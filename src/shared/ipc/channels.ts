@@ -19,6 +19,12 @@ export const RESPOND_PERMISSION = 'respond-permission' as const
 export const LOAD_SESSIONS = 'load-sessions' as const
 export const LOAD_SESSION = 'load-session' as const
 export const CREATE_SESSION = 'create-session' as const
+export const DELETE_SESSION = 'delete-session' as const
+export const WINDOW_MINIMIZE = 'window-minimize' as const
+export const WINDOW_MAXIMIZE = 'window-maximize' as const
+export const WINDOW_CLOSE = 'window-close' as const
+export const WINDOW_IS_MAXIMIZED = 'window-is-maximized' as const
+
 
 // ── main → renderer（事件推送） ──────────────────────
 
@@ -31,3 +37,5 @@ export const AGENT_DIFF_UPDATE = 'agent:diff-update' as const
 export const AGENT_VERIFICATION_RESULT = 'agent:verification-result' as const
 export const AGENT_ERROR = 'agent:error' as const
 export const AGENT_MESSAGE_END = 'agent:message-end' as const
+export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const
+export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const

@@ -5,6 +5,8 @@ import { ProjectPicker } from './features/project-picker/ProjectPicker'
 import { ChatPanel } from './features/chat/ChatPanel'
 import { PermissionPrompt } from './features/permissions/PermissionPrompt'
 import { SettingsModal } from './features/settings/SettingsModal'
+import { TitleBar } from './components/TitleBar'
+import { SessionList } from './features/session-list/SessionList'
 import './App.css'
 
 function App(): JSX.Element {
@@ -14,6 +16,7 @@ function App(): JSX.Element {
 
   // 导入事件流响应 Actions
   const handleMessageStart = useAppStore(state => state.handleMessageStart)
+  const handleThinkingDelta = useAppStore(state => state.handleThinkingDelta)
   const handleTextDelta = useAppStore(state => state.handleTextDelta)
   const handleToolCall = useAppStore(state => state.handleToolCall)
   const handleToolResult = useAppStore(state => state.handleToolResult)
@@ -32,6 +35,11 @@ function App(): JSX.Element {
     // 监听：Agent 思考开始
     const unsubMessageStart = window.api.on('agent:message-start', (data) => {
       handleMessageStart(data.messageId)
+    })
+
+    // 监听：Agent 思考实时增量
+    const unsubThinkingDelta = window.api.on('agent:thinking-delta', (data) => {
+      handleThinkingDelta(data.messageId, data.delta)
     })
 
     // 监听：Agent 流式字符输出
@@ -67,6 +75,7 @@ function App(): JSX.Element {
     // 清理函数：解绑所有主进程事件监听器
     return () => {
       unsubMessageStart()
+      unsubThinkingDelta()
       unsubTextDelta()
       unsubToolCall()
       unsubToolResult()
@@ -76,6 +85,7 @@ function App(): JSX.Element {
     }
   }, [
     handleMessageStart,
+    handleThinkingDelta,
     handleTextDelta,
     handleToolCall,
     handleToolResult,
@@ -85,39 +95,48 @@ function App(): JSX.Element {
   ])
 
   return (
-    <div className="app-layout">
-      {/* 左侧功能配置栏 */}
-      <aside className="app-sidebar">
-        <div className="app-sidebar__header" title="Nova Agent">
-          <NovaLogo size={28} />
-        </div>
+    <div className="app-wrapper">
+      {/* 自定义标题栏 */}
+      <TitleBar />
+      
+      <div className="app-layout">
+        {/* 左侧功能配置与会话管理栏 */}
+        <aside className="app-sidebar">
+          <div className="app-sidebar__header" title="Nova Agent">
+            <NovaLogo size={20} />
+            <span className="app-sidebar__header-title">Nova Agent</span>
+          </div>
 
-        <div className="app-sidebar__content">
-          {/* 工作区项目卡片 */}
-          <ProjectPicker />
-        </div>
+          <div className="app-sidebar__content">
+            {/* 工作区项目卡片 */}
+            <ProjectPicker />
+            {/* 会话管理列表 */}
+            <SessionList />
+          </div>
 
-        <div className="app-sidebar__footer">
-          <button 
-            className="app-sidebar__settings-btn"
-            onClick={() => setConfigModalOpen(true)}
-            title="模型设置"
-          >
-            <SettingsIcon size={18} />
-          </button>
-        </div>
-      </aside>
+          <div className="app-sidebar__footer">
+            <button 
+              className="app-sidebar__settings-btn"
+              onClick={() => setConfigModalOpen(true)}
+              title="模型设置"
+            >
+              <SettingsIcon size={16} />
+              <span>模型设置</span>
+            </button>
+          </div>
+        </aside>
 
-      {/* 右侧主对话面板 */}
-      <main className="app-main">
-        <ChatPanel />
-      </main>
+        {/* 右侧主对话面板 */}
+        <main className="app-main">
+          <ChatPanel />
+        </main>
 
-      {/* 模型参数配置模态窗 */}
-      <SettingsModal />
+        {/* 模型参数配置模态窗 */}
+        <SettingsModal />
 
-      {/* 权限确认弹窗 */}
-      <PermissionPrompt />
+        {/* 权限确认弹窗 */}
+        <PermissionPrompt />
+      </div>
     </div>
   )
 }

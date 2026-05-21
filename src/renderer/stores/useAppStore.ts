@@ -23,6 +23,7 @@ export interface ExtendedMessage {
   toolCalls?: ExtendedToolCall[]
   timestamp: number
   isError?: boolean
+  thinking?: string
 }
 
 /** 等待用户决策的权限请求 */
@@ -123,6 +124,12 @@ interface AppState {
   /** 选中指定会话，并载入相关消息 */
   selectSession: (sessionId: string) => Promise<void>
 
+  /** 删除会话 */
+  deleteSession: (sessionId: string) => Promise<void>
+
+  /** 创建新会话 */
+  createNewSession: () => Promise<void>
+
   /** 按消息回退到某条消息之前的状态 */
   rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
 
@@ -132,6 +139,7 @@ interface AppState {
   // ── 主进程事件驱动的状态更新 ──────────────────────────────
   
   handleMessageStart: (messageId: string) => void
+  handleThinkingDelta: (messageId: string, delta: string) => void
   handleTextDelta: (messageId: string, delta: string) => void
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
@@ -276,6 +284,48 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  deleteSession: async (sessionId: string) => {
+    try {
+      await window.api.invoke('delete-session', { sessionId })
+      const { currentSessionId, sessions } = get()
+      const nextSessions = sessions.filter(s => s.id !== sessionId)
+      set({ sessions: nextSessions })
+
+      // 如果删除的是当前会话，需要切走
+      if (currentSessionId === sessionId) {
+        if (nextSessions.length > 0) {
+          await get().selectSession(nextSessions[0].id)
+        } else {
+          set({
+            currentSessionId: null,
+            currentProject: null,
+            messages: []
+          })
+        }
+      }
+    } catch (err) {
+      console.error('删除会话出错:', err)
+    }
+  },
+
+  createNewSession: async () => {
+    const { currentProject, currentMode } = get()
+    if (!currentProject) return
+    try {
+      const sessionDetail: SessionDetail = await window.api.invoke('create-session', {
+        workspaceRoot: currentProject,
+        mode: currentMode
+      })
+      set(state => ({
+        currentSessionId: sessionDetail.id,
+        sessions: upsertSessionSummary(state.sessions, sessionDetail),
+        messages: restoreSessionMessages(sessionDetail.messages)
+      }))
+    } catch (err) {
+      console.error('创建新会话失败:', err)
+    }
+  },
+
   selectSession: async (sessionId: string) => {
     try {
       const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
@@ -328,12 +378,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       role: 'assistant',
       content: '',
       toolCalls: [],
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      thinking: ''
     }
 
     set(state => ({
       messages: [...state.messages, assistantMsg],
       currentGeneratingMessageId: messageId
+    }))
+  },
+
+  handleThinkingDelta: (messageId: string, delta: string) => {
+    set(state => ({
+      messages: state.messages.map(msg => 
+        msg.id === messageId ? { ...msg, thinking: (msg.thinking ?? '') + delta } : msg
+      )
     }))
   },
 

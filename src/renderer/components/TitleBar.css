@@ -1,0 +1,77 @@
+.title-bar {
+  height: 32px;
+  background-color: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-cream);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  user-select: none;
+  flex-shrink: 0;
+  z-index: 1000;
+}
+
+/* 整个标题栏背景上，除了按钮和Logo，都是可拖拽区域 */
+.title-bar__drag-area {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  -webkit-app-region: drag;
+  z-index: 0;
+}
+
+.title-bar__left {
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+  pointer-events: none; /* 让它不阻挡拖动 */
+}
+
+.title-bar__logo {
+  color: var(--color-brand);
+}
+
+.title-bar__title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.title-bar__right {
+  display: flex;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag; /* 按钮区域不能被拖拽，否则点击无效 */
+  height: 100%;
+}
+
+.title-bar__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 32px;
+  background: transparent;
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.title-bar__btn:hover {
+  background-color: var(--border-warm);
+  color: var(--text-primary);
+}
+
+.title-bar__btn--close:hover {
+  background-color: var(--color-error) !important;
+  color: #ffffff !important;
+}
+
+.title-bar__btn:active {
+  opacity: 0.8;
+}

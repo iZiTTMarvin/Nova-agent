@@ -6,6 +6,7 @@
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
   | { type: 'message_start'; messageId: string }
+  | { type: 'thinking_delta'; messageId: string; delta: string }
   | { type: 'text_delta'; messageId: string; delta: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string }

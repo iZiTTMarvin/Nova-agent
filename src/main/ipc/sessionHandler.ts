@@ -12,6 +12,7 @@ import {
   LOAD_SESSIONS,
   LOAD_SESSION,
   CREATE_SESSION,
+  DELETE_SESSION,
   ACCEPT_FILE,
   REJECT_FILE,
   ROLLBACK_MESSAGE
@@ -111,6 +112,14 @@ export function registerSessionHandler(): void {
     setCurrentProjectPath(params.workspaceRoot)
     setCurrentMode(data.mode)
     return toSessionDetail(data)
+  })
+
+  // 删除会话
+  ipcMain.handle(DELETE_SESSION, async (_event, params: { sessionId: string }) => {
+    const success = sessionStore.delete(params.sessionId)
+    if (!success) {
+      throw new Error(`会话 ${params.sessionId} 删除失败：会话不存在`)
+    }
   })
 
   // 接受文件改动（当前版本为 no-op，后续 S10 diff UI 可扩展）

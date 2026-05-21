@@ -145,6 +145,10 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
       activeStreams.set(event.messageId, { content: '', toolCalls: [] })
       break
     }
+    case 'thinking_delta': {
+      // 思考内容仅用于前端展示，不持久化
+      break
+    }
     case 'text_delta': {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
@@ -239,6 +243,9 @@ function forwardEventToRenderer(
   switch (event.type) {
     case 'message_start':
       webContents.send('agent:message-start', { messageId: event.messageId })
+      break
+    case 'thinking_delta':
+      webContents.send('agent:thinking-delta', { messageId: event.messageId, delta: event.delta })
       break
     case 'text_delta':
       webContents.send('agent:text-delta', { messageId: event.messageId, delta: event.delta })

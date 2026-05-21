@@ -138,3 +138,59 @@ export const NovaLogo: React.FC<IconProps & { animating?: boolean }> = ({ size =
     <circle cx="12" cy="13" r="2.5" fill="currentColor" />
   </svg>
 )
+
+/** 垃圾桶图标 - 删除会话 */
+export const TrashIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <line x1="10" y1="11" x2="10" y2="17" />
+    <line x1="14" y1="11" x2="14" y2="17" />
+  </svg>
+)
+
+/** 加号图标 - 新建会话 */
+export const PlusIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </svg>
+)
+
+/** 回退图标 - 消息回退 */
+export const UndoIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M3 7v6h6" />
+    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+  </svg>
+)
+
+/** 最小化窗口图标 */
+export const MinimizeIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </svg>
+)
+
+/** 最大化窗口图标 */
+export const MaximizeIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+  </svg>
+)
+
+/** 还原窗口图标 */
+export const RestoreIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <rect x="8" y="4" width="12" height="12" rx="1.5" />
+    <path d="M4 8v10a2 2 0 0 0 2 2h10" fill="none" />
+  </svg>
+)
+
+/** 关闭窗口图标 */
+export const CloseIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+)

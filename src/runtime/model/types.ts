@@ -45,6 +45,7 @@ export interface ModelClientConfig {
 
 /** 模型产出的流式事件 */
 export type ChatEvent =
+  | { type: 'thinking_delta'; delta: string }
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_call'; toolCall: ChatToolCall }
   | { type: 'message_start' }

@@ -141,6 +141,7 @@
 }
 
 .chat-msg {
+  position: relative;
   max-width: 80%;
   padding: 16px;
   border-radius: var(--radius-lg);
@@ -419,3 +420,49 @@
   cursor: not-allowed;
   transform: none;
 }
+
+/* 消息悬浮操作栏 */
+.chat-msg__actions {
+  position: absolute;
+  top: -12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast) ease, transform var(--transition-fast) ease;
+  transform: translateY(4px);
+  z-index: 10;
+}
+
+.chat-msg:hover .chat-msg__actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.chat-msg__action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-whisper);
+  transition: all var(--transition-fast);
+}
+
+.chat-msg__action-btn:hover {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
+  background-color: var(--color-brand-dim);
+  box-shadow: 0 2px 6px rgba(201, 100, 66, 0.15);
+}
+
+.chat-msg__action-btn:active {
+  transform: scale(0.9);
+}
+

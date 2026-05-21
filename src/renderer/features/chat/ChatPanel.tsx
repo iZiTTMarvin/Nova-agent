@@ -9,8 +9,10 @@ import {
   AlertIcon, 
   NovaLogo, 
   FolderIcon, 
-  SettingsIcon 
+  SettingsIcon,
+  UndoIcon
 } from '../../components/Icons'
+import { ThinkingBlock } from './ThinkingBlock'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import './ChatPanel.css'
 
@@ -157,6 +159,38 @@ const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
   )
 }
 
+// ── 2.5 解析消息中的思考内容（Windsurf 风格） ─────────────────
+function parseThinking(msg: any, isGenerating: boolean, currentGeneratingMessageId: string | null) {
+  let thinkingContent = msg.thinking || ''
+  let textContent = msg.content || ''
+  let isThinkingActive = false
+
+  // 1. 如果有明确的 msg.thinking（来自 reasoning_content 字段）
+  if (msg.thinking !== undefined && msg.thinking !== '') {
+    isThinkingActive = isGenerating && msg.id === currentGeneratingMessageId && !msg.content
+    return { thinkingContent, textContent, isThinkingActive }
+  }
+
+  // 2. 备用逻辑：从 content 中正则解析 <think>...</think> 标签
+  if (msg.content && msg.content.includes('<think>')) {
+    const thinkStartIndex = msg.content.indexOf('<think>')
+    const thinkEndIndex = msg.content.indexOf('</think>')
+
+    if (thinkEndIndex !== -1) {
+      thinkingContent = msg.content.substring(thinkStartIndex + 7, thinkEndIndex)
+      textContent = msg.content.substring(0, thinkStartIndex) + msg.content.substring(thinkEndIndex + 8)
+      isThinkingActive = false
+    } else {
+      // 只有 <think> 没有 </think>，正在流式思考中
+      thinkingContent = msg.content.substring(thinkStartIndex + 7)
+      textContent = msg.content.substring(0, thinkStartIndex)
+      isThinkingActive = isGenerating && msg.id === currentGeneratingMessageId
+    }
+  }
+
+  return { thinkingContent, textContent, isThinkingActive }
+}
+
 // ── 3. 主聊天控制面板 ───────────────────────────────────────
 export const ChatPanel: React.FC = () => {
   const currentProject = useAppStore(state => state.currentProject)
@@ -167,6 +201,19 @@ export const ChatPanel: React.FC = () => {
   const cancelExecution = useAppStore(state => state.cancelExecution)
   const selectProject = useAppStore(state => state.selectProject)
   const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
+  
+  // 会话与回退所需状态
+  const currentSessionId = useAppStore(state => state.currentSessionId)
+  const rollbackMessage = useAppStore(state => state.rollbackMessage)
+  const currentGeneratingMessageId = useAppStore(state => state.currentGeneratingMessageId)
+
+  // 处理消息回退操作
+  const handleRollback = async (messageId: string) => {
+    if (!currentSessionId) return
+    if (window.confirm('确定要回退到此消息执行前的状态吗？这将物理恢复工作区文件，并移除此消息之后的所有对话记录。')) {
+      await rollbackMessage(currentSessionId, messageId)
+    }
+  }
 
   const [inputVal, setInputVal] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -292,32 +339,57 @@ export const ChatPanel: React.FC = () => {
           </div>
         )}
 
-        {messages.map(msg => (
-          <div 
-            key={msg.id} 
-            className={`chat-msg-wrapper chat-msg-wrapper--${msg.role === 'user' ? 'user' : 'assistant'}`}
-          >
-            <div className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'} ${msg.isError ? 'chat-msg--error' : ''}`}>
-              {/* 渲染消息文本 */}
-              {msg.content && <MarkdownRenderer content={msg.content} />}
+        {messages.map(msg => {
+          const isAssistant = msg.role === 'assistant'
+          const { thinkingContent, textContent, isThinkingActive } = isAssistant 
+            ? parseThinking(msg, isGenerating, currentGeneratingMessageId)
+            : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
 
-              {/* 渲染内部包含的工具调用过程 */}
-              {msg.toolCalls && msg.toolCalls.length > 0 && (
-                <div style={{ marginTop: '12px' }}>
-                  {msg.toolCalls.map(tc => (
-                    <ToolBox
-                      key={tc.id}
-                      name={tc.name}
-                      args={tc.arguments}
-                      status={tc.status}
-                      result={tc.result}
-                    />
-                  ))}
-                </div>
-              )}
+          return (
+            <div 
+              key={msg.id} 
+              className={`chat-msg-wrapper chat-msg-wrapper--${msg.role === 'user' ? 'user' : 'assistant'}`}
+            >
+              <div className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'} ${msg.isError ? 'chat-msg--error' : ''}`}>
+                {/* 悬浮操作栏：仅在 assistant 消息上显示，且必须是生成完毕状态 */}
+                {isAssistant && !isGenerating && (
+                  <div className="chat-msg__actions">
+                    <button 
+                      className="chat-msg__action-btn"
+                      onClick={() => handleRollback(msg.id)}
+                      title="回退到此消息之前的状态"
+                    >
+                      <UndoIcon size={13} />
+                    </button>
+                  </div>
+                )}
+
+                {/* 渲染思考框（Windsurf 风格） */}
+                {isAssistant && thinkingContent && (
+                  <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
+                )}
+
+                {/* 渲染消息文本 */}
+                {textContent && <MarkdownRenderer content={textContent} />}
+
+                {/* 渲染内部包含的工具调用过程 */}
+                {msg.toolCalls && msg.toolCalls.length > 0 && (
+                  <div style={{ marginTop: '12px' }}>
+                    {msg.toolCalls.map(tc => (
+                      <ToolBox
+                        key={tc.id}
+                        name={tc.name}
+                        args={tc.arguments}
+                        status={tc.status}
+                        result={tc.result}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         <div ref={messagesEndRef} />
       </div>
 

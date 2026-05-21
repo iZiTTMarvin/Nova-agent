@@ -1,4 +1,5 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu } from 'electron'
+import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
 import { join } from 'path'
 import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
@@ -79,6 +80,7 @@ function createMainWindow(): void {
     height: 800,
     minWidth: 900,
     minHeight: 650,
+    frame: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -88,6 +90,9 @@ function createMainWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
+    if (mainWindow) {
+      watchWindowMaximizeState(mainWindow)
+    }
     mainWindow?.show()
   })
 
@@ -103,6 +108,9 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // 0. 移除默认菜单栏，使用自定义标题栏
+  Menu.setApplicationMenu(null)
+
   // 1. 尝试从本地加载模型配置以初始化 modelClient
   loadModelConfigOnStartup()
   
@@ -111,6 +119,9 @@ app.whenReady().then(() => {
   
   // 3. 注册 Agent 运行时专属事件与通道
   registerAgentHandler(getMainWindow, getModelClient)
+
+  // 3.5. 注册窗口控制的 IPC 处理器
+  registerWindowHandler(getMainWindow)
   
   // 4. 创建渲染视窗
   createMainWindow()

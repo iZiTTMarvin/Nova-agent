@@ -163,6 +163,10 @@ export class AgentLoop {
           if (this.cancelled) break
 
           switch (event.type) {
+            case 'thinking_delta':
+              this.eventBus.emit({ type: 'thinking_delta', messageId, delta: event.delta })
+              break
+
             case 'text_delta':
               assistantContent += event.delta
               this.eventBus.emit({ type: 'text_delta', messageId, delta: event.delta })

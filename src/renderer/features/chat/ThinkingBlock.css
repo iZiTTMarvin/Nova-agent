@@ -1,0 +1,109 @@
+/* 拟纸风格折叠式思考框样式 */
+
+.thinking-block {
+  margin: 8px 0 16px 0;
+  border: 1px dashed var(--border-warm);
+  border-radius: var(--radius-md);
+  background-color: rgba(250, 249, 245, 0.5); /* 极淡象牙白 */
+  overflow: hidden;
+  transition: all var(--transition-normal);
+}
+
+.thinking-block[open] {
+  border-style: solid;
+  border-left: 3px solid var(--color-brand); /* 赤土橙高亮左边框，突显思考部分 */
+  background-color: rgba(245, 244, 237, 0.6); /* 稍微深一点的羊皮纸色背景 */
+  box-shadow: var(--shadow-whisper);
+}
+
+/* 移除原生 summary 小箭头，以便自定义样式 */
+.thinking-block__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none; /* 去除 Chrome 原生三角 */
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.thinking-block__summary::-webkit-details-marker {
+  display: none; /* 去除 Safari 原生三角 */
+}
+
+.thinking-block__summary:hover {
+  background-color: rgba(232, 230, 220, 0.4); /* 微弱暖沙色 */
+  color: var(--text-secondary);
+}
+
+.thinking-block__header-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 思考状态小呼吸指示灯 */
+.thinking-block__status-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.thinking-block--active .thinking-block__status-indicator {
+  background-color: var(--color-brand);
+}
+
+.thinking-block__status-indicator--pulsing {
+  animation: thinking-pulse 1.5s infinite ease-in-out;
+}
+
+@keyframes thinking-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 rgba(201, 100, 66, 0.4);
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+    box-shadow: 0 0 4px 2px rgba(201, 100, 66, 0.2);
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 rgba(201, 100, 66, 0);
+  }
+}
+
+.thinking-block__title {
+  font-family: var(--font-sans);
+  font-style: italic;
+}
+
+.thinking-block__arrow {
+  color: var(--text-muted);
+  transition: transform var(--transition-fast) ease;
+}
+
+.thinking-block__content {
+  border-top: 1px solid var(--border-cream);
+  padding: 10px 14px;
+}
+
+.thinking-block__pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-height: 250px;
+  overflow-y: auto;
+}

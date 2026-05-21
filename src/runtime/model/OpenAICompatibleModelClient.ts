@@ -102,6 +102,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
             const delta = choice.delta
             finishReason = choice.finish_reason ?? finishReason
 
+            // 思考/推理内容增量（DeepSeek、MiniMax 等模型通过此字段返回内部推理过程）
+            if (delta?.reasoning_content) {
+              yield { type: 'thinking_delta', delta: delta.reasoning_content }
+            }
+
             // 文本增量
             if (delta?.content) {
               yield { type: 'text_delta', delta: delta.content }

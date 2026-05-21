@@ -65,6 +65,26 @@ export interface IpcCommands {
     params: { workspaceRoot: string; mode?: Mode }
     result: SessionDetail
   }
+  'delete-session': {
+    params: { sessionId: string }
+    result: void
+  }
+  'window-minimize': {
+    params: void
+    result: void
+  }
+  'window-maximize': {
+    params: void
+    result: void
+  }
+  'window-close': {
+    params: void
+    result: void
+  }
+  'window-is-maximized': {
+    params: void
+    result: boolean
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -114,6 +134,13 @@ export interface IpcEvents {
   }
   'agent:message-end': {
     messageId: string
+  }
+  'agent:thinking-delta': {
+    messageId: string
+    delta: string
+  }
+  'window:maximize-change': {
+    isMaximized: boolean
   }
 }
 
