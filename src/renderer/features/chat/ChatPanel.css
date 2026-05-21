@@ -331,9 +331,18 @@
    输入与控制区
    ────────────────────────────────────────────────────────── */
 .chat-input-area {
-  padding: 20px 24px;
+  padding: 16px 24px 20px 24px;
   background-color: var(--bg-card);
   border-top: 1px solid var(--border-cream);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-input-mode-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
 
 .chat-input-wrapper {

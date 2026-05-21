@@ -80,25 +80,22 @@ function App(): JSX.Element {
     <div className="app-layout">
       {/* 左侧功能配置栏 */}
       <aside className="app-sidebar">
-        <div className="app-sidebar__header">
+        <div className="app-sidebar__header" title="Nova Agent">
           <NovaLogo size={28} />
-          <h1 className="app-sidebar__title">Nova Agent</h1>
         </div>
 
         <div className="app-sidebar__content">
           {/* 工作区项目卡片 */}
           <ProjectPicker />
-          {/* 运行模式切换 */}
-          <ModeSwitch />
         </div>
 
         <div className="app-sidebar__footer">
           <button 
             className="app-sidebar__settings-btn"
             onClick={() => setConfigModalOpen(true)}
+            title="模型设置"
           >
-            <SettingsIcon size={16} />
-            模型设置
+            <SettingsIcon size={18} />
           </button>
         </div>
       </aside>

@@ -1,84 +1,47 @@
-.mode-switch {
+.mode-pill-selector {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex-direction: row;
+  gap: 4px;
+  padding: 4px;
+  background-color: rgba(24, 24, 27, 0.7); /* bg-zinc-900/60 variant */
+  border-radius: 9999px; /* rounded-full */
+  border: 1px solid rgba(39, 39, 42, 0.5); /* border-zinc-800/40 variant */
+  backdrop-filter: blur(12px); /* backdrop-blur-md */
+  width: fit-content;
+  box-shadow: 0 4px 12px rgba(20, 20, 19, 0.05);
 }
 
-.mode-switch__title {
-  font-family: var(--font-serif);
-  font-size: 1.1rem;
-  font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.mode-switch__options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mode-switch__card {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px;
-  background-color: var(--bg-card);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-cream);
-  text-align: left;
-  transition: all var(--transition-fast);
-}
-
-.mode-switch__card:hover {
-  border-color: var(--border-warm);
-  background-color: var(--bg-sidebar);
-}
-
-.mode-switch__card--active {
-  border-color: var(--color-brand);
-  background-color: var(--color-brand-dim);
-  box-shadow: 0 0 0 1px var(--color-brand);
-}
-
-.mode-switch__card--active:hover {
-  background-color: var(--color-brand-dim);
-}
-
-.mode-switch__icon-wrapper {
-  display: flex;
+.mode-pill-btn {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-sidebar);
-  color: var(--text-secondary);
-  flex-shrink: 0;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem; /* text-xs */
+  font-weight: 500;
+  color: #a1a1aa; /* text-zinc-400 */
+  border: none;
+  background: none;
+  cursor: pointer;
   transition: all var(--transition-fast);
-  border: 1px solid var(--border-cream);
+  user-select: none;
 }
 
-.mode-switch__card--active .mode-switch__icon-wrapper {
-  background-color: var(--bg-card);
+.mode-pill-btn:hover {
+  color: #e4e4e7; /* text-zinc-200 */
+}
+
+.mode-pill-btn--active {
+  background-color: #27272a; /* bg-zinc-850 / zinc-800 */
+  color: #ffffff; /* text-zinc-200 / white */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.mode-pill-btn svg {
+  transition: color var(--transition-fast);
+}
+
+.mode-pill-btn--active svg {
   color: var(--color-brand);
-  border-color: var(--color-brand);
-}
-
-.mode-switch__info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.mode-switch__name {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.mode-switch__desc {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  line-height: 1.3;
 }

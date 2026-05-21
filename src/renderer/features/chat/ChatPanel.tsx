@@ -11,6 +11,7 @@ import {
   FolderIcon, 
   SettingsIcon 
 } from '../../components/Icons'
+import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import './ChatPanel.css'
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
@@ -322,6 +323,9 @@ export const ChatPanel: React.FC = () => {
 
       {/* 底部输入框 */}
       <div className="chat-input-area">
+        <div className="chat-input-mode-container">
+          <ModeSwitch />
+        </div>
         <div className="chat-input-wrapper">
           <textarea
             ref={textareaRef}
