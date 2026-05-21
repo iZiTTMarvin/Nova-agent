@@ -1,13 +1,26 @@
 import { ipcMain } from 'electron'
 import { PING } from '../../shared/ipc/channels'
+import { registerProjectHandler } from './projectHandler'
+import { registerConfigHandler } from './configHandler'
+import { registerModeHandler } from './modeHandler'
+import { getMainWindow } from '../index'
 
 /**
- * 注册所有 IPC handler（renderer → main 命令）
- * 每个 handler 对应 IpcCommands 中的一个 channel
+ * 注册所有主进程与渲染进程的 IPC 命令通信处理器
+ * 统一分发并代理各类具体功能处理器
  */
 export function registerIpcHandlers(): void {
-  // ping/pong 连通测试
+  // ping/pong 基础连通测试
   ipcMain.handle(PING, async () => {
     return 'pong'
   })
+
+  // 注册项目目录选择 IPC
+  registerProjectHandler(getMainWindow)
+
+  // 注册模型配置存取 IPC
+  registerConfigHandler()
+
+  // 注册运行模式切换 IPC
+  registerModeHandler()
 }

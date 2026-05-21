@@ -1,4 +1,60 @@
-/* 全局基础样式 */
+/* 全局基础样式 — 拟纸质感 Claude Parchment 主题 */
+
+:root {
+  /* 基础背景（羊皮纸暖黄） */
+  --bg-app: #f5f4ed; 
+  /* 侧边栏背景（略带绿/黄调的温润象牙白） */
+  --bg-sidebar: #faf9f5; 
+  /* 卡片/ elevated surfaces（白色纸张） */
+  --bg-card: #ffffff; 
+  /* 辅助背景（暖沙色，用于次要按钮和交互悬浮） */
+  --bg-sand: #e8e6dc;
+  /* 输入框背景 */
+  --bg-input: #ffffff;
+  
+  /* 字体颜色 */
+  --text-primary: #141413;     /* 近黑色，最温暖的深色 */
+  --text-secondary: #5e5d59;   /* 橄榄灰，次要正文 */
+  --text-muted: #87867f;       /* 石灰色，辅助/占位信息 */
+  --text-charcoal: #4d4c48;    /* 木炭暖色，用于浅底按钮文本 */
+  
+  /* 品牌高亮与状态色 */
+  --color-brand: #c96442;      /* 赤土色（焦橙），主 CTA 颜色 */
+  --color-brand-hover: #b05131;
+  --color-brand-dim: rgba(201, 100, 66, 0.08);
+  --color-accent: #d97757;     /* 珊瑚橙，次要高亮 */
+  --color-error: #b53333;      /* 温暖深红，错误状态 */
+  --color-success: #788c5d;    /* 莫兰迪绿，成功状态 */
+  --color-focus: #3898ec;      /* 焦点蓝，无障碍对焦环 */
+  
+  /* 边框（极淡的奶油色 border 与暖边框） */
+  --border-cream: #f0eee6;
+  --border-warm: #e8e6dc;
+  
+  /* 字体族 */
+  --font-serif: Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  
+  /* 圆角大小 */
+  --radius-sm: 6px;
+  --radius-md: 8px;   /* 按钮/次要交互 */
+  --radius-lg: 12px;  /* 输入框/主按钮 */
+  --radius-xl: 16px;  /* 卡片/面板 */
+  
+  /* 阴影效果（弱投影与环形投影组合） */
+  --ring-shadow-subtle: 0 0 0 1px var(--border-cream);
+  --ring-shadow-warm: 0 0 0 1px var(--border-warm);
+  --ring-shadow-active: 0 0 0 2px var(--color-brand);
+  --shadow-whisper: rgba(20, 20, 19, 0.03) 0px 4px 20px;
+  --shadow-card: rgba(20, 20, 19, 0.04) 0px 2px 8px, 0px 0px 0px 1px var(--border-cream);
+  --shadow-popup: rgba(20, 20, 19, 0.08) 0px 12px 32px, 0px 0px 0px 1px var(--border-warm);
+
+  /* 过渡曲线 */
+  --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 *,
 *::before,
 *::after {
@@ -12,10 +68,68 @@ body,
 #root {
   height: 100%;
   width: 100%;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  overflow: hidden;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* 按钮基础微交互 */
+button {
+  font-family: var(--font-sans);
+  background: none;
+  border: none;
+  cursor: pointer;
+  outline: none;
+}
+
+/* 滚动条整体美化，与纸张质感契合 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-warm);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Nova Logo 呼吸关键帧动画 */
+@keyframes nova-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.95;
+    filter: drop-shadow(0 0 0px var(--color-brand));
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+    filter: drop-shadow(0 0 4px var(--color-accent));
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.95;
+    filter: drop-shadow(0 0 0px var(--color-brand));
+  }
+}
+
+/* 拟物输入框聚焦样式 */
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-focus) !important;
+  box-shadow: 0 0 0 2px rgba(56, 152, 236, 0.15) !important;
 }

@@ -1,15 +1,78 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
+import * as fs from 'fs'
 import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import type { ModelClient } from '../runtime/model/ModelClient'
+import type { Mode } from '../shared/session'
 
 /** 主窗口实例 */
 let mainWindow: BrowserWindow | null = null
 
 /** 模型客户端实例，运行时通过配置初始化 */
 let modelClient: ModelClient | null = null
+
+/** 当前选择的本地项目目录绝对路径 */
+let currentProjectPath: string | null = null
+
+/** 当前运行模式，默认协作模式 */
+let currentMode: Mode = 'default'
+
+/** 获取主窗口实例 */
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow
+}
+
+/** 获取模型客户端 */
+export function getModelClient(): ModelClient | null {
+  return modelClient
+}
+
+/** 设置模型客户端 */
+export function setModelClient(client: ModelClient | null): void {
+  modelClient = client
+}
+
+/** 获取当前工作区路径 */
+export function getCurrentProjectPath(): string | null {
+  return currentProjectPath
+}
+
+/** 设置当前工作区路径 */
+export function setCurrentProjectPath(path: string | null): void {
+  currentProjectPath = path
+}
+
+/** 获取当前模式 */
+export function getCurrentMode(): Mode {
+  return currentMode
+}
+
+/** 设置当前模式 */
+export function setCurrentMode(mode: Mode): void {
+  currentMode = mode
+}
+
+/**
+ * 启动时自动载入持久化的模型配置以提供免配直接运行体验
+ */
+function loadModelConfigOnStartup(): void {
+  const configPath = join(app.getPath('userData'), 'settings', 'model.json')
+  if (!fs.existsSync(configPath)) {
+    return
+  }
+
+  try {
+    const content = fs.readFileSync(configPath, 'utf8')
+    const config = JSON.parse(content)
+    if (config && config.baseUrl && config.modelId) {
+      modelClient = new OpenAICompatibleModelClient(config)
+    }
+  } catch (err) {
+    console.error('启动时加载持久化配置失败:', err)
+  }
+}
 
 /**
  * 创建应用主窗口
@@ -19,8 +82,8 @@ function createMainWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    minWidth: 800,
-    minHeight: 600,
+    minWidth: 900,
+    minHeight: 650,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -44,19 +107,17 @@ function createMainWindow(): void {
   }
 }
 
-/** 获取主窗口实例 */
-function getMainWindow(): BrowserWindow | null {
-  return mainWindow
-}
-
-/** 获取模型客户端（S3 暂用占位逻辑，S8 会对接 Settings 持久化） */
-function getModelClient(): ModelClient | null {
-  return modelClient
-}
-
 app.whenReady().then(() => {
+  // 1. 尝试从本地加载模型配置以初始化 modelClient
+  loadModelConfigOnStartup()
+  
+  // 2. 注册所有 renderer → main 的 IPC 处理器
   registerIpcHandlers()
+  
+  // 3. 注册 Agent 运行时专属事件与通道
   registerAgentHandler(getMainWindow, getModelClient)
+  
+  // 4. 创建渲染视窗
   createMainWindow()
 
   app.on('activate', () => {

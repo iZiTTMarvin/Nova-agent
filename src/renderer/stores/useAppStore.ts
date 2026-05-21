@@ -1,0 +1,335 @@
+import { create } from 'zustand'
+import type { Mode, Session, ToolCall } from '../../shared/session/types'
+import type { ModelConfig } from '../../shared/config'
+
+/** 
+ * 扩展的工具调用接口
+ * 提供在 UI 渲染时跟踪工具执行状态和返回结果的能力
+ */
+export interface ExtendedToolCall extends ToolCall {
+  result?: string
+  status: 'running' | 'success' | 'error'
+}
+
+/** 
+ * 扩展的单条聊天消息接口
+ * 将标准的 toolCalls 扩展为携带状态和结果的 ExtendedToolCall，便于流式呈现
+ */
+export interface ExtendedMessage {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant' | 'system' | 'tool'
+  content: string
+  toolCalls?: ExtendedToolCall[]
+  timestamp: number
+  isError?: boolean
+}
+
+/** Zustand 全局状态定义 */
+interface AppState {
+  currentProject: string | null
+  currentMode: Mode
+  sessions: Session[]
+  currentSessionId: string | null
+  messages: ExtendedMessage[]
+  isGenerating: boolean
+  currentGeneratingMessageId: string | null
+  modelConfig: ModelConfig | null
+  isConfigModalOpen: boolean
+
+  // ── Actions ──────────────────────────────────────────
+  
+  /** 加载或切换工作区 */
+  selectProject: () => Promise<void>
+  
+  /** 更换当前运行模式 */
+  setMode: (mode: Mode) => Promise<void>
+  
+  /** 发送用户消息 */
+  sendMessage: (content: string) => Promise<void>
+  
+  /** 中断当前的流式生成 */
+  cancelExecution: () => Promise<void>
+  
+  /** 载入持久化的模型配置 */
+  loadModelConfig: () => Promise<void>
+  
+  /** 保存新模型配置 */
+  saveModelConfig: (config: ModelConfig) => Promise<void>
+  
+  /** 手工打开或关闭配置弹窗 */
+  setConfigModalOpen: (isOpen: boolean) => void
+
+  /** 加载会话列表及当前会话 */
+  loadSessions: () => Promise<void>
+  
+  /** 选中指定会话，并载入相关消息 */
+  selectSession: (sessionId: string) => void
+
+  // ── 主进程事件驱动的状态更新 ──────────────────────────────
+  
+  handleMessageStart: (messageId: string) => void
+  handleTextDelta: (messageId: string, delta: string) => void
+  handleToolCall: (messageId: string, toolName: string, args: Record<string, unknown>) => void
+  handleToolResult: (messageId: string, toolName: string, result: string) => void
+  handleMessageEnd: (messageId: string) => void
+  handleError: (messageId: string, error: string) => void
+}
+
+export const useAppStore = create<AppState>((set, get) => ({
+  currentProject: null,
+  currentMode: 'default',
+  sessions: [],
+  currentSessionId: null,
+  messages: [],
+  isGenerating: false,
+  currentGeneratingMessageId: null,
+  modelConfig: null,
+  isConfigModalOpen: false,
+
+  selectProject: async () => {
+    try {
+      const selectedPath = await window.api.invoke('select-project')
+      if (selectedPath) {
+        // 创建一个模拟会话（S5 阶段在前端模拟，S9 阶段会由后端 SessionStore 管理）
+        const newSessionId = 'session_' + Date.now()
+        const newSession: Session = {
+          id: newSessionId,
+          workspaceRoot: selectedPath,
+          mode: get().currentMode,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          messageCount: 0
+        }
+
+        set(state => ({
+          currentProject: selectedPath,
+          currentSessionId: newSessionId,
+          sessions: [newSession, ...state.sessions],
+          messages: [] // 清空旧会话消息
+        }))
+      }
+    } catch (err) {
+      console.error('选择项目工作区失败:', err)
+    }
+  },
+
+  setMode: async (mode: Mode) => {
+    try {
+      await window.api.invoke('set-mode', mode)
+      set({ currentMode: mode })
+      
+      // 更新当前会话的模式属性
+      const { currentSessionId, sessions } = get()
+      if (currentSessionId) {
+        set({
+          sessions: sessions.map(s => 
+            s.id === currentSessionId ? { ...s, mode } : s
+          )
+        })
+      }
+    } catch (err) {
+      console.error('切换模式失败:', err)
+    }
+  },
+
+  sendMessage: async (content: string) => {
+    const { currentSessionId, isGenerating, currentProject } = get()
+    if (isGenerating || !currentProject) return
+
+    const activeSessionId = currentSessionId || 'session_default'
+
+    // 1. 创建并追加用户消息
+    const userMsg: ExtendedMessage = {
+      id: 'msg_' + Date.now() + '_user',
+      sessionId: activeSessionId,
+      role: 'user',
+      content,
+      timestamp: Date.now()
+    }
+
+    set(state => ({
+      messages: [...state.messages, userMsg],
+      isGenerating: true
+    }))
+
+    try {
+      // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
+      await window.api.invoke('send-message', {
+        sessionId: activeSessionId,
+        content
+      })
+    } catch (err) {
+      // 若启动 AgentLoop 出错，在此更新界面状态
+      get().handleError('msg_err_' + Date.now(), (err as Error).message)
+    }
+  },
+
+  cancelExecution: async () => {
+    try {
+      await window.api.invoke('cancel-execution')
+      set({ isGenerating: false, currentGeneratingMessageId: null })
+    } catch (err) {
+      console.error('取消执行失败:', err)
+    }
+  },
+
+  loadModelConfig: async () => {
+    try {
+      const config = await window.api.invoke('load-model-config')
+      set({ modelConfig: config })
+    } catch (err) {
+      console.error('读取模型配置失败:', err)
+    }
+  },
+
+  saveModelConfig: async (config: ModelConfig) => {
+    try {
+      await window.api.invoke('save-model-config', config)
+      set({ modelConfig: config, isConfigModalOpen: false })
+    } catch (err) {
+      console.error('保存模型配置失败:', err)
+      throw err
+    }
+  },
+
+  setConfigModalOpen: (isOpen: boolean) => {
+    set({ isConfigModalOpen: isOpen })
+  },
+
+  loadSessions: async () => {
+    try {
+      // S5 阶段返回本地前端状态，后续 S9 阶段通过 'load-sessions' 桥接 SessionStore
+      const sessions = await window.api.invoke('load-sessions').catch(() => [] as Session[])
+      if (sessions.length > 0) {
+        set({ sessions })
+      }
+    } catch (err) {
+      console.error('加载会话列表出错:', err)
+    }
+  },
+
+  selectSession: (sessionId: string) => {
+    const session = get().sessions.find(s => s.id === sessionId)
+    if (session) {
+      set({
+        currentSessionId: sessionId,
+        currentProject: session.workspaceRoot,
+        currentMode: session.mode,
+        messages: [] // S5 阶段暂不处理历史消息载入，可在 session 切换时默认清空，待 S9 补全
+      })
+    }
+  },
+
+  // ── 主进程流式事件响应器 ────────────────────────────────────
+
+  handleMessageStart: (messageId: string) => {
+    const { currentSessionId } = get()
+    const activeSessionId = currentSessionId || 'session_default'
+
+    // 收到 Assistant 消息开始，向消息队列追加一个空的 assistant 卡片
+    const assistantMsg: ExtendedMessage = {
+      id: messageId,
+      sessionId: activeSessionId,
+      role: 'assistant',
+      content: '',
+      toolCalls: [],
+      timestamp: Date.now()
+    }
+
+    set(state => ({
+      messages: [...state.messages, assistantMsg],
+      currentGeneratingMessageId: messageId
+    }))
+  },
+
+  handleTextDelta: (messageId: string, delta: string) => {
+    set(state => ({
+      messages: state.messages.map(msg => 
+        msg.id === messageId ? { ...msg, content: msg.content + delta } : msg
+      )
+    }))
+  },
+
+  handleToolCall: (messageId: string, toolName: string, args: Record<string, unknown>) => {
+    // 插入一个新的 ExtendedToolCall，状态为 'running'
+    const newToolCall: ExtendedToolCall = {
+      id: 'tc_' + Date.now() + '_' + toolName,
+      name: toolName,
+      arguments: args,
+      status: 'running'
+    }
+
+    set(state => ({
+      messages: state.messages.map(msg => {
+        if (msg.id === messageId) {
+          const toolCalls = msg.toolCalls ? [...msg.toolCalls, newToolCall] : [newToolCall]
+          return { ...msg, toolCalls }
+        }
+        return msg
+      })
+    }))
+  },
+
+  handleToolResult: (messageId: string, toolName: string, result: string) => {
+    // 定位最后一个匹配的 toolCall，更新其执行结果与状态
+    set(state => ({
+      messages: state.messages.map(msg => {
+        if (msg.id === messageId && msg.toolCalls) {
+          const toolCalls = msg.toolCalls.map((tc, idx) => {
+            const isLastOfName = idx === msg.toolCalls!.map(t => t.name).lastIndexOf(toolName)
+            if (isLastOfName && tc.status === 'running') {
+              const isError = result.startsWith('工具执行失败')
+              return {
+                ...tc,
+                result,
+                status: isError ? ('error' as const) : ('success' as const)
+              }
+            }
+            return tc
+          })
+          return { ...msg, toolCalls }
+        }
+        return msg
+      })
+    }))
+  },
+
+  handleMessageEnd: (messageId: string) => {
+    set({
+      isGenerating: false,
+      currentGeneratingMessageId: null
+    })
+
+    // 更新当前会话的消息数属性
+    const { currentSessionId, sessions, messages } = get()
+    if (currentSessionId) {
+      set({
+        sessions: sessions.map(s => 
+          s.id === currentSessionId ? { ...s, messageCount: messages.length, updatedAt: Date.now() } : s
+        )
+      })
+    }
+  },
+
+  handleError: (messageId: string, error: string) => {
+    const { currentSessionId } = get()
+    const activeSessionId = currentSessionId || 'session_default'
+
+    // 发生异常时，向队列追加一条明显的错误卡片，并标记 isError = true
+    const errorMsg: ExtendedMessage = {
+      id: messageId,
+      sessionId: activeSessionId,
+      role: 'assistant',
+      content: error,
+      isError: true,
+      timestamp: Date.now()
+    }
+
+    set(state => ({
+      messages: [...state.messages, errorMsg],
+      isGenerating: false,
+      currentGeneratingMessageId: null
+    }))
+  }
+}))

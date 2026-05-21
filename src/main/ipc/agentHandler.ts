@@ -7,32 +7,54 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION } from '../../shared/ipc/channels'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { EventBus } from '../../runtime/agent/EventBus'
+import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
+import { lsTool } from '../../runtime/tools/lsTool'
+import { readTool } from '../../runtime/tools/readTool'
+import { grepTool } from '../../runtime/tools/grepTool'
+import { findTool } from '../../runtime/tools/findTool'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
+import { getCurrentProjectPath } from '../index'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
 
 /**
  * 注册 agent 相关的 IPC handler
+ * @param getMainWindow 获取当前活跃的 Electron 主窗口
  * @param getModelClient 获取当前配置的 ModelClient 实例
  */
 export function registerAgentHandler(
   getMainWindow: () => BrowserWindow | null,
   getModelClient: () => ModelClient | null
 ): void {
-  // 发送消息
-  ipcMain.handle(SEND_MESSAGE, async (_event, params: { sessionId: string; content: string }) => {
+  // 发送消息命令
+  ipcMain.handle(SEND_MESSAGE, async (_event, params: { sessionId: string; content: string }): Promise<void> => {
     const modelClient = getModelClient()
     if (!modelClient) {
-      throw new Error('模型未配置，请先在设置中配置模型')
+      throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
     }
 
-    // 每次发消息时创建新的 AgentLoop（S3 简化处理，S9 会改用会话管理）
+    const projectPath = getCurrentProjectPath()
+    if (!projectPath) {
+      throw new Error('当前未选择项目工作区，请在侧边栏先选择一个本地目录。')
+    }
+
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus)
 
-    // 将 runtime 事件转发到 renderer
+    // 1. 设置 Agent 工作区边界
+    agentLoop.setWorkingDir(projectPath)
+
+    // 2. 初始化只读工具集（ls, read, grep, find）
+    const toolRegistry = new ToolRegistry()
+    toolRegistry.register(lsTool)
+    toolRegistry.register(readTool)
+    toolRegistry.register(grepTool)
+    toolRegistry.register(findTool)
+    agentLoop.setToolRegistry(toolRegistry)
+
+    // 将 runtime 执行中触发的流式事件转发到 renderer 端，推动 UI 更新
     eventBus.on((event: AgentEvent) => {
       forwardEventToRenderer(getMainWindow(), event)
     })
@@ -40,8 +62,8 @@ export function registerAgentHandler(
     await agentLoop.sendMessage(params.content)
   })
 
-  // 取消执行
-  ipcMain.handle(CANCEL_EXECUTION, async () => {
+  // 取消执行命令
+  ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
     agentLoop?.cancel()
   })
 }
