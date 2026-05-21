@@ -9,6 +9,7 @@ import {
   SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG, SET_MODE,
   ACCEPT_FILE, REJECT_FILE, ROLLBACK_MESSAGE,
   RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION,
+  CREATE_SESSION,
   AGENT_MESSAGE_START, AGENT_TEXT_DELTA, AGENT_TOOL_CALL,
   AGENT_TOOL_RESULT, AGENT_PERMISSION_REQUEST,
   AGENT_DIFF_UPDATE, AGENT_VERIFICATION_RESULT,
@@ -16,16 +17,16 @@ import {
 } from '../../src/shared/ipc/channels'
 
 describe('IPC channel 常量', () => {
-  it('定义了 13 个命令 channel', () => {
+  it('定义了 14 个命令 channel', () => {
     const commandChannels = [
       PING, SELECT_PROJECT, SEND_MESSAGE, CANCEL_EXECUTION,
       SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG, SET_MODE,
       ACCEPT_FILE, REJECT_FILE, ROLLBACK_MESSAGE,
-      RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION
+      RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION, CREATE_SESSION
     ]
-    expect(commandChannels).toHaveLength(13)
+    expect(commandChannels).toHaveLength(14)
     // 每个 channel 都是唯一的字符串
-    expect(new Set(commandChannels).size).toBe(13)
+    expect(new Set(commandChannels).size).toBe(14)
   })
 
   it('定义了 9 个事件 channel', () => {
@@ -61,6 +62,13 @@ describe('IpcCommands 类型完整性', () => {
     const params: Params = { sessionId: 's1', content: 'hello' }
     expect(params.sessionId).toBe('s1')
     expect(params.content).toBe('hello')
+  })
+
+  it('set-mode 命令参数包含 mode 和可选 sessionId', () => {
+    type Params = IpcCommands['set-mode']['params']
+    const params: Params = { mode: 'plan', sessionId: 'sess_1' }
+    expect(params.mode).toBe('plan')
+    expect(params.sessionId).toBe('sess_1')
   })
 })
 

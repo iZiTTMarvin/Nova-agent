@@ -195,6 +195,24 @@ describe('SessionStore', () => {
     })
   })
 
+  describe('updateMode', () => {
+    it('更新会话模式并持久化到磁盘', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root', 'default')
+
+      const updated = store.updateMode(session.id, 'auto')
+
+      expect(updated).not.toBeNull()
+      expect(updated!.mode).toBe('auto')
+      expect(store.load(session.id)!.mode).toBe('auto')
+    })
+
+    it('更新不存在的会话模式返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      expect(store.updateMode('missing-session', 'plan')).toBeNull()
+    })
+  })
+
   describe('save', () => {
     it('保存覆盖已有数据', () => {
       const store = new SessionStore(tmpDir)

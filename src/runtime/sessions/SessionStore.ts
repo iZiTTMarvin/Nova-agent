@@ -120,6 +120,17 @@ export class SessionStore {
     return session
   }
 
+  /** 更新会话模式并持久化 */
+  updateMode(sessionId: string, mode: Mode): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    session.mode = mode
+    session.updatedAt = Date.now()
+    this.save(session)
+    return session
+  }
+
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
   getSessionsDir(): string {
     return this.sessionsDir

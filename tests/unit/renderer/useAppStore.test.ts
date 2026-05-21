@@ -44,7 +44,10 @@ describe('useAppStore Zustand Store', () => {
     await useAppStore.getState().setMode('plan')
 
     // 验证调用了 IPC
-    expect(mockInvoke).toHaveBeenCalledWith('set-mode', 'plan')
+    expect(mockInvoke).toHaveBeenCalledWith('set-mode', {
+      mode: 'plan',
+      sessionId: undefined
+    })
     // 验证 store 的值已被更新
     expect(useAppStore.getState().currentMode).toBe('plan')
   })
@@ -161,5 +164,86 @@ describe('useAppStore Zustand Store', () => {
     })
     expect(useAppStore.getState().pendingPermissionRequest).toBeNull()
     expect(useAppStore.getState().isSubmittingPermission).toBe(false)
+  })
+
+  it('加载历史会话时应正确恢复工具调用结果和错误状态', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      id: 'sess_1',
+      workspaceRoot: '/project/root',
+      mode: 'default',
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: 1,
+      messages: [
+        {
+          id: 'msg_assistant_1',
+          sessionId: 'sess_1',
+          role: 'assistant',
+          content: '已完成',
+          timestamp: 3,
+          toolCalls: [
+            {
+              id: 'tc_1',
+              name: 'bash',
+              arguments: { command: 'npm test' }
+            }
+          ],
+          _toolCallResults: {
+            tc_1: '工具执行失败: 测试失败'
+          }
+        }
+      ]
+    })
+
+    await useAppStore.getState().selectSession('sess_1')
+
+    const message = useAppStore.getState().messages[0]
+    expect(message.toolCalls?.[0].result).toBe('工具执行失败: 测试失败')
+    expect(message.toolCalls?.[0].status).toBe('error')
+  })
+
+  it('回退后重新加载会话时应复用同一套工具结果恢复逻辑', async () => {
+    mockInvoke
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        id: 'sess_1',
+        workspaceRoot: '/project/root',
+        mode: 'auto',
+        createdAt: 1,
+        updatedAt: 4,
+        messageCount: 1,
+        messages: [
+          {
+            id: 'msg_assistant_2',
+            sessionId: 'sess_1',
+            role: 'assistant',
+            content: '构建完成',
+            timestamp: 5,
+            toolCalls: [
+              {
+                id: 'tc_2',
+                name: 'bash',
+                arguments: { command: 'npm run build' }
+              }
+            ],
+            _toolCallResults: {
+              tc_2: '构建成功'
+            }
+          }
+        ]
+      })
+
+    await useAppStore.getState().rollbackMessage('sess_1', 'msg_user_1')
+
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'rollback-message', {
+      sessionId: 'sess_1',
+      messageId: 'msg_user_1'
+    })
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'load-session', { sessionId: 'sess_1' })
+
+    const state = useAppStore.getState()
+    expect(state.currentMode).toBe('auto')
+    expect(state.messages[0].toolCalls?.[0].result).toBe('构建成功')
+    expect(state.messages[0].toolCalls?.[0].status).toBe('success')
   })
 })

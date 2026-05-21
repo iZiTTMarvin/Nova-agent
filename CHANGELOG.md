@@ -13,6 +13,10 @@
   - 更新 `main/ipc/registerHandlers.ts`：注册 sessionHandler
   - 更新 `renderer/stores/useAppStore.ts`：selectProject 通过 IPC 创建真实会话，selectSession 从后端加载历史消息，新增 rollbackMessage 和 rejectFile 方法
   - 新增 30 个单元测试（SessionStore 17 + restore 13）
+  - 补齐流式 assistant 内容与工具结果的历史恢复逻辑，避免回退后把 arguments 误展示成 result
+  - 新增 `SessionStore.updateMode()`，让会话 mode 真正持久化到磁盘，而不是只停留在主进程内存
+  - 更新 `set-mode` IPC 契约，切换模式时同步写回当前会话；加载/创建会话时同步主进程 mode
+  - 补充 5 个回归测试（SessionStore mode 持久化 2 个 + renderer 历史恢复/回退 2 个 + IPC 契约 1 个）
 
 ## 2026-05-21
 

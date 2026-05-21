@@ -18,7 +18,7 @@ import {
 } from '../../shared/ipc/channels'
 import { SessionStore } from '../../runtime/sessions/SessionStore'
 import { rejectFile, revertToMessage, listManifests } from '../../runtime/checkpoints/restore'
-import { setCurrentProjectPath } from '../index'
+import { setCurrentMode, setCurrentProjectPath } from '../index'
 import type { Session, SessionDetail, Message } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
@@ -100,6 +100,7 @@ export function registerSessionHandler(): void {
     }
     // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
     setCurrentProjectPath(data.workspaceRoot)
+    setCurrentMode(data.mode)
     return toSessionDetail(data)
   })
 
@@ -108,6 +109,7 @@ export function registerSessionHandler(): void {
     const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
     // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
     setCurrentProjectPath(params.workspaceRoot)
+    setCurrentMode(data.mode)
     return toSessionDetail(data)
   })
 

@@ -34,7 +34,7 @@ export interface IpcCommands {
     result: ModelConfig | null
   }
   'set-mode': {
-    params: Mode
+    params: { mode: Mode; sessionId?: string }
     result: void
   }
   'accept-file': {

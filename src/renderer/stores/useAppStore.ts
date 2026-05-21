@@ -35,6 +35,50 @@ export interface PendingPermissionRequest {
   reason: string
 }
 
+type SessionMessagePayload = Message & { _toolCallResults?: Record<string, string> }
+
+function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
+  if (!result) return 'success'
+  return result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
+    ? 'error'
+    : 'success'
+}
+
+function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMessage[] {
+  return messages.map((message) => {
+    const payload = message as SessionMessagePayload
+    const results = payload._toolCallResults ?? {}
+
+    return {
+      ...message,
+      toolCalls: message.toolCalls?.map((toolCall) => {
+        const result = results[toolCall.id]
+        return {
+          id: toolCall.id,
+          name: toolCall.name,
+          arguments: toolCall.arguments,
+          status: getToolCallStatus(result),
+          result
+        }
+      })
+    }
+  })
+}
+
+function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
+  const nextSummary: Session = {
+    id: detail.id,
+    workspaceRoot: detail.workspaceRoot,
+    mode: detail.mode,
+    createdAt: detail.createdAt,
+    updatedAt: detail.updatedAt,
+    messageCount: detail.messageCount
+  }
+
+  const others = sessions.filter(session => session.id !== detail.id)
+  return [nextSummary, ...others]
+}
+
 /** Zustand 全局状态定义 */
 interface AppState {
   currentProject: string | null
@@ -124,8 +168,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         set(state => ({
           currentProject: selectedPath,
           currentSessionId: sessionDetail.id,
-          sessions: [sessionDetail, ...state.sessions.filter(s => s.id !== sessionDetail.id)],
-          messages: [] // 新会话无历史消息
+          currentMode: sessionDetail.mode,
+          sessions: upsertSessionSummary(state.sessions, sessionDetail),
+          messages: restoreSessionMessages(sessionDetail.messages)
         }))
       }
     } catch (err) {
@@ -135,11 +180,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setMode: async (mode: Mode) => {
     try {
-      await window.api.invoke('set-mode', mode)
+      const { currentSessionId, sessions } = get()
+      await window.api.invoke('set-mode', { mode, sessionId: currentSessionId ?? undefined })
       set({ currentMode: mode })
       
       // 更新当前会话的模式属性
-      const { currentSessionId, sessions } = get()
       if (currentSessionId) {
         set({
           sessions: sessions.map(s => 
@@ -238,25 +283,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         currentSessionId: sessionId,
         currentProject: detail.workspaceRoot,
         currentMode: detail.mode,
-        messages: detail.messages.map(msg => {
-          // 从 IPC 返回的 _toolCallResults 字段恢复工具调用结果
-          const results = (msg as Message & { _toolCallResults?: Record<string, string> })._toolCallResults ?? {}
-          return {
-            ...msg,
-            toolCalls: msg.toolCalls?.map(tc => {
-              const result = results[tc.id]
-              return {
-                id: tc.id,
-                name: tc.name,
-                arguments: tc.arguments,
-                status: result
-                  ? (result.startsWith('工具执行失败') || result.startsWith('权限拒绝:') ? 'error' as const : 'success' as const)
-                  : 'success' as const,
-                result
-              }
-            })
-          }
-        })
+        sessions: upsertSessionSummary(get().sessions, detail),
+        messages: restoreSessionMessages(detail.messages)
       })
     } catch (err) {
       console.error('加载会话详情出错:', err)
@@ -269,14 +297,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       // 回退成功后重新加载会话数据
       const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
       set({
-        messages: detail.messages.map(msg => ({
-          ...msg,
-          toolCalls: msg.toolCalls?.map(tc => ({
-            ...tc,
-            status: 'success' as const,
-            result: tc.arguments ? String(tc.arguments) : undefined
-          }))
-        }))
+        currentProject: detail.workspaceRoot,
+        currentMode: detail.mode,
+        sessions: upsertSessionSummary(get().sessions, detail),
+        messages: restoreSessionMessages(detail.messages)
       })
     } catch (err) {
       console.error('回退消息出错:', err)
