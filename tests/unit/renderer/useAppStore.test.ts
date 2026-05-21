@@ -30,7 +30,10 @@ describe('useAppStore Zustand Store', () => {
       isGenerating: false,
       currentGeneratingMessageId: null,
       modelConfig: null,
-      isConfigModalOpen: false
+      isConfigModalOpen: false,
+      pendingPermissionRequest: null,
+      isSubmittingPermission: false,
+      permissionError: null
     })
   })
 
@@ -114,5 +117,48 @@ describe('useAppStore Zustand Store', () => {
     const toolResult = state.messages[0].toolCalls![0]
     expect(toolResult.status).toBe('error')
     expect(toolResult.result).toBe('工具执行失败: 文件不存在')
+  })
+
+  it('应该保存来自主进程的权限请求', () => {
+    useAppStore.getState().handlePermissionRequest({
+      messageId: 'msg_1',
+      requestId: 'req_1',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+      riskLevel: 'low',
+      reason: '命令执行'
+    })
+
+    const state = useAppStore.getState()
+    expect(state.pendingPermissionRequest).toEqual({
+      messageId: 'msg_1',
+      requestId: 'req_1',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+      riskLevel: 'low',
+      reason: '命令执行'
+    })
+    expect(state.permissionError).toBeNull()
+  })
+
+  it('用户回应权限请求后应回传主进程并清空挂起状态', async () => {
+    mockInvoke.mockResolvedValue(undefined)
+    useAppStore.getState().handlePermissionRequest({
+      messageId: 'msg_2',
+      requestId: 'req_2',
+      toolName: 'bash',
+      args: { command: 'npm run build' },
+      riskLevel: 'medium',
+      reason: '命令执行'
+    })
+
+    await useAppStore.getState().respondPermissionRequest('allow')
+
+    expect(mockInvoke).toHaveBeenCalledWith('respond-permission', {
+      requestId: 'req_2',
+      decision: 'allow'
+    })
+    expect(useAppStore.getState().pendingPermissionRequest).toBeNull()
+    expect(useAppStore.getState().isSubmittingPermission).toBe(false)
   })
 })

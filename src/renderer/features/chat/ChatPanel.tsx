@@ -217,7 +217,7 @@ export const ChatPanel: React.FC = () => {
           <NovaLogo size={48} className="chat-empty__logo" animating={true} />
           <h2 className="chat-empty__title">开启 Nova 智能编程协作</h2>
           <p className="chat-empty__subtitle">
-            Nova 能够自主加载并调用只读探针工具理解项目上下文。开始之前，请完成以下配置：
+            Nova 会按当前模式调用内置工具理解项目、修改代码，并在高风险操作前请求你的确认。开始之前，请完成以下配置：
           </p>
         </div>
 
@@ -252,7 +252,7 @@ export const ChatPanel: React.FC = () => {
             <div className="chat-empty__step-content">
               <span className="chat-empty__step-title">选择本地工作区目录</span>
               <span className="chat-empty__step-desc">
-                选定代码库作为 Agent 的执行沙箱边界，Nova 会以此作为只读工具的工作目录。
+                选定代码库作为 Agent 的执行边界，Nova 会在这个工作区内读取、修改和验证代码。
               </span>
               {isStep1Done && !isStep2Done && (
                 <button 

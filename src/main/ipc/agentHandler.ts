@@ -4,7 +4,7 @@
  * 将 AgentEvent 通过 IPC 推送到 renderer
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import { SEND_MESSAGE, CANCEL_EXECUTION } from '../../shared/ipc/channels'
+import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION } from '../../shared/ipc/channels'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
@@ -12,9 +12,14 @@ import { lsTool } from '../../runtime/tools/lsTool'
 import { readTool } from '../../runtime/tools/readTool'
 import { grepTool } from '../../runtime/tools/grepTool'
 import { findTool } from '../../runtime/tools/findTool'
+import { editTool } from '../../runtime/tools/editTool'
+import { writeTool } from '../../runtime/tools/writeTool'
+import { bashTool } from '../../runtime/tools/bashTool'
+import { PermissionManager } from '../../runtime/permissions/PermissionManager'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
-import { getCurrentProjectPath } from '../index'
+import type { PermissionDecision } from '../../shared/session/types'
+import { getCurrentProjectPath, getCurrentMode } from '../index'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -46,13 +51,23 @@ export function registerAgentHandler(
     // 1. 设置 Agent 工作区边界
     agentLoop.setWorkingDir(projectPath)
 
-    // 2. 初始化只读工具集（ls, read, grep, find）
+    // 2. 初始化工具集（7 个内置工具）
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(lsTool)
     toolRegistry.register(readTool)
     toolRegistry.register(grepTool)
     toolRegistry.register(findTool)
+    toolRegistry.register(editTool)
+    toolRegistry.register(writeTool)
+    toolRegistry.register(bashTool)
     agentLoop.setToolRegistry(toolRegistry)
+
+    // 3. 注入权限决策引擎
+    const permissionManager = new PermissionManager()
+    agentLoop.setPermissionManager(permissionManager)
+
+    // 4. 同步当前运行模式
+    agentLoop.setMode(getCurrentMode())
 
     // 将 runtime 执行中触发的流式事件转发到 renderer 端，推动 UI 更新
     eventBus.on((event: AgentEvent) => {
@@ -65,6 +80,13 @@ export function registerAgentHandler(
   // 取消执行命令
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
     agentLoop?.cancel()
+  })
+
+  // 用户回应权限请求（allow / deny）
+  ipcMain.handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
+    if (!agentLoop) return
+    const granted = params.decision === 'allow'
+    agentLoop.respondPermission(params.requestId, granted)
   })
 }
 
@@ -93,10 +115,12 @@ function forwardEventToRenderer(
       break
     case 'permission_request':
       webContents.send('agent:permission-request', {
+        messageId: event.messageId,
         requestId: event.requestId,
         toolName: event.toolName,
         args: event.args,
-        risk: event.risk
+        riskLevel: event.riskLevel,
+        reason: event.reason
       })
       break
     case 'diff_update':

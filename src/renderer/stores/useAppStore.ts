@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Mode, Session, ToolCall } from '../../shared/session/types'
+import type { Mode, PermissionDecision, Session, ToolCall } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 
 /** 
@@ -25,6 +25,16 @@ export interface ExtendedMessage {
   isError?: boolean
 }
 
+/** 等待用户决策的权限请求 */
+export interface PendingPermissionRequest {
+  messageId: string
+  requestId: string
+  toolName: string
+  args: Record<string, unknown>
+  riskLevel: 'low' | 'medium' | 'high'
+  reason: string
+}
+
 /** Zustand 全局状态定义 */
 interface AppState {
   currentProject: string | null
@@ -36,6 +46,9 @@ interface AppState {
   currentGeneratingMessageId: string | null
   modelConfig: ModelConfig | null
   isConfigModalOpen: boolean
+  pendingPermissionRequest: PendingPermissionRequest | null
+  isSubmittingPermission: boolean
+  permissionError: string | null
 
   // ── Actions ──────────────────────────────────────────
   
@@ -74,6 +87,8 @@ interface AppState {
   handleToolResult: (messageId: string, toolName: string, result: string) => void
   handleMessageEnd: (messageId: string) => void
   handleError: (messageId: string, error: string) => void
+  handlePermissionRequest: (request: PendingPermissionRequest) => void
+  respondPermissionRequest: (decision: PermissionDecision) => Promise<void>
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -86,6 +101,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentGeneratingMessageId: null,
   modelConfig: null,
   isConfigModalOpen: false,
+  pendingPermissionRequest: null,
+  isSubmittingPermission: false,
+  permissionError: null,
 
   selectProject: async () => {
     try {
@@ -168,7 +186,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelExecution: async () => {
     try {
       await window.api.invoke('cancel-execution')
-      set({ isGenerating: false, currentGeneratingMessageId: null })
+      set({
+        isGenerating: false,
+        currentGeneratingMessageId: null,
+        pendingPermissionRequest: null,
+        isSubmittingPermission: false,
+        permissionError: null
+      })
     } catch (err) {
       console.error('取消执行失败:', err)
     }
@@ -279,7 +303,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           const toolCalls = msg.toolCalls.map((tc, idx) => {
             const isLastOfName = idx === msg.toolCalls!.map(t => t.name).lastIndexOf(toolName)
             if (isLastOfName && tc.status === 'running') {
-              const isError = result.startsWith('工具执行失败')
+              const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
               return {
                 ...tc,
                 result,
@@ -298,7 +322,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   handleMessageEnd: (messageId: string) => {
     set({
       isGenerating: false,
-      currentGeneratingMessageId: null
+      currentGeneratingMessageId: null,
+      pendingPermissionRequest: null,
+      isSubmittingPermission: false,
+      permissionError: null
     })
 
     // 更新当前会话的消息数属性
@@ -329,7 +356,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     set(state => ({
       messages: [...state.messages, errorMsg],
       isGenerating: false,
-      currentGeneratingMessageId: null
+      currentGeneratingMessageId: null,
+      pendingPermissionRequest: null,
+      isSubmittingPermission: false,
+      permissionError: null
     }))
+  },
+
+  handlePermissionRequest: (request: PendingPermissionRequest) => {
+    set({
+      pendingPermissionRequest: request,
+      isSubmittingPermission: false,
+      permissionError: null
+    })
+  },
+
+  respondPermissionRequest: async (decision: PermissionDecision) => {
+    const { pendingPermissionRequest } = get()
+    if (!pendingPermissionRequest) return
+
+    set({ isSubmittingPermission: true, permissionError: null })
+
+    try {
+      await window.api.invoke('respond-permission', {
+        requestId: pendingPermissionRequest.requestId,
+        decision
+      })
+      set({
+        pendingPermissionRequest: null,
+        isSubmittingPermission: false,
+        permissionError: null
+      })
+    } catch (err) {
+      set({
+        isSubmittingPermission: false,
+        permissionError: err instanceof Error ? err.message : '提交权限决策失败'
+      })
+    }
   }
 }))

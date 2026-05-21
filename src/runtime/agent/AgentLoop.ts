@@ -5,12 +5,14 @@
  * S3 阶段：纯文本对话循环（消息 → 模型 → 响应）
  * S4 阶段：加入工具调度（tool_call → 执行 → 结果回模型 → 重复）
  * S6 阶段：加入 checkpoint 备份和 plan 模式写入拦截
+ * S7 阶段：加入 PermissionManager 权限决策
  */
 import type { ModelClient } from '../model/ModelClient'
 import type { ChatMessage, ChatToolCall } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
+import type { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'
 import { EventBus } from './EventBus'
 import { randomUUID } from 'crypto'
@@ -41,6 +43,12 @@ export class AgentLoop {
 
   /** checkpoint 管理器（可选，S6 引入） */
   private checkpointManager: CheckpointManager | null = null
+
+  /** 权限决策引擎（可选，S7 引入） */
+  private permissionManager: PermissionManager | null = null
+
+  /** 等待用户确认的权限请求（requestId → resolve 回调） */
+  private pendingPermissions: Map<string, (granted: boolean) => void> = new Map()
 
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
@@ -84,6 +92,11 @@ export class AgentLoop {
   /** 设置 checkpoint 管理器 */
   setCheckpointManager(manager: CheckpointManager): void {
     this.checkpointManager = manager
+  }
+
+  /** 设置权限决策引擎 */
+  setPermissionManager(manager: PermissionManager): void {
+    this.permissionManager = manager
   }
 
   /** 动态调整最大工具调用轮数 */
@@ -201,13 +214,16 @@ export class AgentLoop {
           const args = this.parseArgs(tc.arguments)
           let result: string
 
-          // plan 模式下拒绝写入工具
-          if (this.mode === 'plan' && WRITE_TOOLS.has(tc.name)) {
-            result = `当前为 plan 模式，"${tc.name}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
+          // 权限检查（S7：用 PermissionManager 替代原来的硬编码 plan 检查）
+          const permissionResult = await this.checkPermission(tc.name, args, messageId)
+
+          if (!permissionResult.allowed) {
+            result = `权限拒绝: ${permissionResult.reason}`
           } else if (this.toolRegistry) {
             const toolResult = await this.toolRegistry.execute(tc.name, args, {
               workingDir: this.workingDir ?? process.cwd(),
-              ...(this.checkpointManager ? { checkpointManager: this.checkpointManager } : {})
+              ...(this.checkpointManager ? { checkpointManager: this.checkpointManager } : {}),
+              ...(this.abortController ? { abortSignal: this.abortController.signal } : {})
             })
             result = toolResult.success
               ? toolResult.output
@@ -265,6 +281,82 @@ export class AgentLoop {
       this.cancelled = true
       this.state = 'cancelled'
       this.abortController?.abort()
+      // 拒绝所有等待中的权限请求
+      for (const [id, resolve] of this.pendingPermissions) {
+        resolve(false)
+        this.pendingPermissions.delete(id)
+      }
+    }
+  }
+
+  /**
+   * 权限检查入口
+   * 返回是否允许执行，如果不允许则附带拒绝原因
+   */
+  private async checkPermission(
+    toolName: string,
+    args: Record<string, unknown>,
+    messageId: string
+  ): Promise<{ allowed: boolean; reason: string }> {
+    // 没有 PermissionManager 时退化为简单 plan 模式检查
+    if (!this.permissionManager) {
+      if (this.mode === 'plan' && WRITE_TOOLS.has(toolName)) {
+        return {
+          allowed: false,
+          reason: `当前为 plan 模式，"${toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
+        }
+      }
+      return { allowed: true, reason: '' }
+    }
+
+    const result = this.permissionManager.check({ toolName, args }, this.mode)
+
+    if (result.decision === 'allow') {
+      return { allowed: true, reason: '' }
+    }
+
+    if (result.decision === 'deny') {
+      return { allowed: false, reason: result.reason }
+    }
+
+    // decision === 'ask'：发射 permission_request 事件，等待用户决策
+    const requestId = randomUUID()
+    const permissionResponse = this.waitForPermissionResponse(requestId)
+
+    this.eventBus.emit({
+      type: 'permission_request',
+      messageId,
+      requestId,
+      toolName,
+      args,
+      riskLevel: result.riskLevel,
+      reason: result.reason
+    })
+
+    const granted = await permissionResponse
+    if (!granted) {
+      return { allowed: false, reason: `用户拒绝了 "${toolName}" 工具的执行请求` }
+    }
+    return { allowed: true, reason: '' }
+  }
+
+  /** 等待用户对权限请求的响应 */
+  private waitForPermissionResponse(requestId: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.pendingPermissions.set(requestId, resolve)
+    })
+  }
+
+  /**
+   * 回应权限请求（由 IPC handler 调用）
+   * @param requestId 权限请求 ID
+   * @param granted 用户是否允许
+   */
+  respondPermission(requestId: string, granted: boolean): void {
+    const resolve = this.pendingPermissions.get(requestId)
+    if (resolve) {
+      this.pendingPermissions.delete(requestId)
+      resolve(granted)
     }
   }
 

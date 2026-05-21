@@ -3,7 +3,8 @@ import { AgentLoop } from '../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
-import type { ToolExecutor, ToolContext, ToolResult } from '../../../src/runtime/tools/types'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
+import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -328,5 +329,123 @@ describe('AgentLoop', () => {
     expect(toolResultEvents.length).toBe(1)
     // 工具结果应该包含错误信息
     expect((toolResultEvents[0] as any).result).toContain('未注册')
+  })
+
+  it('default 模式下 bash 需要权限确认，允许后才执行工具', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_bash_1', name: 'bash', arguments: '{"command":"npm test"}' }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '验证完成。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'bash',
+      description: '执行 shell 命令',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'shell 命令' }
+        },
+        required: ['command']
+      },
+      async execute(args: Record<string, unknown>): Promise<ToolResult> {
+        return { success: true, output: `bash ok: ${args.command}` }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+    loop.setMode('default')
+    loop.setPermissionManager(new PermissionManager())
+
+    const events: unknown[] = []
+    eventBus.on((event) => {
+      events.push(event)
+      if ((event as any).type === 'permission_request') {
+        loop.respondPermission((event as any).requestId, true)
+      }
+    })
+
+    await loop.sendMessage('执行测试命令')
+
+    const permissionEvents = events.filter((e: any) => e.type === 'permission_request')
+    expect(permissionEvents).toHaveLength(1)
+
+    const toolResultEvents = events.filter((e: any) => e.type === 'tool_result')
+    expect(toolResultEvents).toHaveLength(1)
+    expect((toolResultEvents[0] as any).result).toContain('bash ok: npm test')
+  })
+
+  it('default 模式下用户拒绝 bash 权限后，应把拒绝结果回传模型', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_bash_2', name: 'bash', arguments: '{"command":"npm run build"}' }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '收到，改用别的方法。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'bash',
+      description: '执行 shell 命令',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'shell 命令' }
+        },
+        required: ['command']
+      },
+      async execute(): Promise<ToolResult> {
+        return { success: true, output: '不应执行到这里' }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+    loop.setMode('default')
+    loop.setPermissionManager(new PermissionManager())
+
+    const events: unknown[] = []
+    eventBus.on((event) => {
+      events.push(event)
+      if ((event as any).type === 'permission_request') {
+        loop.respondPermission((event as any).requestId, false)
+      }
+    })
+
+    await loop.sendMessage('执行构建命令')
+
+    const toolResultEvents = events.filter((e: any) => e.type === 'tool_result')
+    expect(toolResultEvents).toHaveLength(1)
+    expect((toolResultEvents[0] as any).result).toContain('权限拒绝:')
+    expect((toolResultEvents[0] as any).result).toContain('用户拒绝了 "bash" 工具的执行请求')
   })
 })

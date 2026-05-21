@@ -2,8 +2,8 @@ import React, { useEffect } from 'react'
 import { useAppStore } from './stores/useAppStore'
 import { NovaLogo, SettingsIcon } from './components/Icons'
 import { ProjectPicker } from './features/project-picker/ProjectPicker'
-import { ModeSwitch } from './features/mode-switch/ModeSwitch'
 import { ChatPanel } from './features/chat/ChatPanel'
+import { PermissionPrompt } from './features/permissions/PermissionPrompt'
 import { SettingsModal } from './features/settings/SettingsModal'
 import './App.css'
 
@@ -19,6 +19,7 @@ function App(): JSX.Element {
   const handleToolResult = useAppStore(state => state.handleToolResult)
   const handleMessageEnd = useAppStore(state => state.handleMessageEnd)
   const handleError = useAppStore(state => state.handleError)
+  const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
 
   // 1. 初始化时加载持久化的配置和会话列表
   useEffect(() => {
@@ -38,14 +39,19 @@ function App(): JSX.Element {
       handleTextDelta(data.messageId, data.delta)
     })
 
-    // 监听：Agent 触发只读探针工具调用
+    // 监听：Agent 触发工具调用
     const unsubToolCall = window.api.on('agent:tool-call', (data) => {
       handleToolCall(data.messageId, data.toolName, data.args)
     })
 
-    // 监听：Agent 探针工具执行完毕拿到结果
+    // 监听：Agent 工具执行完毕拿到结果
     const unsubToolResult = window.api.on('agent:tool-result', (data) => {
       handleToolResult(data.messageId, data.toolName, data.result)
+    })
+
+    // 监听：Agent 请求用户确认权限
+    const unsubPermissionRequest = window.api.on('agent:permission-request', (data) => {
+      handlePermissionRequest(data)
     })
 
     // 监听：Agent 执行出错
@@ -64,6 +70,7 @@ function App(): JSX.Element {
       unsubTextDelta()
       unsubToolCall()
       unsubToolResult()
+      unsubPermissionRequest()
       unsubError()
       unsubMessageEnd()
     }
@@ -72,6 +79,7 @@ function App(): JSX.Element {
     handleTextDelta,
     handleToolCall,
     handleToolResult,
+    handlePermissionRequest,
     handleError,
     handleMessageEnd
   ])
@@ -107,9 +115,11 @@ function App(): JSX.Element {
 
       {/* 模型参数配置模态窗 */}
       <SettingsModal />
+
+      {/* 权限确认弹窗 */}
+      <PermissionPrompt />
     </div>
   )
 }
 
 export default App
-

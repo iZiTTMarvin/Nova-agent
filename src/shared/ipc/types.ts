@@ -87,10 +87,12 @@ export interface IpcEvents {
     result: string
   }
   'agent:permission-request': {
+    messageId: string
     requestId: string
     toolName: string
     args: Record<string, unknown>
-    risk: string
+    riskLevel: 'low' | 'medium' | 'high'
+    reason: string
   }
   'agent:diff-update': {
     messageId: string

@@ -72,14 +72,18 @@ describe('IpcEvents 类型完整性', () => {
     expect(data.delta).toBe('hello')
   })
 
-  it('agent:permission-request 事件包含 risk 字段', () => {
+  it('agent:permission-request 事件包含结构化风险字段', () => {
     type Event = IpcEvents['agent:permission-request']
     const data: Event = {
+      messageId: 'm1',
       requestId: 'r1',
       toolName: 'bash',
       args: { command: 'rm -rf /' },
-      risk: 'high'
+      riskLevel: 'high',
+      reason: '高危命令执行'
     }
-    expect(data.risk).toBe('high')
+    expect(data.messageId).toBe('m1')
+    expect(data.riskLevel).toBe('high')
+    expect(data.reason).toBe('高危命令执行')
   })
 })
