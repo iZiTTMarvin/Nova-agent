@@ -24,7 +24,7 @@ export interface Message {
   timestamp: number
 }
 
-/** 会话摘要（用于列表展示） */
+/** 会话摘要（用于列表展示，不含消息体） */
 export interface Session {
   id: string
   workspaceRoot: string
@@ -32,6 +32,11 @@ export interface Session {
   createdAt: number
   updatedAt: number
   messageCount: number
+}
+
+/** 会话详情（含完整消息列表，用于加载历史对话） */
+export interface SessionDetail extends Session {
+  messages: Message[]
 }
 
 /** Checkpoint manifest（用于回退和文件拒绝） */

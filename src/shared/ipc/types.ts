@@ -2,7 +2,7 @@
  * IPC 命令和事件的类型定义
  * 保证 renderer → main 命令和 main → renderer 事件的端到端类型安全
  */
-import type { Mode, PermissionDecision, Message, Session } from '../session'
+import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig } from '../config'
 import type { DiffEntry } from '../diff'
 
@@ -59,7 +59,11 @@ export interface IpcCommands {
   }
   'load-session': {
     params: { sessionId: string }
-    result: Session
+    result: SessionDetail
+  }
+  'create-session': {
+    params: { workspaceRoot: string; mode?: Mode }
+    result: SessionDetail
   }
 }
 

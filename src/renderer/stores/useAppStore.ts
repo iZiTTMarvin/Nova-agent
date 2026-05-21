@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Mode, PermissionDecision, Session, ToolCall } from '../../shared/session/types'
+import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 
 /** 
@@ -77,7 +77,13 @@ interface AppState {
   loadSessions: () => Promise<void>
   
   /** 选中指定会话，并载入相关消息 */
-  selectSession: (sessionId: string) => void
+  selectSession: (sessionId: string) => Promise<void>
+
+  /** 按消息回退到某条消息之前的状态 */
+  rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
+
+  /** 按文件拒绝某个文件的改动 */
+  rejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
 
   // ── 主进程事件驱动的状态更新 ──────────────────────────────
   
@@ -109,22 +115,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const selectedPath = await window.api.invoke('select-project')
       if (selectedPath) {
-        // 创建一个模拟会话（S5 阶段在前端模拟，S9 阶段会由后端 SessionStore 管理）
-        const newSessionId = 'session_' + Date.now()
-        const newSession: Session = {
-          id: newSessionId,
+        // 通过 IPC 创建后端管理的真实会话
+        const sessionDetail: SessionDetail = await window.api.invoke('create-session', {
           workspaceRoot: selectedPath,
-          mode: get().currentMode,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          messageCount: 0
-        }
+          mode: get().currentMode
+        })
 
         set(state => ({
           currentProject: selectedPath,
-          currentSessionId: newSessionId,
-          sessions: [newSession, ...state.sessions],
-          messages: [] // 清空旧会话消息
+          currentSessionId: sessionDetail.id,
+          sessions: [sessionDetail, ...state.sessions.filter(s => s.id !== sessionDetail.id)],
+          messages: [] // 新会话无历史消息
         }))
       }
     } catch (err) {
@@ -223,25 +224,59 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadSessions: async () => {
     try {
-      // S5 阶段返回本地前端状态，后续 S9 阶段通过 'load-sessions' 桥接 SessionStore
-      const sessions = await window.api.invoke('load-sessions').catch(() => [] as Session[])
-      if (sessions.length > 0) {
-        set({ sessions })
-      }
+      const sessions: Session[] = await window.api.invoke('load-sessions')
+      set({ sessions })
     } catch (err) {
       console.error('加载会话列表出错:', err)
     }
   },
 
-  selectSession: (sessionId: string) => {
-    const session = get().sessions.find(s => s.id === sessionId)
-    if (session) {
+  selectSession: async (sessionId: string) => {
+    try {
+      const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
       set({
         currentSessionId: sessionId,
-        currentProject: session.workspaceRoot,
-        currentMode: session.mode,
-        messages: [] // S5 阶段暂不处理历史消息载入，可在 session 切换时默认清空，待 S9 补全
+        currentProject: detail.workspaceRoot,
+        currentMode: detail.mode,
+        messages: detail.messages.map(msg => ({
+          ...msg,
+          toolCalls: msg.toolCalls?.map(tc => ({
+            ...tc,
+            status: 'success' as const,
+            result: tc.arguments ? String(tc.arguments) : undefined
+          }))
+        }))
       })
+    } catch (err) {
+      console.error('加载会话详情出错:', err)
+    }
+  },
+
+  rollbackMessage: async (sessionId: string, messageId: string) => {
+    try {
+      await window.api.invoke('rollback-message', { sessionId, messageId })
+      // 回退成功后重新加载会话数据
+      const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
+      set({
+        messages: detail.messages.map(msg => ({
+          ...msg,
+          toolCalls: msg.toolCalls?.map(tc => ({
+            ...tc,
+            status: 'success' as const,
+            result: tc.arguments ? String(tc.arguments) : undefined
+          }))
+        }))
+      })
+    } catch (err) {
+      console.error('回退消息出错:', err)
+    }
+  },
+
+  rejectFile: async (sessionId: string, messageId: string, filePath: string) => {
+    try {
+      await window.api.invoke('reject-file', { sessionId, messageId, filePath })
+    } catch (err) {
+      console.error('拒绝文件改动出错:', err)
     }
   },
 

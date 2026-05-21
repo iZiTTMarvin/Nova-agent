@@ -18,6 +18,7 @@ export const ROLLBACK_MESSAGE = 'rollback-message' as const
 export const RESPOND_PERMISSION = 'respond-permission' as const
 export const LOAD_SESSIONS = 'load-sessions' as const
 export const LOAD_SESSION = 'load-session' as const
+export const CREATE_SESSION = 'create-session' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 

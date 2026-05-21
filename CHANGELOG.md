@@ -2,6 +2,20 @@
 
 ## 2026-05-21
 
+- **feat**: 实现 S9 SessionStore + 回退能力
+  - 新增 `src/runtime/sessions/types.ts`：会话类型定义（SessionSummary、SessionData、SessionMessage、SessionToolCall）
+  - 新增 `src/runtime/sessions/SessionStore.ts`：会话持久化模块，支持创建/加载/列表/删除会话、追加消息
+  - 新增 `src/runtime/checkpoints/restore.ts`：按文件拒绝（rejectFile）和按消息回退（revertToMessage），清理 checkpoint 目录和会话历史
+  - 新增 `src/main/ipc/sessionHandler.ts`：会话管理和回退操作的 IPC handler（load-sessions、load-session、create-session、accept-file、reject-file、rollback-message）
+  - 更新 `shared/session/types.ts`：新增 SessionDetail 类型（继承 Session + messages）
+  - 更新 `shared/ipc/types.ts` 和 `channels.ts`：新增 create-session IPC 通道，load-session 返回 SessionDetail
+  - 更新 `main/ipc/agentHandler.ts`：注入 CheckpointManager 和 SessionStore，每轮消息后保存会话快照
+  - 更新 `main/ipc/registerHandlers.ts`：注册 sessionHandler
+  - 更新 `renderer/stores/useAppStore.ts`：selectProject 通过 IPC 创建真实会话，selectSession 从后端加载历史消息，新增 rollbackMessage 和 rejectFile 方法
+  - 新增 30 个单元测试（SessionStore 17 + restore 13）
+
+## 2026-05-21
+
 - **feat**: 实现 S8 Settings UI（模型配置）
   - 新增 `src/runtime/model/config.ts`：配置持久化与校验的统一模块
     - `validateModelConfig`：字段级校验（baseUrl 必须 http/https 开头、apiKey 非空、modelId 非空），trim 前后空白

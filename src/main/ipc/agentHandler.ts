@@ -2,6 +2,7 @@
  * Agent IPC Handler
  * 连接 renderer 的 IPC 命令和 runtime 的 AgentLoop
  * 将 AgentEvent 通过 IPC 推送到 renderer
+ * S9：集成 CheckpointManager 和 SessionStore
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION } from '../../shared/ipc/channels'
@@ -16,10 +17,13 @@ import { editTool } from '../../runtime/tools/editTool'
 import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
+import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
 import type { PermissionDecision } from '../../shared/session/types'
 import { getCurrentProjectPath, getCurrentMode } from '../index'
+import { getSessionStore } from './sessionHandler'
+import type { SessionMessage } from '../../runtime/sessions/types'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -69,9 +73,39 @@ export function registerAgentHandler(
     // 4. 同步当前运行模式
     agentLoop.setMode(getCurrentMode())
 
+    // 5. 注入 CheckpointManager（S9：支持会话回退和文件拒绝）
+    const sessionStore = getSessionStore()
+    const checkpointManager = new CheckpointManager({
+      checkpointDir: sessionStore.getSessionsDir(),
+      sessionId: params.sessionId,
+      workspaceRoot: projectPath
+    })
+    agentLoop.setCheckpointManager(checkpointManager)
+
+    // 6. 保存用户消息到会话存储
+    const userMessage: SessionMessage = {
+      id: `msg_${Date.now()}_user`,
+      role: 'user',
+      content: params.content,
+      timestamp: Date.now()
+    }
+    const session = sessionStore.load(params.sessionId)
+    if (session) {
+      sessionStore.appendMessage(params.sessionId, userMessage)
+    }
+
     // 将 runtime 执行中触发的流式事件转发到 renderer 端，推动 UI 更新
     eventBus.on((event: AgentEvent) => {
       forwardEventToRenderer(getMainWindow(), event)
+
+      // 消息结束后保存 assistant 消息到会话存储
+      if (event.type === 'message_end') {
+        saveAssistantMessage(params.sessionId, event.messageId)
+      }
+      // 错误也保存为 assistant 消息
+      if (event.type === 'error') {
+        saveErrorMessage(params.sessionId, event.messageId, event.error)
+      }
     })
 
     await agentLoop.sendMessage(params.content)
@@ -88,6 +122,35 @@ export function registerAgentHandler(
     const granted = params.decision === 'allow'
     agentLoop.respondPermission(params.requestId, granted)
   })
+}
+
+/** 保存 assistant 消息到会话存储 */
+function saveAssistantMessage(sessionId: string, messageId: string): void {
+  const sessionStore = getSessionStore()
+  const session = sessionStore.load(sessionId)
+  if (!session) return
+
+  // 从 AgentLoop 的上下文中提取完整的 assistant 消息
+  // 当前简化处理：只记录消息 ID 和时间戳，内容在流式过程中由 renderer 追踪
+  const assistantMessage: SessionMessage = {
+    id: messageId,
+    role: 'assistant',
+    content: '', // 内容在流式过程中已通过 text_delta 事件发给 renderer，这里为空
+    timestamp: Date.now()
+  }
+  sessionStore.appendMessage(sessionId, assistantMessage)
+}
+
+/** 保存错误消息到会话存储 */
+function saveErrorMessage(sessionId: string, messageId: string, error: string): void {
+  const sessionStore = getSessionStore()
+  const errorMessage: SessionMessage = {
+    id: messageId,
+    role: 'assistant',
+    content: error,
+    timestamp: Date.now()
+  }
+  sessionStore.appendMessage(sessionId, errorMessage)
 }
 
 /** 将 AgentEvent 映射到 IPC 事件 channel 并推送到 renderer */

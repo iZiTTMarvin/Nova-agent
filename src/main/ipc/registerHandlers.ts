@@ -3,6 +3,7 @@ import { PING } from '../../shared/ipc/channels'
 import { registerProjectHandler } from './projectHandler'
 import { registerConfigHandler } from './configHandler'
 import { registerModeHandler } from './modeHandler'
+import { registerSessionHandler } from './sessionHandler'
 import { getMainWindow } from '../index'
 
 /**
@@ -23,4 +24,7 @@ export function registerIpcHandlers(): void {
 
   // 注册运行模式切换 IPC
   registerModeHandler()
+
+  // 注册会话管理与回退操作 IPC
+  registerSessionHandler()
 }

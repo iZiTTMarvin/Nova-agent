@@ -5,5 +5,6 @@ export {
   type ToolCall,
   type Message,
   type Session,
+  type SessionDetail,
   type CheckpointManifest
 } from './types'
