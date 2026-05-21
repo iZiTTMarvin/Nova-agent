@@ -7,8 +7,8 @@
 export type AgentEvent =
   | { type: 'message_start'; messageId: string }
   | { type: 'text_delta'; messageId: string; delta: string }
-  | { type: 'tool_call'; messageId: string; toolName: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; messageId: string; toolName: string; result: string }
+  | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string }
   | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string }
   | { type: 'diff_update'; messageId: string; diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }> }
   | { type: 'verification_result'; messageId: string; result: string }

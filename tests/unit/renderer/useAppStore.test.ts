@@ -87,17 +87,18 @@ describe('useAppStore Zustand Store', () => {
     useAppStore.getState().handleMessageStart(testMsgId)
 
     // 2. 触发工具调用开始执行
-    useAppStore.getState().handleToolCall(testMsgId, 'ls', { path: './' })
+    useAppStore.getState().handleToolCall(testMsgId, 'tc_ls_1', 'ls', { path: './' })
     let state = useAppStore.getState()
     
     expect(state.messages[0].toolCalls?.length).toBe(1)
     const toolCall = state.messages[0].toolCalls![0]
+    expect(toolCall.id).toBe('tc_ls_1')
     expect(toolCall.name).toBe('ls')
     expect(toolCall.status).toBe('running')
     expect(toolCall.arguments).toEqual({ path: './' })
 
     // 3. 触发工具执行成功并回传结果
-    useAppStore.getState().handleToolResult(testMsgId, 'ls', 'file1.txt\nfile2.txt')
+    useAppStore.getState().handleToolResult(testMsgId, 'tc_ls_1', 'ls', 'file1.txt\nfile2.txt')
     state = useAppStore.getState()
 
     const toolResult = state.messages[0].toolCalls![0]
@@ -108,10 +109,10 @@ describe('useAppStore Zustand Store', () => {
   it('当工具执行失败时应该能正确标记状态为 error', () => {
     const testMsgId = 'assistant-msg-1'
     useAppStore.getState().handleMessageStart(testMsgId)
-    useAppStore.getState().handleToolCall(testMsgId, 'read', { path: 'none.txt' })
+    useAppStore.getState().handleToolCall(testMsgId, 'tc_read_1', 'read', { path: 'none.txt' })
     
     // 回传失败结果
-    useAppStore.getState().handleToolResult(testMsgId, 'read', '工具执行失败: 文件不存在')
+    useAppStore.getState().handleToolResult(testMsgId, 'tc_read_1', 'read', '工具执行失败: 文件不存在')
     const state = useAppStore.getState()
 
     const toolResult = state.messages[0].toolCalls![0]

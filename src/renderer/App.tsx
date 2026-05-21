@@ -41,12 +41,12 @@ function App(): JSX.Element {
 
     // 监听：Agent 触发工具调用
     const unsubToolCall = window.api.on('agent:tool-call', (data) => {
-      handleToolCall(data.messageId, data.toolName, data.args)
+      handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args)
     })
 
     // 监听：Agent 工具执行完毕拿到结果
     const unsubToolResult = window.api.on('agent:tool-result', (data) => {
-      handleToolResult(data.messageId, data.toolName, data.result)
+      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result)
     })
 
     // 监听：Agent 请求用户确认权限

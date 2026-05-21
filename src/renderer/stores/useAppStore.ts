@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall } from '../../shared/session/types'
+import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 
 /** 
@@ -89,8 +89,8 @@ interface AppState {
   
   handleMessageStart: (messageId: string) => void
   handleTextDelta: (messageId: string, delta: string) => void
-  handleToolCall: (messageId: string, toolName: string, args: Record<string, unknown>) => void
-  handleToolResult: (messageId: string, toolName: string, result: string) => void
+  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
+  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
   handleMessageEnd: (messageId: string) => void
   handleError: (messageId: string, error: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
@@ -238,14 +238,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         currentSessionId: sessionId,
         currentProject: detail.workspaceRoot,
         currentMode: detail.mode,
-        messages: detail.messages.map(msg => ({
-          ...msg,
-          toolCalls: msg.toolCalls?.map(tc => ({
-            ...tc,
-            status: 'success' as const,
-            result: tc.arguments ? String(tc.arguments) : undefined
-          }))
-        }))
+        messages: detail.messages.map(msg => {
+          // 从 IPC 返回的 _toolCallResults 字段恢复工具调用结果
+          const results = (msg as Message & { _toolCallResults?: Record<string, string> })._toolCallResults ?? {}
+          return {
+            ...msg,
+            toolCalls: msg.toolCalls?.map(tc => {
+              const result = results[tc.id]
+              return {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+                status: result
+                  ? (result.startsWith('工具执行失败') || result.startsWith('权限拒绝:') ? 'error' as const : 'success' as const)
+                  : 'success' as const,
+                result
+              }
+            })
+          }
+        })
       })
     } catch (err) {
       console.error('加载会话详情出错:', err)
@@ -310,10 +321,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
-  handleToolCall: (messageId: string, toolName: string, args: Record<string, unknown>) => {
+  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
     // 插入一个新的 ExtendedToolCall，状态为 'running'
     const newToolCall: ExtendedToolCall = {
-      id: 'tc_' + Date.now() + '_' + toolName,
+      id: toolCallId,
       name: toolName,
       arguments: args,
       status: 'running'
@@ -330,14 +341,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
-  handleToolResult: (messageId: string, toolName: string, result: string) => {
-    // 定位最后一个匹配的 toolCall，更新其执行结果与状态
+  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => {
+    // 通过 toolCallId 精确匹配工具调用记录，更新其执行结果与状态
     set(state => ({
       messages: state.messages.map(msg => {
         if (msg.id === messageId && msg.toolCalls) {
-          const toolCalls = msg.toolCalls.map((tc, idx) => {
-            const isLastOfName = idx === msg.toolCalls!.map(t => t.name).lastIndexOf(toolName)
-            if (isLastOfName && tc.status === 'running') {
+          const toolCalls = msg.toolCalls.map(tc => {
+            if (tc.id === toolCallId) {
               const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
               return {
                 ...tc,

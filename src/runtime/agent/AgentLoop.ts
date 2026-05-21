@@ -173,6 +173,7 @@ export class AgentLoop {
               this.eventBus.emit({
                 type: 'tool_call',
                 messageId,
+                toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
                 args: JSON.parse(event.toolCall.arguments || '{}')
               })
@@ -235,6 +236,7 @@ export class AgentLoop {
           this.eventBus.emit({
             type: 'tool_result',
             messageId,
+            toolCallId: tc.id,
             toolName: tc.name,
             result
           })

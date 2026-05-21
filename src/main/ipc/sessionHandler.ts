@@ -18,7 +18,7 @@ import {
 } from '../../shared/ipc/channels'
 import { SessionStore } from '../../runtime/sessions/SessionStore'
 import { rejectFile, revertToMessage, listManifests } from '../../runtime/checkpoints/restore'
-import { getCurrentProjectPath } from '../index'
+import { setCurrentProjectPath } from '../index'
 import type { Session, SessionDetail, Message } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
@@ -26,8 +26,18 @@ import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
 
-/** 将持久化 SessionMessage 转换为共享 Message 格式 */
-function toMessage(msg: SessionMessage): Message {
+/** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果 */
+function toMessage(msg: SessionMessage): Message & { _toolCallResults?: Record<string, string> } {
+  // 工具调用结果以额外字段传递，前端从 _toolCallResults 中按 id 取回
+  const toolCallResults: Record<string, string> = {}
+  if (msg.toolCalls) {
+    for (const tc of msg.toolCalls) {
+      if (tc.result !== undefined) {
+        toolCallResults[tc.id] = tc.result
+      }
+    }
+  }
+
   return {
     id: msg.id,
     sessionId: '', // 将在外层填充
@@ -38,7 +48,9 @@ function toMessage(msg: SessionMessage): Message {
       name: tc.name,
       arguments: tc.arguments ? JSON.parse(tc.arguments) : {}
     })),
-    timestamp: msg.timestamp
+    timestamp: msg.timestamp,
+    // 非标准字段，前端用此恢复工具调用结果
+    _toolCallResults: Object.keys(toolCallResults).length > 0 ? toolCallResults : undefined
   }
 }
 
@@ -86,12 +98,16 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
+    // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
+    setCurrentProjectPath(data.workspaceRoot)
     return toSessionDetail(data)
   })
 
   // 创建新会话
   ipcMain.handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
     const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
+    // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
+    setCurrentProjectPath(params.workspaceRoot)
     return toSessionDetail(data)
   })
 
@@ -105,15 +121,16 @@ export function registerSessionHandler(): void {
     _event,
     params: { sessionId: string; messageId: string; filePath: string }
   ) => {
-    const projectPath = getCurrentProjectPath()
-    if (!projectPath) {
-      throw new Error('未选择工作区目录')
+    // 使用会话绑定的 workspaceRoot 而非全局 currentProjectPath
+    const session = sessionStore.load(params.sessionId)
+    if (!session) {
+      throw new Error(`会话 ${params.sessionId} 不存在`)
     }
 
     const checkpointRoot = sessionStore.getSessionsDir()
     const success = rejectFile(
       checkpointRoot,
-      projectPath,
+      session.workspaceRoot,
       params.sessionId,
       params.messageId,
       params.filePath
@@ -129,9 +146,10 @@ export function registerSessionHandler(): void {
     _event,
     params: { sessionId: string; messageId: string }
   ) => {
-    const projectPath = getCurrentProjectPath()
-    if (!projectPath) {
-      throw new Error('未选择工作区目录')
+    // 使用会话绑定的 workspaceRoot 而非全局 currentProjectPath
+    const session = sessionStore.load(params.sessionId)
+    if (!session) {
+      throw new Error(`会话 ${params.sessionId} 不存在`)
     }
 
     const checkpointRoot = sessionStore.getSessionsDir()
@@ -142,7 +160,7 @@ export function registerSessionHandler(): void {
     // 2. 执行物理回退（恢复文件、删除 checkpoint 目录）
     const success = revertToMessage(
       checkpointRoot,
-      projectPath,
+      session.workspaceRoot,
       params.sessionId,
       params.messageId,
       allManifests
@@ -153,14 +171,11 @@ export function registerSessionHandler(): void {
     }
 
     // 3. 从会话数据中删除该消息及之后的所有消息
-    const session = sessionStore.load(params.sessionId)
-    if (session) {
-      const targetIdx = session.messages.findIndex(m => m.id === params.messageId)
-      if (targetIdx !== -1) {
-        session.messages = session.messages.slice(0, targetIdx)
-        session.updatedAt = Date.now()
-        sessionStore.save(session)
-      }
+    const targetIdx = session.messages.findIndex(m => m.id === params.messageId)
+    if (targetIdx !== -1) {
+      session.messages = session.messages.slice(0, targetIdx)
+      session.updatedAt = Date.now()
+      sessionStore.save(session)
     }
   })
 }

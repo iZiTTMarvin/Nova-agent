@@ -82,11 +82,13 @@ export interface IpcEvents {
   }
   'agent:tool-call': {
     messageId: string
+    toolCallId: string
     toolName: string
     args: Record<string, unknown>
   }
   'agent:tool-result': {
     messageId: string
+    toolCallId: string
     toolName: string
     result: string
   }

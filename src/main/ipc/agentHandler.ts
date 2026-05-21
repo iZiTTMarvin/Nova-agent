@@ -2,7 +2,7 @@
  * Agent IPC Handler
  * 连接 renderer 的 IPC 命令和 runtime 的 AgentLoop
  * 将 AgentEvent 通过 IPC 推送到 renderer
- * S9：集成 CheckpointManager 和 SessionStore
+ * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION } from '../../shared/ipc/channels'
@@ -21,12 +21,25 @@ import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
 import type { PermissionDecision } from '../../shared/session/types'
-import { getCurrentProjectPath, getCurrentMode } from '../index'
+import { getCurrentMode } from '../index'
 import { getSessionStore } from './sessionHandler'
-import type { SessionMessage } from '../../runtime/sessions/types'
+import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/types'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
+
+/**
+ * 流式内容累积器
+ * 在 message_start 到 message_end 之间累积 assistant 消息的完整内容，
+ * 包括文本增量和工具调用记录，用于最终保存到 SessionStore
+ */
+interface StreamAccumulator {
+  content: string
+  toolCalls: SessionToolCall[]
+}
+
+/** 当前正在累积的流式消息映射：messageId → 累积器 */
+const activeStreams = new Map<string, StreamAccumulator>()
 
 /**
  * 注册 agent 相关的 IPC handler
@@ -44,15 +57,18 @@ export function registerAgentHandler(
       throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
     }
 
-    const projectPath = getCurrentProjectPath()
-    if (!projectPath) {
-      throw new Error('当前未选择项目工作区，请在侧边栏先选择一个本地目录。')
+    // 从会话数据中获取 workspaceRoot，确保使用该会话绑定的项目目录
+    const sessionStore = getSessionStore()
+    const session = sessionStore.load(params.sessionId)
+    if (!session) {
+      throw new Error(`会话 ${params.sessionId} 不存在`)
     }
+    const projectPath = session.workspaceRoot
 
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus)
 
-    // 1. 设置 Agent 工作区边界
+    // 1. 设置 Agent 工作区边界（使用会话的工作区目录）
     agentLoop.setWorkingDir(projectPath)
 
     // 2. 初始化工具集（7 个内置工具）
@@ -73,8 +89,7 @@ export function registerAgentHandler(
     // 4. 同步当前运行模式
     agentLoop.setMode(getCurrentMode())
 
-    // 5. 注入 CheckpointManager（S9：支持会话回退和文件拒绝）
-    const sessionStore = getSessionStore()
+    // 5. 注入 CheckpointManager（S9：支持会话回退和文件拒绝，路径与会话工作区一致）
     const checkpointManager = new CheckpointManager({
       checkpointDir: sessionStore.getSessionsDir(),
       sessionId: params.sessionId,
@@ -89,23 +104,13 @@ export function registerAgentHandler(
       content: params.content,
       timestamp: Date.now()
     }
-    const session = sessionStore.load(params.sessionId)
-    if (session) {
-      sessionStore.appendMessage(params.sessionId, userMessage)
-    }
+    sessionStore.appendMessage(params.sessionId, userMessage)
 
-    // 将 runtime 执行中触发的流式事件转发到 renderer 端，推动 UI 更新
+    // 将 runtime 执行中触发的流式事件转发到 renderer 端，
+    // 同时累积完整内容用于最终持久化
     eventBus.on((event: AgentEvent) => {
       forwardEventToRenderer(getMainWindow(), event)
-
-      // 消息结束后保存 assistant 消息到会话存储
-      if (event.type === 'message_end') {
-        saveAssistantMessage(params.sessionId, event.messageId)
-      }
-      // 错误也保存为 assistant 消息
-      if (event.type === 'error') {
-        saveErrorMessage(params.sessionId, event.messageId, event.error)
-      }
+      accumulateStreamEvent(params.sessionId, event)
     })
 
     await agentLoop.sendMessage(params.content)
@@ -124,18 +129,86 @@ export function registerAgentHandler(
   })
 }
 
-/** 保存 assistant 消息到会话存储 */
-function saveAssistantMessage(sessionId: string, messageId: string): void {
-  const sessionStore = getSessionStore()
-  const session = sessionStore.load(sessionId)
-  if (!session) return
+/**
+ * 累积流式事件内容
+ *
+ * message_start → 创建累积器
+ * text_delta → 追加文本内容
+ * tool_call → 追加工具调用记录
+ * tool_result → 更新对应工具调用的执行结果
+ * message_end → 将完整内容保存到 SessionStore
+ * error → 将错误消息保存到 SessionStore
+ */
+function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
+  switch (event.type) {
+    case 'message_start': {
+      activeStreams.set(event.messageId, { content: '', toolCalls: [] })
+      break
+    }
+    case 'text_delta': {
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        stream.content += event.delta
+      }
+      break
+    }
+    case 'tool_call': {
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        stream.toolCalls.push({
+          id: event.toolCallId,
+          name: event.toolName,
+          arguments: JSON.stringify(event.args),
+          result: undefined // 结果在 tool_result 事件中填充
+        })
+      }
+      break
+    }
+    case 'tool_result': {
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        // 通过 toolCallId 精确匹配工具调用记录
+        const targetIdx = stream.toolCalls.findIndex(
+          tc => tc.id === event.toolCallId
+        )
+        if (targetIdx !== -1) {
+          stream.toolCalls[targetIdx].result = event.result
+        }
+      }
+      break
+    }
+    case 'message_end': {
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        activeStreams.delete(event.messageId)
+        saveAssistantMessage(sessionId, event.messageId, stream.content, stream.toolCalls)
+      }
+      break
+    }
+    case 'error': {
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        activeStreams.delete(event.messageId)
+      }
+      saveErrorMessage(sessionId, event.messageId, event.error)
+      break
+    }
+  }
+}
 
-  // 从 AgentLoop 的上下文中提取完整的 assistant 消息
-  // 当前简化处理：只记录消息 ID 和时间戳，内容在流式过程中由 renderer 追踪
+/** 保存完整的 assistant 消息到会话存储（含文本内容和工具调用记录） */
+function saveAssistantMessage(
+  sessionId: string,
+  messageId: string,
+  content: string,
+  toolCalls: SessionToolCall[]
+): void {
+  const sessionStore = getSessionStore()
   const assistantMessage: SessionMessage = {
     id: messageId,
     role: 'assistant',
-    content: '', // 内容在流式过程中已通过 text_delta 事件发给 renderer，这里为空
+    content,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     timestamp: Date.now()
   }
   sessionStore.appendMessage(sessionId, assistantMessage)
@@ -171,10 +244,10 @@ function forwardEventToRenderer(
       webContents.send('agent:text-delta', { messageId: event.messageId, delta: event.delta })
       break
     case 'tool_call':
-      webContents.send('agent:tool-call', { messageId: event.messageId, toolName: event.toolName, args: event.args })
+      webContents.send('agent:tool-call', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args })
       break
     case 'tool_result':
-      webContents.send('agent:tool-result', { messageId: event.messageId, toolName: event.toolName, result: event.result })
+      webContents.send('agent:tool-result', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, result: event.result })
       break
     case 'permission_request':
       webContents.send('agent:permission-request', {
