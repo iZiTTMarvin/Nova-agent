@@ -5,10 +5,12 @@
 
 import type { ToolDefinition } from '../model/types'
 
-/** 工具执行上下文，携带工作区边界信息 */
+/** 工具执行上下文，携带工作区边界和 checkpoint 信息 */
 export interface ToolContext {
   /** 工作区根目录的绝对路径，所有路径操作不得越界 */
   workingDir: string
+  /** checkpoint 管理器（写入类工具需要通过它做写前备份） */
+  checkpointManager?: import('../checkpoints/CheckpointManager').CheckpointManager
 }
 
 /** 工具执行结果 */

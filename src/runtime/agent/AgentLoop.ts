@@ -4,13 +4,19 @@
  *
  * S3 阶段：纯文本对话循环（消息 → 模型 → 响应）
  * S4 阶段：加入工具调度（tool_call → 执行 → 结果回模型 → 重复）
+ * S6 阶段：加入 checkpoint 备份和 plan 模式写入拦截
  */
 import type { ModelClient } from '../model/ModelClient'
 import type { ChatMessage, ChatToolCall } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import type { ToolRegistry } from '../tools/ToolRegistry'
+import type { CheckpointManager } from '../checkpoints/CheckpointManager'
+import type { Mode } from '../../shared/session/types'
 import { EventBus } from './EventBus'
 import { randomUUID } from 'crypto'
+
+/** 写入类工具名称集合，plan 模式下会被拒绝 */
+const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
 
 export class AgentLoop {
   private modelClient: ModelClient
@@ -29,6 +35,12 @@ export class AgentLoop {
 
   /** 工作区路径（可选，传入后工具执行才有工作区边界） */
   private workingDir: string | null = null
+
+  /** 运行模式（plan / default / auto） */
+  private mode: Mode = 'default'
+
+  /** checkpoint 管理器（可选，S6 引入） */
+  private checkpointManager: CheckpointManager | null = null
 
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
@@ -62,6 +74,16 @@ export class AgentLoop {
   /** 设置工作区路径（工具执行时的边界目录） */
   setWorkingDir(dir: string): void {
     this.workingDir = dir
+  }
+
+  /** 设置运行模式 */
+  setMode(mode: Mode): void {
+    this.mode = mode
+  }
+
+  /** 设置 checkpoint 管理器 */
+  setCheckpointManager(manager: CheckpointManager): void {
+    this.checkpointManager = manager
   }
 
   /** 动态调整最大工具调用轮数 */
@@ -102,6 +124,9 @@ export class AgentLoop {
     // 将用户消息加入上下文
     const userMessage: ChatMessage = { role: 'user', content }
     this.context.push(userMessage)
+
+    // 开启 checkpoint 事务边界
+    this.checkpointManager?.beginMessage(messageId)
 
     this.eventBus.emit({ type: 'message_start', messageId })
 
@@ -176,9 +201,13 @@ export class AgentLoop {
           const args = this.parseArgs(tc.arguments)
           let result: string
 
-          if (this.toolRegistry) {
+          // plan 模式下拒绝写入工具
+          if (this.mode === 'plan' && WRITE_TOOLS.has(tc.name)) {
+            result = `当前为 plan 模式，"${tc.name}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
+          } else if (this.toolRegistry) {
             const toolResult = await this.toolRegistry.execute(tc.name, args, {
-              workingDir: this.workingDir ?? process.cwd()
+              workingDir: this.workingDir ?? process.cwd(),
+              ...(this.checkpointManager ? { checkpointManager: this.checkpointManager } : {})
             })
             result = toolResult.success
               ? toolResult.output
@@ -214,6 +243,9 @@ export class AgentLoop {
     if (this.state === 'running') {
       this.state = 'idle'
     }
+
+    // 结束 checkpoint 事务边界
+    this.checkpointManager?.endMessage()
 
     this.eventBus.emit({ type: 'message_end', messageId })
   }
