@@ -1,9 +1,15 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers } from './ipc/registerHandlers'
+import { registerAgentHandler } from './ipc/agentHandler'
+import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
+import type { ModelClient } from '../runtime/model/ModelClient'
 
 /** 主窗口实例 */
 let mainWindow: BrowserWindow | null = null
+
+/** 模型客户端实例，运行时通过配置初始化 */
+let modelClient: ModelClient | null = null
 
 /**
  * 创建应用主窗口
@@ -31,7 +37,6 @@ function createMainWindow(): void {
     mainWindow = null
   })
 
-  // 开发环境加载 dev server，生产环境加载构建产物
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -39,8 +44,19 @@ function createMainWindow(): void {
   }
 }
 
+/** 获取主窗口实例 */
+function getMainWindow(): BrowserWindow | null {
+  return mainWindow
+}
+
+/** 获取模型客户端（S3 暂用占位逻辑，S8 会对接 Settings 持久化） */
+function getModelClient(): ModelClient | null {
+  return modelClient
+}
+
 app.whenReady().then(() => {
   registerIpcHandlers()
+  registerAgentHandler(getMainWindow, getModelClient)
   createMainWindow()
 
   app.on('activate', () => {
