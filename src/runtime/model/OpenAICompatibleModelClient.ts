@@ -21,7 +21,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
     messages: ChatMessage[],
     tools?: ToolDefinition[]
   ): AsyncIterable<ChatEvent> {
-    const url = `${this.config.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
+    // baseUrl 应为完整 API 根地址（如 https://api.openai.com/v1），
+    // 只需拼接路径后缀 /chat/completions
+    const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
     const body: Record<string, unknown> = {
       model: this.config.modelId,

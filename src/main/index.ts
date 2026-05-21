@@ -1,9 +1,9 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
-import * as fs from 'fs'
 import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
+import { loadModelConfig as loadPersistedModelConfig } from '../runtime/model/config'
 import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
 
@@ -56,17 +56,12 @@ export function setCurrentMode(mode: Mode): void {
 
 /**
  * 启动时自动载入持久化的模型配置以提供免配直接运行体验
+ * 使用 runtime/model/config 模块统一管理配置文件的读取逻辑
  */
 function loadModelConfigOnStartup(): void {
-  const configPath = join(app.getPath('userData'), 'settings', 'model.json')
-  if (!fs.existsSync(configPath)) {
-    return
-  }
-
   try {
-    const content = fs.readFileSync(configPath, 'utf8')
-    const config = JSON.parse(content)
-    if (config && config.baseUrl && config.modelId) {
+    const config = loadPersistedModelConfig(app.getPath('userData'))
+    if (config) {
       modelClient = new OpenAICompatibleModelClient(config)
     }
   } catch (err) {

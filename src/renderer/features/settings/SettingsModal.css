@@ -103,6 +103,11 @@
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
+.settings-modal__input--error {
+  border-color: var(--color-error, #b53333);
+  box-shadow: 0 0 0 2px rgba(181, 51, 51, 0.12);
+}
+
 .settings-modal__input--password {
   padding-right: 48px;
 }
@@ -128,6 +133,12 @@
 .settings-modal__help {
   font-size: 0.75rem;
   color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.settings-modal__field-error {
+  font-size: 0.75rem;
+  color: var(--color-error);
   line-height: 1.4;
 }
 

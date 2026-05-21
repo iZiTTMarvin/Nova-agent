@@ -2,6 +2,19 @@
 
 ## 2026-05-21
 
+- **feat**: 实现 S8 Settings UI（模型配置）
+  - 新增 `src/runtime/model/config.ts`：配置持久化与校验的统一模块
+    - `validateModelConfig`：字段级校验（baseUrl 必须 http/https 开头、apiKey 非空、modelId 非空），trim 前后空白
+    - `saveModelConfig`：校验通过后持久化到磁盘，校验失败抛异常；返回 trim 后的合法配置
+    - `loadModelConfig`：从磁盘加载配置，复用 `validateModelConfig` 做强校验，坏配置静默返回 null
+  - 重构 `configHandler.ts`：去除冗余校验逻辑，统一由 `saveModelConfig` / `loadModelConfig` 负责校验和读写
+  - 重构 `main/index.ts`：启动加载配置改用 `loadModelConfig` 模块，移除内联 fs 读写
+  - 完善 `SettingsModal.tsx`：字段级错误展示、URL 格式校验、输入变化时自动清除对应错误
+  - 修复 `OpenAICompatibleModelClient` URL 拼接：从 `/v1/chat/completions` 改为 `/chat/completions`，避免用户填写含 `/v1` 的 baseUrl 后请求打到 `/v1/v1/`
+  - 新增 25 个单元测试覆盖：校验成功/失败/边界、配置读写/覆盖/容错、save 校验抛异常、load 校验拦截坏配置（缺 apiKey、空 apiKey、非法 URL）
+
+## 2026-05-21
+
 - **feat**: 实现 S7 PermissionManager + bashTool
   - 实现 `PermissionManager`：三模式权限决策引擎（plan deny / default ask / auto allow 危险 deny）
   - 实现 `rules.ts`：规则表 + 危险命令黑名单检测（Unix + Windows 双平台覆盖）
