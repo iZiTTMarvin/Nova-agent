@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
+import type { DiffEntry } from '../../shared/diff/types'
 
 /** 
  * 扩展的工具调用接口
@@ -95,6 +96,11 @@ interface AppState {
   isSubmittingPermission: boolean
   permissionError: string | null
 
+  /** 每条消息的 diff 数据缓存：messageId → DiffEntry[] */
+  messageDiffs: Record<string, DiffEntry[]>
+  /** 正在加载 diff 的消息 ID 集合 */
+  loadingDiffs: Set<string>
+
   // ── Actions ──────────────────────────────────────────
   
   /** 加载或切换工作区 */
@@ -136,6 +142,12 @@ interface AppState {
   /** 按文件拒绝某个文件的改动 */
   rejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
 
+  /** 按需加载某条消息的 diff 数据 */
+  loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
+
+  /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
+  clearMessageDiffs: (messageId: string) => void
+
   // ── 主进程事件驱动的状态更新 ──────────────────────────────
   
   handleMessageStart: (messageId: string) => void
@@ -162,6 +174,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingPermissionRequest: null,
   isSubmittingPermission: false,
   permissionError: null,
+  messageDiffs: {},
+  loadingDiffs: new Set(),
 
   selectProject: async () => {
     try {
@@ -329,13 +343,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectSession: async (sessionId: string) => {
     try {
       const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
+      const restored = restoreSessionMessages(detail.messages)
       set({
         currentSessionId: sessionId,
         currentProject: detail.workspaceRoot,
         currentMode: detail.mode,
         sessions: upsertSessionSummary(get().sessions, detail),
-        messages: restoreSessionMessages(detail.messages)
+        messages: restored,
+        messageDiffs: {} // 切换会话时清空 diff 缓存
       })
+
+      // 为所有 assistant 消息异步加载 diff 数据
+      for (const msg of restored) {
+        if (msg.role === 'assistant') {
+          get().loadMessageDiffs(sessionId, msg.id)
+        }
+      }
     } catch (err) {
       console.error('加载会话详情出错:', err)
     }
@@ -360,9 +383,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   rejectFile: async (sessionId: string, messageId: string, filePath: string) => {
     try {
       await window.api.invoke('reject-file', { sessionId, messageId, filePath })
+      // 拒绝后重新加载该消息的 diff 以反映最新状态
+      get().loadMessageDiffs(sessionId, messageId)
     } catch (err) {
       console.error('拒绝文件改动出错:', err)
     }
+  },
+
+  loadMessageDiffs: async (sessionId: string, messageId: string) => {
+    const { loadingDiffs } = get()
+    if (loadingDiffs.has(messageId)) return
+
+    set(state => ({
+      loadingDiffs: new Set([...state.loadingDiffs, messageId])
+    }))
+
+    try {
+      const diffs: DiffEntry[] = await window.api.invoke('get-message-diffs', { sessionId, messageId })
+      set(state => ({
+        messageDiffs: { ...state.messageDiffs, [messageId]: diffs },
+        loadingDiffs: new Set([...state.loadingDiffs].filter(id => id !== messageId))
+      }))
+    } catch (err) {
+      console.error('加载 diff 出错:', err)
+      set(state => ({
+        loadingDiffs: new Set([...state.loadingDiffs].filter(id => id !== messageId))
+      }))
+    }
+  },
+
+  clearMessageDiffs: (messageId: string) => {
+    set(state => {
+      const { [messageId]: _, ...rest } = state.messageDiffs
+      return { messageDiffs: rest }
+    })
   },
 
   // ── 主进程流式事件响应器 ────────────────────────────────────
@@ -456,9 +510,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       permissionError: null
     })
 
-    // 更新当前会话的消息数属性
+    // 更新当前会话的消息数属性，并自动加载 diff
     const { currentSessionId, sessions, messages } = get()
     if (currentSessionId) {
+      get().loadMessageDiffs(currentSessionId, messageId)
       set({
         sessions: sessions.map(s => 
           s.id === currentSessionId ? { ...s, messageCount: messages.length, updatedAt: Date.now() } : s

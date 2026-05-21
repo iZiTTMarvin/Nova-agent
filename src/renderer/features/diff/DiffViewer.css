@@ -1,0 +1,265 @@
+/* ──────────────────────────────────────────────────────────
+   DiffViewer — 文件变更差异审查面板
+   ────────────────────────────────────────────────────────── */
+
+.diff-viewer {
+  margin-top: 12px;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--bg-sidebar);
+}
+
+/* ── 整体头部 ──────────────────────────────────────── */
+.diff-viewer__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-cream);
+  transition: background-color var(--transition-fast);
+}
+
+.diff-viewer__header:hover {
+  background-color: var(--bg-sand);
+}
+
+.diff-viewer__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-charcoal);
+}
+
+.diff-viewer__stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.diff-viewer__stat--added {
+  color: var(--color-success);
+}
+
+.diff-viewer__stat--removed {
+  color: var(--color-error);
+}
+
+.diff-viewer__stat--files {
+  color: var(--text-muted);
+}
+
+/* ── diff 内容体 ──────────────────────────────────── */
+.diff-viewer__body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 单个文件面板 ──────────────────────────────────── */
+.diff-file {
+  border-bottom: 1px solid var(--border-cream);
+}
+
+.diff-file:last-child {
+  border-bottom: none;
+}
+
+.diff-file__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--bg-card);
+  transition: background-color var(--transition-fast);
+}
+
+.diff-file__header:hover {
+  background-color: var(--bg-sand);
+}
+
+.diff-file__name {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file__status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.diff-file--added .diff-file__status-badge {
+  background-color: rgba(120, 140, 93, 0.12);
+  color: var(--color-success);
+}
+
+.diff-file--modified .diff-file__status-badge {
+  background-color: rgba(201, 100, 66, 0.1);
+  color: var(--color-brand);
+}
+
+.diff-file--deleted .diff-file__status-badge {
+  background-color: rgba(181, 51, 51, 0.08);
+  color: var(--color-error);
+}
+
+.diff-file__rejected-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  background-color: var(--bg-sand);
+  border-radius: 4px;
+}
+
+.diff-file--rejected {
+  opacity: 0.6;
+}
+
+/* ── 文件操作按钮 ──────────────────────────────────── */
+.diff-file__actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.diff-file:hover .diff-file__actions {
+  opacity: 1;
+}
+
+.diff-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border-cream);
+  background-color: var(--bg-card);
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.diff-action-btn:hover {
+  transform: scale(1.1);
+}
+
+.diff-action-btn--accept:hover {
+  color: var(--color-success);
+  border-color: var(--color-success);
+  background-color: rgba(120, 140, 93, 0.08);
+}
+
+.diff-action-btn--reject:hover {
+  color: var(--color-error);
+  border-color: var(--color-error);
+  background-color: rgba(181, 51, 51, 0.06);
+}
+
+/* ── diff hunk 区块 ────────────────────────────────── */
+.diff-file__body {
+  background-color: #fafaf7;
+}
+
+.diff-hunk {
+  border-top: 1px solid var(--border-cream);
+}
+
+.diff-hunk:first-child {
+  border-top: none;
+}
+
+.diff-hunk__header {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 4px 14px;
+  background-color: var(--bg-sand);
+  border-bottom: 1px solid var(--border-cream);
+}
+
+.diff-hunk__content {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+/* ── 单行 diff ────────────────────────────────────── */
+.diff-line {
+  display: flex;
+  min-height: 22px;
+}
+
+.diff-line__no {
+  display: inline-block;
+  width: 40px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-muted);
+  background-color: rgba(0, 0, 0, 0.03);
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding-top: 1px;
+}
+
+.diff-line__text {
+  padding-left: 8px;
+  white-space: pre;
+  flex: 1;
+  min-width: 0;
+}
+
+/* 新增行：柔和绿底色 */
+.diff-line--add {
+  background-color: rgba(120, 140, 93, 0.1);
+}
+
+.diff-line--add .diff-line__text {
+  color: #3d5a1e;
+}
+
+.diff-line--add .diff-line__no {
+  background-color: rgba(120, 140, 93, 0.06);
+}
+
+/* 删除行：柔和红底色 */
+.diff-line--remove {
+  background-color: rgba(181, 51, 51, 0.08);
+}
+
+.diff-line--remove .diff-line__text {
+  color: #8b2020;
+}
+
+.diff-line--remove .diff-line__no {
+  background-color: rgba(181, 51, 51, 0.04);
+}
+
+/* 上下文行 */
+.diff-line--context {
+  background-color: transparent;
+}
+
+.diff-line--context .diff-line__text {
+  color: var(--text-primary);
+}

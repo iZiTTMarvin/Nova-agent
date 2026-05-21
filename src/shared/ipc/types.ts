@@ -41,6 +41,10 @@ export interface IpcCommands {
     params: { sessionId: string; messageId: string; filePath: string }
     result: void
   }
+  'get-message-diffs': {
+    params: { sessionId: string; messageId: string }
+    result: DiffEntry[]
+  }
   'reject-file': {
     params: { sessionId: string; messageId: string; filePath: string }
     result: void

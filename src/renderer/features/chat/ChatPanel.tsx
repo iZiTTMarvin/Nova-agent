@@ -14,6 +14,7 @@ import {
 } from '../../components/Icons'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
+import { DiffViewer } from '../diff/DiffViewer'
 import './ChatPanel.css'
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
@@ -207,6 +208,12 @@ export const ChatPanel: React.FC = () => {
   const rollbackMessage = useAppStore(state => state.rollbackMessage)
   const currentGeneratingMessageId = useAppStore(state => state.currentGeneratingMessageId)
 
+  // diff 审查所需状态
+  const messageDiffs = useAppStore(state => state.messageDiffs)
+  const loadingDiffs = useAppStore(state => state.loadingDiffs)
+  const loadMessageDiffs = useAppStore(state => state.loadMessageDiffs)
+  const rejectFile = useAppStore(state => state.rejectFile)
+
   // 处理消息回退操作
   const handleRollback = async (messageId: string) => {
     if (!currentSessionId) return
@@ -385,6 +392,16 @@ export const ChatPanel: React.FC = () => {
                       />
                     ))}
                   </div>
+                )}
+
+                {/* diff 审查面板：仅 assistant 消息、生成完毕、有 diff 数据时展示 */}
+                {isAssistant && !isGenerating && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].length > 0 && (
+                  <DiffViewer
+                    diffs={messageDiffs[msg.id]}
+                    sessionId={currentSessionId}
+                    messageId={msg.id}
+                    onRejectFile={(filePath) => rejectFile(currentSessionId, msg.id, filePath)}
+                  />
                 )}
               </div>
             </div>
