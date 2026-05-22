@@ -154,6 +154,36 @@ describe('CheckpointManager', () => {
     })
   })
 
+  describe('recordBashChange', () => {
+    it('bash 修改文件时会把原始内容写入 modifiedFiles 备份', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'existing.txt')
+      mgr.recordBashChange(filePath, 'bash 前内容\n', false)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toContain('existing.txt')
+
+      const backupPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'files', 'existing.txt')
+      expect(readFileSync(backupPath, 'utf-8')).toBe('bash 前内容\n')
+    })
+
+    it('bash 删除文件时会写入 deletedFiles 并保留恢复备份', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'src', 'main.ts')
+      mgr.recordBashChange(filePath, 'const x = 1\n', false, true)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.deletedFiles).toContain('src/main.ts')
+
+      const backupPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'files', 'src', 'main.ts')
+      expect(readFileSync(backupPath, 'utf-8')).toBe('const x = 1\n')
+    })
+  })
+
   // ── 跨消息隔离 ──────────────────────────────────────────────
 
   describe('跨消息隔离', () => {

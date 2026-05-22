@@ -33,7 +33,9 @@ describe('useAppStore Zustand Store', () => {
       isConfigModalOpen: false,
       pendingPermissionRequest: null,
       isSubmittingPermission: false,
-      permissionError: null
+      permissionError: null,
+      messageDiffs: {},
+      loadingDiffs: new Set()
     })
   })
 
@@ -167,33 +169,38 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('加载历史会话时应正确恢复工具调用结果和错误状态', async () => {
-    mockInvoke.mockResolvedValueOnce({
-      id: 'sess_1',
-      workspaceRoot: '/project/root',
-      mode: 'default',
-      createdAt: 1,
-      updatedAt: 2,
-      messageCount: 1,
-      messages: [
-        {
-          id: 'msg_assistant_1',
-          sessionId: 'sess_1',
-          role: 'assistant',
-          content: '已完成',
-          timestamp: 3,
-          toolCalls: [
-            {
-              id: 'tc_1',
-              name: 'bash',
-              arguments: { command: 'npm test' }
+    mockInvoke
+      .mockResolvedValueOnce({
+        id: 'sess_1',
+        workspaceRoot: '/project/root',
+        mode: 'default',
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 1,
+        messages: [
+          {
+            id: 'msg_assistant_1',
+            sessionId: 'sess_1',
+            role: 'assistant',
+            content: '已完成',
+            timestamp: 3,
+            toolCalls: [
+              {
+                id: 'tc_1',
+                name: 'bash',
+                arguments: { command: 'npm test' }
+              }
+            ],
+            _toolCallResults: {
+              tc_1: '工具执行失败: 测试失败'
             }
-          ],
-          _toolCallResults: {
-            tc_1: '工具执行失败: 测试失败'
           }
-        }
-      ]
-    })
+        ]
+      })
+      .mockResolvedValueOnce({
+        diffs: [],
+        reviews: {}
+      })
 
     await useAppStore.getState().selectSession('sess_1')
 
@@ -245,5 +252,90 @@ describe('useAppStore Zustand Store', () => {
     expect(state.currentMode).toBe('auto')
     expect(state.messages[0].toolCalls?.[0].result).toBe('构建成功')
     expect(state.messages[0].toolCalls?.[0].status).toBe('success')
+  })
+
+  it('loadMessageDiffs 应缓存 diff 与审查状态', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      diffs: [
+        {
+          filePath: 'src/app.ts',
+          status: 'modified',
+          hunks: []
+        }
+      ],
+      reviews: {
+        'src/app.ts': 'accepted'
+      }
+    })
+
+    await useAppStore.getState().loadMessageDiffs('sess_1', 'msg_1')
+
+    expect(useAppStore.getState().messageDiffs['msg_1']).toEqual({
+      diffs: [
+        {
+          filePath: 'src/app.ts',
+          status: 'modified',
+          hunks: []
+        }
+      ],
+      reviews: {
+        'src/app.ts': 'accepted'
+      }
+    })
+  })
+
+  it('acceptFile 应更新本地缓存中的审查状态', async () => {
+    mockInvoke.mockResolvedValueOnce(undefined)
+    useAppStore.setState({
+      messageDiffs: {
+        msg_1: {
+          diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [] }],
+          reviews: {}
+        }
+      }
+    })
+
+    await useAppStore.getState().acceptFile('sess_1', 'msg_1', 'src/app.ts')
+
+    expect(mockInvoke).toHaveBeenCalledWith('accept-file', {
+      sessionId: 'sess_1',
+      messageId: 'msg_1',
+      filePath: 'src/app.ts'
+    })
+    expect(useAppStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('accepted')
+  })
+
+  it('rejectFile 应更新本地缓存中的 rejected 状态', async () => {
+    mockInvoke.mockResolvedValueOnce(undefined)
+    useAppStore.setState({
+      messageDiffs: {
+        msg_1: {
+          diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [] }],
+          reviews: {}
+        }
+      }
+    })
+
+    await useAppStore.getState().rejectFile('sess_1', 'msg_1', 'src/app.ts')
+
+    expect(mockInvoke).toHaveBeenCalledWith('reject-file', {
+      sessionId: 'sess_1',
+      messageId: 'msg_1',
+      filePath: 'src/app.ts'
+    })
+    expect(useAppStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('rejected')
+  })
+
+  it('rejectFile 失败时应继续向上抛错，供 UI 显示错误', async () => {
+    mockInvoke.mockRejectedValueOnce(new Error('boom'))
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      await expect(
+        useAppStore.getState().rejectFile('sess_1', 'msg_1', 'src/app.ts')
+      ).rejects.toThrow('boom')
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
   })
 })

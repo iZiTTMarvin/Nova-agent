@@ -3,8 +3,13 @@
  *
  * bash 命令执行前对工作区做内容快照，执行后对比发现变更，
  * 让 bash 造成的文件修改也能进入 checkpoint/diff 流。
+ *
+ * 设计取舍：
+ * - 大目录继续跳过，避免把 node_modules / dist 整体扫进来
+ * - 不再按文件大小忽略内容快照。只要文件在工作区边界内，
+ *   就应该被审查和回退能力覆盖；否则会出现“bash 改了但 UI 看不到”的漏洞。
  */
-import { readdirSync, statSync, readFileSync, existsSync } from 'fs'
+import { readdirSync, statSync, readFileSync } from 'fs'
 import { join, relative } from 'path'
 
 /** 跳过的目录名 */
@@ -13,12 +18,10 @@ const SKIP_DIRS = new Set([
   '__pycache__', '.next', 'target', '.cache', '.nova'
 ])
 
-/** 单个文件的上限大小，超过则跳过（避免读大文件） */
-const MAX_FILE_SIZE = 100 * 1024
-
 export interface FileSnapshot {
   content: string
   mtimeMs: number
+  size: number
 }
 
 /** 工作区快照：相对路径 → 文件内容 + mtime */
@@ -84,10 +87,9 @@ function walk(root: string, dir: string, snapshot: WorkspaceSnapshot): void {
     } else if (entry.isFile()) {
       try {
         const stat = statSync(fullPath)
-        if (stat.size > MAX_FILE_SIZE) continue
         const relPath = relative(root, fullPath).replace(/\\/g, '/')
         const content = readFileSync(fullPath, 'utf-8')
-        snapshot.set(relPath, { content, mtimeMs: stat.mtimeMs })
+        snapshot.set(relPath, { content, mtimeMs: stat.mtimeMs, size: stat.size })
       } catch { continue }
     }
   }
@@ -107,7 +109,6 @@ function walkMtimes(root: string, dir: string, mtimes: MtimeSnapshot): void {
     } else if (entry.isFile()) {
       try {
         const stat = statSync(fullPath)
-        if (stat.size > MAX_FILE_SIZE) continue
         const relPath = relative(root, fullPath).replace(/\\/g, '/')
         mtimes.set(relPath, stat.mtimeMs)
       } catch { continue }

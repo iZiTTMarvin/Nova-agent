@@ -9,13 +9,13 @@
  * 5. 审查状态持久化：pending / accepted / rejected
  */
 import React, { useState } from 'react'
-import type { DiffEntry, DiffHunk } from '../../../shared/diff/types'
+import type { DiffEntry, DiffHunk, DiffReviewStatus } from '../../../shared/diff/types'
 import { ChevronIcon, CheckIcon, UndoIcon } from '../../components/Icons'
 import './DiffViewer.css'
 
 export interface DiffViewerProps {
   diffs: DiffEntry[]
-  reviews: Record<string, 'accepted' | 'rejected'>
+  reviews: Record<string, DiffReviewStatus>
   sessionId: string
   messageId: string
   isLoading?: boolean
@@ -85,6 +85,7 @@ const FileDiffPanel: React.FC<{
 }> = ({ entry, reviewStatus, onReject, onAccept }) => {
   const [expanded, setExpanded] = useState(reviewStatus === 'pending')
   const [rejecting, setRejecting] = useState(false)
+  const [accepting, setAccepting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const statusLabel = entry.status === 'added' ? '新建' : entry.status === 'deleted' ? '删除' : '修改'
@@ -103,7 +104,17 @@ const FileDiffPanel: React.FC<{
   }
 
   const handleAccept = () => {
-    onAccept?.(entry.filePath)
+    void (async () => {
+      setAccepting(true)
+      setError(null)
+      try {
+        await onAccept?.(entry.filePath)
+      } catch (err) {
+        setError('接受失败，未能更新审查状态')
+      } finally {
+        setAccepting(false)
+      }
+    })()
   }
 
   // 已拒绝状态
@@ -152,6 +163,7 @@ const FileDiffPanel: React.FC<{
           <button
             className="diff-action-btn diff-action-btn--accept"
             onClick={handleAccept}
+            disabled={accepting || rejecting}
             title="接受改动（标记为已审查）"
           >
             <CheckIcon size={13} />
@@ -159,7 +171,7 @@ const FileDiffPanel: React.FC<{
           <button
             className="diff-action-btn diff-action-btn--reject"
             onClick={handleReject}
-            disabled={rejecting}
+            disabled={accepting || rejecting}
             title="拒绝改动（恢复原始文件）"
           >
             <UndoIcon size={13} />

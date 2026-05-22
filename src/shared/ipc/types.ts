@@ -4,7 +4,7 @@
  */
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig } from '../config'
-import type { DiffEntry } from '../diff'
+import type { DiffEntry, DiffReviewStatus } from '../diff'
 
 // ── renderer → main 命令的参数和返回值 ──────────────────────
 
@@ -45,7 +45,7 @@ export interface IpcCommands {
     params: { sessionId: string; messageId: string }
     result: {
       diffs: DiffEntry[]
-      reviews: Record<string, 'accepted' | 'rejected'>
+      reviews: Record<string, DiffReviewStatus>
     }
   }
   'reject-file': {

@@ -93,7 +93,17 @@ export const bashTool: ToolExecutor = {
             try {
               const afterMtimes = snapshotMtimes(context.workingDir)
               const changes = diffSnapshots(beforeSnapshot, afterMtimes)
-              for (const relPath of changes.modified) {
+
+              /**
+               * 同一条 bash 命令里，文件可能先被修改、再被删除，或者新增后再次改写。
+               * 这里按优先级去重，避免同一路径同时写进多个 manifest 列表。
+               */
+              const deletedSet = new Set(changes.deleted)
+              const addedSet = new Set(changes.added)
+              const modifiedSet = new Set(
+                changes.modified.filter(relPath => !deletedSet.has(relPath) && !addedSet.has(relPath))
+              )
+              for (const relPath of modifiedSet) {
                 const entry = beforeSnapshot.get(relPath)
                 if (entry) {
                   context.checkpointManager.recordBashChange(
@@ -103,14 +113,14 @@ export const bashTool: ToolExecutor = {
                   )
                 }
               }
-              for (const relPath of changes.added) {
+              for (const relPath of addedSet) {
                 context.checkpointManager.recordBashChange(
                   join(context.workingDir, relPath),
                   '',
                   true
                 )
               }
-              for (const relPath of changes.deleted) {
+              for (const relPath of deletedSet) {
                 const entry = beforeSnapshot.get(relPath)
                 if (entry) {
                   context.checkpointManager.recordBashChange(

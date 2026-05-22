@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
-import type { DiffEntry } from '../../shared/diff/types'
+import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 
 /** 
  * 扩展的工具调用接口
@@ -38,6 +38,10 @@ export interface PendingPermissionRequest {
 }
 
 type SessionMessagePayload = Message & { _toolCallResults?: Record<string, string> }
+type MessageDiffCache = {
+  diffs: DiffEntry[]
+  reviews: Record<string, DiffReviewStatus>
+}
 
 function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
   if (!result) return 'success'
@@ -81,6 +85,22 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
   return [nextSummary, ...others]
 }
 
+function applyDiffReviewStatus(
+  cache: MessageDiffCache,
+  filePath: string,
+  status: DiffReviewStatus
+): MessageDiffCache {
+  const existingDiff = cache.diffs.find(diff => diff.filePath === filePath)
+  const nextDiffs = existingDiff
+    ? cache.diffs
+    : [...cache.diffs, { filePath, hunks: [], status: 'modified' as const }]
+
+  return {
+    diffs: nextDiffs,
+    reviews: { ...cache.reviews, [filePath]: status }
+  }
+}
+
 /** Zustand 全局状态定义 */
 interface AppState {
   currentProject: string | null
@@ -97,10 +117,7 @@ interface AppState {
   permissionError: string | null
 
   /** 每条消息的 diff 数据缓存 */
-  messageDiffs: Record<string, {
-    diffs: DiffEntry[]
-    reviews: Record<string, 'accepted' | 'rejected'>
-  }>
+  messageDiffs: Record<string, MessageDiffCache>
   /** 正在加载 diff 的消息 ID 集合 */
   loadingDiffs: Set<string>
 
@@ -389,10 +406,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   rejectFile: async (sessionId: string, messageId: string, filePath: string) => {
     try {
       await window.api.invoke('reject-file', { sessionId, messageId, filePath })
-      // 拒绝后重新加载该消息的 diff 以反映最新状态
-      get().loadMessageDiffs(sessionId, messageId)
+      const cache = get().messageDiffs[messageId]
+      if (cache) {
+        set(state => ({
+          messageDiffs: {
+            ...state.messageDiffs,
+            [messageId]: applyDiffReviewStatus(cache, filePath, 'rejected')
+          }
+        }))
+      }
     } catch (err) {
       console.error('拒绝文件改动出错:', err)
+      throw err
     }
   },
 
@@ -421,21 +446,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   acceptFile: async (sessionId: string, messageId: string, filePath: string) => {
     try {
       await window.api.invoke('accept-file', { sessionId, messageId, filePath })
-      // 更新本地缓存中的审查状态
       const cache = get().messageDiffs[messageId]
       if (cache) {
         set(state => ({
           messageDiffs: {
             ...state.messageDiffs,
-            [messageId]: {
-              ...cache,
-              reviews: { ...cache.reviews, [filePath]: 'accepted' as const }
-            }
+            [messageId]: applyDiffReviewStatus(cache, filePath, 'accepted')
           }
         }))
       }
     } catch (err) {
       console.error('接受文件出错:', err)
+      throw err
     }
   },
 

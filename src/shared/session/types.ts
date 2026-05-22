@@ -38,17 +38,3 @@ export interface Session {
 export interface SessionDetail extends Session {
   messages: Message[]
 }
-
-/** Checkpoint manifest（用于回退和文件拒绝） */
-export interface CheckpointManifest {
-  sessionId: string
-  messageId: string
-  workspaceRoot: string
-  createdFiles: string[]
-  modifiedFiles: string[]
-  deletedFiles: string[]
-  status: 'active' | 'rolled-back'
-  createdAt: number
-  /** 文件级审查状态，key 为相对路径 */
-  fileReviews?: Record<string, 'accepted' | 'rejected'>
-}

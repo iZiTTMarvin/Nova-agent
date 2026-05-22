@@ -13,3 +13,6 @@ export interface DiffEntry {
   hunks: DiffHunk[]
   status: 'added' | 'modified' | 'deleted'
 }
+
+/** 文件级审查状态 */
+export type DiffReviewStatus = 'accepted' | 'rejected'

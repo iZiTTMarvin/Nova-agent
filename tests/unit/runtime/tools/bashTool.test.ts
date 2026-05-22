@@ -1,11 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { bashTool } from '../../../../src/runtime/tools/bashTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
+import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 
 const WORKSPACE = process.cwd()
+const checkpointSpy = vi.spyOn(CheckpointManager.prototype, 'recordBashChange')
 
 function createContext(): ToolContext {
   return { workingDir: WORKSPACE }
@@ -14,6 +16,10 @@ function createContext(): ToolContext {
 function shellEscapePath(filePath: string): string {
   return `'${filePath.replace(/'/g, `'\\''`)}'`
 }
+
+afterEach(() => {
+  checkpointSpy.mockClear()
+})
 
 describe('bashTool', () => {
   // ── 基础执行 ───────────────────────────────────────────
@@ -161,5 +167,37 @@ describe('bashTool', () => {
     )
     expect(result.success).toBe(true)
     expect(result.output).toContain('fast')
+  })
+
+  it('bash 改动文件时会把原始内容记录到 checkpoint', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-checkpoint-'))
+    const checkpointDir = join(tempDir, '.checkpoints')
+    const manager = new CheckpointManager({
+      checkpointDir,
+      sessionId: 'sess_1',
+      workspaceRoot: tempDir
+    })
+    manager.beginMessage('msg_1')
+
+    const filePath = join(tempDir, 'big.txt')
+    const originalContent = 'x'.repeat(120 * 1024)
+    await import('fs/promises').then(fs => fs.writeFile(filePath, originalContent, 'utf8'))
+
+    const mutateCommand = process.platform === 'win32'
+      ? `powershell -NoProfile -Command "(Get-Content -Raw '${filePath.replace(/'/g, "''")}') + 'tail' | Set-Content '${filePath.replace(/'/g, "''")}'"`
+      : `python - <<'PY'\nfrom pathlib import Path\npath = Path(${JSON.stringify(filePath)})\npath.write_text(path.read_text() + 'tail', encoding='utf-8')\nPY`
+
+    try {
+      const result = await bashTool.execute(
+        { command: mutateCommand },
+        { workingDir: tempDir, checkpointManager: manager }
+      )
+
+      expect(result.success).toBe(true)
+      expect(checkpointSpy).toHaveBeenCalledWith(filePath, originalContent, false)
+    } finally {
+      manager.endMessage()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
