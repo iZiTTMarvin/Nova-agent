@@ -96,8 +96,11 @@ interface AppState {
   isSubmittingPermission: boolean
   permissionError: string | null
 
-  /** 每条消息的 diff 数据缓存：messageId → DiffEntry[] */
-  messageDiffs: Record<string, DiffEntry[]>
+  /** 每条消息的 diff 数据缓存 */
+  messageDiffs: Record<string, {
+    diffs: DiffEntry[]
+    reviews: Record<string, 'accepted' | 'rejected'>
+  }>
   /** 正在加载 diff 的消息 ID 集合 */
   loadingDiffs: Set<string>
 
@@ -144,6 +147,9 @@ interface AppState {
 
   /** 按需加载某条消息的 diff 数据 */
   loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
+
+  /** 接受文件改动：标记为已审查 */
+  acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
 
   /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
   clearMessageDiffs: (messageId: string) => void
@@ -399,9 +405,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
 
     try {
-      const diffs: DiffEntry[] = await window.api.invoke('get-message-diffs', { sessionId, messageId })
+      const result = await window.api.invoke('get-message-diffs', { sessionId, messageId })
       set(state => ({
-        messageDiffs: { ...state.messageDiffs, [messageId]: diffs },
+        messageDiffs: { ...state.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews } },
         loadingDiffs: new Set([...state.loadingDiffs].filter(id => id !== messageId))
       }))
     } catch (err) {
@@ -409,6 +415,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       set(state => ({
         loadingDiffs: new Set([...state.loadingDiffs].filter(id => id !== messageId))
       }))
+    }
+  },
+
+  acceptFile: async (sessionId: string, messageId: string, filePath: string) => {
+    try {
+      await window.api.invoke('accept-file', { sessionId, messageId, filePath })
+      // 更新本地缓存中的审查状态
+      const cache = get().messageDiffs[messageId]
+      if (cache) {
+        set(state => ({
+          messageDiffs: {
+            ...state.messageDiffs,
+            [messageId]: {
+              ...cache,
+              reviews: { ...cache.reviews, [filePath]: 'accepted' as const }
+            }
+          }
+        }))
+      }
+    } catch (err) {
+      console.error('接受文件出错:', err)
     }
   },
 

@@ -213,6 +213,7 @@ export const ChatPanel: React.FC = () => {
   const loadingDiffs = useAppStore(state => state.loadingDiffs)
   const loadMessageDiffs = useAppStore(state => state.loadMessageDiffs)
   const rejectFile = useAppStore(state => state.rejectFile)
+  const acceptFile = useAppStore(state => state.acceptFile)
 
   // 处理消息回退操作
   const handleRollback = async (messageId: string) => {
@@ -394,13 +395,26 @@ export const ChatPanel: React.FC = () => {
                   </div>
                 )}
 
-                {/* diff 审查面板：仅 assistant 消息、生成完毕、有 diff 数据时展示 */}
-                {isAssistant && !isGenerating && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].length > 0 && (
+                {/* diff 审查面板：仅 assistant 消息、生成完毕时展示 */}
+                {isAssistant && !isGenerating && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
                   <DiffViewer
-                    diffs={messageDiffs[msg.id]}
+                    diffs={messageDiffs[msg.id].diffs}
+                    reviews={messageDiffs[msg.id].reviews}
                     sessionId={currentSessionId}
                     messageId={msg.id}
                     onRejectFile={(filePath) => rejectFile(currentSessionId, msg.id, filePath)}
+                    onAcceptFile={(filePath) => acceptFile(currentSessionId, msg.id, filePath)}
+                  />
+                )}
+
+                {/* diff 加载中 */}
+                {isAssistant && !isGenerating && currentSessionId && loadingDiffs.has(msg.id) && !messageDiffs[msg.id] && (
+                  <DiffViewer
+                    diffs={[]}
+                    reviews={{}}
+                    sessionId={currentSessionId}
+                    messageId={msg.id}
+                    isLoading={true}
                   />
                 )}
               </div>

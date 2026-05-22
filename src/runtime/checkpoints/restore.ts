@@ -65,11 +65,17 @@ export function rejectFile(
     }
     manifest.createdFiles = manifest.createdFiles.filter(f => f !== relFilePath)
   }
-  // 删除的文件：无法恢复（原始内容已不在工作区，需要从更早的备份恢复，
-  // 但当前 v1 不支持跨消息恢复删除的文件）
+  // 删除的文件：从备份恢复原始内容到工作区
   else if (manifest.deletedFiles.includes(relFilePath)) {
-    // 删除的文件拒绝暂不支持恢复，标记失败
-    return false
+    const backupPath = join(filesDir, relFilePath)
+    if (existsSync(backupPath)) {
+      const targetDir = dirname(absFilePath)
+      if (!existsSync(targetDir)) {
+        mkdirSync(targetDir, { recursive: true })
+      }
+      writeFileSync(absFilePath, readFileSync(backupPath), 'utf8')
+    }
+    manifest.deletedFiles = manifest.deletedFiles.filter(f => f !== relFilePath)
   }
   else {
     // 文件不在 manifest 中，无法拒绝
@@ -142,6 +148,20 @@ export function revertToMessage(
       const absPath = join(workspaceRoot, relPath)
       if (existsSync(absPath)) {
         unlinkSync(absPath)
+      }
+    }
+
+    // 恢复被删除的文件：从备份还原原始内容
+    for (const relPath of manifest.deletedFiles) {
+      const backupPath = join(filesDir, relPath)
+      const absPath = join(workspaceRoot, relPath)
+
+      if (existsSync(backupPath)) {
+        const targetDir = dirname(absPath)
+        if (!existsSync(targetDir)) {
+          mkdirSync(targetDir, { recursive: true })
+        }
+        writeFileSync(absPath, readFileSync(backupPath), 'utf8')
       }
     }
 

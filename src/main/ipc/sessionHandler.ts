@@ -23,7 +23,7 @@ import { setCurrentMode, setCurrentProjectPath } from '../index'
 import type { Session, SessionDetail, Message } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
-import { readManifest, getFilesDir } from '../../runtime/checkpoints/manifest'
+import { readManifest, writeManifest, getFilesDir } from '../../runtime/checkpoints/manifest'
 import { computeFileDiff } from '../../shared/diff/compute'
 import type { DiffEntry } from '../../shared/diff/types'
 import { existsSync, readFileSync } from 'fs'
@@ -128,16 +128,25 @@ export function registerSessionHandler(): void {
     }
   })
 
-  // 接受文件改动（当前版本为 no-op，后续 S10 diff UI 可扩展）
-  ipcMain.handle(ACCEPT_FILE, async () => {
-    // 当前版本暂不需要额外操作，文件已在工作区中
+  // 接受文件改动：标记为已审查
+  ipcMain.handle(ACCEPT_FILE, async (
+    _event,
+    params: { sessionId: string; messageId: string; filePath: string }
+  ): Promise<void> => {
+    const checkpointRoot = sessionStore.getSessionsDir()
+    const manifest = readManifest(checkpointRoot, params.sessionId, params.messageId)
+    if (!manifest) return
+
+    if (!manifest.fileReviews) manifest.fileReviews = {}
+    manifest.fileReviews[params.filePath] = 'accepted'
+    writeManifest(checkpointRoot, manifest)
   })
 
-  // 获取某条消息的所有文件 diff
+  // 获取某条消息的所有文件 diff（含审查状态）
   ipcMain.handle(GET_MESSAGE_DIFFS, async (
     _event,
     params: { sessionId: string; messageId: string }
-  ): Promise<DiffEntry[]> => {
+  ): Promise<{ diffs: DiffEntry[]; reviews: Record<string, 'accepted' | 'rejected'> }> => {
     const session = sessionStore.load(params.sessionId)
     if (!session) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
@@ -146,14 +155,14 @@ export function registerSessionHandler(): void {
     const checkpointRoot = sessionStore.getSessionsDir()
     const manifest = readManifest(checkpointRoot, params.sessionId, params.messageId)
     if (!manifest || manifest.status !== 'active') {
-      return []
+      return { diffs: [], reviews: {} }
     }
 
     const workspaceRoot = session.workspaceRoot
     const filesDir = getFilesDir(checkpointRoot, params.sessionId, params.messageId)
     const diffs: DiffEntry[] = []
 
-    // 处理修改过的文件：对比备份与当前工作区内容
+    // 修改过的文件：对比备份与当前工作区内容
     for (const relPath of manifest.modifiedFiles) {
       const backupPath = join(filesDir, relPath)
       const currentPath = join(workspaceRoot, relPath)
@@ -164,7 +173,7 @@ export function registerSessionHandler(): void {
       diffs.push(computeFileDiff(relPath, oldContent, newContent, 'modified'))
     }
 
-    // 处理新建的文件：无原始内容，全部为 added
+    // 新建的文件：无原始内容，全部为 added
     for (const relPath of manifest.createdFiles) {
       const currentPath = join(workspaceRoot, relPath)
       if (!existsSync(currentPath)) continue
@@ -172,7 +181,7 @@ export function registerSessionHandler(): void {
       diffs.push(computeFileDiff(relPath, '', newContent, 'added'))
     }
 
-    // 处理删除的文件：无新内容，全部为 removed
+    // 删除的文件：从备份读取原始内容
     for (const relPath of manifest.deletedFiles) {
       const backupPath = join(filesDir, relPath)
       if (!existsSync(backupPath)) continue
@@ -180,7 +189,10 @@ export function registerSessionHandler(): void {
       diffs.push(computeFileDiff(relPath, oldContent, '', 'deleted'))
     }
 
-    return diffs
+    return {
+      diffs,
+      reviews: manifest.fileReviews ?? {}
+    }
   })
 
   // 按文件拒绝：从 checkpoint 恢复该文件到原始内容
@@ -204,7 +216,15 @@ export function registerSessionHandler(): void {
     )
 
     if (!success) {
-      throw new Error('文件拒绝失败：该文件不在当前消息的 checkpoint 中，或属于删除的文件类型')
+      throw new Error('文件拒绝失败：该文件不在当前消息的 checkpoint 中')
+    }
+
+    // 标记文件审查状态为 rejected
+    const manifest = readManifest(checkpointRoot, params.sessionId, params.messageId)
+    if (manifest) {
+      if (!manifest.fileReviews) manifest.fileReviews = {}
+      manifest.fileReviews[params.filePath] = 'rejected'
+      writeManifest(checkpointRoot, manifest)
     }
   })
 

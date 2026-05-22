@@ -134,7 +134,8 @@ describe('rejectFile', () => {
     expect(result).toBe(false)
   })
 
-  it('拒绝删除的文件类型返回 false（当前版本不支持恢复删除）', () => {
+  it('拒绝删除的文件：从备份恢复原始内容', () => {
+    writeBackupFile('msg_1', 'src/deleted.ts', 'original deleted content')
     createManifest('msg_1', {
       deletedFiles: ['src/deleted.ts']
     })
@@ -143,7 +144,8 @@ describe('rejectFile', () => {
       checkpointRoot, workspaceRoot, sessionId, 'msg_1', 'src/deleted.ts'
     )
 
-    expect(result).toBe(false)
+    expect(result).toBe(true)
+    expect(readWorkspaceFile('src/deleted.ts')).toBe('original deleted content')
   })
 
   it('manifest 不存在时返回 false', () => {

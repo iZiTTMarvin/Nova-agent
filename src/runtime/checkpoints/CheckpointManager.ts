@@ -8,7 +8,7 @@
  * 4. 支持按消息开始/结束来管理事务边界
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs'
-import { join, relative } from 'path'
+import { join, relative, dirname } from 'path'
 import type { CheckpointConfig, CheckpointManifest } from './types'
 import { writeManifest, readManifest, getFilesDir } from './manifest'
 
@@ -151,5 +151,64 @@ export class CheckpointManager {
   endMessage(): void {
     this.currentMessageId = null
     this.backedUpFiles.clear()
+  }
+
+  /**
+   * 记录 bash 命令造成的文件变更
+   *
+   * 与 backupBeforeWrite 不同的是：此方法接收原始内容参数，
+   * 因为 bash 已经修改了工作区文件，无法再从磁盘读取原始内容。
+   *
+   * @param absoluteFilePath 文件绝对路径
+   * @param originalContent bash 执行前的文件内容
+   * @param isNewFile bash 是否新建了该文件
+   * @param isDeleted bash 是否删除了该文件
+   */
+  recordBashChange(
+    absoluteFilePath: string,
+    originalContent: string,
+    isNewFile: boolean,
+    isDeleted: boolean = false
+  ): void {
+    if (!this.currentMessageId) return
+
+    const relPath = relative(this.config.workspaceRoot, absoluteFilePath).replace(/\\/g, '/')
+
+    // 如果 write/edit 已经处理过该文件，跳过
+    if (this.backedUpFiles.has(relPath)) return
+    this.backedUpFiles.add(relPath)
+
+    const manifest = this.getOrCreateManifest()
+    const filesDir = getFilesDir(
+      this.config.checkpointDir,
+      this.config.sessionId,
+      this.currentMessageId
+    )
+
+    if (isDeleted) {
+      // 被删除的文件：将原始内容保存到备份，以便恢复
+      mkdirSync(filesDir, { recursive: true })
+      const backupPath = join(filesDir, relPath)
+      mkdirSync(dirname(backupPath), { recursive: true })
+      writeFileSync(backupPath, originalContent, 'utf8')
+      if (!manifest.deletedFiles.includes(relPath)) {
+        manifest.deletedFiles.push(relPath)
+      }
+    } else if (isNewFile) {
+      if (!manifest.createdFiles.includes(relPath)) {
+        manifest.createdFiles.push(relPath)
+      }
+    } else {
+      // 修改的文件：将原始内容保存到备份
+      mkdirSync(filesDir, { recursive: true })
+      const backupPath = join(filesDir, relPath)
+      mkdirSync(dirname(backupPath), { recursive: true })
+      writeFileSync(backupPath, originalContent, 'utf8')
+      if (!manifest.modifiedFiles.includes(relPath)) {
+        manifest.modifiedFiles.push(relPath)
+      }
+    }
+
+    writeManifest(this.config.checkpointDir, manifest)
   }
 }

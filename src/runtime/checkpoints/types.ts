@@ -16,6 +16,8 @@ export interface CheckpointManifest {
   deletedFiles: string[]
   status: 'active' | 'rolled-back'
   createdAt: number
+  /** 文件级审查状态，key 为相对路径 */
+  fileReviews?: Record<string, 'accepted' | 'rejected'>
 }
 
 /** CheckpointManager 的初始化配置 */

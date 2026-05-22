@@ -43,7 +43,10 @@ export interface IpcCommands {
   }
   'get-message-diffs': {
     params: { sessionId: string; messageId: string }
-    result: DiffEntry[]
+    result: {
+      diffs: DiffEntry[]
+      reviews: Record<string, 'accepted' | 'rejected'>
+    }
   }
   'reject-file': {
     params: { sessionId: string; messageId: string; filePath: string }

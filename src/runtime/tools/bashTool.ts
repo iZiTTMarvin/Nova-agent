@@ -6,6 +6,8 @@
 import { exec, execFile } from 'child_process'
 import type { ExecException } from 'child_process'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { snapshotWorkspace, snapshotMtimes, diffSnapshots } from '../checkpoints/snapshot'
+import { join } from 'path'
 
 /** 默认超时时间（毫秒），防止命令无限运行 */
 const DEFAULT_TIMEOUT = 30_000
@@ -42,6 +44,11 @@ export const bashTool: ToolExecutor = {
     }
 
     const timeoutMs = parseTimeout(args.timeout)
+
+    // bash 执行前：对工作区拍内容快照（用于对比 bash 造成的文件变更）
+    const beforeSnapshot = context.checkpointManager
+      ? snapshotWorkspace(context.workingDir)
+      : null
 
     return new Promise<ToolResult>((resolve) => {
       let stdoutBuffer = ''
@@ -81,6 +88,45 @@ export const bashTool: ToolExecutor = {
           windowsHide: true
         },
         (error: ExecException | null, stdout: string, stderr: string) => {
+          // bash 执行完毕后：对比快照，将变更记录到 checkpoint
+          if (beforeSnapshot && context.checkpointManager) {
+            try {
+              const afterMtimes = snapshotMtimes(context.workingDir)
+              const changes = diffSnapshots(beforeSnapshot, afterMtimes)
+              for (const relPath of changes.modified) {
+                const entry = beforeSnapshot.get(relPath)
+                if (entry) {
+                  context.checkpointManager.recordBashChange(
+                    join(context.workingDir, relPath),
+                    entry.content,
+                    false
+                  )
+                }
+              }
+              for (const relPath of changes.added) {
+                context.checkpointManager.recordBashChange(
+                  join(context.workingDir, relPath),
+                  '',
+                  true
+                )
+              }
+              for (const relPath of changes.deleted) {
+                const entry = beforeSnapshot.get(relPath)
+                if (entry) {
+                  context.checkpointManager.recordBashChange(
+                    join(context.workingDir, relPath),
+                    entry.content,
+                    false,
+                    true
+                  )
+                }
+              }
+            } catch (e) {
+              // 快照对比失败不影响命令结果返回
+              console.error('bash 快照对比失败:', e)
+            }
+          }
+
           const combinedOutput = combineOutput(
             stdoutBuffer || stdout || '',
             stderrBuffer || stderr || ''
