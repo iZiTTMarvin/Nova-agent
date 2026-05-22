@@ -23,23 +23,121 @@ export interface DiffViewerProps {
   onAcceptFile?: (filePath: string) => Promise<void>
 }
 
+type TokenType =
+  | 'plain'
+  | 'comment'
+  | 'string'
+  | 'number'
+  | 'keyword'
+  | 'operator'
+  | 'property'
+
+interface DiffToken {
+  text: string
+  type: TokenType
+}
+
+const KEYWORDS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while',
+  'switch', 'case', 'break', 'continue', 'class', 'interface', 'type', 'export',
+  'import', 'from', 'async', 'await', 'new', 'try', 'catch', 'finally', 'throw',
+  'extends', 'implements', 'public', 'private', 'protected', 'readonly', 'true',
+  'false', 'null', 'undefined'
+])
+
+function detectLanguage(filePath: string): 'code' | 'json' | 'markdown' | 'shell' | 'plain' {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith('.json')) return 'json'
+  if (lower.endsWith('.md')) return 'markdown'
+  if (lower.endsWith('.sh') || lower.endsWith('.bash') || lower.endsWith('.ps1')) return 'shell'
+  if (
+    lower.endsWith('.ts') || lower.endsWith('.tsx') || lower.endsWith('.js') ||
+    lower.endsWith('.jsx') || lower.endsWith('.css') || lower.endsWith('.html')
+  ) {
+    return 'code'
+  }
+  return 'plain'
+}
+
+function highlightLine(text: string, filePath: string): DiffToken[] {
+  const language = detectLanguage(filePath)
+  if (!text) return [{ text: '', type: 'plain' }]
+
+  if (language === 'markdown') {
+    if (/^\s*#{1,6}\s/.test(text)) return [{ text, type: 'keyword' }]
+    if (/^\s*[-*]\s/.test(text)) return [{ text, type: 'operator' }]
+    if (/^\s*>/.test(text)) return [{ text, type: 'comment' }]
+    return [{ text, type: 'plain' }]
+  }
+
+  if (language === 'shell') {
+    if (/^\s*#/.test(text)) return [{ text, type: 'comment' }]
+  }
+
+  const tokens: DiffToken[] = []
+  const pattern = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b|\/\/.*|\/\*.*?\*\/|[:=+\-*/<>!&|()[\]{}.,])/g
+  let lastIndex = 0
+
+  for (const match of text.matchAll(pattern)) {
+    const value = match[0]
+    const index = match.index ?? 0
+    if (index > lastIndex) {
+      tokens.push({ text: text.slice(lastIndex, index), type: 'plain' })
+    }
+
+    let type: TokenType = 'plain'
+    if (value.startsWith('//') || value.startsWith('/*') || (language === 'shell' && value.startsWith('#'))) {
+      type = 'comment'
+    } else if (
+      value.startsWith('"') || value.startsWith("'") || value.startsWith('`')
+    ) {
+      type = 'string'
+    } else if (/^\d/.test(value)) {
+      type = 'number'
+    } else if (KEYWORDS.has(value)) {
+      type = 'keyword'
+    } else if (/^[A-Za-z_]\w*$/.test(value) && language === 'json') {
+      type = 'property'
+    } else if (/^[:=+\-*/<>!&|()[\]{}.,]+$/.test(value)) {
+      type = 'operator'
+    }
+
+    tokens.push({ text: value, type })
+    lastIndex = index + value.length
+  }
+
+  if (lastIndex < text.length) {
+    tokens.push({ text: text.slice(lastIndex), type: 'plain' })
+  }
+
+  return tokens.length > 0 ? tokens : [{ text, type: 'plain' }]
+}
+
 /** 单行 diff 渲染 */
 const DiffLineView: React.FC<{
   prefix: string
   text: string
   realLineNo: number
-}> = ({ prefix, text, realLineNo }) => {
+  filePath: string
+}> = ({ prefix, text, realLineNo, filePath }) => {
   const type = prefix === '+' ? 'add' : prefix === '-' ? 'remove' : 'context'
+  const tokens = highlightLine(text, filePath)
+
   return (
     <div className={`diff-line diff-line--${type}`}>
       <span className="diff-line__no">{realLineNo || ''}</span>
-      <span className="diff-line__text">{prefix}{text}</span>
+      <span className="diff-line__text">
+        <span className="diff-line__prefix">{prefix}</span>
+        {tokens.map((token, idx) => (
+          <span key={idx} className={`diff-token diff-token--${token.type}`}>{token.text}</span>
+        ))}
+      </span>
     </div>
   )
 }
 
 /** 单个 hunk 的行渲染，使用真实的旧行/新行号 */
-const HunkView: React.FC<{ hunk: DiffHunk }> = ({ hunk }) => {
+const HunkView: React.FC<{ hunk: DiffHunk; filePath: string }> = ({ hunk, filePath }) => {
   const lines = hunk.content.split('\n')
   let oldLine = hunk.oldStart
   let newLine = hunk.newStart
@@ -68,7 +166,7 @@ const HunkView: React.FC<{ hunk: DiffHunk }> = ({ hunk }) => {
           }
 
           return (
-            <DiffLineView key={idx} prefix={prefix} text={text} realLineNo={lineNo} />
+            <DiffLineView key={idx} prefix={prefix} text={text} realLineNo={lineNo} filePath={filePath} />
           )
         })}
       </div>
@@ -144,7 +242,7 @@ const FileDiffPanel: React.FC<{
         {expanded && (
           <div className="diff-file__body">
             {entry.hunks.map((hunk, idx) => (
-              <HunkView key={idx} hunk={hunk} />
+              <HunkView key={idx} hunk={hunk} filePath={entry.filePath} />
             ))}
           </div>
         )}
@@ -186,7 +284,7 @@ const FileDiffPanel: React.FC<{
       {expanded && (
         <div className="diff-file__body">
           {entry.hunks.map((hunk, idx) => (
-            <HunkView key={idx} hunk={hunk} />
+            <HunkView key={idx} hunk={hunk} filePath={entry.filePath} />
           ))}
         </div>
       )}

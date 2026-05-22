@@ -395,8 +395,8 @@ export const ChatPanel: React.FC = () => {
                   </div>
                 )}
 
-                {/* diff 审查面板：仅 assistant 消息、生成完毕时展示 */}
-                {isAssistant && !isGenerating && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
+                {/* diff 审查面板：assistant 消息一旦产生变更就展示，不必等整条消息结束 */}
+                {isAssistant && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
                   <DiffViewer
                     diffs={messageDiffs[msg.id].diffs}
                     reviews={messageDiffs[msg.id].reviews}
@@ -408,7 +408,7 @@ export const ChatPanel: React.FC = () => {
                 )}
 
                 {/* diff 加载中 */}
-                {isAssistant && !isGenerating && currentSessionId && loadingDiffs.has(msg.id) && !messageDiffs[msg.id] && (
+                {isAssistant && currentSessionId && loadingDiffs.has(msg.id) && !messageDiffs[msg.id] && (
                   <DiffViewer
                     diffs={[]}
                     reviews={{}}

@@ -2,6 +2,7 @@
  * Agent 层事件和状态类型
  * EventBus 的结构化事件定义，对应 IPC 推送给 renderer 的事件
  */
+import type { DiffReviewStatus } from '../../shared/diff/types'
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
@@ -11,7 +12,12 @@ export type AgentEvent =
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string }
   | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string }
-  | { type: 'diff_update'; messageId: string; diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }> }
+  | {
+      type: 'diff_update'
+      messageId: string
+      diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }>
+      reviews: Record<string, DiffReviewStatus>
+    }
   | { type: 'verification_result'; messageId: string; result: string }
   | { type: 'error'; messageId: string; error: string }
   | { type: 'message_end'; messageId: string }

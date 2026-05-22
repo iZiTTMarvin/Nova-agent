@@ -284,6 +284,19 @@ describe('useAppStore Zustand Store', () => {
     })
   })
 
+  it('handleDiffUpdate 应实时写入当前消息的 diff 元数据', () => {
+    useAppStore.getState().handleDiffUpdate(
+      'msg_1',
+      [{ filePath: 'src/live.ts', status: 'modified' }],
+      {}
+    )
+
+    expect(useAppStore.getState().messageDiffs['msg_1']).toEqual({
+      diffs: [{ filePath: 'src/live.ts', status: 'modified', hunks: [] }],
+      reviews: {}
+    })
+  })
+
   it('acceptFile 应更新本地缓存中的审查状态', async () => {
     mockInvoke.mockResolvedValueOnce(undefined)
     useAppStore.setState({

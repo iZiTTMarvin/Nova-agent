@@ -130,6 +130,7 @@ export interface IpcEvents {
   'agent:diff-update': {
     messageId: string
     diffs: DiffEntry[]
+    reviews: Record<string, DiffReviewStatus>
   }
   'agent:verification-result': {
     messageId: string

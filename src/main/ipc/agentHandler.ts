@@ -18,6 +18,7 @@ import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
+import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
 import type { PermissionDecision } from '../../shared/session/types'
@@ -27,6 +28,8 @@ import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/typ
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
+let activeSessionStorePath: string | null = null
+let activeWorkspaceRoot: string | null = null
 
 /**
  * 流式内容累积器
@@ -64,6 +67,8 @@ export function registerAgentHandler(
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
     const projectPath = session.workspaceRoot
+    activeSessionStorePath = sessionStore.getSessionsDir()
+    activeWorkspaceRoot = projectPath
 
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus)
@@ -179,6 +184,7 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
           stream.toolCalls[targetIdx].result = event.result
         }
       }
+      emitLiveDiffUpdate(sessionId, event.messageId)
       break
     }
     case 'message_end': {
@@ -197,6 +203,31 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
       saveErrorMessage(sessionId, event.messageId, event.error)
       break
     }
+  }
+}
+
+function emitLiveDiffUpdate(sessionId: string, messageId: string): void {
+  if (!agentLoop || !activeSessionStorePath || !activeWorkspaceRoot) return
+
+  try {
+    const nextState = buildMessageDiffState(
+      activeSessionStorePath,
+      activeWorkspaceRoot,
+      sessionId,
+      messageId
+    )
+
+    agentLoop.getEventBus().emit({
+      type: 'diff_update',
+      messageId,
+      diffs: nextState.diffs.map(diff => ({
+        filePath: diff.filePath,
+        status: diff.status
+      })),
+      reviews: nextState.reviews
+    })
+  } catch (err) {
+    console.error('实时 diff 更新失败:', err)
   }
 }
 
@@ -267,7 +298,11 @@ function forwardEventToRenderer(
       })
       break
     case 'diff_update':
-      webContents.send('agent:diff-update', { messageId: event.messageId, diffs: event.diffs })
+      webContents.send('agent:diff-update', {
+        messageId: event.messageId,
+        diffs: event.diffs,
+        reviews: event.reviews
+      })
       break
     case 'verification_result':
       webContents.send('agent:verification-result', { messageId: event.messageId, result: event.result })

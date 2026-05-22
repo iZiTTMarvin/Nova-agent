@@ -19,21 +19,13 @@ import {
 } from '../../shared/ipc/channels'
 import { SessionStore } from '../../runtime/sessions/SessionStore'
 import { rejectFile, revertToMessage, listManifests } from '../../runtime/checkpoints/restore'
+import { buildMessageDiffState, type MessageDiffsState } from '../../runtime/checkpoints/diffState'
 import { setCurrentMode, setCurrentProjectPath } from '../index'
 import type { Session, SessionDetail, Message } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
-import { readManifest, writeManifest, getFilesDir } from '../../runtime/checkpoints/manifest'
-import { computeFileDiff } from '../../shared/diff/compute'
-import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
-import { existsSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
-
-interface MessageDiffsResponse {
-  diffs: DiffEntry[]
-  reviews: Record<string, DiffReviewStatus>
-}
 
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
@@ -153,63 +145,18 @@ export function registerSessionHandler(): void {
   ipcMain.handle(GET_MESSAGE_DIFFS, async (
     _event,
     params: { sessionId: string; messageId: string }
-  ): Promise<MessageDiffsResponse> => {
+  ): Promise<MessageDiffsState> => {
     const session = sessionStore.load(params.sessionId)
     if (!session) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
 
-    const checkpointRoot = sessionStore.getSessionsDir()
-    const manifest = readManifest(checkpointRoot, params.sessionId, params.messageId)
-    if (!manifest || manifest.status !== 'active') {
-      return { diffs: [], reviews: {} }
-    }
-
-    const workspaceRoot = session.workspaceRoot
-    const filesDir = getFilesDir(checkpointRoot, params.sessionId, params.messageId)
-    const diffs: DiffEntry[] = []
-
-    // 修改过的文件：对比备份与当前工作区内容
-    for (const relPath of manifest.modifiedFiles) {
-      const backupPath = join(filesDir, relPath)
-      const currentPath = join(workspaceRoot, relPath)
-
-      if (!existsSync(backupPath)) continue
-      const oldContent = readFileSync(backupPath, 'utf-8')
-      const newContent = existsSync(currentPath) ? readFileSync(currentPath, 'utf-8') : ''
-      diffs.push(computeFileDiff(relPath, oldContent, newContent, 'modified'))
-    }
-
-    // 新建的文件：无原始内容，全部为 added
-    for (const relPath of manifest.createdFiles) {
-      const currentPath = join(workspaceRoot, relPath)
-      if (!existsSync(currentPath)) continue
-      const newContent = readFileSync(currentPath, 'utf-8')
-      diffs.push(computeFileDiff(relPath, '', newContent, 'added'))
-    }
-
-    // 删除的文件：从备份读取原始内容
-    for (const relPath of manifest.deletedFiles) {
-      const backupPath = join(filesDir, relPath)
-      if (!existsSync(backupPath)) continue
-      const oldContent = readFileSync(backupPath, 'utf-8')
-      diffs.push(computeFileDiff(relPath, oldContent, '', 'deleted'))
-    }
-
-    const reviews = manifest.fileReviews ?? {}
-    const visiblePaths = new Set(diffs.map(diff => diff.filePath))
-    const filteredReviews: Record<string, DiffReviewStatus> = {}
-
-    for (const [filePath, status] of Object.entries(reviews)) {
-      if (visiblePaths.has(filePath) || status === 'rejected') {
-        filteredReviews[filePath] = status
-      }
-    }
-
-    return {
-      diffs,
-      reviews: filteredReviews
-    }
+    return buildMessageDiffState(
+      sessionStore.getSessionsDir(),
+      session.workspaceRoot,
+      params.sessionId,
+      params.messageId
+    )
   })
 
   // 按文件拒绝：从 checkpoint 恢复该文件到原始内容

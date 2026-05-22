@@ -178,6 +178,7 @@ interface AppState {
   handleTextDelta: (messageId: string, delta: string) => void
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
+  handleDiffUpdate: (messageId: string, diffs: Array<{ filePath: string; status: DiffEntry['status'] }>, reviews: Record<string, DiffReviewStatus>) => void
   handleMessageEnd: (messageId: string) => void
   handleError: (messageId: string, error: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
@@ -547,6 +548,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         return msg
       })
+    }))
+  },
+
+  handleDiffUpdate: (messageId: string, diffs, reviews) => {
+    const existing = get().messageDiffs[messageId]
+    const nextDiffs = diffs.map(diffMeta => {
+      const previous = existing?.diffs.find(diff => diff.filePath === diffMeta.filePath)
+      return previous ?? {
+        filePath: diffMeta.filePath,
+        status: diffMeta.status,
+        hunks: []
+      }
+    })
+
+    set(state => ({
+      messageDiffs: {
+        ...state.messageDiffs,
+        [messageId]: {
+          diffs: nextDiffs,
+          reviews
+        }
+      }
     }))
   },
 

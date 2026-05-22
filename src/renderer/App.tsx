@@ -20,6 +20,7 @@ function App(): JSX.Element {
   const handleTextDelta = useAppStore(state => state.handleTextDelta)
   const handleToolCall = useAppStore(state => state.handleToolCall)
   const handleToolResult = useAppStore(state => state.handleToolResult)
+  const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
   const handleMessageEnd = useAppStore(state => state.handleMessageEnd)
   const handleError = useAppStore(state => state.handleError)
   const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
@@ -62,6 +63,11 @@ function App(): JSX.Element {
       handlePermissionRequest(data)
     })
 
+    // 监听：Agent 执行中实时 diff 更新
+    const unsubDiffUpdate = window.api.on('agent:diff-update', (data) => {
+      handleDiffUpdate(data.messageId, data.diffs, data.reviews)
+    })
+
     // 监听：Agent 执行出错
     const unsubError = window.api.on('agent:error', (data) => {
       handleError(data.messageId, data.error)
@@ -80,6 +86,7 @@ function App(): JSX.Element {
       unsubToolCall()
       unsubToolResult()
       unsubPermissionRequest()
+      unsubDiffUpdate()
       unsubError()
       unsubMessageEnd()
     }
@@ -89,6 +96,7 @@ function App(): JSX.Element {
     handleTextDelta,
     handleToolCall,
     handleToolResult,
+    handleDiffUpdate,
     handlePermissionRequest,
     handleError,
     handleMessageEnd

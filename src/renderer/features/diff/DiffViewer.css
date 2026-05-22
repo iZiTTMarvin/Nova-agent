@@ -264,6 +264,40 @@
   min-width: 0;
 }
 
+.diff-line__prefix {
+  color: var(--text-muted);
+}
+
+.diff-token--plain {
+  color: inherit;
+}
+
+.diff-token--comment {
+  color: #667a63;
+  font-style: italic;
+}
+
+.diff-token--string {
+  color: #8f4e1f;
+}
+
+.diff-token--number {
+  color: #1f5d75;
+}
+
+.diff-token--keyword {
+  color: #7a2f54;
+  font-weight: 600;
+}
+
+.diff-token--operator {
+  color: #6f5c4b;
+}
+
+.diff-token--property {
+  color: #2f5f7a;
+}
+
 /* 新增行：柔和绿底色 */
 .diff-line--add {
   background-color: rgba(120, 140, 93, 0.1);
