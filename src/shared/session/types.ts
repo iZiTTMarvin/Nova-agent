@@ -14,6 +14,35 @@ export interface ToolCall {
   arguments: Record<string, unknown>
 }
 
+// ── 顺序消息块类型 (S13) ──────────────────────────────────
+
+/** 思考块 */
+export interface ThinkingBlock {
+  type: 'thinking'
+  content: string
+}
+
+/** 正文块 */
+export interface TextBlock {
+  type: 'text'
+  content: string
+}
+
+/** 工具调用块 */
+export interface ToolBlock {
+  type: 'tool'
+  toolCallId: string
+  toolName: string
+  arguments: Record<string, unknown>
+  status: 'running' | 'success' | 'error'
+  result?: string
+}
+
+/** 顺序消息块：按流式事件的到达顺序排列 */
+export type MessageBlock = ThinkingBlock | TextBlock | ToolBlock
+
+// ── 消息类型 ──────────────────────────────────────────────
+
 /** 单条消息 */
 export interface Message {
   id: string
@@ -21,6 +50,8 @@ export interface Message {
   role: MessageRole
   content: string
   toolCalls?: ToolCall[]
+  /** 顺序块数组 (S13)，按流式事件顺序排列的 thinking/text/tool 块 */
+  blocks?: MessageBlock[]
   timestamp: number
 }
 
