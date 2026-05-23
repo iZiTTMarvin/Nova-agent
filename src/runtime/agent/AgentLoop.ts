@@ -15,6 +15,7 @@ import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'
 import { EventBus } from './EventBus'
+import { getBaseDecision } from '../permissions/rules'
 import { randomUUID } from 'crypto'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
@@ -149,8 +150,9 @@ export class AgentLoop {
       while (toolRound < this.maxToolRounds) {
         if (this.cancelled) break
 
-        // 获取工具定义（如果有 registry）
-        const tools = this.toolRegistry?.getToolDefinitions()
+        // 获取工具定义（如果有 registry），按 mode 过滤被禁止的工具
+        const allTools = this.toolRegistry?.getToolDefinitions()
+        const tools = allTools?.filter(t => getBaseDecision(this.mode, t.name) !== 'deny')
 
         // 调用模型，获取流式响应
         const stream = this.modelClient.chat(this.context, tools)
@@ -172,7 +174,11 @@ export class AgentLoop {
               this.eventBus.emit({ type: 'text_delta', messageId, delta: event.delta })
               break
 
-            case 'tool_call':
+            case 'tool_call': {
+              // 被模式策略禁止的工具调用不发射事件、不展示工具卡
+              if (getBaseDecision(this.mode, event.toolCall.name) === 'deny') {
+                break
+              }
               toolCalls.push(event.toolCall)
               this.eventBus.emit({
                 type: 'tool_call',
@@ -182,6 +188,7 @@ export class AgentLoop {
                 args: JSON.parse(event.toolCall.arguments || '{}')
               })
               break
+            }
 
             case 'error':
               this.eventBus.emit({ type: 'error', messageId, error: event.error })
