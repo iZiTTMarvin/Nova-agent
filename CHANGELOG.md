@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-23
+
+- **feat**: S13 修复 Plan 工具暴露、思考泄露与顺序渲染
+  - 新增 `src/runtime/model/ThinkTagParser.ts`：四态流式状态机，从 delta.content 中剥离 `<think'>...</think'>` 标签，正确产出 thinking_delta 和 text_delta，状态跨 chunk 保持
+  - 修改 `src/runtime/model/OpenAICompatibleModelClient.ts`：delta.content 经过 ThinkTagParser 处理，流结束时冲刷缓冲区
+  - 修改 `src/runtime/agent/AgentLoop.ts`：Plan 模式下只向模型暴露只读工具 schema，被禁止的工具调用不发射 tool_call 事件
+  - 新增 `src/shared/session/types.ts` 中 ThinkingBlock/TextBlock/ToolBlock/MessageBlock 联合类型，Message 接口增加 blocks 字段
+  - 修改 `src/renderer/stores/useAppStore.ts`：流式事件按顺序维护 blocks 数组，旧消息兼容构造 blocks
+  - 修改 `src/renderer/features/chat/ChatPanel.tsx`：按 blocks 顺序渲染 thinking→text→tool→text，替代旧的分桶渲染
+  - 修改 `src/main/ipc/agentHandler.ts`：StreamAccumulator 累积 blocks 并持久化到 SessionMessage
+  - 新增 19 个单元测试（thinkTagParser 15 + toolFilter 4）
+
 ## 2026-05-21
 
 - **feat**: 实现 S9 SessionStore + 回退能力
