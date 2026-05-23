@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message } from '../../shared/session/types'
+import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message, MessageBlock } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 
@@ -25,6 +25,8 @@ export interface ExtendedMessage {
   timestamp: number
   isError?: boolean
   thinking?: string
+  /** 顺序块数组，按流式事件顺序排列的 thinking/text/tool 块 */
+  blocks?: MessageBlock[]
 }
 
 /** 等待用户决策的权限请求 */
@@ -55,19 +57,41 @@ function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMe
     const payload = message as SessionMessagePayload
     const results = payload._toolCallResults ?? {}
 
-    return {
-      ...message,
-      toolCalls: message.toolCalls?.map((toolCall) => {
-        const result = results[toolCall.id]
-        return {
-          id: toolCall.id,
-          name: toolCall.name,
-          arguments: toolCall.arguments,
-          status: getToolCallStatus(result),
-          result
-        }
-      })
+    const toolCalls = message.toolCalls?.map((toolCall) => {
+      const result = results[toolCall.id]
+      return {
+        id: toolCall.id,
+        name: toolCall.name,
+        arguments: toolCall.arguments,
+        status: getToolCallStatus(result),
+        result
+      }
+    })
+
+    // 如果消息已有 blocks（从持久化加载），直接使用
+    if (message.blocks && message.blocks.length > 0) {
+      return { ...message, toolCalls }
     }
+
+    // 旧消息无 blocks：从 content 和 toolCalls 构造
+    const blocks: MessageBlock[] = []
+    if (message.content) {
+      blocks.push({ type: 'text', content: message.content })
+    }
+    if (toolCalls) {
+      for (const tc of toolCalls) {
+        blocks.push({
+          type: 'tool',
+          toolCallId: tc.id,
+          toolName: tc.name,
+          arguments: tc.arguments,
+          status: tc.status,
+          result: tc.result
+        })
+      }
+    }
+
+    return { ...message, toolCalls, blocks }
   })
 }
 
@@ -483,7 +507,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       content: '',
       toolCalls: [],
       timestamp: Date.now(),
-      thinking: ''
+      thinking: '',
+      blocks: []
     }
 
     set(state => ({
@@ -494,22 +519,37 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   handleThinkingDelta: (messageId: string, delta: string) => {
     set(state => ({
-      messages: state.messages.map(msg => 
-        msg.id === messageId ? { ...msg, thinking: (msg.thinking ?? '') + delta } : msg
-      )
+      messages: state.messages.map(msg => {
+        if (msg.id !== messageId) return msg
+        const blocks = msg.blocks ? [...msg.blocks] : []
+        const last = blocks[blocks.length - 1]
+        if (last && last.type === 'thinking') {
+          blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+        } else {
+          blocks.push({ type: 'thinking', content: delta })
+        }
+        return { ...msg, thinking: (msg.thinking ?? '') + delta, blocks }
+      })
     }))
   },
 
   handleTextDelta: (messageId: string, delta: string) => {
     set(state => ({
-      messages: state.messages.map(msg => 
-        msg.id === messageId ? { ...msg, content: msg.content + delta } : msg
-      )
+      messages: state.messages.map(msg => {
+        if (msg.id !== messageId) return msg
+        const blocks = msg.blocks ? [...msg.blocks] : []
+        const last = blocks[blocks.length - 1]
+        if (last && last.type === 'text') {
+          blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+        } else {
+          blocks.push({ type: 'text', content: delta })
+        }
+        return { ...msg, content: msg.content + delta, blocks }
+      })
     }))
   },
 
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
-    // 插入一个新的 ExtendedToolCall，状态为 'running'
     const newToolCall: ExtendedToolCall = {
       id: toolCallId,
       name: toolName,
@@ -519,34 +559,45 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set(state => ({
       messages: state.messages.map(msg => {
-        if (msg.id === messageId) {
-          const toolCalls = msg.toolCalls ? [...msg.toolCalls, newToolCall] : [newToolCall]
-          return { ...msg, toolCalls }
-        }
-        return msg
+        if (msg.id !== messageId) return msg
+        const blocks = msg.blocks ? [...msg.blocks] : []
+        blocks.push({
+          type: 'tool',
+          toolCallId,
+          toolName,
+          arguments: args,
+          status: 'running'
+        })
+        const toolCalls = msg.toolCalls ? [...msg.toolCalls, newToolCall] : [newToolCall]
+        return { ...msg, toolCalls, blocks }
       })
     }))
   },
 
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => {
-    // 通过 toolCallId 精确匹配工具调用记录，更新其执行结果与状态
+    const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
+
     set(state => ({
       messages: state.messages.map(msg => {
-        if (msg.id === messageId && msg.toolCalls) {
-          const toolCalls = msg.toolCalls.map(tc => {
-            if (tc.id === toolCallId) {
-              const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
-              return {
-                ...tc,
-                result,
-                status: isError ? ('error' as const) : ('success' as const)
-              }
-            }
-            return tc
-          })
-          return { ...msg, toolCalls }
-        }
-        return msg
+        if (msg.id !== messageId) return msg
+
+        // 更新 blocks 中的 tool 块
+        const blocks = msg.blocks?.map(b => {
+          if (b.type === 'tool' && b.toolCallId === toolCallId) {
+            return { ...b, status: isError ? 'error' as const : 'success' as const, result }
+          }
+          return b
+        })
+
+        // 同步更新 toolCalls 数组（给 diff 功能用）
+        const toolCalls = msg.toolCalls?.map(tc => {
+          if (tc.id === toolCallId) {
+            return { ...tc, result, status: isError ? 'error' as const : 'success' as const }
+          }
+          return tc
+        })
+
+        return { ...msg, blocks, toolCalls }
       })
     }))
   },
