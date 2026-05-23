@@ -14,6 +14,7 @@ import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'
+import { isToolVisibleInMode } from '../../shared/session/toolVisibility'
 import { EventBus } from './EventBus'
 import { getBaseDecision } from '../permissions/rules'
 import { randomUUID } from 'crypto'
@@ -62,7 +63,7 @@ export class AgentLoop {
     this.modelClient = modelClient
     this.eventBus = eventBus
     this.config = {
-      systemPrompt: config?.systemPrompt ?? '你是一个编程助手。',
+      systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       maxToolRounds: config?.maxToolRounds ?? 20
     }
     this.maxToolRounds = this.config.maxToolRounds ?? 20
@@ -152,13 +153,14 @@ export class AgentLoop {
 
         // 获取工具定义（如果有 registry），按 mode 过滤被禁止的工具
         const allTools = this.toolRegistry?.getToolDefinitions()
-        const tools = allTools?.filter(t => getBaseDecision(this.mode, t.name) !== 'deny')
+        const tools = allTools?.filter(t => isToolVisibleInMode(this.mode, t.name))
 
         // 调用模型，获取流式响应
         const stream = this.modelClient.chat(this.context, tools)
 
         let assistantContent = ''
         const toolCalls: ChatToolCall[] = []
+        const hiddenToolCallIds = new Set<string>()
         let finishReason = ''
 
         for await (const event of stream) {
@@ -175,11 +177,15 @@ export class AgentLoop {
               break
 
             case 'tool_call': {
-              // 被模式策略禁止的工具调用不发射事件、不展示工具卡
-              if (getBaseDecision(this.mode, event.toolCall.name) === 'deny') {
+              const hiddenByMode = !isToolVisibleInMode(this.mode, event.toolCall.name)
+              toolCalls.push(event.toolCall)
+
+              // 模式策略禁止的工具调用仍要回传模型结果，但不进入 UI 事件流
+              if (hiddenByMode) {
+                hiddenToolCallIds.add(event.toolCall.id)
                 break
               }
-              toolCalls.push(event.toolCall)
+
               this.eventBus.emit({
                 type: 'tool_call',
                 messageId,
@@ -225,6 +231,7 @@ export class AgentLoop {
 
           const args = this.parseArgs(tc.arguments)
           let result: string
+          const hiddenByMode = hiddenToolCallIds.has(tc.id)
 
           // 权限检查（S7：用 PermissionManager 替代原来的硬编码 plan 检查）
           const permissionResult = await this.checkPermission(tc.name, args, messageId)
@@ -244,13 +251,15 @@ export class AgentLoop {
             result = `工具 "${tc.name}" 不可用：未注册工具`
           }
 
-          this.eventBus.emit({
-            type: 'tool_result',
-            messageId,
-            toolCallId: tc.id,
-            toolName: tc.name,
-            result
-          })
+          if (!hiddenByMode) {
+            this.eventBus.emit({
+              type: 'tool_result',
+              messageId,
+              toolCallId: tc.id,
+              toolName: tc.name,
+              result
+            })
+          }
 
           this.context.push({
             role: 'tool',

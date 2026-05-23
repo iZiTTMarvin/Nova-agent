@@ -11,3 +11,10 @@ export {
   type ToolBlock,
   type MessageBlock
 } from './types'
+
+export {
+  getToolCapability,
+  isToolVisibleInMode,
+  isModeHiddenWriteTool,
+  type ToolCapability
+} from './toolVisibility'

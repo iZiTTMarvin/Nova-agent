@@ -52,10 +52,16 @@ function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
     : 'success'
 }
 
+/** 旧会话兼容路径：正文只保留用户可见文本，不把历史 think 标签重新展示出来 */
+function stripLegacyThinkingTags(content: string): string {
+  return content.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '')
+}
+
 function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMessage[] {
   return messages.map((message) => {
     const payload = message as SessionMessagePayload
     const results = payload._toolCallResults ?? {}
+    const sanitizedContent = stripLegacyThinkingTags(message.content)
 
     const toolCalls = message.toolCalls?.map((toolCall) => {
       const result = results[toolCall.id]
@@ -70,13 +76,13 @@ function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMe
 
     // 如果消息已有 blocks（从持久化加载），直接使用
     if (message.blocks && message.blocks.length > 0) {
-      return { ...message, toolCalls }
+      return { ...message, content: sanitizedContent, toolCalls }
     }
 
     // 旧消息无 blocks：从 content 和 toolCalls 构造
     const blocks: MessageBlock[] = []
-    if (message.content) {
-      blocks.push({ type: 'text', content: message.content })
+    if (sanitizedContent) {
+      blocks.push({ type: 'text', content: sanitizedContent })
     }
     if (toolCalls) {
       for (const tc of toolCalls) {
@@ -91,7 +97,7 @@ function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMe
       }
     }
 
-    return { ...message, toolCalls, blocks }
+    return { ...message, content: sanitizedContent, toolCalls, blocks }
   })
 }
 

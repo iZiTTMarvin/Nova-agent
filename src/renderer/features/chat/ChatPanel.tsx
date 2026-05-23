@@ -15,6 +15,7 @@ import {
 import { ThinkingBlock } from './ThinkingBlock'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { DiffViewer } from '../diff/DiffViewer'
+import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock } from './renderingPolicy'
 import './ChatPanel.css'
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
@@ -76,6 +77,7 @@ interface ToolBoxProps {
 
 const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
   const [isOpen, setIsOpen] = useState(false)
+  const shouldHideArguments = isPermissionDeniedResult(result)
 
   // 映射工具的中文名和主要职责
   const getToolDisplayName = (toolName: string) => {
@@ -141,12 +143,14 @@ const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
       
       {isOpen && (
         <div className="tool-box__body">
-          <div className="tool-box__section">
-            <div className="tool-box__sec-title">入参 (Arguments)</div>
-            <pre className="tool-box__content">
-              {JSON.stringify(args, null, 2)}
-            </pre>
-          </div>
+          {!shouldHideArguments && (
+            <div className="tool-box__section">
+              <div className="tool-box__sec-title">入参 (Arguments)</div>
+              <pre className="tool-box__content">
+                {JSON.stringify(args, null, 2)}
+              </pre>
+            </div>
+          )}
           
           {result && (
             <div className="tool-box__section">
@@ -207,6 +211,7 @@ export const ChatPanel: React.FC = () => {
   const currentSessionId = useAppStore(state => state.currentSessionId)
   const rollbackMessage = useAppStore(state => state.rollbackMessage)
   const currentGeneratingMessageId = useAppStore(state => state.currentGeneratingMessageId)
+  const currentMode = useAppStore(state => state.currentMode)
 
   // diff 审查所需状态
   const messageDiffs = useAppStore(state => state.messageDiffs)
@@ -382,10 +387,25 @@ export const ChatPanel: React.FC = () => {
                   msg.blocks!.map((block, idx) => {
                     switch (block.type) {
                       case 'thinking':
-                        return <ThinkingBlock key={idx} thinking={block.content} active={isGenerating && msg.id === currentGeneratingMessageId} />
+                        return (
+                          <ThinkingBlock
+                            key={idx}
+                            thinking={block.content}
+                            active={isActiveThinkingBlock(
+                              msg.blocks!,
+                              idx,
+                              isGenerating,
+                              msg.id,
+                              currentGeneratingMessageId
+                            )}
+                          />
+                        )
                       case 'text':
                         return block.content ? <MarkdownRenderer key={idx} content={block.content} /> : null
                       case 'tool':
+                        if (!shouldRenderToolBlock(currentMode, block.toolName)) {
+                          return null
+                        }
                         return <ToolBox key={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} />
                     }
                   })
@@ -399,7 +419,9 @@ export const ChatPanel: React.FC = () => {
                     {msg.toolCalls && msg.toolCalls.length > 0 && (
                       <div style={{ marginTop: '12px' }}>
                         {msg.toolCalls.map(tc => (
-                          <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
+                          shouldRenderToolBlock(currentMode, tc.name)
+                            ? <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
+                            : null
                         ))}
                       </div>
                     )}

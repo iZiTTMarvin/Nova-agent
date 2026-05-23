@@ -209,6 +209,73 @@ describe('useAppStore Zustand Store', () => {
     expect(message.toolCalls?.[0].status).toBe('error')
   })
 
+  it('加载带 blocks 的历史会话时应保留顺序块结构', async () => {
+    mockInvoke
+      .mockResolvedValueOnce({
+        id: 'sess_blocks',
+        workspaceRoot: '/project/root',
+        mode: 'plan',
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 1,
+        messages: [
+          {
+            id: 'msg_blocks_1',
+            sessionId: 'sess_blocks',
+            role: 'assistant',
+            content: '规划结论',
+            timestamp: 3,
+            blocks: [
+              { type: 'thinking', content: '先看目录' },
+              { type: 'text', content: '规划结论' }
+            ]
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        diffs: [],
+        reviews: {}
+      })
+
+    await useAppStore.getState().selectSession('sess_blocks')
+
+    expect(useAppStore.getState().messages[0].blocks).toEqual([
+      { type: 'thinking', content: '先看目录' },
+      { type: 'text', content: '规划结论' }
+    ])
+  })
+
+  it('旧消息无 blocks 时应去掉历史 think 标签，只保留正文', async () => {
+    mockInvoke
+      .mockResolvedValueOnce({
+        id: 'sess_legacy',
+        workspaceRoot: '/project/root',
+        mode: 'default',
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 1,
+        messages: [
+          {
+            id: 'msg_legacy_1',
+            sessionId: 'sess_legacy',
+            role: 'assistant',
+            content: '<think>先分析</think>真正正文',
+            timestamp: 3
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        diffs: [],
+        reviews: {}
+      })
+
+    await useAppStore.getState().selectSession('sess_legacy')
+
+    const message = useAppStore.getState().messages[0]
+    expect(message.content).toBe('真正正文')
+    expect(message.blocks).toEqual([{ type: 'text', content: '真正正文' }])
+  })
+
   it('回退后重新加载会话时应复用同一套工具结果恢复逻辑', async () => {
     mockInvoke
       .mockResolvedValueOnce(undefined)

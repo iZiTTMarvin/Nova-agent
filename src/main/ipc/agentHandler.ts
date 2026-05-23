@@ -22,10 +22,10 @@ import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
 import type { PermissionDecision } from '../../shared/session/types'
-import { getCurrentMode } from '../index'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
+import { getSystemPromptForMode } from '../../runtime/agent/modePrompt'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -73,7 +73,9 @@ export function registerAgentHandler(
     activeWorkspaceRoot = projectPath
 
     const eventBus = new EventBus()
-    agentLoop = new AgentLoop(modelClient, eventBus)
+    agentLoop = new AgentLoop(modelClient, eventBus, {
+      systemPrompt: getSystemPromptForMode(session.mode)
+    })
 
     // 1. 设置 Agent 工作区边界（使用会话的工作区目录）
     agentLoop.setWorkingDir(projectPath)
@@ -94,7 +96,7 @@ export function registerAgentHandler(
     agentLoop.setPermissionManager(permissionManager)
 
     // 4. 同步当前运行模式
-    agentLoop.setMode(getCurrentMode())
+    agentLoop.setMode(session.mode)
 
     // 5. 注入 CheckpointManager（S9：支持会话回退和文件拒绝，路径与会话工作区一致）
     const checkpointManager = new CheckpointManager({

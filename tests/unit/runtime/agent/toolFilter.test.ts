@@ -113,17 +113,29 @@ describe('AgentLoop 工具过滤 (T13-B)', () => {
     const events: any[] = []
     const eventBus = new EventBus()
     eventBus.on(e => events.push(e))
+    const seenToolResultsByModel: string[] = []
 
     // 模型返回一个 write 工具调用
     const client: ModelClient = {
-      async *chat(): AsyncIterable<ChatEvent> {
-        yield { type: 'message_start' }
-        yield { type: 'text_delta', delta: 'thinking...' }
-        yield {
-          type: 'tool_call',
-          toolCall: { id: 'tc_1', name: 'write', arguments: '{}' }
+      async *chat(messages: unknown): AsyncIterable<ChatEvent> {
+        const chatMessages = messages as Array<{ role: string; content: string; toolCallId?: string }>
+        const lastToolMessage = [...chatMessages].reverse().find(msg => msg.role === 'tool')
+
+        if (!lastToolMessage) {
+          yield { type: 'message_start' }
+          yield { type: 'text_delta', delta: 'thinking...' }
+          yield {
+            type: 'tool_call',
+            toolCall: { id: 'tc_1', name: 'write', arguments: '{}' }
+          }
+          yield { type: 'message_end', finishReason: 'tool_calls' }
+          return
         }
-        yield { type: 'message_end', finishReason: 'tool_calls' }
+
+        seenToolResultsByModel.push(lastToolMessage.content)
+        yield { type: 'message_start' }
+        yield { type: 'text_delta', delta: '继续规划' }
+        yield { type: 'message_end', finishReason: 'stop' }
       },
       updateConfig() {}
     } as unknown as ModelClient
@@ -141,6 +153,11 @@ describe('AgentLoop 工具过滤 (T13-B)', () => {
     await loop.sendMessage('test')
 
     const toolCallEvents = events.filter(e => e.type === 'tool_call')
+    const toolResultEvents = events.filter(e => e.type === 'tool_result')
     expect(toolCallEvents).toHaveLength(0)
+    expect(toolResultEvents).toHaveLength(0)
+    expect(seenToolResultsByModel).toEqual([
+      expect.stringContaining('当前为 plan 模式')
+    ])
   })
 })

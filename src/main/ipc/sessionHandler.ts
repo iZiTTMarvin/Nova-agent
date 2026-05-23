@@ -26,36 +26,14 @@ import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
+import { toSharedMessage } from './sessionMessageMapper'
 
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
 
 /** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果 */
 function toMessage(msg: SessionMessage): Message & { _toolCallResults?: Record<string, string> } {
-  // 工具调用结果以额外字段传递，前端从 _toolCallResults 中按 id 取回
-  const toolCallResults: Record<string, string> = {}
-  if (msg.toolCalls) {
-    for (const tc of msg.toolCalls) {
-      if (tc.result !== undefined) {
-        toolCallResults[tc.id] = tc.result
-      }
-    }
-  }
-
-  return {
-    id: msg.id,
-    sessionId: '', // 将在外层填充
-    role: msg.role,
-    content: msg.content,
-    toolCalls: msg.toolCalls?.map(tc => ({
-      id: tc.id,
-      name: tc.name,
-      arguments: tc.arguments ? JSON.parse(tc.arguments) : {}
-    })),
-    timestamp: msg.timestamp,
-    // 非标准字段，前端用此恢复工具调用结果
-    _toolCallResults: Object.keys(toolCallResults).length > 0 ? toolCallResults : undefined
-  }
+  return toSharedMessage(msg)
 }
 
 /** 将持久化 SessionData 转换为共享 Session 摘要格式 */

@@ -11,28 +11,8 @@
  * *auto 模式下危险命令（sudo、rm -rf、curl|sh 等）强制 deny
  */
 import type { Mode, PermissionDecision } from '../../shared/session/types'
+import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { RiskLevel } from './types'
-
-/** 工具分类，不同分类有不同权限策略 */
-type ToolCategory = 'readonly' | 'write' | 'bash'
-
-/** 根据工具名判断所属分类 */
-function getToolCategory(toolName: string): ToolCategory {
-  switch (toolName) {
-    case 'ls':
-    case 'read':
-    case 'grep':
-    case 'find':
-      return 'readonly'
-    case 'edit':
-    case 'write':
-      return 'write'
-    case 'bash':
-      return 'bash'
-    default:
-      return 'bash' // 未知工具按最严格处理
-  }
-}
 
 /**
  * 危险命令黑名单模式
@@ -85,7 +65,8 @@ export function assessCommandRisk(command: string): {
  * 用于非 bash 工具的快速查询
  */
 export function getBaseDecision(mode: Mode, toolName: string): PermissionDecision {
-  const category = getToolCategory(toolName)
+  const capability = getToolCapability(toolName)
+  const category = capability === 'unknown' ? 'bash' : capability
 
   // plan 模式：只读工具 allow，其余全部 deny
   if (mode === 'plan') {
@@ -105,7 +86,8 @@ export function getBaseDecision(mode: Mode, toolName: string): PermissionDecisio
  * 获取工具在当前模式下的风险等级描述
  */
 export function getRiskDescription(toolName: string, riskLevel: RiskLevel): string {
-  const category = getToolCategory(toolName)
+  const capability = getToolCapability(toolName)
+  const category = capability === 'unknown' ? 'bash' : capability
   if (category === 'readonly') return '只读操作'
   if (category === 'write') return '文件修改操作'
   if (riskLevel === 'high') return '高危命令执行'

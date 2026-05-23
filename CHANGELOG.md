@@ -2,6 +2,13 @@
 
 ## 2026-05-23
 
+- **fix**: 收口 S13 的历史恢复、Plan 提示词与思考计时问题
+  - 新增 `src/main/ipc/sessionMessageMapper.ts`：统一恢复持久化消息，历史会话重新加载时保留 `blocks`，并安全解析工具参数
+  - 新增 `src/runtime/agent/modePrompt.ts`：按 mode 注入系统提示词，Plan 模式明确为只读规划模式，不再把完整实现正文当作写入替代
+  - 修改 `src/runtime/agent/AgentLoop.ts`：隐藏工具调用继续回传拒绝结果给模型，但不进入 UI 事件流，避免空白或半截回复
+  - 修改 `src/renderer/features/chat/ChatPanel.tsx` 与 `renderingPolicy.ts`：只有最后一个思考块继续计时，Plan 模式不渲染被策略禁止的写入工具卡，权限拒绝时隐藏 Arguments
+  - 修改 `src/renderer/stores/useAppStore.ts`：旧会话兼容恢复时清理历史 `<think>` 标签，正文不再混入思考内容
+
 - **feat**: S13 修复 Plan 工具暴露、思考泄露与顺序渲染
   - 新增 `src/runtime/model/ThinkTagParser.ts`：四态流式状态机，从 delta.content 中剥离 `<think'>...</think'>` 标签，正确产出 thinking_delta 和 text_delta，状态跨 chunk 保持
   - 修改 `src/runtime/model/OpenAICompatibleModelClient.ts`：delta.content 经过 ThinkTagParser 处理，流结束时冲刷缓冲区
