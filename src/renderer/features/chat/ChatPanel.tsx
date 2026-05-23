@@ -220,6 +220,10 @@ export const ChatPanel: React.FC = () => {
   const rejectFile = useAppStore(state => state.rejectFile)
   const acceptFile = useAppStore(state => state.acceptFile)
 
+  // 验证权限确认
+  const pendingVerificationRequest = useAppStore(state => state.pendingVerificationRequest)
+  const respondVerificationPermission = useAppStore(state => state.respondVerificationPermission)
+
   // 处理消息回退操作
   const handleRollback = async (messageId: string) => {
     if (!currentSessionId) return
@@ -450,10 +454,39 @@ export const ChatPanel: React.FC = () => {
                     isLoading={true}
                   />
                 )}
+
+                {/* 验证结果摘要 */}
+                {isAssistant && msg.verificationSummary && (
+                  <div className={`verification-summary ${msg.verificationSummary.startsWith('✗') ? 'verification-summary--failed' : 'verification-summary--passed'}`}>
+                    <pre className="verification-summary__content">{msg.verificationSummary}</pre>
+                  </div>
+                )}
               </div>
             </div>
           )
         })}
+        {/* 验证权限确认：用户决定是否允许执行验证命令 */}
+        {pendingVerificationRequest && (
+          <div className="verification-permission">
+            <div className="verification-permission__text">
+              Agent 请求运行验证命令：<code>{pendingVerificationRequest.command}</code>
+            </div>
+            <div className="verification-permission__actions">
+              <button
+                className="verification-permission__btn verification-permission__btn--deny"
+                onClick={() => respondVerificationPermission(false)}
+              >
+                跳过
+              </button>
+              <button
+                className="verification-permission__btn verification-permission__btn--allow"
+                onClick={() => respondVerificationPermission(true)}
+              >
+                允许执行
+              </button>
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 

@@ -52,6 +52,8 @@ export interface Message {
   toolCalls?: ToolCall[]
   /** 顺序块数组 (S13)，按流式事件顺序排列的 thinking/text/tool 块 */
   blocks?: MessageBlock[]
+  /** 验证结果摘要 (S14)，修改后自动验证的结果 */
+  verificationSummary?: string
   timestamp: number
 }
 

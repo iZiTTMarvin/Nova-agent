@@ -39,6 +39,8 @@ export interface SessionMessage {
   blocks?: MessageBlock[]
   /** 工具消息关联的 toolCallId */
   toolCallId?: string
+  /** 验证结果摘要（修改后自动验证的结果） */
+  verificationSummary?: string
   timestamp: number
 }
 

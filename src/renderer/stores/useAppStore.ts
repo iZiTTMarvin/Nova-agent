@@ -27,6 +27,8 @@ export interface ExtendedMessage {
   thinking?: string
   /** 顺序块数组，按流式事件顺序排列的 thinking/text/tool 块 */
   blocks?: MessageBlock[]
+  /** 验证结果摘要（修改后自动验证的结果） */
+  verificationSummary?: string
 }
 
 /** 等待用户决策的权限请求 */
@@ -145,6 +147,8 @@ interface AppState {
   pendingPermissionRequest: PendingPermissionRequest | null
   isSubmittingPermission: boolean
   permissionError: string | null
+  /** 验证权限请求（用户确认是否执行验证命令） */
+  pendingVerificationRequest: { requestId: string; command: string } | null
 
   /** 每条消息的 diff 数据缓存 */
   messageDiffs: Record<string, MessageDiffCache>
@@ -211,8 +215,15 @@ interface AppState {
   handleDiffUpdate: (messageId: string, diffs: Array<{ filePath: string; status: DiffEntry['status'] }>, reviews: Record<string, DiffReviewStatus>) => void
   handleMessageEnd: (messageId: string) => void
   handleError: (messageId: string, error: string) => void
+  handleVerificationResult: (messageId: string, result: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
   respondPermissionRequest: (decision: PermissionDecision) => Promise<void>
+  /** 收到验证权限请求 */
+  handleVerificationPermissionRequest: (request: { requestId: string; command: string }) => void
+  /** 清除验证权限请求（用户回应、超时或取消后） */
+  clearVerificationPermissionRequest: (requestId: string) => void
+  /** 用户回应验证权限请求 */
+  respondVerificationPermission: (granted: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -228,6 +239,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingPermissionRequest: null,
   isSubmittingPermission: false,
   permissionError: null,
+  pendingVerificationRequest: null,
   messageDiffs: {},
   loadingDiffs: new Set(),
 
@@ -246,7 +258,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           currentSessionId: sessionDetail.id,
           currentMode: sessionDetail.mode,
           sessions: upsertSessionSummary(state.sessions, sessionDetail),
-          messages: restoreSessionMessages(sessionDetail.messages)
+          messages: restoreSessionMessages(sessionDetail.messages),
+          pendingVerificationRequest: null
         }))
       }
     } catch (err) {
@@ -312,6 +325,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         isGenerating: false,
         currentGeneratingMessageId: null,
         pendingPermissionRequest: null,
+        pendingVerificationRequest: null,
         isSubmittingPermission: false,
         permissionError: null
       })
@@ -367,7 +381,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           set({
             currentSessionId: null,
             currentProject: null,
-            messages: []
+            messages: [],
+            pendingVerificationRequest: null
           })
         }
       }
@@ -387,7 +402,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       set(state => ({
         currentSessionId: sessionDetail.id,
         sessions: upsertSessionSummary(state.sessions, sessionDetail),
-        messages: restoreSessionMessages(sessionDetail.messages)
+        messages: restoreSessionMessages(sessionDetail.messages),
+        pendingVerificationRequest: null
       }))
     } catch (err) {
       console.error('创建新会话失败:', err)
@@ -404,7 +420,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         currentMode: detail.mode,
         sessions: upsertSessionSummary(get().sessions, detail),
         messages: restored,
-        messageDiffs: {} // 切换会话时清空 diff 缓存
+        messageDiffs: {}, // 切换会话时清空 diff 缓存
+        pendingVerificationRequest: null
       })
 
       // 为所有 assistant 消息异步加载 diff 数据
@@ -427,7 +444,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         currentProject: detail.workspaceRoot,
         currentMode: detail.mode,
         sessions: upsertSessionSummary(get().sessions, detail),
-        messages: restoreSessionMessages(detail.messages)
+        messages: restoreSessionMessages(detail.messages),
+        pendingVerificationRequest: null
       })
     } catch (err) {
       console.error('回退消息出错:', err)
@@ -644,11 +662,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (currentSessionId) {
       get().loadMessageDiffs(currentSessionId, messageId)
       set({
-        sessions: sessions.map(s => 
+        sessions: sessions.map(s =>
           s.id === currentSessionId ? { ...s, messageCount: messages.length, updatedAt: Date.now() } : s
         )
       })
     }
+  },
+
+  handleVerificationResult: (messageId: string, result: string) => {
+    set(state => ({
+      messages: state.messages.map(msg => {
+        if (msg.id !== messageId) return msg
+        return { ...msg, verificationSummary: result }
+      })
+    }))
   },
 
   handleError: (messageId: string, error: string) => {
@@ -705,5 +732,29 @@ export const useAppStore = create<AppState>((set, get) => ({
         permissionError: err instanceof Error ? err.message : '提交权限决策失败'
       })
     }
+  },
+
+  handleVerificationPermissionRequest: (request: { requestId: string; command: string }) => {
+    set({ pendingVerificationRequest: request })
+  },
+
+  clearVerificationPermissionRequest: (requestId: string) => {
+    set(state => ({
+      pendingVerificationRequest:
+        state.pendingVerificationRequest?.requestId === requestId
+          ? null
+          : state.pendingVerificationRequest
+    }))
+  },
+
+  respondVerificationPermission: (granted: boolean) => {
+    const { pendingVerificationRequest } = get()
+    if (!pendingVerificationRequest) return
+
+    window.api.invoke('respond-verification-permission', {
+      requestId: pendingVerificationRequest.requestId,
+      granted
+    })
+    set({ pendingVerificationRequest: null })
   }
 }))

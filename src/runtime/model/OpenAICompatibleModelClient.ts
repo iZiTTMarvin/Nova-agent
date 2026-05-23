@@ -4,7 +4,7 @@
  * 支持 SSE 流式响应，纯 Node.js 实现，不依赖 Electron
  */
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, ChatToolCall } from './types'
-import type { ModelClient } from './ModelClient'
+import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 
 export class OpenAICompatibleModelClient implements ModelClient {
@@ -20,7 +20,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
   async *chat(
     messages: ChatMessage[],
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
+    options?: ChatOptions
   ): AsyncIterable<ChatEvent> {
     // baseUrl 应为完整 API 根地址（如 https://api.openai.com/v1），
     // 只需拼接路径后缀 /chat/completions
@@ -51,9 +52,15 @@ export class OpenAICompatibleModelClient implements ModelClient {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.apiKey}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: options?.abortSignal
       })
     } catch (err) {
+      // 区分用户取消和真正的网络错误
+      if ((err as Error).name === 'AbortError') {
+        yield { type: 'cancelled' }
+        return
+      }
       yield { type: 'error', error: `请求失败: ${(err as Error).message}` }
       return
     }
@@ -85,6 +92,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     try {
       while (true) {
+        // 检查是否已取消
+        if (options?.abortSignal?.aborted) {
+          break
+        }
+
         const { done, value } = await reader.read()
         if (done) break
 
@@ -152,6 +164,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
       }
     } finally {
       reader.releaseLock()
+    }
+
+    // 如果因为 abort 而退出流读取，发射取消事件而非正常结束
+    if (options?.abortSignal?.aborted) {
+      yield { type: 'cancelled' }
+      return
     }
 
     // 冲刷 think 标签状态机残留内容

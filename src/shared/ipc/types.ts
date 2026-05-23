@@ -60,6 +60,10 @@ export interface IpcCommands {
     params: { requestId: string; decision: PermissionDecision }
     result: void
   }
+  'respond-verification-permission': {
+    params: { requestId: string; granted: boolean }
+    result: void
+  }
   'load-sessions': {
     params: void
     result: Session[]
@@ -135,6 +139,15 @@ export interface IpcEvents {
   'agent:verification-result': {
     messageId: string
     result: string
+  }
+  'agent:verification-permission-request': {
+    messageId: string
+    requestId: string
+    command: string
+  }
+  'agent:verification-permission-cleared': {
+    messageId: string
+    requestId: string
   }
   'agent:error': {
     messageId: string

@@ -18,6 +18,8 @@ export type AgentEvent =
       diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }>
       reviews: Record<string, DiffReviewStatus>
     }
+  | { type: 'verification_permission_request'; messageId: string; requestId: string; command: string }
+  | { type: 'verification_permission_cleared'; messageId: string; requestId: string }
   | { type: 'verification_result'; messageId: string; result: string }
   | { type: 'error'; messageId: string; error: string }
   | { type: 'message_end'; messageId: string }

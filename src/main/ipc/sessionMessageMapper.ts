@@ -59,6 +59,7 @@ export function toSharedMessage(
       arguments: parseToolArguments(tc.arguments)
     })),
     blocks: normalizeBlocks(msg.blocks),
+    verificationSummary: msg.verificationSummary,
     timestamp: msg.timestamp,
     _toolCallResults: Object.keys(toolCallResults).length > 0 ? toolCallResults : undefined
   }

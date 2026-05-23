@@ -76,6 +76,19 @@ export class AgentLoop {
     }
   }
 
+  /**
+   * 注入历史对话上下文（放在 system prompt 之后）
+   * 用于每次 send-message 时从 session 恢复多轮历史
+   */
+  injectHistory(messages: ChatMessage[]): void {
+    // 历史消息插入到 system prompt 之后
+    // this.context[0] 是 system prompt（如果配置了的话），后续是历史
+    this.context = [
+      ...this.context,
+      ...messages
+    ]
+  }
+
   /** 设置工具注册表 */
   setToolRegistry(registry: ToolRegistry): void {
     this.toolRegistry = registry
@@ -155,8 +168,10 @@ export class AgentLoop {
         const allTools = this.toolRegistry?.getToolDefinitions()
         const tools = allTools?.filter(t => isToolVisibleInMode(this.mode, t.name))
 
-        // 调用模型，获取流式响应
-        const stream = this.modelClient.chat(this.context, tools)
+        // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
+        const stream = this.modelClient.chat(this.context, tools, {
+          abortSignal: this.abortController?.signal
+        })
 
         let assistantContent = ''
         const toolCalls: ChatToolCall[] = []
@@ -195,6 +210,11 @@ export class AgentLoop {
               })
               break
             }
+
+            case 'cancelled':
+              // 模型请求被取消，跳出循环进入 cancelled 结束态
+              this.cancelled = true
+              break
 
             case 'error':
               this.eventBus.emit({ type: 'error', messageId, error: event.error })

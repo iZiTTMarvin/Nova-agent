@@ -5,7 +5,7 @@
  * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION } from '../../shared/ipc/channels'
+import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
@@ -19,18 +19,52 @@ import { bashTool } from '../../runtime/tools/bashTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
+import { readManifest } from '../../runtime/checkpoints/manifest'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
-import type { PermissionDecision } from '../../shared/session/types'
+import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
 import { getSystemPromptForMode } from '../../runtime/agent/modePrompt'
+import { buildConversationContext } from '../../runtime/agent/contextBuilder'
+import { runVerification } from '../../runtime/verification/service'
+import { formatVerificationSummary } from '../../runtime/verification/format'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
-let activeSessionStorePath: string | null = null
-let activeWorkspaceRoot: string | null = null
+
+const VERIFICATION_PERMISSION_TIMEOUT_MS = 30_000
+
+interface PendingVerificationPermissionEntry {
+  messageId: string
+  resolve: (granted: boolean) => void
+  timeoutHandle: NodeJS.Timeout
+  eventBus: EventBus
+}
+
+/** 等待用户对验证权限请求的响应（verificationRequestId → 挂起状态） */
+export const pendingVerificationPermissions = new Map<string, PendingVerificationPermissionEntry>()
+
+function clearVerificationPermissionRequest(requestId: string, granted: boolean): void {
+  const entry = pendingVerificationPermissions.get(requestId)
+  if (!entry) return
+
+  clearTimeout(entry.timeoutHandle)
+  pendingVerificationPermissions.delete(requestId)
+  entry.resolve(granted)
+  entry.eventBus.emit({
+    type: 'verification_permission_cleared',
+    messageId: entry.messageId,
+    requestId
+  })
+}
+
+function clearAllPendingVerificationPermissions(): void {
+  for (const requestId of [...pendingVerificationPermissions.keys()]) {
+    clearVerificationPermissionRequest(requestId, false)
+  }
+}
 
 /**
  * 流式内容累积器
@@ -44,7 +78,7 @@ interface StreamAccumulator {
 }
 
 /** 当前正在累积的流式消息映射：messageId → 累积器 */
-const activeStreams = new Map<string, StreamAccumulator>()
+export const activeStreams = new Map<string, StreamAccumulator>()
 
 /**
  * 注册 agent 相关的 IPC handler
@@ -62,25 +96,32 @@ export function registerAgentHandler(
       throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
     }
 
-    // 从会话数据中获取 workspaceRoot，确保使用该会话绑定的项目目录
     const sessionStore = getSessionStore()
     const session = sessionStore.load(params.sessionId)
     if (!session) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
+
     const projectPath = session.workspaceRoot
-    activeSessionStorePath = sessionStore.getSessionsDir()
-    activeWorkspaceRoot = projectPath
+    const sessionsDir = sessionStore.getSessionsDir()
+
+    // 在闭包中捕获本次调用的全部上下文，后续所有操作只读这些值
+    const capturedSessionId = params.sessionId
+    const capturedMode = session.mode
+    const capturedWorkspaceRoot = projectPath
+    const capturedSessionsDir = sessionsDir
 
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus, {
       systemPrompt: getSystemPromptForMode(session.mode)
     })
 
-    // 1. 设置 Agent 工作区边界（使用会话的工作区目录）
+    // 从 session 历史恢复多轮对话上下文（不含 system prompt，由上面 mode 生成）
+    const history = buildConversationContext(session, session.mode)
+    agentLoop.injectHistory(history)
+
     agentLoop.setWorkingDir(projectPath)
 
-    // 2. 初始化工具集（7 个内置工具）
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(lsTool)
     toolRegistry.register(readTool)
@@ -91,22 +132,17 @@ export function registerAgentHandler(
     toolRegistry.register(bashTool)
     agentLoop.setToolRegistry(toolRegistry)
 
-    // 3. 注入权限决策引擎
     const permissionManager = new PermissionManager()
     agentLoop.setPermissionManager(permissionManager)
-
-    // 4. 同步当前运行模式
     agentLoop.setMode(session.mode)
 
-    // 5. 注入 CheckpointManager（S9：支持会话回退和文件拒绝，路径与会话工作区一致）
     const checkpointManager = new CheckpointManager({
-      checkpointDir: sessionStore.getSessionsDir(),
+      checkpointDir: sessionsDir,
       sessionId: params.sessionId,
       workspaceRoot: projectPath
     })
     agentLoop.setCheckpointManager(checkpointManager)
 
-    // 6. 保存用户消息到会话存储
     const userMessage: SessionMessage = {
       id: `msg_${Date.now()}_user`,
       role: 'user',
@@ -115,40 +151,49 @@ export function registerAgentHandler(
     }
     sessionStore.appendMessage(params.sessionId, userMessage)
 
-    // 将 runtime 执行中触发的流式事件转发到 renderer 端，
-    // 同时累积完整内容用于最终持久化
     eventBus.on((event: AgentEvent) => {
       forwardEventToRenderer(getMainWindow(), event)
-      accumulateStreamEvent(params.sessionId, event)
+      accumulateStreamEvent(capturedSessionId, event, {
+        mode: capturedMode,
+        workspaceRoot: capturedWorkspaceRoot,
+        sessionsDir: capturedSessionsDir,
+        eventBus,
+        getMainWindow
+      })
     })
 
     await agentLoop.sendMessage(params.content)
   })
 
-  // 取消执行命令
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
     agentLoop?.cancel()
+    clearAllPendingVerificationPermissions()
   })
 
-  // 用户回应权限请求（allow / deny）
   ipcMain.handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
     if (!agentLoop) return
     const granted = params.decision === 'allow'
     agentLoop.respondPermission(params.requestId, granted)
   })
+
+  ipcMain.handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: { requestId: string; granted: boolean }): Promise<void> => {
+    clearVerificationPermissionRequest(params.requestId, params.granted)
+  })
+}
+
+/** 每次消息处理需要的上下文快照，避免读全局变量 */
+export interface MessageContext {
+  mode: Mode
+  workspaceRoot: string
+  sessionsDir: string
+  eventBus: EventBus
+  getMainWindow: () => BrowserWindow | null
 }
 
 /**
  * 累积流式事件内容
- *
- * message_start → 创建累积器
- * text_delta → 追加文本内容
- * tool_call → 追加工具调用记录
- * tool_result → 更新对应工具调用的执行结果
- * message_end → 将完整内容保存到 SessionStore
- * error → 将错误消息保存到 SessionStore
  */
-function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
+export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx: MessageContext): void {
   switch (event.type) {
     case 'message_start': {
       activeStreams.set(event.messageId, { content: '', toolCalls: [], blocks: [] })
@@ -202,16 +247,11 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
         const isError = event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')
-        const targetIdx = stream.toolCalls.findIndex(
-          tc => tc.id === event.toolCallId
-        )
+        const targetIdx = stream.toolCalls.findIndex(tc => tc.id === event.toolCallId)
         if (targetIdx !== -1) {
           stream.toolCalls[targetIdx].result = event.result
         }
-        // 更新 blocks 中对应的 tool 块
-        const blockIdx = stream.blocks.findIndex(
-          b => b.type === 'tool' && b.toolCallId === event.toolCallId
-        )
+        const blockIdx = stream.blocks.findIndex(b => b.type === 'tool' && b.toolCallId === event.toolCallId)
         if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
           const block = stream.blocks[blockIdx]
           stream.blocks[blockIdx] = {
@@ -221,7 +261,7 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
           } as typeof block
         }
       }
-      emitLiveDiffUpdate(sessionId, event.messageId)
+      emitLiveDiffUpdate(sessionId, event.messageId, ctx)
       break
     }
     case 'message_end': {
@@ -229,6 +269,7 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
       if (stream) {
         activeStreams.delete(event.messageId)
         saveAssistantMessage(sessionId, event.messageId, stream.content, stream.toolCalls, stream.blocks)
+        triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
     }
@@ -243,18 +284,16 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
   }
 }
 
-function emitLiveDiffUpdate(sessionId: string, messageId: string): void {
-  if (!agentLoop || !activeSessionStorePath || !activeWorkspaceRoot) return
-
+function emitLiveDiffUpdate(sessionId: string, messageId: string, ctx: MessageContext): void {
   try {
     const nextState = buildMessageDiffState(
-      activeSessionStorePath,
-      activeWorkspaceRoot,
+      ctx.sessionsDir,
+      ctx.workspaceRoot,
       sessionId,
       messageId
     )
 
-    agentLoop.getEventBus().emit({
+    ctx.eventBus.emit({
       type: 'diff_update',
       messageId,
       diffs: nextState.diffs.map(diff => ({
@@ -268,7 +307,97 @@ function emitLiveDiffUpdate(sessionId: string, messageId: string): void {
   }
 }
 
-/** 保存完整的 assistant 消息到会话存储（含文本内容、工具调用记录和顺序块） */
+/**
+ * 基于 checkpoint manifest 判断本轮是否有真实文件修改
+ */
+function hasRealModifications(sessionsDir: string, sessionId: string, messageId: string): boolean {
+  const manifest = readManifest(sessionsDir, sessionId, messageId)
+  if (!manifest) return false
+  return (
+    manifest.createdFiles.length > 0 ||
+    manifest.modifiedFiles.length > 0 ||
+    manifest.deletedFiles.length > 0
+  )
+}
+
+/**
+ * 触发验证：所有状态通过参数传入，不依赖全局变量
+ */
+export function triggerVerificationIfNeeded(
+  sessionId: string,
+  messageId: string,
+  ctx: MessageContext
+): void {
+  // 基于 checkpoint manifest 判定是否有真实文件修改
+  const hasModifications = hasRealModifications(ctx.sessionsDir, sessionId, messageId)
+  if (!hasModifications) return
+
+  // 异步执行验证，不阻塞主流程
+  // 所有状态已在闭包中捕获，不会因后续操作串线
+  const verifyAsync = async () => {
+    try {
+      const result = await runVerification({
+        workingDir: ctx.workspaceRoot,
+        mode: ctx.mode,
+        hasModifications: true,
+        // default 模式：通过 EventBus → IPC 推送到 renderer 等待用户确认
+        permissionCallback: async (command: string): Promise<boolean> => {
+          const requestId = `vp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          return new Promise<boolean>((resolve) => {
+            const timeoutHandle = setTimeout(() => {
+              clearVerificationPermissionRequest(requestId, false)
+            }, VERIFICATION_PERMISSION_TIMEOUT_MS)
+
+            pendingVerificationPermissions.set(requestId, {
+              messageId,
+              resolve,
+              timeoutHandle,
+              eventBus: ctx.eventBus
+            })
+
+            ctx.eventBus.emit({
+              type: 'verification_permission_request',
+              messageId,
+              requestId,
+              command
+            })
+          })
+        }
+      })
+
+      if (!result) return
+
+      const summary = formatVerificationSummary(result)
+
+      ctx.eventBus.emit({
+        type: 'verification_result',
+        messageId,
+        result: summary
+      })
+
+      appendVerificationSummary(sessionId, messageId, summary)
+    } catch (err) {
+      console.error('验证执行失败:', err)
+    }
+  }
+
+  verifyAsync()
+}
+
+/** 将验证摘要追加到已保存的 assistant 消息 */
+function appendVerificationSummary(sessionId: string, messageId: string, summary: string): void {
+  const sessionStore = getSessionStore()
+  const session = sessionStore.load(sessionId)
+  if (!session) return
+
+  const msgIndex = session.messages.findIndex(m => m.id === messageId)
+  if (msgIndex === -1) return
+
+  session.messages[msgIndex].verificationSummary = summary
+  sessionStore.save(session)
+}
+
+/** 保存完整的 assistant 消息到会话存储 */
 function saveAssistantMessage(
   sessionId: string,
   messageId: string,
@@ -345,6 +474,19 @@ function forwardEventToRenderer(
       break
     case 'verification_result':
       webContents.send('agent:verification-result', { messageId: event.messageId, result: event.result })
+      break
+    case 'verification_permission_request':
+      webContents.send('agent:verification-permission-request', {
+        messageId: event.messageId,
+        requestId: event.requestId,
+        command: event.command
+      })
+      break
+    case 'verification_permission_cleared':
+      webContents.send('agent:verification-permission-cleared', {
+        messageId: event.messageId,
+        requestId: event.requestId
+      })
       break
     case 'error':
       webContents.send('agent:error', { messageId: event.messageId, error: event.error })

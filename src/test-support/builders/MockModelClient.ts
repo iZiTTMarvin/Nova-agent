@@ -2,9 +2,8 @@
  * Mock ModelClient — 测试辅助工具
  * 产出预设的 ChatEvent 序列，用于验证 AgentLoop 逻辑而不依赖真实模型 API
  */
-import type { ChatMessage, ChatEvent, ToolDefinition } from '../../runtime/model/types'
-import type { ModelClient } from '../../runtime/model/ModelClient'
-import type { ModelClientConfig } from '../../runtime/model/types'
+import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from '../../runtime/model/types'
+import type { ModelClient, ChatOptions } from '../../runtime/model/ModelClient'
 
 export interface MockResponse {
   events: ChatEvent[]
@@ -30,7 +29,8 @@ export class MockModelClient implements ModelClient {
 
   async *chat(
     messages: ChatMessage[],
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
+    _options?: ChatOptions
   ): AsyncIterable<ChatEvent> {
     this.calls.push({ messages: [...messages], tools: tools ? [...tools] : undefined })
 

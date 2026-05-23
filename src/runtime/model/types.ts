@@ -51,3 +51,4 @@ export type ChatEvent =
   | { type: 'message_start' }
   | { type: 'message_end'; finishReason: 'stop' | 'tool_calls' | string }
   | { type: 'error'; error: string }
+  | { type: 'cancelled' }

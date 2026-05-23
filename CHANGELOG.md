@@ -1,6 +1,50 @@
 # Changelog
 
+## 2026-05-24
+
+- **fix**: 收紧 S14 验证权限请求的生命周期与状态清理
+  - 修改 `src/main/ipc/agentHandler.ts`：验证权限请求增加 30 秒超时自动拒绝，并在取消执行时统一清理挂起请求
+  - 新增 `verification_permission_cleared` 事件与 IPC 通道，避免 renderer 留下悬挂的验证确认 UI
+  - 修改 `src/renderer/App.tsx` 与 `src/renderer/stores/useAppStore.ts`：超时、取消、切 session、创建新会话和删除会话时都会清理验证权限提示
+  - 调整 `tests/unit/main/verificationPermissionFlow.test.ts` 与 `tests/unit/runtime/model/abortSignal.test.ts`：补齐超时清理回归测试并修正取消语义描述
+
 ## 2026-05-23
+
+- **fix**: 验证权限确认接入真实 IPC 交互流程
+  - 修改 `src/main/ipc/agentHandler.ts`：default 模式验证不再 `return true` 直接放行，改为通过 EventBus 发出 `verification_permission_request` 事件，等待 renderer IPC 回来的用户决策
+  - 新增 `verification_permission_request` AgentEvent 类型和 IPC 通道
+  - 新增 `respond-verification-permission` IPC handler，resolve 挂起的权限 Promise
+  - 修改 `src/renderer/stores/useAppStore.ts`：新增 `pendingVerificationRequest` 状态、`handleVerificationPermissionRequest` 和 `respondVerificationPermission` actions
+  - 修改 `src/renderer/App.tsx`：监听 `agent:verification-permission-request` 事件
+  - 修改 `src/renderer/features/chat/ChatPanel.tsx`：展示验证权限确认 UI（允许/跳过）
+  - 新增 `tests/unit/main/verificationPermissionFlow.test.ts`（4 个测试）：验证 permissionCallback 闭包的 EventBus 交互、用户允许/拒绝、事件流累积
+
+## 2026-05-23
+
+- **feat**: 补齐 Mini Coding Workbench 最小闭环（S14）
+  - 新增 `src/runtime/agent/contextBuilder.ts`：从 session 历史恢复模型对话上下文，实现真正的多轮对话（user/assistant/tool/thinking 完整恢复）
+  - 修改 `src/runtime/agent/AgentLoop.ts`：新增 `injectHistory()` 方法接收预组装历史上下文；调模型时传入 AbortSignal 实现真正的请求级取消
+  - 修改 `src/runtime/model/ModelClient.ts`：chat() 接口增加 `ChatOptions` 参数（含 abortSignal）
+  - 修改 `src/runtime/model/OpenAICompatibleModelClient.ts`：fetch 传入 signal，区分 AbortError 和 API 错误，流读取中检查 abort 状态
+  - 修改 `src/main/ipc/agentHandler.ts`：发送消息前用 contextBuilder 恢复历史；消息完成后自动触发验证；验证摘要追加到 SessionMessage
+  - 新增 `src/runtime/verification/`：验证服务模块（types/strategy/runner/service），按 test>lint>build 优先级探测并执行验证命令
+  - 修改 `src/renderer/App.tsx`：监听 `agent:verification-result` 事件
+  - 修改 `src/renderer/stores/useAppStore.ts`：ExtendedMessage 增加 verificationSummary，新增 handleVerificationResult handler
+  - 修改 `src/renderer/features/chat/ChatPanel.tsx`：在 assistant 消息下展示验证结果摘要（成功/失败区分）
+  - 修改 `src/runtime/sessions/types.ts`：SessionMessage 增加 verificationSummary 字段
+  - 修改 `src/shared/session/types.ts`：Message 增加 verificationSummary 字段
+  - 修改 `src/main/ipc/sessionMessageMapper.ts`：传递 verificationSummary 到 renderer
+  - 新增 31 个测试（contextBuilder 9 + abortSignal 4 + verification 12 + regression 6）
+
+- **fix**: S14 架构收口（代码审查修复）
+  - 修改 `src/runtime/model/types.ts`：ChatEvent 增加 `cancelled` 事件类型，用户取消和 API 错误语义分离
+  - 修改 `src/runtime/model/OpenAICompatibleModelClient.ts`：取消时发射 `cancelled` 而非 `error`
+  - 修改 `src/runtime/agent/AgentLoop.ts`：对 `cancelled` 事件走独立分支，不进入 error 状态
+  - 重写 `src/runtime/verification/service.ts`：服务自包含闭环，所有状态通过参数传入，不依赖全局变量
+  - 新增 `src/runtime/verification/format.ts`：格式化逻辑独立，验证服务不堆在 agentHandler 里
+  - 修改 `src/runtime/verification/types.ts`：新增 `PermissionCallback` 类型，default 模式需权限确认
+  - 重写 `src/main/ipc/agentHandler.ts`：删除 5 个进程级全局变量，改用闭包捕获 + MessageContext 参数传递；hasModifications 改用 checkpoint manifest 判定而非工具名猜测
+  - 新增 6 个测试（entryIntegration 4 + verification permission 2）
 
 - **fix**: 收口 S13 的历史恢复、Plan 提示词与思考计时问题
   - 新增 `src/main/ipc/sessionMessageMapper.ts`：统一恢复持久化消息，历史会话重新加载时保留 `blocks`，并安全解析工具参数

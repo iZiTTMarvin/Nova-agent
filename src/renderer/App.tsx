@@ -23,7 +23,10 @@ function App(): JSX.Element {
   const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
   const handleMessageEnd = useAppStore(state => state.handleMessageEnd)
   const handleError = useAppStore(state => state.handleError)
+  const handleVerificationResult = useAppStore(state => state.handleVerificationResult)
   const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
+  const handleVerificationPermissionRequest = useAppStore(state => state.handleVerificationPermissionRequest)
+  const clearVerificationPermissionRequest = useAppStore(state => state.clearVerificationPermissionRequest)
 
   // 1. 初始化时加载持久化的配置和会话列表
   useEffect(() => {
@@ -73,6 +76,20 @@ function App(): JSX.Element {
       handleError(data.messageId, data.error)
     })
 
+    // 监听：验证结果
+    const unsubVerificationResult = window.api.on('agent:verification-result', (data) => {
+      handleVerificationResult(data.messageId, data.result)
+    })
+
+    // 监听：验证权限请求（用户确认是否执行验证命令）
+    const unsubVerificationPermissionRequest = window.api.on('agent:verification-permission-request', (data) => {
+      handleVerificationPermissionRequest({ requestId: data.requestId, command: data.command })
+    })
+
+    const unsubVerificationPermissionCleared = window.api.on('agent:verification-permission-cleared', (data) => {
+      clearVerificationPermissionRequest(data.requestId)
+    })
+
     // 监听：Agent 本轮思考和应答全部完成
     const unsubMessageEnd = window.api.on('agent:message-end', (data) => {
       handleMessageEnd(data.messageId)
@@ -88,6 +105,9 @@ function App(): JSX.Element {
       unsubPermissionRequest()
       unsubDiffUpdate()
       unsubError()
+      unsubVerificationResult()
+      unsubVerificationPermissionRequest()
+      unsubVerificationPermissionCleared()
       unsubMessageEnd()
     }
   }, [
@@ -99,6 +119,9 @@ function App(): JSX.Element {
     handleDiffUpdate,
     handlePermissionRequest,
     handleError,
+    handleVerificationResult,
+    handleVerificationPermissionRequest,
+    clearVerificationPermissionRequest,
     handleMessageEnd
   ])
 
