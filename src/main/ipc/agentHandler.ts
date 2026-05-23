@@ -25,6 +25,7 @@ import type { PermissionDecision } from '../../shared/session/types'
 import { getCurrentMode } from '../index'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/types'
+import type { MessageBlock } from '../../shared/session/types'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -39,6 +40,7 @@ let activeWorkspaceRoot: string | null = null
 interface StreamAccumulator {
   content: string
   toolCalls: SessionToolCall[]
+  blocks: MessageBlock[]
 }
 
 /** 当前正在累积的流式消息映射：messageId → 累积器 */
@@ -147,17 +149,31 @@ export function registerAgentHandler(
 function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
   switch (event.type) {
     case 'message_start': {
-      activeStreams.set(event.messageId, { content: '', toolCalls: [] })
+      activeStreams.set(event.messageId, { content: '', toolCalls: [], blocks: [] })
       break
     }
     case 'thinking_delta': {
-      // 思考内容仅用于前端展示，不持久化
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        const last = stream.blocks[stream.blocks.length - 1]
+        if (last && last.type === 'thinking') {
+          last.content += event.delta
+        } else {
+          stream.blocks.push({ type: 'thinking', content: event.delta })
+        }
+      }
       break
     }
     case 'text_delta': {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
         stream.content += event.delta
+        const last = stream.blocks[stream.blocks.length - 1]
+        if (last && last.type === 'text') {
+          last.content += event.delta
+        } else {
+          stream.blocks.push({ type: 'text', content: event.delta })
+        }
       }
       break
     }
@@ -168,7 +184,14 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
           id: event.toolCallId,
           name: event.toolName,
           arguments: JSON.stringify(event.args),
-          result: undefined // 结果在 tool_result 事件中填充
+          result: undefined
+        })
+        stream.blocks.push({
+          type: 'tool',
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          arguments: event.args,
+          status: 'running'
         })
       }
       break
@@ -176,12 +199,24 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
     case 'tool_result': {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
-        // 通过 toolCallId 精确匹配工具调用记录
+        const isError = event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')
         const targetIdx = stream.toolCalls.findIndex(
           tc => tc.id === event.toolCallId
         )
         if (targetIdx !== -1) {
           stream.toolCalls[targetIdx].result = event.result
+        }
+        // 更新 blocks 中对应的 tool 块
+        const blockIdx = stream.blocks.findIndex(
+          b => b.type === 'tool' && b.toolCallId === event.toolCallId
+        )
+        if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
+          const block = stream.blocks[blockIdx]
+          stream.blocks[blockIdx] = {
+            ...block,
+            status: isError ? 'error' : 'success',
+            result: event.result
+          } as typeof block
         }
       }
       emitLiveDiffUpdate(sessionId, event.messageId)
@@ -191,7 +226,7 @@ function accumulateStreamEvent(sessionId: string, event: AgentEvent): void {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
         activeStreams.delete(event.messageId)
-        saveAssistantMessage(sessionId, event.messageId, stream.content, stream.toolCalls)
+        saveAssistantMessage(sessionId, event.messageId, stream.content, stream.toolCalls, stream.blocks)
       }
       break
     }
@@ -231,12 +266,13 @@ function emitLiveDiffUpdate(sessionId: string, messageId: string): void {
   }
 }
 
-/** 保存完整的 assistant 消息到会话存储（含文本内容和工具调用记录） */
+/** 保存完整的 assistant 消息到会话存储（含文本内容、工具调用记录和顺序块） */
 function saveAssistantMessage(
   sessionId: string,
   messageId: string,
   content: string,
-  toolCalls: SessionToolCall[]
+  toolCalls: SessionToolCall[],
+  blocks: MessageBlock[]
 ): void {
   const sessionStore = getSessionStore()
   const assistantMessage: SessionMessage = {
@@ -244,6 +280,7 @@ function saveAssistantMessage(
     role: 'assistant',
     content,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    blocks: blocks.length > 0 ? blocks : undefined,
     timestamp: Date.now()
   }
   sessionStore.appendMessage(sessionId, assistantMessage)

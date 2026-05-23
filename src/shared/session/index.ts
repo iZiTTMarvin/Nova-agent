@@ -5,5 +5,9 @@ export {
   type ToolCall,
   type Message,
   type Session,
-  type SessionDetail
+  type SessionDetail,
+  type ThinkingBlock,
+  type TextBlock,
+  type ToolBlock,
+  type MessageBlock
 } from './types'

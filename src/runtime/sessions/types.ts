@@ -6,7 +6,7 @@
  * 删除该消息及之后的所有内容（checkpoint、历史、diff）。
  * 不支持分支或合并。
  */
-import type { Mode } from '../../shared/session'
+import type { Mode, MessageBlock } from '../../shared/session'
 
 /** 会话摘要（用于列表展示，不含完整消息） */
 export interface SessionSummary {
@@ -35,6 +35,8 @@ export interface SessionMessage {
   content: string
   /** assistant 消息可携带工具调用 */
   toolCalls?: SessionToolCall[]
+  /** 顺序块数组，按流式事件顺序排列 */
+  blocks?: MessageBlock[]
   /** 工具消息关联的 toolCallId */
   toolCallId?: string
   timestamp: number
