@@ -5,6 +5,7 @@
  */
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, ChatToolCall } from './types'
 import type { ModelClient } from './ModelClient'
+import { ThinkTagParser } from './ThinkTagParser'
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
@@ -65,6 +66,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     yield { type: 'message_start' }
 
+    // 流式 think 标签解析状态机（处理 content 中的 <think'>'...</think'>' 标签）
+    const thinkTagParser = new ThinkTagParser()
+
     // 累积 tool_calls，SSE 每个 chunk 可能只包含部分信息
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>()
     let finishReason = ''
@@ -107,9 +111,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
               yield { type: 'thinking_delta', delta: delta.reasoning_content }
             }
 
-            // 文本增量
+            // 文本增量（经过 think 标签状态机处理）
             if (delta?.content) {
-              yield { type: 'text_delta', delta: delta.content }
+              for (const seg of thinkTagParser.feed(delta.content)) {
+                yield {
+                  type: seg.type === 'thinking' ? 'thinking_delta' : 'text_delta',
+                  delta: seg.content
+                }
+              }
             }
 
             // 工具调用增量
@@ -143,6 +152,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
       }
     } finally {
       reader.releaseLock()
+    }
+
+    // 冲刷 think 标签状态机残留内容
+    for (const seg of thinkTagParser.flush()) {
+      yield {
+        type: seg.type === 'thinking' ? 'thinking_delta' : 'text_delta',
+        delta: seg.content
+      }
     }
 
     // 发射完整的 tool_call 事件
