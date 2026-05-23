@@ -349,20 +349,25 @@ export const ChatPanel: React.FC = () => {
 
         {messages.map(msg => {
           const isAssistant = msg.role === 'assistant'
-          const { thinkingContent, textContent, isThinkingActive } = isAssistant 
+
+          // blocks 渲染路径：按流式事件顺序展示 thinking → text → tool → text → ...
+          const hasBlocks = isAssistant && msg.blocks && msg.blocks.length > 0
+
+          // 旧路径兼容：无 blocks 时走 parseThinking 正则兜底
+          const { thinkingContent, textContent, isThinkingActive } = isAssistant && !hasBlocks
             ? parseThinking(msg, isGenerating, currentGeneratingMessageId)
             : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
 
           return (
-            <div 
-              key={msg.id} 
+            <div
+              key={msg.id}
               className={`chat-msg-wrapper chat-msg-wrapper--${msg.role === 'user' ? 'user' : 'assistant'}`}
             >
               <div className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'} ${msg.isError ? 'chat-msg--error' : ''}`}>
                 {/* 悬浮操作栏：仅在 assistant 消息上显示，且必须是生成完毕状态 */}
                 {isAssistant && !isGenerating && (
                   <div className="chat-msg__actions">
-                    <button 
+                    <button
                       className="chat-msg__action-btn"
                       onClick={() => handleRollback(msg.id)}
                       title="回退到此消息之前的状态"
@@ -372,30 +377,36 @@ export const ChatPanel: React.FC = () => {
                   </div>
                 )}
 
-                {/* 渲染思考框（Windsurf 风格） */}
-                {isAssistant && thinkingContent && (
-                  <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
+                {hasBlocks ? (
+                  /* blocks 顺序渲染：按真实流式事件顺序展示 */
+                  msg.blocks!.map((block, idx) => {
+                    switch (block.type) {
+                      case 'thinking':
+                        return <ThinkingBlock key={idx} thinking={block.content} active={isGenerating && msg.id === currentGeneratingMessageId} />
+                      case 'text':
+                        return block.content ? <MarkdownRenderer key={idx} content={block.content} /> : null
+                      case 'tool':
+                        return <ToolBox key={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} />
+                    }
+                  })
+                ) : (
+                  /* 旧渲染路径：无 blocks 时走分桶逻辑 */
+                  <>
+                    {thinkingContent && (
+                      <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
+                    )}
+                    {textContent && <MarkdownRenderer content={textContent} />}
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div style={{ marginTop: '12px' }}>
+                        {msg.toolCalls.map(tc => (
+                          <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {/* 渲染消息文本 */}
-                {textContent && <MarkdownRenderer content={textContent} />}
-
-                {/* 渲染内部包含的工具调用过程 */}
-                {msg.toolCalls && msg.toolCalls.length > 0 && (
-                  <div style={{ marginTop: '12px' }}>
-                    {msg.toolCalls.map(tc => (
-                      <ToolBox
-                        key={tc.id}
-                        name={tc.name}
-                        args={tc.arguments}
-                        status={tc.status}
-                        result={tc.result}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* diff 审查面板：assistant 消息一旦产生变更就展示，不必等整条消息结束 */}
+                {/* diff 审查面板 */}
                 {isAssistant && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
                   <DiffViewer
                     diffs={messageDiffs[msg.id].diffs}
