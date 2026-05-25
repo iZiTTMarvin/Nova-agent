@@ -448,4 +448,68 @@ describe('AgentLoop', () => {
     expect((toolResultEvents[0] as any).result).toContain('权限拒绝:')
     expect((toolResultEvents[0] as any).result).toContain('用户拒绝了 "bash" 工具的执行请求')
   })
+
+  /**
+   * T3 回归：用户在权限确认期间点取消（cancel）时，
+   * 不应再产生"权限拒绝"的 tool_result，也不应把该工具调用 push 到 context。
+   * 历史回放因此不会出现莫名其妙的"权限拒绝"卡片。
+   */
+  it('cancel 在权限确认期间不应产生权限拒绝的 tool_result', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_bash_cancel', name: 'bash', arguments: '{"command":"sleep 100"}' }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'bash',
+      description: '执行 shell 命令',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'shell 命令' }
+        },
+        required: ['command']
+      },
+      async execute(): Promise<ToolResult> {
+        return { success: true, output: '不应执行' }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+    loop.setMode('default')
+    loop.setPermissionManager(new PermissionManager())
+
+    const events: unknown[] = []
+    eventBus.on((event) => {
+      events.push(event)
+      // 收到权限请求时不应答，转而调用 cancel
+      if ((event as any).type === 'permission_request') {
+        loop.cancel()
+      }
+    })
+
+    await loop.sendMessage('执行需要权限的命令')
+
+    // 关键断言：
+    // 1. 不应有 tool_result 事件被发出（更别说"权限拒绝"字样）
+    const toolResultEvents = events.filter((e: any) => e.type === 'tool_result')
+    expect(toolResultEvents).toHaveLength(0)
+
+    // 2. context 中不应包含 role: 'tool' 的消息
+    const ctxToolMessages = loop.getContext().filter(m => m.role === 'tool')
+    expect(ctxToolMessages).toHaveLength(0)
+
+    // 3. 状态应为 cancelled
+    expect(loop.getState()).toBe('cancelled')
+  })
 })

@@ -22,6 +22,18 @@ import { randomUUID } from 'crypto'
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
 
+/**
+ * 表示权限请求被 cancel 中断的 sentinel 错误。
+ * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
+ * 和"流程被取消"（不产生任何 tool_result，不污染 context 与持久化）。
+ */
+class PermissionAbortedError extends Error {
+  constructor() {
+    super('permission request aborted by cancel')
+    this.name = 'PermissionAbortedError'
+  }
+}
+
 export class AgentLoop {
   private modelClient: ModelClient
   private eventBus: EventBus
@@ -49,8 +61,11 @@ export class AgentLoop {
   /** 权限决策引擎（可选，S7 引入） */
   private permissionManager: PermissionManager | null = null
 
-  /** 等待用户确认的权限请求（requestId → resolve 回调） */
-  private pendingPermissions: Map<string, (granted: boolean) => void> = new Map()
+  /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
+  private pendingPermissions: Map<
+    string,
+    { resolve: (granted: boolean) => void; reject: (err: Error) => void }
+  > = new Map()
 
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
@@ -256,6 +271,12 @@ export class AgentLoop {
           // 权限检查（S7：用 PermissionManager 替代原来的硬编码 plan 检查）
           const permissionResult = await this.checkPermission(tc.name, args, messageId)
 
+          // 权限请求被 cancel 中断：跳过 tool_result 与 context 注入，
+          // 让外层循环检测到 cancelled 后直接结束本轮。
+          if (permissionResult.aborted) {
+            break
+          }
+
           if (!permissionResult.allowed) {
             result = `权限拒绝: ${permissionResult.reason}`
           } else if (this.toolRegistry) {
@@ -323,9 +344,10 @@ export class AgentLoop {
       this.cancelled = true
       this.state = 'cancelled'
       this.abortController?.abort()
-      // 拒绝所有等待中的权限请求
-      for (const [id, resolve] of this.pendingPermissions) {
-        resolve(false)
+      // 拒绝所有等待中的权限请求（用 PermissionAbortedError 而非 resolve(false)，
+      // 这样 checkPermission 不会把它当成"用户拒绝"生成权限拒绝 tool_result）
+      for (const [id, entry] of this.pendingPermissions) {
+        entry.reject(new PermissionAbortedError())
         this.pendingPermissions.delete(id)
       }
     }
@@ -333,13 +355,16 @@ export class AgentLoop {
 
   /**
    * 权限检查入口
-   * 返回是否允许执行，如果不允许则附带拒绝原因
+   * 返回：
+   * - { allowed: true }：可执行
+   * - { allowed: false, reason }：用户主动拒绝或规则拒绝，需把"权限拒绝: {reason}"作为 tool_result 回传模型
+   * - { aborted: true }：流程被 cancel 打断，调用方应跳过该工具的 tool_result 与 context 注入
    */
   private async checkPermission(
     toolName: string,
     args: Record<string, unknown>,
     messageId: string
-  ): Promise<{ allowed: boolean; reason: string }> {
+  ): Promise<{ allowed: boolean; reason: string; aborted?: boolean }> {
     // 没有 PermissionManager 时退化为简单 plan 模式检查
     if (!this.permissionManager) {
       if (this.mode === 'plan' && WRITE_TOOLS.has(toolName)) {
@@ -375,17 +400,24 @@ export class AgentLoop {
       reason: result.reason
     })
 
-    const granted = await permissionResponse
-    if (!granted) {
-      return { allowed: false, reason: `用户拒绝了 "${toolName}" 工具的执行请求` }
+    try {
+      const granted = await permissionResponse
+      if (!granted) {
+        return { allowed: false, reason: `用户拒绝了 "${toolName}" 工具的执行请求` }
+      }
+      return { allowed: true, reason: '' }
+    } catch (err) {
+      if (err instanceof PermissionAbortedError) {
+        return { allowed: false, reason: '', aborted: true }
+      }
+      throw err
     }
-    return { allowed: true, reason: '' }
   }
 
-  /** 等待用户对权限请求的响应 */
+  /** 等待用户对权限请求的响应；cancel 时会以 PermissionAbortedError reject */
   private waitForPermissionResponse(requestId: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      this.pendingPermissions.set(requestId, resolve)
+    return new Promise((resolve, reject) => {
+      this.pendingPermissions.set(requestId, { resolve, reject })
     })
   }
 
@@ -395,10 +427,10 @@ export class AgentLoop {
    * @param granted 用户是否允许
    */
   respondPermission(requestId: string, granted: boolean): void {
-    const resolve = this.pendingPermissions.get(requestId)
-    if (resolve) {
+    const entry = this.pendingPermissions.get(requestId)
+    if (entry) {
       this.pendingPermissions.delete(requestId)
-      resolve(granted)
+      entry.resolve(granted)
     }
   }
 

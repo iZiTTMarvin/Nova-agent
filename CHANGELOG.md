@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-05-25
+
+- **fix(T1)**: DiffViewer 不再出现 `+0 -0` 中间态
+  - `src/runtime/agent/types.ts` / `src/shared/ipc/types.ts`：`diff_update` 事件新增 `phase: 'live' | 'final'` 字段，区分占位信号与终值
+  - `src/main/ipc/agentHandler.ts`：`emitLiveDiffUpdate` 改为只读 manifest 文件清单，不再调用 `buildMessageDiffState`，避免在事件循环里同步跑 LCS；并通过 `setImmediate` 异步调度，确保不阻塞当前 EventBus 调用栈
+  - `src/renderer/stores/useAppStore.ts`：`handleDiffUpdate` 新增 phase 参数，live 阶段不写 `messageDiffs`，仅写 `loadingDiffs` 和 `loadingDiffPlaceholders`；`loadMessageDiffs` 不再因 live 占位被错误跳过
+  - `src/renderer/features/diff/DiffViewer.tsx`：loading 分支渲染文件名 + spinner，不再显示统计数字
+  - `src/renderer/features/chat/ChatPanel.tsx`：调整渲染优先级，loading 时优先显示骨架，避免空 hunks 触发 `+0 -0`
+- **fix(T2)**: 异步化 emitLiveDiffUpdate 调度，并添加性能埋点
+  - `[perf] tool_result → diff_update: {ms}` 日志，>50ms 时升级为 warn
+- **fix(T3)**: cancel 时不再向 session 残留"权限拒绝"工具结果
+  - `src/runtime/agent/AgentLoop.ts`：cancel() 用 `PermissionAbortedError` reject 挂起的权限请求，`checkPermission` 捕获后返回 `{ aborted: true }`，工具循环检测到后跳过 tool_result 与 context 注入
+  - `src/main/ipc/agentHandler.ts`：新增 `markActiveStreamsCancelled` 与 `dropPermissionDeniedResiduals` 双重保险，message_end 时剔除"权限拒绝: 用户拒绝"类残留，但保留模式策略拒绝（plan 模式拒写工具）
+- **test**: 新增/扩展回归测试
+  - `tests/unit/main/liveDiffEmission.test.ts`：phase: live 行为、LCS 不重算、异步调度
+  - `tests/unit/renderer/useAppStore.test.ts`：T1 全链路回归
+  - `tests/unit/runtime/AgentLoop.test.ts`：cancel 期间不产生权限拒绝
+  - `tests/unit/main/verificationPermissionFlow.test.ts`：兜底过滤覆盖
+
 ## 2026-05-24
 
 - **fix**: 收紧 S14 验证权限请求的生命周期与状态清理

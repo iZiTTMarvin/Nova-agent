@@ -3,6 +3,7 @@ import { EventBus } from '../../../src/runtime/agent/EventBus'
 import {
   accumulateStreamEvent,
   triggerVerificationIfNeeded,
+  markActiveStreamsCancelled,
   activeStreams,
   pendingVerificationPermissions,
   type MessageContext
@@ -155,6 +156,104 @@ describe('agentHandler 真实入口测试', () => {
         role: 'assistant',
         content: 'API 超时'
       }))
+    })
+
+    /**
+     * T3-4：cancel 兜底过滤
+     * 即使 runtime 层意外漏发了"权限拒绝: 用户拒绝"的 tool_result，
+     * 只要在累积期间被 markActiveStreamsCancelled 标记过，message_end 时
+     * 也会把这种残留剔除，避免落盘到 session 历史。
+     */
+    it('cancel 后 message_end 应剔除"权限拒绝: 用户拒绝"残留，但保留正常工具结果', () => {
+      const ctx = makeCtx()
+
+      accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_cancel' }, ctx)
+
+      // 一个正常完成的工具调用
+      accumulateStreamEvent('sess_1', {
+        type: 'tool_call',
+        messageId: 'msg_cancel',
+        toolCallId: 'tc_ls',
+        toolName: 'ls',
+        args: { path: '.' }
+      }, ctx)
+      accumulateStreamEvent('sess_1', {
+        type: 'tool_result',
+        messageId: 'msg_cancel',
+        toolCallId: 'tc_ls',
+        toolName: 'ls',
+        result: 'a.txt\nb.txt'
+      }, ctx)
+
+      // 一个被 cancel 残留的"权限拒绝"工具调用
+      accumulateStreamEvent('sess_1', {
+        type: 'tool_call',
+        messageId: 'msg_cancel',
+        toolCallId: 'tc_bash',
+        toolName: 'bash',
+        args: { command: 'rm -rf /' }
+      }, ctx)
+      accumulateStreamEvent('sess_1', {
+        type: 'tool_result',
+        messageId: 'msg_cancel',
+        toolCallId: 'tc_bash',
+        toolName: 'bash',
+        result: '权限拒绝: 用户拒绝了 "bash" 工具的执行请求'
+      }, ctx)
+
+      // 模拟 IPC handler 收到 cancel-execution 命令
+      markActiveStreamsCancelled()
+
+      accumulateStreamEvent('sess_1', { type: 'message_end', messageId: 'msg_cancel' }, ctx)
+
+      const store = getSessionStore()
+      const lastCall = vi.mocked(store.appendMessage).mock.calls.find(
+        c => (c[1] as any).id === 'msg_cancel'
+      )
+      expect(lastCall).toBeDefined()
+      const saved = lastCall![1] as any
+
+      // 正常工具结果保留
+      expect(saved.toolCalls.map((t: any) => t.id)).toEqual(['tc_ls'])
+      // 权限拒绝条目从 blocks 中剔除
+      const toolBlockIds = saved.blocks
+        .filter((b: any) => b.type === 'tool')
+        .map((b: any) => b.toolCallId)
+      expect(toolBlockIds).toEqual(['tc_ls'])
+    })
+
+    it('未 cancel 的 message_end 不应剔除任何工具结果（即使 result 含权限拒绝字样）', () => {
+      const ctx = makeCtx()
+
+      accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_normal' }, ctx)
+      // 模式策略导致的拒绝（非用户主动拒绝），应作为 Agent 真实经历保留
+      accumulateStreamEvent('sess_1', {
+        type: 'tool_call',
+        messageId: 'msg_normal',
+        toolCallId: 'tc_w',
+        toolName: 'write',
+        args: { path: 'a.ts', content: 'x' }
+      }, ctx)
+      accumulateStreamEvent('sess_1', {
+        type: 'tool_result',
+        messageId: 'msg_normal',
+        toolCallId: 'tc_w',
+        toolName: 'write',
+        result: '权限拒绝: 当前为 plan 模式，"write" 工具不可用。'
+      }, ctx)
+
+      accumulateStreamEvent('sess_1', { type: 'message_end', messageId: 'msg_normal' }, ctx)
+
+      const store = getSessionStore()
+      const savedCall = vi.mocked(store.appendMessage).mock.calls.find(
+        c => (c[1] as any).id === 'msg_normal'
+      )
+      expect(savedCall).toBeDefined()
+      const saved = savedCall![1] as any
+
+      // 模式策略拒绝应保留（非"用户拒绝"）
+      expect(saved.toolCalls).toHaveLength(1)
+      expect(saved.toolCalls[0].id).toBe('tc_w')
     })
   })
 

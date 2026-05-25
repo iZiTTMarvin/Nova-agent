@@ -57,7 +57,7 @@ describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
     buildMessageDiffStateSpy.mockClear()
   })
 
-  it('tool_result 触发 diff_update 事件，phase 应为 live，且 diffs 不含 hunks', () => {
+  it('tool_result 触发 diff_update 事件，phase 应为 live，且 diffs 不含 hunks', async () => {
     const eventBus = new EventBus()
     const captured: AgentEvent[] = []
     eventBus.on(e => captured.push(e))
@@ -81,6 +81,9 @@ describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
       result: '写入成功'
     }, ctx)
 
+    // emitLiveDiffUpdate 已异步化，等待一个事件循环 tick
+    await new Promise(r => setImmediate(r))
+
     const diffEvent = captured.find(e => e.type === 'diff_update')
     expect(diffEvent).toBeDefined()
     if (diffEvent?.type === 'diff_update') {
@@ -93,7 +96,7 @@ describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
     }
   })
 
-  it('tool_result 触发的实时 diff 更新不应调用 buildMessageDiffState（重计算 LCS）', () => {
+  it('tool_result 触发的实时 diff 更新不应调用 buildMessageDiffState（重计算 LCS）', async () => {
     const eventBus = new EventBus()
     const ctx = makeCtx(eventBus)
 
@@ -113,6 +116,37 @@ describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
       result: '写入成功'
     }, ctx)
 
+    await new Promise(r => setImmediate(r))
     expect(buildMessageDiffStateSpy).not.toHaveBeenCalled()
+  })
+
+  it('emitLiveDiffUpdate 应异步触发，不阻塞当前 EventBus 调用栈', async () => {
+    const eventBus = new EventBus()
+    const captured: AgentEvent[] = []
+    eventBus.on(e => captured.push(e))
+    const ctx = makeCtx(eventBus)
+
+    accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_1' }, ctx)
+    accumulateStreamEvent('sess_1', {
+      type: 'tool_call',
+      messageId: 'msg_1',
+      toolCallId: 'tc_w',
+      toolName: 'write',
+      args: { path: 'src/foo.ts' }
+    }, ctx)
+    accumulateStreamEvent('sess_1', {
+      type: 'tool_result',
+      messageId: 'msg_1',
+      toolCallId: 'tc_w',
+      toolName: 'write',
+      result: '写入成功'
+    }, ctx)
+
+    // 同步阶段：只看到 tool_result 已经被监听器消费；diff_update 尚未发出
+    expect(captured.some(e => e.type === 'diff_update')).toBe(false)
+
+    // 等待异步 tick：diff_update 应该追加
+    await new Promise(r => setImmediate(r))
+    expect(captured.some(e => e.type === 'diff_update')).toBe(true)
   })
 })

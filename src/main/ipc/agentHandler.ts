@@ -74,10 +74,24 @@ interface StreamAccumulator {
   content: string
   toolCalls: SessionToolCall[]
   blocks: MessageBlock[]
+  /**
+   * 是否在累积过程中被取消。
+   * 一旦置为 true，message_end 时持久化层会剔除"权限拒绝: 用户拒绝"等
+   * 由 cancel 路径残留的 tool block，避免历史回放出现莫名其妙的拒绝卡片。
+   * 这是兜底保险——理论上 runtime 层（AgentLoop）已不再产生该残留。
+   */
+  cancelled?: boolean
 }
 
 /** 当前正在累积的流式消息映射：messageId → 累积器 */
 export const activeStreams = new Map<string, StreamAccumulator>()
+
+/** 把所有 active stream 标记为 cancelled，供 message_end 路径做兜底过滤 */
+export function markActiveStreamsCancelled(): void {
+  for (const stream of activeStreams.values()) {
+    stream.cancelled = true
+  }
+}
 
 /**
  * 注册 agent 相关的 IPC handler
@@ -166,6 +180,7 @@ export function registerAgentHandler(
 
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
     agentLoop?.cancel()
+    markActiveStreamsCancelled()
     clearAllPendingVerificationPermissions()
   })
 
@@ -195,7 +210,7 @@ export interface MessageContext {
 export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx: MessageContext): void {
   switch (event.type) {
     case 'message_start': {
-      activeStreams.set(event.messageId, { content: '', toolCalls: [], blocks: [] })
+      activeStreams.set(event.messageId, { content: '', toolCalls: [], blocks: [], cancelled: false })
       break
     }
     case 'thinking_delta': {
@@ -260,14 +275,23 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           } as typeof block
         }
       }
-      emitLiveDiffUpdate(sessionId, event.messageId, ctx)
+      // 异步调度：让 tool_result 当前的 EventBus 调用栈（含其他订阅者、IPC 转发）
+      // 先全部跑完，避免 manifest 读盘阻塞下一个 thinking_delta 的处理。
+      scheduleLiveDiffUpdate(sessionId, event.messageId, ctx)
       break
     }
     case 'message_end': {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
         activeStreams.delete(event.messageId)
-        saveAssistantMessage(sessionId, event.messageId, stream.content, stream.toolCalls, stream.blocks)
+
+        // T3-3 兜底：cancel 期间残留的"权限拒绝"工具结果不应进入持久化历史，
+        // 否则下次进入会话会看到莫名其妙的拒绝卡片。
+        const { toolCalls, blocks } = stream.cancelled
+          ? dropPermissionDeniedResiduals(stream.toolCalls, stream.blocks)
+          : { toolCalls: stream.toolCalls, blocks: stream.blocks }
+
+        saveAssistantMessage(sessionId, event.messageId, stream.content, toolCalls, blocks)
         triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
@@ -314,6 +338,28 @@ function emitLiveDiffUpdate(sessionId: string, messageId: string, ctx: MessageCo
   } catch (err) {
     console.error('实时 diff 占位更新失败:', err)
   }
+}
+
+/**
+ * 异步调度 emitLiveDiffUpdate。
+ *
+ * 用 setImmediate 把 manifest 读盘 + emit 推到下一个事件循环 tick，让 tool_result
+ * 当前的 EventBus 监听器链（forwardEventToRenderer、本累积器等）先全部跑完。
+ * 这样后续 thinking_delta 不会被 IO/emit 同步阻塞。
+ *
+ * 同时埋点 tool_result → diff_update 之间的间隔，便于排查阻塞回归。
+ */
+function scheduleLiveDiffUpdate(sessionId: string, messageId: string, ctx: MessageContext): void {
+  const t0 = performance.now()
+  setImmediate(() => {
+    emitLiveDiffUpdate(sessionId, messageId, ctx)
+    const dt = performance.now() - t0
+    if (dt > 50) {
+      console.warn(`[perf] tool_result → diff_update: ${dt.toFixed(1)}ms (>50ms)`)
+    } else {
+      console.debug(`[perf] tool_result → diff_update: ${dt.toFixed(1)}ms`)
+    }
+  })
 }
 
 /**
@@ -424,6 +470,37 @@ function saveAssistantMessage(
     timestamp: Date.now()
   }
   sessionStore.appendMessage(sessionId, assistantMessage)
+}
+
+/**
+ * 兜底过滤：剔除"权限拒绝: 用户拒绝"残留
+ *
+ * 当 cancel 在权限弹窗弹出时被触发，理论上 AgentLoop 已经走 PermissionAbortedError
+ * 路径不再发出 tool_result 事件；但这里再做一道兜底，让旧版本 runtime 或异常路径
+ * 也不会污染会话历史。
+ *
+ * 只剔除"由用户拒绝产生"的权限拒绝条目（reason 含「用户拒绝」），保留模式策略
+ * 引发的拒绝（如 plan 模式拒写工具），后者是 Agent 真实经历过的事实。
+ */
+function dropPermissionDeniedResiduals(
+  toolCalls: SessionToolCall[],
+  blocks: MessageBlock[]
+): { toolCalls: SessionToolCall[]; blocks: MessageBlock[] } {
+  const isUserDenied = (result?: string): boolean =>
+    typeof result === 'string' && result.startsWith('权限拒绝:') && result.includes('用户拒绝')
+
+  const droppedIds = new Set<string>()
+  for (const tc of toolCalls) {
+    if (isUserDenied(tc.result)) droppedIds.add(tc.id)
+  }
+  if (droppedIds.size === 0) {
+    return { toolCalls, blocks }
+  }
+
+  return {
+    toolCalls: toolCalls.filter(tc => !droppedIds.has(tc.id)),
+    blocks: blocks.filter(b => b.type !== 'tool' || !droppedIds.has(b.toolCallId))
+  }
 }
 
 /** 保存错误消息到会话存储 */
