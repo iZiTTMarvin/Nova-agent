@@ -1,14 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useAppStore } from '../../stores/useAppStore'
-import { 
-  SendIcon, 
-  StopIcon, 
-  TerminalIcon, 
-  ChevronIcon, 
-  CheckIcon, 
-  AlertIcon, 
-  NovaLogo, 
-  FolderIcon, 
+import {
+  SendIcon,
+  StopIcon,
+  TerminalIcon,
+  ChevronIcon,
+  CheckIcon,
+  AlertIcon,
+  NovaLogo,
+  FolderIcon,
   SettingsIcon,
   UndoIcon
 } from '../../components/Icons'
@@ -236,15 +236,64 @@ export const ChatPanel: React.FC = () => {
   const [inputVal, setInputVal] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  // 用户是否主动上滚，上滚期间停止自动跟随
+  const userScrolledUpRef = useRef(false)
+  // 流式阶段的 rAF 节流滚动句柄
+  const rafIdRef = useRef<number | null>(null)
 
-  // 自动滚动到底部
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  // 瞬时跳到底部（流式阶段用，避免 smooth 动画排队）
+  const scrollToBottomInstant = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+  }, [])
 
+  // 检测用户是否主动上滚：距底部超过阈值则视为上滚
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    userScrolledUpRef.current = distFromBottom > 40
+  }, [])
+
+  // 新消息加入时自动滚到底部（用户上滚状态重置）
   useEffect(() => {
-    scrollToBottom()
-  }, [messages, isGenerating])
+    userScrolledUpRef.current = false
+    scrollToBottomInstant()
+  }, [messages.length, scrollToBottomInstant])
+
+  // 流式阶段：delta 到来时用 rAF 节流滚动，避免高频抖动
+  useEffect(() => {
+    if (!isGenerating) {
+      // 非生成阶段取消待处理的 rAF
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
+      }
+      return
+    }
+
+    // 生成阶段：每帧最多滚一次
+    const scheduleScroll = () => {
+      if (!userScrolledUpRef.current) {
+        scrollToBottomInstant()
+      }
+    }
+
+    // 立即触发一次，然后靠 rAF 节流后续
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null
+        scheduleScroll()
+      })
+    }
+
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
+      }
+    }
+  }, [messages, isGenerating, scrollToBottomInstant])
 
   // 处理文本域自动折行高度自适应
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -338,7 +387,7 @@ export const ChatPanel: React.FC = () => {
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
     <div className="chat-panel">
-      <div className="chat-messages">
+      <div className="chat-messages" ref={scrollContainerRef} onScroll={handleScroll}>
         {messages.length === 0 && (
           <div style={{
             display: 'flex',
