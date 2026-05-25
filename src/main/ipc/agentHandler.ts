@@ -313,8 +313,15 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
  * 只读 checkpoint manifest 的文件清单，不计算 LCS（重活留给 message_end 后的
  * get-message-diffs 路径，避免在事件循环里阻塞。Renderer 收到 phase: 'live'
  * 会进入 loading skeleton 状态，不渲染 +X -Y 中间值。
+ *
+ * 竞态保护：本函数被 setImmediate 异步调度。若在排队期间 message_end 已经
+ * 把累积器从 activeStreams 删除，说明 renderer 这边的 loadMessageDiffs 已经
+ * 拿到 final 数据写入了 messageDiffs；此时再 emit 一个 live 占位会把真实
+ * 数据压回骨架，且没有后续 final 来恢复。直接跳过即可。
  */
 function emitLiveDiffUpdate(sessionId: string, messageId: string, ctx: MessageContext): void {
+  if (!activeStreams.has(messageId)) return
+
   try {
     const manifest = readManifest(ctx.sessionsDir, sessionId, messageId)
     if (!manifest || manifest.status !== 'active') return

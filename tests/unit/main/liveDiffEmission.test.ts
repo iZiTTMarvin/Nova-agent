@@ -149,4 +149,42 @@ describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
     await new Promise(r => setImmediate(r))
     expect(captured.some(e => e.type === 'diff_update')).toBe(true)
   })
+
+  /**
+   * T1 竞态：tool_result 排队的 setImmediate 还没执行，message_end 就先到了。
+   * 此时累积器已被删除，late live 不应再 emit diff_update（否则会把已写入
+   * messageDiffs 的最终数据压回 loading 骨架，且没有后续 final 来清掉）。
+   */
+  it('message_end 之后到达的 late live 不应再 emit diff_update', async () => {
+    const eventBus = new EventBus()
+    const captured: AgentEvent[] = []
+    eventBus.on(e => captured.push(e))
+    const ctx = makeCtx(eventBus)
+
+    accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_race' }, ctx)
+    accumulateStreamEvent('sess_1', {
+      type: 'tool_call',
+      messageId: 'msg_race',
+      toolCallId: 'tc_w',
+      toolName: 'write',
+      args: { path: 'src/foo.ts' }
+    }, ctx)
+    accumulateStreamEvent('sess_1', {
+      type: 'tool_result',
+      messageId: 'msg_race',
+      toolCallId: 'tc_w',
+      toolName: 'write',
+      result: '写入成功'
+    }, ctx)
+
+    // 在 setImmediate 真正触发前，message_end 先发生，删除了累积器
+    accumulateStreamEvent('sess_1', { type: 'message_end', messageId: 'msg_race' }, ctx)
+
+    // 现在让 setImmediate 执行（late live）
+    await new Promise(r => setImmediate(r))
+
+    // 关键断言：累积器已删除时，emitLiveDiffUpdate 不应发出 diff_update
+    const diffEvents = captured.filter(e => e.type === 'diff_update')
+    expect(diffEvents).toHaveLength(0)
+  })
 })

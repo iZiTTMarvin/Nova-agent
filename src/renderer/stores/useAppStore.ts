@@ -654,10 +654,14 @@ export const useAppStore = create<AppState>((set, get) => ({
    *   此时不写 messageDiffs（否则 DiffViewer 会按空 hunks 渲染出 +0 -0 中间态），
    *   仅把 messageId 标记为正在加载，并把文件列表存到 placeholders 供 skeleton 展示，
    *   等到 message_end 后再拉取最终数据替换。
+   *   竞态保护：如果 messageDiffs 已经被 final 写入，说明本条 live 是 setImmediate
+   *   排队期间迟到的事件（message_end 先一步走完了 loadMessageDiffs），直接忽略，
+   *   避免把真实数据压回骨架且没有后续 final 来清除。
    * phase === 'final'：完整数据。直接覆盖缓存并清除 loading 标记和 placeholders。
    */
   handleDiffUpdate: (messageId, phase, diffs, reviews) => {
     if (phase === 'live') {
+      if (get().messageDiffs[messageId]) return
       const placeholders = diffs.map(d => ({ filePath: d.filePath, status: d.status }))
       set(state => ({
         loadingDiffs: new Set([...state.loadingDiffs, messageId]),

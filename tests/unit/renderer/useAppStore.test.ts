@@ -523,4 +523,44 @@ describe('useAppStore Zustand Store', () => {
     ])
     expect(finalState.loadingDiffPlaceholders[messageId]).toBeUndefined()
   })
+
+  /**
+   * T1 竞态回归：final 已经写入 messageDiffs 后，迟到的 live 事件不能把真实数据压回骨架。
+   *
+   * 触发场景：tool_result 被 setImmediate 异步调度的 live emit 排队中，message_end 已经
+   * 同步走完，loadMessageDiffs 拿到 final 数据，最后 live 才被事件循环消费。
+   */
+  it('T1 竞态：late live 不应覆盖已存在的最终 diff 数据', () => {
+    const messageId = 'msg_late_live'
+
+    // 1. 模拟 final 已经先到（loadMessageDiffs 完成）
+    useAppStore.getState().handleDiffUpdate(
+      messageId,
+      'final',
+      [{
+        filePath: 'src/foo.ts',
+        status: 'modified',
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }]
+      }],
+      {}
+    )
+    expect(useAppStore.getState().messageDiffs[messageId]).toBeDefined()
+    expect(useAppStore.getState().loadingDiffs.has(messageId)).toBe(false)
+
+    // 2. 模拟迟到的 live 事件（被 setImmediate 排队晚到）
+    useAppStore.getState().handleDiffUpdate(
+      messageId,
+      'live',
+      [{ filePath: 'src/foo.ts', status: 'modified' }],
+      {}
+    )
+
+    // 关键断言：messageDiffs 不应被清掉，loadingDiffs 不应被重新打开
+    const state = useAppStore.getState()
+    expect(state.messageDiffs[messageId]?.diffs[0].hunks).toEqual([
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }
+    ])
+    expect(state.loadingDiffs.has(messageId)).toBe(false)
+    expect(state.loadingDiffPlaceholders[messageId]).toBeUndefined()
+  })
 })
