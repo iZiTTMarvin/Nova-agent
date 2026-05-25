@@ -27,6 +27,7 @@ describe('useAppStore Zustand Store', () => {
       sessions: [],
       currentSessionId: null,
       messages: [],
+      messageIndexById: {},
       isGenerating: false,
       currentGeneratingMessageId: null,
       modelConfig: null,
@@ -562,5 +563,90 @@ describe('useAppStore Zustand Store', () => {
     ])
     expect(state.loadingDiffs.has(messageId)).toBe(false)
     expect(state.loadingDiffPlaceholders[messageId]).toBeUndefined()
+  })
+
+  /**
+   * T5 回归：messageIndexById 索引在 delta 处理中应与 messages 数组保持一致
+   */
+  describe('T5: messageIndexById 索引与 delta 优化', () => {
+    it('handleMessageStart 应同步维护 messageIndexById', () => {
+      useAppStore.getState().handleMessageStart('msg_idx_1')
+      const state = useAppStore.getState()
+      expect(state.messageIndexById['msg_idx_1']).toBe(0)
+      expect(state.messages[0].id).toBe('msg_idx_1')
+    })
+
+    it('多次追加消息后索引应正确反映位置', () => {
+      useAppStore.getState().handleMessageStart('msg_a')
+      useAppStore.getState().handleMessageStart('msg_b')
+      const state = useAppStore.getState()
+      expect(state.messageIndexById['msg_a']).toBe(0)
+      expect(state.messageIndexById['msg_b']).toBe(1)
+    })
+
+    it('handleThinkingDelta 应通过索引定位消息，不影响其他消息', () => {
+      useAppStore.getState().handleMessageStart('msg_first')
+      useAppStore.getState().handleMessageStart('msg_second')
+
+      useAppStore.getState().handleThinkingDelta('msg_second', '思考中...')
+
+      const state = useAppStore.getState()
+      // 第二条消息应该更新
+      expect(state.messages[1].thinking).toBe('思考中...')
+      // 第一条消息应保持不变
+      expect(state.messages[0].thinking).toBe('')
+    })
+
+    it('handleTextDelta 应通过索引定位消息，不影响其他消息', () => {
+      useAppStore.getState().handleMessageStart('msg_text_1')
+      useAppStore.getState().handleMessageStart('msg_text_2')
+
+      useAppStore.getState().handleTextDelta('msg_text_2', '你好')
+      useAppStore.getState().handleTextDelta('msg_text_1', '世界')
+
+      const state = useAppStore.getState()
+      expect(state.messages[0].content).toBe('世界')
+      expect(state.messages[1].content).toBe('你好')
+    })
+
+    it('handleToolCall 应通过索引定位消息并正确追加工具调用', () => {
+      useAppStore.getState().handleMessageStart('msg_tc')
+      useAppStore.getState().handleToolCall('msg_tc', 'tc_1', 'ls', { path: './' })
+
+      const state = useAppStore.getState()
+      expect(state.messages[0].toolCalls?.length).toBe(1)
+      expect(state.messages[0].toolCalls![0].name).toBe('ls')
+    })
+
+    it('handleToolResult 应通过索引定位消息并正确更新工具状态', () => {
+      useAppStore.getState().handleMessageStart('msg_tr')
+      useAppStore.getState().handleToolCall('msg_tr', 'tc_tr_1', 'read', { path: 'a.ts' })
+      useAppStore.getState().handleToolResult('msg_tr', 'tc_tr_1', 'read', '文件内容')
+
+      const state = useAppStore.getState()
+      expect(state.messages[0].toolCalls![0].status).toBe('success')
+      expect(state.messages[0].toolCalls![0].result).toBe('文件内容')
+    })
+
+    it('handleVerificationResult 应通过索引定位消息', () => {
+      useAppStore.getState().handleMessageStart('msg_vr')
+      useAppStore.getState().handleVerificationResult('msg_vr', '✓ 验证通过')
+
+      const state = useAppStore.getState()
+      expect(state.messages[0].verificationSummary).toBe('✓ 验证通过')
+    })
+
+    it('不存在的 messageId 应静默忽略，不修改状态', () => {
+      useAppStore.getState().handleMessageStart('msg_exists')
+      const before = useAppStore.getState().messages.length
+
+      useAppStore.getState().handleThinkingDelta('msg_nonexistent', '不会出现')
+      useAppStore.getState().handleTextDelta('msg_nonexistent', '不会出现')
+      useAppStore.getState().handleToolCall('msg_nonexistent', 'tc_x', 'ls', {})
+
+      const after = useAppStore.getState()
+      expect(after.messages.length).toBe(before)
+      expect(after.messages[0].content).toBe('')
+    })
   })
 })

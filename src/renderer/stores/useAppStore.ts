@@ -133,6 +133,15 @@ function applyDiffReviewStatus(
   }
 }
 
+/** 根据 messages 数组构建 id → index 索引，加速 delta 更新时按 id 定位 */
+function buildMessageIndex(messages: ExtendedMessage[]): Record<string, number> {
+  const index: Record<string, number> = {}
+  for (let i = 0; i < messages.length; i++) {
+    index[messages[i].id] = i
+  }
+  return index
+}
+
 /** Zustand 全局状态定义 */
 interface AppState {
   currentProject: string | null
@@ -140,6 +149,8 @@ interface AppState {
   sessions: Session[]
   currentSessionId: string | null
   messages: ExtendedMessage[]
+  /** id → 数组索引，用于 delta 处理时 O(1) 定位消息，避免全量 .map() */
+  messageIndexById: Record<string, number>
   isGenerating: boolean
   currentGeneratingMessageId: string | null
   modelConfig: ModelConfig | null
@@ -242,6 +253,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: [],
   currentSessionId: null,
   messages: [],
+  messageIndexById: {},
   isGenerating: false,
   currentGeneratingMessageId: null,
   modelConfig: null,
@@ -264,12 +276,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           mode: get().currentMode
         })
 
+        const restored = restoreSessionMessages(sessionDetail.messages)
         set(state => ({
           currentProject: selectedPath,
           currentSessionId: sessionDetail.id,
           currentMode: sessionDetail.mode,
           sessions: upsertSessionSummary(state.sessions, sessionDetail),
-          messages: restoreSessionMessages(sessionDetail.messages),
+          messages: restored,
+          messageIndexById: buildMessageIndex(restored),
           pendingVerificationRequest: null
         }))
       }
@@ -312,10 +326,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       timestamp: Date.now()
     }
 
-    set(state => ({
-      messages: [...state.messages, userMsg],
-      isGenerating: true
-    }))
+    set(state => {
+      const nextMessages = [...state.messages, userMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 },
+        isGenerating: true
+      }
+    })
 
     try {
       // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
@@ -393,6 +411,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             currentSessionId: null,
             currentProject: null,
             messages: [],
+            messageIndexById: {},
             pendingVerificationRequest: null
           })
         }
@@ -410,10 +429,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         workspaceRoot: currentProject,
         mode: currentMode
       })
+      const restored = restoreSessionMessages(sessionDetail.messages)
       set(state => ({
         currentSessionId: sessionDetail.id,
         sessions: upsertSessionSummary(state.sessions, sessionDetail),
-        messages: restoreSessionMessages(sessionDetail.messages),
+        messages: restored,
+        messageIndexById: buildMessageIndex(restored),
         pendingVerificationRequest: null
       }))
     } catch (err) {
@@ -431,6 +452,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         currentMode: detail.mode,
         sessions: upsertSessionSummary(get().sessions, detail),
         messages: restored,
+        messageIndexById: buildMessageIndex(restored),
         messageDiffs: {}, // 切换会话时清空 diff 缓存
         pendingVerificationRequest: null
       })
@@ -451,11 +473,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       await window.api.invoke('rollback-message', { sessionId, messageId })
       // 回退成功后重新加载会话数据
       const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
+      const restored = restoreSessionMessages(detail.messages)
       set({
         currentProject: detail.workspaceRoot,
         currentMode: detail.mode,
         sessions: upsertSessionSummary(get().sessions, detail),
-        messages: restoreSessionMessages(detail.messages),
+        messages: restored,
+        messageIndexById: buildMessageIndex(restored),
         pendingVerificationRequest: null
       })
     } catch (err) {
@@ -556,42 +580,52 @@ export const useAppStore = create<AppState>((set, get) => ({
       blocks: []
     }
 
-    set(state => ({
-      messages: [...state.messages, assistantMsg],
-      currentGeneratingMessageId: messageId
-    }))
+    set(state => {
+      const nextMessages = [...state.messages, assistantMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        currentGeneratingMessageId: messageId
+      }
+    })
   },
 
   handleThinkingDelta: (messageId: string, delta: string) => {
-    set(state => ({
-      messages: state.messages.map(msg => {
-        if (msg.id !== messageId) return msg
-        const blocks = msg.blocks ? [...msg.blocks] : []
-        const last = blocks[blocks.length - 1]
-        if (last && last.type === 'thinking') {
-          blocks[blocks.length - 1] = { ...last, content: last.content + delta }
-        } else {
-          blocks.push({ type: 'thinking', content: delta })
-        }
-        return { ...msg, thinking: (msg.thinking ?? '') + delta, blocks }
-      })
-    }))
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const blocks = msg.blocks ? [...msg.blocks] : []
+      const last = blocks[blocks.length - 1]
+      if (last && last.type === 'thinking') {
+        blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+      } else {
+        blocks.push({ type: 'thinking', content: delta })
+      }
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, thinking: (msg.thinking ?? '') + delta, blocks }
+      return { messages: nextMessages }
+    })
   },
 
   handleTextDelta: (messageId: string, delta: string) => {
-    set(state => ({
-      messages: state.messages.map(msg => {
-        if (msg.id !== messageId) return msg
-        const blocks = msg.blocks ? [...msg.blocks] : []
-        const last = blocks[blocks.length - 1]
-        if (last && last.type === 'text') {
-          blocks[blocks.length - 1] = { ...last, content: last.content + delta }
-        } else {
-          blocks.push({ type: 'text', content: delta })
-        }
-        return { ...msg, content: msg.content + delta, blocks }
-      })
-    }))
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const blocks = msg.blocks ? [...msg.blocks] : []
+      const last = blocks[blocks.length - 1]
+      if (last && last.type === 'text') {
+        blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+      } else {
+        blocks.push({ type: 'text', content: delta })
+      }
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, content: msg.content + delta, blocks }
+      return { messages: nextMessages }
+    })
   },
 
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
@@ -602,49 +636,55 @@ export const useAppStore = create<AppState>((set, get) => ({
       status: 'running'
     }
 
-    set(state => ({
-      messages: state.messages.map(msg => {
-        if (msg.id !== messageId) return msg
-        const blocks = msg.blocks ? [...msg.blocks] : []
-        blocks.push({
-          type: 'tool',
-          toolCallId,
-          toolName,
-          arguments: args,
-          status: 'running'
-        })
-        const toolCalls = msg.toolCalls ? [...msg.toolCalls, newToolCall] : [newToolCall]
-        return { ...msg, toolCalls, blocks }
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const blocks = msg.blocks ? [...msg.blocks] : []
+      blocks.push({
+        type: 'tool',
+        toolCallId,
+        toolName,
+        arguments: args,
+        status: 'running'
       })
-    }))
+      const toolCalls = msg.toolCalls ? [...msg.toolCalls, newToolCall] : [newToolCall]
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, toolCalls, blocks }
+      return { messages: nextMessages }
+    })
   },
 
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => {
     const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
 
-    set(state => ({
-      messages: state.messages.map(msg => {
-        if (msg.id !== messageId) return msg
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
 
-        // 更新 blocks 中的 tool 块
-        const blocks = msg.blocks?.map(b => {
-          if (b.type === 'tool' && b.toolCallId === toolCallId) {
-            return { ...b, status: isError ? 'error' as const : 'success' as const, result }
-          }
-          return b
-        })
-
-        // 同步更新 toolCalls 数组（给 diff 功能用）
-        const toolCalls = msg.toolCalls?.map(tc => {
-          if (tc.id === toolCallId) {
-            return { ...tc, result, status: isError ? 'error' as const : 'success' as const }
-          }
-          return tc
-        })
-
-        return { ...msg, blocks, toolCalls }
+      // 更新 blocks 中的 tool 块
+      const blocks = msg.blocks?.map(b => {
+        if (b.type === 'tool' && b.toolCallId === toolCallId) {
+          return { ...b, status: isError ? 'error' as const : 'success' as const, result }
+        }
+        return b
       })
-    }))
+
+      // 同步更新 toolCalls 数组
+      const toolCalls = msg.toolCalls?.map(tc => {
+        if (tc.id === toolCallId) {
+          return { ...tc, result, status: isError ? 'error' as const : 'success' as const }
+        }
+        return tc
+      })
+
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, blocks, toolCalls }
+      return { messages: nextMessages }
+    })
   },
 
   /**
@@ -719,12 +759,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   handleVerificationResult: (messageId: string, result: string) => {
-    set(state => ({
-      messages: state.messages.map(msg => {
-        if (msg.id !== messageId) return msg
-        return { ...msg, verificationSummary: result }
-      })
-    }))
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, verificationSummary: result }
+      return { messages: nextMessages }
+    })
   },
 
   handleError: (messageId: string, error: string) => {
@@ -741,14 +784,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       timestamp: Date.now()
     }
 
-    set(state => ({
-      messages: [...state.messages, errorMsg],
-      isGenerating: false,
-      currentGeneratingMessageId: null,
-      pendingPermissionRequest: null,
-      isSubmittingPermission: false,
-      permissionError: null
-    }))
+    set(state => {
+      const nextMessages = [...state.messages, errorMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        isGenerating: false,
+        currentGeneratingMessageId: null,
+        pendingPermissionRequest: null,
+        isSubmittingPermission: false,
+        permissionError: null
+      }
+    })
   },
 
   handlePermissionRequest: (request: PendingPermissionRequest) => {
