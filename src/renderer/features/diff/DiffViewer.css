@@ -139,6 +139,25 @@
   border-left: 3px solid var(--color-success);
 }
 
+/* loading 占位文件项：禁用交互、淡化前景 */
+.diff-file--loading {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.diff-file__loading-spinner {
+  margin-left: auto;
+  font-size: 0.85rem;
+  letter-spacing: 2px;
+  color: var(--text-secondary);
+  animation: diff-loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes diff-loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.9; }
+}
+
 .diff-file__review-badge {
   font-size: 0.7rem;
   font-weight: 600;

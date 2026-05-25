@@ -19,6 +19,12 @@ export interface DiffViewerProps {
   sessionId: string
   messageId: string
   isLoading?: boolean
+  /**
+   * loading 阶段的占位文件列表。
+   * 后端已经知道有哪些文件被改动，但还没算完 LCS，所以这里先把文件名展示出来，
+   * 用 spinner 表达「正在加载详细差异」。
+   */
+  loadingPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
   onRejectFile?: (filePath: string) => Promise<void>
   onAcceptFile?: (filePath: string) => Promise<void>
 }
@@ -298,18 +304,42 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   sessionId,
   messageId,
   isLoading = false,
+  loadingPlaceholders,
   onRejectFile,
   onAcceptFile
 }) => {
   const [expanded, setExpanded] = useState(true)
 
-  // loading 状态
+  // loading 状态：展示已知文件名 + spinner，不展示 +0 -0 统计避免误导
   if (isLoading) {
+    const placeholders = loadingPlaceholders ?? []
     return (
-      <div className="diff-viewer">
+      <div className="diff-viewer diff-viewer--loading">
         <div className="diff-viewer__header">
-          <span className="diff-viewer__title">加载文件变更中...</span>
+          <span className="diff-viewer__title">正在加载文件变更…</span>
+          {placeholders.length > 0 && (
+            <span className="diff-viewer__stats">
+              <span className="diff-viewer__stat diff-viewer__stat--files">{placeholders.length} 个文件</span>
+            </span>
+          )}
         </div>
+        {placeholders.length > 0 && (
+          <div className="diff-viewer__body">
+            {placeholders.map((file, idx) => {
+              const statusLabel = file.status === 'added' ? '新建' : file.status === 'deleted' ? '删除' : '修改'
+              return (
+                <div key={`${file.filePath}_${idx}`} className="diff-file diff-file--loading">
+                  <div className="diff-file__header">
+                    <ChevronIcon size={14} direction="right" />
+                    <span className="diff-file__name">{file.filePath}</span>
+                    <span className="diff-file__status-badge">{statusLabel}</span>
+                    <span className="diff-file__loading-spinner" aria-label="loading">…</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     )
   }

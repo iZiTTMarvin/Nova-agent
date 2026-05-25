@@ -35,7 +35,8 @@ describe('useAppStore Zustand Store', () => {
       isSubmittingPermission: false,
       permissionError: null,
       messageDiffs: {},
-      loadingDiffs: new Set()
+      loadingDiffs: new Set(),
+      loadingDiffPlaceholders: {}
     })
   })
 
@@ -351,10 +352,58 @@ describe('useAppStore Zustand Store', () => {
     })
   })
 
+  it('handleDiffUpdate(live) 不应写入 messageDiffs，而应把 messageId 标记为 loading', () => {
+    useAppStore.getState().handleDiffUpdate(
+      'msg_live_1',
+      'live',
+      [{ filePath: 'src/live.ts', status: 'modified' }],
+      {}
+    )
+
+    const state = useAppStore.getState()
+    expect(state.messageDiffs['msg_live_1']).toBeUndefined()
+    expect(state.loadingDiffs.has('msg_live_1')).toBe(true)
+  })
+
+  it('handleDiffUpdate(final) 应写入完整 diff 数据并清除 loading 标记', () => {
+    // 先模拟一次 live 占位
+    useAppStore.getState().handleDiffUpdate(
+      'msg_final_1',
+      'live',
+      [{ filePath: 'src/final.ts', status: 'modified' }],
+      {}
+    )
+    expect(useAppStore.getState().loadingDiffs.has('msg_final_1')).toBe(true)
+
+    // 再模拟 final：携带完整 hunks
+    useAppStore.getState().handleDiffUpdate(
+      'msg_final_1',
+      'final',
+      [{
+        filePath: 'src/final.ts',
+        status: 'modified',
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: ' a' }]
+      }],
+      { 'src/final.ts': 'pending' as const }
+    )
+
+    const state = useAppStore.getState()
+    expect(state.loadingDiffs.has('msg_final_1')).toBe(false)
+    expect(state.messageDiffs['msg_final_1']).toEqual({
+      diffs: [{
+        filePath: 'src/final.ts',
+        status: 'modified',
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: ' a' }]
+      }],
+      reviews: { 'src/final.ts': 'pending' }
+    })
+  })
+
   it('handleDiffUpdate 应实时写入当前消息的 diff 元数据', () => {
     useAppStore.getState().handleDiffUpdate(
       'msg_1',
-      [{ filePath: 'src/live.ts', status: 'modified' }],
+      'final',
+      [{ filePath: 'src/live.ts', status: 'modified', hunks: [] }],
       {}
     )
 
@@ -417,5 +466,61 @@ describe('useAppStore Zustand Store', () => {
     } finally {
       consoleErrorSpy.mockRestore()
     }
+  })
+
+  /**
+   * T1 回归：tool_result → diff_update(live) → message_end → loadMessageDiffs(final)
+   * 断言中间任何时刻都不会出现"+0 -0"语义（即不会出现 hunks 为空但被当作完整数据的 messageDiffs 条目）。
+   */
+  it('T1 回归：流式期间不应出现 hunks 为空的 messageDiffs 中间态', async () => {
+    const messageId = 'msg_t1_regression'
+    const sessionId = 'sess_t1'
+
+    useAppStore.setState({ currentSessionId: sessionId })
+
+    // 1. 模拟 message_start + tool_call + tool_result（与 store 实际接收事件一致）
+    useAppStore.getState().handleMessageStart(messageId)
+    useAppStore.getState().handleToolCall(messageId, 'tc_w_1', 'write', { path: 'src/foo.ts' })
+    useAppStore.getState().handleToolResult(messageId, 'tc_w_1', 'write', '写入成功')
+
+    // 此时还没有 diff_update：messageDiffs 应为空
+    expect(useAppStore.getState().messageDiffs[messageId]).toBeUndefined()
+
+    // 2. 模拟 emitLiveDiffUpdate 推送 phase: 'live'
+    useAppStore.getState().handleDiffUpdate(
+      messageId,
+      'live',
+      [{ filePath: 'src/foo.ts', status: 'modified' }],
+      {}
+    )
+
+    // 关键断言：live 阶段不应写入 messageDiffs（避免 DiffViewer 渲染 +0 -0）
+    expect(useAppStore.getState().messageDiffs[messageId]).toBeUndefined()
+    expect(useAppStore.getState().loadingDiffs.has(messageId)).toBe(true)
+    expect(useAppStore.getState().loadingDiffPlaceholders[messageId]).toEqual([
+      { filePath: 'src/foo.ts', status: 'modified' }
+    ])
+
+    // 3. 模拟 message_end 触发 loadMessageDiffs，后端返回完整 hunks
+    mockInvoke.mockResolvedValueOnce({
+      diffs: [{
+        filePath: 'src/foo.ts',
+        status: 'modified',
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }]
+      }],
+      reviews: {}
+    })
+    // handleMessageEnd 内部会调 loadMessageDiffs(currentSessionId, messageId)
+    useAppStore.getState().handleMessageEnd(messageId)
+    // 等微任务：loadMessageDiffs 是 async
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    // 最终状态：拿到完整 hunks，loading 标记被清除
+    const finalState = useAppStore.getState()
+    expect(finalState.loadingDiffs.has(messageId)).toBe(false)
+    expect(finalState.messageDiffs[messageId]?.diffs[0].hunks).toEqual([
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }
+    ])
+    expect(finalState.loadingDiffPlaceholders[messageId]).toBeUndefined()
   })
 })

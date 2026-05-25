@@ -216,6 +216,7 @@ export const ChatPanel: React.FC = () => {
   // diff 审查所需状态
   const messageDiffs = useAppStore(state => state.messageDiffs)
   const loadingDiffs = useAppStore(state => state.loadingDiffs)
+  const loadingDiffPlaceholders = useAppStore(state => state.loadingDiffPlaceholders)
   const loadMessageDiffs = useAppStore(state => state.loadMessageDiffs)
   const rejectFile = useAppStore(state => state.rejectFile)
   const acceptFile = useAppStore(state => state.acceptFile)
@@ -432,8 +433,20 @@ export const ChatPanel: React.FC = () => {
                   </>
                 )}
 
-                {/* diff 审查面板 */}
-                {isAssistant && currentSessionId && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
+                {/* diff 区域：loading 时优先展示骨架，避免 +0 -0 中间态 */}
+                {isAssistant && currentSessionId && loadingDiffs.has(msg.id) && (
+                  <DiffViewer
+                    diffs={[]}
+                    reviews={{}}
+                    sessionId={currentSessionId}
+                    messageId={msg.id}
+                    isLoading={true}
+                    loadingPlaceholders={loadingDiffPlaceholders[msg.id]}
+                  />
+                )}
+
+                {/* diff 最终数据：仅在没有 loading 标记且有真实数据时渲染 */}
+                {isAssistant && currentSessionId && !loadingDiffs.has(msg.id) && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
                   <DiffViewer
                     diffs={messageDiffs[msg.id].diffs}
                     reviews={messageDiffs[msg.id].reviews}
@@ -441,17 +454,6 @@ export const ChatPanel: React.FC = () => {
                     messageId={msg.id}
                     onRejectFile={(filePath) => rejectFile(currentSessionId, msg.id, filePath)}
                     onAcceptFile={(filePath) => acceptFile(currentSessionId, msg.id, filePath)}
-                  />
-                )}
-
-                {/* diff 加载中 */}
-                {isAssistant && currentSessionId && loadingDiffs.has(msg.id) && !messageDiffs[msg.id] && (
-                  <DiffViewer
-                    diffs={[]}
-                    reviews={{}}
-                    sessionId={currentSessionId}
-                    messageId={msg.id}
-                    isLoading={true}
                   />
                 )}
 

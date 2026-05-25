@@ -154,6 +154,11 @@ interface AppState {
   messageDiffs: Record<string, MessageDiffCache>
   /** 正在加载 diff 的消息 ID 集合 */
   loadingDiffs: Set<string>
+  /**
+   * live 阶段的占位文件列表，仅在等待最终 diff 数据时使用。
+   * 让 DiffViewer 在 skeleton 状态下也能展示文件名，给用户更明确的反馈。
+   */
+  loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
 
   // ── Actions ──────────────────────────────────────────
   
@@ -212,7 +217,12 @@ interface AppState {
   handleTextDelta: (messageId: string, delta: string) => void
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
-  handleDiffUpdate: (messageId: string, diffs: Array<{ filePath: string; status: DiffEntry['status'] }>, reviews: Record<string, DiffReviewStatus>) => void
+  handleDiffUpdate: (
+    messageId: string,
+    phase: 'live' | 'final',
+    diffs: Array<{ filePath: string; status: DiffEntry['status']; hunks?: DiffEntry['hunks'] }>,
+    reviews: Record<string, DiffReviewStatus>
+  ) => void
   handleMessageEnd: (messageId: string) => void
   handleError: (messageId: string, error: string) => void
   handleVerificationResult: (messageId: string, result: string) => void
@@ -242,6 +252,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingVerificationRequest: null,
   messageDiffs: {},
   loadingDiffs: new Set(),
+  loadingDiffPlaceholders: {},
 
   selectProject: async () => {
     try {
@@ -471,24 +482,34 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadMessageDiffs: async (sessionId: string, messageId: string) => {
-    const { loadingDiffs } = get()
-    if (loadingDiffs.has(messageId)) return
+    // 注意：loadingDiffs 中的 messageId 既可能来自 live 占位，也可能来自上一次未完成的 final 请求。
+    // 这里仅在「已存在缓存」或「已有进行中的 final 请求」时跳过；live 占位不阻断真实加载。
+    const state = get()
+    if (state.messageDiffs[messageId]) return
 
-    set(state => ({
-      loadingDiffs: new Set([...state.loadingDiffs, messageId])
+    set(s => ({
+      loadingDiffs: new Set([...s.loadingDiffs, messageId])
     }))
 
     try {
       const result = await window.api.invoke('get-message-diffs', { sessionId, messageId })
-      set(state => ({
-        messageDiffs: { ...state.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews } },
-        loadingDiffs: new Set([...state.loadingDiffs].filter(id => id !== messageId))
-      }))
+      set(s => {
+        const nextLoading = new Set(s.loadingDiffs)
+        nextLoading.delete(messageId)
+        const { [messageId]: _, ...nextPlaceholders } = s.loadingDiffPlaceholders
+        return {
+          messageDiffs: { ...s.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews } },
+          loadingDiffs: nextLoading,
+          loadingDiffPlaceholders: nextPlaceholders
+        }
+      })
     } catch (err) {
       console.error('加载 diff 出错:', err)
-      set(state => ({
-        loadingDiffs: new Set([...state.loadingDiffs].filter(id => id !== messageId))
-      }))
+      set(s => {
+        const nextLoading = new Set(s.loadingDiffs)
+        nextLoading.delete(messageId)
+        return { loadingDiffs: nextLoading }
+      })
     }
   },
 
@@ -626,26 +647,50 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
-  handleDiffUpdate: (messageId: string, diffs, reviews) => {
-    const existing = get().messageDiffs[messageId]
-    const nextDiffs = diffs.map(diffMeta => {
-      const previous = existing?.diffs.find(diff => diff.filePath === diffMeta.filePath)
-      return previous ?? {
-        filePath: diffMeta.filePath,
-        status: diffMeta.status,
-        hunks: []
+  /**
+   * 工具执行后实时点亮 diff 区域。
+   *
+   * phase === 'live'：占位信号。后端只发了文件名 + status，没有 hunks。
+   *   此时不写 messageDiffs（否则 DiffViewer 会按空 hunks 渲染出 +0 -0 中间态），
+   *   仅把 messageId 标记为正在加载，并把文件列表存到 placeholders 供 skeleton 展示，
+   *   等到 message_end 后再拉取最终数据替换。
+   * phase === 'final'：完整数据。直接覆盖缓存并清除 loading 标记和 placeholders。
+   */
+  handleDiffUpdate: (messageId, phase, diffs, reviews) => {
+    if (phase === 'live') {
+      const placeholders = diffs.map(d => ({ filePath: d.filePath, status: d.status }))
+      set(state => ({
+        loadingDiffs: new Set([...state.loadingDiffs, messageId]),
+        loadingDiffPlaceholders: {
+          ...state.loadingDiffPlaceholders,
+          [messageId]: placeholders
+        }
+      }))
+      return
+    }
+
+    const nextDiffs = diffs.map(diffMeta => ({
+      filePath: diffMeta.filePath,
+      status: diffMeta.status,
+      hunks: diffMeta.hunks ?? []
+    }))
+
+    set(state => {
+      const nextLoading = new Set(state.loadingDiffs)
+      nextLoading.delete(messageId)
+      const { [messageId]: _, ...nextPlaceholders } = state.loadingDiffPlaceholders
+      return {
+        messageDiffs: {
+          ...state.messageDiffs,
+          [messageId]: {
+            diffs: nextDiffs,
+            reviews
+          }
+        },
+        loadingDiffs: nextLoading,
+        loadingDiffPlaceholders: nextPlaceholders
       }
     })
-
-    set(state => ({
-      messageDiffs: {
-        ...state.messageDiffs,
-        [messageId]: {
-          diffs: nextDiffs,
-          reviews
-        }
-      }
-    }))
   },
 
   handleMessageEnd: (messageId: string) => {

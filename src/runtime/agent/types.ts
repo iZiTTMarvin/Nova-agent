@@ -15,6 +15,13 @@ export type AgentEvent =
   | {
       type: 'diff_update'
       messageId: string
+      /**
+       * live：工具执行完后实时发出的占位信号，只携带文件列表和状态，不含 hunks；
+       *       前端用于点亮 loading skeleton，不应渲染 +X -Y 统计。
+       * final：message_end 后通过 get-message-diffs 主动拉取的最终数据。
+       *        emitLiveDiffUpdate 不会再发 final，保留枚举值供未来扩展。
+       */
+      phase: 'live' | 'final'
       diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }>
       reviews: Record<string, DiffReviewStatus>
     }

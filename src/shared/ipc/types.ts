@@ -133,7 +133,14 @@ export interface IpcEvents {
   }
   'agent:diff-update': {
     messageId: string
-    diffs: DiffEntry[]
+    /** live: 工具执行后实时占位信号（无 hunks）；final: 最终数据（含 hunks） */
+    phase: 'live' | 'final'
+    /**
+     * 文件级元数据。
+     * phase === 'live' 时 hunks 字段保证为空数组；
+     * phase === 'final' 时携带完整 hunks。
+     */
+    diffs: Array<{ filePath: string; status: DiffEntry['status']; hunks?: DiffEntry['hunks'] }>
     reviews: Record<string, DiffReviewStatus>
   }
   'agent:verification-result': {

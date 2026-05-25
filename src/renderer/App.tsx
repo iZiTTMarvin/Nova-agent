@@ -68,7 +68,7 @@ function App(): JSX.Element {
 
     // 监听：Agent 执行中实时 diff 更新
     const unsubDiffUpdate = window.api.on('agent:diff-update', (data) => {
-      handleDiffUpdate(data.messageId, data.diffs, data.reviews)
+      handleDiffUpdate(data.messageId, data.phase, data.diffs, data.reviews)
     })
 
     // 监听：Agent 执行出错

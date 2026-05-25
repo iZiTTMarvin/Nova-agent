@@ -18,7 +18,6 @@ import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
-import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import { readManifest } from '../../runtime/checkpoints/manifest'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
@@ -284,26 +283,36 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
   }
 }
 
+/**
+ * 工具执行完成后实时点亮前端的占位信号
+ *
+ * 只读 checkpoint manifest 的文件清单，不计算 LCS（重活留给 message_end 后的
+ * get-message-diffs 路径，避免在事件循环里阻塞。Renderer 收到 phase: 'live'
+ * 会进入 loading skeleton 状态，不渲染 +X -Y 中间值。
+ */
 function emitLiveDiffUpdate(sessionId: string, messageId: string, ctx: MessageContext): void {
   try {
-    const nextState = buildMessageDiffState(
-      ctx.sessionsDir,
-      ctx.workspaceRoot,
-      sessionId,
-      messageId
-    )
+    const manifest = readManifest(ctx.sessionsDir, sessionId, messageId)
+    if (!manifest || manifest.status !== 'active') return
+
+    const reviews = manifest.fileReviews ?? {}
+    const liveDiffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }> = [
+      ...manifest.modifiedFiles.map(filePath => ({ filePath, status: 'modified' as const })),
+      ...manifest.createdFiles.map(filePath => ({ filePath, status: 'added' as const })),
+      ...manifest.deletedFiles.map(filePath => ({ filePath, status: 'deleted' as const }))
+    ]
+
+    if (liveDiffs.length === 0) return
 
     ctx.eventBus.emit({
       type: 'diff_update',
       messageId,
-      diffs: nextState.diffs.map(diff => ({
-        filePath: diff.filePath,
-        status: diff.status
-      })),
-      reviews: nextState.reviews
+      phase: 'live',
+      diffs: liveDiffs,
+      reviews
     })
   } catch (err) {
-    console.error('实时 diff 更新失败:', err)
+    console.error('实时 diff 占位更新失败:', err)
   }
 }
 
@@ -468,6 +477,7 @@ function forwardEventToRenderer(
     case 'diff_update':
       webContents.send('agent:diff-update', {
         messageId: event.messageId,
+        phase: event.phase,
         diffs: event.diffs,
         reviews: event.reviews
       })
