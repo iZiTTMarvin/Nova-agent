@@ -1,0 +1,79 @@
+/**
+ * 工具卡片显示名称与参数摘要
+ * 纯函数，可独立测试，供 ToolBox 组件使用
+ */
+
+/** 映射工具的中文名 */
+export function getToolDisplayName(toolName: string): string {
+  switch (toolName) {
+    case 'ls':
+      return '列出目录内容 (ls)'
+    case 'read':
+      return '读取文件内容 (read)'
+    case 'grep':
+      return '检索过滤文本 (grep)'
+    case 'find':
+      return '模糊检索定位文件 (find)'
+    case 'write':
+      return '写入文件 (write)'
+    case 'edit':
+      return '修改文件 (edit)'
+    case 'bash':
+      return '执行命令 (bash)'
+    default:
+      return `运行自动化工具 (${toolName})`
+  }
+}
+
+/**
+ * 统计文本行数，处理尾随换行：
+ * "a\nb" → 2 行，"a\nb\n" → 2 行（末尾空行不算）
+ */
+function countLines(text: string): number {
+  if (!text) return 0
+  // 去掉末尾换行后再 split，避免尾随换行多算 1 行
+  return text.replace(/\n$/, '').split('\n').length
+}
+
+/** 根据工具名和参数生成一句话摘要，不需要展开卡片就能看到核心操作信息 */
+export function getToolSummary(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'write': {
+      const path = (args.path as string) || ''
+      const content = args.content as string | undefined
+      const lines = content ? countLines(content) : 0
+      return path ? `正在写入 ${path}（+${lines} 行）` : '正在写入文件'
+    }
+    case 'edit': {
+      const path = (args.path as string) || ''
+      const old = args.old as string | undefined
+      const lines = old ? countLines(old) : 1
+      return path ? `正在修改 ${path}（替换 ${lines} 行）` : '正在修改文件'
+    }
+    case 'bash': {
+      const command = (args.command as string) || ''
+      // 截断过长的命令，只显示有效前缀
+      const display = command.length > 60 ? command.slice(0, 57) + '...' : command
+      return command ? `正在执行 ${display}` : '正在执行命令'
+    }
+    case 'read': {
+      const path = (args.path as string) || ''
+      return path ? `读取 ${path}` : '读取文件'
+    }
+    case 'grep': {
+      const pattern = (args.pattern as string) || ''
+      const path = (args.path as string) || ''
+      return pattern ? `搜索 "${pattern}"${path ? ` 在 ${path}` : ''}` : '搜索文本'
+    }
+    case 'find': {
+      const pattern = (args.pattern as string) || ''
+      return pattern ? `搜索 ${pattern}` : '搜索文件'
+    }
+    case 'ls': {
+      const path = (args.path as string) || ''
+      return path ? `列出 ${path}` : '列出目录'
+    }
+    default:
+      return ''
+  }
+}

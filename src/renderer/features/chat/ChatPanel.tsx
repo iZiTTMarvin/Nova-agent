@@ -17,6 +17,7 @@ import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock } from './renderingPolicy'
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
+import { getToolDisplayName, getToolSummary } from './toolDisplay'
 import './ChatPanel.css'
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
@@ -79,22 +80,7 @@ interface ToolBoxProps {
 const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
   const [isOpen, setIsOpen] = useState(false)
   const shouldHideArguments = isPermissionDeniedResult(result)
-
-  // 映射工具的中文名和主要职责
-  const getToolDisplayName = (toolName: string) => {
-    switch (toolName) {
-      case 'ls':
-        return '列出目录内容 (ls)'
-      case 'read':
-        return '读取文件内容 (read)'
-      case 'grep':
-        return '检索过滤文本 (grep)'
-      case 'find':
-        return '模糊检索定位文件 (find)'
-      default:
-        return `运行自动化工具 (${toolName})`
-    }
-  }
+  const summary = getToolSummary(name, args)
 
   // 状态图标选择
   const renderStatusIcon = () => {
@@ -137,6 +123,7 @@ const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
         {renderStatusIcon()}
         <TerminalIcon size={14} style={{ color: 'var(--text-secondary)' }} />
         <span className="tool-box__title">{getToolDisplayName(name)}</span>
+        {summary && <span className="tool-box__summary">{summary}</span>}
         <div className="tool-box__arrow">
           <ChevronIcon size={14} direction={isOpen ? 'up' : 'down'} />
         </div>
@@ -146,7 +133,7 @@ const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
         <div className="tool-box__body">
           {!shouldHideArguments && (
             <div className="tool-box__section">
-              <div className="tool-box__sec-title">入参 (Arguments)</div>
+              <div className="tool-box__sec-title">调用参数</div>
               <pre className="tool-box__content">
                 {JSON.stringify(args, null, 2)}
               </pre>
@@ -155,7 +142,7 @@ const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
           
           {result && (
             <div className="tool-box__section">
-              <div className="tool-box__sec-title">出参 (Result)</div>
+              <div className="tool-box__sec-title">执行结果</div>
               <pre className="tool-box__content">{result}</pre>
             </div>
           )}

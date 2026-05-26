@@ -284,6 +284,16 @@
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-charcoal);
+  flex-shrink: 0;
+}
+
+.tool-box__summary {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
   flex: 1;
 }
 
