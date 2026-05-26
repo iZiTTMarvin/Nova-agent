@@ -137,6 +137,7 @@
   - 流式 delta 到来时检查该标志，为 true 则不自动滚动
   - 新消息加入时重置标志
   - 验收：用户上滚后不再被自动拉回底部
+  - 自动化回归：`tests/unit/renderer/autoScroll.test.ts`
 
 ---
 
@@ -169,6 +170,8 @@
   - 用浏览器 Performance 面板检查主线程长任务
   - 用 React Profiler 检查 ChatPanel 单次 commit 时间
   - 验收：无 >50ms 主线程长任务，commit 时间显著下降
+  - 自动化回归：`tests/unit/renderer/phase3Performance.test.ts`
+  - 验收记录：`tasks/phase3-validation.md`
 
 ---
 
@@ -269,7 +272,7 @@
 | CP1 — T1 完成 | DiffViewer 无 `+0 -0` 中间态 | 手动测试 + 单元测试 |
 | CP2 — T2 完成 | 1MB 文件写入无卡顿 | 性能日志 < 50ms |
 | CP3 — T3 完成 | cancel 后 session 无权限拒绝条目 | 集成测试 + 检查 session JSON |
-| CP4 — T4+T5 完成 | 长对话流式无卡顿、滚动不抖 | Performance 面板 + 手动测试 |
+| CP4 — T4+T5 完成 | 长对话流式无卡顿、滚动不抖 | Profiler 回归测试 + `tasks/phase3-validation.md` |
 | CP5 — 全部完成 | 完整流程回归通过 | 创建会话 → 写大文件 → 观察 Diff → 取消 → 重新进入 |
 
 ---

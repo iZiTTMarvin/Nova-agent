@@ -16,6 +16,7 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock } from './renderingPolicy'
+import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
 import './ChatPanel.css'
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
@@ -239,20 +240,37 @@ export const ChatPanel: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   // 用户是否主动上滚，上滚期间停止自动跟随
   const userScrolledUpRef = useRef(false)
-  // 流式阶段的 rAF 节流滚动句柄
-  const rafIdRef = useRef<number | null>(null)
+  // 生成阶段专用的滚动调度器：统一管理 rAF 节流与取消逻辑
+  const streamAutoScrollRef = useRef<ReturnType<typeof createStreamAutoScrollController> | null>(null)
 
   // 瞬时跳到底部（流式阶段用，避免 smooth 动画排队）
   const scrollToBottomInstant = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
   }, [])
 
+  useEffect(() => {
+    const controller = createStreamAutoScrollController(
+      scrollToBottomInstant,
+      () => userScrolledUpRef.current,
+      browserFrameScheduler
+    )
+    streamAutoScrollRef.current = controller
+
+    return () => {
+      controller.cancel()
+      streamAutoScrollRef.current = null
+    }
+  }, [scrollToBottomInstant])
+
   // 检测用户是否主动上滚：距底部超过阈值则视为上滚
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return
-    const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    userScrolledUpRef.current = distFromBottom > 40
+    userScrolledUpRef.current = shouldPauseAutoFollow({
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      clientHeight: container.clientHeight
+    })
   }, [])
 
   // 新消息加入时自动滚到底部（用户上滚状态重置）
@@ -264,36 +282,16 @@ export const ChatPanel: React.FC = () => {
   // 流式阶段：delta 到来时用 rAF 节流滚动，避免高频抖动
   useEffect(() => {
     if (!isGenerating) {
-      // 非生成阶段取消待处理的 rAF
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current)
-        rafIdRef.current = null
-      }
+      streamAutoScrollRef.current?.cancel()
       return
     }
 
-    // 生成阶段：每帧最多滚一次
-    const scheduleScroll = () => {
-      if (!userScrolledUpRef.current) {
-        scrollToBottomInstant()
-      }
-    }
-
-    // 立即触发一次，然后靠 rAF 节流后续
-    if (rafIdRef.current === null) {
-      rafIdRef.current = requestAnimationFrame(() => {
-        rafIdRef.current = null
-        scheduleScroll()
-      })
-    }
+    streamAutoScrollRef.current?.schedule()
 
     return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current)
-        rafIdRef.current = null
-      }
+      streamAutoScrollRef.current?.cancel()
     }
-  }, [messages, isGenerating, scrollToBottomInstant])
+  }, [messages, isGenerating])
 
   // 处理文本域自动折行高度自适应
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

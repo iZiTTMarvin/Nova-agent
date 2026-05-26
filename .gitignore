@@ -7,7 +7,9 @@ Thumbs.db
 
 
 .spec-workflow
-tasks
+tasks/*
+!tasks/todo.md
+!tasks/phase3-validation.md
 SPEC.md
 TASKS.md
 docs
