@@ -111,6 +111,16 @@ export interface IpcEvents {
     messageId: string
     delta: string
   }
+  'agent:tool-call-start': {
+    messageId: string
+    toolCallId: string
+    toolName: string
+  }
+  'agent:tool-call-delta': {
+    messageId: string
+    toolCallId: string
+    argumentsDelta: string
+  }
   'agent:tool-call': {
     messageId: string
     toolCallId: string

@@ -32,6 +32,8 @@ export const WINDOW_IS_MAXIMIZED = 'window-is-maximized' as const
 
 export const AGENT_MESSAGE_START = 'agent:message-start' as const
 export const AGENT_TEXT_DELTA = 'agent:text-delta' as const
+export const AGENT_TOOL_CALL_START = 'agent:tool-call-start' as const
+export const AGENT_TOOL_CALL_DELTA = 'agent:tool-call-delta' as const
 export const AGENT_TOOL_CALL = 'agent:tool-call' as const
 export const AGENT_TOOL_RESULT = 'agent:tool-result' as const
 export const AGENT_PERMISSION_REQUEST = 'agent:permission-request' as const

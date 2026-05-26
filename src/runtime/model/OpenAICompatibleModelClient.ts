@@ -140,16 +140,41 @@ export class OpenAICompatibleModelClient implements ModelClient {
                 const existing = pendingToolCalls.get(idx)
 
                 if (tc.id) {
-                  // 新的 tool_call 开始
+                  // 新的工具调用启动
+                  const name = tc.function?.name ?? ''
+                  const initialArgs = tc.function?.arguments ?? ''
+
                   pendingToolCalls.set(idx, {
                     id: tc.id,
-                    name: tc.function?.name ?? existing?.name ?? '',
-                    arguments: tc.function?.arguments ?? existing?.arguments ?? ''
+                    name,
+                    arguments: initialArgs
                   })
+
+                  // 立刻 emit start，让 UI 提前插入 running 卡片
+                  yield {
+                    type: 'tool_call_start',
+                    toolCallId: tc.id,
+                    toolName: name,
+                    index: idx
+                  }
+
+                  // 第一个 chunk 也可能携带 arguments 片段，一并 yield
+                  if (initialArgs) {
+                    yield {
+                      type: 'tool_call_delta',
+                      toolCallId: tc.id,
+                      argumentsDelta: initialArgs
+                    }
+                  }
                 } else if (existing) {
                   // 追加 arguments 片段
                   if (tc.function?.arguments) {
                     existing.arguments += tc.function.arguments
+                    yield {
+                      type: 'tool_call_delta',
+                      toolCallId: existing.id,
+                      argumentsDelta: tc.function.arguments
+                    }
                   }
                   if (tc.function?.name) {
                     existing.name = tc.function.name

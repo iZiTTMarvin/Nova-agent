@@ -47,6 +47,8 @@ export interface ModelClientConfig {
 export type ChatEvent =
   | { type: 'thinking_delta'; delta: string }
   | { type: 'text_delta'; delta: string }
+  | { type: 'tool_call_start'; toolCallId: string; toolName: string; index: number }
+  | { type: 'tool_call_delta'; toolCallId: string; argumentsDelta: string }
   | { type: 'tool_call'; toolCall: ChatToolCall }
   | { type: 'message_start' }
   | { type: 'message_end'; finishReason: 'stop' | 'tool_calls' | string }

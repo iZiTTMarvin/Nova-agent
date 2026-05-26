@@ -206,6 +206,32 @@ export class AgentLoop {
               this.eventBus.emit({ type: 'text_delta', messageId, delta: event.delta })
               break
 
+            case 'tool_call_start': {
+              const hiddenByMode = !isToolVisibleInMode(this.mode, event.toolName)
+              if (hiddenByMode) {
+                hiddenToolCallIds.add(event.toolCallId)
+                break
+              }
+              this.eventBus.emit({
+                type: 'tool_call_start',
+                messageId,
+                toolCallId: event.toolCallId,
+                toolName: event.toolName
+              })
+              break
+            }
+
+            case 'tool_call_delta': {
+              if (hiddenToolCallIds.has(event.toolCallId)) break
+              this.eventBus.emit({
+                type: 'tool_call_delta',
+                messageId,
+                toolCallId: event.toolCallId,
+                argumentsDelta: event.argumentsDelta
+              })
+              break
+            }
+
             case 'tool_call': {
               const hiddenByMode = !isToolVisibleInMode(this.mode, event.toolCall.name)
               toolCalls.push(event.toolCall)

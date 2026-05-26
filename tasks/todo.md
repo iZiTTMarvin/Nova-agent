@@ -1,284 +1,297 @@
-# Review 修复 Todo 清单
+# 流式工具调用渲染（Streaming Tool Call）Todo 清单
 
-> 基于 `tasks/review-fixes.md` 拆解
-> 生成日期：2025-05-25
+> 基于 `STREAMING_TOOL_CALL_PLAN.md` 拆解
+> 生成日期：2025-05-26
+> 目标：write/edit 工具在模型流式产出参数期间，UI 立刻出现写入文件卡片，等宽字体逐行刷出代码并自动滚动到底部。
 
 ---
 
-## Phase 1：P0 核心体验修复
+## Phase S1：模型层 + Agent 层 + IPC 层（数据通路）
 
-### T1 [P0] 修复 DiffViewer `+0 -0` 突变体验断裂
+> 建立从 SSE 到 renderer 的完整增量事件通路，不做 UI 层改动，现有功能不受影响。
 
-**目标**：工具执行完成后，DiffViewer 不再出现 `+0 -0` 中间态，改为 loading skeleton 或直接显示真实数据。
+### S-T1 模型层：SSE 工具调用增量同步 yield
 
-**采用方案**：方案 A — 实时事件保持轻量信号 + 前端进入 loading skeleton
+**目标**：SSE 流中 `delta.tool_calls` 的 `arguments` 增量实时 yield 给下游，不再等流结束才一次性发出。
 
-- [x] **T1-1** 修改 `emitLiveDiffUpdate` 事件格式
-  - 文件：`src/main/ipc/agentHandler.ts:287-308`
-  - 在发送的事件对象中增加 `phase: "live"` 字段，标识这是占位信号
-  - 检查该事件是否只包含 `{ filePath, status }`，确认不含 hunks
-  - 验收：emitLiveDiffUpdate 发出的事件包含 `phase: "live"`
+- [x] **S-T1-1** 扩展 ChatEvent 类型
+  - 文件：`src/runtime/model/types.ts`
+  - 在现有变体基础上新增 `tool_call_start`（携带 toolCallId、toolName、index）和 `tool_call_delta`（携带 toolCallId、argumentsDelta）
+  - 保留现有 `tool_call` 变体不变（它仍是"参数齐全可执行"的信号）
+  - 验收：TypeScript 编译通过，现有代码不受影响
 
-- [x] **T1-2** 修改 `handleDiffUpdate` 处理逻辑
-  - 文件：`src/renderer/stores/useAppStore.ts:629-649`
-  - 收到 `phase: "live"` 事件时，不写入 `messageDiffs[id]`
-  - 改为将 messageId 加入 `loadingDiffs` Set，并附带文件路径列表
-  - 或者写入带 `isStub: true` 标记的占位数据：`{ diffs: [], reviews: {}, isStub: true }`
-  - 验收：live 阶段不会向 messageDiffs 写入空 hunks 数据
+- [x] **S-T1-2** 修改 OpenAICompatibleModelClient 增量 yield 逻辑
+  - 文件：`src/runtime/model/OpenAICompatibleModelClient.ts:137-159`
+  - 在 `delta.tool_calls` 处理块中：收到第一个含 `id` 的 chunk 时，立刻 yield `tool_call_start`，如果有初始 arguments 片段也 yield `tool_call_delta`
+  - 后续 chunk 有 `function.arguments` 时，yield `tool_call_delta`
+  - 末尾一次性 yield 完整 `tool_call` 的逻辑**保持不动**
+  - 验收：mock SSE 多 chunk 场景下，yield 序列为 `tool_call_start → tool_call_delta×N → tool_call`
 
-- [x] **T1-3** DiffViewer 增加 loading skeleton 渲染分支
-  - 文件：`src/renderer/features/diff/DiffViewer.tsx:319-328`
-  - 当数据含 `isStub: true` 或处于 loading 状态时，显示文件名列表 + spinner
-  - 不渲染 `+X -Y` 统计数字
-  - 验收：loading 阶段不显示 `+0 -0`
-
-- [x] **T1-4** 修改 ChatPanel 的 DiffViewer 渲染条件
-  - 文件：`src/renderer/features/chat/ChatPanel.tsx:436-452`
-  - 调整 loading 态判定：`loadingDiffs.has(id)` 即显示 loading skeleton
-  - 确保 `isStub` 数据不触发真实 diff 渲染
-  - 验收：loading skeleton 正确显示，message_end 后替换为真实数据
-
-- [x] **T1-5** 消除重复 LCS 计算
-  - 文件：`src/main/ipc/agentHandler.ts:287-308`、`src/main/ipc/sessionHandler.ts:123-138`
-  - emitLiveDiffUpdate 改为只读 manifest 文件列表，不调用 `buildMessageDiffState` 算 LCS
-  - 确认 message_end 路径的 `get-message-diffs` 才是唯一调用 `buildMessageDiffState` 的地方
-  - 验收：同一份 LCS 计算只执行一次
-
-- [x] **T1-6** 编写 T1 回归测试
-  - 模拟事件序列：`tool_result` → `diff_update(phase: "live")` → `message_end`
-  - 断言前端从未在某个时刻渲染过 `+0 -0`
+- [x] **S-T1-3** 编写 S-T1 单元测试
+  - 文件：`tests/unit/runtime/model/streamingToolCall.test.ts`（新文件）
+  - mock fetch 返回多 chunk SSE，断言 ChatEvent 序列含正确顺序
+  - 包含：单工具调用、多工具并发调用、第一个 chunk 不带 name 的边缘场景
   - 验收：测试通过
 
 ---
 
-## Phase 2：P1 稳定性修复
+### S-T2 Agent 层：透传 + mode 隐藏过滤
 
-### T2 [P1] EventBus 同步回调内 IO + LCS 异步化
+**目标**：AgentLoop 透传流式工具调用事件，mode 隐藏的工具只进 toolCalls 数组不 emit 给 UI。
 
-**目标**：大文件写入时，tool_result 到下一个 thinking_delta 间隔不超过 50ms。
+- [x] **S-T2-1** 扩展 AgentEvent 类型
+  - 文件：`src/runtime/agent/types.ts`
+  - 在 `tool_call` 之前新增 `tool_call_start`（含 messageId、toolCallId、toolName）和 `tool_call_delta`（含 messageId、toolCallId、argumentsDelta）
+  - 不透传 index，renderer 用 toolCallId 定位
+  - 验收：TypeScript 编译通过
 
-> 如果 T1 方案 A 落地（emitLiveDiffUpdate 不再算 LCS），本任务的核心问题已自动解决大半。但仍需确保同步 IO 路径不阻塞事件循环。
-
-- [x] **T2-1** 确认 T1 方案 A 落地后 emitLiveDiffUpdate 的 IO 行为
-  - 文件：`src/main/ipc/agentHandler.ts:154-163`
-  - 检查 emitLiveDiffUpdate 改造后是否还有同步 readFileSync 调用
-  - 如果只剩文件列表读取，确认列表读取是否可异步化
-  - 验收：确认无同步阻塞 IO
-
-- [x] **T2-2** 将 emitLiveDiffUpdate 调度改为异步
-  - 文件：`src/main/ipc/agentHandler.ts`
-  - 用 `setImmediate` / `queueMicrotask` 包裹 emitLiveDiffUpdate 调用
-  - 确保当前 EventBus emit 调用栈不被阻塞
-  - 验收：EventBus 单次 emit 调用栈内不含 LCS / 大文件 IO
-
-- [x] **T2-3** 添加性能埋点
-  - 在 EventBus emit tool_result 前后记录时间戳
-  - 在 emitLiveDiffUpdate 调用前后记录时间戳
-  - 输出日志格式：`[perf] tool_result → diff_update: {duration}ms`
-  - 验收：可通过日志确认间隔 < 50ms
-
-- [x] **T2-4** 手动验证大文件场景
-  - 用 1MB 文本文件的写入场景测试
-  - 观察 tool_result 与下一个 thinking_delta 之间间隔
-  - 验收：间隔不超过 50ms
+- [x] **S-T2-2** 修改 AgentLoop 流循环处理
+  - 文件：`src/runtime/agent/AgentLoop.ts:196-242`
+  - 在 `case 'tool_call':` 之前新增 `case 'tool_call_start'` 和 `case 'tool_call_delta'`
+  - mode 隐藏的工具加入 `hiddenToolCallIds` Set，delta 阶段检查该 Set 跳过 emit
+  - 现有 `case 'tool_call'` 保持不动
+  - 验收：plan mode 下 write/edit 的 start/delta 不 emit，但 tool_call 仍正常执行
 
 ---
 
-### T3 [P1] cancel 时不再向 session 残留"权限拒绝"工具结果
+### S-T3 IPC 层：channel 注册 + 转发
 
-**目标**：用户取消后，session 文件中不出现"权限拒绝"的工具结果条目。
+**目标**：新增 IPC channel 将流式事件转发给 renderer，不影响持久化逻辑。
 
-- [x] **T3-1** 修改 cancel() 的权限请求处理
-  - 文件：`src/runtime/agent/AgentLoop.ts:320-332`
-  - cancel() 时不再 `resolve(false)`，改为抛出 AbortError
-  - checkPermission 捕获 AbortError 后返回特殊状态 `aborted`
-  - 验收：cancel 路径不产生"权限拒绝"字符串
+- [x] **S-T3-1** 新增 channel 常量
+  - 文件：`src/shared/ipc/channels.ts`
+  - 新增 `AGENT_TOOL_CALL_START = 'agent:tool-call-start'` 和 `AGENT_TOOL_CALL_DELTA = 'agent:tool-call-delta'`
+  - 验收：常量可供 import
 
-- [x] **T3-2** AgentLoop 处理 aborted 状态
-  - 文件：`src/runtime/agent/AgentLoop.ts`
-  - 检测到 checkPermission 返回 `aborted` 时，不 emit tool_result
-  - 不将该工具调用 push 到 context
-  - 验收：aborted 工具调用不会产生 tool_result 事件
+- [x] **S-T3-2** 扩展 IpcEvents 类型
+  - 文件：`src/shared/ipc/types.ts`
+  - 紧挨 `agent:tool-call` 新增两个事件类型定义
+  - 验收：TypeScript 编译通过
 
-- [x] **T3-3** 持久化层添加 cancelled 状态检查（双重保险）
-  - 文件：`src/main/ipc/agentHandler.ts:267-275`
-  - accumulateStreamEvent 在 message_end 分支检查 agentLoop 是否 cancelled
-  - 如果 cancelled，保存前剔除"权限拒绝"类型的 tool block
-  - 验收：即使 runtime 层有遗漏，持久化层也能兜底过滤
+- [x] **S-T3-3** 修改 forwardEventToRenderer
+  - 文件：`src/main/ipc/agentHandler.ts:535-591`
+  - 在 `case 'tool_call':` 之前新增 `case 'tool_call_start'` 和 `case 'tool_call_delta'` 转发分支
+  - 验收：renderer 可收到流式事件
 
-- [x] **T3-4** 编写 T3 集成测试
-  - 模拟：permission_request 期间调用 cancel()
-  - 断言 sessionStore 中保存的消息 toolCalls 不含权限拒绝结果
-  - 断言正常完成的工具调用仍然被保留
+- [x] **S-T3-4** 确认 accumulateStreamEvent 不变
+  - 文件：`src/main/ipc/agentHandler.ts:210-308`
+  - 确认增量事件不写 stream（持久化只关心最终完整 tool_call）
+  - 在 switch 上方加一行注释说明此意图
+  - 验收：会话历史不包含流式增量数据
+
+---
+
+## Phase S2：Renderer 状态层 + 参数解析
+
+> store 接收流式事件并维护 UI 状态，partial JSON 解析器提取 write/edit/bash 的关键字段。
+
+### S-T4 Renderer 状态层：useAppStore 接入流式增量
+
+**目标**：store 新增 `streamingToolArgs` 字段和相关 actions，处理 start/delta/final 全生命周期。
+
+- [ ] **S-T4-1** 新增 store 字段和类型
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - AppState 新增 `streamingToolArgs: Record<string, string>`
+  - ExtendedToolCall 新增 `argumentsRaw?: string`（仅 renderer 内存层，不导出到 shared）
+  - 文件顶部新增本地类型 `RendererToolBlock = ToolBlock & { argumentsRaw?: string }`
+  - 初始值 `streamingToolArgs: {}`
+  - 验收：TypeScript 编译通过，shared 类型不受影响
+
+- [ ] **S-T4-2** 实现 handleToolCallStart
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - 收到 start 时在对应 message 的 blocks 里插入 running 状态的 ToolBlock，toolCalls 里插入 ExtendedToolCall，streamingToolArgs 置入空字符串
+  - 验收：start 到达后 blocks 和 toolCalls 都有对应 running 条目
+
+- [ ] **S-T4-3** 实现 handleToolCallDelta
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - 累积 `streamingToolArgs[toolCallId]`，调用 `parsePartialToolArgs` 解析当前进度，更新对应 ToolBlock 和 ExtendedToolCall 的 arguments 和 argumentsRaw
+  - 验收：每次 delta 到达后 ToolBlock.arguments 反映当前已解析的字段
+
+- [ ] **S-T4-4** 修改 handleToolCall 合并 final args
+  - 文件：`src/renderer/stores/useAppStore.ts:631-657`
+  - 收到 final tool_call 时：如果 start 已插过 ToolBlock 则覆盖 args 并清掉 argumentsRaw；如果没收到 start 则兜底插入
+  - 从 `streamingToolArgs` 清除对应 key
+  - 验收：final 到达后 streamingToolArgs 无残留，ToolBlock.argumentsRaw 为 undefined
+
+- [ ] **S-T4-5** 修改 cancelExecution 兜底清理
+  - 文件：`src/renderer/stores/useAppStore.ts:351-364`
+  - 取消时把所有 status='running' 的 ToolBlock 标为 error + result='已取消'，清空 argumentsRaw
+  - 清空整个 streamingToolArgs
+  - 验收：取消后无残留 running 卡片，streamingToolArgs 为空
+
+- [ ] **S-T4-6** 编写 S-T4 单元测试
+  - 文件：`tests/unit/renderer/streamingToolCallStore.test.ts`（新文件）
+  - 断言 start → delta×N → final 后 streamingToolArgs 已清空、ToolBlock.arguments 是最终完整对象、argumentsRaw 为 undefined
+  - 断言 cancel 后所有 running 卡片变 error、streamingToolArgs 清空
   - 验收：测试通过
 
 ---
 
-## Phase 3：P2 渲染优化
+### S-T5 partial JSON 参数解析工具
 
-### T4 [P2] scrollToBottom 高频 smooth 动画排队抖动
+**目标**：从可能未闭合的 JSON 字符串中容错提取指定 key 的字符串值，用于 write/edit/bash 实时进度展示。
 
-**目标**：思考阶段滚动不再抖动，用户手动上滚后不再被自动拉回底部。
+- [ ] **S-T5-1** 实现 extractPartialString
+  - 文件：`src/renderer/features/chat/partialJsonArgs.ts`（新文件）
+  - 从 partial JSON 中按 key 查找字符串值，支持完整闭合和截断两种情况
+  - 支持 JSON 转义：`\" \\ \/ \n \r \t \b \f \uXXXX`
+  - 找不到 key 返回 undefined，字符串未闭合返回已收部分
+  - 验收：核心提取逻辑正确
 
-- [x] **T4-1** 修改滚动依赖项
-  - 文件：`src/renderer/features/chat/ChatPanel.tsx:244-246`
-  - useEffect 依赖从 `[messages, isGenerating]` 改为 `[messages.length, isGenerating]`
-  - 验收：流式 delta 不再触发完整滚动
+- [ ] **S-T5-2** 实现 parsePartialToolArgs 派发
+  - 文件：`src/renderer/features/chat/partialJsonArgs.ts`
+  - 按 toolName 选择需展示的字段：write(path+content)、edit(path+old+new)、bash(command)
+  - 执行前确认 `writeTool.ts`、`editTool.ts`、`bashTool.ts` 的参数 schema 字段名
+  - 验收：各工具字段名与实际 schema 一致
 
-- [x] **T4-2** 添加流式阶段专用滚动器
+- [ ] **S-T5-3** 编写 S-T5 单元测试
+  - 文件：`tests/unit/renderer/partialJsonArgs.test.ts`（新文件）
+  - 至少覆盖：空字符串/缺失 key、完整 JSON、半截 path、半截 content、含 `\n` 转义、含转义引号截断、`\uXXXX` 完整与不完整、write/edit/bash 派发、1000 次累加大文件压测
+  - 验收：9 类场景全部通过
+
+---
+
+## Phase S3：流式卡片 UI 组件 + 入口路由
+
+> 构建视觉组件并接入 ChatPanel，使 write/edit 工具在流式期间呈现实时进度卡片。
+
+### S-T6 流式写入卡片组件
+
+**目标**：新增 StreamingFileCard 组件，复用 DiffViewer 视觉风格，等宽 body + 行号 + 自动滚动 + 状态指示器。
+
+- [ ] **S-T6-1** 抽取 syntaxHighlight 共享模块
+  - 文件：`src/renderer/features/diff/syntaxHighlight.ts`（新文件）
+  - 从 `DiffViewer.tsx` 提取 TokenType / KEYWORDS / detectLanguage / highlightLine
+  - DiffViewer.tsx 改为 `import { highlightLine } from './syntaxHighlight'`
+  - 运行 DiffViewer 相关单测确认不影响现有功能
+  - 验收：DiffViewer 行为不变，StreamingFileCard 可复用高亮逻辑
+
+- [ ] **S-T6-2** 实现 StreamingFileCard 组件
+  - 文件：`src/renderer/features/chat/StreamingFileCard.tsx`（新文件）
+  - Props：toolCallId、toolName(write/edit)、status、args、argumentsRaw、result
+  - 自动展开/收起策略：running 默认展开，完成后自动收起；用户手动操作不被覆盖
+  - 自动滚动用 rAF 节流，避免每个 chunk 同步 layout
+  - write 用 content 字段，edit 用 new 字段作为预览文本
+  - 验收：组件渲染逻辑完整
+
+- [ ] **S-T6-3** 实现 StreamingFileCard CSS
+  - 文件：`src/renderer/features/chat/StreamingFileCard.css`（新文件）
+  - 复用 DiffViewer 视觉语言：圆角边框、header 行高字体、状态徽章颜色
+  - 状态指示器：running = 蓝色旋转圆圈（0.8s 线性循环）、success = 绿色对勾、error = 红色叉
+  - body 限制 max-height: 360px + overflow-y: auto，等宽字体 + 行号
+  - 颜色变量对齐现有 App.css / ChatPanel.css
+  - 验收：视觉风格与 DiffViewer 一致
+
+- [ ] **S-T6-4** 确认或新增 SpinnerIcon
+  - 文件：`src/renderer/components/Icons.tsx`
+  - 如果已有可旋转图标可复用则跳过；否则新增 SpinnerIcon
+  - 验收：StreamingFileCard 的 running 状态有旋转动画图标
+
+---
+
+### S-T7 入口路由：App + ChatPanel 接入
+
+**目标**：注册流式事件订阅，ChatPanel 把 write/edit 工具路由到 StreamingFileCard。
+
+- [ ] **S-T7-1** App.tsx 注册流式事件订阅
+  - 文件：`src/renderer/App.tsx:38-126`
+  - 在 useEffect 中订阅 `agent:tool-call-start` 和 `agent:tool-call-delta`
+  - 调用 `handleToolCallStart` 和 `handleToolCallDelta`
+  - cleanup 函数取消订阅，依赖数组加入新 actions
+  - 验收：renderer 可接收并处理流式事件
+
+- [ ] **S-T7-2** ChatPanel 路由 write/edit 到 StreamingFileCard
   - 文件：`src/renderer/features/chat/ChatPanel.tsx`
-  - 用 `requestAnimationFrame` 节流（约 16ms 间隔）
-  - 流式阶段滚动行为改为 `behavior: "auto"`（瞬时跳到底部）
-  - 验收：思考阶段滚动平滑不抖
-
-- [x] **T4-3** 添加用户手动滚动检测
-  - 监听滚动容器的 scroll 事件
-  - 如果用户主动向上滚动（距底部超过阈值），设置 `userScrolledUp = true`
-  - 流式 delta 到来时检查该标志，为 true 则不自动滚动
-  - 新消息加入时重置标志
-  - 验收：用户上滚后不再被自动拉回底部
-  - 自动化回归：`tests/unit/renderer/autoScroll.test.ts`
+  - 在 ToolBlock 渲染分支中：write/edit 走 StreamingFileCard，其余走 ToolBox
+  - ChatPanel 顶部声明 `type ToolBlockWithRaw = ToolBlock & { argumentsRaw?: string }` 用于取 argumentsRaw
+  - 验收：write/edit 显示流式卡片，bash/read/grep 等仍走 ToolBox
 
 ---
 
-### T5 [P2] handleThinkingDelta / handleTextDelta 全量 messages.map 优化
+## Phase S4：端到端验证
 
-**目标**：长对话流式阶段不出现主线程长任务（>50ms）。
+> 类型检查 + 单元测试 + 手动端到端验证 + 回归校验。
 
-- [x] **T5-1** 在 store 内添加 messageIndexById 索引
-  - 文件：`src/renderer/stores/useAppStore.ts:544-573`
-  - 新增 `messageIndexById: Record<string, number>` 字段
-  - 每次消息数组变更时同步更新索引
-  - 验收：索引与 messages 数组保持一致
+### S-T8 验证
 
-- [x] **T5-2** 改造 delta 处理为索引直接更新
-  - 文件：`src/renderer/stores/useAppStore.ts:544-573`
-  - handleThinkingDelta / handleTextDelta 改为按索引直接切片更新：
-    ```ts
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const next = state.messages.slice()
-      next[idx] = updateMessage(next[idx], delta)
-      return { messages: next }
-    })
-    ```
-  - 验收：delta 处理不再遍历全量消息数组
+**目标**：全链路功能正确，无回归。
 
-- [x] **T5-3** 性能验证
-  - 构建 50 条历史消息 + 思考阶段的测试场景
-  - 用浏览器 Performance 面板检查主线程长任务
-  - 用 React Profiler 检查 ChatPanel 单次 commit 时间
-  - 验收：无 >50ms 主线程长任务，commit 时间显著下降
-  - 自动化回归：`tests/unit/renderer/phase3Performance.test.ts`
-  - 验收记录：`tasks/phase3-validation.md`
+- [ ] **S-T8-1** 类型检查通过
+  - 运行 `npm run typecheck`
+  - 验收：无类型错误
 
----
+- [ ] **S-T8-2** 全量单测通过
+  - 运行 `npx vitest run`
+  - 现有测试 + 新增测试全部通过
+  - 验收：0 failed
 
-## Phase 4：P3 体验打磨
+- [ ] **S-T8-3** 手动端到端验证 — 长 HTML 写入
+  - 在 default mode 让模型写 1000+ 行 HTML
+  - 验收：模型说完文字后 StreamingFileCard 立刻出现，header 显示文件名 +「新建」+ 蓝色旋转圆圈
+  - 验收：body 等宽字体逐行刷出代码，自动滚动，行号正确，右上角行数实时增长
+  - 验收：写入完成后 body 自动收起，圆圈变绿色对勾
+  - 验收：消息结束后 DiffViewer 卡片仍正常出现在消息末尾
 
-### T6 [P3] ToolBox 中文映射与参数摘要
+- [ ] **S-T8-4** 手动端到端验证 — edit 修改
+  - 让模型对已有文件做 edit
+  - 验收：流式卡片状态徽章为「修改」，body 显示 new 字段内容
 
-**目标**：工具卡片标题直观显示操作类型、目标文件/命令，不需要展开。
+- [ ] **S-T8-5** 手动端到端验证 — 手动展开/收起保护
+  - running 阶段用户点击收起 → 之后 status 变化时保持收起
+  - 完成后用户点击展开 → 之后不被自动覆盖
+  - 验收：用户手动操作优先级高于自动策略
 
-- [x] **T6-1** 补充工具中文名映射
-  - 文件：`src/renderer/features/chat/ChatPanel.tsx:83-96`
-  - 扩展 `getToolDisplayName` 覆盖以下工具：
-    - `write` → `写入文件 (write)`
-    - `edit` → `修改文件 (edit)`
-    - `bash` → `执行命令 (bash)`
-  - 验收：这三种工具显示中文名
+- [ ] **S-T8-6** 手动端到端验证 — 取消执行
+  - 长 HTML 写入过程中点取消
+  - 验收：流式卡片状态变 error，圆圈变红色叉，result 显示「已取消」，body 自动收起
+  - 验收：刷新或重启后，取消的半成品 ToolBlock 不出现在历史里
 
-- [x] **T6-2** 添加参数摘要逻辑
-  - 文件：`src/renderer/features/chat/ChatPanel.tsx`
-  - 在卡片标题旁显示摘要：
-    - write: `正在写入 src/foo.ts（+N 行）`
-    - edit: `正在修改 src/foo.ts（替换 N 行）`
-    - bash: `正在执行 npm test`
-    - read: `读取 src/foo.ts`
-    - grep: `搜索 "TODO" 在 src/`
-  - 摘要文字溢出时 CSS 省略号截断
-  - 验收：不展开卡片也能看到核心操作信息
+- [ ] **S-T8-7** 手动端到端验证 — plan mode
+  - plan mode 下让模型尝试 write
+  - 验收：UI 不显示 StreamingFileCard，模型仍能正常推理
 
-- [x] **T6-3** 调整术语用词
-  - `入参 (Arguments)` → `调用参数`
-  - `出参 (Result)` → `执行结果`
-  - 验收：术语更贴近普通用户理解
+- [ ] **S-T8-8** 手动端到端验证 — bash 工具 + 多 write 并发
+  - bash 仍走原 ToolBox，不出现 StreamingFileCard
+  - 多个 write 并发时每张卡片独立刷新，不串
+  - 验收：bash 正常、多卡片独立
+
+- [ ] **S-T8-9** 性能与回归校验
+  - 1000+ 行写入过程中思考/文本阶段不卡顿
+  - DiffViewer 仍按 live skeleton → final 路径（不出现 +0 -0）
+  - 取消后不残留权限拒绝条目
+  - 流式卡片滚动用 rAF 节流，不出现高频 smooth 排队问题
+  - 验收：无回归问题
 
 ---
 
-### T7 [P3] ThinkingBlock 计时器精度
-
-**目标**：思考时间显示不出现整秒跳动，主线程卡顿恢复后立即追上。
-
-- [x] **T7-1** 改用 Date.now() 差值计时
-  - 文件：`src/renderer/features/chat/ThinkingBlock.tsx:14-26`
-  - 组件挂载时记录 `startTime = Date.now()`
-  - setInterval 间隔从 1000ms 改为 100ms
-  - 每次触发时计算 `(Date.now() - startTime) / 1000` 取一位小数
-  - 移除 `seconds++` 递增逻辑
-  - 验收：计时器单调递增，精度到 0.1 秒
-
-- [x] **T7-2** 验证主线程卡顿场景
-  - 模拟 LCS 计算等卡顿场景
-  - 卡顿恢复后观察计时器是否立即追上真实时间
-  - 验收：不出现"停一秒再跳两秒"
-
----
-
-## Phase 5（可选/长期）
-
-### T8 [P3，可选] 拆分 useAppStore 巨型 store
-
-**目标**：每个 slice 文件 <300 行，单一职责。
-
-> 此任务不急，可随日常开发逐步推进。
-
-- [ ] **T8-1** 拆分 useChatStore
-  - 负责：messages、isGenerating、currentGeneratingMessageId、send/cancel
-  - 文件：`src/renderer/stores/useChatStore.ts`（新建）
-
-- [ ] **T8-2** 拆分 useSessionStore
-  - 负责：sessions、currentSessionId、selectSession、createNewSession、rollbackMessage
-  - 文件：`src/renderer/stores/useSessionStore.ts`（新建）
-
-- [ ] **T8-3** 拆分 useDiffStore
-  - 负责：messageDiffs、loadingDiffs、loadMessageDiffs、accept/rejectFile
-  - 文件：`src/renderer/stores/useDiffStore.ts`（新建）
-
-- [ ] **T8-4** 拆分 usePermissionStore
-  - 负责：pendingPermissionRequest、pendingVerificationRequest 及回应
-  - 文件：`src/renderer/stores/usePermissionStore.ts`（新建）
-
-- [ ] **T8-5** 拆分 useProjectStore
-  - 负责：currentProject、currentMode、modelConfig、setMode、selectProject
-  - 文件：`src/renderer/stores/useProjectStore.ts`（新建）
-
-- [ ] **T8-6** 组合 useAppStore 门面（可选）
-  - 作为对外统一入口，内部组合各 slice
-  - 组件通过 selector 订阅，跨 slice 引用通过 `getState()` 拿快照
-
-- [ ] **T8-7** 回归验证
-  - 全量测试通过
-  - 各组件 selector 改写后行数不增加
-  - 每个 slice < 300 行
-
----
-
-## 执行检查点
+## 执行检查点（Streaming Tool Call）
 
 | 检查点 | 完成条件 | 验证方式 |
 |---|---|---|
-| CP1 — T1 完成 | DiffViewer 无 `+0 -0` 中间态 | 手动测试 + 单元测试 |
-| CP2 — T2 完成 | 1MB 文件写入无卡顿 | 性能日志 < 50ms |
-| CP3 — T3 完成 | cancel 后 session 无权限拒绝条目 | 集成测试 + 检查 session JSON |
-| CP4 — T4+T5 完成 | 长对话流式无卡顿、滚动不抖 | Profiler 回归测试 + `tasks/phase3-validation.md` |
-| CP5 — 全部完成 | 完整流程回归通过 | 创建会话 → 写大文件 → 观察 Diff → 取消 → 重新进入 |
+| SCP1 — S-T1+T2+T3 完成 | SSE → renderer 增量事件通路打通 | mock SSE 测试 + IPC 事件到达 renderer |
+| SCP2 — S-T4+T5 完成 | store 正确维护流式状态，partial JSON 解析正确 | 单元测试通过 |
+| SCP3 — S-T6+T7 完成 | write/edit 工具在 UI 上显示流式卡片 | 手动测试长 HTML 写入 |
+| SCP4 — S-T8 完成 | 全链路功能正确，无回归 | typecheck + 单测 + 端到端手动验证 |
 
 ---
 
-## 每项通用验证
+## 执行顺序与提交规范
 
-- `npm run test`（vitest）跑相关单元测试
-- `npm run typecheck`（如果有）
-- 手动跑"创建会话 → 让 Agent 写一个大文件 → 观察 DiffViewer → 取消 → 重新进入会话"完整流程
+1. 先做 S-T6-1（syntaxHighlight 抽取，StreamingFileCard 的依赖）
+2. 然后 S-T1 → S-T2 → S-T3 → S-T4 → S-T5 → S-T6-2/3/4 → S-T7 → S-T8
+3. 每提交一次都跑 `npm run typecheck`，S-T5/S-T8 跑 `npx vitest run`
+
+提交格式（中文 Conventional Commits）：
+```
+refactor(diff): 抽取 syntaxHighlight 工具模块（S-T6 前置）
+feat(stream): S-T1 模型层 SSE 工具调用增量同步 yield
+feat(stream): S-T2 AgentLoop 透传流式工具调用事件
+feat(stream): S-T3 IPC channel 注册并向 renderer 转发流式事件
+feat(stream): S-T4 useAppStore 接入流式工具调用增量
+feat(stream): S-T5 partial JSON 参数解析工具与单测
+feat(stream): S-T6 新增 StreamingFileCard 流式写入卡片组件
+feat(stream): S-T7 ChatPanel 把 write/edit 路由到 StreamingFileCard
+test(stream): S-T8 端到端流式工具调用回归校验
+```
+
+完成后更新 `CHANGELOG.md`。

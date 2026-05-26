@@ -208,6 +208,8 @@ export interface MessageContext {
  * 累积流式事件内容
  */
 export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx: MessageContext): void {
+  // 注意：tool_call_start / tool_call_delta 是流式增量事件，不写 stream 累积器。
+  // 持久化只关心最终完整 tool_call（由 tool_call 事件写入），增量不落盘。
   switch (event.type) {
     case 'message_start': {
       activeStreams.set(event.messageId, { content: '', toolCalls: [], blocks: [], cancelled: false })
@@ -541,6 +543,12 @@ function forwardEventToRenderer(
       break
     case 'text_delta':
       webContents.send('agent:text-delta', { messageId: event.messageId, delta: event.delta })
+      break
+    case 'tool_call_start':
+      webContents.send('agent:tool-call-start', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName })
+      break
+    case 'tool_call_delta':
+      webContents.send('agent:tool-call-delta', { messageId: event.messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta })
       break
     case 'tool_call':
       webContents.send('agent:tool-call', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args })
