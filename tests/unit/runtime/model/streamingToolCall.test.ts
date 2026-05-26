@@ -234,22 +234,16 @@ describe('OpenAICompatibleModelClient 流式工具调用增量 yield', () => {
     }
 
     const events: ChatEvent[] = []
-    const iter = client.chat(
+    // 不嵌套 for await，让外层循环自然消费所有事件
+    for await (const event of client.chat(
       [{ role: 'user', content: 'test' }],
       undefined,
       { abortSignal: controller.signal }
-    )
-
-    // 读完 start 和第一个 delta
-    for await (const event of iter) {
+    )) {
       events.push(event)
-      if (events.length >= 3) { // message_start + tool_call_start + tool_call_delta
+      if (events.length >= 3) {
+        // message_start + tool_call_start + tool_call_delta 之后触发 abort
         controller.abort()
-        // 继续消费剩余事件
-        for await (const remaining of iter) {
-          events.push(remaining)
-        }
-        break
       }
     }
 

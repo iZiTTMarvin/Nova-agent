@@ -140,7 +140,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
                 const existing = pendingToolCalls.get(idx)
 
                 if (tc.id) {
-                  // 新的工具调用启动
+                  // 新的工具调用启动。OpenAI SSE 协议保证第一个带 id 的 chunk
+                  // 同时携带 function.name，无须从 existing 兜底取 name/arguments。
                   const name = tc.function?.name ?? ''
                   const initialArgs = tc.function?.arguments ?? ''
 

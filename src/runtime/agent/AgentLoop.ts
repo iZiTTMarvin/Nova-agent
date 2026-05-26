@@ -191,6 +191,9 @@ export class AgentLoop {
         let assistantContent = ''
         const toolCalls: ChatToolCall[] = []
         const hiddenToolCallIds = new Set<string>()
+        // 追踪已向 UI emit 过 tool_call_start 的 ID，
+        // 用于 final tool_call 时判断是否需要清理性 emit
+        const startedToolCallIds = new Set<string>()
         let finishReason = ''
 
         for await (const event of stream) {
@@ -207,11 +210,13 @@ export class AgentLoop {
               break
 
             case 'tool_call_start': {
-              const hiddenByMode = !isToolVisibleInMode(this.mode, event.toolName)
-              if (hiddenByMode) {
+              // toolName 为空时不做 mode 隐藏判断，让 delta 直通 UI；
+              // final tool_call 拿到完整 name 后再决定是否隐藏，并清理占位卡片。
+              if (event.toolName && !isToolVisibleInMode(this.mode, event.toolName)) {
                 hiddenToolCallIds.add(event.toolCallId)
                 break
               }
+              startedToolCallIds.add(event.toolCallId)
               this.eventBus.emit({
                 type: 'tool_call_start',
                 messageId,
@@ -236,8 +241,19 @@ export class AgentLoop {
               const hiddenByMode = !isToolVisibleInMode(this.mode, event.toolCall.name)
               toolCalls.push(event.toolCall)
 
-              // 模式策略禁止的工具调用仍要回传模型结果，但不进入 UI 事件流
               if (hiddenByMode) {
+                // start 阶段 toolName 为空时直通了 UI（start 事件被 emit），
+                // 此时 final 拿到完整 name 后发现应该隐藏——需要 emit tool_call 让
+                // store 清理之前 start 创建的占位卡片。
+                if (startedToolCallIds.has(event.toolCall.id)) {
+                  this.eventBus.emit({
+                    type: 'tool_call',
+                    messageId,
+                    toolCallId: event.toolCall.id,
+                    toolName: event.toolCall.name,
+                    args: JSON.parse(event.toolCall.arguments || '{}')
+                  })
+                }
                 hiddenToolCallIds.add(event.toolCall.id)
                 break
               }
