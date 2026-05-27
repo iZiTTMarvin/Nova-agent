@@ -29,7 +29,7 @@ export function getToolDisplayName(toolName: string): string {
  * 统计文本行数，处理尾随换行：
  * "a\nb" → 2 行，"a\nb\n" → 2 行（末尾空行不算）
  */
-function countLines(text: string): number {
+export function countLines(text: string): number {
   if (!text) return 0
   // 去掉末尾换行后再 split，避免尾随换行多算 1 行
   return text.replace(/\n$/, '').split('\n').length

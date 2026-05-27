@@ -20,11 +20,9 @@ import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAut
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
 import { StreamingFileCard } from './StreamingFileCard'
 import type { ToolBlock } from '../../../shared/session/types'
-import type { ExtendedToolCall } from '../../stores/useAppStore'
 import './ChatPanel.css'
 
-/** ChatPanel 内部扩展类型：从 renderer store 传入的 ToolBlock 可能携带 argumentsRaw */
-type ToolBlockWithRaw = ToolBlock & { argumentsRaw?: string }
+/** ChatPanel — 主聊天控制面板 */
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
 const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
@@ -453,7 +451,6 @@ export const ChatPanel: React.FC = () => {
                         }
                         // write/edit 走流式卡片，其余走 ToolBox
                         if (block.toolName === 'write' || block.toolName === 'edit') {
-                          const rawBlock = block as ToolBlockWithRaw
                           return (
                             <StreamingFileCard
                               key={block.toolCallId}
@@ -461,7 +458,6 @@ export const ChatPanel: React.FC = () => {
                               toolName={block.toolName}
                               status={block.status}
                               args={block.arguments}
-                              argumentsRaw={rawBlock.argumentsRaw}
                               result={block.result}
                             />
                           )
@@ -483,7 +479,6 @@ export const ChatPanel: React.FC = () => {
                           if (!shouldRenderToolBlock(currentMode, tc.name)) return null
                           // write/edit 走流式卡片，其余走 ToolBox
                           if (tc.name === 'write' || tc.name === 'edit') {
-                            const extTc = tc as ExtendedToolCall
                             return (
                               <StreamingFileCard
                                 key={tc.id}
@@ -491,7 +486,6 @@ export const ChatPanel: React.FC = () => {
                                 toolName={tc.name}
                                 status={tc.status}
                                 args={tc.arguments}
-                                argumentsRaw={extTc.argumentsRaw}
                                 result={tc.result}
                               />
                             )

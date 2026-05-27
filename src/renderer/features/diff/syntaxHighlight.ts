@@ -29,6 +29,11 @@ export const KEYWORDS = new Set([
   'false', 'null', 'undefined'
 ])
 
+/**
+ * 根据文件路径后缀检测语言类型（大小写不敏感）
+ * @param filePath 文件路径
+ * @returns 语言分类：code | json | markdown | shell | plain
+ */
 export function detectLanguage(filePath: string): 'code' | 'json' | 'markdown' | 'shell' | 'plain' {
   const lower = filePath.toLowerCase()
   if (lower.endsWith('.json')) return 'json'
@@ -43,6 +48,12 @@ export function detectLanguage(filePath: string): 'code' | 'json' | 'markdown' |
   return 'plain'
 }
 
+/**
+ * 对单行文本做轻量级 token 级语法高亮
+ * @param text 待高亮的一行文本
+ * @param filePath 文件路径（用于语言检测以选择高亮策略）
+ * @returns DiffToken 数组，保证永不为空（至少含一个 plain token）
+ */
 export function highlightLine(text: string, filePath: string): DiffToken[] {
   const language = detectLanguage(filePath)
   if (!text) return [{ text: '', type: 'plain' }]

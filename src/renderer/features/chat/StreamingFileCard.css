@@ -85,9 +85,8 @@
   color: var(--color-success);
 }
 
-/* 修改（edit）= 橙色系 */
-.streaming-card--running .streaming-card__status-badge,
-.streaming-card:not(.streaming-card--success):not(.streaming-card--error) .streaming-card__status-badge {
+/* running = 橙色系 */
+.streaming-card--running .streaming-card__status-badge {
   background-color: rgba(201, 100, 66, 0.1);
   color: var(--color-brand);
 }

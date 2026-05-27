@@ -10,7 +10,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { SpinnerIcon, CheckIcon, AlertIcon, ChevronIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
-import { getToolSummary } from './toolDisplay'
+import { getToolSummary, countLines } from './toolDisplay'
 import './StreamingFileCard.css'
 
 interface StreamingFileCardProps {
@@ -18,7 +18,6 @@ interface StreamingFileCardProps {
   toolName: 'write' | 'edit'
   status: 'running' | 'success' | 'error'
   args: Record<string, unknown>
-  argumentsRaw?: string
   result?: string
 }
 
@@ -43,12 +42,6 @@ function getStatusLabel(toolName: string, status: StreamingFileCardProps['status
   if (status === 'error') return '失败'
   if (toolName === 'write') return '新建'
   return '修改'
-}
-
-/** 计算文本行数，处理尾随换行 */
-function countLines(text: string): number {
-  if (!text) return 0
-  return text.replace(/\n$/, '').split('\n').length
 }
 
 export const StreamingFileCard: React.FC<StreamingFileCardProps> = ({
@@ -91,14 +84,21 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = ({
     frameIdRef.current = null
   }, [])
 
+  // 内容变化时触发滚动调度（scheduleAutoScroll 内部已有 frameIdRef 防重复）
   useEffect(() => {
     if (status === 'running' && isOpen) {
       scheduleAutoScroll()
-    } else {
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewContent])
+
+  // 状态或展开状态变化时取消自动滚动
+  useEffect(() => {
+    if (status !== 'running' || !isOpen) {
       cancelAutoScroll()
     }
     return () => cancelAutoScroll()
-  }, [status, isOpen, previewContent, scheduleAutoScroll, cancelAutoScroll])
+  }, [status, isOpen, cancelAutoScroll])
 
   const handleToggle = () => {
     userToggledRef.current = true
