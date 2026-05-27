@@ -1,0 +1,194 @@
+/** StreamingFileCard — 流式文件写入/修改实时卡片样式
+ *
+ * 复用 DiffViewer 视觉语言：圆角边框、header 行高字体、状态徽章颜色。
+ * body 限制 max-height: 360px + overflow-y: auto，等宽字体 + 行号。
+ */
+
+.streaming-card {
+  margin: 12px 0;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--bg-sidebar);
+  box-shadow: 0 1px 4px rgba(20, 20, 19, 0.02);
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.streaming-card__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--bg-card);
+  transition: background-color var(--transition-fast);
+}
+
+.streaming-card__header:hover {
+  background-color: var(--bg-sand);
+}
+
+.streaming-card__status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.streaming-card--running .streaming-card__status-icon {
+  color: var(--color-focus);
+}
+
+.streaming-card--success .streaming-card__status-icon {
+  color: var(--color-success);
+}
+
+.streaming-card--error .streaming-card__status-icon {
+  color: var(--color-error);
+}
+
+.streaming-card__spinner {
+  animation: streaming-spin 0.8s linear infinite;
+}
+
+@keyframes streaming-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.streaming-card__filename {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.streaming-card__status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* 新建（write）= 绿色系 */
+.streaming-card--success .streaming-card__status-badge {
+  background-color: rgba(120, 140, 93, 0.12);
+  color: var(--color-success);
+}
+
+/* 修改（edit）= 橙色系 */
+.streaming-card--running .streaming-card__status-badge,
+.streaming-card:not(.streaming-card--success):not(.streaming-card--error) .streaming-card__status-badge {
+  background-color: rgba(201, 100, 66, 0.1);
+  color: var(--color-brand);
+}
+
+/* error = 红色系 */
+.streaming-card--error .streaming-card__status-badge {
+  background-color: rgba(181, 51, 51, 0.08);
+  color: var(--color-error);
+}
+
+.streaming-card__line-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.streaming-card__arrow {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Body ─────────────────────────────────────────────── */
+.streaming-card__body {
+  max-height: 360px;
+  overflow-y: auto;
+  background-color: #fafaf7;
+  border-top: 1px solid var(--border-cream);
+  padding: 8px 0;
+}
+
+.streaming-card__line {
+  display: flex;
+  min-height: 22px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.streaming-card__line-no {
+  display: inline-block;
+  width: 40px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-muted);
+  background-color: rgba(0, 0, 0, 0.03);
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding-top: 1px;
+}
+
+.streaming-card__line-text {
+  padding-left: 8px;
+  white-space: pre;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+/* error 信息 */
+.streaming-card__error {
+  margin: 8px 14px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--color-error);
+  background-color: rgba(181, 51, 51, 0.05);
+  border: 1px solid rgba(181, 51, 51, 0.1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 复用 DiffViewer 的 token 高亮色 */
+.diff-token--plain {
+  color: inherit;
+}
+
+.diff-token--comment {
+  color: #667a63;
+  font-style: italic;
+}
+
+.diff-token--string {
+  color: #8f4e1f;
+}
+
+.diff-token--number {
+  color: #1f5d75;
+}
+
+.diff-token--keyword {
+  color: #7a2f54;
+  font-weight: 600;
+}
+
+.diff-token--operator {
+  color: #6f5c4b;
+}
+
+.diff-token--property {
+  color: #2f5f7a;
+}

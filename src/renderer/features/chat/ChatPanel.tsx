@@ -18,7 +18,13 @@ import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock } from './renderingPolicy'
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
+import { StreamingFileCard } from './StreamingFileCard'
+import type { ToolBlock } from '../../../shared/session/types'
+import type { ExtendedToolCall } from '../../stores/useAppStore'
 import './ChatPanel.css'
+
+/** ChatPanel 内部扩展类型：从 renderer store 传入的 ToolBlock 可能携带 argumentsRaw */
+type ToolBlockWithRaw = ToolBlock & { argumentsRaw?: string }
 
 // ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
 const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
@@ -441,11 +447,27 @@ export const ChatPanel: React.FC = () => {
                         )
                       case 'text':
                         return block.content ? <MarkdownRenderer key={idx} content={block.content} /> : null
-                      case 'tool':
+                      case 'tool': {
                         if (!shouldRenderToolBlock(currentMode, block.toolName)) {
                           return null
                         }
+                        // write/edit 走流式卡片，其余走 ToolBox
+                        if (block.toolName === 'write' || block.toolName === 'edit') {
+                          const rawBlock = block as ToolBlockWithRaw
+                          return (
+                            <StreamingFileCard
+                              key={block.toolCallId}
+                              toolCallId={block.toolCallId}
+                              toolName={block.toolName}
+                              status={block.status}
+                              args={block.arguments}
+                              argumentsRaw={rawBlock.argumentsRaw}
+                              result={block.result}
+                            />
+                          )
+                        }
                         return <ToolBox key={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} />
+                      }
                     }
                   })
                 ) : (
@@ -457,11 +479,25 @@ export const ChatPanel: React.FC = () => {
                     {textContent && <MarkdownRenderer content={textContent} />}
                     {msg.toolCalls && msg.toolCalls.length > 0 && (
                       <div style={{ marginTop: '12px' }}>
-                        {msg.toolCalls.map(tc => (
-                          shouldRenderToolBlock(currentMode, tc.name)
-                            ? <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
-                            : null
-                        ))}
+                        {msg.toolCalls.map(tc => {
+                          if (!shouldRenderToolBlock(currentMode, tc.name)) return null
+                          // write/edit 走流式卡片，其余走 ToolBox
+                          if (tc.name === 'write' || tc.name === 'edit') {
+                            const extTc = tc as ExtendedToolCall
+                            return (
+                              <StreamingFileCard
+                                key={tc.id}
+                                toolCallId={tc.id}
+                                toolName={tc.name}
+                                status={tc.status}
+                                args={tc.arguments}
+                                argumentsRaw={extTc.argumentsRaw}
+                                result={tc.result}
+                              />
+                            )
+                          }
+                          return <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
+                        })}
                       </div>
                     )}
                   </>
