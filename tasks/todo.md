@@ -163,33 +163,33 @@
 
 **目标**：新增 StreamingFileCard 组件，复用 DiffViewer 视觉风格，等宽 body + 行号 + 自动滚动 + 状态指示器。
 
-- [ ] **S-T6-1** 抽取 syntaxHighlight 共享模块
+- [x] **S-T6-1** 抽取 syntaxHighlight 共享模块
   - 文件：`src/renderer/features/diff/syntaxHighlight.ts`（新文件）
   - 从 `DiffViewer.tsx` 提取 TokenType / KEYWORDS / detectLanguage / highlightLine
   - DiffViewer.tsx 改为 `import { highlightLine } from './syntaxHighlight'`
   - 运行 DiffViewer 相关单测确认不影响现有功能
   - 验收：DiffViewer 行为不变，StreamingFileCard 可复用高亮逻辑
 
-- [ ] **S-T6-2** 实现 StreamingFileCard 组件
+- [x] **S-T6-2** 实现 StreamingFileCard 组件
   - 文件：`src/renderer/features/chat/StreamingFileCard.tsx`（新文件）
   - Props：toolCallId、toolName(write/edit)、status、args、argumentsRaw、result
   - 自动展开/收起策略：running 默认展开，完成后自动收起；用户手动操作不被覆盖
   - 自动滚动用 rAF 节流，避免每个 chunk 同步 layout
   - write 用 content 字段，edit 用 new 字段作为预览文本
-  - 验收：组件渲染逻辑完整
+  - 验收：组件渲染逻辑完整 ✅
 
-- [ ] **S-T6-3** 实现 StreamingFileCard CSS
+- [x] **S-T6-3** 实现 StreamingFileCard CSS
   - 文件：`src/renderer/features/chat/StreamingFileCard.css`（新文件）
   - 复用 DiffViewer 视觉语言：圆角边框、header 行高字体、状态徽章颜色
   - 状态指示器：running = 蓝色旋转圆圈（0.8s 线性循环）、success = 绿色对勾、error = 红色叉
   - body 限制 max-height: 360px + overflow-y: auto，等宽字体 + 行号
   - 颜色变量对齐现有 App.css / ChatPanel.css
-  - 验收：视觉风格与 DiffViewer 一致
+  - 验收：视觉风格与 DiffViewer 一致 ✅
 
-- [ ] **S-T6-4** 确认或新增 SpinnerIcon
+- [x] **S-T6-4** 确认或新增 SpinnerIcon
   - 文件：`src/renderer/components/Icons.tsx`
   - 如果已有可旋转图标可复用则跳过；否则新增 SpinnerIcon
-  - 验收：StreamingFileCard 的 running 状态有旋转动画图标
+  - 验收：StreamingFileCard 的 running 状态有旋转动画图标 ✅
 
 ---
 
@@ -204,11 +204,11 @@
   - cleanup 函数取消订阅，依赖数组加入新 actions
   - 验收：renderer 可接收并处理流式事件 ✅
 
-- [ ] **S-T7-2** ChatPanel 路由 write/edit 到 StreamingFileCard
+- [x] **S-T7-2** ChatPanel 路由 write/edit 到 StreamingFileCard
   - 文件：`src/renderer/features/chat/ChatPanel.tsx`
   - 在 ToolBlock 渲染分支中：write/edit 走 StreamingFileCard，其余走 ToolBox
   - ChatPanel 顶部声明 `type ToolBlockWithRaw = ToolBlock & { argumentsRaw?: string }` 用于取 argumentsRaw
-  - 验收：write/edit 显示流式卡片，bash/read/grep 等仍走 ToolBox
+  - 验收：write/edit 显示流式卡片，bash/read/grep 等仍走 ToolBox ✅
 
 ---
 
@@ -220,14 +220,14 @@
 
 **目标**：全链路功能正确，无回归。
 
-- [ ] **S-T8-1** 类型检查通过
+- [x] **S-T8-1** 类型检查通过
   - 运行 `npm run typecheck`
-  - 验收：无类型错误
+  - 验收：无类型错误 ✅
 
-- [ ] **S-T8-2** 全量单测通过
+- [x] **S-T8-2** 全量单测通过
   - 运行 `npx vitest run`
   - 现有测试 + 新增测试全部通过
-  - 验收：0 failed
+  - 验收：0 failed ✅
 
 - [ ] **S-T8-3** 手动端到端验证 — 长 HTML 写入
   - 在 default mode 让模型写 1000+ 行 HTML
@@ -274,8 +274,8 @@
 |---|---|---|
 | SCP1 — S-T1+T2+T3 完成 | SSE → renderer 增量事件通路打通 | mock SSE 测试 + IPC 事件到达 renderer |
 | SCP2 — S-T4+T5 完成 | store 正确维护流式状态，partial JSON 解析正确 | 单元测试通过 |
-| SCP3 — S-T6+T7 完成 | write/edit 工具在 UI 上显示流式卡片 | 手动测试长 HTML 写入 |
-| SCP4 — S-T8 完成 | 全链路功能正确，无回归 | typecheck + 单测 + 端到端手动验证 |
+| SCP3 — S-T6+T7 完成 | write/edit 工具在 UI 上显示流式卡片 | typecheck + build + 单元测试通过，手动验证待执行 |
+| SCP4 — S-T8 部分完成 | 全链路功能正确，无回归 | typecheck ✅ + 单测 ✅（360 passed）+ build ✅，端到端手动验证待执行 |
 
 ---
 
