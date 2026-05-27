@@ -1,16 +1,29 @@
 import { create } from 'zustand'
-import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message, MessageBlock } from '../../shared/session/types'
+import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message, MessageBlock, ThinkingBlock, TextBlock, ToolBlock } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
+import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 
-/** 
+/**
  * 扩展的工具调用接口
  * 提供在 UI 渲染时跟踪工具执行状态和返回结果的能力
+ * argumentsRaw 仅在流式增量阶段有值，final tool_call 到达后移除
  */
 export interface ExtendedToolCall extends ToolCall {
   result?: string
   status: 'running' | 'success' | 'error'
+  argumentsRaw?: string
 }
+
+/**
+ * 渲染器专用 ToolBlock：在流式增量阶段携带 argumentsRaw（原始 JSON 字符串）
+ * argumentsRaw 只在流式期间存在，tool_call 最终事件到达后移除。
+ * 此类型仅在 renderer 内部使用，不污染 shared/session/types.ts。
+ */
+export type RendererToolBlock = ToolBlock & { argumentsRaw?: string }
+
+/** 渲染器专用顺序消息块类型，ToolBlock 使用携带 argumentsRaw 的扩展版本 */
+export type RendererMessageBlock = ThinkingBlock | TextBlock | RendererToolBlock
 
 /** 
  * 扩展的单条聊天消息接口
@@ -25,8 +38,8 @@ export interface ExtendedMessage {
   timestamp: number
   isError?: boolean
   thinking?: string
-  /** 顺序块数组，按流式事件顺序排列的 thinking/text/tool 块 */
-  blocks?: MessageBlock[]
+  /** 顺序块数组，按流式事件顺序排列，ToolBlock 使用 renderer 扩展类型携带 argumentsRaw */
+  blocks?: RendererMessageBlock[]
   /** 验证结果摘要（修改后自动验证的结果） */
   verificationSummary?: string
 }
@@ -161,6 +174,12 @@ interface AppState {
   /** 验证权限请求（用户确认是否执行验证命令） */
   pendingVerificationRequest: { requestId: string; command: string } | null
 
+  /**
+   * 流式工具调用参数累积：toolCallId → 已累积的原始 arguments 字符串。
+   * start 时初始化为空字符串，delta 追加片段，最终 tool_call 事件到达后清空对应条目。
+   */
+  streamingToolArgs: Record<string, string>
+
   /** 每条消息的 diff 数据缓存 */
   messageDiffs: Record<string, MessageDiffCache>
   /** 正在加载 diff 的消息 ID 集合 */
@@ -227,6 +246,12 @@ interface AppState {
   handleThinkingDelta: (messageId: string, delta: string) => void
   handleTextDelta: (messageId: string, delta: string) => void
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
+
+  /** 流式工具调用开始：创建 running 占位卡片 + 初始化 streamingToolArgs */
+  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => void
+
+  /** 流式工具调用参数增量：追加 argumentsRaw 到 streamingToolArgs + 更新 block */
+  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => void
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
   handleDiffUpdate: (
     messageId: string,
@@ -265,6 +290,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   messageDiffs: {},
   loadingDiffs: new Set(),
   loadingDiffPlaceholders: {},
+  streamingToolArgs: {},
 
   selectProject: async () => {
     try {
@@ -350,13 +376,43 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelExecution: async () => {
     try {
       await window.api.invoke('cancel-execution')
-      set({
-        isGenerating: false,
-        currentGeneratingMessageId: null,
-        pendingPermissionRequest: null,
-        pendingVerificationRequest: null,
-        isSubmittingPermission: false,
-        permissionError: null
+      set(state => {
+        // 兜底：将所有 running 状态的 tool 块和 toolCall 条目标记为 error
+        const nextMessages = state.messages.map(msg => {
+          if (!msg.blocks && !msg.toolCalls) return msg
+          let changed = false
+
+          const blocks = msg.blocks?.map(b => {
+            if (b.type === 'tool' && b.status === 'running') {
+              changed = true
+              const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
+              return { ...restBlock, type: 'tool' as const, status: 'error' as const, result: '用户取消执行' }
+            }
+            return b
+          })
+
+          const toolCalls = msg.toolCalls?.map(tc => {
+            if (tc.status === 'running') {
+              changed = true
+              const { argumentsRaw: _tcDrop, ...restTc } = tc
+              return { ...restTc, status: 'error' as const, result: '用户取消执行' }
+            }
+            return tc
+          })
+
+          return changed ? { ...msg, blocks, toolCalls } : msg
+        })
+
+        return {
+          messages: nextMessages,
+          isGenerating: false,
+          currentGeneratingMessageId: null,
+          pendingPermissionRequest: null,
+          pendingVerificationRequest: null,
+          isSubmittingPermission: false,
+          permissionError: null,
+          streamingToolArgs: {}
+        }
       })
     } catch (err) {
       console.error('取消执行失败:', err)
@@ -641,18 +697,139 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (idx === undefined) return state
       const msg = state.messages[idx]
       if (!msg) return state
+
+      // 查找是否已有 start 创建的占位 block（流式增量场景）
       const blocks = msg.blocks ? [...msg.blocks] : []
+      const existingBlockIdx = blocks.findIndex(
+        b => b.type === 'tool' && b.toolCallId === toolCallId
+      )
+
+      if (existingBlockIdx !== -1) {
+        // 已有占位 block：用最终 args 和 toolName 覆盖，解构剔除 argumentsRaw
+        const existing = blocks[existingBlockIdx]
+        if (existing.type === 'tool') {
+          const { argumentsRaw: _drop, ...restBlock } = existing as RendererToolBlock
+          blocks[existingBlockIdx] = {
+            ...restBlock,
+            type: 'tool',
+            toolCallId,
+            toolName,
+            arguments: args,
+            status: 'running'
+          }
+        }
+      } else {
+        // 无占位 block（向后兼容：未收到 start 事件时直接创建）
+        blocks.push({
+          type: 'tool',
+          toolCallId,
+          toolName,
+          arguments: args,
+          status: 'running'
+        })
+      }
+
+      // 同步更新 toolCalls 数组：查找并更新或追加，解构剔除 argumentsRaw
+      const toolCalls = msg.toolCalls ? [...msg.toolCalls] : []
+      const tcIdx = toolCalls.findIndex(tc => tc.id === toolCallId)
+      if (tcIdx !== -1) {
+        const { argumentsRaw: _tcDrop, ...restTc } = toolCalls[tcIdx]
+        toolCalls[tcIdx] = { ...restTc, name: toolName, arguments: args }
+      } else {
+        toolCalls.push(newToolCall)
+      }
+
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, toolCalls, blocks }
+
+      // 清空该 toolCallId 的流式增量累积
+      const { [toolCallId]: _, ...restStreaming } = state.streamingToolArgs
+      return { messages: nextMessages, streamingToolArgs: restStreaming }
+    })
+  },
+
+  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => {
+    const placeholder: ExtendedToolCall = {
+      id: toolCallId,
+      name: toolName,
+      arguments: {},
+      status: 'running'
+    }
+
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      // 创建 running 占位 block，携带空的 argumentsRaw
+      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
       blocks.push({
         type: 'tool',
         toolCallId,
         toolName,
-        arguments: args,
-        status: 'running'
+        arguments: {},
+        status: 'running',
+        argumentsRaw: ''
       })
-      const toolCalls = msg.toolCalls ? [...msg.toolCalls, newToolCall] : [newToolCall]
+
+      const toolCalls = msg.toolCalls ? [...msg.toolCalls, placeholder] : [placeholder]
       const nextMessages = state.messages.slice()
       nextMessages[idx] = { ...msg, toolCalls, blocks }
-      return { messages: nextMessages }
+
+      // 初始化流式增量累积
+      return {
+        messages: nextMessages,
+        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: '' }
+      }
+    })
+  },
+
+  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      // 累积 argumentsRaw 到 streamingToolArgs
+      const prevRaw = state.streamingToolArgs[toolCallId] ?? ''
+      const nextRaw = prevRaw + argumentsDelta
+
+      // 从已有 block/toolCall 获取 toolName，用于派发 partial 解析
+      const existingBlock = msg.blocks?.find(
+        b => b.type === 'tool' && b.toolCallId === toolCallId
+      )
+      const toolName = existingBlock?.type === 'tool' ? existingBlock.toolName : ''
+      const partialArgs = parsePartialToolArgs(toolName, nextRaw)
+
+      // 同步更新 block 的 argumentsRaw 和 arguments
+      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
+      const blockIdx = blocks.findIndex(
+        b => b.type === 'tool' && b.toolCallId === toolCallId
+      )
+      if (blockIdx !== -1 && blocks[blockIdx].type === 'tool') {
+        blocks[blockIdx] = {
+          ...blocks[blockIdx],
+          arguments: partialArgs,
+          argumentsRaw: nextRaw
+        } as RendererToolBlock
+      }
+
+      // 同步更新 toolCalls 数组的 arguments 和 argumentsRaw
+      const toolCalls = msg.toolCalls ? msg.toolCalls.map(tc =>
+        tc.id === toolCallId
+          ? { ...tc, arguments: partialArgs, argumentsRaw: nextRaw }
+          : tc
+      ) : msg.toolCalls
+
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, blocks, toolCalls }
+
+      return {
+        messages: nextMessages,
+        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: nextRaw }
+      }
     })
   },
 

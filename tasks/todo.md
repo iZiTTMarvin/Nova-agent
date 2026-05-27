@@ -84,70 +84,74 @@
 ## Phase S2：Renderer 状态层 + 参数解析
 
 > store 接收流式事件并维护 UI 状态，partial JSON 解析器提取 write/edit/bash 的关键字段。
-
-### S-T4 Renderer 状态层：useAppStore 接入流式增量
-
-**目标**：store 新增 `streamingToolArgs` 字段和相关 actions，处理 start/delta/final 全生命周期。
-
-- [ ] **S-T4-1** 新增 store 字段和类型
-  - 文件：`src/renderer/stores/useAppStore.ts`
-  - AppState 新增 `streamingToolArgs: Record<string, string>`
-  - ExtendedToolCall 新增 `argumentsRaw?: string`（仅 renderer 内存层，不导出到 shared）
-  - 文件顶部新增本地类型 `RendererToolBlock = ToolBlock & { argumentsRaw?: string }`
-  - 初始值 `streamingToolArgs: {}`
-  - 验收：TypeScript 编译通过，shared 类型不受影响
-
-- [ ] **S-T4-2** 实现 handleToolCallStart
-  - 文件：`src/renderer/stores/useAppStore.ts`
-  - 收到 start 时在对应 message 的 blocks 里插入 running 状态的 ToolBlock，toolCalls 里插入 ExtendedToolCall，streamingToolArgs 置入空字符串
-  - 验收：start 到达后 blocks 和 toolCalls 都有对应 running 条目
-
-- [ ] **S-T4-3** 实现 handleToolCallDelta
-  - 文件：`src/renderer/stores/useAppStore.ts`
-  - 累积 `streamingToolArgs[toolCallId]`，调用 `parsePartialToolArgs` 解析当前进度，更新对应 ToolBlock 和 ExtendedToolCall 的 arguments 和 argumentsRaw
-  - 验收：每次 delta 到达后 ToolBlock.arguments 反映当前已解析的字段
-
-- [ ] **S-T4-4** 修改 handleToolCall 合并 final args
-  - 文件：`src/renderer/stores/useAppStore.ts:631-657`
-  - 收到 final tool_call 时：如果 start 已插过 ToolBlock 则覆盖 args 并清掉 argumentsRaw；如果没收到 start 则兜底插入
-  - 从 `streamingToolArgs` 清除对应 key
-  - 验收：final 到达后 streamingToolArgs 无残留，ToolBlock.argumentsRaw 为 undefined
-
-- [ ] **S-T4-5** 修改 cancelExecution 兜底清理
-  - 文件：`src/renderer/stores/useAppStore.ts:351-364`
-  - 取消时把所有 status='running' 的 ToolBlock 标为 error + result='已取消'，清空 argumentsRaw
-  - 清空整个 streamingToolArgs
-  - 验收：取消后无残留 running 卡片，streamingToolArgs 为空
-
-- [ ] **S-T4-6** 编写 S-T4 单元测试
-  - 文件：`tests/unit/renderer/streamingToolCallStore.test.ts`（新文件）
-  - 断言 start → delta×N → final 后 streamingToolArgs 已清空、ToolBlock.arguments 是最终完整对象、argumentsRaw 为 undefined
-  - 断言 cancel 后所有 running 卡片变 error、streamingToolArgs 清空
-  - 验收：测试通过
-
----
+> **执行顺序**：S-T5（解析工具）必须先于 S-T4-3 完成，否则 handleToolCallDelta 无法调用 parsePartialToolArgs。
 
 ### S-T5 partial JSON 参数解析工具
 
 **目标**：从可能未闭合的 JSON 字符串中容错提取指定 key 的字符串值，用于 write/edit/bash 实时进度展示。
 
-- [ ] **S-T5-1** 实现 extractPartialString
+- [x] **S-T5-1** 实现 extractPartialString
   - 文件：`src/renderer/features/chat/partialJsonArgs.ts`（新文件）
   - 从 partial JSON 中按 key 查找字符串值，支持完整闭合和截断两种情况
   - 支持 JSON 转义：`\" \\ \/ \n \r \t \b \f \uXXXX`
   - 找不到 key 返回 undefined，字符串未闭合返回已收部分
-  - 验收：核心提取逻辑正确
+  - 验收：核心提取逻辑正确 ✅
 
-- [ ] **S-T5-2** 实现 parsePartialToolArgs 派发
+- [x] **S-T5-2** 实现 parsePartialToolArgs 派发
   - 文件：`src/renderer/features/chat/partialJsonArgs.ts`
   - 按 toolName 选择需展示的字段：write(path+content)、edit(path+old+new)、bash(command)
-  - 执行前确认 `writeTool.ts`、`editTool.ts`、`bashTool.ts` 的参数 schema 字段名
-  - 验收：各工具字段名与实际 schema 一致
+  - 字段名已与 `writeTool.ts`、`editTool.ts`、`bashTool.ts` 的参数 schema 核对一致
+  - 验收：各工具字段名与实际 schema 一致 ✅
 
-- [ ] **S-T5-3** 编写 S-T5 单元测试
+- [x] **S-T5-3** 编写 S-T5 单元测试
   - 文件：`tests/unit/renderer/partialJsonArgs.test.ts`（新文件）
-  - 至少覆盖：空字符串/缺失 key、完整 JSON、半截 path、半截 content、含 `\n` 转义、含转义引号截断、`\uXXXX` 完整与不完整、write/edit/bash 派发、1000 次累加大文件压测
-  - 验收：9 类场景全部通过
+  - 覆盖：空字符串/缺失 key、完整 JSON、半截 path、半截 content、含 `\n` 转义、含转义引号截断、`\uXXXX` 完整与不完整、key 后空格、key 后无冒号、非字符串值、write/edit/bash 派发、1000 次累加大文件压测
+  - 验收：22 个场景全部通过 ✅
+
+---
+
+### S-T4 Renderer 状态层：useAppStore 接入流式增量
+
+**目标**：store 新增 `streamingToolArgs` 字段和相关 actions，处理 start/delta/final 全生命周期。
+**⚠️ 依赖**：S-T4-3（handleToolCallDelta）依赖 S-T5（parsePartialToolArgs），必须先完成 S-T5 再做 S-T4-3。
+
+- [x] **S-T4-1** 新增 store 字段和类型
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - AppState 新增 `streamingToolArgs: Record<string, string>`
+  - ExtendedToolCall 新增 `argumentsRaw?: string`（仅 renderer 内存层，不导出到 shared）
+  - 文件顶部新增本地类型 `RendererToolBlock = ToolBlock & { argumentsRaw?: string }`、`RendererMessageBlock`
+  - ExtendedMessage.blocks 改为 `RendererMessageBlock[]`
+  - 初始值 `streamingToolArgs: {}`
+  - 验收：TypeScript 编译通过，shared 类型不受影响 ✅
+
+- [x] **S-T4-2** 实现 handleToolCallStart
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - 收到 start 时在对应 message 的 blocks 里插入 running 状态的 ToolBlock，toolCalls 里插入 ExtendedToolCall，streamingToolArgs 置入空字符串
+  - 验收：start 到达后 blocks 和 toolCalls 都有对应 running 条目 ✅
+
+- [x] **S-T4-3** 实现 handleToolCallDelta ⚠️ 依赖 S-T5 已完成
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - 累积 `streamingToolArgs[toolCallId]`，调用 `parsePartialToolArgs` 解析当前进度，更新对应 ToolBlock 和 ExtendedToolCall 的 arguments 和 argumentsRaw
+  - 验收：每次 delta 到达后 ToolBlock.arguments 反映当前已解析的字段 ✅
+
+- [x] **S-T4-4** 修改 handleToolCall 合并 final args
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - 收到 final tool_call 时：如果 start 已插过 ToolBlock 则用解构剔除 argumentsRaw 并覆盖 args；如果没收到 start 则兜底插入
+  - 从 `streamingToolArgs` 清除对应 key
+  - 验收：final 到达后 streamingToolArgs 无残留，ToolBlock.argumentsRaw 为 undefined ✅
+
+- [x] **S-T4-5** 修改 cancelExecution 兜底清理
+  - 文件：`src/renderer/stores/useAppStore.ts`
+  - 取消时把所有 status='running' 的 ToolBlock 和 ExtendedToolCall 标为 error + result='用户取消执行'，解构剔除 argumentsRaw
+  - 清空整个 streamingToolArgs
+  - 验收：取消后无残留 running 卡片，streamingToolArgs 为空 ✅
+
+- [x] **S-T4-6** 编写 S-T4 单元测试
+  - 文件：`tests/unit/renderer/streamingToolCallStore.test.ts`（新文件）
+  - 断言 start → delta×N → final 后 streamingToolArgs 已清空、ToolBlock.arguments 是最终完整对象、argumentsRaw 为 undefined
+  - 断言 delta 后 block.arguments 和 toolCalls.arguments 反映 partial 解析结果
+  - 断言 cancel 后所有 running 卡片变 error、streamingToolArgs 清空
+  - 验收：测试通过 ✅
 
 ---
 
@@ -193,12 +197,12 @@
 
 **目标**：注册流式事件订阅，ChatPanel 把 write/edit 工具路由到 StreamingFileCard。
 
-- [ ] **S-T7-1** App.tsx 注册流式事件订阅
+- [x] **S-T7-1** App.tsx 注册流式事件订阅
   - 文件：`src/renderer/App.tsx:38-126`
   - 在 useEffect 中订阅 `agent:tool-call-start` 和 `agent:tool-call-delta`
   - 调用 `handleToolCallStart` 和 `handleToolCallDelta`
   - cleanup 函数取消订阅，依赖数组加入新 actions
-  - 验收：renderer 可接收并处理流式事件
+  - 验收：renderer 可接收并处理流式事件 ✅
 
 - [ ] **S-T7-2** ChatPanel 路由 write/edit 到 StreamingFileCard
   - 文件：`src/renderer/features/chat/ChatPanel.tsx`
@@ -278,7 +282,7 @@
 ## 执行顺序与提交规范
 
 1. 先做 S-T6-1（syntaxHighlight 抽取，StreamingFileCard 的依赖）
-2. 然后 S-T1 → S-T2 → S-T3 → S-T4 → S-T5 → S-T6-2/3/4 → S-T7 → S-T8
+2. 然后 S-T1 → S-T2 → S-T3 → **S-T5 → S-T4**（S-T5 必须先于 S-T4-3，因为 handleToolCallDelta 依赖 parsePartialToolArgs） → S-T6-2/3/4 → S-T7 → S-T8
 3. 每提交一次都跑 `npm run typecheck`，S-T5/S-T8 跑 `npx vitest run`
 
 提交格式（中文 Conventional Commits）：
@@ -287,8 +291,8 @@ refactor(diff): 抽取 syntaxHighlight 工具模块（S-T6 前置）
 feat(stream): S-T1 模型层 SSE 工具调用增量同步 yield
 feat(stream): S-T2 AgentLoop 透传流式工具调用事件
 feat(stream): S-T3 IPC channel 注册并向 renderer 转发流式事件
-feat(stream): S-T4 useAppStore 接入流式工具调用增量
 feat(stream): S-T5 partial JSON 参数解析工具与单测
+feat(stream): S-T4 useAppStore 接入流式工具调用增量
 feat(stream): S-T6 新增 StreamingFileCard 流式写入卡片组件
 feat(stream): S-T7 ChatPanel 把 write/edit 路由到 StreamingFileCard
 test(stream): S-T8 端到端流式工具调用回归校验

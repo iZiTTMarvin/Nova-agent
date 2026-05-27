@@ -37,7 +37,8 @@ describe('useAppStore Zustand Store', () => {
       permissionError: null,
       messageDiffs: {},
       loadingDiffs: new Set(),
-      loadingDiffPlaceholders: {}
+      loadingDiffPlaceholders: {},
+      streamingToolArgs: {}
     })
   })
 

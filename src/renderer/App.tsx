@@ -18,6 +18,8 @@ function App(): JSX.Element {
   const handleMessageStart = useAppStore(state => state.handleMessageStart)
   const handleThinkingDelta = useAppStore(state => state.handleThinkingDelta)
   const handleTextDelta = useAppStore(state => state.handleTextDelta)
+  const handleToolCallStart = useAppStore(state => state.handleToolCallStart)
+  const handleToolCallDelta = useAppStore(state => state.handleToolCallDelta)
   const handleToolCall = useAppStore(state => state.handleToolCall)
   const handleToolResult = useAppStore(state => state.handleToolResult)
   const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
@@ -51,7 +53,17 @@ function App(): JSX.Element {
       handleTextDelta(data.messageId, data.delta)
     })
 
-    // 监听：Agent 触发工具调用
+    // 监听：Agent 流式工具调用开始（S2 增量事件）
+    const unsubToolCallStart = window.api.on('agent:tool-call-start', (data) => {
+      handleToolCallStart(data.messageId, data.toolCallId, data.toolName)
+    })
+
+    // 监听：Agent 流式工具调用参数增量（S2 增量事件）
+    const unsubToolCallDelta = window.api.on('agent:tool-call-delta', (data) => {
+      handleToolCallDelta(data.messageId, data.toolCallId, data.argumentsDelta)
+    })
+
+    // 监听：Agent 工具调用完成（最终事件，携带完整参数）
     const unsubToolCall = window.api.on('agent:tool-call', (data) => {
       handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args)
     })
@@ -100,6 +112,8 @@ function App(): JSX.Element {
       unsubMessageStart()
       unsubThinkingDelta()
       unsubTextDelta()
+      unsubToolCallStart()
+      unsubToolCallDelta()
       unsubToolCall()
       unsubToolResult()
       unsubPermissionRequest()
@@ -114,6 +128,8 @@ function App(): JSX.Element {
     handleMessageStart,
     handleThinkingDelta,
     handleTextDelta,
+    handleToolCallStart,
+    handleToolCallDelta,
     handleToolCall,
     handleToolResult,
     handleDiffUpdate,
