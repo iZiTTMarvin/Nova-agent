@@ -8,6 +8,9 @@
   border-radius: var(--radius-md);
   overflow: hidden;
   background-color: var(--bg-sidebar);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* ── 整体头部 ──────────────────────────────────────── */
@@ -21,6 +24,7 @@
   background-color: var(--bg-card);
   border-bottom: 1px solid var(--border-cream);
   transition: background-color var(--transition-fast);
+  min-width: 0;
 }
 
 .diff-viewer__header:hover {
@@ -31,6 +35,10 @@
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-charcoal);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diff-viewer__stats {
@@ -40,6 +48,7 @@
   margin-left: auto;
   font-size: 0.75rem;
   font-family: var(--font-mono);
+  flex-shrink: 0;
 }
 
 .diff-viewer__stat--added {
@@ -63,11 +72,15 @@
 .diff-viewer__body {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* ── 单个文件面板 ──────────────────────────────────── */
 .diff-file {
   border-bottom: 1px solid var(--border-cream);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .diff-file:last-child {
@@ -83,6 +96,7 @@
   user-select: none;
   background-color: var(--bg-card);
   transition: background-color var(--transition-fast);
+  min-width: 0;
 }
 
 .diff-file__header:hover {
@@ -228,10 +242,14 @@
 /* ── diff hunk 区块 ────────────────────────────────── */
 .diff-file__body {
   background-color: #fafaf7;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .diff-hunk {
   border-top: 1px solid var(--border-cream);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .diff-hunk:first-child {
@@ -254,11 +272,14 @@
   font-size: 0.8rem;
   line-height: 1.5;
   overflow-x: auto;
+  max-width: 100%;
 }
 
 /* ── 单行 diff ────────────────────────────────────── */
 .diff-line {
   display: flex;
+  width: max-content;
+  min-width: 100%;
   min-height: 22px;
 }
 
@@ -278,8 +299,9 @@
 
 .diff-line__text {
   padding-left: 8px;
+  padding-right: 14px;
   white-space: pre;
-  flex: 1;
+  flex: 1 0 auto;
   min-width: 0;
 }
 

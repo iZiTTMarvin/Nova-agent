@@ -8,7 +8,8 @@ interface ThinkingBlockProps {
 }
 
 export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({ thinking, active = false }) => {
-  const [isOpen, setIsOpen] = useState(true) // 默认展开，便于看到正在流式输入的内容
+  // 正在思考的块默认展开；历史完成块默认折叠，避免打开旧会话时撑开整屏。
+  const [isOpen, setIsOpen] = useState(active)
   // 使用 Date.now() 差值计算真实经过时间，避免主线程卡顿时计时器"停顿再追赶"
   const [elapsed, setElapsed] = useState(0)
   const startTimeRef = useRef<number | null>(null)
@@ -35,17 +36,6 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({ thinking, active =
         setElapsed(Math.round(finalDelta * 10) / 10)
         startTimeRef.current = null
       }
-    }
-  }, [active])
-
-  // 当思考结束（active 变为 false）时，如果是自动展开的，为了不占空间可以自动折叠起来
-  useEffect(() => {
-    if (!active && thinking) {
-      // 延迟一小段时间再折叠，提供平滑的心智切换
-      const timeout = setTimeout(() => {
-        setIsOpen(false)
-      }, 1200)
-      return () => clearTimeout(timeout)
     }
   }, [active])
 

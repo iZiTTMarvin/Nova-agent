@@ -1,7 +1,7 @@
 /** StreamingFileCard — 流式文件写入/修改实时卡片样式
  *
  * 复用 DiffViewer 视觉语言：圆角边框、header 行高字体、状态徽章颜色。
- * body 限制 max-height: 360px + overflow-y: auto，等宽字体 + 行号。
+ * body 限制 max-height: 360px + overflow: auto，等宽字体 + 行号。
  */
 
 .streaming-card {
@@ -11,6 +11,9 @@
   overflow: hidden;
   background-color: var(--bg-sidebar);
   box-shadow: 0 1px 4px rgba(20, 20, 19, 0.02);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* ── Header ─────────────────────────────────────────────── */
@@ -23,6 +26,7 @@
   user-select: none;
   background-color: var(--bg-card);
   transition: background-color var(--transition-fast);
+  min-width: 0;
 }
 
 .streaming-card__header:hover {
@@ -112,14 +116,17 @@
 /* ── Body ─────────────────────────────────────────────── */
 .streaming-card__body {
   max-height: 360px;
-  overflow-y: auto;
+  overflow: auto;
   background-color: #fafaf7;
   border-top: 1px solid var(--border-cream);
   padding: 8px 0;
+  max-width: 100%;
 }
 
 .streaming-card__line {
   display: flex;
+  width: max-content;
+  min-width: 100%;
   min-height: 22px;
   font-family: var(--font-mono);
   font-size: 0.8rem;
@@ -142,8 +149,9 @@
 
 .streaming-card__line-text {
   padding-left: 8px;
+  padding-right: 14px;
   white-space: pre;
-  flex: 1;
+  flex: 1 0 auto;
   min-width: 0;
   color: var(--text-primary);
 }

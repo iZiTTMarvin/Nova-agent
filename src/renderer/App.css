@@ -107,6 +107,7 @@
    ────────────────────────────────────────────────────────── */
 .app-main {
   flex: 1;
+  min-width: 0;
   height: 100%;
   background-color: var(--bg-app);
   position: relative;

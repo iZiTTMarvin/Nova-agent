@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
   background-color: var(--bg-app);
 }
 
@@ -121,15 +122,18 @@
 .chat-messages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  min-width: 0;
 }
 
 .chat-msg-wrapper {
   display: flex;
   width: 100%;
+  min-width: 0;
 }
 
 .chat-msg-wrapper--user {
@@ -142,7 +146,7 @@
 
 .chat-msg {
   position: relative;
-  max-width: 80%;
+  min-width: 0;
   padding: 16px;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -151,6 +155,7 @@
 }
 
 .chat-msg--user {
+  max-width: min(80%, 640px);
   background-color: var(--bg-sand);
   color: var(--text-primary);
   border: 1px solid var(--border-warm);
@@ -158,6 +163,8 @@
 }
 
 .chat-msg--assistant {
+  width: 100%;
+  max-width: 100%;
   background-color: var(--bg-card);
   color: var(--text-primary);
   border: 1px solid var(--border-cream);
@@ -177,6 +184,14 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.markdown-text-block {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .markdown-paragraph {
@@ -206,6 +221,7 @@
   overflow-x: auto;
   margin: 8px 0;
   border: 1px solid #2d2d2d;
+  max-width: 100%;
 }
 
 .markdown-lang-tag {
@@ -219,10 +235,63 @@
 }
 
 .markdown-code {
+  display: block;
   font-family: var(--font-mono);
   font-size: 0.85rem;
   color: #d4d4d4;
   white-space: pre;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* Assistant 等待态：替代空白气泡，让用户知道模型已经开始处理 */
+.assistant-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+
+.assistant-pending__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+}
+
+.assistant-pending__dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--color-brand);
+  opacity: 0.35;
+  animation: assistant-pending-dot 1.2s ease-in-out infinite;
+}
+
+.assistant-pending__dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.assistant-pending__dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+.assistant-pending__label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+@keyframes assistant-pending-dot {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.3;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 0.9;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -235,6 +304,8 @@
   margin: 12px 0;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(20, 20, 19, 0.02);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tool-box__header {

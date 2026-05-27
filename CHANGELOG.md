@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-27
+
+- **fix**: 收紧聊天流的视觉稳定性
+  - `src/renderer/features/chat/ChatPanel.tsx`：assistant 消息开始但还没有文字、思考或工具调用时，显示“正在思考”等待态，不再出现空白气泡
+  - `src/renderer/features/chat/ChatPanel.css` / `src/renderer/features/diff/DiffViewer.css`：assistant 消息改为稳定占满当前内容列，Diff 长行限制在内部横向滚动，不再撑出窗口
+  - `src/renderer/features/chat/ThinkingBlock.tsx` / `src/renderer/features/chat/StreamingFileCard.tsx`：完成后不再自动收起，避免页面高度突然塌陷
+  - `tests/unit/renderer/chatExperience.test.ts`：补齐等待态、思考块和流式文件卡片的回归测试
+
 ## 2026-05-25
 
 - **fix(T1)**: DiffViewer 不再出现 `+0 -0` 中间态

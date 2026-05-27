@@ -4,7 +4,7 @@
  * 职责：
  * 1. 在 write/edit 工具流式产出参数期间，展示实时进度卡片
  * 2. 等宽字体逐行刷出代码，带行号与语法高亮
- * 3. running 时自动展开并滚动到底部，完成后自动收起（用户手动操作优先）
+ * 3. running 时自动展开并滚动到底部，完成后保持当前展开状态，避免页面突然塌陷
  * 4. 复用 DiffViewer 视觉语言：圆角边框、header 行高字体、状态徽章颜色
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react'
@@ -60,10 +60,10 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = ({
   const lineCount = countLines(previewContent)
   const summary = getToolSummary(toolName, args)
 
-  // 自动展开/收起策略：running 默认展开，完成后自动收起；用户手动操作后不再覆盖
+  // 自动展开策略：running 默认展开；完成后不自动收起，避免用户阅读时视口跳动。
   useEffect(() => {
-    if (!userToggledRef.current) {
-      setIsOpen(status === 'running')
+    if (status === 'running' && !userToggledRef.current) {
+      setIsOpen(true)
     }
   }, [status])
 

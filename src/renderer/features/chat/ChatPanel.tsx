@@ -19,7 +19,8 @@ import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock 
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
 import { StreamingFileCard } from './StreamingFileCard'
-import type { ToolBlock } from '../../../shared/session/types'
+import type { Mode } from '../../../shared/session/types'
+import type { ExtendedToolCall, RendererMessageBlock } from '../../stores/useAppStore'
 import './ChatPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
@@ -71,6 +72,31 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
       })}
     </div>
   )
+}
+
+/** Assistant 空白等待态：模型已接管但还没产出文字、思考或工具调用时展示 */
+const AssistantPendingIndicator: React.FC = () => (
+  <div className="assistant-pending" role="status" aria-live="polite" aria-label="Nova 正在准备回复">
+    <span className="assistant-pending__dots" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+    <span className="assistant-pending__label">正在思考</span>
+  </div>
+)
+
+function hasVisibleToolCalls(toolCalls: ExtendedToolCall[] | undefined, mode: Mode): boolean {
+  return !!toolCalls?.some(toolCall => shouldRenderToolBlock(mode, toolCall.name))
+}
+
+function hasVisibleBlocks(blocks: RendererMessageBlock[] | undefined, mode: Mode): boolean {
+  return !!blocks?.some(block => {
+    if (block.type === 'thinking' || block.type === 'text') {
+      return block.content.trim().length > 0
+    }
+    return shouldRenderToolBlock(mode, block.toolName)
+  })
 }
 
 // ── 2. 折叠式工具调用状态卡片 ────────────────────────────────
@@ -405,6 +431,11 @@ export const ChatPanel: React.FC = () => {
           const { thinkingContent, textContent, isThinkingActive } = isAssistant && !hasBlocks
             ? parseThinking(msg, isGenerating, currentGeneratingMessageId)
             : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
+          const isCurrentAssistantGenerating = isAssistant && isGenerating && msg.id === currentGeneratingMessageId
+          const hasVisibleContent = hasBlocks
+            ? hasVisibleBlocks(msg.blocks, currentMode)
+            : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
+          const shouldShowPending = isCurrentAssistantGenerating && !hasVisibleContent
 
           return (
             <div
@@ -424,6 +455,8 @@ export const ChatPanel: React.FC = () => {
                     </button>
                   </div>
                 )}
+
+                {shouldShowPending && <AssistantPendingIndicator />}
 
                 {hasBlocks ? (
                   /* blocks 顺序渲染：按真实流式事件顺序展示 */
