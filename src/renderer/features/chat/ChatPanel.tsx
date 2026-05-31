@@ -19,60 +19,12 @@ import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock 
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
 import { StreamingFileCard } from './StreamingFileCard'
+import { MarkdownRenderer } from './MarkdownRenderer'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedToolCall, RendererMessageBlock } from '../../stores/useAppStore'
 import './ChatPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
-
-// ── 1. 轻量级 Markdown 渲染器 ────────────────────────────────
-const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
-  if (!content) return null
-
-  // 简单的 Markdown 块解析
-  const parts = content.split(/(```[\s\S]*?```)/g)
-
-  return (
-    <div className="markdown-body">
-      {parts.map((part, index) => {
-        if (part.startsWith('```')) {
-          // 代码块
-          const match = part.match(/```(\w*)\n([\s\S]*?)```/)
-          const lang = match ? match[1] : ''
-          const code = match ? match[2] : part.slice(3, -3)
-          return (
-            <pre key={index} className="markdown-pre">
-              {lang && <div className="markdown-lang-tag">{lang}</div>}
-              <code className="markdown-code">{code.trim()}</code>
-            </pre>
-          )
-        } else {
-          // 普通文本，按行分割并处理内联 `code`
-          return (
-            <div key={index} className="markdown-text-block">
-              {part.split('\n').map((line, lIdx) => {
-                if (!line.trim() && lIdx > 0) return <div key={lIdx} className="markdown-paragraph-gap" />
-                
-                // 处理内联代码 `code`
-                const subParts = line.split(/(`[^`]+`)/g)
-                return (
-                  <p key={lIdx} className="markdown-paragraph">
-                    {subParts.map((subPart, spIdx) => {
-                      if (subPart.startsWith('`') && subPart.endsWith('`')) {
-                        return <code key={spIdx} className="markdown-inline-code">{subPart.slice(1, -1)}</code>
-                      }
-                      return subPart;
-                    })}
-                  </p>
-                )
-              })}
-            </div>
-          )
-        }
-      })}
-    </div>
-  )
-}
 
 /** Assistant 空白等待态：模型已接管但还没产出文字、思考或工具调用时展示 */
 const AssistantPendingIndicator: React.FC = () => (
