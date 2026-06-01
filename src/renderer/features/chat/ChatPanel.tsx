@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useAppStore } from '../../stores/useAppStore'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   SendIcon,
   StopIcon,
@@ -272,7 +273,17 @@ export const ChatPanel: React.FC = () => {
   }
 
   const handleSend = () => {
-    if (!inputVal.trim() || isGenerating || !currentProject) return
+    if (!inputVal.trim() || isGenerating) return
+    if (!modelConfig) {
+      alert("请先在左下角配置模型 API Key！")
+      setConfigModalOpen(true)
+      return
+    }
+    if (!currentProject) {
+      alert("请先在左侧选择或新建一个项目工作区！")
+      selectProject()
+      return
+    }
     sendMessage(inputVal.trim())
     setInputVal('')
     if (textareaRef.current) {
@@ -288,90 +299,14 @@ export const ChatPanel: React.FC = () => {
   }
 
   // ── 空状态引导界面 ─────────────────────────────────────────
-  if (!currentProject || !modelConfig) {
-    const isStep1Done = !!modelConfig
-    const isStep2Done = !!currentProject
-
-    return (
-      <div className="chat-empty">
-        <div className="chat-empty__header">
-          <NovaLogo size={48} className="chat-empty__logo" animating={true} />
-          <h2 className="chat-empty__title">开启 Nova 智能编程协作</h2>
-          <p className="chat-empty__subtitle">
-            Nova 会按当前模式调用内置工具理解项目、修改代码，并在高风险操作前请求你的确认。开始之前，请完成以下配置：
-          </p>
-        </div>
-
-        <div className="chat-empty__steps">
-          {/* 第一步：模型配置 */}
-          <div className="chat-empty__step-card">
-            <div className={`chat-empty__step-num ${isStep1Done ? 'chat-empty__step-num--success' : ''}`}>
-              {isStep1Done ? '✓' : '1'}
-            </div>
-            <div className="chat-empty__step-content">
-              <span className="chat-empty__step-title">设置大语言模型接口</span>
-              <span className="chat-empty__step-desc">
-                Nova 是由模型驱动的 Agent，配置符合 OpenAI 兼容标准的 API 以驱动思考循环。
-              </span>
-              {!isStep1Done && (
-                <button 
-                  className="project-picker__btn project-picker__btn--secondary chat-empty__step-action"
-                  onClick={() => setConfigModalOpen(true)}
-                >
-                  <SettingsIcon size={14} />
-                  去配置模型
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* 第二步：选择工作区 */}
-          <div className="chat-empty__step-card">
-            <div className={`chat-empty__step-num ${isStep2Done ? 'chat-empty__step-num--success' : ''}`}>
-              {isStep2Done ? '✓' : '2'}
-            </div>
-            <div className="chat-empty__step-content">
-              <span className="chat-empty__step-title">选择本地工作区目录</span>
-              <span className="chat-empty__step-desc">
-                选定代码库作为 Agent 的执行边界，Nova 会在这个工作区内读取、修改和验证代码。
-              </span>
-              {isStep1Done && !isStep2Done && (
-                <button 
-                  className="project-picker__btn chat-empty__step-action"
-                  onClick={selectProject}
-                >
-                  <FolderIcon size={14} />
-                  选择本地项目
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const isEmptyState = messages.length === 0
 
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
-    <div className="chat-panel">
-      <div className="chat-messages" ref={scrollContainerRef} onScroll={handleScroll}>
-        {messages.length === 0 && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            color: 'var(--text-muted)',
-            gap: '12px'
-          }}>
-            <NovaLogo size={32} />
-            <p style={{ fontFamily: 'var(--font-serif)', fontSize: '1.1rem' }}>
-              对话已开启，您可以输入任何代码分析与探索指令
-            </p>
-            <p style={{ fontSize: '0.8rem' }}>例如：“查找本项目下的所有 ts 配置文件”</p>
-          </div>
-        )}
+    <div className="chat-panel relative flex flex-col h-full bg-white">
+      {/* 消息流区域，只有非空状态时才显示并占据空间 */}
+      {!isEmptyState && (
+        <div className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32" ref={scrollContainerRef} onScroll={handleScroll}>
 
         {messages.map(msg => {
           const isAssistant = msg.role === 'assistant'
@@ -540,43 +475,81 @@ export const ChatPanel: React.FC = () => {
         )}
         <div ref={messagesEndRef} />
       </div>
+      )}
 
-      {/* 底部输入框 */}
-      <div className="chat-input-area">
-        <div className="chat-input-mode-container">
-          <ModeSwitch />
+      {/* 底部输入框 / 空状态中央输入框 */}
+      <motion.div 
+        layout
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className={`absolute left-0 right-0 flex flex-col items-center justify-center px-4 pointer-events-none ${
+          isEmptyState ? 'top-0 bottom-0' : 'bottom-6'
+        }`}
+      >
+        <div className="w-full max-w-3xl flex flex-col items-center pointer-events-auto">
+          
+          <AnimatePresence>
+            {isEmptyState && (
+              <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="mb-8 flex flex-col items-center justify-center space-y-4"
+              >
+                <NovaLogo size={48} className="text-[#d97757]" />
+                <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
+                  说出你的想法
+                </h1>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <motion.div 
+            layout
+            className="w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100/80 backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)]"
+          >
+            <textarea
+              ref={textareaRef}
+              className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
+              placeholder="向 Nova 提问或分配编程任务..."
+              rows={1}
+              value={inputVal}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              disabled={isGenerating}
+            />
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
+              <div className="flex items-center gap-2">
+                <ModeSwitch />
+              </div>
+              <div>
+                {isGenerating ? (
+                  <button 
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors" 
+                    onClick={cancelExecution}
+                    title="中断生成"
+                  >
+                    <StopIcon size={14} />
+                  </button>
+                ) : (
+                  <button 
+                    className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
+                      inputVal.trim() 
+                        ? 'bg-text-primary text-white hover:bg-gray-800' 
+                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    }`}
+                    onClick={handleSend}
+                    disabled={!inputVal.trim()}
+                    title="发送"
+                  >
+                    <SendIcon size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+
         </div>
-        <div className="chat-input-wrapper">
-          <textarea
-            ref={textareaRef}
-            className="chat-textarea"
-            placeholder="向 Nova 提问或分配编程任务..."
-            rows={1}
-            value={inputVal}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            disabled={isGenerating}
-          />
-          {isGenerating ? (
-            <button 
-              className="chat-action-btn chat-action-btn--stop" 
-              onClick={cancelExecution}
-              title="中断生成"
-            >
-              <StopIcon size={16} />
-            </button>
-          ) : (
-            <button 
-              className="chat-action-btn" 
-              onClick={handleSend}
-              disabled={!inputVal.trim()}
-              title="发送"
-            >
-              <SendIcon size={16} />
-            </button>
-          )}
-        </div>
-      </div>
+      </motion.div>
     </div>
   )
 }

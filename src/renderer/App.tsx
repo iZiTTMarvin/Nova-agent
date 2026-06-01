@@ -1,12 +1,11 @@
 import React, { useEffect } from 'react'
 import { useAppStore } from './stores/useAppStore'
 import { NovaLogo, SettingsIcon } from './components/Icons'
-import { ProjectPicker } from './features/project-picker/ProjectPicker'
+import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './features/chat/ChatPanel'
 import { PermissionPrompt } from './features/permissions/PermissionPrompt'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
-import { SessionList } from './features/session-list/SessionList'
 import './App.css'
 
 function App(): JSX.Element {
@@ -148,30 +147,7 @@ function App(): JSX.Element {
       
       <div className="app-layout">
         {/* 左侧功能配置与会话管理栏 */}
-        <aside className="app-sidebar">
-          <div className="app-sidebar__header" title="Nova Agent">
-            <NovaLogo size={20} />
-            <span className="app-sidebar__header-title">Nova Agent</span>
-          </div>
-
-          <div className="app-sidebar__content">
-            {/* 工作区项目卡片 */}
-            <ProjectPicker />
-            {/* 会话管理列表 */}
-            <SessionList />
-          </div>
-
-          <div className="app-sidebar__footer">
-            <button 
-              className="app-sidebar__settings-btn"
-              onClick={() => setConfigModalOpen(true)}
-              title="模型设置"
-            >
-              <SettingsIcon size={16} />
-              <span>模型设置</span>
-            </button>
-          </div>
-        </aside>
+        <Sidebar />
 
         {/* 右侧主对话面板 */}
         <main className="app-main">

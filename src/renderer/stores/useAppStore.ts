@@ -223,7 +223,7 @@ interface AppState {
   deleteSession: (sessionId: string) => Promise<void>
 
   /** 创建新会话 */
-  createNewSession: () => Promise<void>
+  createNewSession: (workspaceRoot?: string) => Promise<void>
 
   /** 按消息回退到某条消息之前的状态 */
   rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
@@ -477,17 +477,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  createNewSession: async () => {
+  createNewSession: async (workspaceRoot?: string) => {
     const { currentProject, currentMode } = get()
-    if (!currentProject) return
+    const targetProject = workspaceRoot || currentProject
+    if (!targetProject) return
     try {
       const sessionDetail: SessionDetail = await window.api.invoke('create-session', {
-        workspaceRoot: currentProject,
+        workspaceRoot: targetProject,
         mode: currentMode
       })
       const restored = restoreSessionMessages(sessionDetail.messages)
       set(state => ({
         currentSessionId: sessionDetail.id,
+        currentProject: targetProject,
         sessions: upsertSessionSummary(state.sessions, sessionDetail),
         messages: restored,
         messageIndexById: buildMessageIndex(restored),
