@@ -4,8 +4,8 @@
  * 核心职责：把 SessionMessage[] 转换成 ChatMessage[]，让每次 send-message 时
  * 模型能看到之前所有 user / assistant / tool 历史，实现真正的多轮对话。
  *
- * 设计约束：
- * - system prompt 不从历史恢复，由当前 mode 重新生成
+ * 设计约束（缓存 Harness）：
+ * - system prompt 由 AgentLoop 构造时注入（frozenSystemPrompt），此处不再处理
  * - thinking 内容不进入模型上下文
  * - assistant 的 toolCalls 恢复为结构化 tool_calls，result 拆成独立 tool 消息
  */
@@ -14,11 +14,10 @@ import type { SessionData } from '../sessions/types'
 import type { Mode } from '../../shared/session/types'
 
 /**
- * 从会话数据构建模型对话上下文
+ * 从会话数据构建模型对话上下文（不含 system prompt）
  *
- * @param session 当前会话（包含历史消息）
- * @param mode 当前运行模式（用于未来可能的上下文裁剪策略）
- * @returns 模型可直接使用的 ChatMessage[]（不含 system prompt）
+ * system prompt 由 agentHandler 通过 AgentLoop 构造时注入（frozenSystemPrompt），
+ * 此处只恢复 user / assistant / tool 历史消息，保证前缀稳定。
  */
 export function buildConversationContext(
   session: SessionData,
@@ -27,7 +26,7 @@ export function buildConversationContext(
   const context: ChatMessage[] = []
 
   for (const msg of session.messages) {
-    // system 消息跳过：由当前 mode 重新生成 system prompt
+    // system 消息跳过：由 AgentLoop 构造时的 frozenSystemPrompt 提供
     if (msg.role === 'system') continue
 
     // thinking 块不进入模型上下文：只恢复 content（纯正文）和 toolCalls

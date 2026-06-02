@@ -6,16 +6,27 @@
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, ChatToolCall } from './types'
 import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
+import { normalizeUsage } from './usage'
+import { applyCacheMarkers, applyToolCacheMarker } from './messageFormat'
+import type { CacheStrategy } from '../../shared/config/types'
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
+  private cacheStrategy: CacheStrategy = 'auto'
 
   constructor(config: ModelClientConfig) {
     this.config = config
+    this.cacheStrategy = config.cacheStrategy ?? 'auto'
   }
 
   updateConfig(config: ModelClientConfig): void {
     this.config = config
+    this.cacheStrategy = config.cacheStrategy ?? 'auto'
+  }
+
+  /** 设置缓存策略（可由外部显式覆盖） */
+  setCacheStrategy(strategy: CacheStrategy): void {
+    this.cacheStrategy = strategy
   }
 
   async *chat(
@@ -27,14 +38,18 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 只需拼接路径后缀 /chat/completions
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
+    const apiMessages = messages.map(m => this.toApiMessage(m))
+    const markedMessages = applyCacheMarkers(apiMessages, this.cacheStrategy)
+
     const body: Record<string, unknown> = {
       model: this.config.modelId,
-      messages: messages.map(m => this.toApiMessage(m)),
-      stream: true
+      messages: markedMessages,
+      stream: true,
+      stream_options: { include_usage: true }
     }
 
     if (tools && tools.length > 0) {
-      body.tools = tools.map(t => ({
+      const rawTools = tools.map(t => ({
         type: 'function',
         function: {
           name: t.name,
@@ -42,6 +57,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
           parameters: t.parameters
         }
       }))
+      body.tools = applyToolCacheMarker(rawTools, this.cacheStrategy)
     }
 
     let response: Response
@@ -79,6 +95,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 累积 tool_calls，SSE 每个 chunk 可能只包含部分信息
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>()
     let finishReason = ''
+    /** 末尾 usage chunk 的原始数据（stream_options.include_usage=true 时由服务端发送） */
+    let rawUsage: Record<string, unknown> | null = null
 
     const bodyStream = response.body
     if (!bodyStream) {
@@ -112,6 +130,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
           try {
             const chunk = JSON.parse(trimmed.slice(6))
+
+            // 末尾 usage chunk：无 choices 但有 usage 字段
+            if (chunk.usage) {
+              rawUsage = chunk.usage as Record<string, unknown>
+            }
+
             const choice = chunk.choices?.[0]
             if (!choice) continue
 
@@ -215,6 +239,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
           name: tc.name,
           arguments: tc.arguments
         }
+      }
+    }
+
+    // 发射归一化的 token 用量（在 message_end 之前，确保下游能关联到本轮）
+    if (rawUsage) {
+      const usage = normalizeUsage(rawUsage)
+      if (usage) {
+        yield { type: 'usage', usage }
       }
     }
 

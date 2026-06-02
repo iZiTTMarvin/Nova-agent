@@ -77,7 +77,12 @@ export function validateModelConfig(config: Partial<ModelConfig> | null | undefi
 
   return {
     valid: true,
-    config: { baseUrl, apiKey, modelId }
+    config: {
+      baseUrl,
+      apiKey,
+      modelId,
+      cacheStrategy: config.cacheStrategy
+    }
   }
 }
 

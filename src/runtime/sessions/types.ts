@@ -26,6 +26,12 @@ export interface SessionData {
   messages: SessionMessage[]
   createdAt: number
   updatedAt: number
+  /**
+   * 会话级冻结的 system prompt（缓存 Harness）
+   * 会话创建时生成，整个生命周期内逐字节复用，切模式不改写。
+   * 旧会话可能没有此字段，回退到 getStableSystemPrompt() 重新生成。
+   */
+  frozenSystemPrompt?: string
 }
 
 /** 会话中单条消息的持久化格式 */

@@ -42,14 +42,13 @@ function makeToolDefs(names: string[]): ToolDefinition[] {
   }))
 }
 
-describe('AgentLoop 工具过滤 (T13-B)', () => {
-  it('plan 模式只暴露只读工具', async () => {
+describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
+  it('plan 模式仍暴露全部工具（写操作由权限层 deny）', async () => {
     const { client, getTools } = captureTools()
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus)
     loop.setMode('plan')
 
-    // 模拟 ToolRegistry.getToolDefinitions 返回全部 7 个工具
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {
       getToolDefinitions: () => allDefs,
@@ -61,12 +60,7 @@ describe('AgentLoop 工具过滤 (T13-B)', () => {
 
     const tools = getTools()
     const toolNames = tools?.map(t => t.name) ?? []
-    for (const name of READONLY_TOOLS) {
-      expect(toolNames).toContain(name)
-    }
-    for (const name of WRITE_TOOLS) {
-      expect(toolNames).not.toContain(name)
-    }
+    expect(toolNames).toEqual(ALL_TOOLS)
   })
 
   it('default 模式暴露全部工具', async () => {
@@ -109,13 +103,12 @@ describe('AgentLoop 工具过滤 (T13-B)', () => {
     expect(toolNames).toEqual(ALL_TOOLS)
   })
 
-  it('plan 模式下被禁止的工具调用不发射 tool_call 事件', async () => {
+  it('plan 模式下写工具调用仍发射 tool_call 事件，但权限层 deny 后回传拒绝结果', async () => {
     const events: any[] = []
     const eventBus = new EventBus()
     eventBus.on(e => events.push(e))
     const seenToolResultsByModel: string[] = []
 
-    // 模型返回一个 write 工具调用
     const client: ModelClient = {
       async *chat(messages: unknown): AsyncIterable<ChatEvent> {
         const chatMessages = messages as Array<{ role: string; content: string; toolCallId?: string }>
@@ -152,10 +145,16 @@ describe('AgentLoop 工具过滤 (T13-B)', () => {
 
     await loop.sendMessage('test')
 
+    // tool_call 事件仍然发射（工具集恒定，UI 可见）
     const toolCallEvents = events.filter(e => e.type === 'tool_call')
+    expect(toolCallEvents).toHaveLength(1)
+
+    // tool_result 事件也发射，但内容是权限拒绝
     const toolResultEvents = events.filter(e => e.type === 'tool_result')
-    expect(toolCallEvents).toHaveLength(0)
-    expect(toolResultEvents).toHaveLength(0)
+    expect(toolResultEvents).toHaveLength(1)
+    expect(toolResultEvents[0].result).toContain('权限拒绝')
+
+    // 模型收到的 tool_result 也包含拒绝信息
     expect(seenToolResultsByModel).toEqual([
       expect.stringContaining('当前为 plan 模式')
     ])

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message, MessageBlock, ThinkingBlock, TextBlock, ToolBlock } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
+import type { NormalizedUsage } from '../../runtime/model/types'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 
 /**
@@ -58,6 +59,15 @@ type SessionMessagePayload = Message & { _toolCallResults?: Record<string, strin
 type MessageDiffCache = {
   diffs: DiffEntry[]
   reviews: Record<string, DiffReviewStatus>
+}
+
+/** 会话级 token 用量聚合统计 */
+export interface SessionUsageStats {
+  totalPromptTokens: number
+  totalCompletionTokens: number
+  totalCachedTokens: number
+  /** 缓存命中率 = totalCachedTokens / totalPromptTokens */
+  hitRate: number
 }
 
 function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
@@ -190,6 +200,9 @@ interface AppState {
    */
   loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
 
+  /** 当前会话的 token 用量聚合统计 */
+  sessionUsage: SessionUsageStats | null
+
   // ── Actions ──────────────────────────────────────────
   
   /** 加载或切换工作区 */
@@ -260,6 +273,7 @@ interface AppState {
     reviews: Record<string, DiffReviewStatus>
   ) => void
   handleMessageEnd: (messageId: string) => void
+  handleUsage: (usage: NormalizedUsage) => void
   handleError: (messageId: string, error: string) => void
   handleVerificationResult: (messageId: string, result: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
@@ -291,6 +305,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadingDiffs: new Set(),
   loadingDiffPlaceholders: {},
   streamingToolArgs: {},
+  sessionUsage: null,
 
   selectProject: async () => {
     try {
@@ -512,7 +527,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         messages: restored,
         messageIndexById: buildMessageIndex(restored),
         messageDiffs: {}, // 切换会话时清空 diff 缓存
-        pendingVerificationRequest: null
+        pendingVerificationRequest: null,
+        sessionUsage: null
       })
 
       // 为所有 assistant 消息异步加载 diff 数据
@@ -935,6 +951,27 @@ export const useAppStore = create<AppState>((set, get) => ({
         )
       })
     }
+  },
+
+  handleUsage: (usage: NormalizedUsage) => {
+    set(state => {
+      const prev = state.sessionUsage ?? {
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalCachedTokens: 0,
+        hitRate: 0
+      }
+      const totalPrompt = prev.totalPromptTokens + usage.promptTokens
+      const totalCached = prev.totalCachedTokens + usage.cachedTokens
+      return {
+        sessionUsage: {
+          totalPromptTokens: totalPrompt,
+          totalCompletionTokens: prev.totalCompletionTokens + usage.completionTokens,
+          totalCachedTokens: totalCached,
+          hitRate: totalPrompt > 0 ? totalCached / totalPrompt : 0
+        }
+      }
+    })
   },
 
   handleVerificationResult: (messageId: string, result: string) => {

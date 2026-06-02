@@ -21,6 +21,7 @@ import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAut
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
 import { StreamingFileCard } from './StreamingFileCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { UsageStats } from './UsageStats'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedToolCall, RendererMessageBlock } from '../../stores/useAppStore'
 import './ChatPanel.css'
@@ -520,6 +521,7 @@ export const ChatPanel: React.FC = () => {
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
               <div className="flex items-center gap-2">
                 <ModeSwitch />
+                <UsageStats />
               </div>
               <div>
                 {isGenerating ? (

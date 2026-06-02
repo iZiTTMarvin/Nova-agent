@@ -101,7 +101,8 @@ describe('入口级集成测试：agentHandler wiring', () => {
     expect(modelMessages[3]).toEqual({ role: 'tool', content: 'file1.ts\nfile2.ts', toolCallId: 'tc_1' })
     expect(modelMessages[4]).toEqual({ role: 'user', content: '第二轮问题' })
     expect(modelMessages[5]).toEqual({ role: 'assistant', content: '已找到。' })
-    expect(modelMessages[6]).toEqual({ role: 'user', content: '第三轮问题' })
+    expect(modelMessages[6].role).toBe('user')
+    expect(modelMessages[6].content).toContain('第三轮问题')
 
     // 总共 7 条消息
     expect(modelMessages).toHaveLength(7)
@@ -127,10 +128,9 @@ describe('入口级集成测试：agentHandler wiring', () => {
     await loop.sendMessage('你好')
 
     const calls = client.getCalls()
-    expect(calls[0].messages).toEqual([
-      { role: 'system', content: '助手' },
-      { role: 'user', content: '你好' }
-    ])
+    expect(calls[0].messages[0]).toEqual({ role: 'system', content: '助手' })
+    expect(calls[0].messages[1].role).toBe('user')
+    expect(calls[0].messages[1].content).toContain('你好')
   })
 
   it('thinking 块不在模型上下文中出现', async () => {

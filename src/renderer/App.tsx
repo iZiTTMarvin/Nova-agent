@@ -23,6 +23,7 @@ function App(): JSX.Element {
   const handleToolResult = useAppStore(state => state.handleToolResult)
   const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
   const handleMessageEnd = useAppStore(state => state.handleMessageEnd)
+  const handleUsage = useAppStore(state => state.handleUsage)
   const handleError = useAppStore(state => state.handleError)
   const handleVerificationResult = useAppStore(state => state.handleVerificationResult)
   const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
@@ -106,6 +107,11 @@ function App(): JSX.Element {
       handleMessageEnd(data.messageId)
     })
 
+    // 监听：Token 用量统计
+    const unsubUsage = window.api.on('agent:usage', (data) => {
+      handleUsage(data.usage)
+    })
+
     // 清理函数：解绑所有主进程事件监听器
     return () => {
       unsubMessageStart()
@@ -122,6 +128,7 @@ function App(): JSX.Element {
       unsubVerificationPermissionRequest()
       unsubVerificationPermissionCleared()
       unsubMessageEnd()
+      unsubUsage()
     }
   }, [
     handleMessageStart,
@@ -137,7 +144,8 @@ function App(): JSX.Element {
     handleVerificationResult,
     handleVerificationPermissionRequest,
     clearVerificationPermissionRequest,
-    handleMessageEnd
+    handleMessageEnd,
+    handleUsage
   ])
 
   return (

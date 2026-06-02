@@ -5,6 +5,7 @@ import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { loadModelConfig as loadPersistedModelConfig } from '../runtime/model/config'
+import { inferCacheStrategy } from '../shared/config/types'
 import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
 
@@ -63,7 +64,12 @@ function loadModelConfigOnStartup(): void {
   try {
     const config = loadPersistedModelConfig(app.getPath('userData'))
     if (config) {
-      modelClient = new OpenAICompatibleModelClient(config)
+      const client = new OpenAICompatibleModelClient(config)
+      // 启动时从 baseUrl 推断缓存策略（如果配置中没有显式指定）
+      if (!config.cacheStrategy) {
+        client.setCacheStrategy(inferCacheStrategy(config.baseUrl))
+      }
+      modelClient = client
     }
   } catch (err) {
     console.error('启动时加载持久化配置失败:', err)

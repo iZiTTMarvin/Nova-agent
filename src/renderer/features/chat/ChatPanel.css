@@ -371,3 +371,27 @@
   background: var(--bg-surface, #1c1c1c);
   color: var(--text-primary);
 }
+
+/* ── UsageStats 轻量 token 统计 ─────────────────────────── */
+.usage-stats {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #9ca3af;
+  user-select: none;
+  cursor: default;
+}
+
+.usage-stats__hit {
+  font-variant-numeric: tabular-nums;
+  color: #6b7280;
+}
+
+.usage-stats__sep {
+  color: #d1d5db;
+}
+
+.usage-stats__total {
+  font-variant-numeric: tabular-nums;
+}

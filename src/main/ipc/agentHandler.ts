@@ -7,6 +7,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
+import { randomUUID } from 'crypto'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
 import { lsTool } from '../../runtime/tools/lsTool'
@@ -25,7 +26,8 @@ import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
-import { getSystemPromptForMode } from '../../runtime/agent/modePrompt'
+import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
+import { getModeInstruction } from '../../runtime/agent/modeInstruction'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
@@ -124,12 +126,45 @@ export function registerAgentHandler(
     const capturedWorkspaceRoot = projectPath
     const capturedSessionsDir = sessionsDir
 
+    // 使用会话级冻结的 system prompt，保证前缀稳定（缓存 Harness 核心）
+    const frozenPrompt = session.frozenSystemPrompt ?? getStableSystemPrompt()
+
+    // 如果旧会话还没有冻结的 prompt，回写一份
+    if (!session.frozenSystemPrompt) {
+      session.frozenSystemPrompt = frozenPrompt
+      sessionStore.save(session)
+    }
+
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus, {
-      systemPrompt: getSystemPromptForMode(session.mode)
+      systemPrompt: frozenPrompt,
+      onCompaction: (compactedContext) => {
+        // 将压缩后的上下文写回 session，保证跨轮次持久化
+        const compactedSession = sessionStore.load(params.sessionId)
+        if (!compactedSession) return
+
+        const compactedMessages: SessionMessage[] = compactedContext
+          .filter(m => m.role !== 'system')
+          .map((m, idx) => ({
+            id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
+            role: m.role as SessionMessage['role'],
+            content: m.content,
+            toolCalls: m.toolCalls?.map(tc => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: tc.arguments,
+              result: undefined
+            })),
+            toolCallId: m.toolCallId,
+            timestamp: Date.now()
+          }))
+
+        compactedSession.messages = compactedMessages
+        sessionStore.save(compactedSession)
+      }
     })
 
-    // 从 session 历史恢复多轮对话上下文（不含 system prompt，由上面 mode 生成）
+    // 从 session 历史恢复多轮对话上下文
     const history = buildConversationContext(session, session.mode)
     agentLoop.injectHistory(history)
 
@@ -156,10 +191,13 @@ export function registerAgentHandler(
     })
     agentLoop.setCheckpointManager(checkpointManager)
 
+    // 持久化增强后的 user 消息内容（含模式指令），保证内存和磁盘字节一致，
+    // 避免跨轮重建历史时产生缓存接缝（C2 前缀稳定化核心要求）
+    const augmentedContent = `${params.content}\n\n${getModeInstruction(session.mode)}`
     const userMessage: SessionMessage = {
       id: `msg_${Date.now()}_user`,
       role: 'user',
-      content: params.content,
+      content: augmentedContent,
       timestamp: Date.now()
     }
     sessionStore.appendMessage(params.sessionId, userMessage)
@@ -589,6 +627,9 @@ function forwardEventToRenderer(
         messageId: event.messageId,
         requestId: event.requestId
       })
+      break
+    case 'usage':
+      webContents.send('agent:usage', { messageId: event.messageId, usage: event.usage })
       break
     case 'error':
       webContents.send('agent:error', { messageId: event.messageId, error: event.error })

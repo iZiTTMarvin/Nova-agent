@@ -1,6 +1,7 @@
 import { ipcMain, app } from 'electron'
 import { SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG } from '../../shared/ipc/channels'
 import type { ModelConfig } from '../../shared/config'
+import { inferCacheStrategy } from '../../shared/config/types'
 import { saveModelConfig, loadModelConfig } from '../../runtime/model/config'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { getModelClient, setModelClient } from '../index'
@@ -23,8 +24,19 @@ export function registerConfigHandler(): void {
     const activeClient = getModelClient()
     if (activeClient) {
       activeClient.updateConfig(config)
+      // 同步缓存策略：优先用配置中的显式值，否则从 baseUrl 推断
+      if (activeClient instanceof OpenAICompatibleModelClient) {
+        const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
+        activeClient.setCacheStrategy(strategy)
+      }
     } else {
-      setModelClient(new OpenAICompatibleModelClient(config))
+      const client = new OpenAICompatibleModelClient(config)
+      // 与启动路径保持一致：优先显式配置，否则从 baseUrl 推断
+      if (client instanceof OpenAICompatibleModelClient) {
+        const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
+        client.setCacheStrategy(strategy)
+      }
+      setModelClient(client)
     }
   })
 

@@ -5,6 +5,7 @@ import { MockModelClient } from '../../../src/test-support/builders/MockModelCli
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
+import type { ChatMessage } from '../../../src/runtime/model/types'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -79,7 +80,8 @@ describe('AgentLoop', () => {
     const calls = client.getCalls()
     expect(calls).toHaveLength(1)
     expect(calls[0].messages[0].role).toBe('system')
-    expect(calls[0].messages[1]).toEqual({ role: 'user', content: '第一条消息' })
+    expect(calls[0].messages[1].role).toBe('user')
+    expect(calls[0].messages[1].content).toContain('第一条消息')
   })
 
   it('连续发送消息，上下文累积增长', async () => {
@@ -109,7 +111,8 @@ describe('AgentLoop', () => {
     // 第二次调用：system + user1 + assistant1 + user2
     expect(calls[1].messages).toHaveLength(4)
     expect(calls[1].messages[2]).toEqual({ role: 'assistant', content: '回复1' })
-    expect(calls[1].messages[3]).toEqual({ role: 'user', content: '问题2' })
+    expect(calls[1].messages[3].role).toBe('user')
+    expect(calls[1].messages[3].content).toContain('问题2')
   })
 
   it('模型错误时发射 error 事件并进入 error 状态', async () => {
@@ -511,5 +514,79 @@ describe('AgentLoop', () => {
 
     // 3. 状态应为 cancelled
     expect(loop.getState()).toBe('cancelled')
+  })
+
+  /**
+   * P2 回归：压缩时上下文末尾为 user 消息，应插入 assistant 桥接，
+   * 避免连续两条 user 消息导致 Anthropic 严格模式 400 错误。
+   */
+  it('压缩时上下文以 user 结尾，模型收到的压缩上下文不会出现连续 user', async () => {
+    const client = new MockModelClient()
+    // 第一轮：正常回复（不触发压缩）
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '好的' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    // 压缩调用：模型生成摘要
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '这是对话摘要。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    // 压缩后的正常回复
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '继续' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus, {
+      systemPrompt: '你是助手。',
+      maxToolRounds: 20,
+      onCompaction: () => {}
+    })
+    loop.setToolRegistry(createTestRegistry())
+
+    // 注入足够多的历史消息（> MIN_RECENT_MESSAGES + 2 = 22 条）且总 token > 阈值
+    // 以触发压缩
+    const history: ChatMessage[] = []
+    for (let i = 0; i < 24; i++) {
+      history.push(
+        { role: 'user', content: 'x'.repeat(20_000) },
+        { role: 'assistant', content: 'y'.repeat(20_000) }
+      )
+    }
+    loop.injectHistory(history)
+
+    // 发送第二条消息，此时上下文总长 > 阈值，会触发压缩
+    // 上下文此时以 user 消息结尾（刚 push 的 user 消息）
+    await loop.sendMessage('触发压缩')
+
+    // 找到压缩调用（包含"请对上面的对话历史"的消息）
+    const calls = client.getCalls()
+    const compactionCall = calls.find(c =>
+      c.messages.some(m => m.role === 'user' && m.content.includes('请对上面的对话历史'))
+    )
+    expect(compactionCall).toBeDefined()
+    const messages = compactionCall!.messages
+
+    // 找到压缩指令 user 消息
+    const compactionUserIdx = messages.findIndex(
+      m => m.role === 'user' && m.content.includes('请对上面的对话历史')
+    )
+    expect(compactionUserIdx).toBeGreaterThan(-1)
+
+    // 压缩指令前面不应是另一条 user 消息
+    if (compactionUserIdx > 0) {
+      expect(messages[compactionUserIdx - 1].role).not.toBe('user')
+    }
   })
 })

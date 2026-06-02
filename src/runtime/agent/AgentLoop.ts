@@ -14,9 +14,9 @@ import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'
-import { isToolVisibleInMode } from '../../shared/session/toolVisibility'
 import { EventBus } from './EventBus'
-import { getBaseDecision } from '../permissions/rules'
+import { getModeInstruction } from './modeInstruction'
+import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES } from './compaction'
 import { randomUUID } from 'crypto'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
@@ -164,8 +164,12 @@ export class AgentLoop {
     this.cancelled = false
     this.abortController = new AbortController()
 
-    // 将用户消息加入上下文
-    const userMessage: ChatMessage = { role: 'user', content }
+    // 将用户消息加入上下文，模式指令附加在尾部（不改前缀，缓存 Harness 核心）
+    const modeInstruction = getModeInstruction(this.mode)
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: `${content}\n\n${modeInstruction}`
+    }
     this.context.push(userMessage)
 
     // 开启 checkpoint 事务边界
@@ -179,9 +183,14 @@ export class AgentLoop {
       while (toolRound < this.maxToolRounds) {
         if (this.cancelled) break
 
-        // 获取工具定义（如果有 registry），按 mode 过滤被禁止的工具
-        const allTools = this.toolRegistry?.getToolDefinitions()
-        const tools = allTools?.filter(t => isToolVisibleInMode(this.mode, t.name))
+        // 上下文压缩检查（缓存 Harness：先插入再压缩）
+        if (shouldCompact(this.context)) {
+          await this.runCompaction()
+        }
+
+        // 获取工具定义（如果有 registry），始终传全部工具（缓存 Harness：工具集恒定）
+        // 写操作约束完全由权限层（getBaseDecision / PermissionManager）控制
+        const tools = this.toolRegistry?.getToolDefinitions()
 
         // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
         const stream = this.modelClient.chat(this.context, tools, {
@@ -190,10 +199,6 @@ export class AgentLoop {
 
         let assistantContent = ''
         const toolCalls: ChatToolCall[] = []
-        const hiddenToolCallIds = new Set<string>()
-        // 追踪已向 UI emit 过 tool_call_start 的 ID，
-        // 用于 final tool_call 时判断是否需要清理性 emit
-        const startedToolCallIds = new Set<string>()
         let finishReason = ''
 
         for await (const event of stream) {
@@ -210,13 +215,6 @@ export class AgentLoop {
               break
 
             case 'tool_call_start': {
-              // toolName 为空时不做 mode 隐藏判断，让 delta 直通 UI；
-              // final tool_call 拿到完整 name 后再决定是否隐藏，并清理占位卡片。
-              if (event.toolName && !isToolVisibleInMode(this.mode, event.toolName)) {
-                hiddenToolCallIds.add(event.toolCallId)
-                break
-              }
-              startedToolCallIds.add(event.toolCallId)
               this.eventBus.emit({
                 type: 'tool_call_start',
                 messageId,
@@ -227,7 +225,6 @@ export class AgentLoop {
             }
 
             case 'tool_call_delta': {
-              if (hiddenToolCallIds.has(event.toolCallId)) break
               this.eventBus.emit({
                 type: 'tool_call_delta',
                 messageId,
@@ -238,26 +235,7 @@ export class AgentLoop {
             }
 
             case 'tool_call': {
-              const hiddenByMode = !isToolVisibleInMode(this.mode, event.toolCall.name)
               toolCalls.push(event.toolCall)
-
-              if (hiddenByMode) {
-                // start 阶段 toolName 为空时直通了 UI（start 事件被 emit），
-                // 此时 final 拿到完整 name 后发现应该隐藏——需要 emit tool_call 让
-                // store 清理之前 start 创建的占位卡片。
-                if (startedToolCallIds.has(event.toolCall.id)) {
-                  this.eventBus.emit({
-                    type: 'tool_call',
-                    messageId,
-                    toolCallId: event.toolCall.id,
-                    toolName: event.toolCall.name,
-                    args: JSON.parse(event.toolCall.arguments || '{}')
-                  })
-                }
-                hiddenToolCallIds.add(event.toolCall.id)
-                break
-              }
-
               this.eventBus.emit({
                 type: 'tool_call',
                 messageId,
@@ -277,6 +255,10 @@ export class AgentLoop {
               this.eventBus.emit({ type: 'error', messageId, error: event.error })
               this.state = 'error'
               return
+
+            case 'usage':
+              this.eventBus.emit({ type: 'usage', messageId, usage: event.usage })
+              break
 
             case 'message_end':
               finishReason = event.finishReason
@@ -308,13 +290,11 @@ export class AgentLoop {
 
           const args = this.parseArgs(tc.arguments)
           let result: string
-          const hiddenByMode = hiddenToolCallIds.has(tc.id)
 
-          // 权限检查（S7：用 PermissionManager 替代原来的硬编码 plan 检查）
+          // 权限检查（用 PermissionManager 做 allow/deny/ask 三态决策）
           const permissionResult = await this.checkPermission(tc.name, args, messageId)
 
-          // 权限请求被 cancel 中断：跳过 tool_result 与 context 注入，
-          // 让外层循环检测到 cancelled 后直接结束本轮。
+          // 权限请求被 cancel 中断：跳过 tool_result 与 context 注入
           if (permissionResult.aborted) {
             break
           }
@@ -334,15 +314,13 @@ export class AgentLoop {
             result = `工具 "${tc.name}" 不可用：未注册工具`
           }
 
-          if (!hiddenByMode) {
-            this.eventBus.emit({
-              type: 'tool_result',
-              messageId,
-              toolCallId: tc.id,
-              toolName: tc.name,
-              result
-            })
-          }
+          this.eventBus.emit({
+            type: 'tool_result',
+            messageId,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            result
+          })
 
           this.context.push({
             role: 'tool',
@@ -369,6 +347,56 @@ export class AgentLoop {
     this.checkpointManager?.endMessage()
 
     this.eventBus.emit({ type: 'message_end', messageId })
+  }
+
+  /**
+   * 执行上下文压缩
+   * 将旧消息发给模型生成摘要，然后用 [system, 摘要, 最近 N 条] 重建上下文。
+   * 压缩调用本身复用现有缓存前缀（只追加压缩指令到尾部）。
+   */
+  private async runCompaction(): Promise<void> {
+    const systemMsg = this.context.find(m => m.role === 'system')
+    const systemPrompt = systemMsg?.content ?? ''
+
+    const [oldMessages, recentMessages] = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
+    if (oldMessages.length === 0) return
+
+    // 构建压缩上下文：旧消息 + 压缩指令（追加到尾部，不改前缀）
+    // 如果上下文末尾是 user 消息，先插入一条 assistant 占位避免连续 user（Anthropic 严格模式会拒绝）
+    const lastMsg = this.context[this.context.length - 1]
+    const needsAssistantBridge = lastMsg?.role === 'user'
+    const compactionContext: ChatMessage[] = [
+      ...this.context,
+      ...(needsAssistantBridge
+        ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
+        : []),
+      { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length) }
+    ]
+
+    // 调用模型生成摘要（非流式收集）
+    let summary = ''
+    try {
+      const stream = this.modelClient.chat(compactionContext, undefined, {
+        abortSignal: this.abortController?.signal
+      })
+      for await (const event of stream) {
+        if (this.cancelled) return
+        if (event.type === 'text_delta') {
+          summary += event.delta
+        }
+      }
+    } catch {
+      // 压缩失败不影响主流程，跳过本次压缩
+      return
+    }
+
+    if (!summary.trim()) return
+
+    // 重建上下文
+    this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages)
+
+    // 通知外部持久化压缩态（agentHandler 写回 SessionStore）
+    this.config.onCompaction?.(this.context)
   }
 
   /** 安全解析 JSON 参数 */

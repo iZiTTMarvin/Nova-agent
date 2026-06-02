@@ -5,6 +5,7 @@
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig } from '../config'
 import type { DiffEntry, DiffReviewStatus } from '../diff'
+import type { NormalizedUsage } from '../../runtime/model/types'
 
 // ── renderer → main 命令的参数和返回值 ──────────────────────
 
@@ -176,6 +177,10 @@ export interface IpcEvents {
   'agent:thinking-delta': {
     messageId: string
     delta: string
+  }
+  'agent:usage': {
+    messageId: string
+    usage: NormalizedUsage
   }
   'window:maximize-change': {
     isMaximized: boolean
