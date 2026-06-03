@@ -47,6 +47,8 @@ export interface AgentLoopConfig {
   systemPrompt?: string
   /** 最大连续工具调用轮数，防止无限循环 */
   maxToolRounds?: number
+  /** 模型最大上下文窗口（tokens），用于计算动态压缩阈值（上限的 80%） */
+  contextWindow?: number
   /**
    * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文。
    * agentHandler 通过此回调将压缩态写回 SessionStore，保证跨轮次持久化。

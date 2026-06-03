@@ -81,7 +81,8 @@ export function validateModelConfig(config: Partial<ModelConfig> | null | undefi
       baseUrl,
       apiKey,
       modelId,
-      cacheStrategy: config.cacheStrategy
+      cacheStrategy: config.cacheStrategy,
+      contextWindow: config.contextWindow
     }
   }
 }

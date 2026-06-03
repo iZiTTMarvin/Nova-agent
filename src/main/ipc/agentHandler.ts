@@ -6,7 +6,10 @@
  */
 import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
+import { app } from 'electron'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
+import { loadModelConfig } from '../../runtime/model/config'
+import { inferContextWindow } from '../../shared/config/types'
 import { randomUUID } from 'crypto'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
@@ -135,9 +138,14 @@ export function registerAgentHandler(
       sessionStore.save(session)
     }
 
+    // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
+    const persistedConfig = loadModelConfig(app.getPath('userData'))
+    const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus, {
       systemPrompt: frozenPrompt,
+      contextWindow,
       onCompaction: (compactedContext) => {
         // 将压缩后的上下文写回 session，保证跨轮次持久化
         const compactedSession = sessionStore.load(params.sessionId)

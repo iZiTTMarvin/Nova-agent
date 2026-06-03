@@ -7,6 +7,7 @@ interface FieldErrors {
   baseUrl?: string
   apiKey?: string
   modelId?: string
+  contextWindow?: string
 }
 
 export const SettingsModal: React.FC = () => {
@@ -18,6 +19,7 @@ export const SettingsModal: React.FC = () => {
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [modelId, setModelId] = useState('')
+  const [contextWindow, setContextWindow] = useState<number | ''>('')
   const [showKey, setShowKey] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -29,6 +31,7 @@ export const SettingsModal: React.FC = () => {
       setBaseUrl(modelConfig?.baseUrl || 'https://api.openai.com/v1')
       setApiKey(modelConfig?.apiKey || '')
       setModelId(modelConfig?.modelId || 'gpt-4o')
+      setContextWindow(modelConfig?.contextWindow ?? '')
       setFieldErrors({})
       setSubmitError(null)
       setShowKey(false)
@@ -59,6 +62,11 @@ export const SettingsModal: React.FC = () => {
       errors.modelId = '模型标识不能为空'
     }
 
+    // contextWindow 为可选字段，若填写则校验为正整数
+    if (contextWindow !== '' && (typeof contextWindow !== 'number' || contextWindow <= 0 || !Number.isInteger(contextWindow))) {
+      errors.contextWindow = '上下文窗口必须是正整数'
+    }
+
     setFieldErrors(errors)
     return Object.keys(errors).length === 0
   }
@@ -76,7 +84,8 @@ export const SettingsModal: React.FC = () => {
       await saveModelConfig({
         baseUrl: baseUrl.trim(),
         apiKey: apiKey.trim(),
-        modelId: modelId.trim()
+        modelId: modelId.trim(),
+        contextWindow: contextWindow === '' ? undefined : contextWindow
       })
       setConfigModalOpen(false)
     } catch (err) {
@@ -153,6 +162,25 @@ export const SettingsModal: React.FC = () => {
             {fieldErrors.modelId
               ? <span className="settings-modal__field-error">{fieldErrors.modelId}</span>
               : <span className="settings-modal__help">需要调用的核心模型 ID。</span>
+            }
+          </div>
+
+          <div className="settings-modal__field">
+            <label className="settings-modal__label">上下文窗口 (Context Window)</label>
+            <input 
+              type="number" 
+              className={`settings-modal__input${fieldErrors.contextWindow ? ' settings-modal__input--error' : ''}`}
+              value={contextWindow}
+              onChange={e => { 
+                const val = e.target.value
+                setContextWindow(val === '' ? '' : Number(val))
+                setFieldErrors(prev => ({ ...prev, contextWindow: undefined }))
+              }}
+              placeholder="例如 200000"
+            />
+            {fieldErrors.contextWindow
+              ? <span className="settings-modal__field-error">{fieldErrors.contextWindow}</span>
+              : <span className="settings-modal__help">模型最大上下文长度（tokens）。留空时根据模型标识自动推断。</span>
             }
           </div>
 

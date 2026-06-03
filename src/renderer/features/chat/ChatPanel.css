@@ -372,6 +372,14 @@
   color: var(--text-primary);
 }
 
+/* ── ContextIndicator 上下文占用圆环 ─────────────────────────── */
+.context-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
 /* ── UsageStats 轻量 token 统计 ─────────────────────────── */
 .usage-stats {
   display: flex;

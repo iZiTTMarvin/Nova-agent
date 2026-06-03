@@ -16,7 +16,7 @@ import type { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'
 import { EventBus } from './EventBus'
 import { getModeInstruction } from './modeInstruction'
-import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES } from './compaction'
+import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold } from './compaction'
 import { randomUUID } from 'crypto'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
@@ -79,7 +79,8 @@ export class AgentLoop {
     this.eventBus = eventBus
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
-      maxToolRounds: config?.maxToolRounds ?? 20
+      maxToolRounds: config?.maxToolRounds ?? 20,
+      contextWindow: config?.contextWindow
     }
     this.maxToolRounds = this.config.maxToolRounds ?? 20
 
@@ -184,7 +185,8 @@ export class AgentLoop {
         if (this.cancelled) break
 
         // 上下文压缩检查（缓存 Harness：先插入再压缩）
-        if (shouldCompact(this.context)) {
+        const compactionThreshold = getCompactionThreshold(this.config.contextWindow ?? 200_000)
+        if (shouldCompact(this.context, compactionThreshold)) {
           await this.runCompaction()
         }
 

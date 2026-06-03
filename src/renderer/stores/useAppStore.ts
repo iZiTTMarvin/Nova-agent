@@ -3,6 +3,7 @@ import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Messag
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
+import { inferContextWindow } from '../../shared/config/types'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 
 /**
@@ -202,6 +203,8 @@ interface AppState {
 
   /** 当前会话的 token 用量聚合统计 */
   sessionUsage: SessionUsageStats | null
+  /** 模型上下文窗口上限（tokens），用于前端显示上下文占用指示器 */
+  contextLimit: number
 
   // ── Actions ──────────────────────────────────────────
   
@@ -306,6 +309,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadingDiffPlaceholders: {},
   streamingToolArgs: {},
   sessionUsage: null,
+  contextLimit: 200_000,
 
   selectProject: async () => {
     try {
@@ -437,7 +441,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadModelConfig: async () => {
     try {
       const config = await window.api.invoke('load-model-config')
-      set({ modelConfig: config })
+      set({
+        modelConfig: config,
+        contextLimit: config?.contextWindow ?? inferContextWindow(config?.modelId ?? '')
+      })
     } catch (err) {
       console.error('读取模型配置失败:', err)
     }
@@ -446,7 +453,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   saveModelConfig: async (config: ModelConfig) => {
     try {
       await window.api.invoke('save-model-config', config)
-      set({ modelConfig: config, isConfigModalOpen: false })
+      set({
+        modelConfig: config,
+        isConfigModalOpen: false,
+        contextLimit: config.contextWindow ?? inferContextWindow(config.modelId)
+      })
     } catch (err) {
       console.error('保存模型配置失败:', err)
       throw err

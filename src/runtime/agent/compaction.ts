@@ -10,7 +10,7 @@
 import type { ChatMessage } from '../model/types'
 import { estimateContextTokens } from './tokenEstimator'
 
-/** 触发压缩的 token 阈值（默认 120K） */
+/** 触发压缩的 token 阈值（默认 120K），当未提供 contextWindow 时作为 fallback */
 export const COMPACTION_THRESHOLD = 120_000
 
 /** 压缩后保留的最近消息数 */
@@ -18,6 +18,13 @@ export const MIN_RECENT_MESSAGES = 20
 
 /** 压缩指令消息的内部标记，用于 UI 过滤和缓存断点跳过 */
 export const COMPACTION_MARKER = '__compaction_instruction__'
+
+/**
+ * 计算动态压缩阈值：模型上下文窗口的 80%
+ */
+export function getCompactionThreshold(contextWindow: number): number {
+  return Math.floor(contextWindow * 0.8)
+}
 
 /**
  * 判断当前上下文是否需要压缩
