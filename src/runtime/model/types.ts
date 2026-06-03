@@ -13,6 +13,14 @@ export interface ChatMessage {
   toolCalls?: ChatToolCall[]
   /** tool 消息必须携带 toolCallId */
   toolCallId?: string
+  /**
+   * 内部消息标记（参考 OpenClacky 的 system_injected 机制）
+   * 标记为 internal 的消息：
+   * - 不被缓存标记选择器标记（不注入 cache_control）
+   * - 发送给 API 前剥离此字段，不污染 API 侧的消息字节
+   * 适用场景：压缩指令、会话上下文注入等动态信息
+   */
+  internal?: boolean
 }
 
 /** 模型返回的工具调用 */

@@ -38,7 +38,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 只需拼接路径后缀 /chat/completions
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
-    const apiMessages = messages.map(m => this.toApiMessage(m))
+    // 过滤 internal 消息（如压缩指令）：不发送给 API，保持缓存前缀纯净
+    const apiMessages = messages.filter(m => !m.internal).map(m => this.toApiMessage(m))
     const markedMessages = applyCacheMarkers(apiMessages, this.cacheStrategy)
 
     const body: Record<string, unknown> = {
@@ -253,8 +254,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
     yield { type: 'message_end', finishReason: finishReason || 'stop' }
   }
 
-  /** 将内部消息格式转为 API 请求格式 */
+  /** 将内部消息格式转为 API 请求格式（剥离 internal 等内部字段） */
   private toApiMessage(msg: ChatMessage): Record<string, unknown> {
+    // internal 等内部字段不发送给 API，保持缓存前缀纯净
     const result: Record<string, unknown> = {
       role: msg.role,
       content: msg.content

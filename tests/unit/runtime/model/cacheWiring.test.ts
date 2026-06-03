@@ -81,8 +81,10 @@ describe('C4 缓存策略端到端接线', () => {
       const userBlocks = userContent as Array<Record<string, unknown>>
       expect(userBlocks[userBlocks.length - 1].cache_control).toEqual({ type: 'ephemeral' })
 
-      // system 消息不应带 cache_control
-      expect(apiMessages[0].content).toBe('system prompt')
+      // system 消息也应带 cache_control（优化 1：system 缓存标记）
+      expect(Array.isArray(apiMessages[0].content)).toBe(true)
+      const systemBlocks = apiMessages[0].content as Array<Record<string, unknown>>
+      expect(systemBlocks[systemBlocks.length - 1].cache_control).toEqual({ type: 'ephemeral' })
     } finally {
       interceptor.restore()
     }

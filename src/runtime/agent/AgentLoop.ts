@@ -17,6 +17,7 @@ import type { Mode } from '../../shared/session/types'
 import { EventBus } from './EventBus'
 import { getModeInstruction } from './modeInstruction'
 import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold } from './compaction'
+import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
@@ -46,10 +47,10 @@ export class AgentLoop {
   /** 对话上下文：累积所有消息用于下一次模型调用 */
   private context: ChatMessage[] = []
 
-  /** 工具注册表（可选，S4 引入） */
+  /** 工具注册表 */
   private toolRegistry: ToolRegistry | null = null
 
-  /** 工作区路径（可选，传入后工具执行才有工作区边界） */
+  /** 工作区路径（传入后工具执行才有工作区边界） */
   private workingDir: string | null = null
 
   /** 运行模式（plan / default / auto） */
@@ -69,6 +70,9 @@ export class AgentLoop {
 
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
+
+  /** 缓存诊断跟踪器：检测 system prompt / 工具定义变化导致的缓存失效 */
+  private cacheDiagnostics = new CacheDiagnostics()
 
   constructor(
     modelClient: ModelClient,
@@ -194,6 +198,10 @@ export class AgentLoop {
         // 写操作约束完全由权限层（getBaseDecision / PermissionManager）控制
         const tools = this.toolRegistry?.getToolDefinitions()
 
+        // 缓存诊断：记录本轮请求的基线（system prompt + 工具定义哈希）
+        const systemPrompt = this.context.find(m => m.role === 'system')?.content ?? ''
+        this.cacheDiagnostics.recordBaseline(systemPrompt, tools)
+
         // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
         const stream = this.modelClient.chat(this.context, tools, {
           abortSignal: this.abortController?.signal
@@ -260,6 +268,17 @@ export class AgentLoop {
 
             case 'usage':
               this.eventBus.emit({ type: 'usage', messageId, usage: event.usage })
+              // 缓存诊断：检查 cache_read_tokens 是否显著下降
+              {
+                const diag = this.cacheDiagnostics.checkResponse(
+                  event.usage.cachedTokens,
+                  this.context.find(m => m.role === 'system')?.content ?? '',
+                  this.toolRegistry?.getToolDefinitions()
+                )
+                if (diag.cacheBreakDetected) {
+                  this.eventBus.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
+                }
+              }
               break
 
             case 'message_end':
@@ -372,7 +391,8 @@ export class AgentLoop {
       ...(needsAssistantBridge
         ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
         : []),
-      { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length) }
+      // 压缩指令标记为 internal：不标记缓存，发送给 API 前剥离此字段
+      { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length), internal: true }
     ]
 
     // 调用模型生成摘要（非流式收集）
@@ -396,6 +416,12 @@ export class AgentLoop {
 
     // 重建上下文
     this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages)
+
+    // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
+    this.cacheDiagnostics.resetBaseline(
+      this.context.find(m => m.role === 'system')?.content ?? '',
+      this.toolRegistry?.getToolDefinitions()
+    )
 
     // 通知外部持久化压缩态（agentHandler 写回 SessionStore）
     this.config.onCompaction?.(this.context)

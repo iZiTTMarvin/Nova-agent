@@ -3,10 +3,16 @@
  *
  * 根据 cacheStrategy 决定是否向消息和工具定义注入 cache_control 标记。
  * - auto：不做任何事（OpenAI/DeepSeek 等服务端自动缓存）
- * - anthropic：对最后 2 条消息 + 最后一个工具定义打 cache_control: { type: 'ephemeral' }
+ * - anthropic：对 system 消息 + 最后 2 条非 system 消息 + 最后一个工具定义
+ *   打 cache_control: { type: 'ephemeral' }
  *
- * 参考 openclacky 的双标记策略（2 markers）：
- * Turn N 标记 [-2] 和 [-1]；Turn N+1 时 [-2] 仍带标记 → 缓存 READ 命中。
+ * 标记点设计（参考 OpenClacky + Claude Code）：
+ * - system 消息标记：系统提示约 350 tokens，整个会话逐字节不变，首轮写入后后续每轮命中
+ * - 消息级双标记（openclacky 验证）：滚动双缓冲，Turn N 标记 [-2] 和 [-1]，
+ *   Turn N+1 时 [-2] 仍带标记 → cache_read 命中
+ * - 工具级标记最后一个：Anthropic 前缀匹配，最后一个工具标记覆盖所有前面的工具定义
+ *
+ * 总标记点 = 1(system) + 2(消息) + 1(工具) = 4，刚好在 Anthropic 的 4 断点限制内
  */
 import type { CacheStrategy } from '../../shared/config/types'
 
@@ -19,18 +25,30 @@ export function applyCacheMarkers(
     return apiMessages
   }
 
-  // 找到最后 2 条非 system 消息的索引
-  const candidateIndices: number[] = []
-  for (let i = apiMessages.length - 1; i >= 0 && candidateIndices.length < 2; i--) {
-    const msg = apiMessages[i]
-    if (msg.role === 'system') continue
-    candidateIndices.push(i)
+  // 收集需要标记的位置：system 消息 + 最后 2 条非 system 消息
+  const markerIndices = new Set<number>()
+
+  // 标记最后一条 system 消息（系统提示稳定，首轮写入后每轮命中 cache_read）
+  const systemIndex = apiMessages.findLastIndex(m => m.role === 'system')
+  if (systemIndex !== -1) {
+    markerIndices.add(systemIndex)
   }
 
-  if (candidateIndices.length === 0) return apiMessages
+  // 标记最后 2 条非 system 消息（滚动双缓冲策略，参考 OpenClacky）
+  let count = 0
+  for (let i = apiMessages.length - 1; i >= 0 && count < 2; i--) {
+    const msg = apiMessages[i]
+    if (msg.role === 'system') continue
+    // 跳过内部消息（如压缩指令），不标记缓存
+    if (msg.internal === true) continue
+    markerIndices.add(i)
+    count++
+  }
+
+  if (markerIndices.size === 0) return apiMessages
 
   return apiMessages.map((msg, idx) => {
-    if (!candidateIndices.includes(idx)) return msg
+    if (!markerIndices.has(idx)) return msg
     return addCacheControlToMessage(msg)
   })
 }

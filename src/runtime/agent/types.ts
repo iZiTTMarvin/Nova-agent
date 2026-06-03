@@ -4,6 +4,7 @@
  */
 import type { DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../model/types'
+import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
@@ -32,6 +33,7 @@ export type AgentEvent =
   | { type: 'verification_permission_cleared'; messageId: string; requestId: string }
   | { type: 'verification_result'; messageId: string; result: string }
   | { type: 'usage'; messageId: string; usage: NormalizedUsage }
+  | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult }
   | { type: 'error'; messageId: string; error: string }
   | { type: 'message_end'; messageId: string }
 

@@ -67,6 +67,8 @@ export interface SessionUsageStats {
   totalPromptTokens: number
   totalCompletionTokens: number
   totalCachedTokens: number
+  /** 缓存写入总量（cache_write_tokens 累计） */
+  totalCacheWriteTokens: number
   /** 缓存命中率 = totalCachedTokens / totalPromptTokens */
   hitRate: number
 }
@@ -970,15 +972,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         totalPromptTokens: 0,
         totalCompletionTokens: 0,
         totalCachedTokens: 0,
+        totalCacheWriteTokens: 0,
         hitRate: 0
       }
       const totalPrompt = prev.totalPromptTokens + usage.promptTokens
       const totalCached = prev.totalCachedTokens + usage.cachedTokens
+      const totalCacheWrite = prev.totalCacheWriteTokens + (usage.cacheWriteTokens ?? 0)
       return {
         sessionUsage: {
           totalPromptTokens: totalPrompt,
           totalCompletionTokens: prev.totalCompletionTokens + usage.completionTokens,
           totalCachedTokens: totalCached,
+          totalCacheWriteTokens: totalCacheWrite,
           hitRate: totalPrompt > 0 ? totalCached / totalPrompt : 0
         }
       }

@@ -178,26 +178,31 @@ describe('compaction', () => {
   })
 
   describe('rebuildWithCompression', () => {
-    it('重建后第一条是 system prompt', () => {
+    it('重建后第一条是 system prompt（含摘要合并）', () => {
       const result = rebuildWithCompression('system', 'summary', [])
-      expect(result[0]).toEqual({ role: 'system', content: 'system' })
+      expect(result).toHaveLength(1)
+      expect(result[0].role).toBe('system')
+      expect(result[0].content).toBe('system\n\n[对话历史摘要]\nsummary')
     })
 
-    it('重建后第二条是摘要', () => {
-      const result = rebuildWithCompression('system', '这是摘要', [])
-      expect(result[1].role).toBe('user')
-      expect(result[1].content).toContain('这是摘要')
+    it('摘要合并到 system 消息尾部，保持前缀稳定', () => {
+      const result = rebuildWithCompression('你是编程助手', '之前讨论了架构设计', [])
+      // system prompt 前缀部分（"你是编程助手"）逐字节不变，能命中缓存
+      expect(result[0].content).toContain('你是编程助手')
+      expect(result[0].content).toContain('之前讨论了架构设计')
+      // 不应有独立的 user 消息作为摘要
+      expect(result).toHaveLength(1)
     })
 
-    it('重建后最近消息追加在尾部', () => {
+    it('重建后最近消息追加在 system 之后', () => {
       const recent: ChatMessage[] = [
         { role: 'user', content: '最近问题' },
         { role: 'assistant', content: '最近回复' }
       ]
       const result = rebuildWithCompression('system', 'summary', recent)
-      expect(result).toHaveLength(4) // system + summary + 2 recent
-      expect(result[2]).toEqual(recent[0])
-      expect(result[3]).toEqual(recent[1])
+      expect(result).toHaveLength(3) // system(+摘要) + 2 recent
+      expect(result[1]).toEqual(recent[0])
+      expect(result[2]).toEqual(recent[1])
     })
   })
 })

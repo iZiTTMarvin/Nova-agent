@@ -391,6 +391,26 @@
   cursor: default;
 }
 
+/* 缓存比例条：绿色=cache_read，蓝色=cache_write */
+.usage-stats__bar {
+  width: 32px;
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+}
+
+.usage-stats__bar-hit {
+  background: #34d399;
+  height: 100%;
+}
+
+.usage-stats__bar-write {
+  background: #60a5fa;
+  height: 100%;
+}
+
 .usage-stats__hit {
   font-variant-numeric: tabular-nums;
   color: #6b7280;
@@ -402,4 +422,9 @@
 
 .usage-stats__total {
   font-variant-numeric: tabular-nums;
+}
+
+.usage-stats__write {
+  font-variant-numeric: tabular-nums;
+  color: #60a5fa;
 }

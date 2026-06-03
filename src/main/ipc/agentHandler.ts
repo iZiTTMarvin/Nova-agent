@@ -639,6 +639,9 @@ function forwardEventToRenderer(
     case 'usage':
       webContents.send('agent:usage', { messageId: event.messageId, usage: event.usage })
       break
+    case 'cache_diagnostic':
+      webContents.send('agent:cache-diagnostic', { messageId: event.messageId, diagnostic: event.diagnostic })
+      break
     case 'error':
       webContents.send('agent:error', { messageId: event.messageId, error: event.error })
       break
