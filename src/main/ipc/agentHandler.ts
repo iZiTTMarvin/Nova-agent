@@ -15,7 +15,7 @@ import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
 import { lsTool } from '../../runtime/tools/lsTool'
 import { readTool } from '../../runtime/tools/readTool'
-import { grepTool } from '../../runtime/tools/grepTool'
+import { createGrepTool } from '../../runtime/tools/grepTool'
 import { findTool } from '../../runtime/tools/findTool'
 import { editTool } from '../../runtime/tools/editTool'
 import { writeTool } from '../../runtime/tools/writeTool'
@@ -181,7 +181,7 @@ export function registerAgentHandler(
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(lsTool)
     toolRegistry.register(readTool)
-    toolRegistry.register(grepTool)
+    toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
     toolRegistry.register(findTool)
     toolRegistry.register(editTool)
     toolRegistry.register(writeTool)

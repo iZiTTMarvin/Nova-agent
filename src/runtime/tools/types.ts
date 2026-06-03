@@ -29,10 +29,12 @@ export interface ToolResult {
 export interface ToolExecutor {
   /** 工具名称，全局唯一 */
   name: string
-  /** 工具描述，供模型理解何时使用 */
+  /** 工具描述，供模型理解用途 */
   description: string
-  /** JSON Schema 格式的参数定义，供模型生成调用 */
+  /** JSON Schema 格式的入参定义，供模型生成调用 */
   parameters: ToolDefinition['parameters']
+  /** 输出最大字符数，超出后由 AgentLoop 通过 TruncationPipeline 截断。未设置则不限制 */
+  maxResultSizeChars?: number
   /** 执行工具 */
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
 }

@@ -14,6 +14,8 @@ import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'
+import type { TruncationStage } from '../tools/grep-types'
+import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
 import { getModeInstruction } from './modeInstruction'
 import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold } from './compaction'
@@ -73,6 +75,9 @@ export class AgentLoop {
 
   /** 缓存诊断跟踪器：检测 system prompt / 工具定义变化导致的缓存失效 */
   private cacheDiagnostics = new CacheDiagnostics()
+
+  /** 截断管道：用于工具输出超限时进行结构化截断 */
+  private truncationPipeline = createTruncationPipeline()
 
   constructor(
     modelClient: ModelClient,
@@ -328,9 +333,15 @@ export class AgentLoop {
               ...(this.checkpointManager ? { checkpointManager: this.checkpointManager } : {}),
               ...(this.abortController ? { abortSignal: this.abortController.signal } : {})
             })
-            result = toolResult.success
-              ? toolResult.output
-              : `工具执行失败: ${toolResult.error}`
+            if (toolResult.success) {
+              const tool = this.toolRegistry.getTool(tc.name)
+              const maxSize = tool?.maxResultSizeChars
+              result = maxSize != null
+                ? this.applyTruncation(toolResult.output, maxSize)
+                : toolResult.output
+            } else {
+              result = `工具执行失败: ${toolResult.error}`
+            }
           } else {
             result = `工具 "${tc.name}" 不可用：未注册工具`
           }
@@ -433,6 +444,41 @@ export class AgentLoop {
       return JSON.parse(argsStr || '{}')
     } catch {
       return {}
+    }
+  }
+
+  /** 对工具输出应用截断，超限时用三明治模式拼装提示 */
+  private applyTruncation(output: string, maxSize: number): string {
+    const pipeline = createTruncationPipeline({ maxByteSize: maxSize })
+    const result = pipeline.apply(output)
+
+    if (!result.truncated || !result.meta) {
+      return output
+    }
+
+    const { shown, total, limit, truncatedAt } = result.meta
+    const topHint = `[系统提示] 以下为截断结果（显示 ${shown}/${total ?? '?'}，触发 ${truncatedAt} 上限 ${limit}）\n`
+    const bottomAction = this.buildBottomActions(truncatedAt, shown, total, limit)
+
+    return topHint + result.output + '\n' + bottomAction
+  }
+
+  /** 按截断层生成可执行的底部建议 */
+  private buildBottomActions(
+    stage: TruncationStage,
+    shown: number,
+    total: number | undefined,
+    limit: number
+  ): string {
+    switch (stage) {
+      case 'match_count':
+        return `[系统提示] 结果已截断：显示 ${shown}/${total ?? '?'} 条（匹配数上限 ${limit}）。请执行以下之一：\n1. 添加 glob: "*.ts" 过滤文件类型\n2. 使用 output_mode: "files_with_matches" 先确认涉及哪些文件\n3. 缩小 path 到具体子目录\n4. 使用 head_limit + offset 分批获取下一批`
+
+      case 'byte_size':
+        return `[系统提示] 结果已截断：输出 ${shown}KB/${total ?? '?'}KB（字节上限 ${limit}KB）。请执行以下之一：\n1. 使用 output_mode: "files_with_matches" 仅获取文件路径\n2. 缩小 path 到具体子目录\n3. 添加 glob 过滤减少匹配文件数`
+
+      case 'line_length':
+        return `[系统提示] 部分行已截断：行长度超 ${limit} 字符上限，超出部分以 ...[截断] 标记。\n对该文件使用 read 工具获取完整内容。`
     }
   }
 

@@ -1,11 +1,13 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
 import { join } from 'path'
+import { spawn } from 'child_process'
 import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { loadModelConfig as loadPersistedModelConfig } from '../runtime/model/config'
 import { inferCacheStrategy } from '../shared/config/types'
+import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
 import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
 
@@ -77,6 +79,25 @@ function loadModelConfigOnStartup(): void {
 }
 
 /**
+ * 探测 ripgrep 是否可用
+ * 尝试执行 rg --version，成功则标记 rgAvailable = true
+ */
+async function probeRipgrep(): Promise<void> {
+  try {
+    const rgPath = findRipgrep()
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn(rgPath, ['--version'], { timeout: 5000 })
+      p.on('close', (code) => code === 0 ? resolve() : reject())
+      p.on('error', reject)
+    })
+    setRgAvailable(true)
+  } catch {
+    setRgAvailable(false)
+    console.warn('[nova-agent] ripgrep 未就绪，grep 将降级为 Node.js 基础搜索')
+  }
+}
+
+/**
  * 创建应用主窗口
  * 加载 renderer 页面，开发环境使用 dev server，生产环境加载构建产物
  */
@@ -113,23 +134,26 @@ function createMainWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
-  // 0. 移除默认菜单栏，使用自定义标题栏
+app.whenReady().then(async () => {
+  // 0. 探测 ripgrep 是否可用
+  await probeRipgrep()
+
+  // 1. 移除默认菜单栏，使用自定义标题栏
   Menu.setApplicationMenu(null)
 
-  // 1. 尝试从本地加载模型配置以初始化 modelClient
+  // 2. 尝试从本地加载模型配置以初始化 modelClient
   loadModelConfigOnStartup()
   
-  // 2. 注册所有 renderer → main 的 IPC 处理器
+  // 3. 注册所有 renderer → main 的 IPC 处理器
   registerIpcHandlers()
   
-  // 3. 注册 Agent 运行时专属事件与通道
+  // 4. 注册 Agent 运行时专属事件与通道
   registerAgentHandler(getMainWindow, getModelClient)
 
-  // 3.5. 注册窗口控制的 IPC 处理器
+  // 4.5. 注册窗口控制的 IPC 处理器
   registerWindowHandler(getMainWindow)
   
-  // 4. 创建渲染视窗
+  // 5. 创建渲染视窗
   createMainWindow()
 
   app.on('activate', () => {
