@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../../stores/useAppStore'
+import { inferVisionSupport } from '../../../shared/config/types'
 import './SettingsModal.css'
 
 /** 各字段的校验错误信息 */
@@ -20,6 +21,7 @@ export const SettingsModal: React.FC = () => {
   const [apiKey, setApiKey] = useState('')
   const [modelId, setModelId] = useState('')
   const [contextWindow, setContextWindow] = useState<number | ''>('')
+  const [supportsVision, setSupportsVision] = useState<boolean | null>(null)
   const [showKey, setShowKey] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -32,6 +34,8 @@ export const SettingsModal: React.FC = () => {
       setApiKey(modelConfig?.apiKey || '')
       setModelId(modelConfig?.modelId || 'gpt-4o')
       setContextWindow(modelConfig?.contextWindow ?? '')
+      // 三态：null 表示未显式设置（使用自动推断），否则 true/false
+      setSupportsVision(modelConfig?.supportsVision ?? null)
       setFieldErrors({})
       setSubmitError(null)
       setShowKey(false)
@@ -39,6 +43,8 @@ export const SettingsModal: React.FC = () => {
   }, [isOpen, modelConfig])
 
   if (!isOpen) return null
+
+  const inferredVision = inferVisionSupport(modelId.trim())
 
   /** 前端逐字段校验，返回是否全部通过 */
   const validate = (): boolean => {
@@ -85,7 +91,8 @@ export const SettingsModal: React.FC = () => {
         baseUrl: baseUrl.trim(),
         apiKey: apiKey.trim(),
         modelId: modelId.trim(),
-        contextWindow: contextWindow === '' ? undefined : contextWindow
+        contextWindow: contextWindow === '' ? undefined : contextWindow,
+        supportsVision: supportsVision ?? undefined
       })
       setConfigModalOpen(false)
     } catch (err) {
@@ -101,8 +108,8 @@ export const SettingsModal: React.FC = () => {
       <div className="settings-modal" onClick={e => e.stopPropagation()}>
         <div className="settings-modal__header">
           <h2 className="settings-modal__title">模型连接配置</h2>
-          <button 
-            className="settings-modal__close-btn" 
+          <button
+            className="settings-modal__close-btn"
             onClick={() => setConfigModalOpen(false)}
             aria-label="关闭"
           >
@@ -113,14 +120,14 @@ export const SettingsModal: React.FC = () => {
         <form className="settings-modal__form" onSubmit={handleSave}>
           <div className="settings-modal__field">
             <label className="settings-modal__label">接口地址 (Base URL)</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               className={`settings-modal__input${fieldErrors.baseUrl ? ' settings-modal__input--error' : ''}`}
               value={baseUrl}
               onChange={e => { setBaseUrl(e.target.value); setFieldErrors(prev => ({ ...prev, baseUrl: undefined })) }}
               placeholder="例如 https://api.openai.com/v1"
             />
-            {fieldErrors.baseUrl 
+            {fieldErrors.baseUrl
               ? <span className="settings-modal__field-error">{fieldErrors.baseUrl}</span>
               : <span className="settings-modal__help">OpenAI 兼容接口的 API 根地址，通常含版本号如 /v1。</span>
             }
@@ -129,14 +136,14 @@ export const SettingsModal: React.FC = () => {
           <div className="settings-modal__field">
             <label className="settings-modal__label">API 凭证 (API Key)</label>
             <div className="settings-modal__input-wrapper">
-              <input 
-                type={showKey ? 'text' : 'password'} 
+              <input
+                type={showKey ? 'text' : 'password'}
                 className={`settings-modal__input settings-modal__input--password${fieldErrors.apiKey ? ' settings-modal__input--error' : ''}`}
                 value={apiKey}
                 onChange={e => { setApiKey(e.target.value); setFieldErrors(prev => ({ ...prev, apiKey: undefined })) }}
                 placeholder="sk-..."
               />
-              <button 
+              <button
                 type="button"
                 className="settings-modal__toggle-pwd"
                 onClick={() => setShowKey(!showKey)}
@@ -152,8 +159,8 @@ export const SettingsModal: React.FC = () => {
 
           <div className="settings-modal__field">
             <label className="settings-modal__label">模型标识 (Model ID)</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               className={`settings-modal__input${fieldErrors.modelId ? ' settings-modal__input--error' : ''}`}
               value={modelId}
               onChange={e => { setModelId(e.target.value); setFieldErrors(prev => ({ ...prev, modelId: undefined })) }}
@@ -167,11 +174,11 @@ export const SettingsModal: React.FC = () => {
 
           <div className="settings-modal__field">
             <label className="settings-modal__label">上下文窗口 (Context Window)</label>
-            <input 
-              type="number" 
+            <input
+              type="number"
               className={`settings-modal__input${fieldErrors.contextWindow ? ' settings-modal__input--error' : ''}`}
               value={contextWindow}
-              onChange={e => { 
+              onChange={e => {
                 const val = e.target.value
                 setContextWindow(val === '' ? '' : Number(val))
                 setFieldErrors(prev => ({ ...prev, contextWindow: undefined }))
@@ -184,19 +191,39 @@ export const SettingsModal: React.FC = () => {
             }
           </div>
 
+          {/* Vision 支持配置 */}
+          <div className="settings-modal__field">
+            <label className="settings-modal__label">图片输入 (Vision)</label>
+            <select
+              className="settings-modal__input settings-modal__select"
+              value={supportsVision === null ? 'auto' : supportsVision ? 'on' : 'off'}
+              onChange={e => {
+                const val = e.target.value
+                setSupportsVision(val === 'auto' ? null : val === 'on')
+              }}
+            >
+              <option value="auto">自动推断（当前模型 {modelId.trim() || '?'} 推断为 {inferredVision ? '支持' : '不支持'}）</option>
+              <option value="on">强制开启</option>
+              <option value="off">强制关闭</option>
+            </select>
+            <span className="settings-modal__help">
+              若模型实际支持图片输入但自动推断错误，请选择「强制开启」；若模型不支持但自动推断错误，请选择「强制关闭」。
+            </span>
+          </div>
+
           {submitError && <div className="settings-modal__error">{submitError}</div>}
 
           <div className="settings-modal__actions">
-            <button 
-              type="button" 
+            <button
+              type="button"
               className="settings-modal__btn settings-modal__btn--cancel"
               onClick={() => setConfigModalOpen(false)}
               disabled={saving}
             >
               取消
             </button>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="settings-modal__btn settings-modal__btn--save"
               disabled={saving}
             >

@@ -5,6 +5,7 @@ import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import { inferContextWindow, inferVisionSupport } from '../../shared/config/types'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
+import type { ImageAttachment } from '../lib/image-attachments'
 
 /**
  * 扩展的工具调用接口
@@ -217,7 +218,7 @@ interface AppState {
   setMode: (mode: Mode) => Promise<void>
   
   /** 发送用户消息 */
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>
   
   /** 中断当前的流式生成 */
   cancelExecution: () => Promise<void>
@@ -358,11 +359,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, images?: ImageAttachment[]) => {
     const { currentSessionId, isGenerating, currentProject } = get()
     if (isGenerating || !currentProject) return
 
     const activeSessionId = currentSessionId || 'session_default'
+
+    // 构建用户消息 blocks（含图片 ImageBlock）
+    const blocks: MessageBlock[] = []
+    if (content.trim()) {
+      blocks.push({ type: 'text', content })
+    }
+    if (images && images.length > 0) {
+      for (const img of images) {
+        blocks.push({
+          type: 'image',
+          fileName: img.fileName,
+          dataUrl: img.dataUrl,
+          mimeType: img.mimeType
+        })
+      }
+    }
 
     // 1. 创建并追加用户消息
     const userMsg: ExtendedMessage = {
@@ -370,6 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessionId: activeSessionId,
       role: 'user',
       content,
+      blocks: blocks.length > 0 ? blocks : undefined,
       timestamp: Date.now()
     }
 
@@ -386,7 +404,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
       await window.api.invoke('send-message', {
         sessionId: activeSessionId,
-        content
+        content,
+        images: images?.map(img => ({
+          fileName: img.fileName,
+          data: img.dataUrl,
+          mimeType: img.mimeType
+        }))
       })
     } catch (err) {
       // 若启动 AgentLoop 出错，在此更新界面状态

@@ -372,6 +372,47 @@
   color: var(--text-primary);
 }
 
+/* ── 用户消息图片网格 ─────────────────────────────────────── */
+.user-message-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  max-width: 100%;
+}
+
+.user-message-image-grid__item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-warm);
+  background: var(--bg-card);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.user-message-image-grid__item:hover {
+  border-color: var(--color-accent);
+  box-shadow: 0 2px 10px rgba(201, 100, 66, 0.14);
+  transform: translateY(-1px);
+}
+
+.user-message-image-grid__item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 最多3列限制（消息气泡内） */
+@media (min-width: 480px) {
+  .user-message-image-grid {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+}
+
 /* ── ContextIndicator 上下文占用圆环 ─────────────────────────── */
 .context-indicator {
   display: flex;
@@ -427,4 +468,24 @@
 .usage-stats__write {
   font-variant-numeric: tabular-nums;
   color: #60a5fa;
+}
+
+/* ── 拖拽高亮遮罩 ────────────────────────────────────────── */
+.chat-panel__drag-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  border: 2px dashed var(--color-focus, #3898ec);
+  background: rgba(56, 152, 236, 0.08);
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-panel__drag-overlay span {
+  color: var(--color-focus, #3898ec);
+  font-weight: 500;
+  font-size: 1.125rem; /* ~text-lg */
 }

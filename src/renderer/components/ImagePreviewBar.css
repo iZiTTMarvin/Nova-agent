@@ -1,0 +1,114 @@
+/** ImagePreviewBar — 图片预览条样式
+ *  拟纸质感暖色调设计，与 ChatPanel 整体视觉协调
+ */
+
+.image-preview-bar {
+  display: flex;
+  padding: 8px 10px;
+  background: rgba(232, 230, 220, 0.55);
+  border-top: 1px solid var(--border-cream);
+  border-bottom: 1px solid var(--border-cream);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.image-preview-bar__track {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  flex: 1;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-warm) transparent;
+  padding-bottom: 2px;
+}
+
+.image-preview-bar__track::-webkit-scrollbar {
+  height: 5px;
+}
+
+.image-preview-bar__track::-webkit-scrollbar-thumb {
+  background: var(--border-warm);
+  border-radius: 3px;
+}
+
+.image-preview-bar__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.image-preview-bar__thumb-btn {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-warm);
+  background: var(--bg-card);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.image-preview-bar__thumb-btn:hover {
+  border-color: var(--color-accent);
+  box-shadow: 0 2px 8px rgba(201, 100, 66, 0.12);
+  transform: translateY(-1px);
+}
+
+.image-preview-bar__thumb-btn:active {
+  transform: scale(0.96);
+}
+
+.image-preview-bar__thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.image-preview-bar__name {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  user-select: none;
+}
+
+.image-preview-bar__remove {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  z-index: 2;
+}
+
+.image-preview-bar__remove:hover {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+  transform: scale(1.1);
+}
+
+.image-preview-bar__remove:active {
+  transform: scale(0.92);
+}

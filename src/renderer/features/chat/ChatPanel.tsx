@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { useAppStore } from '../../stores/useAppStore'
+import { useAppStore, selectSupportsVision } from '../../stores/useAppStore'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   SendIcon,
@@ -11,7 +11,8 @@ import {
   NovaLogo,
   FolderIcon,
   SettingsIcon,
-  UndoIcon
+  UndoIcon,
+  ImageIcon
 } from '../../components/Icons'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
@@ -23,6 +24,16 @@ import { StreamingFileCard } from './StreamingFileCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { UsageStats } from './UsageStats'
 import { ContextIndicator } from './ContextIndicator'
+import { ImagePreviewBar } from '../../components/ImagePreviewBar'
+import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
+import {
+  fileToImageAttachment,
+  getPastedImageFiles,
+  getDroppedImageFiles,
+  getDroppedNonImageFiles,
+  MAX_IMAGE_COUNT,
+  type ImageAttachment
+} from '../../lib/image-attachments'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedToolCall, RendererMessageBlock } from '../../stores/useAppStore'
 import './ChatPanel.css'
@@ -182,12 +193,15 @@ export const ChatPanel: React.FC = () => {
   const cancelExecution = useAppStore(state => state.cancelExecution)
   const selectProject = useAppStore(state => state.selectProject)
   const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
-  
+
   // 会话与回退所需状态
   const currentSessionId = useAppStore(state => state.currentSessionId)
   const rollbackMessage = useAppStore(state => state.rollbackMessage)
   const currentGeneratingMessageId = useAppStore(state => state.currentGeneratingMessageId)
   const currentMode = useAppStore(state => state.currentMode)
+
+  // Vision 门控：当前模型是否支持图片输入
+  const supportsVision = useAppStore(selectSupportsVision)
 
   // diff 审查所需状态
   const messageDiffs = useAppStore(state => state.messageDiffs)
@@ -217,6 +231,18 @@ export const ChatPanel: React.FC = () => {
   const userScrolledUpRef = useRef(false)
   // 生成阶段专用的滚动调度器：统一管理 rAF 节流与取消逻辑
   const streamAutoScrollRef = useRef<ReturnType<typeof createStreamAutoScrollController> | null>(null)
+
+  // 图片附件状态
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+  // 全屏预览状态
+  const [previewDialog, setPreviewDialog] = useState<{ open: boolean; images: { dataUrl: string; fileName: string }[]; index: number }>({
+    open: false,
+    images: [],
+    index: 0
+  })
+  // 隐藏的文件上传 input
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 瞬时跳到底部（流式阶段用，避免 smooth 动画排队）
   const scrollToBottomInstant = useCallback(() => {
@@ -278,7 +304,7 @@ export const ChatPanel: React.FC = () => {
   }
 
   const handleSend = () => {
-    if (!inputVal.trim() || isGenerating) return
+    if ((!inputVal.trim() && imageAttachments.length === 0) || isGenerating) return
     if (!modelConfig) {
       alert("请先在左下角配置模型 API Key！")
       setConfigModalOpen(true)
@@ -289,8 +315,9 @@ export const ChatPanel: React.FC = () => {
       selectProject()
       return
     }
-    sendMessage(inputVal.trim())
+    sendMessage(inputVal.trim(), imageAttachments)
     setInputVal('')
+    setImageAttachments([])
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
@@ -303,18 +330,149 @@ export const ChatPanel: React.FC = () => {
     }
   }
 
+  // ── 图片上传交互 ─────────────────────────────────────────
+
+  /** toast 提示工具（项目未引入 toast 库，用轻量 alert 或 console.warn） */
+  const showToast = useCallback((message: string) => {
+    // eslint-disable-next-line no-alert
+    window.alert(message)
+  }, [])
+
+  /** 按钮上传：将有效图片加入附件列表，失败项逐条提示 */
+  const addImageFiles = useCallback(async (files: File[]) => {
+    const remainingSlots = MAX_IMAGE_COUNT - imageAttachments.length
+    if (remainingSlots <= 0) {
+      showToast('最多上传 10 张图片')
+      return
+    }
+
+    const toProcess = files.slice(0, remainingSlots)
+    const results = await Promise.all(toProcess.map(f => fileToImageAttachment(f)))
+
+    const valid: ImageAttachment[] = []
+    for (const res of results) {
+      if ('attachment' in res) {
+        valid.push(res.attachment)
+      } else if ('error' in res) {
+        showToast(res.error)
+      }
+    }
+
+    if (valid.length > 0) {
+      setImageAttachments(prev => [...prev, ...valid])
+    }
+    if (files.length > toProcess.length) {
+      showToast('最多上传 10 张图片')
+    }
+  }, [imageAttachments.length, showToast])
+
+  /** 文件 input onChange */
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!supportsVision) return
+    const files = Array.from(e.target.files ?? [])
+    if (files.length === 0) return
+    await addImageFiles(files)
+    e.target.value = '' // 允许重复选择相同文件
+  }, [supportsVision, addImageFiles])
+
+  /** textarea onPaste：仅 supportsVision 时拦截图片 */
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!supportsVision) return
+    const imageFiles = getPastedImageFiles(e.clipboardData)
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      await addImageFiles(imageFiles)
+    }
+  }, [supportsVision, addImageFiles])
+
+  /** 拖拽交互 */
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDragOver) setIsDragOver(true)
+  }, [isDragOver])
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // 仅当真正离开容器而非子元素时取消高亮
+    if (e.currentTarget === e.target) {
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+
+    const allFiles = Array.from(e.dataTransfer.files)
+    if (allFiles.length === 0) return
+
+    const imageFiles = getDroppedImageFiles(e.dataTransfer)
+    const otherFiles = getDroppedNonImageFiles(e.dataTransfer)
+
+    if (supportsVision && imageFiles.length > 0) {
+      await addImageFiles(imageFiles)
+    }
+
+    // 非图片文件 + 不支持 vision 时的图片，统一处理为文件引用
+    const fileRefs = [
+      ...otherFiles,
+      ...(!supportsVision ? imageFiles : [])
+    ]
+    if (fileRefs.length > 0) {
+      const refs = fileRefs.map(f => `@${f.name}`).join(' ')
+      setInputVal(prev => (prev ? prev + ' ' : '') + refs)
+      // 统一调整 textarea 高度
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto'
+          textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px'
+        }
+      }, 0)
+    }
+  }, [supportsVision, addImageFiles])
+
+  /** 点击预览条缩略图打开全屏 */
+  const openPreviewFromBar = useCallback((index: number) => {
+    setPreviewDialog({
+      open: true,
+      images: imageAttachments.map(a => ({ dataUrl: a.dataUrl, fileName: a.fileName })),
+      index
+    })
+  }, [imageAttachments])
+
+  /** 移除附件 */
+  const removeAttachment = useCallback((id: string) => {
+    setImageAttachments(prev => prev.filter(a => a.id !== id))
+  }, [])
+
   // ── 空状态引导界面 ─────────────────────────────────────────
   const isEmptyState = messages.length === 0
 
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
-    <div className="chat-panel relative flex flex-col h-full bg-white">
+    <div
+      className="chat-panel relative flex flex-col h-full bg-white"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* 拖拽高亮遮罩 */}
+      {isDragOver && (
+        <div className="chat-panel__drag-overlay">
+          <span>拖拽图片到此处上传</span>
+        </div>
+      )}
+
       {/* 消息流区域，只有非空状态时才显示并占据空间 */}
       {!isEmptyState && (
         <div className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32" ref={scrollContainerRef} onScroll={handleScroll}>
 
         {messages.map(msg => {
           const isAssistant = msg.role === 'assistant'
+          const isUser = msg.role === 'user'
 
           // blocks 渲染路径：按流式事件顺序展示 thinking → text → tool → text → ...
           const hasBlocks = isAssistant && msg.blocks && msg.blocks.length > 0
@@ -328,6 +486,11 @@ export const ChatPanel: React.FC = () => {
             ? hasVisibleBlocks(msg.blocks, currentMode)
             : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
           const shouldShowPending = isCurrentAssistantGenerating && !hasVisibleContent
+
+          // 用户消息图片提取（用于图片网格渲染）
+          const userImageBlocks = isUser
+            ? msg.blocks?.filter((b): b is { type: 'image'; fileName: string; dataUrl: string; mimeType: string } => b.type === 'image') ?? []
+            : []
 
           return (
             <div
@@ -370,6 +533,8 @@ export const ChatPanel: React.FC = () => {
                         )
                       case 'text':
                         return block.content ? <MarkdownRenderer key={idx} content={block.content} /> : null
+                      case 'image':
+                        return null // 用户消息图片在下方统一网格渲染
                       case 'tool': {
                         if (!shouldRenderToolBlock(currentMode, block.toolName)) {
                           return null
@@ -420,6 +585,27 @@ export const ChatPanel: React.FC = () => {
                       </div>
                     )}
                   </>
+                )}
+
+                {/* 用户消息图片网格 */}
+                {isUser && userImageBlocks.length > 0 && (
+                  <div className="user-message-image-grid">
+                    {userImageBlocks.map((img, idx) => (
+                      <button
+                        key={`${img.fileName}-${idx}`}
+                        className="user-message-image-grid__item"
+                        onClick={() => setPreviewDialog({
+                          open: true,
+                          images: userImageBlocks.map(b => ({ dataUrl: b.dataUrl, fileName: b.fileName })),
+                          index: idx
+                        })}
+                        type="button"
+                        title={img.fileName}
+                      >
+                        <img src={img.dataUrl} alt={img.fileName} draggable={false} />
+                      </button>
+                    ))}
+                  </div>
                 )}
 
                 {/* diff 区域：loading 时优先展示骨架，避免 +0 -0 中间态 */}
@@ -483,7 +669,7 @@ export const ChatPanel: React.FC = () => {
       )}
 
       {/* 底部输入框 / 空状态中央输入框 */}
-      <motion.div 
+      <motion.div
         layout
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className={`absolute left-0 right-0 flex flex-col items-center justify-center px-4 pointer-events-none ${
@@ -491,10 +677,10 @@ export const ChatPanel: React.FC = () => {
         }`}
       >
         <div className="w-full max-w-3xl flex flex-col items-center pointer-events-auto">
-          
+
           <AnimatePresence>
             {isEmptyState && (
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
@@ -508,10 +694,28 @@ export const ChatPanel: React.FC = () => {
             )}
           </AnimatePresence>
 
-          <motion.div 
+          <motion.div
             layout
-            className="w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-gray-100/80 backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)]"
+            className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
+              isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
+            }`}
           >
+            {/* 图片预览条 */}
+            <ImagePreviewBar
+              attachments={imageAttachments}
+              onRemove={removeAttachment}
+              onPreview={openPreviewFromBar}
+            />
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+
             <textarea
               ref={textareaRef}
               className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
@@ -520,32 +724,43 @@ export const ChatPanel: React.FC = () => {
               value={inputVal}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               disabled={isGenerating}
             />
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
               <div className="flex items-center gap-2">
+                {supportsVision && (
+                  <button
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="上传图片"
+                    type="button"
+                  >
+                    <ImageIcon size={16} />
+                  </button>
+                )}
                 <ModeSwitch />
                 <ContextIndicator />
                 <UsageStats />
               </div>
               <div>
                 {isGenerating ? (
-                  <button 
-                    className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors" 
+                  <button
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
                     onClick={cancelExecution}
                     title="中断生成"
                   >
                     <StopIcon size={14} />
                   </button>
                 ) : (
-                  <button 
+                  <button
                     className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
-                      inputVal.trim() 
-                        ? 'bg-text-primary text-white hover:bg-gray-800' 
+                      inputVal.trim() || imageAttachments.length > 0
+                        ? 'bg-text-primary text-white hover:bg-gray-800'
                         : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     }`}
                     onClick={handleSend}
-                    disabled={!inputVal.trim()}
+                    disabled={!inputVal.trim() && imageAttachments.length === 0}
                     title="发送"
                   >
                     <SendIcon size={14} />
@@ -557,6 +772,15 @@ export const ChatPanel: React.FC = () => {
 
         </div>
       </motion.div>
+
+      {/* 全屏图片预览 */}
+      <ImagePreviewDialog
+        images={previewDialog.images}
+        currentIndex={previewDialog.index}
+        isOpen={previewDialog.open}
+        onClose={() => setPreviewDialog(prev => ({ ...prev, open: false }))}
+        onNavigate={(idx) => setPreviewDialog(prev => ({ ...prev, index: idx }))}
+      />
     </div>
   )
 }

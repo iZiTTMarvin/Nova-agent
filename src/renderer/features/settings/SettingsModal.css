@@ -189,3 +189,25 @@
 .settings-modal__btn:active {
   transform: scale(0.98);
 }
+
+/* ── Vision checkbox 样式 ────────────────────────────────── */
+.settings-modal__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-modal__checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.settings-modal__checkbox-label {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
