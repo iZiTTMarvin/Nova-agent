@@ -35,7 +35,7 @@ export const SessionList: React.FC = () => {
         {currentProject && (
           <button 
             className="session-list__new-btn"
-            onClick={createNewSession}
+            onClick={() => createNewSession()}
             title="新建会话"
           >
             <PlusIcon size={12} />

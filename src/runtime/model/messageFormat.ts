@@ -29,7 +29,14 @@ export function applyCacheMarkers(
   const markerIndices = new Set<number>()
 
   // 标记最后一条 system 消息（系统提示稳定，首轮写入后每轮命中 cache_read）
-  const systemIndex = apiMessages.findLastIndex(m => m.role === 'system')
+  let systemIndex = -1
+  for (let i = apiMessages.length - 1; i >= 0; i--) {
+    const msg = apiMessages[i]
+    if (msg.role === 'system') {
+      systemIndex = i
+      break
+    }
+  }
   if (systemIndex !== -1) {
     markerIndices.add(systemIndex)
   }
