@@ -27,6 +27,7 @@ import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
+import { readState } from '../../runtime/tools/editTool'
 
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
@@ -80,6 +81,8 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
+    // 切换会话时清除先读后改状态，防止跨会话污染
+    readState.clear()
     // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
     setCurrentProjectPath(data.workspaceRoot)
     setCurrentMode(data.mode)
@@ -89,6 +92,8 @@ export function registerSessionHandler(): void {
   // 创建新会话
   ipcMain.handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
     const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
+    // 新建会话时清除先读后改状态，防止跨会话污染
+    readState.clear()
     // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
     setCurrentProjectPath(params.workspaceRoot)
     setCurrentMode(data.mode)

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { editTool } from '../../../../src/runtime/tools/editTool'
 import { writeTool } from '../../../../src/runtime/tools/writeTool'
+import { readTool } from '../../../../src/runtime/tools/readTool'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 
@@ -45,18 +46,22 @@ describe('写入工具', () => {
 
   describe('editTool', () => {
     it('精确替换文件中的指定内容', async () => {
+      const ctx = createContext()
+      await readTool.execute({ path: 'hello.txt' }, ctx)
       const result = await editTool.execute(
         { path: 'hello.txt', old: 'world', new: 'Nova' },
-        createContext()
+        ctx
       )
       expect(result.success).toBe(true)
       expect(readFileSync(join(TMP, 'hello.txt'), 'utf-8')).toBe('hello Nova\n')
     })
 
     it('替换多行文本', async () => {
+      const ctx = createContext()
+      await readTool.execute({ path: 'src/main.ts' }, ctx)
       const result = await editTool.execute(
         { path: 'src/main.ts', old: 'const x = 1', new: 'const x = 42' },
-        createContext()
+        ctx
       )
       expect(result.success).toBe(true)
       const content = readFileSync(join(TMP, 'src', 'main.ts'), 'utf-8')
@@ -64,23 +69,27 @@ describe('写入工具', () => {
     })
 
     it('old 文本不存在时返回错误', async () => {
+      const ctx = createContext()
+      await readTool.execute({ path: 'hello.txt' }, ctx)
       const result = await editTool.execute(
         { path: 'hello.txt', old: 'NOTEXIST', new: 'foo' },
-        createContext()
+        ctx
       )
       expect(result.success).toBe(false)
-      expect(result.error).toContain('未找到')
+      expect(result.error).toContain('not found')
     })
 
     it('old 文本出现多次时返回错误（防止歧义）', async () => {
       writeFileSync(join(TMP, 'dup.txt'), 'aaa\nbbb\naaa\n')
+      const ctx = createContext()
+      await readTool.execute({ path: 'dup.txt' }, ctx)
 
       const result = await editTool.execute(
         { path: 'dup.txt', old: 'aaa', new: 'ccc' },
-        createContext()
+        ctx
       )
       expect(result.success).toBe(false)
-      expect(result.error).toContain('2 次')
+      expect(result.error).toContain('2 times')
     })
 
     it('缺少参数时返回错误', async () => {
@@ -102,6 +111,7 @@ describe('写入工具', () => {
 
     it('配合 checkpoint 时备份原始内容', async () => {
       const ctx = createContext(true)
+      await readTool.execute({ path: 'hello.txt' }, ctx)
 
       const result = await editTool.execute(
         { path: 'hello.txt', old: 'world', new: 'Nova' },
