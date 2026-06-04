@@ -8,6 +8,7 @@ import { mkdirSync, constants } from 'fs'
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, stat as fsStat } from 'fs/promises'
 import { ToolRegistry } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
 import { lineDiff, renderLineDiff, computeFirstChangedLine, generateUnifiedPatch, extractSnippet } from './editDiff'
 
@@ -28,20 +29,6 @@ const nodeEditOperations: EditOperations = {
     const s = await fsStat(path)
     return { mtimeMs: s.mtimeMs, size: s.size }
   },
-}
-
-// ── fileMutationQueue ─────────────────────────────────────────────────────────
-
-const queues = new Map<string, Promise<void>>()
-
-export async function withFileMutationQueue<T>(
-  absolutePath: string,
-  callback: () => Promise<T>
-): Promise<T> {
-  const prev = queues.get(absolutePath) ?? Promise.resolve()
-  const next = prev.then(callback, callback)
-  queues.set(absolutePath, next.then(() => {}, () => {}))
-  return next
 }
 
 // ── ReadState ─────────────────────────────────────────────────────────────────
