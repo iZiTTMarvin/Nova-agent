@@ -4,7 +4,7 @@
  */
 import { readdirSync, statSync } from 'fs'
 import { join, relative } from 'path'
-import { ToolRegistry } from './ToolRegistry'
+import { resolveAndValidatePath } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
 /**
@@ -61,7 +61,6 @@ export const findTool: ToolExecutor = {
   },
 
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
-    const registry = new ToolRegistry()
     const pattern = args.pattern as string
     const inputPath = (args.path as string) || '.'
 
@@ -69,7 +68,7 @@ export const findTool: ToolExecutor = {
       return { success: false, output: '', error: '缺少 pattern 参数' }
     }
 
-    const validated = registry.resolveAndValidate(context.workingDir, inputPath)
+    const validated = resolveAndValidatePath(context.workingDir, inputPath)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }

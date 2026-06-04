@@ -51,6 +51,8 @@ export interface AgentLoopConfig {
   maxToolRounds?: number
   /** 模型最大上下文窗口（tokens），用于计算动态压缩阈值（上限的 80%） */
   contextWindow?: number
+  /** 当前模型是否支持图片输入（vision），用于 readTool 决定是否发送图片 */
+  supportsVision?: boolean
   /**
    * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文。
    * agentHandler 通过此回调将压缩态写回 SessionStore，保证跨轮次持久化。

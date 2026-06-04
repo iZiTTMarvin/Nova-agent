@@ -6,7 +6,7 @@
 import { dirname } from 'path'
 import { mkdirSync, constants } from 'fs'
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, stat as fsStat } from 'fs/promises'
-import { ToolRegistry } from './ToolRegistry'
+import { resolveAndValidatePath } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
@@ -490,7 +490,6 @@ export const editTool: ToolExecutor = {
       if (signal?.aborted) throw new Error('Edit operation aborted')
     }
 
-    const registry = new ToolRegistry()
     const ops = nodeEditOperations
 
     let input: { filePath: string; edits: Array<{ oldText: string; newText: string }> }
@@ -507,7 +506,7 @@ export const editTool: ToolExecutor = {
       return { success: false, output: '', error: '缺少 edits 参数（或旧格式 old/new）' }
     }
 
-    const validated = registry.resolveAndValidate(context.workingDir, input.filePath)
+    const validated = resolveAndValidatePath(context.workingDir, input.filePath)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }

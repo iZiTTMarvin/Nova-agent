@@ -43,3 +43,18 @@ export function inferContextWindow(modelId: string): number {
   if (lower.includes('deepseek')) return 64_000
   return DEFAULT_CONTEXT_WINDOW
 }
+
+/**
+ * 基于模型 ID 推断是否支持图片输入（vision）。
+ * 默认 true（现代模型大多支持 vision，仅对已知纯文本模型返回 false）。
+ */
+export function inferVisionSupport(modelId: string): boolean {
+  const lower = modelId.toLowerCase()
+  // 已知不支持 vision 的模型
+  if (lower.includes('gpt-3.5')) return false
+  if (lower.includes('text-only')) return false
+  // deepseek-chat（非 VL 版本）不支持 vision
+  if (lower.includes('deepseek-chat') && !lower.includes('vl')) return false
+  if (lower.includes('deepseek-reasoner')) return false
+  return true
+}

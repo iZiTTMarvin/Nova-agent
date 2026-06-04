@@ -13,6 +13,16 @@ export interface ToolContext {
   checkpointManager?: import('../checkpoints/CheckpointManager').CheckpointManager
   /** 取消信号，用户点击取消时触发，bashTool 等长时间运行工具应监听此信号终止执行 */
   abortSignal?: AbortSignal
+  /** 当前模型是否支持图片输入（vision），用于 readTool 决定是否发送图片 */
+  supportsVision?: boolean
+}
+
+/** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */
+export interface ImageContent {
+  /** base64 编码的图片数据 */
+  data: string
+  /** 图片 MIME 类型（image/jpeg、image/png、image/gif、image/webp） */
+  mimeType: string
 }
 
 /** 工具执行结果 */
@@ -23,6 +33,12 @@ export interface ToolResult {
   output: string
   /** 错误信息（仅在 success=false 时有值） */
   error?: string
+  /**
+   * 图片内容列表（可选）。
+   * 当工具返回图片时，output 为文字说明，images 为 base64 编码的图片数据。
+   * AgentLoop 会将 output + images 组合为多模态 content 数组发送给模型。
+   */
+  images?: ImageContent[]
 }
 
 /** 工具执行器接口，所有工具必须实现 */

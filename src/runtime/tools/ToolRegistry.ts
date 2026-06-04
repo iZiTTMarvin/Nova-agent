@@ -11,6 +11,19 @@ export type ResolveResult =
   | { ok: true; path: string }
   | { ok: false; error: string }
 
+/**
+ * 独立的路径解析与边界校验（不需要 ToolRegistry 实例）。
+ * 工具执行时直接调用此函数，避免每次 new ToolRegistry() 的开销。
+ */
+export function resolveAndValidatePath(workingDir: string, inputPath: string): ResolveResult {
+  const resolved = resolve(workingDir, inputPath)
+  const rel = relative(workingDir, normalize(resolved))
+  if (rel.startsWith('..') || normalize(resolved).startsWith('..')) {
+    return { ok: false, error: `路径越界: "${inputPath}" 位于工作区 "${workingDir}" 之外` }
+  }
+  return { ok: true, path: resolved }
+}
+
 export class ToolRegistry {
   private tools: Map<string, ToolExecutor> = new Map()
 

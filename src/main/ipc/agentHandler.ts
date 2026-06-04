@@ -9,7 +9,7 @@ import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATIO
 import { app } from 'electron'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow } from '../../shared/config/types'
+import { inferContextWindow, inferVisionSupport } from '../../shared/config/types'
 import { randomUUID } from 'crypto'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
@@ -141,11 +141,13 @@ export function registerAgentHandler(
     // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
     const persistedConfig = loadModelConfig(app.getPath('userData'))
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+    const supportsVision = inferVisionSupport(persistedConfig?.modelId ?? '')
 
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus, {
       systemPrompt: frozenPrompt,
       contextWindow,
+      supportsVision,
       onCompaction: (compactedContext) => {
         // 将压缩后的上下文写回 session，保证跨轮次持久化
         const compactedSession = sessionStore.load(params.sessionId)
@@ -156,7 +158,7 @@ export function registerAgentHandler(
           .map((m, idx) => ({
             id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
             role: m.role as SessionMessage['role'],
-            content: m.content,
+            content: typeof m.content === 'string' ? m.content : m.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n'),
             toolCalls: m.toolCalls?.map(tc => ({
               id: tc.id,
               name: tc.name,

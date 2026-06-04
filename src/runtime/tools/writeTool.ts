@@ -7,7 +7,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { ToolRegistry } from './ToolRegistry'
+import { resolveAndValidatePath } from './ToolRegistry'
 import { withFileMutationQueue } from './file-mutation-queue'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
@@ -72,8 +72,7 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
         return { success: false, output: '', error: '缺少 content 参数' }
       }
 
-      const registry = new ToolRegistry()
-      const validated = registry.resolveAndValidate(context.workingDir, inputPath)
+      const validated = resolveAndValidatePath(context.workingDir, inputPath)
       if (!validated.ok) {
         return { success: false, output: '', error: validated.error }
       }

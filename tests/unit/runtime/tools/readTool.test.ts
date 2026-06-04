@@ -5,6 +5,7 @@ import {
   rmSync,
 } from 'fs'
 import { join } from 'path'
+import sharp from 'sharp'
 import {
   readTool,
   isBinaryExtension,
@@ -20,6 +21,20 @@ const TMP = join(process.cwd(), '.test-workspace-readtool')
 
 function createContext(overrides?: Partial<ToolContext>): ToolContext {
   return { workingDir: TMP, ...overrides }
+}
+
+/** 用 sharp 生成 1×1 PNG */
+async function createTestPng(): Promise<Buffer> {
+  return sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 255, g: 255, b: 255 } } })
+    .png()
+    .toBuffer()
+}
+
+/** 用 sharp 生成 1×1 JPEG */
+async function createTestJpeg(): Promise<Buffer> {
+  return sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 255, g: 255, b: 255 } } })
+    .jpeg()
+    .toBuffer()
 }
 
 describe('readTool', () => {
@@ -250,8 +265,9 @@ describe('readTool', () => {
   describe('纯函数', () => {
     it('isBinaryExtension 识别已知扩展名', () => {
       expect(isBinaryExtension('file.exe')).toBe(true)
-      expect(isBinaryExtension('image.png')).toBe(true)
       expect(isBinaryExtension('file.pdf')).toBe(true)
+      // .png 不在 BINARY_EXTENSIONS 中（走图片 MIME 检测路径）
+      expect(isBinaryExtension('image.png')).toBe(false)
       expect(isBinaryExtension('file.txt')).toBe(false)
       expect(isBinaryExtension('file.ts')).toBe(false)
     })
@@ -348,6 +364,78 @@ describe('readTool', () => {
       )
       expect(result.success).toBe(false)
       expect(result.error).toContain('已取消')
+    })
+  })
+
+  // ── 图片检测 ─────────────────────────────────────────────
+
+  describe('图片检测', () => {
+    it('读取有效 PNG 图片返回图片数据', async () => {
+      const pngBuf = await createTestPng()
+      writeFileSync(join(TMP, 'test.png'), pngBuf)
+
+      const result = await readTool.execute(
+        { path: 'test.png' },
+        createContext({ supportsVision: true }),
+      )
+      expect(result.success).toBe(true)
+      expect(result.output).toContain('image/png')
+      expect(result.images).toBeDefined()
+      expect(result.images!.length).toBe(1)
+      expect(result.images![0].mimeType).toBe('image/png')
+      expect(result.images![0].data.length).toBeGreaterThan(0)
+    })
+
+    it('读取有效 JPEG 图片返回图片数据', async () => {
+      const jpegBuf = await createTestJpeg()
+      writeFileSync(join(TMP, 'photo.jpg'), jpegBuf)
+
+      const result = await readTool.execute(
+        { path: 'photo.jpg' },
+        createContext({ supportsVision: true }),
+      )
+      expect(result.success).toBe(true)
+      expect(result.output).toContain('image/jpeg')
+      expect(result.images).toBeDefined()
+      expect(result.images!.length).toBe(1)
+    })
+
+    it('模型不支持 vision 时返回文字提示而非图片', async () => {
+      const pngBuf = await createTestPng()
+      writeFileSync(join(TMP, 'novision.png'), pngBuf)
+
+      const result = await readTool.execute(
+        { path: 'novision.png' },
+        createContext({ supportsVision: false }),
+      )
+      expect(result.success).toBe(true)
+      expect(result.output).toContain('不支持图片输入')
+      expect(result.images).toBeUndefined()
+    })
+
+    it('无效图片文件返回错误', async () => {
+      // .png 扩展名但内容不是有效图片
+      writeFileSync(join(TMP, 'fake.png'), 'not a real png file')
+
+      const result = await readTool.execute(
+        { path: 'fake.png' },
+        createContext({ supportsVision: true }),
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('无法识别为有效图片文件')
+    })
+
+    it('图片文件不写入 readState', async () => {
+      const pngBuf = await createTestPng()
+      writeFileSync(join(TMP, 'statecheck.png'), pngBuf)
+
+      await readTool.execute(
+        { path: 'statecheck.png' },
+        createContext({ supportsVision: true }),
+      )
+
+      const absPath = join(TMP, 'statecheck.png')
+      expect(readState.get(absPath)).toBeUndefined()
     })
   })
 })

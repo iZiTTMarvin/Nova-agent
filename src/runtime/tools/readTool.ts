@@ -1,17 +1,20 @@
 /**
  * readTool — 生产级文件读取工具
  *
- * 异步 I/O、二进制检测（扩展名 + 解码后空字符）、文件大小预检、
- * offset/limit 分页读取、三重安全截断（字节/行数/单行）、续读提示。
+ * 异步 I/O、图片检测（文件头签名 MIME 检测）、二进制检测（扩展名 + 解码后空字符）、
+ * 文件大小预检、offset/limit 分页读取、三重安全截断（字节/行数/单行）、续读提示。
  *
- * 目前不做的功能：流式读取（256KB 预检下 readFile 够用）、图片检测、PDF/Notebook（专用工具职责）。
+ * 图片处理：检测到图片时读取二进制 → base64 编码 → 通过 ToolResult.images 返回，
+ * AgentLoop 负责组合为多模态消息发送给模型。
  */
 import { readFile as asyncReadFile, stat as asyncStat } from 'fs/promises'
 import { extname } from 'path'
-import { ToolRegistry } from './ToolRegistry'
+import { resolveAndValidatePath } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { readState } from './editTool'
 import { decodeFileBuffer } from './editDiff'
+import { detectImageMimeTypeFromFile } from './mime'
+import { resizeImage, formatDimensionNote } from './image-resize'
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -19,7 +22,7 @@ const UTF8_BOM = '\uFEFF'
 
 const BINARY_EXTENSIONS = new Set([
   '.exe', '.dll', '.dylib', '.so', '.o', '.obj', '.lib', '.a',
-  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.avif',
+  '.bmp', '.ico', '.avif',
   '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.zst',
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
   '.bin', '.dat', '.db', '.sqlite', '.sqlite3',
@@ -37,12 +40,15 @@ const MAX_OUTPUT_BYTES = 100 * 1024
 const MAX_OUTPUT_LINES = 2000
 /** 单行字符上限，超出后截断并追加标记 */
 const MAX_LINE_LENGTH = 1000
+/** 支持读取的图片扩展名（走 MIME 检测路径，不走二进制拒绝路径） */
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 
-/** 判断是否为已知二进制扩展名 */
-export function isBinaryExtension(filePath: string): boolean {
-  return BINARY_EXTENSIONS.has(extname(filePath).toLowerCase())
+/** 判断是否为已知二进制扩展名。可传入预计算的 ext 避免重复调用 extname */
+export function isBinaryExtension(filePathOrExt: string): boolean {
+  const ext = filePathOrExt.startsWith('.') ? filePathOrExt : extname(filePathOrExt).toLowerCase()
+  return BINARY_EXTENSIONS.has(ext)
 }
 
 /** 将字节数格式化为人类可读的大小 */
@@ -134,7 +140,7 @@ export function buildContinuationHint(
 
 export const readTool: ToolExecutor = {
   name: 'read',
-  description: '读取指定文件的文本内容。编辑文件前必须先读取。支持 offset/limit 分页读取长文件。',
+  description: '读取指定文件的内容。支持文本文件和图片（jpg、png、gif、webp）。图片以 base64 编码发送给模型。编辑文件前必须先读取。支持 offset/limit 分页读取长文件。',
   parameters: {
     type: 'object',
     properties: {
@@ -165,14 +171,13 @@ export const readTool: ToolExecutor = {
       return { success: false, output: '', error: '读取已取消' }
     }
 
-    const registry = new ToolRegistry()
     const inputPath = args.path as string
 
     if (!inputPath) {
       return { success: false, output: '', error: '缺少 path 参数' }
     }
 
-    const validated = registry.resolveAndValidate(context.workingDir, inputPath)
+    const validated = resolveAndValidatePath(context.workingDir, inputPath)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }
@@ -193,8 +198,56 @@ export const readTool: ToolExecutor = {
         return { success: false, output: '', error: '读取已取消' }
       }
 
-      // ── 二进制扩展名检测（O(1)，在 readFile 之前避免浪费 I/O） ──
-      if (isBinaryExtension(absolutePath)) {
+      // ── 图片 MIME 检测（基于文件头签名，优先于二进制扩展名检测） ──
+      // 只有图片扩展名才走 MIME 检测，避免对每个文件都读头部
+      const ext = extname(absolutePath).toLowerCase()
+      if (IMAGE_EXTENSIONS.has(ext)) {
+        const mimeType = await detectImageMimeTypeFromFile(absolutePath)
+        if (mimeType) {
+          if (signal?.aborted) {
+            return { success: false, output: '', error: '读取已取消' }
+          }
+
+          // 模型不支持 vision 时，给出明确提示而非让 API 报 raw error
+          if (!context.supportsVision) {
+            return {
+              success: true,
+              output: `已检测到图片文件 [${mimeType}]，但当前模型不支持图片输入，图片内容已省略。`,
+            }
+          }
+
+          const imageBuf = await asyncReadFile(absolutePath)
+
+          // 尝试缩放图片到合理尺寸（2000×2000、4.5MB base64 上限、EXIF 自动修正）
+          const resized = await resizeImage(imageBuf, mimeType)
+          if (!resized) {
+            return {
+              success: true,
+              output: `已读取图片文件 [${mimeType}]，尺寸 ${formatFileSize(imageBuf.length)}。\n[图片因无法缩放到合理大小而被省略。]`,
+            }
+          }
+
+          // 构建输出提示：MIME 类型 + 维度映射说明
+          let textNote = `已读取图片文件 [${resized.mimeType}]`
+          const dimensionNote = formatDimensionNote(resized)
+          if (dimensionNote) textNote += `\n${dimensionNote}`
+
+          return {
+            success: true,
+            output: textNote,
+            images: [{ data: resized.data, mimeType: resized.mimeType }],
+          }
+        }
+        // MIME 检测失败（可能损坏或不支持），按二进制文件处理
+        return {
+          success: false,
+          output: '',
+          error: `"${inputPath}" 无法识别为有效图片文件。`,
+        }
+      }
+
+      // ── 二进制扩展名检测（O(1)，复用上方已计算的 ext） ──
+      if (isBinaryExtension(ext)) {
         return {
           success: false,
           output: '',

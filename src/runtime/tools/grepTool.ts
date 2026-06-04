@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import { createInterface } from 'readline'
-import { ToolRegistry } from './ToolRegistry'
+import { resolveAndValidatePath } from './ToolRegistry'
 import { findRipgrep, isRgAvailable } from './find-rg'
 import { createTruncationPipeline } from './TruncationPipeline'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
@@ -116,8 +116,7 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
         return { success: false, output: '', error: '缺少 pattern 参数' }
       }
 
-      const registry = new ToolRegistry()
-      const validated = registry.resolveAndValidate(context.workingDir, inputPath)
+      const validated = resolveAndValidatePath(context.workingDir, inputPath)
       if (!validated.ok) {
         return { success: false, output: '', error: validated.error }
       }

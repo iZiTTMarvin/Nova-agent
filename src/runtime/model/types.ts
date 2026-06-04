@@ -5,10 +5,28 @@
 
 // ── 消息格式 ──────────────────────────────────────────────
 
+/**
+ * 多模态内容块。
+ * OpenAI Chat Completions API 的 content 字段既支持纯字符串，
+ * 也支持由 text 和 image_url 块组成的数组。
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: string } }
+
+/** 从 content（string 或 ContentBlock 数组）中提取纯文本 */
+export function extractTextFromContent(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content
+  return content
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+    .map(block => block.text)
+    .join('\n')
+}
+
 /** 发送给模型的消息 */
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | ContentBlock[]
   /** assistant 消息可携带工具调用 */
   toolCalls?: ChatToolCall[]
   /** tool 消息必须携带 toolCallId */

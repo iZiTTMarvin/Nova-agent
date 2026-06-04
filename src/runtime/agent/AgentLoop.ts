@@ -8,7 +8,8 @@
  * S7 阶段：加入 PermissionManager 权限决策
  */
 import type { ModelClient } from '../model/ModelClient'
-import type { ChatMessage, ChatToolCall } from '../model/types'
+import type { ChatMessage, ChatToolCall, ContentBlock } from '../model/types'
+import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
@@ -89,7 +90,8 @@ export class AgentLoop {
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       maxToolRounds: config?.maxToolRounds ?? 20,
-      contextWindow: config?.contextWindow
+      contextWindow: config?.contextWindow,
+      supportsVision: config?.supportsVision ?? true
     }
     this.maxToolRounds = this.config.maxToolRounds ?? 20
 
@@ -204,7 +206,9 @@ export class AgentLoop {
         const tools = this.toolRegistry?.getToolDefinitions()
 
         // 缓存诊断：记录本轮请求的基线（system prompt + 工具定义哈希）
-        const systemPrompt = this.context.find(m => m.role === 'system')?.content ?? ''
+        const systemPrompt = extractTextFromContent(
+          this.context.find(m => m.role === 'system')?.content ?? ''
+        )
         this.cacheDiagnostics.recordBaseline(systemPrompt, tools)
 
         // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
@@ -277,7 +281,9 @@ export class AgentLoop {
               {
                 const diag = this.cacheDiagnostics.checkResponse(
                   event.usage.cachedTokens,
-                  this.context.find(m => m.role === 'system')?.content ?? '',
+                  extractTextFromContent(
+                    this.context.find(m => m.role === 'system')?.content ?? ''
+                  ),
                   this.toolRegistry?.getToolDefinitions()
                 )
                 if (diag.cacheBreakDetected) {
@@ -315,7 +321,8 @@ export class AgentLoop {
           if (this.cancelled) break
 
           const args = this.parseArgs(tc.arguments)
-          let result: string
+          let resultText: string
+          let resultImages: import('../tools/types').ImageContent[] | undefined
 
           // 权限检查（用 PermissionManager 做 allow/deny/ask 三态决策）
           const permissionResult = await this.checkPermission(tc.name, args, messageId)
@@ -326,24 +333,26 @@ export class AgentLoop {
           }
 
           if (!permissionResult.allowed) {
-            result = `权限拒绝: ${permissionResult.reason}`
+            resultText = `权限拒绝: ${permissionResult.reason}`
           } else if (this.toolRegistry) {
             const toolResult = await this.toolRegistry.execute(tc.name, args, {
               workingDir: this.workingDir ?? process.cwd(),
               ...(this.checkpointManager ? { checkpointManager: this.checkpointManager } : {}),
-              ...(this.abortController ? { abortSignal: this.abortController.signal } : {})
+              ...(this.abortController ? { abortSignal: this.abortController.signal } : {}),
+              supportsVision: this.config.supportsVision
             })
             if (toolResult.success) {
               const tool = this.toolRegistry.getTool(tc.name)
               const maxSize = tool?.maxResultSizeChars
-              result = maxSize != null
+              resultText = maxSize != null
                 ? this.applyTruncation(toolResult.output, maxSize)
                 : toolResult.output
+              resultImages = toolResult.images
             } else {
-              result = `工具执行失败: ${toolResult.error}`
+              resultText = `工具执行失败: ${toolResult.error}`
             }
           } else {
-            result = `工具 "${tc.name}" 不可用：未注册工具`
+            resultText = `工具 "${tc.name}" 不可用：未注册工具`
           }
 
           this.eventBus.emit({
@@ -351,12 +360,25 @@ export class AgentLoop {
             messageId,
             toolCallId: tc.id,
             toolName: tc.name,
-            result
+            result: resultText
           })
+
+          // 构建 tool 消息内容：纯文本用 string，带图片用 ContentBlock 数组
+          const toolContent: string | ContentBlock[] = resultImages?.length
+            ? [
+                { type: 'text', text: resultText },
+                ...resultImages.map(img => ({
+                  type: 'image_url' as const,
+                  image_url: {
+                    url: `data:${img.mimeType};base64,${img.data}`,
+                  },
+                })),
+              ]
+            : resultText
 
           this.context.push({
             role: 'tool',
-            content: result,
+            content: toolContent,
             toolCallId: tc.id
           })
         }
@@ -388,7 +410,7 @@ export class AgentLoop {
    */
   private async runCompaction(): Promise<void> {
     const systemMsg = this.context.find(m => m.role === 'system')
-    const systemPrompt = systemMsg?.content ?? ''
+    const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
 
     const [oldMessages, recentMessages] = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
     if (oldMessages.length === 0) return
@@ -430,7 +452,9 @@ export class AgentLoop {
 
     // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
     this.cacheDiagnostics.resetBaseline(
-      this.context.find(m => m.role === 'system')?.content ?? '',
+      extractTextFromContent(
+        this.context.find(m => m.role === 'system')?.content ?? ''
+      ),
       this.toolRegistry?.getToolDefinitions()
     )
 
