@@ -1,5 +1,5 @@
 import type { Message, MessageBlock, ToolBlock } from '../../shared/session'
-import type { SessionMessage } from '../../runtime/sessions/types'
+import { extractTextFromSerializableContent, type SessionMessage } from '../../runtime/sessions/types'
 
 function parseToolArguments(argumentsValue: string | Record<string, unknown> | undefined): Record<string, unknown> {
   if (!argumentsValue) {
@@ -52,7 +52,7 @@ export function toSharedMessage(
     id: msg.id,
     sessionId: '',
     role: msg.role,
-    content: msg.content,
+    content: extractTextFromSerializableContent(msg.content),
     toolCalls: msg.toolCalls?.map(tc => ({
       id: tc.id,
       name: tc.name,

@@ -17,6 +17,8 @@ export interface ModelConfig {
   cacheStrategy?: CacheStrategy
   /** 模型最大上下文窗口（tokens），未设置时从 modelId 自动推断 */
   contextWindow?: number
+  /** 是否支持图片输入。未设置时由 inferVisionSupport(modelId) 推断 */
+  supportsVision?: boolean
 }
 
 /** 从 baseUrl 推断默认缓存策略 */
@@ -47,6 +49,7 @@ export function inferContextWindow(modelId: string): number {
 /**
  * 基于模型 ID 推断是否支持图片输入（vision）。
  * 默认 true（现代模型大多支持 vision，仅对已知纯文本模型返回 false）。
+ * 当 ModelConfig.supportsVision 未设置时作为兜底推断。
  */
 export function inferVisionSupport(modelId: string): boolean {
   const lower = modelId.toLowerCase()

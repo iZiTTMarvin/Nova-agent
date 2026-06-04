@@ -50,6 +50,9 @@ function hasVisibleBlocks(blocks: RendererMessageBlock[] | undefined, mode: Mode
     if (block.type === 'thinking' || block.type === 'text') {
       return block.content.trim().length > 0
     }
+    if (block.type === 'image') {
+      return true
+    }
     return shouldRenderToolBlock(mode, block.toolName)
   })
 }

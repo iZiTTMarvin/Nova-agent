@@ -27,11 +27,12 @@ import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
-import type { SessionMessage, SessionToolCall } from '../../runtime/sessions/types'
+import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
+import { extractTextFromSerializableContent } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
 import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
-import { getModeInstruction } from '../../runtime/agent/modeInstruction'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
+import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
 
@@ -108,7 +109,7 @@ export function registerAgentHandler(
   getModelClient: () => ModelClient | null
 ): void {
   // 发送消息命令
-  ipcMain.handle(SEND_MESSAGE, async (_event, params: { sessionId: string; content: string }): Promise<void> => {
+  ipcMain.handle(SEND_MESSAGE, async (_event, params: { sessionId: string; content: string; images?: Array<{ fileName: string; data: string; mimeType: string }> }): Promise<void> => {
     const modelClient = getModelClient()
     if (!modelClient) {
       throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
@@ -141,7 +142,7 @@ export function registerAgentHandler(
     // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
     const persistedConfig = loadModelConfig(app.getPath('userData'))
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
-    const supportsVision = inferVisionSupport(persistedConfig?.modelId ?? '')
+    const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
 
     const eventBus = new EventBus()
     agentLoop = new AgentLoop(modelClient, eventBus, {
@@ -158,7 +159,7 @@ export function registerAgentHandler(
           .map((m, idx) => ({
             id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
             role: m.role as SessionMessage['role'],
-            content: typeof m.content === 'string' ? m.content : m.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n'),
+            content: extractTextFromSerializableContent(m.content),
             toolCalls: m.toolCalls?.map(tc => ({
               id: tc.id,
               name: tc.name,
@@ -201,13 +202,40 @@ export function registerAgentHandler(
     })
     agentLoop.setCheckpointManager(checkpointManager)
 
-    // 持久化增强后的 user 消息内容（含模式指令），保证内存和磁盘字节一致，
-    // 避免跨轮重建历史时产生缓存接缝（C2 前缀稳定化核心要求）
-    const augmentedContent = `${params.content}\n\n${getModeInstruction(session.mode)}`
+    // 构建用户消息内容（含图片时为 ContentBlock[]，否则为 string）
+    // modeInstruction 统一由 AgentLoop.sendMessage 追加，持久化中不包含
+    let sendContent: string | ContentBlock[]
+    let persistContent: string | SerializableContentBlock[]
+    const persistBlocks: import('../../shared/session/types').MessageBlock[] = []
+
+    if (params.images && params.images.length > 0) {
+      const imageContentBlocks: ContentBlock[] = [
+        { type: 'text', text: params.content },
+        ...params.images.map(img => ({
+          type: 'image_url' as const,
+          image_url: { url: img.data }
+        }))
+      ]
+      // ContentBlock 与 SerializableContentBlock 结构兼容，复用同一数组
+      sendContent = imageContentBlocks
+      persistContent = imageContentBlocks as SerializableContentBlock[]
+      persistBlocks.push({ type: 'text', content: params.content })
+      persistBlocks.push(...params.images.map(img => ({
+        type: 'image' as const,
+        fileName: img.fileName,
+        dataUrl: img.data,
+        mimeType: img.mimeType
+      })))
+    } else {
+      sendContent = params.content
+      persistContent = params.content
+    }
+
     const userMessage: SessionMessage = {
       id: `msg_${Date.now()}_user`,
       role: 'user',
-      content: augmentedContent,
+      content: persistContent,
+      blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
       timestamp: Date.now()
     }
     sessionStore.appendMessage(params.sessionId, userMessage)
@@ -223,7 +251,7 @@ export function registerAgentHandler(
       })
     })
 
-    await agentLoop.sendMessage(params.content)
+    await agentLoop.sendMessage(sendContent)
   })
 
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {

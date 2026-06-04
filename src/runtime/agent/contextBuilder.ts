@@ -9,7 +9,7 @@
  * - thinking 内容不进入模型上下文
  * - assistant 的 toolCalls 恢复为结构化 tool_calls，result 拆成独立 tool 消息
  */
-import type { ChatMessage } from '../model/types'
+import type { ChatMessage, ContentBlock } from '../model/types'
 import type { SessionData } from '../sessions/types'
 import type { Mode } from '../../shared/session/types'
 
@@ -72,10 +72,10 @@ export function buildConversationContext(
       continue
     }
 
-    // user 消息：原样保留
+    // user 消息：原样保留（content 可能是 string 或 ContentBlock[]）
     context.push({
       role: msg.role,
-      content: msg.content
+      content: msg.content as string | ContentBlock[]
     })
   }
 

@@ -1,9 +1,9 @@
 import { create } from 'zustand'
-import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message, MessageBlock, ThinkingBlock, TextBlock, ToolBlock } from '../../shared/session/types'
+import type { Mode, PermissionDecision, Session, SessionDetail, ToolCall, Message, MessageBlock, ThinkingBlock, TextBlock, ToolBlock, ImageBlock } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
-import { inferContextWindow } from '../../shared/config/types'
+import { inferContextWindow, inferVisionSupport } from '../../shared/config/types'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 
 /**
@@ -25,7 +25,7 @@ export interface ExtendedToolCall extends ToolCall {
 export type RendererToolBlock = ToolBlock & { argumentsRaw?: string }
 
 /** 渲染器专用顺序消息块类型，ToolBlock 使用携带 argumentsRaw 的扩展版本 */
-export type RendererMessageBlock = ThinkingBlock | TextBlock | RendererToolBlock
+export type RendererMessageBlock = ThinkingBlock | TextBlock | RendererToolBlock | ImageBlock
 
 /** 
  * 扩展的单条聊天消息接口
@@ -1086,3 +1086,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingVerificationRequest: null })
   }
 }))
+
+/** 可复用的 selector：当前模型是否支持图片输入 */
+export const selectSupportsVision = (state: AppState): boolean => {
+  const modelId = state.modelConfig?.modelId ?? ''
+  return state.modelConfig?.supportsVision ?? inferVisionSupport(modelId)
+}

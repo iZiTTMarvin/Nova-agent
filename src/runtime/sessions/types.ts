@@ -34,11 +34,28 @@ export interface SessionData {
   frozenSystemPrompt?: string
 }
 
+/** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */
+export type SerializableContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+/** 从 string | SerializableContentBlock[] 中提取纯文本 */
+export function extractTextFromSerializableContent(
+  content: string | SerializableContentBlock[]
+): string {
+  if (typeof content === 'string') return content
+  return content
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map(b => b.text)
+    .join('\n')
+}
+
 /** 会话中单条消息的持久化格式 */
 export interface SessionMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
-  content: string
+  /** 消息内容。纯文本为 string，含图片时为 ContentBlock[]（兼容旧会话的 string 格式） */
+  content: string | SerializableContentBlock[]
   /** assistant 消息可携带工具调用 */
   toolCalls?: SessionToolCall[]
   /** 顺序块数组，按流式事件顺序排列 */

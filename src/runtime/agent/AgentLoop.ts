@@ -165,7 +165,7 @@ export class AgentLoop {
    * 发送用户消息并启动循环
    * 发射 message_start → (流式 text_delta / tool_call / tool_result) → message_end
    */
-  async sendMessage(content: string): Promise<void> {
+  async sendMessage(content: string | ContentBlock[]): Promise<void> {
     if (this.state === 'running') {
       this.eventBus.emit({ type: 'error', messageId: '', error: '当前正在执行中，请先取消' })
       return
@@ -178,9 +178,16 @@ export class AgentLoop {
 
     // 将用户消息加入上下文，模式指令附加在尾部（不改前缀，缓存 Harness 核心）
     const modeInstruction = getModeInstruction(this.mode)
+    let userContent: string | ContentBlock[]
+    if (typeof content === 'string') {
+      userContent = `${content}\n\n${modeInstruction}`
+    } else {
+      // ContentBlock[] 时，将模式指令追加为末尾 text block
+      userContent = [...content, { type: 'text', text: modeInstruction }]
+    }
     const userMessage: ChatMessage = {
       role: 'user',
-      content: `${content}\n\n${modeInstruction}`
+      content: userContent
     }
     this.context.push(userMessage)
 

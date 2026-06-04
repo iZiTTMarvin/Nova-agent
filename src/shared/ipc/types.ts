@@ -19,7 +19,16 @@ export interface IpcCommands {
     result: string | null
   }
   'send-message': {
-    params: { sessionId: string; content: string }
+    params: {
+      sessionId: string
+      content: string
+      images?: Array<{
+        fileName: string
+        /** base64 data: URI（renderer 端 FileReader.readAsDataURL 编码） */
+        data: string
+        mimeType: string
+      }>
+    }
     result: void
   }
   'cancel-execution': {

@@ -38,8 +38,17 @@ export interface ToolBlock {
   result?: string
 }
 
+/** 图片块（用户消息中携带的图片，用于 UI 流式渲染） */
+export interface ImageBlock {
+  type: 'image'
+  fileName: string
+  /** base64 data: URI，可直接作为 <img src> 渲染 */
+  dataUrl: string
+  mimeType: string
+}
+
 /** 顺序消息块：按流式事件的到达顺序排列 */
-export type MessageBlock = ThinkingBlock | TextBlock | ToolBlock
+export type MessageBlock = ThinkingBlock | TextBlock | ToolBlock | ImageBlock
 
 // ── 消息类型 ──────────────────────────────────────────────
 
