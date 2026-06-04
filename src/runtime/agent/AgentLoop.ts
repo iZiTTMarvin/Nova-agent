@@ -19,9 +19,10 @@ import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
 import { getModeInstruction } from './modeInstruction'
-import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold } from './compaction'
+import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold, rollbackBefore } from './compaction'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
+import { estimateContextTokens } from './tokenEstimator'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
@@ -79,6 +80,15 @@ export class AgentLoop {
 
   /** 截断管道：用于工具输出超限时进行结构化截断 */
   private truncationPipeline = createTruncationPipeline()
+
+  /** 上下文溢出重试标志（防止同一轮无限循环） */
+  private contextOverflowRetryAttempted = false
+  /** 是否正在执行溢出压缩（用于守卫正常压缩逻辑） */
+  private compressingForOverflow = false
+  /** 缓存上次估算的 token 数，用于判断守卫 */
+  private lastEstimatedTokens = 0
+  /** 压缩层级计数 */
+  private compactionLevel = 0
 
   constructor(
     modelClient: ModelClient,
@@ -175,6 +185,7 @@ export class AgentLoop {
     this.state = 'running'
     this.cancelled = false
     this.abortController = new AbortController()
+    this.contextOverflowRetryAttempted = false
 
     // 将用户消息加入上下文，模式指令附加在尾部（不改前缀，缓存 Harness 核心）
     const modeInstruction = getModeInstruction(this.mode)
@@ -202,10 +213,17 @@ export class AgentLoop {
       while (toolRound < this.maxToolRounds) {
         if (this.cancelled) break
 
-        // 上下文压缩检查（缓存 Harness：先插入再压缩）
-        const compactionThreshold = getCompactionThreshold(this.config.contextWindow ?? 200_000)
-        if (shouldCompact(this.context, compactionThreshold)) {
-          await this.runCompaction()
+        let shouldRetryChat = false
+
+        // 上下文压缩检查：跳过正在执行溢出压缩的轮次
+        if (!this.compressingForOverflow) {
+          const compactionThreshold = getCompactionThreshold(this.config.contextWindow ?? 200_000)
+          // 2.4 守卫：使用上轮估算/API实际报告的 token 数和当前实时估算中的较大值作为判断依据，防范反复触发
+          const currentTokens = estimateContextTokens(this.context)
+          const tokensToCompare = Math.max(currentTokens, this.lastEstimatedTokens)
+          if (shouldCompact(this.context, compactionThreshold, tokensToCompare)) {
+            await this.runCompaction()
+          }
         }
 
         // 获取工具定义（如果有 registry），始终传全部工具（缓存 Harness：工具集恒定）
@@ -277,6 +295,31 @@ export class AgentLoop {
               this.cancelled = true
               break
 
+            case 'context_overflow': {
+              if (this.contextOverflowRetryAttempted) {
+                this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
+                this.state = 'error'
+                return
+              }
+              this.contextOverflowRetryAttempted = true
+
+              const standardOk = await this.runOverflowCompaction('standard')
+              if (standardOk) {
+                shouldRetryChat = true
+                break
+              }
+
+              const aggressiveOk = await this.runOverflowCompaction('aggressive')
+              if (aggressiveOk) {
+                shouldRetryChat = true
+                break
+              }
+
+              this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
+              this.state = 'error'
+              return
+            }
+
             case 'error':
               this.eventBus.emit({ type: 'error', messageId, error: event.error })
               this.state = 'error'
@@ -307,6 +350,10 @@ export class AgentLoop {
 
         if (this.cancelled) break
 
+        if (shouldRetryChat) {
+          continue
+        }
+
         // 将 assistant 回复（含 tool_calls）加入上下文
         const assistantMsg: ChatMessage = {
           role: 'assistant',
@@ -316,6 +363,9 @@ export class AgentLoop {
           assistantMsg.toolCalls = toolCalls
         }
         this.context.push(assistantMsg)
+
+        // 每次成功调用模型后更新估算 token 计数
+        this.lastEstimatedTokens = estimateContextTokens(this.context)
 
         // 如果模型没有调用工具，本轮结束
         if (toolCalls.length === 0 || finishReason !== 'tool_calls') {
@@ -419,7 +469,7 @@ export class AgentLoop {
     const systemMsg = this.context.find(m => m.role === 'system')
     const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
 
-    const [oldMessages, recentMessages] = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
+    const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
     if (oldMessages.length === 0) return
 
     // 构建压缩上下文：旧消息 + 压缩指令（追加到尾部，不改前缀）
@@ -456,6 +506,8 @@ export class AgentLoop {
 
     // 重建上下文
     this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages)
+    this.compactionLevel++
+    this.lastEstimatedTokens = estimateContextTokens(this.context)
 
     // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
     this.cacheDiagnostics.resetBaseline(
@@ -606,6 +658,122 @@ export class AgentLoop {
     if (entry) {
       this.pendingPermissions.delete(requestId)
       entry.resolve(granted)
+    }
+  }
+
+  /**
+   * 上下文溢出紧急压缩
+   * 参考 OpenClacky llm_caller.rb perform_context_overflow_compression (L426-517)
+   *
+   * @param mode 'standard' (pull_back=1, 保缓存) 或 'aggressive' (pull_back≈一半, 保生存)
+   * @returns true 表示压缩成功，应重试原始请求；false 表示压缩失败或不可用
+   */
+  private async runOverflowCompaction(mode: 'standard' | 'aggressive'): Promise<boolean> {
+    const pullBack = mode === 'aggressive'
+      ? Math.max(4, Math.min(
+          Math.floor(this.context.length / 2),
+          this.context.length - 2,
+          64))
+      : 1
+
+    this.compressingForOverflow = true
+    let compressionPointIndex = -1
+    const pulledBackMessages: ChatMessage[] = []
+
+    const rollbackAndRestore = () => {
+      if (compressionPointIndex >= 0) {
+        this.context = rollbackBefore(this.context, compressionPointIndex)
+      }
+      pulledBackMessages.forEach(m => this.context.push(m))
+    }
+
+    try {
+      // 1. 从 this.context 末尾弹出 pullBack 条消息
+      for (let i = 0; i < pullBack && this.context.length > 2; i++) {
+        const popped = this.context.pop()!
+        if (popped.role !== 'system') {
+          pulledBackMessages.unshift(popped)
+        } else {
+          this.context.push(popped) // 不弹 system，放回
+          break
+        }
+      }
+
+      // 2. 强制触发压缩
+      const systemMsg = this.context.find(m => m.role === 'system')
+      const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
+      const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
+
+      if (oldMessages.length === 0) {
+        // [修复] 当 oldMessages 为空早退时，将刚才弹出的 pulledBackMessages 推回，避免消息丢失
+        pulledBackMessages.forEach(m => this.context.push(m))
+        return false
+      }
+
+      // 3. 构建压缩上下文，追加到 this.context
+      const lastMsg = this.context[this.context.length - 1]
+      const needsAssistantBridge = lastMsg?.role === 'user'
+      compressionPointIndex = this.context.length
+
+      const compactionMessages: ChatMessage[] = [
+        ...(needsAssistantBridge
+          ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
+          : []),
+        { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length), internal: true }
+      ]
+      this.context.push(...compactionMessages)
+
+      // 4. 调用模型获取摘要
+      let summary = ''
+      const stream = this.modelClient.chat(this.context, undefined, {
+        abortSignal: this.abortController?.signal
+      })
+      for await (const event of stream) {
+        if (this.cancelled) {
+          rollbackAndRestore()
+          return false
+        }
+        if (event.type === 'text_delta') {
+          summary += event.delta
+        }
+        if (event.type === 'context_overflow') {
+          // 压缩调用本身也溢出了，回滚后返回 false 让上层升级到 aggressive
+          rollbackAndRestore()
+          return false
+        }
+        if (event.type === 'error') {
+          rollbackAndRestore()
+          return false
+        }
+      }
+
+      if (!summary.trim()) {
+        rollbackAndRestore()
+        return false
+      }
+
+      // 5. 成功：重建上下文 + 追加 pulledBack
+      this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages, pulledBackMessages)
+      this.compactionLevel++
+
+      // 重置 token 估算，防止下轮立即重新触发压缩
+      this.lastEstimatedTokens = estimateContextTokens(this.context)
+
+      // 重置缓存诊断基线
+      this.cacheDiagnostics.resetBaseline(
+        extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
+        this.toolRegistry?.getToolDefinitions()
+      )
+
+      // 通知外部持久化
+      this.config.onCompaction?.(this.context)
+
+      return true
+    } catch {
+      rollbackAndRestore()
+      return false
+    } finally {
+      this.compressingForOverflow = false
     }
   }
 

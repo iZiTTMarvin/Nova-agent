@@ -4,6 +4,7 @@ import {
   splitForCompaction,
   buildCompactionPrompt,
   rebuildWithCompression,
+  rollbackBefore,
   COMPACTION_THRESHOLD,
   MIN_RECENT_MESSAGES
 } from '../../../../src/runtime/agent/compaction'
@@ -70,21 +71,21 @@ describe('compaction', () => {
   describe('splitForCompaction', () => {
     it('保留最近 N 条消息', () => {
       const messages = makeMessages(30)
-      const [old, recent] = splitForCompaction(messages, 10)
+      const { oldMessages: old, recentMessages: recent } = splitForCompaction(messages, 10)
       expect(recent).toHaveLength(10)
       expect(old.length).toBeGreaterThan(0)
     })
 
     it('消息数不足 recentCount 时 old 为空', () => {
       const messages = makeMessages(5)
-      const [old, recent] = splitForCompaction(messages, 10)
+      const { oldMessages: old, recentMessages: recent } = splitForCompaction(messages, 10)
       expect(old).toHaveLength(0)
       expect(recent).toHaveLength(5)
     })
 
     it('system 消息不出现在 old 或 recent 中', () => {
       const messages = makeMessages(30)
-      const [old, recent] = splitForCompaction(messages, 10)
+      const { oldMessages: old, recentMessages: recent } = splitForCompaction(messages, 10)
       expect(old.every(m => m.role !== 'system')).toBe(true)
       expect(recent.every(m => m.role !== 'system')).toBe(true)
     })
@@ -111,7 +112,7 @@ describe('compaction', () => {
       ]
 
       // 保留最近 5 条，切点本应落在 tool 消息上
-      const [old, recent] = splitForCompaction(messages, 5)
+      const { oldMessages: old, recentMessages: recent } = splitForCompaction(messages, 5)
 
       // recent 不应以 tool 消息开头（孤儿 tool）
       expect(recent[0].role).not.toBe('tool')
@@ -143,7 +144,7 @@ describe('compaction', () => {
       ]
 
       // 保留最近 3 条：预期 recent = [user:q3, assistant:a3] + 可能更多
-      const [old, recent] = splitForCompaction(messages, 3)
+      const { oldMessages: old, recentMessages: recent } = splitForCompaction(messages, 3)
 
       // recent 不应以 tool 开头
       expect(recent[0].role).not.toBe('tool')
@@ -203,6 +204,69 @@ describe('compaction', () => {
       expect(result).toHaveLength(3) // system(+摘要) + 2 recent
       expect(result[1]).toEqual(recent[0])
       expect(result[2]).toEqual(recent[1])
+    })
+
+    it('重建时携带 pulledBackMessages', () => {
+      const recent: ChatMessage[] = [{ role: 'user', content: 'recent' }]
+      const pb: ChatMessage[] = [{ role: 'assistant', content: 'pulled' }]
+      const result = rebuildWithCompression('system', 'summary', recent, pb)
+      expect(result).toHaveLength(3) // system(+摘要) + 1 recent + 1 pulledBack
+      expect(result[2]).toEqual(pb[0])
+    })
+  })
+
+  describe('rollbackBefore', () => {
+    it('回滚到指定索引之前', () => {
+      const messages: ChatMessage[] = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' }
+      ]
+      const result = rollbackBefore(messages, 2)
+      expect(result).toHaveLength(2)
+      expect(result[0]).toEqual(messages[0])
+      expect(result[1]).toEqual(messages[1])
+    })
+
+    it('越界或负数索引返回原 context', () => {
+      const messages = makeMessages(3)
+      expect(rollbackBefore(messages, -1)).toEqual(messages)
+      expect(rollbackBefore(messages, 10)).toEqual(messages)
+    })
+  })
+
+  describe('splitForCompaction with pullBackFromTail', () => {
+    it('从 recentMessages 末尾弹出指定数量的消息', () => {
+      const messages = makeMessages(30)
+      const { oldMessages, recentMessages, pulledBackMessages } = splitForCompaction(messages, 10, 3)
+      expect(recentMessages).toHaveLength(7) // 10 - 3 = 7
+      expect(pulledBackMessages).toHaveLength(3)
+      expect(oldMessages.length).toBeGreaterThan(0)
+    })
+
+    it('弹出消息时不破坏工具调用组对齐（工具在尾部被弹走，assistant 也跟着弹走）', () => {
+      const messages: ChatMessage[] = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'q1' },
+        { role: 'assistant', content: 'thinking', toolCalls: [
+          { id: 'tc1', name: 'read', arguments: '{}' }
+        ]},
+        { role: 'tool', content: 'file content', toolCallId: 'tc1' },
+        { role: 'user', content: 'q2' }
+      ]
+
+      // split 并弹出 1 条消息（user: q2）
+      const result1 = splitForCompaction(messages, 4, 1)
+      expect(result1.pulledBackMessages).toHaveLength(1)
+      expect(result1.pulledBackMessages[0].role).toBe('user')
+
+      // 如果弹出 2 条消息（原本是 tool 和 q2，会触发边界对齐将整个工具组弹走）
+      const result2 = splitForCompaction(messages, 4, 2)
+      // 弹出后，recentMessages 结尾不能是孤儿 toolCall
+      // 本例中最近消息最多保留 4 条，包含 assistant + tool + q2，现在要从尾部弹 2 条
+      // 分界线指向 tool。由于 alignPullBackBoundary，分界线会前移，把 assistant 和 tool 也一起弹走
+      expect(result2.pulledBackMessages.some(m => m.role === 'assistant')).toBe(true)
+      expect(result2.recentMessages.every(m => m.role !== 'tool' && !m.toolCalls)).toBe(true)
     })
   })
 })

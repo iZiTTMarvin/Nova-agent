@@ -9,6 +9,7 @@ import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker } from './messageFormat'
 import type { CacheStrategy } from '../../shared/config/types'
+import { isContextOverflowError } from '../agent/contextOverflow'
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
@@ -84,7 +85,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     if (!response.ok) {
       const text = await response.text().catch(() => 'unknown')
-      yield { type: 'error', error: `API 错误 ${response.status}: ${text}` }
+      if (response.status === 400 && isContextOverflowError(400, text)) {
+        yield { type: 'context_overflow', rawError: text }
+      } else {
+        yield { type: 'error', error: `API 错误 ${response.status}: ${text}` }
+      }
       return
     }
 

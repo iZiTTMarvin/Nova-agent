@@ -28,13 +28,19 @@ export function getCompactionThreshold(contextWindow: number): number {
 
 /**
  * 判断当前上下文是否需要压缩
+ *
+ * @param context 当前上下文
+ * @param threshold 触发压缩的 token 阈值
+ * @param estimatedTokens 可选。预先估算或上轮 API 实际返回的较新 token 计数（用于守卫判断防范反复触发）
  */
 export function shouldCompact(
   context: ChatMessage[],
-  threshold: number = COMPACTION_THRESHOLD
+  threshold: number = COMPACTION_THRESHOLD,
+  estimatedTokens?: number
 ): boolean {
   if (context.length <= MIN_RECENT_MESSAGES + 2) return false
-  return estimateContextTokens(context) > threshold
+  const tokens = estimatedTokens ?? estimateContextTokens(context)
+  return tokens > threshold
 }
 
 /**
@@ -67,7 +73,8 @@ export function buildCompactionPrompt(recentCount: number): string {
 export function rebuildWithCompression(
   systemPrompt: string,
   summary: string,
-  recentMessages: ChatMessage[]
+  recentMessages: ChatMessage[],
+  pulledBackMessages?: ChatMessage[]
 ): ChatMessage[] {
   const context: ChatMessage[] = []
 
@@ -80,38 +87,76 @@ export function rebuildWithCompression(
   // 追加最近 N 条消息
   context.push(...recentMessages)
 
+  // 如果有被弹出的消息，追加入重建后的上下文尾部
+  if (pulledBackMessages && pulledBackMessages.length > 0) {
+    context.push(...pulledBackMessages)
+  }
+
   return context
+}
+
+/**
+ * 将上下文回滚到指定索引之前
+ * 参考 OpenClacky message_history.rb rollback_before
+ *
+ * @param context 当前上下文
+ * @param markerIndex 要回滚到的位置（此位置及之后的消息被移除）
+ * @returns 截断后的上下文
+ */
+export function rollbackBefore(context: ChatMessage[], markerIndex: number): ChatMessage[] {
+  if (markerIndex < 0 || markerIndex >= context.length) return context
+  return context.slice(0, markerIndex)
 }
 
 /**
  * 从上下文中提取需要压缩的旧消息和保留的最近消息
  *
- * 切点会对齐到工具调用组边界，避免切碎 assistant(toolCalls) + tool(result) 配对，
- * 防止重建后出现孤儿 tool 消息导致 API 400 错误。
+ * 切点会对齐到工具调用组边界，避免切碎 assistant(toolCalls) + tool(result) 配对。
+ * 支持 `pullBackFromTail` 以便在溢出时弹出末尾消息，弹出消息同样会对齐到工具调用组边界，
+ * 避免破坏压缩时发送的 compactionContext 中工具调用与工具结果的完整性。
  *
- * @returns [oldMessages, recentMessages] 元组
+ * @returns 包含 oldMessages、recentMessages 和 pulledBackMessages 的对象
  */
 export function splitForCompaction(
   context: ChatMessage[],
-  recentCount: number = MIN_RECENT_MESSAGES
-): [ChatMessage[], ChatMessage[]] {
+  recentCount: number = MIN_RECENT_MESSAGES,
+  pullBackFromTail: number = 0
+): { oldMessages: ChatMessage[]; recentMessages: ChatMessage[]; pulledBackMessages: ChatMessage[] } {
   const nonSystemMessages = context.filter(m => m.role !== 'system')
 
   if (nonSystemMessages.length <= recentCount) {
-    return [[], nonSystemMessages]
+    let splitIndex = nonSystemMessages.length - pullBackFromTail
+    if (splitIndex < 1) splitIndex = 1 // 至少保留一条
+    splitIndex = alignPullBackBoundary(nonSystemMessages, splitIndex)
+
+    return {
+      oldMessages: [],
+      recentMessages: nonSystemMessages.slice(0, splitIndex),
+      pulledBackMessages: nonSystemMessages.slice(splitIndex)
+    }
   }
 
   let splitIndex = nonSystemMessages.length - recentCount
-
-  // 向前对齐到工具调用组边界：
-  // 如果切点落在 tool 消息上，说明它属于前面某个 assistant(toolCalls) 的配对，
-  // 需要把切点前移到该 assistant 消息之前，保证整个组都在同一侧。
   splitIndex = alignToToolGroupBoundary(nonSystemMessages, splitIndex)
 
-  return [
-    nonSystemMessages.slice(0, splitIndex),
-    nonSystemMessages.slice(splitIndex)
-  ]
+  const oldMessages = nonSystemMessages.slice(0, splitIndex)
+  let recentMessages = nonSystemMessages.slice(splitIndex)
+
+  let pulledBackMessages: ChatMessage[] = []
+  if (pullBackFromTail > 0) {
+    let pbIndex = recentMessages.length - pullBackFromTail
+    if (pbIndex < 1) pbIndex = 1 // 至少保留一条最近消息以匹配 API 结构
+    pbIndex = alignPullBackBoundary(recentMessages, pbIndex)
+
+    pulledBackMessages = recentMessages.slice(pbIndex)
+    recentMessages = recentMessages.slice(0, pbIndex)
+  }
+
+  return {
+    oldMessages,
+    recentMessages,
+    pulledBackMessages
+  }
 }
 
 /**
@@ -127,14 +172,39 @@ function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: number): 
   }
 
   // 如果前移后落到了带 toolCalls 的 assistant 上，也要把它纳入 recent 侧
+  const msg = messages[splitIndex]
   if (
     splitIndex > 0 &&
-    messages[splitIndex]?.role === 'assistant' &&
-    messages[splitIndex]?.toolCalls &&
-    messages[splitIndex].toolCalls!.length > 0
+    msg?.role === 'assistant' &&
+    msg.toolCalls &&
+    msg.toolCalls.length > 0
   ) {
     splitIndex--
   }
 
   return Math.max(0, splitIndex)
+}
+
+/**
+ * 弹出消息时的边界对齐
+ *
+ * 如果切点落在 tool 消息上，或者在切点后的 tool 被弹走但带 toolCalls 的 assistant 留在 recentMessages，
+ * 我们需要前移切点，把这一整组工具调用消息全部划入 pulledBackMessages，避免 recent 结尾留下孤儿 toolCalls。
+ */
+function alignPullBackBoundary(messages: ChatMessage[], pbIndex: number): number {
+  while (pbIndex > 0 && messages[pbIndex]?.role === 'tool') {
+    pbIndex--
+  }
+
+  const msg = messages[pbIndex]
+  if (
+    pbIndex > 0 &&
+    msg?.role === 'assistant' &&
+    msg.toolCalls &&
+    msg.toolCalls.length > 0
+  ) {
+    pbIndex--
+  }
+
+  return Math.max(0, pbIndex)
 }

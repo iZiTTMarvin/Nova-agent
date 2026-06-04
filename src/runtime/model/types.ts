@@ -97,4 +97,5 @@ export type ChatEvent =
   | { type: 'message_end'; finishReason: 'stop' | 'tool_calls' | string }
   | { type: 'usage'; usage: NormalizedUsage }
   | { type: 'error'; error: string }
+  | { type: 'context_overflow'; rawError: string }
   | { type: 'cancelled' }

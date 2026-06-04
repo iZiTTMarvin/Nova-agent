@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { withFileMutationQueue } from '../../../../src/runtime/tools/editTool'
+import { withFileMutationQueue } from '../../../../src/runtime/tools/file-mutation-queue'
 
 describe('fileMutationQueue', () => {
   it('同文件操作串行执行', async () => {

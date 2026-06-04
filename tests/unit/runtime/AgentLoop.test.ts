@@ -589,4 +589,173 @@ describe('AgentLoop', () => {
       expect(messages[compactionUserIdx - 1].role).not.toBe('user')
     }
   })
+
+  it('Layer 1 紧急压缩成功并重试', async () => {
+    const client = new MockModelClient()
+    // 1. 第一轮 chat 返回溢出错误
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+    // 2. 压缩摘要调用返回成功
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '这是紧急摘要。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    // 3. 压缩后重试正常回复
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '终于回复成功了。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: any[] = []
+    eventBus.on(e => events.push(e))
+
+    // 注入足够多的历史（超过 MIN_RECENT_MESSAGES = 20），以进行紧急压缩
+    const history: ChatMessage[] = []
+    for (let i = 0; i < 12; i++) {
+      history.push(
+        { role: 'user', content: `q${i}` },
+        { role: 'assistant', content: `a${i}` }
+      )
+    }
+    loop.injectHistory(history)
+
+    await loop.sendMessage('问题2')
+
+    // 检查最终状态是 idle
+    expect(loop.getState()).toBe('idle')
+    // 并且 events 中没有抛出 error 事件
+    expect(events.some(e => e.type === 'error')).toBe(false)
+    // 最终回复合并了摘要
+    const lastMsg = loop.getContext()[loop.getContext().length - 1]
+    expect(lastMsg.role).toBe('assistant')
+    expect(lastMsg.content).toBe('终于回复成功了。')
+    // 并且第一条 system 消息里带有了摘要
+    expect(loop.getContext()[0].content).toContain('这是紧急摘要。')
+  })
+
+  it('Layer 1 压缩本身溢出后，升级到 Layer 2 压缩成功并重试', async () => {
+    const client = new MockModelClient()
+    // 1. 第一轮 chat 溢出
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+    // 2. Layer 1 压缩调用本身又溢出
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'compaction input too long' }
+      ]
+    })
+    // 3. Layer 2 压缩调用成功返回摘要
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '更深层次的摘要。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    // 4. 重试正常回复
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '回复成功。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+
+    // 注入多条历史消息，使 Layer 2 弹起后依然有消息可以被压缩（至少 44 条非系统消息）
+    const history: ChatMessage[] = []
+    for (let i = 0; i < 22; i++) {
+      history.push(
+        { role: 'user', content: `q${i}` },
+        { role: 'assistant', content: `a${i}` }
+      )
+    }
+    loop.injectHistory(history)
+
+    await loop.sendMessage('最终问题')
+
+    expect(loop.getState()).toBe('idle')
+    expect(loop.getContext()[0].content).toContain('更深层次的摘要。')
+    const lastMsg = loop.getContext()[loop.getContext().length - 1]
+    expect(lastMsg.role).toBe('assistant')
+    expect(lastMsg.content).toBe('回复成功。')
+  })
+
+  it('Layer 1 和 Layer 2 均失败时，向上抛出错误，且上下文恢复原样', async () => {
+    const client = new MockModelClient()
+    // 1. 第一轮 chat 溢出
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+    // 2. Layer 1 压缩失败
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'error', error: 'API Error' }
+      ]
+    })
+    // 3. Layer 2 压缩失败
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'error', error: 'API Error' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+
+    await loop.sendMessage('触发溢出问题')
+
+    // 状态为 error
+    expect(loop.getState()).toBe('error')
+
+    // 发送消息失败后，由于回滚，发送的消息和被弹出的消息均会恢复
+    const lastMsg = loop.getContext()[loop.getContext().length - 1]
+    expect(lastMsg.role).toBe('user')
+    expect(lastMsg.content).toContain('触发溢出问题')
+  })
+
+  it('当没有足够多的历史消息可压缩时（oldMessages为空），紧急压缩应早退且不丢失消息', async () => {
+    const client = new MockModelClient()
+    // 1. 第一轮 chat 溢出
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+
+    // 不注入历史（非系统消息只有 sendMessage 发出的 1 条，它会被弹起，弹起后剩余 0 条，触发 oldMessages 为空 early return）
+    await loop.sendMessage('单独一条消息')
+
+    // 应该因为无可压缩消息且 chat 报错而进入 error 状态
+    expect(loop.getState()).toBe('error')
+
+    // 关键断言：弹起的消息应该被正确推回 context，不能丢失
+    const lastMsg = loop.getContext()[loop.getContext().length - 1]
+    expect(lastMsg.role).toBe('user')
+    expect(lastMsg.content).toContain('单独一条消息')
+  })
 })
