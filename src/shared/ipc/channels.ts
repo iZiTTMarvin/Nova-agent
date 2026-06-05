@@ -41,6 +41,7 @@ export const AGENT_VERIFICATION_PERMISSION_REQUEST = 'agent:verification-permiss
 export const AGENT_VERIFICATION_PERMISSION_CLEARED = 'agent:verification-permission-cleared' as const
 export const AGENT_DIFF_UPDATE = 'agent:diff-update' as const
 export const AGENT_VERIFICATION_RESULT = 'agent:verification-result' as const
+export const AGENT_TODOS_UPDATED = 'agent:todos-updated' as const
 export const AGENT_ERROR = 'agent:error' as const
 export const AGENT_MESSAGE_END = 'agent:message-end' as const
 export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const

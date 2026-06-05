@@ -16,6 +16,11 @@ export function getToolCapability(toolName: string): ToolCapability {
       return 'write'
     case 'bash':
       return 'bash'
+    case 'todo_write':
+      // todo_write 写的是会话级元数据，不动文件系统。
+      // 归为 readonly：plan 模式下可见且可用，UI 不会被染成危险操作色，
+      // PermissionManager 走读类工具的宽松默认规则。
+      return 'readonly'
     default:
       return 'unknown'
   }

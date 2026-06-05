@@ -20,6 +20,8 @@ export function getToolDisplayName(toolName: string): string {
       return '修改文件 (edit)'
     case 'bash':
       return '执行命令 (bash)'
+    case 'todo_write':
+      return '更新任务列表 (todo_write)'
     default:
       return `运行自动化工具 (${toolName})`
   }
@@ -72,6 +74,10 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
     case 'ls': {
       const path = (args.path as string) || ''
       return path ? `列出 ${path}` : '列出目录'
+    }
+    case 'todo_write': {
+      const todos = Array.isArray(args.todos) ? args.todos : []
+      return `正在更新任务列表（${todos.length} 项）`
     }
     default:
       return ''

@@ -4,6 +4,8 @@
  */
 
 import type { ToolDefinition } from '../model/types'
+import type { SessionStore } from '../sessions/SessionStore'
+import type { EventBus } from '../agent/EventBus'
 
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
@@ -18,6 +20,19 @@ export interface ToolContext {
   abortSignal?: AbortSignal
   /** 当前模型是否支持图片输入（vision），用于 readTool 决定是否发送图片 */
   supportsVision?: boolean
+  /**
+   * 会话级状态存储（可选）。
+   * 仅 todo_write 等需要把状态外化到会话的工具使用；其他工具拿不到也无所谓。
+   * 不存在时工具走降级路径，不影响主循环。
+   */
+  sessionStore?: SessionStore
+  /** 当前会话 ID，与 sessionStore 配套使用 */
+  sessionId?: string
+  /**
+   * 事件总线（可选）。提供工具向 main → renderer 链路发送自定义事件的能力。
+   * 当前只 todo_write 使用，emit 'todos_updated' 触发 renderer store 更新。
+   */
+  eventBus?: EventBus
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */

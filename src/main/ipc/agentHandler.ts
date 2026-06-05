@@ -20,6 +20,7 @@ import { findTool } from '../../runtime/tools/findTool'
 import { editTool } from '../../runtime/tools/editTool'
 import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
+import { todoWriteTool } from '../../runtime/tools/todoWriteTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { readManifest } from '../../runtime/checkpoints/manifest'
@@ -189,11 +190,14 @@ export function registerAgentHandler(
     toolRegistry.register(editTool)
     toolRegistry.register(writeTool)
     toolRegistry.register(bashTool)
+    toolRegistry.register(todoWriteTool)
     agentLoop.setToolRegistry(toolRegistry)
 
     const permissionManager = new PermissionManager()
     agentLoop.setPermissionManager(permissionManager)
     agentLoop.setMode(session.mode)
+    // 注入会话上下文：todo_write 工具通过它写会话元数据
+    agentLoop.setSessionContext(sessionStore, params.sessionId)
 
     const checkpointManager = new CheckpointManager({
       checkpointDir: sessionsDir,
@@ -664,6 +668,13 @@ function forwardEventToRenderer(
       webContents.send('agent:verification-permission-cleared', {
         messageId: event.messageId,
         requestId: event.requestId
+      })
+      break
+    case 'todos_updated':
+      webContents.send('agent:todos-updated', {
+        sessionId: event.sessionId,
+        todos: event.todos,
+        view: event.view
       })
       break
     case 'usage':

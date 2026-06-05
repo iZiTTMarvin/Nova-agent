@@ -6,6 +6,7 @@ import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '
 import type { ModelConfig } from '../config'
 import type { DiffEntry, DiffReviewStatus } from '../diff'
 import type { NormalizedUsage } from '../../runtime/model/types'
+import type { TodoItem, TodoViewInfo } from '../todo/types'
 
 // ── renderer → main 命令的参数和返回值 ──────────────────────
 
@@ -175,6 +176,11 @@ export interface IpcEvents {
   'agent:verification-permission-cleared': {
     messageId: string
     requestId: string
+  }
+  'agent:todos-updated': {
+    sessionId: string
+    todos: TodoItem[]
+    view: TodoViewInfo
   }
   'agent:error': {
     messageId: string

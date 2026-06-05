@@ -7,6 +7,7 @@
  * 不支持分支或合并。
  */
 import type { Mode, MessageBlock } from '../../shared/session'
+import type { TodoItem } from '../../shared/todo/types'
 
 /** 会话摘要（用于列表展示，不含完整消息） */
 export interface SessionSummary {
@@ -32,6 +33,12 @@ export interface SessionData {
    * 旧会话可能没有此字段，回退到 getStableSystemPrompt() 重新生成。
    */
   frozenSystemPrompt?: string
+  /**
+   * 会话级 todo 列表（任务外显计划）。
+   * 由 todo_write 工具维护，独立于对话历史：上下文压缩对 todo 完全透明。
+   * 旧会话没有此字段，反序列化后视为空数组。
+   */
+  todos?: TodoItem[]
 }
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */

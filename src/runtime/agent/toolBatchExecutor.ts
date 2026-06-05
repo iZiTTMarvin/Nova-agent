@@ -2,6 +2,8 @@ import type { ChatToolCall } from '../model/types'
 import type { ContentBlock } from '../model/types'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { Mode } from '../../shared/session/types'
+import type { SessionStore } from '../sessions/SessionStore'
+import type { EventBus } from './EventBus'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ImageContent } from '../tools/types'
 import type { AgentEvent } from './types'
@@ -46,6 +48,12 @@ export interface ToolBatchExecutionOptions {
   applyTruncation: (output: string, maxSize: number) => string
   maxParallelToolCalls: number
   toolExecution: 'parallel' | 'sequential'
+  /** 会话级状态存储（透传给 ToolContext；不存在时工具走降级） */
+  sessionStore?: SessionStore | null
+  /** 当前会话 ID（与 sessionStore 配套） */
+  sessionId?: string | null
+  /** 事件总线（供 todo_write 等向 renderer 推送事件） */
+  eventBus?: EventBus | null
 }
 
 interface ToolRunResult {
@@ -66,7 +74,10 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     workingDir: options.workingDir,
     ...(options.checkpointManager ? { checkpointManager: options.checkpointManager } : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-    supportsVision: options.supportsVision
+    supportsVision: options.supportsVision,
+    ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
+    ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(options.eventBus ? { eventBus: options.eventBus } : {})
   }
 }
 

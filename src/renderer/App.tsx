@@ -6,6 +6,7 @@ import { ChatPanel } from './features/chat/ChatPanel'
 import { PermissionPrompt } from './features/permissions/PermissionPrompt'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
+import { useTodoStore } from './features/todo/useTodoStore'
 import './App.css'
 
 function App(): JSX.Element {
@@ -29,6 +30,9 @@ function App(): JSX.Element {
   const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
   const handleVerificationPermissionRequest = useAppStore(state => state.handleVerificationPermissionRequest)
   const clearVerificationPermissionRequest = useAppStore(state => state.clearVerificationPermissionRequest)
+
+  // todo: 由事件总线独立维护，订阅 IPC 即可
+  const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
 
   // 1. 初始化时加载持久化的配置和会话列表
   useEffect(() => {
@@ -102,6 +106,11 @@ function App(): JSX.Element {
       clearVerificationPermissionRequest(data.requestId)
     })
 
+    // 监听：todo 列表更新（task 5 IPC 链路终点）
+    const unsubTodosUpdated = window.api.on('agent:todos-updated', (data) => {
+      applyTodoUpdate({ sessionId: data.sessionId, todos: data.todos, view: data.view })
+    })
+
     // 监听：Agent 本轮思考和应答全部完成
     const unsubMessageEnd = window.api.on('agent:message-end', (data) => {
       handleMessageEnd(data.messageId)
@@ -127,6 +136,7 @@ function App(): JSX.Element {
       unsubVerificationResult()
       unsubVerificationPermissionRequest()
       unsubVerificationPermissionCleared()
+      unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
     }
@@ -144,6 +154,7 @@ function App(): JSX.Element {
     handleVerificationResult,
     handleVerificationPermissionRequest,
     clearVerificationPermissionRequest,
+    applyTodoUpdate,
     handleMessageEnd,
     handleUsage
   ])

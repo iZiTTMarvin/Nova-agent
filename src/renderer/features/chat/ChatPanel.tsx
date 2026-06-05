@@ -25,6 +25,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { UsageStats } from './UsageStats'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
+import { TodoPanel } from '../todo/TodoPanel'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
   fileToImageAttachment,
@@ -37,6 +38,7 @@ import {
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedToolCall, RendererMessageBlock } from '../../stores/useAppStore'
 import './ChatPanel.css'
+import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
 
@@ -469,6 +471,8 @@ export const ChatPanel: React.FC = () => {
       {/* 消息流区域，只有非空状态时才显示并占据空间 */}
       {!isEmptyState && (
         <div className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32" ref={scrollContainerRef} onScroll={handleScroll}>
+          {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
+          <TodoPanel sessionId={currentSessionId} />
 
         {messages.map(msg => {
           const isAssistant = msg.role === 'assistant'

@@ -14,6 +14,7 @@ import type { AgentState, AgentLoopConfig } from './types'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { PermissionManager } from '../permissions/PermissionManager'
+import type { SessionStore } from '../sessions/SessionStore'
 import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
@@ -66,6 +67,12 @@ export class AgentLoop {
 
   /** 权限决策引擎（可选，S7 引入） */
   private permissionManager: PermissionManager | null = null
+
+  /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具） */
+  private sessionStore: SessionStore | null = null
+
+  /** 当前会话 ID，与 sessionStore 配套 */
+  private sessionId: string | null = null
 
   /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
   private pendingPermissions: Map<
@@ -153,6 +160,16 @@ export class AgentLoop {
   /** 设置权限决策引擎 */
   setPermissionManager(manager: PermissionManager): void {
     this.permissionManager = manager
+  }
+
+  /**
+   * 设置会话上下文：把 SessionStore 与当前 sessionId 注入 AgentLoop，
+   * 工具执行时由 toolBatchExecutor 透传到 ToolContext。
+   * todo_write 等需要写会话元数据的工具会用到；其他工具不受影响。
+   */
+  setSessionContext(sessionStore: SessionStore, sessionId: string): void {
+    this.sessionStore = sessionStore
+    this.sessionId = sessionId
   }
 
   /** 动态调整最大工具调用轮数 */
@@ -392,7 +409,10 @@ export class AgentLoop {
           emit: (event) => this.eventBus.emit(event),
           applyTruncation: (output, maxSize) => this.applyTruncation(output, maxSize),
           maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
-          toolExecution: this.config.toolExecution ?? 'parallel'
+          toolExecution: this.config.toolExecution ?? 'parallel',
+          sessionStore: this.sessionStore,
+          sessionId: this.sessionId,
+          eventBus: this.eventBus
         })
 
         if (!batchResult.aborted && !this.cancelled && !this.abortController?.signal.aborted) {

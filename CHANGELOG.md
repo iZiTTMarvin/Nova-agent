@@ -2,6 +2,18 @@
 
 ## 2026-06-05
 
+- **feat**: 新增 `todo_write` 工具：把"当前计划"显式外化为会话级持久化状态
+  - `src/shared/todo/types.ts` + `src/runtime/tools/todoView.ts`：`TodoItem` / `TodoViewInfo` 数据模型与紧凑视图算法（移植自 kilocode `TodoView.calculate`）
+  - `src/runtime/tools/todoWriteTool.ts` + `src/runtime/tools/todoWriteDescription.ts`：模型可调用的 `todo_write` 工具，工具描述是模型行为的唯一合同，含 7 条"应该用"、4 条"不要用"反例与状态机规则
+  - `src/runtime/sessions/types.ts` + `SessionStore.ts`：`SessionData` 新增 `todos` / `lastTodoWrite` 字段；`getTodos` / `updateTodos` 旧格式会话向后兼容
+  - `src/runtime/tools/types.ts` + `src/runtime/agent/toolBatchExecutor.ts` + `AgentLoop.ts`：`ToolContext` 新增 `sessionStore?` / `sessionId?` / `eventBus?` 可选字段并透传，`AgentLoop` 新增 `setSessionContext` 注入接口
+  - `src/runtime/agent/types.ts` + `src/shared/ipc/channels.ts` + `types.ts` + `agentHandler.ts`：新增 `todos_updated` 事件（不参与 AgentLoop 主流程状态机，仅给渲染端订阅）
+  - `src/shared/session/toolVisibility.ts`：`todo_write` 归类为 `readonly`（写的是会话元数据，不动文件系统）
+  - `src/runtime/tools/index.ts` + `agentHandler.ts`：`todo_write` 注册到 `ToolRegistry`
+  - `src/renderer/features/todo/`：`useTodoStore`（按 sessionId 隔离）+ `TodoPanel`（full / compact 两种模式，含折叠信息行）+ `TodoItemRow`（状态图标 + 优先级 chip + 改行高亮）
+  - `src/renderer/App.tsx` + `ChatPanel.tsx`：IPC 事件订阅链路 + 挂载到 `ChatPanel` 顶部
+  - `tests/unit/runtime/tools/todoView.test.ts` + `todoWriteTool.test.ts` + `tests/unit/runtime/sessions/SessionStore.test.ts`（新增 todo 持久化用例）+ `tests/unit/shared/toolVisibility.test.ts` + `tests/unit/runtime/permissions/todoWritePermission.test.ts` + `tests/unit/runtime/EventBus.test.ts`（todos_updated 事件）+ `tests/unit/renderer/todo/useTodoStore.test.ts` 共 80 个新测试
+
 - **Runtime**: 新增工具批量执行调度
   - 只读工具支持并发执行，写入和 shell 工具保持顺序
   - 工具结果事件可按完成顺序发出，但模型上下文仍按原始调用顺序写回

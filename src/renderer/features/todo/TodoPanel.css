@@ -1,0 +1,157 @@
+/**
+ * TodoPanel 样式
+ *
+ * 设计目标：与 nova 整体暖色 / 米白调一致（参考 Sidebar、ChatPanel）。
+ * 优先用项目已有的 CSS 变量（--text-primary、--text-secondary、--border-warm 等），
+ * 状态色挑低饱和度，避免在浅底上刺眼。
+ */
+
+.todo-panel {
+  margin: 12px 16px 0 16px;
+  border: 1px solid var(--border-warm, #e7e0d3);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 13px;
+  transition: box-shadow 0.15s ease;
+}
+
+.todo-panel:hover {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.04);
+}
+
+.todo-panel__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary, #1f1d1a);
+}
+
+.todo-panel__header:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.todo-panel__caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-secondary, #6b6760);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+
+.todo-panel__caret[data-collapsed="true"] {
+  transform: rotate(-90deg);
+}
+
+.todo-panel__title {
+  font-weight: 500;
+  flex: 1;
+  color: var(--text-primary, #1f1d1a);
+}
+
+.todo-panel__progress {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-secondary, #6b6760);
+  background: rgba(201, 100, 66, 0.08);
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+
+.todo-panel__body {
+  border-top: 1px solid var(--border-warm, #ece6da);
+  padding: 6px 4px 8px 4px;
+}
+
+.todo-panel__range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 10px 8px 10px;
+  color: var(--text-secondary, #8a857d);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-panel__items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--text-primary, #1f1d1a);
+  transition: background-color 0.12s ease;
+}
+
+.todo-row--in-progress {
+  background: rgba(56, 152, 236, 0.08);
+}
+
+.todo-row--done {
+  color: var(--text-secondary, #8a857d);
+}
+
+.todo-row--done .todo-row__content {
+  text-decoration: line-through;
+}
+
+.todo-row--changed {
+  animation: todo-changed-flash 0.6s ease-out;
+}
+
+@keyframes todo-changed-flash {
+  0%   { background-color: rgba(201, 100, 66, 0.20); }
+  100% { background-color: transparent; }
+}
+
+.todo-row__glyph {
+  font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--text-secondary, #6b6760);
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.todo-row__content {
+  flex: 1;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.todo-priority {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.todo-priority--high {
+  background: rgba(217, 119, 87, 0.14);
+  color: #c96442;
+}
+
+.todo-priority--medium {
+  background: rgba(184, 156, 95, 0.18);
+  color: #8a6f2a;
+}
+
+.todo-priority--low {
+  background: rgba(120, 120, 120, 0.10);
+  color: #6b6760;
+}

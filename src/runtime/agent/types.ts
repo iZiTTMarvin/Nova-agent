@@ -5,6 +5,7 @@
 import type { DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../model/types'
 import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
+import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
@@ -36,6 +37,16 @@ export type AgentEvent =
   | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult }
   | { type: 'error'; messageId: string; error: string }
   | { type: 'message_end'; messageId: string }
+  | {
+      /**
+       * todo 列表更新事件（不参与 AgentLoop 主流程状态机，仅给渲染端订阅）。
+       * 由 todo_write 工具在写入 store 后同步 emit；payload 含 view，前端不用再算。
+       */
+      type: 'todos_updated'
+      sessionId: string
+      todos: TodoItem[]
+      view: TodoViewInfo
+    }
 
 /** 事件监听回调 */
 export type AgentEventCallback = (event: AgentEvent) => void

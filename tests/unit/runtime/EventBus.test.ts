@@ -52,4 +52,22 @@ describe('EventBus', () => {
     bus.emit({ type: 'message_start', messageId: 'm1' })
     expect(secondReceived).toBe(true)
   })
+
+  it('todos_updated 事件可正常 emit 与订阅', () => {
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on(event => received.push(event))
+
+    bus.emit({
+      type: 'todos_updated',
+      sessionId: 'sess_1',
+      todos: [{ content: 'A', status: 'pending', priority: 'high' }],
+      view: { mode: 'full', todos: [], hiddenBefore: 0, hiddenAfter: 0, changed: 1 }
+    })
+
+    expect(received).toHaveLength(1)
+    expect(received[0].type).toBe('todos_updated')
+    expect(received[0].sessionId).toBe('sess_1')
+    expect(received[0].todos[0].content).toBe('A')
+  })
 })

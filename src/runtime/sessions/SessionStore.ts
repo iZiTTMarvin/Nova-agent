@@ -20,6 +20,7 @@ import { randomUUID } from 'crypto'
 import type { SessionSummary, SessionData, SessionMessage } from './types'
 import { SESSION_DATA_FILE } from './types'
 import type { Mode } from '../../shared/session'
+import type { TodoItem } from '../../shared/todo/types'
 
 export class SessionStore {
   private readonly sessionsDir: string
@@ -129,6 +130,39 @@ export class SessionStore {
     session.updatedAt = Date.now()
     this.save(session)
     return session
+  }
+
+  /**
+   * 读取会话级 todo 列表。旧会话（无 todos 字段）默认返回空数组。
+   * 这是 todo_write 工具读取"写入前快照"和"恢复视图"时的统一入口。
+   */
+  getTodos(sessionId: string): TodoItem[] {
+    const session = this.load(sessionId)
+    if (!session) return []
+    return Array.isArray(session.todos) ? session.todos : []
+  }
+
+  /**
+   * 全量替换会话级 todo 列表（每次写入都是全量替换，与 kilocode 对齐）。
+   * 一次 load 同时承担"读取写入前快照"和"写入"两个职责，避免调用方
+   * 先 getTodos 再 updateTodos 造成的双次读盘。
+   *
+   * 返回：{ session, previousTodos }，或会话不存在时返回 null。
+   * - session：写入后的完整 SessionData（已 save 落盘）
+   * - previousTodos：写入前的旧 todo 列表（空数组等价于"首次创建"）
+   */
+  updateTodos(
+    sessionId: string,
+    todos: TodoItem[]
+  ): { session: SessionData; previousTodos: TodoItem[] } | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    const previousTodos = Array.isArray(session.todos) ? session.todos : []
+    session.todos = todos
+    session.updatedAt = Date.now()
+    this.save(session)
+    return { session, previousTodos }
   }
 
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
