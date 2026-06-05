@@ -78,7 +78,7 @@ interface ToolBoxProps {
   result?: string
 }
 
-const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
+const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ name, args, status, result }) {
   const [isOpen, setIsOpen] = useState(false)
   const shouldHideArguments = isPermissionDeniedResult(result)
   const summary = getToolSummary(name, args)
@@ -151,7 +151,7 @@ const ToolBox: React.FC<ToolBoxProps> = ({ name, args, status, result }) => {
       )}
     </div>
   )
-}
+})
 
 // ── 2.5 解析消息中的思考内容（Windsurf 风格） ─────────────────
 function parseThinking(msg: any, isGenerating: boolean, currentGeneratingMessageId: string | null) {

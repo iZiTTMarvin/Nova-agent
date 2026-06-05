@@ -133,7 +133,13 @@ interface MarkdownRendererProps {
   content: string
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+/**
+ * 用 React.memo 包裹：流式生成期间，每个 text_delta 都会触发 ChatPanel 整体重渲染，
+ * 若不做 memo，所有历史消息的 Markdown 都会被 react-markdown 重新解析、代码块逐行
+ * 重新高亮，产生 O(消息数 × 内容量) 的解析/ DOM 开销，长循环下直接撑爆渲染进程
+ * （Blink/Oilpan OOM 白屏）。content 为字符串，浅比较即可精确命中「内容未变则跳过」。
+ */
+export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({ content }) {
   if (!content) return null
 
   return (
@@ -184,4 +190,4 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
       </ReactMarkdown>
     </div>
   )
-}
+})

@@ -96,11 +96,20 @@ export function parsePartialToolArgs(toolName: string, raw: string): Record<stri
       break
     }
     case 'edit': {
+      // 新 schema：filePath + edits[].oldText/newText；旧 schema：path + old/new。
+      // 两套字段都尝试提取，命中谁用谁，保证 edit 流式预览在新旧格式下都能显示
+      // 文件名与新内容（否则新格式下 StreamingFileCard 会一直显示「未命名文件」）。
+      const filePath = extractPartialString(raw, 'filePath')
       const path = extractPartialString(raw, 'path')
+      const oldText = extractPartialString(raw, 'oldText')
       const oldStr = extractPartialString(raw, 'old')
+      const newText = extractPartialString(raw, 'newText')
       const newStr = extractPartialString(raw, 'new')
+      if (filePath !== undefined) args.filePath = filePath
       if (path !== undefined) args.path = path
+      if (oldText !== undefined) args.oldText = oldText
       if (oldStr !== undefined) args.old = oldStr
+      if (newText !== undefined) args.newText = newText
       if (newStr !== undefined) args.new = newStr
       break
     }

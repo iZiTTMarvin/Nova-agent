@@ -2,6 +2,14 @@
 
 ## 2026-06-05
 
+- **fix**: 修复 Windows 上 `edit` 反复报 "File has not been read yet" 引发的死循环、卡顿与渲染进程 OOM 白屏
+  - `src/runtime/tools/editTool.ts`：`readState` 的 Map 键改为规范化键（`path.normalize` 折叠分隔符 + win32 转小写）。根因是 Windows 文件系统大小写不敏感，但 `read` 写入键与 `edit` 查询键可能因盘符/路径大小写（`D:\` vs `d:\`）不一致而错配，导致 `edit` 误判未读、模型陷入 `read→edit→失败→read` 无限重试
+  - `src/runtime/tools/writeTool.ts`：`write` 成功后回种 `readState`（规范化内容 + 写入后 mtime），消除 `write → edit("未读取") → read → edit` 的多余往返；远程/自定义 ops 取不到本地 mtime 时静默跳过
+  - `src/runtime/agent/AgentLoop.ts` + `src/runtime/agent/toolBatchExecutor.ts`：新增「相同工具调用（名称 + 参数一致）连续失败 3 次熔断」，命中后停止本轮并下发「已自动中断」提示，避免空转烧满 `maxToolRounds` 并向渲染端灌入海量事件；失败判定改用 `ToolExecutionOutcome.failed` 结构化标记（而非从中文 `resultText` 前缀反推），文案本地化不会让熔断失效，并能覆盖"未注册工具"等不以"工具执行失败"开头的失败；参数每轮不同（正常迭代修复）不会被误伤
+  - `src/renderer/features/chat/MarkdownRenderer.tsx` / `StreamingFileCard.tsx` / `ThinkingBlock.tsx` / `ChatPanel.tsx(ToolBox)`：重型渲染组件加 `React.memo`。此前每个流式增量都会让全部历史消息重新做 Markdown 解析与逐行语法高亮，长循环下撑爆 Blink/Oilpan 堆导致白屏 OOM；memo 后仅当前活动消息重渲染
+  - `src/renderer/features/chat/StreamingFileCard.tsx` / `partialJsonArgs.ts` / `toolDisplay.ts`：适配 `edit` 新 schema（`filePath` + `edits[].oldText/newText`），修复 edit 卡片显示「未命名文件」、文件名与新内容为空的问题，同时兼容旧 `path`/`old`/`new` 格式
+  - `tests/unit/runtime/AgentLoop.test.ts` / `tests/unit/runtime/tools/editTool.test.ts` / `tests/unit/renderer/partialJsonArgs.test.ts`：新增熔断（含未注册工具）、`readState` 键大小写无关（win32）、`write→edit` 免读、edit 新 schema 解析共 8 个回归用例
+
 - **feat**: 新增 `todo_write` 工具：把"当前计划"显式外化为会话级持久化状态
   - `src/shared/todo/types.ts` + `src/runtime/tools/todoView.ts`：`TodoItem` / `TodoViewInfo` 数据模型与紧凑视图算法（移植自 kilocode `TodoView.calculate`）
   - `src/runtime/tools/todoWriteTool.ts` + `src/runtime/tools/todoWriteDescription.ts`：模型可调用的 `todo_write` 工具，工具描述是模型行为的唯一合同，含 7 条"应该用"、4 条"不要用"反例与状态机规则

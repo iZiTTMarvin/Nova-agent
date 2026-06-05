@@ -890,4 +890,145 @@ describe('AgentLoop', () => {
     expect(lastMsg.role).toBe('user')
     expect(lastMsg.content).toContain('单独一条消息')
   })
+
+  /**
+   * 回归：对「完全相同的工具调用」反复失败时应触发熔断，
+   * 在达到 REPEATED_FAILURE_LIMIT(3) 次失败后停止本轮循环，
+   * 而不是空转烧满 maxToolRounds 并向渲染进程灌入海量事件（卡顿 / OOM 根因之一）。
+   */
+  it('同一工具调用连续失败达上限时熔断，停止继续调用模型', async () => {
+    const client = new MockModelClient()
+    // 模型每一轮都用「完全相同的参数」调用 badedit 工具（模拟死循环）
+    for (let i = 0; i < 6; i++) {
+      client.addResponse({
+        events: [
+          { type: 'message_start' },
+          {
+            type: 'tool_call',
+            toolCall: { id: `call_${i}`, name: 'badedit', arguments: '{"filePath":"x.ts"}' }
+          },
+          { type: 'message_end', finishReason: 'tool_calls' }
+        ]
+      })
+    }
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'badedit',
+      description: '总是失败的工具',
+      parameters: { type: 'object', properties: { filePath: { type: 'string' } } },
+      async execute(): Promise<ToolResult> {
+        return { success: false, output: '', error: 'File has not been read yet.' }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+
+    const events: any[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('反复触发同一失败调用')
+
+    // 第 3 次失败后熔断：模型只应被调用 3 次（而非 maxToolRounds=20 次）
+    expect(client.getCalls()).toHaveLength(3)
+
+    // 应发出包含「已自动中断」的提示文本
+    const noticed = events.some(
+      (e) => e.type === 'text_delta' && typeof e.delta === 'string' && e.delta.includes('已自动中断')
+    )
+    expect(noticed).toBe(true)
+
+    // 循环正常收尾（idle），并发出 message_end
+    expect(loop.getState()).toBe('idle')
+    expect(events.some((e) => e.type === 'message_end')).toBe(true)
+  })
+
+  /**
+   * 回归：熔断基于结构化 failed 标记，能覆盖"未注册工具"这类
+   * 错误结果不以"工具执行失败"开头的失败（旧的字符串前缀匹配会漏判）。
+   */
+  it('反复调用未注册工具同样触发熔断', async () => {
+    const client = new MockModelClient()
+    for (let i = 0; i < 6; i++) {
+      client.addResponse({
+        events: [
+          { type: 'message_start' },
+          {
+            type: 'tool_call',
+            toolCall: { id: `call_${i}`, name: 'ghost_tool', arguments: '{"x":1}' }
+          },
+          { type: 'message_end', finishReason: 'tool_calls' }
+        ]
+      })
+    }
+
+    // 只注册 ls，ghost_tool 不存在 → 每轮返回"工具不可用"错误（failed: true）
+    const { loop, eventBus } = createLoop(client)
+
+    const events: any[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('反复调用不存在的工具')
+
+    // 第 3 次失败后熔断：模型只应被调用 3 次
+    expect(client.getCalls()).toHaveLength(3)
+    const noticed = events.some(
+      (e) => e.type === 'text_delta' && typeof e.delta === 'string' && e.delta.includes('已自动中断')
+    )
+    expect(noticed).toBe(true)
+  })
+
+  /**
+   * 配套验证：参数每次都不同（模型在迭代修复）时不应被熔断误伤。
+   */
+  it('参数每轮不同的失败调用不会触发熔断', async () => {
+    const client = new MockModelClient()
+    for (let i = 0; i < 5; i++) {
+      client.addResponse({
+        events: [
+          { type: 'message_start' },
+          {
+            type: 'tool_call',
+            toolCall: { id: `call_${i}`, name: 'badedit', arguments: `{"filePath":"x${i}.ts"}` }
+          },
+          { type: 'message_end', finishReason: 'tool_calls' }
+        ]
+      })
+    }
+    // 第 5 轮后给一个正常结束，避免依赖 maxToolRounds 行为
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'badedit',
+      description: '总是失败的工具',
+      parameters: { type: 'object', properties: { filePath: { type: 'string' } } },
+      async execute(): Promise<ToolResult> {
+        return { success: false, output: '', error: 'File has not been read yet.' }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+
+    const events: any[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('每轮参数不同')
+
+    // 不应熔断：不应出现「已自动中断」提示
+    const noticed = events.some(
+      (e) => e.type === 'text_delta' && typeof e.delta === 'string' && e.delta.includes('已自动中断')
+    )
+    expect(noticed).toBe(false)
+  })
 })

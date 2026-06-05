@@ -117,6 +117,20 @@ describe('parsePartialToolArgs', () => {
     expect(result).toEqual({ path: 'a.ts', old: 'foo', new: 'bar' })
   })
 
+  it('edit 新 schema：提取 filePath、oldText、newText', () => {
+    const raw = '{"filePath":"a.ts","edits":[{"oldText":"foo","newText":"bar"}]}'
+    const result = parsePartialToolArgs('edit', raw)
+    expect(result).toEqual({ filePath: 'a.ts', oldText: 'foo', newText: 'bar' })
+  })
+
+  it('edit 新 schema 半截参数：filePath 已收、newText 截断', () => {
+    const raw = '{"filePath":"style.css","edits":[{"oldText":"a","newText":"b'
+    const result = parsePartialToolArgs('edit', raw)
+    expect(result.filePath).toBe('style.css')
+    expect(result.oldText).toBe('a')
+    expect(result.newText).toBe('b')
+  })
+
   it('edit 半截参数', () => {
     const result = parsePartialToolArgs('edit', '{"path":"a.ts","old":"f')
     expect(result).toEqual({ path: 'a.ts', old: 'f' })

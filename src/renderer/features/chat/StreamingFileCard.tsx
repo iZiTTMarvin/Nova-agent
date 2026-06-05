@@ -21,20 +21,29 @@ interface StreamingFileCardProps {
   result?: string
 }
 
-/** 从 args 中提取预览文本：write 取 content，edit 取 new */
+/** 从 args 中提取预览文本：write 取 content，edit 取新内容 */
 function getPreviewContent(toolName: string, args: Record<string, unknown>): string {
   if (toolName === 'write') {
     return (args.content as string) || ''
   }
   if (toolName === 'edit') {
-    return (args.new as string) || ''
+    // 新格式：edits[].newText（可能多处替换，拼接展示）；
+    // 流式/旧格式回退：newText / new。
+    const edits = args.edits
+    if (Array.isArray(edits)) {
+      return edits
+        .map(e => (e && typeof e === 'object' ? ((e as Record<string, unknown>).newText as string) ?? '' : ''))
+        .filter(Boolean)
+        .join('\n\n')
+    }
+    return (args.newText as string) || (args.new as string) || ''
   }
   return ''
 }
 
-/** 从 args 中提取文件路径 */
+/** 从 args 中提取文件路径（兼容新 schema filePath 与旧 schema path） */
 function getFilePath(args: Record<string, unknown>): string {
-  return (args.path as string) || ''
+  return (args.filePath as string) || (args.path as string) || ''
 }
 
 /** 状态对应的徽章文本 */
@@ -44,12 +53,12 @@ function getStatusLabel(toolName: string, status: StreamingFileCardProps['status
   return '修改'
 }
 
-export const StreamingFileCard: React.FC<StreamingFileCardProps> = ({
+export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(function StreamingFileCard({
   toolName,
   status,
   args,
   result
-}) => {
+}) {
   const [isOpen, setIsOpen] = useState(status === 'running')
   const userToggledRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -166,4 +175,4 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = ({
       )}
     </div>
   )
-}
+})

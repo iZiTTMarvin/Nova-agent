@@ -4,11 +4,12 @@
  * 写入前通过 CheckpointManager 备份原始内容
  * 支持 AbortSignal 取消、文件变更队列、可插拔的写入操作
  */
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, stat as fsStat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { withFileMutationQueue } from './file-mutation-queue'
+import { readState } from './editTool'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
 /**
@@ -106,6 +107,24 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
         // 写入文件内容
         await ops.writeFile(absolutePath, content)
         throwIfAborted()
+
+        // 回种 readState：write 刚写出的内容即「已知的最新内容」，
+        // 这样后续 edit 不必再强制 read 一次（否则模型容易陷入 write → edit
+        // ("File has not been read yet") → read → edit 的多余往返甚至死循环）。
+        //
+        // 存储规范化内容（去 BOM + CRLF→LF），与 editTool.safetyGate 的比较口径一致；
+        // timestamp 取写入后的真实 mtime，使得 safetyGate 的「外部修改」判定（仅当
+        // stat.mtime > lastRead.timestamp 时才比较内容）在文件未再被改动时直接跳过。
+        //
+        // 仅对本地文件系统生效：远程/自定义 ops 下 fsStat 取不到本地 mtime 会抛错，
+        // 此时静默跳过回种，不影响写入结果（远程写入本就无法用本地 edit 校验）。
+        try {
+          const written = await fsStat(absolutePath)
+          const normalized = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
+          readState.set(absolutePath, { content: normalized, timestamp: written.mtimeMs })
+        } catch {
+          /* 取不到本地 mtime（远程 ops 等）时跳过回种 */
+        }
 
         return {
           success: true,

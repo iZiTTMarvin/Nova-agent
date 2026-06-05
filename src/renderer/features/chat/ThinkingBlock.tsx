@@ -7,7 +7,7 @@ interface ThinkingBlockProps {
   active?: boolean // 是否正在进行流式输出（思考中）
 }
 
-export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({ thinking, active = false }) => {
+export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function ThinkingBlock({ thinking, active = false }) {
   // 正在思考的块默认展开；历史完成块默认折叠，避免打开旧会话时撑开整屏。
   const [isOpen, setIsOpen] = useState(active)
   // 使用 Date.now() 差值计算真实经过时间，避免主线程卡顿时计时器"停顿再追赶"
@@ -76,4 +76,4 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({ thinking, active =
       </div>
     </details>
   )
-}
+})

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, statSync, utimesSync } 
 import { join } from 'path'
 import { editTool } from '../../../../src/runtime/tools/editTool'
 import { readTool } from '../../../../src/runtime/tools/readTool'
+import { writeTool } from '../../../../src/runtime/tools/writeTool'
 import { readState } from '../../../../src/runtime/tools/editTool'
 import { encodeFile } from '../../../../src/runtime/tools/editDiff'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
@@ -320,5 +321,60 @@ describe('editTool 集成测试', () => {
       createContext()
     )
     expect(result.success).toBe(true)
+  })
+
+  // ── 回归：readState 键规范化 + write 回种（Windows 路径大小写死循环根因） ──
+
+  it.runIf(process.platform === 'win32')(
+    'Windows: read 与 edit 路径大小写不一致时仍视为已读（readState 键大小写无关）',
+    async () => {
+      // 模拟 read 用一种大小写、edit 用另一种大小写的真实场景：
+      // Windows 文件系统大小写不敏感，但若 readState 键大小写敏感，会误判"未读取"
+      // 并触发模型 read→edit→失败→read 的死循环。
+      writeFileSync(join(TMP, 'CaseTest.ts'), 'const a = 1\n')
+      await readTool.execute({ path: 'CaseTest.ts' }, createContext())
+
+      // 用全小写文件名再 edit（指向同一物理文件）
+      const result = await editTool.execute(
+        { filePath: 'casetest.ts', edits: [{ oldText: 'const a = 1', newText: 'const a = 2' }] },
+        createContext()
+      )
+      expect(result.success).toBe(true)
+      expect(readFileSync(join(TMP, 'CaseTest.ts'), 'utf-8')).toContain('const a = 2')
+    }
+  )
+
+  it('write 创建文件后可直接 edit，无需再次 read（write 回种 readState）', async () => {
+    // write 工具写出文件后应回种 readState，避免模型陷入
+    // write → edit("File has not been read yet") → read → edit 的多余往返/死循环。
+    const writeResult = await writeTool.execute(
+      { path: 'fresh.ts', content: 'line1\nline2\n' },
+      createContext()
+    )
+    expect(writeResult.success).toBe(true)
+
+    const editResult = await editTool.execute(
+      { filePath: 'fresh.ts', edits: [{ oldText: 'line1', newText: 'LINE1' }] },
+      createContext()
+    )
+    expect(editResult.success).toBe(true)
+    expect(readFileSync(join(TMP, 'fresh.ts'), 'utf-8')).toBe('LINE1\nline2\n')
+  })
+
+  it('write 覆写已有文件后可直接 edit（回种刷新为最新内容）', async () => {
+    writeFileSync(join(TMP, 'over.ts'), 'old content\n')
+    // 不先 read，直接 write 覆写
+    const writeResult = await writeTool.execute(
+      { path: 'over.ts', content: 'brand new\n' },
+      createContext()
+    )
+    expect(writeResult.success).toBe(true)
+
+    const editResult = await editTool.execute(
+      { filePath: 'over.ts', edits: [{ oldText: 'brand new', newText: 'edited' }] },
+      createContext()
+    )
+    expect(editResult.success).toBe(true)
+    expect(readFileSync(join(TMP, 'over.ts'), 'utf-8')).toBe('edited\n')
   })
 })

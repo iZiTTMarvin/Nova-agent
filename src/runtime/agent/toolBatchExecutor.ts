@@ -15,6 +15,12 @@ export interface ToolExecutionOutcome {
   resultText: string
   resultImages?: ImageContent[]
   skippedByAbort?: boolean
+  /**
+   * 工具是否以失败告终（执行异常 / success=false / 权限拒绝 / 未注册）。
+   * 结构化标记，避免下游（如 AgentLoop 重复失败熔断）从渲染后的中文 resultText
+   * 前缀反推失败状态——文案一旦本地化或调整就会让判定静默失效。
+   */
+  failed?: boolean
 }
 
 interface PreparedToolCall {
@@ -92,7 +98,8 @@ function createErrorOutcome(index: number, toolCall: ChatToolCall, args: Record<
     index,
     toolCall,
     args,
-    resultText
+    resultText,
+    failed: true
   }
 }
 
@@ -172,6 +179,7 @@ async function executePreparedToolCall(
   const toolContext = buildToolContext(options)
   let resultText = ''
   let resultImages: ImageContent[] | undefined
+  let failed = false
 
   try {
     const toolResult = await item.tool.execute(item.args, toolContext)
@@ -190,9 +198,11 @@ async function executePreparedToolCall(
       resultImages = toolResult.images
     } else {
       resultText = `工具执行失败: ${toolResult.error}`
+      failed = true
     }
   } catch (err) {
     resultText = `工具执行失败: ${(err as Error).message}`
+    failed = true
   }
 
   options.emit({
@@ -209,7 +219,8 @@ async function executePreparedToolCall(
       toolCall: item.toolCall,
       args: item.args,
       resultText,
-      resultImages
+      resultImages,
+      failed
     },
     emitted: true
   }

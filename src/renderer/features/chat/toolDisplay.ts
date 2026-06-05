@@ -47,9 +47,19 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       return path ? `正在写入 ${path}（+${lines} 行）` : '正在写入文件'
     }
     case 'edit': {
-      const path = (args.path as string) || ''
-      const old = args.old as string | undefined
-      const lines = old ? countLines(old) : 1
+      const path = (args.filePath as string) || (args.path as string) || ''
+      // 替换行数：新格式累加 edits[].oldText 行数；旧格式回退 old。
+      const edits = args.edits
+      let lines: number
+      if (Array.isArray(edits)) {
+        lines = edits.reduce((sum: number, e) => {
+          const ot = e && typeof e === 'object' ? ((e as Record<string, unknown>).oldText as string) : ''
+          return sum + (ot ? countLines(ot) : 0)
+        }, 0)
+      } else {
+        const old = args.old as string | undefined
+        lines = old ? countLines(old) : 1
+      }
       return path ? `正在修改 ${path}（替换 ${lines} 行）` : '正在修改文件'
     }
     case 'bash': {

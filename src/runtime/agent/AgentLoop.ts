@@ -104,6 +104,17 @@ export class AgentLoop {
   /** 压缩层级计数 */
   private compactionLevel = 0
 
+  /**
+   * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
+   * 用于检测模型对「完全相同的工具调用」反复触发并反复失败的死循环
+   * （典型场景：edit 因 readState 键不一致一直报 "File has not been read yet"，
+   * 模型 read→edit→失败→read 无限重试，最终把渲染进程拖垮 / OOM）。
+   * 每条用户消息开始时清空。
+   */
+  private repeatedFailureCounts = new Map<string, number>()
+  /** 同一签名工具调用累计失败达到该次数即熔断，停止本轮循环 */
+  private static readonly REPEATED_FAILURE_LIMIT = 3
+
   constructor(
     modelClient: ModelClient,
     eventBus: EventBus,
@@ -231,6 +242,7 @@ export class AgentLoop {
     this.cancelled = false
     this.abortController = new AbortController()
     this.contextOverflowRetryAttempted = false
+    this.repeatedFailureCounts.clear()
 
     // 将用户消息加入上下文，模式指令附加在尾部（不改前缀，缓存 Harness 核心）
     const modeInstruction = getModeInstruction(this.mode)
@@ -457,6 +469,20 @@ export class AgentLoop {
           break
         }
 
+        // 熔断：检测对同一工具调用（名称 + 参数完全一致）的重复失败。
+        // 命中后停止本轮循环，避免模型在无效调用上空转烧光 maxToolRounds，
+        // 同时把海量流式事件灌向渲染进程导致卡顿 / OOM 白屏。
+        const stuckTool = this.trackRepeatedFailures(batchResult.outcomes)
+        if (stuckTool) {
+          const notice =
+            `\n\n[已自动中断] 检测到对「${stuckTool}」的相同调用连续失败 ` +
+            `${AgentLoop.REPEATED_FAILURE_LIMIT} 次，已停止本轮以避免无效循环。` +
+            `请查看上方的工具错误信息后再调整指令。`
+          // 通过 text_delta 下发：renderer 追加展示，累积器并入持久化内容，口径一致
+          this.eventBus.emit({ type: 'text_delta', messageId, delta: notice })
+          break
+        }
+
         // 继续下一轮模型调用（带着工具结果）
       }
     } catch (err) {
@@ -571,6 +597,52 @@ export class AgentLoop {
       case 'line_length':
         return `[系统提示] 部分行已截断：行长度超 ${limit} 字符上限，超出部分以 ...[截断] 标记。\n对该文件使用 read 工具获取完整内容。`
     }
+  }
+
+  /**
+   * 跟踪并检测重复失败的工具调用。
+   *
+   * 对每个非中断的工具结果计算签名（工具名 + 序列化参数）：
+   * - 失败结果（"工具执行失败" / "权限拒绝:"）累加该签名的失败计数；
+   * - 成功结果清零该签名计数（说明该调用已不再卡住）。
+   *
+   * 当任一签名累计失败次数达到 REPEATED_FAILURE_LIMIT，返回对应工具名表示需要熔断；
+   * 否则返回 null。只有「参数完全相同」的调用才会累加，因此模型在迭代修复
+   * （每次参数不同）时不会被误伤。
+   *
+   * @returns 触发熔断的工具名；未触发返回 null
+   */
+  private trackRepeatedFailures(
+    outcomes: Array<{ toolCall: ChatToolCall; args: Record<string, unknown>; resultText: string; failed?: boolean; skippedByAbort?: boolean }>
+  ): string | null {
+    for (const outcome of outcomes) {
+      if (outcome.skippedByAbort) continue
+
+      // 用结构化的 failed 标记判定失败，而非从渲染后的中文 resultText 前缀反推，
+      // 避免文案本地化 / 调整后熔断器静默失效，也能覆盖"未注册工具"等不以
+      // "工具执行失败" 开头的错误结果。
+      const failed = outcome.failed === true
+      // 参数可能含大体量内容（如 write 的 content），签名做长度上限保护，
+      // 仅用于「是否同一调用」的判定，过长时截断不影响判等的稳定性。
+      let argsKey: string
+      try {
+        argsKey = JSON.stringify(outcome.args)
+      } catch {
+        argsKey = String(outcome.args)
+      }
+      const signature = `${outcome.toolCall.name}:${argsKey.slice(0, 4096)}`
+
+      if (failed) {
+        const next = (this.repeatedFailureCounts.get(signature) ?? 0) + 1
+        this.repeatedFailureCounts.set(signature, next)
+        if (next >= AgentLoop.REPEATED_FAILURE_LIMIT) {
+          return outcome.toolCall.name
+        }
+      } else {
+        this.repeatedFailureCounts.delete(signature)
+      }
+    }
+    return null
   }
 
   /** 取消当前执行 */

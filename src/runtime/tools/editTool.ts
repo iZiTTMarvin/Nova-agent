@@ -3,7 +3,7 @@
  * 融合 Pi 多编辑点 + Claude Code 安全门禁 + DeepSeek 编码/回滚
  * 核心原则：所有 oldText 匹配原始文件（非增量），先读后改，写入失败自动回滚
  */
-import { dirname } from 'path'
+import { dirname, normalize } from 'path'
 import { mkdirSync, constants } from 'fs'
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, stat as fsStat } from 'fs/promises'
 import { resolveAndValidatePath } from './ToolRegistry'
@@ -45,11 +45,34 @@ export interface ReadState {
   clear(): void
 }
 
+/**
+ * 规范化 readState 的 key。
+ *
+ * readState 以「已读文件的绝对路径字符串」为键：readTool 写入、editTool 校验、
+ * writeTool 回种。同一个物理文件在不同调用里可能产生不同的字符串形式：
+ *   - 路径分隔符差异（Windows 上 `/` 与 `\`）；
+ *   - 盘符 / 路径大小写差异（`D:\` 与 `d:\`、`Style.css` 与 `style.css`）——
+ *     Windows 文件系统大小写不敏感，但 JS Map 的键是大小写敏感的字符串比较。
+ *
+ * 一旦 read 写入的 key 与 edit 查询的 key 大小写/分隔符不一致，safetyGate 会误判
+ * "File has not been read yet"，从而触发模型反复 read → edit → 失败 → read 的死循环
+ * （这正是 Windows 上观测到的严重 bug 的根因）。
+ *
+ * 这里统一规范化：先用 path.normalize 折叠分隔符与冗余段，再在大小写不敏感的
+ * 平台（win32）上转为小写。Linux 文件系统区分大小写，保持原样以免误合并不同文件。
+ *
+ * 注意：仅规范化「Map 的查找键」，真正用于文件 I/O 的路径仍使用原始 absolutePath。
+ */
+function normalizeReadStateKey(path: string): string {
+  const normalized = normalize(path)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
 class ReadStateMap implements ReadState {
   private store = new Map<string, ReadStateEntry>()
-  get(path: string): ReadStateEntry | undefined { return this.store.get(path) }
-  set(path: string, entry: ReadStateEntry): void { this.store.set(path, entry) }
-  has(path: string): boolean { return this.store.has(path) }
+  get(path: string): ReadStateEntry | undefined { return this.store.get(normalizeReadStateKey(path)) }
+  set(path: string, entry: ReadStateEntry): void { this.store.set(normalizeReadStateKey(path), entry) }
+  has(path: string): boolean { return this.store.has(normalizeReadStateKey(path)) }
   clear(): void { this.store.clear() }
 }
 
