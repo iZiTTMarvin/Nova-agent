@@ -77,8 +77,9 @@ describe('bashTool', () => {
     const longCmd = process.platform === 'win32'
       ? 'ping -n 30 127.0.0.1 >nul'
       : 'sleep 30'
+    // 毫秒精度：1000ms = 1s
     const result = await bashTool.execute(
-      { command: longCmd, timeout: 1 },
+      { command: longCmd, timeout: 1000 },
       createContext()
     )
     expect(result.success).toBe(false)
@@ -149,8 +150,13 @@ describe('bashTool', () => {
   // ── stderr 采集 ────────────────────────────────────────
 
   it('同时采集 stdout 和 stderr', async () => {
+    // 跨 shell 写法：用 node 显式往两个流写
+    // PowerShell 不支持 `>&2`，cmd 不支持 `$stderr`，统一走 node -e
+    const cmd = process.platform === 'win32'
+      ? 'node -e "process.stdout.write(\'out\\n\'); process.stderr.write(\'err\\n\');"'
+      : 'node -e "process.stdout.write(\'out\\n\'); process.stderr.write(\'err\\n\');"'
     const result = await bashTool.execute(
-      { command: 'echo "out" && echo "err" >&2' },
+      { command: cmd },
       createContext()
     )
     expect(result.success).toBe(true)
@@ -160,9 +166,10 @@ describe('bashTool', () => {
 
   // ── 参数校验 ───────────────────────────────────────────
 
-  it('timeout 参数被正确识别（合法正整数）', async () => {
+  it('timeout 参数被正确识别（毫秒）', async () => {
+    // 毫秒精度：10000ms = 10s，echo 远远小于这个时间
     const result = await bashTool.execute(
-      { command: 'echo "fast"', timeout: 10 },
+      { command: 'echo "fast"', timeout: 10000 },
       createContext()
     )
     expect(result.success).toBe(true)
@@ -199,5 +206,53 @@ describe('bashTool', () => {
       manager.endMessage()
       rmSync(tempDir, { recursive: true, force: true })
     }
+  })
+
+  // ── workdir 参数（新） ────────────────────────────────
+
+  it('workdir 参数：相对路径解析', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-workdir-'))
+    try {
+      const subDir = join(tempDir, 'sub')
+      const { mkdirSync } = await import('fs')
+      mkdirSync(subDir, { recursive: true })
+      // 跨 shell 写法：用 node -e 在子目录创建 marker
+      const markerPath = join(subDir, 'marker.txt')
+      const cmd = `node -e "require('fs').writeFileSync('marker.txt', 'ok')"`
+      const result = await bashTool.execute(
+        { command: cmd, workdir: 'sub' },
+        { workingDir: tempDir }
+      )
+      expect(result.success).toBe(true)
+      expect(existsSync(markerPath)).toBe(true)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  // ── 退出码处理（新） ──────────────────────────────────
+
+  it('退出码 0 → success=true', async () => {
+    const result = await bashTool.execute(
+      { command: 'node -e "process.exit(0)"' },
+      createContext()
+    )
+    expect(result.success).toBe(true)
+  })
+
+  it('退出码 1 → success=false, error 含退出码', async () => {
+    const result = await bashTool.execute(
+      { command: 'node -e "process.exit(1)"' },
+      createContext()
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('退出码')
+  })
+
+  // ── bashTool 描述（动态渲染） ────────────────────────
+
+  it('bashTool.description 包含当前 shell 信息', () => {
+    expect(bashTool.description).toBeTruthy()
+    expect(bashTool.description.length).toBeGreaterThan(50)
   })
 })

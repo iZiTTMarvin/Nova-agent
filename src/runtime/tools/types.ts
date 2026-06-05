@@ -33,6 +33,18 @@ export interface ToolContext {
    * 当前只 todo_write 使用，emit 'todos_updated' 触发 renderer store 更新。
    */
   eventBus?: EventBus
+  /**
+   * 自定义 shell 可执行路径（可选）。
+   * 仅为 bash 工具使用：覆盖默认的 Shell 发现（pwsh / powershell / Git Bash / cmd）。
+   * 路径不存在时 bash 工具会直接报错。
+   */
+  shellPath?: string
+  /**
+   * 需要注入到 PATH 前面的目录列表（可选）。
+   * 仅为 bash 工具使用：让项目内的本地工具（node_modules/.bin、vendor 等）优先可用。
+   * 仅绝对路径会被处理；空数组 / 仅含相对路径的输入会被忽略。
+   */
+  binDirs?: string[]
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */

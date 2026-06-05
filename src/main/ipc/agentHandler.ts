@@ -7,6 +7,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
 import { app } from 'electron'
+import { join } from 'path'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { loadModelConfig } from '../../runtime/model/config'
 import { inferContextWindow, inferVisionSupport } from '../../shared/config/types'
@@ -181,6 +182,12 @@ export function registerAgentHandler(
     agentLoop.injectHistory(history)
 
     agentLoop.setWorkingDir(projectPath)
+    // 把 bash 工具的执行环境（shellPath / binDirs）注入到 AgentLoop。
+    // 暂时只把项目 node_modules/.bin 加到 PATH——shellPath 没有用户配置时
+    // 保留 undefined，让 bash 工具按平台自动发现（pwsh / powershell / Git Bash / cmd）。
+    agentLoop.setBashEnvironment({
+      binDirs: [join(projectPath, 'node_modules', '.bin')]
+    })
 
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(lsTool)

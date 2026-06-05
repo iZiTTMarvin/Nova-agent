@@ -54,6 +54,10 @@ export interface ToolBatchExecutionOptions {
   sessionId?: string | null
   /** 事件总线（供 todo_write 等向 renderer 推送事件） */
   eventBus?: EventBus | null
+  /** bash 工具的自定义 shell 路径（可选） */
+  shellPath?: string
+  /** bash 工具的 PATH 注入目录（可选） */
+  binDirs?: string[]
 }
 
 interface ToolRunResult {
@@ -77,7 +81,9 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     supportsVision: options.supportsVision,
     ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
-    ...(options.eventBus ? { eventBus: options.eventBus } : {})
+    ...(options.eventBus ? { eventBus: options.eventBus } : {}),
+    ...(options.shellPath ? { shellPath: options.shellPath } : {}),
+    ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {})
   }
 }
 

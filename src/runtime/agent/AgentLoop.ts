@@ -59,6 +59,12 @@ export class AgentLoop {
   /** 工作区路径（传入后工具执行才有工作区边界） */
   private workingDir: string | null = null
 
+  /** bash 工具的自定义 shell 路径（可选） */
+  private shellPath: string | undefined = undefined
+
+  /** bash 工具的 PATH 注入目录（可选） */
+  private binDirs: string[] = []
+
   /** 运行模式（plan / default / auto） */
   private mode: Mode = 'default'
 
@@ -145,6 +151,24 @@ export class AgentLoop {
   /** 设置工作区路径（工具执行时的边界目录） */
   setWorkingDir(dir: string): void {
     this.workingDir = dir
+  }
+
+  /**
+   * 设置 bash 工具的执行环境（可选）。
+   *
+   * - shellPath：覆盖默认 Shell 发现
+   * - binDirs：注入到 PATH 前面的目录列表
+   *
+   * 透传给 ToolContext，由 bash 工具读取。
+   * 同时清空 bashTool.description 的懒缓存，让新 shellPath 生效。
+   */
+  setBashEnvironment(env: { shellPath?: string; binDirs?: string[] } = {}): void {
+    this.shellPath = env.shellPath
+    this.binDirs = env.binDirs ?? []
+    if (env.shellPath) {
+      // 动态 import 避免循环依赖（agent → tools → shellConfig 不会反向）
+      import('../tools/bash').then((mod) => mod.invalidateBashDescriptionCache?.())
+    }
   }
 
   /** 设置运行模式 */
@@ -401,6 +425,8 @@ export class AgentLoop {
           toolRegistry: this.toolRegistry,
           workingDir: this.workingDir ?? process.cwd(),
           mode: this.mode,
+          shellPath: this.shellPath,
+          binDirs: this.binDirs,
           supportsVision: this.config.supportsVision ?? true,
           checkpointManager: this.checkpointManager,
           abortSignal: this.abortController?.signal,
