@@ -7,6 +7,8 @@ import { ThinkingBlock } from '../../../src/renderer/features/chat/ThinkingBlock
 import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
 
+vi.mock('framer-motion', () => import('./_framerMotionMock'))
+
 const mockInvoke = vi.fn()
 const mockOn = vi.fn()
 const mockRemoveAllListeners = vi.fn()

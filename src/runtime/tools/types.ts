@@ -5,6 +5,9 @@
 
 import type { ToolDefinition } from '../model/types'
 
+/** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
+export type ToolExecutionMode = 'parallel' | 'sequential'
+
 /** 工具执行上下文，携带工作区边界和 checkpoint 信息 */
 export interface ToolContext {
   /** 工作区根目录的绝对路径，所有路径操作不得越界 */
@@ -51,6 +54,13 @@ export interface ToolExecutor {
   parameters: ToolDefinition['parameters']
   /** 输出最大字符数，超出后由 AgentLoop 通过 TruncationPipeline 截断。未设置则不限制 */
   maxResultSizeChars?: number
+  /** 工具默认执行模式。未声明时视为 sequential。 */
+  executionMode?: ToolExecutionMode
+  /**
+   * 判断当前入参和上下文是否允许并发执行。
+   * 未声明或抛错时一律视为不安全，避免误把有副作用的工具放进并发批次。
+   */
+  isConcurrencySafe?: (args: Record<string, unknown>, context: ToolContext) => boolean
   /** 执行工具 */
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
 }

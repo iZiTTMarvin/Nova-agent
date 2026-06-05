@@ -45,6 +45,8 @@ function matchGlob(pattern: string, filePath: string): boolean {
 export const findTool: ToolExecutor = {
   name: 'find',
   description: '按 glob 模式在工作区中查找文件。支持 * 和 ** 通配符。',
+  executionMode: 'parallel',
+  isConcurrencySafe: () => true,
   parameters: {
     type: 'object',
     properties: {

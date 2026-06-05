@@ -53,6 +53,10 @@ export interface AgentLoopConfig {
   contextWindow?: number
   /** 当前模型是否支持图片输入（vision），用于 readTool 决定是否发送图片 */
   supportsVision?: boolean
+  /** 全局工具执行策略：parallel 允许并发安全工具并行，sequential 强制顺序执行 */
+  toolExecution?: 'parallel' | 'sequential'
+  /** 全局最大并发工具数，小于 1 时按 1 处理 */
+  maxParallelToolCalls?: number
   /**
    * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文。
    * agentHandler 通过此回调将压缩态写回 SessionStore，保证跨轮次持久化。

@@ -18,6 +18,7 @@ export const bashTool: ToolExecutor = {
     '在工作区中执行 shell 命令并返回输出。' +
     '支持运行构建、测试、lint 等开发命令。' +
     '注意：危险命令（sudo、rm -rf 等）会被权限系统拦截。',
+  executionMode: 'sequential',
   parameters: {
     type: 'object',
     properties: {

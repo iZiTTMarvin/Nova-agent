@@ -629,6 +629,33 @@ describe('useAppStore Zustand Store', () => {
       expect(state.messages[0].toolCalls![0].result).toBe('文件内容')
     })
 
+    it('两个工具结果反序到达时，仍应更新到各自的卡片和 toolCall', () => {
+      useAppStore.getState().handleMessageStart('msg_order')
+      useAppStore.getState().handleToolCall('msg_order', 'tc_a', 'read', { path: 'a.ts' })
+      useAppStore.getState().handleToolCall('msg_order', 'tc_b', 'grep', { pattern: 'foo' })
+
+      useAppStore.getState().handleToolResult('msg_order', 'tc_b', 'grep', 'grep 结果')
+      useAppStore.getState().handleToolResult('msg_order', 'tc_a', 'read', 'read 结果')
+
+      const state = useAppStore.getState()
+      expect(state.messages[0].toolCalls?.[0].id).toBe('tc_a')
+      expect(state.messages[0].toolCalls?.[0].result).toBe('read 结果')
+      expect(state.messages[0].toolCalls?.[1].id).toBe('tc_b')
+      expect(state.messages[0].toolCalls?.[1].result).toBe('grep 结果')
+
+      const blocks = state.messages[0].blocks ?? []
+      const blockA = blocks.find(b => b.type === 'tool' && b.toolCallId === 'tc_a')
+      const blockB = blocks.find(b => b.type === 'tool' && b.toolCallId === 'tc_b')
+      if (blockA && blockA.type === 'tool') {
+        expect(blockA.result).toBe('read 结果')
+        expect(blockA.status).toBe('success')
+      }
+      if (blockB && blockB.type === 'tool') {
+        expect(blockB.result).toBe('grep 结果')
+        expect(blockB.status).toBe('success')
+      }
+    })
+
     it('handleVerificationResult 应通过索引定位消息', () => {
       useAppStore.getState().handleMessageStart('msg_vr')
       useAppStore.getState().handleVerificationResult('msg_vr', '✓ 验证通过')

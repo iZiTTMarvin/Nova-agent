@@ -52,6 +52,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {
       getToolDefinitions: () => allDefs,
+      getTool: () => ({ name: 'noop' } as any),
       execute: vi.fn()
     }
     loop.setToolRegistry(mockRegistry as any)
@@ -72,6 +73,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {
       getToolDefinitions: () => allDefs,
+      getTool: () => ({ name: 'noop' } as any),
       execute: vi.fn()
     }
     loop.setToolRegistry(mockRegistry as any)
@@ -92,6 +94,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {
       getToolDefinitions: () => allDefs,
+      getTool: () => ({ name: 'noop' } as any),
       execute: vi.fn()
     }
     loop.setToolRegistry(mockRegistry as any)
@@ -139,6 +142,13 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {
       getToolDefinitions: () => allDefs,
+      getTool: (name: string) => ({
+        name,
+        description: `${name} tool`,
+        parameters: { type: 'object', properties: {} },
+        executionMode: 'sequential',
+        execute: vi.fn()
+      }),
       execute: vi.fn()
     }
     loop.setToolRegistry(mockRegistry as any)

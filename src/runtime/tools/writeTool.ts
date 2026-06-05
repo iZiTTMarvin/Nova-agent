@@ -43,6 +43,7 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
       '创建新文件或完整覆写已有文件。' +
       '适用于创建新文件或需要完全重写文件内容的场景。' +
       '如果要修改文件中的部分内容，请使用 edit 工具。',
+    executionMode: 'sequential',
     parameters: {
       type: 'object',
       properties: {

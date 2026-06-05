@@ -45,6 +45,8 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
   return {
     name: 'grep',
     description: buildDescription(isRgAvailable()),
+    executionMode: 'parallel',
+    isConcurrencySafe: () => true,
     parameters: {
       type: 'object',
       properties: {

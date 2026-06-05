@@ -23,6 +23,7 @@ import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCo
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
+import { executeToolBatch, toToolContent } from './toolBatchExecutor'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
@@ -101,7 +102,10 @@ export class AgentLoop {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       maxToolRounds: config?.maxToolRounds ?? 20,
       contextWindow: config?.contextWindow,
-      supportsVision: config?.supportsVision ?? true
+      supportsVision: config?.supportsVision ?? true,
+      toolExecution: config?.toolExecution ?? 'parallel',
+      maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
+      onCompaction: config?.onCompaction
     }
     this.maxToolRounds = this.config.maxToolRounds ?? 20
 
@@ -374,70 +378,37 @@ export class AgentLoop {
 
         // 执行所有工具调用，将结果加入上下文
         toolRound++
-        for (const tc of toolCalls) {
-          if (this.cancelled) break
+        const batchResult = await executeToolBatch({
+          toolCalls,
+          messageId,
+          toolRegistry: this.toolRegistry,
+          workingDir: this.workingDir ?? process.cwd(),
+          mode: this.mode,
+          supportsVision: this.config.supportsVision ?? true,
+          checkpointManager: this.checkpointManager,
+          abortSignal: this.abortController?.signal,
+          checkPermission: (toolName, args, currentMessageId) =>
+            this.checkPermission(toolName, args, currentMessageId),
+          emit: (event) => this.eventBus.emit(event),
+          applyTruncation: (output, maxSize) => this.applyTruncation(output, maxSize),
+          maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
+          toolExecution: this.config.toolExecution ?? 'parallel'
+        })
 
-          const args = this.parseArgs(tc.arguments)
-          let resultText: string
-          let resultImages: import('../tools/types').ImageContent[] | undefined
-
-          // 权限检查（用 PermissionManager 做 allow/deny/ask 三态决策）
-          const permissionResult = await this.checkPermission(tc.name, args, messageId)
-
-          // 权限请求被 cancel 中断：跳过 tool_result 与 context 注入
-          if (permissionResult.aborted) {
-            break
-          }
-
-          if (!permissionResult.allowed) {
-            resultText = `权限拒绝: ${permissionResult.reason}`
-          } else if (this.toolRegistry) {
-            const toolResult = await this.toolRegistry.execute(tc.name, args, {
-              workingDir: this.workingDir ?? process.cwd(),
-              ...(this.checkpointManager ? { checkpointManager: this.checkpointManager } : {}),
-              ...(this.abortController ? { abortSignal: this.abortController.signal } : {}),
-              supportsVision: this.config.supportsVision
+        if (!batchResult.aborted && !this.cancelled && !this.abortController?.signal.aborted) {
+          for (const outcome of batchResult.outcomes) {
+            if (outcome.skippedByAbort) continue
+            this.context.push({
+              role: 'tool',
+              content: toToolContent(outcome.resultText, outcome.resultImages),
+              toolCallId: outcome.toolCall.id
             })
-            if (toolResult.success) {
-              const tool = this.toolRegistry.getTool(tc.name)
-              const maxSize = tool?.maxResultSizeChars
-              resultText = maxSize != null
-                ? this.applyTruncation(toolResult.output, maxSize)
-                : toolResult.output
-              resultImages = toolResult.images
-            } else {
-              resultText = `工具执行失败: ${toolResult.error}`
-            }
-          } else {
-            resultText = `工具 "${tc.name}" 不可用：未注册工具`
           }
+        }
 
-          this.eventBus.emit({
-            type: 'tool_result',
-            messageId,
-            toolCallId: tc.id,
-            toolName: tc.name,
-            result: resultText
-          })
-
-          // 构建 tool 消息内容：纯文本用 string，带图片用 ContentBlock 数组
-          const toolContent: string | ContentBlock[] = resultImages?.length
-            ? [
-                { type: 'text', text: resultText },
-                ...resultImages.map(img => ({
-                  type: 'image_url' as const,
-                  image_url: {
-                    url: `data:${img.mimeType};base64,${img.data}`,
-                  },
-                })),
-              ]
-            : resultText
-
-          this.context.push({
-            role: 'tool',
-            content: toolContent,
-            toolCallId: tc.id
-          })
+        if (batchResult.aborted || this.cancelled || this.abortController?.signal.aborted) {
+          this.cancelled = true
+          break
         }
 
         // 继续下一轮模型调用（带着工具结果）
@@ -519,15 +490,6 @@ export class AgentLoop {
 
     // 通知外部持久化压缩态（agentHandler 写回 SessionStore）
     this.config.onCompaction?.(this.context)
-  }
-
-  /** 安全解析 JSON 参数 */
-  private parseArgs(argsStr: string): Record<string, unknown> {
-    try {
-      return JSON.parse(argsStr || '{}')
-    } catch {
-      return {}
-    }
   }
 
   /** 对工具输出应用截断，超限时用三明治模式拼装提示 */

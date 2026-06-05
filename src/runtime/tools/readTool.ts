@@ -141,6 +141,8 @@ export function buildContinuationHint(
 export const readTool: ToolExecutor = {
   name: 'read',
   description: '读取指定文件的内容。支持文本文件和图片（jpg、png、gif、webp）。图片以 base64 编码发送给模型。编辑文件前必须先读取。支持 offset/limit 分页读取长文件。',
+  executionMode: 'parallel',
+  isConcurrencySafe: () => true,
   parameters: {
     type: 'object',
     properties: {

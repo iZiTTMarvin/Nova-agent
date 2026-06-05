@@ -10,6 +10,8 @@ import type { ToolExecutor, ToolContext, ToolResult } from './types'
 export const lsTool: ToolExecutor = {
   name: 'ls',
   description: '列出指定目录下的文件和子目录。返回目录条目列表，区分文件和目录。',
+  executionMode: 'parallel',
+  isConcurrencySafe: () => true,
   parameters: {
     type: 'object',
     properties: {

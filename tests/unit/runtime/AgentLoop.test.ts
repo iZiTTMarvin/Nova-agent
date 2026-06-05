@@ -271,6 +271,138 @@ describe('AgentLoop', () => {
     expect(lastMsg.toolCallId).toBe('call_1')
   })
 
+  it('只读工具并发完成顺序可乱序，但写回上下文时仍按原始 tool_call 顺序', async () => {
+    const client = new MockModelClient()
+    const releaseRead = (() => {
+      let resolve!: () => void
+      const promise = new Promise<void>(res => { resolve = res })
+      return { promise, resolve }
+    })()
+
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_read', name: 'read', arguments: '{"path":"a.txt"}' }
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_grep', name: 'grep', arguments: '{"pattern":"foo"}' }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'read',
+      description: '读取文件',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: { path: { type: 'string' } } },
+      async execute(): Promise<ToolResult> {
+        await releaseRead.promise
+        return { success: true, output: 'read ok' }
+      }
+    })
+    registry.register({
+      name: 'grep',
+      description: '搜索',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: { pattern: { type: 'string' } } },
+      async execute(): Promise<ToolResult> {
+        return { success: true, output: 'grep ok' }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+
+    const events: string[] = []
+    eventBus.on((event) => {
+      if (event.type === 'tool_result') {
+        events.push(event.toolCallId)
+      }
+    })
+
+    const promise = loop.sendMessage('并发读取')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    releaseRead.resolve()
+    await promise
+
+    expect(events).toEqual(['call_grep', 'call_read'])
+
+    const toolMessages = loop.getContext().filter(m => m.role === 'tool')
+    expect(toolMessages).toHaveLength(2)
+    expect(toolMessages[0].toolCallId).toBe('call_read')
+    expect(toolMessages[0].content).toBe('read ok')
+    expect(toolMessages[1].toolCallId).toBe('call_grep')
+    expect(toolMessages[1].content).toBe('grep ok')
+  })
+
+  it('read 工具返回 images 时，tool 消息会写入多模态 ContentBlock 数组', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_read_img', name: 'read', arguments: '{"path":"image.png"}' }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'read',
+      description: '读取图片',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: { path: { type: 'string' } } },
+      async execute(): Promise<ToolResult> {
+        return {
+          success: true,
+          output: '已读取图片文件 [image/png]',
+          images: [{ data: 'ZmFrZS1pbWFnZQ==', mimeType: 'image/png' }]
+        }
+      }
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    loop.setToolRegistry(registry)
+
+    await loop.sendMessage('读取图片')
+
+    const toolMessages = loop.getContext().filter(m => m.role === 'tool')
+    expect(toolMessages).toHaveLength(1)
+    const toolContent = toolMessages[0].content
+    expect(Array.isArray(toolContent)).toBe(true)
+    if (Array.isArray(toolContent)) {
+      expect(toolContent[0]).toEqual({ type: 'text', text: '已读取图片文件 [image/png]' })
+      expect(toolContent[1]).toEqual({
+        type: 'image_url',
+        image_url: { url: 'data:image/png;base64,ZmFrZS1pbWFnZQ==' }
+      })
+    }
+  })
+
   it('达到 maxToolRounds 时停止工具调度', async () => {
     const client = new MockModelClient()
     // 模型一直调用工具（死循环场景）

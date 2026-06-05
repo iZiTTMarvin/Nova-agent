@@ -438,6 +438,7 @@ export const editTool: ToolExecutor = {
     '精确修改已有文件。支持一次调用修改多处（edits 数组）。' +
     '所有 oldText 与原始文件匹配（非增量），必须唯一且互不重叠。' +
     '编辑前必须先用 read 工具读取文件。',
+  executionMode: 'sequential',
   parameters: {
     type: 'object',
     properties: {
