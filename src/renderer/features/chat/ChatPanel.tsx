@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { useAppStore, selectSupportsVision } from '../../stores/useAppStore'
+import { useChatStore } from '../../stores/useChatStore'
+import { useAgentStore } from '../../stores/useAgentStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
+import { selectSupportsVisionFromConfig } from '../../stores/selectors'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   SendIcon,
@@ -15,6 +18,7 @@ import {
   ImageIcon
 } from '../../components/Icons'
 import { ThinkingBlock } from './ThinkingBlock'
+import { StreamingTextBlock } from './StreamingTextBlock'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock } from './renderingPolicy'
@@ -36,7 +40,7 @@ import {
   type ImageAttachment
 } from '../../lib/image-attachments'
 import type { Mode } from '../../../shared/session/types'
-import type { ExtendedToolCall, RendererMessageBlock } from '../../stores/useAppStore'
+import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock } from '../../stores/types'
 import './ChatPanel.css'
 import '../todo/TodoPanel.css'
 
@@ -154,7 +158,14 @@ const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ name, args
 })
 
 // ── 2.5 解析消息中的思考内容（Windsurf 风格） ─────────────────
-function parseThinking(msg: any, isGenerating: boolean, currentGeneratingMessageId: string | null) {
+/** parseThinking 只关心 message 中的 thinking / content / id 字段，
+ * 用 Pick<...> 限定最小依赖，替代 any 提升类型安全。 */
+type ThinkingParseSource = Pick<ExtendedMessage, 'id'> & {
+  thinking?: string
+  content: string
+}
+
+function parseThinking(msg: ThinkingParseSource, isGenerating: boolean, currentGeneratingMessageId: string | null) {
   let thinkingContent = msg.thinking || ''
   let textContent = msg.content || ''
   let isThinkingActive = false
@@ -187,35 +198,38 @@ function parseThinking(msg: any, isGenerating: boolean, currentGeneratingMessage
 
 // ── 3. 主聊天控制面板 ───────────────────────────────────────
 export const ChatPanel: React.FC = () => {
-  const currentProject = useAppStore(state => state.currentProject)
-  const modelConfig = useAppStore(state => state.modelConfig)
-  const messages = useAppStore(state => state.messages)
-  const isGenerating = useAppStore(state => state.isGenerating)
-  const sendMessage = useAppStore(state => state.sendMessage)
-  const cancelExecution = useAppStore(state => state.cancelExecution)
-  const selectProject = useAppStore(state => state.selectProject)
-  const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
-
-  // 会话与回退所需状态
-  const currentSessionId = useAppStore(state => state.currentSessionId)
-  const rollbackMessage = useAppStore(state => state.rollbackMessage)
-  const currentGeneratingMessageId = useAppStore(state => state.currentGeneratingMessageId)
-  const currentMode = useAppStore(state => state.currentMode)
+  // ── settings store（项目/模型/模式/配置弹窗） ──
+  const currentProject = useSettingsStore(state => state.currentProject)
+  const modelConfig = useSettingsStore(state => state.modelConfig)
+  const currentMode = useSettingsStore(state => state.currentMode)
+  const selectProject = useSettingsStore(state => state.selectProject)
+  const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
 
   // Vision 门控：当前模型是否支持图片输入
-  const supportsVision = useAppStore(selectSupportsVision)
+  const supportsVision = selectSupportsVisionFromConfig(modelConfig)
 
-  // diff 审查所需状态
-  const messageDiffs = useAppStore(state => state.messageDiffs)
-  const loadingDiffs = useAppStore(state => state.loadingDiffs)
-  const loadingDiffPlaceholders = useAppStore(state => state.loadingDiffPlaceholders)
-  const loadMessageDiffs = useAppStore(state => state.loadMessageDiffs)
-  const rejectFile = useAppStore(state => state.rejectFile)
-  const acceptFile = useAppStore(state => state.acceptFile)
+  // ── chat store（消息/会话/diff/流式） ──
+  const messages = useChatStore(state => state.messages)
+  const isGenerating = useChatStore(state => state.isGenerating)
+  const currentSessionId = useChatStore(state => state.currentSessionId)
+  const currentGeneratingMessageId = useChatStore(state => state.currentGeneratingMessageId)
+  const sendMessage = useChatStore(state => state.sendMessage)
+  const rollbackMessage = useChatStore(state => state.rollbackMessage)
+  const messageDiffs = useChatStore(state => state.messageDiffs)
+  const loadingDiffs = useChatStore(state => state.loadingDiffs)
+  const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
+  const loadMessageDiffs = useChatStore(state => state.loadMessageDiffs)
+  const rejectFile = useChatStore(state => state.rejectFile)
+  const acceptFile = useChatStore(state => state.acceptFile)
+  // Phase 6：Steering Queue
+  const pendingUserMessages = useChatStore(state => state.pendingUserMessages)
+  const enqueuePendingMessage = useChatStore(state => state.enqueuePendingMessage)
+  const removePendingMessage = useChatStore(state => state.removePendingMessage)
 
-  // 验证权限确认
-  const pendingVerificationRequest = useAppStore(state => state.pendingVerificationRequest)
-  const respondVerificationPermission = useAppStore(state => state.respondVerificationPermission)
+  // ── agent store（权限/取消/验证权限） ──
+  const cancelExecution = useAgentStore(state => state.cancelExecution)
+  const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
+  const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
 
   // 处理消息回退操作
   const handleRollback = async (messageId: string) => {
@@ -282,19 +296,20 @@ export const ChatPanel: React.FC = () => {
     scrollToBottomInstant()
   }, [messages.length, scrollToBottomInstant])
 
-  // 流式阶段：delta 到来时用 rAF 节流滚动，避免高频抖动
+  // 流式阶段：render pool 每次 tick 触发自动滚动，让滚动节奏与字符放出节奏同步
+  // Phase 4 之前是监听 messages 变化，但 messages 在 Phase 2 buffer 后频率已大幅降低，
+  // 改为 render pool tick 触发后能精确跟随"用户看到的字符展开"。
+  // 取消与 scroll 都被 streamAutoScrollRef 内部用 rAF 节流，重复触发安全。
+  const scheduleStreamAutoScroll = useCallback(() => {
+    streamAutoScrollRef.current?.schedule()
+  }, [])
+
+  // 流式期间才挂自动滚动调度；非流式阶段由 messages 长度变化 effect 接管
   useEffect(() => {
     if (!isGenerating) {
       streamAutoScrollRef.current?.cancel()
-      return
     }
-
-    streamAutoScrollRef.current?.schedule()
-
-    return () => {
-      streamAutoScrollRef.current?.cancel()
-    }
-  }, [messages, isGenerating])
+  }, [isGenerating])
 
   // 处理文本域自动折行高度自适应
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -306,7 +321,7 @@ export const ChatPanel: React.FC = () => {
   }
 
   const handleSend = () => {
-    if ((!inputVal.trim() && imageAttachments.length === 0) || isGenerating) return
+    if (!inputVal.trim() && imageAttachments.length === 0) return
     if (!modelConfig) {
       alert("请先在左下角配置模型 API Key！")
       setConfigModalOpen(true)
@@ -317,7 +332,24 @@ export const ChatPanel: React.FC = () => {
       selectProject()
       return
     }
-    sendMessage(inputVal.trim(), imageAttachments)
+
+    const text = inputVal.trim()
+    const images = imageAttachments
+
+    // Phase 6：Steering Queue
+    // Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
+    if (isGenerating) {
+      enqueuePendingMessage(text, images)
+      setInputVal('')
+      setImageAttachments([])
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+      }
+      return
+    }
+
+    // 正常路径：直接发送
+    sendMessage(text, images)
     setInputVal('')
     setImageAttachments([])
     if (textareaRef.current) {
@@ -536,7 +568,14 @@ export const ChatPanel: React.FC = () => {
                           />
                         )
                       case 'text':
-                        return block.content ? <MarkdownRenderer key={idx} content={block.content} /> : null
+                        return (
+                          <StreamingTextBlock
+                            key={`${idx}-${msg.id}`}
+                            fullContent={block.content}
+                            isStreaming={isCurrentAssistantGenerating}
+                            onRenderPoolTick={scheduleStreamAutoScroll}
+                          />
+                        )
                       case 'image':
                         return null // 用户消息图片在下方统一网格渲染
                       case 'tool': {
@@ -566,7 +605,7 @@ export const ChatPanel: React.FC = () => {
                     {thinkingContent && (
                       <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
                     )}
-                    {textContent && <MarkdownRenderer content={textContent} />}
+                    {textContent && <MarkdownRenderer content={textContent} isStreaming={isCurrentAssistantGenerating} />}
                     {msg.toolCalls && msg.toolCalls.length > 0 && (
                       <div style={{ marginTop: '12px' }}>
                         {msg.toolCalls.map(tc => {
@@ -668,6 +707,33 @@ export const ChatPanel: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Phase 6：Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
+        {pendingUserMessages.length > 0 && (
+          <div className="steering-queue">
+            <div className="steering-queue__header">
+              <span className="steering-queue__title">
+                已排队 {pendingUserMessages.length} 条消息（Agent 完成后自动发送）
+              </span>
+            </div>
+            <div className="steering-queue__list">
+              {pendingUserMessages.map((msg, idx) => (
+                <div key={`pending-${idx}`} className="steering-queue__item">
+                  <span className="steering-queue__index">{idx + 1}.</span>
+                  <span className="steering-queue__text">{msg.text || '(空文本)'}</span>
+                  <button
+                    className="steering-queue__remove"
+                    onClick={() => removePendingMessage(idx)}
+                    title="从队列移除"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
       )}
@@ -723,13 +789,16 @@ export const ChatPanel: React.FC = () => {
             <textarea
               ref={textareaRef}
               className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
-              placeholder="向 Nova 提问或分配编程任务..."
+              placeholder={isGenerating
+                ? 'Agent 正在运行，输入将进入排队队列...'
+                : '向 Nova 提问或分配编程任务...'}
               rows={1}
               value={inputVal}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              disabled={isGenerating}
+              // Phase 6：textarea 在 Agent 运行期间不再 disabled，
+              // 用户可以继续输入，新消息进入 Steering Queue 等 turn boundary 自动 dispatch
             />
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
               <div className="flex items-center gap-2">

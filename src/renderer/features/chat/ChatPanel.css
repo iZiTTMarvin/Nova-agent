@@ -489,3 +489,81 @@
   font-weight: 500;
   font-size: 1.125rem; /* ~text-lg */
 }
+
+/* ──────────────────────────────────────────────────────────
+   Phase 6：Steering Queue 提示
+   Agent 运行期间，用户入队的消息以淡蓝虚线框展示在消息流底部，
+   turn boundary 自动 dispatch 时逐条消失。
+   ────────────────────────────────────────────────────────── */
+.steering-queue {
+  margin: 12px 0 0 0;
+  padding: 10px 14px;
+  border: 1px dashed rgba(56, 152, 236, 0.4);
+  border-radius: 10px;
+  background: rgba(56, 152, 236, 0.04);
+  font-size: 13px;
+  color: var(--text-primary, #1a1a1a);
+}
+
+.steering-queue__header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.steering-queue__title {
+  font-weight: 500;
+  color: var(--color-focus, #3898ec);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.steering-queue__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.steering-queue__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+}
+
+.steering-queue__index {
+  font-weight: 600;
+  color: var(--color-focus, #3898ec);
+  font-size: 11px;
+  min-width: 16px;
+}
+
+.steering-queue__text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary, #555);
+}
+
+.steering-queue__remove {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #999);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.steering-queue__remove:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #d33;
+}

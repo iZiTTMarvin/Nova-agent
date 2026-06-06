@@ -1,0 +1,1180 @@
+/**
+ * useChatStore — 消息、会话、消息索引、Diff 缓存、流式事件 handler
+ *
+ * 负责：
+ * - 会话列表与当前会话
+ * - 消息列表 + 消息索引
+ * - 当前正在生成的消息 ID + isGenerating（与消息生命周期强绑定）
+ * - 流式工具调用参数累积
+ * - 每条消息的 diff 缓存（live / final、loading 状态）
+ * - 来自主进程的所有 delta/事件 handler
+ *
+ * 依赖方向：
+ * - 可以读 useAgentStore / useSettingsStore（通过 getState）
+ * - 不被 useAgentStore 内部状态依赖（cancel 路径从 agent store 进入后调本 store）
+ */
+import { create } from 'zustand'
+import type {
+  Session,
+  SessionDetail,
+  MessageBlock,
+  Mode,
+  PermissionDecision
+} from '../../shared/session/types'
+import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
+import type { NormalizedUsage } from '../../runtime/model/types'
+import type { ImageAttachment } from '../lib/image-attachments'
+import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
+import type {
+  ExtendedMessage,
+  ExtendedToolCall,
+  MessageDiffCache,
+  PendingPermissionRequest,
+  RendererMessageBlock,
+  RendererToolBlock,
+  SessionMessagePayload
+} from './types'
+
+// ── 内部辅助函数（与 useAppStore 旧实现行为完全一致） ─────────────────
+
+/** 根据 tool_result 文本判断工具调用是否失败（与 runtime 文案协议） */
+function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
+  if (!result) return 'success'
+  return result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
+    ? 'error'
+    : 'success'
+}
+
+/** 旧会话兼容路径：剥离历史 <think>...</think> 标签，不在 UI 重复展示 */
+function stripLegacyThinkingTags(content: string): string {
+  return content.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '')
+}
+
+/** 把后端返回的 SessionDetail 消息列表恢复成 ExtendedMessage 数组 */
+function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMessage[] {
+  return messages.map((message) => {
+    const payload = message as SessionMessagePayload
+    const results = payload._toolCallResults ?? {}
+    const sanitizedContent = stripLegacyThinkingTags(message.content)
+
+    const toolCalls = message.toolCalls?.map((toolCall) => {
+      const result = results[toolCall.id]
+      return {
+        id: toolCall.id,
+        name: toolCall.name,
+        arguments: toolCall.arguments,
+        status: getToolCallStatus(result),
+        result
+      }
+    })
+
+    if (message.blocks && message.blocks.length > 0) {
+      return { ...message, content: sanitizedContent, toolCalls }
+    }
+
+    // 旧消息无 blocks：从 content 和 toolCalls 构造
+    const blocks: MessageBlock[] = []
+    if (sanitizedContent) {
+      blocks.push({ type: 'text', content: sanitizedContent })
+    }
+    if (toolCalls) {
+      for (const tc of toolCalls) {
+        blocks.push({
+          type: 'tool',
+          toolCallId: tc.id,
+          toolName: tc.name,
+          arguments: tc.arguments,
+          status: tc.status,
+          result: tc.result
+        })
+      }
+    }
+
+    return { ...message, content: sanitizedContent, toolCalls, blocks }
+  })
+}
+
+/** 把 SessionDetail 转成 Session 摘要并 upsert 到 sessions 列表头部 */
+function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
+  const nextSummary: Session = {
+    id: detail.id,
+    workspaceRoot: detail.workspaceRoot,
+    mode: detail.mode,
+    createdAt: detail.createdAt,
+    updatedAt: detail.updatedAt,
+    messageCount: detail.messageCount
+  }
+
+  const others = sessions.filter(session => session.id !== detail.id)
+  return [nextSummary, ...others]
+}
+
+/** 把单条 diff 文件标记为某个 review 状态（若该文件尚未进入 diffs 列表则先追加占位） */
+function applyDiffReviewStatus(
+  cache: MessageDiffCache,
+  filePath: string,
+  status: DiffReviewStatus
+): MessageDiffCache {
+  const existingDiff = cache.diffs.find(diff => diff.filePath === filePath)
+  const nextDiffs = existingDiff
+    ? cache.diffs
+    : [...cache.diffs, { filePath, hunks: [], status: 'modified' as const }]
+
+  return {
+    diffs: nextDiffs,
+    reviews: { ...cache.reviews, [filePath]: status }
+  }
+}
+
+/** 根据 messages 数组构建 id → index 索引，加速 delta handler O(1) 定位 */
+function buildMessageIndex(messages: ExtendedMessage[]): Record<string, number> {
+  const index: Record<string, number> = {}
+  for (let i = 0; i < messages.length; i++) {
+    index[messages[i].id] = i
+  }
+  return index
+}
+
+// ── Store 接口与实现 ──────────────────────────────────────
+
+export interface ChatState {
+  // ── 状态 ──
+  sessions: Session[]
+  currentSessionId: string | null
+  messages: ExtendedMessage[]
+  /** id → 数组索引，用于 delta handler O(1) 定位 */
+  messageIndexById: Record<string, number>
+  /** 与消息生成生命周期强绑定，写入由 sendMessage / handleMessageStart / handleError 触发 */
+  isGenerating: boolean
+  currentGeneratingMessageId: string | null
+
+  /**
+   * 流式工具调用参数累积：toolCallId → 已累积的 arguments 字符串。
+   * start 时初始化为空字符串，delta 追加片段，最终 tool_call 事件到达后清空。
+   */
+  streamingToolArgs: Record<string, string>
+
+  /** 每条消息的 diff 数据缓存 */
+  messageDiffs: Record<string, MessageDiffCache>
+  /** 正在加载 diff 的消息 ID 集合 */
+  loadingDiffs: Set<string>
+  /**
+   * live 阶段的占位文件列表，仅在等待最终 diff 数据时使用。
+   * 让 DiffViewer 在 skeleton 状态下也能展示文件名。
+   */
+  loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
+
+  /**
+   * Phase 6：Steering Queue 等待派发的用户消息。
+   * Agent 运行期间用户仍可输入，输入的消息会进入此队列，
+   * 在 turn boundary（handleMessageEnd / cancel 完成）自动 dispatch。
+   */
+  pendingUserMessages: Array<{ text: string; images: ImageAttachment[] }>
+
+  // ── Actions ──
+
+  /** 加载会话列表 */
+  loadSessions: () => Promise<void>
+  /** 选中指定会话并加载消息 */
+  selectSession: (sessionId: string) => Promise<void>
+  /** 删除会话（当前会话被删时切到下一条或清空） */
+  deleteSession: (sessionId: string) => Promise<void>
+  /** 创建新会话 */
+  createNewSession: (workspaceRoot?: string) => Promise<void>
+  /** 发送用户消息（含图片） */
+  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>
+  /** 按消息回退到某条消息之前的状态 */
+  rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
+  /** 按文件接受改动 */
+  acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
+  /** 按文件拒绝改动 */
+  rejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
+  /** 加载某条消息的 diff 数据 */
+  loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
+  /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
+  clearMessageDiffs: (messageId: string) => void
+
+  /**
+   * Phase 2 批量应用流式 delta：
+   * 把同帧累积的 delta 按 messageId 分组合并，一次 set() 写回 store。
+   * 接受三种 delta 类型：thinking / text / toolCall。
+   */
+  applyStreamDeltas: (deltas: StreamDeltaBatch) => void
+
+  // ── 主进程事件 handler ──
+  handleMessageStart: (messageId: string) => void
+  /**
+   * @deprecated 自 Phase 2 引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
+   * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
+   * 未来版本会移除；新代码请改用 `applyStreamDeltas` 配合 streamDeltaScheduler。
+   */
+  handleThinkingDelta: (messageId: string, delta: string) => void
+  /**
+   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`。
+   */
+  handleTextDelta: (messageId: string, delta: string) => void
+  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => void
+  /**
+   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`（kind: 'toolCall'）。
+   */
+  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => void
+  /**
+   * @deprecated 仍是主进程 tool_call 终态事件（不含 streaming）的合法处理入口；
+   * 不是被 buffer/scheduler 替代的对象。保留为长期 API。
+   */
+  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
+  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
+  handleDiffUpdate: (
+    messageId: string,
+    phase: 'live' | 'final',
+    diffs: Array<{ filePath: string; status: DiffEntry['status']; hunks?: DiffEntry['hunks'] }>,
+    reviews: Record<string, DiffReviewStatus>
+  ) => void
+  /**
+   * 主进程消息结束事件。
+   * @param messageId 消息 ID
+   * @param interrupted 是否为 cancel 中断结束（Phase 3）
+   *
+   * Phase 6：声明为 async 以便 await turn boundary 的 dispatchNextPending，
+   * 调用方拿到 Promise resolve 时 store 状态已稳定（pending 已 dispatch）。
+   */
+  handleMessageEnd: (messageId: string, interrupted?: boolean) => Promise<void>
+  handleError: (messageId: string, error: string) => void
+  handleVerificationResult: (messageId: string, result: string) => void
+
+  /**
+   * Phase 3：把当前所有 running tool 块标记为 error（"用户取消执行"）。
+   * 由 useAgentStore.cancelExecution 触发，保留旧 useAppStore 的兜底行为。
+   */
+  markRunningAsCancelled: () => void
+
+  /**
+   * Phase 6：Steering Queue — 用户在 Agent 运行期间入队消息
+   * 实际 dispatch 在 turn boundary 触发（handleMessageEnd / markRunningAsCancelled 后）
+   */
+  enqueuePendingMessage: (text: string, images: ImageAttachment[]) => void
+  /** 取消某条挂起消息的排队（按索引） */
+  removePendingMessage: (index: number) => void
+  /** 清空全部挂起消息 */
+  clearPendingMessages: () => void
+}
+
+// ── Phase 6：Steering Queue 容量上限 ─────────────────────────────
+
+/** 单个会话最多保留的挂起消息数。超过后丢弃最早入队的项。 */
+const MAX_PENDING_MESSAGES = 20
+
+// ── Phase 2：流式 delta 批量结构 ──────────────────────────────
+
+/** 单条 delta 的统一结构（thinking / text / toolCall 三选一） */
+export type StreamDelta =
+  | { kind: 'thinking'; messageId: string; delta: string }
+  | { kind: 'text'; messageId: string; delta: string }
+  | { kind: 'toolCall'; messageId: string; toolCallId: string; delta: string }
+
+/** 一次 flush 的批量 delta 数组 */
+export type StreamDeltaBatch = StreamDelta[]
+
+/**
+ * Phase 6：turn boundary 自动 dispatch 挂起消息。
+ * 当 handleMessageEnd / markRunningAsCancelled 触发时，dequeue 第一条挂起消息并 sendMessage。
+ *
+ * 注意：get() 必须在 set() 之外调用，保证读到的 pendingUserMessages 是 set 之后的新值。
+ * 同时 sendMessage 自身会 set isGenerating=true 并发起 IPC，与 dispatch 行为一致。
+ *
+ * 异步等待：sendMessage 是 async（含动态 import 与 IPC await），调用方应 await 本函数
+ * 以确保 store 状态在 dispatch 后完全稳定（避免测试中读到中间态）。
+ */
+async function dispatchNextPending(get: () => ChatState): Promise<void> {
+  const { pendingUserMessages, sendMessage, isGenerating } = get()
+  if (isGenerating) return
+  if (pendingUserMessages.length === 0) return
+  const [next, ...rest] = pendingUserMessages
+  // 同步移除队首，避免被多次 dispatch
+  useChatStore.setState({ pendingUserMessages: rest })
+  await sendMessage(next.text, next.images)
+}
+
+// ── Store 实现 ─────────────────────────────────────────────
+
+export const useChatStore = create<ChatState>((set, get) => ({
+  sessions: [],
+  currentSessionId: null,
+  messages: [],
+  messageIndexById: {},
+  isGenerating: false,
+  currentGeneratingMessageId: null,
+  streamingToolArgs: {},
+  messageDiffs: {},
+  loadingDiffs: new Set(),
+  loadingDiffPlaceholders: {},
+  pendingUserMessages: [],
+
+  loadSessions: async () => {
+    try {
+      const sessions: Session[] = await window.api.invoke('load-sessions')
+      set({ sessions })
+    } catch (err) {
+      console.error('加载会话列表出错:', err)
+    }
+  },
+
+  deleteSession: async (sessionId: string) => {
+    try {
+      await window.api.invoke('delete-session', { sessionId })
+      const { currentSessionId, sessions } = get()
+      const nextSessions = sessions.filter(s => s.id !== sessionId)
+      set({ sessions: nextSessions })
+
+      // 如果删除的是当前会话，需要切走
+      if (currentSessionId === sessionId) {
+        if (nextSessions.length > 0) {
+          await get().selectSession(nextSessions[0].id)
+        } else {
+          set({
+            currentSessionId: null,
+            messages: [],
+            messageIndexById: {}
+          })
+          // 同步清空 settings 层的 project 与 usage、清空 agent runtime
+          const { useSettingsStore } = await import('./useSettingsStore')
+          useSettingsStore.getState().setCurrentProject(null)
+          useSettingsStore.getState().resetSessionUsage()
+          const { useAgentStore } = await import('./useAgentStore')
+          useAgentStore.getState().resetAgentRuntime()
+        }
+      }
+    } catch (err) {
+      console.error('删除会话出错:', err)
+    }
+  },
+
+  sendMessage: async (content: string, images?: ImageAttachment[]) => {
+    const { currentSessionId, isGenerating } = get()
+    if (isGenerating) return
+
+    // 读取 settings 层的 project 路径（动态 import 避免循环依赖）
+    const { useSettingsStore } = await import('./useSettingsStore')
+    const currentProject = useSettingsStore.getState().currentProject
+    if (!currentProject) return
+
+    const activeSessionId = currentSessionId || 'session_default'
+
+    // 构建用户消息 blocks（含图片 ImageBlock）
+    const blocks: MessageBlock[] = []
+    if (content.trim()) {
+      blocks.push({ type: 'text', content })
+    }
+    if (images && images.length > 0) {
+      for (const img of images) {
+        blocks.push({
+          type: 'image',
+          fileName: img.fileName,
+          dataUrl: img.dataUrl,
+          mimeType: img.mimeType
+        })
+      }
+    }
+
+    // 1. 创建并追加用户消息
+    const userMsg: ExtendedMessage = {
+      id: 'msg_' + Date.now() + '_user',
+      sessionId: activeSessionId,
+      role: 'user',
+      content,
+      blocks: blocks.length > 0 ? blocks : undefined,
+      timestamp: Date.now()
+    }
+
+    set(state => {
+      const nextMessages = [...state.messages, userMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 },
+        isGenerating: true
+      }
+    })
+
+    try {
+      // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
+      await window.api.invoke('send-message', {
+        sessionId: activeSessionId,
+        content,
+        images: images?.map(img => ({
+          fileName: img.fileName,
+          data: img.dataUrl,
+          mimeType: img.mimeType
+        }))
+      })
+    } catch (err) {
+      get().handleError('msg_err_' + Date.now(), (err as Error).message)
+    }
+  },
+
+  selectSession: async (sessionId: string) => {
+    try {
+      const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
+      const restored = restoreSessionMessages(detail.messages)
+      set({
+        currentSessionId: sessionId,
+        sessions: upsertSessionSummary(get().sessions, detail),
+        messages: restored,
+        messageIndexById: buildMessageIndex(restored),
+        messageDiffs: {} // 切换会话时清空 diff 缓存
+      })
+
+      // 同步 settings / agent runtime
+      const { useSettingsStore } = await import('./useSettingsStore')
+      useSettingsStore.setState({
+        currentProject: detail.workspaceRoot,
+        currentMode: detail.mode
+      })
+      useSettingsStore.getState().resetSessionUsage()
+      const { useAgentStore } = await import('./useAgentStore')
+      useAgentStore.getState().resetAgentRuntime()
+
+      // 为所有 assistant 消息异步加载 diff 数据
+      for (const msg of restored) {
+        if (msg.role === 'assistant') {
+          get().loadMessageDiffs(sessionId, msg.id)
+        }
+      }
+    } catch (err) {
+      console.error('加载会话详情出错:', err)
+    }
+  },
+
+  rollbackMessage: async (sessionId: string, messageId: string) => {
+    try {
+      await window.api.invoke('rollback-message', { sessionId, messageId })
+      // 回退成功后重新加载会话数据
+      const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
+      const restored = restoreSessionMessages(detail.messages)
+      set({
+        sessions: upsertSessionSummary(get().sessions, detail),
+        messages: restored,
+        messageIndexById: buildMessageIndex(restored)
+      })
+      // 同步 settings / agent runtime
+      const { useSettingsStore } = await import('./useSettingsStore')
+      useSettingsStore.setState({
+        currentProject: detail.workspaceRoot,
+        currentMode: detail.mode
+      })
+      const { useAgentStore } = await import('./useAgentStore')
+      useAgentStore.getState().resetAgentRuntime()
+    } catch (err) {
+      console.error('回退消息出错:', err)
+    }
+  },
+
+  /**
+   * 创建新会话（用当前项目工作区，或显式传入 workspaceRoot）
+   * 注：参数顺序与 useAppStore 旧实现一致（workspaceRoot 可选，默认使用 settings.currentProject）
+   */
+  createNewSession: async (workspaceRoot?: string) => {
+    const { useSettingsStore } = await import('./useSettingsStore')
+    const settings = useSettingsStore.getState()
+    const targetProject = workspaceRoot || settings.currentProject
+    if (!targetProject) return
+    try {
+      const sessionDetail: SessionDetail = await window.api.invoke('create-session', {
+        workspaceRoot: targetProject,
+        mode: settings.currentMode
+      })
+      const restored = restoreSessionMessages(sessionDetail.messages)
+      set(state => ({
+        currentSessionId: sessionDetail.id,
+        sessions: upsertSessionSummary(state.sessions, sessionDetail),
+        messages: restored,
+        messageIndexById: buildMessageIndex(restored)
+      }))
+      // 同步 settings / agent runtime
+      useSettingsStore.setState({
+        currentProject: targetProject,
+        currentMode: sessionDetail.mode
+      })
+      useSettingsStore.getState().resetSessionUsage()
+      const { useAgentStore } = await import('./useAgentStore')
+      useAgentStore.getState().resetAgentRuntime()
+    } catch (err) {
+      console.error('创建新会话失败:', err)
+    }
+  },
+
+  rejectFile: async (sessionId: string, messageId: string, filePath: string) => {
+    try {
+      await window.api.invoke('reject-file', { sessionId, messageId, filePath })
+      const cache = get().messageDiffs[messageId]
+      if (cache) {
+        set(state => ({
+          messageDiffs: {
+            ...state.messageDiffs,
+            [messageId]: applyDiffReviewStatus(cache, filePath, 'rejected')
+          }
+        }))
+      }
+    } catch (err) {
+      console.error('拒绝文件改动出错:', err)
+      throw err
+    }
+  },
+
+  loadMessageDiffs: async (sessionId: string, messageId: string) => {
+    const state = get()
+    if (state.messageDiffs[messageId]) return
+
+    set(s => ({
+      loadingDiffs: new Set([...s.loadingDiffs, messageId])
+    }))
+
+    try {
+      const result = await window.api.invoke('get-message-diffs', { sessionId, messageId })
+      set(s => {
+        const nextLoading = new Set(s.loadingDiffs)
+        nextLoading.delete(messageId)
+        const { [messageId]: _drop, ...nextPlaceholders } = s.loadingDiffPlaceholders
+        return {
+          messageDiffs: { ...s.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews } },
+          loadingDiffs: nextLoading,
+          loadingDiffPlaceholders: nextPlaceholders
+        }
+      })
+    } catch (err) {
+      console.error('加载 diff 出错:', err)
+      set(s => {
+        const nextLoading = new Set(s.loadingDiffs)
+        nextLoading.delete(messageId)
+        return { loadingDiffs: nextLoading }
+      })
+    }
+  },
+
+  acceptFile: async (sessionId: string, messageId: string, filePath: string) => {
+    try {
+      await window.api.invoke('accept-file', { sessionId, messageId, filePath })
+      const cache = get().messageDiffs[messageId]
+      if (cache) {
+        set(state => ({
+          messageDiffs: {
+            ...state.messageDiffs,
+            [messageId]: applyDiffReviewStatus(cache, filePath, 'accepted')
+          }
+        }))
+      }
+    } catch (err) {
+      console.error('接受文件出错:', err)
+      throw err
+    }
+  },
+
+  clearMessageDiffs: (messageId: string) => {
+    set(state => {
+      const { [messageId]: _drop, ...rest } = state.messageDiffs
+      return { messageDiffs: rest }
+    })
+  },
+
+  // ── 主进程流式事件响应器 ────────────────────────────────────
+
+  handleMessageStart: (messageId: string) => {
+    const { currentSessionId } = get()
+    const activeSessionId = currentSessionId || 'session_default'
+
+    // 收到 Assistant 消息开始，向消息队列追加一个空的 assistant 卡片
+    const assistantMsg: ExtendedMessage = {
+      id: messageId,
+      sessionId: activeSessionId,
+      role: 'assistant',
+      content: '',
+      toolCalls: [],
+      timestamp: Date.now(),
+      thinking: '',
+      blocks: []
+    }
+
+    set(state => {
+      const nextMessages = [...state.messages, assistantMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        currentGeneratingMessageId: messageId
+      }
+    })
+  },
+
+  /** @deprecated 见 ChatState 接口同名字段注释。 */
+  handleThinkingDelta: (messageId: string, delta: string) => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const blocks = msg.blocks ? [...msg.blocks] : []
+      const last = blocks[blocks.length - 1]
+      if (last && last.type === 'thinking') {
+        blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+      } else {
+        blocks.push({ type: 'thinking', content: delta })
+      }
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, thinking: (msg.thinking ?? '') + delta, blocks }
+      return { messages: nextMessages }
+    })
+  },
+
+  /** @deprecated 见 ChatState 接口同名字段注释。 */
+  handleTextDelta: (messageId: string, delta: string) => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const blocks = msg.blocks ? [...msg.blocks] : []
+      const last = blocks[blocks.length - 1]
+      if (last && last.type === 'text') {
+        blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+      } else {
+        blocks.push({ type: 'text', content: delta })
+      }
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, content: msg.content + delta, blocks }
+      return { messages: nextMessages }
+    })
+  },
+
+  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
+    const newToolCall: ExtendedToolCall = {
+      id: toolCallId,
+      name: toolName,
+      arguments: args,
+      status: 'running'
+    }
+
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      // 查找是否已有 start 创建的占位 block
+      const blocks = msg.blocks ? [...msg.blocks] : []
+      const existingBlockIdx = blocks.findIndex(
+        b => b.type === 'tool' && b.toolCallId === toolCallId
+      )
+
+      if (existingBlockIdx !== -1) {
+        const existing = blocks[existingBlockIdx]
+        if (existing.type === 'tool') {
+          const { argumentsRaw: _drop, ...restBlock } = existing as RendererToolBlock
+          blocks[existingBlockIdx] = {
+            ...restBlock,
+            type: 'tool',
+            toolCallId,
+            toolName,
+            arguments: args,
+            status: 'running'
+          }
+        }
+      } else {
+        blocks.push({
+          type: 'tool',
+          toolCallId,
+          toolName,
+          arguments: args,
+          status: 'running'
+        })
+      }
+
+      // 同步更新 toolCalls 数组
+      const toolCalls = msg.toolCalls ? [...msg.toolCalls] : []
+      const tcIdx = toolCalls.findIndex(tc => tc.id === toolCallId)
+      if (tcIdx !== -1) {
+        const { argumentsRaw: _tcDrop, ...restTc } = toolCalls[tcIdx]
+        toolCalls[tcIdx] = { ...restTc, name: toolName, arguments: args }
+      } else {
+        toolCalls.push(newToolCall)
+      }
+
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, toolCalls, blocks }
+
+      const { [toolCallId]: _drop2, ...restStreaming } = state.streamingToolArgs
+      return { messages: nextMessages, streamingToolArgs: restStreaming }
+    })
+  },
+
+  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => {
+    const placeholder: ExtendedToolCall = {
+      id: toolCallId,
+      name: toolName,
+      arguments: {},
+      status: 'running'
+    }
+
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
+      blocks.push({
+        type: 'tool',
+        toolCallId,
+        toolName,
+        arguments: {},
+        status: 'running',
+        argumentsRaw: ''
+      })
+
+      const toolCalls = msg.toolCalls ? [...msg.toolCalls, placeholder] : [placeholder]
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, toolCalls, blocks }
+
+      return {
+        messages: nextMessages,
+        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: '' }
+      }
+    })
+  },
+
+  /** @deprecated 见 ChatState 接口同名字段注释。 */
+  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      const prevRaw = state.streamingToolArgs[toolCallId] ?? ''
+      const nextRaw = prevRaw + argumentsDelta
+
+      const existingBlock = msg.blocks?.find(
+        b => b.type === 'tool' && b.toolCallId === toolCallId
+      )
+      const toolName = existingBlock?.type === 'tool' ? existingBlock.toolName : ''
+      const partialArgs = parsePartialToolArgs(toolName, nextRaw)
+
+      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
+      const blockIdx = blocks.findIndex(
+        b => b.type === 'tool' && b.toolCallId === toolCallId
+      )
+      if (blockIdx !== -1 && blocks[blockIdx].type === 'tool') {
+        blocks[blockIdx] = {
+          ...blocks[blockIdx],
+          arguments: partialArgs,
+          argumentsRaw: nextRaw
+        } as RendererToolBlock
+      }
+
+      const toolCalls = msg.toolCalls ? msg.toolCalls.map(tc =>
+        tc.id === toolCallId
+          ? { ...tc, arguments: partialArgs, argumentsRaw: nextRaw }
+          : tc
+      ) : msg.toolCalls
+
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, blocks, toolCalls }
+
+      return {
+        messages: nextMessages,
+        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: nextRaw }
+      }
+    })
+  },
+
+  handleToolResult: (messageId: string, toolCallId: string, _toolName: string, result: string) => {
+    const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
+
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      const blocks = msg.blocks?.map(b => {
+        if (b.type === 'tool' && b.toolCallId === toolCallId) {
+          return { ...b, status: isError ? 'error' as const : 'success' as const, result }
+        }
+        return b
+      })
+
+      const toolCalls = msg.toolCalls?.map(tc => {
+        if (tc.id === toolCallId) {
+          return { ...tc, result, status: isError ? 'error' as const : 'success' as const }
+        }
+        return tc
+      })
+
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, blocks, toolCalls }
+      return { messages: nextMessages }
+    })
+  },
+
+  /**
+   * 工具执行后实时点亮 diff 区域。
+   *
+   * phase === 'live'：占位信号。后端只发了文件名 + status，没有 hunks。
+   *   此时不写 messageDiffs（否则 DiffViewer 会按空 hunks 渲染出 +0 -0 中间态），
+   *   仅把 messageId 标记为正在加载。
+   * phase === 'final'：完整数据。直接覆盖缓存并清除 loading 标记和 placeholders。
+   */
+  handleDiffUpdate: (messageId, phase, diffs, reviews) => {
+    if (phase === 'live') {
+      if (get().messageDiffs[messageId]) return
+      const placeholders = diffs.map(d => ({ filePath: d.filePath, status: d.status }))
+      set(state => ({
+        loadingDiffs: new Set([...state.loadingDiffs, messageId]),
+        loadingDiffPlaceholders: {
+          ...state.loadingDiffPlaceholders,
+          [messageId]: placeholders
+        }
+      }))
+      return
+    }
+
+    const nextDiffs = diffs.map(diffMeta => ({
+      filePath: diffMeta.filePath,
+      status: diffMeta.status,
+      hunks: diffMeta.hunks ?? []
+    }))
+
+    set(state => {
+      const nextLoading = new Set(state.loadingDiffs)
+      nextLoading.delete(messageId)
+      const { [messageId]: _drop, ...nextPlaceholders } = state.loadingDiffPlaceholders
+      return {
+        messageDiffs: {
+          ...state.messageDiffs,
+          [messageId]: {
+            diffs: nextDiffs,
+            reviews
+          }
+        },
+        loadingDiffs: nextLoading,
+        loadingDiffPlaceholders: nextPlaceholders
+      }
+    })
+  },
+
+  handleMessageEnd: async (messageId: string, interrupted?: boolean) => {
+    set(state => {
+      const nextMessages = state.messages.slice()
+      const idx = state.messageIndexById[messageId]
+      if (idx !== undefined && nextMessages[idx]) {
+        const msg = nextMessages[idx]
+        if (interrupted) {
+          // Phase 3：取消中断结束时，把该消息的 running tool 块标记为 error
+          // 并清空 argumentsRaw、附上 "用户取消执行" 结果。同时标记消息 interrupted。
+          const blocks = msg.blocks?.map(b => {
+            if (b.type === 'tool' && b.status === 'running') {
+              const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
+              return { ...restBlock, type: 'tool' as const, status: 'error' as const, result: '用户取消执行' }
+            }
+            return b
+          })
+          const toolCalls = msg.toolCalls?.map(tc => {
+            if (tc.status === 'running') {
+              const { argumentsRaw: _tcDrop, ...restTc } = tc
+              return { ...restTc, status: 'error' as const, result: '用户取消执行' }
+            }
+            return tc
+          })
+          nextMessages[idx] = {
+            ...msg,
+            interrupted: true,
+            blocks,
+            toolCalls
+          }
+        }
+      }
+      return {
+        messages: nextMessages,
+        isGenerating: false,
+        currentGeneratingMessageId: null,
+        // 中断时清空所有流式工具参数累积
+        ...(interrupted ? { streamingToolArgs: {} } : {})
+      }
+    })
+
+    // 更新当前会话的消息数属性，并自动加载 diff
+    const { currentSessionId, sessions, messages } = get()
+    if (currentSessionId) {
+      get().loadMessageDiffs(currentSessionId, messageId)
+      set({
+        sessions: sessions.map(s =>
+          s.id === currentSessionId ? { ...s, messageCount: messages.length, updatedAt: Date.now() } : s
+        )
+      })
+    }
+
+    // 正常完成路径：清除 agent store 的 5s 兜底定时器。
+    // 即使是 interrupted 路径，message-end 已正常到达，定时器也不应再触发。
+    const { useAgentStore } = await import('./useAgentStore')
+    useAgentStore.getState().clearCancelFallback()
+
+    // Phase 6：turn boundary 自动 dispatch 挂起消息
+    await dispatchNextPending(get)
+  },
+
+  handleError: (messageId: string, error: string) => {
+    const { currentSessionId } = get()
+    const activeSessionId = currentSessionId || 'session_default'
+
+    // 发生异常时，向队列追加一条明显的错误卡片
+    const errorMsg: ExtendedMessage = {
+      id: messageId,
+      sessionId: activeSessionId,
+      role: 'assistant',
+      content: error,
+      isError: true,
+      timestamp: Date.now()
+    }
+
+    set(state => {
+      const nextMessages = [...state.messages, errorMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        isGenerating: false,
+        currentGeneratingMessageId: null
+      }
+    })
+  },
+
+  handleVerificationResult: (messageId: string, result: string) => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = { ...msg, verificationSummary: result }
+      return { messages: nextMessages }
+    })
+  },
+
+  markRunningAsCancelled: async () => {
+    set(state => {
+      const nextMessages = state.messages.map(msg => {
+        if (!msg.blocks && !msg.toolCalls) return msg
+        let changed = false
+
+        const blocks = msg.blocks?.map(b => {
+          if (b.type === 'tool' && b.status === 'running') {
+            changed = true
+            const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
+            return { ...restBlock, type: 'tool' as const, status: 'error' as const, result: '用户取消执行' }
+          }
+          return b
+        })
+
+        const toolCalls = msg.toolCalls?.map(tc => {
+          if (tc.status === 'running') {
+            changed = true
+            const { argumentsRaw: _tcDrop, ...restTc } = tc
+            return { ...restTc, status: 'error' as const, result: '用户取消执行' }
+          }
+          return tc
+        })
+
+        return changed ? { ...msg, blocks, toolCalls } : msg
+      })
+
+      return {
+        messages: nextMessages,
+        isGenerating: false,
+        currentGeneratingMessageId: null,
+        streamingToolArgs: {}
+      }
+    })
+
+    // Phase 6：cancel 兜底路径也是 turn boundary，dispatch 挂起消息
+    // 同时清除 agent store 的 5s 兜底定时器（虽然 markRunningAsCancelled 本身就是兜底终点，
+    // 但保险起见显式清除一次，避免后续 cancel 流程出现多个并存定时器）。
+    const { useAgentStore } = await import('./useAgentStore')
+    useAgentStore.getState().clearCancelFallback()
+    await dispatchNextPending(get)
+  },
+
+  enqueuePendingMessage: (text, images) => {
+    set(state => {
+      // 防止用户疯狂输入导致队列无限增长。超过上限时丢弃最早的项。
+      if (state.pendingUserMessages.length >= MAX_PENDING_MESSAGES) {
+        const dropped = state.pendingUserMessages.length - MAX_PENDING_MESSAGES + 1
+        console.warn(`[enqueuePendingMessage] 队列已满（${MAX_PENDING_MESSAGES}），丢弃最早的 ${dropped} 条`)
+        return {
+          pendingUserMessages: [
+            ...state.pendingUserMessages.slice(dropped),
+            { text, images: [...images] }
+          ]
+        }
+      }
+      return {
+        pendingUserMessages: [...state.pendingUserMessages, { text, images: [...images] }]
+      }
+    })
+  },
+
+  removePendingMessage: (index) => {
+    set(state => ({
+      pendingUserMessages: state.pendingUserMessages.filter((_, i) => i !== index)
+    }))
+  },
+
+  clearPendingMessages: () => {
+    set({ pendingUserMessages: [] })
+  },
+
+  /**
+   * Phase 2：批量应用 delta。
+   * 把同帧累积的 delta 按 messageId 分组、对同消息的同 kind 合并，
+   * 一次 set() 写回 store，避免一帧多次 set() 触发多次 React 重渲染。
+   *
+   * 实现要点：先按 messageId 聚合 delta，再对每条消息只重建一次数组
+   * （避免之前每条 delta 都 `const next = [...nextMessages]` 产生的 O(N²) 拷贝）。
+   *
+   * 行为与单次 handleXxxDelta 完全一致：按 messageId 找到消息，
+   * 按 kind 找到或新建对应 block，再追加内容。
+   */
+  applyStreamDeltas: (deltas: StreamDeltaBatch) => {
+    if (deltas.length === 0) return
+
+    set(state => {
+      // 第一步：按 messageId 聚合 delta，保留组内到达顺序
+      const byMessageId = new Map<string, StreamDelta[]>()
+      for (const delta of deltas) {
+        if (state.messageIndexById[delta.messageId] === undefined) continue
+        let arr = byMessageId.get(delta.messageId)
+        if (!arr) {
+          arr = []
+          byMessageId.set(delta.messageId, arr)
+        }
+        arr.push(delta)
+      }
+
+      // 第二步：拷贝 messages 一次（顶层），对每条消息只在其 blocks 层级再拷贝
+      const nextMessages = state.messages.slice()
+      const nextStreaming: Record<string, string> = { ...state.streamingToolArgs }
+      let messagesChanged = false
+      let streamingChanged = false
+
+      for (const [messageId, messageDeltas] of byMessageId) {
+        const idx = state.messageIndexById[messageId]
+        if (idx === undefined) continue
+        const msg = nextMessages[idx]
+        if (!msg) continue
+
+        let workingBlocks: RendererMessageBlock[] | undefined = msg.blocks ? [...msg.blocks] : undefined
+        let workingToolCalls = msg.toolCalls
+        let workingContent = msg.content
+        let workingThinking = msg.thinking ?? ''
+
+        for (const delta of messageDeltas) {
+          if (delta.kind === 'thinking') {
+            const blocks = workingBlocks ?? []
+            const last = blocks[blocks.length - 1]
+            if (last && last.type === 'thinking') {
+              blocks[blocks.length - 1] = { ...last, content: last.content + delta.delta }
+            } else {
+              blocks.push({ type: 'thinking', content: delta.delta })
+            }
+            workingBlocks = blocks
+            workingThinking = workingThinking + delta.delta
+          } else if (delta.kind === 'text') {
+            const blocks = workingBlocks ?? []
+            const last = blocks[blocks.length - 1]
+            if (last && last.type === 'text') {
+              blocks[blocks.length - 1] = { ...last, content: last.content + delta.delta }
+            } else {
+              blocks.push({ type: 'text', content: delta.delta })
+            }
+            workingBlocks = blocks
+            workingContent = workingContent + delta.delta
+          } else {
+            // toolCall delta：累积 argumentsRaw + partial 解析 + 更新 block / toolCalls
+            const prevRaw = nextStreaming[delta.toolCallId] ?? ''
+            const nextRaw = prevRaw + delta.delta
+            nextStreaming[delta.toolCallId] = nextRaw
+            streamingChanged = true
+
+            // 一次性查 blocks 找到对应 tool block 并取出 toolName，
+            // 避免在 toolCalls.map 里再 find 两次 + 重复 parsePartialToolArgs。
+            const blocks = workingBlocks ?? []
+            const blockIdx = blocks.findIndex(
+              b => b.type === 'tool' && b.toolCallId === delta.toolCallId
+            )
+            const toolBlock = blockIdx !== -1 && blocks[blockIdx].type === 'tool'
+              ? blocks[blockIdx]
+              : null
+            const partialArgs = toolBlock
+              ? parsePartialToolArgs(toolBlock.toolName, nextRaw)
+              : null
+
+            if (toolBlock && partialArgs !== null) {
+              blocks[blockIdx] = {
+                ...toolBlock,
+                arguments: partialArgs,
+                argumentsRaw: nextRaw
+              } as RendererToolBlock
+              workingBlocks = blocks
+            }
+
+            if (workingToolCalls && toolBlock && partialArgs !== null) {
+              workingToolCalls = workingToolCalls.map(tc =>
+                tc.id === delta.toolCallId
+                  ? { ...tc, arguments: partialArgs, argumentsRaw: nextRaw }
+                  : tc
+              )
+            } else if (workingToolCalls && !toolBlock) {
+              // 块还没起来时（tool_call_start 还没到），仍要更新 toolCalls[].argumentsRaw，
+              // 这样 toolCallStart 事件上来时不会丢失已经累积的 raw。
+              workingToolCalls = workingToolCalls.map(tc =>
+                tc.id === delta.toolCallId
+                  ? { ...tc, argumentsRaw: nextRaw }
+                  : tc
+              )
+            }
+          }
+        }
+
+        // 整条消息处理完，原子写回 nextMessages[idx]
+        nextMessages[idx] = {
+          ...msg,
+          content: workingContent,
+          thinking: workingThinking,
+          blocks: workingBlocks,
+          toolCalls: workingToolCalls
+        }
+        messagesChanged = true
+      }
+
+      return {
+        ...(messagesChanged ? { messages: nextMessages } : {}),
+        ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
+      }
+    })
+  }
+}))
+
+/**
+ * 重置整个 chat store 到默认值。供测试 setup 复用。
+ * 不导出给生产代码使用，保留为内部测试辅助。
+ */
+export function resetChatStoreForTests(): void {
+  useChatStore.setState({
+    sessions: [],
+    currentSessionId: null,
+    messages: [],
+    messageIndexById: {},
+    isGenerating: false,
+    currentGeneratingMessageId: null,
+    streamingToolArgs: {},
+    messageDiffs: {},
+    loadingDiffs: new Set(),
+    loadingDiffPlaceholders: {},
+    pendingUserMessages: []
+  })
+}

@@ -63,6 +63,12 @@ export interface Message {
   blocks?: MessageBlock[]
   /** 验证结果摘要 (S14)，修改后自动验证的结果 */
   verificationSummary?: string
+  /**
+   * Phase 3：true 表示本条消息是 cancel 中断产生的。
+   * 持久化层在 saveAssistantMessage 时根据 message_end.interrupted 写入，
+   * 历史会话加载后 UI 据此显示「已中断」标识。
+   */
+  interrupted?: boolean
   timestamp: number
 }
 

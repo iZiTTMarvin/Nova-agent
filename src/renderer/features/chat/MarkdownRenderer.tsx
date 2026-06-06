@@ -7,13 +7,31 @@
  * 2. 代码块复用 syntaxHighlight 做 token 上色，右上角始终显示语言标签
  * 3. 代码块右上角提供"复制"按钮，复制成功后回写 ✓ 已复制
  * 4. 链接默认在新窗口打开，避免打断用户对话上下文
+ *
+ * Phase 5 优化：
+ * - MARKDOWN_COMPONENTS 提升为模块级常量，引用稳定，配合 React.memo
+ *   避免 react-markdown 每次 render 重建 AST
+ * - CodeBlock 接受 isStreaming：流式期间跳过 highlightLine 逐行解析，
+ *   改用纯文本展示，结束后再启用完整高亮
  */
-import React, { Fragment, useCallback, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import React, { Fragment, useCallback, useMemo, useState } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
 import './MarkdownRenderer.css'
+
+// hast 节点的最小结构，避免引入 @types/hast 这一额外依赖
+interface HastTextNode {
+  type: 'text'
+  value: string
+}
+interface HastElementNode {
+  type: 'element'
+  tagName?: string
+  properties?: { className?: string[] | string }
+  children?: Array<HastElementNode | HastTextNode>
+}
 
 // 把 markdown 语言标签映射成 highlightLine 能识别的假文件后缀
 const LANG_EXT_MAP: Record<string, string> = {
@@ -42,9 +60,10 @@ function langToFakePath(language: string): string {
 interface CodeBlockProps {
   language: string
   code: string
+  isStreaming?: boolean
 }
 
-const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
+const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = false }) => {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(() => {
@@ -82,7 +101,12 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
           {lines.map((line, idx) => (
             <Fragment key={idx}>
               {idx > 0 && '\n'}
-              {highlightLine(line, fakePath).map((token, tIdx) => (
+              {/*
+                流式期间：跳过 highlightLine 逐行 token 解析，避免每 chunk 重新走词法分析。
+                文本节点直接渲染，纯文本展示；不输出 diff-token span 类。
+                流式结束后恢复正常高亮。
+              */}
+              {isStreaming ? line : highlightLine(line, fakePath).map((token, tIdx) => (
                 <span key={tIdx} className={`diff-token diff-token--${token.type}`}>
                   {token.text}
                 </span>
@@ -93,18 +117,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
       </pre>
     </div>
   )
-}
-
-// hast 节点的最小结构，避免引入 @types/hast 这一额外依赖
-interface HastTextNode {
-  type: 'text'
-  value: string
-}
-interface HastElementNode {
-  type: 'element'
-  tagName?: string
-  properties?: { className?: string[] | string }
-  children?: Array<HastElementNode | HastTextNode>
 }
 
 function getCodeFromPreNode(node: unknown): { language: string; code: string } | null {
@@ -131,7 +143,60 @@ function getCodeFromPreNode(node: unknown): { language: string; code: string } |
 
 interface MarkdownRendererProps {
   content: string
+  /**
+   * 是否处于流式生成中。流式期间代码块跳过语法高亮，避免每 chunk 重解析。
+   * 默认 false。
+   */
+  isStreaming?: boolean
 }
+
+/**
+ * 模块级 Markdown 组件映射表。
+ *
+ * 关键：引用稳定，React.memo 才能正确短路。
+ * 之前内联对象每次 render 重建，导致 react-markdown 每次都全量重建 AST，
+ * 在历史消息多时严重拖慢长循环渲染。
+ *
+ * 注意：pre / code / a / table 都是无状态组件，引用稳定；
+ * 但 pre 需要捕获 isStreaming 决定是否走代码块高亮降级，因此实际传给
+ * react-markdown 的 components 由组件内部 useMemo 拼装（见下）。
+ */
+const STATIC_MARKDOWN_COMPONENTS: Omit<Components, 'pre'> = {
+  // 走到这里的都是 inline code（fence 已被 pre 拦截）
+  code({ children, ...rest }) {
+    // 只透传必要属性，避免 react-markdown 的 node 注入到 DOM
+    const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
+    return (
+      <code className="markdown-inline-code" {...domSafe}>
+        {children}
+      </code>
+    )
+  },
+  a({ children, href, ...rest }) {
+    const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
+    return (
+      <a
+        className="markdown-link"
+        href={href}
+        target="_blank"
+        rel="noreferrer noopener"
+        {...domSafe}
+      >
+        {children}
+      </a>
+    )
+  },
+  table({ children }) {
+    return (
+      <div className="markdown-table-wrap">
+        <table className="markdown-table">{children}</table>
+      </div>
+    )
+  }
+}
+
+/** 模块级 remark 插件数组，引用稳定 */
+const REMARK_PLUGINS = [remarkGfm]
 
 /**
  * 用 React.memo 包裹：流式生成期间，每个 text_delta 都会触发 ChatPanel 整体重渲染，
@@ -139,52 +204,30 @@ interface MarkdownRendererProps {
  * 重新高亮，产生 O(消息数 × 内容量) 的解析/ DOM 开销，长循环下直接撑爆渲染进程
  * （Blink/Oilpan OOM 白屏）。content 为字符串，浅比较即可精确命中「内容未变则跳过」。
  */
-export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({ content }) {
+export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({ content, isStreaming = false }) {
+  // 流式期间内层 code 组件已经通过 CodeBlock 的 isStreaming 跳过高亮；
+  // 这里额外 memo remarkPlugins 防不必要的 prop 引用变化。
+  const remarkPlugins = useMemo(() => REMARK_PLUGINS, [])
+
+  // pre 组件需要捕获 isStreaming（决定 CodeBlock 走不走高亮降级路径），
+  // 因此不能在模块级常量里固定。改在组件内 useMemo 拼装，把 isStreaming 闭包进去。
+  // 当 isStreaming 翻转时，引用变化 → react-markdown 重建组件树 → 高亮路径正确切换。
+  const components = useMemo<Components>(() => ({
+    ...STATIC_MARKDOWN_COMPONENTS,
+    pre({ node, children }) {
+      const parsed = getCodeFromPreNode(node)
+      if (!parsed) return <pre className="md-code-block__pre">{children}</pre>
+      return <CodeBlock language={parsed.language} code={parsed.code} isStreaming={isStreaming} />
+    }
+  }), [isStreaming])
+
   if (!content) return null
 
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          // fence 代码块在 hast 中是 pre > code 结构，这里截获后交给 CodeBlock 处理
-          pre({ node, children }) {
-            const parsed = getCodeFromPreNode(node)
-            if (!parsed) return <pre className="md-code-block__pre">{children}</pre>
-            return <CodeBlock language={parsed.language} code={parsed.code} />
-          },
-          // 走到这里的都是 inline code（fence 已被 pre 拦截）
-          code({ children, ...rest }) {
-            // 只透传必要属性，避免 react-markdown 的 node 注入到 DOM
-            const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
-            return (
-              <code className="markdown-inline-code" {...domSafe}>
-                {children}
-              </code>
-            )
-          },
-          a({ children, href, ...rest }) {
-            const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
-            return (
-              <a
-                className="markdown-link"
-                href={href}
-                target="_blank"
-                rel="noreferrer noopener"
-                {...domSafe}
-              >
-                {children}
-              </a>
-            )
-          },
-          table({ children }) {
-            return (
-              <div className="markdown-table-wrap">
-                <table className="markdown-table">{children}</table>
-              </div>
-            )
-          }
-        }}
+        remarkPlugins={remarkPlugins}
+        components={components}
       >
         {content}
       </ReactMarkdown>

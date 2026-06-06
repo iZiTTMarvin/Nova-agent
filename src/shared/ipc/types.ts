@@ -188,6 +188,12 @@ export interface IpcEvents {
   }
   'agent:message-end': {
     messageId: string
+    /**
+     * Phase 3：true 表示本轮 message-end 是由 cancel 触发的（用户主动中断），
+     * renderer 据此把消息标记为 interrupted 状态。
+     * 正常完成的消息不写此字段。
+     */
+    interrupted?: boolean
   }
   'agent:thinking-delta': {
     messageId: string

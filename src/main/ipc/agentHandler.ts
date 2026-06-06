@@ -380,7 +380,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           ? dropPermissionDeniedResiduals(stream.toolCalls, stream.blocks)
           : { toolCalls: stream.toolCalls, blocks: stream.blocks }
 
-        saveAssistantMessage(sessionId, event.messageId, stream.content, toolCalls, blocks)
+        saveAssistantMessage(sessionId, event.messageId, stream.content, toolCalls, blocks, event.interrupted)
         triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
@@ -554,7 +554,8 @@ function saveAssistantMessage(
   messageId: string,
   content: string,
   toolCalls: SessionToolCall[],
-  blocks: MessageBlock[]
+  blocks: MessageBlock[],
+  interrupted?: boolean
 ): void {
   const sessionStore = getSessionStore()
   const assistantMessage: SessionMessage = {
@@ -563,7 +564,9 @@ function saveAssistantMessage(
     content,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     blocks: blocks.length > 0 ? blocks : undefined,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    // 取消中断的消息也持久化 interrupted 标记，下次加载时 UI 仍能区分
+    ...(interrupted ? { interrupted: true } : {})
   }
   sessionStore.appendMessage(sessionId, assistantMessage)
 }
@@ -694,7 +697,10 @@ function forwardEventToRenderer(
       webContents.send('agent:error', { messageId: event.messageId, error: event.error })
       break
     case 'message_end':
-      webContents.send('agent:message-end', { messageId: event.messageId })
+      webContents.send('agent:message-end', {
+        messageId: event.messageId,
+        ...(event.interrupted ? { interrupted: true } : {})
+      })
       break
   }
 }

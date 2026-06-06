@@ -71,6 +71,12 @@ export interface SessionMessage {
   toolCallId?: string
   /** 验证结果摘要（修改后自动验证的结果） */
   verificationSummary?: string
+  /**
+   * Phase 3：true 表示本条消息是 cancel 中断产生的（由主进程 message-end 事件携带的
+   * interrupted 字段写入）。下次加载会话时 UI 仍能区分"已中断"和"已完成"。
+   * 普通完成的消息不写此字段，UI 视为未设置即可。
+   */
+  interrupted?: boolean
   timestamp: number
 }
 

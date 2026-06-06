@@ -1031,4 +1031,53 @@ describe('AgentLoop', () => {
     )
     expect(noticed).toBe(false)
   })
+
+  /**
+   * Phase 3：cancel 后 message_end 事件应携带 interrupted=true。
+   */
+  it('Phase 3: cancel 后 message_end 事件应携带 interrupted=true', async () => {
+    const client = new MockModelClient()
+    // 第一个 chunk 后立刻 cancelled
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '一段话' },
+        { type: 'cancelled' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: Array<{ type: string; interrupted?: boolean }> = []
+    eventBus.on((e) => events.push(e as { type: string; interrupted?: boolean }))
+
+    await loop.sendMessage('取消我')
+
+    const messageEndEvent = events.find(e => e.type === 'message_end')
+    expect(messageEndEvent).toBeDefined()
+    expect(messageEndEvent!.interrupted).toBe(true)
+  })
+
+  /**
+   * Phase 3：正常完成（非 cancel）的 message_end 不应携带 interrupted 字段。
+   */
+  it('Phase 3: 正常完成的 message_end 不应携带 interrupted', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '正常回复' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: Array<{ type: string; interrupted?: boolean }> = []
+    eventBus.on((e) => events.push(e as { type: string; interrupted?: boolean }))
+
+    await loop.sendMessage('你好')
+
+    const messageEndEvent = events.find(e => e.type === 'message_end')
+    expect(messageEndEvent).toBeDefined()
+    expect(messageEndEvent!.interrupted).toBeUndefined()
+  })
 })

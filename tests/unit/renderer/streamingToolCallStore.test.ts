@@ -149,7 +149,7 @@ describe('S2 流式工具调用 store 行为', () => {
     }
   })
 
-  it('cancelExecution 应将 running tool 块标记为 error + 清空 streamingToolArgs', async () => {
+  it('cancelExecution 应发送 IPC 信号；由 message-end(interrupted=true) 把 running tool 标记为 error + 清空 streamingToolArgs', async () => {
     const msgId = 'msg_cancel_1'
 
     // 模拟正在流式生成中的工具调用
@@ -165,20 +165,33 @@ describe('S2 流式工具调用 store 行为', () => {
       expect(block.status).toBe('running')
     }
 
-    // 取消执行
+    // Phase 3：取消只发 IPC，不动本地 messages
     mockInvoke.mockResolvedValue(undefined)
     await useAppStore.getState().cancelExecution()
 
     state = useAppStore.getState()
+    // 取消后本地不动 running 块（等 message-end 兜底）
+    const blockAfterCancel = state.messages[0].blocks![0]
+    if (blockAfterCancel.type === 'tool') {
+      expect(blockAfterCancel.status).toBe('running')
+    }
+    // 弹窗状态被本地清空
+    expect(state.pendingPermissionRequest).toBeNull()
 
+    // 主进程推送 message-end(interrupted=true) 触发收尾
+    useAppStore.getState().handleMessageEnd(msgId, true)
+
+    state = useAppStore.getState()
     // running 块应标记为 error
     const cancelBlock = state.messages[0].blocks![0]
     if (cancelBlock.type === 'tool') {
       expect(cancelBlock.status).toBe('error')
+      expect(cancelBlock.result).toBe('用户取消执行')
     }
-
     // streamingToolArgs 应清空
     expect(state.streamingToolArgs['tc_cancel']).toBeUndefined()
+    // 消息应标记 interrupted
+    expect(state.messages[0].interrupted).toBe(true)
   })
 
   it('无 start 的 handleToolCall 应正常创建新块（向后兼容）', () => {
@@ -266,7 +279,7 @@ describe('S2 流式工具调用 store 行为', () => {
     expect(state.messages.length).toBe(0)
   })
 
-  it('cancel 后 running toolCalls 也应标记为 error', async () => {
+  it('cancel 后由 message-end(interrupted=true) 把 running toolCalls 也标记为 error', async () => {
     const msgId = 'msg_cancel_tc'
 
     useAppStore.getState().handleMessageStart(msgId)
@@ -278,6 +291,11 @@ describe('S2 流式工具调用 store 行为', () => {
 
     mockInvoke.mockResolvedValue(undefined)
     await useAppStore.getState().cancelExecution()
+
+    // 取消后本地不动，等主进程 message-end
+    expect(useAppStore.getState().messages[0].toolCalls![0].status).toBe('running')
+
+    useAppStore.getState().handleMessageEnd(msgId, true)
 
     const state = useAppStore.getState()
     // toolCalls 中的条目也应标记为 error

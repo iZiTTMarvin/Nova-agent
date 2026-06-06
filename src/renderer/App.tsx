@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { useAppStore } from './stores/useAppStore'
+import { useChatStore } from './stores/useChatStore'
 import { NovaLogo, SettingsIcon } from './components/Icons'
 import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './features/chat/ChatPanel'
@@ -7,19 +8,36 @@ import { PermissionPrompt } from './features/permissions/PermissionPrompt'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
+import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
+import {
+  configureStreamDeltaScheduler,
+  flushStreamDeltasNow,
+  resetStreamDeltaScheduler,
+  scheduleStreamDelta
+} from './lib/streamDeltaScheduler'
 import './App.css'
 
+/**
+ * App 根组件
+ *
+ * 职责：
+ * 1. 启动时加载模型配置与会话列表
+ * 2. 注册主进程 AgentLoop 流式事件监听器
+ * 3. 装配流式缓冲与 rAF 调度器
+ *
+ * 流式缓冲架构（Phase 2）：
+ * - 高频 delta（thinking / text / tool-call-args）走 buffer + rAF 聚合
+ * - 低频最终事件（message-start / tool-call / tool-result / message-end / error 等）直接调 store
+ * - message-end / error / dispose 之前必须 flushNow，保证最后内容不丢失
+ */
 function App(): JSX.Element {
   const loadModelConfig = useAppStore(state => state.loadModelConfig)
   const loadSessions = useAppStore(state => state.loadSessions)
   const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
 
-  // 导入事件流响应 Actions
+  // 低频最终事件 action（不走 buffer）
   const handleMessageStart = useAppStore(state => state.handleMessageStart)
-  const handleThinkingDelta = useAppStore(state => state.handleThinkingDelta)
-  const handleTextDelta = useAppStore(state => state.handleTextDelta)
   const handleToolCallStart = useAppStore(state => state.handleToolCallStart)
-  const handleToolCallDelta = useAppStore(state => state.handleToolCallDelta)
   const handleToolCall = useAppStore(state => state.handleToolCall)
   const handleToolResult = useAppStore(state => state.handleToolResult)
   const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
@@ -42,32 +60,53 @@ function App(): JSX.Element {
 
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
   useEffect(() => {
+    // ── Phase 2：装配流式缓冲 + rAF 调度器 ──
+    //
+    // 数据流：IPC delta → buffer(16ms 文本 / 300ms 工具参数 聚合) → scheduler(rAF 帧聚合) → store(一次 setState)
+    //
+    // buffer 在 timer 到期时把 batch 拆成单个 delta 投递给 scheduler；
+    // scheduler 把同一帧内的所有 delta 合并为一次 applyStreamDeltas 调用。
+    // 这样无论 buffer 触发多少次 flush，同一帧内只产生一次 React 重渲染。
+    configureStreamDeltaScheduler({
+      requestFrame: (cb) => window.requestAnimationFrame(cb),
+      cancelFrame: (handle) => window.cancelAnimationFrame(handle),
+      apply: (batch) => useChatStore.getState().applyStreamDeltas(batch)
+    })
+
+    const buffer = createStreamDeltaBuffer((batch) => {
+      // 关键修复：buffer 自身不直接调 applyStreamDeltas，改为把 batch 拆开
+      // 逐条投递给 scheduler，让 scheduler 在下一帧 rAF 时一次性合并。
+      for (const delta of batch) {
+        scheduleStreamDelta(delta)
+      }
+    })
+
     // 监听：Agent 思考开始
     const unsubMessageStart = window.api.on('agent:message-start', (data) => {
       handleMessageStart(data.messageId)
     })
 
-    // 监听：Agent 思考实时增量
+    // 监听：Agent 思考实时增量 → 进 buffer
     const unsubThinkingDelta = window.api.on('agent:thinking-delta', (data) => {
-      handleThinkingDelta(data.messageId, data.delta)
+      buffer.pushThinking(data.messageId, data.delta)
     })
 
-    // 监听：Agent 流式字符输出
+    // 监听：Agent 流式字符输出 → 进 buffer
     const unsubTextDelta = window.api.on('agent:text-delta', (data) => {
-      handleTextDelta(data.messageId, data.delta)
+      buffer.pushText(data.messageId, data.delta)
     })
 
-    // 监听：Agent 流式工具调用开始（S2 增量事件）
+    // 监听：Agent 流式工具调用开始（low-freq 元数据，直接 store）
     const unsubToolCallStart = window.api.on('agent:tool-call-start', (data) => {
       handleToolCallStart(data.messageId, data.toolCallId, data.toolName)
     })
 
-    // 监听：Agent 流式工具调用参数增量（S2 增量事件）
+    // 监听：Agent 流式工具调用参数增量 → 进 buffer
     const unsubToolCallDelta = window.api.on('agent:tool-call-delta', (data) => {
-      handleToolCallDelta(data.messageId, data.toolCallId, data.argumentsDelta)
+      buffer.pushToolCallDelta(data.messageId, data.toolCallId, data.argumentsDelta)
     })
 
-    // 监听：Agent 工具调用完成（最终事件，携带完整参数）
+    // 监听：Agent 工具调用完成（最终事件，携带完整参数）→ 直接 store
     const unsubToolCall = window.api.on('agent:tool-call', (data) => {
       handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args)
     })
@@ -87,8 +126,10 @@ function App(): JSX.Element {
       handleDiffUpdate(data.messageId, data.phase, data.diffs, data.reviews)
     })
 
-    // 监听：Agent 执行出错
+    // 监听：Agent 执行出错 → 强制 flush 后再走最终事件
     const unsubError = window.api.on('agent:error', (data) => {
+      buffer.flushNow()
+      flushStreamDeltasNow()
       handleError(data.messageId, data.error)
     })
 
@@ -111,9 +152,16 @@ function App(): JSX.Element {
       applyTodoUpdate({ sessionId: data.sessionId, todos: data.todos, view: data.view })
     })
 
-    // 监听：Agent 本轮思考和应答全部完成
+    // 监听：Agent 本轮思考和应答全部完成 → 强制 flush
     const unsubMessageEnd = window.api.on('agent:message-end', (data) => {
-      handleMessageEnd(data.messageId)
+      buffer.flushNow()
+      flushStreamDeltasNow()
+      // await dispatchNextPending 的潜在异常，catch 后避免静默吞掉导致 UI 卡死
+      Promise.resolve(handleMessageEnd(data.messageId, data.interrupted)).catch((err) => {
+        console.error('[message-end] handleMessageEnd 异常:', err)
+      })
+      // dispose 之后下一次 message-start 来临会由 React 重新 effect 重建 buffer。
+      // 为简化：保持 buffer 实例跨 turn 复用，dispose 仅在 App 卸载时执行。
     })
 
     // 监听：Token 用量统计
@@ -121,7 +169,14 @@ function App(): JSX.Element {
       handleUsage(data.usage)
     })
 
-    // 清理函数：解绑所有主进程事件监听器
+    // 清理函数：解绑所有主进程事件监听器，释放 buffer
+    // 顺序很关键（防御性）：
+    // 1. 先解绑所有主进程 IPC 监听器，避免清理过程中又有新 delta 进来
+    // 2. buffer.flushNow() 把 buffer 还在 pending 的 delta 投递给 scheduler
+    // 3. flushStreamDeltasNow() 把 scheduler 排到 rAF 队列的 delta 同步推给 store
+    //    （HMR / StrictMode 二次 effect 跑之前，旧 buffer 的最后一批 delta 不会丢失）
+    // 4. dispose buffer（内部还会 flushNow 一次，此时已空，no-op）
+    // 5. reset scheduler（此刻应已无 pending）
     return () => {
       unsubMessageStart()
       unsubThinkingDelta()
@@ -139,13 +194,14 @@ function App(): JSX.Element {
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
+      buffer.flushNow()
+      flushStreamDeltasNow()
+      buffer.dispose()
+      resetStreamDeltaScheduler()
     }
   }, [
     handleMessageStart,
-    handleThinkingDelta,
-    handleTextDelta,
     handleToolCallStart,
-    handleToolCallDelta,
     handleToolCall,
     handleToolResult,
     handleDiffUpdate,
@@ -163,7 +219,7 @@ function App(): JSX.Element {
     <div className="app-wrapper">
       {/* 自定义标题栏 */}
       <TitleBar />
-      
+
       <div className="app-layout">
         {/* 左侧功能配置与会话管理栏 */}
         <Sidebar />

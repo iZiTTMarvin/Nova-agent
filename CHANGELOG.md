@@ -1,5 +1,71 @@
 # Changelog
 
+## 2026-06-06
+
+- **refactor**: Store 拆分 + 流式输出优化 + 取消机制 + 渲染池 + Steering Queue
+  - **Phase 1 Store 拆分**：1118 行 useAppStore.ts 拆为三个职责清晰的子 store + 兼容层
+    - 新建 `src/renderer/stores/types.ts`：跨 store 共用类型（ExtendedMessage / ExtendedToolCall / RendererMessageBlock / PendingPermissionRequest / MessageDiffCache / SessionUsageStats 等）
+    - 新建 `src/renderer/stores/useChatStore.ts`：消息 / 会话 / 消息索引 / 流式 handler / diff 缓存 / markRunningAsCancelled / applyStreamDeltas
+    - 新建 `src/renderer/stores/useAgentStore.ts`：Agent 运行时 / 权限 / 取消 / 验证权限
+    - 新建 `src/renderer/stores/useSettingsStore.ts`：ModelConfig / currentProject / currentMode / sessionUsage / contextLimit / isConfigModalOpen
+    - 新建 `src/renderer/stores/selectors.ts`：跨 store selector（selectSupportsVisionFromConfig）
+    - 改造 `useAppStore.ts` 为薄兼容层：setState 按字段归属分发到子 store；hook 形式订阅并合并三个子 store
+    - `src/renderer/features/chat/ChatPanel.tsx`：所有 `useAppStore(state => ...)` 拆为从 useChatStore / useAgentStore / useSettingsStore 直接订阅
+  - **Phase 2 数据层缓冲**：高频 SSE delta 改为批量写入，避免 kHz 级 React 重渲染
+    - 新建 `src/renderer/lib/streamDeltaBuffer.ts`：时间窗口缓冲（文本 16ms / 工具参数 300ms），关键时点 flushNow；thinking→text 切换时自动 flushNow 避免块顺序错乱
+    - 新建 `src/renderer/lib/streamDeltaScheduler.ts`：模块级 pending queue + rAF 聚合；新增 `scheduleStreamDelta` 统一 delta 入口，让 buffer 在 onFlush 中遍历 batch 投递，避免直接调 apply 绕过 rAF 层
+    - `src/renderer/App.tsx`：thinking / text / tool-call-delta 三个高频事件改为走 buffer；message-end / error 前 flushStreamDeltasNow；handleMessageEnd 异常 catch 后不再静默吞掉
+    - `useChatStore.applyStreamDeltas` 改为先按 messageId 聚合再处理（O(N²) → O(N) 数组拷贝）
+  - **Phase 3 取消机制改造**：前端只发信号，不再手动擦状态
+    - `src/runtime/agent/types.ts` / `src/runtime/agent/AgentLoop.ts`：`message_end` 事件新增 `interrupted?: boolean`，仅在 cancel 路径时携带
+    - `src/shared/session/types.ts` / `src/runtime/sessions/types.ts` / `src/main/ipc/sessionMessageMapper.ts`：`Message` 与 `SessionMessage` 新增 `interrupted` 字段，持久化到 SessionStore 后下次加载 UI 仍能区分
+    - `src/shared/ipc/types.ts` / `src/main/ipc/agentHandler.ts`：IPC `agent:message-end` 透传 `interrupted` 字段
+    - `useChatStore.handleMessageEnd` 接受 `interrupted` 参数：中断时把该消息的 running tool 块标记为 error、清空 streamingToolArgs、标记消息 interrupted
+    - `useAgentStore.cancelExecution` 改造为发信号 + 5s 兜底超时（仅当 currentGeneratingMessageId 仍是取消时那条才触发 markRunningAsCancelled，避免误杀 dispatchNextPending 派发的新消息）
+  - **Phase 4 渲染池**：从"段落跳跃"改为"平滑打字机"
+    - 新建 `src/renderer/hooks/useStreamingRenderPool.ts`：targetLength / renderedLength 双轨 + rAF tick，getCatchupStep 算法（小池固定 220 chars/s、中池 14%、大池 20%、超大量 28% 但不超过 3600 chars/帧）；支持 `agile` / `elegant` 两种风格
+    - 新建 `src/renderer/features/chat/StreamingTextBlock.tsx`：封装 useStreamingRenderPool + MarkdownRenderer，render pool tick 时通过 `onRenderPoolTick` 回调通知外部
+    - `src/renderer/features/chat/ChatPanel.tsx`：text block 渲染路径切换到 StreamingTextBlock；自动滚动从监听 messages 改为监听 render pool tick
+  - **Phase 5 Markdown 优化**：`src/renderer/features/chat/MarkdownRenderer.tsx`
+    - 提取模块级 `STATIC_MARKDOWN_COMPONENTS` 常量 + `REMARK_PLUGINS`，引用稳定
+    - 关键修复：pre 组件移到 `useMemo` 内部拼装并把 `isStreaming` 闭包进 CodeBlock，确保流式期间代码块真正跳过 `highlightLine` 逐行 token 解析
+    - CodeBlock 接受 `isStreaming` prop：流式期间纯文本展示，结束后正常高亮
+  - **Phase 6 Steering Queue**：允许在 Agent 运行期间输入消息，turn boundary 自动 dispatch
+    - `useChatStore` 新增 `pendingUserMessages: Array<{ text; images }>` 队列（上限 20 条）+ `enqueuePendingMessage` / `removePendingMessage` / `clearPendingMessages` actions
+    - `handleMessageEnd` / `markRunningAsCancelled` 末尾调用 `dispatchNextPending`（async）：FIFO dequeue 队首消息并 sendMessage
+    - ChatPanel textarea 在 isGenerating 期间不再 disabled，placeholder 提示"输入将进入排队队列"；新增 steering-queue 提示组件展示当前排队项
+  - **测试**：新增 `streamDeltaBuffer.test.ts` (12) / `streamDeltaScheduler.test.ts` (8) / `applyStreamDeltas.test.ts` (9) / `useStreamingRenderPool.test.ts` (16) / `steeringQueue.test.ts` (7) / `cancelRaceCondition.test.ts` (2) / `AgentLoop.test.ts` +2 共 56 个新测试
+  - 架构依赖方向：useChatStore / useAgentStore / useSettingsStore 通过 `getState()` 单向读跨 store；useAppStore 兼容层做合并视图，按 KEY_OWNERSHIP 表把 setState 分发到对应子 store
+  - **代码审查后修复**：
+    - C1：streamDeltaBuffer 的 onFlush 改为遍历 batch 调 `scheduleStreamDelta`，让 rAF 聚合层真正生效
+    - C2：MarkdownRenderer 的 pre 组件从模块级常量移到 useMemo 内部，捕获 isStreaming 传递给 CodeBlock
+    - I1：5s 兜底定时器检查 currentGeneratingMessageId 与取消时是否一致，避免误杀新消息
+    - I2：补全 .steering-queue* CSS 样式（淡蓝虚线框、列表项、删除按钮）
+    - I3：streamDeltaBuffer 增加 thinking→text 切换点检测，第一次 pushText 紧跟 thinking 时立即 flushNow
+    - I4：App.tsx 改用 Promise.resolve(...).catch 包裹 handleMessageEnd 避免异步异常静默
+    - I5：applyStreamDeltas 改为先按 messageId 聚合再统一处理消息引用，消除 O(N²) 数组拷贝
+    - I6：useAppStore.setState 改为基于子 store 的 `Partial<ReturnType<typeof getState>>` 类型断言，移除 `as never`
+    - S1：pendingUserMessages 上限 20 条防 OOM
+    - S2：移除 StreamingTextBlock 的 data-render-pool-* debug 属性
+    - S3：parseThinking 参数从 any 改为 `Pick<ExtendedMessage, 'id'> & { thinking?; content }` 精确类型
+  - **第二轮代码审查后修复**：
+    - C1-1：App.tsx 清理函数在 `buffer.flushNow()` 之后追加 `flushStreamDeltasNow()`，再 dispose / reset scheduler，确保 HMR / Strict Mode 二次 effect 之前最后一批 delta 不丢失
+    - C1-2：`useChatStore` 的 `handleThinkingDelta` / `handleTextDelta` / `handleToolCallDelta` 在接口和实现处都标注 `@deprecated`，新代码必须走 `applyStreamDeltas` 路径
+    - C2-1：ChatPanel.tsx 旧渲染路径（无 blocks 的消息）补上 `isStreaming={isCurrentAssistantGenerating}`，保证 API 契约完整
+    - I1-1：5s 兜底定时器句柄保存到模块级 `cancelFallbackTimer`，`useChatStore.handleMessageEnd` / `markRunningAsCancelled` 完成后通过 `useAgentStore.clearCancelFallback()` 显式 `clearTimeout`，避免空跑 5s
+    - I1-2：cancelledMessageId 为 null 时跳过启动兜底定时器（双击取消、刷新后立即点击场景）
+    - I1 顺手：去掉冗余的 `+ 1000ms` 时间窗容差（定时器本身就是 5s 触发）
+    - I5-1：`useChatStore.applyStreamDeltas` 的 toolCall 分支重构为一次性 `findIndex` 取出 toolBlock 与 partialArgs，避免在 `toolCalls.map` 里重复 `find` 两次 + 重复 `parsePartialToolArgs` 两次
+  - **第二轮新增测试**：
+    - `MarkdownRenderer.test.tsx` (新文件，4 测试)：C2 修复 — 验证 isStreaming=true 时代码块不输出 .diff-token span，isStreaming=false 时正常高亮；翻转时渲染路径正确切换
+    - `useStreamingRenderPool.test.ts` +3：流式期间 fullText 持续增长时 tick 真正推进 renderedLength；追赶完成后再次增长 poolSize 重现非零；tick 单调递增不倒退
+    - `applyStreamDeltas.test.ts` +3：混合 batch（多 messageId text + toolCall）一次 setState 各自合并；同 messageId thinking+text+toolCall 顺序保留；toolCallStart 后到的 text + toolCall delta 正确处理
+  - **vitest.config.ts**：include 改为 `['tests/**/*.test.ts', 'tests/**/*.test.tsx']` 支持 tsx 测试
+  - **第三轮审查后建议补全**：
+    - `useAppStore.ts` 聚合接口中 `handleThinkingDelta` / `handleTextDelta` / `handleToolCallDelta` 补 `@deprecated` JSDoc（与 useChatStore 对齐），测试代码通过 useAppStore 调用时也能看到弃用提示
+    - `App.tsx` 清理函数顺序调换：先解绑所有 IPC 监听器，再 flushNow → flushStreamDeltasNow → buffer.dispose → reset scheduler，避免清理过程中又有新 delta 进入
+    - `cancelRaceCondition.test.ts` +4 测试：cancelledMessageId 为 null 时不启动兜底定时器；handleMessageEnd 正常完成后兜底定时器已被 clear；clearCancelFallback 单独调用是 no-op；markRunningAsCancelled 路径同样清除兜底定时器
+
 ## 2026-06-05
 
 - **fix**: 修复 Windows 上 `edit` 反复报 "File has not been read yet" 引发的死循环、卡顿与渲染进程 OOM 白屏

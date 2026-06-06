@@ -500,7 +500,17 @@ export class AgentLoop {
     // 结束 checkpoint 事务边界
     this.checkpointManager?.endMessage()
 
-    this.eventBus.emit({ type: 'message_end', messageId })
+    // Phase 3：取消场景下 message-end 携带 interrupted=true，便于前端区分
+    // 正常完成与 cancel 中断（前端据此标记消息 + 决定是否重试/排队等）。
+    // 注意：this.cancelled 由 cancel() 设置，状态机此时可能为 'cancelled' 或 'idle'，
+    // 因此判定 cancel 的根因应看 this.cancelled（独立的 boolean 标志），
+    // 不依赖 this.state 的字面值。
+    // 仅在 interrupted=true 时携带字段，与设计文档"新增 interrupted 字段"语义一致。
+    this.eventBus.emit({
+      type: 'message_end',
+      messageId,
+      ...(this.cancelled ? { interrupted: true } : {})
+    })
   }
 
   /**
