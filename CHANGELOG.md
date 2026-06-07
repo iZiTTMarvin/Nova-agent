@@ -2,6 +2,11 @@
 
 ## 2026-06-07
 
+- **refactor**: 移除冗余的 `streamDeltaScheduler` 中间层，buffer 直连 store（Step 3）
+  - 删除 `src/renderer/lib/streamDeltaScheduler.ts`（119 行）：rAF 聚合层与 `useStreamingRenderPool` 节奏叠加 1~2 帧，且 buffer 自身已按 16ms / 300ms 节流，再叠一层 rAF 收益不抵复杂度
+  - 删除 `tests/unit/renderer/streamDeltaScheduler.test.ts`（186 行）
+  - `src/renderer/App.tsx`：`createStreamDeltaBuffer` 的 onFlush 直接调 `useChatStore.getState().applyStreamDeltas(batch)`；清理函数里删 `flushStreamDeltasNow()` 与 `resetStreamDeltaScheduler()`；message-end / error / agent:tool-call 路径只剩 `buffer.flushNow()`，少 1 帧延迟
+  - `src/renderer/stores/useChatStore.ts` / `useAppStore.ts`：清理 `@deprecated` 注释里对 `streamDeltaScheduler` 的引用，改写为「buffer 在 App 端直接喂批量 delta」
 - **perf**: `StreamingFileCard` 流式期降级为纯文本 + `argumentsRaw` props 稳定化（Step 2）
   - `src/renderer/features/chat/StreamingFileCard.tsx`
     - props 改接 `argumentsRaw?: string`（primitive 字符串），配合 `useMemo` + `parsePartialToolArgs` 在内部解析为 `args`；保留 `args?` 字段作为旧调用方兼容回退

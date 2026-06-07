@@ -84,7 +84,7 @@ export interface AppState {
   /**
    * @deprecated 自 Phase 2 引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
    * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
-   * 未来版本会移除；新代码请改用 `applyStreamDeltas` 配合 streamDeltaScheduler。
+   * 未来版本会移除；新代码请改用 `applyStreamDeltas`（buffer 在 App 端直接喂批量 delta）。
    */
   handleThinkingDelta: (messageId: string, delta: string) => void
   /**
