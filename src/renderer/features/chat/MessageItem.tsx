@@ -182,6 +182,7 @@ function MessageItemInner({
                       toolCallId={block.toolCallId}
                       toolName={block.toolName}
                       status={block.status}
+                      argumentsRaw={block.argumentsRaw}
                       args={block.arguments}
                       result={block.result}
                     />
@@ -209,6 +210,7 @@ function MessageItemInner({
                         toolCallId={tc.id}
                         toolName={tc.name}
                         status={tc.status}
+                        argumentsRaw={tc.argumentsRaw}
                         args={tc.arguments}
                         result={tc.result}
                       />

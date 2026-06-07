@@ -2,6 +2,13 @@
 
 ## 2026-06-07
 
+- **perf**: `StreamingFileCard` 流式期降级为纯文本 + `argumentsRaw` props 稳定化（Step 2）
+  - `src/renderer/features/chat/StreamingFileCard.tsx`
+    - props 改接 `argumentsRaw?: string`（primitive 字符串），配合 `useMemo` + `parsePartialToolArgs` 在内部解析为 `args`；保留 `args?` 字段作为旧调用方兼容回退
+    - `running` 阶段不再调用 `highlightLine` 做 token 级高亮，每帧少 N 次正则匹配（CSS 大文件 200+ 行常见）；`success` / `error` 才一次性高亮，与 `MarkdownRenderer` 的 `isStreaming` 降级思路一致
+    - `previewContent.split('\n')` 用 `useMemo` 缓存，避免每次重渲染重复 split
+  - `src/renderer/features/chat/MessageItem.tsx`：渲染 `StreamingFileCard` 时同时传 `argumentsRaw` 与 `args`（block 已有字段，原样透传）
+  - **测试**：新增 `tests/unit/renderer/StreamingFileCard.test.tsx`（7 用例）覆盖 running 不高亮、success 高亮、status 切换、partial JSON 解析、`argumentsRaw` vs `args` 兼容、edit 工具新 schema、memo 命中
 - **perf/fix**: 消息级 `_revision` 精细 memo + 修复流式打字机与工具参数竞态
   - **消息级精细 memo（渲染瓶颈根因修复）**
     - `src/renderer/stores/types.ts`：`ExtendedMessage` 新增内部 `_revision` 字段（不持久化、不进 IPC）
