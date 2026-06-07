@@ -23,24 +23,28 @@ import { getToolSummary, countLines } from './toolDisplay'
 import { parsePartialToolArgs } from './partialJsonArgs'
 import './StreamingFileCard.css'
 
-export interface StreamingFileCardProps {
+/** StreamingFileCard 的公共字段（两条通道共享） */
+interface StreamingFileCardBaseProps {
   toolCallId: string
   toolName: 'write' | 'edit'
   status: 'running' | 'success' | 'error'
-  /**
-   * 工具参数原始 JSON 字符串（流式通道）。流式期间逐段增长，finalize 后被 store 删掉。
-   * 与 args 互斥：流式期接这个，finalize 后改接 args。
-   */
-  argumentsRaw?: string
-  /**
-   * 已解析的完整 args（完整通道）。流式期上游用 argumentsRaw + parsePartialToolArgs 增量填充；
-   * finalize 后由 store 写入完整对象。
-   *
-   * 兼容旧调用方：若既未传 argumentsRaw 也未传 args（外部已自行解析），可只传 args。
-   */
-  args?: Record<string, unknown>
   result?: string
 }
+
+/**
+ * StreamingFileCard 的 props —— argumentsRaw / args 两条通道用 discriminated union 强制互斥。
+ *
+ * - 流式通道：只传 `argumentsRaw`（原始 JSON 字符串，逐段增长）。
+ *   字符串是 primitive，浅比较稳定，React.memo 严格命中，避免上游每帧重建 args 对象触发的假重渲染。
+ * - 完整通道：只传 `args`（已解析的完整对象）。finalize 时 store 删掉 block.argumentsRaw，
+ *   调用方自动切到本通道，仅在那一次 prop 变化触发重渲染进入高亮路径。
+ *
+ * 用 union（而非两个 optional 字段）让 TypeScript 在编译期保证：
+ * 两个通道不会同时出现、也不会同时缺失。谁误传两个，编译直接报错。
+ */
+export type StreamingFileCardProps =
+  | (StreamingFileCardBaseProps & { argumentsRaw: string; args?: never })
+  | (StreamingFileCardBaseProps & { argumentsRaw?: never; args: Record<string, unknown> })
 
 /** 从 args 中提取预览文本：write 取 content，edit 取新内容 */
 function getPreviewContent(toolName: string, args: Record<string, unknown>): string {
