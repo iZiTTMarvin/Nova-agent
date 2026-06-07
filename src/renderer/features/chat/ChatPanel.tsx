@@ -7,25 +7,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   SendIcon,
   StopIcon,
-  TerminalIcon,
-  ChevronIcon,
-  CheckIcon,
-  AlertIcon,
   NovaLogo,
-  FolderIcon,
-  SettingsIcon,
-  UndoIcon,
   ImageIcon
 } from '../../components/Icons'
-import { ThinkingBlock } from './ThinkingBlock'
-import { StreamingTextBlock } from './StreamingTextBlock'
+import { MessageItem } from './MessageItem'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
-import { DiffViewer } from '../diff/DiffViewer'
-import { isActiveThinkingBlock, isPermissionDeniedResult, shouldRenderToolBlock } from './renderingPolicy'
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
-import { getToolDisplayName, getToolSummary } from './toolDisplay'
-import { StreamingFileCard } from './StreamingFileCard'
-import { MarkdownRenderer } from './MarkdownRenderer'
 import { UsageStats } from './UsageStats'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
@@ -39,164 +26,12 @@ import {
   MAX_IMAGE_COUNT,
   type ImageAttachment
 } from '../../lib/image-attachments'
-import type { Mode } from '../../../shared/session/types'
-import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock } from '../../stores/types'
 import './ChatPanel.css'
 import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
 
-/** Assistant 空白等待态：模型已接管但还没产出文字、思考或工具调用时展示 */
-const AssistantPendingIndicator: React.FC = () => (
-  <div className="assistant-pending" role="status" aria-live="polite" aria-label="Nova 正在准备回复">
-    <span className="assistant-pending__dots" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-    </span>
-    <span className="assistant-pending__label">正在思考</span>
-  </div>
-)
 
-function hasVisibleToolCalls(toolCalls: ExtendedToolCall[] | undefined, mode: Mode): boolean {
-  return !!toolCalls?.some(toolCall => shouldRenderToolBlock(mode, toolCall.name))
-}
-
-function hasVisibleBlocks(blocks: RendererMessageBlock[] | undefined, mode: Mode): boolean {
-  return !!blocks?.some(block => {
-    if (block.type === 'thinking' || block.type === 'text') {
-      return block.content.trim().length > 0
-    }
-    if (block.type === 'image') {
-      return true
-    }
-    return shouldRenderToolBlock(mode, block.toolName)
-  })
-}
-
-// ── 2. 折叠式工具调用状态卡片 ────────────────────────────────
-interface ToolBoxProps {
-  name: string
-  args: Record<string, unknown>
-  status: 'running' | 'success' | 'error'
-  result?: string
-}
-
-const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ name, args, status, result }) {
-  const [isOpen, setIsOpen] = useState(false)
-  const shouldHideArguments = isPermissionDeniedResult(result)
-  const summary = getToolSummary(name, args)
-
-  // 状态图标选择
-  const renderStatusIcon = () => {
-    switch (status) {
-      case 'running':
-        return (
-          <div className="tool-box__status-icon tool-box__status-icon--running">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-              <line x1="12" y1="2" x2="12" y2="6" />
-              <line x1="12" y1="18" x2="12" y2="22" />
-              <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
-              <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
-              <line x1="2" y1="12" x2="6" y2="12" />
-              <line x1="18" y1="12" x2="22" y2="12" />
-              <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
-              <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
-            </svg>
-          </div>
-        )
-      case 'success':
-        return (
-          <div className="tool-box__status-icon tool-box__status-icon--success">
-            <CheckIcon size={14} />
-          </div>
-        )
-      case 'error':
-        return (
-          <div className="tool-box__status-icon tool-box__status-icon--error">
-            <AlertIcon size={14} />
-          </div>
-        )
-      default:
-        return null
-    }
-  }
-
-  return (
-    <div className="tool-box">
-      <div className="tool-box__header" onClick={() => setIsOpen(!isOpen)}>
-        {renderStatusIcon()}
-        <TerminalIcon size={14} style={{ color: 'var(--text-secondary)' }} />
-        <span className="tool-box__title">{getToolDisplayName(name)}</span>
-        {summary && <span className="tool-box__summary">{summary}</span>}
-        <div className="tool-box__arrow">
-          <ChevronIcon size={14} direction={isOpen ? 'up' : 'down'} />
-        </div>
-      </div>
-      
-      {isOpen && (
-        <div className="tool-box__body">
-          {!shouldHideArguments && (
-            <div className="tool-box__section">
-              <div className="tool-box__sec-title">调用参数</div>
-              <pre className="tool-box__content">
-                {JSON.stringify(args, null, 2)}
-              </pre>
-            </div>
-          )}
-          
-          {result && (
-            <div className="tool-box__section">
-              <div className="tool-box__sec-title">执行结果</div>
-              <pre className="tool-box__content">{result}</pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-})
-
-// ── 2.5 解析消息中的思考内容（Windsurf 风格） ─────────────────
-/** parseThinking 只关心 message 中的 thinking / content / id 字段，
- * 用 Pick<...> 限定最小依赖，替代 any 提升类型安全。 */
-type ThinkingParseSource = Pick<ExtendedMessage, 'id'> & {
-  thinking?: string
-  content: string
-}
-
-function parseThinking(msg: ThinkingParseSource, isGenerating: boolean, currentGeneratingMessageId: string | null) {
-  let thinkingContent = msg.thinking || ''
-  let textContent = msg.content || ''
-  let isThinkingActive = false
-
-  // 1. 如果有明确的 msg.thinking（来自 reasoning_content 字段）
-  if (msg.thinking !== undefined && msg.thinking !== '') {
-    isThinkingActive = isGenerating && msg.id === currentGeneratingMessageId && !msg.content
-    return { thinkingContent, textContent, isThinkingActive }
-  }
-
-  // 2. 备用逻辑：从 content 中正则解析 <think>...</think> 标签
-  if (msg.content && msg.content.includes('<think>')) {
-    const thinkStartIndex = msg.content.indexOf('<think>')
-    const thinkEndIndex = msg.content.indexOf('</think>')
-
-    if (thinkEndIndex !== -1) {
-      thinkingContent = msg.content.substring(thinkStartIndex + 7, thinkEndIndex)
-      textContent = msg.content.substring(0, thinkStartIndex) + msg.content.substring(thinkEndIndex + 8)
-      isThinkingActive = false
-    } else {
-      // 只有 <think> 没有 </think>，正在流式思考中
-      thinkingContent = msg.content.substring(thinkStartIndex + 7)
-      textContent = msg.content.substring(0, thinkStartIndex)
-      isThinkingActive = isGenerating && msg.id === currentGeneratingMessageId
-    }
-  }
-
-  return { thinkingContent, textContent, isThinkingActive }
-}
-
-// ── 3. 主聊天控制面板 ───────────────────────────────────────
 export const ChatPanel: React.FC = () => {
   // ── settings store（项目/模型/模式/配置弹窗） ──
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -218,10 +53,9 @@ export const ChatPanel: React.FC = () => {
   const messageDiffs = useChatStore(state => state.messageDiffs)
   const loadingDiffs = useChatStore(state => state.loadingDiffs)
   const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
-  const loadMessageDiffs = useChatStore(state => state.loadMessageDiffs)
   const rejectFile = useChatStore(state => state.rejectFile)
   const acceptFile = useChatStore(state => state.acceptFile)
-  // Phase 6：Steering Queue
+  // Steering Queue
   const pendingUserMessages = useChatStore(state => state.pendingUserMessages)
   const enqueuePendingMessage = useChatStore(state => state.enqueuePendingMessage)
   const removePendingMessage = useChatStore(state => state.removePendingMessage)
@@ -231,13 +65,22 @@ export const ChatPanel: React.FC = () => {
   const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
   const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
 
-  // 处理消息回退操作
-  const handleRollback = async (messageId: string) => {
+  // 处理消息回退操作（useCallback 稳定引用，供 MessageItem areEqual 比较）
+  const handleRollback = useCallback(async (messageId: string) => {
     if (!currentSessionId) return
     if (window.confirm('确定要回退到此消息执行前的状态吗？这将物理恢复工作区文件，并移除此消息之后的所有对话记录。')) {
       await rollbackMessage(currentSessionId, messageId)
     }
-  }
+  }, [currentSessionId, rollbackMessage])
+
+  // acceptFile / rejectFile 用 useCallback 包裹 store action，稳定引用
+  const handleAcceptFile = useCallback(async (sessionId: string, messageId: string, filePath: string) => {
+    await acceptFile(sessionId, messageId, filePath)
+  }, [acceptFile])
+
+  const handleRejectFile = useCallback(async (sessionId: string, messageId: string, filePath: string) => {
+    await rejectFile(sessionId, messageId, filePath)
+  }, [rejectFile])
 
   const [inputVal, setInputVal] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -507,182 +350,25 @@ export const ChatPanel: React.FC = () => {
           <TodoPanel sessionId={currentSessionId} />
 
         {messages.map(msg => {
-          const isAssistant = msg.role === 'assistant'
-          const isUser = msg.role === 'user'
-
-          // blocks 渲染路径：按流式事件顺序展示 thinking → text → tool → text → ...
-          const hasBlocks = isAssistant && msg.blocks && msg.blocks.length > 0
-
-          // 旧路径兼容：无 blocks 时走 parseThinking 正则兜底
-          const { thinkingContent, textContent, isThinkingActive } = isAssistant && !hasBlocks
-            ? parseThinking(msg, isGenerating, currentGeneratingMessageId)
-            : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
-          const isCurrentAssistantGenerating = isAssistant && isGenerating && msg.id === currentGeneratingMessageId
-          const hasVisibleContent = hasBlocks
-            ? hasVisibleBlocks(msg.blocks, currentMode)
-            : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
-          const shouldShowPending = isCurrentAssistantGenerating && !hasVisibleContent
-
-          // 用户消息图片提取（用于图片网格渲染）
-          const userImageBlocks = isUser
-            ? msg.blocks?.filter((b): b is { type: 'image'; fileName: string; dataUrl: string; mimeType: string } => b.type === 'image') ?? []
-            : []
-
+          const diffCache = messageDiffs[msg.id]
+          const isDiffLoading = loadingDiffs.has(msg.id)
+          const diffPlaceholders = loadingDiffPlaceholders[msg.id]
           return (
-            <div
+            <MessageItem
               key={msg.id}
-              className={`chat-msg-wrapper chat-msg-wrapper--${msg.role === 'user' ? 'user' : 'assistant'}`}
-            >
-              <div className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'} ${msg.isError ? 'chat-msg--error' : ''}`}>
-                {/* 悬浮操作栏：仅在 assistant 消息上显示，且必须是生成完毕状态 */}
-                {isAssistant && !isGenerating && (
-                  <div className="chat-msg__actions">
-                    <button
-                      className="chat-msg__action-btn"
-                      onClick={() => handleRollback(msg.id)}
-                      title="回退到此消息之前的状态"
-                    >
-                      <UndoIcon size={13} />
-                    </button>
-                  </div>
-                )}
-
-                {shouldShowPending && <AssistantPendingIndicator />}
-
-                {hasBlocks ? (
-                  /* blocks 顺序渲染：按真实流式事件顺序展示 */
-                  msg.blocks!.map((block, idx) => {
-                    switch (block.type) {
-                      case 'thinking':
-                        return (
-                          <ThinkingBlock
-                            key={idx}
-                            thinking={block.content}
-                            active={isActiveThinkingBlock(
-                              msg.blocks!,
-                              idx,
-                              isGenerating,
-                              msg.id,
-                              currentGeneratingMessageId
-                            )}
-                          />
-                        )
-                      case 'text':
-                        return (
-                          <StreamingTextBlock
-                            key={`${idx}-${msg.id}`}
-                            fullContent={block.content}
-                            isStreaming={isCurrentAssistantGenerating}
-                            onRenderPoolTick={scheduleStreamAutoScroll}
-                          />
-                        )
-                      case 'image':
-                        return null // 用户消息图片在下方统一网格渲染
-                      case 'tool': {
-                        if (!shouldRenderToolBlock(currentMode, block.toolName)) {
-                          return null
-                        }
-                        // write/edit 走流式卡片，其余走 ToolBox
-                        if (block.toolName === 'write' || block.toolName === 'edit') {
-                          return (
-                            <StreamingFileCard
-                              key={block.toolCallId}
-                              toolCallId={block.toolCallId}
-                              toolName={block.toolName}
-                              status={block.status}
-                              args={block.arguments}
-                              result={block.result}
-                            />
-                          )
-                        }
-                        return <ToolBox key={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} />
-                      }
-                    }
-                  })
-                ) : (
-                  /* 旧渲染路径：无 blocks 时走分桶逻辑 */
-                  <>
-                    {thinkingContent && (
-                      <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
-                    )}
-                    {textContent && <MarkdownRenderer content={textContent} isStreaming={isCurrentAssistantGenerating} />}
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div style={{ marginTop: '12px' }}>
-                        {msg.toolCalls.map(tc => {
-                          if (!shouldRenderToolBlock(currentMode, tc.name)) return null
-                          // write/edit 走流式卡片，其余走 ToolBox
-                          if (tc.name === 'write' || tc.name === 'edit') {
-                            return (
-                              <StreamingFileCard
-                                key={tc.id}
-                                toolCallId={tc.id}
-                                toolName={tc.name}
-                                status={tc.status}
-                                args={tc.arguments}
-                                result={tc.result}
-                              />
-                            )
-                          }
-                          return <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* 用户消息图片网格 */}
-                {isUser && userImageBlocks.length > 0 && (
-                  <div className="user-message-image-grid">
-                    {userImageBlocks.map((img, idx) => (
-                      <button
-                        key={`${img.fileName}-${idx}`}
-                        className="user-message-image-grid__item"
-                        onClick={() => setPreviewDialog({
-                          open: true,
-                          images: userImageBlocks.map(b => ({ dataUrl: b.dataUrl, fileName: b.fileName })),
-                          index: idx
-                        })}
-                        type="button"
-                        title={img.fileName}
-                      >
-                        <img src={img.dataUrl} alt={img.fileName} draggable={false} />
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* diff 区域：loading 时优先展示骨架，避免 +0 -0 中间态 */}
-                {isAssistant && currentSessionId && loadingDiffs.has(msg.id) && (
-                  <DiffViewer
-                    diffs={[]}
-                    reviews={{}}
-                    sessionId={currentSessionId}
-                    messageId={msg.id}
-                    isLoading={true}
-                    loadingPlaceholders={loadingDiffPlaceholders[msg.id]}
-                  />
-                )}
-
-                {/* diff 最终数据：仅在没有 loading 标记且有真实数据时渲染 */}
-                {isAssistant && currentSessionId && !loadingDiffs.has(msg.id) && messageDiffs[msg.id] && messageDiffs[msg.id].diffs.length > 0 && (
-                  <DiffViewer
-                    diffs={messageDiffs[msg.id].diffs}
-                    reviews={messageDiffs[msg.id].reviews}
-                    sessionId={currentSessionId}
-                    messageId={msg.id}
-                    onRejectFile={(filePath) => rejectFile(currentSessionId, msg.id, filePath)}
-                    onAcceptFile={(filePath) => acceptFile(currentSessionId, msg.id, filePath)}
-                  />
-                )}
-
-                {/* 验证结果摘要 */}
-                {isAssistant && msg.verificationSummary && (
-                  <div className={`verification-summary ${msg.verificationSummary.startsWith('✗') ? 'verification-summary--failed' : 'verification-summary--passed'}`}>
-                    <pre className="verification-summary__content">{msg.verificationSummary}</pre>
-                  </div>
-                )}
-              </div>
-            </div>
+              msg={msg}
+              isGenerating={isGenerating}
+              currentGeneratingMessageId={currentGeneratingMessageId}
+              currentMode={currentMode}
+              currentSessionId={currentSessionId}
+              onRollback={handleRollback}
+              onAcceptFile={handleAcceptFile}
+              onRejectFile={handleRejectFile}
+              onRenderPoolTick={scheduleStreamAutoScroll}
+              diffCache={diffCache}
+              isDiffLoading={isDiffLoading}
+              diffPlaceholders={diffPlaceholders}
+            />
           )
         })}
         {/* 验证权限确认：用户决定是否允许执行验证命令 */}

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-06-07
+
+- **perf/fix**: 消息级 `_revision` 精细 memo + 修复流式打字机与工具参数竞态
+  - **消息级精细 memo（渲染瓶颈根因修复）**
+    - `src/renderer/stores/types.ts`：`ExtendedMessage` 新增内部 `_revision` 字段（不持久化、不进 IPC）
+    - `src/renderer/stores/useChatStore.ts`：新增 `bumpRevision()`，所有消息 mutate 路径统一 bump `_revision`，新建 / 恢复消息初始化为 0
+    - 新建 `src/renderer/features/chat/MessageItem.tsx`：从 ChatPanel 抽出单条消息渲染，`React.memo(areEqual)` 只比 `_revision` 等 primitive/reference，流式期间仅当前生成的消息重渲染，历史消息整盘跳过
+    - 新建 `src/renderer/features/chat/ToolBox.tsx` / `AssistantPendingIndicator.tsx`：从 ChatPanel 内联抽出
+    - `src/renderer/features/chat/ChatPanel.tsx`：`messages.map` 改为渲染 `<MessageItem>`，回调用 `useCallback` 稳定引用；清理失效 import
+    - `src/renderer/features/chat/StreamingTextBlock.tsx`：补 `React.memo`
+  - **修复流式打字机首次挂载失效**：`src/renderer/hooks/useStreamingRenderPool.ts`
+    - 流式中首次挂载时 `renderedLength` 从 0 起算（此前直接 = targetLength 导致 pool=0，打字机从未启动）；非流式仍直接显示完整内容
+    - 默认 `requestFrame/cancelFrame` 提到模块级常量，避免 rAF tick effect 频繁重启
+  - **修复工具参数竞态导致的「未命名文件」**（严重）
+    - 根因：工具参数 delta 走 300ms 缓冲，最终 `agent:tool-call`（完整 args）走 store 直通；最终事件先写入完整 args 后，缓冲残留的 partial delta 才 flush 并用残缺解析覆盖，导致 `path` 丢失
+    - `src/renderer/App.tsx`：`agent:tool-call` 处理前先 `buffer.flushNow()` + `flushStreamDeltasNow()`，再写完整 args
+    - `src/renderer/stores/useChatStore.ts`：`applyStreamDeltas` 防御兜底——tool block 已 finalize（`argumentsRaw === undefined`）则跳过 partial 覆盖
+  - **测试**：新增 `MessageItem.test.ts` / `revisionBump.test.ts` / `applyStreamDeltas` 竞态回归用例；对齐 `useStreamingRenderPool.test.ts` 首挂载断言
+
 ## 2026-06-06
 
 - **refactor**: Store 拆分 + 流式输出优化 + 取消机制 + 渲染池 + Steering Queue

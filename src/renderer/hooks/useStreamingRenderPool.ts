@@ -92,6 +92,13 @@ export interface UseStreamingRenderPoolOptions {
 }
 
 /**
+ * 默认 rAF 实现提到模块级常量，避免在组件 render 中新建箭头函数引用，
+ * 导致 useEffect [requestFrame, cancelFrame] 每次 render 都重启 rAF tick 循环。
+ */
+const defaultRequestFrame = (cb: () => void): number => requestAnimationFrame(cb)
+const defaultCancelFrame = (handle: number): void => cancelAnimationFrame(handle)
+
+/**
  * useStreamingRenderPool — 流式文本渲染池 hook
  *
  * @param fullText 完整文本（来自 store 的 message block.content）
@@ -106,16 +113,27 @@ export function useStreamingRenderPool(
   options: UseStreamingRenderPoolOptions = {}
 ): RenderPoolResult {
   const config = RENDER_POOL_CONFIG[style]
-  const requestFrame = options.requestFrame ?? ((cb: () => void) => requestAnimationFrame(cb))
-  const cancelFrame = options.cancelFrame ?? ((handle: number) => cancelAnimationFrame(handle))
+  const requestFrame = options.requestFrame ?? defaultRequestFrame
+  const cancelFrame = options.cancelFrame ?? defaultCancelFrame
 
   /** 目标长度（上游 fullText 长度） */
   const targetLength = fullText.length
-  /** 已放出长度（受 rAF tick 控制逐步增长） */
-  const [renderedLength, setRenderedLength] = useState<number>(() => targetLength)
+  /**
+   * 已放出长度（受 rAF tick 控制逐步增长）。
+   *
+   * 初始化策略（关键，决定有没有打字机效果）：
+   * - 流式期间首次挂载：从 0 开始，让 rAF tick 逐步追上 fullText
+   *   （否则上游 streamDeltaBuffer 16ms 节流后，首次挂载时 fullText 已累积一段，
+   *   `useState(() => targetLength)` 会让 pool 直接 = 0，打字机从没启动）
+   * - 非流式（恢复历史会话或流式结束）：直接 = targetLength，立刻显示完整内容
+   *
+   * 注意：useState 的 lazy initializer 只在首次挂载时执行一次，
+   * 后续 isStreaming 切换由 effect 处理，不会再走这段。
+   */
+  const [renderedLength, setRenderedLength] = useState<number>(() => (isStreaming ? 0 : targetLength))
   /** refs 让 rAF tick 能拿到最新值，避免 effect 重启 */
   const targetLengthRef = useRef(targetLength)
-  const renderedLengthRef = useRef<number>(targetLength)
+  const renderedLengthRef = useRef<number>(isStreaming ? 0 : targetLength)
   const lastTickAtRef = useRef<number>(0)
   const rafRef = useRef<number | null>(null)
 

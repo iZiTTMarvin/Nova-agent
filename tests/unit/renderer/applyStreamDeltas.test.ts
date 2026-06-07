@@ -260,4 +260,41 @@ describe('useChatStore.applyStreamDeltas', () => {
     // write 工具的 partial 解析字段是 path
     expect(msg.toolCalls![0].arguments).toEqual({ path: 'foo.txt' })
   })
+
+  it('竞态回归：handleToolCall finalize 后，迟到的 buffered partial delta 不得覆盖完整 args', () => {
+    // 复现截图 bug：工具参数 delta 走 300ms 缓冲，最终 tool-call 事件直接进 store。
+    // 若最终事件先写入完整 args，随后缓冲 flush 的残留 partial delta 用残缺解析结果
+    // 覆盖完整 args，会导致文件名丢失（UI 显示「未命名文件」）。
+    useChatStore.getState().handleMessageStart('msg_race')
+    useChatStore.getState().handleToolCallStart('msg_race', 'tc_r', 'write')
+
+    // 1) 流式期间累积了一部分 partial（content 在前，path 还没流到）
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'toolCall', messageId: 'msg_race', toolCallId: 'tc_r', delta: '{"content":"body' }
+    ])
+
+    // 2) 最终事件到达，写入完整 args（path + 完整 content）
+    useChatStore.getState().handleToolCall('msg_race', 'tc_r', 'write', {
+      path: 'index.html',
+      content: 'body-full'
+    })
+
+    const afterFinal = useChatStore.getState().messages[0]
+    const toolBlockAfterFinal = afterFinal.blocks!.find(
+      b => b.type === 'tool' && b.toolCallId === 'tc_r'
+    )
+    expect(toolBlockAfterFinal).toMatchObject({ arguments: { path: 'index.html', content: 'body-full' } })
+
+    // 3) 缓冲迟到的残留 delta 此刻才 flush —— 不得覆盖已 finalize 的完整 args
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'toolCall', messageId: 'msg_race', toolCallId: 'tc_r', delta: '-content"}' }
+    ])
+
+    const afterLate = useChatStore.getState().messages[0]
+    const toolBlock = afterLate.blocks!.find(b => b.type === 'tool' && b.toolCallId === 'tc_r')
+    const toolCall = afterLate.toolCalls!.find(tc => tc.id === 'tc_r')
+    // 关键断言：path 不丢失，完整 args 保持不变
+    expect(toolBlock).toMatchObject({ arguments: { path: 'index.html', content: 'body-full' } })
+    expect(toolCall!.arguments).toEqual({ path: 'index.html', content: 'body-full' })
+  })
 })

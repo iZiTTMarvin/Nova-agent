@@ -27,13 +27,14 @@ export interface StreamingTextBlockProps {
 /**
  * 流式文本块。流式期间走 useStreamingRenderPool 控制放出节奏，
  * 结束后一次性渲染完整内容。
+ * React.memo 包裹：fullContent 是 string，浅比较即可命中。
  */
-export const StreamingTextBlock: React.FC<StreamingTextBlockProps> = ({
+export const StreamingTextBlock = React.memo(function StreamingTextBlock({
   fullContent,
   isStreaming,
   style = 'agile',
   onRenderPoolTick
-}) => {
+}: StreamingTextBlockProps) {
   const pool = useStreamingRenderPool(fullContent, isStreaming, style)
   const lastReportedLengthRef = useRef<number>(pool.renderedLength)
 
@@ -61,4 +62,4 @@ export const StreamingTextBlock: React.FC<StreamingTextBlockProps> = ({
       <MarkdownRenderer content={pool.text} isStreaming={true} />
     </div>
   )
-}
+})

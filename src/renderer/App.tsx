@@ -108,6 +108,13 @@ function App(): JSX.Element {
 
     // 监听：Agent 工具调用完成（最终事件，携带完整参数）→ 直接 store
     const unsubToolCall = window.api.on('agent:tool-call', (data) => {
+      // 关键修复（竞态）：工具参数 delta 走 300ms 缓冲，而本最终事件直接进 store。
+      // 若不先 flush，缓冲中迟到的 partial delta 会在 handleToolCall 写入完整 args 之后
+      // 才 flush，用残缺的 partial 解析结果覆盖完整 args，导致文件名/内容丢失
+      // （UI 表现为「未命名文件」+ 空内容，但后端实际已用完整 args 写盘）。
+      // 因此先把缓冲中该轮残留的 delta 同步刷入 store，再用完整 args 覆盖，保证顺序正确。
+      buffer.flushNow()
+      flushStreamDeltasNow()
       handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args)
     })
 

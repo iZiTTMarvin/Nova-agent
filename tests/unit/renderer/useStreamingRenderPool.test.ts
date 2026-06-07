@@ -213,18 +213,18 @@ describe('useStreamingRenderPool', () => {
       renderer = TestRenderer.create(React.createElement(Probe))
     })
 
-    // 初始 renderedLength = fullText.length（state 初始值）
+    // 流式期间首次挂载：renderedLength 从 0 开始（让打字机从头追赶 fullText）。
+    // 这是渲染池打字机效果的关键不变量，对齐 useStreamingRenderPool 初始化策略。
     const initial = ref.current!.renderedLength
-    expect(initial).toBe(props.fullText.length)
+    expect(initial).toBe(0)
 
-    // 推进 rAF：把内部 fakeRaf 推进一步
+    // 推进 rAF：把内部 fakeRaf 推进一步，tick 应该真正推进 renderedLength
     act(() => {
       fakeRaf.advance(32)
     })
 
-    // 此时 rAF tick 应该计算 step（即使 poolSize = 0 也会重新 schedule）
-    // 由于初始 poolSize = 0，rAF 不会推进 renderedLength
-    // 关键断言：tick 不会让 renderedLength 超过 targetLength
+    // 关键断言：tick 推进后 renderedLength 应该 > 0 且不超过 targetLength
+    expect(ref.current!.renderedLength).toBeGreaterThan(0)
     expect(ref.current!.renderedLength).toBeLessThanOrEqual(ref.current!.targetLength)
 
     act(() => {
@@ -234,8 +234,8 @@ describe('useStreamingRenderPool', () => {
 
   it('流式期间 fullText 持续增长：tick 真正推进了 renderedLength（核心追赶场景）', () => {
     // 关键场景：模型一边吐字一边累积 buffer。
-    // 初始 fullText = 'a' (renderedLength 也是 1，因为 useState 初始值 = targetLength)；
-    // fullText 增长到 'a' + 'x'.repeat(500) → poolSize = 500 → rAF tick 应逐步放出字符。
+    // 初始 fullText='a'，流式中首次挂载 renderedLength=0；
+    // fullText 增长到 'a' + 'x'.repeat(500) → poolSize=501 → rAF tick 应逐步放出字符。
     const props = { fullText: 'a', isStreaming: true, style: 'agile' as const }
     const { ref, Probe } = probeHook(props)
     let renderer: TestRenderer.ReactTestRenderer | null = null
@@ -243,7 +243,10 @@ describe('useStreamingRenderPool', () => {
       renderer = TestRenderer.create(React.createElement(Probe))
     })
 
-    expect(ref.current!.renderedLength).toBe(1)
+    // 流式期间首次挂载 renderedLength=0
+    expect(ref.current!.renderedLength).toBe(0)
+    expect(ref.current!.targetLength).toBe(1)
+    expect(ref.current!.poolSize).toBe(1)
 
     // fullText 增长（模拟 streamDeltaBuffer 累积）
     act(() => {
@@ -253,18 +256,17 @@ describe('useStreamingRenderPool', () => {
       renderer?.update(React.createElement(Probe))
     })
 
-    // 更新后：targetLength 跳到 501，renderedLength 仍为 1（useEffect 只同步 ref，state 不动），
-    // 产生 poolSize = 500
+    // 更新后：targetLength 跳到 501，renderedLength 仍为 0，poolSize = 501
     expect(ref.current!.targetLength).toBe(501)
-    expect(ref.current!.poolSize).toBe(500)
-    expect(ref.current!.renderedLength).toBe(1)
+    expect(ref.current!.poolSize).toBe(501)
+    expect(ref.current!.renderedLength).toBe(0)
 
-    // 推进 32ms 一次 rAF：tick 计算 step（500 是中池，14% = 70），renderedLength 应增长
+    // 推进 32ms 一次 rAF：tick 计算 step（501 是中池，14% ≈ 71），renderedLength 应增长
     act(() => {
       fakeRaf.advance(32)
     })
     const afterFirstTick = ref.current!.renderedLength
-    expect(afterFirstTick).toBeGreaterThan(1) // 关键：tick 真的推进了
+    expect(afterFirstTick).toBeGreaterThan(0) // 关键：tick 真的推进了
 
     // 继续推进多帧：renderedLength 应单调递增但不超过 targetLength
     act(() => {

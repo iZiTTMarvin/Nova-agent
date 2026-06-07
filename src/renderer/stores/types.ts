@@ -47,6 +47,13 @@ export interface ExtendedMessage {
    * 普通完成的消息不写此字段，UI 视为未设置即可。
    */
   interrupted?: boolean
+  /**
+   * 渲染优化用的内部修订号。每次 store 内对该消息的 mutation 都会 bump，
+   * MessageItem 用 React.memo 比 _revision 即可精确判断"该消息变没变"，
+   * 避免 ChatPanel 整盘 messages.map 触发的子组件 reconciliation。
+   * 不持久化，不参与跨进程 IPC。
+   */
+  _revision?: number
 }
 
 /** 等待用户决策的权限请求 */

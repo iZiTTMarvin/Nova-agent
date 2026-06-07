@@ -69,7 +69,7 @@ function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMe
     })
 
     if (message.blocks && message.blocks.length > 0) {
-      return { ...message, content: sanitizedContent, toolCalls }
+      return { ...message, content: sanitizedContent, toolCalls, _revision: 0 }
     }
 
     // 旧消息无 blocks：从 content 和 toolCalls 构造
@@ -90,7 +90,7 @@ function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMe
       }
     }
 
-    return { ...message, content: sanitizedContent, toolCalls, blocks }
+    return { ...message, content: sanitizedContent, toolCalls, blocks, _revision: 0 }
   })
 }
 
@@ -124,6 +124,11 @@ function applyDiffReviewStatus(
     diffs: nextDiffs,
     reviews: { ...cache.reviews, [filePath]: status }
   }
+}
+
+/** 给消息 bump 一次 _revision，返回新引用。所有 store 内 mutate 路径都通过它，保证 revision 单调递增。 */
+function bumpRevision(msg: ExtendedMessage): ExtendedMessage {
+  return { ...msg, _revision: (msg._revision ?? 0) + 1 }
 }
 
 /** 根据 messages 数组构建 id → index 索引，加速 delta handler O(1) 定位 */
@@ -383,7 +388,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       role: 'user',
       content,
       blocks: blocks.length > 0 ? blocks : undefined,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      _revision: 0
     }
 
     set(state => {
@@ -590,7 +596,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolCalls: [],
       timestamp: Date.now(),
       thinking: '',
-      blocks: []
+      blocks: [],
+      _revision: 0
     }
 
     set(state => {
@@ -618,7 +625,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blocks.push({ type: 'thinking', content: delta })
       }
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, thinking: (msg.thinking ?? '') + delta, blocks }
+      nextMessages[idx] = bumpRevision({ ...msg, thinking: (msg.thinking ?? '') + delta, blocks })
       return { messages: nextMessages }
     })
   },
@@ -638,7 +645,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blocks.push({ type: 'text', content: delta })
       }
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, content: msg.content + delta, blocks }
+      nextMessages[idx] = bumpRevision({ ...msg, content: msg.content + delta, blocks })
       return { messages: nextMessages }
     })
   },
@@ -697,7 +704,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, toolCalls, blocks }
+      nextMessages[idx] = bumpRevision({ ...msg, toolCalls, blocks })
 
       const { [toolCallId]: _drop2, ...restStreaming } = state.streamingToolArgs
       return { messages: nextMessages, streamingToolArgs: restStreaming }
@@ -730,7 +737,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const toolCalls = msg.toolCalls ? [...msg.toolCalls, placeholder] : [placeholder]
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, toolCalls, blocks }
+      nextMessages[idx] = bumpRevision({ ...msg, toolCalls, blocks })
 
       return {
         messages: nextMessages,
@@ -775,7 +782,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ) : msg.toolCalls
 
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, blocks, toolCalls }
+      nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
 
       return {
         messages: nextMessages,
@@ -808,7 +815,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
 
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, blocks, toolCalls }
+      nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
       return { messages: nextMessages }
     })
   },
@@ -882,12 +889,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             return tc
           })
-          nextMessages[idx] = {
+          nextMessages[idx] = bumpRevision({
             ...msg,
             interrupted: true,
             blocks,
             toolCalls
-          }
+          })
         }
       }
       return {
@@ -930,7 +937,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       role: 'assistant',
       content: error,
       isError: true,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      _revision: 0
     }
 
     set(state => {
@@ -951,7 +959,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const msg = state.messages[idx]
       if (!msg) return state
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = { ...msg, verificationSummary: result }
+      nextMessages[idx] = bumpRevision({ ...msg, verificationSummary: result })
       return { messages: nextMessages }
     })
   },
@@ -980,7 +988,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return tc
         })
 
-        return changed ? { ...msg, blocks, toolCalls } : msg
+        return changed ? bumpRevision({ ...msg, blocks, toolCalls }) : msg
       })
 
       return {
@@ -1095,6 +1103,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
             workingContent = workingContent + delta.delta
           } else {
             // toolCall delta：累积 argumentsRaw + partial 解析 + 更新 block / toolCalls
+            //
+            // 防御（竞态双保险）：若该 tool block 已被 handleToolCall finalize
+            // （finalize 时会删除 block.argumentsRaw 字段），说明完整 args 已写入，
+            // 此时任何迟到的 buffered partial delta 都不能再覆盖完整 args，直接跳过。
+            // 主修在 App.tsx：tool-call 最终事件前先 flushNow；这里是顺序兜底。
+            const finalizedBlocks = workingBlocks ?? []
+            const finalizedIdx = finalizedBlocks.findIndex(
+              b => b.type === 'tool' && b.toolCallId === delta.toolCallId
+            )
+            if (finalizedIdx !== -1 && finalizedBlocks[finalizedIdx].type === 'tool') {
+              const finalizedBlock = finalizedBlocks[finalizedIdx] as RendererToolBlock
+              if (finalizedBlock.argumentsRaw === undefined) {
+                continue
+              }
+            }
+
             const prevRaw = nextStreaming[delta.toolCallId] ?? ''
             const nextRaw = prevRaw + delta.delta
             nextStreaming[delta.toolCallId] = nextRaw
@@ -1141,13 +1165,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         // 整条消息处理完，原子写回 nextMessages[idx]
-        nextMessages[idx] = {
+        nextMessages[idx] = bumpRevision({
           ...msg,
           content: workingContent,
           thinking: workingThinking,
           blocks: workingBlocks,
           toolCalls: workingToolCalls
-        }
+        })
         messagesChanged = true
       }
 
