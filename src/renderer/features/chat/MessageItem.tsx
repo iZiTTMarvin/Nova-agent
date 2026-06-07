@@ -10,7 +10,7 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock, shouldRenderToolBlock } from './renderingPolicy'
-import { StreamingFileCard } from './StreamingFileCard'
+import { StreamingFileCard, type StreamingFileCardProps } from './StreamingFileCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ToolBox } from './ToolBox'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
@@ -176,17 +176,13 @@ function MessageItemInner({
                   return null
                 }
                 if (block.toolName === 'write' || block.toolName === 'edit') {
-                  return (
-                    <StreamingFileCard
-                      key={block.toolCallId}
-                      toolCallId={block.toolCallId}
-                      toolName={block.toolName}
-                      status={block.status}
-                      argumentsRaw={block.argumentsRaw}
-                      args={block.arguments}
-                      result={block.result}
-                    />
-                  )
+                  // 通道互斥：流式期 argumentsRaw 存在 → 只传流式通道；
+                  // finalize 后 store 会删掉 block.argumentsRaw → 只传完整 args 通道。
+                  // 避免两条通道同时存在导致 StreamingFileCard 内部 useMemo 依赖 argsProp 引用变化而失效。
+                  const cardProps: StreamingFileCardProps = block.argumentsRaw === undefined
+                    ? { toolCallId: block.toolCallId, toolName: block.toolName, status: block.status, args: block.arguments, result: block.result }
+                    : { toolCallId: block.toolCallId, toolName: block.toolName, status: block.status, argumentsRaw: block.argumentsRaw, result: block.result }
+                  return <StreamingFileCard key={block.toolCallId} {...cardProps} />
                 }
                 return <ToolBox key={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} />
               }
@@ -204,17 +200,11 @@ function MessageItemInner({
                 {msg.toolCalls.map(tc => {
                   if (!shouldRenderToolBlock(currentMode, tc.name)) return null
                   if (tc.name === 'write' || tc.name === 'edit') {
-                    return (
-                      <StreamingFileCard
-                        key={tc.id}
-                        toolCallId={tc.id}
-                        toolName={tc.name}
-                        status={tc.status}
-                        argumentsRaw={tc.argumentsRaw}
-                        args={tc.arguments}
-                        result={tc.result}
-                      />
-                    )
+                    // 通道互斥：见 blocks 路径同位置注释。
+                    const cardProps: StreamingFileCardProps = tc.argumentsRaw === undefined
+                      ? { toolCallId: tc.id, toolName: tc.name, status: tc.status, args: tc.arguments, result: tc.result }
+                      : { toolCallId: tc.id, toolName: tc.name, status: tc.status, argumentsRaw: tc.argumentsRaw, result: tc.result }
+                    return <StreamingFileCard key={tc.id} {...cardProps} />
                   }
                   return <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} />
                 })}

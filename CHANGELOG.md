@@ -2,6 +2,10 @@
 
 ## 2026-06-07
 
+- **refactor**: MessageItem 让 `StreamingFileCard` 的 `argumentsRaw` / `args` 通道互斥传递（Step 2 收尾）
+  - `src/renderer/features/chat/MessageItem.tsx`：渲染 `StreamingFileCard` 时根据 `block.argumentsRaw` 是否存在二选一传 `argumentsRaw` 或 `args`，不再同时传两份。让组件级 `React.memo` 在流式期严格命中（仅当 `argumentsRaw` 字符串变长才失效），finalize 时 `argumentsRaw` 字段被 store 删掉自动切换到 `args` 通道，只在那一帧触发一次重渲染
+  - `src/renderer/features/chat/StreamingFileCard.tsx`：把 `StreamingFileCardProps` 改为 `export`，让 MessageItem 可以基于类型构造互斥的 props 对象（类型层面就保证两个通道不会同时存在）
+  - **测试**：在 `StreamingFileCard.test.tsx` 新增 2 个用例（流式期同 `argumentsRaw` 引用 memo 命中、完整闭合的 `argumentsRaw` 正确解析且不高亮）
 - **refactor**: 移除冗余的 `streamDeltaScheduler` 中间层，buffer 直连 store（Step 3）
   - 删除 `src/renderer/lib/streamDeltaScheduler.ts`（119 行）：rAF 聚合层与 `useStreamingRenderPool` 节奏叠加 1~2 帧，且 buffer 自身已按 16ms / 300ms 节流，再叠一层 rAF 收益不抵复杂度
   - 删除 `tests/unit/renderer/streamDeltaScheduler.test.ts`（186 行）

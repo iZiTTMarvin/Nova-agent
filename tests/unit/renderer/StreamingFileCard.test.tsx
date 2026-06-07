@@ -255,4 +255,73 @@ describe('StreamingFileCard Step 2 优化', () => {
       renderer?.unmount()
     })
   })
+
+  it('接完整闭合的 argumentsRaw：能解析 path/content 并展示', () => {
+    // 模拟 finalize 时 store 仍保留 argumentsRaw 但内容已闭合（兼容路径）
+    const fullRaw = '{"path":"src/foo.ts","content":"a = 1;"}'
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(StreamingFileCard, {
+          toolCallId: 'tc_1',
+          toolName: 'write',
+          status: 'running',
+          argumentsRaw: fullRaw
+        })
+      )
+    })
+
+    // 完整 JSON 解析的 path 正确显示（即使 status='running' 也不影响展示）
+    const filename = renderer!.root.findByProps({ className: 'streaming-card__filename' })
+    expect(filename.children).toEqual(['src/foo.ts'])
+
+    const lineText = renderer!.root.findByProps({ className: 'streaming-card__line-text' })
+    expect(lineText.children).toEqual(['a = 1;'])
+
+    // running 状态下 highlightLine 不被调（哪怕 argumentsRaw 是完整 JSON）
+    expect(highlightLine).not.toHaveBeenCalled()
+
+    act(() => {
+      renderer?.unmount()
+    })
+  })
+
+  it('流式期连续同 argumentsRaw 引用（无新增）：不应触发额外 highlightLine', () => {
+    // 模拟 useChatStore 在某些情况会写入相同 argumentsRaw 引用（比如同 batch 多次 bump 但内容未变），
+    // 此时 React.memo 应命中，highlightLine 不被多调。
+    const raw = makeRaw('a { color: red; }')
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(StreamingFileCard, {
+          toolCallId: 'tc_1',
+          toolName: 'write',
+          status: 'running',
+          argumentsRaw: raw
+        })
+      )
+    })
+
+    // running 期 highlightLine 不应被调用
+    expect(highlightLine).not.toHaveBeenCalled()
+
+    // 同样的 props 再 update（父级 forceUpdate / 无关 state 变化）
+    act(() => {
+      renderer!.update(
+        React.createElement(StreamingFileCard, {
+          toolCallId: 'tc_1',
+          toolName: 'write',
+          status: 'running',
+          argumentsRaw: raw
+        })
+      )
+    })
+
+    expect(highlightLine).not.toHaveBeenCalled()
+
+    act(() => {
+      renderer?.unmount()
+    })
+  })
 })

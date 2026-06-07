@@ -23,20 +23,20 @@ import { getToolSummary, countLines } from './toolDisplay'
 import { parsePartialToolArgs } from './partialJsonArgs'
 import './StreamingFileCard.css'
 
-interface StreamingFileCardProps {
+export interface StreamingFileCardProps {
   toolCallId: string
   toolName: 'write' | 'edit'
   status: 'running' | 'success' | 'error'
   /**
-   * 工具参数原始 JSON 字符串。流式期间逐段增长，finalize 后不再变化。
-   * 优先使用：string 浅比较稳定，能精确控制本组件何时重渲染。
+   * 工具参数原始 JSON 字符串（流式通道）。流式期间逐段增长，finalize 后被 store 删掉。
+   * 与 args 互斥：流式期接这个，finalize 后改接 args。
    */
   argumentsRaw?: string
   /**
-   * 已解析的 args。流式期上游用 argumentsRaw + parsePartialToolArgs 增量填充；
+   * 已解析的完整 args（完整通道）。流式期上游用 argumentsRaw + parsePartialToolArgs 增量填充；
    * finalize 后由 store 写入完整对象。
    *
-   * 兼容旧调用方：若未传 argumentsRaw（外部已自行解析），可退回到 args。
+   * 兼容旧调用方：若既未传 argumentsRaw 也未传 args（外部已自行解析），可只传 args。
    */
   args?: Record<string, unknown>
   result?: string
