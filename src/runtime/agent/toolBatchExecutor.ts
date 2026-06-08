@@ -7,6 +7,7 @@ import type { EventBus } from './EventBus'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ImageContent } from '../tools/types'
 import type { AgentEvent } from './types'
+import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 
 export interface ToolExecutionOutcome {
   index: number
@@ -210,7 +211,8 @@ async function executePreparedToolCall(
     messageId: options.messageId,
     toolCallId: item.toolCall.id,
     toolName: item.toolCall.name,
-    result: resultText
+    // T02：在主进程 emit 前对工具输出做截断，防止大 result 撑爆渲染端 heap
+    result: sanitizeToolOutput(item.toolCall.name, resultText, failed)
   })
 
   return {
@@ -336,12 +338,13 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     if (!tool) {
       const outcome = createErrorOutcome(index, toolCall, args, `工具 "${toolCall.name}" 不可用：未注册工具`)
       precheckOutcomes.push(outcome)
+      // 失败路径走更激进的 2KB 截断（isError=true）
       options.emit({
         type: 'tool_result',
         messageId: options.messageId,
         toolCallId: toolCall.id,
         toolName: toolCall.name,
-        result: outcome.resultText
+        result: sanitizeToolOutput(toolCall.name, outcome.resultText, true)
       })
       continue
     }
@@ -358,12 +361,13 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     if (!permissionResult.allowed) {
       const outcome = createErrorOutcome(index, toolCall, args, `权限拒绝: ${permissionResult.reason}`)
       precheckOutcomes.push(outcome)
+      // 失败路径走更激进的 2KB 截断（isError=true）
       options.emit({
         type: 'tool_result',
         messageId: options.messageId,
         toolCallId: toolCall.id,
         toolName: toolCall.name,
-        result: outcome.resultText
+        result: sanitizeToolOutput(toolCall.name, outcome.resultText, true)
       })
       continue
     }

@@ -25,6 +25,7 @@ import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
+import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 import type {
   ExtendedMessage,
   ExtendedToolCall,
@@ -59,17 +60,35 @@ function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMe
 
     const toolCalls = message.toolCalls?.map((toolCall) => {
       const result = results[toolCall.id]
+      // T01：历史消息恢复时对 write/edit 工具的 arguments 做摘要化
+      const sanitizedArgs = sanitizeToolInput(toolCall.name, toolCall.arguments)
+      // T02：对工具输出做截断，防止历史消息中的长 result 撑爆 heap
+      const isErr = result?.startsWith('工具执行失败') || result?.startsWith('权限拒绝:')
+      const sanitizedResult = result ? sanitizeToolOutput(toolCall.name, result, isErr) : result
       return {
         id: toolCall.id,
         name: toolCall.name,
-        arguments: toolCall.arguments,
+        arguments: sanitizedArgs,
         status: getToolCallStatus(result),
-        result
+        result: sanitizedResult
       }
     })
 
     if (message.blocks && message.blocks.length > 0) {
-      return { ...message, content: sanitizedContent, toolCalls, _revision: 0 }
+      // T01+T02：对已有 blocks 中的 tool block arguments 和 result 做摘要化/截断
+      const sanitizedBlocks = message.blocks.map(block => {
+        if (block.type === 'tool') {
+          const blockResult = (block as import('../../shared/session/types').ToolBlock).result
+          const isBlkErr = blockResult?.startsWith('工具执行失败') || blockResult?.startsWith('权限拒绝:')
+          return {
+            ...block,
+            arguments: sanitizeToolInput(block.toolName, block.arguments),
+            result: blockResult ? sanitizeToolOutput(block.toolName, blockResult, isBlkErr) : blockResult
+          }
+        }
+        return block
+      })
+      return { ...message, content: sanitizedContent, toolCalls, blocks: sanitizedBlocks, _revision: 0 }
     }
 
     // 旧消息无 blocks：从 content 和 toolCalls 构造
@@ -651,10 +670,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
+    // T01：在 args 写入 store 前对 write/edit 的 content 做摘要化
+    const sanitizedArgs = sanitizeToolInput(toolName, args)
+
     const newToolCall: ExtendedToolCall = {
       id: toolCallId,
       name: toolName,
-      arguments: args,
+      arguments: sanitizedArgs,
       status: 'running'
     }
 
@@ -679,7 +701,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             type: 'tool',
             toolCallId,
             toolName,
-            arguments: args,
+            arguments: sanitizedArgs,
             status: 'running'
           }
         }
@@ -688,7 +710,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           type: 'tool',
           toolCallId,
           toolName,
-          arguments: args,
+          arguments: sanitizedArgs,
           status: 'running'
         })
       }
@@ -698,7 +720,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const tcIdx = toolCalls.findIndex(tc => tc.id === toolCallId)
       if (tcIdx !== -1) {
         const { argumentsRaw: _tcDrop, ...restTc } = toolCalls[tcIdx]
-        toolCalls[tcIdx] = { ...restTc, name: toolName, arguments: args }
+        toolCalls[tcIdx] = { ...restTc, name: toolName, arguments: sanitizedArgs }
       } else {
         toolCalls.push(newToolCall)
       }
@@ -793,6 +815,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   handleToolResult: (messageId: string, toolCallId: string, _toolName: string, result: string) => {
     const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
+    // T02：在 tool_result 写 store 前对输出做截断，防止大输出撑爆 heap
+    const sanitizedResult = sanitizeToolOutput(_toolName, result, isError)
 
     set(state => {
       const idx = state.messageIndexById[messageId]
@@ -802,14 +826,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const blocks = msg.blocks?.map(b => {
         if (b.type === 'tool' && b.toolCallId === toolCallId) {
-          return { ...b, status: isError ? 'error' as const : 'success' as const, result }
+          return { ...b, status: isError ? 'error' as const : 'success' as const, result: sanitizedResult }
         }
         return b
       })
 
       const toolCalls = msg.toolCalls?.map(tc => {
         if (tc.id === toolCallId) {
-          return { ...tc, result, status: isError ? 'error' as const : 'success' as const }
+          return { ...tc, result: sanitizedResult, status: isError ? 'error' as const : 'success' as const }
         }
         return tc
       })
@@ -1137,19 +1161,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ? parsePartialToolArgs(toolBlock.toolName, nextRaw)
               : null
 
-            if (toolBlock && partialArgs !== null) {
+            // T01：流式累积的 partialArgs 也做摘要化，防止大文件流式期间撑大 heap
+            const sanitizedPartialArgs = partialArgs !== null && toolBlock
+              ? sanitizeToolInput(toolBlock.toolName, partialArgs)
+              : partialArgs
+
+            if (toolBlock && sanitizedPartialArgs !== null) {
               blocks[blockIdx] = {
                 ...toolBlock,
-                arguments: partialArgs,
+                arguments: sanitizedPartialArgs,
                 argumentsRaw: nextRaw
               } as RendererToolBlock
               workingBlocks = blocks
             }
 
-            if (workingToolCalls && toolBlock && partialArgs !== null) {
+            if (workingToolCalls && toolBlock && sanitizedPartialArgs !== null) {
               workingToolCalls = workingToolCalls.map(tc =>
                 tc.id === delta.toolCallId
-                  ? { ...tc, arguments: partialArgs, argumentsRaw: nextRaw }
+                  ? { ...tc, arguments: sanitizedPartialArgs, argumentsRaw: nextRaw }
                   : tc
               )
             } else if (workingToolCalls && !toolBlock) {
