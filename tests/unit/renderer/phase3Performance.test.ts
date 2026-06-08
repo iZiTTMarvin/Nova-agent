@@ -83,6 +83,13 @@ function getStats(values: number[]) {
 describe('Phase 3 渲染性能回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // T06：MessageItem mount 时会调 get-message-diffs，需要提供默认 mock 返回
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'get-message-diffs') {
+        return Promise.resolve({ diffs: [], reviews: {} })
+      }
+      return Promise.resolve(undefined)
+    })
     useAppStore.setState({
       currentProject: null,
       currentMode: 'default',

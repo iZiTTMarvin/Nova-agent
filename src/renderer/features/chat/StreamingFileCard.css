@@ -199,3 +199,20 @@
 .diff-token--property {
   color: #2f5f7a;
 }
+
+/* T03：截断提示行 */
+.streaming-card__truncation-hint {
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  color: var(--color-brand);
+  cursor: pointer;
+  background-color: var(--bg-sand);
+  border-top: 1px dashed var(--border-warm);
+  text-align: center;
+  user-select: none;
+  transition: background-color var(--transition-fast);
+}
+
+.streaming-card__truncation-hint:hover {
+  background-color: var(--border-cream);
+}

@@ -49,6 +49,13 @@ function resetStore(messages: ExtendedMessage[] = []) {
 describe('聊天体验回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // T06：MessageItem mount 时会调 get-message-diffs，需要提供默认 mock
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'get-message-diffs') {
+        return Promise.resolve({ diffs: [], reviews: {} })
+      }
+      return Promise.resolve(undefined)
+    })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
     global.window = {
@@ -129,7 +136,7 @@ describe('聊天体验回归', () => {
     })
   })
 
-  it('流式文件卡片完成后保持展开状态，避免大段代码预览突然收起', () => {
+  it('T03：流式文件卡片完成后自动折叠，减少大段代码占用的视口', () => {
     const args = {
       path: 'src/example.ts',
       content: 'export const value = 1\nexport const next = 2'
@@ -146,6 +153,7 @@ describe('聊天体验回归', () => {
       )
     })
 
+    // running 时自动展开
     expect(renderer!.root.findAllByProps({ className: 'streaming-card__body' })).toHaveLength(1)
 
     act(() => {
@@ -159,7 +167,8 @@ describe('聊天体验回归', () => {
       )
     })
 
-    expect(renderer!.root.findAllByProps({ className: 'streaming-card__body' })).toHaveLength(1)
+    // T03：完成后自动折叠，不再保持展开
+    expect(renderer!.root.findAllByProps({ className: 'streaming-card__body' })).toHaveLength(0)
 
     act(() => {
       renderer?.unmount()

@@ -39,6 +39,7 @@ export interface StreamDeltaBuffer {
   /**
    * 清理资源：取消所有 timer、清空 buffer。
    * 调用后 buffer 不可再使用，需要重新创建。
+   * dispose 之前 flushNow 一次，保证已 push 但未到期的 delta 不丢失。
    */
   dispose: () => void
 }
@@ -91,7 +92,6 @@ export function createStreamDeltaBuffer(
     }
     if (pending.length === 0) return
     const batch = pending.splice(0, pending.length)
-    // 重置切换点：flush 后队列清空，下次 pushText 不会再触发"切换"
     lastTextKind = null
     onFlush(batch)
   }
@@ -105,8 +105,6 @@ export function createStreamDeltaBuffer(
     },
     pushText: (messageId, delta) => {
       if (disposed || !delta) return
-      // Phase 2 切换点：第一次 pushText 且最近 push 的是 thinking →
-      // 立即 flushNow 把思考内容刷出去，确保 thinking→text 块在 store 中按顺序追加。
       if (lastTextKind === 'thinking' && pending.some(d => d.kind === 'thinking')) {
         flushNow()
       }
@@ -121,8 +119,8 @@ export function createStreamDeltaBuffer(
     },
     flushNow,
     dispose: () => {
-      // dispose 之前 flushNow 一次，保证已 push 但未到期的 delta 不丢失
       if (!disposed) {
+        // dispose 之前 flushNow 一次，保证已 push 但未到期的 delta 不丢失
         flushNow()
       }
       disposed = true

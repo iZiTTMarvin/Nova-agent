@@ -19,9 +19,15 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { SpinnerIcon, CheckIcon, AlertIcon, ChevronIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
+import { highlightLineCached } from '../../lib/highlightCache'
 import { getToolSummary, countLines } from './toolDisplay'
 import { parsePartialToolArgs } from './partialJsonArgs'
+import { isContentSummary } from '../../../shared/tool-input-sanitizer'
+import type { ContentSummary } from '../../../shared/tool-input-sanitizer'
 import './StreamingFileCard.css'
+
+/** T03：大文件预览行数上限，超过时截断展示 */
+const PREVIEW_LINE_LIMIT = 240
 
 /** StreamingFileCard 的公共字段（两条通道共享） */
 interface StreamingFileCardBaseProps {
@@ -46,22 +52,35 @@ export type StreamingFileCardProps =
   | (StreamingFileCardBaseProps & { argumentsRaw: string; args?: never })
   | (StreamingFileCardBaseProps & { argumentsRaw?: never; args: Record<string, unknown> })
 
+/** 从可能是 ContentSummary 的值中提取预览文本（T03 兼容 T01 摘要化） */
+function extractTextFromSummary(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (isContentSummary(value)) {
+    const s = value as ContentSummary
+    return s.content_head + '\n\n... [摘要] ...\n\n' + s.content_tail
+  }
+  return ''
+}
+
 /** 从 args 中提取预览文本：write 取 content，edit 取新内容 */
 function getPreviewContent(toolName: string, args: Record<string, unknown>): string {
   if (toolName === 'write') {
-    return (args.content as string) || ''
+    return extractTextFromSummary(args.content)
   }
   if (toolName === 'edit') {
-    // 新格式：edits[].newText（可能多处替换，拼接展示）；
-    // 流式/旧格式回退：newText / new。
     const edits = args.edits
     if (Array.isArray(edits)) {
       return edits
-        .map(e => (e && typeof e === 'object' ? ((e as Record<string, unknown>).newText as string) ?? '' : ''))
+        .map(e => {
+          if (e && typeof e === 'object') {
+            return extractTextFromSummary((e as Record<string, unknown>).newText)
+          }
+          return ''
+        })
         .filter(Boolean)
         .join('\n\n')
     }
-    return (args.newText as string) || (args.new as string) || ''
+    return extractTextFromSummary(args.newText) || extractTextFromSummary(args.new) || ''
   }
   return ''
 }
@@ -85,10 +104,15 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
   args: argsProp,
   result
 }) {
-  const [isOpen, setIsOpen] = useState(status === 'running')
+  // T03：默认折叠。running 时由 useEffect 自动展开；完成后自动折叠（除非用户手动操作过）
+  const [isOpen, setIsOpen] = useState(false)
   const userToggledRef = useRef(false)
+  // T03：大文件行数截断控制
+  const [showFull, setShowFull] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const frameIdRef = useRef<number | null>(null)
+  // T03：追踪上一次 status，用于检测 running → 完成态切换
+  const prevStatusRef = useRef(status)
 
   // 优先用 argumentsRaw 自行 parsePartialToolArgs；
   // 仅当外部未传 argumentsRaw（兼容旧调用方）时回退到 args。
@@ -106,10 +130,15 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
   const lineCount = countLines(previewContent)
   const summary = getToolSummary(toolName, args)
 
-  // 自动展开策略：running 默认展开；完成后不自动收起，避免用户阅读时视口跳动。
+  // T03：running 时自动展开；running → 完成态时自动折叠（除非用户手动展开过）
   useEffect(() => {
+    const prev = prevStatusRef.current
+    prevStatusRef.current = status
+
     if (status === 'running' && !userToggledRef.current) {
       setIsOpen(true)
+    } else if (prev === 'running' && status !== 'running' && !userToggledRef.current) {
+      setIsOpen(false)
     }
   }, [status])
 
@@ -154,6 +183,9 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
   // split('\n') 在每帧重新执行都是一次 O(n) 字符串扫描+数组分配，
   // 用 useMemo 缓存；previewContent 引用未变时直接复用上一次的 lines 数组。
   const lines = useMemo(() => previewContent.split('\n'), [previewContent])
+  // T03：大文件截断，只渲染前 PREVIEW_LINE_LIMIT 行
+  const needsTruncation = lines.length > PREVIEW_LINE_LIMIT
+  const displayLines = showFull ? lines : lines.slice(0, PREVIEW_LINE_LIMIT)
   // running 阶段不高亮：每帧少 N 次正则匹配（CSS 大文件 200+ 行常见）。
   // 与 MarkdownRenderer.tsx 的 isStreaming 降级思路一致。
   const shouldHighlight = status !== 'running'
@@ -195,13 +227,13 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
 
       {isOpen && (
         <div className="streaming-card__body" ref={bodyRef}>
-          {lines.map((line, idx) => {
+          {displayLines.map((line, idx) => {
             return (
               <div key={idx} className="streaming-card__line">
                 <span className="streaming-card__line-no">{idx + 1}</span>
                 <span className="streaming-card__line-text">
                   {shouldHighlight
-                    ? highlightLine(line, filePath).map((token, tIdx) => (
+                    ? highlightLineCached(line, filePath, highlightLine).map((token, tIdx) => (
                         <span key={tIdx} className={`diff-token diff-token--${token.type}`}>{token.text}</span>
                       ))
                     : line}
@@ -209,6 +241,18 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
               </div>
             )
           })}
+
+          {/* T03：截断提示行 */}
+          {needsTruncation && !showFull && (
+            <div className="streaming-card__truncation-hint" onClick={() => setShowFull(true)}>
+              还有 {lines.length - PREVIEW_LINE_LIMIT} 行未显示，点击展开全部
+            </div>
+          )}
+          {needsTruncation && showFull && (
+            <div className="streaming-card__truncation-hint" onClick={() => setShowFull(false)}>
+              点击折叠
+            </div>
+          )}
 
           {/* error 状态下展示错误信息 */}
           {status === 'error' && result && (

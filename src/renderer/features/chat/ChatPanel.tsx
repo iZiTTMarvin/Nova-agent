@@ -55,6 +55,7 @@ export const ChatPanel: React.FC = () => {
   const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
   const rejectFile = useChatStore(state => state.rejectFile)
   const acceptFile = useChatStore(state => state.acceptFile)
+  const loadMessageDiffs = useChatStore(state => state.loadMessageDiffs)
   // Steering Queue
   const pendingUserMessages = useChatStore(state => state.pendingUserMessages)
   const enqueuePendingMessage = useChatStore(state => state.enqueuePendingMessage)
@@ -345,7 +346,11 @@ export const ChatPanel: React.FC = () => {
 
       {/* 消息流区域，只有非空状态时才显示并占据空间 */}
       {!isEmptyState && (
-        <div className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32" ref={scrollContainerRef} onScroll={handleScroll}>
+        <div
+          className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32"
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+        >
           {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
           <TodoPanel sessionId={currentSessionId} />
 
@@ -368,6 +373,7 @@ export const ChatPanel: React.FC = () => {
               diffCache={diffCache}
               isDiffLoading={isDiffLoading}
               diffPlaceholders={diffPlaceholders}
+              onLoadDiffs={loadMessageDiffs}
             />
           )
         })}

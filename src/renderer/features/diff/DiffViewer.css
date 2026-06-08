@@ -373,3 +373,20 @@
 .diff-line--context .diff-line__text {
   color: var(--text-primary);
 }
+
+/* T04：hunk 截断提示 */
+.diff-hunk__truncation {
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  color: var(--color-brand);
+  cursor: pointer;
+  background-color: var(--bg-sand);
+  border-top: 1px dashed var(--border-warm);
+  text-align: center;
+  user-select: none;
+  transition: background-color var(--transition-fast);
+}
+
+.diff-hunk__truncation:hover {
+  background-color: var(--border-cream);
+}

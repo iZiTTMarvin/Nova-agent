@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-08
+
+- **perf**: 渲染进程 OOM 防护 — 截断 + 折叠 + LRU 裁剪 + 按需加载
+  - `StreamingFileCard.tsx`：running 时自动展开，完成后自动折叠；超过 240 行截断展示
+  - `DiffViewer.tsx`：hunk 超过 500 行截断；pending 状态自动展开
+  - `useChatStore.ts`：消息窗口 LRU 裁剪（240 条上限，保留尾部 80 条）；流式 delta 原地 `+=` 拼接减少 GC；取消 `selectSession` 全量预加载 diff，改为 `MessageItem` 挂载时按需加载
+  - `highlightCache.ts`：`highlightLine` 结果的 LRU 缓存（2000 条上限），避免重复语法高亮计算
+  - `streamDeltaBuffer.ts`：简化为单 timer + 16ms 文本 / 300ms 工具参数两级节流
+
 ## 2026-06-07
 
 - **refactor**: MessageItem 让 `StreamingFileCard` 的 `argumentsRaw` / `args` 通道互斥传递（Step 2 收尾）

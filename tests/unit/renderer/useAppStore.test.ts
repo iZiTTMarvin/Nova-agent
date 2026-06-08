@@ -200,10 +200,8 @@ describe('useAppStore Zustand Store', () => {
           }
         ]
       })
-      .mockResolvedValueOnce({
-        diffs: [],
-        reviews: {}
-      })
+
+    // T06：selectSession 不再自动调 loadMessageDiffs，无需 mock get-message-diffs
 
     await useAppStore.getState().selectSession('sess_1')
 
@@ -235,10 +233,8 @@ describe('useAppStore Zustand Store', () => {
           }
         ]
       })
-      .mockResolvedValueOnce({
-        diffs: [],
-        reviews: {}
-      })
+
+    // T06：selectSession 不再自动调 loadMessageDiffs
 
     await useAppStore.getState().selectSession('sess_blocks')
 
@@ -262,15 +258,14 @@ describe('useAppStore Zustand Store', () => {
             id: 'msg_legacy_1',
             sessionId: 'sess_legacy',
             role: 'assistant',
-            content: '<think>先分析</think>真正正文',
+            // 含诸如标签的旧消息回归测试，字符串拼接避免编辑器误识别
+            content: '<' + 'think' + '>先分析</' + 'think' + '>真正正文',
             timestamp: 3
           }
         ]
       })
-      .mockResolvedValueOnce({
-        diffs: [],
-        reviews: {}
-      })
+
+    // T06：selectSession 不再自动调 loadMessageDiffs
 
     await useAppStore.getState().selectSession('sess_legacy')
 

@@ -8,11 +8,15 @@
  * 4. 每个文件支持接受/拒绝操作
  * 5. 审查状态持久化：pending / accepted / rejected
  */
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import type { DiffEntry, DiffHunk, DiffReviewStatus } from '../../../shared/diff/types'
 import { ChevronIcon, CheckIcon, UndoIcon } from '../../components/Icons'
 import { highlightLine } from './syntaxHighlight'
+import { highlightLineCached } from '../../lib/highlightCache'
 import './DiffViewer.css'
+
+/** T04：单个 hunk 超过此行数时截断展示 */
+const PREVIEW_HUNK_LINE_LIMIT = 500
 
 export interface DiffViewerProps {
   diffs: DiffEntry[]
@@ -38,7 +42,8 @@ const DiffLineView: React.FC<{
   filePath: string
 }> = ({ prefix, text, realLineNo, filePath }) => {
   const type = prefix === '+' ? 'add' : prefix === '-' ? 'remove' : 'context'
-  const tokens = highlightLine(text, filePath)
+  // T13：通过缓存层调用 highlightLine，避免重复计算
+  const tokens = highlightLineCached(text, filePath, highlightLine)
 
   return (
     <div className={`diff-line diff-line--${type}`}>
@@ -53,11 +58,39 @@ const DiffLineView: React.FC<{
   )
 }
 
-/** 单个 hunk 的行渲染，使用真实的旧行/新行号 */
-const HunkView: React.FC<{ hunk: DiffHunk; filePath: string }> = ({ hunk, filePath }) => {
+/** 预计算单行 diff 信息，避免 VList 渲染时依赖递增状态 */
+interface ComputedDiffLine {
+  prefix: string
+  text: string
+  realLineNo: number
+}
+
+/** 从 hunk content 预计算所有行的 diff 信息 */
+function computeDiffLines(hunk: DiffHunk): ComputedDiffLine[] {
   const lines = hunk.content.split('\n')
   let oldLine = hunk.oldStart
   let newLine = hunk.newStart
+  return lines.map(line => {
+    const prefix = line[0] || ' '
+    const text = line.slice(1)
+    let lineNo = 0
+    if (prefix === ' ') {
+      lineNo = oldLine; oldLine++; newLine++
+    } else if (prefix === '+') {
+      lineNo = newLine; newLine++
+    } else {
+      lineNo = oldLine; oldLine++
+    }
+    return { prefix, text, realLineNo: lineNo }
+  })
+}
+
+/** Hunk 渲染。大 hunk 截断展示，保留行级直接渲染 */
+const HunkView: React.FC<{ hunk: DiffHunk; filePath: string }> = ({ hunk, filePath }) => {
+  const allLines = useMemo(() => computeDiffLines(hunk), [hunk])
+  const needsTruncation = allLines.length > PREVIEW_HUNK_LINE_LIMIT
+  const [showFull, setShowFull] = useState(false)
+  const displayLines = showFull ? allLines : allLines.slice(0, PREVIEW_HUNK_LINE_LIMIT)
 
   return (
     <div className="diff-hunk">
@@ -65,27 +98,19 @@ const HunkView: React.FC<{ hunk: DiffHunk; filePath: string }> = ({ hunk, filePa
         @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
       </div>
       <div className="diff-hunk__content">
-        {lines.map((line, idx) => {
-          const prefix = line[0] || ' '
-          const text = line.slice(1)
-          let lineNo = 0
-
-          if (prefix === ' ') {
-            lineNo = oldLine
-            oldLine++
-            newLine++
-          } else if (prefix === '+') {
-            lineNo = newLine
-            newLine++
-          } else {
-            lineNo = oldLine
-            oldLine++
-          }
-
-          return (
-            <DiffLineView key={idx} prefix={prefix} text={text} realLineNo={lineNo} filePath={filePath} />
-          )
-        })}
+        {displayLines.map((line, idx) => (
+          <DiffLineView key={idx} prefix={line.prefix} text={line.text} realLineNo={line.realLineNo} filePath={filePath} />
+        ))}
+        {needsTruncation && !showFull && (
+          <div className="diff-hunk__truncation" onClick={() => setShowFull(true)}>
+            还有 {allLines.length - PREVIEW_HUNK_LINE_LIMIT} 行未显示，点击展开完整 hunk
+          </div>
+        )}
+        {needsTruncation && showFull && (
+          <div className="diff-hunk__truncation" onClick={() => setShowFull(false)}>
+            点击折叠
+          </div>
+        )}
       </div>
     </div>
   )
@@ -98,6 +123,7 @@ const FileDiffPanel: React.FC<{
   onReject?: (filePath: string) => Promise<void>
   onAccept?: (filePath: string) => Promise<void>
 }> = ({ entry, reviewStatus, onReject, onAccept }) => {
+  // T04：默认折叠，但 pending 状态自动展开让用户立刻看到需要 review 的变更
   const [expanded, setExpanded] = useState(reviewStatus === 'pending')
   const [rejecting, setRejecting] = useState(false)
   const [accepting, setAccepting] = useState(false)
@@ -219,7 +245,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   onRejectFile,
   onAcceptFile
 }) => {
-  const [expanded, setExpanded] = useState(true)
+  // T04：DiffViewer 外层默认折叠
+  const [expanded, setExpanded] = useState(false)
 
   // loading 状态：展示已知文件名 + spinner，不展示 +0 -0 统计避免误导
   if (isLoading) {

@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React from 'react'
+import React, { useEffect } from 'react'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { DiffViewer } from '../diff/DiffViewer'
@@ -32,6 +32,8 @@ export interface MessageItemProps {
   diffCache?: MessageDiffCache
   isDiffLoading: boolean
   diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
+  /** T06：按需加载 diff 的回调，MessageItem 挂载时调用 */
+  onLoadDiffs?: (sessionId: string, messageId: string) => void
 }
 
 // ── 模块级辅助函数（从 ChatPanel.tsx 搬入） ──────────────────────
@@ -99,10 +101,18 @@ function MessageItemInner({
   onRenderPoolTick,
   diffCache,
   isDiffLoading,
-  diffPlaceholders
+  diffPlaceholders,
+  onLoadDiffs
 }: MessageItemProps) {
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user'
+
+  // T06：assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
+  useEffect(() => {
+    if (isAssistant && currentSessionId && onLoadDiffs && !diffCache && !isDiffLoading) {
+      onLoadDiffs(currentSessionId, msg.id)
+    }
+  }, [msg.id, isAssistant, currentSessionId, onLoadDiffs, diffCache, isDiffLoading])
 
   // blocks 渲染路径：按流式事件顺序展示 thinking → text → tool → text → ...
   const hasBlocks = isAssistant && msg.blocks && msg.blocks.length > 0
@@ -280,7 +290,8 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.onRenderPoolTick === next.onRenderPoolTick &&
     prev.diffCache === next.diffCache &&
     prev.isDiffLoading === next.isDiffLoading &&
-    prev.diffPlaceholders === next.diffPlaceholders
+    prev.diffPlaceholders === next.diffPlaceholders &&
+    prev.onLoadDiffs === next.onLoadDiffs
   )
 }
 

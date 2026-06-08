@@ -288,6 +288,13 @@ export interface ChatState {
 /** 单个会话最多保留的挂起消息数。超过后丢弃最早入队的项。 */
 const MAX_PENDING_MESSAGES = 20
 
+// ── T05：消息窗口 LRU 裁剪常量 ──────────────────────────────
+
+/** 消息数组超过此阈值触发裁剪 */
+const MESSAGE_WINDOW_MAX_SIZE = 240
+/** 裁剪时保留尾部最近的消息数 */
+const MESSAGE_WINDOW_TAIL_PRESERVE = 80
+
 // ── Phase 2：流式 delta 批量结构 ──────────────────────────────
 
 /** 单条 delta 的统一结构（thinking / text / toolCall 三选一） */
@@ -298,6 +305,23 @@ export type StreamDelta =
 
 /** 一次 flush 的批量 delta 数组 */
 export type StreamDeltaBatch = StreamDelta[]
+
+/** T05：消息窗口 LRU 裁剪。超过 MESSAGE_WINDOW_MAX_SIZE 时从头部裁剪，保留尾部 N 条 */
+function trimMessageWindow(
+  messages: ExtendedMessage[],
+  index: Record<string, number>
+): { messages: ExtendedMessage[]; index: Record<string, number> } {
+  if (messages.length <= MESSAGE_WINDOW_MAX_SIZE) return { messages, index }
+  const tailPreserve = messages.length - MESSAGE_WINDOW_TAIL_PRESERVE
+  const trimCount = Math.min(messages.length - MESSAGE_WINDOW_MAX_SIZE, Math.max(0, tailPreserve))
+  if (trimCount <= 0) return { messages, index }
+  const trimmed = messages.slice(trimCount)
+  const newIndex: Record<string, number> = {}
+  for (let i = 0; i < trimmed.length; i++) {
+    newIndex[trimmed[i].id] = i
+  }
+  return { messages: trimmed, index: newIndex }
+}
 
 /**
  * Phase 6：turn boundary 自动 dispatch 挂起消息。
@@ -413,9 +437,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set(state => {
       const nextMessages = [...state.messages, userMsg]
+      // T05：裁剪消息窗口
+      const trimmed = trimMessageWindow(nextMessages, { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 })
       return {
-        messages: nextMessages,
-        messageIndexById: { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 },
+        messages: trimmed.messages,
+        messageIndexById: trimmed.index,
         isGenerating: true
       }
     })
@@ -440,11 +466,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
       const restored = restoreSessionMessages(detail.messages)
+      // T05：会话加载后裁剪消息窗口
+      const trimmed = trimMessageWindow(restored, buildMessageIndex(restored))
       set({
         currentSessionId: sessionId,
         sessions: upsertSessionSummary(get().sessions, detail),
-        messages: restored,
-        messageIndexById: buildMessageIndex(restored),
+        messages: trimmed.messages,
+        messageIndexById: trimmed.index,
         messageDiffs: {} // 切换会话时清空 diff 缓存
       })
 
@@ -457,13 +485,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       useSettingsStore.getState().resetSessionUsage()
       const { useAgentStore } = await import('./useAgentStore')
       useAgentStore.getState().resetAgentRuntime()
-
-      // 为所有 assistant 消息异步加载 diff 数据
-      for (const msg of restored) {
-        if (msg.role === 'assistant') {
-          get().loadMessageDiffs(sessionId, msg.id)
-        }
-      }
+      // T06：不再在 selectSession 时全量预加载所有 assistant 消息的 diff
+      // 改为 MessageItem 挂载时按需加载，避免长会话初始化卡顿
     } catch (err) {
       console.error('加载会话详情出错:', err)
     }
@@ -1109,22 +1132,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const blocks = workingBlocks ?? []
             const last = blocks[blocks.length - 1]
             if (last && last.type === 'thinking') {
-              blocks[blocks.length - 1] = { ...last, content: last.content + delta.delta }
+              // T07：原地 += 而非创建新对象，减少 GC 压力
+              ;(last as { content: string }).content += delta.delta
             } else {
               blocks.push({ type: 'thinking', content: delta.delta })
             }
             workingBlocks = blocks
-            workingThinking = workingThinking + delta.delta
+            workingThinking += delta.delta
           } else if (delta.kind === 'text') {
             const blocks = workingBlocks ?? []
             const last = blocks[blocks.length - 1]
             if (last && last.type === 'text') {
-              blocks[blocks.length - 1] = { ...last, content: last.content + delta.delta }
+              // T07：原地 += 而非创建新对象
+              ;(last as { content: string }).content += delta.delta
             } else {
               blocks.push({ type: 'text', content: delta.delta })
             }
             workingBlocks = blocks
-            workingContent = workingContent + delta.delta
+            workingContent += delta.delta
           } else {
             // toolCall delta：累积 argumentsRaw + partial 解析 + 更新 block / toolCalls
             //
@@ -1204,10 +1229,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messagesChanged = true
       }
 
-      return {
-        ...(messagesChanged ? { messages: nextMessages } : {}),
-        ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
+      // T05：流式 delta 处理完后裁剪消息窗口
+      let finalResult: Partial<ChatState>
+      if (messagesChanged) {
+        const trimmed = trimMessageWindow(nextMessages, state.messageIndexById)
+        finalResult = {
+          messages: trimmed.messages,
+          ...(trimmed.messages !== nextMessages ? { messageIndexById: trimmed.index } : {}),
+          ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
+        }
+      } else {
+        finalResult = {
+          ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
+        }
       }
+
+      return finalResult
     })
   }
 }))
