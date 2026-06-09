@@ -567,3 +567,38 @@
   background: rgba(0, 0, 0, 0.05);
   color: #d33;
 }
+
+
+/* ──────────────────────────────────────────────────────────
+   Tool Box Live Enter（流式期间的入场动画）
+
+   职责分工：
+   - opacity 由本 CSS @keyframes 驱动（96ms，64% 处 opacity 1）
+   - scale 由 framer-motion spring 驱动（ToolBox.tsx motion.div）
+   两者独立可关：
+   - CSS 层：prefers-reduced-motion 媒体查询
+   - framer-motion 层：useReducedMotion hook
+   ────────────────────────────────────────────────────────── */
+
+.tool-box--live-enter {
+  animation: tool-box-live-enter 96ms ease-out both;
+  will-change: opacity;
+}
+
+@keyframes tool-box-live-enter {
+  0% {
+    opacity: 0;
+  }
+  64% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-box--live-enter {
+    animation: none;
+  }
+}

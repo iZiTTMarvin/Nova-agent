@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { CheckIcon, AlertIcon, TerminalIcon, ChevronIcon } from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
@@ -9,12 +10,28 @@ export interface ToolBoxProps {
   args: Record<string, unknown>
   status: 'running' | 'success' | 'error'
   result?: string
+  /** 是否处于 assistant 流式生成中。true 时启用入场动画。 */
+  isLiveStreaming?: boolean
 }
 
-export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ name, args, status, result }) {
+/**
+ * 流式入场动画参数。
+ *
+ * 职责分工：opacity 由 CSS @keyframes tool-box-live-enter 驱动（96ms，64% 处 opacity 1），
+ * scale 由 framer-motion spring 驱动。两者独立可关：CSS 层通过 prefers-reduced-motion，
+ * framer-motion 层通过 useReducedMotion hook。
+ */
+export const LIVE_ENTER_SPRING = { type: 'spring' as const, stiffness: 300, damping: 30, mass: 0.8 }
+export const NO_ANIMATION = { duration: 0 }
+
+export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ name, args, status, result, isLiveStreaming = false }) {
   const [isOpen, setIsOpen] = useState(false)
   const shouldHideArguments = isPermissionDeniedResult(result)
   const summary = getToolSummary(name, args)
+
+  /** 系统偏好 + framer-motion 层的双重门控：减少动效时跳过 spring */
+  const prefersReducedMotion = useReducedMotion()
+  const animateLive = isLiveStreaming && !prefersReducedMotion
 
   const renderStatusIcon = () => {
     switch (status) {
@@ -51,7 +68,12 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ nam
   }
 
   return (
-    <div className="tool-box">
+    <motion.div
+      initial={animateLive ? { scale: 0.98 } : false}
+      animate={{ scale: 1 }}
+      transition={animateLive ? LIVE_ENTER_SPRING : NO_ANIMATION}
+      className={isLiveStreaming ? 'tool-box tool-box--live-enter' : 'tool-box'}
+    >
       <div className="tool-box__header" onClick={() => setIsOpen(!isOpen)}>
         {renderStatusIcon()}
         <TerminalIcon size={14} style={{ color: 'var(--text-secondary)' }} />
@@ -81,6 +103,6 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ nam
           )}
         </div>
       )}
-    </div>
+    </motion.div>
   )
 })
