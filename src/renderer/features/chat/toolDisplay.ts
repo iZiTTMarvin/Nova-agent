@@ -2,6 +2,7 @@
  * 工具卡片显示名称与参数摘要
  * 纯函数，可独立测试，供 ToolBox 组件使用
  */
+import { isContentSummary } from '../../../shared/tool-input-sanitizer'
 
 /** 映射工具的中文名 */
 export function getToolDisplayName(toolName: string): string {
@@ -28,13 +29,26 @@ export function getToolDisplayName(toolName: string): string {
 }
 
 /**
- * 统计文本行数，处理尾随换行：
- * "a\nb" → 2 行，"a\nb\n" → 2 行（末尾空行不算）
+ * 统计文本/摘要对象的行数。
+ *
+ * write/edit 的超大内容在进入 renderer store 前会被摘要化成 ContentSummary。
+ * 这里必须兼容两种形态，否则历史会话里的大文件卡片在渲染摘要时会因为
+ * `text.replace is not a function` 直接把整个 React 树打崩成白屏。
+ *
+ * - "a\nb" → 2 行
+ * - "a\nb\n" → 2 行（末尾空行不算）
+ * - ContentSummary → 直接读持久化时记录好的 `content_lines`
  */
-export function countLines(text: string): number {
-  if (!text) return 0
-  // 去掉末尾换行后再 split，避免尾随换行多算 1 行
-  return text.replace(/\n$/, '').split('\n').length
+export function countLines(text: unknown): number {
+  if (typeof text === 'string') {
+    if (!text) return 0
+    // 去掉末尾换行后再 split，避免尾随换行多算 1 行
+    return text.replace(/\n$/, '').split('\n').length
+  }
+  if (isContentSummary(text)) {
+    return text.content_lines
+  }
+  return 0
 }
 
 /** 根据工具名和参数生成一句话摘要，不需要展开卡片就能看到核心操作信息 */
@@ -42,8 +56,7 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
   switch (toolName) {
     case 'write': {
       const path = (args.path as string) || ''
-      const content = args.content as string | undefined
-      const lines = content ? countLines(content) : 0
+      const lines = countLines(args.content)
       return path ? `正在写入 ${path}（+${lines} 行）` : '正在写入文件'
     }
     case 'edit': {
@@ -53,12 +66,12 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       let lines: number
       if (Array.isArray(edits)) {
         lines = edits.reduce((sum: number, e) => {
-          const ot = e && typeof e === 'object' ? ((e as Record<string, unknown>).oldText as string) : ''
-          return sum + (ot ? countLines(ot) : 0)
+          const ot = e && typeof e === 'object' ? (e as Record<string, unknown>).oldText : ''
+          return sum + countLines(ot)
         }, 0)
       } else {
-        const old = args.old as string | undefined
-        lines = old ? countLines(old) : 1
+        const old = args.old
+        lines = Math.max(1, countLines(old))
       }
       return path ? `正在修改 ${path}（替换 ${lines} 行）` : '正在修改文件'
     }

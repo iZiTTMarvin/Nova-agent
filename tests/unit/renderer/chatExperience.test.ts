@@ -6,6 +6,7 @@ import { StreamingFileCard } from '../../../src/renderer/features/chat/Streaming
 import { ThinkingBlock } from '../../../src/renderer/features/chat/ThinkingBlock'
 import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
+import { sanitizeToolInput } from '../../../src/shared/tool-input-sanitizer'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
@@ -169,6 +170,46 @@ describe('聊天体验回归', () => {
 
     // T03：完成后自动折叠，不再保持展开
     expect(renderer!.root.findAllByProps({ className: 'streaming-card__body' })).toHaveLength(0)
+
+    act(() => {
+      renderer?.unmount()
+    })
+  })
+
+  it('加载带摘要化 write 卡片的历史会话时不应白屏', () => {
+    const sanitizedWriteArgs = sanitizeToolInput('write', {
+      path: 'index.html',
+      content: '<!doctype html>\n' + '<section>hello</section>\n'.repeat(600)
+    })
+
+    const messages: ExtendedMessage[] = [
+      {
+        id: 'msg_assistant_summary',
+        sessionId: 'sess_chat_experience',
+        role: 'assistant',
+        content: '已生成个人主页',
+        blocks: [
+          {
+            type: 'tool',
+            toolCallId: 'tc_write_summary',
+            toolName: 'write',
+            arguments: sanitizedWriteArgs,
+            status: 'success'
+          }
+        ],
+        timestamp: 3
+      }
+    ]
+
+    resetStore(messages)
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ChatPanel))
+    })
+
+    const filename = renderer!.root.findByProps({ className: 'streaming-card__filename' })
+    expect(filename.children).toEqual(['index.html'])
 
     act(() => {
       renderer?.unmount()
