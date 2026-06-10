@@ -25,6 +25,8 @@ import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
 import { executeToolBatch, toToolContent } from './toolBatchExecutor'
+import { IdleCompressionTimer } from './IdleCompressionTimer'
+import type { IdleCompactionTarget } from './IdleCompressionTimer'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
@@ -41,7 +43,7 @@ class PermissionAbortedError extends Error {
   }
 }
 
-export class AgentLoop {
+export class AgentLoop implements IdleCompactionTarget {
   private modelClient: ModelClient
   private eventBus: EventBus
   private config: AgentLoopConfig
@@ -103,6 +105,9 @@ export class AgentLoop {
   private lastEstimatedTokens = 0
   /** 压缩层级计数 */
   private compactionLevel = 0
+
+  /** 空闲压缩计时器（惰性创建） */
+  private idleTimer: IdleCompressionTimer | null = null
 
   /**
    * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
@@ -244,6 +249,9 @@ export class AgentLoop {
     this.contextOverflowRetryAttempted = false
     this.repeatedFailureCounts.clear()
 
+    // 空闲压缩：新消息到达时取消任何正在运行的压缩
+    this.idleTimer?.cancel()
+
     // 将用户消息加入上下文，模式指令附加在尾部（不改前缀，缓存 Harness 核心）
     const modeInstruction = getModeInstruction(this.mode)
     let userContent: string | ContentBlock[]
@@ -356,6 +364,8 @@ export class AgentLoop {
               if (this.contextOverflowRetryAttempted) {
                 this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
                 this.state = 'error'
+                this.idleTimer ??= new IdleCompressionTimer(this)
+                this.idleTimer.start()
                 return
               }
               this.contextOverflowRetryAttempted = true
@@ -374,12 +384,16 @@ export class AgentLoop {
 
               this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
               this.state = 'error'
+              this.idleTimer ??= new IdleCompressionTimer(this)
+              this.idleTimer.start()
               return
             }
 
             case 'error':
               this.eventBus.emit({ type: 'error', messageId, error: event.error })
               this.state = 'error'
+              this.idleTimer ??= new IdleCompressionTimer(this)
+              this.idleTimer.start()
               return
 
             case 'usage':
@@ -489,6 +503,9 @@ export class AgentLoop {
       if (!this.cancelled) {
         this.eventBus.emit({ type: 'error', messageId, error: (err as Error).message })
         this.state = 'error'
+        // 错误也启动空闲计时（错误后用户可能离开）
+        this.idleTimer ??= new IdleCompressionTimer(this)
+        this.idleTimer.start()
         return
       }
     }
@@ -511,6 +528,10 @@ export class AgentLoop {
       messageId,
       ...(this.cancelled ? { interrupted: true } : {})
     })
+
+    // 所有正常退出路径（idle / cancelled / error via overflow）都启动空闲计时
+    this.idleTimer ??= new IdleCompressionTimer(this)
+    this.idleTimer.start()
   }
 
   /**
@@ -875,5 +896,41 @@ export class AgentLoop {
     this.state = 'idle'
     this.cancelled = false
     this.abortController = null
+    this.idleTimer?.cancel()
+  }
+
+  /**
+   * @internal 供 IdleCompressionTimer 调用。
+   *
+   * 压缩前快照 this.context，abort 时恢复快照。
+   * runCompaction() 本身不会修改 this.context（它构建局部 compactionContext 调模型），
+   * 只有成功路径的 rebuildWithCompression 才会替换。所以 abort/异常时只需恢复快照即可。
+   *
+   * 独立 AbortController 通过 signal 转发与 timer 的 abort 联动，
+   * 不与主循环的 abortController 混用，避免 cancel 时误杀正常 LLM 调用。
+   */
+  async runIdleCompaction(abortSignal: AbortSignal): Promise<void> {
+    const prevContext = [...this.context]
+    const prevAbortController = this.abortController
+    const prevCancelled = this.cancelled
+    const prevOverflowFlag = this.compressingForOverflow
+    const onAbort = () => this.abortController?.abort()
+
+    try {
+      this.abortController = new AbortController()
+      abortSignal.addEventListener('abort', onAbort, { once: true })
+      this.cancelled = false
+      this.compressingForOverflow = false
+      await this.runCompaction()
+    } finally {
+      abortSignal.removeEventListener('abort', onAbort)
+      // abort 时回滚：恢复压缩前的上下文，防止 sendMessage 并发推入的用户消息被误删
+      if (abortSignal.aborted) {
+        this.context = prevContext
+      }
+      this.abortController = prevAbortController
+      this.cancelled = prevCancelled
+      this.compressingForOverflow = prevOverflowFlag
+    }
   }
 }
