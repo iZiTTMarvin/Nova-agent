@@ -27,6 +27,9 @@ import { estimateContextTokens } from './tokenEstimator'
 import { executeToolBatch, toToolContent } from './toolBatchExecutor'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import type { IdleCompactionTarget } from './IdleCompressionTimer'
+import { HookManager } from './HookManager'
+import { RecoveryStateMachine } from './RecoveryStateMachine'
+import { SystemPromptBuilder } from './SystemPromptBuilder'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
@@ -109,6 +112,21 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 空闲压缩计时器（惰性创建） */
   private idleTimer: IdleCompressionTimer | null = null
 
+  /** Hook 编排层（与 EventBus 并行，负责干预） */
+  private hookManager: HookManager
+
+  /** 错误恢复状态机 */
+  private recovery = new RecoveryStateMachine()
+
+  /** 冻结的 system prompt（6 层拼装结果） */
+  private frozenSystemPrompt: string
+
+  /** 当前轮次 messageId（cancel / onCancel 使用） */
+  private currentMessageId: string | null = null
+
+  /** 模型临时错误重试计数 */
+  private modelErrorAttempt = 0
+
   /**
    * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
    * 用于检测模型对「完全相同的工具调用」反复触发并反复失败的死循环
@@ -137,13 +155,41 @@ export class AgentLoop implements IdleCompactionTarget {
       onCompaction: config?.onCompaction
     }
     this.maxToolRounds = this.config.maxToolRounds ?? 20
+    this.hookManager = new HookManager(eventBus)
+    this.frozenSystemPrompt = this.buildFrozenSystemPrompt()
 
-    if (this.config.systemPrompt) {
+    if (this.frozenSystemPrompt) {
       this.context.push({
         role: 'system',
-        content: this.config.systemPrompt
+        content: this.frozenSystemPrompt
       })
     }
+  }
+
+  /** 从配置构建冻结 system prompt */
+  private buildFrozenSystemPrompt(): string {
+    const layers = this.config.systemPromptLayers
+    if (layers) {
+      return SystemPromptBuilder.build({
+        agentRole: layers.agentRole,
+        baseRules: layers.baseRules ?? '',
+        projectRules: layers.projectRules ?? null,
+        skillContext: layers.skillContext ?? '',
+        modeInstruction: layers.modeInstruction ?? '',
+        toolSummary: layers.toolSummary ?? ''
+      })
+    }
+    return this.config.systemPrompt ?? ''
+  }
+
+  /** 注入自定义 HookManager（测试 / 扩展用） */
+  setHookManager(hm: HookManager): void {
+    this.hookManager = hm
+  }
+
+  /** 获取 HookManager 实例 */
+  getHookManager(): HookManager {
+    return this.hookManager
   }
 
   /**
@@ -243,11 +289,13 @@ export class AgentLoop implements IdleCompactionTarget {
     }
 
     const messageId = randomUUID()
+    this.currentMessageId = messageId
     this.state = 'running'
     this.cancelled = false
     this.abortController = new AbortController()
     this.contextOverflowRetryAttempted = false
     this.repeatedFailureCounts.clear()
+    this.modelErrorAttempt = 0
 
     // 空闲压缩：新消息到达时取消任何正在运行的压缩
     this.idleTimer?.cancel()
@@ -272,6 +320,11 @@ export class AgentLoop implements IdleCompactionTarget {
 
     this.eventBus.emit({ type: 'message_start', messageId })
 
+    const userText = typeof content === 'string'
+      ? content
+      : extractTextFromContent(content)
+    await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
+
     try {
       let toolRound = 0
 
@@ -279,6 +332,21 @@ export class AgentLoop implements IdleCompactionTarget {
         if (this.cancelled) break
 
         let shouldRetryChat = false
+
+        const beforeAgent = await this.hookManager.trigger({
+          event: 'beforeAgentStart',
+          messageId,
+          prompt: userText,
+          systemPrompt: this.frozenSystemPrompt
+        })
+        if (beforeAgent?.messages) this.context = beforeAgent.messages
+        if (beforeAgent?.systemPrompt) {
+          this.frozenSystemPrompt = beforeAgent.systemPrompt
+          const sysIdx = this.context.findIndex(m => m.role === 'system')
+          if (sysIdx >= 0) {
+            this.context[sysIdx] = { role: 'system', content: beforeAgent.systemPrompt }
+          }
+        }
 
         // 上下文压缩检查：跳过正在执行溢出压缩的轮次
         if (!this.compressingForOverflow) {
@@ -301,8 +369,22 @@ export class AgentLoop implements IdleCompactionTarget {
         )
         this.cacheDiagnostics.recordBaseline(systemPrompt, tools)
 
+        const contextHook = await this.hookManager.trigger({
+          event: 'context',
+          messageId,
+          messages: [...this.context]
+        })
+        let chatMessages = contextHook?.messages ?? this.context
+
+        const preChatHook = await this.hookManager.trigger({
+          event: 'preChat',
+          messageId,
+          messages: [...chatMessages]
+        })
+        chatMessages = preChatHook?.messages ?? chatMessages
+
         // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
-        const stream = this.modelClient.chat(this.context, tools, {
+        const stream = this.modelClient.chat(chatMessages, tools, {
           abortSignal: this.abortController?.signal
         })
 
@@ -361,7 +443,11 @@ export class AgentLoop implements IdleCompactionTarget {
               break
 
             case 'context_overflow': {
-              if (this.contextOverflowRetryAttempted) {
+              const overflowState = this.recovery.classify(event.rawError, this.modelErrorAttempt)
+              this.eventBus.emit({ type: 'recovery_state', messageId, state: overflowState })
+              await this.hookManager.trigger({ event: 'onError', messageId, error: event.rawError })
+
+              if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
                 this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
                 this.state = 'error'
                 this.idleTimer ??= new IdleCompressionTimer(this)
@@ -369,6 +455,11 @@ export class AgentLoop implements IdleCompactionTarget {
                 return
               }
               this.contextOverflowRetryAttempted = true
+
+              if (overflowState.kind === 'recovering') {
+                const hint = this.recovery.buildRecoveryHint(overflowState)
+                this.eventBus.emit({ type: 'recovery_hint', messageId, hint, attempt: this.modelErrorAttempt })
+              }
 
               const standardOk = await this.runOverflowCompaction('standard')
               if (standardOk) {
@@ -389,12 +480,26 @@ export class AgentLoop implements IdleCompactionTarget {
               return
             }
 
-            case 'error':
+            case 'error': {
+              const errState = this.recovery.classify(event.error, this.modelErrorAttempt)
+              this.eventBus.emit({ type: 'recovery_state', messageId, state: errState })
+              await this.hookManager.trigger({ event: 'onError', messageId, error: event.error })
+
+              if (errState.kind === 'retrying' && this.recovery.shouldRetry(errState)) {
+                this.modelErrorAttempt = errState.attempt
+                const hint = this.recovery.buildRecoveryHint(errState)
+                this.eventBus.emit({ type: 'recovery_hint', messageId, hint, attempt: errState.attempt })
+                await this.sleep(this.recovery.backoffMs(errState.attempt))
+                shouldRetryChat = true
+                break
+              }
+
               this.eventBus.emit({ type: 'error', messageId, error: event.error })
               this.state = 'error'
               this.idleTimer ??= new IdleCompressionTimer(this)
               this.idleTimer.start()
               return
+            }
 
             case 'usage':
               this.eventBus.emit({ type: 'usage', messageId, usage: event.usage })
@@ -438,6 +543,8 @@ export class AgentLoop implements IdleCompactionTarget {
         // 每次成功调用模型后更新估算 token 计数
         this.lastEstimatedTokens = estimateContextTokens(this.context)
 
+        await this.hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
+
         // 如果模型没有调用工具，本轮结束
         if (toolCalls.length === 0 || finishReason !== 'tool_calls') {
           break
@@ -464,7 +571,8 @@ export class AgentLoop implements IdleCompactionTarget {
           toolExecution: this.config.toolExecution ?? 'parallel',
           sessionStore: this.sessionStore,
           sessionId: this.sessionId,
-          eventBus: this.eventBus
+          eventBus: this.eventBus,
+          hookManager: this.hookManager
         })
 
         if (!batchResult.aborted && !this.cancelled && !this.abortController?.signal.aborted) {
@@ -501,7 +609,9 @@ export class AgentLoop implements IdleCompactionTarget {
       }
     } catch (err) {
       if (!this.cancelled) {
-        this.eventBus.emit({ type: 'error', messageId, error: (err as Error).message })
+        const errMsg = (err as Error).message
+        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
         this.state = 'error'
         // 错误也启动空闲计时（错误后用户可能离开）
         this.idleTimer ??= new IdleCompressionTimer(this)
@@ -516,6 +626,15 @@ export class AgentLoop implements IdleCompactionTarget {
 
     // 结束 checkpoint 事务边界
     this.checkpointManager?.endMessage()
+
+    if (this.cancelled && this.currentMessageId) {
+      await this.hookManager.trigger({
+        event: 'onCancel',
+        messageId: this.currentMessageId,
+        interrupted: true
+      })
+    }
+    this.currentMessageId = null
 
     // Phase 3：取消场景下 message-end 携带 interrupted=true，便于前端区分
     // 正常完成与 cancel 中断（前端据此标记消息 + 决定是否重试/排队等）。
@@ -676,12 +795,24 @@ export class AgentLoop implements IdleCompactionTarget {
     return null
   }
 
+  /** 异步 sleep（恢复重试用） */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
   /** 取消当前执行 */
   cancel(): void {
     if (this.state === 'running') {
       this.cancelled = true
       this.state = 'cancelled'
       this.abortController?.abort()
+      if (this.currentMessageId) {
+        void this.hookManager.trigger({
+          event: 'onCancel',
+          messageId: this.currentMessageId,
+          interrupted: true
+        })
+      }
       // 拒绝所有等待中的权限请求（用 PermissionAbortedError 而非 resolve(false)，
       // 这样 checkPermission 不会把它当成"用户拒绝"生成权限拒绝 tool_result）
       for (const [id, entry] of this.pendingPermissions) {
@@ -890,8 +1021,8 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 清空对话上下文 */
   reset(): void {
-    this.context = this.config.systemPrompt
-      ? [{ role: 'system', content: this.config.systemPrompt }]
+    this.context = this.frozenSystemPrompt
+      ? [{ role: 'system', content: this.frozenSystemPrompt }]
       : []
     this.state = 'idle'
     this.cancelled = false

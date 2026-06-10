@@ -65,13 +65,13 @@ export function buildCompactionPrompt(recentCount: number): string {
  * - 只有后半部分（摘要 ~200-500 tokens）需要 cache_write
  * - 后续轮次中完整的 system（prompt + 摘要）也可以持续命中
  *
- * @param systemPrompt 冻结的 system prompt
+ * @param frozenSystemPrompt 冻结的 system prompt（会话级不变）
  * @param summary 模型生成的摘要文本
  * @param recentMessages 保留的最近 N 条消息
  * @returns 重建后的上下文
  */
 export function rebuildWithCompression(
-  systemPrompt: string,
+  frozenSystemPrompt: string,
   summary: string,
   recentMessages: ChatMessage[],
   pulledBackMessages?: ChatMessage[]
@@ -81,7 +81,7 @@ export function rebuildWithCompression(
   // 摘要合并到 system 消息尾部，保持 system prompt 前缀不变以命中缓存
   context.push({
     role: 'system',
-    content: `${systemPrompt}\n\n[对话历史摘要]\n${summary}`
+    content: `${frozenSystemPrompt}\n\n[对话历史摘要]\n${summary}`
   })
 
   // 追加最近 N 条消息

@@ -84,7 +84,13 @@ export const ChatPanel: React.FC = () => {
   }, [rejectFile])
 
   const [inputVal, setInputVal] = useState('')
+  /** 用户可 slash 调用的技能列表（/name） */
+  const [slashSkills, setSlashSkills] = useState<Array<{ name: string; description: string }>>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    void window.api.invoke('list-skills').then(setSlashSkills).catch(() => setSlashSkills([]))
+  }, [currentSessionId])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   // 用户是否主动上滚，上滚期间停止自动跟随
@@ -477,6 +483,26 @@ export const ChatPanel: React.FC = () => {
               className="hidden"
               onChange={handleFileInputChange}
             />
+
+            {slashSkills.length > 0 && inputVal.startsWith('/') && (
+              <ul className="mb-1 max-h-32 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
+                {slashSkills
+                  .filter(s => `/${s.name}`.startsWith(inputVal.split(/\s/)[0] ?? ''))
+                  .map(s => (
+                    <li
+                      key={s.name}
+                      className="cursor-pointer px-3 py-1.5 hover:bg-white"
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        setInputVal(`/${s.name} `)
+                      }}
+                    >
+                      <span className="font-medium text-text-primary">/{s.name}</span>
+                      <span className="ml-2 text-gray-500">{s.description}</span>
+                    </li>
+                  ))}
+              </ul>
+            )}
 
             <textarea
               ref={textareaRef}

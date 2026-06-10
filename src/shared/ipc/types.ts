@@ -19,6 +19,10 @@ export interface IpcCommands {
     params: void
     result: string | null
   }
+  'list-skills': {
+    params: void
+    result: Array<{ name: string; description: string }>
+  }
   'send-message': {
     params: {
       sessionId: string

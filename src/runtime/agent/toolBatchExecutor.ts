@@ -7,6 +7,7 @@ import type { EventBus } from './EventBus'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ImageContent } from '../tools/types'
 import type { AgentEvent } from './types'
+import type { HookManager } from './HookManager'
 import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 
 export interface ToolExecutionOutcome {
@@ -65,6 +66,8 @@ export interface ToolBatchExecutionOptions {
   shellPath?: string
   /** bash 工具的 PATH 注入目录（可选） */
   binDirs?: string[]
+  /** Hook 编排层（preToolUse / postToolUse） */
+  hookManager?: HookManager | null
 }
 
 interface ToolRunResult {
@@ -115,7 +118,8 @@ function createSkippedOutcome(index: number, toolCall: ChatToolCall, args: Recor
 }
 
 function isConcurrencySafe(tool: ToolExecutor, args: Record<string, unknown>, context: ToolContext): boolean {
-  if (tool.executionMode !== 'parallel') {
+  // task / bash 必须串行，与 bash 同级
+  if (tool.name === 'task' || tool.name === 'bash' || tool.executionMode !== 'parallel') {
     return false
   }
 
@@ -204,6 +208,20 @@ async function executePreparedToolCall(
   } catch (err) {
     resultText = `工具执行失败: ${(err as Error).message}`
     failed = true
+  }
+
+  // postToolUse：允许 hook 修改工具结果
+  if (options.hookManager) {
+    const patched = await options.hookManager.trigger({
+      event: 'postToolUse',
+      messageId: options.messageId,
+      toolCallId: item.toolCall.id,
+      toolName: item.toolCall.name,
+      toolResult: resultText,
+      isError: failed
+    })
+    if (patched?.content !== undefined) resultText = patched.content
+    if (patched?.isError !== undefined) failed = patched.isError
   }
 
   options.emit({
@@ -332,8 +350,33 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     }
 
     const toolCall = options.toolCalls[index]
-    const args = parseArgs(toolCall.arguments)
+    let args = parseArgs(toolCall.arguments)
     const tool = options.toolRegistry?.getTool(toolCall.name)
+
+    // preToolUse：拦截或修改参数
+    if (options.hookManager && tool) {
+      const pre = await options.hookManager.trigger({
+        event: 'preToolUse',
+        messageId: options.messageId,
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        toolArgs: args
+      })
+      if (pre?.block) {
+        const reason = pre.reason ?? 'hook 拦截'
+        const outcome = createErrorOutcome(index, toolCall, args, `工具被 hook 拦截: ${reason}`)
+        precheckOutcomes.push(outcome)
+        options.emit({
+          type: 'tool_result',
+          messageId: options.messageId,
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          result: sanitizeToolOutput(toolCall.name, outcome.resultText, true)
+        })
+        continue
+      }
+      if (pre?.modifiedArgs) args = { ...args, ...pre.modifiedArgs }
+    }
 
     if (!tool) {
       const outcome = createErrorOutcome(index, toolCall, args, `工具 "${toolCall.name}" 不可用：未注册工具`)

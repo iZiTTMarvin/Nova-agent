@@ -8,6 +8,7 @@
 export const PING = 'ping' as const
 export const SELECT_PROJECT = 'select-project' as const
 export const SEND_MESSAGE = 'send-message' as const
+export const LIST_SKILLS = 'list-skills' as const
 export const CANCEL_EXECUTION = 'cancel-execution' as const
 export const SAVE_MODEL_CONFIG = 'save-model-config' as const
 export const LOAD_MODEL_CONFIG = 'load-model-config' as const

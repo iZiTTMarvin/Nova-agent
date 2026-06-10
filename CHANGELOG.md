@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-06-10
+
+- **feat(hooks)**: 实现 9 事件 `HookManager` 并接入 `AgentLoop` 主循环
+  - 新增 `src/runtime/agent/HookManager.ts`：顺序执行 / 提前退出 / 累积 patch / 顺序变换四种策略，handler 异常 swallow
+  - `AgentLoop` 在 message_start、beforeAgentStart、context、preChat、preToolUse、postToolUse、postMessage、onError、onCancel 锚点注入 hook
+  - `toolBatchExecutor` 支持 `preToolUse` 拦截与 `postToolUse` 结果变换
+  - `types.ts` 新增 `hook_error` 事件；`agentHandler` 启动时注册 `onMessageStart` 示例日志
+- **feat(skills)**: 实现 `SkillRegistry` + `invoke_skill` 工具 + 系统提示词注入
+  - 扫描 `~/.nova/skills` 与项目 `.nova/skills`，frontmatter 解析，`buildSkillContext` 注入 `<skills>` 段
+  - slash 命令 `/name` 展开为自然语言提示（由 LLM 主动调 `invoke_skill`）；`ChatPanel` 输入 `/` 时展示候选下拉
+- **feat(agent)**: 6 层 `SystemPromptBuilder` + `RecoveryStateMachine`（继续/重试/恢复三态）
+  - `projectRulesDiscovery` 扫描 AGENTS.md / CLAUDE.md / .cursorrules
+  - 模型临时错误指数退避重试；context overflow 走 recovering + `recovery_hint` 事件
+- **feat(agent)**: 内置 explore/code 子代理 + `task` 工具 + 三层隔离
+  - `SubAgentConfig` 内置规格 + `~/.nova/subagents/*.json` 自定义
+  - `task` 工具串行执行；子代理隔离 ToolRegistry / PermissionManager / Checkpoint（不注入 checkpoint）
+  - 子 EventBus 收集摘要；`permission_request` 经 `subAgentBridge` 以 `sub:` 前缀转发父 UI 并路由响应
+  - `SubAgentPermissionBridge` 实例级绑定；task 结束 / cancel 时 `clearForLoop` / `clear`
+
 ## 2026-06-08
 
 - **perf**: 渲染进程 OOM 防护 — 截断 + 折叠 + LRU 裁剪 + 按需加载

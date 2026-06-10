@@ -6,6 +6,19 @@ import type { DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../model/types'
 import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
+import type { RecoveryState } from './RecoveryStateMachine'
+
+/** Hook 系统 9 个固定事件（供 renderer / 扩展监听） */
+export type HookEvent =
+  | 'onMessageStart'
+  | 'beforeAgentStart'
+  | 'preChat'
+  | 'context'
+  | 'preToolUse'
+  | 'postToolUse'
+  | 'postMessage'
+  | 'onError'
+  | 'onCancel'
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
@@ -36,6 +49,9 @@ export type AgentEvent =
   | { type: 'usage'; messageId: string; usage: NormalizedUsage }
   | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult }
   | { type: 'error'; messageId: string; error: string }
+  | { type: 'hook_error'; messageId: string; hookEvent: HookEvent; error: string }
+  | { type: 'recovery_hint'; messageId: string; hint: string; attempt: number }
+  | { type: 'recovery_state'; messageId: string; state: RecoveryState }
   | {
       type: 'message_end'
       messageId: string
@@ -63,10 +79,22 @@ export type AgentEventCallback = (event: AgentEvent) => void
 /** AgentLoop 的当前状态 */
 export type AgentState = 'idle' | 'running' | 'cancelled' | 'error'
 
+/** 6 层 system prompt 结构（见 SystemPromptBuilder） */
+export interface SystemPromptLayers {
+  agentRole: string
+  baseRules?: string
+  projectRules?: string | null
+  skillContext?: string
+  modeInstruction?: string
+  toolSummary?: string
+}
+
 /** AgentLoop 配置 */
 export interface AgentLoopConfig {
-  /** 系统提示词 */
+  /** 系统提示词（向后兼容：等价于仅设置 agentRole 层） */
   systemPrompt?: string
+  /** 6 层 system prompt（优先于 systemPrompt 字符串） */
+  systemPromptLayers?: SystemPromptLayers
   /** 最大连续工具调用轮数，防止无限循环 */
   maxToolRounds?: number
   /** 模型最大上下文窗口（tokens），用于计算动态压缩阈值（上限的 80%） */

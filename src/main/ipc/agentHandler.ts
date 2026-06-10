@@ -5,7 +5,7 @@
  * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
+import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, LIST_SKILLS } from '../../shared/ipc/channels'
 import { app } from 'electron'
 import { join } from 'path'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
@@ -34,12 +34,35 @@ import { extractTextFromSerializableContent } from '../../runtime/sessions/types
 import type { MessageBlock } from '../../shared/session/types'
 import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
+import { SkillRegistry } from '../../runtime/skills/SkillRegistry'
+import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
+import { discoverProjectRules } from '../../runtime/agent/projectRulesDiscovery'
+import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
+import { createTaskTool } from '../../runtime/tools/taskTool'
+import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBridge'
 import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
+
+/** 缓存用户可 slash 调用的技能（供 renderer datalist） */
+let cachedUserInvocableSkills: Array<{ name: string; description: string }> = []
+
+/**
+ * 展开 slash 命令为自然语言提示（命中 user-invocable 技能）。
+ * 第一版不强制 tool_call，由 LLM 根据提示主动调用 invoke_skill。
+ */
+function expandSlashCommand(content: string, registry: SkillRegistry): string {
+  if (!content.startsWith('/')) return content
+  const match = content.match(/^\/([^\s]+)(?:\s+(.*))?$/)
+  if (!match) return content
+  const [, skillName, rest] = match
+  const skill = registry.get(skillName ?? '')
+  if (!skill?.userInvocable) return content
+  return `请使用 invoke_skill 工具调用技能「${skill.name}」，任务：${rest?.trim() || '按技能说明执行'}`
+}
 
 const VERIFICATION_PERMISSION_TIMEOUT_MS = 30_000
 
@@ -146,9 +169,42 @@ export function registerAgentHandler(
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
     const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
 
+    const skillRegistry = SkillRegistry.load({
+      projectDir: join(projectPath, '.nova', 'skills')
+    })
+    cachedUserInvocableSkills = skillRegistry.listUserInvocable().map(s => ({
+      name: s.name,
+      description: s.description
+    }))
+
+    const projectRules = discoverProjectRules(projectPath)
+    const skillContext = buildSkillContext(skillRegistry.listForContext())
+
     const eventBus = new EventBus()
+    const permissionManager = new PermissionManager()
+
+    const toolRegistry = new ToolRegistry()
+    toolRegistry.register(lsTool)
+    toolRegistry.register(readTool)
+    toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
+    toolRegistry.register(findTool)
+    toolRegistry.register(editTool)
+    toolRegistry.register(writeTool)
+    toolRegistry.register(bashTool)
+    toolRegistry.register(todoWriteTool)
+    toolRegistry.register(createInvokeSkillTool({ modelClient, skillRegistry }))
+
+    const toolSummary = toolRegistry.getToolDefinitions()
+      .map(t => `- ${t.name}: ${t.description.split('\n')[0]}`)
+      .join('\n')
+
     agentLoop = new AgentLoop(modelClient, eventBus, {
-      systemPrompt: frozenPrompt,
+      systemPromptLayers: {
+        agentRole: frozenPrompt,
+        projectRules,
+        skillContext,
+        toolSummary
+      },
       contextWindow,
       supportsVision,
       onCompaction: (compactedContext) => {
@@ -181,6 +237,19 @@ export function registerAgentHandler(
     const history = buildConversationContext(session, session.mode)
     agentLoop.injectHistory(history)
 
+    toolRegistry.register(createTaskTool({
+      modelClient,
+      parentEventBus: eventBus,
+      contextWindow,
+      supportsVision,
+      resolveTool: (name) => toolRegistry.getTool(name)
+    }))
+
+    agentLoop.setToolRegistry(toolRegistry)
+    agentLoop.getHookManager().on('onMessageStart', (payload) => {
+      console.log(`[Hook] onMessageStart messageId=${payload.messageId}`)
+    })
+
     agentLoop.setWorkingDir(projectPath)
     // 把 bash 工具的执行环境（shellPath / binDirs）注入到 AgentLoop。
     // 暂时只把项目 node_modules/.bin 加到 PATH——shellPath 没有用户配置时
@@ -189,18 +258,6 @@ export function registerAgentHandler(
       binDirs: [join(projectPath, 'node_modules', '.bin')]
     })
 
-    const toolRegistry = new ToolRegistry()
-    toolRegistry.register(lsTool)
-    toolRegistry.register(readTool)
-    toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
-    toolRegistry.register(findTool)
-    toolRegistry.register(editTool)
-    toolRegistry.register(writeTool)
-    toolRegistry.register(bashTool)
-    toolRegistry.register(todoWriteTool)
-    agentLoop.setToolRegistry(toolRegistry)
-
-    const permissionManager = new PermissionManager()
     agentLoop.setPermissionManager(permissionManager)
     agentLoop.setMode(session.mode)
     // 注入会话上下文：todo_write 工具通过它写会话元数据
@@ -238,7 +295,7 @@ export function registerAgentHandler(
         mimeType: img.mimeType
       })))
     } else {
-      sendContent = params.content
+      sendContent = expandSlashCommand(params.content, skillRegistry)
       persistContent = params.content
     }
 
@@ -265,15 +322,22 @@ export function registerAgentHandler(
     await agentLoop.sendMessage(sendContent)
   })
 
+  ipcMain.handle(LIST_SKILLS, async (): Promise<Array<{ name: string; description: string }>> => {
+    return cachedUserInvocableSkills
+  })
+
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
     agentLoop?.cancel()
+    defaultSubAgentPermissionBridge.clear()
     markActiveStreamsCancelled()
     clearAllPendingVerificationPermissions()
   })
 
   ipcMain.handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
-    if (!agentLoop) return
     const granted = params.decision === 'allow'
+    // 子代理权限（sub: 前缀）路由到子 AgentLoop，其余走父循环
+    if (defaultSubAgentPermissionBridge.resolve(params.requestId, granted)) return
+    if (!agentLoop) return
     agentLoop.respondPermission(params.requestId, granted)
   })
 
