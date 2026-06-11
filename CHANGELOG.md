@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-11
+
+- **fix(ui)**: Recovery 管线审查修复 — `recovery_state` IPC 截断 `snapshot`（`RendererRecoveryState`）；`RecoveryBanner` 补充 `failed` 状态；`handleError` 同步清理恢复状态（error 路径无 message-end）
+- **feat(ui)**: Agent 事件管线 UI — Hook 错误与 Recovery 恢复状态接通渲染端
+  - IPC 新增 `agent:hook-error`、`agent:recovery-hint`、`agent:recovery-state` 三通道；`agentHandler.forwardEventToRenderer` 映射 runtime 事件
+  - `useChatStore` 新增 `recoveryState` / `recoveryHints` / `hookErrors` 及对应 handler；`message-end` 时按 messageId 清理
+  - 新建 `RecoveryBanner`：重试（橙色）、上下文压缩（蓝色）、Hook 异常（警告色）；集成于 `ChatPanel` 输入框上方（对齐 Cursor / Windsurf composer 状态条）
+  - 补充 `forwardEventToRenderer` 与 store handler 单测
+
 ## 2026-06-10
 
 - **feat(hooks)**: 实现 9 事件 `HookManager` 并接入 `AgentLoop` 主循环

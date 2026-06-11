@@ -6,7 +6,18 @@ import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '
 import type { ModelConfig } from '../config'
 import type { DiffEntry, DiffReviewStatus } from '../diff'
 import type { NormalizedUsage } from '../../runtime/model/types'
+import type { HookEvent } from '../../runtime/agent/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
+
+/**
+ * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
+ * recovering 不含 snapshot: ChatMessage[]，避免大对象无意义穿透 IPC。
+ */
+export type RendererRecoveryState =
+  | { kind: 'continuing' }
+  | { kind: 'retrying'; attempt: number; lastError: string; maxAttempts: number }
+  | { kind: 'recovering'; fromMessageId: string }
+  | { kind: 'failed'; error: string }
 
 // ── renderer → main 命令的参数和返回值 ──────────────────────
 
@@ -206,6 +217,20 @@ export interface IpcEvents {
   'agent:usage': {
     messageId: string
     usage: NormalizedUsage
+  }
+  'agent:hook-error': {
+    messageId: string
+    hookEvent: HookEvent
+    error: string
+  }
+  'agent:recovery-hint': {
+    messageId: string
+    hint: string
+    attempt: number
+  }
+  'agent:recovery-state': {
+    messageId: string
+    state: RendererRecoveryState
   }
   'window:maximize-change': {
     isMaximized: boolean

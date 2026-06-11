@@ -47,4 +47,7 @@ export const AGENT_ERROR = 'agent:error' as const
 export const AGENT_MESSAGE_END = 'agent:message-end' as const
 export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const
 export const AGENT_USAGE = 'agent:usage' as const
+export const AGENT_HOOK_ERROR = 'agent:hook-error' as const
+export const AGENT_RECOVERY_HINT = 'agent:recovery-hint' as const
+export const AGENT_RECOVERY_STATE = 'agent:recovery-state' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const

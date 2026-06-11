@@ -27,6 +27,8 @@ import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { readManifest } from '../../runtime/checkpoints/manifest'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { AgentEvent } from '../../runtime/agent/types'
+import type { RecoveryState } from '../../runtime/agent/RecoveryStateMachine'
+import type { RendererRecoveryState } from '../../shared/ipc/types'
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
@@ -678,8 +680,27 @@ function saveErrorMessage(sessionId: string, messageId: string, error: string): 
   sessionStore.appendMessage(sessionId, errorMessage)
 }
 
+/** 截断 recovering.snapshot，只向渲染端发送 UI 所需字段 */
+function toRendererRecoveryState(state: RecoveryState): RendererRecoveryState {
+  switch (state.kind) {
+    case 'continuing':
+      return { kind: 'continuing' }
+    case 'retrying':
+      return {
+        kind: 'retrying',
+        attempt: state.attempt,
+        lastError: state.lastError,
+        maxAttempts: state.maxAttempts
+      }
+    case 'recovering':
+      return { kind: 'recovering', fromMessageId: state.fromMessageId }
+    case 'failed':
+      return { kind: 'failed', error: state.error }
+  }
+}
+
 /** 将 AgentEvent 映射到 IPC 事件 channel 并推送到 renderer */
-function forwardEventToRenderer(
+export function forwardEventToRenderer(
   mainWindow: BrowserWindow | null,
   event: AgentEvent
 ): void {
@@ -759,6 +780,26 @@ function forwardEventToRenderer(
       break
     case 'error':
       webContents.send('agent:error', { messageId: event.messageId, error: event.error })
+      break
+    case 'hook_error':
+      webContents.send('agent:hook-error', {
+        messageId: event.messageId,
+        hookEvent: event.hookEvent,
+        error: event.error
+      })
+      break
+    case 'recovery_hint':
+      webContents.send('agent:recovery-hint', {
+        messageId: event.messageId,
+        hint: event.hint,
+        attempt: event.attempt
+      })
+      break
+    case 'recovery_state':
+      webContents.send('agent:recovery-state', {
+        messageId: event.messageId,
+        state: toRendererRecoveryState(event.state)
+      })
       break
     case 'message_end':
       webContents.send('agent:message-end', {

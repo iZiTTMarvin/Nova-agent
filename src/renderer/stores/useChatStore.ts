@@ -23,6 +23,8 @@ import type {
 } from '../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
+import type { HookEvent } from '../../runtime/agent/types'
+import type { RendererRecoveryState } from '../../shared/ipc/types'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
@@ -150,6 +152,21 @@ function bumpRevision(msg: ExtendedMessage): ExtendedMessage {
   return { ...msg, _revision: (msg._revision ?? 0) + 1 }
 }
 
+/** 按 messageId 移除恢复 / Hook 相关临时状态（message-end 与 error 路径共用） */
+function omitRecoveryFieldsForMessage(
+  state: Pick<ChatState, 'recoveryState' | 'recoveryHints' | 'hookErrors'>,
+  messageId: string
+): Pick<ChatState, 'recoveryState' | 'recoveryHints' | 'hookErrors'> {
+  const { [messageId]: _rs, ...restRecoveryState } = state.recoveryState
+  const { [messageId]: _rh, ...restRecoveryHints } = state.recoveryHints
+  const { [messageId]: _he, ...restHookErrors } = state.hookErrors
+  return {
+    recoveryState: restRecoveryState,
+    recoveryHints: restRecoveryHints,
+    hookErrors: restHookErrors
+  }
+}
+
 /** 根据 messages 数组构建 id → index 索引，加速 delta handler O(1) 定位 */
 function buildMessageIndex(messages: ExtendedMessage[]): Record<string, number> {
   const index: Record<string, number> = {}
@@ -194,6 +211,13 @@ export interface ChatState {
    * 在 turn boundary（handleMessageEnd / cancel 完成）自动 dispatch。
    */
   pendingUserMessages: Array<{ text: string; images: ImageAttachment[] }>
+
+  /** 每条消息当前的恢复状态（retrying / recovering 等） */
+  recoveryState: Record<string, RendererRecoveryState>
+  /** 每条消息累积的恢复提示（按到达顺序追加） */
+  recoveryHints: Record<string, Array<{ hint: string; attempt: number }>>
+  /** 每条消息累积的 Hook 执行异常 */
+  hookErrors: Record<string, Array<{ hookEvent: HookEvent; error: string }>>
 
   // ── Actions ──
 
@@ -265,6 +289,12 @@ export interface ChatState {
   handleMessageEnd: (messageId: string, interrupted?: boolean) => Promise<void>
   handleError: (messageId: string, error: string) => void
   handleVerificationResult: (messageId: string, result: string) => void
+  /** 主进程 recovery_state 事件：更新当前消息的恢复状态机 */
+  handleRecoveryState: (messageId: string, state: RendererRecoveryState) => void
+  /** 主进程 recovery_hint 事件：追加一条恢复提示 */
+  handleRecoveryHint: (messageId: string, hint: string, attempt: number) => void
+  /** 主进程 hook_error 事件：记录 Hook 执行异常（不中断 Agent） */
+  handleHookError: (messageId: string, hookEvent: HookEvent, error: string) => void
 
   /**
    * Phase 3：把当前所有 running tool 块标记为 error（"用户取消执行"）。
@@ -357,6 +387,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadingDiffs: new Set(),
   loadingDiffPlaceholders: {},
   pendingUserMessages: [],
+  recoveryState: {},
+  recoveryHints: {},
+  hookErrors: {},
 
   loadSessions: async () => {
     try {
@@ -948,6 +981,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: nextMessages,
         isGenerating: false,
         currentGeneratingMessageId: null,
+        ...omitRecoveryFieldsForMessage(state, messageId),
         // 中断时清空所有流式工具参数累积
         ...(interrupted ? { streamingToolArgs: {} } : {})
       }
@@ -994,7 +1028,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: nextMessages,
         messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
         isGenerating: false,
-        currentGeneratingMessageId: null
+        currentGeneratingMessageId: null,
+        // error 路径不发射 message-end，此处同步清理恢复状态，避免残留
+        ...omitRecoveryFieldsForMessage(state, messageId)
       }
     })
   },
@@ -1009,6 +1045,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextMessages[idx] = bumpRevision({ ...msg, verificationSummary: result })
       return { messages: nextMessages }
     })
+  },
+
+  handleRecoveryState: (messageId: string, recovery: RendererRecoveryState) => {
+    set(state => ({
+      recoveryState: { ...state.recoveryState, [messageId]: recovery }
+    }))
+  },
+
+  handleRecoveryHint: (messageId: string, hint: string, attempt: number) => {
+    set(state => ({
+      recoveryHints: {
+        ...state.recoveryHints,
+        [messageId]: [...(state.recoveryHints[messageId] ?? []), { hint, attempt }]
+      }
+    }))
+  },
+
+  handleHookError: (messageId: string, hookEvent: HookEvent, error: string) => {
+    set(state => ({
+      hookErrors: {
+        ...state.hookErrors,
+        [messageId]: [...(state.hookErrors[messageId] ?? []), { hookEvent, error }]
+      }
+    }))
   },
 
   markRunningAsCancelled: async () => {
@@ -1265,6 +1325,9 @@ export function resetChatStoreForTests(): void {
     messageDiffs: {},
     loadingDiffs: new Set(),
     loadingDiffPlaceholders: {},
-    pendingUserMessages: []
+    pendingUserMessages: [],
+    recoveryState: {},
+    recoveryHints: {},
+    hookErrors: {}
   })
 }

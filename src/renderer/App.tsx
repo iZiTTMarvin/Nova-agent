@@ -159,6 +159,21 @@ function App(): JSX.Element {
       handleUsage(data.usage)
     })
 
+    // 监听：Hook 执行异常（不中断 Agent，仅 UI 提示）
+    const unsubHookError = window.api.on('agent:hook-error', (data) => {
+      useChatStore.getState().handleHookError(data.messageId, data.hookEvent, data.error)
+    })
+
+    // 监听：恢复提示（重试 / 压缩上下文等）
+    const unsubRecoveryHint = window.api.on('agent:recovery-hint', (data) => {
+      useChatStore.getState().handleRecoveryHint(data.messageId, data.hint, data.attempt)
+    })
+
+    // 监听：恢复状态机切换（retrying / recovering 等）
+    const unsubRecoveryState = window.api.on('agent:recovery-state', (data) => {
+      useChatStore.getState().handleRecoveryState(data.messageId, data.state)
+    })
+
     // 清理函数：解绑所有主进程事件监听器，释放 buffer
     // 顺序很关键（防御性）：
     // 1. 先解绑所有主进程 IPC 监听器，避免清理过程中又有新 delta 进来
@@ -182,6 +197,9 @@ function App(): JSX.Element {
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
+      unsubHookError()
+      unsubRecoveryHint()
+      unsubRecoveryState()
       buffer.flushNow()
       buffer.dispose()
     }

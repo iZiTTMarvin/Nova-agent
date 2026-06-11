@@ -1,0 +1,94 @@
+/**
+ * RecoveryBanner — 输入框上方的 Agent 状态条
+ * 视觉对齐 Cursor / Windsurf：紧凑、语义色、不抢占消息流注意力
+ */
+
+.recovery-banner-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.recovery-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  border: 1px solid transparent;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.recovery-banner__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.recovery-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recovery-banner__title {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.recovery-banner__detail {
+  color: inherit;
+  opacity: 0.88;
+  word-break: break-word;
+}
+
+/* 重试中：暖橙色（与 Cursor 重试提示相近） */
+.recovery-banner--retrying {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #b45309;
+}
+
+/* 上下文压缩：蓝色（与 steering-queue / focus 色系统一） */
+.recovery-banner--recovering {
+  background: rgba(56, 152, 236, 0.08);
+  border-color: rgba(56, 152, 236, 0.3);
+  color: #1d6fb8;
+}
+
+/* 恢复失败：与 hook_error 同色，复用警告语义 */
+.recovery-banner--failed {
+  background: rgba(181, 51, 51, 0.06);
+  border-color: rgba(181, 51, 51, 0.25);
+  color: var(--color-error, #b53333);
+}
+
+/* Hook 异常：警告琥珀色 */
+.recovery-banner--hook-error {
+  background: rgba(181, 51, 51, 0.06);
+  border-color: rgba(181, 51, 51, 0.25);
+  color: var(--color-error, #b53333);
+}
+
+.recovery-banner__spinner {
+  animation: recovery-banner-spin 0.9s linear infinite;
+}
+
+@keyframes recovery-banner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recovery-banner__spinner {
+    animation: none;
+  }
+}
