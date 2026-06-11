@@ -89,9 +89,31 @@ export const ChatPanel: React.FC = () => {
   const [slashSkills, setSlashSkills] = useState<Array<{ name: string; description: string }>>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
   useEffect(() => {
-    void window.api.invoke('list-skills').then(setSlashSkills).catch(() => setSlashSkills([]))
-  }, [currentSessionId])
+    let cancelled = false
+    const toSlashList = (skills: Awaited<ReturnType<typeof window.nova.skill.list>>) =>
+      skills
+        .filter(s => s.userInvocable && !s.invalid)
+        .map(s => ({ name: s.name, description: s.description }))
+
+    const apply = (skills: ReturnType<typeof toSlashList>) => {
+      if (!cancelled) setSlashSkills(skills)
+    }
+
+    void window.nova.skill.list().then(list => apply(toSlashList(list))).catch(() => apply([]))
+    const unsub = window.nova.skill.onChange(skills => apply(toSlashList(skills)))
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (currentProject) {
+      void window.nova.skill.reload(currentProject)
+    }
+  }, [currentProject])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   // 用户是否主动上滚，上滚期间停止自动跟随

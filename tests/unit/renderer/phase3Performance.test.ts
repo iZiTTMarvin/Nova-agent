@@ -6,6 +6,7 @@ import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/
 import type { ModelConfig } from '../../../src/shared/config'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
+import { createNovaSkillMock } from './_novaSkillMock'
 
 const mockInvoke = vi.fn()
 const mockOn = vi.fn()
@@ -18,6 +19,7 @@ global.window = {
     on: mockOn,
     removeAllListeners: mockRemoveAllListeners
   },
+  nova: { skill: createNovaSkillMock() },
   confirm: vi.fn(() => false)
 } as unknown as Window & typeof globalThis
 

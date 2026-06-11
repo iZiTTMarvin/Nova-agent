@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents } from '../shared/ipc/types'
+import { skillApi } from './skill-api'
 
 /**
  * 类型安全的 IPC invoke 封装
@@ -47,3 +48,4 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+contextBridge.exposeInMainWorld('nova', { skill: skillApi })

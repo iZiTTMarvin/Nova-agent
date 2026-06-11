@@ -5,7 +5,7 @@
  * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, LIST_SKILLS } from '../../shared/ipc/channels'
+import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
 import { app } from 'electron'
 import { join } from 'path'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
@@ -36,9 +36,7 @@ import { extractTextFromSerializableContent } from '../../runtime/sessions/types
 import type { MessageBlock } from '../../shared/session/types'
 import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
-import { existsSync } from 'fs'
-import { SkillRegistry } from '../../runtime/skills/SkillRegistry'
-import { resolveDevBuiltinDir } from '../../runtime/skills/SkillLoader'
+import { getSkillService } from '../services/SkillServiceHost'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
 import { discoverProjectRules } from '../../runtime/agent/projectRulesDiscovery'
 import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
@@ -50,9 +48,6 @@ import { formatVerificationSummary } from '../../runtime/verification/format'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
-
-/** 缓存用户可 slash 调用的技能（供 renderer datalist） */
-let cachedUserInvocableSkills: Array<{ name: string; description: string }> = []
 
 const VERIFICATION_PERMISSION_TIMEOUT_MS = 30_000
 
@@ -162,15 +157,11 @@ export function registerAgentHandler(
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
     const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
 
-    const appBuiltinDir = join(app.getAppPath(), '.nova', 'skills')
-    const skillRegistry = SkillRegistry.load({
-      workspaceRoot: projectPath,
-      builtinDir: existsSync(appBuiltinDir) ? appBuiltinDir : resolveDevBuiltinDir()
-    })
-    cachedUserInvocableSkills = skillRegistry.listUserInvocable().map(s => ({
-      name: s.name,
-      description: s.description
-    }))
+    const skillService = getSkillService()
+    if (skillService.getWorkspaceRoot() !== projectPath) {
+      skillService.load(projectPath)
+    }
+    const skillRegistry = skillService.getRegistry()
 
     const projectRules = discoverProjectRules(projectPath)
     const skillContext = buildSkillContext(skillRegistry.listForContext())
@@ -333,10 +324,6 @@ export function registerAgentHandler(
     })
 
     await agentLoop.sendMessage(sendContent)
-  })
-
-  ipcMain.handle(LIST_SKILLS, async (): Promise<Array<{ name: string; description: string }>> => {
-    return cachedUserInvocableSkills
   })
 
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {

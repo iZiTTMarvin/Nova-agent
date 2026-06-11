@@ -8,6 +8,12 @@ import type { DiffEntry, DiffReviewStatus } from '../diff'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
+import type {
+  SkillSummary,
+  SkillCreateInput,
+  SkillImportInput,
+  SkillReloadResult
+} from '../skills/types'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -29,10 +35,6 @@ export interface IpcCommands {
   'select-project': {
     params: void
     result: string | null
-  }
-  'list-skills': {
-    params: void
-    result: Array<{ name: string; description: string }>
   }
   'send-message': {
     params: {
@@ -121,6 +123,38 @@ export interface IpcCommands {
   'window-is-maximized': {
     params: void
     result: boolean
+  }
+  'skill:list': {
+    params: void
+    result: SkillSummary[]
+  }
+  'skill:get': {
+    params: string
+    result: SkillSummary | null
+  }
+  'skill:create': {
+    params: SkillCreateInput
+    result: SkillSummary
+  }
+  'skill:delete': {
+    params: string
+    result: void
+  }
+  'skill:toggle': {
+    params: { name: string; enabled: boolean }
+    result: SkillSummary
+  }
+  'skill:import': {
+    params: SkillImportInput
+    result: SkillSummary
+  }
+  'skill:export': {
+    params: string
+    result: { zipPath: string }
+  }
+  'skill:reload': {
+    params: string | null | undefined
+    result: SkillReloadResult
   }
 }
 
@@ -234,6 +268,9 @@ export interface IpcEvents {
   }
   'window:maximize-change': {
     isMaximized: boolean
+  }
+  'skill:changed': {
+    skills: SkillSummary[]
   }
 }
 

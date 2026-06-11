@@ -63,6 +63,7 @@ Nova Agent 不是又一个追求大而全的 Coding Agent，而是一个**适合
 **关键规则：**
 
 - `renderer` 不直接操作文件、模型、shell，只通过 `preload` 暴露的受控 API 通信。
+- **Preload 约定**：通用 IPC 走 `window.api.invoke/on`；新增子系统（技能、规则、子代理等）走 `window.nova.*`（如 `window.nova.skill.list()`），避免继续膨胀 `window.api`。
 - `main` 不承担 Agent 业务逻辑，只做桥接和宿主能力暴露。
 - `runtime` 不依赖 Electron，可脱离桌面环境独立运行单元测试。
 

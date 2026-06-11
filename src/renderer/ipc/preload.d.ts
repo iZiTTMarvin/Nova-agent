@@ -4,11 +4,15 @@
  * 所有 IPC 通信必须通过此 API，renderer 无法直接访问 Node/Electron API
  */
 import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents } from '../../shared/ipc/types'
+import type { NovaSkillApi } from '../../shared/skills/types'
 
 export {}
 
 declare global {
   interface Window {
+    nova: {
+      skill: NovaSkillApi
+    }
     api: {
       invoke: <C extends IpcCommandChannel>(
         channel: C,

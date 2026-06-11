@@ -8,7 +8,15 @@
 export const PING = 'ping' as const
 export const SELECT_PROJECT = 'select-project' as const
 export const SEND_MESSAGE = 'send-message' as const
-export const LIST_SKILLS = 'list-skills' as const
+/** Skill 管理 IPC（renderer → main） */
+export const SKILL_LIST = 'skill:list' as const
+export const SKILL_GET = 'skill:get' as const
+export const SKILL_CREATE = 'skill:create' as const
+export const SKILL_DELETE = 'skill:delete' as const
+export const SKILL_TOGGLE = 'skill:toggle' as const
+export const SKILL_IMPORT = 'skill:import' as const
+export const SKILL_EXPORT = 'skill:export' as const
+export const SKILL_RELOAD = 'skill:reload' as const
 export const CANCEL_EXECUTION = 'cancel-execution' as const
 export const SAVE_MODEL_CONFIG = 'save-model-config' as const
 export const LOAD_MODEL_CONFIG = 'load-model-config' as const
@@ -51,3 +59,4 @@ export const AGENT_HOOK_ERROR = 'agent:hook-error' as const
 export const AGENT_RECOVERY_HINT = 'agent:recovery-hint' as const
 export const AGENT_RECOVERY_STATE = 'agent:recovery-state' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
+export const SKILL_CHANGED = 'skill:changed' as const

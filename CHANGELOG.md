@@ -2,6 +2,12 @@
 
 ## 2026-06-11
 
+- **feat(skills)**: Task 3/4 — 内置技能 + SkillService IPC
+  - 内置 4 个核心 skill（`onboard` / `skill-creator` / `skill-add` / `new`）置于 `.nova/skills/`，构建时复制到 `out/main/.nova/skills`
+  - `SkillService` 单例：`load/reload/list/create/delete/toggle`；启停持久化 `~/.nova/skill-state.json`；`import/export` 暂为 stub
+  - IPC `skill:*` + preload `window.nova.skill`；应用启动即加载 builtin，工作区切换自动 reload 并推送 `skill:changed`
+  - `ChatPanel` 改用 `window.nova.skill`；移除已无调用方的 `list-skills` 通道
+  - 新增 `npm run validate:skills` 校验内置 skill frontmatter
 - **fix(ui)**: Recovery 管线审查修复 — `recovery_state` IPC 截断 `snapshot`（`RendererRecoveryState`）；`RecoveryBanner` 补充 `failed` 状态；`handleError` 同步清理恢复状态（error 路径无 message-end）
 - **feat(ui)**: Agent 事件管线 UI — Hook 错误与 Recovery 恢复状态接通渲染端
   - IPC 新增 `agent:hook-error`、`agent:recovery-hint`、`agent:recovery-state` 三通道；`agentHandler.forwardEventToRenderer` 映射 runtime 事件

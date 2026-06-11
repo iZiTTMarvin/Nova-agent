@@ -1,0 +1,57 @@
+/**
+ * Skill IPC 与渲染端共享类型（不含 body 全量，列表接口使用 preview）
+ */
+import type { SkillSource } from '../../runtime/skills/types'
+
+/** 渲染端 / IPC 安全的技能摘要 */
+export interface SkillSummary {
+  name: string
+  nameZh?: string
+  description: string
+  descriptionZh?: string
+  source: SkillSource
+  sourcePath: string
+  userInvocable: boolean
+  modelInvocable: boolean
+  enabled: boolean
+  invalid?: boolean
+  invalidReason?: string
+  warnings: string[]
+  bodyPreview: string
+  argumentHint?: string
+  hasSupportingFiles: boolean
+  forkAgent?: boolean
+}
+
+export type SkillCreateLocation = 'global' | 'project'
+
+export interface SkillCreateInput {
+  name: string
+  description: string
+  body: string
+  location: SkillCreateLocation
+}
+
+export interface SkillImportInput {
+  url?: string
+  zipPath?: string
+  location: SkillCreateLocation
+}
+
+export interface SkillReloadResult {
+  count: number
+  errors: string[]
+}
+
+/** preload window.nova.skill API 形状 */
+export interface NovaSkillApi {
+  list(): Promise<SkillSummary[]>
+  get(name: string): Promise<SkillSummary | null>
+  create(input: SkillCreateInput): Promise<SkillSummary>
+  delete(name: string): Promise<void>
+  toggle(name: string, enabled: boolean): Promise<SkillSummary>
+  import(input: SkillImportInput): Promise<SkillSummary>
+  export(name: string): Promise<{ zipPath: string }>
+  reload(workspaceRoot?: string | null): Promise<SkillReloadResult>
+  onChange(cb: (skills: SkillSummary[]) => void): () => void
+}

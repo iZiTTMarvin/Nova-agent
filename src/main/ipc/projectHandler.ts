@@ -1,6 +1,7 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { SELECT_PROJECT } from '../../shared/ipc/channels'
 import { setCurrentProjectPath } from '../index'
+import { reloadSkillsForWorkspace } from '../services/SkillServiceHost'
 
 /**
  * 注册项目选择相关的 IPC 处理器
@@ -29,7 +30,8 @@ export function registerProjectHandler(getMainWindow: () => BrowserWindow | null
     
     // 同步更新主进程维护的全局项目路径，以供 AgentLoop 启动时作为 workingDir 边界
     setCurrentProjectPath(selectedPath)
-    
+    reloadSkillsForWorkspace(selectedPath)
+
     return selectedPath
   })
 }

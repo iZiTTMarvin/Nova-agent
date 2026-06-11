@@ -55,6 +55,18 @@ export function resolveDevBuiltinDir(): string {
   return join(process.cwd(), '.nova', 'skills')
 }
 
+/**
+ * 解析 builtin 技能目录：生产优先 app.getAppPath()/.nova/skills，否则回退开发路径
+ * @param getAppPath Electron app.getAppPath；非 Electron 环境可省略
+ */
+export function resolveBuiltinSkillsDir(getAppPath?: () => string): string {
+  if (getAppPath) {
+    const appBuiltin = join(getAppPath(), '.nova', 'skills')
+    if (existsSync(appBuiltin)) return appBuiltin
+  }
+  return resolveDevBuiltinDir()
+}
+
 export class SkillLoader {
   private skills = new Map<string, SkillManifest>()
   private errors: LoadError[] = []

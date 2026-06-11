@@ -4,6 +4,7 @@ import { registerProjectHandler } from './projectHandler'
 import { registerConfigHandler } from './configHandler'
 import { registerModeHandler } from './modeHandler'
 import { registerSessionHandler } from './sessionHandler'
+import { registerSkillHandler } from './skillHandler'
 import { getMainWindow } from '../index'
 
 /**
@@ -27,4 +28,7 @@ export function registerIpcHandlers(): void {
 
   // 注册会话管理与回退操作 IPC
   registerSessionHandler()
+
+  // 注册技能管理 IPC
+  registerSkillHandler()
 }

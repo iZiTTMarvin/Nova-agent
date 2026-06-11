@@ -9,6 +9,7 @@ import type { ModelConfig } from '../../../src/shared/config'
 import { sanitizeToolInput } from '../../../src/shared/tool-input-sanitizer'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
+import { createNovaSkillMock } from './_novaSkillMock'
 
 const mockInvoke = vi.fn()
 const mockOn = vi.fn()
@@ -66,6 +67,7 @@ describe('聊天体验回归', () => {
         on: mockOn,
         removeAllListeners: mockRemoveAllListeners
       },
+      nova: { skill: createNovaSkillMock() },
       confirm: vi.fn(() => false)
     } as unknown as Window & typeof globalThis
     resetStore()

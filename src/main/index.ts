@@ -10,6 +10,7 @@ import { inferCacheStrategy } from '../shared/config/types'
 import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
 import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
+import { bindSkillServiceWindow, getSkillService } from './services/SkillServiceHost'
 
 /** 主窗口实例 */
 let mainWindow: BrowserWindow | null = null
@@ -119,6 +120,7 @@ function createMainWindow(): void {
   mainWindow.on('ready-to-show', () => {
     if (mainWindow) {
       watchWindowMaximizeState(mainWindow)
+      bindSkillServiceWindow(mainWindow)
     }
     mainWindow?.show()
   })
@@ -146,6 +148,9 @@ app.whenReady().then(async () => {
   
   // 3. 注册所有 renderer → main 的 IPC 处理器
   registerIpcHandlers()
+
+  // 3.5 应用启动时加载内置 + 全局技能（无需先发消息）
+  getSkillService().load(null)
   
   // 4. 注册 Agent 运行时专属事件与通道
   registerAgentHandler(getMainWindow, getModelClient)
