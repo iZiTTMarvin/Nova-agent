@@ -1,0 +1,79 @@
+/**
+ * Skill 系统核心类型定义
+ * 对齐 docs/skill-system-design.md §5.1（MVP 不含 brand / encrypted）
+ */
+import type { HookEvent } from '../agent/types'
+
+/** 技能来源（MVP 三源 + 预留枚举） */
+export type SkillSource =
+  | 'builtin'
+  | 'global'
+  | 'project'
+  | 'third_party_claude'
+  | 'virtual'
+  | 'mcp'
+
+/** 扫描/解析错误 */
+export interface LoadError {
+  path: string
+  message: string
+  skillName?: string
+}
+
+/** slash 命令解析结果 */
+export interface SlashParseResult {
+  matched: boolean
+  found: boolean
+  reason?: 'not_found' | 'not_user_invocable' | 'agent_not_allowed'
+  skillName?: string
+  args?: string
+  skill?: SkillManifest
+  suggestions: string[]
+}
+
+/** 模板展开上下文 */
+export interface TemplateContext {
+  workspacePath?: string
+  selectedFiles?: string[]
+  gitBranch?: string
+  memoriesMeta?: string
+  sessionId?: string
+  /** slash / tool 传入的参数文本 */
+  arguments?: string
+  [key: string]: string | string[] | undefined
+}
+
+/** 完整技能清单 */
+export interface SkillManifest {
+  name: string
+  nameZh?: string
+  description: string
+  descriptionZh?: string
+  userInvocable: boolean
+  modelInvocable: boolean
+  agent?: string | string[]
+  allowedTools?: string[]
+  forbiddenTools?: string[]
+  argumentHint?: string
+  hooks?: HookEvent[]
+  forkAgent?: boolean
+  subagentModel?: string
+  autoSummarize?: boolean
+  body: string
+  source: SkillSource
+  sourcePath: string
+  directory: string
+  invalid?: boolean
+  invalidReason?: string
+  warnings: string[]
+  hasSupportingFiles: boolean
+  /** 运行时 model 调用开关（默认跟随 modelInvocable） */
+  enabled: boolean
+}
+
+/** invokeSkill 调度结果 */
+export type SkillDispatchResult =
+  | { kind: 'passthrough' }
+  | { kind: 'system_notice'; text: string }
+  | { kind: 'fork'; skill: SkillManifest; args: string }
+  | { kind: 'inject'; assistantContent: string; userContent: string }

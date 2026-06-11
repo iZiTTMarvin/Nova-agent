@@ -1,45 +1,65 @@
 /**
- * SkillRegistry — 扫描并缓存本地技能包
- * 项目级 .nova/skills 覆盖全局 ~/.nova/skills
+ * SkillRegistry — 在 SkillLoader 之上提供缓存查询 API
+ * 对外保留 load / get / listForContext / listUserInvocable，并扩展 reload / errors / shadowed
  */
-import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { parseSkillMarkdown, type SkillManifest } from './SkillManifest'
+import { SkillLoader, resolveDevBuiltinDir, type SkillLoaderOptions } from './SkillLoader'
+import type { LoadError, SkillManifest, SkillSource } from './types'
 
-const MAX_CONTEXT_SKILLS = 30
-const SKILL_FILE = 'SKILL.md'
+export interface SkillRegistryLoadOptions extends SkillLoaderOptions {
+  /** 工作区根目录，自动解析 projectDir = <root>/.nova/skills */
+  workspaceRoot?: string
+  /** @deprecated 使用 projectDir 或 workspaceRoot */
+  projectDir?: string
+}
+
 let warnedTruncation = false
 
 export class SkillRegistry {
-  private skills = new Map<string, SkillManifest>()
+  private loader: SkillLoader
+  private lastOpts: SkillRegistryLoadOptions = {}
 
-  private constructor(skills: Map<string, SkillManifest>) {
-    this.skills = skills
+  private constructor(loader: SkillLoader, opts: SkillRegistryLoadOptions) {
+    this.loader = loader
+    this.lastOpts = opts
   }
 
   /**
-   * 扫描全局与项目技能目录
-   * @param opts.globalDir 默认 ~/.nova/skills
-   * @param opts.projectDir 工作区 .nova/skills（优先级更高）
+   * 扫描多源技能目录并构建注册表
    */
-  static load(opts: { globalDir?: string; projectDir?: string } = {}): SkillRegistry {
-    const globalDir = opts.globalDir ?? join(homedir(), '.nova', 'skills')
-    const merged = new Map<string, SkillManifest>()
+  static load(opts: SkillRegistryLoadOptions = {}): SkillRegistry {
+    const projectDir =
+      opts.projectDir ??
+      (opts.workspaceRoot ? join(opts.workspaceRoot, '.nova', 'skills') : undefined)
 
-    SkillRegistry.scanDir(globalDir, merged)
-    if (opts.projectDir) SkillRegistry.scanDir(opts.projectDir, merged)
-
-    const list = [...merged.values()]
-    if (list.length > MAX_CONTEXT_SKILLS) {
-      if (!warnedTruncation) {
-        console.warn(`[SkillRegistry] 技能超过 ${MAX_CONTEXT_SKILLS} 条，已截断`)
-        warnedTruncation = true
-      }
-      const trimmed = new Map(list.slice(0, MAX_CONTEXT_SKILLS).map(s => [s.name, s]))
-      return new SkillRegistry(trimmed)
+    const loaderOpts: SkillLoaderOptions = {
+      // builtin 仅显式传入时扫描（生产由 agentHandler 注入 app 路径；开发可传 resolveDevBuiltinDir()）
+      builtinDir: opts.builtinDir,
+      globalDir: opts.globalDir ?? join(homedir(), '.nova', 'skills'),
+      projectDir,
+      thirdPartyDir: opts.thirdPartyDir
     }
-    return new SkillRegistry(merged)
+
+    const loader = SkillLoader.loadAll(loaderOpts)
+    const all = loader.listAll()
+
+    if (all.length > 30 && !warnedTruncation) {
+      console.warn('[SkillRegistry] 技能超过 30 条，listForContext 将截断')
+      warnedTruncation = true
+    }
+
+    return new SkillRegistry(loader, { ...opts, projectDir })
+  }
+
+  /** 使用上次选项重新加载 */
+  reload(workspaceRoot?: string): SkillRegistry {
+    const opts = { ...this.lastOpts }
+    if (workspaceRoot) {
+      opts.workspaceRoot = workspaceRoot
+      opts.projectDir = join(workspaceRoot, '.nova', 'skills')
+    }
+    return SkillRegistry.load(opts)
   }
 
   /** 重置截断 warn 标志（测试用） */
@@ -47,41 +67,28 @@ export class SkillRegistry {
     warnedTruncation = false
   }
 
-  private static scanDir(dir: string, target: Map<string, SkillManifest>): void {
-    if (!existsSync(dir)) return
-    let entries: string[]
-    try {
-      entries = readdirSync(dir, { withFileTypes: true })
-        .filter(e => e.isDirectory())
-        .map(e => e.name)
-    } catch {
-      return
-    }
-    for (const name of entries) {
-      const skillPath = join(dir, name, SKILL_FILE)
-      if (!existsSync(skillPath)) continue
-      try {
-        const content = readFileSync(skillPath, 'utf-8')
-        const manifest = parseSkillMarkdown(content, name)
-        if (manifest) target.set(manifest.name, manifest)
-      } catch {
-        // 非法 manifest 跳过，不影响其他技能
-      }
-    }
-  }
-
-  /** 模型可见技能列表 */
-  listForContext(): SkillManifest[] {
-    return [...this.skills.values()].filter(s => s.modelInvocable)
-  }
-
-  /** 按名称查找 */
   get(name: string): SkillManifest | undefined {
-    return this.skills.get(name)
+    return this.loader.get(name)
   }
 
-  /** 用户可 slash 调用的技能 */
+  getErrors(): LoadError[] {
+    return this.loader.getErrors()
+  }
+
+  getShadowed(): Record<string, SkillSource> {
+    return this.loader.getShadowed()
+  }
+
+  listForContext(profile?: string): SkillManifest[] {
+    return this.loader.listForContext(profile)
+  }
+
   listUserInvocable(): SkillManifest[] {
-    return [...this.skills.values()].filter(s => s.userInvocable)
+    return this.loader.listUserInvocable()
+  }
+
+  /** 内部 loader 访问（测试 / 扩展） */
+  getLoader(): SkillLoader {
+    return this.loader
   }
 }

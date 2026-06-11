@@ -18,11 +18,25 @@ describe('invokeSkillTool', () => {
     expect(result.error).toContain('未找到')
   })
 
-  it('成功调用返回模型输出', async () => {
+  it('统一调度：返回展开后的 skill body（不独立 chat）', async () => {
     const dir = join(tmpdir(), `skill-invoke-${Date.now()}`)
     mkdirSync(dir, { recursive: true })
     mkdirSync(join(dir, 'demo'), { recursive: true })
     writeFileSync(join(dir, 'demo', 'SKILL.md'), `---\nname: demo\ndescription: d\n---\nYou are demo.`)
+    const reg = SkillRegistry.load({ globalDir: dir })
+    const client = new MockModelClient()
+    const tool = createInvokeSkillTool({ modelClient: client, skillRegistry: reg })
+    const result = await tool.execute({ skill_name: 'demo', task: 'do it' }, ctx)
+    rmSync(dir, { recursive: true, force: true })
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('You are demo.')
+    expect(result.output).toContain('do it')
+  })
+
+  it('flag=false 时走旧版独立 chat', async () => {
+    const dir = join(tmpdir(), `skill-legacy-${Date.now()}`)
+    mkdirSync(join(dir, 'demo'), { recursive: true })
+    writeFileSync(join(dir, 'demo', 'SKILL.md'), `---\nname: demo\ndescription: d\n---\nbody`)
     const reg = SkillRegistry.load({ globalDir: dir })
     const client = new MockModelClient()
     client.addResponse({
@@ -32,10 +46,13 @@ describe('invokeSkillTool', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const tool = createInvokeSkillTool({ modelClient: client, skillRegistry: reg })
-    const result = await tool.execute({ skill_name: 'demo', task: 'do it' }, ctx)
+    const tool = createInvokeSkillTool({
+      modelClient: client,
+      skillRegistry: reg,
+      useUnifiedSkillDispatch: false
+    })
+    const result = await tool.execute({ skill_name: 'demo', task: 't' }, ctx)
     rmSync(dir, { recursive: true, force: true })
-    expect(result.success).toBe(true)
     expect(result.output).toBe('skill result')
   })
 
@@ -52,13 +69,17 @@ describe('invokeSkillTool', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const tool = createInvokeSkillTool({ modelClient: client, skillRegistry: reg })
+    const tool = createInvokeSkillTool({
+      modelClient: client,
+      skillRegistry: reg,
+      useUnifiedSkillDispatch: false
+    })
     const result = await tool.execute({ skill_name: 'demo', task: 't' }, ctx)
     rmSync(dir, { recursive: true, force: true })
     expect(result.success).toBe(false)
   })
 
-  it('空输出返回失败', async () => {
+  it('空输出返回失败（legacy）', async () => {
     const dir = join(tmpdir(), `skill-empty-${Date.now()}`)
     mkdirSync(join(dir, 'demo'), { recursive: true })
     writeFileSync(join(dir, 'demo', 'SKILL.md'), `---\nname: demo\ndescription: d\n---\nbody`)
@@ -70,7 +91,11 @@ describe('invokeSkillTool', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const tool = createInvokeSkillTool({ modelClient: client, skillRegistry: reg })
+    const tool = createInvokeSkillTool({
+      modelClient: client,
+      skillRegistry: reg,
+      useUnifiedSkillDispatch: false
+    })
     const result = await tool.execute({ skill_name: 'demo', task: 't' }, ctx)
     rmSync(dir, { recursive: true, force: true })
     expect(result.success).toBe(false)

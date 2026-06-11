@@ -36,7 +36,9 @@ import { extractTextFromSerializableContent } from '../../runtime/sessions/types
 import type { MessageBlock } from '../../shared/session/types'
 import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
+import { existsSync } from 'fs'
 import { SkillRegistry } from '../../runtime/skills/SkillRegistry'
+import { resolveDevBuiltinDir } from '../../runtime/skills/SkillLoader'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
 import { discoverProjectRules } from '../../runtime/agent/projectRulesDiscovery'
 import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
@@ -52,21 +54,10 @@ let agentLoop: AgentLoop | null = null
 /** 缓存用户可 slash 调用的技能（供 renderer datalist） */
 let cachedUserInvocableSkills: Array<{ name: string; description: string }> = []
 
-/**
- * 展开 slash 命令为自然语言提示（命中 user-invocable 技能）。
- * 第一版不强制 tool_call，由 LLM 根据提示主动调用 invoke_skill。
- */
-function expandSlashCommand(content: string, registry: SkillRegistry): string {
-  if (!content.startsWith('/')) return content
-  const match = content.match(/^\/([^\s]+)(?:\s+(.*))?$/)
-  if (!match) return content
-  const [, skillName, rest] = match
-  const skill = registry.get(skillName ?? '')
-  if (!skill?.userInvocable) return content
-  return `请使用 invoke_skill 工具调用技能「${skill.name}」，任务：${rest?.trim() || '按技能说明执行'}`
-}
-
 const VERIFICATION_PERMISSION_TIMEOUT_MS = 30_000
+
+/** 统一 skill 调度开关（默认开启；测试可经环境变量关闭） */
+const USE_UNIFIED_SKILL_DISPATCH = process.env.NOVA_USE_UNIFIED_SKILL_DISPATCH !== 'false'
 
 interface PendingVerificationPermissionEntry {
   messageId: string
@@ -171,8 +162,10 @@ export function registerAgentHandler(
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
     const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
 
+    const appBuiltinDir = join(app.getAppPath(), '.nova', 'skills')
     const skillRegistry = SkillRegistry.load({
-      projectDir: join(projectPath, '.nova', 'skills')
+      workspaceRoot: projectPath,
+      builtinDir: existsSync(appBuiltinDir) ? appBuiltinDir : resolveDevBuiltinDir()
     })
     cachedUserInvocableSkills = skillRegistry.listUserInvocable().map(s => ({
       name: s.name,
@@ -194,7 +187,15 @@ export function registerAgentHandler(
     toolRegistry.register(writeTool)
     toolRegistry.register(bashTool)
     toolRegistry.register(todoWriteTool)
-    toolRegistry.register(createInvokeSkillTool({ modelClient, skillRegistry }))
+    toolRegistry.register(createInvokeSkillTool({
+      modelClient,
+      skillRegistry,
+      useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
+      parentEventBus: eventBus,
+      resolveTool: (name) => toolRegistry.getTool(name),
+      contextWindow,
+      supportsVision
+    }))
 
     const toolSummary = toolRegistry.getToolDefinitions()
       .map(t => `- ${t.name}: ${t.description.split('\n')[0]}`)
@@ -207,6 +208,7 @@ export function registerAgentHandler(
         skillContext,
         toolSummary
       },
+      useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
       contextWindow,
       supportsVision,
       onCompaction: (compactedContext) => {
@@ -248,6 +250,14 @@ export function registerAgentHandler(
     }))
 
     agentLoop.setToolRegistry(toolRegistry)
+    agentLoop.setSkillRegistry(skillRegistry)
+    agentLoop.setSkillForkDeps({
+      modelClient,
+      parentEventBus: eventBus,
+      resolveTool: (name) => toolRegistry.getTool(name),
+      contextWindow,
+      supportsVision
+    })
     agentLoop.getHookManager().on('onMessageStart', (payload) => {
       console.log(`[Hook] onMessageStart messageId=${payload.messageId}`)
     })
@@ -297,7 +307,8 @@ export function registerAgentHandler(
         mimeType: img.mimeType
       })))
     } else {
-      sendContent = expandSlashCommand(params.content, skillRegistry)
+      // slash 调度由 AgentLoop.invokeSkill 处理；持久化保留用户原始输入
+      sendContent = params.content
       persistContent = params.content
     }
 

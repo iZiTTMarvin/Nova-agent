@@ -110,4 +110,9 @@ export interface AgentLoopConfig {
    * agentHandler 通过此回调将压缩态写回 SessionStore，保证跨轮次持久化。
    */
   onCompaction?: (compactedContext: import('../model/types').ChatMessage[]) => void
+  /**
+   * 是否启用统一 skill 调度（slash inject/fork）。
+   * 默认 true；测试或回退旧路径时可设为 false。
+   */
+  useUnifiedSkillDispatch?: boolean
 }

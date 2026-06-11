@@ -30,6 +30,9 @@ import type { IdleCompactionTarget } from './IdleCompressionTimer'
 import { HookManager } from './HookManager'
 import { RecoveryStateMachine } from './RecoveryStateMachine'
 import { SystemPromptBuilder } from './SystemPromptBuilder'
+import type { SkillRegistry } from '../skills/SkillRegistry'
+import { invokeSkill } from '../skills/invokeSkill'
+import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
@@ -127,6 +130,10 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 模型临时错误重试计数 */
   private modelErrorAttempt = 0
 
+  /** 统一 skill 调度：slash inject / fork */
+  private skillRegistry: SkillRegistry | null = null
+  private skillForkDeps: RunSkillForkDeps | null = null
+
   /**
    * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
    * 用于检测模型对「完全相同的工具调用」反复触发并反复失败的死循环
@@ -152,7 +159,8 @@ export class AgentLoop implements IdleCompactionTarget {
       supportsVision: config?.supportsVision ?? true,
       toolExecution: config?.toolExecution ?? 'parallel',
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
-      onCompaction: config?.onCompaction
+      onCompaction: config?.onCompaction,
+      useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false
     }
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.hookManager = new HookManager(eventBus)
@@ -263,6 +271,16 @@ export class AgentLoop implements IdleCompactionTarget {
     this.maxToolRounds = n
   }
 
+  /** 注入技能注册表（统一 slash 调度） */
+  setSkillRegistry(registry: SkillRegistry | null): void {
+    this.skillRegistry = registry
+  }
+
+  /** 注入 fork skill 执行依赖 */
+  setSkillForkDeps(deps: RunSkillForkDeps | null): void {
+    this.skillForkDeps = deps
+  }
+
   /** 获取当前状态 */
   getState(): AgentState {
     return this.state
@@ -300,30 +318,90 @@ export class AgentLoop implements IdleCompactionTarget {
     // 空闲压缩：新消息到达时取消任何正在运行的压缩
     this.idleTimer?.cancel()
 
-    // 将用户消息加入上下文，模式指令附加在尾部（不改前缀，缓存 Harness 核心）
-    const modeInstruction = getModeInstruction(this.mode)
-    let userContent: string | ContentBlock[]
-    if (typeof content === 'string') {
-      userContent = `${content}\n\n${modeInstruction}`
-    } else {
-      // ContentBlock[] 时，将模式指令追加为末尾 text block
-      userContent = [...content, { type: 'text', text: modeInstruction }]
-    }
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: userContent
-    }
-    this.context.push(userMessage)
-
     // 开启 checkpoint 事务边界
     this.checkpointManager?.beginMessage(messageId)
 
     this.eventBus.emit({ type: 'message_start', messageId })
 
-    const userText = typeof content === 'string'
+    const modeInstruction = getModeInstruction(this.mode)
+    let userText = typeof content === 'string'
       ? content
       : extractTextFromContent(content)
+
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
+
+    // 统一 skill 调度：slash inject / fork / system_notice（纯文本且开关开启时）
+    const useSkillDispatch =
+      typeof content === 'string' &&
+      this.skillRegistry &&
+      this.config.useUnifiedSkillDispatch !== false
+
+    if (useSkillDispatch) {
+      const dispatch = invokeSkill({
+        input: content,
+        registry: this.skillRegistry!,
+        profile: this.mode,
+        templateContext: { workspacePath: this.workingDir ?? undefined }
+      })
+
+      if (dispatch.kind === 'fork' && this.skillForkDeps) {
+        try {
+          const forkResult = await runSkillFork(this.skillForkDeps, {
+            skill: dispatch.skill,
+            args: dispatch.args,
+            ctx: {
+              workingDir: this.workingDir ?? process.cwd(),
+              shellPath: this.shellPath,
+              binDirs: this.binDirs
+            },
+            templateContext: { workspacePath: this.workingDir ?? undefined }
+          })
+          this.context.push({ role: 'assistant', content: forkResult.summary })
+          this.eventBus.emit({ type: 'text_delta', messageId, delta: forkResult.summary })
+        } catch (err) {
+          const errMsg = (err as Error).message
+          await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+          this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+          this.state = 'error'
+          this.checkpointManager?.endMessage()
+          this.eventBus.emit({ type: 'message_end', messageId })
+          this.idleTimer ??= new IdleCompressionTimer(this)
+          this.idleTimer.start()
+          return
+        }
+        await this.finishMessageRound(messageId)
+        return
+      }
+
+      if (dispatch.kind === 'inject') {
+        this.context.push({ role: 'assistant', content: dispatch.assistantContent })
+        this.context.push({
+          role: 'user',
+          content: `${dispatch.userContent}\n\n${modeInstruction}`
+        })
+        userText = dispatch.userContent
+      } else if (dispatch.kind === 'system_notice') {
+        this.context.push({
+          role: 'user',
+          content: `${dispatch.text}\n\n${modeInstruction}`
+        })
+        userText = dispatch.text
+      } else if (dispatch.kind === 'passthrough') {
+        this.context.push({
+          role: 'user',
+          content: `${content}\n\n${modeInstruction}`
+        })
+      }
+    } else {
+      // 默认路径：用户消息 + 模式指令
+      let userContent: string | ContentBlock[]
+      if (typeof content === 'string') {
+        userContent = `${content}\n\n${modeInstruction}`
+      } else {
+        userContent = [...content, { type: 'text', text: modeInstruction }]
+      }
+      this.context.push({ role: 'user', content: userContent })
+    }
 
     try {
       let toolRound = 0
@@ -620,11 +698,15 @@ export class AgentLoop implements IdleCompactionTarget {
       }
     }
 
+    await this.finishMessageRound(messageId)
+  }
+
+  /** 结束一轮消息：checkpoint 收尾、message_end、空闲压缩计时 */
+  private async finishMessageRound(messageId: string): Promise<void> {
     if (this.state === 'running') {
       this.state = 'idle'
     }
 
-    // 结束 checkpoint 事务边界
     this.checkpointManager?.endMessage()
 
     if (this.cancelled && this.currentMessageId) {
@@ -636,19 +718,12 @@ export class AgentLoop implements IdleCompactionTarget {
     }
     this.currentMessageId = null
 
-    // Phase 3：取消场景下 message-end 携带 interrupted=true，便于前端区分
-    // 正常完成与 cancel 中断（前端据此标记消息 + 决定是否重试/排队等）。
-    // 注意：this.cancelled 由 cancel() 设置，状态机此时可能为 'cancelled' 或 'idle'，
-    // 因此判定 cancel 的根因应看 this.cancelled（独立的 boolean 标志），
-    // 不依赖 this.state 的字面值。
-    // 仅在 interrupted=true 时携带字段，与设计文档"新增 interrupted 字段"语义一致。
     this.eventBus.emit({
       type: 'message_end',
       messageId,
       ...(this.cancelled ? { interrupted: true } : {})
     })
 
-    // 所有正常退出路径（idle / cancelled / error via overflow）都启动空闲计时
     this.idleTimer ??= new IdleCompressionTimer(this)
     this.idleTimer.start()
   }

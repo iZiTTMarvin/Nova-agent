@@ -6,6 +6,10 @@ import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import type { ChatMessage } from '../../../src/runtime/model/types'
+import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
+import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -1079,5 +1083,37 @@ describe('AgentLoop', () => {
     const messageEndEvent = events.find(e => e.type === 'message_end')
     expect(messageEndEvent).toBeDefined()
     expect(messageEndEvent!.interrupted).toBeUndefined()
+  })
+
+  it('slash inject：上下文含 assistant 技能段与 follow-up user', async () => {
+    const skillsDir = join(tmpdir(), `loop-skill-${Date.now()}`)
+    mkdirSync(join(skillsDir, 'onboard'), { recursive: true })
+    writeFileSync(
+      join(skillsDir, 'onboard', 'SKILL.md'),
+      `---\nname: onboard\ndescription: guide\n---\nOnboard instructions here.`
+    )
+    const skillRegistry = SkillRegistry.load({ globalDir: skillsDir })
+
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+    loop.setSkillRegistry(skillRegistry)
+
+    await loop.sendMessage('/onboard')
+
+    const ctx = loop.getContext()
+    const assistant = ctx.find(m => m.role === 'assistant' && String(m.content).includes('Onboard instructions'))
+    const userFollowUp = ctx.filter(m => m.role === 'user').pop()
+    expect(assistant).toBeDefined()
+    expect(String(userFollowUp?.content)).toContain('请按上述技能指令执行')
+
+    rmSync(skillsDir, { recursive: true, force: true })
   })
 })

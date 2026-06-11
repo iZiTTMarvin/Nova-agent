@@ -1,7 +1,7 @@
 /**
  * buildSkillContext — 将技能清单格式化为 system prompt 片段
  */
-import type { SkillManifest } from '../skills/SkillManifest'
+import type { SkillManifest } from '../skills/types'
 
 /**
  * 拼装 <skills> 段
