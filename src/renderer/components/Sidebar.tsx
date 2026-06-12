@@ -166,7 +166,7 @@ export const Sidebar: React.FC = () => {
           <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
             <SettingsIcon size={16} />
           </div>
-          <span className="text-sm font-medium">模型设置</span>
+          <span className="text-sm font-medium">设置</span>
         </button>
       </div>
     </aside>

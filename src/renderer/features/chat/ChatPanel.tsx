@@ -27,6 +27,8 @@ import {
   MAX_IMAGE_COUNT,
   type ImageAttachment
 } from '../../lib/image-attachments'
+import { SkillAC, type SkillACHandle } from '../skills/SkillAC'
+import { useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import '../todo/TodoPanel.css'
 
@@ -40,6 +42,8 @@ export const ChatPanel: React.FC = () => {
   const currentMode = useSettingsStore(state => state.currentMode)
   const selectProject = useSettingsStore(state => state.selectProject)
   const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
+  const composerPrefill = useSettingsStore(state => state.composerPrefill)
+  const clearComposerPrefill = useSettingsStore(state => state.clearComposerPrefill)
 
   // Vision 门控：当前模型是否支持图片输入
   const supportsVision = selectSupportsVisionFromConfig(modelConfig)
@@ -85,35 +89,41 @@ export const ChatPanel: React.FC = () => {
   }, [rejectFile])
 
   const [inputVal, setInputVal] = useState('')
-  /** 用户可 slash 调用的技能列表（/name） */
-  const [slashSkills, setSlashSkills] = useState<Array<{ name: string; description: string }>>([])
+  const [isComposing, setIsComposing] = useState(false)
+  const slashSkills = useSkillsStore(state => state.skills)
+  const refreshSkills = useSkillsStore(state => state.refresh)
+  const setSkills = useSkillsStore(state => state.setSkills)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const composerBoxRef = useRef<HTMLDivElement>(null)
+  const skillACRef = useRef<SkillACHandle>(null)
 
   // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
   useEffect(() => {
-    let cancelled = false
-    const toSlashList = (skills: Awaited<ReturnType<typeof window.nova.skill.list>>) =>
-      skills
-        .filter(s => s.userInvocable && !s.invalid)
-        .map(s => ({ name: s.name, description: s.description }))
-
-    const apply = (skills: ReturnType<typeof toSlashList>) => {
-      if (!cancelled) setSlashSkills(skills)
-    }
-
-    void window.nova.skill.list().then(list => apply(toSlashList(list))).catch(() => apply([]))
-    const unsub = window.nova.skill.onChange(skills => apply(toSlashList(skills)))
-    return () => {
-      cancelled = true
-      unsub()
-    }
-  }, [])
+    void refreshSkills()
+    const unsub = window.nova.skill.onChange(list => setSkills(list))
+    return unsub
+  }, [refreshSkills, setSkills])
 
   useEffect(() => {
     if (currentProject) {
       void window.nova.skill.reload(currentProject)
     }
   }, [currentProject])
+
+  // 设置页「使用技能」预填 composer
+  useEffect(() => {
+    if (composerPrefill) {
+      setInputVal(composerPrefill)
+      clearComposerPrefill()
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus()
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto'
+          textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+        }
+      })
+    }
+  }, [composerPrefill, clearComposerPrefill])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   // 用户是否主动上滚，上滚期间停止自动跟随
@@ -230,11 +240,28 @@ export const ChatPanel: React.FC = () => {
     }
   }
 
+  const handleSlashSelect = useCallback((text: string) => {
+    setInputVal(text)
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+        textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+      }
+    })
+  }, [])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (skillACRef.current?.onKeyDown(e)) return
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault()
       handleSend()
     }
+  }
+
+  const handleSlashButton = () => {
+    setInputVal(prev => (prev.startsWith('/') ? prev : `/${prev}`))
+    textareaRef.current?.focus()
   }
 
   // ── 图片上传交互 ─────────────────────────────────────────
@@ -489,6 +516,7 @@ export const ChatPanel: React.FC = () => {
           </AnimatePresence>
 
           <motion.div
+            ref={composerBoxRef}
             layout
             className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
               isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
@@ -510,25 +538,14 @@ export const ChatPanel: React.FC = () => {
               onChange={handleFileInputChange}
             />
 
-            {slashSkills.length > 0 && inputVal.startsWith('/') && (
-              <ul className="mb-1 max-h-32 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 text-sm">
-                {slashSkills
-                  .filter(s => `/${s.name}`.startsWith(inputVal.split(/\s/)[0] ?? ''))
-                  .map(s => (
-                    <li
-                      key={s.name}
-                      className="cursor-pointer px-3 py-1.5 hover:bg-white"
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        setInputVal(`/${s.name} `)
-                      }}
-                    >
-                      <span className="font-medium text-text-primary">/{s.name}</span>
-                      <span className="ml-2 text-gray-500">{s.description}</span>
-                    </li>
-                  ))}
-              </ul>
-            )}
+            <SkillAC
+              ref={skillACRef}
+              inputValue={inputVal}
+              anchorRef={composerBoxRef}
+              skills={slashSkills}
+              onSelect={handleSlashSelect}
+              isComposing={isComposing}
+            />
 
             <textarea
               ref={textareaRef}
@@ -540,12 +557,22 @@ export const ChatPanel: React.FC = () => {
               value={inputVal}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={() => setIsComposing(false)}
               onPaste={handlePaste}
               // Phase 6：textarea 在 Agent 运行期间不再 disabled，
               // 用户可以继续输入，新消息进入 Steering Queue 等 turn boundary 自动 dispatch
             />
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
               <div className="flex items-center gap-2">
+                <button
+                  className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors text-sm font-medium"
+                  onClick={handleSlashButton}
+                  title="插入 / 命令"
+                  type="button"
+                >
+                  /
+                </button>
                 {supportsVision && (
                   <button
                     className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors"

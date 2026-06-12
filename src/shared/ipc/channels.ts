@@ -17,6 +17,18 @@ export const SKILL_TOGGLE = 'skill:toggle' as const
 export const SKILL_IMPORT = 'skill:import' as const
 export const SKILL_EXPORT = 'skill:export' as const
 export const SKILL_RELOAD = 'skill:reload' as const
+/** 应用设置 */
+export const SETTINGS_GET = 'settings:get' as const
+export const SETTINGS_SET = 'settings:set' as const
+/** Rules 管理 */
+export const RULES_LIST = 'rules:list' as const
+export const RULES_READ = 'rules:read' as const
+export const RULES_WRITE = 'rules:write' as const
+export const RULES_CREATE = 'rules:create' as const
+/** Subagents 管理 */
+export const SUBAGENTS_LIST = 'subagents:list' as const
+export const SUBAGENTS_SAVE = 'subagents:save' as const
+export const SUBAGENTS_DELETE = 'subagents:delete' as const
 export const CANCEL_EXECUTION = 'cancel-execution' as const
 export const SAVE_MODEL_CONFIG = 'save-model-config' as const
 export const LOAD_MODEL_CONFIG = 'load-model-config' as const

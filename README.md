@@ -1,222 +1,335 @@
-# Nova Agent — Mini Coding Workbench
+# Nova Agent
 
-> 一个受 Pi 启发的极简桌面编程工作台。选择任意本地项目，用自然语言驱动 AI 完成理解、修改、验证的全流程，所有改动真实写入工作区，但始终可审查、可回退。
+极简桌面编程工作台 — 基于 Electron 的本地 AI Agent IDE，对接任意 OpenAI 兼容 API，在你的项目工作区内读代码、改文件、跑命令、管理技能与子代理。
 
----
-
-## 项目定位
-
-Nova Agent 不是又一个追求大而全的 Coding Agent，而是一个**适合学习 Agent Loop、适合面试展示、适合日常小修小改**的桌面工作台。
-
-它的核心体验是：
-
-1. **项目理解** — 打开任意本地目录，让 Agent 先读目录、搜代码、做分析。
-2. **代码修改** — Agent 通过 8 个内置工具精确读写文件、执行 shell、管理任务计划。
-3. **可审查可回退** — 每次用户消息对应一次事务边界（Message-Scoped Checkpoint），支持按文件拒绝、按消息回退到任意历史节点。
-4. **边做边验证** — 修改完成后自动探测并运行验证命令，结果即时展示在对应消息下方。
+当前版本：**0.1.0**（活跃开发中）
 
 ---
 
-## 核心特性
+## 目录
 
-- **三层分离架构**：Renderer UI（React）↔ Electron Host（IPC 桥接）↔ Runtime Core（纯 TypeScript）。Runtime 不依赖 Electron，可独立单测。
-- **OpenAI-Compatible 流式对话**：支持 SSE 流式响应、工具调用（Tool Calling）、多轮 Agent Loop、Vision 图片上传。模型配置全局一份，持久化到磁盘。
-- **8 个内置工具**：`ls` / `read` / `grep` / `find` / `edit` / `write` / `bash` / `todo_write`，全部限制在工作区内。
-  - `todo_write`：把"当前计划"外化为会话级持久化状态，支持 full / compact 双视图。
-- **三种工作模式**：
-  - `plan` — 只读分析，不写盘，适合项目理解和方案规划。
-  - `default` — 默认协作，`edit`/`write` 自动执行，`bash` 和验证需用户确认。
-  - `auto` — 高自动化，危险命令（`sudo`、`rm -rf`、`curl | sh` 等）仍会被拦截。
-- **工具批量执行调度**：只读工具（`ls`/`read`/`grep`/`find`）并发执行，写入和 shell 工具保持顺序；结果按完成顺序实时推送到 UI，但模型上下文仍按原始调用顺序回传。
-- **相同工具调用熔断**：同一工具调用（名称 + 参数一致）连续失败 3 次自动熔断，停止本轮并向用户提示"已自动中断"，避免空转烧满 `maxToolRounds`。
-- **Message-Scoped Checkpoint**：每条用户消息第一次修改文件前自动备份原始内容，回退时确定性恢复，不智能合并、不丢数据。
-- **Diff 审查与回退**：消息结束后展示本轮所有文件变更的 diff，支持逐文件接受/拒绝，也支持一键回退到某条历史消息之前。
-- **验证服务**：修改完成后按 `test > lint > build` 优先级自动探测并执行验证命令，结果展示在对应消息下方；default 模式下需用户确认。
-- **会话持久化**：会话、消息、模式、验证摘要、Todo 列表全量持久化，重启后可继续对话。
-- **多轮对话上下文恢复**：从 session 历史完整恢复模型对话上下文（user / assistant / tool / thinking），支持长会话的上下文压缩与 Token 估算。
-- **思考块剥离**：自动解析模型返回的 `<think'>...</think'>` 标签，将推理过程与正文分离展示。
-- **流式工具调用渲染**：模型在流式产出 `write`/`edit`/`bash` 参数时，UI 立刻出现文件卡片，等宽字体逐行刷出内容并自动滚动，完成后保留可展开状态。
-- **消息 Blocks 结构化渲染**：按 thinking → text → tool → text 的顺序流式组装并渲染，避免分桶导致的顺序错乱。
-- **图片上传支持**：支持拖拽或粘贴上传图片，Vision 模型可识别图片内容。
-- **权限确认交互**：`bash` 命令和验证权限通过 IPC 推送到 UI，用户明确允许后才执行；取消时安全清理挂起请求，不向 session 残留"权限拒绝"工具结果。
-- **取消与清理**：用户可随时取消当前执行，挂起权限请求被安全清理，不残留错误状态。
+- [特性](#特性)
+- [环境要求](#环境要求)
+- [快速开始](#快速开始)
+- [使用说明](#使用说明)
+- [技能（Skills）](#技能skills)
+- [规则与子代理](#规则与子代理)
+- [目录与配置路径](#目录与配置路径)
+- [架构概览](#架构概览)
+- [项目结构](#项目结构)
+- [开发](#开发)
+- [文档与变更记录](#文档与变更记录)
+- [许可证](#许可证)
 
 ---
 
-## 技术架构
+## 特性
 
-```
-┌──────────────────────────────────────────┐
-│  Renderer UI (React 18 + Zustand)        │
-│  聊天 / Diff / 权限 / 设置 / 模式 / Todo │
-├──────────────────────────────────────────┤
-│  Electron Host (main process)            │
-│  窗口 / IPC / 目录选择 / 生命周期         │
-├──────────────────────────────────────────┤
-│  Runtime Core (纯 TypeScript)            │
-│  AgentLoop / ModelClient / Tools         │
-│  Permissions / Checkpoints / Verify      │
-│  Sessions / ContextBuilder / Compaction  │
-└──────────────────────────────────────────┘
-```
+### 对话与 Agent 运行时
 
-**关键规则：**
+- **OpenAI 兼容接口**：支持自定义 Base URL、API Key、模型 ID、上下文窗口与 Vision 开关
+- **多轮工具调用**：内置 `ls` / `read` / `grep` / `find` / `edit` / `write` / `bash` / `todo_write` / `task` / `invoke_skill` 等工具
+- **运行模式**：`plan`（只读规划）、`default`（写入需确认）、`auto`（自动执行，危险命令仍拦截）
+- **权限审批**：高风险操作（如 `bash`）弹出确认；支持会话级 diff 审阅与文件回滚
+- **检查点**：工具改文件前自动快照，支持按消息回退工作区
+- **恢复管线**：模型临时错误自动重试；上下文溢出时压缩恢复；输入框上方展示恢复状态条
+- **Steering Queue**：Agent 运行中可将新消息排队，当前轮次结束后自动发送
+- **图片输入**：在支持 Vision 的模型下可粘贴或拖拽图片
 
-- `renderer` 不直接操作文件、模型、shell，只通过 `preload` 暴露的受控 API 通信。
-- **Preload 约定**：通用 IPC 走 `window.api.invoke/on`；新增子系统（技能、规则、子代理等）走 `window.nova.*`（如 `window.nova.skill.list()`），避免继续膨胀 `window.api`。
-- `main` 不承担 Agent 业务逻辑，只做桥接和宿主能力暴露。
-- `runtime` 不依赖 Electron，可脱离桌面环境独立运行单元测试。
+### Skill 子系统
+
+- **多源加载**：内置 / 全局 `~/.nova/skills` / 项目 `.nova/skills`，按优先级合并
+- **Slash 命令**：输入 `/` 触发自动补全（如 `onboard (skill)`），选中后注入主对话
+- **统一调度**：`/skill-name` 走 `invokeSkill` 注入或 `fork_agent` 子代理，与 `invoke_skill` 工具共用逻辑
+- **设置页管理**：启用/禁用、来源标识、一键填入 Composer
+
+### 设置与工作区
+
+- **左右分栏设置**：LLM 配置、规则（Rules）、技能（Skills）、子代理（Subagents）
+- **规则文件**：支持 `AGENTS.md`、`CLAUDE.md`、`.cursorrules` 及 `.nova/rules/*.md`
+- **子代理**：内置 `explore`（只读探索）与 `code`（受限编程），可扩展自定义 JSON 配置
+- **多会话**：按工作区管理会话历史，切换项目时技能列表自动 reload
+
+### 工程化
+
+- TypeScript 全栈类型安全；主进程与渲染进程通过类型化 IPC 通信
+- Vitest 单元测试（970+ 用例）；内置 skill frontmatter 校验脚本
 
 ---
 
-## 技术栈
+## 环境要求
 
-| 层级 | 技术 | 说明 |
-|---|---|---|
-| **宿主** | Electron 33+ | 桌面应用壳 |
-| **构建** | electron-vite | Electron 专用 Vite 构建 |
-| **语言** | TypeScript 5.x (strict) | 全项目统一 |
-| **Renderer UI** | React 18 + Hooks | 函数组件 |
-| **动画** | Framer Motion | 流式卡片、面板过渡 |
-| **状态管理** | Zustand | 轻量，适合中型桌面应用 |
-| **样式** | TailwindCSS + PostCSS | 原子化 CSS |
-| **Markdown** | react-markdown + remark-gfm | 消息正文渲染 |
-| **Runtime Core** | 纯 TypeScript | 不依赖 Electron API |
-| **图片处理** | sharp + iconv-lite | Vision 上传与编码转换 |
-| **搜索** | @vscode/ripgrep | 跨平台 grep 底层 |
-| **测试** | Vitest (unit) + Playwright (e2e) | runtime 可脱离 Electron 单测 |
-| **模型** | OpenAI-Compatible API | 通过 fetch 调用，支持流式 SSE 与 Vision |
+| 依赖 | 版本建议 |
+|------|----------|
+| Node.js | 18+ |
+| npm | 9+ |
+| 操作系统 | Windows / macOS / Linux |
+
+可选：系统安装 [ripgrep](https://github.com/BurntSushi/ripgrep)（`grep` 工具会优先使用内置 `@vscode/ripgrep`，亦可回退系统 `rg`）。
 
 ---
 
 ## 快速开始
 
-### 环境要求
-
-- Node.js 18+
-- npm 9+
-
-### 安装依赖
-
 ```bash
+# 克隆仓库
+git clone <repository-url>
+cd nova-agent
+
+# 安装依赖
 npm install
-```
 
-### 开发运行
-
-```bash
+# 开发模式（Electron + 热更新）
 npm run dev
 ```
 
-### 构建
+首次启动后：
+
+1. 点击左下角 **设置**，填写 LLM 接口地址、API Key 与模型 ID
+2. 在侧边栏 **选择或新建项目工作区**
+3. 在 Composer 中输入任务，或使用 `/onboard` 运行内置入门向导
+
+生产构建：
 
 ```bash
 npm run build
-```
-
-### 类型检查
-
-```bash
-npm run typecheck
-```
-
-### 运行测试
-
-```bash
-# 单元测试
-npm run test
-
-# 单元测试（监听模式）
-npm run test:watch
+npm run preview   # 预览构建产物
 ```
 
 ---
 
-## 使用流程
+## 使用说明
 
-1. 启动应用，选择本地项目目录。
-2. 在设置中配置 OpenAI-Compatible 模型（`baseUrl`、`apiKey`、`modelId`）。支持 Vision 的模型可识别上传的图片。
-3. 选择模式：`plan`（只读分析）或 `default`/`auto`（可写入）。
-4. 输入需求，例如：
-   - "先理解这个项目"
-   - "帮我修一个 bug"
-   - "给这个项目加一个功能"
-5. Agent 会读取项目、搜索代码、提出修改方案，并最终写入工作区。写入过程中 UI 会实时显示文件卡片。
-6. 消息结束后，审查 Diff 面板，逐文件接受或拒绝。
-7. 如需回退，点击历史消息旁的回退按钮，恢复到该消息之前的状态。
-8. 使用 `todo_write` 工具或面板管理当前会话的任务计划。
+### 配置模型
+
+打开 **设置 → LLM 配置**：
+
+- **Base URL**：OpenAI 兼容 API 根地址（如 `https://api.openai.com/v1`）
+- **API Key**：鉴权凭证
+- **Model ID**：如 `minimax m3`、`glm-5.2` 等
+- **Context Window**：可留空，按模型名自动推断
+- **Vision**：自动推断 / 强制开启 / 强制关闭
+
+配置持久化在 Electron `userData` 目录下的模型配置文件中。
+
+### 运行模式
+
+| 模式 | 说明 |
+|------|------|
+| `plan` | 只读：禁止 `edit` / `write` / `bash` |
+| `default` | 写入工具可用；`bash` 需用户确认 |
+| `auto` | 自动执行；仍拦截高风险 shell 命令 |
+
+在 Composer 旁的模式切换器中切换。
+
+### Slash 命令与 Composer
+
+- 输入 `/` 打开技能自动补全列表
+- 选择项后输入框填充为 `/skill-name `（不含 `(skill)` 后缀）
+- 发送后由 `AgentLoop` 解析并注入 skill 正文，或由模型通过 `invoke_skill` 工具调用
+
+### 权限与 Diff
+
+- Agent 修改文件后，可在消息流中查看 diff、逐文件接受或拒绝
+- 支持将对话回退到某条消息之前的状态（含工作区文件物理恢复）
+
+---
+
+## 技能（Skills）
+
+### 内置技能
+
+仓库自带 4 个核心 skill（构建时打包进应用）：
+
+| 名称 | 说明 |
+|------|------|
+| `onboard` | 首次启动向导，熟悉工作区与配置 |
+| `skill-creator` | 创建与优化 skill 的指引 |
+| `skill-add` | 从 URL / zip 安装 skill 的指引 |
+| `new` | 空白 skill 脚手架模板 |
+
+在 Composer 中输入 `/onboard` 即可触发。
+
+### 安装路径与优先级
+
+优先级（高覆盖低）：**project > global > builtin**
+
+| 来源 | 路径 |
+|------|------|
+| 内置 | 应用内 `.nova/skills/<name>/SKILL.md` |
+| 全局 | `~/.nova/skills/<name>/SKILL.md` |
+| 项目 | `<workspace>/.nova/skills/<name>/SKILL.md` |
+
+每个 skill 为目录 + `SKILL.md`，frontmatter 至少包含 `name`、`description`；默认可通过 `/` 调用（`user-invocable: true`）。
+
+### 自定义 Skill 示例
+
+`~/.nova/skills/my-review/SKILL.md`：
+
+```markdown
+---
+name: my-review
+description: 对当前变更做代码审查
+user-invocable: true
+---
+
+请审查工作区中最近的代码变更，从正确性、可读性、安全风险三方面给出建议。
+```
+
+保存后重启或切换工作区，输入 `/my-review` 即可调用。
+
+### 校验内置 Skill
+
+```bash
+npm run validate:skills
+```
+
+---
+
+## 规则与子代理
+
+### 规则（Rules）
+
+Agent 系统提示词会合并项目规则，扫描顺序：
+
+1. 工作区根目录：`AGENTS.md` → `CLAUDE.md` → `.cursorrules`
+2. 工作区：`.nova/rules/*.md`
+3. 全局：`~/.nova/rules/*.md`
+
+在 **设置 → 规则** 中可浏览、编辑与新建规则文件。
+
+### 子代理（Subagents）
+
+主 Agent 可通过 `task` 工具委派子任务：
+
+| 内置名称 | 能力 |
+|----------|------|
+| `explore` | 只读探索（ls / read / grep / find） |
+| `code` | 受限编程（含 edit / write / bash，写操作走父 Agent 权限） |
+
+自定义配置：
+
+- 全局：`~/.nova/subagents/<name>.json`
+- 项目：`<workspace>/.nova/subagents/<name>.json`
+
+JSON 字段对齐 `SubAgentSpec`（`name`、`description`、`allowedTools`、`prompt` 等）。在 **设置 → 子代理** 中管理。
+
+部分 skill 支持 `fork_agent: true`，slash 调用时会直接 fork 子 Agent 执行。
+
+---
+
+## 目录与配置路径
+
+| 用途 | 路径 |
+|------|------|
+| 全局 Nova 配置 | `~/.nova/settings.json` |
+| 技能启停状态 | `~/.nova/skill-state.json` |
+| 全局技能 | `~/.nova/skills/` |
+| 全局规则 | `~/.nova/rules/` |
+| 全局子代理 | `~/.nova/subagents/` |
+| 项目技能 | `<workspace>/.nova/skills/` |
+| 项目规则 | `<workspace>/.nova/rules/` |
+| 项目子代理 | `<workspace>/.nova/subagents/` |
+| 会话与检查点 | Electron `userData`（由应用管理） |
+
+设置项 `loadThirdPartySkills`（默认 `true`）用于后续接入 Claude Code 技能目录，详见 `CHANGELOG.md` 与实施计划。
+
+---
+
+## 架构概览
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Renderer (React + Zustand)                             │
+│  ChatPanel · SkillAC · SettingsModal · DiffViewer     │
+│       │ preload: window.api / window.nova.skill         │
+└───────┼─────────────────────────────────────────────────┘
+        │ IPC (类型化 channels)
+┌───────▼─────────────────────────────────────────────────┐
+│  Main (Electron)                                        │
+│  agentHandler · skillHandler · rulesHandler · ...       │
+│       │                                                 │
+│  ┌────▼─────────────────────────────────────────────┐   │
+│  │  Runtime                                         │   │
+│  │  AgentLoop · ToolRegistry · PermissionManager    │   │
+│  │  SkillRegistry / SkillService · CheckpointManager│   │
+│  │  SystemPromptBuilder · RecoveryStateMachine      │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**数据流（发送消息）**：
+
+1. Renderer 通过 `send-message` IPC 提交用户输入
+2. `invokeSkill` 预处理 slash 命令（注入 / fork / 系统提示）
+3. `AgentLoop` 拼装 system prompt（含规则与 skill 上下文），调用模型
+4. 模型返回 tool calls → 权限检查 → 工具执行 → 结果回注上下文
+5. 流式事件（`text-delta`、`tool-call`、`diff-update` 等）推送至 UI
 
 ---
 
 ## 项目结构
 
-```text
+```
 nova-agent/
+├── .nova/skills/          # 内置 skill 源码（构建时复制到产物）
 ├── src/
-│   ├── renderer/                 # React UI 层
-│   │   ├── features/
-│   │   │   ├── chat/             # 聊天消息列表、输入框、流式卡片、Markdown 渲染
-│   │   │   ├── diff/             # Diff 审查面板、语法高亮
-│   │   │   ├── mode-switch/      # plan / default / auto 模式切换
-│   │   │   ├── permissions/      # 权限确认弹窗（bash / 验证）
-│   │   │   ├── project-picker/   # 项目目录选择
-│   │   │   ├── session-list/     # 历史会话列表
-│   │   │   ├── settings/         # 模型配置 UI
-│   │   │   └── todo/             # 会话级 Todo 面板
-│   │   ├── components/           # 共享 UI 组件（图标、图片预览、标题栏等）
-│   │   ├── stores/               # Zustand 全局状态
-│   │   ├── lib/                  # 渲染层工具（图片附件、流式自滚动等）
-│   │   └── styles/               # 全局样式
-│   ├── main/                     # Electron 宿主层
-│   │   ├── ipc/                  # IPC handler（agent / session / config / mode / project / window）
-│   │   ├── app/                  # 应用生命周期
-│   │   ├── services/             # 主进程服务
-│   │   └── windows/              # 窗口管理
-│   ├── preload/                  # 受控桥接层
-│   ├── runtime/                  # 纯 TS Agent Runtime
-│   │   ├── agent/                # AgentLoop、EventBus、上下文构建、压缩、批量执行
-│   │   ├── model/                # ModelClient、SSE 流式解析、思考标签剥离、Token 估算
-│   │   ├── tools/                # 8 个内置工具 + ToolRegistry + 截断管线
-│   │   ├── permissions/          # 三模式权限决策 + 危险命令黑名单
-│   │   ├── checkpoints/          # 备份、manifest、diff 状态、回退恢复
-│   │   ├── sessions/             # 会话持久化（含 Todo、验证摘要）
-│   │   └── verification/         # 验证策略、执行器、格式化
-│   └── shared/                   # renderer / main / runtime 共用类型与工具
-│       ├── config/               # 配置类型
-│       ├── diff/                 # diff 计算与类型
-│       ├── ipc/                  # IPC 通道与事件类型
-│       ├── session/              # 会话、消息、工具可见性类型
-│       └── todo/                 # Todo 数据模型
-├── tests/
-│   ├── unit/                     # 单元测试（按层级对应 src）
-│   ├── integration/              # 集成测试
-│   └── e2e/                      # 端到端测试
-├── docs/
-│   ├── specs/                    # 设计规格与实现计划
-│   ├── design/                   # 功能设计方案
-│   └── ideas/                    # 技术探索与对比报告
-└── tasks/                        # 迭代任务管理
+│   ├── main/              # Electron 主进程、IPC handlers
+│   ├── preload/           # contextBridge API
+│   ├── renderer/          # React UI
+│   ├── runtime/           # Agent、工具、技能、会话、检查点
+│   └── shared/            # IPC 类型、会话类型、配置类型
+├── tests/unit/            # Vitest 单元测试
+├── scripts/               # 校验与辅助脚本
+├── electron.vite.config.ts
+├── CHANGELOG.md
+└── package.json
 ```
 
 ---
 
-## 贡献指南
+## 开发
 
-本项目目前处于快速迭代期，核心目标是验证「极简桌面 Coding Workbench」的产品假设和工程实现。
+```bash
+# 类型检查
+npm run typecheck
 
-如果你希望参与：
+# 运行全部测试
+npm test
 
-1. 先阅读 `docs/specs/mini-coding-workbench/` 下的设计文档，理解架构决策和模块边界。
-2. 遵循现有的代码风格：中文注释、Conventional Commits 中文描述、文件 ≤300 行、函数 ≤40 行。
-3. 优先补充能证明问题存在或防止回归的测试。
-4. 修改 Runtime Core 时，确保新代码可脱离 Electron 在 Vitest 中运行。
+# 监听模式
+npm run test:watch
+
+# 校验内置 skill frontmatter
+npm run validate:skills
+```
+
+### 添加 IPC 通道
+
+1. 在 `src/shared/ipc/channels.ts` 声明 channel 常量
+2. 在 `src/shared/ipc/types.ts` 补充 `IpcCommands` / `IpcEvents` 类型
+3. 在 `src/main/ipc/` 实现 handler，并于 `registerHandlers.ts` 注册
+4. 如需暴露给渲染端，在 `src/preload/` 封装并在 `preload.d.ts` 声明
+
+### 添加工具
+
+在 `src/runtime/tools/` 实现 `ToolExecutor`，于 `agentHandler` 注册到 `ToolRegistry`。注意 `plan` 模式下的可见性与 `PermissionManager` 规则。
+
+---
+
+## 文档与变更记录
+
+- 版本历史与近期功能：[CHANGELOG.md](./CHANGELOG.md)
+- Skill 系统设计（若仓库内保留）：`docs/skill-system-design.md`
 
 ---
 
 ## 许可证
 
-MIT License
+[MIT](./LICENSE) — Copyright (c) 2026 Harrison Xu
 
 ---
 
-> Nova Agent 的诞生不是为了做「最强的 Coding Agent」，而是为了做「最能讲清楚 Agent Loop 原理、最能放心演示、最能在日常小修小改中真正可用」的桌面工作台。
+## 致谢
+
+Nova Agent 在架构上参考了诸多主流高质量Agent工具，致谢：pi-agent、opencode、kilo code、openclacky

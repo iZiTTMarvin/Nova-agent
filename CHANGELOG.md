@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-12
+
+- **feat(settings)**: Task 5 设置弹窗改版 — 左右布局（56rem 固定高度）/ Rules / Skills / Subagents 四区；IPC `settings:*` / `rules:*` / `subagents:*`；左下角入口改名为「设置」
+- **feat(skillac)**: Task 6 SkillAC — `/` 自动补全 Portal 浮层，Nova 暖色主题，评分 100/80/60（字符回退要求 query 全字符命中）
+
 ## 2026-06-11
 
 - **feat(skills)**: Task 3/4 — 内置技能 + SkillService IPC

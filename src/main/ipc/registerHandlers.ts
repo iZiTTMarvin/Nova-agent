@@ -5,6 +5,9 @@ import { registerConfigHandler } from './configHandler'
 import { registerModeHandler } from './modeHandler'
 import { registerSessionHandler } from './sessionHandler'
 import { registerSkillHandler } from './skillHandler'
+import { registerSettingsHandler } from './settingsHandler'
+import { registerRulesHandler } from './rulesHandler'
+import { registerSubagentsHandler } from './subagentsHandler'
 import { getMainWindow } from '../index'
 
 /**
@@ -31,4 +34,9 @@ export function registerIpcHandlers(): void {
 
   // 注册技能管理 IPC
   registerSkillHandler()
+
+  // 设置 / 规则 / 子代理 IPC
+  registerSettingsHandler()
+  registerRulesHandler()
+  registerSubagentsHandler()
 }

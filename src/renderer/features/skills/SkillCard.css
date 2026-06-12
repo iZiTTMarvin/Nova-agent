@@ -1,0 +1,105 @@
+.skill-card {
+  padding: 12px 14px;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-card__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-card__name {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--color-brand);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.skill-card__name:hover {
+  text-decoration: underline;
+}
+
+.skill-card__badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+  border: 1px solid var(--border-warm);
+  color: var(--text-secondary);
+  background: var(--bg-card);
+}
+
+.skill-card__badge--builtin {
+  border-color: rgba(201, 100, 66, 0.35);
+  color: var(--color-brand);
+  background: var(--color-brand-dim, rgba(201, 100, 66, 0.08));
+}
+
+.skill-card__badge--third_party_claude {
+  border-color: rgba(56, 152, 236, 0.35);
+  color: #2563eb;
+  background: rgba(56, 152, 236, 0.08);
+}
+
+.skill-card__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.skill-card__toggle input {
+  accent-color: var(--color-brand);
+}
+
+.skill-card__desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skill-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.skill-card__btn {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-warm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.skill-card__btn:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.skill-card__btn--danger:hover {
+  border-color: var(--color-error, #b53333);
+  color: var(--color-error, #b53333);
+}

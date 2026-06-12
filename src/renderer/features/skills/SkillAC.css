@@ -1,0 +1,56 @@
+/**
+ * SkillAC — Nova 暖色 slash 补全浮层
+ */
+.skill-ac {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-popup, 0 8px 30px rgba(20, 20, 19, 0.12));
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.skill-ac__item {
+  padding: 8px 12px 8px 14px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.skill-ac__item:hover,
+.skill-ac__item--active {
+  background: var(--color-brand-dim, rgba(201, 100, 66, 0.08));
+  border-left-color: var(--color-brand);
+}
+
+.skill-ac__title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.skill-ac__slash {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.skill-ac__kind {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.skill-ac__desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

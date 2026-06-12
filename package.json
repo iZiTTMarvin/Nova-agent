@@ -2,6 +2,7 @@
   "name": "nova-agent",
   "version": "0.1.0",
   "description": "Mini Coding Workbench — 极简桌面编程工作台",
+  "license": "MIT",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

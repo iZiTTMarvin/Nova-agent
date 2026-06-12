@@ -14,6 +14,18 @@ import type {
   SkillImportInput,
   SkillReloadResult
 } from '../skills/types'
+import type {
+  NovaSettingsDto,
+  RuleFileEntry,
+  RulesListParams,
+  RulesReadParams,
+  RulesWriteParams,
+  RulesCreateParams,
+  SubagentListItem,
+  SubagentsListParams,
+  SubagentsSaveParams,
+  SubagentsDeleteParams
+} from '../settings/types'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -155,6 +167,42 @@ export interface IpcCommands {
   'skill:reload': {
     params: string | null | undefined
     result: SkillReloadResult
+  }
+  'settings:get': {
+    params: void
+    result: NovaSettingsDto
+  }
+  'settings:set': {
+    params: Partial<NovaSettingsDto>
+    result: NovaSettingsDto
+  }
+  'rules:list': {
+    params: RulesListParams
+    result: RuleFileEntry[]
+  }
+  'rules:read': {
+    params: RulesReadParams
+    result: string
+  }
+  'rules:write': {
+    params: RulesWriteParams
+    result: void
+  }
+  'rules:create': {
+    params: RulesCreateParams
+    result: RuleFileEntry
+  }
+  'subagents:list': {
+    params: SubagentsListParams
+    result: SubagentListItem[]
+  }
+  'subagents:save': {
+    params: SubagentsSaveParams
+    result: SubagentListItem
+  }
+  'subagents:delete': {
+    params: SubagentsDeleteParams
+    result: void
   }
 }
 

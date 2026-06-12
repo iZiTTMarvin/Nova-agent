@@ -29,6 +29,8 @@ export interface SettingsState {
   currentMode: Mode
   /** 当前会话的 token 用量聚合统计 */
   sessionUsage: SessionUsageStats | null
+  /** 设置页「使用技能」后预填到 composer 的文本 */
+  composerPrefill: string | null
 
   // ── Actions ──
   /** 加载持久化的模型配置 */
@@ -47,6 +49,10 @@ export interface SettingsState {
   resetSessionUsage: () => void
   /** 手动设置 currentProject（被 ChatStore 创建/删除/切换会话时同步调用） */
   setCurrentProject: (project: string | null) => void
+  /** 关闭设置并预填 composer（如 `/onboard `） */
+  requestComposerPrefill: (text: string) => void
+  /** ChatPanel 消费后清空 */
+  clearComposerPrefill: () => void
 }
 
 const EMPTY_USAGE: SessionUsageStats = {
@@ -64,6 +70,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   currentProject: null,
   currentMode: 'default',
   sessionUsage: null,
+  composerPrefill: null,
 
   loadModelConfig: async () => {
     try {
@@ -166,6 +173,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setCurrentProject: (project: string | null) => {
     set({ currentProject: project })
+  },
+
+  requestComposerPrefill: (text: string) => {
+    set({ composerPrefill: text, isConfigModalOpen: false })
+  },
+
+  clearComposerPrefill: () => {
+    set({ composerPrefill: null })
   }
 }))
 
@@ -177,6 +192,7 @@ export function resetSettingsStoreForTests(): void {
     isConfigModalOpen: false,
     currentProject: null,
     currentMode: 'default',
-    sessionUsage: null
+    sessionUsage: null,
+    composerPrefill: null
   })
 }
