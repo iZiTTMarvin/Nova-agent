@@ -1,10 +1,12 @@
 /**
- * Skills 配置面板 — 列表、开关、第三方 skill 选项
+ * Skills 配置面板 — 列表、开关、第三方 skill 选项、创建与导入
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useSkillsStore } from '../skills/store'
 import { SkillCard } from '../skills/SkillCard'
+import { CreateSkillDialog } from '../skills/CreateSkillDialog'
+import { SkillImportBar } from '../skills/SkillImportBar'
 import { skillsI18n } from '../skills/i18n'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 
@@ -19,6 +21,14 @@ export const SkillsSettingsPanel: React.FC = () => {
 
   const [settings, setSettings] = useState<NovaSettingsDto>({ loadThirdPartySkills: true })
   const [expanded, setExpanded] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const showToast = useCallback((message: string) => {
+    setToast(message)
+    window.setTimeout(() => setToast(null), 3200)
+  }, [])
 
   const loadSettings = useCallback(async () => {
     const s = await window.api.invoke('settings:get')
@@ -44,14 +54,16 @@ export const SkillsSettingsPanel: React.FC = () => {
   const handleThirdPartyToggle = async (checked: boolean) => {
     const next = await window.api.invoke('settings:set', { loadThirdPartySkills: checked })
     setSettings(next)
-    // Task 13 运行时读取此开关；此处先 reload 以便后续接入
-    // reload 会触发 skill:changed → onChange，无需再 refreshSkills
     await window.nova.skill.reload(currentProject)
   }
 
   const handleToggle = async (name: string, enabled: boolean) => {
-    await window.nova.skill.toggle(name, enabled)
-    await refreshSkills()
+    try {
+      await window.nova.skill.toggle(name, enabled)
+      // skill:changed → onChange 已更新列表，无需再 refresh
+    } catch (err) {
+      showToast((err as Error).message)
+    }
   }
 
   const handleUse = (name: string) => {
@@ -60,12 +72,27 @@ export const SkillsSettingsPanel: React.FC = () => {
 
   const handleDelete = async (name: string) => {
     if (!window.confirm(`确定删除技能「${name}」？`)) return
-    await window.nova.skill.delete(name)
-    await refreshSkills()
+    try {
+      await window.nova.skill.delete(name)
+      // skill:changed → onChange 已更新列表
+      showToast(`已删除技能「${name}」`)
+    } catch (err) {
+      showToast((err as Error).message)
+    }
+  }
+
+  const handleCreated = (name: string) => {
+    showToast(skillsI18n.createSuccess(name))
+  }
+
+  const handleImported = (name: string) => {
+    showToast(skillsI18n.importSuccess(name))
   }
 
   return (
     <div className="settings-panel">
+      {toast && <div className="skill-settings-toast">{toast}</div>}
+
       <header className="settings-panel__header settings-panel__header--row">
         <div>
           <h3 className="settings-panel__title">{skillsI18n.panelTitle}</h3>
@@ -75,14 +102,14 @@ export const SkillsSettingsPanel: React.FC = () => {
           <button
             type="button"
             className="settings-panel__ghost-btn"
-            onClick={() => window.alert(skillsI18n.importNotReady)}
+            onClick={() => setImportOpen(v => !v)}
           >
-            {skillsI18n.import}
+            {importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
           </button>
           <button
             type="button"
             className="settings-panel__primary-btn"
-            onClick={() => window.alert(skillsI18n.createNotReady)}
+            onClick={() => setCreateOpen(true)}
           >
             {skillsI18n.create}
           </button>
@@ -98,6 +125,10 @@ export const SkillsSettingsPanel: React.FC = () => {
         <span className="settings-toggle-row__label">{skillsI18n.loadThirdParty}</span>
         <span className="settings-toggle-row__hint">{skillsI18n.loadThirdPartyHint}</span>
       </label>
+
+      {importOpen && (
+        <SkillImportBar hasProject={Boolean(currentProject)} onImported={handleImported} />
+      )}
 
       <div className="settings-panel__scroll skill-card-list">
         {visible.length === 0 && <p className="settings-panel__muted">{skillsI18n.empty}</p>}
@@ -121,6 +152,13 @@ export const SkillsSettingsPanel: React.FC = () => {
           {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
         </button>
       )}
+
+      <CreateSkillDialog
+        open={createOpen}
+        hasProject={Boolean(currentProject)}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+      />
     </div>
   )
 }

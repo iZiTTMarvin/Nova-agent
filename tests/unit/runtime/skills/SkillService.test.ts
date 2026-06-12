@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { execSync } from 'child_process'
 import { SkillService } from '../../../../src/runtime/skills/SkillService'
+import { saveNovaSettings } from '../../../../src/runtime/settings/novaSettings'
 
 const md = (name: string, desc: string) =>
   `---\nname: ${name}\ndescription: ${desc}\n---\n# ${name}`
@@ -100,10 +102,62 @@ describe('SkillService', () => {
     expect(service2.get('my-global')?.enabled).toBe(false)
   })
 
-  it('import/export stub 抛出未实现', () => {
+  it('export stub 抛出未实现', () => {
     service.load(null)
-    expect(() => service.import({ location: 'global', zipPath: '/tmp/x.zip' })).toThrow(/尚未实现/)
     expect(() => service.export('my-global')).toThrow(/尚未实现/)
+  })
+
+  it('import 从 zip 解压并写入 global 目录', async () => {
+    service.load(null)
+    const importName = 'imported-skill'
+    const srcDir = join(tmpdir(), `nova-import-src-${Date.now()}`, importName)
+    mkdirSync(srcDir, { recursive: true })
+    writeFileSync(join(srcDir, 'SKILL.md'), md(importName, 'from zip'))
+
+    const zipPath = join(tmpdir(), `nova-import-${Date.now()}.zip`)
+    if (process.platform === 'win32') {
+      execSync(
+        `powershell -NoProfile -Command "Compress-Archive -Path '${srcDir.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force"`,
+        { stdio: 'ignore' }
+      )
+    } else {
+      execSync(`zip -r "${zipPath}" .`, { cwd: srcDir, stdio: 'ignore' })
+    }
+
+    const imported = await service.import({ location: 'global', zipPath })
+    expect(imported.name).toBe(importName)
+    expect(existsSync(join(globalDir, importName, 'SKILL.md'))).toBe(true)
+    expect(service.get(importName)?.description).toBe('from zip')
+
+    rmSync(srcDir, { recursive: true, force: true })
+    rmSync(zipPath, { force: true })
+  })
+
+  it('loadThirdPartySkills 关闭时不加载第三方缓存', () => {
+    const fakeUser = join(tmpdir(), `nova-fake-user-${Date.now()}`)
+    const prevUserProfile = process.env.USERPROFILE
+    process.env.USERPROFILE = fakeUser
+    mkdirSync(join(fakeUser, '.claude', 'skills', 'claude-only'), { recursive: true })
+    writeFileSync(
+      join(fakeUser, '.claude', 'skills', 'claude-only', 'SKILL.md'),
+      md('claude-only', 'third party')
+    )
+
+    saveNovaSettings({ loadThirdPartySkills: false })
+    const svc = new SkillService({
+      globalDir,
+      novaHomeDir: novaHome,
+      getAppPath: () => appRoot
+    })
+    svc.load(null)
+    expect(svc.get('claude-only')).toBeNull()
+
+    saveNovaSettings({ loadThirdPartySkills: true })
+    svc.reload()
+    expect(svc.get('claude-only')?.source).toBe('third_party_claude')
+
+    process.env.USERPROFILE = prevUserProfile
+    rmSync(fakeUser, { recursive: true, force: true })
   })
 
   it('切换 workspace 后加载 project 技能', () => {

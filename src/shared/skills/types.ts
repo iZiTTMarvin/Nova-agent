@@ -47,11 +47,14 @@ export interface SkillReloadResult {
 export interface NovaSkillApi {
   list(): Promise<SkillSummary[]>
   get(name: string): Promise<SkillSummary | null>
+  getBody(name: string): Promise<string | null>
   create(input: SkillCreateInput): Promise<SkillSummary>
   delete(name: string): Promise<void>
   toggle(name: string, enabled: boolean): Promise<SkillSummary>
   import(input: SkillImportInput): Promise<SkillSummary>
   export(name: string): Promise<{ zipPath: string }>
   reload(workspaceRoot?: string | null): Promise<SkillReloadResult>
+  /** 打开文件选择器选取 zip（主进程 dialog） */
+  pickImportFile(): Promise<string | null>
   onChange(cb: (skills: SkillSummary[]) => void): () => void
 }

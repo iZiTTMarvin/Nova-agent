@@ -33,8 +33,38 @@ export const skillsI18n = {
   empty: '暂无技能',
   delete: '删除',
   builtinNoDelete: '内置技能不可删除',
-  importNotReady: '导入功能即将推出（Task 8）',
-  createNotReady: '创建功能即将推出（Task 7）'
+  createTitle: '新建技能',
+  createNameLabel: '名称（slug）',
+  createNameHint: '小写字母、数字与连字符，如 my-skill',
+  createNameInvalid: '名称格式无效',
+  createDescLabel: '描述',
+  createDescRequired: '请填写描述',
+  createBodyLabel: '正文（Markdown）',
+  createTemplateLabel: '模板',
+  createTemplates: {
+    blank: '空白',
+    new: 'new 脚手架',
+    onboard: 'onboard 向导'
+  } as const,
+  createLocationLabel: '保存位置',
+  createLocationGlobal: '全局 (~/.nova/skills)',
+  createLocationProject: '当前项目',
+  createNeedProject: '请先打开项目工作区',
+  createCancel: '取消',
+  createSubmit: '创建',
+  createSubmitting: '创建中…',
+  createSuccess: (name: string) => `技能「${name}」已创建`,
+  createTemplateLoadFailed: '加载模板失败',
+  importLocationLabel: '导入到',
+  importDropHint: '将 .zip 拖到此处，或点击下方按钮选择文件',
+  importPickZip: '选择 zip 文件',
+  importUrlPlaceholder: 'https://example.com/skill.zip',
+  importFromUrl: '从 URL 导入',
+  importZipOnly: '仅支持 .zip 文件',
+  importing: '正在导入…',
+  importSuccess: (name: string) => `已导入技能「${name}」`,
+  showImportBar: '显示导入区',
+  hideImportBar: '收起导入区'
 } as const
 
 export const rulesI18n = {

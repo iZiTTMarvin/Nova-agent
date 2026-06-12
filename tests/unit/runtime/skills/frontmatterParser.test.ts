@@ -77,4 +77,56 @@ describe('parseSkillMarkdown', () => {
     expect(m.name).toBe('bad-name')
     expect(m.warnings.some(w => w.includes('slug'))).toBe(true)
   })
+
+  it('解析 Claude Code 块标量 description: |', () => {
+    const raw = `---
+name: autoplan
+description: |
+  Auto-review pipeline reads review skills from disk.
+  Use when asked to auto review or autoplan.
+allowed-tools:
+  - Bash
+  - Read
+---
+
+## Body
+`
+    const m = parseSkillMarkdown(raw, { ...baseOpts, fallbackName: 'autoplan' })
+    expect(m.description).toContain('Auto-review pipeline')
+    expect(m.description).toContain('autoplan')
+    expect(m.allowedTools).toEqual(['Bash', 'Read'])
+    expect(m.description).not.toBe('|')
+  })
+
+  it('CRLF 行尾下块标量 description 仍可解析', () => {
+    const raw = '---\r\nname: autoplan\r\ndescription: |\r\n  Line one from CRLF file.\r\n  Line two.\r\n---\r\nbody\r\n'
+    const m = parseSkillMarkdown(raw, { ...baseOpts, fallbackName: 'autoplan' })
+    expect(m.description).toContain('Line one from CRLF file')
+    expect(m.description).not.toBe('|')
+  })
+
+  it('解析 description: > 折叠块', () => {
+    const raw = `---
+name: fold
+description: >
+  Line one
+  line two
+---
+body
+`
+    const m = parseSkillMarkdown(raw, baseOpts)
+    // js-yaml 折叠块标量：换行折叠为空格
+    expect(m.description.replace(/\s+/g, ' ').trim()).toBe('Line one line two')
+  })
+
+  it('值内含未引号冒号（Claude 脏 YAML）可解析 description', () => {
+    const raw = `---
+name: job
+description: Role with colon: senior engineer
+---
+body
+`
+    const m = parseSkillMarkdown(raw, baseOpts)
+    expect(m.description).toContain('senior engineer')
+  })
 })

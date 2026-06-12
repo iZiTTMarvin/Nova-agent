@@ -1,0 +1,103 @@
+/* 技能创建/导入弹窗 — 沿用 Nova 暖色设置弹窗语义 */
+.skill-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(20, 20, 19, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.skill-dialog {
+  width: min(520px, 96vw);
+  max-height: min(88vh, 680px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-popup);
+}
+
+.skill-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+
+.skill-dialog__title {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.skill-dialog__close {
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.skill-dialog__form {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.skill-dialog__counter {
+  float: right;
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.skill-dialog__textarea--sm {
+  min-height: 72px;
+  flex: none;
+}
+
+.skill-dialog__body-field {
+  flex: 1;
+  min-height: 0;
+}
+
+.skill-dialog__body-field .settings-editor {
+  min-height: 160px;
+}
+
+.skill-dialog__template-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skill-dialog__template-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-warm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.skill-dialog__template-btn--active {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  background: var(--bg-card);
+}
+
+.skill-dialog__template-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

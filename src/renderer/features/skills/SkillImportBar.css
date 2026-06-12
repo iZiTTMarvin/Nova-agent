@@ -1,0 +1,54 @@
+.skill-import-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px dashed var(--border-warm);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+
+.skill-import-bar__location {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-import-bar__dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.skill-import-bar__dropzone--active {
+  border-color: var(--color-brand);
+  background: var(--bg-card);
+}
+
+.skill-import-bar__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.skill-import-bar__url {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.skill-import-bar__url .settings-modal__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-import-bar__url .settings-panel__primary-btn {
+  flex-shrink: 0;
+}

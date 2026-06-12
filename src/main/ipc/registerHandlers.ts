@@ -33,7 +33,7 @@ export function registerIpcHandlers(): void {
   registerSessionHandler()
 
   // 注册技能管理 IPC
-  registerSkillHandler()
+  registerSkillHandler(getMainWindow)
 
   // 设置 / 规则 / 子代理 IPC
   registerSettingsHandler()

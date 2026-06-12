@@ -11,12 +11,14 @@ export const SEND_MESSAGE = 'send-message' as const
 /** Skill 管理 IPC（renderer → main） */
 export const SKILL_LIST = 'skill:list' as const
 export const SKILL_GET = 'skill:get' as const
+export const SKILL_GET_BODY = 'skill:get-body' as const
 export const SKILL_CREATE = 'skill:create' as const
 export const SKILL_DELETE = 'skill:delete' as const
 export const SKILL_TOGGLE = 'skill:toggle' as const
 export const SKILL_IMPORT = 'skill:import' as const
 export const SKILL_EXPORT = 'skill:export' as const
 export const SKILL_RELOAD = 'skill:reload' as const
+export const SKILL_PICK_IMPORT = 'skill:pick-import' as const
 /** 应用设置 */
 export const SETTINGS_GET = 'settings:get' as const
 export const SETTINGS_SET = 'settings:set' as const

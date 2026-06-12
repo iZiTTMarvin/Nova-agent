@@ -144,6 +144,10 @@ export interface IpcCommands {
     params: string
     result: SkillSummary | null
   }
+  'skill:get-body': {
+    params: string
+    result: string | null
+  }
   'skill:create': {
     params: SkillCreateInput
     result: SkillSummary
@@ -167,6 +171,10 @@ export interface IpcCommands {
   'skill:reload': {
     params: string | null | undefined
     result: SkillReloadResult
+  }
+  'skill:pick-import': {
+    params: void
+    result: string | null
   }
   'settings:get': {
     params: void

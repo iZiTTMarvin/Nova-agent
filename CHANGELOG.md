@@ -2,6 +2,11 @@
 
 ## 2026-06-12
 
+- **feat(third-party-skills)**: Task 13 — Claude Code 技能只读同步至 `~/.nova/imported/claude-skills/`；`loadThirdPartySkills` 开关（默认开）；优先级 `project > global > third_party_claude > builtin`
+- **feat(skill-create)**: Task 7 — `CreateSkillDialog`（slug 校验、description 计数、blank/new/onboard 模板、全局/项目位置）；IPC `skill:get-body`
+- **feat(skill-import)**: Task 8 — `SkillService.import`（zip 解压 + https URL 30s 超时）；`SkillImportBar`（选文件/拖拽/URL）；IPC `skill:pick-import`；CLI `scripts/install-skill.mjs` / `scripts/package-skill.mjs`
+- **chore(deps)**: 新增 `yauzl`、`gray-matter`（zip 解压 + YAML frontmatter）
+- **fix(skills)**: frontmatter 改用 gray-matter/js-yaml + Kilo 式 fallback，修复第三方 skill（如 autoplan）description 块标量/冒号值解析
 - **feat(settings)**: Task 5 设置弹窗改版 — 左右布局（56rem 固定高度）/ Rules / Skills / Subagents 四区；IPC `settings:*` / `rules:*` / `subagents:*`；左下角入口改名为「设置」
 - **feat(skillac)**: Task 6 SkillAC — `/` 自动补全 Portal 浮层，Nova 暖色主题，评分 100/80/60（字符回退要求 query 全字符命中）
 

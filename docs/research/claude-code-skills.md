@@ -135,7 +135,7 @@ builtin(0) < third_party_claude(1) < global(2) < project(3)
 
 同名覆盖时，高优先级生效；`shadowed` 记录被覆盖的低优先级来源。
 
-> 注：实施任务清单写的是 `project > global > builtin > third_party`；与上表一致（数字越大优先级越高）。
+> 注：数字越大优先级越高；`third_party_claude` 高于 `builtin`（用户 Claude 技能可覆盖内置同名项），低于 `global` / `project`。
 
 ---
 

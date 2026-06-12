@@ -67,6 +67,22 @@ describe('SkillLoader', () => {
     expect(loader.listForContext('default').map(s => s.name)).toEqual(['c'])
   })
 
+  it('third_party_claude 优先级介于 builtin 与 global 之间', () => {
+    writeSkill(builtinDir, 'shared', md('shared', 'builtin'))
+    writeSkill(globalDir, 'shared', md('shared', 'global'))
+    const thirdDir = join(tmpdir(), `nova-third-${Date.now()}`)
+    mkdirSync(thirdDir, { recursive: true })
+    writeSkill(thirdDir, 'shared', md('shared', 'third'))
+    writeSkill(thirdDir, 'claude-only', md('claude-only', 'claude'))
+
+    const loader = SkillLoader.loadAll({ builtinDir, globalDir, thirdPartyDir: thirdDir })
+    expect(loader.get('shared')?.description).toBe('global')
+    expect(loader.get('claude-only')?.source).toBe('third_party_claude')
+    expect(loader.getShadowed()['shared']).toBe('third_party_claude')
+
+    rmSync(thirdDir, { recursive: true, force: true })
+  })
+
   it('listUserInvocable 过滤 user-invocable', () => {
     writeSkill(globalDir, 'a', md('a', 'd', 'user-invocable: false\n'))
     writeSkill(globalDir, 'b', md('b', 'ok'))

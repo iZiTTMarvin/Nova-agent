@@ -16,18 +16,21 @@
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",
     "framer-motion": "^12.40.0",
+    "gray-matter": "^4.0.3",
     "iconv-lite": "^0.7.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.34.5",
+    "yauzl": "^3.4.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/react-test-renderer": "^18.3.1",
+    "@types/yauzl": "^3.3.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.5.0",
     "electron": "^33.2.0",

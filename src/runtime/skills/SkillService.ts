@@ -2,11 +2,21 @@
  * SkillService — 桌面端技能管理单例
  * 封装加载、CRUD、启停持久化；import/export 为 stub（Task 8 实现）
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { syncClaudeCodeSkills } from './ClaudeCodeSkillAdapter'
 import { SkillRegistry } from './SkillRegistry'
 import { resolveBuiltinSkillsDir } from './SkillLoader'
+import { loadNovaSettings } from '../settings/novaSettings'
+import {
+  createTempSkillDir,
+  downloadHttpsToFile,
+  extractZip,
+  findSkillRoot,
+  isZipPath,
+  validateSkillDirectory
+} from './skillZip'
 import type { SkillManifest } from './types'
 import type {
   SkillCreateInput,
@@ -75,12 +85,21 @@ export class SkillService {
     return this.reload()
   }
 
-  /** 按当前 workspace 重新扫描 */
+  /** 按当前 workspace 重新扫描（含第三方 Claude skill 同步） */
   reload(): SkillRegistry {
+    const settings = loadNovaSettings()
+    const claudeSync = syncClaudeCodeSkills({
+      enabled: settings.loadThirdPartySkills,
+      workspaceRoot: this.workspaceRoot,
+      novaHomeDir: this.novaHomeDir
+    })
+
     this.registry = SkillRegistry.load({
       workspaceRoot: this.workspaceRoot ?? undefined,
       builtinDir: resolveBuiltinSkillsDir(this.getAppPath),
-      globalDir: this.globalDir
+      globalDir: this.globalDir,
+      // 开关开启时从缓存目录加载 third_party_claude 源
+      thirdPartyDir: claudeSync?.cacheDir
     })
     this.applySkillState()
     return this.registry
@@ -114,6 +133,12 @@ export class SkillService {
   get(name: string): SkillSummary | null {
     const skill = this.getRegistry().get(name)
     return skill ? toSkillSummary(skill) : null
+  }
+
+  /** 获取技能完整正文（创建模板等场景） */
+  getBody(name: string): string | null {
+    const skill = this.getRegistry().get(name)
+    return skill?.body ?? null
   }
 
   /** 获取完整 manifest（主进程 Agent 调度用） */
@@ -188,9 +213,55 @@ export class SkillService {
     return toSkillSummary(skill)
   }
 
-  /** Task 8 实现体；当前 stub */
-  import(_input: SkillImportInput): never {
-    throw new Error('技能导入尚未实现，请使用设置页导入或等待后续版本')
+  /**
+   * 从 zip 或 https URL 导入技能
+   */
+  async import(input: SkillImportInput): Promise<SkillSummary> {
+    if (!input.zipPath && !input.url) {
+      throw new Error('请提供 zip 路径或 https URL')
+    }
+    if (input.zipPath && input.url) {
+      throw new Error('zip 路径与 URL 不能同时指定')
+    }
+
+    const temp = createTempSkillDir('import')
+    let zipPath = input.zipPath
+
+    try {
+      if (input.url) {
+        zipPath = join(temp.dir, 'download.zip')
+        await downloadHttpsToFile(input.url, zipPath)
+      }
+
+      if (!zipPath || !existsSync(zipPath)) {
+        throw new Error('zip 文件不存在')
+      }
+      if (!isZipPath(zipPath)) {
+        throw new Error('仅支持 .zip 格式')
+      }
+
+      const extractDir = join(temp.dir, 'extracted')
+      await extractZip(zipPath, extractDir)
+
+      const skillRoot = findSkillRoot(extractDir)
+      const { name } = validateSkillDirectory(skillRoot)
+
+      const targetDir = join(this.resolveLocationDir(input.location), name)
+      if (existsSync(targetDir)) {
+        throw new Error(`技能「${name}」已存在，请先删除或更换名称`)
+      }
+
+      cpSync(skillRoot, targetDir, { recursive: true })
+
+      this.reload()
+      const imported = this.getRegistry().get(name)
+      if (!imported) {
+        throw new Error(`导入后未能加载技能：${name}`)
+      }
+      return toSkillSummary(imported)
+    } finally {
+      temp.cleanup()
+    }
   }
 
   /** Task 8 实现体；当前 stub */
