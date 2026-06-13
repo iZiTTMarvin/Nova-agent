@@ -1,6 +1,6 @@
 # Nova Agent
 
-极简桌面编程工作台 — 基于 Electron 的本地 AI Agent IDE，对接任意 OpenAI 兼容 API，在你的项目工作区内读代码、改文件、跑命令、管理技能与子代理。
+极简桌面编程工作台 — 基于 Electron 的本地 AI Agent Coding Cowork，对接任意 OpenAI 兼容 API，在你的项目工作区内读代码、改文件、跑命令、管理技能与子代理。
 
 当前版本：**0.1.0**（活跃开发中）
 
