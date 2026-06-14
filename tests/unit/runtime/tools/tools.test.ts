@@ -5,13 +5,14 @@ import { lsTool } from '../../../../src/runtime/tools/lsTool'
 import { readTool } from '../../../../src/runtime/tools/readTool'
 import { createGrepTool } from '../../../../src/runtime/tools/grepTool'
 import { findTool } from '../../../../src/runtime/tools/findTool'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 
 /** 创建临时测试目录 */
 const TMP = join(process.cwd(), '.test-workspace-tools')
 
 function createContext(): ToolContext {
-  return { workingDir: TMP }
+  return { workingDir: TMP, readState: createReadState() }
 }
 
 describe('只读工具', () => {

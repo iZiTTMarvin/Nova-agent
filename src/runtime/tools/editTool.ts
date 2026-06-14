@@ -43,6 +43,8 @@ export interface ReadState {
   set(path: string, entry: ReadStateEntry): void
   has(path: string): boolean
   clear(): void
+  /** 深拷贝：用于 sub agent 创建独立 readState，避免污染父 agent */
+  clone(): ReadState
 }
 
 /**
@@ -74,9 +76,21 @@ class ReadStateMap implements ReadState {
   set(path: string, entry: ReadStateEntry): void { this.store.set(normalizeReadStateKey(path), entry) }
   has(path: string): boolean { return this.store.has(normalizeReadStateKey(path)) }
   clear(): void { this.store.clear() }
+
+  /** 深拷贝：用于 sub agent 创建独立 readState，避免污染父 agent */
+  clone(): ReadState {
+    const copy = new ReadStateMap()
+    for (const [key, value] of this.store) {
+      copy.store.set(key, { ...value })
+    }
+    return copy
+  }
 }
 
-export const readState: ReadState = new ReadStateMap()
+/** 工厂：创建独立的 readState 实例（每个 AgentLoop 一个，sub agent 通过 clone 隔离） */
+export function createReadState(): ReadState {
+  return new ReadStateMap()
+}
 
 // ── lineEnding ────────────────────────────────────────────────────────────────
 
@@ -546,7 +560,7 @@ export const editTool: ToolExecutor = {
         const readResult = await readFileForEdit(ops, absolutePath)
         throwIfAborted()
 
-        await safetyGate(absolutePath, readState, ops, readResult.normalized)
+        await safetyGate(absolutePath, context.readState, ops, readResult.normalized)
         throwIfAborted()
 
         const resolved = resolveEdits(readResult.normalized, input.edits, absolutePath)
@@ -563,7 +577,7 @@ export const editTool: ToolExecutor = {
         throwIfAborted()
 
         const newStat = await ops.stat(absolutePath)
-        readState.set(absolutePath, {
+        context.readState.set(absolutePath, {
           content: newContent,
           timestamp: newStat.mtimeMs,
         })

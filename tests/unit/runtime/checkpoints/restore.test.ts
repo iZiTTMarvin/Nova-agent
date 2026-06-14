@@ -295,3 +295,78 @@ describe('listManifests', () => {
     expect(result).toHaveLength(0)
   })
 })
+
+// ── C2 回归：二进制文件字节级回退（不再因 utf8 编码损坏） ──
+
+describe('C2: 二进制文件回退字节级一致', () => {
+  /** 构造一个最小有效 PNG（1×1 红色像素），含非 utf8 字节序列 */
+  function makePngBuffer(): Buffer {
+    // PNG signature: 89 50 4E 47 0D 0A 1A 0A —— 第一字节 0x89 在 utf8 中是多字节起始
+    // 若以 utf8 读 + 写会被强行解码为 U+FFFD（替换字符），导致字节序列损坏。
+    // 这里直接用真实 PNG 头部 + 最小 IHDR + IDAT + IEND 的近似结构。
+    return Buffer.from([
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
+      0x00, 0x00, 0x00, 0x0D,                           // IHDR length
+      0x49, 0x48, 0x44, 0x52,                           // "IHDR"
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,  // 1×1
+      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE,
+      0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54,  // IDAT
+      0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00,
+      0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, 0x33,
+      0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,  // IEND
+      0xAE, 0x42, 0x60, 0x82
+    ])
+  }
+
+  it('rejectFile 回退二进制文件后字节级一致', () => {
+    const original = makePngBuffer()
+    const modified = Buffer.from('modified text content', 'utf8')
+
+    // workspace 中放修改后的"损坏"版本
+    fs.writeFileSync(path.join(workspaceRoot, 'img.png'), modified)
+    // 备份中放原始二进制
+    const filesDir = getFilesDir(checkpointRoot, sessionId, 'msg_bin')
+    fs.mkdirSync(filesDir, { recursive: true })
+    fs.writeFileSync(path.join(filesDir, 'img.png'), original)
+
+    createManifest('msg_bin', { modifiedFiles: ['img.png'] })
+
+    const result = rejectFile(
+      checkpointRoot, workspaceRoot, sessionId, 'msg_bin', 'img.png'
+    )
+
+    expect(result).toBe(true)
+    const restored = fs.readFileSync(path.join(workspaceRoot, 'img.png'))
+    // C2 修复前：restore.ts 用 utf8 读写，0x89 等字节会被替换 → 字节级不等。
+    // C2 修复后：直接 readFileSync/writeFileSync 不带编码 → 字节级一致。
+    expect(restored.equals(original)).toBe(true)
+  })
+
+  it('revertToMessage 回退多个二进制文件后字节级一致', () => {
+    const png1 = makePngBuffer()
+    const png2 = Buffer.from([0x00, 0xFF, 0x80, 0x7F, 0xC0, 0xAF, 0xFE, 0xDC])
+
+    // workspace 放"损坏"文本
+    fs.writeFileSync(path.join(workspaceRoot, 'a.png'), 'corrupted')
+    fs.writeFileSync(path.join(workspaceRoot, 'b.bin'), 'corrupted')
+
+    // 备份放原始二进制
+    const filesDir = getFilesDir(checkpointRoot, sessionId, 'msg_bin2')
+    fs.mkdirSync(filesDir, { recursive: true })
+    fs.writeFileSync(path.join(filesDir, 'a.png'), png1)
+    fs.writeFileSync(path.join(filesDir, 'b.bin'), png2)
+
+    createManifest('msg_bin2', { modifiedFiles: ['a.png', 'b.bin'] })
+
+    const ok = revertToMessage(
+      checkpointRoot, workspaceRoot, sessionId, 'msg_bin2',
+      listManifests(checkpointRoot, sessionId)
+    )
+    expect(ok).toBe(true)
+
+    const restoredA = fs.readFileSync(path.join(workspaceRoot, 'a.png'))
+    const restoredB = fs.readFileSync(path.join(workspaceRoot, 'b.bin'))
+    expect(restoredA.equals(png1)).toBe(true)
+    expect(restoredB.equals(png2)).toBe(true)
+  })
+})

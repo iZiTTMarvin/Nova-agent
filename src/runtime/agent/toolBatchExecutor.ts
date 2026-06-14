@@ -6,6 +6,7 @@ import type { SessionStore } from '../sessions/SessionStore'
 import type { EventBus } from './EventBus'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ImageContent } from '../tools/types'
+import type { ReadState } from '../tools/editTool'
 import type { AgentEvent } from './types'
 import type { HookManager } from './HookManager'
 import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
@@ -68,6 +69,12 @@ export interface ToolBatchExecutionOptions {
   binDirs?: string[]
   /** Hook 编排层（preToolUse / postToolUse） */
   hookManager?: HookManager | null
+  /**
+   * read state：记录"模型已读过的文件 + 当时内容/mtime"。
+   * edit/write 的"先读后改"校验依赖它。
+   * 每个 AgentLoop 实例持有独立 readState（sub agent 通过 clone 隔离）。
+   */
+  readState: ReadState
 }
 
 interface ToolRunResult {
@@ -86,6 +93,7 @@ function parseArgs(argsStr: string): Record<string, unknown> {
 function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
   return {
     workingDir: options.workingDir,
+    readState: options.readState,
     ...(options.checkpointManager ? { checkpointManager: options.checkpointManager } : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     supportsVision: options.supportsVision,

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-06-14
+
+- **fix(agent/checkpoints)**: 全面 bug 修复 15 项（C1–C6 / I1–I5 / S1/S2/S4/S5），覆盖数据丢失、资源泄漏、安全边界、状态隔离四类
+  - **P0 数据丢失**
+    - C1 压缩保留工具结果：`onCompaction` 把独立 tool 消息的内容合并回 `SessionToolCall.result`，避免重启加载时 `contextBuilder` 跳过 tool message 触发 OpenAI 400
+    - C4+ 空闲压缩 abort 不再覆盖用户新消息：`runCompaction` 增加 `abortSignal` 参数，在替换 context / 调 onCompaction 前检查；移除 `prevContext` 快照回滚逻辑
+    - C2 bash 流二进制损坏：snapshot 改 Buffer 读取、`recordBashChange` 接收 Buffer、`restore.ts` 全部去掉 utf8 编码读写，二进制文件字节级回退
+  - **P1 资源生命周期 + 安全边界**
+    - C3 subLoop 资源释放：`AgentLoop` 新增 `dispose()`（cancel idleTimer、reject pending permissions），task / skillFork finally 调用
+    - C5 bash workdir 边界校验：`resolveWorkdir` 用 `relative + isAbsolute` 拒绝越界（绝对路径 / `..` 前缀）
+    - C6 zip bomb 防护：`extractZip` 加文件数 / 总大小累计上限；`downloadHttpsToFile` 流式下载 + Content-Length 预检 + 超限清理
+  - **P2/P3 状态隔离**
+    - I1 `readState` 从模块级单例改为 `ToolContext` 实例字段（参考 Claude Code `ToolUseContext.readFileState`）：`toolBatchExecutor` 注入，sub agent 用 `clone()` 深拷贝
+    - I2 `ROLLBACK_MESSAGE` 回退后清空 readState：避免陈旧快照误导后续 edit 校验
+    - I3 创建新 AgentLoop 前 `dispose()` 旧的，避免遗留 IdleCompressionTimer
+    - I4 危险命令黑名单补 `--recursive` / `eval` / `source` / 反引号替换执行
+    - I5 `onCompaction` 中 sessionStore.load 失败时 `console.error`，不再静默丢压缩
+  - **P4 体验**
+    - S1 error / cancel 状态下不启动 idleTimer，避免后台压缩污染状态
+      - catch 异常 / finishMessageRound cancel：不启动
+      - fork 错误 / context_overflow 失败 / 模型错误重试耗尽：全部取消已存在的 idleTimer，避免之前后台残留 timer 触发
+    - S2 `waitForChildProcess` 改监听 `close` 事件，去掉 100ms 经验延迟，30s 安全兜底
+    - S4 `contextBuilder` 在 `tc.result === undefined` 时打 warning，方便发现 C1 类 bug
+    - S5 `UNIMPLEMENTED_FIELDS` 提示仅 dev 环境显示，生产静默
+- **test**: 新增 10 个 regression test（C2 二进制回退、C5 workdir 边界、C6 zip bomb、I1 readState 隔离 + clone、S1 error/overflow 不启动 idleTimer + 正常路径基线），全部 1005 测试通过
+
 ## 2026-06-12
 
 - **feat(third-party-skills)**: Task 13 — Claude Code 技能只读同步至 `~/.nova/imported/claude-skills/`；`loadThirdPartySkills` 开关（默认开）；优先级 `project > global > third_party_claude > builtin`

@@ -209,34 +209,44 @@ async function listDirectChildPids(pid: number): Promise<number[]> {
 /**
  * 等待子进程退出，处理 Windows 上的 stdio 句柄泄漏问题。
  *
- * Windows 的 child_process 在进程退出后，stdio 句柄可能还没被 Node 完全
- * 释放，导致后续 close 事件不触发或阻塞。解决方式：先等 'exit' 事件，
- * 然后再等 100ms 让 stdio drain，最后强制 resolve 兜底。
+ * Node 的 child_process 有两个相关事件：
+ *   - 'exit'：进程本身结束（拿到 exitCode / signal）
+ *   - 'close'：所有 stdio 流完全关闭后才触发
+ *
+ * Windows 上 'exit' 触发后 stdio 句柄可能还没 drain，进程对象也未必能立即被复用。
+ * 之前的实现用 exit + 100ms 延迟兜底，但 100ms 是经验值——大型子进程有时
+ * 确实需要更久。直接监听 'close' 就能拿到真实"完全结束"信号，不需要任何时间假设。
  *
  * 返回 exit code（null 表示被信号终止或 spawn 失败）。
  */
 export function waitForChildProcess(child: ChildProcess): Promise<number | null> {
   return new Promise<number | null>((resolve) => {
     let settled = false
+    let exitCode: number | null = null
     const finalize = (code: number | null) => {
       if (settled) return
       settled = true
       resolve(code)
     }
 
+    // 先记下 exit code；'close' 触发后用它 finalize。
+    // 如果只监听 'close' 也能拿到 exitCode（事件签名一致），但分开记录更直观。
     child.once('exit', (code) => {
-      // Windows 上句柄可能还没 drain，等 100ms
-      setTimeout(() => finalize(code), 100)
+      exitCode = code
+    })
+
+    // 'close' 在 stdio 完全关闭后触发，比 'exit' 更可靠。
+    // 兜底：如果 30s 内还没 close（极端 IO 卡死），用 exitCode 直接 finalize。
+    const safety = setTimeout(() => finalize(exitCode), 30_000)
+
+    child.once('close', (code) => {
+      clearTimeout(safety)
+      finalize(code)
     })
 
     child.once('error', (err) => {
-      // spawn 阶段就失败（ENOENT 等）
-      if (process.platform === 'win32') {
-        setTimeout(() => finalize(null), 100)
-      } else {
-        finalize(null)
-      }
-      // 错误对象保留在闭包外不必关心
+      clearTimeout(safety)
+      finalize(null)
       void err
     })
   })

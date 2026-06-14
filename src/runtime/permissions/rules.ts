@@ -21,8 +21,14 @@ import type { RiskLevel } from './types'
 const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   // Unix 危险命令
   { pattern: /\bsudo\b/, reason: '需要超级用户权限' },
+  // rm -rf / rm -r / rm --recursive：补全长选项，原规则只覆盖短选项
   { pattern: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*--no-preserve-root)/, reason: '强制递归删除' },
-  { pattern: /\brm\s+-[a-zA-Z]*r/, reason: '递归删除目录' },
+  { pattern: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+|--recursive\b)/, reason: '递归删除目录' },
+  // eval / source：在当前 shell 上下文执行任意字符串，可绕过权限检查
+  { pattern: /(^|[\s;&|`(])eval\s/, reason: '在当前 shell 中执行任意字符串' },
+  { pattern: /(^|[\s;&|`(])(source|\.)\s+\S/, reason: '在当前 shell 中执行脚本（source）' },
+  // 反引号 / $() 命令替换执行：常用于隐藏 sudo 等关键字
+  { pattern: /`[^`]+`/, reason: '通过反引号执行任意命令，可能隐藏危险关键字' },
   { pattern: /\bcurl\b.*\|\s*(sh|bash|zsh)/, reason: '从网络下载并直接执行脚本' },
   { pattern: /\bwget\b.*\|\s*(sh|bash|zsh)/, reason: '从网络下载并直接执行脚本' },
   { pattern: /\bchmod\s+([0-7]{3,4}|[+-][rwx])/, reason: '修改文件权限' },

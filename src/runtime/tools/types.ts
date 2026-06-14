@@ -6,6 +6,7 @@
 import type { ToolDefinition } from '../model/types'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { EventBus } from '../agent/EventBus'
+import type { ReadState } from './editTool'
 
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
@@ -14,6 +15,15 @@ export type ToolExecutionMode = 'parallel' | 'sequential'
 export interface ToolContext {
   /** 工作区根目录的绝对路径，所有路径操作不得越界 */
   workingDir: string
+  /**
+   * 文件读取状态（read state）：记录"模型已 read 过哪些文件以及当时的内容/mtime"。
+   * edit / write 工具的"先读后改"校验依赖此状态。
+   *
+   * 每个 AgentLoop 实例持有独立的 readState，由 toolBatchExecutor 注入。
+   * 主 agent 与 sub agent 之间通过 clone 实现隔离，避免 sub agent 读过的文件
+   * 污染主 agent 的校验逻辑（I1）。
+   */
+  readState: ReadState
   /** checkpoint 管理器（写入类工具需要通过它做写前备份） */
   checkpointManager?: import('../checkpoints/CheckpointManager').CheckpointManager
   /** 取消信号，用户点击取消时触发，bashTool 等长时间运行工具应监听此信号终止执行 */

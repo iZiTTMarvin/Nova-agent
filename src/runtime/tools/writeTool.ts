@@ -9,7 +9,6 @@ import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { withFileMutationQueue } from './file-mutation-queue'
-import { readState } from './editTool'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
 /**
@@ -121,7 +120,7 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
         try {
           const written = await fsStat(absolutePath)
           const normalized = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
-          readState.set(absolutePath, { content: normalized, timestamp: written.mtimeMs })
+          context.readState.set(absolutePath, { content: normalized, timestamp: written.mtimeMs })
         } catch {
           /* 取不到本地 mtime（远程 ops 等）时跳过回种 */
         }

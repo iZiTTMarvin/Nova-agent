@@ -33,6 +33,7 @@ import { SystemPromptBuilder } from './SystemPromptBuilder'
 import type { SkillRegistry } from '../skills/SkillRegistry'
 import { invokeSkill } from '../skills/invokeSkill'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
+import { createReadState, type ReadState } from '../tools/editTool'
 
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
@@ -133,6 +134,13 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 统一 skill 调度：slash inject / fork */
   private skillRegistry: SkillRegistry | null = null
   private skillForkDeps: RunSkillForkDeps | null = null
+
+  /**
+   * 文件读取状态：记录"已 read 过哪些文件"，edit/write 工具的"先读后改"校验依赖此。
+   * 默认实例化一个独立的 readState；agentHandler 注入主 readState（跨 SEND_MESSAGE 复用），
+   * sub agent 在 taskTool / runSkillFork 中 clone 主 readState 隔离。
+   */
+  private readState: ReadState = createReadState()
 
   /**
    * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
@@ -281,6 +289,29 @@ export class AgentLoop implements IdleCompactionTarget {
     this.skillForkDeps = deps
   }
 
+  /**
+   * 注入主 readState（由 agentHandler 调用，跨 SEND_MESSAGE 复用）。
+   * 不调用时使用 loop 自带的独立实例（用于 sub agent 隔离测试）。
+   */
+  setReadState(rs: ReadState): void {
+    this.readState = rs
+  }
+
+  /** 获取当前 readState（供 toolBatchExecutor 注入到 ToolContext） */
+  getReadState(): ReadState {
+    return this.readState
+  }
+
+  /**
+   * 克隆当前 readState 的深拷贝，供 sub agent（task / skill fork）创建独立副本。
+   * 主 agent 与 sub agent 共享 readState 会导致：
+   *   - sub agent 读过的文件污染主 agent 后续 edit 校验；
+   *   - 主 agent 的 readState 被修改后再创建 sub agent 时复用陈旧状态。
+   */
+  cloneReadState(): ReadState {
+    return this.readState.clone()
+  }
+
   /** 获取当前状态 */
   getState(): AgentState {
     return this.state
@@ -351,6 +382,7 @@ export class AgentLoop implements IdleCompactionTarget {
             args: dispatch.args,
             ctx: {
               workingDir: this.workingDir ?? process.cwd(),
+              readState: this.readState,
               shellPath: this.shellPath,
               binDirs: this.binDirs
             },
@@ -365,8 +397,9 @@ export class AgentLoop implements IdleCompactionTarget {
           this.state = 'error'
           this.checkpointManager?.endMessage()
           this.eventBus.emit({ type: 'message_end', messageId })
-          this.idleTimer ??= new IdleCompressionTimer(this)
-          this.idleTimer.start()
+          // S1：error 状态取消 idleTimer，避免 266s 后台压缩污染损坏 context
+          this.idleTimer?.cancel()
+          this.idleTimer = null
           return
         }
         await this.finishMessageRound(messageId)
@@ -528,8 +561,9 @@ export class AgentLoop implements IdleCompactionTarget {
               if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
                 this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
                 this.state = 'error'
-                this.idleTimer ??= new IdleCompressionTimer(this)
-                this.idleTimer.start()
+                // S1：context_overflow 最终失败等同 error，取消 idleTimer
+                this.idleTimer?.cancel()
+                this.idleTimer = null
                 return
               }
               this.contextOverflowRetryAttempted = true
@@ -553,8 +587,9 @@ export class AgentLoop implements IdleCompactionTarget {
 
               this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
               this.state = 'error'
-              this.idleTimer ??= new IdleCompressionTimer(this)
-              this.idleTimer.start()
+              // S1：所有 overflow 压缩失败路径都取消 idleTimer，避免后台压缩污染
+              this.idleTimer?.cancel()
+              this.idleTimer = null
               return
             }
 
@@ -574,8 +609,9 @@ export class AgentLoop implements IdleCompactionTarget {
 
               this.eventBus.emit({ type: 'error', messageId, error: event.error })
               this.state = 'error'
-              this.idleTimer ??= new IdleCompressionTimer(this)
-              this.idleTimer.start()
+              // S1：模型错误重试耗尽后取消 idleTimer
+              this.idleTimer?.cancel()
+              this.idleTimer = null
               return
             }
 
@@ -650,7 +686,8 @@ export class AgentLoop implements IdleCompactionTarget {
           sessionStore: this.sessionStore,
           sessionId: this.sessionId,
           eventBus: this.eventBus,
-          hookManager: this.hookManager
+          hookManager: this.hookManager,
+          readState: this.readState
         })
 
         if (!batchResult.aborted && !this.cancelled && !this.abortController?.signal.aborted) {
@@ -691,9 +728,10 @@ export class AgentLoop implements IdleCompactionTarget {
         await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
         this.eventBus.emit({ type: 'error', messageId, error: errMsg })
         this.state = 'error'
-        // 错误也启动空闲计时（错误后用户可能离开）
-        this.idleTimer ??= new IdleCompressionTimer(this)
-        this.idleTimer.start()
+        // S1：错误状态下不启动 idleTimer。
+        // 错误意味着本轮已损坏（context 可能是不完整状态），266s 后触发压缩只会
+        // 把损坏内容发给模型烧 token，且压缩后状态可能进一步污染下一次对话。
+        // 用户回来时应主动 sendMessage 触发新一轮，而不是后台悄悄压缩。
         return
       }
     }
@@ -724,16 +762,25 @@ export class AgentLoop implements IdleCompactionTarget {
       ...(this.cancelled ? { interrupted: true } : {})
     })
 
-    this.idleTimer ??= new IdleCompressionTimer(this)
-    this.idleTimer.start()
+    // S1：cancel 状态下不启动 idleTimer。
+    // 用户主动取消通常意味着模型走偏，启动后台压缩既浪费 token 又可能在用户
+    // 不知情时改写 context（再次进入会话发现历史已被压缩）。让用户主动发起下一条消息。
+    if (!this.cancelled) {
+      this.idleTimer ??= new IdleCompressionTimer(this)
+      this.idleTimer.start()
+    }
   }
 
   /**
    * 执行上下文压缩
    * 将旧消息发给模型生成摘要，然后用 [system, 摘要, 最近 N 条] 重建上下文。
    * 压缩调用本身复用现有缓存前缀（只追加压缩指令到尾部）。
+   *
+   * @param abortSignal 可选的 abort 信号：传入时会在替换 context 前检查，
+   *   abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息能保留，
+   *   避免之前 prevContext 回滚方案误删用户新消息的 bug（C4+）。
    */
-  private async runCompaction(): Promise<void> {
+  private async runCompaction(abortSignal?: AbortSignal): Promise<void> {
     const systemMsg = this.context.find(m => m.role === 'system')
     const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
 
@@ -772,6 +819,10 @@ export class AgentLoop implements IdleCompactionTarget {
 
     if (!summary.trim()) return
 
+    // 关键：替换 context 前检查 abort，防止压缩期间用户 sendMessage 推入的新消息被覆盖。
+    // runIdleCompaction 会传 abortSignal，主循环（line 436）的 runCompaction 不传。
+    if (abortSignal?.aborted) return
+
     // 重建上下文
     this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages)
     this.compactionLevel++
@@ -785,6 +836,8 @@ export class AgentLoop implements IdleCompactionTarget {
       this.toolRegistry?.getToolDefinitions()
     )
 
+    // onCompaction 回调前再检查一次：abort 后不应触发持久化，避免与主循环状态竞争
+    if (abortSignal?.aborted) return
     // 通知外部持久化压缩态（agentHandler 写回 SessionStore）
     this.config.onCompaction?.(this.context)
   }
@@ -894,6 +947,35 @@ export class AgentLoop implements IdleCompactionTarget {
         entry.reject(new PermissionAbortedError())
         this.pendingPermissions.delete(id)
       }
+    }
+  }
+
+  /**
+   * 彻底释放 AgentLoop 持有的所有资源。
+   *
+   * 与 cancel() 的区别：cancel() 只在 state==='running' 时生效，
+   * 而 dispose() 在 idle 状态下也要清理 idleTimer（否则 266 秒后会触发后台压缩烧 token，
+   * 且 subLoop 对象图无法被 GC）。
+   *
+   * 调用场景：
+   * - taskTool / runSkillFork 的子 agent 执行完后释放（C3）
+   * - agentHandler 创建新 AgentLoop 前 dispose 旧的（I3）
+   */
+  dispose(): void {
+    // 即使 state 不是 running 也要清理 idleTimer：sendMessage 完成后 state===idle，
+    // cancel() 此时是空操作，idleTimer 仍在等待触发后台压缩
+    this.idleTimer?.cancel()
+    this.idleTimer = null
+
+    // 兜底清理 pending permissions（cancel 在 idle 时跳过这一步）
+    for (const [, entry] of this.pendingPermissions) {
+      entry.reject(new PermissionAbortedError())
+    }
+    this.pendingPermissions.clear()
+
+    // 如果还在 running，也走 cancel 流程触发 onCancel hook
+    if (this.state === 'running') {
+      this.cancel()
     }
   }
 
@@ -1108,15 +1190,14 @@ export class AgentLoop implements IdleCompactionTarget {
   /**
    * @internal 供 IdleCompressionTimer 调用。
    *
-   * 压缩前快照 this.context，abort 时恢复快照。
-   * runCompaction() 本身不会修改 this.context（它构建局部 compactionContext 调模型），
-   * 只有成功路径的 rebuildWithCompression 才会替换。所以 abort/异常时只需恢复快照即可。
+   * abort 时不回滚 context：依赖 runCompaction 在替换 context 前检查 abortSignal，
+   * abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息自然保留，
+   * 避免之前 prevContext 回滚方案把并发推入的新消息一并回滚掉的 bug（C4+）。
    *
    * 独立 AbortController 通过 signal 转发与 timer 的 abort 联动，
    * 不与主循环的 abortController 混用，避免 cancel 时误杀正常 LLM 调用。
    */
   async runIdleCompaction(abortSignal: AbortSignal): Promise<void> {
-    const prevContext = [...this.context]
     const prevAbortController = this.abortController
     const prevCancelled = this.cancelled
     const prevOverflowFlag = this.compressingForOverflow
@@ -1127,13 +1208,9 @@ export class AgentLoop implements IdleCompactionTarget {
       abortSignal.addEventListener('abort', onAbort, { once: true })
       this.cancelled = false
       this.compressingForOverflow = false
-      await this.runCompaction()
+      await this.runCompaction(abortSignal)
     } finally {
       abortSignal.removeEventListener('abort', onAbort)
-      // abort 时回滚：恢复压缩前的上下文，防止 sendMessage 并发推入的用户消息被误删
-      if (abortSignal.aborted) {
-        this.context = prevContext
-      }
       this.abortController = prevAbortController
       this.cancelled = prevCancelled
       this.compressingForOverflow = prevOverflowFlag

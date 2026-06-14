@@ -3,14 +3,16 @@ import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { bashTool } from '../../../../src/runtime/tools/bashTool'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 
 const WORKSPACE = process.cwd()
 const checkpointSpy = vi.spyOn(CheckpointManager.prototype, 'recordBashChange')
 
+/** 测试用 readState：bash 不写入 readState，但 ToolContext 要求该字段（I1） */
 function createContext(): ToolContext {
-  return { workingDir: WORKSPACE }
+  return { workingDir: WORKSPACE, readState: createReadState() }
 }
 
 function shellEscapePath(filePath: string): string {
@@ -108,7 +110,7 @@ describe('bashTool', () => {
     // 启动命令后立即取消
     const promise = bashTool.execute(
       { command: longCmd },
-      { workingDir: WORKSPACE, abortSignal: controller.signal }
+      { workingDir: WORKSPACE, readState: createReadState(), abortSignal: controller.signal }
     )
     // 给命令一点启动时间，然后取消
     await new Promise(r => setTimeout(r, 100))
@@ -131,7 +133,7 @@ describe('bashTool', () => {
     try {
       const promise = bashTool.execute(
         { command: delayedWriteCommand },
-        { workingDir: WORKSPACE, abortSignal: controller.signal }
+        { workingDir: WORKSPACE, readState: createReadState(), abortSignal: controller.signal }
       )
       await new Promise(r => setTimeout(r, 100))
       controller.abort()
@@ -197,11 +199,19 @@ describe('bashTool', () => {
     try {
       const result = await bashTool.execute(
         { command: mutateCommand },
-        { workingDir: tempDir, checkpointManager: manager }
+        { workingDir: tempDir, readState: createReadState(), checkpointManager: manager }
       )
 
       expect(result.success).toBe(true)
-      expect(checkpointSpy).toHaveBeenCalledWith(filePath, originalContent, false)
+      // C2 修复后 recordBashChange 接收 Buffer 而非 string，避免 utf8 编码损坏二进制文件。
+      // snapshot.ts 会跳过 >10MB 文件的 content（这里 120KB 仍会被完整拷贝），
+      // 所以备份 Buffer 应等于原始内容。用 Buffer.from + equals 比对，不依赖字符串。
+      expect(checkpointSpy).toHaveBeenCalledTimes(1)
+      const [calledPath, calledContent, calledIsNew] = checkpointSpy.mock.calls[0]
+      expect(calledPath).toBe(filePath)
+      expect(calledIsNew).toBe(false)
+      expect(Buffer.isBuffer(calledContent)).toBe(true)
+      expect((calledContent as Buffer).equals(Buffer.from(originalContent, 'utf8'))).toBe(true)
     } finally {
       manager.endMessage()
       rmSync(tempDir, { recursive: true, force: true })
@@ -221,7 +231,7 @@ describe('bashTool', () => {
       const cmd = `node -e "require('fs').writeFileSync('marker.txt', 'ok')"`
       const result = await bashTool.execute(
         { command: cmd, workdir: 'sub' },
-        { workingDir: tempDir }
+        { workingDir: tempDir, readState: createReadState() }
       )
       expect(result.success).toBe(true)
       expect(existsSync(markerPath)).toBe(true)
@@ -254,5 +264,52 @@ describe('bashTool', () => {
   it('bashTool.description 包含当前 shell 信息', () => {
     expect(bashTool.description).toBeTruthy()
     expect(bashTool.description.length).toBeGreaterThan(50)
+  })
+
+  // ── C5 回归：workdir 边界校验 ────────────────────────
+
+  it('workdir 越界（绝对路径）被拒绝', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-workdir-escape-'))
+    try {
+      const outside = process.platform === 'win32' ? 'C:\\Windows' : '/etc'
+      const result = await bashTool.execute(
+        { command: 'echo hi', workdir: outside },
+        { workingDir: tempDir, readState: createReadState() }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('逃逸')
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('workdir 越界（.. 相对路径）被拒绝', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-workdir-dotdot-'))
+    try {
+      const result = await bashTool.execute(
+        { command: 'echo hi', workdir: '../../..' },
+        { workingDir: tempDir, readState: createReadState() }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('逃逸')
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('workdir 合法子目录允许执行', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-workdir-ok-'))
+    try {
+      const subDir = join(tempDir, 'sub')
+      const { mkdirSync } = await import('fs')
+      mkdirSync(subDir, { recursive: true })
+      const result = await bashTool.execute(
+        { command: 'node -e "process.exit(0)"', workdir: 'sub' },
+        { workingDir: tempDir, readState: createReadState() }
+      )
+      expect(result.success).toBe(true)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })

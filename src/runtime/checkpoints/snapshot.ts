@@ -8,6 +8,8 @@
  * - 大目录继续跳过，避免把 node_modules / dist 整体扫进来
  * - 不再按文件大小忽略内容快照。只要文件在工作区边界内，
  *   就应该被审查和回退能力覆盖；否则会出现“bash 改了但 UI 看不到”的漏洞。
+ * - content 用 Buffer 而非 string 存储，二进制安全（修复 utf-8 强制解码损坏 PNG / 字体等）
+ * - 超过 MAX_SNAPSHOT_FILE_SIZE 的文件不读 content，只记 mtime，避免内存爆炸
  */
 import { readdirSync, statSync, readFileSync } from 'fs'
 import { join, relative } from 'path'
@@ -18,8 +20,21 @@ const SKIP_DIRS = new Set([
   '__pycache__', '.next', 'target', '.cache', '.nova'
 ])
 
+/**
+ * 单文件内容快照大小上限。
+ * 超过该值的文件只记 mtime（用于检测变化），不读 content 到内存：
+ * - 避免巨大产物（如编译输出）一次性吃满内存
+ * - 这类大文件即使被 bash 改了，按字节回退也不实际
+ */
+const MAX_SNAPSHOT_FILE_SIZE = 10 * 1024 * 1024  // 10MB
+
 export interface FileSnapshot {
-  content: string
+  /**
+   * 文件字节内容（二进制安全）。
+   * 超大文件（>MAX_SNAPSHOT_FILE_SIZE）跳过内容读取，content 为 undefined。
+   * 这种情况下无法回退，但 mtime 仍可用于检测变化。
+   */
+  content?: Buffer
   mtimeMs: number
   size: number
 }
@@ -88,7 +103,13 @@ function walk(root: string, dir: string, snapshot: WorkspaceSnapshot): void {
       try {
         const stat = statSync(fullPath)
         const relPath = relative(root, fullPath).replace(/\\/g, '/')
-        const content = readFileSync(fullPath, 'utf-8')
+        // 超大文件：只记 mtime 不读 content，避免内存爆炸
+        if (stat.size > MAX_SNAPSHOT_FILE_SIZE) {
+          snapshot.set(relPath, { mtimeMs: stat.mtimeMs, size: stat.size })
+          continue
+        }
+        // 用 Buffer 读，二进制安全（修复 utf-8 强制解码损坏）
+        const content = readFileSync(fullPath)
         snapshot.set(relPath, { content, mtimeMs: stat.mtimeMs, size: stat.size })
       } catch { continue }
     }

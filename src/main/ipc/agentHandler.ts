@@ -42,12 +42,30 @@ import { discoverProjectRules } from '../../runtime/agent/projectRulesDiscovery'
 import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../runtime/tools/taskTool'
 import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBridge'
+import { createReadState, type ReadState } from '../../runtime/tools/editTool'
 import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
+
+/**
+ * 主 readState：跨多次 SEND_MESSAGE 复用，记录"模型已读过的文件"。
+ *
+ * 每次新建 AgentLoop 时通过 setReadState 注入，使得同一会话连发多条消息时
+ * 第二条消息能继续享受第一条消息的 read 状态（否则 edit 会陷入
+ * "File has not been read yet" 循环）。
+ *
+ * Sub agent（task / skill fork）通过 cloneReadState 拿深拷贝，不污染此实例。
+ * 会话切换 / 创建 / 回退时由 sessionHandler 显式 clear。
+ */
+const mainReadState: ReadState = createReadState()
+
+/** 暴露给 sessionHandler：会话切换/创建/回退时清空 readState，避免跨会话污染 */
+export function getMainReadState(): ReadState {
+  return mainReadState
+}
 
 const VERIFICATION_PERMISSION_TIMEOUT_MS = 30_000
 
@@ -192,6 +210,13 @@ export function registerAgentHandler(
       .map(t => `- ${t.name}: ${t.description.split('\n')[0]}`)
       .join('\n')
 
+    // 创建新 loop 前先释放旧 loop 的资源（I3）：
+    // 旧 loop 即使本轮已结束，idleTimer（266 秒后台压缩）仍在运行，
+    // 且 pending permissions 可能持有未决 promise。dispose 会一并清理。
+    if (agentLoop) {
+      agentLoop.dispose()
+    }
+
     agentLoop = new AgentLoop(modelClient, eventBus, {
       systemPromptLayers: {
         agentRole: frozenPrompt,
@@ -205,23 +230,50 @@ export function registerAgentHandler(
       onCompaction: (compactedContext) => {
         // 将压缩后的上下文写回 session，保证跨轮次持久化
         const compactedSession = sessionStore.load(params.sessionId)
-        if (!compactedSession) return
+        if (!compactedSession) {
+          console.error(`[onCompaction] sessionStore 找不到会话 ${params.sessionId}，压缩结果未持久化`)
+          return
+        }
+
+        // ChatMessage 中工具结果以独立 tool 消息（role:'tool' + toolCallId）携带，
+        // 而 SessionMessage 的运行时持久化结构是 SessionToolCall.result 字段。
+        // 这里把独立 tool 消息的内容合并回对应 assistant.toolCalls[i].result，
+        // 让压缩后 session 与 saveAssistantMessage 持久化路径结构一致。
+        // 否则重启加载时 contextBuilder 走 toolCalls[i].result 分支会全部跳过，
+        // 既丢失工具结果，也可能触发 OpenAI 协议要求 tool_calls 必须有对应 tool message 的 400。
+        const toolResults = new Map<string, string>()
+        for (const m of compactedContext) {
+          if (m.role === 'tool' && m.toolCallId) {
+            toolResults.set(m.toolCallId, extractTextFromSerializableContent(m.content))
+          }
+        }
 
         const compactedMessages: SessionMessage[] = compactedContext
-          .filter(m => m.role !== 'system')
-          .map((m, idx) => ({
-            id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
-            role: m.role as SessionMessage['role'],
-            content: extractTextFromSerializableContent(m.content),
-            toolCalls: m.toolCalls?.map(tc => ({
-              id: tc.id,
-              name: tc.name,
-              arguments: tc.arguments,
-              result: undefined
-            })),
-            toolCallId: m.toolCallId,
-            timestamp: Date.now()
-          }))
+          // 过滤掉独立 tool 消息：内容已合并到对应 assistant.toolCalls[i].result
+          .filter(m => m.role !== 'system' && m.role !== 'tool')
+          .map((m, idx) => {
+            const msg: SessionMessage = {
+              id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
+              role: m.role as SessionMessage['role'],
+              content: extractTextFromSerializableContent(m.content),
+              toolCallId: m.toolCallId,
+              timestamp: Date.now()
+            }
+
+            if (m.toolCalls && m.toolCalls.length > 0) {
+              msg.toolCalls = m.toolCalls.map(tc => {
+                const result = toolResults.get(tc.id)
+                return {
+                  id: tc.id,
+                  name: tc.name,
+                  arguments: tc.arguments,
+                  ...(result !== undefined ? { result } : {})
+                }
+              })
+            }
+
+            return msg
+          })
 
         compactedSession.messages = compactedMessages
         sessionStore.save(compactedSession)
@@ -265,6 +317,9 @@ export function registerAgentHandler(
     agentLoop.setMode(session.mode)
     // 注入会话上下文：todo_write 工具通过它写会话元数据
     agentLoop.setSessionContext(sessionStore, params.sessionId)
+    // 注入主 readState：跨多次 SEND_MESSAGE 复用，使得同一会话连发消息时
+    // 第二条消息能继续享受第一条消息的 read 状态（I1 实例化）
+    agentLoop.setReadState(mainReadState)
 
     const checkpointManager = new CheckpointManager({
       checkpointDir: sessionsDir,

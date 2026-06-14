@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { AgentLoop } from '../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../src/runtime/agent/EventBus'
+import { IdleCompressionTimer } from '../../../src/runtime/agent/IdleCompressionTimer'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
@@ -1115,5 +1116,97 @@ describe('AgentLoop', () => {
     expect(String(userFollowUp?.content)).toContain('请按上述技能指令执行')
 
     rmSync(skillsDir, { recursive: true, force: true })
+  })
+
+  // ── S1 回归：error / overflow 路径不应启动 idleTimer ────────
+
+  it('S1: 模型 error 后不启动 idleTimer', async () => {
+    const startSpy = vi.spyOn(IdleCompressionTimer.prototype, 'start')
+    const cancelSpy = vi.spyOn(IdleCompressionTimer.prototype, 'cancel')
+
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'error', error: '模拟模型内部错误' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+    await loop.sendMessage('trigger error')
+
+    // 模型 error 后最终态为 error
+    expect(loop.getState()).toBe('error')
+    // idleTimer.start 必须未被调用（S1 关键断言）
+    expect(startSpy).not.toHaveBeenCalled()
+
+    startSpy.mockRestore()
+    cancelSpy.mockRestore()
+  })
+
+  it('S1: context_overflow 最终失败后不启动 idleTimer', async () => {
+    const startSpy = vi.spyOn(IdleCompressionTimer.prototype, 'start')
+    const cancelSpy = vi.spyOn(IdleCompressionTimer.prototype, 'cancel')
+
+    const client = new MockModelClient()
+    // 反复触发 context_overflow，让 recovery 走到 failed 路径
+    // 第一次：触发 overflow，进入重试
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+    // 第二次：再 overflow，达到重试上限后 failed
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+    // 兜底：万一 recovery 仍想重试，再补几条
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'context_overflow', rawError: 'context length exceeded' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+    await loop.sendMessage('trigger overflow')
+
+    // 无论 recovery 怎么决策，最终态必须是 error（不能是 idle）
+    expect(loop.getState()).toBe('error')
+    expect(startSpy).not.toHaveBeenCalled()
+
+    startSpy.mockRestore()
+    cancelSpy.mockRestore()
+  })
+
+  it('S1: 正常完成后仍然启动 idleTimer（基线，防止误改正常路径）', async () => {
+    const startSpy = vi.spyOn(IdleCompressionTimer.prototype, 'start')
+
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'done' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+    await loop.sendMessage('normal flow')
+
+    expect(loop.getState()).toBe('idle')
+    expect(startSpy).toHaveBeenCalled()
+
+    startSpy.mockRestore()
   })
 })

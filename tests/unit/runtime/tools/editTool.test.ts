@@ -1,23 +1,30 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, statSync, utimesSync } from 'fs'
 import { join } from 'path'
-import { editTool } from '../../../../src/runtime/tools/editTool'
+import { editTool, createReadState } from '../../../../src/runtime/tools/editTool'
 import { readTool } from '../../../../src/runtime/tools/readTool'
 import { writeTool } from '../../../../src/runtime/tools/writeTool'
-import { readState } from '../../../../src/runtime/tools/editTool'
 import { encodeFile } from '../../../../src/runtime/tools/editDiff'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 
 const TMP = join(process.cwd(), '.test-workspace-edit')
 
+/**
+ * 测试用 readState：单文件作用域，beforeEach 中重建。
+ * 同一个 it 内多次 createContext 共享同一份 readState，使得
+ * 「先 read 后 edit」的链路能在测试里跑通（与生产环境同一 AgentLoop 实例
+ * 跨工具调用共享 readState 的行为对齐）。
+ */
+let testReadState = createReadState()
+
 function createContext(overrides?: Partial<ToolContext>): ToolContext {
-  return { workingDir: TMP, ...overrides }
+  return { workingDir: TMP, readState: testReadState, ...overrides }
 }
 
 describe('editTool 集成测试', () => {
   beforeEach(() => {
     mkdirSync(TMP, { recursive: true })
-    readState.clear()
+    testReadState = createReadState()
   })
 
   afterEach(() => {
@@ -343,6 +350,63 @@ describe('editTool 集成测试', () => {
       expect(readFileSync(join(TMP, 'CaseTest.ts'), 'utf-8')).toContain('const a = 2')
     }
   )
+
+  // ── I1 回归：readState 实例隔离 ──────────────────────────────
+
+  it('两个独立 readState 互不污染（A 读不影响 B 的 edit 校验）', async () => {
+    writeFileSync(join(TMP, 'iso_a.txt'), 'content A\n')
+    writeFileSync(join(TMP, 'iso_b.txt'), 'content B\n')
+
+    // A readState：读 iso_a.txt
+    const readStateA = createReadState()
+    await readTool.execute(
+      { path: 'iso_a.txt' },
+      { workingDir: TMP, readState: readStateA }
+    )
+    // B readState：空，从未读
+    const readStateB = createReadState()
+
+    // 用 A 的 readState edit iso_a.txt → 应该成功
+    const okResult = await editTool.execute(
+      {
+        filePath: 'iso_a.txt',
+        edits: [{ oldText: 'content A', newText: 'A was edited' }]
+      },
+      { workingDir: TMP, readState: readStateA }
+    )
+    expect(okResult.success).toBe(true)
+
+    // 用 B 的 readState edit iso_b.txt → 应该失败 "File has not been read"
+    const failResult = await editTool.execute(
+      {
+        filePath: 'iso_b.txt',
+        edits: [{ oldText: 'content B', newText: 'B was edited' }]
+      },
+      { workingDir: TMP, readState: readStateB }
+    )
+    expect(failResult.success).toBe(false)
+    expect(failResult.error).toContain('not been read')
+  })
+
+  it('readState.clone() 产生独立副本（修改 clone 不影响原始）', async () => {
+    writeFileSync(join(TMP, 'clone_test.txt'), 'hello\n')
+    const parent = createReadState()
+    await readTool.execute(
+      { path: 'clone_test.txt' },
+      { workingDir: TMP, readState: parent }
+    )
+
+    const child = parent.clone()
+    // 子副本读到的文件应该与父副本一致（继承）
+    const absPath = join(TMP, 'clone_test.txt')
+    expect(child.get(absPath)).toBeDefined()
+    expect(child.get(absPath)!.content).toBe('hello\n')
+
+    // 修改子副本不影响父副本（隔离）
+    child.set(absPath, { content: 'modified', timestamp: 999 })
+    expect(parent.get(absPath)!.content).toBe('hello\n')
+    expect(child.get(absPath)!.content).toBe('modified')
+  })
 
   it('write 创建文件后可直接 edit，无需再次 read（write 回种 readState）', async () => {
     // write 工具写出文件后应回种 readState，避免模型陷入

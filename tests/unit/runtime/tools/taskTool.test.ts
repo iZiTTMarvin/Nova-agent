@@ -3,6 +3,7 @@ import { createTaskTool } from '../../../../src/runtime/tools/taskTool'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { SUB_PERMISSION_PREFIX, SubAgentPermissionBridge } from '../../../../src/runtime/tools/subAgentBridge'
 
@@ -19,7 +20,7 @@ function baseRegistry(): ToolRegistry {
   return reg
 }
 
-const ctx: ToolContext = { workingDir: process.cwd() }
+const ctx: ToolContext = { workingDir: process.cwd(), readState: createReadState() }
 
 describe('taskTool', () => {
   it('未知子代理类型返回错误', async () => {

@@ -11,7 +11,6 @@ import { readFile as asyncReadFile, stat as asyncStat } from 'fs/promises'
 import { extname } from 'path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
-import { readState } from './editTool'
 import { decodeFileBuffer } from './editDiff'
 import { detectImageMimeTypeFromFile } from './mime'
 import { resizeImage, formatDimensionNote } from './image-resize'
@@ -322,7 +321,7 @@ export const readTool: ToolExecutor = {
       // 而非全量文件内容，避免 readState 过大。
       // 截断只影响展示，不影响后续编辑校验。
       const readStateContent = slicedLines.join('\n')
-      readState.set(absolutePath, {
+      context.readState.set(absolutePath, {
         content: readStateContent,
         timestamp: fileStat.mtimeMs,
       })

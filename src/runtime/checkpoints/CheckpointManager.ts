@@ -160,13 +160,13 @@ export class CheckpointManager {
    * 因为 bash 已经修改了工作区文件，无法再从磁盘读取原始内容。
    *
    * @param absoluteFilePath 文件绝对路径
-   * @param originalContent bash 执行前的文件内容
+   * @param originalContent bash 执行前的文件内容（Buffer 二进制安全，或 string）
    * @param isNewFile bash 是否新建了该文件
    * @param isDeleted bash 是否删除了该文件
    */
   recordBashChange(
     absoluteFilePath: string,
-    originalContent: string,
+    originalContent: Buffer | string,
     isNewFile: boolean,
     isDeleted: boolean = false
   ): void {
@@ -190,7 +190,8 @@ export class CheckpointManager {
       mkdirSync(filesDir, { recursive: true })
       const backupPath = join(filesDir, relPath)
       mkdirSync(dirname(backupPath), { recursive: true })
-      writeFileSync(backupPath, originalContent, 'utf8')
+      // 不带 encoding：Buffer 字节级写入，二进制安全
+      writeFileSync(backupPath, originalContent)
       if (!manifest.deletedFiles.includes(relPath)) {
         manifest.deletedFiles.push(relPath)
       }
@@ -203,7 +204,8 @@ export class CheckpointManager {
       mkdirSync(filesDir, { recursive: true })
       const backupPath = join(filesDir, relPath)
       mkdirSync(dirname(backupPath), { recursive: true })
-      writeFileSync(backupPath, originalContent, 'utf8')
+      // 不带 encoding：Buffer 字节级写入，二进制安全
+      writeFileSync(backupPath, originalContent)
       if (!manifest.modifiedFiles.includes(relPath)) {
         manifest.modifiedFiles.push(relPath)
       }

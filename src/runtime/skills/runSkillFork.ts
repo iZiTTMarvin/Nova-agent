@@ -108,6 +108,8 @@ export async function runSkillFork(
   if (ctx.shellPath || ctx.binDirs) {
     subLoop.setBashEnvironment({ shellPath: ctx.shellPath, binDirs: ctx.binDirs })
   }
+  // 隔离 readState：sub agent 拿主 readState 的深拷贝，避免它读过的文件污染主 agent 后续 edit 校验（I1）。
+  subLoop.setReadState(ctx.readState.clone())
 
   const task = args.trim() || '按技能说明执行'
   try {
@@ -115,6 +117,9 @@ export async function runSkillFork(
   } finally {
     unsub()
     defaultSubAgentPermissionBridge.clearForLoop(subLoop)
+    // 释放 subLoop 资源：cancel() 在 idle 时空操作，dispose 才能停掉 idleTimer，
+    // 避免 266 秒后技能子代理的 IdleCompressionTimer 触发后台压缩烧 token
+    subLoop.dispose()
   }
 
   if (!summary.trim()) {

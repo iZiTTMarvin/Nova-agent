@@ -10,7 +10,7 @@
  * 6. 工具描述按 shell 平台动态生成（参见 prompt.ts）
  * 7. 默认执行后端可替换：通过 `BashOperations` 接口注入（便于测试 / 远程执行）
  */
-import { resolve } from 'path'
+import { resolve, relative, isAbsolute } from 'path'
 import type { ChildProcess } from 'child_process'
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import { snapshotWorkspace, snapshotMtimes, diffSnapshots } from '../../checkpoints/snapshot'
@@ -100,7 +100,12 @@ export const bashTool: ToolExecutor = {
     }
 
     const { command, timeoutMs, workdir } = params
-    const cwd = resolveWorkdir(context.workingDir, workdir)
+    let cwd: string
+    try {
+      cwd = resolveWorkdir(context.workingDir, workdir)
+    } catch (e) {
+      return { success: false, output: '', error: (e as Error).message }
+    }
 
     const shellConfig = getShellConfig(context.shellPath)
     const env = getShellEnv(context.binDirs ?? [])
@@ -224,9 +229,16 @@ function parseBashParams(args: Record<string, unknown>):
 
 function resolveWorkdir(workingDir: string, workdir: string | undefined): string {
   if (!workdir) return workingDir
-  // path.resolve 在传入绝对路径时会直接返回该绝对路径（忽略前面的 workingDir），
-  // 与传入相对路径时的"拼接"行为不同但结果正确。这里统一走 resolve。
-  return resolve(workingDir, workdir)
+  // 边界校验：workdir 解析后必须仍在 workingDir 内，
+  // 防止 workdir='/etc' 或 '../../..' 逃逸工作区造成破坏。
+  // 注：path.relative 在 Windows 上对盘符大小写不敏感（C:\ 与 c:\ 视为同盘），
+  // 因此无需对盘符大小写做特殊处理。
+  const resolved = resolve(workingDir, workdir)
+  const rel = relative(workingDir, resolved)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`workdir "${workdir}" 逃逸工作区边界，已拒绝执行`)
+  }
+  return resolved
 }
 
 function parseTimeout(value: unknown): number {
@@ -252,10 +264,11 @@ function recordCheckpoint(
     )
     for (const relPath of modifiedSet) {
       const entry = beforeSnapshot.get(relPath)
+      // entry.content 可能为 undefined（超大文件跳过内容读取），跳过 backup 但仍记录到 manifest
       if (entry) {
         context.checkpointManager.recordBashChange(
           join(context.workingDir, relPath),
-          entry.content,
+          entry.content ?? Buffer.alloc(0),
           false
         )
       }
@@ -263,7 +276,7 @@ function recordCheckpoint(
     for (const relPath of addedSet) {
       context.checkpointManager.recordBashChange(
         join(context.workingDir, relPath),
-        '',
+        Buffer.alloc(0),
         true
       )
     }
@@ -272,7 +285,7 @@ function recordCheckpoint(
       if (entry) {
         context.checkpointManager.recordBashChange(
           join(context.workingDir, relPath),
-          entry.content,
+          entry.content ?? Buffer.alloc(0),
           false,
           true
         )

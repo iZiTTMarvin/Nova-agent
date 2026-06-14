@@ -54,7 +54,8 @@ export function rejectFile(
       if (!existsSync(targetDir)) {
         mkdirSync(targetDir, { recursive: true })
       }
-      writeFileSync(absFilePath, readFileSync(backupPath), 'utf8')
+      // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+      writeFileSync(absFilePath, readFileSync(backupPath))
     }
     manifest.modifiedFiles = manifest.modifiedFiles.filter(f => f !== relFilePath)
   }
@@ -73,7 +74,8 @@ export function rejectFile(
       if (!existsSync(targetDir)) {
         mkdirSync(targetDir, { recursive: true })
       }
-      writeFileSync(absFilePath, readFileSync(backupPath), 'utf8')
+      // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+      writeFileSync(absFilePath, readFileSync(backupPath))
     }
     manifest.deletedFiles = manifest.deletedFiles.filter(f => f !== relFilePath)
   }
@@ -139,7 +141,8 @@ export function revertToMessage(
         if (!existsSync(targetDir)) {
           mkdirSync(targetDir, { recursive: true })
         }
-        writeFileSync(absPath, readFileSync(backupPath), 'utf8')
+        // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+        writeFileSync(absPath, readFileSync(backupPath))
       }
     }
 
@@ -161,7 +164,8 @@ export function revertToMessage(
         if (!existsSync(targetDir)) {
           mkdirSync(targetDir, { recursive: true })
         }
-        writeFileSync(absPath, readFileSync(backupPath), 'utf8')
+        // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+        writeFileSync(absPath, readFileSync(backupPath))
       }
     }
 

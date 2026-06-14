@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
-import { editTool } from '../../../../src/runtime/tools/editTool'
+import { editTool, createReadState } from '../../../../src/runtime/tools/editTool'
 import { writeTool } from '../../../../src/runtime/tools/writeTool'
 import { readTool } from '../../../../src/runtime/tools/readTool'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
@@ -12,10 +12,13 @@ const CHECKPOINT_ROOT = join(process.cwd(), '.test-writetools-checkpoints')
 const SESSION_ID = 'test-session'
 const MESSAGE_ID = 'msg-001'
 
+/** 测试用 readState：beforeEach 中重建，确保测试间互不影响（与 I1 行为对齐） */
+let testReadState = createReadState()
+
 function createContext(
   withCheckpoint = false
 ): ToolContext & { checkpointManager?: CheckpointManager } {
-  const ctx: ToolContext = { workingDir: TMP }
+  const ctx: ToolContext = { workingDir: TMP, readState: testReadState }
   if (withCheckpoint) {
     const mgr = new CheckpointManager({
       checkpointDir: CHECKPOINT_ROOT,
@@ -35,6 +38,7 @@ describe('写入工具', () => {
     mkdirSync(join(TMP, 'src'), { recursive: true })
     writeFileSync(join(TMP, 'src', 'main.ts'), 'const x = 1\nexport { x }\n')
     rmSync(CHECKPOINT_ROOT, { recursive: true, force: true })
+    testReadState = createReadState()
   })
 
   afterEach(() => {

@@ -13,14 +13,17 @@ import {
   applySafetyTruncation,
   buildContinuationHint,
 } from '../../../../src/runtime/tools/readTool'
-import { readState } from '../../../../src/runtime/tools/editTool'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { encodeFile } from '../../../../src/runtime/tools/editDiff'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 
 const TMP = join(process.cwd(), '.test-workspace-readtool')
 
+/** 测试用 readState：beforeEach 中重建（与 I1 行为对齐） */
+let testReadState = createReadState()
+
 function createContext(overrides?: Partial<ToolContext>): ToolContext {
-  return { workingDir: TMP, ...overrides }
+  return { workingDir: TMP, readState: testReadState, ...overrides }
 }
 
 /** 用 sharp 生成 1×1 PNG */
@@ -40,7 +43,7 @@ async function createTestJpeg(): Promise<Buffer> {
 describe('readTool', () => {
   beforeEach(() => {
     mkdirSync(TMP, { recursive: true })
-    readState.clear()
+    testReadState = createReadState()
   })
 
   afterEach(() => {
@@ -313,7 +316,7 @@ describe('readTool', () => {
       await readTool.execute({ path: 'state.txt' }, createContext())
 
       const absPath = join(TMP, 'state.txt')
-      const state = readState.get(absPath)
+      const state = testReadState.get(absPath)
       expect(state).toBeDefined()
       expect(state!.content).toBe('content for state\nline2\n')
       expect(state!.timestamp).toBeGreaterThan(0)
@@ -435,7 +438,7 @@ describe('readTool', () => {
       )
 
       const absPath = join(TMP, 'statecheck.png')
-      expect(readState.get(absPath)).toBeUndefined()
+      expect(testReadState.get(absPath)).toBeUndefined()
     })
   })
 })

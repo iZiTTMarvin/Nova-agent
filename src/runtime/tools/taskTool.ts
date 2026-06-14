@@ -116,12 +116,20 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
         subLoop.setBashEnvironment({ shellPath: ctx.shellPath, binDirs: ctx.binDirs })
       }
 
+      // 隔离 readState：sub agent 拿主 readState 的深拷贝，
+      // 避免它读过的文件污染主 agent 后续 edit 校验（I1）。
+      // 这里直接用 ctx.readState.clone()（task 工具运行在主 loop 的 ToolContext 中）。
+      subLoop.setReadState(ctx.readState.clone())
+
       // 3. checkpoint 隔离：不注入 checkpointManager
       try {
         await subLoop.sendMessage(task)
       } finally {
         unsub()
         permissionBridge.clearForLoop(subLoop)
+        // 释放 subLoop 资源：cancel() 在 idle 时空操作，dispose 才能停掉 idleTimer，
+        // 避免 266 秒后子 agent 的 IdleCompressionTimer 触发后台压缩烧 token
+        subLoop.dispose()
       }
 
       if (!summary.trim()) {

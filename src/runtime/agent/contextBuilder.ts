@@ -49,13 +49,22 @@ export function buildConversationContext(
       // 每个 toolCall 的 result 恢复为独立的 tool 消息
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
-          if (tc.result !== undefined) {
-            context.push({
-              role: 'tool',
-              content: tc.result,
-              toolCallId: tc.id
-            })
+          if (tc.result === undefined) {
+            // S4 监测点：toolCall 缺失 result 是异常状态（正常路径 saveAssistantMessage
+            // 都会写入 result）。这会导致 OpenAI 协议报 400（tool_calls 缺对应 tool message）。
+            // 历史上 C1（压缩保留工具结果）的 bug 就表现为此处静默跳过——
+            // 加 warning 让类似问题能在日志里第一时间被发现，而不是 API 报错后回查。
+            console.warn(
+              `[contextBuilder] assistant 消息 ${msg.id} 的 toolCall ${tc.id} (${tc.name}) 缺少 result，已跳过对应的 tool 消息。` +
+              ` 可能原因：持久化时未写入（旧版本 bug）/ 压缩回调未合并 result（参考 C1）。`
+            )
+            continue
           }
+          context.push({
+            role: 'tool',
+            content: tc.result,
+            toolCallId: tc.id
+          })
         }
       }
 

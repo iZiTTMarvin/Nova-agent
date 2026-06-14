@@ -27,7 +27,7 @@ import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
-import { readState } from '../../runtime/tools/editTool'
+import { getMainReadState } from './agentHandler'
 
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
@@ -82,7 +82,7 @@ export function registerSessionHandler(): void {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
     // 切换会话时清除先读后改状态，防止跨会话污染
-    readState.clear()
+    getMainReadState().clear()
     // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
     setCurrentProjectPath(data.workspaceRoot)
     setCurrentMode(data.mode)
@@ -93,7 +93,7 @@ export function registerSessionHandler(): void {
   ipcMain.handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
     const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
     // 新建会话时清除先读后改状态，防止跨会话污染
-    readState.clear()
+    getMainReadState().clear()
     // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
     setCurrentProjectPath(params.workspaceRoot)
     setCurrentMode(data.mode)
@@ -212,6 +212,12 @@ export function registerSessionHandler(): void {
       session.updatedAt = Date.now()
       sessionStore.save(session)
     }
+
+    // 4. 清空 readState：磁盘文件已回退到旧版本，readState 里"已读过"的快照
+    // 反映的是回退前的内容，会误导后续 edit 的"外部修改"校验，必须丢弃。
+    // I2 修复：之前的实现只回退 session 数据 + 磁盘文件，readState 仍指向新版本，
+    // 导致用户回退后继续 edit 会得到错误的 stale 判定或悄悄跳过 stale 校验。
+    getMainReadState().clear()
   })
 }
 
