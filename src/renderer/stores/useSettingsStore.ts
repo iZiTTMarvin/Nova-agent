@@ -161,13 +161,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const totalPrompt = prev.totalPromptTokens + usage.promptTokens
       const totalCached = prev.totalCachedTokens + usage.cachedTokens
       const totalCacheWrite = prev.totalCacheWriteTokens + (usage.cacheWriteTokens ?? 0)
+      // Anthropic 总输入 = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+      // promptTokens 已包含 input + cache_read，因此分母需要补上 cache_creation。
+      const totalInput = totalPrompt + totalCacheWrite
       return {
         sessionUsage: {
           totalPromptTokens: totalPrompt,
           totalCompletionTokens: prev.totalCompletionTokens + usage.completionTokens,
           totalCachedTokens: totalCached,
           totalCacheWriteTokens: totalCacheWrite,
-          hitRate: totalPrompt > 0 ? totalCached / totalPrompt : 0
+          hitRate: totalInput > 0 ? totalCached / totalInput : 0
         }
       }
     })

@@ -38,10 +38,10 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
   }
 
   const hitPercent = (sessionUsage.hitRate * 100).toFixed(1)
-  const totalInput = sessionUsage.totalPromptTokens || 1
+  const totalInput = sessionUsage.totalPromptTokens + sessionUsage.totalCacheWriteTokens || 1
   const readRatio = sessionUsage.totalCachedTokens / totalInput
   const writeRatio = sessionUsage.totalCacheWriteTokens / totalInput
-  const totalUsage = sessionUsage.totalPromptTokens + sessionUsage.totalCompletionTokens
+  const totalUsage = sessionUsage.totalPromptTokens + sessionUsage.totalCompletionTokens + sessionUsage.totalCacheWriteTokens
 
   if (variant === 'panel') {
     const rows = [

@@ -87,6 +87,11 @@ export interface SessionUsageStats {
   totalCompletionTokens: number
   totalCachedTokens: number
   totalCacheWriteTokens: number
-  /** 缓存命中率 = totalCachedTokens / totalPromptTokens */
+  /**
+   * 缓存命中率 = totalCachedTokens / (totalPromptTokens + totalCacheWriteTokens)
+   *
+   * Anthropic 总输入 = input_tokens + cache_read_input_tokens + cache_creation_input_tokens。
+   * 其中 promptTokens 已包含前两项，所以分母必须补上 cache_creation_input_tokens。
+   */
   hitRate: number
 }
