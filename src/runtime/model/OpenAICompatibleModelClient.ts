@@ -39,9 +39,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 只需拼接路径后缀 /chat/completions
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
-    // 过滤 internal 消息（如压缩指令）：不发送给 API，保持缓存前缀纯净
-    const apiMessages = messages.filter(m => !m.internal).map(m => this.toApiMessage(m))
+    // 默认过滤 internal 消息，避免把运行时临时提示暴露给普通对话；
+    // 只有像 compaction 这样的受控内部调用，才会显式放行 internal 正文。
+    const selectedMessages = options?.includeInternalMessages
+      ? messages
+      : messages.filter(m => !m.internal)
+    const apiMessages = selectedMessages.map(m => this.toApiMessage(m, true))
     const markedMessages = applyCacheMarkers(apiMessages, this.cacheStrategy)
+      .map(msg => this.stripInternalMarker(msg))
 
     const body: Record<string, unknown> = {
       model: this.config.modelId,
@@ -259,12 +264,20 @@ export class OpenAICompatibleModelClient implements ModelClient {
     yield { type: 'message_end', finishReason: finishReason || 'stop' }
   }
 
-  /** 将内部消息格式转为 API 请求格式（剥离 internal 等内部字段） */
-  private toApiMessage(msg: ChatMessage): Record<string, unknown> {
-    // internal 等内部字段不发送给 API，保持缓存前缀纯净
+  /**
+   * 将内部消息格式转为 API 请求格式。
+   *
+   * preserveInternal=true 时仅在本地缓存标记阶段保留 internal 元数据，
+   * 之后会在真正发请求前统一剥离，不污染 API 字节流。
+   */
+  private toApiMessage(msg: ChatMessage, preserveInternal = false): Record<string, unknown> {
     const result: Record<string, unknown> = {
       role: msg.role,
       content: msg.content
+    }
+
+    if (preserveInternal && msg.internal === true) {
+      result.internal = true
     }
 
     if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -283,5 +296,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
     }
 
     return result
+  }
+
+  /** 在真正发请求前剥离 internal 等本地标记，避免污染 API 消息字节。 */
+  private stripInternalMarker(msg: Record<string, unknown>): Record<string, unknown> {
+    if (!('internal' in msg)) return msg
+    const { internal: _internal, ...rest } = msg
+    return rest
   }
 }

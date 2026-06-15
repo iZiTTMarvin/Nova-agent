@@ -56,7 +56,7 @@ export const findTool: ToolExecutor = {
       },
       path: {
         type: 'string',
-        description: '搜索的起始目录，相对于工作区根目录。默认为工作区根目录。'
+        description: '搜索的起始目录，相对于工作区根目录（绝对路径见 session context）。默认为工作区根目录。'
       }
     },
     required: ['pattern']
@@ -115,10 +115,10 @@ export const findTool: ToolExecutor = {
 
     walkDir(validated.path)
 
-    if (results.length === 0) {
-      return { success: true, output: `未找到匹配 "${pattern}" 的文件` }
-    }
-
-    return { success: true, output: results.join('\n') }
+    // 成功路径（含无匹配）：在工作区绝对路径标头后返回结果（session context 双保险）。
+    const body = results.length === 0
+      ? `未找到匹配 "${pattern}" 的文件`
+      : results.join('\n')
+    return { success: true, output: `[workspace: ${context.workingDir}]\n${body}` }
   }
 }

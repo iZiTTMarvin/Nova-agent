@@ -151,7 +151,8 @@ describe('只读工具', () => {
         createContext()
       )
       expect(result.success).toBe(true)
-      const lines = result.output.split('\n').filter(l => l.length > 0)
+      // 输出以 [workspace: ...] 标头开头（session context 双保险），统计时排除标头行
+      const lines = result.output.split('\n').filter(l => l.length > 0 && !l.startsWith('[workspace:'))
       expect(lines.length).toBeLessThanOrEqual(2)
     })
   })

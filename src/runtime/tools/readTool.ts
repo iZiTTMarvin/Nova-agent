@@ -147,7 +147,7 @@ export const readTool: ToolExecutor = {
     properties: {
       path: {
         type: 'string',
-        description: '要读取的文件路径，相对于工作区根目录。',
+        description: '要读取的文件路径，相对于工作区根目录（绝对路径见 session context）。',
       },
       offset: {
         type: 'number',
@@ -301,7 +301,8 @@ export const readTool: ToolExecutor = {
           : allLines.slice(paramOffset)
 
       if (slicedLines.length === 0) {
-        return { success: true, output: '' }
+        // 空结果也加 workspace 标头（session context 双保险，与其他读类工具一致）
+        return { success: true, output: `[workspace: ${context.workingDir}]\n` }
       }
 
       // ── 安全截断 ──
@@ -326,7 +327,8 @@ export const readTool: ToolExecutor = {
         timestamp: fileStat.mtimeMs,
       })
 
-      return { success: true, output: linesText + hint }
+      // 成功路径：在工作区绝对路径标头后返回内容（session context 的双保险）。
+      return { success: true, output: `[workspace: ${context.workingDir}]\n${linesText}${hint}` }
     } catch (err) {
       const nodeErr = err as NodeJS.ErrnoException & Error
       if (nodeErr.code === 'ENOENT') {

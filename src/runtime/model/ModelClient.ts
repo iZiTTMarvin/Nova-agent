@@ -8,6 +8,11 @@ import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from '
 export interface ChatOptions {
   /** 取消信号，触发时中断上游模型请求 */
   abortSignal?: AbortSignal
+  /**
+   * 仅用于受控内部调用（如上下文压缩）：
+   * 允许把 internal 消息的正文发送给模型，但 internal 标记本身仍不会进入 API 请求体。
+   */
+  includeInternalMessages?: boolean
 }
 
 export interface ModelClient {

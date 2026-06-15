@@ -17,7 +17,7 @@ export const lsTool: ToolExecutor = {
     properties: {
       path: {
         type: 'string',
-        description: '要列出的目录路径，相对于工作区根目录。默认为当前目录。'
+        description: '要列出的目录路径，相对于工作区根目录（绝对路径见 session context）。默认为当前目录。'
       }
     }
   },
@@ -45,11 +45,11 @@ export const lsTool: ToolExecutor = {
         }
       }
 
-      if (lines.length === 0) {
-        return { success: true, output: '(空目录)' }
-      }
-
-      return { success: true, output: lines.join('\n') }
+      // 成功路径（含空目录）：在最前面加工作区绝对路径标头（session context 双保险），
+      // 让模型即便不读 [Session context] 也能从工具结果拿到绝对路径锚点。
+      // 失败 / 错误路径不加，避免污染错误诊断。
+      const body = lines.length === 0 ? '(空目录)' : lines.join('\n')
+      return { success: true, output: `[workspace: ${context.workingDir}]\n${body}` }
     } catch (err) {
       return { success: false, output: '', error: `无法读取目录: ${(err as Error).message}` }
     }

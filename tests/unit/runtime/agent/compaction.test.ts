@@ -176,6 +176,11 @@ describe('compaction', () => {
       const prompt = buildCompactionPrompt(10)
       expect(prompt).toContain('摘要')
     })
+
+    it('要求摘要显式保留工作区绝对路径', () => {
+      const prompt = buildCompactionPrompt(10)
+      expect(prompt).toContain('Working directory')
+    })
   })
 
   describe('rebuildWithCompression', () => {

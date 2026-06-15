@@ -35,8 +35,9 @@ export interface ChatMessage {
    * 内部消息标记（参考 OpenClacky 的 system_injected 机制）
    * 标记为 internal 的消息：
    * - 不被缓存标记选择器标记（不注入 cache_control）
-   * - 发送给 API 前剥离此字段，不污染 API 侧的消息字节
-   * 适用场景：压缩指令、会话上下文注入等动态信息
+   * - 默认不会发送给 API；但受控内部调用（如上下文压缩）可显式放行正文
+   * - 无论是否放行正文，internal 字段本身都会在序列化时被剥离
+   * 适用场景：压缩指令、运行时临时提示等动态信息
    */
   internal?: boolean
 }

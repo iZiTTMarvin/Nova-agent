@@ -91,6 +91,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
     const modelMessages = calls[0].messages
 
     // system prompt + 第一轮历史 + 第二轮历史 + 第三轮用户消息
+    // 注：session context（合并方案）拼在最后一条 user 消息 content 前缀，不增加消息条数
     expect(modelMessages[0].role).toBe('system')
     expect(modelMessages[1]).toEqual({ role: 'user', content: '第一轮问题' })
     expect(modelMessages[2]).toEqual({
@@ -102,9 +103,11 @@ describe('入口级集成测试：agentHandler wiring', () => {
     expect(modelMessages[4]).toEqual({ role: 'user', content: '第二轮问题' })
     expect(modelMessages[5]).toEqual({ role: 'assistant', content: '已找到。' })
     expect(modelMessages[6].role).toBe('user')
+    // 最后一条 user 消息含 session context 前缀（合并方案）
+    expect(modelMessages[6].content).toContain('[Session context:')
     expect(modelMessages[6].content).toContain('第三轮问题')
 
-    // 总共 7 条消息
+    // 总共 7 条消息（session context 在 user content 前缀里，不单独成条）
     expect(modelMessages).toHaveLength(7)
   })
 
@@ -130,6 +133,8 @@ describe('入口级集成测试：agentHandler wiring', () => {
     const calls = client.getCalls()
     expect(calls[0].messages[0]).toEqual({ role: 'system', content: '助手' })
     expect(calls[0].messages[1].role).toBe('user')
+    // user 消息含 session context 前缀（合并方案）+ 真实输入
+    expect(calls[0].messages[1].content).toContain('[Session context:')
     expect(calls[0].messages[1].content).toContain('你好')
   })
 
@@ -215,7 +220,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
 
     const modelMessages = client.getCalls()[0].messages
 
-    // 应该有完整的 3 轮历史 + 本轮 user
+    // 应该有完整的 3 轮历史 + 本轮 user（session context 拼在最后一条 user 前缀，不单独成条）
     const userMsgs = modelMessages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(4)
 

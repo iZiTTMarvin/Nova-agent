@@ -21,18 +21,18 @@ export class MockModelClient implements ModelClient {
   }
 
   /** 获取所有历史调用 */
-  getCalls(): { messages: ChatMessage[]; tools?: ToolDefinition[] }[] {
+  getCalls(): { messages: ChatMessage[]; tools?: ToolDefinition[]; options?: ChatOptions }[] {
     return this.calls
   }
 
-  private calls: { messages: ChatMessage[]; tools?: ToolDefinition[] }[] = []
+  private calls: { messages: ChatMessage[]; tools?: ToolDefinition[]; options?: ChatOptions }[] = []
 
   async *chat(
     messages: ChatMessage[],
     tools?: ToolDefinition[],
-    _options?: ChatOptions
+    options?: ChatOptions
   ): AsyncIterable<ChatEvent> {
-    this.calls.push({ messages: [...messages], tools: tools ? [...tools] : undefined })
+    this.calls.push({ messages: [...messages], tools: tools ? [...tools] : undefined, options })
 
     const response = this.responses[this.callIndex] ?? { events: [] }
     this.callIndex++

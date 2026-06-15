@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-15
+
+- **fix(agent)**: 收口 session context v4 —— 修复工作区锚点误判、旧会话错误 prompt 迁移与 compaction 提示真实下发
+  - `AgentLoop` 改为按完整 session-context 前缀逐字节比对锚点，只扫描 user 消息，避免 working directory 前缀子串误判与 assistant/tool 回显误命中
+  - `agentHandler` 对已知旧版 `frozenSystemPrompt` 做定点归一化，避免历史会话继续沿用缺失或错误的 session context 文案
+  - `OpenAICompatibleModelClient` 新增受控 `includeInternalMessages` 选项，允许 compaction 临时提示正文进入真实 API，同时继续剥离 `internal` 字段
+- **test**: 补充 session context 跨天重注、前缀路径切换、compaction 真实发送与 legacy prompt 归一化回归测试
+
 ## 2026-06-14
 
 - **fix(agent/checkpoints)**: 全面 bug 修复 15 项（C1–C6 / I1–I5 / S1/S2/S4/S5），覆盖数据丢失、资源泄漏、安全边界、状态隔离四类

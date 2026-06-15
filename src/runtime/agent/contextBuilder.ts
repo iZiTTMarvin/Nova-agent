@@ -29,6 +29,10 @@ export function buildConversationContext(
     // system 消息跳过：由 AgentLoop 构造时的 frozenSystemPrompt 提供
     if (msg.role === 'system') continue
 
+    // 注：session context 不经此路径恢复。合并方案下它只在 sendMessage 运行时
+    // 拼到 user content 前缀，不作为独立消息进 SessionStore。SessionMessage 类型
+    // 本身也不携带 internal 字段，故此处无须过滤。
+
     // thinking 块不进入模型上下文：只恢复 content（纯正文）和 toolCalls
     if (msg.role === 'assistant') {
       const assistantMsg: ChatMessage = {

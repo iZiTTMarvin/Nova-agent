@@ -33,6 +33,7 @@ import type { IdleCompactionTarget } from './IdleCompressionTimer'
 import { HookManager } from './HookManager'
 import { RecoveryStateMachine } from './RecoveryStateMachine'
 import { SystemPromptBuilder } from './SystemPromptBuilder'
+import { buildSessionContext } from './sessionContext'
 import { calculateContextBreakdown } from './contextBreakdownCalculator'
 import type { SkillRegistry } from '../skills/SkillRegistry'
 import { invokeSkill } from '../skills/invokeSkill'
@@ -294,6 +295,8 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 设置工作区路径（工具执行时的边界目录） */
   setWorkingDir(dir: string): void {
     this.workingDir = dir
+    // 无须显式重置 session context：getSessionContextPrefix 扫描 context 时会
+    // 发现旧锚点的 Working directory ≠ 新 dir，自动触发重新拼接。
   }
 
   /**
@@ -426,6 +429,15 @@ export class AgentLoop implements IdleCompactionTarget {
       ? content
       : extractTextFromContent(content)
 
+    // Session context 前缀（合并方案）：只在当前上下文里不存在"仍有效的锚点"时拼接，
+    // 并放到本轮 user 消息 content 最前面。它是真实 user 消息的一部分（不标
+    // internal），模型能真正看到；不落盘（持久化在 agentHandler 中用原始 content，
+    // 早于 sendMessage）。null 表示当前 context 已有有效锚点，跳过。
+    const sessionPrefix = this.getSessionContextPrefix()
+    /** 把 sessionPrefix 拼到一段文本前（prefix 为空时原样返回） */
+    const withPrefix = (text: string): string =>
+      sessionPrefix ? `${sessionPrefix}\n\n${text}` : text
+
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
 
     // 统一 skill 调度：slash inject / fork / system_notice（纯文本且开关开启时）
@@ -477,28 +489,32 @@ export class AgentLoop implements IdleCompactionTarget {
         this.context.push({ role: 'assistant', content: dispatch.assistantContent })
         this.context.push({
           role: 'user',
-          content: `${dispatch.userContent}\n\n${modeInstruction}`
+          content: withPrefix(`${dispatch.userContent}\n\n${modeInstruction}`)
         })
         userText = dispatch.userContent
       } else if (dispatch.kind === 'system_notice') {
         this.context.push({
           role: 'user',
-          content: `${dispatch.text}\n\n${modeInstruction}`
+          content: withPrefix(`${dispatch.text}\n\n${modeInstruction}`)
         })
         userText = dispatch.text
       } else if (dispatch.kind === 'passthrough') {
         this.context.push({
           role: 'user',
-          content: `${content}\n\n${modeInstruction}`
+          content: withPrefix(`${content}\n\n${modeInstruction}`)
         })
       }
     } else {
       // 默认路径：用户消息 + 模式指令
       let userContent: string | ContentBlock[]
       if (typeof content === 'string') {
-        userContent = `${content}\n\n${modeInstruction}`
+        userContent = withPrefix(`${content}\n\n${modeInstruction}`)
       } else {
-        userContent = [...content, { type: 'text', text: modeInstruction }]
+        // ContentBlock[]（含图片）：sessionPrefix 作为首个 text block 插入最前面
+        const blocks = sessionPrefix
+          ? [{ type: 'text' as const, text: sessionPrefix }, ...content, { type: 'text' as const, text: modeInstruction }]
+          : [...content, { type: 'text' as const, text: modeInstruction }]
+        userContent = blocks
       }
       this.context.push({ role: 'user', content: userContent })
     }
@@ -898,7 +914,8 @@ export class AgentLoop implements IdleCompactionTarget {
       ...(needsAssistantBridge
         ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
         : []),
-      // 压缩指令标记为 internal：不标记缓存，发送给 API 前剥离此字段
+      // 压缩指令标记为 internal：跳过缓存标记，但 compaction 调用会显式放行正文，
+      // 让模型真正看到摘要要求；internal 字段本身仍会在序列化层被剥离。
       { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length), internal: true }
     ]
 
@@ -906,7 +923,8 @@ export class AgentLoop implements IdleCompactionTarget {
     let summary = ''
     try {
       const stream = this.modelPool.chat(compactionContext, undefined, {
-        abortSignal: this.abortController?.signal
+        abortSignal: this.abortController?.signal,
+        includeInternalMessages: true
       })
       for await (const event of stream) {
         if (this.cancelled) return
@@ -1227,7 +1245,8 @@ export class AgentLoop implements IdleCompactionTarget {
       // 4. 调用模型获取摘要
       let summary = ''
       const stream = this.modelPool.chat(this.context, undefined, {
-        abortSignal: this.abortController?.signal
+        abortSignal: this.abortController?.signal,
+        includeInternalMessages: true
       })
       for await (const event of stream) {
         if (this.cancelled) {
@@ -1287,6 +1306,83 @@ export class AgentLoop implements IdleCompactionTarget {
     this.cancelled = false
     this.abortController = null
     this.idleTimer?.cancel()
+  }
+
+  /**
+   * 获取本轮 user 消息应拼接的 session context 前缀文本（合并方案）。
+   *
+   * 重注条件（v4 收口）：扫描当前 context，判断是否仍存在"与当前工作区/模型/日期完全一致"
+   * 的 session context 前缀。只要有一条 user 消息仍保留这段前缀，就认为锚点仍在，
+   * 无须重注。这统一处理了所有生命周期场景：
+   * - 同日首轮：context 中无锚点 → 注入
+   * - 同日后续轮：锚点仍在 context 中 → 跳过
+   * - 跨天：旧锚点日期 ≠ today → 重注
+   * - reset() 后：context 被清空 → 无锚点 → 重注
+   * - 压缩后：带前缀的旧消息被摘要吃掉 → 锚点消失 → 重注
+   *
+   * @returns session context 文本，或 null（锚点仍在，跳过）
+   */
+  private getSessionContextPrefix(): string | null {
+    const workingDir = this.workingDir ?? process.cwd()
+    const model = this.modelPool.getActiveProvider().modelId
+    const sessionContext = buildSessionContext({
+      workingDir,
+      model,
+      date: this.getSessionContextDate()
+    })
+
+    // 扫描 context：是否仍保留与"当前工作区 / 当前模型 / 今天"完全一致的锚点
+    if (this.contextHasValidAnchor(sessionContext)) return null
+
+    return sessionContext
+  }
+
+  /**
+   * 检查当前 context 中是否存在"仍然有效的" session context 锚点。
+   *
+   * 判据：
+   * - 仅扫描 user 消息，避免 assistant/tool 回显文本误命中
+   * - 仅看消息开头的 session context 前缀段，避免正文里碰巧出现同样字符串
+   * - 与本轮应生成的完整前缀做逐字节相等比较，避免 workingDir 前缀子串误判
+   *
+   * 这比单纯记日期更健壮，统一处理所有生命周期场景：
+   * - 同日后续轮：锚点仍在 context 中且完全匹配 → 跳过
+   * - 跨天：旧锚点日期 ≠ today → 重注
+   * - reset() 后：context 被清空 → 无锚点 → 重注
+   * - 压缩后：带前缀的旧消息被摘要吃掉 → 锚点消失 → 重注
+   * - setWorkingDir 后：旧锚点路径 ≠ 新 workingDir → 重注
+   */
+  private contextHasValidAnchor(expectedPrefix: string): boolean {
+    return this.context.some(m => {
+      if (m.role !== 'user') return false
+      return this.extractSessionContextPrefix(m.content) === expectedPrefix
+    })
+  }
+
+  /**
+   * 从 user 消息里提取 session context 前缀。
+   *
+   * string 路径用 `\n\n` 分隔前缀与正文；多模态路径则把前缀放在首个 text block。
+   * 单独抽出来可避免 `extractTextFromContent()` 把 text block 全部拼接后，
+   * 把图片消息误判成"整条文本都等于前缀"。
+   */
+  private extractSessionContextPrefix(content: string | ContentBlock[]): string | null {
+    if (typeof content === 'string') {
+      if (!content.startsWith('[Session context:')) return null
+      return content.split('\n\n')[0] ?? content
+    }
+
+    const firstBlock = content[0]
+    if (!firstBlock || firstBlock.type !== 'text') return null
+    return firstBlock.text.startsWith('[Session context:') ? firstBlock.text : null
+  }
+
+  /**
+   * 提供 session context 使用的"当前时间"。
+   * 抽成独立方法便于测试覆盖（例如跨天重注场景可覆写固定日期）。
+   */
+  protected getSessionContextDate(date: Date = new Date()): Date {
+    return date
   }
 
   /**

@@ -37,7 +37,7 @@ import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
 import { extractTextFromSerializableContent } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
-import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
+import { getStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../runtime/agent/modePrompt'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
 import { getSkillService } from '../services/SkillServiceHost'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
@@ -205,11 +205,12 @@ export function registerAgentHandler(
     const capturedWorkspaceRoot = projectPath
     const capturedSessionsDir = sessionsDir
 
-    // 使用会话级冻结的 system prompt，保证前缀稳定（缓存 Harness 核心）
-    const frozenPrompt = session.frozenSystemPrompt ?? getStableSystemPrompt()
+    // 使用会话级冻结的 system prompt，保证前缀稳定（缓存 Harness 核心）。
+    // 对已知错误/过时的旧 prompt 做一次定点归一化，避免历史会话继续沿用错误文案。
+    const frozenPrompt = normalizeFrozenSystemPrompt(session.frozenSystemPrompt ?? getStableSystemPrompt())
 
-    // 如果旧会话还没有冻结的 prompt，回写一份
-    if (!session.frozenSystemPrompt) {
+    // 如果旧会话还没有冻结 prompt，或命中了已知旧版错误 prompt，则回写一份当前稳定版本。
+    if (session.frozenSystemPrompt !== frozenPrompt) {
       session.frozenSystemPrompt = frozenPrompt
       sessionStore.save(session)
     }
@@ -302,8 +303,10 @@ export function registerAgentHandler(
         }
 
         const compactedMessages: SessionMessage[] = compactedContext
-          // 过滤掉独立 tool 消息：内容已合并到对应 assistant.toolCalls[i].result
-          .filter(m => m.role !== 'system' && m.role !== 'tool')
+          // 过滤掉 system（由 frozenSystemPrompt 提供）、独立 tool 消息（内容已合并到
+          // 对应 assistant.toolCalls[i].result）、以及 internal 消息（压缩指令等动态信息，
+          // 不应污染持久化）。注：session context 采用合并方案，不是独立消息，不在此过滤范围内。
+          .filter(m => m.role !== 'system' && m.role !== 'tool' && !m.internal)
           .map((m, idx) => {
             const msg: SessionMessage = {
               id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,

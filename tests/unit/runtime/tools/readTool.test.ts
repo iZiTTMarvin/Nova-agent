@@ -19,6 +19,16 @@ import type { ToolContext } from '../../../../src/runtime/tools/types'
 
 const TMP = join(process.cwd(), '.test-workspace-readtool')
 
+/**
+ * readTool 成功路径会在输出最前面加一行 `[workspace: <abs path>]` 标头
+ * （session context 注入的双保险）。测试断言文件正文内容时需要剥掉这一行。
+ * 仅在 output 以该标头开头时剥离，其余原样返回。
+ */
+function stripWorkspaceHeader(output: string): string {
+  const prefix = `[workspace: ${TMP}]\n`
+  return output.startsWith(prefix) ? output.slice(prefix.length) : output
+}
+
 /** 测试用 readState：beforeEach 中重建（与 I1 行为对齐） */
 let testReadState = createReadState()
 
@@ -57,7 +67,7 @@ describe('readTool', () => {
       writeFileSync(join(TMP, 'hello.txt'), 'hello world\nline2\nline3\n')
       const result = await readTool.execute({ path: 'hello.txt' }, createContext())
       expect(result.success).toBe(true)
-      expect(result.output).toBe('hello world\nline2\nline3\n')
+      expect(stripWorkspaceHeader(result.output)).toBe('hello world\nline2\nline3\n')
     })
 
     it('读取子目录中的文件', async () => {
@@ -72,7 +82,7 @@ describe('readTool', () => {
       writeFileSync(join(TMP, 'empty.txt'), '')
       const result = await readTool.execute({ path: 'empty.txt' }, createContext())
       expect(result.success).toBe(true)
-      expect(result.output).toBe('')
+      expect(stripWorkspaceHeader(result.output)).toBe('')
     })
   })
 
@@ -182,7 +192,7 @@ describe('readTool', () => {
         createContext(),
       )
       expect(result.success).toBe(true)
-      expect(result.output).toBe('line 10\nline 11\nline 12\nline 13\nline 14')
+      expect(stripWorkspaceHeader(result.output)).toBe('line 10\nline 11\nline 12\nline 13\nline 14')
     })
 
     it('offset 超出文件行数返回空结果', async () => {
@@ -192,7 +202,7 @@ describe('readTool', () => {
         createContext(),
       )
       expect(result.success).toBe(true)
-      expect(result.output).toBe('')
+      expect(stripWorkspaceHeader(result.output)).toBe('')
     })
 
     it('只使用 offset 不使用 limit 时从 offset 读到末尾', async () => {
@@ -203,7 +213,7 @@ describe('readTool', () => {
         createContext(),
       )
       expect(result.success).toBe(true)
-      expect(result.output).toBe('line 8\nline 9')
+      expect(stripWorkspaceHeader(result.output)).toBe('line 8\nline 9')
     })
   })
 
@@ -233,8 +243,8 @@ describe('readTool', () => {
         createContext(),
       )
       expect(result.success).toBe(true)
-      // 请求 2000-2499，共 500 行 < 2000，不应截断
-      const outputLines = result.output.split('\n')
+      // 请求 2000-2499，共 500 行 < 2000，不应截断（剥掉 [workspace:] 标头后再统计）
+      const outputLines = stripWorkspaceHeader(result.output).split('\n')
       expect(outputLines.length).toBe(500)
       expect(outputLines[0]).toBe('line 2000')
       expect(outputLines[499]).toBe('line 2499')
@@ -348,7 +358,7 @@ describe('readTool', () => {
       writeFileSync(join(TMP, 'bom.txt'), buf)
       const result = await readTool.execute({ path: 'bom.txt' }, createContext())
       expect(result.success).toBe(true)
-      expect(result.output).toBe('bom content\nline2')
+      expect(stripWorkspaceHeader(result.output)).toBe('bom content\nline2')
       expect(result.output).not.toContain('\uFEFF')
     })
   })

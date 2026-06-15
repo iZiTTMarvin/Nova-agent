@@ -81,12 +81,15 @@ describe('AgentLoop', () => {
     const { loop } = createLoop(client)
     await loop.sendMessage('第一条消息')
 
-    // 第一次调用：system prompt + 用户消息
+    // 第一次调用：system prompt + 用户消息（session context 拼在 user content 前缀）
     const calls = client.getCalls()
     expect(calls).toHaveLength(1)
     expect(calls[0].messages[0].role).toBe('system')
     expect(calls[0].messages[1].role).toBe('user')
-    expect(calls[0].messages[1].content).toContain('第一条消息')
+    // session context 前缀拼在 user 消息 content 中（合并方案，不增加消息条数）
+    expect(typeof calls[0].messages[1].content).toBe('string')
+    expect(calls[0].messages[1].content as string).toContain('[Session context:')
+    expect(calls[0].messages[1].content as string).toContain('第一条消息')
   })
 
   it('连续发送消息，上下文累积增长', async () => {
@@ -113,7 +116,7 @@ describe('AgentLoop', () => {
     await loop.sendMessage('问题2')
 
     const calls = client.getCalls()
-    // 第二次调用：system + user1 + assistant1 + user2
+    // 第二次调用：system + user1（含 session context 前缀） + assistant1 + user2
     expect(calls[1].messages).toHaveLength(4)
     expect(calls[1].messages[2]).toEqual({ role: 'assistant', content: '回复1' })
     expect(calls[1].messages[3].role).toBe('user')
@@ -713,6 +716,7 @@ describe('AgentLoop', () => {
       c.messages.some(m => m.role === 'user' && m.content.includes('请对上面的对话历史'))
     )
     expect(compactionCall).toBeDefined()
+    expect(compactionCall!.options?.includeInternalMessages).toBe(true)
     const messages = compactionCall!.messages
 
     // 找到压缩指令 user 消息

@@ -52,6 +52,7 @@ export function buildCompactionPrompt(recentCount: number): string {
     '请对上面的对话历史生成一份简洁的摘要。',
     '摘要应保留：关键决策、文件修改、工具执行结果、用户意图和当前任务状态。',
     '摘要应丢弃：冗余的思考过程、重复的工具输出、过时的中间状态。',
+    '摘要开头请用一行注明当前工作区绝对路径（Working directory），让后续对话能继续基于该路径操作。',
     `摘要之后，对话将从最近 ${recentCount} 条消息继续。`,
     '请直接输出摘要文本，不要加任何前缀说明。'
   ].join('\n')

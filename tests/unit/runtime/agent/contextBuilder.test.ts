@@ -219,4 +219,37 @@ describe('buildConversationContext', () => {
       toolCallId: 'tc_1'
     })
   })
+
+  describe('session context 与 contextBuilder 的关系（v2 合并方案）', () => {
+    it('contextBuilder 不需要处理 session context：它不作为独立消息进 SessionStore', () => {
+      // v2 合并方案：session context 拼在 user content 前缀（运行时），不落盘。
+      // SessionMessage 类型不携带 internal 字段，contextBuilder 路径根本不会遇到它。
+      // 因此 contextBuilder 无须任何 special-case 过滤——它只做 system 跳过 + tool 结果恢复。
+      const session = makeSession([
+        { id: 'm1', role: 'user', content: 'q1', timestamp: 1 },
+        { id: 'm2', role: 'assistant', content: 'a1', timestamp: 2 }
+      ])
+
+      const result = buildConversationContext(session, 'default')
+      expect(result).toEqual([
+        { role: 'user', content: 'q1' },
+        { role: 'assistant', content: 'a1' }
+      ])
+    })
+
+    it('持久化的 user content 不含 session context 前缀（验证不落盘）', () => {
+      // 即便运行时 user 消息 content 含 [Session context] 前缀，
+      // SessionStore 中保存的是原始用户输入（agentHandler 用 persistContent，
+      // 早于 sendMessage）。contextBuilder 从 SessionStore 恢复时只看到原始输入。
+      const session = makeSession([
+        { id: 'm1', role: 'user', content: '帮我看看 src 目录', timestamp: 1 }
+      ])
+
+      const result = buildConversationContext(session, 'default')
+      // 恢复出的 user 消息是原始输入，不含 session context 前缀
+      expect(result[0].content).toBe('帮我看看 src 目录')
+      expect(typeof result[0].content === 'string' &&
+        result[0].content.includes('[Session context')).toBe(false)
+    })
+  })
 })

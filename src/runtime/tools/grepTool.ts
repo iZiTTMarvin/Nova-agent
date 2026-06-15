@@ -66,7 +66,7 @@ function buildDescription(rgReady: boolean): string {
 
 参数说明：
 - pattern: 搜索模式（自动检测是否为正则，不含元字符时用字面量匹配）
-- path: 搜索起始目录，默认为工作区根目录
+- path: 搜索起始目录，默认为工作区根目录（绝对路径见 session context）
 - output_mode: 输出格式
   - "content"（默认）: 返回 文件:行号: 内容
   - "files_with_matches": 仅返回包含匹配的文件路径
@@ -101,7 +101,7 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
         },
         path: {
           type: 'string',
-          description: '搜索起始目录，默认为工作区根目录'
+          description: '搜索起始目录，默认为工作区根目录（绝对路径见 session context）'
         },
         output_mode: {
           type: 'string',
@@ -169,7 +169,7 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
       }
 
       if (isRgAvailable()) {
-        return executeWithRipgrep(
+        const result = await executeWithRipgrep(
           pattern,
           validated.path,
           context,
@@ -183,9 +183,10 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
           offset,
           multiline
         )
+        return prefixWorkspaceHeader(result, context.workingDir)
       }
 
-      return executeFallback(
+      const result = await executeFallback(
         pattern,
         validated.path,
         context,
@@ -197,8 +198,24 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
         headLimit,
         offset
       )
+      return prefixWorkspaceHeader(result, context.workingDir)
     }
   }
+}
+
+/**
+ * 在 grep 成功结果前加工作区绝对路径标头（session context 双保险）。
+ *
+ * 判断规则（v2 修正）：
+ * - success:true 且无 error → 加标头（含无匹配、"未找到"等所有成功路径）
+ * - success:false 或有 error → 不加（避免污染错误诊断）
+ *
+ * 上一版用 startsWith('未找到匹配') 判断是错误的：fallback 路径会先拼 [回退模式...]
+ * warning，导致 output 永远不以"未找到匹配"开头，所有 fallback 无匹配结果都被误加标头。
+ */
+function prefixWorkspaceHeader(result: ToolResult, workingDir: string): ToolResult {
+  if (!result.success || result.error) return result
+  return { ...result, output: `[workspace: ${workingDir}]\n${result.output ?? ''}` }
 }
 
 async function executeWithRipgrep(
