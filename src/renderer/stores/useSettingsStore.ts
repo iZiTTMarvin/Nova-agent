@@ -39,6 +39,11 @@ export interface SettingsState {
   currentMode: Mode
   /** 当前会话的 token 用量聚合统计 */
   sessionUsage: SessionUsageStats | null
+  /**
+   * 上下文容量分项 token 估算(来自 agent:context-breakdown 推送)。
+   * null 表示本会话还没收到过推送(无 LLM 调用)。
+   */
+  contextBreakdown: ContextBreakdown | null
   /** 设置页「使用技能」后预填到 composer 的文本 */
   composerPrefill: string | null
 
@@ -57,6 +62,8 @@ export interface SettingsState {
   handleUsage: (usage: NormalizedUsage) => void
   /** 切换会话时清空用量统计 */
   resetSessionUsage: () => void
+  /** 写入/覆盖本轮分项 token 估算(来自 agent:context-breakdown) */
+  setContextBreakdown: (payload: ContextBreakdown) => void
   /**
    * 由 useWorkspaceStore 同步调用：把工作区最新状态镜像到本 store。
    * 这是单向数据流：workspace store → settings store（派生镜像），
@@ -78,6 +85,24 @@ const EMPTY_USAGE: SessionUsageStats = {
   hitRate: 0
 }
 
+/** 上下文容量分项 token 估算(本轮 LLM 调用实际发给模型的拆分) */
+export interface ContextBreakdown {
+  sessionId: string
+  messageId: string
+  breakdown: {
+    systemPrompt: number
+    skills: number
+    tools: number
+    messages: number
+    other: number
+  }
+  totalEstimated: number
+  promptTokensActual: number
+  capturedAt: number
+  /** 计算时使用的上下文窗口上限(部分场景需要覆盖 store 里的默认值) */
+  contextLimit?: number
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   modelConfig: null,
   contextLimit: 200_000,
@@ -85,6 +110,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   currentProject: null,
   currentMode: 'default',
   sessionUsage: null,
+  contextBreakdown: null,
   composerPrefill: null,
 
   loadModelConfig: async () => {
@@ -148,7 +174,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   resetSessionUsage: () => {
+    // 只清空用量统计，不清空 contextBreakdown；
+    // 切换会话后 AgentLoop 会通过 injectHistory 重新推送新的上下文拆分。
     set({ sessionUsage: null })
+  },
+
+  setContextBreakdown: (payload) => {
+    set({ contextBreakdown: payload })
   },
 
   syncFromWorkspace: (project: string | null, mode: Mode) => {
@@ -176,6 +208,7 @@ export function resetSettingsStoreForTests(): void {
     currentProject: null,
     currentMode: 'default',
     sessionUsage: null,
+    contextBreakdown: null,
     composerPrefill: null
   })
 }

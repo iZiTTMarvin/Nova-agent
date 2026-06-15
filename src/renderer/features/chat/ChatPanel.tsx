@@ -13,7 +13,6 @@ import {
 import { MessageItem } from './MessageItem'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
-import { UsageStats } from './UsageStats'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
@@ -589,7 +588,6 @@ export const ChatPanel: React.FC = () => {
                 )}
                 <ModeSwitch />
                 <ContextIndicator />
-                <UsageStats />
               </div>
               <div>
                 {isGenerating ? (

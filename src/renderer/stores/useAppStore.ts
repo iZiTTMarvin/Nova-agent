@@ -45,6 +45,7 @@ export interface AppState {
   contextLimit: number
   isConfigModalOpen: boolean
   sessionUsage: SessionUsageStats | null
+  contextBreakdown: import('./useSettingsStore').ContextBreakdown | null
   // ── chat ──
   sessions: Session[]
   currentSessionId: string | null
@@ -110,6 +111,7 @@ export interface AppState {
   ) => void
   handleMessageEnd: (messageId: string, interrupted?: boolean) => void
   handleUsage: (usage: NormalizedUsage) => void
+  setContextBreakdown: (payload: import('./useSettingsStore').ContextBreakdown) => void
   handleError: (messageId: string, error: string) => void
   handleVerificationResult: (messageId: string, result: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
@@ -141,6 +143,7 @@ function mergeState(
     contextLimit: settings.contextLimit,
     isConfigModalOpen: settings.isConfigModalOpen,
     sessionUsage: settings.sessionUsage,
+    contextBreakdown: settings.contextBreakdown,
     // chat
     sessions: chat.sessions,
     currentSessionId: chat.currentSessionId,
@@ -185,6 +188,7 @@ function mergeState(
     handleDiffUpdate: chat.handleDiffUpdate,
     handleMessageEnd: chat.handleMessageEnd,
     handleUsage: settings.handleUsage,
+    setContextBreakdown: settings.setContextBreakdown,
     handleError: chat.handleError,
     handleVerificationResult: chat.handleVerificationResult,
     handlePermissionRequest: agent.handlePermissionRequest,
@@ -214,6 +218,7 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   contextLimit: 'settings',
   isConfigModalOpen: 'settings',
   sessionUsage: 'settings',
+  contextBreakdown: 'settings',
   // chat
   sessions: 'chat',
   currentSessionId: 'chat',
@@ -258,6 +263,7 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   handleDiffUpdate: 'chat',
   handleMessageEnd: 'chat',
   handleUsage: 'settings',
+  setContextBreakdown: 'settings',
   handleError: 'chat',
   handleVerificationResult: 'chat',
   handlePermissionRequest: 'agent',

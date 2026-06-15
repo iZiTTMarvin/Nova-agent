@@ -22,7 +22,7 @@ import {
 import { SessionStore } from '../../runtime/sessions/SessionStore'
 import { rejectFile, revertToMessage, listManifests } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState, type MessageDiffsState } from '../../runtime/checkpoints/diffState'
-import { setCurrentMode, setCurrentProjectPath } from '../index'
+import { setCurrentMode, setCurrentProjectPath, getMainWindow } from '../index'
 import type { Session, SessionDetail, Message } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
@@ -31,7 +31,10 @@ import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
 import { getMainReadState } from './agentHandler'
-
+import { calculateContextBreakdown } from '../../runtime/agent/contextBreakdownCalculator'
+import { getSkillService } from '../services/SkillServiceHost'
+import { loadModelConfig } from '../../runtime/model/config'
+import { inferContextWindow } from '../../shared/config/types'
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
 
@@ -52,7 +55,31 @@ function toSessionSummary(data: SessionData): Session {
   }
 }
 
-/** 将持久化 SessionData 转换为共享 SessionDetail 格式（含消息列表） */
+/** 加载/切换会话时立即计算并推送上下文容量拆分 */
+function pushContextBreakdownForSession(session: SessionData): void {
+  const skillService = getSkillService()
+  if (skillService.getWorkspaceRoot() !== session.workspaceRoot) {
+    skillService.load(session.workspaceRoot)
+  }
+  const skills = skillService.getRegistry().listForContext()
+
+  const persistedConfig = loadModelConfig(app.getPath('userData'))
+  const contextLimit = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+
+  const { payload } = calculateContextBreakdown({
+    session,
+    skills,
+    toolDefinitions: [],
+    contextLimit
+  })
+
+  const win = getMainWindow()
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('agent:context-breakdown', payload)
+  }
+}
+
+/** 将持久化 SessionData 转换为共享 SessionDetail 格式（含消息历史） */
 function toSessionDetail(data: SessionData): SessionDetail {
   return {
     id: data.id,
@@ -68,6 +95,7 @@ function toSessionDetail(data: SessionData): SessionDetail {
   }
 }
 
+
 export function registerSessionHandler(): void {
   const appDataPath = app.getPath('userData')
   sessionStore = new SessionStore(appDataPath)
@@ -77,6 +105,7 @@ export function registerSessionHandler(): void {
     const summaries = sessionStore.list()
     return summaries
   })
+
 
   // 加载单个会话的完整数据（含消息历史）
   ipcMain.handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
@@ -89,6 +118,8 @@ export function registerSessionHandler(): void {
     // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
     setCurrentProjectPath(data.workspaceRoot)
     setCurrentMode(data.mode)
+    // 立即推送上下文容量拆分，renderer 无需等待 LLM 调用即可显示
+    pushContextBreakdownForSession(data)
     return toSessionDetail(data)
   })
 
@@ -100,15 +131,8 @@ export function registerSessionHandler(): void {
     // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
     setCurrentProjectPath(params.workspaceRoot)
     setCurrentMode(data.mode)
+    pushContextBreakdownForSession(data)
     return toSessionDetail(data)
-  })
-
-  // 删除会话
-  ipcMain.handle(DELETE_SESSION, async (_event, params: { sessionId: string }) => {
-    const success = sessionStore.delete(params.sessionId)
-    if (!success) {
-      throw new Error(`会话 ${params.sessionId} 删除失败：会话不存在`)
-    }
   })
 
   // 接受文件改动：标记为已审查

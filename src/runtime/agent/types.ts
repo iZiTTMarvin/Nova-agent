@@ -47,6 +47,24 @@ export type AgentEvent =
   | { type: 'verification_permission_cleared'; messageId: string; requestId: string }
   | { type: 'verification_result'; messageId: string; result: string }
   | { type: 'usage'; messageId: string; usage: NormalizedUsage }
+  | {
+      type: 'context_breakdown'
+      sessionId: string
+      /** 对应触发该统计的消息 ID;启动/注入历史时可为空字符串 */
+      messageId: string
+      breakdown: {
+        systemPrompt: number
+        skills: number
+        tools: number
+        messages: number
+        other: number
+      }
+      totalEstimated: number
+      promptTokensActual: number
+      capturedAt: number
+      /** 计算时使用的上下文窗口上限(覆盖 store 默认值,例如加载会话时直接计算) */
+      contextLimit?: number
+    }
   | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult }
   | { type: 'error'; messageId: string; error: string }
   | { type: 'hook_error'; messageId: string; hookEvent: HookEvent; error: string }
@@ -96,6 +114,12 @@ export interface AgentLoopConfig {
   systemPrompt?: string
   /** 6 层 system prompt（优先于 systemPrompt 字符串） */
   systemPromptLayers?: SystemPromptLayers
+  /**
+   * skillContext 层正文 token 估算（char/4）。
+   * agentHandler 在拼完 skillContext 后算一次传入，AgentLoop 用它把"技能正文"
+   * 单独算一桶，而不是从 frozenSystemPrompt 字符串里反向正则切分（脆弱）。
+   */
+  skillsTokenEstimate?: number
   /** 最大连续工具调用轮数，防止无限循环 */
   maxToolRounds?: number
   /** 模型最大上下文窗口（tokens），用于计算动态压缩阈值（上限的 80%） */

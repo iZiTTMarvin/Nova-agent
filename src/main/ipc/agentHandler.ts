@@ -41,6 +41,7 @@ import { getStableSystemPrompt } from '../../runtime/agent/modePrompt'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
 import { getSkillService } from '../services/SkillServiceHost'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
+import { estimateTokens } from '../../runtime/agent/tokenEstimator'
 import { discoverProjectRules } from '../../runtime/agent/projectRulesDiscovery'
 import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../runtime/tools/taskTool'
@@ -226,6 +227,8 @@ export function registerAgentHandler(
 
     const projectRules = discoverProjectRules(projectPath)
     const skillContext = buildSkillContext(skillRegistry.listForContext())
+    /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
+    const skillsTokenEstimate = estimateTokens(skillContext)
 
     const eventBus = new EventBus()
     const permissionManager = new PermissionManager()
@@ -273,6 +276,7 @@ export function registerAgentHandler(
         skillContext,
         toolSummary
       },
+      skillsTokenEstimate,
       useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
       contextWindow,
       supportsVision,
@@ -329,31 +333,6 @@ export function registerAgentHandler(
       }
     })
 
-    // 从 session 历史恢复多轮对话上下文
-    const history = buildConversationContext(session, session.mode)
-    agentLoop.injectHistory(history)
-
-    toolRegistry.register(createTaskTool({
-      modelClient,
-      parentEventBus: eventBus,
-      contextWindow,
-      supportsVision,
-      resolveTool: (name) => toolRegistry.getTool(name)
-    }))
-
-    agentLoop.setToolRegistry(toolRegistry)
-    agentLoop.setSkillRegistry(skillRegistry)
-    agentLoop.setSkillForkDeps({
-      modelClient,
-      parentEventBus: eventBus,
-      resolveTool: (name) => toolRegistry.getTool(name),
-      contextWindow,
-      supportsVision
-    })
-    agentLoop.getHookManager().on('onMessageStart', (payload) => {
-      console.log(`[Hook] onMessageStart messageId=${payload.messageId}`)
-    })
-
     agentLoop.setWorkingDir(projectPath)
     // 把 bash 工具的执行环境（shellPath / binDirs）注入到 AgentLoop。
     // 暂时只把项目 node_modules/.bin 加到 PATH——shellPath 没有用户配置时
@@ -365,10 +344,24 @@ export function registerAgentHandler(
     agentLoop.setPermissionManager(permissionManager)
     agentLoop.setMode(session.mode)
     // 注入会话上下文：todo_write 工具通过它写会话元数据
+    // 必须在 injectHistory 之前设置 sessionId，否则恢复历史后触发的
+    // context_breakdown 事件会带上空 sessionId。
     agentLoop.setSessionContext(sessionStore, params.sessionId)
     // 注入主 readState：跨多次 SEND_MESSAGE 复用，使得同一会话连发消息时
     // 第二条消息能继续享受第一条消息的 read 状态（I1 实例化）
     agentLoop.setReadState(mainReadState)
+
+    // 从 session 历史恢复多轮对话上下文
+    const history = buildConversationContext(session, session.mode)
+    agentLoop.injectHistory(history)
+
+    toolRegistry.register(createTaskTool({
+      modelClient,
+      parentEventBus: eventBus,
+      contextWindow,
+      supportsVision,
+      resolveTool: (name) => toolRegistry.getTool(name)
+    }))
 
     const checkpointManager = new CheckpointManager({
       checkpointDir: sessionsDir,
@@ -876,6 +869,16 @@ export function forwardEventToRenderer(
       break
     case 'usage':
       webContents.send('agent:usage', { messageId: event.messageId, usage: event.usage })
+      break
+    case 'context_breakdown':
+      webContents.send('agent:context-breakdown', {
+        sessionId: event.sessionId,
+        messageId: event.messageId,
+        breakdown: event.breakdown,
+        totalEstimated: event.totalEstimated,
+        promptTokensActual: event.promptTokensActual,
+        capturedAt: event.capturedAt
+      })
       break
     case 'cache_diagnostic':
       webContents.send('agent:cache-diagnostic', { messageId: event.messageId, diagnostic: event.diagnostic })

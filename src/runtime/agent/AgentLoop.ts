@@ -33,6 +33,7 @@ import type { IdleCompactionTarget } from './IdleCompressionTimer'
 import { HookManager } from './HookManager'
 import { RecoveryStateMachine } from './RecoveryStateMachine'
 import { SystemPromptBuilder } from './SystemPromptBuilder'
+import { calculateContextBreakdown } from './contextBreakdownCalculator'
 import type { SkillRegistry } from '../skills/SkillRegistry'
 import { invokeSkill } from '../skills/invokeSkill'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
@@ -95,6 +96,9 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 当前会话 ID，与 sessionStore 配套 */
   private sessionId: string | null = null
+
+  /** 技能正文层独立 token 估算，作为'技能'分项桶的预算 */
+  private skillsTokenBudget: number = 0
 
   /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
   private pendingPermissions: Map<
@@ -178,8 +182,11 @@ export class AgentLoop implements IdleCompactionTarget {
       toolExecution: config?.toolExecution ?? 'parallel',
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
-      useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false
+      useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false,
+      skillsTokenEstimate: config?.skillsTokenEstimate
     }
+    /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
+    this.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.hookManager = new HookManager(eventBus)
     this.frozenSystemPrompt = this.buildFrozenSystemPrompt()
@@ -208,6 +215,52 @@ export class AgentLoop implements IdleCompactionTarget {
     return this.config.systemPrompt ?? ''
   }
 
+  /**
+   * 计算本轮 prompt 的分项 token 估算并推 context_breakdown 事件。
+   * 复用 contextBreakdownCalculator，保证 AgentLoop 内外口径一致。
+   */
+  private emitContextBreakdown(messageId: string, promptTokensActual: number): void {
+    const result = calculateContextBreakdown({
+      session: {
+        id: this.sessionId ?? '',
+        workspaceRoot: this.workingDir ?? '',
+        mode: this.mode ?? 'default',
+        messages: this.context
+          .filter(m => m.role !== 'system')
+          .map(m => this.toSessionMessageForBreakdown(m)),
+        frozenSystemPrompt: this.frozenSystemPrompt,
+        schemaVersion: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      skills: this.skillsTokenBudget,
+      toolDefinitions: this.toolRegistry?.getToolDefinitions() ?? [],
+      contextLimit: this.config.contextWindow ?? 200_000
+    })
+    this.eventBus.emit({
+      ...result.payload,
+      type: 'context_breakdown',
+      messageId,
+      promptTokensActual
+    })
+  }
+
+  /** 把运行时的 ChatMessage 转成 SessionMessage 口径(仅用于 token 估算) */
+  private toSessionMessageForBreakdown(m: ChatMessage): import('../sessions/types').SessionMessage {
+    return {
+      id: '',
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : extractTextFromContent(m.content),
+      toolCalls: m.toolCalls?.map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments
+      })),
+      toolCallId: m.toolCallId,
+      timestamp: Date.now()
+    }
+  }
+
   /** 注入自定义 HookManager（测试 / 扩展用） */
   setHookManager(hm: HookManager): void {
     this.hookManager = hm
@@ -229,6 +282,8 @@ export class AgentLoop implements IdleCompactionTarget {
       ...this.context,
       ...messages
     ]
+    // 恢复历史后立即推送一次上下文占用，让 renderer 无需等待下一轮 LLM 调用即可显示
+    this.emitContextBreakdown('', 0)
   }
 
   /** 设置工具注册表 */
@@ -455,6 +510,8 @@ export class AgentLoop implements IdleCompactionTarget {
         if (this.cancelled) break
 
         let shouldRetryChat = false
+        /** 本轮 model response 是否收到 usage 事件，用于兜底推送 context_breakdown */
+        let roundSawUsage = false
 
         const beforeAgent = await this.hookManager.trigger({
           event: 'beforeAgentStart',
@@ -655,6 +712,7 @@ export class AgentLoop implements IdleCompactionTarget {
             }
 
             case 'usage':
+              roundSawUsage = true
               this.eventBus.emit({ type: 'usage', messageId, usage: event.usage })
               // 缓存诊断：检查 cache_read_tokens 是否显著下降
               {
@@ -669,6 +727,7 @@ export class AgentLoop implements IdleCompactionTarget {
                   this.eventBus.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
                 }
               }
+              this.emitContextBreakdown(messageId, event.usage.promptTokens)
               break
 
             case 'message_end':
@@ -695,6 +754,10 @@ export class AgentLoop implements IdleCompactionTarget {
 
         // 每次成功调用模型后更新估算 token 计数
         this.lastEstimatedTokens = estimateContextTokens(this.context)
+        // 兜底：本轮 model response 没收到 usage 事件（部分 provider 不报）时，补一次分项推送
+        if (!roundSawUsage) {
+          this.emitContextBreakdown(messageId, 0)
+        }
 
         await this.hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
 

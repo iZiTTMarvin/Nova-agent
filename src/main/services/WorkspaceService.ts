@@ -10,7 +10,7 @@
  * - renderer 只订阅 workspace:changed，不反向写其它 store。
  * - 会话列表（availableSessions）随状态一起广播，避免 renderer 二次拉取。
  */
-import { dialog, BrowserWindow } from 'electron'
+import { dialog, BrowserWindow, app } from 'electron'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionData } from '../../runtime/sessions/types'
 import type { Mode, Session, SessionDetail } from '../../shared/session'
@@ -19,8 +19,10 @@ import { revertToMessage, listManifests } from '../../runtime/checkpoints/restor
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
 import { getMainReadState } from '../ipc/agentHandler'
 import { setCurrentProjectPath, setCurrentMode } from '../index'
-import { reloadSkillsForWorkspace } from './SkillServiceHost'
-
+import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
+import { calculateContextBreakdown } from '../../runtime/agent/contextBreakdownCalculator'
+import { loadModelConfig } from '../../runtime/model/config'
+import { inferContextWindow } from '../../shared/config/types'
 /** SessionDetail 转换（与 sessionHandler 同构，独立实现避免双向依赖） */
 function toSession(data: SessionData): Session {
   return {
@@ -30,6 +32,29 @@ function toSession(data: SessionData): Session {
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     messageCount: data.messages.length
+  }
+}
+/** 计算并直接推送某会话的上下文容量拆分给 renderer */
+function pushContextBreakdownForSession(session: SessionData, getMainWindow: () => BrowserWindow | null): void {
+  const skillService = getSkillService()
+  if (skillService.getWorkspaceRoot() !== session.workspaceRoot) {
+    skillService.load(session.workspaceRoot)
+  }
+  const skills = skillService.getRegistry().listForContext()
+
+  const persistedConfig = loadModelConfig(app.getPath('userData'))
+  const contextLimit = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+
+  const { payload } = calculateContextBreakdown({
+    session,
+    skills,
+    toolDefinitions: [],
+    contextLimit
+  })
+
+  const win = getMainWindow()
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('agent:context-breakdown', payload)
   }
 }
 
@@ -116,6 +141,7 @@ export class WorkspaceService {
       availableSessions: store.list()
     }
     this.broadcast()
+    pushContextBreakdownForSession(data, this.deps.getMainWindow)
     return this.state
   }
 
@@ -134,9 +160,11 @@ export class WorkspaceService {
       availableSessions: store.list()
     }
     this.broadcast()
+    pushContextBreakdownForSession(data, this.deps.getMainWindow)
     return this.state
   }
 
+  /**
   /**
    * 删除会话。
    * 删除的是当前会话时，自动切到剩余列表的第一条；没有剩余会话则清空工作区。
@@ -150,7 +178,7 @@ export class WorkspaceService {
 
     if (deletingCurrent) {
       if (remaining.length > 0) {
-        // 切到剩余的第一条（递归复用 selectSession 逻辑，但避免广播两次）
+        // 切到剩余的第一条
         const next = remaining[0]
         const detail = store.load(next.id)
         if (detail) {
@@ -163,6 +191,7 @@ export class WorkspaceService {
             currentMode: detail.mode,
             availableSessions: remaining
           }
+          pushContextBreakdownForSession(detail, this.deps.getMainWindow)
         } else {
           this.state = { ...this.state, availableSessions: remaining }
         }
@@ -203,9 +232,9 @@ export class WorkspaceService {
       availableSessions: store.list()
     }
     this.broadcast()
+    pushContextBreakdownForSession(detail, this.deps.getMainWindow)
     return this.state
   }
-
   /** 切换运行模式（并持久化到当前会话） */
   setMode(params: { mode: Mode; sessionId?: string }): WorkspaceState {
     const store = this.deps.getSessionStore()
@@ -220,6 +249,12 @@ export class WorkspaceService {
     setCurrentMode(params.mode)
     this.state = { ...this.state, currentMode: params.mode }
     this.broadcast()
+
+    // 模式变更可能影响 system prompt 长度，重新推送上下文拆分
+    const session = sessionId ? store.load(sessionId) : null
+    if (session) {
+      pushContextBreakdownForSession(session, this.deps.getMainWindow)
+    }
     return this.state
   }
 
@@ -262,6 +297,9 @@ export class WorkspaceService {
       availableSessions: store.list()
     }
     this.broadcast()
+
+    // 回滚后消息变少，重新推送上下文拆分
+    pushContextBreakdownForSession(session, this.deps.getMainWindow)
     return this.state
   }
 

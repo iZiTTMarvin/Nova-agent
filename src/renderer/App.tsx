@@ -39,6 +39,7 @@ function App(): JSX.Element {
   const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
   const handleMessageEnd = useAppStore(state => state.handleMessageEnd)
   const handleUsage = useAppStore(state => state.handleUsage)
+  const setContextBreakdown = useAppStore(state => state.setContextBreakdown)
   const handleError = useAppStore(state => state.handleError)
   const handleVerificationResult = useAppStore(state => state.handleVerificationResult)
   const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
@@ -168,6 +169,14 @@ function App(): JSX.Element {
       handleUsage(data.usage)
     })
 
+    const unsubContextBreakdown = window.api.on('agent:context-breakdown', (data) => {
+      // 不能在 effect 建立时捕获 currentSessionId；会话切换/首次打开历史会话后，
+      // 旧闭包会一直拿到陈旧值，导致主进程刚推送的 breakdown 被误丢弃。
+      const activeSessionId = useChatStore.getState().currentSessionId
+      if (data.sessionId && data.sessionId !== activeSessionId) return
+      setContextBreakdown(data)
+    })
+
     // 监听：Hook 执行异常（不中断 Agent，仅 UI 提示）
     const unsubHookError = window.api.on('agent:hook-error', (data) => {
       useChatStore.getState().handleHookError(data.messageId, data.hookEvent, data.error)
@@ -206,6 +215,7 @@ function App(): JSX.Element {
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
+      unsubContextBreakdown()
       unsubHookError()
       unsubRecoveryHint()
       unsubRecoveryState()
@@ -225,7 +235,8 @@ function App(): JSX.Element {
     clearVerificationPermissionRequest,
     applyTodoUpdate,
     handleMessageEnd,
-    handleUsage
+    handleUsage,
+    setContextBreakdown
   ])
 
   return (

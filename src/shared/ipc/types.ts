@@ -373,6 +373,26 @@ export interface IpcEvents {
     messageId: string
     usage: NormalizedUsage
   }
+  'agent:context-breakdown': {
+    sessionId: string
+    messageId: string
+    /** 五类分项 token,均为本轮 LLM 调用实际发送给模型的拆分估算 */
+    breakdown: {
+      systemPrompt: number
+      skills: number
+      tools: number
+      messages: number
+      other: number
+    }
+    /** 五项合计,与 usage.promptTokens 同口径对账 */
+    totalEstimated: number
+    /** API 真实回传的 prompt_tokens(若有,无则 0),用于校验估算偏差 */
+    promptTokensActual: number
+    /** 时间戳,renderer 用来节流或丢弃过期帧 */
+    capturedAt: number
+    /** 计算时使用的上下文窗口上限(部分场景需要覆盖 store 默认值) */
+    contextLimit?: number
+  }
   'agent:hook-error': {
     messageId: string
     hookEvent: HookEvent

@@ -413,12 +413,208 @@
   }
 }
 
-/* ── ContextIndicator 上下文占用圆环 ─────────────────────────── */
+/* ── ContextIndicator 上下文占用圆环 + hover Popover ────────── */
+.context-indicator-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
 .context-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+}
+
+.context-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 12px 14px;
+  z-index: 60;
+  font-size: 12px;
+  color: #d4d4d4;
+  user-select: none;
+}
+
+.context-popover__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.context-popover__title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #e5e5e5;
+}
+
+.context-popover__total {
+  font-size: 11px;
+  color: #a3a3a3;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-popover__pct {
+  color: #737373;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-popover__bar {
+  height: 4px;
+  width: 100%;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.context-popover__bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.context-popover__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-popover__row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
+.context-popover__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+  display: inline-block;
+}
+
+.context-popover__label {
+  color: #d4d4d4;
+}
+
+.context-popover__value {
+  font-variant-numeric: tabular-nums;
+  color: #d4d4d4;
+}
+
+.context-popover__row .context-popover__pct {
+  min-width: 44px;
+  text-align: right;
+  color: #737373;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-popover__divider {
+  height: 1px;
+  background: #2a2a2a;
+  margin: 10px 0 8px;
+}
+
+.context-popover__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.context-popover__hitrate {
+  font-variant-numeric: tabular-nums;
+  color: #d4d4d4;
+  font-weight: 500;
+}
+
+.context-usage {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.context-usage__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.context-usage__title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #e5e5e5;
+}
+
+.context-usage__summary {
+  font-size: 11px;
+  color: #a3a3a3;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-usage__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a8a8a;
+}
+
+.context-usage__bar {
+  height: 4px;
+  width: 100%;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.context-usage__bar-hit {
+  background: #34d399;
+  height: 100%;
+}
+
+.context-usage__bar-write {
+  background: #60a5fa;
+  height: 100%;
+}
+
+.context-usage__grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  align-items: center;
+}
+
+.context-usage__label {
+  color: #a3a3a3;
+}
+
+.context-usage__value {
+  color: #d4d4d4;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── UsageStats 轻量 token 统计 ─────────────────────────── */

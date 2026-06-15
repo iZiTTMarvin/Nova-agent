@@ -217,4 +217,43 @@ describe('聊天体验回归', () => {
       renderer?.unmount()
     })
   })
+
+  it('底部工具栏不再常驻显示独立 UsageStats，避免与上下文指示器混淆', () => {
+    useAppStore.setState({
+      sessionUsage: {
+        totalPromptTokens: 1000,
+        totalCompletionTokens: 120,
+        totalCachedTokens: 390,
+        totalCacheWriteTokens: 80,
+        hitRate: 0.39
+      },
+      contextBreakdown: {
+        sessionId: 'sess_chat_experience',
+        messageId: '',
+        breakdown: {
+          systemPrompt: 300,
+          skills: 200,
+          tools: 100,
+          messages: 500,
+          other: 0
+        },
+        totalEstimated: 1100,
+        promptTokensActual: 1000,
+        capturedAt: 1,
+        contextLimit: 200_000
+      }
+    })
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ChatPanel))
+    })
+
+    expect(renderer!.root.findAllByProps({ className: 'usage-stats' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ className: 'context-indicator-wrap' })).toHaveLength(1)
+
+    act(() => {
+      renderer?.unmount()
+    })
+  })
 })
