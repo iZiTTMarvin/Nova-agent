@@ -1,15 +1,21 @@
 /**
- * useSettingsStore — 模型配置、UI 开关、当前项目/模式、用量统计
+ * useSettingsStore — 模型配置、UI 开关、用量统计
  *
  * 负责：
  * - ModelConfig 加载与保存
  * - isConfigModalOpen（设置弹窗显隐）
- * - currentProject / currentMode（工作区与运行模式）
  * - sessionUsage（会话级 token 用量聚合）
+ * - composerPrefill（设置页「使用技能」后预填 composer）
+ *
+ * 架构变更（PRD §5.1 工作区单一事实源）：
+ * - currentProject / currentMode 不再由本 store 维护，改由 useWorkspaceStore 作为唯一事实源。
+ * - 本 store 通过订阅 useWorkspaceStore 把 currentProject/currentMode 作为派生镜像保留，
+ *   仅为 useAppStore 兼容层和既有组件零改动工作。
+ * - selectProject / setMode 改为转发到 useWorkspaceStore，不再直接 IPC + 反向写 chat store。
  *
  * 依赖方向：
- * - 不依赖 useChatStore / useAgentStore
- * - 被 useChatStore（sendMessage 读取 currentProject）和 useAgentStore 读取
+ * - 订阅 useWorkspaceStore（单向，只读派生）
+ * - 被 useChatStore（sendMessage 读取 currentProject）和 useAppStore 读取
  */
 import { create } from 'zustand'
 import type { Mode } from '../../shared/session/types'
@@ -24,8 +30,12 @@ export interface SettingsState {
   /** 模型上下文窗口上限（tokens），用于前端显示上下文占用指示器 */
   contextLimit: number
   isConfigModalOpen: boolean
-  /** 当前工作区路径 */
+  /**
+   * 当前工作区路径（派生镜像，源自 useWorkspaceStore）。
+   * 仅供 useAppStore 兼容层与既有组件零改动；不再由本 store 主动写入。
+   */
   currentProject: string | null
+  /** 当前运行模式（派生镜像，源自 useWorkspaceStore） */
   currentMode: Mode
   /** 当前会话的 token 用量聚合统计 */
   sessionUsage: SessionUsageStats | null
@@ -39,16 +49,21 @@ export interface SettingsState {
   saveModelConfig: (config: ModelConfig) => Promise<void>
   /** 打开或关闭配置弹窗 */
   setConfigModalOpen: (isOpen: boolean) => void
-  /** 加载或切换工作区 */
+  /** 选择项目（转发到 useWorkspaceStore） */
   selectProject: () => Promise<void>
-  /** 更换当前运行模式 */
+  /** 更换当前运行模式（转发到 useWorkspaceStore） */
   setMode: (mode: Mode) => Promise<void>
   /** 累计一次 token 用量 */
   handleUsage: (usage: NormalizedUsage) => void
   /** 切换会话时清空用量统计 */
   resetSessionUsage: () => void
-  /** 手动设置 currentProject（被 ChatStore 创建/删除/切换会话时同步调用） */
-  setCurrentProject: (project: string | null) => void
+  /**
+   * 由 useWorkspaceStore 同步调用：把工作区最新状态镜像到本 store。
+   * 这是单向数据流：workspace store → settings store（派生镜像），
+   * 不允许其他模块直接调用此方法写 currentProject/currentMode。
+   * @internal
+   */
+  syncFromWorkspace: (project: string | null, mode: Mode) => void
   /** 关闭设置并预填 composer（如 `/onboard `） */
   requestComposerPrefill: (text: string) => void
   /** ChatPanel 消费后清空 */
@@ -103,50 +118,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   selectProject: async () => {
-    try {
-      const selectedPath = await window.api.invoke('select-project')
-      if (selectedPath) {
-        // 通过 IPC 创建后端管理的真实会话
-        const sessionDetail = await window.api.invoke('create-session', {
-          workspaceRoot: selectedPath,
-          mode: get().currentMode
-        })
-
-        // 通知 chat store 切到新会话
-        // 通过动态 import 避免循环依赖
-        const { useChatStore } = await import('./useChatStore')
-        await useChatStore.getState().selectSession(sessionDetail.id)
-
-        set({
-          currentProject: selectedPath,
-          currentMode: sessionDetail.mode
-        })
-      }
-    } catch (err) {
-      console.error('选择项目工作区失败:', err)
-    }
+    // 转发到 workspace store（单一事实源），不再自己 IPC + 反向写 chat store
+    const { useWorkspaceStore } = await import('./useWorkspaceStore')
+    await useWorkspaceStore.getState().selectProject()
   },
 
   setMode: async (mode: Mode) => {
-    try {
-      // 从 chat store 读取 currentSessionId 与 sessions（动态 import 避免循环依赖）
-      const { useChatStore } = await import('./useChatStore')
-      const { currentSessionId: sessionId, sessions } = useChatStore.getState()
-
-      await window.api.invoke('set-mode', { mode, sessionId: sessionId ?? undefined })
-      set({ currentMode: mode })
-
-      // 更新当前会话的模式属性
-      if (sessionId) {
-        useChatStore.setState({
-          sessions: sessions.map(s =>
-            s.id === sessionId ? { ...s, mode } : s
-          )
-        })
-      }
-    } catch (err) {
-      console.error('切换模式失败:', err)
-    }
+    // 转发到 workspace store
+    const { useWorkspaceStore } = await import('./useWorkspaceStore')
+    await useWorkspaceStore.getState().setMode(mode)
   },
 
   handleUsage: (usage: NormalizedUsage) => {
@@ -171,8 +151,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ sessionUsage: null })
   },
 
-  setCurrentProject: (project: string | null) => {
-    set({ currentProject: project })
+  syncFromWorkspace: (project: string | null, mode: Mode) => {
+    // 仅在值真正变化时 set，避免无谓的重渲染
+    if (get().currentProject !== project || get().currentMode !== mode) {
+      set({ currentProject: project, currentMode: mode })
+    }
   },
 
   requestComposerPrefill: (text: string) => {

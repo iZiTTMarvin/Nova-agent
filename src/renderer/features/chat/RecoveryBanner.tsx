@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useChatStore } from '../../stores/useChatStore'
 import './RecoveryBanner.css'
@@ -6,6 +6,14 @@ import './RecoveryBanner.css'
 interface RecoveryBannerProps {
   /** 当前正在生成的消息 ID；无生成中的消息时不展示 */
   messageId: string | null
+}
+
+/** 模型切换信息（PRD §5.4） */
+interface ModelSwitchInfo {
+  messageId: string
+  modelId: string
+  fallbackIndex: number
+  reason: string
 }
 
 /** 旋转加载指示器（retrying / recovering 共用） */
@@ -59,6 +67,26 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
     messageId ? state.hookErrors[messageId] : undefined
   )
 
+  // PRD §5.4：监听模型切换事件（仅展示与当前 messageId 相关的切换）
+  const [modelSwitch, setModelSwitch] = useState<ModelSwitchInfo | null>(null)
+  useEffect(() => {
+    if (!messageId) {
+      setModelSwitch(null)
+      return
+    }
+    const unsub = window.api.on('agent:model-switched', (data) => {
+      if (data.messageId === messageId) {
+        setModelSwitch({
+          messageId: data.messageId,
+          modelId: data.modelId,
+          fallbackIndex: data.fallbackIndex,
+          reason: data.reason
+        })
+      }
+    })
+    return unsub
+  }, [messageId])
+
   const latestHint = recoveryHints?.[recoveryHints.length - 1]
 
   const recoveryBanner = useMemo(() => {
@@ -92,7 +120,7 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
   }, [messageId, recoveryState, latestHint])
 
   const hasHookErrors = (hookErrors?.length ?? 0) > 0
-  const visible = Boolean(recoveryBanner || hasHookErrors)
+  const visible = Boolean(recoveryBanner || hasHookErrors || modelSwitch)
 
   if (!messageId || !visible) return null
 
@@ -144,6 +172,28 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
             </span>
           </motion.div>
         ))}
+
+        {/* PRD §5.4：模型已切换至备用 */}
+        {modelSwitch && (
+          <motion.div
+            key="model-switched"
+            className="recovery-banner recovery-banner--model-switched"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.18 }}
+          >
+            <span className="recovery-banner__icon">
+              <SpinnerIcon className="recovery-banner__spinner" />
+            </span>
+            <span className="recovery-banner__body">
+              <span className="recovery-banner__title">
+                已切换至备用模型：{modelSwitch.modelId}
+              </span>
+              <span className="recovery-banner__detail">{modelSwitch.reason}</span>
+            </span>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   )

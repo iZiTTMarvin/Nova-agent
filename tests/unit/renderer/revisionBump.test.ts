@@ -82,9 +82,9 @@ describe('_revision bump', () => {
   })
 
   it('sendMessage 创建的用户消息 _revision 应为 0', async () => {
-    // sendMessage 需要 settings store 有 currentProject，否则会 early return
-    const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
-    useSettingsStore.setState({ currentProject: '/test/project' })
+    // PRD §5.1：sendMessage 现在从 workspace store 读 currentProjectPath
+    const { useWorkspaceStore } = await import('../../../src/renderer/stores/useWorkspaceStore')
+    useWorkspaceStore.setState({ currentProjectPath: '/test/project' })
 
     vi.mocked(mockInvoke).mockResolvedValue(undefined)
     await useChatStore.getState().sendMessage('hello')

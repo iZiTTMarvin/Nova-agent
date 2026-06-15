@@ -49,6 +49,28 @@ export const WINDOW_MINIMIZE = 'window-minimize' as const
 export const WINDOW_MAXIMIZE = 'window-maximize' as const
 export const WINDOW_CLOSE = 'window-close' as const
 export const WINDOW_IS_MAXIMIZED = 'window-is-maximized' as const
+// ── Workspace 单一事实源（PRD §5.1） ──────────────────────
+/** 读取当前工作区状态 */
+export const WORKSPACE_GET = 'workspace:get' as const
+/** 选择项目（弹文件夹对话框或指定路径），自动创建会话 */
+export const WORKSPACE_SELECT_PROJECT = 'workspace:select-project' as const
+/** 显式创建新会话 */
+export const WORKSPACE_CREATE_SESSION = 'workspace:create-session' as const
+/** 删除会话（删除当前会话时自动切到下一条或清空） */
+export const WORKSPACE_DELETE_SESSION = 'workspace:delete-session' as const
+/** 切换当前会话 */
+export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
+/** 切换运行模式 */
+export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
+/** 回滚到某条消息之前 */
+export const WORKSPACE_ROLLBACK_MESSAGE = 'workspace:rollback-message' as const
+// ── 权限持久化规则（PRD §5.2） ──────────────────────
+export const PERMISSION_LIST = 'permission:list' as const
+export const PERMISSION_UPSERT = 'permission:upsert' as const
+export const PERMISSION_DELETE = 'permission:delete' as const
+// ── DiffViewer 批量审阅（PRD §5.3） ──────────────────────
+export const ACCEPT_ALL_FILES = 'accept-all-files' as const
+export const REJECT_ALL_FILES = 'reject-all-files' as const
 
 
 // ── main → renderer（事件推送） ──────────────────────
@@ -72,5 +94,8 @@ export const AGENT_USAGE = 'agent:usage' as const
 export const AGENT_HOOK_ERROR = 'agent:hook-error' as const
 export const AGENT_RECOVERY_HINT = 'agent:recovery-hint' as const
 export const AGENT_RECOVERY_STATE = 'agent:recovery-state' as const
+export const AGENT_MODEL_SWITCHED = 'agent:model-switched' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
+/** 工作区状态变更广播（PRD §5.1） */
+export const WORKSPACE_CHANGED = 'workspace:changed' as const

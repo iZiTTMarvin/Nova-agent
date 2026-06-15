@@ -26,6 +26,8 @@ export const LlmSettingsPanel: React.FC = () => {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // PRD §5.4：备用模型链（fallback）
+  const [fallbacks, setFallbacks] = useState<Array<{ baseUrl: string; apiKey: string; modelId: string }>>([])
 
   useEffect(() => {
     setBaseUrl(modelConfig?.baseUrl || 'https://api.openai.com/v1')
@@ -36,6 +38,13 @@ export const LlmSettingsPanel: React.FC = () => {
     setFieldErrors({})
     setSubmitError(null)
     setShowKey(false)
+    setFallbacks(
+      (modelConfig?.fallbacks ?? []).map(fb => ({
+        baseUrl: fb.baseUrl,
+        apiKey: fb.apiKey,
+        modelId: fb.modelId
+      }))
+    )
   }, [modelConfig])
 
   const inferredVision = inferVisionSupport(modelId.trim())
@@ -71,12 +80,18 @@ export const LlmSettingsPanel: React.FC = () => {
     setSaving(true)
     setSubmitError(null)
     try {
+      // PRD §5.4：只保留三要素齐全的 fallback，过滤空条目
+      const validFallbacks = fallbacks
+        .map(fb => ({ baseUrl: fb.baseUrl.trim(), apiKey: fb.apiKey.trim(), modelId: fb.modelId.trim() }))
+        .filter(fb => fb.baseUrl && fb.apiKey && fb.modelId)
+
       await saveModelConfig({
         baseUrl: baseUrl.trim(),
         apiKey: apiKey.trim(),
         modelId: modelId.trim(),
         contextWindow: contextWindow === '' ? undefined : contextWindow,
-        supportsVision: supportsVision ?? undefined
+        supportsVision: supportsVision ?? undefined,
+        ...(validFallbacks.length > 0 ? { fallbacks: validFallbacks } : {})
       })
       setConfigModalOpen(false)
     } catch (err) {
@@ -193,6 +208,73 @@ export const LlmSettingsPanel: React.FC = () => {
             <option value="off">强制关闭</option>
           </select>
           <span className="settings-modal__help">若自动推断与实际情况不符，可手动覆盖。</span>
+        </div>
+
+        {/* PRD §5.4：备用模型链（fallback） */}
+        <div className="settings-modal__field">
+          <label className="settings-modal__label">备用模型（Fallback）</label>
+          <span className="settings-modal__help">
+            主模型出现 429/5xx/超时且重试耗尽时，按顺序切换到这些模型继续任务。建议同家族/同上下文窗口。
+          </span>
+          <div className="llm-fallback-list">
+            {fallbacks.map((fb, idx) => (
+              <div key={idx} className="llm-fallback-item">
+                <input
+                  type="text"
+                  className="settings-modal__input llm-fallback-item__model"
+                  value={fb.modelId}
+                  onChange={e => {
+                    const next = [...fallbacks]
+                    next[idx] = { ...fb, modelId: e.target.value }
+                    setFallbacks(next)
+                  }}
+                  placeholder="模型 ID（如 gpt-4o-mini）"
+                  disabled={saving}
+                />
+                <input
+                  type="text"
+                  className="settings-modal__input llm-fallback-item__url"
+                  value={fb.baseUrl}
+                  onChange={e => {
+                    const next = [...fallbacks]
+                    next[idx] = { ...fb, baseUrl: e.target.value }
+                    setFallbacks(next)
+                  }}
+                  placeholder="Base URL"
+                  disabled={saving}
+                />
+                <input
+                  type="password"
+                  className="settings-modal__input llm-fallback-item__key"
+                  value={fb.apiKey}
+                  onChange={e => {
+                    const next = [...fallbacks]
+                    next[idx] = { ...fb, apiKey: e.target.value }
+                    setFallbacks(next)
+                  }}
+                  placeholder="API Key"
+                  disabled={saving}
+                />
+                <button
+                  type="button"
+                  className="settings-modal__btn settings-modal__btn--cancel llm-fallback-item__remove"
+                  onClick={() => setFallbacks(fallbacks.filter((_, i) => i !== idx))}
+                  disabled={saving}
+                  title="移除该备用模型"
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="settings-modal__btn settings-modal__btn--cancel llm-fallback-add"
+            onClick={() => setFallbacks([...fallbacks, { baseUrl: '', apiKey: '', modelId: '' }])}
+            disabled={saving}
+          >
+            + 添加备用模型
+          </button>
         </div>
 
         {submitError && <div className="settings-modal__error">{submitError}</div>}

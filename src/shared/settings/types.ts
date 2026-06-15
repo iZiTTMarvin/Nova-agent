@@ -3,9 +3,37 @@
  */
 import type { RuleFileEntry, RuleScope } from '../../runtime/agent/rulesDiscovery'
 import type { SubAgentSpec } from '../../runtime/agent/SubAgentConfig'
+import type { Mode } from '../session/types'
 
+/**
+ * 应用级用户偏好（持久化到 ~/.nova/settings.json）
+ *
+ * 与 LLM 配置（ModelConfig，独立文件）分离。
+ * 加载时由 novaSettings 做默认值填充，保证旧版本设置缺少新字段时安全升级。
+ */
 export interface NovaSettingsDto {
+  // ── 现有 ──
   loadThirdPartySkills: boolean
+
+  // ── PRD §5.6 新增：通用偏好 ──
+  /** 默认运行模式（新建会话时使用） */
+  defaultMode: Mode
+  /** bash 工具默认 shell 路径（空表示用系统默认） */
+  defaultShell: string
+  /** bash 命令默认超时（毫秒，0 表示不超时） */
+  defaultShellTimeout: number
+  /** 是否启用修改后自动验证 */
+  verificationEnabled: boolean
+  /** 编辑器字体大小（px） */
+  editorFontSize: number
+  /** 编辑器字体族 */
+  editorFontFamily: string
+  /** 主题 */
+  theme: 'light' | 'dark' | 'system'
+  /** DiffViewer 默认是否自动展开 */
+  diffAutoExpand: boolean
+  /** 上次打开的项目路径（启动时恢复，空表示无） */
+  lastProjectPath: string | null
 }
 
 export interface RulesListParams {

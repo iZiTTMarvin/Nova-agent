@@ -15,7 +15,9 @@ import {
   DELETE_SESSION,
   ACCEPT_FILE,
   REJECT_FILE,
-  ROLLBACK_MESSAGE
+  ROLLBACK_MESSAGE,
+  ACCEPT_ALL_FILES,
+  REJECT_ALL_FILES
 } from '../../shared/ipc/channels'
 import { SessionStore } from '../../runtime/sessions/SessionStore'
 import { rejectFile, revertToMessage, listManifests } from '../../runtime/checkpoints/restore'
@@ -27,6 +29,7 @@ import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
+import { getWorkspaceService } from '../services/WorkspaceService'
 import { getMainReadState } from './agentHandler'
 
 /** SessionStore 单例，在注册时初始化 */
@@ -122,6 +125,25 @@ export function registerSessionHandler(): void {
     if (!manifest.fileReviews) manifest.fileReviews = {}
     manifest.fileReviews[params.filePath] = 'accepted'
     writeManifest(checkpointRoot, manifest)
+  })
+
+  // 批量接受文件改动（PRD §5.3）：委托给 WorkspaceService
+  ipcMain.handle(ACCEPT_ALL_FILES, async (
+    _event,
+    params: { sessionId: string; messageId: string; filePaths: string[] }
+  ): Promise<void> => {
+    const ws = getWorkspaceService()
+    ws.acceptAllFiles(params.sessionId, params.messageId, params.filePaths)
+  })
+
+  // 批量拒绝文件改动（PRD §5.3）：委托给 WorkspaceService
+  // 逐个从 checkpoint 恢复，任一失败收集到 failed 数组返回（不中断剩余）
+  ipcMain.handle(REJECT_ALL_FILES, async (
+    _event,
+    params: { sessionId: string; messageId: string; filePaths: string[] }
+  ): Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }> => {
+    const ws = getWorkspaceService()
+    return ws.rejectAllFiles(params.sessionId, params.messageId, params.filePaths)
   })
 
   // 获取某条消息的所有文件 diff（含审查状态）

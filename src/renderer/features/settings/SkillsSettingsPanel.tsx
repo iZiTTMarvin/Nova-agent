@@ -19,7 +19,7 @@ export const SkillsSettingsPanel: React.FC = () => {
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSkills = useSkillsStore(state => state.setSkills)
 
-  const [settings, setSettings] = useState<NovaSettingsDto>({ loadThirdPartySkills: true })
+  const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -119,7 +119,7 @@ export const SkillsSettingsPanel: React.FC = () => {
       <label className="settings-toggle-row">
         <input
           type="checkbox"
-          checked={settings.loadThirdPartySkills}
+          checked={settings?.loadThirdPartySkills ?? true}
           onChange={e => void handleThirdPartyToggle(e.target.checked)}
         />
         <span className="settings-toggle-row__label">{skillsI18n.loadThirdParty}</span>

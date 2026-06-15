@@ -21,6 +21,7 @@ import type { SessionSummary, SessionData, SessionMessage } from './types'
 import { SESSION_DATA_FILE } from './types'
 import type { Mode } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
+import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
 
 export class SessionStore {
   private readonly sessionsDir: string
@@ -33,6 +34,7 @@ export class SessionStore {
   create(workspaceRoot: string, mode: Mode = 'default'): SessionData {
     const now = Date.now()
     const session: SessionData = {
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       id: `sess_${randomUUID()}`,
       workspaceRoot,
       mode,
@@ -45,26 +47,40 @@ export class SessionStore {
     return session
   }
 
-  /** 保存会话数据到磁盘 */
+  /** 保存会话数据到磁盘（保证 schemaVersion 字段始终写入） */
   save(session: SessionData): void {
     const dir = path.join(this.sessionsDir, session.id)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
 
+    const toWrite: SessionData = {
+      ...session,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION
+    }
     const filePath = path.join(dir, SESSION_DATA_FILE)
-    fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf8')
+    fs.writeFileSync(filePath, JSON.stringify(toWrite, null, 2), 'utf8')
   }
 
-  /** 加载完整会话数据，不存在时返回 null */
+  /**
+   * 加载完整会话数据，不存在时返回 null。
+   * 旧版本会话首次加载时自动迁移到 CURRENT_SESSION_SCHEMA_VERSION（带备份），
+   * 迁移失败返回 null（与"文件损坏静默跳过"行为一致），避免阻塞 UI。
+   */
   load(sessionId: string): SessionData | null {
     const filePath = path.join(this.sessionsDir, sessionId, SESSION_DATA_FILE)
     if (!fs.existsSync(filePath)) return null
 
     try {
+      // 走迁移入口：迁移前自动备份，已是当前版本则零开销直读
+      const migrated = migrateSessionFile(this.sessionsDir, sessionId)
+      if (migrated) return migrated
+      // 迁移函数返回 null 仅当文件不存在，这里已确认存在，兜底直接解析
       const content = fs.readFileSync(filePath, 'utf8')
-      return JSON.parse(content) as SessionData
-    } catch {
+      return migrateSessionData(JSON.parse(content))
+    } catch (err) {
+      // 迁移失败：原文件已备份，记录错误后返回 null（与既有"损坏静默跳过"行为一致）
+      console.error(`[SessionStore] 加载会话 ${sessionId} 失败:`, err)
       return null
     }
   }
@@ -82,8 +98,9 @@ export class SessionStore {
       if (!fs.existsSync(filePath)) continue
 
       try {
-        const content = fs.readFileSync(filePath, 'utf8')
-        const data = JSON.parse(content) as SessionData
+        // list 也走迁移，确保侧边栏展示的会话都是最新结构
+        const data = migrateSessionFile(this.sessionsDir, entry.name)
+        if (!data) continue
         summaries.push({
           id: data.id,
           workspaceRoot: data.workspaceRoot,

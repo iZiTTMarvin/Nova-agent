@@ -1,6 +1,8 @@
 import React, { useEffect } from 'react'
 import { useAppStore } from './stores/useAppStore'
 import { useChatStore } from './stores/useChatStore'
+import { useWorkspaceStore } from './stores/useWorkspaceStore'
+import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { NovaLogo, SettingsIcon } from './components/Icons'
 import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './features/chat/ChatPanel'
@@ -27,7 +29,6 @@ import './App.css'
  */
 function App(): JSX.Element {
   const loadModelConfig = useAppStore(state => state.loadModelConfig)
-  const loadSessions = useAppStore(state => state.loadSessions)
   const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
 
   // 低频最终事件 action（不走 buffer）
@@ -48,10 +49,18 @@ function App(): JSX.Element {
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
 
   // 1. 初始化时加载持久化的配置和会话列表
+  //    PRD §5.1：会话列表改为由 workspace:get 统一拉取（单一事实源），
+  //    startWorkspaceDispatcher 订阅 workspace:changed 并分发到 chat/settings/agent。
   useEffect(() => {
     loadModelConfig()
-    loadSessions()
-  }, [loadModelConfig, loadSessions])
+    // 启动工作区分发器（订阅 workspace:changed）
+    const stopDispatcher = startWorkspaceDispatcher()
+    // 拉取初始工作区状态（会触发首次 dispatch，加载会话列表 + 选中最近会话）
+    void useWorkspaceStore.getState().init()
+    return () => {
+      stopDispatcher()
+    }
+  }, [loadModelConfig])
 
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
   useEffect(() => {

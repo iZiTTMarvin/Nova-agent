@@ -8,6 +8,9 @@
  * S7 阶段：加入 PermissionManager 权限决策
  */
 import type { ModelClient } from '../model/ModelClient'
+import { ModelClientPool } from '../model/ModelClientPool'
+import { decideFallback } from './FallbackDecider'
+import { MAX_RETRY_ATTEMPTS } from './RecoveryStateMachine'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../model/types'
 import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
@@ -51,7 +54,11 @@ class PermissionAbortedError extends Error {
 }
 
 export class AgentLoop implements IdleCompactionTarget {
-  private modelClient: ModelClient
+  /**
+   * PRD §5.4：modelClient 改为 ModelClientPool。
+   * 即便未配置 fallback，也包装成只含主模型的 pool，对外接口不变。
+   */
+  private modelPool: ModelClientPool
   private eventBus: EventBus
   private config: AgentLoopConfig
   private state: AgentState = 'idle'
@@ -154,11 +161,14 @@ export class AgentLoop implements IdleCompactionTarget {
   private static readonly REPEATED_FAILURE_LIMIT = 3
 
   constructor(
-    modelClient: ModelClient,
+    modelClient: ModelClient | ModelClientPool,
     eventBus: EventBus,
     config?: AgentLoopConfig
   ) {
-    this.modelClient = modelClient
+    // PRD §5.4：统一包装成 ModelClientPool（单个 ModelClient 时无 fallback）
+    this.modelPool = modelClient instanceof ModelClientPool
+      ? modelClient
+      : new ModelClientPool({ primary: modelClient, primaryConfig: { baseUrl: '', apiKey: '', modelId: 'primary' } })
     this.eventBus = eventBus
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
@@ -345,6 +355,8 @@ export class AgentLoop implements IdleCompactionTarget {
     this.contextOverflowRetryAttempted = false
     this.repeatedFailureCounts.clear()
     this.modelErrorAttempt = 0
+    // PRD §5.4.5：每条新消息开始时重置回主模型（降级不影响下一轮）
+    this.modelPool.resetToPrimary()
 
     // 空闲压缩：新消息到达时取消任何正在运行的压缩
     this.idleTimer?.cancel()
@@ -495,7 +507,7 @@ export class AgentLoop implements IdleCompactionTarget {
         chatMessages = preChatHook?.messages ?? chatMessages
 
         // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
-        const stream = this.modelClient.chat(chatMessages, tools, {
+        const stream = this.modelPool.chat(chatMessages, tools, {
           abortSignal: this.abortController?.signal
         })
 
@@ -603,6 +615,33 @@ export class AgentLoop implements IdleCompactionTarget {
                 const hint = this.recovery.buildRecoveryHint(errState)
                 this.eventBus.emit({ type: 'recovery_hint', messageId, hint, attempt: errState.attempt })
                 await this.sleep(this.recovery.backoffMs(errState.attempt))
+                shouldRetryChat = true
+                break
+              }
+
+              // PRD §5.4：重试链耗尽后，由 FallbackDecider 判定是否切换 fallback 模型。
+              // RecoveryStateMachine 保持四态不变，降级决策与之正交。
+              const fallbackDecision = decideFallback({
+                currentError: event.error,
+                retryAttempt: this.modelErrorAttempt,
+                maxAttempts: MAX_RETRY_ATTEMPTS, // 引用常量，避免硬编码不一致
+                currentFallbackIndex: this.modelPool.getActiveFallbackIndex(),
+                availableFallbackCount: this.modelPool.getFallbackCount()
+              })
+              if (fallbackDecision.shouldFallback && fallbackDecision.nextFallbackIndex !== undefined) {
+                const nextIndex = fallbackDecision.nextFallbackIndex
+                this.modelPool.switchToFallback(nextIndex)
+                // 对新模型重新开始重试链
+                this.modelErrorAttempt = 0
+                const provider = this.modelPool.getActiveProvider()
+                this.eventBus.emit({
+                  type: 'model_switched',
+                  messageId,
+                  modelId: provider.modelId,
+                  fallbackIndex: provider.fallbackIndex,
+                  reason: fallbackDecision.reason
+                })
+                // 切换后立即重试（不等待）
                 shouldRetryChat = true
                 break
               }
@@ -803,7 +842,7 @@ export class AgentLoop implements IdleCompactionTarget {
     // 调用模型生成摘要（非流式收集）
     let summary = ''
     try {
-      const stream = this.modelClient.chat(compactionContext, undefined, {
+      const stream = this.modelPool.chat(compactionContext, undefined, {
         abortSignal: this.abortController?.signal
       })
       for await (const event of stream) {
@@ -1124,7 +1163,7 @@ export class AgentLoop implements IdleCompactionTarget {
 
       // 4. 调用模型获取摘要
       let summary = ''
-      const stream = this.modelClient.chat(this.context, undefined, {
+      const stream = this.modelPool.chat(this.context, undefined, {
         abortSignal: this.abortController?.signal
       })
       for await (const event of stream) {

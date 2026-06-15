@@ -26,6 +26,19 @@ import type {
   SubagentsSaveParams,
   SubagentsDeleteParams
 } from '../settings/types'
+import type {
+  WorkspaceState,
+  SelectProjectParams,
+  CreateSessionParams,
+  SetModeParams,
+  RollbackMessageParams
+} from '../workspace/types'
+import type {
+  PermissionRuleDto,
+  PermissionListParams,
+  PermissionUpsertParams,
+  PermissionDeleteParams
+} from '../permissions/types'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -212,6 +225,58 @@ export interface IpcCommands {
     params: SubagentsDeleteParams
     result: void
   }
+  // ── Workspace 单一事实源（PRD §5.1） ──
+  'workspace:get': {
+    params: void
+    result: WorkspaceState
+  }
+  'workspace:select-project': {
+    params: SelectProjectParams | void
+    /** 返回新的工作区状态；用户取消选择对话框时仍返回当前状态 */
+    result: WorkspaceState
+  }
+  'workspace:create-session': {
+    params: CreateSessionParams
+    result: WorkspaceState
+  }
+  'workspace:delete-session': {
+    params: { sessionId: string }
+    result: WorkspaceState
+  }
+  'workspace:select-session': {
+    params: { sessionId: string }
+    result: WorkspaceState
+  }
+  'workspace:set-mode': {
+    params: SetModeParams
+    result: WorkspaceState
+  }
+  'workspace:rollback-message': {
+    params: RollbackMessageParams
+    result: WorkspaceState
+  }
+  // ── 权限持久化规则（PRD §5.2） ──
+  'permission:list': {
+    params: PermissionListParams
+    result: PermissionRuleDto[]
+  }
+  'permission:upsert': {
+    params: PermissionUpsertParams
+    result: PermissionRuleDto
+  }
+  'permission:delete': {
+    params: PermissionDeleteParams
+    result: { deleted: boolean }
+  }
+  // ── DiffViewer 批量审阅（PRD §5.3） ──
+  'accept-all-files': {
+    params: { sessionId: string; messageId: string; filePaths: string[] }
+    result: void
+  }
+  'reject-all-files': {
+    params: { sessionId: string; messageId: string; filePaths: string[] }
+    result: { restored: string[]; failed: Array<{ filePath: string; error: string }> }
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -322,11 +387,21 @@ export interface IpcEvents {
     messageId: string
     state: RendererRecoveryState
   }
+  'agent:model-switched': {
+    messageId: string
+    modelId: string
+    fallbackIndex: number
+    reason: string
+  }
   'window:maximize-change': {
     isMaximized: boolean
   }
   'skill:changed': {
     skills: SkillSummary[]
+  }
+  /** 工作区状态变更广播（PRD §5.1）。主进程是唯一写入方。 */
+  'workspace:changed': {
+    state: WorkspaceState
   }
 }
 

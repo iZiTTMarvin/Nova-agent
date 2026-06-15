@@ -560,3 +560,141 @@
   cursor: pointer;
   user-select: none;
 }
+
+/* ── GeneralSettingsPanel：inline field（label + checkbox 同行） ── */
+.settings-modal__field--inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-modal__field--inline .settings-modal__label {
+  margin-bottom: 0;
+}
+
+/* ── PermissionsSettingsPanel：权限规则列表 ── */
+.perm-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.perm-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-sand);
+}
+
+.perm-rule__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.perm-rule__behavior {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.perm-rule__behavior--allow {
+  background-color: rgba(46, 125, 50, 0.12);
+  color: #2e7d32;
+}
+
+.perm-rule__behavior--deny {
+  background-color: rgba(181, 51, 51, 0.12);
+  color: #b53333;
+}
+
+.perm-rule__behavior--ask {
+  background-color: rgba(183, 110, 28, 0.12);
+  color: #b76e1c;
+}
+
+.perm-rule__tool {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.perm-rule__matcher {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+.perm-rule__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.perm-rule__scope {
+  padding: 1px 6px;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-sm);
+}
+
+.perm-rule__desc {
+  flex: 1;
+  min-width: 100px;
+}
+
+.perm-rule__delete {
+  background: none;
+  border: none;
+  color: var(--color-error);
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.perm-rule__delete:hover {
+  background-color: rgba(181, 51, 51, 0.08);
+}
+
+/* ── LlmSettingsPanel：备用模型链编辑区 ── */
+.llm-fallback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.llm-fallback-item {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.llm-fallback-item__remove {
+  padding: 7px 10px;
+  font-size: 0.75rem;
+}
+
+.llm-fallback-add {
+  margin-top: 8px;
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  align-self: flex-start;
+}
+
+@media (max-width: 720px) {
+  .llm-fallback-item {
+    grid-template-columns: 1fr;
+  }
+}

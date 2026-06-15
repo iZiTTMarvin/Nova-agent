@@ -7,6 +7,7 @@
  * 3. 每个文件可独立展开/折叠
  * 4. 每个文件支持接受/拒绝操作
  * 5. 审查状态持久化：pending / accepted / rejected
+ * 6. PRD §5.3：批量审阅（全部接受 / 全部拒绝 / 只看未审阅 / 按目录折叠）
  */
 import React, { useMemo, useState } from 'react'
 import type { DiffEntry, DiffHunk, DiffReviewStatus } from '../../../shared/diff/types'
@@ -32,6 +33,10 @@ export interface DiffViewerProps {
   loadingPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
   onRejectFile?: (filePath: string) => Promise<void>
   onAcceptFile?: (filePath: string) => Promise<void>
+  /** PRD §5.3：批量接受（接受全部 pending 文件） */
+  onAcceptAll?: (filePaths: string[]) => Promise<void>
+  /** PRD §5.3：批量拒绝（拒绝全部 pending 文件，从 checkpoint 恢复），返回恢复成功与失败的文件 */
+  onRejectAll?: (filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
 }
 
 /** 单行 diff 渲染 */
@@ -235,6 +240,17 @@ const FileDiffPanel: React.FC<{
   )
 }
 
+/** 取文件路径的首段作为目录分组键 */
+function dirOf(filePath: string): string {
+  const idx = filePath.indexOf('/')
+  if (idx === -1) {
+    // Windows 路径
+    const idx2 = filePath.indexOf('\\')
+    return idx2 === -1 ? '(根目录)' : filePath.slice(0, idx2)
+  }
+  return filePath.slice(0, idx)
+}
+
 export const DiffViewer: React.FC<DiffViewerProps> = ({
   diffs,
   reviews,
@@ -243,10 +259,19 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   isLoading = false,
   loadingPlaceholders,
   onRejectFile,
-  onAcceptFile
+  onAcceptFile,
+  onAcceptAll,
+  onRejectAll
 }) => {
   // T04：DiffViewer 外层默认折叠
   const [expanded, setExpanded] = useState(false)
+  // PRD §5.3：只看未审阅
+  const [onlyPending, setOnlyPending] = useState(false)
+  // PRD §5.3：按目录折叠
+  const [groupByDir, setGroupByDir] = useState(false)
+  // 批量操作进行中
+  const [batching, setBatching] = useState(false)
+  const [batchError, setBatchError] = useState<string | null>(null)
 
   // loading 状态：展示已知文件名 + spinner，不展示 +0 -0 统计避免误导
   if (isLoading) {
@@ -295,8 +320,54 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     ), 0
   )
 
-  const pendingCount = diffs.filter(d => !reviews[d.filePath]).length
+  const pendingFiles = diffs.filter(d => !reviews[d.filePath])
+  const pendingCount = pendingFiles.length
   const reviewedCount = diffs.length - pendingCount
+
+  // 应用过滤：只看未审阅
+  const visibleDiffs = onlyPending ? pendingFiles : diffs
+
+  // 批量接受所有 pending 文件
+  const handleAcceptAll = async () => {
+    if (!onAcceptAll || pendingCount === 0) return
+    setBatching(true)
+    setBatchError(null)
+    try {
+      await onAcceptAll(pendingFiles.map(d => d.filePath))
+    } catch (err) {
+      setBatchError('批量接受失败')
+    } finally {
+      setBatching(false)
+    }
+  }
+
+  // 批量拒绝所有 pending 文件
+  const handleRejectAll = async () => {
+    if (!onRejectAll || pendingCount === 0) return
+    setBatching(true)
+    setBatchError(null)
+    try {
+      const result = await onRejectAll(pendingFiles.map(d => d.filePath))
+      if (result.failed.length > 0) {
+        setBatchError(`${result.failed.length} 个文件拒绝失败：${result.failed.map(f => f.filePath).join(', ')}`)
+      }
+    } catch (err) {
+      setBatchError('批量拒绝失败')
+    } finally {
+      setBatching(false)
+    }
+  }
+
+  // 渲染单个文件面板
+  const renderFile = (entry: DiffEntry) => (
+    <FileDiffPanel
+      key={entry.filePath}
+      entry={entry}
+      reviewStatus={reviews[entry.filePath] ?? 'pending'}
+      onReject={onRejectFile}
+      onAccept={onAcceptFile}
+    />
+  )
 
   return (
     <div className="diff-viewer">
@@ -317,17 +388,88 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 
       {expanded && (
         <div className="diff-viewer__body">
-          {diffs.map((entry, idx) => (
-            <FileDiffPanel
-              key={idx}
-              entry={entry}
-              reviewStatus={reviews[entry.filePath] ?? 'pending'}
-              onReject={onRejectFile}
-              onAccept={onAcceptFile}
-            />
-          ))}
+          {/* PRD §5.3：批量工具栏 */}
+          {pendingCount > 0 && (onAcceptAll || onRejectAll) && (
+            <div className="diff-viewer__toolbar" onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                className="diff-toolbar__btn diff-toolbar__btn--accept-all"
+                onClick={() => void handleAcceptAll()}
+                disabled={batching}
+                title={`接受全部 ${pendingCount} 个待审阅文件`}
+              >
+                全部接受（{pendingCount}）
+              </button>
+              <button
+                type="button"
+                className="diff-toolbar__btn diff-toolbar__btn--reject-all"
+                onClick={() => void handleRejectAll()}
+                disabled={batching}
+                title={`拒绝全部 ${pendingCount} 个待审阅文件（从 checkpoint 恢复）`}
+              >
+                全部拒绝（{pendingCount}）
+              </button>
+              <label className="diff-toolbar__toggle" title="只展示未审阅的文件">
+                <input
+                  type="checkbox"
+                  checked={onlyPending}
+                  onChange={e => setOnlyPending(e.target.checked)}
+                />
+                <span>只看未审阅</span>
+              </label>
+              <label className="diff-toolbar__toggle" title="按文件路径首段分组">
+                <input
+                  type="checkbox"
+                  checked={groupByDir}
+                  onChange={e => setGroupByDir(e.target.checked)}
+                />
+                <span>按目录折叠</span>
+              </label>
+            </div>
+          )}
+
+          {/* PRD §5.3：只看未审阅时若没有 pending 文件，给出提示 */}
+          {onlyPending && visibleDiffs.length === 0 && (
+            <div className="diff-viewer__empty">没有待审阅的文件</div>
+          )}
+
+          {batchError && <div className="diff-viewer__batch-error">{batchError}</div>}
+
+          {/* PRD §5.3：按目录分组渲染 */}
+          {groupByDir ? (
+            <div className="diff-viewer__groups">
+              {Object.entries(
+                visibleDiffs.reduce<Record<string, DiffEntry[]>>((acc, entry) => {
+                  const key = dirOf(entry.filePath)
+                  ;(acc[key] ??= []).push(entry)
+                  return acc
+                }, {})
+              ).map(([dir, entries]) => (
+                <DiffDirGroup key={dir} dir={dir} entries={entries}>
+                  {entries.map(renderFile)}
+                </DiffDirGroup>
+              ))}
+            </div>
+          ) : (
+            visibleDiffs.map(renderFile)
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+/** 按目录分组的小折叠面板 */
+const DiffDirGroup: React.FC<{ dir: string; entries: DiffEntry[]; children: React.ReactNode }> = ({ dir, entries, children }) => {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="diff-dir-group">
+      <div className="diff-dir-group__header" onClick={() => setOpen(!open)}>
+        <ChevronIcon size={13} direction={open ? 'down' : 'right'} />
+        <span className="diff-dir-group__name">{dir}</span>
+        <span className="diff-dir-group__count">{entries.length}</span>
+      </div>
+      {open && <div className="diff-dir-group__body">{children}</div>}
     </div>
   )
 }

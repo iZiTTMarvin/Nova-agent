@@ -10,7 +10,9 @@ import { app } from 'electron'
 import { join } from 'path'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow, inferVisionSupport } from '../../shared/config/types'
+import { inferContextWindow, inferVisionSupport, inferCacheStrategy } from '../../shared/config/types'
+import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
+import { ModelClientPool } from '../../runtime/model/ModelClientPool'
 import { randomUUID } from 'crypto'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
@@ -23,6 +25,7 @@ import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
 import { todoWriteTool } from '../../runtime/tools/todoWriteTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
+import { listPermissionRules } from '../../runtime/permissions/PermissionService'
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { readManifest } from '../../runtime/checkpoints/manifest'
 import type { ModelClient } from '../../runtime/model/ModelClient'
@@ -99,6 +102,46 @@ function clearVerificationPermissionRequest(requestId: string, granted: boolean)
 function clearAllPendingVerificationPermissions(): void {
   for (const requestId of [...pendingVerificationPermissions.keys()]) {
     clearVerificationPermissionRequest(requestId, false)
+  }
+}
+
+/**
+ * PRD §5.4：为主 modelClient 构建 ModelClientPool。
+ * - 读取磁盘 ModelConfig，若有 fallbacks 则为每个 fallback 创建 client 并组装 pool。
+ * - 无 fallbacks 时返回单个 client（AgentLoop 构造函数会自动包装成无 fallback 的 pool）。
+ * - fallback client 创建失败（配置非法）时跳过该条，不阻塞主流程。
+ */
+function buildModelPoolWithFallbacks(primary: ModelClient): ModelClient | ModelClientPool {
+  try {
+    const cfg = loadModelConfig(app.getPath('userData'))
+    if (!cfg || !cfg.fallbacks || cfg.fallbacks.length === 0) {
+      return primary
+    }
+
+    const fallbackSlots: Array<{ config: typeof cfg; client: OpenAICompatibleModelClient }> = []
+    for (const fb of cfg.fallbacks) {
+      try {
+        if (!fb.baseUrl || !fb.apiKey || !fb.modelId) continue
+        const fbClient = new OpenAICompatibleModelClient(fb)
+        if (!fb.cacheStrategy) {
+          fbClient.setCacheStrategy(inferCacheStrategy(fb.baseUrl))
+        }
+        fallbackSlots.push({ config: fb, client: fbClient })
+      } catch (err) {
+        console.error('[agentHandler] 创建 fallback client 失败，已跳过:', err)
+      }
+    }
+
+    if (fallbackSlots.length === 0) return primary
+
+    return new ModelClientPool({
+      primary,
+      primaryConfig: cfg,
+      fallbacks: fallbackSlots.map(s => ({ config: s.config, client: s.client }))
+    })
+  } catch (err) {
+    console.error('[agentHandler] 构建 fallback pool 失败，回退单 client:', err)
+    return primary
   }
 }
 
@@ -186,6 +229,9 @@ export function registerAgentHandler(
 
     const eventBus = new EventBus()
     const permissionManager = new PermissionManager()
+    // PRD §5.2：注入持久化权限规则 + 当前项目路径，用于匹配 allow/deny/ask
+    permissionManager.setRules(listPermissionRules(projectPath))
+    permissionManager.setCurrentProjectPath(projectPath)
 
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(lsTool)
@@ -217,7 +263,10 @@ export function registerAgentHandler(
       agentLoop.dispose()
     }
 
-    agentLoop = new AgentLoop(modelClient, eventBus, {
+    // PRD §5.4：构建带 fallback 的 ModelClientPool（若配置了 fallbacks）
+    const modelPool = buildModelPoolWithFallbacks(modelClient)
+
+    agentLoop = new AgentLoop(modelPool, eventBus, {
       systemPromptLayers: {
         agentRole: frozenPrompt,
         projectRules,
@@ -852,6 +901,14 @@ export function forwardEventToRenderer(
       webContents.send('agent:recovery-state', {
         messageId: event.messageId,
         state: toRendererRecoveryState(event.state)
+      })
+      break
+    case 'model_switched':
+      webContents.send('agent:model-switched', {
+        messageId: event.messageId,
+        modelId: event.modelId,
+        fallbackIndex: event.fallbackIndex,
+        reason: event.reason
       })
       break
     case 'message_end':

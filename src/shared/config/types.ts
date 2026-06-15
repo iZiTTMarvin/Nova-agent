@@ -19,6 +19,13 @@ export interface ModelConfig {
   contextWindow?: number
   /** 是否支持图片输入。未设置时由 inferVisionSupport(modelId) 推断 */
   supportsVision?: boolean
+  /**
+   * PRD §5.4：备用模型配置链（fallback）。
+   * 主模型出现 429/5xx 等瞬态错误且重试链耗尽时，按顺序切换到这些模型继续任务。
+   * 第一个元素是第一顺位 fallback，依次类推。
+   * 留空或未设置表示不启用降级（保持原行为）。
+   */
+  fallbacks?: ModelConfig[]
 }
 
 /** 从 baseUrl 推断默认缓存策略 */

@@ -1,36 +1,40 @@
 /**
  * SettingsModal — 左右分栏设置壳层
- * 导航：LLM / 规则 / 技能 / 子代理
+ * 导航：通用 / LLM / 规则 / 技能 / 子代理 / 权限
  */
 import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { GeneralSettingsPanel } from './GeneralSettingsPanel'
 import { LlmSettingsPanel } from './LlmSettingsPanel'
 import { RulesSettingsPanel } from './RulesSettingsPanel'
 import { SkillsSettingsPanel } from './SkillsSettingsPanel'
 import { SubagentsSettingsPanel } from './SubagentsSettingsPanel'
+import { PermissionsSettingsPanel } from './PermissionsSettingsPanel'
 import './SettingsModal.css'
 
 const NAV_STORAGE_KEY = 'nova-settings-nav'
 
-export type SettingsSection = 'llm' | 'rules' | 'skills' | 'subagents'
+export type SettingsSection = 'general' | 'llm' | 'rules' | 'skills' | 'subagents' | 'permissions'
 
 const NAV_ITEMS: { id: SettingsSection; label: string }[] = [
+  { id: 'general', label: '通用' },
   { id: 'llm', label: 'LLM 配置' },
   { id: 'rules', label: '规则' },
   { id: 'skills', label: '技能' },
-  { id: 'subagents', label: '子代理' }
+  { id: 'subagents', label: '子代理' },
+  { id: 'permissions', label: '权限' }
 ]
 
 function readStoredSection(): SettingsSection {
   try {
     const raw = sessionStorage.getItem(NAV_STORAGE_KEY)
-    if (raw === 'llm' || raw === 'rules' || raw === 'skills' || raw === 'subagents') {
+    if (raw === 'general' || raw === 'llm' || raw === 'rules' || raw === 'skills' || raw === 'subagents' || raw === 'permissions') {
       return raw
     }
   } catch {
     // sessionStorage 不可用时忽略
   }
-  return 'llm'
+  return 'general'
 }
 
 export const SettingsModal: React.FC = () => {
@@ -85,10 +89,12 @@ export const SettingsModal: React.FC = () => {
           </nav>
 
           <div className="settings-modal__content">
+            {section === 'general' && <GeneralSettingsPanel />}
             {section === 'llm' && <LlmSettingsPanel />}
             {section === 'rules' && <RulesSettingsPanel />}
             {section === 'skills' && <SkillsSettingsPanel />}
             {section === 'subagents' && <SubagentsSettingsPanel />}
+            {section === 'permissions' && <PermissionsSettingsPanel />}
           </div>
         </div>
       </div>

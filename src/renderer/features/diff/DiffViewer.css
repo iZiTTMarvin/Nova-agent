@@ -390,3 +390,130 @@
 .diff-hunk__truncation:hover {
   background-color: var(--border-cream);
 }
+
+/* ── PRD §5.3：批量审阅工具栏 ── */
+.diff-viewer__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background-color: var(--bg-sand);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+}
+
+.diff-toolbar__btn {
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.diff-toolbar__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.diff-toolbar__btn--accept-all {
+  color: #2e7d32;
+  background-color: rgba(46, 125, 50, 0.08);
+  border-color: rgba(46, 125, 50, 0.2);
+}
+
+.diff-toolbar__btn--accept-all:hover:not(:disabled) {
+  background-color: rgba(46, 125, 50, 0.16);
+}
+
+.diff-toolbar__btn--reject-all {
+  color: #b53333;
+  background-color: rgba(181, 51, 51, 0.06);
+  border-color: rgba(181, 51, 51, 0.2);
+}
+
+.diff-toolbar__btn--reject-all:hover:not(:disabled) {
+  background-color: rgba(181, 51, 51, 0.12);
+}
+
+.diff-toolbar__toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.diff-toolbar__toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+.diff-viewer__empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.diff-viewer__batch-error {
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+  color: var(--color-error);
+  background-color: rgba(181, 51, 51, 0.06);
+  border: 1px solid rgba(181, 51, 51, 0.15);
+  border-radius: var(--radius-sm);
+}
+
+/* ── PRD §5.3：按目录分组 ── */
+.diff-viewer__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-dir-group {
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.diff-dir-group__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background-color: var(--bg-sand);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+}
+
+.diff-dir-group__name {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-weight: 500;
+}
+
+.diff-dir-group__count {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  background-color: var(--border-cream);
+  border-radius: var(--radius-sm);
+}
+
+.diff-dir-group__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}

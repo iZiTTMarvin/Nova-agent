@@ -52,6 +52,7 @@ export type AgentEvent =
   | { type: 'hook_error'; messageId: string; hookEvent: HookEvent; error: string }
   | { type: 'recovery_hint'; messageId: string; hint: string; attempt: number }
   | { type: 'recovery_state'; messageId: string; state: RecoveryState }
+  | { type: 'model_switched'; messageId: string; modelId: string; fallbackIndex: number; reason: string }
   | {
       type: 'message_end'
       messageId: string

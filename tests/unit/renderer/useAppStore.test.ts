@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useAppStore } from '../../../src/renderer/stores/useAppStore'
+import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
+import { resetWorkspaceDispatcherForTests } from '../../../src/renderer/stores/workspaceDispatcher'
 
 // 模拟 window.api
 const mockInvoke = vi.fn()
-const mockOn = vi.fn()
+const mockOn = vi.fn(() => () => {}) // on 返回 unsubscribe 函数
 const mockRemoveAllListeners = vi.fn()
 
 // 挂载到全局 window 对象
@@ -16,10 +18,34 @@ global.window = {
   }
 } as unknown as Window & typeof globalThis
 
+/**
+ * 构造一个 WorkspaceState 广播载荷（PRD §5.1 新架构）。
+ * selectSession / rollbackMessage / setMode 等操作的主进程返回值都是这个结构。
+ */
+function makeWorkspaceState(overrides: Partial<{
+  currentSessionId: string | null
+  currentProjectPath: string | null
+  currentMode: 'plan' | 'default' | 'auto'
+  availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'auto'; createdAt: number; updatedAt: number; messageCount: number }>
+}> = {}): {
+  currentSessionId: string | null
+  currentProjectPath: string | null
+  currentMode: 'plan' | 'default' | 'auto'
+  availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'auto'; createdAt: number; updatedAt: number; messageCount: number }>
+} {
+  return {
+    currentSessionId: null,
+    currentProjectPath: '/project/root',
+    currentMode: 'default',
+    availableSessions: [],
+    ...overrides
+  }
+}
+
 describe('useAppStore Zustand Store', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    
+
     // 重置 store 状态到默认值
     useAppStore.setState({
       currentProject: null,
@@ -40,20 +66,27 @@ describe('useAppStore Zustand Store', () => {
       loadingDiffPlaceholders: {},
       streamingToolArgs: {}
     })
+    // PRD §5.1：重置 workspace store 与 dispatcher 内部状态
+    useWorkspaceStore.setState({
+      currentSessionId: null,
+      currentProjectPath: null,
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: false
+    })
+    resetWorkspaceDispatcherForTests()
   })
 
   it('应该能够成功切换运行模式并同步至主进程', async () => {
-    mockInvoke.mockResolvedValue(undefined)
+    // PRD §5.1：setMode 现在转发到 workspace store，返回 WorkspaceState
+    mockInvoke.mockResolvedValue(makeWorkspaceState({ currentMode: 'plan' }))
 
     // 执行模式切换
     await useAppStore.getState().setMode('plan')
 
-    // 验证调用了 IPC
-    expect(mockInvoke).toHaveBeenCalledWith('set-mode', {
-      mode: 'plan',
-      sessionId: undefined
-    })
-    // 验证 store 的值已被更新
+    // 验证调用了 workspace IPC（单一事实源）
+    expect(mockInvoke).toHaveBeenCalledWith('workspace:set-mode', { mode: 'plan' })
+    // 验证 store 的值已被 dispatcher 同步更新
     expect(useAppStore.getState().currentMode).toBe('plan')
   })
 
@@ -172,7 +205,9 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('加载历史会话时应正确恢复工具调用结果和错误状态', async () => {
+    // PRD §5.1 新链路：workspace:select-session（返回 WorkspaceState）→ load-session（返回 SessionDetail）
     mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_1', currentMode: 'default' }))
       .mockResolvedValueOnce({
         id: 'sess_1',
         workspaceRoot: '/project/root',
@@ -204,6 +239,8 @@ describe('useAppStore Zustand Store', () => {
     // T06：selectSession 不再自动调 loadMessageDiffs，无需 mock get-message-diffs
 
     await useAppStore.getState().selectSession('sess_1')
+    // 等待 syncFromWorkspace 内部异步 load-session 完成
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     const message = useAppStore.getState().messages[0]
     expect(message.toolCalls?.[0].result).toBe('工具执行失败: 测试失败')
@@ -212,6 +249,7 @@ describe('useAppStore Zustand Store', () => {
 
   it('加载带 blocks 的历史会话时应保留顺序块结构', async () => {
     mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_blocks', currentMode: 'plan' }))
       .mockResolvedValueOnce({
         id: 'sess_blocks',
         workspaceRoot: '/project/root',
@@ -237,6 +275,7 @@ describe('useAppStore Zustand Store', () => {
     // T06：selectSession 不再自动调 loadMessageDiffs
 
     await useAppStore.getState().selectSession('sess_blocks')
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(useAppStore.getState().messages[0].blocks).toEqual([
       { type: 'thinking', content: '先看目录' },
@@ -246,6 +285,7 @@ describe('useAppStore Zustand Store', () => {
 
   it('旧消息无 blocks 时应去掉历史 think 标签，只保留正文', async () => {
     mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_legacy', currentMode: 'default' }))
       .mockResolvedValueOnce({
         id: 'sess_legacy',
         workspaceRoot: '/project/root',
@@ -268,6 +308,9 @@ describe('useAppStore Zustand Store', () => {
     // T06：selectSession 不再自动调 loadMessageDiffs
 
     await useAppStore.getState().selectSession('sess_legacy')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await useAppStore.getState().selectSession('sess_legacy')
 
     const message = useAppStore.getState().messages[0]
     expect(message.content).toBe('真正正文')
@@ -275,8 +318,9 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('回退后重新加载会话时应复用同一套工具结果恢复逻辑', async () => {
+    // PRD §5.1 新链路：workspace:rollback-message（WorkspaceState）→ load-session（SessionDetail）
     mockInvoke
-      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_1', currentMode: 'auto' }))
       .mockResolvedValueOnce({
         id: 'sess_1',
         workspaceRoot: '/project/root',
@@ -306,8 +350,9 @@ describe('useAppStore Zustand Store', () => {
       })
 
     await useAppStore.getState().rollbackMessage('sess_1', 'msg_user_1')
+    await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'rollback-message', {
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:rollback-message', {
       sessionId: 'sess_1',
       messageId: 'msg_user_1'
     })

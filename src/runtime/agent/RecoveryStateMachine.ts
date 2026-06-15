@@ -11,7 +11,8 @@ export type RecoveryState =
   | { kind: 'recovering'; fromMessageId: string; snapshot: ChatMessage[] }
   | { kind: 'failed'; error: string }
 
-const MAX_RETRY_ATTEMPTS = 3
+/** 主模型重试上限（export 供 FallbackDecider / AgentLoop 引用，避免硬编码不一致） */
+export const MAX_RETRY_ATTEMPTS = 3
 const TRANSIENT_PATTERNS = [
   /rate.?limit/i,
   /429/,

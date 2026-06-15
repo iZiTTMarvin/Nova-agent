@@ -28,6 +28,10 @@ export interface MessageItemProps {
   onRollback: (messageId: string) => void
   onAcceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   onRejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
+  /** PRD §5.3：批量接受 */
+  onAcceptAllFiles?: (sessionId: string, messageId: string, filePaths: string[]) => Promise<void>
+  /** PRD §5.3：批量拒绝，返回恢复成功与失败的文件 */
+  onRejectAllFiles?: (sessionId: string, messageId: string, filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
   onRenderPoolTick: () => void
   diffCache?: MessageDiffCache
   isDiffLoading: boolean
@@ -98,6 +102,8 @@ function MessageItemInner({
   onRollback,
   onAcceptFile,
   onRejectFile,
+  onAcceptAllFiles,
+  onRejectAllFiles,
   onRenderPoolTick,
   diffCache,
   isDiffLoading,
@@ -260,6 +266,8 @@ function MessageItemInner({
             messageId={msg.id}
             onRejectFile={(filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
             onAcceptFile={(filePath) => onAcceptFile(currentSessionId, msg.id, filePath)}
+            {...(onAcceptAllFiles ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
+            {...(onRejectAllFiles ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
           />
         )}
 
@@ -287,6 +295,8 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.onRollback === next.onRollback &&
     prev.onAcceptFile === next.onAcceptFile &&
     prev.onRejectFile === next.onRejectFile &&
+    prev.onAcceptAllFiles === next.onAcceptAllFiles &&
+    prev.onRejectAllFiles === next.onRejectAllFiles &&
     prev.onRenderPoolTick === next.onRenderPoolTick &&
     prev.diffCache === next.diffCache &&
     prev.isDiffLoading === next.isDiffLoading &&

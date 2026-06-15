@@ -237,6 +237,10 @@ export interface ChatState {
   acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   /** 按文件拒绝改动 */
   rejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
+  /** 批量接受多个文件改动（PRD §5.3） */
+  acceptAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<void>
+  /** 批量拒绝多个文件改动（PRD §5.3），返回恢复成功与失败的文件 */
+  rejectAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
   /** 加载某条消息的 diff 数据 */
   loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
   /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
@@ -311,6 +315,19 @@ export interface ChatState {
   removePendingMessage: (index: number) => void
   /** 清空全部挂起消息 */
   clearPendingMessages: () => void
+
+  /**
+   * PRD §5.1：把 workspace store 广播的工作区状态同步到本 store。
+   * 由 workspaceDispatcher 调用（workspace:changed 事件的唯一副作用入口）。
+   * - 同步 sessions 列表
+   * - 若 currentSessionId 变化（含从 null 切到某会话 / 从某会话切到 null），
+   *   重新加载该会话的消息（或清空）。
+   * @internal 不应被 UI 组件直接调用
+   */
+  syncFromWorkspace: (next: {
+    currentSessionId: string | null
+    availableSessions: Session[]
+  }) => void
 }
 
 // ── Phase 6：Steering Queue 容量上限 ─────────────────────────────
@@ -401,30 +418,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteSession: async (sessionId: string) => {
+    // PRD §5.1：删除会话统一走 workspace store。当前会话被删时由主进程自动切到下一条，
+    // 广播 workspace:changed 后本 store 通过 dispatchWorkspaceChange 同步 messages / sessions。
     try {
-      await window.api.invoke('delete-session', { sessionId })
-      const { currentSessionId, sessions } = get()
-      const nextSessions = sessions.filter(s => s.id !== sessionId)
-      set({ sessions: nextSessions })
-
-      // 如果删除的是当前会话，需要切走
-      if (currentSessionId === sessionId) {
-        if (nextSessions.length > 0) {
-          await get().selectSession(nextSessions[0].id)
-        } else {
-          set({
-            currentSessionId: null,
-            messages: [],
-            messageIndexById: {}
-          })
-          // 同步清空 settings 层的 project 与 usage、清空 agent runtime
-          const { useSettingsStore } = await import('./useSettingsStore')
-          useSettingsStore.getState().setCurrentProject(null)
-          useSettingsStore.getState().resetSessionUsage()
-          const { useAgentStore } = await import('./useAgentStore')
-          useAgentStore.getState().resetAgentRuntime()
-        }
-      }
+      const { useWorkspaceStore } = await import('./useWorkspaceStore')
+      await useWorkspaceStore.getState().deleteSession(sessionId)
     } catch (err) {
       console.error('删除会话出错:', err)
     }
@@ -434,9 +432,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentSessionId, isGenerating } = get()
     if (isGenerating) return
 
-    // 读取 settings 层的 project 路径（动态 import 避免循环依赖）
-    const { useSettingsStore } = await import('./useSettingsStore')
-    const currentProject = useSettingsStore.getState().currentProject
+    // PRD §5.1：project 路径统一从 workspace store 读取（单一事实源）
+    const { useWorkspaceStore } = await import('./useWorkspaceStore')
+    const currentProject = useWorkspaceStore.getState().currentProjectPath
     if (!currentProject) return
 
     const activeSessionId = currentSessionId || 'session_default'
@@ -496,88 +494,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectSession: async (sessionId: string) => {
-    try {
-      const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
-      const restored = restoreSessionMessages(detail.messages)
-      // T05：会话加载后裁剪消息窗口
-      const trimmed = trimMessageWindow(restored, buildMessageIndex(restored))
-      set({
-        currentSessionId: sessionId,
-        sessions: upsertSessionSummary(get().sessions, detail),
-        messages: trimmed.messages,
-        messageIndexById: trimmed.index,
-        messageDiffs: {} // 切换会话时清空 diff 缓存
-      })
-
-      // 同步 settings / agent runtime
-      const { useSettingsStore } = await import('./useSettingsStore')
-      useSettingsStore.setState({
-        currentProject: detail.workspaceRoot,
-        currentMode: detail.mode
-      })
-      useSettingsStore.getState().resetSessionUsage()
-      const { useAgentStore } = await import('./useAgentStore')
-      useAgentStore.getState().resetAgentRuntime()
-      // T06：不再在 selectSession 时全量预加载所有 assistant 消息的 diff
-      // 改为 MessageItem 挂载时按需加载，避免长会话初始化卡顿
-    } catch (err) {
-      console.error('加载会话详情出错:', err)
-    }
+    // PRD §5.1：会话切换统一走 workspace store（单一事实源），由主进程广播 workspace:changed
+    // 触发 useChatStore 重新加载消息（见 dispatchWorkspaceChange 副作用）。
+    // 本方法保留签名以兼容 useAppStore，内部只转发。
+    const { useWorkspaceStore } = await import('./useWorkspaceStore')
+    await useWorkspaceStore.getState().selectSession(sessionId)
   },
 
   rollbackMessage: async (sessionId: string, messageId: string) => {
+    // PRD §5.1：回滚统一走 workspace store，主进程广播 workspace:changed 后
+    // dispatchWorkspaceChange 负责重新加载该会话的消息。
     try {
-      await window.api.invoke('rollback-message', { sessionId, messageId })
-      // 回退成功后重新加载会话数据
-      const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
-      const restored = restoreSessionMessages(detail.messages)
-      set({
-        sessions: upsertSessionSummary(get().sessions, detail),
-        messages: restored,
-        messageIndexById: buildMessageIndex(restored)
-      })
-      // 同步 settings / agent runtime
-      const { useSettingsStore } = await import('./useSettingsStore')
-      useSettingsStore.setState({
-        currentProject: detail.workspaceRoot,
-        currentMode: detail.mode
-      })
-      const { useAgentStore } = await import('./useAgentStore')
-      useAgentStore.getState().resetAgentRuntime()
+      const { useWorkspaceStore } = await import('./useWorkspaceStore')
+      await useWorkspaceStore.getState().rollbackMessage(sessionId, messageId)
     } catch (err) {
-      console.error('回退消息出错:', err)
+      console.error('回滚消息出错:', err)
     }
   },
 
   /**
    * 创建新会话（用当前项目工作区，或显式传入 workspaceRoot）
-   * 注：参数顺序与 useAppStore 旧实现一致（workspaceRoot 可选，默认使用 settings.currentProject）
+   * PRD §5.1：统一转发到 workspace store，由主进程创建并广播。
    */
   createNewSession: async (workspaceRoot?: string) => {
-    const { useSettingsStore } = await import('./useSettingsStore')
-    const settings = useSettingsStore.getState()
-    const targetProject = workspaceRoot || settings.currentProject
+    const { useWorkspaceStore } = await import('./useWorkspaceStore')
+    const ws = useWorkspaceStore.getState()
+    const targetProject = workspaceRoot || ws.currentProjectPath
     if (!targetProject) return
     try {
-      const sessionDetail: SessionDetail = await window.api.invoke('create-session', {
-        workspaceRoot: targetProject,
-        mode: settings.currentMode
-      })
-      const restored = restoreSessionMessages(sessionDetail.messages)
-      set(state => ({
-        currentSessionId: sessionDetail.id,
-        sessions: upsertSessionSummary(state.sessions, sessionDetail),
-        messages: restored,
-        messageIndexById: buildMessageIndex(restored)
-      }))
-      // 同步 settings / agent runtime
-      useSettingsStore.setState({
-        currentProject: targetProject,
-        currentMode: sessionDetail.mode
-      })
-      useSettingsStore.getState().resetSessionUsage()
-      const { useAgentStore } = await import('./useAgentStore')
-      useAgentStore.getState().resetAgentRuntime()
+      await ws.createSession(targetProject, ws.currentMode)
     } catch (err) {
       console.error('创建新会话失败:', err)
     }
@@ -645,6 +590,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch (err) {
       console.error('接受文件出错:', err)
+      throw err
+    }
+  },
+
+  acceptAllFiles: async (sessionId: string, messageId: string, filePaths: string[]) => {
+    if (filePaths.length === 0) return
+    try {
+      await window.api.invoke('accept-all-files', { sessionId, messageId, filePaths })
+      const cache = get().messageDiffs[messageId]
+      if (cache) {
+        // 逐个 apply 后整体写入，避免多次 setState
+        let updated = cache
+        for (const fp of filePaths) {
+          updated = applyDiffReviewStatus(updated, fp, 'accepted')
+        }
+        set(state => ({
+          messageDiffs: { ...state.messageDiffs, [messageId]: updated }
+        }))
+      }
+    } catch (err) {
+      console.error('批量接受文件出错:', err)
+      throw err
+    }
+  },
+
+  rejectAllFiles: async (sessionId: string, messageId: string, filePaths: string[]) => {
+    if (filePaths.length === 0) return { restored: [], failed: [] }
+    try {
+      const result = await window.api.invoke('reject-all-files', { sessionId, messageId, filePaths })
+      const cache = get().messageDiffs[messageId]
+      if (cache) {
+        // 仅把恢复成功的文件标记为 rejected；失败的不改状态（UI 可单独提示）
+        let updated = cache
+        for (const fp of result.restored) {
+          updated = applyDiffReviewStatus(updated, fp, 'rejected')
+        }
+        set(state => ({
+          messageDiffs: { ...state.messageDiffs, [messageId]: updated }
+        }))
+      }
+      if (result.failed.length > 0) {
+        console.warn('部分文件拒绝失败:', result.failed)
+      }
+      return result
+    } catch (err) {
+      console.error('批量拒绝文件出错:', err)
       throw err
     }
   },
@@ -1306,6 +1297,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       return finalResult
     })
+  },
+
+  syncFromWorkspace: (next) => {
+    const prev = get()
+    const sessionChanged = prev.currentSessionId !== next.currentSessionId
+
+    // 1. 同步 sessions 列表 + currentSessionId
+    set({ sessions: next.availableSessions, currentSessionId: next.currentSessionId })
+
+    // 2. 若 currentSessionId 变化，重新加载消息（或清空）
+    if (sessionChanged) {
+      // 清空 diff 缓存，避免跨会话污染
+      set({ messageDiffs: {}, loadingDiffPlaceholders: {} })
+
+      if (next.currentSessionId) {
+        // 异步加载该会话的完整消息历史
+        void (async () => {
+          try {
+            const detail: SessionDetail = await window.api.invoke('load-session', { sessionId: next.currentSessionId! })
+            // 二次校验：加载期间用户可能又切了会话，只有 still current 时才 set
+            if (get().currentSessionId !== next.currentSessionId) return
+            const restored = restoreSessionMessages(detail.messages)
+            const trimmed = trimMessageWindow(restored, buildMessageIndex(restored))
+            set({
+              messages: trimmed.messages,
+              messageIndexById: trimmed.index
+            })
+          } catch (err) {
+            console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)
+          }
+        })()
+      } else {
+        // 切到"无会话"状态：清空消息
+        set({ messages: [], messageIndexById: {} })
+      }
+    }
   }
 }))
 

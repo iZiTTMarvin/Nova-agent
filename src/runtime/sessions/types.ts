@@ -21,6 +21,11 @@ export interface SessionSummary {
 
 /** 会话完整数据（含所有消息） */
 export interface SessionData {
+  /**
+   * 数据结构版本号。旧会话首次加载时由 migrations.ts 迁移补全。
+   * 新创建的会话固定写入 CURRENT_SESSION_SCHEMA_VERSION。
+   */
+  schemaVersion: number
   id: string
   workspaceRoot: string
   mode: Mode

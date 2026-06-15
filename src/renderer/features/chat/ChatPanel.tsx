@@ -60,6 +60,8 @@ export const ChatPanel: React.FC = () => {
   const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
   const rejectFile = useChatStore(state => state.rejectFile)
   const acceptFile = useChatStore(state => state.acceptFile)
+  const acceptAllFiles = useChatStore(state => state.acceptAllFiles)
+  const rejectAllFiles = useChatStore(state => state.rejectAllFiles)
   const loadMessageDiffs = useChatStore(state => state.loadMessageDiffs)
   // Steering Queue
   const pendingUserMessages = useChatStore(state => state.pendingUserMessages)
@@ -425,6 +427,8 @@ export const ChatPanel: React.FC = () => {
               onRollback={handleRollback}
               onAcceptFile={handleAcceptFile}
               onRejectFile={handleRejectFile}
+              onAcceptAllFiles={acceptAllFiles}
+              onRejectAllFiles={rejectAllFiles}
               onRenderPoolTick={scheduleStreamAutoScroll}
               diffCache={diffCache}
               isDiffLoading={isDiffLoading}

@@ -1,19 +1,39 @@
 /**
  * Nova 全局设置持久化（~/.nova/settings.json）
+ *
  * Task 5/13：第三方 skill 开关等应用级配置
+ * PRD §5.6：扩展为完整用户偏好 schema，含默认模式、bash shell、verification、字体、主题等。
+ *
+ * 设计要点：
+ * - NovaSettings 与 NovaSettingsDto 结构对齐（dto 即 schema）。
+ * - 加载时做默认值填充：旧版本单字段 settings.json 会安全升级到完整 schema。
+ * - 保存时做 schema 校验：非法值拒绝（如负数字号、未知 theme）。
+ * - 迁移函数独立，失败不阻塞启动（回退默认值）。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import type { Mode } from '../../shared/session/types'
+import type { NovaSettingsDto } from '../../shared/settings/types'
 
-/** 应用级设置字段 */
-export interface NovaSettings {
-  /** 是否加载 Claude Code 第三方 skill（Task 13 运行时读取） */
-  loadThirdPartySkills: boolean
-}
+/** 应用级设置字段（与 NovaSettingsDto 完全对齐） */
+export type NovaSettings = NovaSettingsDto
 
-const DEFAULT_SETTINGS: NovaSettings = {
-  loadThirdPartySkills: true
+/** 当前 settings schema 版本（用于未来迁移） */
+const CURRENT_SETTINGS_VERSION = 1
+
+/** 默认值：所有字段的兜底 */
+export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
+  loadThirdPartySkills: true,
+  defaultMode: 'default',
+  defaultShell: '',
+  defaultShellTimeout: 120_000,
+  verificationEnabled: true,
+  editorFontSize: 13,
+  editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+  theme: 'system',
+  diffAutoExpand: false,
+  lastProjectPath: null
 }
 
 /** 返回 ~/.nova 目录路径 */
@@ -25,29 +45,126 @@ function getSettingsPath(): string {
   return join(getNovaHomeDir(), 'settings.json')
 }
 
-/** 读取设置；文件不存在或解析失败时返回默认值 */
+/**
+ * 把任意未知结构的磁盘数据迁移 + 默认值填充为完整 NovaSettings。
+ *
+ * 迁移逻辑：
+ * - 无 settingsVersion 视为 v0（旧版只有 loadThirdPartySkills 单字段）。
+ * - v0 → v1：补全所有新增字段为默认值。
+ * - 逐字段用默认值兜底（即便 v1 也可能有字段缺失，防御性填充）。
+ */
+function migrateAndFill(raw: unknown): NovaSettings {
+  const obj = (raw ?? {}) as Record<string, unknown>
+  const result: NovaSettings = { ...DEFAULT_NOVA_SETTINGS }
+
+  // 逐字段安全填充：只在类型合法时采用磁盘值，否则用默认值
+  if (typeof obj.loadThirdPartySkills === 'boolean') {
+    result.loadThirdPartySkills = obj.loadThirdPartySkills
+  }
+  if (obj.defaultMode === 'plan' || obj.defaultMode === 'default' || obj.defaultMode === 'auto') {
+    result.defaultMode = obj.defaultMode as Mode
+  }
+  if (typeof obj.defaultShell === 'string') {
+    result.defaultShell = obj.defaultShell
+  }
+  if (typeof obj.defaultShellTimeout === 'number' && obj.defaultShellTimeout >= 0) {
+    result.defaultShellTimeout = obj.defaultShellTimeout
+  }
+  if (typeof obj.verificationEnabled === 'boolean') {
+    result.verificationEnabled = obj.verificationEnabled
+  }
+  if (typeof obj.editorFontSize === 'number' && Number.isInteger(obj.editorFontSize) && obj.editorFontSize >= 8 && obj.editorFontSize <= 32) {
+    result.editorFontSize = obj.editorFontSize
+  }
+  if (typeof obj.editorFontFamily === 'string' && obj.editorFontFamily.trim()) {
+    result.editorFontFamily = obj.editorFontFamily
+  }
+  if (obj.theme === 'light' || obj.theme === 'dark' || obj.theme === 'system') {
+    result.theme = obj.theme
+  }
+  if (typeof obj.diffAutoExpand === 'boolean') {
+    result.diffAutoExpand = obj.diffAutoExpand
+  }
+  if (typeof obj.lastProjectPath === 'string') {
+    result.lastProjectPath = obj.lastProjectPath
+  }
+
+  return result
+}
+
+/**
+ * 校验 patch 的字段合法性。返回错误消息列表（空表示全部合法）。
+ * 用于 saveNovaSettings 拒绝非法值。
+ */
+function validatePatch(patch: Partial<NovaSettings>): string[] {
+  const errors: string[] = []
+  if ('defaultMode' in patch && patch.defaultMode !== undefined) {
+    if (!['plan', 'default', 'auto'].includes(patch.defaultMode)) {
+      errors.push('defaultMode 必须是 plan / default / auto 之一')
+    }
+  }
+  if ('defaultShellTimeout' in patch && patch.defaultShellTimeout !== undefined) {
+    if (typeof patch.defaultShellTimeout !== 'number' || patch.defaultShellTimeout < 0) {
+      errors.push('defaultShellTimeout 必须是非负数')
+    }
+  }
+  if ('editorFontSize' in patch && patch.editorFontSize !== undefined) {
+    if (typeof patch.editorFontSize !== 'number' || !Number.isInteger(patch.editorFontSize) || patch.editorFontSize < 8 || patch.editorFontSize > 32) {
+      errors.push('editorFontSize 必须是 8~32 之间的整数')
+    }
+  }
+  if ('theme' in patch && patch.theme !== undefined) {
+    if (!['light', 'dark', 'system'].includes(patch.theme)) {
+      errors.push('theme 必须是 light / dark / system 之一')
+    }
+  }
+  if ('defaultShell' in patch && patch.defaultShell !== undefined && typeof patch.defaultShell !== 'string') {
+    errors.push('defaultShell 必须是字符串')
+  }
+  if ('editorFontFamily' in patch && patch.editorFontFamily !== undefined && typeof patch.editorFontFamily !== 'string') {
+    errors.push('editorFontFamily 必须是字符串')
+  }
+  return errors
+}
+
+/** 读取设置；文件不存在或解析失败时返回默认值（迁移 + 填充后） */
 export function loadNovaSettings(): NovaSettings {
   const path = getSettingsPath()
   if (!existsSync(path)) {
-    return { ...DEFAULT_SETTINGS }
+    return { ...DEFAULT_NOVA_SETTINGS }
   }
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf-8')) as Partial<NovaSettings>
-    return {
-      loadThirdPartySkills: raw.loadThirdPartySkills ?? DEFAULT_SETTINGS.loadThirdPartySkills
-    }
+    const raw = JSON.parse(readFileSync(path, 'utf-8'))
+    return migrateAndFill(raw)
   } catch {
-    return { ...DEFAULT_SETTINGS }
+    // 解析失败：回退默认值，不阻塞启动
+    return { ...DEFAULT_NOVA_SETTINGS }
   }
 }
 
-/** 合并写入设置 */
+/**
+ * 合并写入设置。
+ * 保存前校验 patch 字段合法性，非法值抛错（含具体字段提示）。
+ * 写盘时附带 settingsVersion，供未来迁移识别。
+ */
 export function saveNovaSettings(patch: Partial<NovaSettings>): NovaSettings {
+  const errors = validatePatch(patch)
+  if (errors.length > 0) {
+    throw new Error(`设置校验失败：${errors.join('；')}`)
+  }
+
   const dir = getNovaHomeDir()
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
   }
-  const next = { ...loadNovaSettings(), ...patch }
+  const current = loadNovaSettings()
+  const next: NovaSettings & { settingsVersion?: number } = {
+    ...current,
+    ...patch,
+    settingsVersion: CURRENT_SETTINGS_VERSION
+  }
   writeFileSync(getSettingsPath(), JSON.stringify(next, null, 2), 'utf-8')
-  return next
+  // 返回不含 settingsVersion 的纯净 dto
+  const { settingsVersion: _drop, ...dto } = next
+  return dto as NovaSettings
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
-import { useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
+import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 
 const mockInvoke = vi.fn()
 const mockOn = vi.fn()
@@ -18,8 +18,8 @@ describe('Steering Queue（Phase 6）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetChatStoreForTests()
-    // 提供一个 currentProject 让 sendMessage 真的尝试发 IPC
-    useSettingsStore.setState({ currentProject: '/test/project' })
+    // PRD §5.1：sendMessage 现在从 workspace store 读 currentProjectPath
+    useWorkspaceStore.setState({ currentProjectPath: '/test/project' })
   })
 
   it('enqueuePendingMessage 应把消息追加到队列', () => {

@@ -198,6 +198,59 @@
   transform: scale(0.98);
 }
 
+/* ── 记忆选项（持久化规则） ── */
+.permission-prompt__remember {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border-warm);
+  padding-top: 10px;
+}
+
+.permission-prompt__remember-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 4px 0;
+  width: 100%;
+  text-align: left;
+}
+
+.permission-prompt__remember-toggle:hover {
+  color: var(--text-primary);
+}
+
+.permission-prompt__remember-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.permission-prompt__btn--remember-allow {
+  color: #2e7d32;
+  background-color: rgba(46, 125, 50, 0.08);
+  border: 1px solid rgba(46, 125, 50, 0.2);
+  font-size: 0.78rem;
+  padding: 7px 12px;
+}
+
+.permission-prompt__btn--remember-allow:hover:not(:disabled) {
+  background-color: rgba(46, 125, 50, 0.14);
+}
+
+.permission-prompt__btn--remember-deny {
+  color: #b53333;
+  background-color: rgba(181, 51, 51, 0.06);
+  border: 1px solid rgba(181, 51, 51, 0.2);
+  font-size: 0.78rem;
+  padding: 7px 12px;
+}
+
+.permission-prompt__btn--remember-deny:hover:not(:disabled) {
+  background-color: rgba(181, 51, 51, 0.12);
+}
+
 @media (max-width: 640px) {
   .permission-prompt {
     padding: 22px;

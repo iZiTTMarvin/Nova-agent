@@ -20,10 +20,11 @@ describe('Phase 3 cancel + Phase 6 dispatch 5s 兜底竞态保护', () => {
     // 重置所有 store
     const { resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
     const { resetAgentStoreForTests } = await import('../../../src/renderer/stores/useAgentStore')
-    const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
+    const { useWorkspaceStore } = await import('../../../src/renderer/stores/useWorkspaceStore')
     resetChatStoreForTests()
     resetAgentStoreForTests()
-    useSettingsStore.setState({ currentProject: '/test/project' })
+    // PRD §5.1：sendMessage 现在从 workspace store 读 currentProjectPath
+    useWorkspaceStore.setState({ currentProjectPath: '/test/project' })
   })
 
   afterEach(() => {
