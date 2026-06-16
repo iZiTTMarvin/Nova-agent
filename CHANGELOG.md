@@ -7,6 +7,15 @@
   - `agentHandler` 对已知旧版 `frozenSystemPrompt` 做定点归一化，避免历史会话继续沿用缺失或错误的 session context 文案
   - `OpenAICompatibleModelClient` 新增受控 `includeInternalMessages` 选项，允许 compaction 临时提示正文进入真实 API，同时继续剥离 `internal` 字段
 - **test**: 补充 session context 跨天重注、前缀路径切换、compaction 真实发送与 legacy prompt 归一化回归测试
+- **feat(agent)**: 根据模型方言选择工具调用格式，彻底修复 MiniMax-M3 等国产模型工具调用失败
+  - 新增 `src/runtime/model/dialect.ts`：Claude / GPT / o 系列走原生 `tool_calls`；MiniMax / Kimi / GLM / DeepSeek / Qwen / 未知模型走 XML inband
+  - 新增 `src/runtime/agent/xmlToolScanner.ts`：从 assistant 正文中扫描 `<invoke name="..."><parameter name="...">...</parameter></invoke>`，并清理 MiniMax `]<minimax>[` 占位符
+  - 新增 `src/runtime/agent/toolPromptRenderer.ts`：根据方言渲染 system prompt 中的工具目录（native 只列名；xml 给出完整 XML 调用示例和规则）
+  - 重写 `src/runtime/agent/modePrompt.ts`：`buildStableSystemPrompt()` 按方言、工作区、工具定义动态生成 prompt，并继续归一化已知旧版错误 prompt
+  - 更新 `src/main/ipc/agentHandler.ts`：创建 AgentLoop 前按当前模型方言生成 system prompt
+  - 更新 `src/runtime/agent/AgentLoop.ts`：流式响应结束后优先用 XML scanner 解析正文工具调用，保留 JSON fallback 作为兜底
+  - 更新 `src/renderer/stores/useChatStore.ts`：前端清理 MiniMax 占位符和行内伪工具调用，避免界面乱码
+  - 新增单元测试：`xmlToolScanner`、`dialect`、`toolPromptRenderer`；更新 `modePrompt` 测试
 
 ## 2026-06-14
 

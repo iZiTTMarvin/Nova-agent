@@ -14,7 +14,7 @@ import { MAX_RETRY_ATTEMPTS } from './RecoveryStateMachine'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../model/types'
 import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
-import type { ToolRegistry } from '../tools/ToolRegistry'
+import { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import type { SessionStore } from '../sessions/SessionStore'
@@ -22,7 +22,6 @@ import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
-import { getModeInstruction } from './modeInstruction'
 import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold, rollbackBefore } from './compaction'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
@@ -33,21 +32,30 @@ import type { IdleCompactionTarget } from './IdleCompressionTimer'
 import { HookManager } from './HookManager'
 import { RecoveryStateMachine } from './RecoveryStateMachine'
 import { SystemPromptBuilder } from './SystemPromptBuilder'
+import { buildStableSystemPrompt, normalizeFrozenSystemPrompt } from './modePrompt'
 import { buildSessionContext } from './sessionContext'
 import { calculateContextBreakdown } from './contextBreakdownCalculator'
+import { preferredToolDialect, type ToolDialect } from '../model/dialect'
+import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type ScannedToolCall as XmlScannedToolCall } from './xmlToolScanner'
 import type { SkillRegistry } from '../skills/SkillRegistry'
-import { invokeSkill } from '../skills/invokeSkill'
+import { parseTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 
-/** 写入类工具名称集合，plan 模式下会被拒绝 */
-const WRITE_TOOLS = new Set(['edit', 'write', 'bash'])
-
+import { invokeSkill } from '../skills/invokeSkill'
+import { getModeInstruction } from './modeInstruction'
 /**
  * 表示权限请求被 cancel 中断的 sentinel 错误。
  * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
  * 和"流程被取消"（不产生任何 tool_result，不污染 context 与持久化）。
  */
+/** 写入类工具名称集合，plan 模式下会被拒绝 */
+const WRITE_TOOLS: Record<string, true> = {
+  edit: true,
+  write: true,
+  bash: true
+}
+
 class PermissionAbortedError extends Error {
   constructor() {
     super('permission request aborted by cancel')
@@ -88,6 +96,8 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** checkpoint 管理器（可选，S6 引入） */
   private checkpointManager: CheckpointManager | null = null
+  /** 当前工具调用方言，由模型 ID 决定 */
+  private toolDialect: ToolDialect = 'xml'
 
   /** 权限决策引擎（可选，S7 引入） */
   private permissionManager: PermissionManager | null = null
@@ -174,6 +184,9 @@ export class AgentLoop implements IdleCompactionTarget {
     this.modelPool = modelClient instanceof ModelClientPool
       ? modelClient
       : new ModelClientPool({ primary: modelClient, primaryConfig: { baseUrl: '', apiKey: '', modelId: 'primary' } })
+    // 根据当前主模型决定工具调用方言
+    const primaryProvider = this.modelPool.getActiveProvider()
+    this.toolDialect = preferredToolDialect(primaryProvider.modelId, primaryProvider.baseUrl)
     this.eventBus = eventBus
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
@@ -199,8 +212,7 @@ export class AgentLoop implements IdleCompactionTarget {
       })
     }
   }
-
-  /** 从配置构建冻结 system prompt */
+  /** 从配置构建冻结 system prompt（根据模型方言注入工具目录格式） */
   private buildFrozenSystemPrompt(): string {
     const layers = this.config.systemPromptLayers
     if (layers) {
@@ -214,6 +226,11 @@ export class AgentLoop implements IdleCompactionTarget {
       })
     }
     return this.config.systemPrompt ?? ''
+  }
+
+  /** 返回当前应使用的工具调用方言 */
+  getToolDialect(): ToolDialect {
+    return this.toolDialect
   }
 
   /**
@@ -758,6 +775,67 @@ export class AgentLoop implements IdleCompactionTarget {
           continue
         }
 
+        // 工具调用兜底：
+        // - XML 方言：模型把调用以 <invoke> 形式写在正文里，scanner 边流边识别。
+        // - 原生 tool_calls：已经被上面的 case 'tool_call' 收集到 toolCalls 中。
+        // - 如果都没有，再尝试识别行内 JSON / fenced JSON / MiniMax 占位符中的调用。
+        if (toolCalls.length === 0) {
+          const xmlParsed = parseXmlToolCalls(stripMinimaxArtifacts(assistantContent))
+          if (xmlParsed.toolCalls.length > 0) {
+            assistantContent = xmlParsed.visibleText
+            finishReason = 'tool_calls'
+            for (const call of xmlParsed.toolCalls) {
+              const syntheticToolCall: ChatToolCall = {
+                id: `call_${randomUUID()}`,
+                name: call.name,
+                arguments: JSON.stringify(call.arguments)
+              }
+              toolCalls.push(syntheticToolCall)
+              this.eventBus.emit({
+                type: 'tool_call_start',
+                messageId,
+                toolCallId: syntheticToolCall.id,
+                toolName: syntheticToolCall.name
+              })
+              this.eventBus.emit({
+                type: 'tool_call',
+                messageId,
+                toolCallId: syntheticToolCall.id,
+                toolName: syntheticToolCall.name,
+                args: call.arguments
+              })
+            }
+          } else {
+            // 兜底：行内 JSON / fenced JSON（不含 MiniMax 占位符的情况）
+            const fallback = parseTextToolCalls(stripMinimaxArtifacts(assistantContent))
+            if (fallback && fallback.toolCalls.length > 0) {
+              assistantContent = fallback.visibleText
+              finishReason = 'tool_calls'
+              for (const parsed of fallback.toolCalls) {
+                const syntheticToolCall: ChatToolCall = {
+                  id: `call_${randomUUID()}`,
+                  name: parsed.toolName,
+                  arguments: JSON.stringify(parsed.arguments)
+                }
+                toolCalls.push(syntheticToolCall)
+                this.eventBus.emit({
+                  type: 'tool_call_start',
+                  messageId,
+                  toolCallId: syntheticToolCall.id,
+                  toolName: syntheticToolCall.name
+                })
+                this.eventBus.emit({
+                  type: 'tool_call',
+                  messageId,
+                  toolCallId: syntheticToolCall.id,
+                  toolName: syntheticToolCall.name,
+                  args: parsed.arguments
+                })
+              }
+            }
+          }
+        }
+
         // 将 assistant 回复（含 tool_calls）加入上下文
         const assistantMsg: ChatMessage = {
           role: 'assistant',
@@ -1113,7 +1191,7 @@ export class AgentLoop implements IdleCompactionTarget {
   ): Promise<{ allowed: boolean; reason: string; aborted?: boolean }> {
     // 没有 PermissionManager 时退化为简单 plan 模式检查
     if (!this.permissionManager) {
-      if (this.mode === 'plan' && WRITE_TOOLS.has(toolName)) {
+      if (this.mode === 'plan' && WRITE_TOOLS[toolName]) {
         return {
           allowed: false,
           reason: `当前为 plan 模式，"${toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`

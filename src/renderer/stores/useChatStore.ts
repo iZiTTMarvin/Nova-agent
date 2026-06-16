@@ -25,6 +25,8 @@ import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
 import type { RendererRecoveryState } from '../../shared/ipc/types'
+import { stripTextToolCalls } from '../../shared/tool-call-text-fallback'
+import { stripMinimaxArtifacts } from '../../runtime/agent/xmlToolScanner'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
@@ -51,6 +53,41 @@ function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
 /** 旧会话兼容路径：剥离历史 <think>...</think> 标签，不在 UI 重复展示 */
 function stripLegacyThinkingTags(content: string): string {
   return content.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '')
+}
+
+/**
+ * 某些模型会把工具调用误输出成正文里的 JSON / XML 片段。
+ * 当后端随后补发真实 tool_call 事件时，这里把那段伪调用从消息文本里剥掉，
+ * 避免界面同时出现“黑色 JSON 代码块 / XML + 真实工具卡片”的重复展示。
+ */
+function stripInlinePseudoToolCalls(
+  content: string,
+  blocks: RendererMessageBlock[]
+): { content: string; blocks: RendererMessageBlock[] } {
+  let cleanedContent = stripMinimaxArtifacts(content)
+  cleanedContent = stripTextToolCalls(cleanedContent)
+  if (cleanedContent === content) {
+    return { content, blocks }
+  }
+
+  const nextBlocks = [...blocks]
+  for (let i = nextBlocks.length - 1; i >= 0; i--) {
+    const block = nextBlocks[i]
+    if (block.type !== 'text') continue
+
+    let cleanedBlockText = stripMinimaxArtifacts(block.content)
+    cleanedBlockText = stripTextToolCalls(cleanedBlockText)
+    if (cleanedBlockText === block.content) break
+
+    if (cleanedBlockText.length === 0) {
+      nextBlocks.splice(i, 1)
+    } else {
+      nextBlocks[i] = { ...block, content: cleanedBlockText }
+    }
+    break
+  }
+
+  return { content: cleanedContent, blocks: nextBlocks }
 }
 
 /** 把后端返回的 SessionDetail 消息列表恢复成 ExtendedMessage 数组 */
@@ -733,8 +770,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const msg = state.messages[idx]
       if (!msg) return state
 
+      const cleanedMessage = stripInlinePseudoToolCalls(msg.content, msg.blocks ? [...msg.blocks] : [])
+
       // 查找是否已有 start 创建的占位 block
-      const blocks = msg.blocks ? [...msg.blocks] : []
+      const blocks = cleanedMessage.blocks
       const existingBlockIdx = blocks.findIndex(
         b => b.type === 'tool' && b.toolCallId === toolCallId
       )
@@ -773,7 +812,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, toolCalls, blocks })
+      nextMessages[idx] = bumpRevision({ ...msg, content: cleanedMessage.content, toolCalls, blocks })
 
       const { [toolCallId]: _drop2, ...restStreaming } = state.streamingToolArgs
       return { messages: nextMessages, streamingToolArgs: restStreaming }

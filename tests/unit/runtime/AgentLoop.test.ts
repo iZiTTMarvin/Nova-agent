@@ -6,6 +6,7 @@ import { MockModelClient } from '../../../src/test-support/builders/MockModelCli
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
+import { extractTextFromContent } from '../../../src/runtime/model/types'
 import type { ChatMessage } from '../../../src/runtime/model/types'
 import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
@@ -248,6 +249,116 @@ describe('AgentLoop', () => {
 
     // 模型应该被调用两次（第一次返回 tool_call，第二次收到结果后最终回复）
     expect(client.getCalls()).toHaveLength(2)
+  })
+
+  it('模型把工具调用误写成 JSON 文本时，仍会兜底解析并继续对话', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '我来看看当前目录。\n\n' },
+        {
+          type: 'text_delta',
+          delta: '```json\n{"name":"list_directory","arguments":{"path":"."}}\n```'
+        },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '目录已列出。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: unknown[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('列出当前目录')
+
+    expect(client.getCalls()).toHaveLength(2)
+    expect(events.some((e: any) => e.type === 'tool_call' && e.toolName === 'ls')).toBe(true)
+
+    const context = loop.getContext()
+    const assistantWithTool = context.find(
+      m => m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.length > 0
+    )
+    expect(assistantWithTool?.content).toBe('我来看看当前目录。')
+
+    const secondCall = client.getCalls()[1]
+    const lastMsg = secondCall.messages[secondCall.messages.length - 1]
+    expect(lastMsg.role).toBe('tool')
+  })
+  it('模型把多个工具调用混在正文 JSON 中时，兜底解析多个 tool_call', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'text_delta',
+          delta: '我先看目录结构。{ "name": "directory_tree", "arguments": { "path": ".", "max_depth": 2 } } 然后读 README。{ "name": "read_file", "arguments": { "path": "README.md" } }'
+        },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '已完成查看。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: unknown[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('当前项目什么情况')
+
+    expect(client.getCalls()).toHaveLength(2)
+
+    const toolCallEvents = events.filter((e: any) => e.type === 'tool_call')
+    expect(toolCallEvents).toHaveLength(2)
+    expect(toolCallEvents.map((e: any) => e.toolName)).toContain('ls')
+    expect(toolCallEvents.map((e: any) => e.toolName)).toContain('read')
+
+    const context = loop.getContext()
+    const assistantWithTool = context.find(
+      m => m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.length > 0
+    )
+    expect(assistantWithTool?.toolCalls).toHaveLength(2)
+  })
+
+  it('模型输出 MiniMax XML 风格调用时，兜底解析并执行', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'text_delta',
+          delta: '让我执行命令。<invoke name="bash"><command>dir</command><description>List files</description></invoke>'
+        },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '命令执行完毕。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: unknown[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('列出文件')
+
+    expect(client.getCalls()).toHaveLength(2)
+    expect(events.some((e: any) => e.type === 'tool_call' && e.toolName === 'bash')).toBe(true)
   })
 
   it('工具结果以 tool 消息回传模型', async () => {
@@ -713,7 +824,7 @@ describe('AgentLoop', () => {
     // 找到压缩调用（包含"请对上面的对话历史"的消息）
     const calls = client.getCalls()
     const compactionCall = calls.find(c =>
-      c.messages.some(m => m.role === 'user' && m.content.includes('请对上面的对话历史'))
+      c.messages.some(m => m.role === 'user' && extractTextFromContent(m.content).includes('请对上面的对话历史'))
     )
     expect(compactionCall).toBeDefined()
     expect(compactionCall!.options?.includeInternalMessages).toBe(true)
@@ -721,7 +832,7 @@ describe('AgentLoop', () => {
 
     // 找到压缩指令 user 消息
     const compactionUserIdx = messages.findIndex(
-      m => m.role === 'user' && m.content.includes('请对上面的对话历史')
+      m => m.role === 'user' && extractTextFromContent(m.content).includes('请对上面的对话历史')
     )
     expect(compactionUserIdx).toBeGreaterThan(-1)
 

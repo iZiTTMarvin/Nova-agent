@@ -11,6 +11,9 @@ import { join } from 'path'
 import { AgentLoop } from '../../runtime/agent/AgentLoop'
 import { loadModelConfig } from '../../runtime/model/config'
 import { inferContextWindow, inferVisionSupport, inferCacheStrategy } from '../../shared/config/types'
+import { preferredToolDialect } from '../../runtime/model/dialect'
+import { renderToolInventory } from '../../runtime/agent/toolPromptRenderer'
+import { buildStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../runtime/agent/modePrompt'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../runtime/model/ModelClientPool'
 import { randomUUID } from 'crypto'
@@ -37,7 +40,6 @@ import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
 import { extractTextFromSerializableContent } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
-import { getStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../runtime/agent/modePrompt'
 import { buildConversationContext } from '../../runtime/agent/contextBuilder'
 import { getSkillService } from '../services/SkillServiceHost'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
@@ -205,16 +207,6 @@ export function registerAgentHandler(
     const capturedWorkspaceRoot = projectPath
     const capturedSessionsDir = sessionsDir
 
-    // 使用会话级冻结的 system prompt，保证前缀稳定（缓存 Harness 核心）。
-    // 对已知错误/过时的旧 prompt 做一次定点归一化，避免历史会话继续沿用错误文案。
-    const frozenPrompt = normalizeFrozenSystemPrompt(session.frozenSystemPrompt ?? getStableSystemPrompt())
-
-    // 如果旧会话还没有冻结 prompt，或命中了已知旧版错误 prompt，则回写一份当前稳定版本。
-    if (session.frozenSystemPrompt !== frozenPrompt) {
-      session.frozenSystemPrompt = frozenPrompt
-      sessionStore.save(session)
-    }
-
     // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
     const persistedConfig = loadModelConfig(app.getPath('userData'))
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
@@ -256,9 +248,27 @@ export function registerAgentHandler(
       supportsVision
     }))
 
-    const toolSummary = toolRegistry.getToolDefinitions()
-      .map(t => `- ${t.name}: ${t.description.split('\n')[0]}`)
-      .join('\n')
+    // PRD §5.4：构建带 fallback 的 ModelClientPool（若配置了 fallbacks）
+    const modelPool = buildModelPoolWithFallbacks(modelClient)
+    const activeProvider = modelPool instanceof ModelClientPool
+      ? modelPool.getActiveProvider()
+      : { modelId: persistedConfig?.modelId ?? '', baseUrl: persistedConfig?.baseUrl ?? '' }
+    const toolDialect = preferredToolDialect(activeProvider.modelId, activeProvider.baseUrl)
+    const toolSummary = renderToolInventory(toolRegistry.getToolDefinitions(), { dialect: toolDialect })
+
+    // system prompt 角色层使用新的 buildStableSystemPrompt，它内部会根据方言
+    // 生成合适的工具目录格式。旧的 frozenPrompt（纯字符串）仅在 layers 不存在时兜底。
+    const frozenPrompt = buildStableSystemPrompt({
+      workingDir: projectPath,
+      tools: toolRegistry.getToolDefinitions(),
+      dialect: toolDialect
+    })
+
+    // 如果旧会话还没有冻结 prompt，或命中了已知旧版错误 prompt，则回写一份当前稳定版本。
+    if (session.frozenSystemPrompt !== frozenPrompt) {
+      session.frozenSystemPrompt = frozenPrompt
+      sessionStore.save(session)
+    }
 
     // 创建新 loop 前先释放旧 loop 的资源（I3）：
     // 旧 loop 即使本轮已结束，idleTimer（266 秒后台压缩）仍在运行，
@@ -266,9 +276,6 @@ export function registerAgentHandler(
     if (agentLoop) {
       agentLoop.dispose()
     }
-
-    // PRD §5.4：构建带 fallback 的 ModelClientPool（若配置了 fallbacks）
-    const modelPool = buildModelPoolWithFallbacks(modelClient)
 
     agentLoop = new AgentLoop(modelPool, eventBus, {
       systemPromptLayers: {
@@ -282,13 +289,11 @@ export function registerAgentHandler(
       contextWindow,
       supportsVision,
       onCompaction: (compactedContext) => {
-        // 将压缩后的上下文写回 session，保证跨轮次持久化
         const compactedSession = sessionStore.load(params.sessionId)
         if (!compactedSession) {
           console.error(`[onCompaction] sessionStore 找不到会话 ${params.sessionId}，压缩结果未持久化`)
           return
         }
-
         // ChatMessage 中工具结果以独立 tool 消息（role:'tool' + toolCallId）携带，
         // 而 SessionMessage 的运行时持久化结构是 SessionToolCall.result 字段。
         // 这里把独立 tool 消息的内容合并回对应 assistant.toolCalls[i].result，
@@ -337,6 +342,8 @@ export function registerAgentHandler(
     })
 
     agentLoop.setWorkingDir(projectPath)
+    // PRD §5.1：把工具注册表注入 AgentLoop
+    agentLoop.setToolRegistry(toolRegistry)
     // 把 bash 工具的执行环境（shellPath / binDirs）注入到 AgentLoop。
     // 暂时只把项目 node_modules/.bin 加到 PATH——shellPath 没有用户配置时
     // 保留 undefined，让 bash 工具按平台自动发现（pwsh / powershell / Git Bash / cmd）。

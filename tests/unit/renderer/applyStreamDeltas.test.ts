@@ -297,4 +297,40 @@ describe('useChatStore.applyStreamDeltas', () => {
     expect(toolBlock).toMatchObject({ arguments: { path: 'index.html', content: 'body-full' } })
     expect(toolCall!.arguments).toEqual({ path: 'index.html', content: 'body-full' })
   })
+
+  it('handleToolCall 会剥掉正文末尾的伪工具调用 JSON，避免和真实工具卡片重复展示', () => {
+    useChatStore.getState().handleMessageStart('msg_text_tool')
+    useChatStore.getState().handleTextDelta(
+      'msg_text_tool',
+      [
+        '我来看看当前目录。',
+        '',
+        '```json',
+        '{"name":"list_directory","arguments":{"path":"."}}',
+        '```'
+      ].join('\n')
+    )
+
+    useChatStore.getState().handleToolCall('msg_text_tool', 'tc_text', 'ls', { path: '.' })
+
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.content).toBe('我来看看当前目录。')
+    expect(msg.blocks?.find(b => b.type === 'text')).toMatchObject({ content: '我来看看当前目录。' })
+    expect(msg.toolCalls?.[0]).toMatchObject({ name: 'ls', arguments: { path: '.' } })
+  })
+  it('handleToolCall 会剥掉正文行内的多个伪工具调用 JSON', () => {
+    useChatStore.getState().handleMessageStart('msg_inline_tools')
+    useChatStore.getState().handleTextDelta(
+      'msg_inline_tools',
+      '我先看目录。{ "name": "directory_tree", "arguments": { "path": ".", "max_depth": 2 } } 再读 README。{ "name": "read_file", "arguments": { "path": "README.md" } }'
+    )
+
+    useChatStore.getState().handleToolCall('msg_inline_tools', 'tc_1', 'ls', { path: '.', max_depth: 2 })
+
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.content).toBe('我先看目录。 再读 README。')
+    const textBlock = msg.blocks?.find(b => b.type === 'text')
+    expect(textBlock).toMatchObject({ content: '我先看目录。 再读 README。' })
+    expect(msg.toolCalls?.[0]).toMatchObject({ name: 'ls', arguments: { path: '.', max_depth: 2 } })
+  })
 })
