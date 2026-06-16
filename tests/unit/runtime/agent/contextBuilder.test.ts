@@ -5,6 +5,7 @@ import type { SessionData } from '../../../../src/runtime/sessions/types'
 /** 构造最小化 SessionData，只填充 messages */
 function makeSession(messages: SessionData['messages']): SessionData {
   return {
+    schemaVersion: 2,
     id: 'sess_test',
     workspaceRoot: '/tmp/project',
     mode: 'default',
@@ -90,8 +91,42 @@ describe('buildConversationContext', () => {
         { id: 'tc_2', name: 'read', arguments: '{"path":"b.ts"}' }
       ]
     })
-    expect(result[2]).toEqual({ role: 'tool', content: 'content a', toolCallId: 'tc_1' })
+    expect(result[2]).toEqual({
+      role: 'tool',
+      content: 'content a',
+      toolCallId: 'tc_1'
+    })
     expect(result[3]).toEqual({ role: 'tool', content: 'content b', toolCallId: 'tc_2' })
+  })
+
+  it('恢复带 artifactId 的工具结果', () => {
+    const session = makeSession([
+      { id: 'm1', role: 'user', content: '跑命令', timestamp: 1 },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content: '',
+        toolCalls: [{
+          id: 'tc_bash',
+          name: 'bash',
+          arguments: '{"command":"echo hi"}',
+          result: 'tail\nartifact://abc123',
+          artifactId: 'abc123',
+          truncationMeta: { totalBytes: 10000, totalLines: 200, shownLines: 20, truncated: true }
+        }],
+        timestamp: 2
+      }
+    ])
+
+    const result = buildConversationContext(session, 'default')
+    const toolMsg = result.find(m => m.role === 'tool')
+    expect(toolMsg).toEqual({
+      role: 'tool',
+      content: 'tail\nartifact://abc123',
+      toolCallId: 'tc_bash',
+      artifactId: 'abc123',
+      truncationMeta: { totalBytes: 10000, totalLines: 200, shownLines: 20, truncated: true }
+    })
   })
 
   it('thinking 块不进入模型上下文', () => {

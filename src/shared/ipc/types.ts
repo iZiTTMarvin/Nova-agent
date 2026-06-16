@@ -7,6 +7,7 @@ import type { ModelConfig } from '../config'
 import type { DiffEntry, DiffReviewStatus } from '../diff'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
+import type { ToolTruncationMeta } from '../../runtime/tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
 import type {
   SkillSummary,
@@ -325,6 +326,10 @@ export interface IpcEvents {
     toolCallId: string
     toolName: string
     result: string
+    /** 大输出落盘后的 artifact ID，供 UI「查看完整输出」入口使用 */
+    artifactId?: string
+    /** 截断元数据（共 N 行 / 展示 M 行），与 ToolResult.truncationMeta 对齐 */
+    truncationMeta?: ToolTruncationMeta
   }
   'agent:permission-request': {
     messageId: string

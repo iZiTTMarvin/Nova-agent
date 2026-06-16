@@ -67,7 +67,9 @@ export function buildConversationContext(
           context.push({
             role: 'tool',
             content: tc.result,
-            toolCallId: tc.id
+            toolCallId: tc.id,
+            ...(tc.artifactId ? { artifactId: tc.artifactId } : {}),
+            ...(tc.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
           })
         }
       }

@@ -5,7 +5,7 @@ import type { Mode } from '../../shared/session/types'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { EventBus } from './EventBus'
 import type { ToolRegistry } from '../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent } from '../tools/types'
+import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta } from '../tools/types'
 import type { ReadState } from '../tools/editTool'
 import type { AgentEvent } from './types'
 import type { HookManager } from './HookManager'
@@ -17,6 +17,9 @@ export interface ToolExecutionOutcome {
   args: Record<string, unknown>
   resultText: string
   resultImages?: ImageContent[]
+  /** 大输出 artifact 指针（与 ToolResult.artifactId 对齐） */
+  artifactId?: string
+  truncationMeta?: ToolTruncationMeta
   skippedByAbort?: boolean
   /**
    * 工具是否以失败告终（执行异常 / success=false / 权限拒绝 / 未注册）。
@@ -67,6 +70,8 @@ export interface ToolBatchExecutionOptions {
   shellPath?: string
   /** bash 工具的 PATH 注入目录（可选） */
   binDirs?: string[]
+  /** 会话级 artifact 存储（大输出落盘 + 指针续读） */
+  artifactStore?: import('../artifacts/ArtifactStore').ArtifactStore | null
   /** Hook 编排层（preToolUse / postToolUse） */
   hookManager?: HookManager | null
   /**
@@ -101,7 +106,8 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(options.eventBus ? { eventBus: options.eventBus } : {}),
     ...(options.shellPath ? { shellPath: options.shellPath } : {}),
-    ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {})
+    ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {}),
+    ...(options.artifactStore ? { artifactStore: options.artifactStore } : {})
   }
 }
 
@@ -192,6 +198,8 @@ async function executePreparedToolCall(
   const toolContext = buildToolContext(options)
   let resultText = ''
   let resultImages: ImageContent[] | undefined
+  let artifactId: string | undefined
+  let truncationMeta: ToolTruncationMeta | undefined
   let failed = false
 
   try {
@@ -204,11 +212,18 @@ async function executePreparedToolCall(
     }
 
     if (toolResult.success) {
-      const maxSize = item.tool.maxResultSizeChars
-      resultText = maxSize != null
-        ? options.applyTruncation(toolResult.output, maxSize)
-        : toolResult.output
+      // 已走 OutputSink / OutputAccumulator 控量并附 artifact 指针时，跳过二次截断
+      if (toolResult.artifactId) {
+        resultText = toolResult.output
+      } else {
+        const maxSize = item.tool.maxResultSizeChars
+        resultText = maxSize != null
+          ? options.applyTruncation(toolResult.output, maxSize)
+          : toolResult.output
+      }
       resultImages = toolResult.images
+      artifactId = toolResult.artifactId
+      truncationMeta = toolResult.truncationMeta
     } else {
       resultText = `工具执行失败: ${toolResult.error}`
       failed = true
@@ -238,7 +253,9 @@ async function executePreparedToolCall(
     toolCallId: item.toolCall.id,
     toolName: item.toolCall.name,
     // T02：在主进程 emit 前对工具输出做截断，防止大 result 撑爆渲染端 heap
-    result: sanitizeToolOutput(item.toolCall.name, resultText, failed)
+    result: sanitizeToolOutput(item.toolCall.name, resultText, failed),
+    ...(artifactId ? { artifactId } : {}),
+    ...(truncationMeta ? { truncationMeta } : {})
   })
 
   return {
@@ -248,6 +265,8 @@ async function executePreparedToolCall(
       args: item.args,
       resultText,
       resultImages,
+      artifactId,
+      truncationMeta,
       failed
     },
     emitted: true

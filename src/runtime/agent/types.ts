@@ -7,6 +7,7 @@ import type { NormalizedUsage } from '../model/types'
 import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
 import type { RecoveryState } from './RecoveryStateMachine'
+import type { ToolTruncationMeta } from '../tools/types'
 
 /** Hook 系统 9 个固定事件（供 renderer / 扩展监听） */
 export type HookEvent =
@@ -28,7 +29,7 @@ export type AgentEvent =
   | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string }
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string }
+  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; artifactId?: string; truncationMeta?: ToolTruncationMeta }
   | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string }
   | {
       type: 'diff_update'

@@ -15,7 +15,7 @@ import type { SessionData, SessionMessage } from './types'
 import { SESSION_DATA_FILE } from './types'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 1
+export const CURRENT_SESSION_SCHEMA_VERSION = 2
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -77,9 +77,24 @@ function normalizeMessageV0(msg: unknown): SessionMessage {
   }
 }
 
+/**
+ * v1 → v2：为 artifact 链路预留字段。
+ *
+ * SessionToolCall.artifactId 为可选新增字段；旧数据无此字段时不报错。
+ * 其余结构保持不变，仅升级 schemaVersion。
+ */
+function migrateV1ToV2(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 2
+  }
+}
+
 /** 迁移函数链：索引 = 起始版本 */
 const MIGRATIONS: Array<(data: unknown) => SessionData> = [
-  migrateV0ToV1 // v0 → v1
+  migrateV0ToV1, // v0 → v1
+  migrateV1ToV2  // v1 → v2
 ]
 
 /**
@@ -128,6 +143,9 @@ export function migrateSessionFile(
   sessionsDir: string,
   sessionId: string
 ): SessionData | null {
+  if (!sessionId || sessionId.includes('..') || sessionId.includes('/') || sessionId.includes('\\')) {
+    throw new Error(`非法 sessionId，拒绝迁移: ${sessionId}`)
+  }
   const filePath = path.join(sessionsDir, sessionId, SESSION_DATA_FILE)
   if (!fs.existsSync(filePath)) return null
 

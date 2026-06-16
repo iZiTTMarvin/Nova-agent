@@ -15,6 +15,17 @@ import type { ChatMessage } from '../model/types'
 import type { SkillManifest } from '../skills/types'
 import type { ContextBreakdown } from '../../renderer/stores/useSettingsStore'
 
+/** 从冻结 system prompt 中提取 SystemPromptBuilder 某层正文 */
+function extractPromptLayer(frozenPrompt: string, layerTitle: string): string {
+  const marker = `=== ${layerTitle} ===`
+  const idx = frozenPrompt.indexOf(marker)
+  if (idx === -1) return ''
+  const start = idx + marker.length
+  let end = frozenPrompt.indexOf('\n=== ', start)
+  if (end === -1) end = frozenPrompt.length
+  return frozenPrompt.slice(start, end).replace(/^\n/, '').trimEnd()
+}
+
 export interface BreakdownInputs {
   /** 当前会话数据（历史消息、模式、工作区） */
   session: SessionData
@@ -45,18 +56,25 @@ export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownRes
     ? Math.max(0, skills)
     : estimateTokens(buildSkillContext(skills))
 
-  const projectRules = discoverProjectRules(session.workspaceRoot)
-  const toolSummary = toolDefinitions
-    .map((t: any) => `- ${t.name}: ${(t.description ?? '').split('\n')[0]}`)
-    .join('\n')
-
   const fullSystemPrompt = session.frozenSystemPrompt ?? getStableSystemPrompt()
 
-  // frozenSystemPrompt 已经包含 skillContext，把技能正文拆出来单独算一桶
-  const rawSystemTokens = estimateTokens(fullSystemPrompt)
-  const systemPromptTokens = Math.max(0, rawSystemTokens - skillsTokens)
+  // tools 桶从 frozen prompt 的 Available Tools 层提取，避免与 JSON schema 重复计算
+  const toolSummaryText = extractPromptLayer(fullSystemPrompt, 'Available Tools')
+  const toolsTokens = toolSummaryText
+    ? estimateTokens(toolSummaryText)
+    : toolDefinitions.length > 0
+      ? estimateTokens(
+          toolDefinitions
+            .map(t => {
+              const def = t as { name?: string; description?: string }
+              return `- ${def.name ?? 'unknown'}: ${(def.description ?? '').split('\n')[0]}`
+            })
+            .join('\n')
+        )
+      : 0
 
-  const toolsTokens = estimateTokens(JSON.stringify(toolDefinitions))
+  const rawSystemTokens = estimateTokens(fullSystemPrompt)
+  const systemPromptTokens = Math.max(0, rawSystemTokens - skillsTokens - toolsTokens)
 
   // 把历史消息转成 ChatMessage 口径估算（含 toolCalls.arguments）
   const historyMessages: ChatMessage[] = session.messages

@@ -1,30 +1,19 @@
 /**
  * 稳定的 system prompt —— 与模式无关，会话级冻结。
  *
- * 角色、基础规则、当前工作区、工具目录都在这里拼装。
+ * 角色、工作区提示、模式说明在这里拼装。
+ * 工具目录由 SystemPromptBuilder 的 toolSummary 层单独注入，避免与 agentRole 重复。
  * 具体模式约束由每轮 user 消息尾部附加，这样切模式只改尾部，前面整条
  * 历史的缓存前缀全部保留。
- *
- * 工具调用格式根据模型方言动态注入：
- * - native（Claude/GPT）：API 负责 tool_calls 通道，prompt 里只列工具名。
- * - xml（MiniMax/kimi/glm/DeepSeek/Qwen 等国产或未知模型）：prompt 里必须给出
- *   完整的 XML inband 调用示例和格式规则。
  */
-import type { ToolDefinition } from '../model/types'
-import { renderToolInventory, renderWorkingDirectoryHint } from './toolPromptRenderer'
+import { renderWorkingDirectoryHint } from './toolPromptRenderer'
 
 export interface BuildStableSystemPromptOptions {
   /** 工作区绝对路径 */
   workingDir?: string
-  /** 可用工具定义 */
-  tools?: ToolDefinition[]
-  /** 工具调用方言 */
-  dialect: 'native' | 'xml'
 }
 
-const STABLE_SYSTEM_PROMPT: BuildStableSystemPromptOptions = {
-  dialect: 'native'
-}
+const STABLE_SYSTEM_PROMPT: BuildStableSystemPromptOptions = {}
 
 export function buildStableSystemPrompt(options: BuildStableSystemPromptOptions): string {
   const parts: string[] = []
@@ -33,13 +22,6 @@ export function buildStableSystemPrompt(options: BuildStableSystemPromptOptions)
 
   if (options.workingDir) {
     parts.push('', renderWorkingDirectoryHint(options.workingDir))
-  }
-
-  if (options.tools && options.tools.length > 0) {
-    const inventory = renderToolInventory(options.tools, { dialect: options.dialect })
-    if (inventory) {
-      parts.push('', inventory)
-    }
   }
 
   parts.push(

@@ -11,6 +11,7 @@
  * 7. 默认执行后端可替换：通过 `BashOperations` 接口注入（便于测试 / 远程执行）
  */
 import { resolve, relative, isAbsolute } from 'path'
+import { realpathSync } from 'fs'
 import type { ChildProcess } from 'child_process'
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import { snapshotWorkspace, snapshotMtimes, diffSnapshots } from '../../checkpoints/snapshot'
@@ -18,6 +19,7 @@ import { join } from 'path'
 import { getShellConfig, getShellEnv, killProcessTree, spawnShell, waitForChildProcess } from './shell'
 import { OutputAccumulator } from './output-accumulator'
 import { renderBashDescription } from './prompt'
+import { OutputSink } from '../OutputSink'
 import type { BashOperations, BashToolParams } from './types'
 
 /** 默认超时（毫秒）。 */
@@ -115,8 +117,11 @@ export const bashTool: ToolExecutor = {
       ? snapshotWorkspace(context.workingDir)
       : null
 
-    // 收集子进程输出
-    const accumulator = new OutputAccumulator()
+    // 大输出优先落到会话 artifact 目录，便于 ArtifactStore 认领
+    const targetDir = context.artifactStore && context.sessionId
+      ? context.artifactStore.getArtifactsDir(context.sessionId)
+      : undefined
+    const accumulator = new OutputAccumulator({ targetDir })
 
     // 终止原因追踪
     let terminationReason: 'timeout' | 'cancelled' | null = null
@@ -187,7 +192,7 @@ export const bashTool: ToolExecutor = {
         const snapshot = accumulator.snapshot()
         await accumulator.closeTempFile()
         recordCheckpoint(beforeSnapshot, context)
-        return composeResult(null, terminationReason, timeoutMs, snapshot)
+        return composeResult(null, terminationReason, timeoutMs, snapshot, context)
       }
       // 非 abort 错误：spawn ENOENT 等
       accumulator.finish()
@@ -201,7 +206,7 @@ export const bashTool: ToolExecutor = {
 
     recordCheckpoint(beforeSnapshot, context)
 
-    return composeResult(exitCode, terminationReason, timeoutMs, snapshot)
+    return composeResult(exitCode, terminationReason, timeoutMs, snapshot, context)
   }
 }
 
@@ -229,16 +234,20 @@ function parseBashParams(args: Record<string, unknown>):
 
 function resolveWorkdir(workingDir: string, workdir: string | undefined): string {
   if (!workdir) return workingDir
-  // 边界校验：workdir 解析后必须仍在 workingDir 内，
-  // 防止 workdir='/etc' 或 '../../..' 逃逸工作区造成破坏。
-  // 注：path.relative 在 Windows 上对盘符大小写不敏感（C:\ 与 c:\ 视为同盘），
-  // 因此无需对盘符大小写做特殊处理。
+  // 用 realpath 解析符号链接，防止 workdir 通过 symlink 逃逸工作区
+  const workspaceReal = realpathSync.native(workingDir)
   const resolved = resolve(workingDir, workdir)
-  const rel = relative(workingDir, resolved)
+  let resolvedReal: string
+  try {
+    resolvedReal = realpathSync.native(resolved)
+  } catch {
+    throw new Error(`workdir "${workdir}" 不存在或无法解析`)
+  }
+  const rel = relative(workspaceReal, resolvedReal)
   if (rel.startsWith('..') || isAbsolute(rel)) {
     throw new Error(`workdir "${workdir}" 逃逸工作区边界，已拒绝执行`)
   }
-  return resolved
+  return resolvedReal
 }
 
 function parseTimeout(value: unknown): number {
@@ -296,45 +305,107 @@ function recordCheckpoint(
   }
 }
 
-function composeResult(
+async function composeResult(
   exitCode: number | null,
   terminationReason: 'timeout' | 'cancelled' | null,
   timeoutMs: number,
-  snapshot: ReturnType<OutputAccumulator['snapshot']>
-): ToolResult {
-  const outputWithPath = appendFullOutputPath(snapshot.content, snapshot.fullOutputPath)
+  snapshot: ReturnType<OutputAccumulator['snapshot']>,
+  context?: ToolContext
+): Promise<ToolResult> {
+  const { output: outputWithPath, artifactId, truncationMeta } = await buildOutputWithArtifact(
+    snapshot,
+    context
+  )
 
   if (terminationReason === 'timeout') {
     return {
       success: false,
       output: outputWithPath,
-      error: `命令执行超时（${Math.round(timeoutMs / 1000)} 秒），已强制终止`
+      error: `命令执行超时（${Math.round(timeoutMs / 1000)} 秒），已强制终止`,
+      ...(artifactId ? { artifactId } : {}),
+      ...(truncationMeta ? { truncationMeta } : {})
     }
   }
   if (terminationReason === 'cancelled') {
     return {
       success: false,
       output: outputWithPath,
-      error: '命令已被用户取消'
+      error: '命令已被用户取消',
+      ...(artifactId ? { artifactId } : {}),
+      ...(truncationMeta ? { truncationMeta } : {})
     }
   }
   if (exitCode === null) {
     return {
       success: false,
       output: outputWithPath,
-      error: '命令未正常退出（可能因信号终止）'
+      error: '命令未正常退出（可能因信号终止）',
+      ...(artifactId ? { artifactId } : {}),
+      ...(truncationMeta ? { truncationMeta } : {})
     }
   }
   if (exitCode !== 0) {
     return {
       success: false,
       output: outputWithPath,
-      error: `命令退出码: ${exitCode}`
+      error: `命令退出码: ${exitCode}`,
+      ...(artifactId ? { artifactId } : {}),
+      ...(truncationMeta ? { truncationMeta } : {})
     }
   }
   return {
     success: true,
-    output: outputWithPath || '(命令执行成功，无输出)'
+    output: outputWithPath || '(命令执行成功，无输出)',
+    ...(artifactId ? { artifactId } : {}),
+    ...(truncationMeta ? { truncationMeta } : {})
+  }
+}
+
+/**
+ * 构建 bash 输出文本：有 artifactStore 时用 writeFromPath + formatNotice；
+ * 否则保持旧的 [Full output saved to: ...] 兜底。
+ */
+async function buildOutputWithArtifact(
+  snapshot: ReturnType<OutputAccumulator['snapshot']>,
+  context?: ToolContext
+): Promise<{
+  output: string
+  artifactId?: string
+  truncationMeta?: ToolResult['truncationMeta']
+}> {
+  if (
+    snapshot.truncated &&
+    snapshot.fullOutputPath &&
+    context?.artifactStore &&
+    context.sessionId
+  ) {
+    const meta = await context.artifactStore.writeFromPath(
+      context.sessionId,
+      snapshot.fullOutputPath,
+      { toolName: 'bash', truncated: true }
+    )
+    const notice = OutputSink.formatNotice({
+      totalLines: snapshot.totalLines,
+      totalBytes: snapshot.totalBytes,
+      shownLines: snapshot.outputLines,
+      artifactId: meta.id,
+      nextOffset: snapshot.outputLines + 1
+    })
+    const output = snapshot.content.length > 0 ? `${snapshot.content}\n${notice}` : notice
+    return {
+      output,
+      artifactId: meta.id,
+      truncationMeta: {
+        totalBytes: snapshot.totalBytes,
+        totalLines: snapshot.totalLines,
+        shownLines: snapshot.outputLines,
+        truncated: true
+      }
+    }
+  }
+
+  return {
+    output: appendFullOutputPath(snapshot.content, snapshot.fullOutputPath)
   }
 }
 

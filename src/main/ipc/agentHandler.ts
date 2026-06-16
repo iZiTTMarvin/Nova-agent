@@ -49,6 +49,7 @@ import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../runtime/tools/taskTool'
 import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBridge'
 import { createReadState, type ReadState } from '../../runtime/tools/editTool'
+import { ArtifactStore } from '../../runtime/artifacts/ArtifactStore'
 import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
@@ -206,6 +207,7 @@ export function registerAgentHandler(
     const capturedMode = session.mode
     const capturedWorkspaceRoot = projectPath
     const capturedSessionsDir = sessionsDir
+    const artifactStore = new ArtifactStore(sessionsDir)
 
     // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
     const persistedConfig = loadModelConfig(app.getPath('userData'))
@@ -258,10 +260,9 @@ export function registerAgentHandler(
 
     // system prompt 角色层使用新的 buildStableSystemPrompt，它内部会根据方言
     // 生成合适的工具目录格式。旧的 frozenPrompt（纯字符串）仅在 layers 不存在时兜底。
+    // agentRole 层不含工具目录；XML/native 工具说明统一走 toolSummary 层，避免重复占 token。
     const frozenPrompt = buildStableSystemPrompt({
-      workingDir: projectPath,
-      tools: toolRegistry.getToolDefinitions(),
-      dialect: toolDialect
+      workingDir: projectPath
     })
 
     // 如果旧会话还没有冻结 prompt，或命中了已知旧版错误 prompt，则回写一份当前稳定版本。
@@ -300,10 +301,18 @@ export function registerAgentHandler(
         // 让压缩后 session 与 saveAssistantMessage 持久化路径结构一致。
         // 否则重启加载时 contextBuilder 走 toolCalls[i].result 分支会全部跳过，
         // 既丢失工具结果，也可能触发 OpenAI 协议要求 tool_calls 必须有对应 tool message 的 400。
-        const toolResults = new Map<string, string>()
+        const toolResults = new Map<string, {
+          result: string
+          artifactId?: string
+          truncationMeta?: import('../../runtime/tools/types').ToolTruncationMeta
+        }>()
         for (const m of compactedContext) {
           if (m.role === 'tool' && m.toolCallId) {
-            toolResults.set(m.toolCallId, extractTextFromSerializableContent(m.content))
+            toolResults.set(m.toolCallId, {
+              result: extractTextFromSerializableContent(m.content),
+              ...(m.artifactId ? { artifactId: m.artifactId } : {}),
+              ...(m.truncationMeta ? { truncationMeta: m.truncationMeta } : {})
+            })
           }
         }
 
@@ -323,12 +332,14 @@ export function registerAgentHandler(
 
             if (m.toolCalls && m.toolCalls.length > 0) {
               msg.toolCalls = m.toolCalls.map(tc => {
-                const result = toolResults.get(tc.id)
+                const info = toolResults.get(tc.id)
                 return {
                   id: tc.id,
                   name: tc.name,
                   arguments: tc.arguments,
-                  ...(result !== undefined ? { result } : {})
+                  ...(info?.result !== undefined ? { result: info.result } : {}),
+                  ...(info?.artifactId ? { artifactId: info.artifactId } : {}),
+                  ...(info?.truncationMeta ? { truncationMeta: info.truncationMeta } : {})
                 }
               })
             }
@@ -357,6 +368,7 @@ export function registerAgentHandler(
     // 必须在 injectHistory 之前设置 sessionId，否则恢复历史后触发的
     // context_breakdown 事件会带上空 sessionId。
     agentLoop.setSessionContext(sessionStore, params.sessionId)
+    agentLoop.setArtifactStore(artifactStore)
     // 注入主 readState：跨多次 SEND_MESSAGE 复用，使得同一会话连发消息时
     // 第二条消息能继续享受第一条消息的 read 状态（I1 实例化）
     agentLoop.setReadState(mainReadState)
@@ -524,6 +536,12 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         const targetIdx = stream.toolCalls.findIndex(tc => tc.id === event.toolCallId)
         if (targetIdx !== -1) {
           stream.toolCalls[targetIdx].result = event.result
+          if (event.artifactId) {
+            stream.toolCalls[targetIdx].artifactId = event.artifactId
+          }
+          if (event.truncationMeta) {
+            stream.toolCalls[targetIdx].truncationMeta = event.truncationMeta
+          }
         }
         const blockIdx = stream.blocks.findIndex(b => b.type === 'tool' && b.toolCallId === event.toolCallId)
         if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
@@ -834,7 +852,14 @@ export function forwardEventToRenderer(
       webContents.send('agent:tool-call', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args })
       break
     case 'tool_result':
-      webContents.send('agent:tool-result', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, result: event.result })
+      webContents.send('agent:tool-result', {
+        messageId: event.messageId,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        result: event.result,
+        ...(event.artifactId ? { artifactId: event.artifactId } : {}),
+        ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
+      })
       break
     case 'permission_request':
       webContents.send('agent:permission-request', {

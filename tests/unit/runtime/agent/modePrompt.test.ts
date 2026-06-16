@@ -2,23 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { buildStableSystemPrompt, getStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../../../src/runtime/agent/modePrompt'
 
 describe('buildStableSystemPrompt', () => {
-  it('native 模式下只包含简短工具列表和模式说明', () => {
+  it('native 模式下不包含工具目录，仅保留工作区与模式说明', () => {
     const prompt = buildStableSystemPrompt({
-      dialect: 'native',
-      tools: [
-        { name: 'ls', description: '列出目录内容', parameters: { type: 'object', properties: {} } },
-        { name: 'read', description: '读取文件', parameters: { type: 'object', properties: {} } }
-      ],
       workingDir: 'D:\\work'
     })
 
-    expect(prompt).toContain('ls')
-    expect(prompt).toContain('read')
+    expect(prompt).not.toContain('<invoke>')
+    expect(prompt).not.toContain('你拥有以下工具')
     expect(prompt).toContain('D:\\work')
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
     expect(prompt).toContain('auto')
-    expect(prompt).not.toContain('<invoke>')
   })
 })
 

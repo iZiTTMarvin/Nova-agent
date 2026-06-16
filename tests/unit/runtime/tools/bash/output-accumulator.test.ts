@@ -86,4 +86,23 @@ describe('OutputAccumulator', () => {
     // 最后一行是 "last"，4 字节
     expect(acc.getLastLineBytes()).toBe(4)
   })
+
+  it('targetDir 设置时溢出文件写入指定目录', async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import('fs')
+    const { join } = await import('path')
+    const { tmpdir } = await import('os')
+    const dir = mkdtempSync(join(tmpdir(), 'nova-acc-target-'))
+    try {
+      const acc = new OutputAccumulator({ maxBytes: 512, targetDir: dir })
+      acc.append(Buffer.from('X'.repeat(2048), 'utf8'))
+      acc.finish()
+      const snap = acc.snapshot()
+      await acc.closeTempFile()
+      expect(snap.fullOutputPath).toBeTruthy()
+      expect(snap.fullOutputPath!.startsWith(dir)).toBe(true)
+      expect(existsSync(snap.fullOutputPath!)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

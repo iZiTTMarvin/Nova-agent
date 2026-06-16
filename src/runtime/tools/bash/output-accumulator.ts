@@ -16,7 +16,7 @@
  * - 子进程 chunk 经常在多字节字符中间切断（中文 / emoji 常见），拼接
  *   出来的字符串本身就是损坏的，后续再解码会出错。
  */
-import { createWriteStream, type WriteStream } from 'fs'
+import { createWriteStream, mkdirSync, type WriteStream } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
@@ -28,6 +28,12 @@ export interface OutputAccumulatorOptions {
   maxLines?: number
   /** 临时文件名前缀，便于调试 */
   tempFilePrefix?: string
+  /**
+   * 溢出文件落盘目录（可选）。
+   * 设置后大输出直接写入该目录，供 ArtifactStore.writeFromPath 认领。
+   * 未设置时回退到 os.tmpdir()。
+   */
+  targetDir?: string
 }
 
 const DEFAULT_TEMP_PREFIX = 'nova-bash-'
@@ -51,6 +57,8 @@ export class OutputAccumulator {
   private readonly maxLines: number
   private readonly tailWindowBytes: number
   private readonly tempFilePrefix: string
+  /** 溢出落盘目录；未设置时使用系统临时目录 */
+  private readonly targetDir: string | undefined
 
   /** 已 flush 的解码文本片段（首段，丢到 head 时被替换为 tailText 的旧部分）。 */
   private headText = ''
@@ -83,6 +91,7 @@ export class OutputAccumulator {
     this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES
     this.tailWindowBytes = this.maxBytes * 2
     this.tempFilePrefix = options.tempFilePrefix ?? DEFAULT_TEMP_PREFIX
+    this.targetDir = options.targetDir
     this.decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true })
   }
 
@@ -247,9 +256,14 @@ export class OutputAccumulator {
     if (this.useTempFile) return
     this.useTempFile = true
 
+    const dir = this.targetDir ?? tmpdir()
+    if (this.targetDir) {
+      mkdirSync(this.targetDir, { recursive: true })
+    }
+
     const fileName = `${this.tempFilePrefix}${randomBytes(8).toString('hex')}.log`
-    this.tempFilePath = join(tmpdir(), fileName)
-    this.tempStream = createWriteStream(this.tempFilePath, { flags: 'w' })
+    this.tempFilePath = join(dir, fileName)
+    this.tempStream = createWriteStream(this.tempFilePath, { flags: 'w', mode: 0o600 })
 
     // head + tail 当前的内容写到文件开头
     const fullText = this.headText + this.tailText
@@ -266,9 +280,13 @@ export class OutputAccumulator {
    * 返回落盘的文件路径。
    */
   private persistFullText(text: string): string {
+    const dir = this.targetDir ?? tmpdir()
+    if (this.targetDir) {
+      mkdirSync(this.targetDir, { recursive: true })
+    }
     const fileName = `${this.tempFilePrefix}${randomBytes(8).toString('hex')}.log`
-    const path = join(tmpdir(), fileName)
-    this.tempStream = createWriteStream(path, { flags: 'w' })
+    const path = join(dir, fileName)
+    this.tempStream = createWriteStream(path, { flags: 'w', mode: 0o600 })
     this.tempStream.write(text)
     this.tempFilePath = path
     this.useTempFile = true

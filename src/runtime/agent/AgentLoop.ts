@@ -41,6 +41,7 @@ import type { SkillRegistry } from '../skills/SkillRegistry'
 import { parseTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
+import type { ArtifactStore } from '../artifacts/ArtifactStore'
 
 import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './modeInstruction'
@@ -107,6 +108,9 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 当前会话 ID，与 sessionStore 配套 */
   private sessionId: string | null = null
+
+  /** 会话级 artifact 存储（大输出落盘，透传给工具执行层） */
+  private artifactStore: ArtifactStore | null = null
 
   /** 技能正文层独立 token 估算，作为'技能'分项桶的预算 */
   private skillsTokenBudget: number = 0
@@ -247,7 +251,7 @@ export class AgentLoop implements IdleCompactionTarget {
           .filter(m => m.role !== 'system')
           .map(m => this.toSessionMessageForBreakdown(m)),
         frozenSystemPrompt: this.frozenSystemPrompt,
-        schemaVersion: 1,
+        schemaVersion: 2,
         createdAt: Date.now(),
         updatedAt: Date.now()
       },
@@ -357,6 +361,11 @@ export class AgentLoop implements IdleCompactionTarget {
   setSessionContext(sessionStore: SessionStore, sessionId: string): void {
     this.sessionStore = sessionStore
     this.sessionId = sessionId
+  }
+
+  /** 注入会话级 artifact 存储，供 bash / grep / read 大输出落盘 */
+  setArtifactStore(store: ArtifactStore): void {
+    this.artifactStore = store
   }
 
   /** 动态调整最大工具调用轮数 */
@@ -883,7 +892,8 @@ export class AgentLoop implements IdleCompactionTarget {
           sessionId: this.sessionId,
           eventBus: this.eventBus,
           hookManager: this.hookManager,
-          readState: this.readState
+          readState: this.readState,
+          artifactStore: this.artifactStore
         })
 
         if (!batchResult.aborted && !this.cancelled && !this.abortController?.signal.aborted) {
@@ -892,7 +902,9 @@ export class AgentLoop implements IdleCompactionTarget {
             this.context.push({
               role: 'tool',
               content: toToolContent(outcome.resultText, outcome.resultImages),
-              toolCallId: outcome.toolCall.id
+              toolCallId: outcome.toolCall.id,
+              ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
+              ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
             })
           }
         }

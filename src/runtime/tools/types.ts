@@ -55,6 +55,11 @@ export interface ToolContext {
    * 仅绝对路径会被处理；空数组 / 仅含相对路径的输入会被忽略。
    */
   binDirs?: string[]
+  /**
+   * 会话级 artifact 存储（可选）。
+   * bash / grep / read 在大输出时写入 artifact 目录，上下文只保留截断块 + 指针。
+   */
+  artifactStore?: import('../artifacts/ArtifactStore').ArtifactStore
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */
@@ -63,6 +68,14 @@ export interface ImageContent {
   data: string
   /** 图片 MIME 类型（image/jpeg、image/png、image/gif、image/webp） */
   mimeType: string
+}
+
+/** 大输出截断元数据（工具 / 事件 / 持久化共用） */
+export interface ToolTruncationMeta {
+  totalBytes: number
+  totalLines: number
+  shownLines?: number
+  truncated: boolean
 }
 
 /** 工具执行结果 */
@@ -79,6 +92,13 @@ export interface ToolResult {
    * AgentLoop 会将 output + images 组合为多模态 content 数组发送给模型。
    */
   images?: ImageContent[]
+  /**
+   * 大输出落盘后的会话内 artifact ID。
+   * 模型上下文只保留截断文本 + artifact:// 指针；全文可通过 read artifact:// 续读。
+   */
+  artifactId?: string
+  /** 截断元数据：总行数/字节数、展示行数等，供 UI 与持久化使用 */
+  truncationMeta?: ToolTruncationMeta
 }
 
 /** 工具执行器接口，所有工具必须实现 */

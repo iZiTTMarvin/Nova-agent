@@ -3,6 +3,8 @@
  * 对齐 OpenAI Chat Completions API 的请求/响应结构
  */
 
+import type { ToolTruncationMeta } from '../tools/types'
+
 // ── 消息格式 ──────────────────────────────────────────────
 
 /**
@@ -31,6 +33,13 @@ export interface ChatMessage {
   toolCalls?: ChatToolCall[]
   /** tool 消息必须携带 toolCallId */
   toolCallId?: string
+  /**
+   * 大输出 artifact 指针（role: 'tool' 时可选）。
+   * 与 ToolResult.artifactId 对齐，便于会话重启后 read artifact:// 续读。
+   */
+  artifactId?: string
+  /** 大输出截断元数据，与 ToolResult.truncationMeta 对齐 */
+  truncationMeta?: ToolTruncationMeta
   /**
    * 内部消息标记（参考 OpenClacky 的 system_injected 机制）
    * 标记为 internal 的消息：

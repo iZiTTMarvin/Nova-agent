@@ -8,6 +8,7 @@
  */
 import type { Mode, MessageBlock } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
+import type { ToolTruncationMeta } from '../tools/types'
 
 /** 会话摘要（用于列表展示，不含完整消息） */
 export interface SessionSummary {
@@ -91,6 +92,10 @@ export interface SessionToolCall {
   name: string
   arguments: string
   result?: string
+  /** 大输出落盘后的 artifact ID，与 ToolResult.artifactId 对齐 */
+  artifactId?: string
+  /** 截断元数据，供 UI 展示「共 N 行 / 展示 M 行」 */
+  truncationMeta?: ToolTruncationMeta
 }
 
 /** 会话持久化文件名 */

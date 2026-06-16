@@ -6,6 +6,7 @@ import { bashTool } from '../../../../src/runtime/tools/bashTool'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
+import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 
 const WORKSPACE = process.cwd()
 const checkpointSpy = vi.spyOn(CheckpointManager.prototype, 'recordBashChange')
@@ -312,4 +313,51 @@ describe('bashTool', () => {
       rmSync(tempDir, { recursive: true, force: true })
     }
   })
+
+  it('200KB 大输出：有 artifactStore 时生成 artifactId 且上下文受控', async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-bash-artifact-'))
+    const sessionId = 'sess_big_bash'
+    const store = new ArtifactStore(sessionsDir)
+    const sizeKb = 200
+    const repeatCmd = process.platform === 'win32'
+      ? `node -e "process.stdout.write('X'.repeat(${sizeKb * 1024}))"`
+      : `node -e "process.stdout.write('X'.repeat(${sizeKb * 1024}))"`
+
+    try {
+      const result = await bashTool.execute(
+        { command: repeatCmd },
+        {
+          workingDir: WORKSPACE,
+          readState: createReadState(),
+          artifactStore: store,
+          sessionId
+        }
+      )
+
+      expect(result.success).toBe(true)
+      expect(result.artifactId).toBeTruthy()
+      expect(result.output).toContain(`artifact://${result.artifactId}`)
+      expect(result.output).not.toContain('[Full output saved to:')
+
+      const full = await store.read(sessionId, result.artifactId!)
+      expect(full.length).toBe(sizeKb * 1024)
+
+      const artifactPath = store.resolvePath(sessionId, result.artifactId!)
+      expect(existsSync(artifactPath)).toBe(true)
+      // 模型上下文应远小于全文（200KB ≈ 50K+ tokens；截断后应 < 15K tokens 量级）
+      expect(Buffer.byteLength(result.output, 'utf8')).toBeLessThan(60_000)
+    } finally {
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('无 artifactStore 时大输出仍使用 [Full output saved to: ...] 兜底', async () => {
+    const repeatCmd = `node -e "process.stdout.write('Y'.repeat(60000))"`
+    const result = await bashTool.execute(
+      { command: repeatCmd },
+      createContext()
+    )
+    expect(result.output).toContain('[Full output saved to:')
+    expect(result.artifactId).toBeUndefined()
+  }, 20_000)
 })
