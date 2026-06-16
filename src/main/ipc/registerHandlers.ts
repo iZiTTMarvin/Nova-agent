@@ -10,6 +10,7 @@ import { registerRulesHandler } from './rulesHandler'
 import { registerSubagentsHandler } from './subagentsHandler'
 import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerPermissionHandler } from './permissionHandler'
+import { registerDialogHandler } from './dialogHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { getSessionStore } from './sessionHandler'
 import { getMainWindow } from '../index'
@@ -23,6 +24,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(PING, async () => {
     return 'pong'
   })
+  // 注册异步对话框 IPC（替代阻塞的 window.confirm）
+  registerDialogHandler()
 
   // 注册项目目录选择 IPC
   registerProjectHandler(getMainWindow)

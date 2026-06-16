@@ -40,9 +40,14 @@ export const Sidebar: React.FC = () => {
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
 
-  const handleDelete = (e: React.MouseEvent, sessionId: string) => {
+  const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
-    if (window.confirm('确定要删除这个会话吗？')) {
+    const response = await window.api.invoke('dialog:confirm', {
+      title: '删除会话',
+      message: '确定要删除这个会话吗？',
+      detail: '删除后无法恢复。'
+    })
+    if (response === 1) {
       deleteSession(sessionId)
     }
   }

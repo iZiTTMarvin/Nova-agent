@@ -57,6 +57,18 @@ export interface IpcCommands {
     params: void
     result: string
   }
+  'dialog:confirm': {
+    params: {
+      type?: 'none' | 'info' | 'error' | 'question' | 'warning'
+      buttons?: string[]
+      defaultId?: number
+      cancelId?: number
+      title?: string
+      message: string
+      detail?: string
+    }
+    result: number
+  }
   'select-project': {
     params: void
     result: string | null

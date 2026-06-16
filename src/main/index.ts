@@ -134,6 +134,11 @@ function createMainWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // 开发模式下自动打开开发者工具（修复 F12 打不开的问题）
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.openDevTools({ mode: 'right' })
+  }
 }
 
 app.whenReady().then(async () => {
