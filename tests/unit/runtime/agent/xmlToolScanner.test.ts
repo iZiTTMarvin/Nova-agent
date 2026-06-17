@@ -68,4 +68,29 @@ describe('xmlToolScanner', () => {
 
     expect(scanner.flushText()).toBe('先看目录： 再读文件：')
   })
+
+  it('兼容 edit 使用子标签而非 parameter 包裹', () => {
+    const text = [
+      '<invoke name="edit">',
+      '<filePath>index.html</filePath>',
+      '<old>const x = 1</old>',
+      '<new>const x = 2</new>',
+      '</invoke>'
+    ].join('')
+    const parsed = parseXmlToolCalls(text)
+    expect(parsed.toolCalls[0]).toEqual({
+      name: 'edit',
+      arguments: {
+        filePath: 'index.html',
+        old: 'const x = 1',
+        new: 'const x = 2'
+      }
+    })
+  })
+
+  it('parameter 标签优先于同名子标签', () => {
+    const text = '<invoke name="read"><parameter name="path">from-param</parameter><path>from-child</path></invoke>'
+    const parsed = parseXmlToolCalls(text)
+    expect(parsed.toolCalls[0].arguments.path).toBe('from-param')
+  })
 })

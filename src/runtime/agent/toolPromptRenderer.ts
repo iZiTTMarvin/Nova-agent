@@ -36,6 +36,15 @@ function renderNativeInventory(tools: ToolDefinition[]): string {
     .join('\n')
 }
 
+/**
+ * XML 示例中跳过的兼容字段。
+ * edit 的 path/old/new 仅用于 native JSON 向后兼容；放进 XML 示例会让模型
+ * 只传 old/new 而漏掉 filePath，触发「缺少 filePath 参数」。
+ */
+const XML_EXAMPLE_SKIP: Record<string, Set<string>> = {
+  edit: new Set(['path', 'old', 'new']),
+}
+
 /** 把 JSON Schema property 类型转 XML 示例值。 */
 function exampleValueForSchema(
   name: string,
@@ -45,10 +54,16 @@ function exampleValueForSchema(
   const type = spec.type
   if (type === 'number' || type === 'integer') return '1'
   if (type === 'boolean') return 'true'
-  if (type === 'array') return '["a", "b"]'
+  if (type === 'array') {
+    // edit.edits 需展示真实结构，避免模型抄成 ["a","b"]
+    if (name === 'edits') {
+      return '[{"oldText":"原始文本","newText":"替换后文本"}]'
+    }
+    return '["a", "b"]'
+  }
   if (type === 'object') return '{"key": "value"}'
   // 默认字符串示例，带语义倾向
-  if (name === 'path') return '.'
+  if (name === 'path' || name === 'filePath') return 'src/example.ts'
   if (name === 'command') return 'echo hello'
   if (name === 'pattern') return '*.ts'
   if (name === 'content') return 'file content'
@@ -62,8 +77,10 @@ function renderXmlToolExample(t: ToolDefinition): string {
   const parameters = (t.parameters ?? {}) as { properties?: Record<string, Record<string, unknown>>; required?: string[] }
   const props = parameters.properties ?? {}
   const required = new Set(parameters.required ?? [])
+  const skipProps = XML_EXAMPLE_SKIP[t.name] ?? new Set<string>()
   const parameterLines: string[] = []
   for (const [name, spec] of Object.entries(props)) {
+    if (skipProps.has(name)) continue
     const value = exampleValueForSchema(name, spec, required)
     if (value === '') continue
     const escaped = value
@@ -106,7 +123,7 @@ function renderXmlInventory(tools: ToolDefinition[]): string {
     '',
     '规则：',
     '- `name` 必须是下面列出的工具名之一，禁止调用未列出的工具。',
-    '- 每个参数用一个 `<parameter name="...">值</parameter>` 表示。',
+    '- 每个参数用一个 `<parameter name="...">值</parameter>` 表示；`filePath` / `path` 等路径参数不可省略。',
     '- 字符串值直接写文本，不要加 JSON 引号或转义。',
     '- 数值 / 布尔值 / 数组 / 对象直接写 JSON 字面量。',
     '- 多个调用连续输出；输出完所有工具调用后停止，等待返回结果再继续。',

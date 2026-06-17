@@ -68,6 +68,16 @@ export function parseXmlToolCalls(text: string): {
       args[key] = value
     }
 
+    // 兼容模型直接用子标签传参（无 <parameter name="..."> 包裹）
+    const childRegex = /<([a-zA-Z_][a-zA-Z0-9_]*)>([\s\S]*?)<\/\1>/g
+    let childMatch: RegExpExecArray | null
+    while ((childMatch = childRegex.exec(innerXml)) !== null) {
+      const key = childMatch[1]
+      if (key === 'parameter') continue
+      if (args[key] !== undefined) continue
+      args[key] = tryJsonParseIfLooksLikeJson(childMatch[2].trim())
+    }
+
     toolCalls.push({ name: toolName, arguments: args })
     segments.push(cleaned.slice(lastIndex, match.index))
     lastIndex = invokeRegex.lastIndex

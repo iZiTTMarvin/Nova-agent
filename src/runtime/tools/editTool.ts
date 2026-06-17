@@ -416,7 +416,15 @@ function normalizeInput(args: Record<string, unknown>): {
   filePath: string
   edits: Array<{ oldText: string; newText: string }>
 } {
-  const filePath = (args.filePath ?? args.path ?? args.file_path) as string
+  const filePath = (
+    args.filePath ??
+    args.path ??
+    args.file_path ??
+    args.filename ??
+    args.file ??
+    args.target_file ??
+    args.target
+  ) as string
 
   if (!args.edits && typeof args.old === 'string' && typeof args.new === 'string') {
     return { filePath, edits: [{ oldText: args.old, newText: args.new }] }
@@ -517,6 +525,7 @@ export const editTool: ToolExecutor = {
         description: '（兼容旧格式）替换后的新文本。'
       },
     },
+    required: ['filePath'],
   },
 
   async execute(
@@ -538,7 +547,11 @@ export const editTool: ToolExecutor = {
     }
 
     if (!input.filePath) {
-      return { success: false, output: '', error: '缺少 filePath 参数' }
+      const hasLegacy = typeof args.old === 'string' || typeof args.new === 'string'
+      const hint = hasLegacy
+        ? '缺少 filePath 参数（已收到 old/new，请同时提供 filePath 或 path）'
+        : '缺少 filePath 参数'
+      return { success: false, output: '', error: hint }
     }
     if (!Array.isArray(input.edits) || input.edits.length === 0) {
       return { success: false, output: '', error: '缺少 edits 参数（或旧格式 old/new）' }
