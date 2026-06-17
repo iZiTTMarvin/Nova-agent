@@ -56,7 +56,11 @@ export const SkillAC = forwardRef<SkillACHandle, SkillACProps>(function SkillAC(
 
   const slashToken = useMemo(() => {
     if (!debouncedQuery.startsWith('/')) return null
-    return debouncedQuery.split(/\s/)[0] ?? ''
+    // 进入参数阶段（出现任意空白字符）即视为 slash 命令已确定，关闭浮层。
+    // 否则用户选中 skill 后再敲参数，每次 Enter 都会被浮层重新拦截、
+    // 把输入框重置回 "/skillname "，导致参数被吞且消息永远发不出去。
+    if (/\s/.test(debouncedQuery)) return null
+    return debouncedQuery
   }, [debouncedQuery])
 
   const allCandidates = useMemo(() => {

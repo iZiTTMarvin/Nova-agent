@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-17
+
+- **fix(composer)**: 修复选中 skill 后无法发送带参数消息的问题
+  - `SkillAC` 的 `/` 自动补全浮层此前只要输入以 `/` 开头且能匹配候选就一直打开；选中 skill 后继续输入参数时，每次 Enter 都被浮层拦截并把输入框重置回 "/skillname "，导致参数被吞、消息永远发不出去
+  - 进入参数阶段（输入出现任意空白字符）后即关闭浮层，Enter/Tab 回归发送路径；纯 slash 命令阶段的选中能力不变
+  - 新增 `tests/unit/renderer/SkillAC.test.tsx` 交互层回归测试，覆盖纯命令选中、参数阶段不拦截、Tab 与多行等场景
+
 ## 2026-06-15
 
 - **fix(agent)**: 收口 session context v4 —— 修复工作区锚点误判、旧会话错误 prompt 迁移与 compaction 提示真实下发
