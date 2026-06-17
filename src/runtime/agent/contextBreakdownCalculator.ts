@@ -10,6 +10,7 @@ import { SystemPromptBuilder } from './SystemPromptBuilder'
 import { getStableSystemPrompt } from './modePrompt'
 import { buildSkillContext } from './buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
+import { renderBaseRules } from './promptRenderer'
 import { extractTextFromSerializableContent, type SessionData } from '../sessions/types'
 import type { ChatMessage } from '../model/types'
 import type { SkillManifest } from '../skills/types'
@@ -125,7 +126,8 @@ export function buildFrozenSystemPromptForSession(
   const skillContext = buildSkillContext(skills)
   return SystemPromptBuilder.build({
     agentRole: getStableSystemPrompt(),
-    projectRules: discoverProjectRules(session.workspaceRoot),
+    baseRules: renderBaseRules(),
+    projectRules: discoverProjectRules(session.workspaceRoot)?.text ?? '',
     skillContext,
     modeInstruction: '',
     toolSummary: ''

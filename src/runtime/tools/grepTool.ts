@@ -5,6 +5,7 @@ import { createInterface } from 'readline'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { findRipgrep, isRgAvailable } from './find-rg'
 import { createTruncationPipeline } from './TruncationPipeline'
+import { OutputSink } from './OutputSink'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import type { GrepInput, GrepOutputMode, GrepToolOptions } from './grep-types'
 
@@ -168,8 +169,11 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
         return { success: false, output: '', error: validated.error }
       }
 
+      let result: ToolResult
+      let fallbackPrefix = ''
+
       if (isRgAvailable()) {
-        const result = await executeWithRipgrep(
+        result = await executeWithRipgrep(
           pattern,
           validated.path,
           context,
@@ -183,21 +187,34 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
           offset,
           multiline
         )
-        return prefixWorkspaceHeader(result, context.workingDir)
+      } else {
+        const fallback = await executeFallback(
+          pattern,
+          validated.path,
+          context,
+          outputMode,
+          glob,
+          afterContext,
+          beforeContext,
+          contextLines,
+          headLimit,
+          offset
+        )
+        result = fallback.result
+        fallbackPrefix = fallback.prefix
       }
 
-      const result = await executeFallback(
-        pattern,
-        validated.path,
-        context,
-        outputMode,
-        glob,
-        afterContext,
-        beforeContext,
-        contextLines,
-        headLimit,
-        offset
-      )
+      // content 模式大输出走 OutputSink；files_with_matches / count 保持原样
+      result = await finalizeGrepOutput(result, context, outputMode)
+
+      // 回退模式警告在 OutputSink 之后拼接，避免进入 artifact 正文
+      if (fallbackPrefix) {
+        result = {
+          ...result,
+          output: `${fallbackPrefix}${result.output ?? ''}`
+        }
+      }
+
       return prefixWorkspaceHeader(result, context.workingDir)
     }
   }
@@ -216,6 +233,42 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
 function prefixWorkspaceHeader(result: ToolResult, workingDir: string): ToolResult {
   if (!result.success || result.error) return result
   return { ...result, output: `[workspace: ${workingDir}]\n${result.output ?? ''}` }
+}
+
+/**
+ * content 模式大输出统一走 OutputSink 二次控量。
+ * files_with_matches / count 或缺少 artifactStore 时原样返回。
+ */
+async function finalizeGrepOutput(
+  result: ToolResult,
+  context: ToolContext,
+  outputMode: GrepOutputMode
+): Promise<ToolResult> {
+  if (
+    !result.success ||
+    result.error ||
+    outputMode !== 'content' ||
+    !context.artifactStore ||
+    !context.sessionId
+  ) {
+    return result
+  }
+
+  const sink = new OutputSink({
+    artifactStore: context.artifactStore,
+    sessionId: context.sessionId,
+    toolName: 'grep'
+  })
+  const finalized = await sink.finalize(result.output ?? '')
+
+  return {
+    ...result,
+    output: finalized.contextText,
+    ...(finalized.artifactId ? { artifactId: finalized.artifactId } : {}),
+    ...(finalized.truncationMeta?.truncated
+      ? { truncationMeta: finalized.truncationMeta }
+      : {})
+  }
 }
 
 async function executeWithRipgrep(
@@ -388,7 +441,7 @@ async function executeFallback(
   contextLines: number | undefined,
   headLimit: number | undefined,
   offset: number | undefined
-): Promise<ToolResult> {
+): Promise<{ result: ToolResult; prefix: string }> {
   const state: FallbackState = {
     cancelled: false,
     matchCount: 0,
@@ -461,23 +514,26 @@ async function executeFallback(
       output = `未找到匹配 "${pattern}" 的内容`
     } else {
       const raw = state.matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n')
-      // TruncationPipeline 处理字节/行长度截断；警告前缀在截断之后拼接，避免被吃掉
-      const pipeline = createTruncationPipeline()
-      output = pipeline.apply(raw).output
+      // 有 artifactStore 时交给 OutputSink 统一控量；否则走旧 TruncationPipeline 兜底
+      if (context.artifactStore && context.sessionId) {
+        output = raw
+      } else {
+        const pipeline = createTruncationPipeline()
+        output = pipeline.apply(raw).output
+      }
     }
   }
 
-  // 在结果前追加回退模式警告和终止原因提示
-  // head_limit 触发时会同时设置 cancelled，但只展示更具体的 head_limit 提示
+  // 回退模式警告在 OutputSink 之后由 execute() 拼接，此处只生成前缀文本
   const warnings: string[] = ['[回退模式: 性能可能较慢，建议安装 ripgrep]']
   if (state.headLimitReached) {
     warnings.push('[已达 head_limit 上限，结果可能不完整]')
   } else if (state.cancelled) {
     warnings.push('[操作已取消，结果可能不完整]')
   }
-  output = `${warnings.join('\n')}\n${output}`
+  const prefix = `${warnings.join('\n')}\n`
 
-  return { success: true, output }
+  return { result: { success: true, output }, prefix }
 }
 
 /**

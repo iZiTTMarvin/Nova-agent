@@ -14,6 +14,12 @@ import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { decodeFileBuffer } from './editDiff'
 import { detectImageMimeTypeFromFile } from './mime'
 import { resizeImage, formatDimensionNote } from './image-resize'
+import { OutputSink } from './OutputSink'
+import {
+  isSummarizableExtension,
+  summarizeStructure,
+  MIN_SUMMARY_LINES,
+} from './readSummarizer'
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -41,6 +47,8 @@ const MAX_OUTPUT_LINES = 2000
 const MAX_LINE_LENGTH = 1000
 /** 支持读取的图片扩展名（走 MIME 检测路径，不走二进制拒绝路径） */
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+/** artifact 虚拟路径前缀，用于续读 bash/grep 等大输出 */
+const ARTIFACT_PATH_PREFIX = 'artifact://'
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +143,182 @@ export function buildContinuationHint(
   return `\n[显示 ${startLine}-${endLine} 行，共 ${totalLineCount} 行。使用 offset=${endLine} 继续读取]`
 }
 
+/** 从 path 参数解析 artifact ID；非 artifact 路径返回 null */
+function parseArtifactId(inputPath: string): string | null {
+  if (!inputPath.startsWith(ARTIFACT_PATH_PREFIX)) return null
+  const id = inputPath.slice(ARTIFACT_PATH_PREFIX.length).trim()
+  if (!id || id.includes('..') || id.includes('/') || id.includes('\\')) return null
+  return id
+}
+
+/**
+ * 安全截断后可选走 OutputSink 二次控量（需 artifactStore）。
+ * 返回 workspace 标头 + 正文，以及可能的 artifactId / truncationMeta。
+ */
+async function buildReadToolResult(
+  bodyText: string,
+  context: ToolContext
+): Promise<ToolResult> {
+  let outputBody = bodyText
+  let artifactId: string | undefined
+  let truncationMeta: ToolResult['truncationMeta']
+
+  if (context.artifactStore && context.sessionId) {
+    const sink = new OutputSink({
+      artifactStore: context.artifactStore,
+      sessionId: context.sessionId,
+      toolName: 'read'
+    })
+    const finalized = await sink.finalize(bodyText)
+    outputBody = finalized.contextText
+    if (finalized.artifactId) {
+      artifactId = finalized.artifactId
+      truncationMeta = finalized.truncationMeta
+    }
+  }
+
+  return {
+    success: true,
+    output: `[workspace: ${context.workingDir}]\n${outputBody}`,
+    ...(artifactId ? { artifactId } : {}),
+    ...(truncationMeta ? { truncationMeta } : {})
+  }
+}
+
+/** 统计 split 后的有效总行数（排除尾部空串元素） */
+function countEffectiveLines(allLines: string[]): number {
+  return allLines.length > 0 && allLines[allLines.length - 1] === ''
+    ? allLines.length - 1
+    : allLines.length
+}
+
+/**
+ * 对文本行数组做 offset/limit 切片、安全截断、续读提示，并写入 readState。
+ * readState 始终保存切片后、截断前的真实内容（供 edit 校验）。
+ */
+async function processTextLines(
+  allLines: string[],
+  paramOffset: number,
+  paramLimit: number | undefined,
+  readStateKey: string,
+  readStateTimestamp: number,
+  context: ToolContext
+): Promise<ToolResult> {
+  const totalLineCount = countEffectiveLines(allLines)
+
+  const slicedLines =
+    paramLimit !== undefined
+      ? allLines.slice(paramOffset, paramOffset + paramLimit)
+      : allLines.slice(paramOffset)
+
+  if (slicedLines.length === 0) {
+    return { success: true, output: `[workspace: ${context.workingDir}]\n` }
+  }
+
+  const { linesText, lineCount: shownLineCount, truncated } =
+    applySafetyTruncation(slicedLines)
+
+  const hint = buildContinuationHint(
+    paramOffset,
+    shownLineCount,
+    totalLineCount,
+    truncated
+  )
+
+  // readState 保存真实切片（截断前），不影响 edit 工具的"先读后改"校验
+  const readStateContent = slicedLines.join('\n')
+  context.readState.set(readStateKey, {
+    content: readStateContent,
+    timestamp: readStateTimestamp
+  })
+
+  return buildReadToolResult(`${linesText}${hint}`, context)
+}
+
+/**
+ * 判断是否应走结构化摘要路径：
+ * 支持扩展名 + 无 offset/limit +（文件 > 256KB 或行数 ≥ 400）。
+ */
+function shouldUseStructureSummary(
+  ext: string,
+  paramOffset: number,
+  paramLimit: number | undefined,
+  fileSize: number,
+  lineCount: number
+): boolean {
+  if (paramLimit !== undefined || paramOffset > 0) return false
+  if (!isSummarizableExtension(ext)) return false
+  return fileSize > MAX_FILE_SIZE_WITHOUT_RANGE || lineCount >= MIN_SUMMARY_LINES
+}
+
+/**
+ * 结构化摘要路径：readState 保存全文，output 首行标注 structure-summary。
+ */
+async function processStructureSummary(
+  normalized: string,
+  absolutePath: string,
+  fileStatMtime: number,
+  context: ToolContext
+): Promise<ToolResult | null> {
+  const summary = summarizeStructure(absolutePath, normalized)
+  if (!summary) return null
+
+  // readState 保存真实全文（非摘要），供 edit 工具"先读后改"校验
+  context.readState.set(absolutePath, {
+    content: normalized,
+    timestamp: fileStatMtime
+  })
+
+  const body = `[read mode: structure-summary]\n${summary}`
+  return buildReadToolResult(body, context)
+}
+
+/** 读取 artifact://{id} 片段（续读 bash/grep 等大输出） */
+async function readFromArtifact(
+  artifactId: string,
+  paramOffset: number,
+  paramLimit: number | undefined,
+  context: ToolContext
+): Promise<ToolResult> {
+  if (!context.artifactStore || !context.sessionId) {
+    return {
+      success: false,
+      output: '',
+      error: '无法读取 artifact：当前会话未启用 artifactStore'
+    }
+  }
+
+  try {
+    const raw = await context.artifactStore.read(context.sessionId, artifactId)
+    const normalized = normalizeToLF(raw)
+    const allLines = normalized.split('\n')
+    const readStateKey = `${ARTIFACT_PATH_PREFIX}${artifactId}`
+
+    return processTextLines(
+      allLines,
+      paramOffset,
+      paramLimit,
+      readStateKey,
+      Date.now(),
+      context
+    )
+  } catch (err) {
+    const nodeErr = err as NodeJS.ErrnoException
+    if (nodeErr.code === 'ENOENT') {
+      return {
+        success: false,
+        output: '',
+        error: `artifact 不存在: "${ARTIFACT_PATH_PREFIX}${artifactId}"`
+      }
+    }
+    return {
+      success: false,
+      output: '',
+      error: `无法读取 artifact: ${(err as Error).message}`
+    }
+  }
+}
+
 // ── readTool 主体 ─────────────────────────────────────────────────────────────
 
 export const readTool: ToolExecutor = {
@@ -178,15 +362,22 @@ export const readTool: ToolExecutor = {
       return { success: false, output: '', error: '缺少 path 参数' }
     }
 
+    const paramOffset = Math.max(0, typeof args.offset === 'number' ? args.offset : 0)
+    const rawLimit = args.limit
+    const paramLimit = typeof rawLimit === 'number' && rawLimit >= 1 ? rawLimit : undefined
+
+    // artifact:// 续读路径：不走工作区路径校验
+    const artifactId = parseArtifactId(inputPath)
+    if (artifactId) {
+      return readFromArtifact(artifactId, paramOffset, paramLimit, context)
+    }
+
     const validated = resolveAndValidatePath(context.workingDir, inputPath)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }
 
     const absolutePath = validated.path
-    const paramOffset = Math.max(0, typeof args.offset === 'number' ? args.offset : 0)
-    const rawLimit = args.limit
-    const paramLimit = typeof rawLimit === 'number' && rawLimit >= 1 ? rawLimit : undefined
 
     try {
       if (signal?.aborted) {
@@ -257,8 +448,19 @@ export const readTool: ToolExecutor = {
       }
 
       // ── 文件大小预检 ──
-      // 只有在无任何分页参数（offset=0 且 limit=undefined）的全量读取模式下才拒绝大文件
-      if (paramLimit === undefined && paramOffset === 0 && fileStat.size > MAX_FILE_SIZE_WITHOUT_RANGE) {
+      // 摘要路径：在拒绝大文件之前尝试结构化摘要（任务 12）
+      // 非摘要候选仍走原有「无分页则拒绝 >256KB」逻辑
+      const needsFullReadForSummary =
+        isSummarizableExtension(ext) &&
+        paramLimit === undefined &&
+        paramOffset === 0
+
+      if (
+        !needsFullReadForSummary &&
+        paramLimit === undefined &&
+        paramOffset === 0 &&
+        fileStat.size > MAX_FILE_SIZE_WITHOUT_RANGE
+      ) {
         return {
           success: false,
           output: '',
@@ -272,8 +474,6 @@ export const readTool: ToolExecutor = {
       const buf = await asyncReadFile(absolutePath)
 
       // ── 解码 ──
-      // 空字节检测在解码后的文本字符串上做（而非原始 buffer），因为
-      // UTF-16LE 等编码的原始 buffer 中合法含有空字节（高字节为 0x00）。
       const { text } = decodeFileBuffer(buf)
       if (text.includes('\0')) {
         return {
@@ -285,50 +485,39 @@ export const readTool: ToolExecutor = {
 
       const stripped = stripBomForRead(text)
       const normalized = normalizeToLF(stripped)
-
-      // ── 行分割与 offset/limit 切片 ──
       const allLines = normalized.split('\n')
-      // 文件末尾的 `\n` 在 split 后会产生一个空串元素（如 "a\nb\n" → ['a','b','']），
-      // 它不增加实际行数，但保留在数组中能让 join('\n') 重建出正确的尾部换行。
-      // totalLineCount 需要排除这个空串元素，确保续读提示的 offset 定位精确。
-      const totalLineCount = allLines.length > 0 && allLines[allLines.length - 1] === ''
-        ? allLines.length - 1
-        : allLines.length
+      const lineCount = countEffectiveLines(allLines)
 
-      const slicedLines =
-        paramLimit !== undefined
-          ? allLines.slice(paramOffset, paramOffset + paramLimit)
-          : allLines.slice(paramOffset)
-
-      if (slicedLines.length === 0) {
-        // 空结果也加 workspace 标头（session context 双保险，与其他读类工具一致）
-        return { success: true, output: `[workspace: ${context.workingDir}]\n` }
+      // ── 结构化摘要路径 ──
+      if (shouldUseStructureSummary(ext, paramOffset, paramLimit, fileStat.size, lineCount)) {
+        const summaryResult = await processStructureSummary(
+          normalized,
+          absolutePath,
+          fileStat.mtimeMs,
+          context
+        )
+        if (summaryResult) return summaryResult
       }
 
-      // ── 安全截断 ──
-      const { linesText, lineCount: shownLineCount, truncated } =
-        applySafetyTruncation(slicedLines)
+      // 摘要不适用时，对大文件且无分页参数仍拒绝
+      if (paramLimit === undefined && paramOffset === 0 && fileStat.size > MAX_FILE_SIZE_WITHOUT_RANGE) {
+        return {
+          success: false,
+          output: '',
+          error:
+            `文件过大（${formatFileSize(fileStat.size)}），请使用 offset 和 limit 参数分页读取。` +
+            `当前限制为 ${Math.floor(MAX_FILE_SIZE_WITHOUT_RANGE / 1024)}KB。`,
+        }
+      }
 
-      // ── 续读提示 ──
-      const hint = buildContinuationHint(
+      return processTextLines(
+        allLines,
         paramOffset,
-        shownLineCount,
-        totalLineCount,
-        truncated,
+        paramLimit,
+        absolutePath,
+        fileStat.mtimeMs,
+        context
       )
-
-      // ── 写入 readState ──
-      // 存储切片后、截断前的内容（即 agent 实际请求的行范围），
-      // 而非全量文件内容，避免 readState 过大。
-      // 截断只影响展示，不影响后续编辑校验。
-      const readStateContent = slicedLines.join('\n')
-      context.readState.set(absolutePath, {
-        content: readStateContent,
-        timestamp: fileStat.mtimeMs,
-      })
-
-      // 成功路径：在工作区绝对路径标头后返回内容（session context 的双保险）。
-      return { success: true, output: `[workspace: ${context.workingDir}]\n${linesText}${hint}` }
     } catch (err) {
       const nodeErr = err as NodeJS.ErrnoException & Error
       if (nodeErr.code === 'ENOENT') {

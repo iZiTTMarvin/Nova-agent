@@ -45,6 +45,7 @@ import { getSkillService } from '../services/SkillServiceHost'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
 import { estimateTokens } from '../../runtime/agent/tokenEstimator'
 import { discoverProjectRules } from '../../runtime/agent/projectRulesDiscovery'
+import { renderBaseRules } from '../../runtime/agent/promptRenderer'
 import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../runtime/tools/taskTool'
 import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBridge'
@@ -220,7 +221,9 @@ export function registerAgentHandler(
     }
     const skillRegistry = skillService.getRegistry()
 
-    const projectRules = discoverProjectRules(projectPath)
+    const projectRules = discoverProjectRules(projectPath)?.text ?? ''
+    /** 行为契约层：模板化 base rules，与模式指令（挂 user 尾部）分离以保缓存前缀稳定 */
+    const baseRules = renderBaseRules()
     const skillContext = buildSkillContext(skillRegistry.listForContext())
     /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
     const skillsTokenEstimate = estimateTokens(skillContext)
@@ -281,6 +284,7 @@ export function registerAgentHandler(
     agentLoop = new AgentLoop(modelPool, eventBus, {
       systemPromptLayers: {
         agentRole: frozenPrompt,
+        baseRules,
         projectRules,
         skillContext,
         toolSummary

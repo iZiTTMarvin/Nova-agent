@@ -129,6 +129,34 @@ describe('buildConversationContext', () => {
     })
   })
 
+  it('cancel 后仅持久化消息进入上下文，artifactId 仍可被 read artifact:// 引用', () => {
+    const session = makeSession([
+      {
+        id: 'm1',
+        role: 'assistant',
+        content: 'interrupted reply',
+        interrupted: true,
+        toolCalls: [{
+          id: 'tc_grep',
+          name: 'grep',
+          arguments: '{"pattern":"x"}',
+          result: 'shown lines\nartifact://grep_art_id',
+          artifactId: 'grep_art_id',
+          truncationMeta: { totalBytes: 50000, totalLines: 600, shownLines: 100, truncated: true }
+        }],
+        timestamp: 1
+      }
+    ])
+
+    const context = buildConversationContext(session, 'default')
+    // 无 cancel 残留的 user/assistant 中间态，只有已保存的一条 assistant + tool
+    expect(context.filter(m => m.role === 'user')).toHaveLength(0)
+    expect(context.filter(m => m.role === 'assistant')).toHaveLength(1)
+    const toolMsg = context.find(m => m.role === 'tool')
+    expect(toolMsg?.artifactId).toBe('grep_art_id')
+    expect(toolMsg?.content).toContain('artifact://grep_art_id')
+  })
+
   it('thinking 块不进入模型上下文', () => {
     const session = makeSession([
       { id: 'm1', role: 'user', content: '分析项目', timestamp: 1 },

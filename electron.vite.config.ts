@@ -18,9 +18,23 @@ function copyNovaBuiltinSkills(): Plugin {
   }
 }
 
+/** 构建时将 agent prompt 模板复制到 out/main/prompts，供 promptRenderer 按 __dirname 读取 */
+function copyAgentPrompts(): Plugin {
+  return {
+    name: 'copy-agent-prompts',
+    closeBundle() {
+      const src = resolve('src/runtime/agent/prompts')
+      const dest = resolve('out/main/prompts')
+      if (existsSync(src)) {
+        cpSync(src, dest, { recursive: true })
+      }
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), copyNovaBuiltinSkills()],
+    plugins: [externalizeDepsPlugin(), copyNovaBuiltinSkills(), copyAgentPrompts()],
     resolve: {
       alias: {
         '@main': resolve('src/main'),

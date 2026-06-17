@@ -363,4 +363,90 @@ describe('SessionStore', () => {
       expect(store.getTodos(session.id)).toEqual([])
     })
   })
+
+  describe('artifactId 持久化', () => {
+    it('含 artifactId 的 toolCall 可保存并重新加载', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      store.appendMessage(session.id, {
+        id: 'msg_user',
+        role: 'user',
+        content: 'run grep',
+        timestamp: Date.now()
+      })
+      store.appendMessage(session.id, {
+        id: 'msg_asst',
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        toolCalls: [{
+          id: 'tc_grep',
+          name: 'grep',
+          arguments: '{"pattern":"foo"}',
+          result: 'head...\nartifact://abc123def456',
+          artifactId: 'abc123def456',
+          truncationMeta: {
+            totalBytes: 80_000,
+            totalLines: 500,
+            shownLines: 120,
+            truncated: true
+          }
+        }]
+      })
+
+      const loaded = store.load(session.id)
+      expect(loaded).not.toBeNull()
+      const tc = loaded!.messages[1].toolCalls![0]
+      expect(tc.artifactId).toBe('abc123def456')
+      expect(tc.truncationMeta).toEqual({
+        totalBytes: 80_000,
+        totalLines: 500,
+        shownLines: 120,
+        truncated: true
+      })
+    })
+
+    it('cancel 场景：未持久化的流式消息不入库，已落盘 artifact 文件不丢', async () => {
+      const { ArtifactStore } = await import('../../../../src/runtime/artifacts/ArtifactStore')
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const artifactStore = new ArtifactStore(store.getSessionsDir())
+      const artifactId = 'cafebabefeed'
+
+      // 模拟 bash 大输出已落盘
+      const artifactDir = path.join(store.getSessionsDir(), session.id, 'artifacts')
+      fs.mkdirSync(artifactDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(artifactDir, artifactId),
+        'full bash output line1\nline2\n',
+        'utf8'
+      )
+
+      // 仅持久化已完成的 assistant 消息（cancel 后流式中间态不入库）
+      store.appendMessage(session.id, {
+        id: 'msg_done',
+        role: 'assistant',
+        content: 'partial reply before cancel',
+        timestamp: Date.now(),
+        interrupted: true,
+        toolCalls: [{
+          id: 'tc_bash',
+          name: 'bash',
+          arguments: '{"command":"echo big"}',
+          result: 'truncated...\nartifact://' + artifactId,
+          artifactId
+        }]
+      })
+
+      const loaded = store.load(session.id)
+      expect(loaded!.messages).toHaveLength(1)
+      expect(loaded!.messages[0].interrupted).toBe(true)
+      expect(loaded!.messages[0].toolCalls![0].artifactId).toBe(artifactId)
+
+      // artifact 文件仍在磁盘，可被续读
+      const full = await artifactStore.read(session.id, artifactId)
+      expect(full).toContain('full bash output')
+    })
+  })
 })

@@ -8,6 +8,8 @@ import { PermissionManager } from '../../../src/runtime/permissions/PermissionMa
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { extractTextFromContent } from '../../../src/runtime/model/types'
 import type { ChatMessage } from '../../../src/runtime/model/types'
+import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator'
+import { AGING_GROUP_BYTES_THRESHOLD } from '../../../src/runtime/agent/toolResultAging'
 import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
@@ -1323,5 +1325,63 @@ describe('AgentLoop', () => {
     expect(startSpy).toHaveBeenCalled()
 
     startSpy.mockRestore()
+  })
+
+  it('sendMessage 后对旧工具组 aging 并降低 token 估算，工具组配对不破坏', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop } = createLoop(client)
+
+    // 预置 35 轮 user+tool 上下文（确保有组落在 MIN_RECENT 保护区外且 user 年龄 > 8）
+    const seeded: ChatMessage[] = [{ role: 'system', content: '你是助手。' }]
+    for (let u = 0; u < 35; u++) {
+      seeded.push({ role: 'user', content: `question ${u}` })
+      seeded.push({
+        role: 'assistant',
+        content: 'tool run',
+        toolCalls: [{ id: `tc_${u}`, name: 'bash', arguments: '{}' }]
+      })
+      seeded.push({
+        role: 'tool',
+        content: `line1\n${'z'.repeat(AGING_GROUP_BYTES_THRESHOLD + 50)}`,
+        toolCallId: `tc_${u}`
+      })
+    }
+    ;(loop as unknown as { context: ChatMessage[] }).context = seeded
+
+    const toolBytesBefore = seeded
+      .filter(m => m.role === 'tool')
+      .reduce((sum, m) => sum + Buffer.byteLength(extractTextFromContent(m.content), 'utf8'), 0)
+
+    await loop.sendMessage('继续')
+
+    const ctx = loop.getContext()
+    const toolBytesAfter = ctx
+      .filter(m => m.role === 'tool')
+      .reduce((sum, m) => sum + Buffer.byteLength(extractTextFromContent(m.content), 'utf8'), 0)
+
+    expect(toolBytesAfter).toBeLessThan(toolBytesBefore)
+
+    const agedTools = ctx.filter(
+      m => m.role === 'tool' && extractTextFromContent(m.content).includes('[aged tool result]')
+    )
+    expect(agedTools.length).toBeGreaterThan(0)
+
+    // 配对完整：每个 assistant(toolCalls) 后仍有 tool 消息
+    const nonSystem = ctx.filter(m => m.role !== 'system')
+    for (const msg of nonSystem) {
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          expect(nonSystem.some(m => m.role === 'tool' && m.toolCallId === tc.id)).toBe(true)
+        }
+      }
+    }
   })
 })

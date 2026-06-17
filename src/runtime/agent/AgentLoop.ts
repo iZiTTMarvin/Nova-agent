@@ -23,6 +23,7 @@ import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
 import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold, rollbackBefore } from './compaction'
+import { ageToolResults } from './toolResultAging'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
@@ -136,6 +137,8 @@ export class AgentLoop implements IdleCompactionTarget {
   private compressingForOverflow = false
   /** 缓存上次估算的 token 数，用于判断守卫 */
   private lastEstimatedTokens = 0
+  /** 距上次压缩后的 user 消息回合数（软触发冷却） */
+  private userTurnsSinceCompaction = 0
   /** 压缩层级计数 */
   private compactionLevel = 0
 
@@ -194,6 +197,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.eventBus = eventBus
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
+      systemPromptLayers: config?.systemPromptLayers,
       maxToolRounds: config?.maxToolRounds ?? 20,
       contextWindow: config?.contextWindow,
       supportsVision: config?.supportsVision ?? true,
@@ -223,7 +227,7 @@ export class AgentLoop implements IdleCompactionTarget {
       return SystemPromptBuilder.build({
         agentRole: layers.agentRole,
         baseRules: layers.baseRules ?? '',
-        projectRules: layers.projectRules ?? null,
+        projectRules: layers.projectRules ?? '',
         skillContext: layers.skillContext ?? '',
         modeInstruction: layers.modeInstruction ?? '',
         toolSummary: layers.toolSummary ?? ''
@@ -545,6 +549,13 @@ export class AgentLoop implements IdleCompactionTarget {
       this.context.push({ role: 'user', content: userContent })
     }
 
+    // 每轮 user 消息递增压缩冷却计数
+    this.userTurnsSinceCompaction++
+
+    // 旧工具结果老化 + 刷新 token 估算（在 shouldCompact 之前）
+    this.context = ageToolResults(this.context)
+    this.lastEstimatedTokens = estimateContextTokens(this.context)
+
     try {
       let toolRound = 0
 
@@ -576,7 +587,7 @@ export class AgentLoop implements IdleCompactionTarget {
           // 2.4 守卫：使用上轮估算/API实际报告的 token 数和当前实时估算中的较大值作为判断依据，防范反复触发
           const currentTokens = estimateContextTokens(this.context)
           const tokensToCompare = Math.max(currentTokens, this.lastEstimatedTokens)
-          if (shouldCompact(this.context, compactionThreshold, tokensToCompare)) {
+          if (shouldCompact(this.context, compactionThreshold, tokensToCompare, this.userTurnsSinceCompaction)) {
             await this.runCompaction()
           }
         }
@@ -1036,6 +1047,7 @@ export class AgentLoop implements IdleCompactionTarget {
     // 重建上下文
     this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages)
     this.compactionLevel++
+    this.userTurnsSinceCompaction = 0
     this.lastEstimatedTokens = estimateContextTokens(this.context)
 
     // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
@@ -1365,6 +1377,7 @@ export class AgentLoop implements IdleCompactionTarget {
       // 5. 成功：重建上下文 + 追加 pulledBack
       this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages, pulledBackMessages)
       this.compactionLevel++
+      this.userTurnsSinceCompaction = 0
 
       // 重置 token 估算，防止下轮立即重新触发压缩
       this.lastEstimatedTokens = estimateContextTokens(this.context)

@@ -16,6 +16,10 @@ import {
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { encodeFile } from '../../../../src/runtime/tools/editDiff'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
+import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
+import { mkdtempSync, rmSync as rmSyncOs } from 'fs'
+import { tmpdir } from 'os'
+import { MIN_SUMMARY_LINES } from '../../../../src/runtime/tools/readSummarizer'
 
 const TMP = join(process.cwd(), '.test-workspace-readtool')
 
@@ -449,6 +453,213 @@ describe('readTool', () => {
 
       const absPath = join(TMP, 'statecheck.png')
       expect(testReadState.get(absPath)).toBeUndefined()
+    })
+  })
+
+  // ── artifact:// 续读 ─────────────────────────────────────
+
+  describe('artifact:// 续读', () => {
+    it('read path="artifact://{id}" offset/limit 返回正确片段', async () => {
+      const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-read-artifact-'))
+      const sessionId = 'sess_read_art'
+      const store = new ArtifactStore(sessionsDir)
+
+      const lines = Array.from({ length: 200 }, (_, i) => `line-${i}`)
+      const meta = await store.write(sessionId, lines.join('\n'), { toolName: 'bash' })
+
+      try {
+        const result = await readTool.execute(
+          { path: `artifact://${meta.id}`, offset: 100, limit: 50 },
+          createContext({ artifactStore: store, sessionId })
+        )
+
+        expect(result.success).toBe(true)
+        const body = stripWorkspaceHeader(result.output)
+        const outputLines = body.split('\n').filter(l => !l.startsWith('[显示'))
+        expect(outputLines[0]).toBe('line-100')
+        expect(outputLines[49]).toBe('line-149')
+        expect(outputLines.length).toBe(50)
+
+        // readState 保存真实切片（截断前）
+        const state = testReadState.get(`artifact://${meta.id}`)
+        expect(state).toBeDefined()
+        expect(state!.content.split('\n').length).toBe(50)
+        expect(state!.content.startsWith('line-100')).toBe(true)
+      } finally {
+        rmSyncOs(sessionsDir, { recursive: true, force: true })
+      }
+    })
+
+    it('缺少 artifactStore 时 artifact 路径报错', async () => {
+      const result = await readTool.execute(
+        { path: 'artifact://deadbeef' },
+        createContext()
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('artifactStore')
+    })
+
+    it('artifact 不存在时返回友好错误', async () => {
+      const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-read-art-missing-'))
+      const sessionId = 'sess_missing'
+      const store = new ArtifactStore(sessionsDir)
+
+      try {
+        const result = await readTool.execute(
+          { path: 'artifact://notexist12' },
+          createContext({ artifactStore: store, sessionId })
+        )
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('不存在')
+      } finally {
+        rmSyncOs(sessionsDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  // ── OutputSink 二次控量 ───────────────────────────────────
+
+  describe('OutputSink 二次控量', () => {
+    it('大文件读取有 artifactStore 时生成 artifactId', async () => {
+      const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-read-sink-'))
+      const sessionId = 'sess_read_sink'
+      const store = new ArtifactStore(sessionsDir)
+
+      // 800 行 × 200 字节 ≈ 160KB，超过 read 安全截断 100KB，再触发 OutputSink 50KB
+      const line = 'z'.repeat(199)
+      const content = Array.from({ length: 800 }, () => line).join('\n')
+      writeFileSync(join(TMP, 'huge.txt'), content)
+
+      try {
+        const result = await readTool.execute(
+          { path: 'huge.txt' },
+          createContext({ artifactStore: store, sessionId })
+        )
+
+        expect(result.success).toBe(true)
+        expect(result.artifactId).toBeTruthy()
+        expect(result.output).toContain(`artifact://${result.artifactId}`)
+        expect(Buffer.byteLength(result.output, 'utf8')).toBeLessThan(60_000)
+
+        // readState 仍保存真实切片（800 行），不受 OutputSink 影响
+        const absPath = join(TMP, 'huge.txt')
+        const state = testReadState.get(absPath)
+        expect(state).toBeDefined()
+        expect(state!.content.split('\n').length).toBe(800)
+      } finally {
+        rmSyncOs(sessionsDir, { recursive: true, force: true })
+      }
+    })
+
+    it('无 artifactStore 时大文件仍走 100KB/2000 行截断', async () => {
+      const line = 'y'.repeat(199)
+      const content = Array.from({ length: 800 }, () => line).join('\n')
+      writeFileSync(join(TMP, 'huge-no-store.txt'), content)
+
+      const result = await readTool.execute(
+        { path: 'huge-no-store.txt' },
+        createContext()
+      )
+
+      expect(result.success).toBe(true)
+      expect(result.artifactId).toBeUndefined()
+      expect(result.output).toContain('[显示')
+      expect(result.output).not.toContain('artifact://')
+    })
+  })
+
+  // ── 结构化摘要 ───────────────────────────────────────────
+
+  describe('结构化摘要', () => {
+    /** 生成大 TS 文件（约 2000 行） */
+    function writeLargeTs(relativePath: string, fnCount: number, bodyLines = 20): string {
+      const lines = [
+        "import { x } from 'y'",
+        '',
+      ]
+      for (let i = 0; i < fnCount; i++) {
+        lines.push(`export function fn${i}(n: number): number {`)
+        for (let j = 0; j < bodyLines; j++) {
+          lines.push(`  const v${j} = n + ${i} + ${j}`)
+        }
+        lines.push(`  return v${bodyLines - 1}`)
+        lines.push(`}`)
+        lines.push('')
+      }
+      lines.push('export default fn0')
+      const content = lines.join('\n')
+      writeFileSync(join(TMP, relativePath), content)
+      return content
+    }
+
+    it('2000 行 TS 文件走 structure-summary 且 tool result < 原文 15%', async () => {
+      const original = writeLargeTs('summary.ts', 80, 20)
+      const result = await readTool.execute({ path: 'summary.ts' }, createContext())
+
+      expect(result.success).toBe(true)
+      expect(result.output).toContain('[read mode: structure-summary]')
+      expect(result.output).toContain('{folded}:')
+
+      const body = stripWorkspaceHeader(result.output)
+      const ratio = Buffer.byteLength(body, 'utf8') / Buffer.byteLength(original, 'utf8')
+      expect(ratio).toBeLessThan(0.15)
+    })
+
+    it('带 offset/limit 时不走摘要', async () => {
+      writeLargeTs('summary-paged.ts', 90)
+      const result = await readTool.execute(
+        { path: 'summary-paged.ts', offset: 0, limit: 10 },
+        createContext()
+      )
+      expect(result.success).toBe(true)
+      expect(result.output).not.toContain('[read mode: structure-summary]')
+    })
+
+    it('摘要模式下 readState 仍保存真实全文', async () => {
+      const original = writeLargeTs('summary-state.ts', 90)
+      await readTool.execute({ path: 'summary-state.ts' }, createContext())
+
+      const absPath = join(TMP, 'summary-state.ts')
+      const state = testReadState.get(absPath)
+      expect(state).toBeDefined()
+      expect(state!.content).toBe(original.replace(/\r\n/g, '\n'))
+    })
+
+    it('行数不足 MIN_SUMMARY_LINES 时不走摘要', async () => {
+      writeFileSync(join(TMP, 'small.ts'), 'export const x = 1\n'.repeat(50))
+      const result = await readTool.execute({ path: 'small.ts' }, createContext())
+      expect(result.output).not.toContain('[read mode: structure-summary]')
+      expect(result.output.split('\n').length).toBeLessThan(MIN_SUMMARY_LINES)
+    })
+
+    it('摘要后仍超 maxContextBytes 时落 artifact', async () => {
+      const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-read-summary-art-'))
+      const sessionId = 'sess_summary_art'
+      const store = new ArtifactStore(sessionsDir)
+
+      // 大量 export 签名使摘要本身仍 > 50KB
+      const lines = ['import { z } from "z"', '']
+      for (let i = 0; i < 800; i++) {
+        lines.push(`export function veryLongNamedFunction${i}(a: number, b: number, c: number): number {`)
+        for (let j = 0; j < 8; j++) lines.push(`  const t${j} = a + b + c + ${j}`)
+        lines.push(`  return t7`)
+        lines.push(`}`)
+        lines.push('')
+      }
+      writeFileSync(join(TMP, 'mega.ts'), lines.join('\n'))
+
+      try {
+        const result = await readTool.execute(
+          { path: 'mega.ts' },
+          createContext({ artifactStore: store, sessionId })
+        )
+        expect(result.success).toBe(true)
+        expect(result.output).toContain('[read mode: structure-summary]')
+        expect(result.artifactId).toBeTruthy()
+        expect(result.output).toContain(`artifact://${result.artifactId}`)
+      } finally {
+        rmSyncOs(sessionsDir, { recursive: true, force: true })
+      }
     })
   })
 })

@@ -6,7 +6,9 @@ import {
   rebuildWithCompression,
   rollbackBefore,
   COMPACTION_THRESHOLD,
-  MIN_RECENT_MESSAGES
+  MIN_RECENT_MESSAGES,
+  SOFT_COMPACTION_COOLDOWN_TURNS,
+  estimateToolMessageTokens,
 } from '../../../../src/runtime/agent/compaction'
 import { estimateTokens, estimateContextTokens } from '../../../../src/runtime/agent/tokenEstimator'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
@@ -65,6 +67,89 @@ describe('compaction', () => {
     it('自定义阈值生效', () => {
       const messages = makeMessages(30, 100)
       expect(shouldCompact(messages, 1)).toBe(true)
+    })
+
+    it('软触发：工具 45% + 总窗口 65% + 冷却 5 回合 → 触发', () => {
+      const threshold = 10_000
+      const messages: ChatMessage[] = [{ role: 'system', content: 's'.repeat(400) }]
+      for (let i = 0; i < 12; i++) {
+        messages.push({ role: 'user', content: `u${i} ` + 'a'.repeat(300) })
+        messages.push({
+          role: 'assistant',
+          content: 'run',
+          toolCalls: [{ id: `tc${i}`, name: 'bash', arguments: '{}' }]
+        })
+        messages.push({
+          role: 'tool',
+          content: 't'.repeat(1600),
+          toolCallId: `tc${i}`
+        })
+      }
+      for (let i = 0; i < 8; i++) {
+        messages.push({ role: 'user', content: 'f'.repeat(400) })
+        messages.push({ role: 'assistant', content: 'g'.repeat(400) })
+      }
+
+      const totalTokens = estimateContextTokens(messages)
+      const toolTokens = estimateToolMessageTokens(messages)
+      expect(toolTokens).toBeGreaterThan(threshold * 0.4)
+      expect(totalTokens).toBeGreaterThan(threshold * 0.6)
+      expect(totalTokens).toBeLessThanOrEqual(threshold)
+
+      expect(shouldCompact(messages, threshold, totalTokens, SOFT_COMPACTION_COOLDOWN_TURNS)).toBe(true)
+    })
+
+    it('软触发：总窗口未达 60% 时不触发（即使工具占比高）', () => {
+      const threshold = 10_000
+      const messages: ChatMessage[] = [{ role: 'system', content: 'sys' }]
+      for (let i = 0; i < 12; i++) {
+        messages.push({ role: 'user', content: `u${i}` })
+        messages.push({
+          role: 'assistant',
+          content: 'x',
+          toolCalls: [{ id: `tc${i}`, name: 'grep', arguments: '{}' }]
+        })
+        messages.push({
+          role: 'tool',
+          content: 'g'.repeat(1700),
+          toolCallId: `tc${i}`
+        })
+      }
+      const totalTokens = estimateContextTokens(messages)
+      const toolTokens = estimateToolMessageTokens(messages)
+      expect(toolTokens).toBeGreaterThan(threshold * 0.4)
+      expect(totalTokens).toBeLessThan(threshold * 0.6)
+
+      expect(shouldCompact(messages, threshold, totalTokens, SOFT_COMPACTION_COOLDOWN_TURNS)).toBe(false)
+    })
+
+    it('软触发：冷却不足 5 user 回合时不触发', () => {
+      const threshold = 10_000
+      const messages: ChatMessage[] = [{ role: 'system', content: 's'.repeat(400) }]
+      for (let i = 0; i < 12; i++) {
+        messages.push({ role: 'user', content: `u${i} ` + 'a'.repeat(300) })
+        messages.push({
+          role: 'assistant',
+          content: 'run',
+          toolCalls: [{ id: `tc${i}`, name: 'bash', arguments: '{}' }]
+        })
+        messages.push({
+          role: 'tool',
+          content: 't'.repeat(1600),
+          toolCallId: `tc${i}`
+        })
+      }
+      for (let i = 0; i < 8; i++) {
+        messages.push({ role: 'user', content: 'f'.repeat(400) })
+        messages.push({ role: 'assistant', content: 'g'.repeat(400) })
+      }
+      const totalTokens = estimateContextTokens(messages)
+      expect(shouldCompact(messages, threshold, totalTokens, 3)).toBe(false)
+    })
+
+    it('硬 cap 超阈值时无视冷却立即触发', () => {
+      const messages = makeMessages(30, 20000)
+      expect(shouldCompact(messages, COMPACTION_THRESHOLD, undefined, 0)).toBe(true)
     })
   })
 
@@ -180,6 +265,12 @@ describe('compaction', () => {
     it('要求摘要显式保留工作区绝对路径', () => {
       const prompt = buildCompactionPrompt(10)
       expect(prompt).toContain('Working directory')
+    })
+
+    it('包含 artifact:// 感知提示', () => {
+      const prompt = buildCompactionPrompt(10)
+      expect(prompt).toContain('artifact://')
+      expect(prompt).toContain('只保留结论')
     })
   })
 

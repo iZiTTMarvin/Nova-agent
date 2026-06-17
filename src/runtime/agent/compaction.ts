@@ -26,21 +26,50 @@ export function getCompactionThreshold(contextWindow: number): number {
   return Math.floor(contextWindow * 0.8)
 }
 
+/** 软触发：工具消息 token 占阈值比例 */
+export const SOFT_COMPACTION_TOOL_RATIO = 0.4
+/** 软触发：总上下文 token 占阈值比例 */
+export const SOFT_COMPACTION_TOTAL_RATIO = 0.6
+/** 软触发：距上次压缩至少经过的用户回合数 */
+export const SOFT_COMPACTION_COOLDOWN_TURNS = 5
+
+/**
+ * 估算上下文中 role:'tool' 消息的 token 数
+ */
+export function estimateToolMessageTokens(context: ChatMessage[]): number {
+  const toolMessages = context.filter(m => m.role === 'tool')
+  if (toolMessages.length === 0) return 0
+  return estimateContextTokens(toolMessages)
+}
+
 /**
  * 判断当前上下文是否需要压缩
  *
- * @param context 当前上下文
- * @param threshold 触发压缩的 token 阈值
- * @param estimatedTokens 可选。预先估算或上轮 API 实际返回的较新 token 计数（用于守卫判断防范反复触发）
+ * - 硬触发：总 token > threshold（contextWindow 的 80%），无视冷却
+ * - 软触发：工具 token > 40% threshold 且总 token > 60% threshold 且冷却 >= 5 user 回合
+ *
+ * @param userTurnsSinceCompaction 距上次压缩后的 user 消息数；默认 0（保守，软触发冷却不足）
  */
 export function shouldCompact(
   context: ChatMessage[],
   threshold: number = COMPACTION_THRESHOLD,
-  estimatedTokens?: number
+  estimatedTokens?: number,
+  userTurnsSinceCompaction: number = 0
 ): boolean {
   if (context.length <= MIN_RECENT_MESSAGES + 2) return false
-  const tokens = estimatedTokens ?? estimateContextTokens(context)
-  return tokens > threshold
+  const totalTokens = estimatedTokens ?? estimateContextTokens(context)
+
+  // 硬 cap：超过 80% 阈值立即压缩
+  if (totalTokens > threshold) return true
+
+  // 软触发需满足冷却
+  if (userTurnsSinceCompaction < SOFT_COMPACTION_COOLDOWN_TURNS) return false
+
+  const toolTokens = estimateToolMessageTokens(context)
+  return (
+    toolTokens > threshold * SOFT_COMPACTION_TOOL_RATIO &&
+    totalTokens > threshold * SOFT_COMPACTION_TOTAL_RATIO
+  )
 }
 
 /**
@@ -52,6 +81,8 @@ export function buildCompactionPrompt(recentCount: number): string {
     '请对上面的对话历史生成一份简洁的摘要。',
     '摘要应保留：关键决策、文件修改、工具执行结果、用户意图和当前任务状态。',
     '摘要应丢弃：冗余的思考过程、重复的工具输出、过时的中间状态。',
+    '遇到含 artifact:// 的工具结果时，摘要里只保留结论，不要复述大段输出。',
+    '摘要中可保留 artifact:// 指针，供后续 read 续读。',
     '摘要开头请用一行注明当前工作区绝对路径（Working directory），让后续对话能继续基于该路径操作。',
     `摘要之后，对话将从最近 ${recentCount} 条消息继续。`,
     '请直接输出摘要文本，不要加任何前缀说明。'
@@ -166,7 +197,7 @@ export function splitForCompaction(
  * 工具调用组的结构：assistant(带 toolCalls) + 若干 tool 消息
  * 如果切点落在组内（tool 消息或带 toolCalls 的 assistant），前移到组起始位置之前
  */
-function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: number): number {
+export function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: number): number {
   // 从切点位置向前扫描，如果当前消息是 tool 角色，继续前移
   while (splitIndex > 0 && messages[splitIndex]?.role === 'tool') {
     splitIndex--
