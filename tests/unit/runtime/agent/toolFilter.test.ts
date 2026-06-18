@@ -14,11 +14,16 @@ function createMockClient(): ModelClient {
   } as unknown as ModelClient
 }
 
-/** 捕获 AgentLoop 发给模型的 tools 参数 */
-function captureTools(): { client: ModelClient; getTools: () => ToolDefinition[] | undefined } {
+/**
+ * 捕获 AgentLoop 发给模型的 tools 参数。
+ * modelId 控制 dialect 判定：'primary' → xml，'gpt-4' → native。
+ */
+function captureTools(modelId = 'primary'): { client: ModelClient; getTools: () => ToolDefinition[] | undefined } {
   let capturedTools: ToolDefinition[] | undefined
 
   const client: ModelClient = {
+    // AgentLoop 构造时会从 client.config 读 modelId 判定 dialect
+    config: { baseUrl: '', apiKey: '', modelId },
     async *chat(_msgs: unknown, tools?: ToolDefinition[]): AsyncIterable<ChatEvent> {
       capturedTools = tools
       yield { type: 'message_start' }
@@ -43,7 +48,7 @@ function makeToolDefs(names: string[]): ToolDefinition[] {
 }
 
 describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
-  it('plan 模式仍暴露全部工具（写操作由权限层 deny）', async () => {
+  it('plan 模式：工具定义恒定提供（XML 方言不传 native tools）', async () => {
     const { client, getTools } = captureTools()
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus)
@@ -59,12 +64,11 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
 
     await loop.sendMessage('test')
 
-    const tools = getTools()
-    const toolNames = tools?.map(t => t.name) ?? []
-    expect(toolNames).toEqual(ALL_TOOLS)
+    // XML 方言（modelId='primary'）不传 native tools，工具定义在 system prompt 文本里恒定
+    expect(getTools()).toBeUndefined()
   })
 
-  it('default 模式暴露全部工具', async () => {
+  it('default 模式：工具定义恒定提供（XML 方言不传 native tools）', async () => {
     const { client, getTools } = captureTools()
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus)
@@ -80,16 +84,33 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
 
     await loop.sendMessage('test')
 
-    const tools = getTools()
-    const toolNames = tools?.map(t => t.name) ?? []
-    expect(toolNames).toEqual(ALL_TOOLS)
+    expect(getTools()).toBeUndefined()
   })
 
-  it('auto 模式暴露全部工具', async () => {
+  it('auto 模式：工具定义恒定提供（XML 方言不传 native tools）', async () => {
     const { client, getTools } = captureTools()
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus)
     loop.setMode('auto')
+
+    const allDefs = makeToolDefs(ALL_TOOLS)
+    const mockRegistry = {
+      getToolDefinitions: () => allDefs,
+      getTool: () => ({ name: 'noop' } as any),
+      execute: vi.fn()
+    }
+    loop.setToolRegistry(mockRegistry as any)
+
+    await loop.sendMessage('test')
+
+    expect(getTools()).toBeUndefined()
+  })
+
+  it('native 方言（modelId 含 gpt）：传全部 native tools 给模型', async () => {
+    // modelId='gpt-4o' → preferredToolDialect 判为 native → 传 tools
+    const { client, getTools } = captureTools('gpt-4o')
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
 
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {

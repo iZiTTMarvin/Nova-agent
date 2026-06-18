@@ -662,4 +662,44 @@ describe('readTool', () => {
       }
     })
   })
+
+  // 参数名别名兼容：模型可能用 file_path / filePath / file / filename 等
+  // 代替 path（尤其 native 协议被中转污染时），readTool 应能识别。
+  describe('参数名别名兼容', () => {
+    const aliases = ['filePath', 'file_path', 'file', 'filename', 'target_file', 'target']
+
+    for (const alias of aliases) {
+      it(`用 ${alias} 代替 path 时能正常读取`, async () => {
+        writeFileSync(join(TMP, 'alias-test.txt'), 'hello alias')
+        const result = await readTool.execute(
+          { [alias]: 'alias-test.txt' },
+          createContext()
+        )
+        expect(result.success).toBe(true)
+        expect(stripWorkspaceHeader(result.output)).toContain('hello alias')
+      })
+    }
+
+    it('path 仍然有效（向后兼容）', async () => {
+      writeFileSync(join(TMP, 'path-test.txt'), 'hello path')
+      const result = await readTool.execute(
+        { path: 'path-test.txt' },
+        createContext()
+      )
+      expect(result.success).toBe(true)
+      expect(stripWorkspaceHeader(result.output)).toContain('hello path')
+    })
+
+    it('path 优先于别名（同时存在时取 path）', async () => {
+      writeFileSync(join(TMP, 'primary.txt'), 'primary')
+      writeFileSync(join(TMP, 'secondary.txt'), 'secondary')
+      const result = await readTool.execute(
+        { path: 'primary.txt', file_path: 'secondary.txt' },
+        createContext()
+      )
+      expect(result.success).toBe(true)
+      expect(stripWorkspaceHeader(result.output)).toContain('primary')
+      expect(stripWorkspaceHeader(result.output)).not.toContain('secondary')
+    })
+  })
 })

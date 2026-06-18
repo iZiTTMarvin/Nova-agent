@@ -7,6 +7,7 @@ import { findRipgrep, isRgAvailable } from './find-rg'
 import { createTruncationPipeline } from './TruncationPipeline'
 import { OutputSink } from './OutputSink'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { resolveToolArg } from './toolArgResolver'
 import type { GrepInput, GrepOutputMode, GrepToolOptions } from './grep-types'
 
 // picomatch 是 Vite 传递依赖，node_modules 中可用但无自带类型声明。
@@ -148,8 +149,10 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
 
     async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
       const input = args as unknown as GrepInput
-      const pattern = input.pattern
-      const inputPath = input.path ?? '.'
+      // 参数名别名兼容：pattern 可能被模型写成 query / search / regex；
+      // path 可能被写成 filePath / file_path 等
+      const pattern = resolveToolArg(args, 'pattern') ?? input.pattern
+      const inputPath = resolveToolArg(args, 'path') ?? input.path ?? '.'
       const outputMode: GrepOutputMode = input.output_mode ?? 'content'
       const glob = input.glob
       const type = input.type

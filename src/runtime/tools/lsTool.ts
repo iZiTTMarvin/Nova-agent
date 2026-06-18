@@ -5,6 +5,7 @@
 import { readdirSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveToolArg } from './toolArgResolver'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
 export const lsTool: ToolExecutor = {
@@ -23,7 +24,7 @@ export const lsTool: ToolExecutor = {
   },
 
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
-    const inputPath = (args.path as string) || '.'
+    const inputPath = resolveToolArg(args, 'path') ?? '.'
 
     const validated = resolveAndValidatePath(context.workingDir, inputPath)
     if (!validated.ok) {

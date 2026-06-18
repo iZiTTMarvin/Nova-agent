@@ -21,6 +21,7 @@ import { OutputAccumulator } from './output-accumulator'
 import { renderBashDescription } from './prompt'
 import { OutputSink } from '../OutputSink'
 import type { BashOperations, BashToolParams } from './types'
+import { resolveToolArg } from '../toolArgResolver'
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -221,7 +222,8 @@ export function getBashDescription(context: { shellPath?: string } = {}): string
 function parseBashParams(args: Record<string, unknown>):
   | { error: string }
   | { command: string; timeoutMs: number; workdir: string | undefined } {
-  const command = typeof args.command === 'string' ? args.command : ''
+  // 参数名别名兼容：command 可能被模型写成 cmd / shell / run
+  const command = resolveToolArg(args, 'command') ?? ''
   if (!command.trim()) {
     return { error: '缺少 command 参数' }
   }

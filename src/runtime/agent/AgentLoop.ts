@@ -28,6 +28,7 @@ import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
 import { executeToolBatch, toToolContent } from './toolBatchExecutor'
+import { repairEmptyArgsFromContent } from './nativeArgsRepair'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import type { IdleCompactionTarget } from './IdleCompressionTimer'
 import { HookManager } from './HookManager'
@@ -39,7 +40,7 @@ import { calculateContextBreakdown } from './contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent, type ScannedToolCall as XmlScannedToolCall } from './xmlToolScanner'
 import type { SkillRegistry } from '../skills/SkillRegistry'
-import { parseTextToolCalls } from '../../shared/tool-call-text-fallback'
+import { parseTextToolCalls, stripTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
@@ -188,9 +189,18 @@ export class AgentLoop implements IdleCompactionTarget {
     config?: AgentLoopConfig
   ) {
     // PRD §5.4：统一包装成 ModelClientPool（单个 ModelClient 时无 fallback）
+    // 从 client 自身的 config 读取 modelId/baseUrl 用于 dialect 判定（OpenAICompatibleModelClient 有 config 属性）
+    const clientConfig = (modelClient as { config?: { modelId?: string; baseUrl?: string } }).config
     this.modelPool = modelClient instanceof ModelClientPool
       ? modelClient
-      : new ModelClientPool({ primary: modelClient, primaryConfig: { baseUrl: '', apiKey: '', modelId: 'primary' } })
+      : new ModelClientPool({
+        primary: modelClient,
+        primaryConfig: {
+          baseUrl: clientConfig?.baseUrl ?? '',
+          apiKey: '',
+          modelId: clientConfig?.modelId ?? 'primary'
+        }
+      })
     // 根据当前主模型决定工具调用方言
     const primaryProvider = this.modelPool.getActiveProvider()
     this.toolDialect = preferredToolDialect(primaryProvider.modelId, primaryProvider.baseUrl)
@@ -616,8 +626,13 @@ export class AgentLoop implements IdleCompactionTarget {
         })
         chatMessages = preChatHook?.messages ?? chatMessages
 
-        // 调用模型，获取流式响应，传入 abort signal 实现真正的取消
-        const stream = this.modelPool.chat(chatMessages, tools, {
+        // 调用模型，获取流式响应，传入 abort signal 实现真正的取消。
+        // XML 方言不传 native tools 定义：XML 工具调用完全靠 prompt 引导 + 正文扫描，
+        // 同时给 API 的 tools 定义会让轻量模型（DeepSeek V4 Flash 等）混乱——
+        // 模型被诱导走 native function calling 但能力不足，返回空 arguments "{}"，
+        // 导致「缺少参数」死循环。Native 方言正常传 tools。
+        const nativeTools = this.toolDialect === 'xml' ? undefined : tools
+        const stream = this.modelPool.chat(chatMessages, nativeTools, {
           abortSignal: this.abortController?.signal
         })
 
@@ -1099,6 +1114,17 @@ export class AgentLoop implements IdleCompactionTarget {
         // 如果模型没有调用工具，本轮结束
         if (toolCalls.length === 0 || finishReason !== 'tool_calls') {
           break
+        }
+
+        // Native 协议兜底：部分模型把参数写在 assistant 正文（XML）而非
+        // function.arguments，导致 toolCall.arguments 为空 → 工具报「缺少参数」。
+        // 这里从正文扫描同名 XML 调用补全参数（native 路径此前缺失的兜底）。
+        // XML 方言已在流式阶段由 scanner 处理，此处对 native 尤其关键。
+        const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent)
+        if (repairedIds.length > 0) {
+          // 清空已补全工具调用的正文残留，避免把 XML 标签当普通文本展示给用户
+          assistantContent = stripTextToolCalls(assistantContent)
+          assistantMsg.content = assistantContent
         }
 
         // 执行所有工具调用，将结果加入上下文

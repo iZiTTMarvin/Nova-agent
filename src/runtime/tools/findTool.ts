@@ -5,6 +5,7 @@
 import { readdirSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveToolArg } from './toolArgResolver'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
 /**
@@ -63,13 +64,14 @@ export const findTool: ToolExecutor = {
   },
 
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
-    const pattern = args.pattern as string
-    const inputPath = (args.path as string) || '.'
+    // 参数名别名兼容：pattern 可能被模型写成 query / search / regex 等
+    const pattern = resolveToolArg(args, 'pattern') ?? ''
+    // path 不是必需参数（默认 '.'），但别名下也要能取到
+    const inputPath = resolveToolArg(args, 'path') ?? '.'
 
     if (!pattern) {
       return { success: false, output: '', error: '缺少 pattern 参数' }
     }
-
     const validated = resolveAndValidatePath(context.workingDir, inputPath)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }

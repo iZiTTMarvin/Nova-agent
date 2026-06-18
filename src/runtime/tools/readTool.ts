@@ -11,6 +11,7 @@ import { readFile as asyncReadFile, stat as asyncStat } from 'fs/promises'
 import { extname } from 'path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { resolveToolArg } from './toolArgResolver'
 import { decodeFileBuffer } from './editDiff'
 import { detectImageMimeTypeFromFile } from './mime'
 import { resizeImage, formatDimensionNote } from './image-resize'
@@ -356,7 +357,10 @@ export const readTool: ToolExecutor = {
       return { success: false, output: '', error: '读取已取消' }
     }
 
-    const inputPath = args.path as string
+    // 参数名别名兼容：path 可能被模型写成 filePath / file_path / file / filename /
+    // target_file / target（尤其在 native 协议被中转污染时）。别名清单统一由
+    // toolArgResolver 管理，避免和 editTool / writeTool / find / grep 不一致。
+    const inputPath = resolveToolArg(args, 'path')
 
     if (!inputPath) {
       return { success: false, output: '', error: '缺少 path 参数' }

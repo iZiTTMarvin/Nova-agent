@@ -10,6 +10,7 @@ import type { ReadState } from '../tools/editTool'
 import type { AgentEvent } from './types'
 import type { HookManager } from './HookManager'
 import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
+import { needsRepair, repairNativeArguments } from './nativeArgsRepair'
 
 export interface ToolExecutionOutcome {
   index: number
@@ -378,6 +379,13 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
 
     const toolCall = options.toolCalls[index]
     let args = parseArgs(toolCall.arguments)
+    // Native 协议参数修复：部分模型/中转把 XML 工具调用塞进 function.arguments，
+    // 导致 args 结构错位（key 变成 'invoke name="..."' 或 '/path' 残片）。
+    // 这里在执行前统一修复，避免「缺少 path/filePath 参数」类错误。
+    // 见 nativeArgsRepair.ts 的背景说明与日志证据。
+    if (needsRepair(toolCall.arguments, args)) {
+      args = repairNativeArguments(toolCall.name, toolCall.arguments, args)
+    }
     const tool = options.toolRegistry?.getTool(toolCall.name)
 
     // preToolUse：拦截或修改参数

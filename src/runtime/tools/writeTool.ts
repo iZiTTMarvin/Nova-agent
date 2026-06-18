@@ -10,6 +10,7 @@ import { dirname } from 'node:path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { withFileMutationQueue } from './file-mutation-queue'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { resolveToolArg } from './toolArgResolver'
 
 /**
  * Pluggable operations for the write tool.
@@ -63,7 +64,8 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
       args: Record<string, unknown>,
       context: ToolContext
     ): Promise<ToolResult> {
-      const inputPath = args.path as string
+      // 参数名别名兼容：别名清单统一由 toolArgResolver 管理
+      const inputPath = resolveToolArg(args, 'path')
       const content = args.content as string
 
       if (!inputPath) {

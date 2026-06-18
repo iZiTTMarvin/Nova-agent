@@ -478,4 +478,114 @@ describe('executeToolBatch', () => {
     const findOutcome = result.outcomes.find(o => o.toolCall.id === 'tc_find')
     expect(findOutcome?.skippedByAbort).toBe(true)
   })
+
+  // 端到端回归：native 协议坏 args（XML 塞进 function.arguments）必须被修复层救回
+  it('native 坏 args（XML 塞进 arguments）经修复后工具收到正确参数', async () => {
+    const registry = new ToolRegistry()
+    const receivedArgs: Record<string, unknown>[] = []
+
+    registerTool(registry, 'read', async (args) => {
+      receivedArgs.push(args)
+      return { success: true, output: 'read-ok' }
+    })
+
+    // 直接复刻 .cursor/debug-bb9d42.log 的真实坏样本：
+    // 模型把 <invoke> XML 塞进 native function.arguments，key 变成 'invoke name="read"'
+    const badArguments = JSON.stringify({
+      'invoke name="read"': '\n<parameter name="path">src/foo.ts</parameter>'
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_native_bad', name: 'read', arguments: badArguments }
+      ],
+      messageId: 'msg_native_repair',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(receivedArgs).toHaveLength(1)
+    expect(receivedArgs[0].path).toBe('src/foo.ts')
+    expect(result.outcomes[0].failed).toBeFalsy()
+    expect(result.outcomes[0].resultText).toBe('read-ok')
+  })
+
+  it('native 坏 args（闭合标签残片作 key）经修复后工具收到正确参数', async () => {
+    const registry = new ToolRegistry()
+    const receivedArgs: Record<string, unknown>[] = []
+
+    registerTool(registry, 'read', async (args) => {
+      receivedArgs.push(args)
+      return { success: true, output: 'read-ok' }
+    })
+
+    // 用户报告的第二个失败样本：key 是闭合标签残片 '/path'
+    const badArguments = JSON.stringify({
+      '/path': '</invoke>\n<invoke name="read">\n<parameter name="path">compus_mange.iml'
+    })
+
+    await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_native_bad2', name: 'read', arguments: badArguments }
+      ],
+      messageId: 'msg_native_repair2',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(receivedArgs).toHaveLength(1)
+    expect(receivedArgs[0].path).toBe('compus_mange.iml')
+  })
+
+  it('正常 native args 不触发修复，原样透传', async () => {
+    const registry = new ToolRegistry()
+    const receivedArgs: Record<string, unknown>[] = []
+
+    registerTool(registry, 'read', async (args) => {
+      receivedArgs.push(args)
+      return { success: true, output: 'ok' }
+    })
+
+    const goodArguments = JSON.stringify({ path: 'src/normal.ts', offset: 10 })
+
+    await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_good', name: 'read', arguments: goodArguments }
+      ],
+      messageId: 'msg_good',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(receivedArgs).toHaveLength(1)
+    expect(receivedArgs[0].path).toBe('src/normal.ts')
+    expect(receivedArgs[0].offset).toBe(10)
+  })
 })

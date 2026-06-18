@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-06-18
+
+- **fix(agent)**: 根因修复——XML 方言下不应传 native tools 定义给模型
+  - 真正根因：`AgentLoop` 不管 dialect 始终把 `tools` 作为 `body.tools`（native function calling 定义）发给 API。XML 方言的轻量模型（DeepSeek V4 Flash）同时收到 prompt 里"用 XML 格式调用"的指示和 API 层的 native tools 定义，两者矛盾导致模型混乱——模型被诱导走 native function calling 但能力不足以正确填充 `function.arguments`，返回空 `arguments: "{}"`，触发「缺少参数」死循环
+  - 诊断证据：日志显示 `dialect: xml`，5 个 read 的 `arguments` 全是 `"{}"`，正文只有 19 字符普通文本（无 XML），reasoning 为空。模型完全没走 XML 路径，而是尝试 native 但填充失败
+  - 修复：`AgentLoop.ts` 在 XML 方言下不传 `tools` 给 `modelPool.chat`（`nativeTools = dialect === 'xml' ? undefined : tools`）。工具定义仍在 system prompt 文本里恒定提供（由 `renderToolInventory` 渲染），不影响缓存 harness；强制模型走 XML 正文路径，消除 native tools 定义带来的混乱
+  - `AgentLoop` 构造函数改进：从 `ModelClient.config` 读取 `modelId`/`baseUrl` 用于 dialect 判定（此前硬编码 `'primary'`，导致生产环境 modelId 丢失、dialect 可能误判）
+  - `toolFilter.test.ts` 适配新行为：XML 方言断言不传 native tools（`undefined`），新增 native 方言（modelId='gpt-4o'）传全部 tools 的测试
+- **fix(agent)**: 治本修复 native 协议下工具调用频繁报「缺少 path/filePath 参数」（前序修复，防御纵深保留）
+  - 根因：部分模型 / 中转服务在 native function calling 协议下，把模型生成的 XML 工具调用原样塞进 `function.arguments` 字段且未做 JSON 转义。前端 `JSON.parse` 后 args 结构彻底错位——key 变成 `invoke name="edit"`、闭合标签残片 `/path`，value 是未闭合的 XML 片段。工具拿不到参数，报「缺少 path 参数」
+  - 之前所有 XML 适配（`787b550` / `aaed462`）都只覆盖 XML inband 方言路径（`xmlToolScanner.ts`），完全没碰 native 路径；dialect 判定又会被含 `openai.com` 的中转 baseUrl 强制判成 native，导致换模型也踩同一坑
+  - 新增 `src/runtime/agent/nativeArgsRepair.ts`：在工具执行前对 args 做检测与重解析。`needsRepair` 识别坏数据（含 XML 标签、非法 key）；`repairNativeArguments` 复用 `XmlToolScanner` 把损坏字符串重解析成结构化 args，取同名调用覆盖；`closeUnclosedParameters` 预处理未闭合的 `<parameter>`（真实模型常吐残缺 XML）；`coerceJsonLikeValues` 把数字 / 布尔 / JSON 数组字符串还原成对应类型，对齐 `parseXmlToolCalls` 行为
+  - 接入点 `src/runtime/agent/toolBatchExecutor.ts:382`：`parseArgs` 之后、权限检查 / hook / 执行之前，确保下游全部拿到正确 args
+  - 无法修复时保持原状，不破坏正常流程；对正常 native JSON 调用零开销短路
+  - 第二层防御 `repairEmptyArgsFromContent`（AgentLoop 执行前）：覆盖"模型把参数写在 assistant 正文而非 function.arguments"的情况——toolCall.arguments 为空 `{}` 时，从正文扫描同名 XML / JSON 代码块调用补全；严格按工具名匹配，不 fallback（避免把 read 的参数塞给 bash）；清空补全后的正文残留避免 XML 标签展示给用户
+  - 第三层修复（参数名别名兼容，直击"只有 read 失败"根因）：readTool / writeTool 此前只取 `args.path`，而 editTool 有 `filePath / path / file_path / file / filename / target_file / target` 七别名兼容。模型把路径放在 `file_path` 等别名下时，edit 能救、read 直接报「缺少 path 参数」——这就是为什么只有 read 失败、其他工具正常。给 readTool / writeTool 补齐与 editTool 一致的别名兼容，`path` 仍优先
+  - 新增 `tests/unit/runtime/agent/nativeArgsRepair.test.ts`（27 例）；`readTool.test.ts` 补 8 例别名兼容测试；`toolBatchExecutor.test.ts` 补 3 个端到端集成测试
+
 ## 2026-06-17
 
 - **fix(streaming)**: XML 方言模型（DeepSeek/GLM/Kimi/Qwen/MiniMax）写文件时文件卡片恢复逐字流式渲染

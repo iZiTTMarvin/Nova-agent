@@ -7,6 +7,7 @@ import { dirname, normalize } from 'path'
 import { mkdirSync, constants } from 'fs'
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, stat as fsStat } from 'fs/promises'
 import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveToolArg } from './toolArgResolver'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
@@ -416,15 +417,7 @@ function normalizeInput(args: Record<string, unknown>): {
   filePath: string
   edits: Array<{ oldText: string; newText: string }>
 } {
-  const filePath = (
-    args.filePath ??
-    args.path ??
-    args.file_path ??
-    args.filename ??
-    args.file ??
-    args.target_file ??
-    args.target
-  ) as string
+  const filePath = resolveToolArg(args, 'path') ?? ''
 
   if (!args.edits && typeof args.old === 'string' && typeof args.new === 'string') {
     return { filePath, edits: [{ oldText: args.old, newText: args.new }] }
