@@ -2,6 +2,14 @@
 
 ## 2026-06-17
 
+- **fix(streaming)**: XML 方言模型（DeepSeek/GLM/Kimi/Qwen/MiniMax）写文件时文件卡片恢复逐字流式渲染
+  - 根因：这些模型把工具调用以 `<invoke><parameter>` 写在正文里，SSE 只有 `text_delta`；旧逻辑在流式结束后对整条正文做一次全量解析，只 emit `tool_call` 终态，从不发 `tool_call_delta`，导致前端文件卡片等整条回复结束才一次性弹出
+  - 把 `src/runtime/agent/xmlToolScanner.ts` 从「全量正则解析器」重写为「增量状态机」：`feed()` 逐块产出 `text` / `toolStart` / `toolArgDelta` / `toolEnd` 事件，buffer 只保留未确定语义的尾部，标签跨 chunk 切断、参数值跨 chunk、XML entity、MiniMax 占位符均正确处理；收紧规则——仅匹配 `invoke/parameter` 已知标签名，正文中的 `<div>` / `<T>` 不被误判
+  - `src/runtime/agent/AgentLoop.ts` 流式循环接入扫描器：`text_delta` → `scanner.feed()`，把事件转成现有 `tool_call_start` / `tool_call_delta` / `tool_call`，前端零改动复用 `argumentsRaw` 流式通道；参数增量用 `JSON.stringify(delta).slice(1,-1)` 重新序列化为 JSON 片段，拼起来是合法 JSON；正文剥离标签，`assistantContent` 只含纯正文
+  - 工具执行依据用 scanner 最终权威值：`ChatToolCall.arguments`（`executeToolBatch` 据此执行）取 `scanEvent.arguments` 而非流式片段拼接——entity（`&lt;` 等）被 SSE token 边界切开时，流式片段逐段转义会累积成字面 `&lt;`，而 scanner 的 `finalDecodeArgs` 在 `toolEnd` 时正确还原成 `<`，避免写入文件内容损坏
+  - native 路径（Claude/GPT）完全不触发扫描器，零影响；XML 方言保留全量解析兜底补漏，scanner 已识别的调用不会重复 emit
+  - 新增 `tests/unit/runtime/agent/agentLoopXmlStreaming.test.ts` 端到端集成测试（13 例，含 entity 跨 chunk 切分的执行数据正确性守护）；`xmlToolScanner.test.ts` 改造为增量测试（45 例，含逐字符 feed、chunk 切断、entity、兜底等价性）
+
 - **fix(composer)**: 修复选中 skill 后无法发送带参数消息的问题
   - `SkillAC` 的 `/` 自动补全浮层此前只要输入以 `/` 开头且能匹配候选就一直打开；选中 skill 后继续输入参数时，每次 Enter 都被浮层拦截并把输入框重置回 "/skillname "，导致参数被吞、消息永远发不出去
   - 进入参数阶段（输入出现任意空白字符）后即关闭浮层，Enter/Tab 回归发送路径；纯 slash 命令阶段的选中能力不变

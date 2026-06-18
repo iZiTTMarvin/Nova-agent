@@ -37,7 +37,7 @@ import { buildStableSystemPrompt, normalizeFrozenSystemPrompt } from './modeProm
 import { buildSessionContext } from './sessionContext'
 import { calculateContextBreakdown } from './contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
-import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type ScannedToolCall as XmlScannedToolCall } from './xmlToolScanner'
+import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent, type ScannedToolCall as XmlScannedToolCall } from './xmlToolScanner'
 import type { SkillRegistry } from '../skills/SkillRegistry'
 import { parseTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
@@ -622,8 +622,144 @@ export class AgentLoop implements IdleCompactionTarget {
         })
 
         let assistantContent = ''
+        // XML 方言：保留原始文本供兜底全量解析（scanner 会剥离标签，assistantContent 只含纯正文）
+        let rawContent = ''
         const toolCalls: ChatToolCall[] = []
         let finishReason = ''
+
+        // XML 方言：创建增量扫描器，边流边识别 <invoke> 工具调用
+        const scanner = this.toolDialect === 'xml' ? new XmlToolScanner() : null
+        // scanner 内部 ID → toolCallId 映射
+        const scannerIdMap = new Map<string, string>()
+        // 已通过 scanner 识别的 toolCallId 集合（用于兜底去重）
+        const scannerToolCallIds = new Set<string>()
+        // 每个 toolCall 的 JSON 适配状态：记录当前 key 与已开 key 集合，驱动 argumentsDelta 片段构建
+        const xmlJsonStates = new Map<string, {
+          currentKey: string | null
+          seenKeys: Set<string>
+        }>()
+
+        /**
+         * 处理一条 scanner 事件，转成对应的 AgentEvent 发射。
+         * 流式循环内和 flush 后共用，避免重复代码。
+         */
+        const processScanEvent = (scanEvent: XmlScanEvent): void => {
+          switch (scanEvent.type) {
+            case 'text': {
+              assistantContent += scanEvent.text
+              this.eventBus.emit({ type: 'text_delta', messageId, delta: scanEvent.text })
+              break
+            }
+            case 'toolStart': {
+              const toolCallId = `call_${randomUUID()}`
+              scannerIdMap.set(scanEvent.id, toolCallId)
+              scannerToolCallIds.add(toolCallId)
+
+              // JSON 适配状态：记录当前 key 与已开 key 集合，驱动后续 argumentsDelta 片段构建
+              xmlJsonStates.set(toolCallId, {
+                currentKey: null,
+                seenKeys: new Set()
+              })
+
+              // emit tool_call_start（前端插入 running 卡片）
+              this.eventBus.emit({
+                type: 'tool_call_start',
+                messageId,
+                toolCallId,
+                toolName: scanEvent.name
+              })
+
+              // emit 初始 argumentsDelta：'{'
+              this.eventBus.emit({
+                type: 'tool_call_delta',
+                messageId,
+                toolCallId,
+                argumentsDelta: '{'
+              })
+
+              // 占位 ChatToolCall（后续 toolEnd 时更新 arguments）
+              toolCalls.push({
+                id: toolCallId,
+                name: scanEvent.name,
+                arguments: '{}'
+              })
+              finishReason = 'tool_calls'
+              break
+            }
+            case 'toolArgDelta': {
+              const toolCallId = scannerIdMap.get(scanEvent.id)!
+              const state = xmlJsonStates.get(toolCallId)!
+              let fragment = ''
+
+              if (!state.seenKeys.has(scanEvent.key)) {
+                // 关闭上一个 key 的字符串值
+                if (state.currentKey !== null) {
+                  fragment += '"'
+                }
+                // 开启新 key：首个 key 不加逗号，后续 key 加逗号
+                const prefix = state.seenKeys.size > 0 ? ',' : ''
+                fragment += `${prefix}"${scanEvent.key}":"`
+                state.seenKeys.add(scanEvent.key)
+                state.currentKey = scanEvent.key
+              }
+
+              // 转义参数值增量（JSON.stringify 去首尾引号 = 安全转义）
+              const escaped = JSON.stringify(scanEvent.delta).slice(1, -1)
+              fragment += escaped
+
+              this.eventBus.emit({
+                type: 'tool_call_delta',
+                messageId,
+                toolCallId,
+                argumentsDelta: fragment
+              })
+              break
+            }
+            case 'toolEnd': {
+              const toolCallId = scannerIdMap.get(scanEvent.id)!
+              const state = xmlJsonStates.get(toolCallId)!
+              let fragment = ''
+
+              // 关闭最后一个 key 的字符串值
+              if (state.currentKey !== null) {
+                fragment += '"'
+              }
+              // 关闭 JSON 对象
+              fragment += '}'
+
+              // emit 最终 argumentsDelta（闭合 JSON）
+              this.eventBus.emit({
+                type: 'tool_call_delta',
+                messageId,
+                toolCallId,
+                argumentsDelta: fragment
+              })
+
+              // ChatToolCall.arguments 是 executeToolBatch 的执行依据，必须用 scanner
+              // 最终解析的权威值（scanEvent.arguments）。流式 argumentsDelta 片段只负责
+              // 驱动前端逐字渲染，不能作为最终执行数据：entity（如 &lt;）被 SSE token 边界
+              // 切开时，流式片段会累积成字面 &lt;，而 scanner 的 finalDecodeArgs 已在
+              // toolEnd 时正确还原成 <。用流式片段会导致写入文件内容损坏。
+              const tc = toolCalls.find(t => t.id === toolCallId)!
+              tc.arguments = JSON.stringify(scanEvent.arguments)
+              tc.name = scanEvent.name
+
+              // emit tool_call（完整 args，驱动后续工具执行）
+              this.eventBus.emit({
+                type: 'tool_call',
+                messageId,
+                toolCallId,
+                toolName: scanEvent.name,
+                args: scanEvent.arguments
+              })
+
+              // 清理状态
+              xmlJsonStates.delete(toolCallId)
+              scannerIdMap.delete(scanEvent.id)
+              break
+            }
+          }
+        }
 
         for await (const event of stream) {
           if (this.cancelled) break
@@ -634,8 +770,17 @@ export class AgentLoop implements IdleCompactionTarget {
               break
 
             case 'text_delta':
-              assistantContent += event.delta
-              this.eventBus.emit({ type: 'text_delta', messageId, delta: event.delta })
+              if (scanner) {
+                // XML 方言：保留原始文本供兜底，scanner 剥离标签后只将纯正文送入 assistantContent
+                rawContent += event.delta
+                for (const scanEvent of scanner.feed(event.delta)) {
+                  processScanEvent(scanEvent)
+                }
+              } else {
+                // Native 方言：原样累积正文
+                assistantContent += event.delta
+                this.eventBus.emit({ type: 'text_delta', messageId, delta: event.delta })
+              }
               break
 
             case 'tool_call_start': {
@@ -784,22 +929,98 @@ export class AgentLoop implements IdleCompactionTarget {
               break
 
             case 'message_end':
-              finishReason = event.finishReason
+              // XML 方言：scanner 已在流式期间检测到工具调用并设置 finishReason='tool_calls'，
+              // 此时 message_end 通常为 'stop'，不应覆盖。
+              if (finishReason !== 'tool_calls') {
+                finishReason = event.finishReason
+              }
               break
           }
         }
 
         if (this.cancelled) break
 
+        // 冲刷 scanner 残留（未闭合标签等）
+        if (scanner) {
+          for (const scanEvent of scanner.flush()) {
+            processScanEvent(scanEvent)
+          }
+        }
+
         if (shouldRetryChat) {
           continue
         }
 
         // 工具调用兜底：
-        // - XML 方言：模型把调用以 <invoke> 形式写在正文里，scanner 边流边识别。
+        // - XML 方言：流式 scanner 已处理大部分调用，兜底补漏（格式异常 / 非标准标签）。
         // - 原生 tool_calls：已经被上面的 case 'tool_call' 收集到 toolCalls 中。
         // - 如果都没有，再尝试识别行内 JSON / fenced JSON / MiniMax 占位符中的调用。
-        if (toolCalls.length === 0) {
+        if (this.toolDialect === 'xml') {
+          // XML 方言：对原始文本做全量解析兜底，只补 scanner 没抓到的调用。
+          // 使用 rawContent（含标签）而非 assistantContent（已剥离标签）。
+          const xmlParsed = parseXmlToolCalls(stripMinimaxArtifacts(rawContent))
+          const newCalls = xmlParsed.toolCalls.filter(call => {
+            const callJson = JSON.stringify(call.arguments)
+            return !toolCalls.some(
+              tc => tc.name === call.name && tc.arguments === callJson
+            )
+          })
+          if (newCalls.length > 0) {
+            // 兜底识别出新调用：用 parseXmlToolCalls 的 visibleText 更新 assistantContent
+            assistantContent = xmlParsed.visibleText
+            finishReason = 'tool_calls'
+            for (const call of newCalls) {
+              const syntheticToolCall: ChatToolCall = {
+                id: `call_${randomUUID()}`,
+                name: call.name,
+                arguments: JSON.stringify(call.arguments)
+              }
+              toolCalls.push(syntheticToolCall)
+              this.eventBus.emit({
+                type: 'tool_call_start',
+                messageId,
+                toolCallId: syntheticToolCall.id,
+                toolName: syntheticToolCall.name
+              })
+              this.eventBus.emit({
+                type: 'tool_call',
+                messageId,
+                toolCallId: syntheticToolCall.id,
+                toolName: syntheticToolCall.name,
+                args: call.arguments
+              })
+            }
+          } else if (toolCalls.length === 0) {
+            // scanner 和 XML 兜底都没找到：尝试行内 JSON / fenced JSON
+            const fallback = parseTextToolCalls(stripMinimaxArtifacts(rawContent))
+            if (fallback && fallback.toolCalls.length > 0) {
+              assistantContent = fallback.visibleText
+              finishReason = 'tool_calls'
+              for (const parsed of fallback.toolCalls) {
+                const syntheticToolCall: ChatToolCall = {
+                  id: `call_${randomUUID()}`,
+                  name: parsed.toolName,
+                  arguments: JSON.stringify(parsed.arguments)
+                }
+                toolCalls.push(syntheticToolCall)
+                this.eventBus.emit({
+                  type: 'tool_call_start',
+                  messageId,
+                  toolCallId: syntheticToolCall.id,
+                  toolName: syntheticToolCall.name
+                })
+                this.eventBus.emit({
+                  type: 'tool_call',
+                  messageId,
+                  toolCallId: syntheticToolCall.id,
+                  toolName: syntheticToolCall.name,
+                  args: parsed.arguments
+                })
+              }
+            }
+          }
+        } else if (toolCalls.length === 0) {
+          // Native 方言：尝试 XML 兜底 + 行内 JSON 兜底
           const xmlParsed = parseXmlToolCalls(stripMinimaxArtifacts(assistantContent))
           if (xmlParsed.toolCalls.length > 0) {
             assistantContent = xmlParsed.visibleText
