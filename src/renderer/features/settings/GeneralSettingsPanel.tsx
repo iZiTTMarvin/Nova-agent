@@ -123,6 +123,24 @@ export const GeneralSettingsPanel: React.FC = () => {
           <span className="settings-modal__help">文件修改后自动运行验证命令检查结果。</span>
         </div>
 
+        {/* 最大工具调用轮数 */}
+        <div className="settings-modal__field">
+          <label className="settings-modal__label">最大工具调用轮数</label>
+          <input
+            type="number"
+            className="settings-modal__input"
+            value={settings.maxToolRounds}
+            min={1}
+            max={1000}
+            step={10}
+            onChange={e => void update('maxToolRounds', Number(e.target.value))}
+            disabled={saving}
+          />
+          <span className="settings-modal__help">
+            单条消息内 Agent 连续调用工具的上限，达到后会停下并提示。默认 100，范围 1~1000。长任务（脚手架 / 大规模重构）可调大。
+          </span>
+        </div>
+
         {/* diff 自动展开 */}
         <div className="settings-modal__field settings-modal__field--inline">
           <label className="settings-modal__label">Diff 自动展开</label>

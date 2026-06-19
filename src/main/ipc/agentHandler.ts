@@ -55,6 +55,7 @@ import { ArtifactStore } from '../../runtime/artifacts/ArtifactStore'
 import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
+import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -215,6 +216,7 @@ export function registerAgentHandler(
     const persistedConfig = loadModelConfig(app.getPath('userData'))
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
     const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
+    const novaSettings = loadNovaSettings()
 
     const skillService = getSkillService()
     if (skillService.getWorkspaceRoot() !== projectPath) {
@@ -294,6 +296,7 @@ export function registerAgentHandler(
       useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
       contextWindow,
       supportsVision,
+      maxToolRounds: novaSettings.maxToolRounds,
       onCompaction: (compactedContext, meta) => {
         if (!persistCompactionSnapshot(sessionStore, capturedSessionId, compactedContext, meta)) {
           console.error(`[onCompaction] 找不到会话 ${capturedSessionId}，快照未写`)

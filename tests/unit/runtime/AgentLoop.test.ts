@@ -553,6 +553,15 @@ describe('AgentLoop', () => {
     // 工具调用次数不应超过 2
     const toolCallEvents = events.filter((e: any) => e.type === 'tool_call')
     expect(toolCallEvents.length).toBeLessThanOrEqual(2)
+
+    // 达到上限时应下发提示文案（不再静默退出）
+    const noticed = events.some(
+      (e: any) =>
+        e.type === 'text_delta' &&
+        typeof e.delta === 'string' &&
+        e.delta.includes('已达到最大工具调用轮数')
+    )
+    expect(noticed).toBe(true)
   })
 
   it('未注册的工具返回错误结果', async () => {

@@ -29,6 +29,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   defaultShell: '',
   defaultShellTimeout: 120_000,
   verificationEnabled: true,
+  maxToolRounds: 100,
   editorFontSize: 13,
   editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
   theme: 'system',
@@ -73,6 +74,14 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.verificationEnabled === 'boolean') {
     result.verificationEnabled = obj.verificationEnabled
   }
+  if (
+    typeof obj.maxToolRounds === 'number' &&
+    Number.isInteger(obj.maxToolRounds) &&
+    obj.maxToolRounds >= 1 &&
+    obj.maxToolRounds <= 1000
+  ) {
+    result.maxToolRounds = obj.maxToolRounds
+  }
   if (typeof obj.editorFontSize === 'number' && Number.isInteger(obj.editorFontSize) && obj.editorFontSize >= 8 && obj.editorFontSize <= 32) {
     result.editorFontSize = obj.editorFontSize
   }
@@ -106,6 +115,16 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   if ('defaultShellTimeout' in patch && patch.defaultShellTimeout !== undefined) {
     if (typeof patch.defaultShellTimeout !== 'number' || patch.defaultShellTimeout < 0) {
       errors.push('defaultShellTimeout 必须是非负数')
+    }
+  }
+  if ('maxToolRounds' in patch && patch.maxToolRounds !== undefined) {
+    if (
+      typeof patch.maxToolRounds !== 'number' ||
+      !Number.isInteger(patch.maxToolRounds) ||
+      patch.maxToolRounds < 1 ||
+      patch.maxToolRounds > 1000
+    ) {
+      errors.push('maxToolRounds 必须是 1~1000 之间的整数')
     }
   }
   if ('editorFontSize' in patch && patch.editorFontSize !== undefined) {

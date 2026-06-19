@@ -1208,6 +1208,18 @@ export class AgentLoop implements IdleCompactionTarget {
           break
         }
 
+        // 达到最大工具调用轮数：此前是静默退出（直接落 message_end），用户无法得知
+        // 任务为何戛然而止。这里在「模型本轮仍调用了工具、却已用满轮数」时显式提示，
+        // 与上方重复失败熔断保持一致的下发方式（text_delta，累积器并入持久化内容）。
+        if (toolRound >= this.maxToolRounds) {
+          const notice =
+            `\n\n[已达到最大工具调用轮数 ${this.maxToolRounds}] ` +
+            `任务可能尚未完成，已暂停以避免无限循环。` +
+            `发送「继续」可接着执行；如长任务频繁触发，可在「设置 → 通用 → 最大工具调用轮数」中调大该上限。`
+          this.eventBus.emit({ type: 'text_delta', messageId, delta: notice })
+          break
+        }
+
         // 继续下一轮模型调用（带着工具结果）
       }
     } catch (err) {
