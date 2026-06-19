@@ -322,6 +322,28 @@ export class AgentLoop implements IdleCompactionTarget {
     this.emitContextBreakdown('', 0)
   }
 
+  /**
+   * 用上下文快照恢复压缩态运行时上下文。
+   * 与 injectHistory 二选一：有可用快照走本方法，否则走 injectHistory。
+   * @param summary 快照里的摘要原文
+   * @param recentMessages 快照的非 system 消息 + 锚点之后的增量消息（已拼好）
+   * @param compactionLevel 快照记录的压缩层级
+   */
+  restoreCompactedContext(summary: string, recentMessages: ChatMessage[], compactionLevel: number): void {
+    const systemPrompt = extractTextFromContent(
+      this.context.find(m => m.role === 'system')?.content ?? ''
+    )
+    this.context = rebuildWithCompression(systemPrompt, summary, recentMessages)
+    this.compactionLevel = compactionLevel
+    this.userTurnsSinceCompaction = 0
+    this.lastEstimatedTokens = estimateContextTokens(this.context)
+    this.cacheDiagnostics.resetBaseline(
+      extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
+      this.toolRegistry?.getToolDefinitions()
+    )
+    this.emitContextBreakdown('', 0)
+  }
+
   /** 设置工具注册表 */
   setToolRegistry(registry: ToolRegistry): void {
     this.toolRegistry = registry
@@ -1246,7 +1268,10 @@ export class AgentLoop implements IdleCompactionTarget {
    *   abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息能保留，
    *   避免之前 prevContext 回滚方案误删用户新消息的 bug（C4+）。
    */
-  private async runCompaction(abortSignal?: AbortSignal): Promise<void> {
+  private async runCompaction(
+    abortSignal?: AbortSignal,
+    trigger: 'threshold' | 'idle' = 'threshold'
+  ): Promise<void> {
     const systemMsg = this.context.find(m => m.role === 'system')
     const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
 
@@ -1307,8 +1332,12 @@ export class AgentLoop implements IdleCompactionTarget {
 
     // onCompaction 回调前再检查一次：abort 后不应触发持久化，避免与主循环状态竞争
     if (abortSignal?.aborted) return
-    // 通知外部持久化压缩态（agentHandler 写回 SessionStore）
-    this.config.onCompaction?.(this.context)
+    // 通知外部持久化压缩态（agentHandler 写入 context-snapshot.json）
+    this.config.onCompaction?.(this.context, {
+      summary: summary.trim(),
+      compactionLevel: this.compactionLevel,
+      trigger
+    })
   }
 
   /** 对工具输出应用截断，超限时用三明治模式拼装提示 */
@@ -1636,7 +1665,11 @@ export class AgentLoop implements IdleCompactionTarget {
       )
 
       // 通知外部持久化
-      this.config.onCompaction?.(this.context)
+      this.config.onCompaction?.(this.context, {
+        summary: summary.trim(),
+        compactionLevel: this.compactionLevel,
+        trigger: 'overflow'
+      })
 
       return true
     } catch {
@@ -1756,7 +1789,7 @@ export class AgentLoop implements IdleCompactionTarget {
       abortSignal.addEventListener('abort', onAbort, { once: true })
       this.cancelled = false
       this.compressingForOverflow = false
-      await this.runCompaction(abortSignal)
+      await this.runCompaction(abortSignal, 'idle')
     } finally {
       abortSignal.removeEventListener('abort', onAbort)
       this.abortController = prevAbortController

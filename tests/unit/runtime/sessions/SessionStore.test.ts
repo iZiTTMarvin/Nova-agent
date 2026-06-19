@@ -449,4 +449,53 @@ describe('SessionStore', () => {
       expect(full).toContain('full bash output')
     })
   })
+
+  describe('上下文快照（context-snapshot.json）', () => {
+    it('saveContextSnapshot 写入后可 loadContextSnapshot 读回', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const snapshot = {
+        version: 1,
+        summary: '对话摘要',
+        recentMessages: [{ role: 'user' as const, content: '最近问题' }],
+        lastMessageId: 'msg_anchor',
+        compactionLevel: 1,
+        updatedAt: Date.now()
+      }
+
+      store.saveContextSnapshot(session.id, snapshot)
+      const loaded = store.loadContextSnapshot(session.id)
+
+      expect(loaded).toEqual(snapshot)
+    })
+
+    it('版本不符的快照返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const dir = path.join(tmpDir, 'sessions', session.id)
+      fs.writeFileSync(
+        path.join(dir, 'context-snapshot.json'),
+        JSON.stringify({ version: 999, summary: '旧版' }),
+        'utf8'
+      )
+
+      expect(store.loadContextSnapshot(session.id)).toBeNull()
+    })
+
+    it('clearContextSnapshot 后 load 返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.saveContextSnapshot(session.id, {
+        version: 1,
+        summary: '摘要',
+        recentMessages: [],
+        lastMessageId: '',
+        compactionLevel: 0,
+        updatedAt: 1
+      })
+
+      store.clearContextSnapshot(session.id)
+      expect(store.loadContextSnapshot(session.id)).toBeNull()
+    })
+  })
 })

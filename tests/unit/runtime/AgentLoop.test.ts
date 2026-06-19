@@ -804,7 +804,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(client, eventBus, {
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
-      onCompaction: () => {}
+      onCompaction: (_ctx, _meta) => {}
     })
     loop.setToolRegistry(createTestRegistry())
 
@@ -842,6 +842,24 @@ describe('AgentLoop', () => {
     if (compactionUserIdx > 0) {
       expect(messages[compactionUserIdx - 1].role).not.toBe('user')
     }
+  })
+
+  it('restoreCompactedContext 用快照恢复压缩态上下文', () => {
+    const { loop } = createLoop()
+    const recentMessages: ChatMessage[] = [
+      { role: 'user', content: '最近用户问题' },
+      { role: 'assistant', content: '最近助手回复' }
+    ]
+
+    loop.restoreCompactedContext('测试摘要内容', recentMessages, 2)
+
+    const ctx = loop.getContext()
+    expect(ctx[0].role).toBe('system')
+    expect(extractTextFromContent(ctx[0].content)).toContain('测试摘要内容')
+    expect(ctx.slice(1)).toEqual(recentMessages)
+    // 压缩层级与冷却计数应被快照恢复
+    expect((loop as unknown as { compactionLevel: number }).compactionLevel).toBe(2)
+    expect((loop as unknown as { userTurnsSinceCompaction: number }).userTurnsSinceCompaction).toBe(0)
   })
 
   it('Layer 1 紧急压缩成功并重试', async () => {

@@ -17,8 +17,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import type { SessionSummary, SessionData, SessionMessage } from './types'
-import { SESSION_DATA_FILE } from './types'
+import type { SessionSummary, SessionData, SessionMessage, ContextSnapshot } from './types'
+import { SESSION_DATA_FILE, SESSION_CONTEXT_SNAPSHOT_FILE, CONTEXT_SNAPSHOT_VERSION } from './types'
 import type { Mode } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
@@ -185,5 +185,38 @@ export class SessionStore {
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
   getSessionsDir(): string {
     return this.sessionsDir
+  }
+
+  /** 写入上下文快照（派生缓存，独立于 session.json） */
+  saveContextSnapshot(sessionId: string, snapshot: ContextSnapshot): void {
+    const dir = path.join(this.sessionsDir, sessionId)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+    const filePath = path.join(dir, SESSION_CONTEXT_SNAPSHOT_FILE)
+    fs.writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8')
+  }
+
+  /**
+   * 加载上下文快照。文件不存在、JSON 损坏或版本不符时返回 null。
+   */
+  loadContextSnapshot(sessionId: string): ContextSnapshot | null {
+    const filePath = path.join(this.sessionsDir, sessionId, SESSION_CONTEXT_SNAPSHOT_FILE)
+    if (!fs.existsSync(filePath)) return null
+
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ContextSnapshot
+      if (parsed.version !== CONTEXT_SNAPSHOT_VERSION) return null
+      return parsed
+    } catch {
+      return null
+    }
+  }
+
+  /** 删除上下文快照文件；不存在时静默返回 */
+  clearContextSnapshot(sessionId: string): void {
+    const filePath = path.join(this.sessionsDir, sessionId, SESSION_CONTEXT_SNAPSHOT_FILE)
+    if (!fs.existsSync(filePath)) return
+    fs.unlinkSync(filePath)
   }
 }

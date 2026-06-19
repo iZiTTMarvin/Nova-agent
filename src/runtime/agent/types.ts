@@ -132,13 +132,26 @@ export interface AgentLoopConfig {
   /** 全局最大并发工具数，小于 1 时按 1 处理 */
   maxParallelToolCalls?: number
   /**
-   * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文。
-   * agentHandler 通过此回调将压缩态写回 SessionStore，保证跨轮次持久化。
+   * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文与元数据。
+   * agentHandler 通过此回调将压缩态写入 context-snapshot.json，不修改 session.messages。
    */
-  onCompaction?: (compactedContext: import('../model/types').ChatMessage[]) => void
+  onCompaction?: (
+    compactedContext: import('../model/types').ChatMessage[],
+    meta: CompactionMeta
+  ) => void
   /**
    * 是否启用统一 skill 调度（slash inject/fork）。
    * 默认 true；测试或回退旧路径时可设为 false。
    */
   useUnifiedSkillDispatch?: boolean
+}
+
+/** 压缩完成时传给 onCompaction 的元数据 */
+export interface CompactionMeta {
+  /** 模型生成的摘要原文（用于写入快照 summary） */
+  summary: string
+  /** 压缩层级（写入快照，用于恢复 AgentLoop.compactionLevel） */
+  compactionLevel: number
+  /** 触发来源，仅诊断用 */
+  trigger: 'threshold' | 'overflow' | 'idle'
 }

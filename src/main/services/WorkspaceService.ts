@@ -289,6 +289,8 @@ export class WorkspaceService {
       session.messages = session.messages.slice(0, targetIdx)
       session.updatedAt = Date.now()
       store.save(session)
+      // 历史截断后锚点失效，清除过期上下文快照
+      store.clearContextSnapshot(sessionId)
     }
     getMainReadState().clear()
 

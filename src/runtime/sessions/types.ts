@@ -9,6 +9,7 @@
 import type { Mode, MessageBlock } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
 import type { ToolTruncationMeta } from '../tools/types'
+import type { ChatMessage } from '../model/types'
 
 /** 会话摘要（用于列表展示，不含完整消息） */
 export interface SessionSummary {
@@ -100,3 +101,36 @@ export interface SessionToolCall {
 
 /** 会话持久化文件名 */
 export const SESSION_DATA_FILE = 'session.json'
+
+/** 上下文快照文件名（与 SESSION_DATA_FILE 并列） */
+export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
+
+/** 当前快照结构版本；结构变更时 +1，旧版本快照一律丢弃并回退全量重建 */
+export const CONTEXT_SNAPSHOT_VERSION = 1
+
+/**
+ * 上下文快照 —— 压缩后运行时上下文的派生缓存（非事实源）。
+ * 作用：让「每次 SEND_MESSAGE 重建上下文」时直接从压缩态起步，
+ * 避免每次都从完整历史重新压缩。坏了/缺失可从 session.messages 重建。
+ */
+export interface ContextSnapshot {
+  /** 结构版本，必须等于 CONTEXT_SNAPSHOT_VERSION 才可用 */
+  version: number
+  /** 当前生效的对话历史摘要原文（重启/下一次 send 时重新并入 system 前缀） */
+  summary: string
+  /**
+   * 压缩后运行时上下文里「除 system 外」的消息，原样存 ChatMessage[]。
+   * 即 compactedContext.filter(m => m.role !== 'system')。
+   * 注意：不含 system（system 由当前 frozenSystemPrompt + summary 重新合成）。
+   */
+  recentMessages: ChatMessage[]
+  /**
+   * 生成快照时 session.messages 的最后一条消息 id，作为「增量补齐」的锚点。
+   * 含义：本快照已经覆盖 session.messages 中截止到该 id 的所有内容。
+   */
+  lastMessageId: string
+  /** 压缩层级，用于恢复 AgentLoop.compactionLevel（软触发冷却/诊断） */
+  compactionLevel: number
+  /** 生成时间戳，仅排错用 */
+  updatedAt: number
+}

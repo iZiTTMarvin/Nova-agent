@@ -16,7 +16,6 @@ import { renderToolInventory } from '../../runtime/agent/toolPromptRenderer'
 import { buildStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../runtime/agent/modePrompt'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../runtime/model/ModelClientPool'
-import { randomUUID } from 'crypto'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
 import { lsTool } from '../../runtime/tools/lsTool'
@@ -38,9 +37,11 @@ import type { RendererRecoveryState } from '../../shared/ipc/types'
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
-import { extractTextFromSerializableContent } from '../../runtime/sessions/types'
 import type { MessageBlock } from '../../shared/session/types'
-import { buildConversationContext } from '../../runtime/agent/contextBuilder'
+import {
+  persistCompactionSnapshot,
+  restoreOrInjectHistory
+} from '../../runtime/sessions/contextSnapshot'
 import { getSkillService } from '../services/SkillServiceHost'
 import { buildSkillContext } from '../../runtime/agent/buildSkillContext'
 import { estimateTokens } from '../../runtime/agent/tokenEstimator'
@@ -293,66 +294,10 @@ export function registerAgentHandler(
       useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
       contextWindow,
       supportsVision,
-      onCompaction: (compactedContext) => {
-        const compactedSession = sessionStore.load(params.sessionId)
-        if (!compactedSession) {
-          console.error(`[onCompaction] sessionStore 找不到会话 ${params.sessionId}，压缩结果未持久化`)
-          return
+      onCompaction: (compactedContext, meta) => {
+        if (!persistCompactionSnapshot(sessionStore, capturedSessionId, compactedContext, meta)) {
+          console.error(`[onCompaction] 找不到会话 ${capturedSessionId}，快照未写`)
         }
-        // ChatMessage 中工具结果以独立 tool 消息（role:'tool' + toolCallId）携带，
-        // 而 SessionMessage 的运行时持久化结构是 SessionToolCall.result 字段。
-        // 这里把独立 tool 消息的内容合并回对应 assistant.toolCalls[i].result，
-        // 让压缩后 session 与 saveAssistantMessage 持久化路径结构一致。
-        // 否则重启加载时 contextBuilder 走 toolCalls[i].result 分支会全部跳过，
-        // 既丢失工具结果，也可能触发 OpenAI 协议要求 tool_calls 必须有对应 tool message 的 400。
-        const toolResults = new Map<string, {
-          result: string
-          artifactId?: string
-          truncationMeta?: import('../../runtime/tools/types').ToolTruncationMeta
-        }>()
-        for (const m of compactedContext) {
-          if (m.role === 'tool' && m.toolCallId) {
-            toolResults.set(m.toolCallId, {
-              result: extractTextFromSerializableContent(m.content),
-              ...(m.artifactId ? { artifactId: m.artifactId } : {}),
-              ...(m.truncationMeta ? { truncationMeta: m.truncationMeta } : {})
-            })
-          }
-        }
-
-        const compactedMessages: SessionMessage[] = compactedContext
-          // 过滤掉 system（由 frozenSystemPrompt 提供）、独立 tool 消息（内容已合并到
-          // 对应 assistant.toolCalls[i].result）、以及 internal 消息（压缩指令等动态信息，
-          // 不应污染持久化）。注：session context 采用合并方案，不是独立消息，不在此过滤范围内。
-          .filter(m => m.role !== 'system' && m.role !== 'tool' && !m.internal)
-          .map((m, idx) => {
-            const msg: SessionMessage = {
-              id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
-              role: m.role as SessionMessage['role'],
-              content: extractTextFromSerializableContent(m.content),
-              toolCallId: m.toolCallId,
-              timestamp: Date.now()
-            }
-
-            if (m.toolCalls && m.toolCalls.length > 0) {
-              msg.toolCalls = m.toolCalls.map(tc => {
-                const info = toolResults.get(tc.id)
-                return {
-                  id: tc.id,
-                  name: tc.name,
-                  arguments: tc.arguments,
-                  ...(info?.result !== undefined ? { result: info.result } : {}),
-                  ...(info?.artifactId ? { artifactId: info.artifactId } : {}),
-                  ...(info?.truncationMeta ? { truncationMeta: info.truncationMeta } : {})
-                }
-              })
-            }
-
-            return msg
-          })
-
-        compactedSession.messages = compactedMessages
-        sessionStore.save(compactedSession)
       }
     })
 
@@ -377,9 +322,12 @@ export function registerAgentHandler(
     // 第二条消息能继续享受第一条消息的 read 状态（I1 实例化）
     agentLoop.setReadState(mainReadState)
 
-    // 从 session 历史恢复多轮对话上下文
-    const history = buildConversationContext(session, session.mode)
-    agentLoop.injectHistory(history)
+    // 从 session 历史恢复多轮对话上下文（快照优先 + 增量补齐，锚点失效则全量重建）
+    restoreOrInjectHistory(
+      agentLoop,
+      session,
+      sessionStore.loadContextSnapshot(params.sessionId)
+    )
 
     toolRegistry.register(createTaskTool({
       modelClient,

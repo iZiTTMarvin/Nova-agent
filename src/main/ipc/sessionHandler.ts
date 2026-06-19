@@ -257,6 +257,8 @@ export function registerSessionHandler(): void {
       session.messages = session.messages.slice(0, targetIdx)
       session.updatedAt = Date.now()
       sessionStore.save(session)
+      // 历史截断后锚点失效，清除过期上下文快照
+      sessionStore.clearContextSnapshot(params.sessionId)
     }
 
     // 4. 清空 readState：磁盘文件已回退到旧版本，readState 里"已读过"的快照
