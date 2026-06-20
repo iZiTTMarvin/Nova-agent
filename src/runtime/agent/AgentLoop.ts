@@ -9,8 +9,6 @@
  */
 import type { ModelClient } from '../model/ModelClient'
 import { ModelClientPool } from '../model/ModelClientPool'
-import { decideFallback } from './FallbackDecider'
-import { MAX_RETRY_ATTEMPTS } from './RecoveryStateMachine'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../model/types'
 import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
@@ -38,9 +36,8 @@ import { buildStableSystemPrompt, normalizeFrozenSystemPrompt } from './modeProm
 import { buildSessionContext } from './sessionContext'
 import { calculateContextBreakdown } from './contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
-import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent, type ScannedToolCall as XmlScannedToolCall } from './xmlToolScanner'
 import type { SkillRegistry } from '../skills/SkillRegistry'
-import { parseTextToolCalls, stripTextToolCalls } from '../../shared/tool-call-text-fallback'
+import { stripTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
@@ -48,6 +45,7 @@ import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './modeInstruction'
 import { createAgentContext, type AgentContext } from './core/AgentContext'
+import { StreamProcessor } from './stream/StreamProcessor'
 /**
  * 表示权限请求被 cancel 中断的 sentinel 错误。
  * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
@@ -196,8 +194,6 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 截断管道：用于工具输出超限时进行结构化截断 */
   private truncationPipeline = createTruncationPipeline()
 
-  /** 上下文溢出重试标志（防止同一轮无限循环） */
-  private contextOverflowRetryAttempted = false
   /** 是否正在执行溢出压缩（用于守卫正常压缩逻辑） */
   private compressingForOverflow = false
   /** 缓存上次估算的 token 数，用于判断守卫（→ ctx.lastEstimatedTokens） */
@@ -228,6 +224,27 @@ export class AgentLoop implements IdleCompactionTarget {
   /** Hook 编排层（与 EventBus 并行，负责干预） */
   private hookManager: HookManager
 
+  /**
+   * StreamProcessor（PRD §6.3）：流消费 / 事件发射 / 方言策略 / 三层兜底解析 /
+   * 重试 / 降级 / 溢出压缩全部下沉至此。惰性创建以复用当前 modelPool / recovery /
+   * cacheDiagnostics / hookManager / eventBus（Phase 2 抽离）。
+   */
+  private streamProcessor: StreamProcessor | null = null
+  private getStreamProcessor(): StreamProcessor {
+    if (!this.streamProcessor) {
+      this.streamProcessor = new StreamProcessor({
+        modelPool: this.modelPool,
+        recovery: this.recovery,
+        cacheDiagnostics: this.cacheDiagnostics,
+        emit: (event) => this.eventBus.emit(event),
+        emitContextBreakdown: (messageId, promptTokens) => this.emitContextBreakdown(messageId, promptTokens),
+        runOverflowCompaction: (mode) => this.runOverflowCompaction(mode),
+        hookManager: this.hookManager
+      })
+    }
+    return this.streamProcessor
+  }
+
   /** 错误恢复状态机 */
   private recovery = new RecoveryStateMachine()
 
@@ -241,9 +258,6 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 当前轮次 messageId（cancel / onCancel 使用） */
   private currentMessageId: string | null = null
-
-  /** 模型临时错误重试计数 */
-  private modelErrorAttempt = 0
 
   /** 统一 skill 调度：slash inject / fork */
   private skillRegistry: SkillRegistry | null = null
@@ -562,9 +576,11 @@ export class AgentLoop implements IdleCompactionTarget {
     this.state = 'running'
     this.cancelled = false
     this.abortController = new AbortController()
-    this.contextOverflowRetryAttempted = false
     this.repeatedFailureCounts.clear()
-    this.modelErrorAttempt = 0
+    // 重试/降级/溢出压缩的单轮态已下沉到 StreamProcessor（PRD §6.3），
+    // 每条新消息开始时重置（等价现状 modelErrorAttempt=0 / contextOverflowRetryAttempted=false）。
+    // retry 重跑本轮时不重置——重试计数跨 retry 累积，由 Processor 自持。
+    this.getStreamProcessor().resetRetryState()
     // PRD §5.4.5：每条新消息开始时重置回主模型（降级不影响下一轮）
     this.modelPool.resetToPrimary()
 
@@ -738,471 +754,45 @@ export class AgentLoop implements IdleCompactionTarget {
         })
         chatMessages = preChatHook?.messages ?? chatMessages
 
-        // 调用模型，获取流式响应，传入 abort signal 实现真正的取消。
         // XML 方言不传 native tools 定义：XML 工具调用完全靠 prompt 引导 + 正文扫描，
         // 同时给 API 的 tools 定义会让轻量模型（DeepSeek V4 Flash 等）混乱——
         // 模型被诱导走 native function calling 但能力不足，返回空 arguments "{}"，
         // 导致「缺少参数」死循环。Native 方言正常传 tools。
         const nativeTools = this.toolDialect === 'xml' ? undefined : tools
-        const stream = this.modelPool.chat(chatMessages, nativeTools, {
-          abortSignal: this.abortController?.signal
+
+        // 流消费 + 事件发射 + 方言策略 + 三层兜底解析 + 重试/降级/溢出 全部下沉到 StreamProcessor。
+        // 重试态（modelErrorAttempt / contextOverflowRetryAttempted）为 Processor 单轮态：
+        // 跨 retry 累积，仅每条新消息开始时由 resetRetryState() 重置一次。
+        // Processor 返回结构化 TurnStreamResult，loop 据此分发，不再直接 return 终态。
+        const turnResult = await this.getStreamProcessor().run({
+          messageId,
+          chatMessages,
+          nativeTools,
+          context: this.ctx,
+          signal: this.abortController?.signal,
+          isCancelled: () => this.cancelled,
+          sleep: (ms: number) => this.sleep(ms)
         })
 
-        let assistantContent = ''
-        // XML 方言：保留原始文本供兜底全量解析（scanner 会剥离标签，assistantContent 只含纯正文）
-        let rawContent = ''
-        const toolCalls: ChatToolCall[] = []
-        let finishReason = ''
-
-        // XML 方言：创建增量扫描器，边流边识别 <invoke> 工具调用
-        const scanner = this.toolDialect === 'xml' ? new XmlToolScanner() : null
-        // scanner 内部 ID → toolCallId 映射
-        const scannerIdMap = new Map<string, string>()
-        // 已通过 scanner 识别的 toolCallId 集合（用于兜底去重）
-        const scannerToolCallIds = new Set<string>()
-        // 每个 toolCall 的 JSON 适配状态：记录当前 key 与已开 key 集合，驱动 argumentsDelta 片段构建
-        const xmlJsonStates = new Map<string, {
-          currentKey: string | null
-          seenKeys: Set<string>
-        }>()
-
-        /**
-         * 处理一条 scanner 事件，转成对应的 AgentEvent 发射。
-         * 流式循环内和 flush 后共用，避免重复代码。
-         */
-        const processScanEvent = (scanEvent: XmlScanEvent): void => {
-          switch (scanEvent.type) {
-            case 'text': {
-              assistantContent += scanEvent.text
-              this.eventBus.emit({ type: 'text_delta', messageId, delta: scanEvent.text })
-              break
-            }
-            case 'toolStart': {
-              const toolCallId = `call_${randomUUID()}`
-              scannerIdMap.set(scanEvent.id, toolCallId)
-              scannerToolCallIds.add(toolCallId)
-
-              // JSON 适配状态：记录当前 key 与已开 key 集合，驱动后续 argumentsDelta 片段构建
-              xmlJsonStates.set(toolCallId, {
-                currentKey: null,
-                seenKeys: new Set()
-              })
-
-              // emit tool_call_start（前端插入 running 卡片）
-              this.eventBus.emit({
-                type: 'tool_call_start',
-                messageId,
-                toolCallId,
-                toolName: scanEvent.name
-              })
-
-              // emit 初始 argumentsDelta：'{'
-              this.eventBus.emit({
-                type: 'tool_call_delta',
-                messageId,
-                toolCallId,
-                argumentsDelta: '{'
-              })
-
-              // 占位 ChatToolCall（后续 toolEnd 时更新 arguments）
-              toolCalls.push({
-                id: toolCallId,
-                name: scanEvent.name,
-                arguments: '{}'
-              })
-              finishReason = 'tool_calls'
-              break
-            }
-            case 'toolArgDelta': {
-              const toolCallId = scannerIdMap.get(scanEvent.id)!
-              const state = xmlJsonStates.get(toolCallId)!
-              let fragment = ''
-
-              if (!state.seenKeys.has(scanEvent.key)) {
-                // 关闭上一个 key 的字符串值
-                if (state.currentKey !== null) {
-                  fragment += '"'
-                }
-                // 开启新 key：首个 key 不加逗号，后续 key 加逗号
-                const prefix = state.seenKeys.size > 0 ? ',' : ''
-                fragment += `${prefix}"${scanEvent.key}":"`
-                state.seenKeys.add(scanEvent.key)
-                state.currentKey = scanEvent.key
-              }
-
-              // 转义参数值增量（JSON.stringify 去首尾引号 = 安全转义）
-              const escaped = JSON.stringify(scanEvent.delta).slice(1, -1)
-              fragment += escaped
-
-              this.eventBus.emit({
-                type: 'tool_call_delta',
-                messageId,
-                toolCallId,
-                argumentsDelta: fragment
-              })
-              break
-            }
-            case 'toolEnd': {
-              const toolCallId = scannerIdMap.get(scanEvent.id)!
-              const state = xmlJsonStates.get(toolCallId)!
-              let fragment = ''
-
-              // 关闭最后一个 key 的字符串值
-              if (state.currentKey !== null) {
-                fragment += '"'
-              }
-              // 关闭 JSON 对象
-              fragment += '}'
-
-              // emit 最终 argumentsDelta（闭合 JSON）
-              this.eventBus.emit({
-                type: 'tool_call_delta',
-                messageId,
-                toolCallId,
-                argumentsDelta: fragment
-              })
-
-              // ChatToolCall.arguments 是 executeToolBatch 的执行依据，必须用 scanner
-              // 最终解析的权威值（scanEvent.arguments）。流式 argumentsDelta 片段只负责
-              // 驱动前端逐字渲染，不能作为最终执行数据：entity（如 &lt;）被 SSE token 边界
-              // 切开时，流式片段会累积成字面 &lt;，而 scanner 的 finalDecodeArgs 已在
-              // toolEnd 时正确还原成 <。用流式片段会导致写入文件内容损坏。
-              const tc = toolCalls.find(t => t.id === toolCallId)!
-              tc.arguments = JSON.stringify(scanEvent.arguments)
-              tc.name = scanEvent.name
-
-              // emit tool_call（完整 args，驱动后续工具执行）
-              this.eventBus.emit({
-                type: 'tool_call',
-                messageId,
-                toolCallId,
-                toolName: scanEvent.name,
-                args: scanEvent.arguments
-              })
-
-              // 清理状态
-              xmlJsonStates.delete(toolCallId)
-              scannerIdMap.delete(scanEvent.id)
-              break
-            }
-          }
+        if (turnResult.kind === 'cancelled') {
+          this.cancelled = true
+          break
         }
-
-        for await (const event of stream) {
-          if (this.cancelled) break
-
-          switch (event.type) {
-            case 'thinking_delta':
-              this.eventBus.emit({ type: 'thinking_delta', messageId, delta: event.delta })
-              break
-
-            case 'text_delta':
-              if (scanner) {
-                // XML 方言：保留原始文本供兜底，scanner 剥离标签后只将纯正文送入 assistantContent
-                rawContent += event.delta
-                for (const scanEvent of scanner.feed(event.delta)) {
-                  processScanEvent(scanEvent)
-                }
-              } else {
-                // Native 方言：原样累积正文
-                assistantContent += event.delta
-                this.eventBus.emit({ type: 'text_delta', messageId, delta: event.delta })
-              }
-              break
-
-            case 'tool_call_start': {
-              this.eventBus.emit({
-                type: 'tool_call_start',
-                messageId,
-                toolCallId: event.toolCallId,
-                toolName: event.toolName
-              })
-              break
-            }
-
-            case 'tool_call_delta': {
-              this.eventBus.emit({
-                type: 'tool_call_delta',
-                messageId,
-                toolCallId: event.toolCallId,
-                argumentsDelta: event.argumentsDelta
-              })
-              break
-            }
-
-            case 'tool_call': {
-              toolCalls.push(event.toolCall)
-              this.eventBus.emit({
-                type: 'tool_call',
-                messageId,
-                toolCallId: event.toolCall.id,
-                toolName: event.toolCall.name,
-                args: JSON.parse(event.toolCall.arguments || '{}')
-              })
-              break
-            }
-
-            case 'cancelled':
-              // 模型请求被取消，跳出循环进入 cancelled 结束态
-              this.cancelled = true
-              break
-
-            case 'context_overflow': {
-              const overflowState = this.recovery.classify(event.rawError, this.modelErrorAttempt)
-              this.eventBus.emit({ type: 'recovery_state', messageId, state: overflowState })
-              await this.hookManager.trigger({ event: 'onError', messageId, error: event.rawError })
-
-              if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
-                this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
-                this.state = 'error'
-                // S1：context_overflow 最终失败等同 error，取消 idleTimer
-                this.idleTimer?.cancel()
-                this.idleTimer = null
-                return
-              }
-              this.contextOverflowRetryAttempted = true
-
-              if (overflowState.kind === 'recovering') {
-                const hint = this.recovery.buildRecoveryHint(overflowState)
-                this.eventBus.emit({ type: 'recovery_hint', messageId, hint, attempt: this.modelErrorAttempt })
-              }
-
-              const standardOk = await this.runOverflowCompaction('standard')
-              if (standardOk) {
-                shouldRetryChat = true
-                break
-              }
-
-              const aggressiveOk = await this.runOverflowCompaction('aggressive')
-              if (aggressiveOk) {
-                shouldRetryChat = true
-                break
-              }
-
-              this.eventBus.emit({ type: 'error', messageId, error: event.rawError })
-              this.state = 'error'
-              // S1：所有 overflow 压缩失败路径都取消 idleTimer，避免后台压缩污染
-              this.idleTimer?.cancel()
-              this.idleTimer = null
-              return
-            }
-
-            case 'error': {
-              const errState = this.recovery.classify(event.error, this.modelErrorAttempt)
-              this.eventBus.emit({ type: 'recovery_state', messageId, state: errState })
-              await this.hookManager.trigger({ event: 'onError', messageId, error: event.error })
-
-              if (errState.kind === 'retrying' && this.recovery.shouldRetry(errState)) {
-                this.modelErrorAttempt = errState.attempt
-                const hint = this.recovery.buildRecoveryHint(errState)
-                this.eventBus.emit({ type: 'recovery_hint', messageId, hint, attempt: errState.attempt })
-                await this.sleep(this.recovery.backoffMs(errState.attempt))
-                shouldRetryChat = true
-                break
-              }
-
-              // PRD §5.4：重试链耗尽后，由 FallbackDecider 判定是否切换 fallback 模型。
-              // RecoveryStateMachine 保持四态不变，降级决策与之正交。
-              const fallbackDecision = decideFallback({
-                currentError: event.error,
-                retryAttempt: this.modelErrorAttempt,
-                maxAttempts: MAX_RETRY_ATTEMPTS, // 引用常量，避免硬编码不一致
-                currentFallbackIndex: this.modelPool.getActiveFallbackIndex(),
-                availableFallbackCount: this.modelPool.getFallbackCount()
-              })
-              if (fallbackDecision.shouldFallback && fallbackDecision.nextFallbackIndex !== undefined) {
-                const nextIndex = fallbackDecision.nextFallbackIndex
-                this.modelPool.switchToFallback(nextIndex)
-                // 对新模型重新开始重试链
-                this.modelErrorAttempt = 0
-                const provider = this.modelPool.getActiveProvider()
-                this.eventBus.emit({
-                  type: 'model_switched',
-                  messageId,
-                  modelId: provider.modelId,
-                  fallbackIndex: provider.fallbackIndex,
-                  reason: fallbackDecision.reason
-                })
-                // 切换后立即重试（不等待）
-                shouldRetryChat = true
-                break
-              }
-
-              this.eventBus.emit({ type: 'error', messageId, error: event.error })
-              this.state = 'error'
-              // S1：模型错误重试耗尽后取消 idleTimer
-              this.idleTimer?.cancel()
-              this.idleTimer = null
-              return
-            }
-
-            case 'usage':
-              roundSawUsage = true
-              this.eventBus.emit({ type: 'usage', messageId, usage: event.usage })
-              // 缓存诊断：检查 cache_read_tokens 是否显著下降
-              {
-                const diag = this.cacheDiagnostics.checkResponse(
-                  event.usage.cachedTokens,
-                  extractTextFromContent(
-                    this.context.find(m => m.role === 'system')?.content ?? ''
-                  ),
-                  this.toolRegistry?.getToolDefinitions()
-                )
-                if (diag.cacheBreakDetected) {
-                  this.eventBus.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
-                }
-              }
-              this.emitContextBreakdown(messageId, event.usage.promptTokens)
-              break
-
-            case 'message_end':
-              // XML 方言：scanner 已在流式期间检测到工具调用并设置 finishReason='tool_calls'，
-              // 此时 message_end 通常为 'stop'，不应覆盖。
-              if (finishReason !== 'tool_calls') {
-                finishReason = event.finishReason
-              }
-              break
-          }
-        }
-
-        if (this.cancelled) break
-
-        // 冲刷 scanner 残留（未闭合标签等）
-        if (scanner) {
-          for (const scanEvent of scanner.flush()) {
-            processScanEvent(scanEvent)
-          }
-        }
-
-        if (shouldRetryChat) {
+        if (turnResult.kind === 'retry') {
           continue
         }
-
-        // 工具调用兜底：
-        // - XML 方言：流式 scanner 已处理大部分调用，兜底补漏（格式异常 / 非标准标签）。
-        // - 原生 tool_calls：已经被上面的 case 'tool_call' 收集到 toolCalls 中。
-        // - 如果都没有，再尝试识别行内 JSON / fenced JSON / MiniMax 占位符中的调用。
-        if (this.toolDialect === 'xml') {
-          // XML 方言：对原始文本做全量解析兜底，只补 scanner 没抓到的调用。
-          // 使用 rawContent（含标签）而非 assistantContent（已剥离标签）。
-          const xmlParsed = parseXmlToolCalls(stripMinimaxArtifacts(rawContent))
-          const newCalls = xmlParsed.toolCalls.filter(call => {
-            const callJson = JSON.stringify(call.arguments)
-            return !toolCalls.some(
-              tc => tc.name === call.name && tc.arguments === callJson
-            )
-          })
-          if (newCalls.length > 0) {
-            // 兜底识别出新调用：用 parseXmlToolCalls 的 visibleText 更新 assistantContent
-            assistantContent = xmlParsed.visibleText
-            finishReason = 'tool_calls'
-            for (const call of newCalls) {
-              const syntheticToolCall: ChatToolCall = {
-                id: `call_${randomUUID()}`,
-                name: call.name,
-                arguments: JSON.stringify(call.arguments)
-              }
-              toolCalls.push(syntheticToolCall)
-              this.eventBus.emit({
-                type: 'tool_call_start',
-                messageId,
-                toolCallId: syntheticToolCall.id,
-                toolName: syntheticToolCall.name
-              })
-              this.eventBus.emit({
-                type: 'tool_call',
-                messageId,
-                toolCallId: syntheticToolCall.id,
-                toolName: syntheticToolCall.name,
-                args: call.arguments
-              })
-            }
-          } else if (toolCalls.length === 0) {
-            // scanner 和 XML 兜底都没找到：尝试行内 JSON / fenced JSON
-            const fallback = parseTextToolCalls(stripMinimaxArtifacts(rawContent))
-            if (fallback && fallback.toolCalls.length > 0) {
-              assistantContent = fallback.visibleText
-              finishReason = 'tool_calls'
-              for (const parsed of fallback.toolCalls) {
-                const syntheticToolCall: ChatToolCall = {
-                  id: `call_${randomUUID()}`,
-                  name: parsed.toolName,
-                  arguments: JSON.stringify(parsed.arguments)
-                }
-                toolCalls.push(syntheticToolCall)
-                this.eventBus.emit({
-                  type: 'tool_call_start',
-                  messageId,
-                  toolCallId: syntheticToolCall.id,
-                  toolName: syntheticToolCall.name
-                })
-                this.eventBus.emit({
-                  type: 'tool_call',
-                  messageId,
-                  toolCallId: syntheticToolCall.id,
-                  toolName: syntheticToolCall.name,
-                  args: parsed.arguments
-                })
-              }
-            }
-          }
-        } else if (toolCalls.length === 0) {
-          // Native 方言：尝试 XML 兜底 + 行内 JSON 兜底
-          const xmlParsed = parseXmlToolCalls(stripMinimaxArtifacts(assistantContent))
-          if (xmlParsed.toolCalls.length > 0) {
-            assistantContent = xmlParsed.visibleText
-            finishReason = 'tool_calls'
-            for (const call of xmlParsed.toolCalls) {
-              const syntheticToolCall: ChatToolCall = {
-                id: `call_${randomUUID()}`,
-                name: call.name,
-                arguments: JSON.stringify(call.arguments)
-              }
-              toolCalls.push(syntheticToolCall)
-              this.eventBus.emit({
-                type: 'tool_call_start',
-                messageId,
-                toolCallId: syntheticToolCall.id,
-                toolName: syntheticToolCall.name
-              })
-              this.eventBus.emit({
-                type: 'tool_call',
-                messageId,
-                toolCallId: syntheticToolCall.id,
-                toolName: syntheticToolCall.name,
-                args: call.arguments
-              })
-            }
-          } else {
-            // 兜底：行内 JSON / fenced JSON（不含 MiniMax 占位符的情况）
-            const fallback = parseTextToolCalls(stripMinimaxArtifacts(assistantContent))
-            if (fallback && fallback.toolCalls.length > 0) {
-              assistantContent = fallback.visibleText
-              finishReason = 'tool_calls'
-              for (const parsed of fallback.toolCalls) {
-                const syntheticToolCall: ChatToolCall = {
-                  id: `call_${randomUUID()}`,
-                  name: parsed.toolName,
-                  arguments: JSON.stringify(parsed.arguments)
-                }
-                toolCalls.push(syntheticToolCall)
-                this.eventBus.emit({
-                  type: 'tool_call_start',
-                  messageId,
-                  toolCallId: syntheticToolCall.id,
-                  toolName: syntheticToolCall.name
-                })
-                this.eventBus.emit({
-                  type: 'tool_call',
-                  messageId,
-                  toolCallId: syntheticToolCall.id,
-                  toolName: syntheticToolCall.name,
-                  args: parsed.arguments
-                })
-              }
-            }
-          }
+        if (turnResult.kind === 'error') {
+          // 终态错误（重试/降级/溢出压缩全部走完仍失败）：与现状一致——
+          // emit error、state=error、取消 idleTimer、不经过 finishMessageRound 直接 return（S1）。
+          this.eventBus.emit({ type: 'error', messageId, error: turnResult.error })
+          this.state = 'error'
+          this.idleTimer?.cancel()
+          this.idleTimer = null
+          return
         }
+
+        // turnResult.kind === 'assistant'：接管兜底解析之后的工具执行。
+        const { assistantContent, toolCalls, finishReason, sawUsage } = turnResult
 
         // 将 assistant 回复（含 tool_calls）加入上下文
         const assistantMsg: ChatMessage = {
@@ -1217,7 +807,7 @@ export class AgentLoop implements IdleCompactionTarget {
         // 每次成功调用模型后更新估算 token 计数
         this.lastEstimatedTokens = estimateContextTokens(this.context)
         // 兜底：本轮 model response 没收到 usage 事件（部分 provider 不报）时，补一次分项推送
-        if (!roundSawUsage) {
+        if (!sawUsage) {
           this.emitContextBreakdown(messageId, 0)
         }
 
@@ -1235,8 +825,7 @@ export class AgentLoop implements IdleCompactionTarget {
         const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent)
         if (repairedIds.length > 0) {
           // 清空已补全工具调用的正文残留，避免把 XML 标签当普通文本展示给用户
-          assistantContent = stripTextToolCalls(assistantContent)
-          assistantMsg.content = assistantContent
+          assistantMsg.content = stripTextToolCalls(assistantContent)
         }
 
         // 执行所有工具调用，将结果加入上下文
