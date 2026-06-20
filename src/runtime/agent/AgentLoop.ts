@@ -47,6 +47,7 @@ import type { ArtifactStore } from '../artifacts/ArtifactStore'
 
 import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './modeInstruction'
+import { createAgentContext, type AgentContext } from './core/AgentContext'
 /**
  * 表示权限请求被 cancel 中断的 sentinel 错误。
  * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
@@ -79,43 +80,106 @@ export class AgentLoop implements IdleCompactionTarget {
   private cancelled = false
   private abortController: AbortController | null = null
 
-  /** 对话上下文：累积所有消息用于下一次模型调用 */
-  private context: ChatMessage[] = []
+  /**
+   * 标准化状态容器（PRD §6.1）。
+   * Phase 1 状态收纳：下列"迁入 ctx"的字段通过访问器桥接到 this.ctx.*，
+   * 60+ 处使用点（this.context / this.workingDir 等）一行不动，对外逐字节等价。
+   * Facade 级态（state/cancelled/modelPool/eventBus/...）仍保留为实例字段。
+   */
+  private ctx: AgentContext = createAgentContext({ readState: createReadState() })
 
-  /** 工具注册表 */
-  private toolRegistry: ToolRegistry | null = null
+  /** 对话上下文：累积所有消息用于下一次模型调用（→ ctx.messages） */
+  private get context(): ChatMessage[] {
+    return this.ctx.messages
+  }
+  private set context(value: ChatMessage[]) {
+    this.ctx.messages = value
+  }
 
-  /** 工作区路径（传入后工具执行才有工作区边界） */
-  private workingDir: string | null = null
+  /** 工具注册表（→ ctx.toolRegistry） */
+  private get toolRegistry(): ToolRegistry | null {
+    return this.ctx.toolRegistry
+  }
+  private set toolRegistry(value: ToolRegistry | null) {
+    this.ctx.toolRegistry = value
+  }
 
-  /** bash 工具的自定义 shell 路径（可选） */
-  private shellPath: string | undefined = undefined
+  /** 工作区路径（传入后工具执行才有工作区边界）（→ ctx.workingDir） */
+  private get workingDir(): string | null {
+    return this.ctx.workingDir
+  }
+  private set workingDir(value: string | null) {
+    this.ctx.workingDir = value
+  }
 
-  /** bash 工具的 PATH 注入目录（可选） */
-  private binDirs: string[] = []
+  /** bash 工具的自定义 shell 路径（可选）（→ ctx.shellPath） */
+  private get shellPath(): string | undefined {
+    return this.ctx.shellPath
+  }
+  private set shellPath(value: string | undefined) {
+    this.ctx.shellPath = value
+  }
 
-  /** 运行模式（plan / default / auto） */
-  private mode: Mode = 'default'
+  /** bash 工具的 PATH 注入目录（可选）（→ ctx.binDirs） */
+  private get binDirs(): string[] {
+    return this.ctx.binDirs
+  }
+  private set binDirs(value: string[]) {
+    this.ctx.binDirs = value
+  }
+
+  /** 运行模式（plan / default / auto）（→ ctx.mode） */
+  private get mode(): Mode {
+    return this.ctx.mode
+  }
+  private set mode(value: Mode) {
+    this.ctx.mode = value
+  }
 
   /** checkpoint 管理器（可选，S6 引入） */
   private checkpointManager: CheckpointManager | null = null
-  /** 当前工具调用方言，由模型 ID 决定 */
-  private toolDialect: ToolDialect = 'xml'
+  /** 当前工具调用方言，由模型 ID 决定（→ ctx.dialect） */
+  private get toolDialect(): ToolDialect {
+    return this.ctx.dialect
+  }
+  private set toolDialect(value: ToolDialect) {
+    this.ctx.dialect = value
+  }
 
   /** 权限决策引擎（可选，S7 引入） */
   private permissionManager: PermissionManager | null = null
 
-  /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具） */
-  private sessionStore: SessionStore | null = null
+  /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具）（→ ctx.sessionStore） */
+  private get sessionStore(): SessionStore | null {
+    return this.ctx.sessionStore
+  }
+  private set sessionStore(value: SessionStore | null) {
+    this.ctx.sessionStore = value
+  }
 
-  /** 当前会话 ID，与 sessionStore 配套 */
-  private sessionId: string | null = null
+  /** 当前会话 ID，与 sessionStore 配套（→ ctx.sessionId） */
+  private get sessionId(): string | null {
+    return this.ctx.sessionId
+  }
+  private set sessionId(value: string | null) {
+    this.ctx.sessionId = value
+  }
 
-  /** 会话级 artifact 存储（大输出落盘，透传给工具执行层） */
-  private artifactStore: ArtifactStore | null = null
+  /** 会话级 artifact 存储（大输出落盘，透传给工具执行层）（→ ctx.artifactStore） */
+  private get artifactStore(): ArtifactStore | null {
+    return this.ctx.artifactStore
+  }
+  private set artifactStore(value: ArtifactStore | null) {
+    this.ctx.artifactStore = value
+  }
 
-  /** 技能正文层独立 token 估算，作为'技能'分项桶的预算 */
-  private skillsTokenBudget: number = 0
+  /** 技能正文层独立 token 估算，作为'技能'分项桶的预算（→ ctx.skillsTokenBudget） */
+  private get skillsTokenBudget(): number {
+    return this.ctx.skillsTokenBudget
+  }
+  private set skillsTokenBudget(value: number) {
+    this.ctx.skillsTokenBudget = value
+  }
 
   /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
   private pendingPermissions: Map<
@@ -136,12 +200,27 @@ export class AgentLoop implements IdleCompactionTarget {
   private contextOverflowRetryAttempted = false
   /** 是否正在执行溢出压缩（用于守卫正常压缩逻辑） */
   private compressingForOverflow = false
-  /** 缓存上次估算的 token 数，用于判断守卫 */
-  private lastEstimatedTokens = 0
-  /** 距上次压缩后的 user 消息回合数（软触发冷却） */
-  private userTurnsSinceCompaction = 0
-  /** 压缩层级计数 */
-  private compactionLevel = 0
+  /** 缓存上次估算的 token 数，用于判断守卫（→ ctx.lastEstimatedTokens） */
+  private get lastEstimatedTokens(): number {
+    return this.ctx.lastEstimatedTokens
+  }
+  private set lastEstimatedTokens(value: number) {
+    this.ctx.lastEstimatedTokens = value
+  }
+  /** 距上次压缩后的 user 消息回合数（软触发冷却）（→ ctx.userTurnsSinceCompaction） */
+  private get userTurnsSinceCompaction(): number {
+    return this.ctx.userTurnsSinceCompaction
+  }
+  private set userTurnsSinceCompaction(value: number) {
+    this.ctx.userTurnsSinceCompaction = value
+  }
+  /** 压缩层级计数（→ ctx.compactionLevel） */
+  private get compactionLevel(): number {
+    return this.ctx.compactionLevel
+  }
+  private set compactionLevel(value: number) {
+    this.ctx.compactionLevel = value
+  }
 
   /** 空闲压缩计时器（惰性创建） */
   private idleTimer: IdleCompressionTimer | null = null
@@ -152,8 +231,13 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 错误恢复状态机 */
   private recovery = new RecoveryStateMachine()
 
-  /** 冻结的 system prompt（6 层拼装结果） */
-  private frozenSystemPrompt: string
+  /** 冻结的 system prompt（6 层拼装结果）（→ ctx.systemPrompt） */
+  private get frozenSystemPrompt(): string {
+    return this.ctx.systemPrompt
+  }
+  private set frozenSystemPrompt(value: string) {
+    this.ctx.systemPrompt = value
+  }
 
   /** 当前轮次 messageId（cancel / onCancel 使用） */
   private currentMessageId: string | null = null
@@ -169,8 +253,14 @@ export class AgentLoop implements IdleCompactionTarget {
    * 文件读取状态：记录"已 read 过哪些文件"，edit/write 工具的"先读后改"校验依赖此。
    * 默认实例化一个独立的 readState；agentHandler 注入主 readState（跨 SEND_MESSAGE 复用），
    * sub agent 在 taskTool / runSkillFork 中 clone 主 readState 隔离。
+   * （→ ctx.readState）
    */
-  private readState: ReadState = createReadState()
+  private get readState(): ReadState {
+    return this.ctx.readState
+  }
+  private set readState(value: ReadState) {
+    this.ctx.readState = value
+  }
 
   /**
    * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
