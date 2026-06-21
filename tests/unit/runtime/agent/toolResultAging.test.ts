@@ -8,8 +8,8 @@ import {
   ageToolResults,
   AGING_USER_TURN_THRESHOLD,
   AGING_GROUP_BYTES_THRESHOLD,
-} from '../../../../src/runtime/agent/toolResultAging'
-import { MIN_RECENT_MESSAGES } from '../../../../src/runtime/agent/compaction'
+} from '../../../../src/runtime/agent/compaction/toolResultAging'
+import { MIN_RECENT_MESSAGES } from '../../../../src/runtime/agent/compaction/compaction'
 
 /** 构造含 N 轮 user + bash 工具组的上下文 */
 function buildToolGroupContext(

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { IdleCompressionTimer } from '../../../../src/runtime/agent/IdleCompressionTimer'
-import type { IdleCompactionTarget } from '../../../../src/runtime/agent/IdleCompressionTimer'
+import { IdleCompressionTimer } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
+import type { IdleCompactionTarget } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'

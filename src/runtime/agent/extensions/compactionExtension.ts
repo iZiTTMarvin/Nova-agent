@@ -9,7 +9,7 @@
  * 原因：runCompaction 需要 AgentLoop 的多个 Facade 态（context/idleTimer/modelPool），
  * 放 Facade 端更自然；runAgentLoop 只负责"在 stream 前、守卫下调用一次"。
  */
-import { getCompactionThreshold, shouldCompact } from '../compaction'
+import { getCompactionThreshold, shouldCompact } from '../compaction/compaction'
 import { estimateContextTokens } from '../tokenEstimator'
 import type { AgentContext } from '../core/AgentContext'
 

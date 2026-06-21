@@ -9,7 +9,7 @@ import {
   MIN_RECENT_MESSAGES,
   SOFT_COMPACTION_COOLDOWN_TURNS,
   estimateToolMessageTokens,
-} from '../../../../src/runtime/agent/compaction'
+} from '../../../../src/runtime/agent/compaction/compaction'
 import { estimateTokens, estimateContextTokens } from '../../../../src/runtime/agent/tokenEstimator'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 

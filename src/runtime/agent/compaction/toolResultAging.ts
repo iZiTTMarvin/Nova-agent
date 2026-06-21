@@ -5,8 +5,8 @@
  * 保护区之外的组。组年龄 = 组起始前 user 消息数；年龄 > 8 且（组内字节 > 8KB
  * 或任一带 artifactId）时，将该组 tool 消息替换为单行占位，保留 toolCallId 配对。
  */
-import type { ChatMessage, ContentBlock } from '../model/types'
-import { extractTextFromContent } from '../model/types'
+import type { ChatMessage, ContentBlock } from '../../model/types'
+import { extractTextFromContent } from '../../model/types'
 import { MIN_RECENT_MESSAGES, alignToToolGroupBoundary } from './compaction'
 
 /** 组年龄阈值：起始位置之前超过该 user 回合数才老化 */

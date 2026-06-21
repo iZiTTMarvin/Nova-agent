@@ -7,8 +7,8 @@
  * 3. 模型输出纯文本摘要
  * 4. 用 [system, 摘要, 最近 N 条] 重建历史
  */
-import type { ChatMessage } from '../model/types'
-import { estimateContextTokens } from './tokenEstimator'
+import type { ChatMessage } from '../../model/types'
+import { estimateContextTokens } from '../tokenEstimator'
 
 /** 触发压缩的 token 阈值（默认 120K），当未提供 contextWindow 时作为 fallback */
 export const COMPACTION_THRESHOLD = 120_000
