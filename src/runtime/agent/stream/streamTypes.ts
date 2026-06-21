@@ -12,7 +12,7 @@ import type { ChatMessage, ChatToolCall, ToolDefinition } from '../../model/type
 import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
 import type { ModelClientPool } from '../../model/ModelClientPool'
-import type { RecoveryStateMachine } from '../RecoveryStateMachine'
+import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 
 /**

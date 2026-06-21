@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RecoveryStateMachine } from '../../../../src/runtime/agent/RecoveryStateMachine'
+import { RecoveryStateMachine } from '../../../../src/runtime/agent/recovery/RecoveryStateMachine'
 
 describe('RecoveryStateMachine', () => {
   const rsm = new RecoveryStateMachine()

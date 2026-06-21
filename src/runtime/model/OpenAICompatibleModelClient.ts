@@ -9,7 +9,7 @@ import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker } from './messageFormat'
 import type { CacheStrategy } from '../../shared/config/types'
-import { isContextOverflowError } from '../agent/contextOverflow'
+import { isContextOverflowError } from '../agent/recovery/contextOverflow'
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig

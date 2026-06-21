@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isContextOverflowError } from '../../../../src/runtime/agent/contextOverflow'
+import { isContextOverflowError } from '../../../../src/runtime/agent/recovery/contextOverflow'
 
 describe('contextOverflow', () => {
   it('应该只在 HTTP 400 时匹配', () => {

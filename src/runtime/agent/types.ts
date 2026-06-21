@@ -6,7 +6,7 @@ import type { DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../model/types'
 import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
-import type { RecoveryState } from './RecoveryStateMachine'
+import type { RecoveryState } from './recovery/RecoveryStateMachine'
 import type { ToolTruncationMeta } from '../tools/types'
 
 /** Hook 系统 9 个固定事件（供 renderer / 扩展监听） */

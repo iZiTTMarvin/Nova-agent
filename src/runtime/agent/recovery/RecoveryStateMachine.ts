@@ -2,7 +2,7 @@
  * RecoveryStateMachine — 错误恢复三态机（继续 / 重试 / 恢复）
  * 纯函数设计，不依赖 AgentLoop，便于单测
  */
-import type { ChatMessage } from '../model/types'
+import type { ChatMessage } from '../../model/types'
 
 /** 恢复状态联合类型 */
 export type RecoveryState =

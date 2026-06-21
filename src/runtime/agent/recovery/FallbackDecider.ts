@@ -13,7 +13,7 @@
  *   且还有未试过的 fallback（nextIndex < fallbackCount）时，返回 shouldFallback: true。
  * - 否则返回 shouldFallback: false（由 AgentLoop 进入 failed 状态）。
  */
-import type { ChatEvent } from '../model/types'
+import type { ChatEvent } from '../../model/types'
 
 /** 决策结果 */
 export interface FallbackDecision {
