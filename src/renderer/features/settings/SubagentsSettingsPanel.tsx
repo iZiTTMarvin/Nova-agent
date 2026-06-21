@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { subagentsI18n } from '../skills/i18n'
 import type { SubagentListItem } from '../../../shared/settings/types'
-import type { SubAgentSpec } from '../../../runtime/agent/SubAgentConfig'
+import type { SubAgentSpec } from '../../../runtime/agent/core/SubAgentConfig'
 
 const EMPTY_TEMPLATE: SubAgentSpec = {
   name: '',

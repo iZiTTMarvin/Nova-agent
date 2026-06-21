@@ -8,7 +8,7 @@ import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta } from '../tools/types'
 import type { ReadState } from '../tools/editTool'
 import type { AgentEvent } from './types'
-import type { HookManager } from './HookManager'
+import type { HookManager } from './core/HookManager'
 import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 import { needsRepair, repairNativeArguments } from './stream/nativeArgsRepair'
 

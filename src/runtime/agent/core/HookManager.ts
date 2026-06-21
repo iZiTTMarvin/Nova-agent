@@ -2,9 +2,9 @@
  * HookManager — Runtime 内部生命周期干预层
  * 与 EventBus 并行：EventBus 负责观察，HookManager 负责拦截与变换
  */
-import type { ChatMessage } from '../model/types'
-import type { EventBus } from './EventBus'
-import type { HookEvent as ExportedHookEvent } from './types'
+import type { ChatMessage } from '../../model/types'
+import type { EventBus } from '../EventBus'
+import type { HookEvent as ExportedHookEvent } from '../types'
 
 /** 9 个固定 hook 事件白名单 */
 export type HookEvent = ExportedHookEvent
