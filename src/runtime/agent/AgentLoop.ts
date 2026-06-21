@@ -20,7 +20,7 @@ import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
-import { shouldCompact, splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, getCompactionThreshold, rollbackBefore } from './compaction'
+import { splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction'
 import { ageToolResults } from './toolResultAging'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
@@ -46,6 +46,12 @@ import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './modeInstruction'
 import { createAgentContext, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
+import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
+import { createCompactionExtension } from './extensions/compactionExtension'
+import { createPermissionExtension } from './extensions/permissionExtension'
+import { createToolPostProcessExtension } from './extensions/toolPostProcessExtension'
+import { StopPolicyExtension } from './extensions/stopPolicyExtension'
+import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
 /**
  * 表示权限请求被 cancel 中断的 sentinel 错误。
  * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
@@ -245,6 +251,12 @@ export class AgentLoop implements IdleCompactionTarget {
     return this.streamProcessor
   }
 
+  /**
+   * StopPolicyExtension（PRD §6.2 shouldStopAfterTurn）：熔断计数 + maxRounds 提示。
+   * 实例态持有熔断计数 Map，每条用户消息开始时 clear()（Phase 3 抽离）。
+   */
+  private readonly stopPolicy = new StopPolicyExtension()
+
   /** 错误恢复状态机 */
   private recovery = new RecoveryStateMachine()
 
@@ -276,16 +288,8 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.readState = value
   }
 
-  /**
-   * 重复失败熔断计数：signature(toolName + 参数) → 失败次数。
-   * 用于检测模型对「完全相同的工具调用」反复触发并反复失败的死循环
-   * （典型场景：edit 因 readState 键不一致一直报 "File has not been read yet"，
-   * 模型 read→edit→失败→read 无限重试，最终把渲染进程拖垮 / OOM）。
-   * 每条用户消息开始时清空。
-   */
-  private repeatedFailureCounts = new Map<string, number>()
-  /** 同一签名工具调用累计失败达到该次数即熔断，停止本轮循环 */
-  private static readonly REPEATED_FAILURE_LIMIT = 3
+  // 注：重复失败熔断计数（repeatedFailureCounts / trackRepeatedFailures）已在 Phase 3
+  // 下沉到 StopPolicyExtension（extensions/stopPolicyExtension.ts）。
 
   constructor(
     modelClient: ModelClient | ModelClientPool,
@@ -576,7 +580,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.state = 'running'
     this.cancelled = false
     this.abortController = new AbortController()
-    this.repeatedFailureCounts.clear()
+    this.stopPolicy.clear()
     // 重试/降级/溢出压缩的单轮态已下沉到 StreamProcessor（PRD §6.3），
     // 每条新消息开始时重置（等价现状 modelErrorAttempt=0 / contextOverflowRetryAttempted=false）。
     // retry 重跑本轮时不重置——重试计数跨 retry 累积，由 Processor 自持。
@@ -694,225 +698,85 @@ export class AgentLoop implements IdleCompactionTarget {
     this.context = ageToolResults(this.context)
     this.lastEstimatedTokens = estimateContextTokens(this.context)
 
-    try {
-      let toolRound = 0
+    // ── 主循环下沉到 runAgentLoop（PRD §6.4 / §8 Phase 3）──
+    // 纯循环驱动：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
+    // Facade 负责：装配 config（注入 extension）、构建 executeBatch（注入权限/截断 extension）、
+    // 收尾（终态错误 S1 / cancelled → finishMessageRound）。
+    const executeBatch = (toolCalls: ChatToolCall[], mid: string) =>
+      executeToolBatch({
+        toolCalls,
+        messageId: mid,
+        toolRegistry: this.toolRegistry,
+        workingDir: this.workingDir ?? process.cwd(),
+        mode: this.mode,
+        shellPath: this.shellPath,
+        binDirs: this.binDirs,
+        supportsVision: this.config.supportsVision ?? true,
+        checkpointManager: this.checkpointManager,
+        abortSignal: this.abortController?.signal,
+        checkPermission: createPermissionExtension(this),
+        emit: (event) => this.eventBus.emit(event),
+        applyTruncation: createToolPostProcessExtension(this),
+        maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
+        toolExecution: this.config.toolExecution ?? 'parallel',
+        sessionStore: this.sessionStore,
+        sessionId: this.sessionId,
+        eventBus: this.eventBus,
+        hookManager: this.hookManager,
+        readState: this.readState,
+        artifactStore: this.artifactStore
+      })
 
-      while (toolRound < this.maxToolRounds) {
-        if (this.cancelled) break
+    const loopConfig: LoopConfig = {
+      maxToolRounds: this.maxToolRounds,
+      toolExecution: this.config.toolExecution ?? 'parallel',
+      maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
+      supportsVision: this.config.supportsVision ?? true,
+      shouldStopAfterTurn: (args) => this.stopPolicy.shouldStopAfterTurn(args),
+      onCompaction: (context, meta) => this.config.onCompaction?.(context, meta)
+    }
 
-        let shouldRetryChat = false
-        /** 本轮 model response 是否收到 usage 事件，用于兜底推送 context_breakdown */
-        let roundSawUsage = false
-
-        const beforeAgent = await this.hookManager.trigger({
-          event: 'beforeAgentStart',
-          messageId,
-          prompt: userText,
-          systemPrompt: this.frozenSystemPrompt
-        })
-        if (beforeAgent?.messages) this.context = beforeAgent.messages
-        if (beforeAgent?.systemPrompt) {
-          this.frozenSystemPrompt = beforeAgent.systemPrompt
-          const sysIdx = this.context.findIndex(m => m.role === 'system')
-          if (sysIdx >= 0) {
-            this.context[sysIdx] = { role: 'system', content: beforeAgent.systemPrompt }
-          }
-        }
-
-        // 上下文压缩检查：跳过正在执行溢出压缩的轮次
-        if (!this.compressingForOverflow) {
-          const compactionThreshold = getCompactionThreshold(this.config.contextWindow ?? 200_000)
-          // 2.4 守卫：使用上轮估算/API实际报告的 token 数和当前实时估算中的较大值作为判断依据，防范反复触发
-          const currentTokens = estimateContextTokens(this.context)
-          const tokensToCompare = Math.max(currentTokens, this.lastEstimatedTokens)
-          if (shouldCompact(this.context, compactionThreshold, tokensToCompare, this.userTurnsSinceCompaction)) {
-            await this.runCompaction()
-          }
-        }
-
-        // 获取工具定义（如果有 registry），始终传全部工具（缓存 Harness：工具集恒定）
-        // 写操作约束完全由权限层（getBaseDecision / PermissionManager）控制
-        const tools = this.toolRegistry?.getToolDefinitions()
-
-        // 缓存诊断：记录本轮请求的基线（system prompt + 工具定义哈希）
-        const systemPrompt = extractTextFromContent(
-          this.context.find(m => m.role === 'system')?.content ?? ''
-        )
-        this.cacheDiagnostics.recordBaseline(systemPrompt, tools)
-
-        const contextHook = await this.hookManager.trigger({
-          event: 'context',
-          messageId,
-          messages: [...this.context]
-        })
-        let chatMessages = contextHook?.messages ?? this.context
-
-        const preChatHook = await this.hookManager.trigger({
-          event: 'preChat',
-          messageId,
-          messages: [...chatMessages]
-        })
-        chatMessages = preChatHook?.messages ?? chatMessages
-
-        // XML 方言不传 native tools 定义：XML 工具调用完全靠 prompt 引导 + 正文扫描，
-        // 同时给 API 的 tools 定义会让轻量模型（DeepSeek V4 Flash 等）混乱——
-        // 模型被诱导走 native function calling 但能力不足，返回空 arguments "{}"，
-        // 导致「缺少参数」死循环。Native 方言正常传 tools。
-        const nativeTools = this.toolDialect === 'xml' ? undefined : tools
-
-        // 流消费 + 事件发射 + 方言策略 + 三层兜底解析 + 重试/降级/溢出 全部下沉到 StreamProcessor。
-        // 重试态（modelErrorAttempt / contextOverflowRetryAttempted）为 Processor 单轮态：
-        // 跨 retry 累积，仅每条新消息开始时由 resetRetryState() 重置一次。
-        // Processor 返回结构化 TurnStreamResult，loop 据此分发，不再直接 return 终态。
-        const turnResult = await this.getStreamProcessor().run({
-          messageId,
-          chatMessages,
-          nativeTools,
-          context: this.ctx,
-          signal: this.abortController?.signal,
-          isCancelled: () => this.cancelled,
-          sleep: (ms: number) => this.sleep(ms)
-        })
-
-        if (turnResult.kind === 'cancelled') {
-          this.cancelled = true
-          break
-        }
-        if (turnResult.kind === 'retry') {
-          continue
-        }
-        if (turnResult.kind === 'error') {
-          // 终态错误（重试/降级/溢出压缩全部走完仍失败）：与现状一致——
-          // emit error、state=error、取消 idleTimer、不经过 finishMessageRound 直接 return（S1）。
-          this.eventBus.emit({ type: 'error', messageId, error: turnResult.error })
-          this.state = 'error'
-          this.idleTimer?.cancel()
-          this.idleTimer = null
-          return
-        }
-
-        // turnResult.kind === 'assistant'：接管兜底解析之后的工具执行。
-        const { assistantContent, toolCalls, finishReason, sawUsage } = turnResult
-
-        // 将 assistant 回复（含 tool_calls）加入上下文
-        const assistantMsg: ChatMessage = {
-          role: 'assistant',
-          content: assistantContent
-        }
-        if (toolCalls.length > 0) {
-          assistantMsg.toolCalls = toolCalls
-        }
-        this.context.push(assistantMsg)
-
-        // 每次成功调用模型后更新估算 token 计数
-        this.lastEstimatedTokens = estimateContextTokens(this.context)
-        // 兜底：本轮 model response 没收到 usage 事件（部分 provider 不报）时，补一次分项推送
-        if (!sawUsage) {
-          this.emitContextBreakdown(messageId, 0)
-        }
-
-        await this.hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
-
-        // 如果模型没有调用工具，本轮结束
-        if (toolCalls.length === 0 || finishReason !== 'tool_calls') {
-          break
-        }
-
-        // Native 协议兜底：部分模型把参数写在 assistant 正文（XML）而非
-        // function.arguments，导致 toolCall.arguments 为空 → 工具报「缺少参数」。
-        // 这里从正文扫描同名 XML 调用补全参数（native 路径此前缺失的兜底）。
-        // XML 方言已在流式阶段由 scanner 处理，此处对 native 尤其关键。
-        const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent)
-        if (repairedIds.length > 0) {
-          // 清空已补全工具调用的正文残留，避免把 XML 标签当普通文本展示给用户
-          assistantMsg.content = stripTextToolCalls(assistantContent)
-        }
-
-        // 执行所有工具调用，将结果加入上下文
-        toolRound++
-        const batchResult = await executeToolBatch({
-          toolCalls,
-          messageId,
-          toolRegistry: this.toolRegistry,
-          workingDir: this.workingDir ?? process.cwd(),
-          mode: this.mode,
-          shellPath: this.shellPath,
-          binDirs: this.binDirs,
-          supportsVision: this.config.supportsVision ?? true,
-          checkpointManager: this.checkpointManager,
-          abortSignal: this.abortController?.signal,
-          checkPermission: (toolName, args, currentMessageId) =>
-            this.checkPermission(toolName, args, currentMessageId),
-          emit: (event) => this.eventBus.emit(event),
-          applyTruncation: (output, maxSize) => this.applyTruncation(output, maxSize),
-          maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
-          toolExecution: this.config.toolExecution ?? 'parallel',
-          sessionStore: this.sessionStore,
-          sessionId: this.sessionId,
-          eventBus: this.eventBus,
-          hookManager: this.hookManager,
-          readState: this.readState,
-          artifactStore: this.artifactStore
-        })
-
-        if (!batchResult.aborted && !this.cancelled && !this.abortController?.signal.aborted) {
-          for (const outcome of batchResult.outcomes) {
-            if (outcome.skippedByAbort) continue
-            this.context.push({
-              role: 'tool',
-              content: toToolContent(outcome.resultText, outcome.resultImages),
-              toolCallId: outcome.toolCall.id,
-              ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
-              ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
-            })
-          }
-        }
-
-        if (batchResult.aborted || this.cancelled || this.abortController?.signal.aborted) {
-          this.cancelled = true
-          break
-        }
-
-        // 熔断：检测对同一工具调用（名称 + 参数完全一致）的重复失败。
-        // 命中后停止本轮循环，避免模型在无效调用上空转烧光 maxToolRounds，
-        // 同时把海量流式事件灌向渲染进程导致卡顿 / OOM 白屏。
-        const stuckTool = this.trackRepeatedFailures(batchResult.outcomes)
-        if (stuckTool) {
-          const notice =
-            `\n\n[已自动中断] 检测到对「${stuckTool}」的相同调用连续失败 ` +
-            `${AgentLoop.REPEATED_FAILURE_LIMIT} 次，已停止本轮以避免无效循环。` +
-            `请查看上方的工具错误信息后再调整指令。`
-          // 通过 text_delta 下发：renderer 追加展示，累积器并入持久化内容，口径一致
-          this.eventBus.emit({ type: 'text_delta', messageId, delta: notice })
-          break
-        }
-
-        // 达到最大工具调用轮数：此前是静默退出（直接落 message_end），用户无法得知
-        // 任务为何戛然而止。这里在「模型本轮仍调用了工具、却已用满轮数」时显式提示，
-        // 与上方重复失败熔断保持一致的下发方式（text_delta，累积器并入持久化内容）。
-        if (toolRound >= this.maxToolRounds) {
-          const notice =
-            `\n\n[已达到最大工具调用轮数 ${this.maxToolRounds}] ` +
-            `任务可能尚未完成，已暂停以避免无限循环。` +
-            `发送「继续」可接着执行；如长任务频繁触发，可在「设置 → 通用 → 最大工具调用轮数」中调大该上限。`
-          this.eventBus.emit({ type: 'text_delta', messageId, delta: notice })
-          break
-        }
-
-        // 继续下一轮模型调用（带着工具结果）
-      }
-    } catch (err) {
-      if (!this.cancelled) {
-        const errMsg = (err as Error).message
-        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+    const endResult: LoopEndResult = await runAgentLoop({
+      messageId,
+      userText,
+      context: this.ctx,
+      config: loopConfig,
+      streamProcessor: this.getStreamProcessor(),
+      hookManager: this.hookManager,
+      emit: (event) => this.eventBus.emit(event),
+      emitContextBreakdown: (mid, promptTokens) => this.emitContextBreakdown(mid, promptTokens),
+      signal: () => this.cancelled,
+      abortSignal: () => this.abortController?.signal,
+      executeBatch,
+      runCompactionIfThreshold: createCompactionExtension({
+        context: this.ctx,
+        contextWindow: this.config.contextWindow ?? 200_000,
+        isCompressingForOverflow: () => this.compressingForOverflow,
+        runCompaction: () => this.runCompaction()
+      }),
+      isCompressingForOverflow: () => this.compressingForOverflow,
+      recordBaseline: (sysPrompt, tools) => this.cacheDiagnostics.recordBaseline(sysPrompt, tools),
+      sleep: (ms: number) => this.sleep(ms),
+      onTerminalError: (error) => {
+        // S1：终态错误 emit error + state=error + 取消 idleTimer，不经 finishMessageRound 直接 return。
+        this.eventBus.emit({ type: 'error', messageId, error })
         this.state = 'error'
-        // S1：错误状态下不启动 idleTimer。
-        // 错误意味着本轮已损坏（context 可能是不完整状态），266s 后触发压缩只会
-        // 把损坏内容发给模型烧 token，且压缩后状态可能进一步污染下一次对话。
-        // 用户回来时应主动 sendMessage 触发新一轮，而不是后台悄悄压缩。
-        return
+        this.idleTimer?.cancel()
+        this.idleTimer = null
       }
+    })
+
+    if (endResult.ended === 'error') {
+      // 终态错误：onTerminalError 已完成 emit/state/idleTimer 收尾，直接 return（不经 finishMessageRound）。
+      // S1：错误意味着本轮已损坏，266s 后触发压缩只会把损坏内容发给模型烧 token。
+      // 用户回来时应主动 sendMessage 触发新一轮，而不是后台悄悄压缩。
+      return
+    }
+
+    // ended === 'normal'：cancelled 标志由 runAgentLoop 在 StreamProcessor cancelled /
+    // executeBatch abort 时通过 endResult.cancelled=true 透传（对标现状 break + finishMessageRound）。
+    if (endResult.cancelled) {
+      this.cancelled = true
     }
 
     await this.finishMessageRound(messageId)
@@ -1064,52 +928,6 @@ export class AgentLoop implements IdleCompactionTarget {
       case 'line_length':
         return `[系统提示] 部分行已截断：行长度超 ${limit} 字符上限，超出部分以 ...[截断] 标记。\n对该文件使用 read 工具获取完整内容。`
     }
-  }
-
-  /**
-   * 跟踪并检测重复失败的工具调用。
-   *
-   * 对每个非中断的工具结果计算签名（工具名 + 序列化参数）：
-   * - 失败结果（"工具执行失败" / "权限拒绝:"）累加该签名的失败计数；
-   * - 成功结果清零该签名计数（说明该调用已不再卡住）。
-   *
-   * 当任一签名累计失败次数达到 REPEATED_FAILURE_LIMIT，返回对应工具名表示需要熔断；
-   * 否则返回 null。只有「参数完全相同」的调用才会累加，因此模型在迭代修复
-   * （每次参数不同）时不会被误伤。
-   *
-   * @returns 触发熔断的工具名；未触发返回 null
-   */
-  private trackRepeatedFailures(
-    outcomes: Array<{ toolCall: ChatToolCall; args: Record<string, unknown>; resultText: string; failed?: boolean; skippedByAbort?: boolean }>
-  ): string | null {
-    for (const outcome of outcomes) {
-      if (outcome.skippedByAbort) continue
-
-      // 用结构化的 failed 标记判定失败，而非从渲染后的中文 resultText 前缀反推，
-      // 避免文案本地化 / 调整后熔断器静默失效，也能覆盖"未注册工具"等不以
-      // "工具执行失败" 开头的错误结果。
-      const failed = outcome.failed === true
-      // 参数可能含大体量内容（如 write 的 content），签名做长度上限保护，
-      // 仅用于「是否同一调用」的判定，过长时截断不影响判等的稳定性。
-      let argsKey: string
-      try {
-        argsKey = JSON.stringify(outcome.args)
-      } catch {
-        argsKey = String(outcome.args)
-      }
-      const signature = `${outcome.toolCall.name}:${argsKey.slice(0, 4096)}`
-
-      if (failed) {
-        const next = (this.repeatedFailureCounts.get(signature) ?? 0) + 1
-        this.repeatedFailureCounts.set(signature, next)
-        if (next >= AgentLoop.REPEATED_FAILURE_LIMIT) {
-          return outcome.toolCall.name
-        }
-      } else {
-        this.repeatedFailureCounts.delete(signature)
-      }
-    }
-    return null
   }
 
   /** 异步 sleep（恢复重试用） */
