@@ -6,9 +6,9 @@
  * 抽成独立函数，供主进程任意时刻调用并 IPC 推送。
  */
 import { estimateTokens, estimateContextTokens } from './tokenEstimator'
-import { SystemPromptBuilder } from './SystemPromptBuilder'
-import { getStableSystemPrompt } from './modePrompt'
-import { buildSkillContext } from './buildSkillContext'
+import { SystemPromptBuilder } from './promptBuilder/SystemPromptBuilder'
+import { getStableSystemPrompt } from './promptBuilder/modePrompt'
+import { buildSkillContext } from './promptBuilder/buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
 import { renderBaseRules } from './promptRenderer'
 import { extractTextFromSerializableContent, type SessionData } from '../sessions/types'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildStableSystemPrompt, getStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../../../src/runtime/agent/modePrompt'
+import { buildStableSystemPrompt, getStableSystemPrompt, normalizeFrozenSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
 
 describe('buildStableSystemPrompt', () => {
   it('native 模式下不包含工具目录，仅保留工作区与模式说明', () => {

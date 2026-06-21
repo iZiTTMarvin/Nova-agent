@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderToolInventory, renderWorkingDirectoryHint } from '../../../../src/runtime/agent/toolPromptRenderer'
+import { renderToolInventory, renderWorkingDirectoryHint } from '../../../../src/runtime/agent/promptBuilder/toolPromptRenderer'
 import type { ToolDefinition } from '../../../../src/runtime/model/types'
 
 const sampleTools: ToolDefinition[] = [

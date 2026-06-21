@@ -8,7 +8,7 @@
  *   示例、参数说明和格式规则，模型按此格式输出到正文，后端 scanner 解析执行。
  */
 
-import type { ToolDefinition } from '../model/types'
+import type { ToolDefinition } from '../../model/types'
 
 export interface RenderOptions {
   /** 当前工具调用方言 */

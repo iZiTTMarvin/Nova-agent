@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SystemPromptBuilder } from '../../../../src/runtime/agent/SystemPromptBuilder'
+import { SystemPromptBuilder } from '../../../../src/runtime/agent/promptBuilder/SystemPromptBuilder'
 
 describe('SystemPromptBuilder', () => {
   const fullLayers = {

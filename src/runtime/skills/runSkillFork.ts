@@ -4,7 +4,7 @@
  */
 import { AgentLoop } from '../agent/AgentLoop'
 import { EventBus } from '../agent/EventBus'
-import { SystemPromptBuilder } from '../agent/SystemPromptBuilder'
+import { SystemPromptBuilder } from '../agent/promptBuilder/SystemPromptBuilder'
 import type { ModelClient } from '../model/ModelClient'
 import { PermissionManager } from '../permissions/PermissionManager'
 import type { Mode } from '../../shared/session/types'

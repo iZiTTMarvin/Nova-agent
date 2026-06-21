@@ -2,7 +2,7 @@
  * SystemPromptBuilder — 6 层 system prompt 流水线拼装
  * 每层独立包裹标题，顺序固定以保障缓存前缀稳定性
  */
-import type { SystemPromptLayers } from './types'
+import type { SystemPromptLayers } from '../types'
 
 const LAYER_TITLES: Record<keyof SystemPromptLayers, string> = {
   agentRole: 'Agent Role',

@@ -4,7 +4,7 @@
  * 将模式约束从 system prompt 移出，挂到 user 消息尾部。
  * 这样切模式只改尾部，前面整条历史的缓存前缀全部保留。
  */
-import type { Mode } from '../../shared/session/types'
+import type { Mode } from '../../../shared/session/types'
 
 /** 当前工具调用方言，决定模式指令是否要重复格式提醒 */
 export interface ModeInstructionOptions {
