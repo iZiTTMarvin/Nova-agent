@@ -27,8 +27,8 @@
  */
 
 import { XmlToolScanner, parseXmlToolCalls, stripMinimaxArtifacts, type XmlScanEvent } from './xmlToolScanner'
-import type { ChatToolCall } from '../model/types'
-import { parseTextToolCalls } from '../../shared/tool-call-text-fallback'
+import type { ChatToolCall } from '../../model/types'
+import { parseTextToolCalls } from '../../../shared/tool-call-text-fallback'
 
 /** 坏 args 的 XML 标签特征 */
 const INVOKE_HINT = /<invoke\b/i

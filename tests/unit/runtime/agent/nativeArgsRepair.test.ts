@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { needsRepair, repairNativeArguments, repairEmptyArgsFromContent } from '../../../../src/runtime/agent/nativeArgsRepair'
+import { needsRepair, repairNativeArguments, repairEmptyArgsFromContent } from '../../../../src/runtime/agent/stream/nativeArgsRepair'
 
 /**
  * Native 工具调用参数修复层测试。

@@ -4,7 +4,7 @@ import {
   stripMinimaxArtifacts,
   XmlToolScanner,
   type XmlScanEvent
-} from '../../../../src/runtime/agent/xmlToolScanner'
+} from '../../../../src/runtime/agent/stream/xmlToolScanner'
 
 /**
  * XML 增量扫描器测试

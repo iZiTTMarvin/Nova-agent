@@ -10,7 +10,7 @@ import type { ReadState } from '../tools/editTool'
 import type { AgentEvent } from './types'
 import type { HookManager } from './HookManager'
 import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
-import { needsRepair, repairNativeArguments } from './nativeArgsRepair'
+import { needsRepair, repairNativeArguments } from './stream/nativeArgsRepair'
 
 export interface ToolExecutionOutcome {
   index: number

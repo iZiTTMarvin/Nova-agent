@@ -29,7 +29,7 @@ import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig } from './loopTypes'
 import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
-import { repairEmptyArgsFromContent } from '../nativeArgsRepair'
+import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 
 /**
