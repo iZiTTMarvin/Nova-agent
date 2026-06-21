@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { discoverProjectRules, discoverProjectRulesFile } from '../../../../src/runtime/agent/projectRulesDiscovery'
+import { discoverProjectRules, discoverProjectRulesFile } from '../../../../src/runtime/agent/context/projectRulesDiscovery'
 
 describe('projectRulesDiscovery', () => {
   let workspace: string

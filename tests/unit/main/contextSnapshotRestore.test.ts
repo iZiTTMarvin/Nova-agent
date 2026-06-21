@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 import { AgentLoop } from '../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
-import { buildConversationContext } from '../../../src/runtime/agent/contextBuilder'
+import { buildConversationContext } from '../../../src/runtime/agent/context/contextBuilder'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 import {
   buildSnapshotFromCompaction,

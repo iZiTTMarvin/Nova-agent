@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { join } from 'path'
-import { isPathInsideRoot } from '../../../../src/runtime/agent/rulesDiscovery'
+import { isPathInsideRoot } from '../../../../src/runtime/agent/context/rulesDiscovery'
 
 describe('isPathInsideRoot', () => {
   const root = join('C:', 'workspace', 'proj')

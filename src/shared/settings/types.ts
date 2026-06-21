@@ -1,7 +1,7 @@
 /**
  * 设置相关 IPC 共享类型
  */
-import type { RuleFileEntry, RuleScope } from '../../runtime/agent/rulesDiscovery'
+import type { RuleFileEntry, RuleScope } from '../../runtime/agent/context/rulesDiscovery'
 import type { SubAgentSpec } from '../../runtime/agent/core/SubAgentConfig'
 import type { Mode } from '../session/types'
 

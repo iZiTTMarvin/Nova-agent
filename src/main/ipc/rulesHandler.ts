@@ -12,7 +12,7 @@ import {
   isPathInsideRoot,
   buildNewGlobalRulePath,
   buildNewWorkspaceRulePath
-} from '../../runtime/agent/rulesDiscovery'
+} from '../../runtime/agent/context/rulesDiscovery'
 import { getNovaHomeDir } from '../../runtime/settings/novaSettings'
 import type {
   RuleFileEntry,

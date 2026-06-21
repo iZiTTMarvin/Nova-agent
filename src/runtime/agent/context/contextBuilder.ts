@@ -9,9 +9,9 @@
  * - thinking 内容不进入模型上下文
  * - assistant 的 toolCalls 恢复为结构化 tool_calls，result 拆成独立 tool 消息
  */
-import type { ChatMessage, ContentBlock } from '../model/types'
-import type { SessionData } from '../sessions/types'
-import type { Mode } from '../../shared/session/types'
+import type { ChatMessage, ContentBlock } from '../../model/types'
+import type { SessionData } from '../../sessions/types'
+import type { Mode } from '../../../shared/session/types'
 
 /**
  * 从会话数据构建模型对话上下文（不含 system prompt）

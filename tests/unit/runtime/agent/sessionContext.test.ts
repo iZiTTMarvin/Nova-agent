@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSessionContext } from '../../../../src/runtime/agent/sessionContext'
+import { buildSessionContext } from '../../../../src/runtime/agent/context/sessionContext'
 
 describe('buildSessionContext', () => {
   it('生成符合 [Session context: ...] 格式的文本', () => {

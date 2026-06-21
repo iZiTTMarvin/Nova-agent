@@ -20,7 +20,7 @@ import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
 import { getMainReadState } from '../ipc/agentHandler'
 import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
-import { calculateContextBreakdown } from '../../runtime/agent/contextBreakdownCalculator'
+import { calculateContextBreakdown } from '../../runtime/agent/context/contextBreakdownCalculator'
 import { loadModelConfig } from '../../runtime/model/config'
 import { inferContextWindow } from '../../shared/config/types'
 /** SessionDetail 转换（与 sessionHandler 同构，独立实现避免双向依赖） */

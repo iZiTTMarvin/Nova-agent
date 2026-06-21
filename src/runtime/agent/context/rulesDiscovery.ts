@@ -4,7 +4,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join, relative, resolve, normalize } from 'path'
-import { getNovaHomeDir } from '../settings/novaSettings'
+import { getNovaHomeDir } from '../../settings/novaSettings'
 
 /** 工作区根目录下的经典规则文件名 */
 const WORKSPACE_RULE_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules'] as const

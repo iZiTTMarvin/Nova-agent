@@ -5,7 +5,7 @@
  * 约束：只读写 context-snapshot.json，不修改 session.messages。
  */
 import { AgentLoop } from '../agent/AgentLoop'
-import { buildConversationContext } from '../agent/contextBuilder'
+import { buildConversationContext } from '../agent/context/contextBuilder'
 import type { CompactionMeta } from '../agent/types'
 import type { ChatMessage } from '../model/types'
 import type { SessionStore } from './SessionStore'

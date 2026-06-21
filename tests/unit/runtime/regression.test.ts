@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildConversationContext } from '../../../src/runtime/agent/contextBuilder'
+import { buildConversationContext } from '../../../src/runtime/agent/context/contextBuilder'
 import { formatVerificationSummary } from '../../../src/runtime/verification/service'
 import type { SessionData } from '../../../src/runtime/sessions/types'
 import type { VerificationResult } from '../../../src/runtime/verification/types'

@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { rulesI18n } from '../skills/i18n'
 import type { RuleFileEntry } from '../../../shared/settings/types'
-import type { RuleScope } from '../../../runtime/agent/rulesDiscovery'
+import type { RuleScope } from '../../../runtime/agent/context/rulesDiscovery'
 
 export const RulesSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)

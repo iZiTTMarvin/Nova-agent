@@ -5,16 +5,16 @@
  * 都需要显示上下文占用，但 AgentLoop 只在发送消息时创建，因此把计算逻辑
  * 抽成独立函数，供主进程任意时刻调用并 IPC 推送。
  */
-import { estimateTokens, estimateContextTokens } from './tokenEstimator'
-import { SystemPromptBuilder } from './promptBuilder/SystemPromptBuilder'
-import { getStableSystemPrompt } from './promptBuilder/modePrompt'
-import { buildSkillContext } from './promptBuilder/buildSkillContext'
+import { estimateTokens, estimateContextTokens } from '../tokenEstimator'
+import { SystemPromptBuilder } from '../promptBuilder/SystemPromptBuilder'
+import { getStableSystemPrompt } from '../promptBuilder/modePrompt'
+import { buildSkillContext } from '../promptBuilder/buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
-import { renderBaseRules } from './promptRenderer'
-import { extractTextFromSerializableContent, type SessionData } from '../sessions/types'
-import type { ChatMessage } from '../model/types'
-import type { SkillManifest } from '../skills/types'
-import type { ContextBreakdown } from '../../renderer/stores/useSettingsStore'
+import { renderBaseRules } from '../promptRenderer'
+import { extractTextFromSerializableContent, type SessionData } from '../../sessions/types'
+import type { ChatMessage } from '../../model/types'
+import type { SkillManifest } from '../../skills/types'
+import type { ContextBreakdown } from '../../../renderer/stores/useSettingsStore'
 
 /** 从冻结 system prompt 中提取 SystemPromptBuilder 某层正文 */
 function extractPromptLayer(frozenPrompt: string, layerTitle: string): string {
