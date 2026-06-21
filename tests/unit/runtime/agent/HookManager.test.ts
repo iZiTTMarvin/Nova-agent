@@ -4,7 +4,7 @@ import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import type { HookEvent } from '../../../../src/runtime/agent/types'
-import { executeToolBatch } from '../../../../src/runtime/agent/toolBatchExecutor'
+import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 

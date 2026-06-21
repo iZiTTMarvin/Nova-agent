@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ToolResult } from '../../../../src/runtime/tools/types'
-import { executeToolBatch } from '../../../../src/runtime/agent/toolBatchExecutor'
+import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void

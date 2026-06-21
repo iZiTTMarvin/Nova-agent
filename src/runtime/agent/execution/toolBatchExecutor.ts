@@ -1,16 +1,16 @@
-import type { ChatToolCall } from '../model/types'
-import type { ContentBlock } from '../model/types'
-import type { CheckpointManager } from '../checkpoints/CheckpointManager'
-import type { Mode } from '../../shared/session/types'
-import type { SessionStore } from '../sessions/SessionStore'
-import type { EventBus } from './EventBus'
-import type { ToolRegistry } from '../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta } from '../tools/types'
-import type { ReadState } from '../tools/editTool'
-import type { AgentEvent } from './types'
-import type { HookManager } from './core/HookManager'
-import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
-import { needsRepair, repairNativeArguments } from './stream/nativeArgsRepair'
+import type { ChatToolCall } from '../../model/types'
+import type { ContentBlock } from '../../model/types'
+import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
+import type { Mode } from '../../../shared/session/types'
+import type { SessionStore } from '../../sessions/SessionStore'
+import type { EventBus } from '../EventBus'
+import type { ToolRegistry } from '../../tools/ToolRegistry'
+import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta } from '../../tools/types'
+import type { ReadState } from '../../tools/editTool'
+import type { AgentEvent } from '../types'
+import type { HookManager } from '../core/HookManager'
+import { sanitizeToolOutput } from '../../../shared/tool-input-sanitizer'
+import { needsRepair, repairNativeArguments } from '../stream/nativeArgsRepair'
 
 export interface ToolExecutionOutcome {
   index: number
@@ -72,7 +72,7 @@ export interface ToolBatchExecutionOptions {
   /** bash 工具的 PATH 注入目录（可选） */
   binDirs?: string[]
   /** 会话级 artifact 存储（大输出落盘 + 指针续读） */
-  artifactStore?: import('../artifacts/ArtifactStore').ArtifactStore | null
+  artifactStore?: import('../../artifacts/ArtifactStore').ArtifactStore | null
   /** Hook 编排层（preToolUse / postToolUse） */
   hookManager?: HookManager | null
   /**
