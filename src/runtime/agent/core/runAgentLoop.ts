@@ -241,10 +241,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
     }
   } catch (err) {
     // 现状 L904-916：非 cancel 的异常 → onError hook + emit error + state=error + return（S1）
+    // 唯一 emit 点：onTerminalError 内部 emit error（与 turnResult.kind==='error' 路径一致）。
+    // 不在此重复 emit，否则 error 事件会被发两次（C1 违规）。
     if (!p.signal()) {
       const errMsg = (err as Error).message
       await hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-      emit({ type: 'error', messageId, error: errMsg })
       p.onTerminalError(errMsg)
       return { ended: 'error' }
     }

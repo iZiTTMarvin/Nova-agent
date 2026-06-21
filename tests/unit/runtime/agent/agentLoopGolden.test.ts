@@ -932,6 +932,44 @@ describe('黄金测试 §9.18 context_breakdown 兜底', () => {
   })
 })
 
+// ============================================================
+// 场景 19：runAgentLoop catch 路径（异常兜底，堵盲区）
+// 期望：循环内任意 await 抛出未捕获异常 → onError hook + 恰好一个 error 事件
+//       + state='error' + 无 message_end（S1：不经 finishMessageRound）。
+// 触发方式：让模型的流迭代器直接 throw（模拟真实连接层崩溃，非 yield error 事件）。
+// 此前该 catch 路径零覆盖——曾因双重 emit error 导致 C1 违规，本场景专门锁定。
+// ============================================================
+describe('黄金测试 §9.19 runAgentLoop 异常兜底（catch 路径）', () => {
+  it('流迭代器抛异常 → onError + 恰好一个 error + state=error + 无 message_end', async () => {
+    // 自定义 client：chat 返回的 async generator 在遍历时直接 throw（而非 yield error 事件）。
+    // 这模拟底层连接崩溃，异常从 StreamProcessor.run 的 for-await 冒泡到 runAgentLoop 的 catch。
+    const throwingClient = {
+      config: { baseUrl: '', apiKey: '', modelId: 'gpt-4o' },
+      async *chat() {
+        throw new Error('connection reset by peer')
+      },
+      updateConfig() {}
+    } as unknown as MockModelClient
+
+    const registry = new ToolRegistry()
+    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client: throwingClient })
+    loop.setToolRegistry(registry)
+
+    const events = await runAndCollect(loop, eventBus, 'hi')
+
+    // 恰好一个 error 事件（验证无双重 emit——曾经的 C1 违规点）
+    const errorEvents = events.filter(e => e.type === 'error')
+    expect(errorEvents).toHaveLength(1)
+    expect((errorEvents[0] as Extract<AgentEvent, { type: 'error' }>).error).toContain('connection reset')
+
+    // state=error（终态）
+    expect(loop.getState()).toBe('error')
+
+    // 无 message_end（error 路径不经 finishMessageRound，S1）
+    expect(events.some(e => e.type === 'message_end')).toBe(false)
+  })
+})
+
 // ── 辅助：轮询等待某类事件 ──────────────────────────────────
 /**
  * 在 collectPromise 进行期间，轮询 EventBus 已发出的事件，等待指定类型出现。
