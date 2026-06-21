@@ -25,19 +25,16 @@ import { ageToolResults } from './toolResultAging'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
-import { executeToolBatch, toToolContent } from './toolBatchExecutor'
-import { repairEmptyArgsFromContent } from './nativeArgsRepair'
+import { executeToolBatch } from './toolBatchExecutor'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import type { IdleCompactionTarget } from './IdleCompressionTimer'
 import { HookManager } from './HookManager'
 import { RecoveryStateMachine } from './RecoveryStateMachine'
 import { SystemPromptBuilder } from './SystemPromptBuilder'
-import { buildStableSystemPrompt, normalizeFrozenSystemPrompt } from './modePrompt'
 import { buildSessionContext } from './sessionContext'
 import { calculateContextBreakdown } from './contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
 import type { SkillRegistry } from '../skills/SkillRegistry'
-import { stripTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
@@ -52,11 +49,7 @@ import { createPermissionExtension } from './extensions/permissionExtension'
 import { createToolPostProcessExtension } from './extensions/toolPostProcessExtension'
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
-/**
- * 表示权限请求被 cancel 中断的 sentinel 错误。
- * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
- * 和"流程被取消"（不产生任何 tool_result，不污染 context 与持久化）。
- */
+
 /** 写入类工具名称集合，plan 模式下会被拒绝 */
 const WRITE_TOOLS: Record<string, true> = {
   edit: true,
@@ -64,6 +57,11 @@ const WRITE_TOOLS: Record<string, true> = {
   bash: true
 }
 
+/**
+ * 表示权限请求被 cancel 中断的 sentinel 错误。
+ * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
+ * 和"流程被取消"（不产生任何 tool_result，不污染 context 与持久化）。
+ */
 class PermissionAbortedError extends Error {
   constructor() {
     super('permission request aborted by cancel')
@@ -287,9 +285,6 @@ export class AgentLoop implements IdleCompactionTarget {
   private set readState(value: ReadState) {
     this.ctx.readState = value
   }
-
-  // 注：重复失败熔断计数（repeatedFailureCounts / trackRepeatedFailures）已在 Phase 3
-  // 下沉到 StopPolicyExtension（extensions/stopPolicyExtension.ts）。
 
   constructor(
     modelClient: ModelClient | ModelClientPool,
