@@ -28,11 +28,14 @@
 ### 对话与 Agent 运行时
 
 - **OpenAI 兼容接口**：支持自定义 Base URL、API Key、模型 ID、上下文窗口与 Vision 开关
+- **模型方言自适应**：Claude/GPT 走原生 `tool_calls`；MiniMax / GLM / DeepSeek / Kimi / Qwen 走 XML inband，正文中以 `<invoke>` 标签调用工具
 - **多轮工具调用**：内置 `ls` / `read` / `grep` / `find` / `edit` / `write` / `bash` / `todo_write` / `task` / `invoke_skill` 等工具
+- **并行工具执行**：自动识别可并行工具（默认最多 4 个），串行依赖自动降级为串行
 - **运行模式**：`plan`（只读规划）、`default`（写入需确认）、`auto`（自动执行，危险命令仍拦截）
 - **权限审批**：高风险操作（如 `bash`）弹出确认；支持会话级 diff 审阅与文件回滚
 - **检查点**：工具改文件前自动快照，支持按消息回退工作区
-- **恢复管线**：模型临时错误自动重试；上下文溢出时压缩恢复；输入框上方展示恢复状态条
+- **恢复管线**：模型临时错误自动重试 + 主备降级（`ModelClientPool`）；上下文溢出时紧急压缩恢复；输入框上方展示恢复状态条
+- **上下文压缩**：token 超阈值时自动 AI 摘要压缩；消息结束后 266 秒无活动触发空闲压缩；支持上下文占用分项展示
 - **Steering Queue**：Agent 运行中可将新消息排队，当前轮次结束后自动发送
 - **图片输入**：在支持 Vision 的模型下可粘贴或拖拽图片
 
@@ -53,7 +56,7 @@
 ### 工程化
 
 - TypeScript 全栈类型安全；主进程与渲染进程通过类型化 IPC 通信
-- Vitest 单元测试（970+ 用例）；内置 skill frontmatter 校验脚本
+- Vitest 单元测试（1280+ 用例）；内置 skill frontmatter 校验脚本
 
 ---
 
@@ -241,7 +244,7 @@ JSON 字段对齐 `SubAgentSpec`（`name`、`description`、`allowedTools`、`pr
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Renderer (React + Zustand)                             │
-│  ChatPanel · SkillAC · SettingsModal · DiffViewer     │
+│  ChatPanel · SkillAC · SettingsModal · DiffViewer       │
 │       │ preload: window.api / window.nova.skill         │
 └───────┼─────────────────────────────────────────────────┘
         │ IPC (类型化 channels)
@@ -251,20 +254,29 @@ JSON 字段对齐 `SubAgentSpec`（`name`、`description`、`allowedTools`、`pr
 │       │                                                 │
 │  ┌────▼─────────────────────────────────────────────┐   │
 │  │  Runtime                                         │   │
-│  │  AgentLoop · ToolRegistry · PermissionManager    │   │
-│  │  SkillRegistry / SkillService · CheckpointManager│   │
-│  │  SystemPromptBuilder · RecoveryStateMachine      │   │
+│  │  ┌─────────────────────────────────────────────┐  │   │
+│  │  │ AgentLoop (Facade)                          │  │   │
+│  │  │  ├─ runAgentLoop ── StreamProcessor        │  │   │
+│  │  │  ├─ executeToolBatch ── ToolPipeline       │  │   │
+│  │  │  ├─ compaction/ ── IdleCompressionTimer     │  │   │
+│  │  │  ├─ recovery/ ── RecoveryStateMachine       │  │   │
+│  │  │  ├─ promptBuilder/ ── SystemPromptBuilder   │  │   │
+│  │  │  └─ extensions/ ── permission / stopPolicy   │  │   │
+│  │  └─────────────────────────────────────────────┘  │   │
+│  │  ModelClientPool · dialect · ToolRegistry         │   │
+│  │  SkillRegistry · CheckpointManager               │   │
 │  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
 
 **数据流（发送消息）**：
 
-1. Renderer 通过 `send-message` IPC 提交用户输入
-2. `invokeSkill` 预处理 slash 命令（注入 / fork / 系统提示）
-3. `AgentLoop` 拼装 system prompt（含规则与 skill 上下文），调用模型
-4. 模型返回 tool calls → 权限检查 → 工具执行 → 结果回注上下文
-5. 流式事件（`text-delta`、`tool-call`、`diff-update` 等）推送至 UI
+1. Renderer 通过 `send-message` IPC 提交用户输入（支持文本 / 图片）
+2. `invokeSkill` 预处理 slash 命令（`inject` 注入正文 / `fork` 子代理 / `system_notice`）
+3. `AgentLoop` 拼装 system prompt（含规则、skill 上下文、方言化工具目录），调用 `ModelClientPool`
+4. `StreamProcessor` 消费 SSE 流：native 路径直接解析 `tool_calls`；XML 方言路径用增量状态机从正文扫描 `<invoke>`
+5. 模型返回 tool calls → `executeToolBatch` 做权限检查 / 截断 / 串并行分组 → 工具执行 → 结果回注上下文
+6. 流式事件（`text-delta`、`tool-call-delta`、`tool-call`、`tool-result`、`context-breakdown` 等）推送至 UI
 
 ---
 
@@ -278,8 +290,15 @@ nova-agent/
 │   ├── preload/           # contextBridge API
 │   ├── renderer/          # React UI
 │   ├── runtime/           # Agent、工具、技能、会话、检查点
+│   │   ├── agent/         # Agent 循环（已模块化：core/ stream/ execution/ compaction/ recovery/ context/ promptBuilder/ extensions/）
+│   │   ├── model/         # ModelClientPool、方言判定、缓存诊断
+│   │   ├── tools/         # 10+ 工具实现（含 bash/、子代理桥接）
+│   │   ├── skills/        # Skill 注册、调用与 fork
+│   │   ├── permissions/   # 权限决策引擎
+│   │   ├── sessions/      # 会话持久化
+│   │   └── checkpoints/ # 文件快照与回退
 │   └── shared/            # IPC 类型、会话类型、配置类型
-├── tests/unit/            # Vitest 单元测试
+├── tests/unit/            # Vitest 单元测试（1000+ 用例）
 ├── scripts/               # 校验与辅助脚本
 ├── electron.vite.config.ts
 ├── CHANGELOG.md
