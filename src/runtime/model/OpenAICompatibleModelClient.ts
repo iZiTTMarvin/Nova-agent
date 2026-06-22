@@ -7,7 +7,7 @@ import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, ChatToo
 import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
-import { applyCacheMarkers, applyToolCacheMarker } from './messageFormat'
+import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
 import type { CacheStrategy } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
 
@@ -44,7 +44,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const selectedMessages = options?.includeInternalMessages
       ? messages
       : messages.filter(m => !m.internal)
-    const apiMessages = selectedMessages.map(m => this.toApiMessage(m, true))
+    // 发送前强制工具调用配对不变量：丢弃孤立 tool、剥离缺响应的 tool_calls。
+    // OpenAI 严格后端（DeepSeek 等）要求每个 tool 消息都有前置配对的 assistant.tool_calls，
+    // 否则报 400。共享历史可能因 abort 残留、压缩边界、跨 provider 切换产生孤立消息，
+    // 这里统一规整以覆盖所有来源。详见 sanitizeToolMessages 注释。
+    const pairedMessages = sanitizeToolMessages(selectedMessages)
+    const apiMessages = pairedMessages.map(m => this.toApiMessage(m, true))
     const markedMessages = applyCacheMarkers(apiMessages, this.cacheStrategy)
       .map(msg => this.stripInternalMarker(msg))
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { applyCacheMarkers, applyToolCacheMarker } from '../../../../src/runtime/model/messageFormat'
+import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from '../../../../src/runtime/model/messageFormat'
+import type { ChatMessage } from '../../../../src/runtime/model/types'
 
 describe('messageFormat 缓存标记适配器', () => {
   describe('applyCacheMarkers', () => {
@@ -121,6 +122,89 @@ describe('messageFormat 缓存标记适配器', () => {
 
     it('空工具数组返回空数组', () => {
       expect(applyToolCacheMarker([], 'anthropic')).toEqual([])
+    })
+  })
+
+  describe('sanitizeToolMessages 工具调用配对规整', () => {
+    it('丢弃孤立 tool 消息（前面没有声明它的 assistant.tool_calls）', () => {
+      // 复现 DeepSeek 400：role:'tool' 没有前置配对 → 必须被丢弃
+      const messages: ChatMessage[] = [
+        { role: 'user', content: 'hi' },
+        { role: 'tool', content: '孤立结果', toolCallId: 'orphan_1' },
+        { role: 'assistant', content: '回答' }
+      ]
+      const result = sanitizeToolMessages(messages)
+      expect(result).toEqual([
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: '回答' }
+      ])
+    })
+
+    it('保留完整配对的 assistant.tool_calls + tool 响应', () => {
+      const messages: ChatMessage[] = [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'ls', arguments: '{}' }] },
+        { role: 'tool', content: 'files', toolCallId: 'c1' },
+        { role: 'assistant', content: 'done' }
+      ]
+      const result = sanitizeToolMessages(messages)
+      expect(result).toEqual(messages)
+    })
+
+    it('剥离部分缺响应的 tool_calls，保留有响应的项', () => {
+      const messages: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            { id: 'c1', name: 'ls', arguments: '{}' },
+            { id: 'c2', name: 'read', arguments: '{}' }
+          ]
+        },
+        { role: 'tool', content: 'files', toolCallId: 'c1' }
+        // c2 无响应
+      ]
+      const result = sanitizeToolMessages(messages)
+      expect(result).toEqual([
+        { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'ls', arguments: '{}' }] },
+        { role: 'tool', content: 'files', toolCallId: 'c1' }
+      ])
+    })
+
+    it('assistant 全部 tool_calls 缺响应且正文为空时整条丢弃（典型：批次被取消）', () => {
+      const messages: ChatMessage[] = [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'ls', arguments: '{}' }] }
+      ]
+      const result = sanitizeToolMessages(messages)
+      expect(result).toEqual([{ role: 'user', content: 'q' }])
+    })
+
+    it('assistant 全部 tool_calls 缺响应但有正文时退化为普通文本消息', () => {
+      const messages: ChatMessage[] = [
+        { role: 'assistant', content: '我打算调用工具', toolCalls: [{ id: 'c1', name: 'ls', arguments: '{}' }] }
+      ]
+      const result = sanitizeToolMessages(messages)
+      expect(result).toEqual([{ role: 'assistant', content: '我打算调用工具' }])
+    })
+
+    it('tool 消息出现在声明它的 assistant 之前时视为孤立丢弃（顺序敏感）', () => {
+      const messages: ChatMessage[] = [
+        { role: 'tool', content: 'early', toolCallId: 'c1' },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'ls', arguments: '{}' }] }
+      ]
+      const result = sanitizeToolMessages(messages)
+      // 前置 tool 被丢弃；assistant 的 c1 因此变成缺响应、正文为空 → 整条丢弃
+      expect(result).toEqual([])
+    })
+
+    it('不修改原数组', () => {
+      const messages: ChatMessage[] = [
+        { role: 'tool', content: 'orphan', toolCallId: 'x' }
+      ]
+      const result = sanitizeToolMessages(messages)
+      expect(messages.length).toBe(1)
+      expect(result.length).toBe(0)
     })
   })
 })
