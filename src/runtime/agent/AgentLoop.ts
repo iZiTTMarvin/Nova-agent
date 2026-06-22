@@ -1,11 +1,7 @@
 /**
- * AgentLoop — 核心消息-模型-工具循环
- * 接收用户消息，组织上下文，调用模型，处理工具调用，通过 EventBus 向外发射流式事件
- *
- * S3 阶段：纯文本对话循环（消息 → 模型 → 响应）
- * S4 阶段：加入工具调度（tool_call → 执行 → 结果回模型 → 重复）
- * S6 阶段：加入 checkpoint 备份和 plan 模式写入拦截
- * S7 阶段：加入 PermissionManager 权限决策
+ * AgentLoop — 核心消息-模型-工具循环的门面类。
+ * 接收用户消息，组织上下文，调用模型，处理工具调用，通过 EventBus 向外发射流式事件。
+ * 纯循环驱动已下沉到 runAgentLoop，本类负责装配、收尾和上下文压缩。
  */
 import type { ModelClient } from '../model/ModelClient'
 import { ModelClientPool } from '../model/ModelClientPool'
@@ -70,10 +66,7 @@ class PermissionAbortedError extends Error {
 }
 
 export class AgentLoop implements IdleCompactionTarget {
-  /**
-   * PRD §5.4：modelClient 改为 ModelClientPool。
-   * 即便未配置 fallback，也包装成只含主模型的 pool，对外接口不变。
-   */
+  /** 模型客户端池，统一包装成 ModelClientPool（即使无 fallback 也包一层，对外接口不变） */
   private modelPool: ModelClientPool
   private eventBus: EventBus
   private config: AgentLoopConfig
@@ -83,14 +76,13 @@ export class AgentLoop implements IdleCompactionTarget {
   private abortController: AbortController | null = null
 
   /**
-   * 标准化状态容器（PRD §6.1）。
-   * Phase 1 状态收纳：下列"迁入 ctx"的字段通过访问器桥接到 this.ctx.*，
-   * 60+ 处使用点（this.context / this.workingDir 等）一行不动，对外逐字节等价。
-   * Facade 级态（state/cancelled/modelPool/eventBus/...）仍保留为实例字段。
+   * 标准化状态容器。
+   * 下列字段通过访问器桥接到 this.ctx.*，让旧使用点（this.context / this.workingDir 等）
+   * 一行不动。Facade 级态（state/cancelled/modelPool/eventBus/...）仍保留为实例字段。
    */
   private ctx: AgentContext = createAgentContext({ readState: createReadState() })
 
-  /** 对话上下文：累积所有消息用于下一次模型调用（→ ctx.messages） */
+  /** 对话上下文：累积所有消息用于下一次模型调用 */
   private get context(): ChatMessage[] {
     return this.ctx.messages
   }
@@ -98,7 +90,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.messages = value
   }
 
-  /** 工具注册表（→ ctx.toolRegistry） */
+  /** 工具注册表 */
   private get toolRegistry(): ToolRegistry | null {
     return this.ctx.toolRegistry
   }
@@ -106,7 +98,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.toolRegistry = value
   }
 
-  /** 工作区路径（传入后工具执行才有工作区边界）（→ ctx.workingDir） */
+  /** 工作区路径（传入后工具执行才有工作区边界） */
   private get workingDir(): string | null {
     return this.ctx.workingDir
   }
@@ -114,7 +106,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.workingDir = value
   }
 
-  /** bash 工具的自定义 shell 路径（可选）（→ ctx.shellPath） */
+  /** bash 工具的自定义 shell 路径（可选） */
   private get shellPath(): string | undefined {
     return this.ctx.shellPath
   }
@@ -122,7 +114,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.shellPath = value
   }
 
-  /** bash 工具的 PATH 注入目录（可选）（→ ctx.binDirs） */
+  /** bash 工具的 PATH 注入目录（可选） */
   private get binDirs(): string[] {
     return this.ctx.binDirs
   }
@@ -130,7 +122,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.binDirs = value
   }
 
-  /** 运行模式（plan / default / auto）（→ ctx.mode） */
+  /** 运行模式（plan / default / auto） */
   private get mode(): Mode {
     return this.ctx.mode
   }
@@ -138,9 +130,9 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.mode = value
   }
 
-  /** checkpoint 管理器（可选，S6 引入） */
+  /** checkpoint 管理器（可选） */
   private checkpointManager: CheckpointManager | null = null
-  /** 当前工具调用方言，由模型 ID 决定（→ ctx.dialect） */
+  /** 当前工具调用方言，由模型 ID 决定 */
   private get toolDialect(): ToolDialect {
     return this.ctx.dialect
   }
@@ -148,10 +140,10 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.dialect = value
   }
 
-  /** 权限决策引擎（可选，S7 引入） */
+  /** 权限决策引擎（可选） */
   private permissionManager: PermissionManager | null = null
 
-  /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具）（→ ctx.sessionStore） */
+  /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具） */
   private get sessionStore(): SessionStore | null {
     return this.ctx.sessionStore
   }
@@ -159,7 +151,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.sessionStore = value
   }
 
-  /** 当前会话 ID，与 sessionStore 配套（→ ctx.sessionId） */
+  /** 当前会话 ID，与 sessionStore 配套 */
   private get sessionId(): string | null {
     return this.ctx.sessionId
   }
@@ -167,7 +159,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.sessionId = value
   }
 
-  /** 会话级 artifact 存储（大输出落盘，透传给工具执行层）（→ ctx.artifactStore） */
+  /** 会话级 artifact 存储（大输出落盘，透传给工具执行层） */
   private get artifactStore(): ArtifactStore | null {
     return this.ctx.artifactStore
   }
@@ -175,7 +167,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.artifactStore = value
   }
 
-  /** 技能正文层独立 token 估算，作为'技能'分项桶的预算（→ ctx.skillsTokenBudget） */
+  /** 技能正文层独立 token 估算，作为'技能'分项桶的预算 */
   private get skillsTokenBudget(): number {
     return this.ctx.skillsTokenBudget
   }
@@ -200,21 +192,21 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 是否正在执行溢出压缩（用于守卫正常压缩逻辑） */
   private compressingForOverflow = false
-  /** 缓存上次估算的 token 数，用于判断守卫（→ ctx.lastEstimatedTokens） */
+  /** 缓存上次估算的 token 数，用于判断守卫 */
   private get lastEstimatedTokens(): number {
     return this.ctx.lastEstimatedTokens
   }
   private set lastEstimatedTokens(value: number) {
     this.ctx.lastEstimatedTokens = value
   }
-  /** 距上次压缩后的 user 消息回合数（软触发冷却）（→ ctx.userTurnsSinceCompaction） */
+  /** 距上次压缩后的 user 消息回合数（软触发冷却） */
   private get userTurnsSinceCompaction(): number {
     return this.ctx.userTurnsSinceCompaction
   }
   private set userTurnsSinceCompaction(value: number) {
     this.ctx.userTurnsSinceCompaction = value
   }
-  /** 压缩层级计数（→ ctx.compactionLevel） */
+  /** 压缩层级计数 */
   private get compactionLevel(): number {
     return this.ctx.compactionLevel
   }
@@ -229,9 +221,9 @@ export class AgentLoop implements IdleCompactionTarget {
   private hookManager: HookManager
 
   /**
-   * StreamProcessor（PRD §6.3）：流消费 / 事件发射 / 方言策略 / 三层兜底解析 /
+   * StreamProcessor：流消费 / 事件发射 / 方言策略 / 三层兜底解析 /
    * 重试 / 降级 / 溢出压缩全部下沉至此。惰性创建以复用当前 modelPool / recovery /
-   * cacheDiagnostics / hookManager / eventBus（Phase 2 抽离）。
+   * cacheDiagnostics / hookManager / eventBus。
    */
   private streamProcessor: StreamProcessor | null = null
   private getStreamProcessor(): StreamProcessor {
@@ -250,15 +242,15 @@ export class AgentLoop implements IdleCompactionTarget {
   }
 
   /**
-   * StopPolicyExtension（PRD §6.2 shouldStopAfterTurn）：熔断计数 + maxRounds 提示。
-   * 实例态持有熔断计数 Map，每条用户消息开始时 clear()（Phase 3 抽离）。
+   * StopPolicyExtension：熔断计数 + maxRounds 提示。
+   * 实例态持有熔断计数 Map，每条用户消息开始时 clear()。
    */
   private readonly stopPolicy = new StopPolicyExtension()
 
   /** 错误恢复状态机 */
   private recovery = new RecoveryStateMachine()
 
-  /** 冻结的 system prompt（6 层拼装结果）（→ ctx.systemPrompt） */
+  /** 冻结的 system prompt（6 层拼装结果） */
   private get frozenSystemPrompt(): string {
     return this.ctx.systemPrompt
   }
@@ -277,7 +269,6 @@ export class AgentLoop implements IdleCompactionTarget {
    * 文件读取状态：记录"已 read 过哪些文件"，edit/write 工具的"先读后改"校验依赖此。
    * 默认实例化一个独立的 readState；agentHandler 注入主 readState（跨 SEND_MESSAGE 复用），
    * sub agent 在 taskTool / runSkillFork 中 clone 主 readState 隔离。
-   * （→ ctx.readState）
    */
   private get readState(): ReadState {
     return this.ctx.readState
@@ -291,8 +282,8 @@ export class AgentLoop implements IdleCompactionTarget {
     eventBus: EventBus,
     config?: AgentLoopConfig
   ) {
-    // PRD §5.4：统一包装成 ModelClientPool（单个 ModelClient 时无 fallback）
-    // 从 client 自身的 config 读取 modelId/baseUrl 用于 dialect 判定（OpenAICompatibleModelClient 有 config 属性）
+    // 统一包装成 ModelClientPool（单个 ModelClient 时无 fallback）
+    // 从 client 自身的 config 读取 modelId/baseUrl 用于 dialect 判定
     const clientConfig = (modelClient as { config?: { modelId?: string; baseUrl?: string } }).config
     this.modelPool = modelClient instanceof ModelClientPool
       ? modelClient
@@ -576,11 +567,10 @@ export class AgentLoop implements IdleCompactionTarget {
     this.cancelled = false
     this.abortController = new AbortController()
     this.stopPolicy.clear()
-    // 重试/降级/溢出压缩的单轮态已下沉到 StreamProcessor（PRD §6.3），
-    // 每条新消息开始时重置（等价现状 modelErrorAttempt=0 / contextOverflowRetryAttempted=false）。
-    // retry 重跑本轮时不重置——重试计数跨 retry 累积，由 Processor 自持。
+    // 重试/降级/溢出压缩的单轮态由 StreamProcessor 自持，每条新消息开始时重置。
+    // retry 重跑本轮时不重置——重试计数跨 retry 累积。
     this.getStreamProcessor().resetRetryState()
-    // PRD §5.4.5：每条新消息开始时重置回主模型（降级不影响下一轮）
+    // 每条新消息开始时重置回主模型（降级不影响下一轮）
     this.modelPool.resetToPrimary()
 
     // 空闲压缩：新消息到达时取消任何正在运行的压缩
@@ -643,7 +633,7 @@ export class AgentLoop implements IdleCompactionTarget {
           this.state = 'error'
           this.checkpointManager?.endMessage()
           this.eventBus.emit({ type: 'message_end', messageId })
-          // S1：error 状态取消 idleTimer，避免 266s 后台压缩污染损坏 context
+          // error 状态取消 idleTimer，避免后台压缩污染损坏 context
           this.idleTimer?.cancel()
           this.idleTimer = null
           return
@@ -693,10 +683,9 @@ export class AgentLoop implements IdleCompactionTarget {
     this.context = ageToolResults(this.context)
     this.lastEstimatedTokens = estimateContextTokens(this.context)
 
-    // ── 主循环下沉到 runAgentLoop（PRD §6.4 / §8 Phase 3）──
-    // 纯循环驱动：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
+    // 主循环下沉到 runAgentLoop：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
     // Facade 负责：装配 config（注入 extension）、构建 executeBatch（注入权限/截断 extension）、
-    // 收尾（终态错误 S1 / cancelled → finishMessageRound）。
+    // 收尾（终态错误 / cancelled → finishMessageRound）。
     const executeBatch = (toolCalls: ChatToolCall[], mid: string) =>
       executeToolBatch({
         toolCalls,
@@ -753,7 +742,7 @@ export class AgentLoop implements IdleCompactionTarget {
       recordBaseline: (sysPrompt, tools) => this.cacheDiagnostics.recordBaseline(sysPrompt, tools),
       sleep: (ms: number) => this.sleep(ms),
       onTerminalError: (error) => {
-        // S1：终态错误 emit error + state=error + 取消 idleTimer，不经 finishMessageRound 直接 return。
+        // 终态错误：emit error + state=error + 取消 idleTimer，不经 finishMessageRound 直接 return。
         this.eventBus.emit({ type: 'error', messageId, error })
         this.state = 'error'
         this.idleTimer?.cancel()
@@ -762,14 +751,14 @@ export class AgentLoop implements IdleCompactionTarget {
     })
 
     if (endResult.ended === 'error') {
-      // 终态错误：onTerminalError 已完成 emit/state/idleTimer 收尾，直接 return（不经 finishMessageRound）。
-      // S1：错误意味着本轮已损坏，266s 后触发压缩只会把损坏内容发给模型烧 token。
+      // 终态错误：onTerminalError 已完成 emit/state/idleTimer 收尾，直接 return。
+      // 错误意味着本轮已损坏，后台压缩只会把损坏内容发给模型烧 token。
       // 用户回来时应主动 sendMessage 触发新一轮，而不是后台悄悄压缩。
       return
     }
 
     // ended === 'normal'：cancelled 标志由 runAgentLoop 在 StreamProcessor cancelled /
-    // executeBatch abort 时通过 endResult.cancelled=true 透传（对标现状 break + finishMessageRound）。
+    // executeBatch abort 时通过 endResult.cancelled=true 透传。
     if (endResult.cancelled) {
       this.cancelled = true
     }
@@ -800,7 +789,7 @@ export class AgentLoop implements IdleCompactionTarget {
       ...(this.cancelled ? { interrupted: true } : {})
     })
 
-    // S1：cancel 状态下不启动 idleTimer。
+    // cancel 状态下不启动 idleTimer。
     // 用户主动取消通常意味着模型走偏，启动后台压缩既浪费 token 又可能在用户
     // 不知情时改写 context（再次进入会话发现历史已被压缩）。让用户主动发起下一条消息。
     if (!this.cancelled) {
@@ -816,7 +805,7 @@ export class AgentLoop implements IdleCompactionTarget {
    *
    * @param abortSignal 可选的 abort 信号：传入时会在替换 context 前检查，
    *   abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息能保留，
-   *   避免之前 prevContext 回滚方案误删用户新消息的 bug（C4+）。
+   *   避免回滚方案误删用户新消息。
    */
   private async runCompaction(
     abortSignal?: AbortSignal,
@@ -863,7 +852,7 @@ export class AgentLoop implements IdleCompactionTarget {
     if (!summary.trim()) return
 
     // 关键：替换 context 前检查 abort，防止压缩期间用户 sendMessage 推入的新消息被覆盖。
-    // runIdleCompaction 会传 abortSignal，主循环（line 436）的 runCompaction 不传。
+    // runIdleCompaction 会传 abortSignal，主循环的 runCompaction 不传。
     if (abortSignal?.aborted) return
 
     // 重建上下文
@@ -960,8 +949,8 @@ export class AgentLoop implements IdleCompactionTarget {
    * 且 subLoop 对象图无法被 GC）。
    *
    * 调用场景：
-   * - taskTool / runSkillFork 的子 agent 执行完后释放（C3）
-   * - agentHandler 创建新 AgentLoop 前 dispose 旧的（I3）
+   * - taskTool / runSkillFork 的子 agent 执行完后释放
+   * - agentHandler 创建新 AgentLoop 前 dispose 旧的
    */
   dispose(): void {
     // 即使 state 不是 running 也要清理 idleTimer：sendMessage 完成后 state===idle，
@@ -1106,7 +1095,7 @@ export class AgentLoop implements IdleCompactionTarget {
       const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
 
       if (oldMessages.length === 0) {
-        // [修复] 当 oldMessages 为空早退时，将刚才弹出的 pulledBackMessages 推回，避免消息丢失
+        // oldMessages 为空早退时，将刚才弹出的 pulledBackMessages 推回，避免消息丢失
         pulledBackMessages.forEach(m => this.context.push(m))
         return false
       }
@@ -1196,16 +1185,13 @@ export class AgentLoop implements IdleCompactionTarget {
   }
 
   /**
-   * 获取本轮 user 消息应拼接的 session context 前缀文本（合并方案）。
+   * 获取本轮 user 消息应拼接的 session context 前缀文本。
    *
-   * 重注条件（v4 收口）：扫描当前 context，判断是否仍存在"与当前工作区/模型/日期完全一致"
-   * 的 session context 前缀。只要有一条 user 消息仍保留这段前缀，就认为锚点仍在，
-   * 无须重注。这统一处理了所有生命周期场景：
+   * 扫描当前 context，判断是否仍存在"与当前工作区/模型/日期完全一致"的 session context 前缀。
+   * 只要有一条 user 消息仍保留这段前缀，就认为锚点仍在，无须重注。这统一处理所有生命周期场景：
    * - 同日首轮：context 中无锚点 → 注入
    * - 同日后续轮：锚点仍在 context 中 → 跳过
-   * - 跨天：旧锚点日期 ≠ today → 重注
-   * - reset() 后：context 被清空 → 无锚点 → 重注
-   * - 压缩后：带前缀的旧消息被摘要吃掉 → 锚点消失 → 重注
+   * - 跨天 / reset() 后 / 压缩后 / setWorkingDir 后：旧锚点失效 → 重注
    *
    * @returns session context 文本，或 null（锚点仍在，跳过）
    */
@@ -1231,13 +1217,6 @@ export class AgentLoop implements IdleCompactionTarget {
    * - 仅扫描 user 消息，避免 assistant/tool 回显文本误命中
    * - 仅看消息开头的 session context 前缀段，避免正文里碰巧出现同样字符串
    * - 与本轮应生成的完整前缀做逐字节相等比较，避免 workingDir 前缀子串误判
-   *
-   * 这比单纯记日期更健壮，统一处理所有生命周期场景：
-   * - 同日后续轮：锚点仍在 context 中且完全匹配 → 跳过
-   * - 跨天：旧锚点日期 ≠ today → 重注
-   * - reset() 后：context 被清空 → 无锚点 → 重注
-   * - 压缩后：带前缀的旧消息被摘要吃掉 → 锚点消失 → 重注
-   * - setWorkingDir 后：旧锚点路径 ≠ 新 workingDir → 重注
    */
   private contextHasValidAnchor(expectedPrefix: string): boolean {
     return this.context.some(m => {
@@ -1277,7 +1256,7 @@ export class AgentLoop implements IdleCompactionTarget {
    *
    * abort 时不回滚 context：依赖 runCompaction 在替换 context 前检查 abortSignal，
    * abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息自然保留，
-   * 避免之前 prevContext 回滚方案把并发推入的新消息一并回滚掉的 bug（C4+）。
+   * 避免回滚方案把并发推入的新消息一并回滚掉。
    *
    * 独立 AbortController 通过 signal 转发与 timer 的 abort 联动，
    * 不与主循环的 abortController 混用，避免 cancel 时误杀正常 LLM 调用。
