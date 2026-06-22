@@ -32,6 +32,21 @@ import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 
+/** 将 toolCall.arguments 字符串解析为对象，供空参护栏统计 */
+function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown> {
+  const trimmed = (argumentsValue ?? '').trim()
+  if (!trimmed || trimmed === '{}') return {}
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // 非法 JSON 视为空参
+  }
+  return {}
+}
+
 /**
  * runAgentLoop 入参（PRD §6.4 RunAgentLoopParams）。
  * Facade 装配后传入。executeBatch 由 Facade 构建 options（注入
@@ -134,7 +149,9 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       })
       chatMessages = preChatHook?.messages ?? chatMessages
 
-      // XML 方言不传 native tools（轻量模型 function calling 能力不足，会返空 arguments 死循环）
+      // native 为默认主路径：向 API 下发 tools，由服务端解析各家原生格式（DSML 等）。
+      // xml 为兜底路径（用户 override 或 ollama 等本地推理）：不传 tools，
+      // 改由 XmlToolScanner 从正文扫描 <invoke>。防空转由 StopPolicyExtension 空参护栏兜底。
       const nativeTools = context.dialect === 'xml' ? undefined : tools
 
       // ── StreamProcessor.run：流消费 + 事件 + 解析 + 重试/降级/溢出（对标现状 L767-775）──
@@ -193,6 +210,12 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         assistantMsg.content = stripTextToolCalls(assistantContent)
       }
 
+      // 解析 repair 后的参数，供停止策略的空参护栏统计
+      const toolCallsThisRound = toolCalls.map(tc => ({
+        name: tc.name,
+        args: parseToolCallArgsRecord(tc.arguments)
+      }))
+
       // ── 执行工具批次（Facade 构建 options，注入权限/截断 extension；对标现状 L831-856）──
       toolRound++
       const batchResult = await p.executeBatch(toolCalls, messageId)
@@ -224,11 +247,13 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           messageId,
           toolRound,
           maxToolRounds: config.maxToolRounds,
+          toolCallsThisRound,
           outcomes: batchResult.outcomes.map(o => ({
             toolCall: { id: o.toolCall.id, name: o.toolCall.name },
             args: o.args,
             resultText: o.resultText,
-            failed: o.failed
+            failed: o.failed,
+            skippedByAbort: o.skippedByAbort
           }))
         })
         if (stopDecision?.stop) {

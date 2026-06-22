@@ -8,6 +8,7 @@
  *
  * 也支持被 MiniMax 特殊 token 污染的文本，例如：
  *   ]<minimax>[<invoke name="bash">...</invoke>]</minimax>[
+ *   <minimax:tool_call><invoke name="bash">...</invoke></minimax:tool_call>
  * 扫描器会把这些占位符去掉后再解析。
  *
  * --- 增量状态机 ---
@@ -73,8 +74,8 @@ export interface ScannedToolCall {
 
 // ==================== 常量与工具函数 ====================
 
-/** MiniMax 等模型会在 XML 调用外层插入的占位符 token */
-const MINIMAX_ARTIFACTS = /\]?<minimax>\[?|\]?<\/minimax>\[?/g
+/** MiniMax 等模型会在 XML 调用外层插入的占位符 token（含 <minimax:tool_call> 命名空间变体） */
+const MINIMAX_ARTIFACTS = /\]?<\/?minimax(?::[a-zA-Z_]+)?>\[?/g
 
 /** 清理文本中的 MiniMax 占位符，避免它们破坏 XML 解析。 */
 export function stripMinimaxArtifacts(text: string): string {

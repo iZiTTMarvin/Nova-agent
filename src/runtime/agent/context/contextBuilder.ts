@@ -12,6 +12,23 @@
 import type { ChatMessage, ContentBlock } from '../../model/types'
 import type { SessionData } from '../../sessions/types'
 import type { Mode } from '../../../shared/session/types'
+import { stripLeakedToolMarkup } from '../../../shared/tool-call-text-fallback'
+
+/** 清洗 assistant 正文中泄漏的模型原生工具标记（如 DeepSeek DSML） */
+function sanitizeAssistantContent(content: string | ContentBlock[]): string | ContentBlock[] {
+  if (typeof content === 'string') {
+    return stripLeakedToolMarkup(content)
+  }
+  if (Array.isArray(content)) {
+    return content.map(block => {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        return { ...block, text: stripLeakedToolMarkup(block.text) }
+      }
+      return block
+    })
+  }
+  return content
+}
 
 /**
  * 从会话数据构建模型对话上下文（不含 system prompt）
@@ -37,7 +54,7 @@ export function buildConversationContext(
     if (msg.role === 'assistant') {
       const assistantMsg: ChatMessage = {
         role: 'assistant',
-        content: msg.content
+        content: sanitizeAssistantContent(msg.content as string | ContentBlock[])
       }
 
       if (msg.toolCalls && msg.toolCalls.length > 0) {

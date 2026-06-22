@@ -20,7 +20,7 @@ const CONFIG_RELATIVE_PATH = path.join('settings', 'model.json')
 
 /** 校验错误：字段名 → 错误信息 */
 export interface ConfigValidationError {
-  field: 'baseUrl' | 'apiKey' | 'modelId'
+  field: 'baseUrl' | 'apiKey' | 'modelId' | 'toolDialect'
   message: string
 }
 
@@ -28,6 +28,8 @@ export interface ConfigValidationError {
 export type ConfigValidationResult =
   | { valid: true; config: ModelConfig }
   | { valid: false; errors: ConfigValidationError[] }
+
+const VALID_TOOL_DIALECTS = new Set(['auto', 'native', 'xml'])
 
 /**
  * 校验模型配置的各个字段
@@ -71,9 +73,23 @@ export function validateModelConfig(config: Partial<ModelConfig> | null | undefi
     errors.push({ field: 'modelId', message: '模型标识 (Model ID) 不能为空' })
   }
 
+  // toolDialect 校验（可选字段）
+  if (
+    config.toolDialect !== undefined &&
+    config.toolDialect !== 'auto' &&
+    !VALID_TOOL_DIALECTS.has(config.toolDialect)
+  ) {
+    errors.push({
+      field: 'toolDialect',
+      message: "工具调用方式必须是 'auto'、'native' 或 'xml'"
+    })
+  }
+
   if (errors.length > 0) {
     return { valid: false, errors }
   }
+
+  const toolDialect = normalizeToolDialect(config.toolDialect)
 
   return {
     valid: true,
@@ -81,10 +97,22 @@ export function validateModelConfig(config: Partial<ModelConfig> | null | undefi
       baseUrl,
       apiKey,
       modelId,
-      cacheStrategy: config.cacheStrategy,
-      contextWindow: config.contextWindow
+      ...(config.cacheStrategy ? { cacheStrategy: config.cacheStrategy } : {}),
+      ...(config.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {}),
+      ...(config.supportsVision !== undefined ? { supportsVision: config.supportsVision } : {}),
+      ...(config.fallbacks && config.fallbacks.length > 0 ? { fallbacks: config.fallbacks } : {}),
+      ...(toolDialect ? { toolDialect } : {})
     }
   }
+}
+
+/** 校验并规范化 toolDialect；非法值忽略，'auto' 视为未设置 */
+function normalizeToolDialect(
+  value: ModelConfig['toolDialect'] | undefined
+): ModelConfig['toolDialect'] | undefined {
+  if (!value || value === 'auto') return undefined
+  if (VALID_TOOL_DIALECTS.has(value)) return value
+  return undefined
 }
 
 /**

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-06-23
+
+- **fix(agent)**: 工具调用方言改为 native 优先，根治 DeepSeek V4 DSML 泄漏与跨 provider 工具消息 400
+  - 根因：旧策略对官方 OpenAI 兼容端点强制 inband XML，且只有一个通用 `<invoke>` 扫描器。DeepSeek-V4 输出原生 DSML（`<｜DSML｜invoke…>`），扫描器认不出 → 工具调用泄漏成正文、不执行。本质是层级错配：官方 `/chat/completions` 本就支持服务端函数调用，不该自己做 inband
+  - `dialect.ts` 反转默认：native 优先，`XML_FORCED_FAMILIES` 收敛到仅 `ollama`；DeepSeek/Kimi/GLM/Qwen/MiniMax 官方端点统一走 native，由服务端解析各家格式（DSML 等）为结构化 `tool_calls`
+  - 新增 `ModelConfig.toolDialect`（auto/native/xml）用户覆盖 + 设置 UI「工具调用方式」下拉，应对中转/本地端点
+  - 空参护栏（`StopPolicyExtension`，`EMPTY_ARGS_LIMIT=2`）：连续多轮空参即中断并引导切 XML，替代旧的"全局退回 xml 防空转"
+  - `sanitizeToolMessages`（发送前规整）：丢弃孤立 tool 消息、剥离无响应的 tool_calls，修复 Ollama→DeepSeek 切换后 `role 'tool' must be a response to...` 400
+  - MiniMax 一致化：移出强制 xml 改走 native；inband 兜底加固 `MINIMAX_ARTIFACTS` 正则以识别 `<minimax:tool_call>` 命名空间外层，override 成 xml 时也不泄漏
+  - 历史会话清洗：`stripLeakedToolMarkup` 在 `contextBuilder` 恢复 assistant 正文时剥离已泄漏的 DSML 残留，不破坏普通 `<`/`>` 代码
+  - 测试：dialect / stopPolicy / contextBuilder / xmlToolScanner / toolFilter / serialization 同步更新，全量 1309 用例通过
+  - 详见 `docs/工具调用方言根治方案-native优先.md`、`docs/DeepSeek-V4-DSML工具调用泄漏修复方案.md`
+
 ## 2026-06-20
 
 - **Agent**: 最大工具调用轮数可配置，达到上限不再静默中断

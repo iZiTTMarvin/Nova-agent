@@ -155,10 +155,12 @@ describe('序列化层：session context 与 internal 消息', () => {
       expect('internal' in capturedBody!.messages[1]).toBe(false)
     })
 
-    it('toApiMessage 白名单构造：普通消息只保留已知字段', async () => {
+    it('未配对的 assistant.tool_calls 经 sanitize 后剥离，API 只保留正文', async () => {
       const client = new OpenAICompatibleModelClient(config)
       installFetchCapture()
 
+      // 典型场景：工具批次 abort 残留——assistant 声明了 tool_calls 但无对应 tool 响应。
+      // sanitizeToolMessages 会剥离未配对项，避免 DeepSeek 等严格后端 400。
       await drain(client, [
         {
           role: 'assistant',
@@ -170,10 +172,36 @@ describe('序列化层：session context 与 internal 消息', () => {
       const sent = capturedBody!.messages[0]
       expect(sent.role).toBe('assistant')
       expect(sent.content).toBe('带工具调用')
+      expect(sent.tool_calls).toBeUndefined()
+      expect(Object.keys(sent).sort()).toEqual(['content', 'role'])
+    })
+
+    it('配对的 assistant.tool_calls + tool 响应经序列化后保留 tool_calls', async () => {
+      const client = new OpenAICompatibleModelClient(config)
+      installFetchCapture()
+
+      await drain(client, [
+        {
+          role: 'assistant',
+          content: '带工具调用',
+          toolCalls: [{ id: 'tc1', name: 'ls', arguments: '{}' }]
+        },
+        { role: 'tool', content: 'file1.ts', toolCallId: 'tc1' }
+      ])
+
+      const sent = capturedBody!.messages[0]
+      expect(sent.role).toBe('assistant')
+      expect(sent.content).toBe('带工具调用')
       expect(sent.tool_calls).toEqual([
         { id: 'tc1', type: 'function', function: { name: 'ls', arguments: '{}' } }
       ])
       expect(Object.keys(sent).sort()).toEqual(['content', 'role', 'tool_calls'])
+      // 配对的 tool 消息也应出现在 API 请求体中
+      expect(capturedBody!.messages[1]).toMatchObject({
+        role: 'tool',
+        content: 'file1.ts',
+        tool_call_id: 'tc1'
+      })
     })
 
     it('混合场景：session context（真实消息）保留 + internal 压缩指令被剥离', async () => {

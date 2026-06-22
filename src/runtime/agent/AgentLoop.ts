@@ -296,8 +296,14 @@ export class AgentLoop implements IdleCompactionTarget {
         }
       })
     // 根据当前主模型决定工具调用方言
+    // TODO: fallback 切换跨方言时需重算 dialect（ModelClientPool.switchToFallback 不改 toolDialect）
     const primaryProvider = this.modelPool.getActiveProvider()
-    this.toolDialect = preferredToolDialect(primaryProvider.modelId, primaryProvider.baseUrl)
+    const dialectOverride = config?.toolDialectOverride ?? primaryProvider.toolDialect
+    this.toolDialect = preferredToolDialect(
+      primaryProvider.modelId,
+      primaryProvider.baseUrl,
+      dialectOverride
+    )
     this.eventBus = eventBus
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',

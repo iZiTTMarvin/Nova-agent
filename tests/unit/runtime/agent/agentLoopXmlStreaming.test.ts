@@ -14,15 +14,27 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 
-/** 构造 AgentLoop，通过 modelId 控制 dialect（xml / native） */
-function createLoop(opts: { modelId: string; client: MockModelClient }) {
-  const { modelId, client } = opts
+/** 构造 AgentLoop；通过 modelId + dialect 覆盖控制方言（xml / native） */
+function createLoop(opts: {
+  modelId: string
+  client: MockModelClient
+  /** 显式指定方言，用于测试 XML 兜底路径（与 modelId 解耦） */
+  dialect?: 'xml' | 'native'
+}) {
+  const { modelId, client, dialect } = opts
   const pool = new ModelClientPool({
     primary: client,
-    primaryConfig: { baseUrl: '', apiKey: '', modelId }
+    primaryConfig: {
+      baseUrl: '',
+      apiKey: '',
+      modelId,
+      ...(dialect ? { toolDialect: dialect } : {})
+    }
   })
   const eventBus = new EventBus()
-  const loop = new AgentLoop(pool, eventBus)
+  const loop = new AgentLoop(pool, eventBus, {
+    ...(dialect ? { toolDialectOverride: dialect } : {})
+  })
 
   // 注册 ls / write / read 三个工具，覆盖流式预览场景
   const registry = new ToolRegistry()
@@ -96,7 +108,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '列出文件')
 
     const toolCallStarts = events.filter(e => e.type === 'tool_call_start')
@@ -138,7 +150,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'glm-4', client })
+    const { loop, eventBus } = createLoop({ modelId: 'glm-4', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '写文件')
 
     const toolCallDeltas = events.filter(e => e.type === 'tool_call_delta')
@@ -177,7 +189,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'qwen-max', client })
+    const { loop, eventBus } = createLoop({ modelId: 'qwen-max', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '写文件')
 
     const toolCallDeltas = events.filter(e => e.type === 'tool_call_delta')
@@ -210,7 +222,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'kimi', client })
+    const { loop, eventBus } = createLoop({ modelId: 'kimi', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '写文件')
 
     const textDeltas = events.filter(e => e.type === 'text_delta')
@@ -243,7 +255,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'minimax-m3', client })
+    const { loop, eventBus } = createLoop({ modelId: 'minimax-m3', client, dialect: 'xml' })
     await runAndCollect(loop, eventBus, '列出文件')
 
     const context = loop.getContext()
@@ -285,7 +297,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-v4', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-v4', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '查看项目')
 
     const toolCallStarts = events.filter(e => e.type === 'tool_call_start')
@@ -326,7 +338,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     await runAndCollect(loop, eventBus, '列出文件')
 
     // 工具被实际执行（驱动了第二轮模型调用），说明 finishReason='tool_calls'
@@ -343,7 +355,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       ]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '你好')
 
     expect(events.some(e => e.type === 'tool_call_start')).toBe(false)
@@ -397,7 +409,8 @@ describe('AgentLoop XML 流式工具调用', () => {
 
     const { loop: xmlLoop, eventBus: xmlBus } = createLoop({
       modelId: 'deepseek-chat',
-      client: xmlClient
+      client: xmlClient,
+      dialect: 'xml'
     })
     const xmlEvents = await runAndCollect(xmlLoop, xmlBus, '列出文件')
 
@@ -454,7 +467,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '列出文件')
 
     // scanner 已识别，兜底不应重复 emit —— 只应有 1 个 tool_call_start / tool_call
@@ -484,7 +497,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '写文件')
 
     const toolCallDeltas = events.filter(e => e.type === 'tool_call_delta')
@@ -525,7 +538,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '写文件')
 
     // 1. tool_call 事件携带的 args（scanner 权威值）应正确
@@ -568,7 +581,7 @@ describe('AgentLoop XML 流式工具调用', () => {
       events: [{ type: 'message_start' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     const events = await runAndCollect(loop, eventBus, '写文件')
 
     const toolCallDeltas = events.filter(e => e.type === 'tool_call_delta')

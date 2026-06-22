@@ -52,13 +52,19 @@ export interface ShouldStopArgs {
     args: Record<string, unknown>
     resultText: string
     failed?: boolean
+    skippedByAbort?: boolean
+  }>
+  /** 本轮工具调用（repairEmptyArgsFromContent 之后），供空参护栏判定 */
+  toolCallsThisRound?: Array<{
+    name: string
+    args: Record<string, unknown>
   }>
 }
 
 /** shouldStopAfterTurn 返回：停止原因 + 提示文案（文案由调用方 emit） */
 export interface StopDecision {
   stop: true
-  reason: 'breaker' | 'max_rounds'
+  reason: 'breaker' | 'max_rounds' | 'empty_args'
   notice: string
 }
 

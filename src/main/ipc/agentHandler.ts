@@ -251,8 +251,16 @@ export function registerAgentHandler(
     const modelPool = buildModelPoolWithFallbacks(modelClient)
     const activeProvider = modelPool instanceof ModelClientPool
       ? modelPool.getActiveProvider()
-      : { modelId: persistedConfig?.modelId ?? '', baseUrl: persistedConfig?.baseUrl ?? '' }
-    const toolDialect = preferredToolDialect(activeProvider.modelId, activeProvider.baseUrl)
+      : {
+        modelId: persistedConfig?.modelId ?? '',
+        baseUrl: persistedConfig?.baseUrl ?? '',
+        toolDialect: persistedConfig?.toolDialect
+      }
+    const toolDialect = preferredToolDialect(
+      activeProvider.modelId,
+      activeProvider.baseUrl,
+      persistedConfig?.toolDialect ?? activeProvider.toolDialect
+    )
     const toolSummary = renderToolInventory(toolRegistry.getToolDefinitions(), { dialect: toolDialect })
 
     // system prompt 角色层使用新的 buildStableSystemPrompt，它内部会根据方言
@@ -288,6 +296,7 @@ export function registerAgentHandler(
       contextWindow,
       supportsVision,
       maxToolRounds: novaSettings.maxToolRounds,
+      toolDialectOverride: persistedConfig?.toolDialect,
       onCompaction: (compactedContext, meta) => {
         if (!persistCompactionSnapshot(sessionStore, capturedSessionId, compactedContext, meta)) {
           console.error(`[onCompaction] 找不到会话 ${capturedSessionId}，快照未写`)

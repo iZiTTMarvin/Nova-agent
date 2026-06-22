@@ -4,7 +4,8 @@ import {
   parseTextToolCall,
   parseTextToolCalls,
   stripTextToolCall,
-  stripTextToolCalls
+  stripTextToolCalls,
+  stripLeakedToolMarkup
 } from '../../../src/shared/tool-call-text-fallback'
 
 describe('tool-call-text-fallback', () => {
@@ -105,5 +106,21 @@ describe('tool-call-text-fallback', () => {
   it('stripTextToolCall 兼容旧 API 移除所有行内伪调用', () => {
     const raw = '先查看一下。{ "name": "ls", "arguments": { "path": "." } }'
     expect(stripTextToolCall(raw)).toBe('先查看一下。')
+  })
+
+  it('stripLeakedToolMarkup 剥离 DeepSeek DSML 标记', () => {
+    const FULLWIDTH_PIPE = '\uFF5C'
+    const raw =
+      `说明文字` +
+      `<${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}invoke name="grep">` +
+      `<${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}parameter name="pattern">x` +
+      `</${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}parameter>` +
+      `</${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}invoke>`
+    expect(stripLeakedToolMarkup(raw)).toBe('说明文字')
+  })
+
+  it('stripLeakedToolMarkup 不破坏普通比较表达式', () => {
+    const code = 'while (a < b && c > d) {}'
+    expect(stripLeakedToolMarkup(code)).toBe(code)
   })
 })

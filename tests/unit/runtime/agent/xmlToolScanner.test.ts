@@ -416,6 +416,26 @@ describe('XmlToolScanner — 增量流式扫描', () => {
     })
   })
 
+  it('MiniMax <minimax:tool_call> 命名空间外层在流式扫描中被清理', () => {
+    const scanner = new XmlToolScanner()
+    const events = scanner.feed(
+      '让我执行。<minimax:tool_call><invoke name="bash"><parameter name="command">dir</parameter></invoke></minimax:tool_call>'
+    )
+
+    const textEvents = events.filter(e => e.type === 'text')
+    const joinedText = textEvents.map(e => (e as Extract<XmlScanEvent, { type: 'text' }>).text).join('')
+    expect(joinedText).not.toContain('minimax')
+    expect(joinedText).not.toContain('tool_call')
+    expect(joinedText).toContain('让我执行。')
+
+    const toolEnd = events.find(e => e.type === 'toolEnd')
+    expect(toolEnd).toMatchObject({
+      type: 'toolEnd',
+      name: 'bash',
+      arguments: { command: 'dir' }
+    })
+  })
+
   // ==================== 正文与工具调用混合 ====================
 
   it('正文-工具-正文 交替', () => {
@@ -756,6 +776,18 @@ describe('parseXmlToolCalls — 全量解析（兜底，行为不变）', () => 
     expect(cleaned).toBe('让我执行。<invoke name="bash"><parameter name="command">dir</parameter></invoke>')
     const parsed = parseXmlToolCalls(cleaned)
     expect(parsed.toolCalls).toEqual([{ name: 'bash', arguments: { command: 'dir' } }])
+  })
+
+  it('清理 <minimax:tool_call> 命名空间外层后解析', () => {
+    const text =
+      '让我执行。<minimax:tool_call><invoke name="bash"><parameter name="command">dir</parameter></invoke></minimax:tool_call>'
+    const cleaned = stripMinimaxArtifacts(text)
+    expect(cleaned).toBe(
+      '让我执行。<invoke name="bash"><parameter name="command">dir</parameter></invoke>'
+    )
+    const parsed = parseXmlToolCalls(cleaned)
+    expect(parsed.toolCalls).toEqual([{ name: 'bash', arguments: { command: 'dir' } }])
+    expect(parsed.visibleText).toBe('让我执行。')
   })
 
   it('兼容 edit 使用子标签而非 parameter 包裹', () => {

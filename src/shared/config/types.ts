@@ -26,6 +26,11 @@ export interface ModelConfig {
    * 留空或未设置表示不启用降级（保持原行为）。
    */
   fallbacks?: ModelConfig[]
+  /**
+   * 工具调用方言覆盖。'auto'（默认）按 preferredToolDialect 自动判定；
+   * 'native' 强制原生函数调用；'xml' 强制 inband XML 兜底。
+   */
+  toolDialect?: 'auto' | 'native' | 'xml'
 }
 
 /** 从 baseUrl 推断默认缓存策略 */

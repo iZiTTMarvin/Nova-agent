@@ -40,21 +40,30 @@ import { PermissionManager } from '../../../../src/runtime/permissions/Permissio
 /** 记录中的 loop 实例，用于 afterEach 统一 dispose */
 const loops: AgentLoop[] = []
 
-/** 构造 AgentLoop；通过 modelId 控制 dialect（xml / native） */
+/** 构造 AgentLoop；通过 modelId + dialect 覆盖控制方言（xml / native） */
 function createLoop(opts: {
   modelId: string
   client: MockModelClient
   fallbacks?: Array<{ config: { baseUrl: string; apiKey: string; modelId: string }; client: MockModelClient }>
   config?: ConstructorParameters<typeof AgentLoop>[2]
+  dialect?: 'xml' | 'native'
 }): { loop: AgentLoop; eventBus: EventBus; client: MockModelClient } {
-  const { modelId, client, fallbacks, config } = opts
+  const { modelId, client, fallbacks, config, dialect } = opts
   const pool = new ModelClientPool({
     primary: client,
-    primaryConfig: { baseUrl: '', apiKey: '', modelId },
+    primaryConfig: {
+      baseUrl: '',
+      apiKey: '',
+      modelId,
+      ...(dialect ? { toolDialect: dialect } : {})
+    },
     fallbacks: fallbacks?.map(f => ({ config: f.config, client: f.client }))
   })
   const eventBus = new EventBus()
-  const loop = new AgentLoop(pool, eventBus, config)
+  const loop = new AgentLoop(pool, eventBus, {
+    ...config,
+    ...(dialect ? { toolDialectOverride: dialect } : {})
+  })
   loops.push(loop)
   return { loop, eventBus, client }
 }
@@ -246,7 +255,7 @@ describe('黄金测试 §9.3 单工具调用（XML）', () => {
 
     const registry = new ToolRegistry()
     registerTool(registry, 'ls', () => ({ success: true, output: '目录内容' }))
-    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client })
+    const { loop, eventBus } = createLoop({ modelId: 'deepseek-chat', client, dialect: 'xml' })
     loop.setToolRegistry(registry)
 
     const events = await runAndCollect(loop, eventBus, '列文件')
@@ -348,7 +357,7 @@ describe('黄金测试 §9.5 XML 兜底解析', () => {
 
     const registry = new ToolRegistry()
     registerTool(registry, 'ls', () => ({ success: true, output: '目录' }))
-    const { loop, eventBus } = createLoop({ modelId: 'minimax-m1', client })
+    const { loop, eventBus } = createLoop({ modelId: 'minimax-m1', client, dialect: 'xml' })
     loop.setToolRegistry(registry)
 
     const events = await runAndCollect(loop, eventBus, '列')

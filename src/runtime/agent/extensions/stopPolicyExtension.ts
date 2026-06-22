@@ -4,6 +4,7 @@
  * 对标现状 sendMessage L876-900：
  * - 重复失败熔断（trackRepeatedFailures）：相同签名累加、成功清零、达 REPEATED_FAILURE_LIMIT 熔断。
  * - maxToolRounds 上限提示。
+ * - 连续空参护栏（native 优先后替代"全局退回 xml"）：连续多轮全空参则中断并引导用户切 XML 模式。
  *
  * 关键语义（用户决策）：熔断计数保持"batch 之后、整批、按源顺序"形态，不拆 per-tool。
  * 原因：并行模式下 per-tool 回调按完成顺序触发，会改变"多签名同时逼近阈值时熔断提示
@@ -12,30 +13,39 @@
  * 熔断计数 Map 所有权：本扩展实例态。每条用户消息开始时由 Facade 调 clear() 重置
  * （对标现状 sendMessage 开头 repeatedFailureCounts.clear()）。
  */
-import type { ChatToolCall } from '../../model/types'
 import type { ShouldStopArgs, StopDecision } from '../core/loopTypes'
 
 /** 同一签名工具调用累计失败达到该次数即熔断，停止本轮循环 */
 export const REPEATED_FAILURE_LIMIT = 3
+
+/** 连续全空参轮次达到该次数即中断，避免 native 弱实现空转 */
+export const EMPTY_ARGS_LIMIT = 2
 
 /**
  * 停止策略扩展。持有熔断计数 Map（实例态）。
  */
 export class StopPolicyExtension {
   private repeatedFailureCounts = new Map<string, number>()
+  /** 连续「本轮所有 tool_calls 参数均为空」的轮次计数 */
+  private emptyArgsRoundCount = 0
 
   /** 每条用户消息开始时清空熔断计数（对标现状 repeatedFailureCounts.clear()） */
   clear(): void {
     this.repeatedFailureCounts.clear()
+    this.emptyArgsRoundCount = 0
   }
 
   /**
    * shouldStopAfterTurn 回调（config.shouldStopAfterTurn）。
    * 逐字节对标现状 trackRepeatedFailures + maxRounds 提示逻辑。
    *
-   * @returns StopDecision（breaker / max_rounds）或 undefined（继续）
+   * @returns StopDecision（breaker / max_rounds / empty_args）或 undefined（继续）
    */
   async shouldStopAfterTurn(args: ShouldStopArgs): Promise<StopDecision | void> {
+    // ── 连续空参护栏（native 优先策略的安全网）──
+    const emptyArgsStop = this.trackEmptyArgsRounds(args)
+    if (emptyArgsStop) return emptyArgsStop
+
     // ── 熔断判定（整批、按源顺序；对标现状 trackRepeatedFailures L1082-1114）──
     const stuckTool = this.trackRepeatedFailures(args.outcomes)
     if (stuckTool) {
@@ -54,6 +64,38 @@ export class StopPolicyExtension {
         `发送「继续」可接着执行；如长任务频繁触发，可在「设置 → 通用 → 最大工具调用轮数」中调大该上限。`
       return { stop: true, reason: 'max_rounds', notice }
     }
+  }
+
+  /**
+   * 统计连续「本轮所有 tool_calls 在 repair 后仍为空参」的轮次。
+   * 中间出现非空参或任一工具成功执行则清零。
+   */
+  private trackEmptyArgsRounds(args: ShouldStopArgs): StopDecision | null {
+    const roundCalls = args.toolCallsThisRound ?? []
+    if (roundCalls.length === 0) return null
+
+    // 任一工具成功 → 清零（说明 native 通道可用）
+    const hasSuccess = args.outcomes.some(
+      o => !o.skippedByAbort && o.failed !== true
+    )
+    if (hasSuccess) {
+      this.emptyArgsRoundCount = 0
+      return null
+    }
+
+    const allEmpty = roundCalls.every(tc => isEmptyArgsRecord(tc.args))
+    if (!allEmpty) {
+      this.emptyArgsRoundCount = 0
+      return null
+    }
+
+    this.emptyArgsRoundCount++
+    if (this.emptyArgsRoundCount < EMPTY_ARGS_LIMIT) return null
+
+    const notice =
+      `\n\n[已自动中断] 模型连续多轮返回空工具参数，已停止本轮以避免空转。` +
+      `可在「设置 → LLM 配置 → 工具调用方式」改为 XML 兼容模式后重试。`
+    return { stop: true, reason: 'empty_args', notice }
   }
 
   /**
@@ -102,4 +144,9 @@ export class StopPolicyExtension {
     }
     return null
   }
+}
+
+/** 判断参数对象是否为空（{} 或无有效字段） */
+function isEmptyArgsRecord(args: Record<string, unknown>): boolean {
+  return Object.keys(args).length === 0
 }

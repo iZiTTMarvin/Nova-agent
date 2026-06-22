@@ -26,7 +26,7 @@ interface ProviderSlot {
   isPrimary: boolean
 }
 
-/** 活跃 provider 信息（供 UI 展示） */
+/** 活跃 provider 信息（供 UI 展示与方言判定） */
 export interface ActiveProviderInfo {
   /** 当前使用的模型 ID */
   modelId: string
@@ -34,6 +34,8 @@ export interface ActiveProviderInfo {
   fallbackIndex: number
   /** baseUrl，供 UI 展示来源 */
   baseUrl: string
+  /** 用户配置的工具调用方言覆盖（'auto' 或未设置时走自动判定） */
+  toolDialect?: ModelConfig['toolDialect']
 }
 
 export interface ModelClientPoolOptions {
@@ -114,7 +116,8 @@ export class ModelClientPool implements ModelClient {
     return {
       modelId: slot.config.modelId,
       fallbackIndex: this.activeIndex,
-      baseUrl: slot.config.baseUrl
+      baseUrl: slot.config.baseUrl,
+      toolDialect: slot.config.toolDialect
     }
   }
 }

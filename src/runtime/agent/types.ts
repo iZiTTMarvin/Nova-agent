@@ -144,6 +144,11 @@ export interface AgentLoopConfig {
    * 默认 true；测试或回退旧路径时可设为 false。
    */
   useUnifiedSkillDispatch?: boolean
+  /**
+   * 工具调用方言用户覆盖（来自 ModelConfig.toolDialect）。
+   * 'auto'/未设置时走 preferredToolDialect 自动判定。
+   */
+  toolDialectOverride?: 'auto' | 'native' | 'xml'
 }
 
 /** 压缩完成时传给 onCompaction 的元数据 */

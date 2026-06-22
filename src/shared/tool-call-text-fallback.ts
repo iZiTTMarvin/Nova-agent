@@ -351,6 +351,43 @@ export function stripTextToolCalls(text: string): string {
   return parseTextToolCalls(text)?.visibleText ?? text
 }
 
+/** DeepSeek DSML 等模型原生工具标记使用的全角竖线 U+FF5C */
+const FULLWIDTH_PIPE = '\uFF5C'
+
+/**
+ * 剥离泄漏进 assistant 正文的模型原生工具调用标记（DeepSeek DSML 等）。
+ * 仅处理已知工具标记，避免误删用户正文里普通的 `<` `>` 比较表达式。
+ */
+export function stripLeakedToolMarkup(text: string): string {
+  if (typeof text !== 'string' || text.length === 0) return text
+
+  let result = text
+
+  // DeepSeek 全角 DSML 整块：<｜DSML｜tool_calls>…</｜DSML｜tool_calls>
+  const fullwidthDsmlBlock = new RegExp(
+    `<${FULLWIDTH_PIPE}[^${FULLWIDTH_PIPE}]+${FULLWIDTH_PIPE}[^>]*>[\\s\\S]*?<\\/${FULLWIDTH_PIPE}[^${FULLWIDTH_PIPE}]+${FULLWIDTH_PIPE}[^>]*>`,
+    'gi'
+  )
+  result = result.replace(fullwidthDsmlBlock, '')
+
+  // 孤立的全角控制 token：<｜xxx｜> 或 </｜xxx｜>
+  const fullwidthToken = new RegExp(
+    `<\\/?${FULLWIDTH_PIPE}[^${FULLWIDTH_PIPE}]+${FULLWIDTH_PIPE}[^>]*>`,
+    'gi'
+  )
+  result = result.replace(fullwidthToken, '')
+
+  // ASCII DSML 变体：<|DSML|…>
+  result = result.replace(/<\|DSML\|[^>]*>[\s\S]*?<\/\|DSML\|[^>]*>/gi, '')
+  result = result.replace(/<\/?\|DSML\|[^>]*>/gi, '')
+
+  // 部分 provider 的 redacted 工具调用占位
+  result = result.replace(/<\|redacted_tool_calls_begin\|>[\s\S]*?<\|redacted_tool_calls_end\|>/gi, '')
+  result = result.replace(/<\|redacted_tool_calls_(begin|end)\|>/gi, '')
+
+  return result.replace(/\n{3,}/g, '\n\n').trim()
+}
+
 /** 兼容旧 API：去掉末尾单条伪工具调用。 */
 export function stripTextToolCall(text: string): string {
   return stripTextToolCalls(text)

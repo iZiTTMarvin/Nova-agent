@@ -315,4 +315,41 @@ describe('buildConversationContext', () => {
         result[0].content.includes('[Session context')).toBe(false)
     })
   })
+
+  describe('DSML 泄漏正文清洗', () => {
+    const FULLWIDTH_PIPE = '\uFF5C'
+    const dsmlBlock =
+      `<${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}tool_calls>` +
+      `<${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}invoke name="grep">` +
+      `<${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}parameter name="pattern">classScore` +
+      `</${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}parameter>` +
+      `</${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}invoke>` +
+      `</${FULLWIDTH_PIPE}DSML${FULLWIDTH_PIPE}tool_calls>`
+
+    it('assistant 正文中的 DSML 标记被剥离', () => {
+      const session = makeSession([
+        {
+          id: 'm1',
+          role: 'assistant',
+          content: `我先搜索一下。\n${dsmlBlock}`,
+          timestamp: 1
+        }
+      ])
+
+      const result = buildConversationContext(session, 'default')
+      expect(result[0].role).toBe('assistant')
+      expect(result[0].content).toBe('我先搜索一下。')
+      expect(String(result[0].content)).not.toContain('DSML')
+    })
+
+    it('普通代码比较表达式不被破坏', () => {
+      const code = 'if (a < b && c > d) { return true }'
+      const session = makeSession([
+        { id: 'm1', role: 'assistant', content: code, timestamp: 1 }
+      ])
+
+      const result = buildConversationContext(session, 'default')
+      expect(result[0].content).toBe(code)
+    })
+  })
 })

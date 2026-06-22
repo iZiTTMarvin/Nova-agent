@@ -16,13 +16,19 @@ function createMockClient(): ModelClient {
 
 /**
  * 捕获 AgentLoop 发给模型的 tools 参数。
- * modelId 控制 dialect 判定：'primary' → xml，'gpt-4' → native。
+ * toolDialectOverride='xml' 显式触发 xml 分支；'gpt-4o' / 'minimax-m3'（默认）→ native。
  */
-function captureTools(modelId = 'primary'): { client: ModelClient; getTools: () => ToolDefinition[] | undefined } {
+function captureTools(
+  modelId = 'custom-model',
+  toolDialectOverride?: 'xml' | 'native'
+): {
+  client: ModelClient
+  getTools: () => ToolDefinition[] | undefined
+  createLoop: (eventBus: EventBus) => AgentLoop
+} {
   let capturedTools: ToolDefinition[] | undefined
 
   const client: ModelClient = {
-    // AgentLoop 构造时会从 client.config 读 modelId 判定 dialect
     config: { baseUrl: '', apiKey: '', modelId },
     async *chat(_msgs: unknown, tools?: ToolDefinition[]): AsyncIterable<ChatEvent> {
       capturedTools = tools
@@ -32,7 +38,14 @@ function captureTools(modelId = 'primary'): { client: ModelClient; getTools: () 
     updateConfig() {}
   } as unknown as ModelClient
 
-  return { client, getTools: () => capturedTools }
+  const createLoop = (eventBus: EventBus) =>
+    new AgentLoop(client, eventBus, toolDialectOverride ? { toolDialectOverride } : undefined)
+
+  return {
+    client,
+    getTools: () => capturedTools,
+    createLoop
+  }
 }
 
 const READONLY_TOOLS = ['ls', 'read', 'grep', 'find']
@@ -49,9 +62,9 @@ function makeToolDefs(names: string[]): ToolDefinition[] {
 
 describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
   it('plan 模式：工具定义恒定提供（XML 方言不传 native tools）', async () => {
-    const { client, getTools } = captureTools()
+    const { createLoop, getTools } = captureTools('custom-model', 'xml')
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = createLoop(eventBus)
     loop.setMode('plan')
 
     const allDefs = makeToolDefs(ALL_TOOLS)
@@ -64,14 +77,14 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
 
     await loop.sendMessage('test')
 
-    // XML 方言（modelId='primary'）不传 native tools，工具定义在 system prompt 文本里恒定
+    // XML 方言（显式 override='xml'）不传 native tools，工具定义在 system prompt 文本里恒定
     expect(getTools()).toBeUndefined()
   })
 
   it('default 模式：工具定义恒定提供（XML 方言不传 native tools）', async () => {
-    const { client, getTools } = captureTools()
+    const { createLoop, getTools } = captureTools('custom-model', 'xml')
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = createLoop(eventBus)
     loop.setMode('default')
 
     const allDefs = makeToolDefs(ALL_TOOLS)
@@ -88,9 +101,9 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
   })
 
   it('auto 模式：工具定义恒定提供（XML 方言不传 native tools）', async () => {
-    const { client, getTools } = captureTools()
+    const { createLoop, getTools } = captureTools('custom-model', 'xml')
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = createLoop(eventBus)
     loop.setMode('auto')
 
     const allDefs = makeToolDefs(ALL_TOOLS)
@@ -108,9 +121,29 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
 
   it('native 方言（modelId 含 gpt）：传全部 native tools 给模型', async () => {
     // modelId='gpt-4o' → preferredToolDialect 判为 native → 传 tools
-    const { client, getTools } = captureTools('gpt-4o')
+    const { createLoop, getTools } = captureTools('gpt-4o')
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = createLoop(eventBus)
+
+    const allDefs = makeToolDefs(ALL_TOOLS)
+    const mockRegistry = {
+      getToolDefinitions: () => allDefs,
+      getTool: () => ({ name: 'noop' } as any),
+      execute: vi.fn()
+    }
+    loop.setToolRegistry(mockRegistry as any)
+
+    await loop.sendMessage('test')
+
+    const tools = getTools()
+    const toolNames = tools?.map(t => t.name) ?? []
+    expect(toolNames).toEqual(ALL_TOOLS)
+  })
+
+  it('MiniMax 默认 native：传全部 native tools 给模型', async () => {
+    const { createLoop, getTools } = captureTools('minimax-m3')
+    const eventBus = new EventBus()
+    const loop = createLoop(eventBus)
 
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {

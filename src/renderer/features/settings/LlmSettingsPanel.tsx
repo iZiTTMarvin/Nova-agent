@@ -21,6 +21,7 @@ export const LlmSettingsPanel: React.FC = () => {
   const [apiKey, setApiKey] = useState('')
   const [modelId, setModelId] = useState('')
   const [contextWindow, setContextWindow] = useState<number | ''>('')
+  const [toolDialect, setToolDialect] = useState<'auto' | 'native' | 'xml'>('auto')
   const [supportsVision, setSupportsVision] = useState<boolean | null>(null)
   const [showKey, setShowKey] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
@@ -34,6 +35,7 @@ export const LlmSettingsPanel: React.FC = () => {
     setApiKey(modelConfig?.apiKey || '')
     setModelId(modelConfig?.modelId || 'gpt-4o')
     setContextWindow(modelConfig?.contextWindow ?? '')
+    setToolDialect(modelConfig?.toolDialect ?? 'auto')
     setSupportsVision(modelConfig?.supportsVision ?? null)
     setFieldErrors({})
     setSubmitError(null)
@@ -91,6 +93,7 @@ export const LlmSettingsPanel: React.FC = () => {
         modelId: modelId.trim(),
         contextWindow: contextWindow === '' ? undefined : contextWindow,
         supportsVision: supportsVision ?? undefined,
+        ...(toolDialect !== 'auto' ? { toolDialect } : {}),
         ...(validFallbacks.length > 0 ? { fallbacks: validFallbacks } : {})
       })
       setConfigModalOpen(false)
@@ -189,6 +192,22 @@ export const LlmSettingsPanel: React.FC = () => {
           ) : (
             <span className="settings-modal__help">留空时根据模型标识自动推断。</span>
           )}
+        </div>
+
+        <div className="settings-modal__field">
+          <label className="settings-modal__label">工具调用方式</label>
+          <select
+            className="settings-modal__input settings-modal__select"
+            value={toolDialect}
+            onChange={e => setToolDialect(e.target.value as 'auto' | 'native' | 'xml')}
+          >
+            <option value="auto">自动（推荐）</option>
+            <option value="native">原生函数调用</option>
+            <option value="xml">XML 兼容模式</option>
+          </select>
+          <span className="settings-modal__help">
+            自动模式下官方云端 API 走原生函数调用；若第三方中转 native 不稳定，可改为 XML 兼容模式。
+          </span>
         </div>
 
         <div className="settings-modal__field">
