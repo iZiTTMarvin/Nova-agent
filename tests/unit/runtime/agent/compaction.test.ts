@@ -3,6 +3,7 @@ import {
   shouldCompact,
   splitForCompaction,
   buildCompactionPrompt,
+  buildCompactionRequestTail,
   rebuildWithCompression,
   rollbackBefore,
   COMPACTION_THRESHOLD,
@@ -363,6 +364,43 @@ describe('compaction', () => {
       // 分界线指向 tool。由于 alignPullBackBoundary，分界线会前移，把 assistant 和 tool 也一起弹走
       expect(result2.pulledBackMessages.some(m => m.role === 'assistant')).toBe(true)
       expect(result2.recentMessages.every(m => m.role !== 'tool' && !m.toolCalls)).toBe(true)
+    })
+  })
+
+  // buildCompactionRequestTail 是从 runCompaction / runOverflowCompaction 抽出的共享逻辑，
+  // 这里锁定其桥接与 internal 标记行为，防止两条压缩路径合并后出现回归。
+  describe('buildCompactionRequestTail', () => {
+    it('末尾是 user 时插入 assistant 桥接（避免连续 user）', () => {
+      const tail = buildCompactionRequestTail('user', 20)
+      expect(tail).toHaveLength(2)
+      expect(tail[0].role).toBe('assistant')
+      expect(tail[0].content).toBe('好的，我来总结之前的对话。')
+      expect(tail[1].role).toBe('user')
+    })
+
+    it('末尾是 assistant 时不插入桥接', () => {
+      const tail = buildCompactionRequestTail('assistant', 20)
+      expect(tail).toHaveLength(1)
+      expect(tail[0].role).toBe('user')
+    })
+
+    it('末尾是 tool 时不插入桥接', () => {
+      const tail = buildCompactionRequestTail('tool', 10)
+      expect(tail).toHaveLength(1)
+      expect(tail[0].role).toBe('user')
+    })
+
+    it('上下文为空（role 为 undefined）时不插入桥接', () => {
+      const tail = buildCompactionRequestTail(undefined, 5)
+      expect(tail).toHaveLength(1)
+      expect(tail[0].role).toBe('user')
+    })
+
+    it('压缩指令消息标记 internal，正文与 buildCompactionPrompt 一致', () => {
+      const tail = buildCompactionRequestTail('user', 15)
+      const instruction = tail[tail.length - 1]
+      expect(instruction.internal).toBe(true)
+      expect(instruction.content).toBe(buildCompactionPrompt(15))
     })
   })
 })

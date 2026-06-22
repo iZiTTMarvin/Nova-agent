@@ -16,7 +16,7 @@ import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
-import { splitForCompaction, buildCompactionPrompt, rebuildWithCompression, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
+import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
 import { ageToolResults } from './compaction/toolResultAging'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
@@ -799,6 +799,39 @@ export class AgentLoop implements IdleCompactionTarget {
   }
 
   /**
+   * 压缩成功后的统一簿记：用摘要重建上下文，并更新压缩层级 / 冷却计数 / token 估算 / 缓存基线。
+   *
+   * 主动阈值压缩（runCompaction）与反应式溢出压缩（runOverflowCompaction）共用此方法，
+   * 消除两处逐字节重复的「重建 + 簿记」逻辑。
+   *
+   * why 不在此触发 onCompaction：runCompaction 在 onCompaction 回调前还有一次
+   * abortSignal 检查（idle 压缩期间用户可能已发新消息），而溢出压缩没有。为保持两条路径
+   * 的 abort 语义与重构前逐字节一致，onCompaction 由各调用方在簿记后自行触发。
+   *
+   * @param systemPrompt 冻结的 system prompt 文本
+   * @param summary 已 trim 的摘要文本
+   * @param recentMessages 压缩后保留的最近消息
+   * @param pulledBackMessages 溢出压缩时被弹出、需追加回上下文尾部的消息（阈值压缩不传）
+   */
+  private applyCompactionResult(
+    systemPrompt: string,
+    summary: string,
+    recentMessages: ChatMessage[],
+    pulledBackMessages?: ChatMessage[]
+  ): void {
+    this.context = rebuildWithCompression(systemPrompt, summary, recentMessages, pulledBackMessages)
+    this.compactionLevel++
+    this.userTurnsSinceCompaction = 0
+    // 重置 token 估算，防止下轮立即重新触发压缩
+    this.lastEstimatedTokens = estimateContextTokens(this.context)
+    // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
+    this.cacheDiagnostics.resetBaseline(
+      extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
+      this.toolRegistry?.getToolDefinitions()
+    )
+  }
+
+  /**
    * 执行上下文压缩
    * 将旧消息发给模型生成摘要，然后用 [system, 摘要, 最近 N 条] 重建上下文。
    * 压缩调用本身复用现有缓存前缀（只追加压缩指令到尾部）。
@@ -817,18 +850,12 @@ export class AgentLoop implements IdleCompactionTarget {
     const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
     if (oldMessages.length === 0) return
 
-    // 构建压缩上下文：旧消息 + 压缩指令（追加到尾部，不改前缀）
-    // 如果上下文末尾是 user 消息，先插入一条 assistant 占位避免连续 user（Anthropic 严格模式会拒绝）
-    const lastMsg = this.context[this.context.length - 1]
-    const needsAssistantBridge = lastMsg?.role === 'user'
+    // 构建压缩上下文：旧消息 + 压缩指令尾巴（追加到尾部，不改前缀）。
+    // 尾巴拼装（连续 user 时的 assistant 桥接 + internal 压缩指令）与溢出压缩共用
+    // buildCompactionRequestTail，避免两处分叉。
     const compactionContext: ChatMessage[] = [
       ...this.context,
-      ...(needsAssistantBridge
-        ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
-        : []),
-      // 压缩指令标记为 internal：跳过缓存标记，但 compaction 调用会显式放行正文，
-      // 让模型真正看到摘要要求；internal 字段本身仍会在序列化层被剥离。
-      { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length), internal: true }
+      ...buildCompactionRequestTail(this.context[this.context.length - 1]?.role, recentMessages.length)
     ]
 
     // 调用模型生成摘要（非流式收集）
@@ -855,19 +882,8 @@ export class AgentLoop implements IdleCompactionTarget {
     // runIdleCompaction 会传 abortSignal，主循环的 runCompaction 不传。
     if (abortSignal?.aborted) return
 
-    // 重建上下文
-    this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages)
-    this.compactionLevel++
-    this.userTurnsSinceCompaction = 0
-    this.lastEstimatedTokens = estimateContextTokens(this.context)
-
-    // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
-    this.cacheDiagnostics.resetBaseline(
-      extractTextFromContent(
-        this.context.find(m => m.role === 'system')?.content ?? ''
-      ),
-      this.toolRegistry?.getToolDefinitions()
-    )
+    // 重建上下文 + 压缩后簿记（层级 / 冷却 / token 估算 / 缓存基线），与溢出压缩共用。
+    this.applyCompactionResult(systemPrompt, summary.trim(), recentMessages)
 
     // onCompaction 回调前再检查一次：abort 后不应触发持久化，避免与主循环状态竞争
     if (abortSignal?.aborted) return
@@ -1100,17 +1116,13 @@ export class AgentLoop implements IdleCompactionTarget {
         return false
       }
 
-      // 3. 构建压缩上下文，追加到 this.context
-      const lastMsg = this.context[this.context.length - 1]
-      const needsAssistantBridge = lastMsg?.role === 'user'
+      // 3. 构建压缩指令尾巴并追加到 this.context。compressionPointIndex 记录追加起点，
+      //    供失败时 rollbackBefore 精确回滚。尾巴拼装与主动阈值压缩共用 buildCompactionRequestTail。
       compressionPointIndex = this.context.length
-
-      const compactionMessages: ChatMessage[] = [
-        ...(needsAssistantBridge
-          ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
-          : []),
-        { role: 'user' as const, content: buildCompactionPrompt(recentMessages.length), internal: true }
-      ]
+      const compactionMessages = buildCompactionRequestTail(
+        this.context[this.context.length - 1]?.role,
+        recentMessages.length
+      )
       this.context.push(...compactionMessages)
 
       // 4. 调用模型获取摘要
@@ -1143,19 +1155,8 @@ export class AgentLoop implements IdleCompactionTarget {
         return false
       }
 
-      // 5. 成功：重建上下文 + 追加 pulledBack
-      this.context = rebuildWithCompression(systemPrompt, summary.trim(), recentMessages, pulledBackMessages)
-      this.compactionLevel++
-      this.userTurnsSinceCompaction = 0
-
-      // 重置 token 估算，防止下轮立即重新触发压缩
-      this.lastEstimatedTokens = estimateContextTokens(this.context)
-
-      // 重置缓存诊断基线
-      this.cacheDiagnostics.resetBaseline(
-        extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
-        this.toolRegistry?.getToolDefinitions()
-      )
+      // 5. 成功：重建上下文（追加 pulledBack）+ 压缩后簿记，与主动阈值压缩共用 applyCompactionResult。
+      this.applyCompactionResult(systemPrompt, summary.trim(), recentMessages, pulledBackMessages)
 
       // 通知外部持久化
       this.config.onCompaction?.(this.context, {

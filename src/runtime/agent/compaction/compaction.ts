@@ -90,6 +90,35 @@ export function buildCompactionPrompt(recentCount: number): string {
 }
 
 /**
+ * 构建追加到压缩请求尾部的指令消息序列。
+ *
+ * 主动阈值压缩（runCompaction）与反应式溢出压缩（runOverflowCompaction）共用此逻辑，
+ * 避免两处各维护一份桥接/指令拼装而产生分叉。返回的是「要追加到上下文末尾的消息」，
+ * 不含原始上下文本身——调用方自行决定是拼成新数组还是 push 进 this.context。
+ *
+ * 关键约束（why）：
+ * - 当上下文末尾是 user 消息时，先插一条 assistant 占位桥接。否则连续两条 user
+ *   会被 Anthropic 严格模式拒绝。
+ * - 压缩指令标记 internal：跳过缓存断点标记，但压缩调用会显式放行其正文
+ *   （includeInternalMessages），让模型真正看到摘要要求；序列化层仍会剥离 internal 字段。
+ *
+ * @param lastMessageRole 当前上下文最后一条消息的 role（用于判断是否需要桥接）
+ * @param recentCount 压缩后保留的最近消息数，用于在指令文案中告知模型续接位置
+ */
+export function buildCompactionRequestTail(
+  lastMessageRole: ChatMessage['role'] | undefined,
+  recentCount: number
+): ChatMessage[] {
+  const needsAssistantBridge = lastMessageRole === 'user'
+  return [
+    ...(needsAssistantBridge
+      ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
+      : []),
+    { role: 'user' as const, content: buildCompactionPrompt(recentCount), internal: true }
+  ]
+}
+
+/**
  * 用压缩摘要重建上下文
  *
  * 将摘要合并到 system 消息尾部而非作为独立 user 消息：
