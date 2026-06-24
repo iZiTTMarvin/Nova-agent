@@ -6,8 +6,11 @@ import {
   validateModelConfig,
   saveModelConfig,
   loadModelConfig,
-  getModelConfigPath
+  getModelConfigPath,
+  loadLlmRegistry,
+  saveLlmRegistry
 } from '../../../../src/runtime/model/config'
+import { migrateV1ToV2 } from '../../../../src/shared/config/llmRegistry'
 import type { ModelConfig } from '../../../../src/shared/config'
 
 /** 创建临时目录用于测试配置读写 */
@@ -314,5 +317,42 @@ describe('getModelConfigPath', () => {
   it('返回正确拼接的路径', () => {
     const result = getModelConfigPath('/app/data')
     expect(result).toBe(path.join('/app/data', 'settings', 'model.json'))
+  })
+})
+
+// ── v2 LlmRegistry ───────────────────────────────────────────
+
+describe('loadLlmRegistry / saveLlmRegistry', () => {
+  it('v1 配置文件自动迁移为 v2', () => {
+    const v1 = {
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-test-key',
+      modelId: 'gpt-4o'
+    }
+    const configPath = getModelConfigPath(tmpDir)
+    const configDir = path.dirname(configPath)
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(configPath, JSON.stringify(v1), 'utf8')
+
+    const registry = loadLlmRegistry(tmpDir)
+    expect(registry).not.toBeNull()
+    expect(registry!.version).toBe(2)
+    expect(registry!.providers.length).toBeGreaterThanOrEqual(1)
+
+    const active = loadModelConfig(tmpDir)
+    expect(active?.modelId).toBe('gpt-4o')
+  })
+
+  it('saveLlmRegistry 写入 v2 并可读回', () => {
+    const registry = migrateV1ToV2({
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-ds',
+      modelId: 'deepseek-chat'
+    })
+    saveLlmRegistry(tmpDir, registry)
+    const loaded = loadLlmRegistry(tmpDir)
+    expect(loaded?.version).toBe(2)
+    expect(loaded?.providers[0].modelId).toBeUndefined()
+    expect(loaded?.providers[0].models[0].modelId).toBe('deepseek-chat')
   })
 })

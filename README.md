@@ -27,7 +27,7 @@
 
 ### 对话与 Agent 运行时
 
-- **OpenAI 兼容接口**：支持自定义 Base URL、API Key、模型 ID、上下文窗口与 Vision 开关
+- **OpenAI 兼容接口**：支持多服务商（MiniMax / GLM / DeepSeek 预设 + 自定义），每个服务商可配置多个模型，Composer 内一键切换
 - **模型方言自适应**：Claude/GPT 走原生 `tool_calls`；MiniMax / GLM / DeepSeek / Kimi / Qwen 走 XML inband，正文中以 `<invoke>` 标签调用工具
 - **多轮工具调用**：内置 `ls` / `read` / `grep` / `find` / `edit` / `write` / `bash` / `todo_write` / `task` / `invoke_skill` 等工具
 - **并行工具执行**：自动识别可并行工具（默认最多 4 个），串行依赖自动降级为串行
@@ -48,7 +48,7 @@
 
 ### 设置与工作区
 
-- **左右分栏设置**：LLM 配置、规则（Rules）、技能（Skills）、子代理（Subagents）
+- **左右分栏设置**：LLM 多服务商配置、规则（Rules）、技能（Skills）、子代理（Subagents）
 - **规则文件**：支持 `AGENTS.md`、`CLAUDE.md`、`.cursorrules` 及 `.nova/rules/*.md`
 - **子代理**：内置 `explore`（只读探索）与 `code`（受限编程），可扩展自定义 JSON 配置
 - **多会话**：按工作区管理会话历史，切换项目时技能列表自动 reload
@@ -88,9 +88,10 @@ npm run dev
 
 首次启动后：
 
-1. 点击左下角 **设置**，填写 LLM 接口地址、API Key 与模型 ID
-2. 在侧边栏 **选择或新建项目工作区**
-3. 在 Composer 中输入任务，或使用 `/onboard` 运行内置入门向导
+1. 点击左下角 **设置 → LLM 配置**，为 MiniMax / GLM / DeepSeek 等服务商填写 API Key（或添加自定义服务商）
+2. 在对话框底部 **模型选择器** 中切换要使用的模型
+3. 在侧边栏 **选择或新建项目工作区**
+4. 在 Composer 中输入任务，或使用 `/onboard` 运行内置入门向导
 
 生产构建：
 
@@ -107,11 +108,15 @@ npm run preview   # 预览构建产物
 
 打开 **设置 → LLM 配置**：
 
-- **Base URL**：OpenAI 兼容 API 根地址（如 `https://api.openai.com/v1`）
-- **API Key**：鉴权凭证
-- **Model ID**：如 `minimax m3`、`glm-5.2` 等
-- **Context Window**：可留空，按模型名自动推断
-- **Vision**：自动推断 / 强制开启 / 强制关闭
+- **预设服务商**：MiniMax、GLM、DeepSeek — 填写 API Key 即可，内置常用模型列表
+- **自定义服务商**：可添加 Ollama 等任意 OpenAI 兼容端点（Base URL + API Key）
+- **模型列表**：支持手动添加/删除；点击 **刷新模型列表** 可从 `/models` 接口拉取
+- **对话框切换**：Composer 底部模型选择器可快速切换；多模型服务商以子菜单展示
+
+高级选项（按服务商）：
+
+- **工具调用方式**：自动 / 原生 / XML
+- **Context Window / Vision**：可在模型条目中扩展（活跃模型自动推断）
 
 配置持久化在 Electron `userData` 目录下的模型配置文件中。
 

@@ -77,6 +77,11 @@ export interface ModelClientConfig {
   modelId: string
   /** 缓存策略，默认 'auto'（前缀稳定即自动命中） */
   cacheStrategy?: 'auto' | 'anthropic'
+  /**
+   * 思考强度覆盖。缺省或 'auto' 时不发送该参数（零行为变化）；
+   * 'low'/'medium'/'high' 按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
+   */
+  reasoningEffort?: 'auto' | 'low' | 'medium' | 'high'
 }
 
 // ── Token 用量 ────────────────────────────────────────────

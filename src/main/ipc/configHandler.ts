@@ -1,47 +1,93 @@
 import { ipcMain, app } from 'electron'
-import { SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG } from '../../shared/ipc/channels'
+import {
+  SAVE_MODEL_CONFIG,
+  LOAD_MODEL_CONFIG,
+  LOAD_LLM_REGISTRY,
+  SAVE_LLM_REGISTRY,
+  SET_ACTIVE_MODEL,
+  FETCH_PROVIDER_MODELS
+} from '../../shared/ipc/channels'
 import type { ModelConfig } from '../../shared/config'
+import type { LlmRegistry } from '../../shared/config/llmRegistry'
 import { inferCacheStrategy } from '../../shared/config/types'
-import { saveModelConfig, loadModelConfig } from '../../runtime/model/config'
+import { resolveActiveModelConfig, resolveFallbackModelConfigs } from '../../shared/config/llmRegistry'
+import {
+  saveModelConfig,
+  loadModelConfig,
+  loadLlmRegistry,
+  saveLlmRegistry,
+  setActiveModelInRegistry
+} from '../../runtime/model/config'
+import { fetchProviderModels } from '../../runtime/model/fetchProviderModels'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { getModelClient, setModelClient } from '../index'
 
+/** 用 ModelConfig 更新主进程全局 ModelClient */
+function applyModelConfigToClient(config: ModelConfig): void {
+  const activeClient = getModelClient()
+  if (activeClient) {
+    activeClient.updateConfig(config)
+    if (activeClient instanceof OpenAICompatibleModelClient) {
+      const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
+      activeClient.setCacheStrategy(strategy)
+    }
+  } else {
+    const client = new OpenAICompatibleModelClient(config)
+    const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
+    client.setCacheStrategy(strategy)
+    setModelClient(client)
+  }
+}
+
+/** 从注册表同步活跃模型到 ModelClient */
+function syncActiveModelFromRegistry(registry: LlmRegistry): void {
+  const active = resolveActiveModelConfig(registry)
+  if (!active) return
+  const fallbacks = resolveFallbackModelConfigs(registry)
+  const config = fallbacks.length > 0 ? { ...active, fallbacks } : active
+  applyModelConfigToClient(config)
+}
+
 /**
  * 注册模型配置相关的 IPC 处理器
- * 
- * 职责：
- * 1. save-model-config：持久化 → 实时更新全局 ModelClient
- *    校验由 saveModelConfig 内部统一执行，失败时抛出异常，前端 catch 展示
- * 2. load-model-config：从磁盘读取配置回传给渲染进程
  */
 export function registerConfigHandler(): void {
-  // 保存模型配置（校验由 saveModelConfig 统一执行）
+  // v1 兼容：保存单 ModelConfig
   ipcMain.handle(SAVE_MODEL_CONFIG, async (_event, rawConfig: ModelConfig): Promise<void> => {
-    // saveModelConfig 内部校验并持久化；校验失败会抛异常，IPC 会自动将错误传回 renderer
     const config = saveModelConfig(rawConfig, app.getPath('userData'))
-
-    // 实时更新主进程持有的 ModelClient 实例以保证后续 Agent 消息发送使用最新配置
-    const activeClient = getModelClient()
-    if (activeClient) {
-      activeClient.updateConfig(config)
-      // 同步缓存策略：优先用配置中的显式值，否则从 baseUrl 推断
-      if (activeClient instanceof OpenAICompatibleModelClient) {
-        const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
-        activeClient.setCacheStrategy(strategy)
-      }
-    } else {
-      const client = new OpenAICompatibleModelClient(config)
-      // 与启动路径保持一致：优先显式配置，否则从 baseUrl 推断
-      if (client instanceof OpenAICompatibleModelClient) {
-        const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
-        client.setCacheStrategy(strategy)
-      }
-      setModelClient(client)
-    }
+    applyModelConfigToClient(config)
   })
 
-  // 读取模型配置（校验由 loadModelConfig 统一执行）
+  // v1 兼容：加载活跃 ModelConfig
   ipcMain.handle(LOAD_MODEL_CONFIG, async (): Promise<ModelConfig | null> => {
     return loadModelConfig(app.getPath('userData'))
   })
+
+  // v2：加载完整注册表
+  ipcMain.handle(LOAD_LLM_REGISTRY, async (): Promise<LlmRegistry | null> => {
+    return loadLlmRegistry(app.getPath('userData'))
+  })
+
+  // v2：保存注册表
+  ipcMain.handle(SAVE_LLM_REGISTRY, async (_event, registry: LlmRegistry): Promise<void> => {
+    const saved = saveLlmRegistry(app.getPath('userData'), registry)
+    syncActiveModelFromRegistry(saved)
+  })
+
+  // v2：快速切换活跃模型
+  ipcMain.handle(
+    SET_ACTIVE_MODEL,
+    async (_event, ref: { providerId: string; modelEntryId: string }): Promise<void> => {
+      const registry = setActiveModelInRegistry(app.getPath('userData'), ref)
+      syncActiveModelFromRegistry(registry)
+    }
+  )
+
+  // 从服务商 API 拉取模型列表
+  ipcMain.handle(
+    FETCH_PROVIDER_MODELS,
+    async (_event, params: { baseUrl: string; apiKey: string }) => {
+      return fetchProviderModels(params)
+    }
+  )
 }

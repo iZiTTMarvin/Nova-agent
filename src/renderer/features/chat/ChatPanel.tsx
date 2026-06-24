@@ -12,6 +12,7 @@ import {
 } from '../../components/Icons'
 import { MessageItem } from './MessageItem'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
+import { ModelSelector } from './ModelSelector'
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
@@ -40,7 +41,6 @@ export const ChatPanel: React.FC = () => {
   const modelConfig = useSettingsStore(state => state.modelConfig)
   const currentMode = useSettingsStore(state => state.currentMode)
   const selectProject = useSettingsStore(state => state.selectProject)
-  const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
   const composerPrefill = useSettingsStore(state => state.composerPrefill)
   const clearComposerPrefill = useSettingsStore(state => state.clearComposerPrefill)
 
@@ -207,8 +207,8 @@ export const ChatPanel: React.FC = () => {
   const handleSend = () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
     if (!modelConfig) {
-      alert("请先在左下角配置模型 API Key！")
-      setConfigModalOpen(true)
+      alert("请先在设置中配置 LLM 服务商与模型！")
+      useSettingsStore.getState().openLlmSettings()
       return
     }
     if (!currentProject) {
@@ -586,6 +586,7 @@ export const ChatPanel: React.FC = () => {
                     <ImageIcon size={16} />
                   </button>
                 )}
+                <ModelSelector />
                 <ModeSwitch />
                 <ContextIndicator />
               </div>

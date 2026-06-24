@@ -1,19 +1,23 @@
 /**
  * 模型配置持久化与校验模块
- * 
+ *
  * 职责：
- * 1. 将 ModelConfig 持久化到本地文件系统（settings/model.json）
- * 2. 从本地文件系统加载 ModelConfig
- * 3. 对 ModelConfig 的字段进行格式校验，返回结构化的错误信息
- * 
- * 设计意图：
- * - 纯 TypeScript 模块，不依赖 Electron API，支持脱离 Electron 单测
- * - Electron 主进程通过此模块完成配置的读写和校验
- * - 全局只维护一份配置文件，不按项目或会话隔离
+ * 1. 将 LlmRegistry (v2) 持久化到 settings/model.json
+ * 2. 兼容 v1 ModelConfig 自动迁移
+ * 3. loadModelConfig 返回当前活跃模型的 ModelConfig（供 Agent 运行时）
  */
 import * as fs from 'fs'
 import * as path from 'path'
 import type { ModelConfig } from '../../shared/config'
+import {
+  type LlmRegistry,
+  migrateV1ToV2,
+  validateLlmRegistry,
+  resolveActiveModelConfig,
+  resolveFallbackModelConfigs,
+  isLlmRegistryV2
+} from '../../shared/config/llmRegistry'
+import { validateModelConfig } from './configLegacy'
 
 /** 配置文件相对路径（相对于 AppData 根目录） */
 const CONFIG_RELATIVE_PATH = path.join('settings', 'model.json')
@@ -29,104 +33,56 @@ export type ConfigValidationResult =
   | { valid: true; config: ModelConfig }
   | { valid: false; errors: ConfigValidationError[] }
 
-const VALID_TOOL_DIALECTS = new Set(['auto', 'native', 'xml'])
+// 重导出 v1 校验（测试与兼容）
+export { validateModelConfig } from './configLegacy'
 
 /**
- * 校验模型配置的各个字段
- * 
- * 校验规则：
- * - baseUrl: 必须是非空字符串，且以 http:// 或 https:// 开头
- * - apiKey: 必须是非空字符串（trim 后非空）
- * - modelId: 必须是非空字符串（trim 后非空）
+ * 从磁盘读取原始 JSON（v1 或 v2）
  */
-export function validateModelConfig(config: Partial<ModelConfig> | null | undefined): ConfigValidationResult {
-  const errors: ConfigValidationError[] = []
-
-  if (!config) {
-    return {
-      valid: false,
-      errors: [
-        { field: 'baseUrl', message: '接口地址 (Base URL) 不能为空' },
-        { field: 'apiKey', message: 'API Key 不能为空' },
-        { field: 'modelId', message: '模型标识 (Model ID) 不能为空' }
-      ]
-    }
-  }
-
-  // baseUrl 校验
-  const baseUrl = (config.baseUrl ?? '').trim()
-  if (!baseUrl) {
-    errors.push({ field: 'baseUrl', message: '接口地址 (Base URL) 不能为空' })
-  } else if (!/^https?:\/\/.+/.test(baseUrl)) {
-    errors.push({ field: 'baseUrl', message: '接口地址必须以 http:// 或 https:// 开头，例如 https://api.openai.com/v1' })
-  }
-
-  // apiKey 校验
-  const apiKey = (config.apiKey ?? '').trim()
-  if (!apiKey) {
-    errors.push({ field: 'apiKey', message: 'API Key 不能为空' })
-  }
-
-  // modelId 校验
-  const modelId = (config.modelId ?? '').trim()
-  if (!modelId) {
-    errors.push({ field: 'modelId', message: '模型标识 (Model ID) 不能为空' })
-  }
-
-  // toolDialect 校验（可选字段）
-  if (
-    config.toolDialect !== undefined &&
-    config.toolDialect !== 'auto' &&
-    !VALID_TOOL_DIALECTS.has(config.toolDialect)
-  ) {
-    errors.push({
-      field: 'toolDialect',
-      message: "工具调用方式必须是 'auto'、'native' 或 'xml'"
-    })
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors }
-  }
-
-  const toolDialect = normalizeToolDialect(config.toolDialect)
-
-  return {
-    valid: true,
-    config: {
-      baseUrl,
-      apiKey,
-      modelId,
-      ...(config.cacheStrategy ? { cacheStrategy: config.cacheStrategy } : {}),
-      ...(config.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {}),
-      ...(config.supportsVision !== undefined ? { supportsVision: config.supportsVision } : {}),
-      ...(config.fallbacks && config.fallbacks.length > 0 ? { fallbacks: config.fallbacks } : {}),
-      ...(toolDialect ? { toolDialect } : {})
-    }
+function readRawConfigFile(appDataPath: string): unknown | null {
+  const configPath = path.join(appDataPath, CONFIG_RELATIVE_PATH)
+  if (!fs.existsSync(configPath)) return null
+  try {
+    const content = fs.readFileSync(configPath, 'utf8')
+    return JSON.parse(content)
+  } catch {
+    return null
   }
 }
 
-/** 校验并规范化 toolDialect；非法值忽略，'auto' 视为未设置 */
-function normalizeToolDialect(
-  value: ModelConfig['toolDialect'] | undefined
-): ModelConfig['toolDialect'] | undefined {
-  if (!value || value === 'auto') return undefined
-  if (VALID_TOOL_DIALECTS.has(value)) return value
-  return undefined
+/**
+ * 解析磁盘配置为 LlmRegistry（含 v1 自动迁移）
+ */
+export function parseLlmRegistryFromDisk(raw: unknown): LlmRegistry | null {
+  if (!raw || typeof raw !== 'object') return null
+
+  if (isLlmRegistryV2(raw)) {
+    const validation = validateLlmRegistry(raw)
+    return validation.valid ? validation.registry : null
+  }
+
+  // v1：单 ModelConfig
+  const v1Result = validateModelConfig(raw as Partial<ModelConfig>)
+  if (!v1Result.valid) return null
+  return migrateV1ToV2(v1Result.config)
 }
 
 /**
- * 将模型配置持久化到磁盘
- * 
- * 写入前进行校验，确保只有合法配置才会落盘。
- * 校验失败时抛出包含字段错误信息的异常，调用方可据此向用户展示精确提示。
- * 校验成功时返回 trim 后的合法配置。
+ * 加载 LLM 注册表
  */
-export function saveModelConfig(config: ModelConfig, appDataPath: string): ModelConfig {
-  const validation = validateModelConfig(config)
+export function loadLlmRegistry(appDataPath: string): LlmRegistry | null {
+  const raw = readRawConfigFile(appDataPath)
+  if (!raw) return null
+  return parseLlmRegistryFromDisk(raw)
+}
+
+/**
+ * 保存 LLM 注册表到磁盘
+ */
+export function saveLlmRegistry(appDataPath: string, registry: LlmRegistry): LlmRegistry {
+  const validation = validateLlmRegistry(registry)
   if (!validation.valid) {
-    const messages = validation.errors.map(e => e.message).join('；')
-    throw new Error(`配置校验失败：${messages}`)
+    throw new Error(`配置校验失败：${validation.message}`)
   }
 
   const configDir = path.join(appDataPath, 'settings')
@@ -136,47 +92,71 @@ export function saveModelConfig(config: ModelConfig, appDataPath: string): Model
     fs.mkdirSync(configDir, { recursive: true })
   }
 
-  // 写入的是 trim 后的合法值
-  fs.writeFileSync(configPath, JSON.stringify(validation.config, null, 2), 'utf8')
+  fs.writeFileSync(configPath, JSON.stringify(validation.registry, null, 2), 'utf8')
+  return validation.registry
+}
 
+/**
+ * 从磁盘加载当前活跃模型配置（Agent 运行时使用）
+ */
+export function loadModelConfig(appDataPath: string): ModelConfig | null {
+  const registry = loadLlmRegistry(appDataPath)
+  if (!registry) return null
+
+  const active = resolveActiveModelConfig(registry)
+  if (!active) return null
+
+  // 附加 fallbacks 供 ModelClientPool 使用
+  const fallbacks = resolveFallbackModelConfigs(registry)
+  if (fallbacks.length > 0) {
+    return { ...active, fallbacks }
+  }
+  return active
+}
+
+/**
+ * 保存 v1 ModelConfig（兼容旧 IPC；内部转为 v2 注册表）
+ */
+export function saveModelConfig(config: ModelConfig, appDataPath: string): ModelConfig {
+  const validation = validateModelConfig(config)
+  if (!validation.valid) {
+    const messages = validation.errors.map(e => e.message).join('；')
+    throw new Error(`配置校验失败：${messages}`)
+  }
+
+  const registry = migrateV1ToV2(validation.config)
+  saveLlmRegistry(appDataPath, registry)
   return validation.config
 }
 
 /**
- * 从磁盘加载模型配置
- * 
- * 读取流程：
- * 1. 文件不存在 → 返回 null（首次使用正常场景）
- * 2. 文件存在但无法解析或校验不通过 → 返回 null（损坏配置静默忽略，不阻塞启动）
- * 3. 所有字段校验通过 → 返回 trim 后的合法 ModelConfig
- * 
- * 复用 validateModelConfig 做统一强校验，保证写入和读取的契约一致
+ * 仅切换活跃模型（不写全盘 providers）
  */
-export function loadModelConfig(appDataPath: string): ModelConfig | null {
-  const configPath = path.join(appDataPath, CONFIG_RELATIVE_PATH)
-
-  if (!fs.existsSync(configPath)) {
-    return null
+export function setActiveModelInRegistry(
+  appDataPath: string,
+  ref: { providerId: string; modelEntryId: string }
+): LlmRegistry {
+  const registry = loadLlmRegistry(appDataPath)
+  if (!registry) {
+    throw new Error('尚未配置任何服务商')
   }
 
-  try {
-    const content = fs.readFileSync(configPath, 'utf8')
-    const parsed = JSON.parse(content)
-
-    // 复用统一校验：任何一个关键字段缺失或格式不对，都不允许进入启动链路
-    const validation = validateModelConfig(parsed)
-    if (!validation.valid) {
-      return null
-    }
-
-    return validation.config
-  } catch {
-    return null
+  const provider = registry.providers.find(p => p.id === ref.providerId)
+  const entry = provider?.models.find(m => m.id === ref.modelEntryId)
+  if (!provider || !entry) {
+    throw new Error('所选模型不存在')
   }
+
+  const next: LlmRegistry = {
+    ...registry,
+    activeModel: { providerId: ref.providerId, modelEntryId: ref.modelEntryId }
+  }
+
+  return saveLlmRegistry(appDataPath, next)
 }
 
 /**
- * 获取配置文件的绝对路径（供外部模块引用）
+ * 获取配置文件的绝对路径
  */
 export function getModelConfigPath(appDataPath: string): string {
   return path.join(appDataPath, CONFIG_RELATIVE_PATH)

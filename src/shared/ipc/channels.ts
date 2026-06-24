@@ -34,6 +34,11 @@ export const SUBAGENTS_DELETE = 'subagents:delete' as const
 export const CANCEL_EXECUTION = 'cancel-execution' as const
 export const SAVE_MODEL_CONFIG = 'save-model-config' as const
 export const LOAD_MODEL_CONFIG = 'load-model-config' as const
+/** LLM 多服务商注册表 */
+export const LOAD_LLM_REGISTRY = 'load-llm-registry' as const
+export const SAVE_LLM_REGISTRY = 'save-llm-registry' as const
+export const SET_ACTIVE_MODEL = 'set-active-model' as const
+export const FETCH_PROVIDER_MODELS = 'fetch-provider-models' as const
 export const SET_MODE = 'set-mode' as const
 export const ACCEPT_FILE = 'accept-file' as const
 export const REJECT_FILE = 'reject-file' as const

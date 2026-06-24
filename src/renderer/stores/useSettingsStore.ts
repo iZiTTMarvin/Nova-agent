@@ -1,79 +1,53 @@
 /**
  * useSettingsStore — 模型配置、UI 开关、用量统计
- *
- * 负责：
- * - ModelConfig 加载与保存
- * - isConfigModalOpen（设置弹窗显隐）
- * - sessionUsage（会话级 token 用量聚合）
- * - composerPrefill（设置页「使用技能」后预填 composer）
- *
- * 架构变更（PRD §5.1 工作区单一事实源）：
- * - currentProject / currentMode 不再由本 store 维护，改由 useWorkspaceStore 作为唯一事实源。
- * - 本 store 通过订阅 useWorkspaceStore 把 currentProject/currentMode 作为派生镜像保留，
- *   仅为 useAppStore 兼容层和既有组件零改动工作。
- * - selectProject / setMode 改为转发到 useWorkspaceStore，不再直接 IPC + 反向写 chat store。
- *
- * 依赖方向：
- * - 订阅 useWorkspaceStore（单向，只读派生）
- * - 被 useChatStore（sendMessage 读取 currentProject）和 useAppStore 读取
  */
 import { create } from 'zustand'
 import type { Mode } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
+import type { LlmRegistry } from '../../shared/config/llmRegistry'
+import {
+  resolveActiveModelConfig,
+  createEmptyRegistry
+} from '../../shared/config/llmRegistry'
 import { inferContextWindow } from '../../shared/config/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { SessionUsageStats } from './types'
 
 export interface SettingsState {
   // ── 状态 ──
+  /** LLM 多服务商注册表 */
+  llmRegistry: LlmRegistry | null
+  /** 当前活跃模型配置（由 llmRegistry 派生，供 Agent 与 vision 判断） */
   modelConfig: ModelConfig | null
-  /** 模型上下文窗口上限（tokens），用于前端显示上下文占用指示器 */
   contextLimit: number
   isConfigModalOpen: boolean
-  /**
-   * 当前工作区路径（派生镜像，源自 useWorkspaceStore）。
-   * 仅供 useAppStore 兼容层与既有组件零改动；不再由本 store 主动写入。
-   */
   currentProject: string | null
-  /** 当前运行模式（派生镜像，源自 useWorkspaceStore） */
   currentMode: Mode
-  /** 当前会话的 token 用量聚合统计 */
   sessionUsage: SessionUsageStats | null
-  /**
-   * 上下文容量分项 token 估算(来自 agent:context-breakdown 推送)。
-   * null 表示本会话还没收到过推送(无 LLM 调用)。
-   */
   contextBreakdown: ContextBreakdown | null
-  /** 设置页「使用技能」后预填到 composer 的文本 */
   composerPrefill: string | null
 
   // ── Actions ──
-  /** 加载持久化的模型配置 */
+  loadLlmRegistry: () => Promise<void>
+  /** @deprecated 请使用 loadLlmRegistry */
   loadModelConfig: () => Promise<void>
-  /** 保存新模型配置 */
+  saveLlmRegistry: (registry: LlmRegistry) => Promise<void>
+  /** @deprecated 请使用 saveLlmRegistry */
   saveModelConfig: (config: ModelConfig) => Promise<void>
-  /** 打开或关闭配置弹窗 */
+  setActiveModel: (providerId: string, modelEntryId: string) => Promise<void>
+  fetchProviderModels: (baseUrl: string, apiKey: string) => Promise<
+    { ok: true; modelIds: string[] } | { ok: false; message: string }
+  >
   setConfigModalOpen: (isOpen: boolean) => void
-  /** 选择项目（转发到 useWorkspaceStore） */
+  /** 打开设置并定位到 LLM 配置 Tab */
+  openLlmSettings: () => void
   selectProject: () => Promise<void>
-  /** 更换当前运行模式（转发到 useWorkspaceStore） */
   setMode: (mode: Mode) => Promise<void>
-  /** 累计一次 token 用量 */
   handleUsage: (usage: NormalizedUsage) => void
-  /** 切换会话时清空用量统计 */
   resetSessionUsage: () => void
-  /** 写入/覆盖本轮分项 token 估算(来自 agent:context-breakdown) */
   setContextBreakdown: (payload: ContextBreakdown) => void
-  /**
-   * 由 useWorkspaceStore 同步调用：把工作区最新状态镜像到本 store。
-   * 这是单向数据流：workspace store → settings store（派生镜像），
-   * 不允许其他模块直接调用此方法写 currentProject/currentMode。
-   * @internal
-   */
   syncFromWorkspace: (project: string | null, mode: Mode) => void
-  /** 关闭设置并预填 composer（如 `/onboard `） */
   requestComposerPrefill: (text: string) => void
-  /** ChatPanel 消费后清空 */
   clearComposerPrefill: () => void
 }
 
@@ -85,7 +59,6 @@ const EMPTY_USAGE: SessionUsageStats = {
   hitRate: 0
 }
 
-/** 上下文容量分项 token 估算(本轮 LLM 调用实际发给模型的拆分) */
 export interface ContextBreakdown {
   sessionId: string
   messageId: string
@@ -99,11 +72,28 @@ export interface ContextBreakdown {
   totalEstimated: number
   promptTokensActual: number
   capturedAt: number
-  /** 计算时使用的上下文窗口上限(部分场景需要覆盖 store 里的默认值) */
   contextLimit?: number
 }
 
+const LLM_SETTINGS_NAV_KEY = 'nova-settings-nav'
+
+function deriveModelState(registry: LlmRegistry | null): {
+  modelConfig: ModelConfig | null
+  contextLimit: number
+} {
+  if (!registry) {
+    return { modelConfig: null, contextLimit: 200_000 }
+  }
+  const modelConfig = resolveActiveModelConfig(registry)
+  return {
+    modelConfig,
+    contextLimit:
+      modelConfig?.contextWindow ?? inferContextWindow(modelConfig?.modelId ?? '')
+  }
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
+  llmRegistry: null,
   modelConfig: null,
   contextLimit: 200_000,
   isConfigModalOpen: false,
@@ -113,44 +103,89 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   contextBreakdown: null,
   composerPrefill: null,
 
-  loadModelConfig: async () => {
+  loadLlmRegistry: async () => {
     try {
-      const config = await window.api.invoke('load-model-config')
+      const registry = await window.api.invoke('load-llm-registry')
+      const derived = deriveModelState(registry)
+      set({ llmRegistry: registry, ...derived })
+    } catch (err) {
+      console.error('读取 LLM 注册表失败:', err)
+    }
+  },
+
+  loadModelConfig: async () => {
+    await get().loadLlmRegistry()
+  },
+
+  saveLlmRegistry: async (registry: LlmRegistry) => {
+    try {
+      await window.api.invoke('save-llm-registry', registry)
+      const derived = deriveModelState(registry)
       set({
-        modelConfig: config,
-        contextLimit: config?.contextWindow ?? inferContextWindow(config?.modelId ?? '')
+        llmRegistry: registry,
+        ...derived,
+        isConfigModalOpen: false
       })
     } catch (err) {
-      console.error('读取模型配置失败:', err)
+      console.error('保存 LLM 注册表失败:', err)
+      throw err
     }
   },
 
   saveModelConfig: async (config: ModelConfig) => {
     try {
       await window.api.invoke('save-model-config', config)
-      set({
-        modelConfig: config,
-        isConfigModalOpen: false,
-        contextLimit: config.contextWindow ?? inferContextWindow(config.modelId)
-      })
+      await get().loadLlmRegistry()
+      set({ isConfigModalOpen: false })
     } catch (err) {
       console.error('保存模型配置失败:', err)
       throw err
     }
   },
 
+  setActiveModel: async (providerId: string, modelEntryId: string) => {
+    try {
+      await window.api.invoke('set-active-model', { providerId, modelEntryId })
+      const registry = get().llmRegistry
+      if (registry) {
+        const next: LlmRegistry = {
+          ...registry,
+          activeModel: { providerId, modelEntryId }
+        }
+        const derived = deriveModelState(next)
+        set({ llmRegistry: next, ...derived })
+      } else {
+        await get().loadLlmRegistry()
+      }
+    } catch (err) {
+      console.error('切换模型失败:', err)
+      throw err
+    }
+  },
+
+  fetchProviderModels: async (baseUrl: string, apiKey: string) => {
+    return window.api.invoke('fetch-provider-models', { baseUrl, apiKey })
+  },
+
   setConfigModalOpen: (isOpen: boolean) => {
     set({ isConfigModalOpen: isOpen })
   },
 
+  openLlmSettings: () => {
+    try {
+      sessionStorage.setItem(LLM_SETTINGS_NAV_KEY, 'llm')
+    } catch {
+      // 忽略
+    }
+    set({ isConfigModalOpen: true })
+  },
+
   selectProject: async () => {
-    // 转发到 workspace store（单一事实源），不再自己 IPC + 反向写 chat store
     const { useWorkspaceStore } = await import('./useWorkspaceStore')
     await useWorkspaceStore.getState().selectProject()
   },
 
   setMode: async (mode: Mode) => {
-    // 转发到 workspace store
     const { useWorkspaceStore } = await import('./useWorkspaceStore')
     await useWorkspaceStore.getState().setMode(mode)
   },
@@ -161,8 +196,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const totalPrompt = prev.totalPromptTokens + usage.promptTokens
       const totalCached = prev.totalCachedTokens + usage.cachedTokens
       const totalCacheWrite = prev.totalCacheWriteTokens + (usage.cacheWriteTokens ?? 0)
-      // Anthropic 总输入 = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
-      // promptTokens 已包含 input + cache_read，因此分母需要补上 cache_creation。
       const totalInput = totalPrompt + totalCacheWrite
       return {
         sessionUsage: {
@@ -177,8 +210,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   resetSessionUsage: () => {
-    // 只清空用量统计，不清空 contextBreakdown；
-    // 切换会话后 AgentLoop 会通过 injectHistory 重新推送新的上下文拆分。
     set({ sessionUsage: null })
   },
 
@@ -187,7 +218,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   syncFromWorkspace: (project: string | null, mode: Mode) => {
-    // 仅在值真正变化时 set，避免无谓的重渲染
     if (get().currentProject !== project || get().currentMode !== mode) {
       set({ currentProject: project, currentMode: mode })
     }
@@ -202,9 +232,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   }
 }))
 
-/** 重置整个 settings store 到默认值。供测试 setup 复用。 */
+/** 获取默认空注册表（首次配置用） */
+export function getDefaultLlmRegistry(): LlmRegistry {
+  return createEmptyRegistry()
+}
+
 export function resetSettingsStoreForTests(): void {
   useSettingsStore.setState({
+    llmRegistry: null,
     modelConfig: null,
     contextLimit: 200_000,
     isConfigModalOpen: false,

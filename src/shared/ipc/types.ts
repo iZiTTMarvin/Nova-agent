@@ -3,7 +3,7 @@
  * 保证 renderer → main 命令和 main → renderer 事件的端到端类型安全
  */
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
-import type { ModelConfig } from '../config'
+import type { ModelConfig, LlmRegistry } from '../config'
 import type { DiffEntry, DiffReviewStatus } from '../diff'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
@@ -98,6 +98,22 @@ export interface IpcCommands {
   'load-model-config': {
     params: void
     result: ModelConfig | null
+  }
+  'load-llm-registry': {
+    params: void
+    result: LlmRegistry | null
+  }
+  'save-llm-registry': {
+    params: LlmRegistry
+    result: void
+  }
+  'set-active-model': {
+    params: { providerId: string; modelEntryId: string }
+    result: void
+  }
+  'fetch-provider-models': {
+    params: { baseUrl: string; apiKey: string }
+    result: { ok: true; modelIds: string[] } | { ok: false; message: string }
   }
   'set-mode': {
     params: { mode: Mode; sessionId?: string }

@@ -5,7 +5,8 @@ import { spawn } from 'child_process'
 import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
-import { loadModelConfig as loadPersistedModelConfig } from '../runtime/model/config'
+import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
+import { resolveActiveModelConfig } from '../shared/config/llmRegistry'
 import { inferCacheStrategy } from '../shared/config/types'
 import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
 import type { ModelClient } from '../runtime/model/ModelClient'
@@ -65,14 +66,26 @@ export function setCurrentMode(mode: Mode): void {
  */
 function loadModelConfigOnStartup(): void {
   try {
-    const config = loadPersistedModelConfig(app.getPath('userData'))
+    const config = loadModelConfig(app.getPath('userData'))
     if (config) {
       const client = new OpenAICompatibleModelClient(config)
-      // 启动时从 baseUrl 推断缓存策略（如果配置中没有显式指定）
       if (!config.cacheStrategy) {
         client.setCacheStrategy(inferCacheStrategy(config.baseUrl))
       }
       modelClient = client
+      return
+    }
+    // 无活跃模型时尝试加载注册表（可能全部未配置 key）
+    const registry = loadLlmRegistry(app.getPath('userData'))
+    if (registry) {
+      const active = resolveActiveModelConfig(registry)
+      if (active) {
+        const client = new OpenAICompatibleModelClient(active)
+        if (!active.cacheStrategy) {
+          client.setCacheStrategy(inferCacheStrategy(active.baseUrl))
+        }
+        modelClient = client
+      }
     }
   } catch (err) {
     console.error('启动时加载持久化配置失败:', err)

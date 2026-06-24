@@ -8,6 +8,7 @@ import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
+import { buildReasoningParams } from './reasoningDialect'
 import type { CacheStrategy } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
 
@@ -58,6 +59,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
       messages: markedMessages,
       stream: true,
       stream_options: { include_usage: true }
+    }
+
+    // 思考强度（按 provider 方言注入；'auto'/缺省时 buildReasoningParams 返回 null，零行为变化）
+    const reasoningParams = this.config.reasoningEffort
+      ? buildReasoningParams(this.config.modelId, this.config.baseUrl, this.config.reasoningEffort)
+      : null
+    if (reasoningParams) {
+      Object.assign(body, reasoningParams)
     }
 
     if (tools && tools.length > 0) {
