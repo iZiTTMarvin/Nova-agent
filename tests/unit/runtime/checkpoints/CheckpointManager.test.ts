@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 import { readManifest } from '../../../../src/runtime/checkpoints/manifest'
+import type { CheckpointConfig } from '../../../../src/runtime/checkpoints/types'
 
 /** 临时测试目录 */
 const TMP = join(process.cwd(), '.test-checkpoint-workspace')
@@ -10,11 +11,12 @@ const CHECKPOINT_ROOT = join(process.cwd(), '.test-checkpoints')
 const SESSION_ID = 'test-session'
 const MESSAGE_ID = 'msg-001'
 
-function createManager(): CheckpointManager {
+function createManager(overrides?: Partial<CheckpointConfig>): CheckpointManager {
   return new CheckpointManager({
     checkpointDir: CHECKPOINT_ROOT,
     sessionId: SESSION_ID,
-    workspaceRoot: TMP
+    workspaceRoot: TMP,
+    ...overrides
   })
 }
 
@@ -205,6 +207,143 @@ describe('CheckpointManager', () => {
 
       expect(m1!.modifiedFiles).toContain('existing.txt')
       expect(m2!.modifiedFiles).toContain('src/main.ts')
+    })
+  })
+
+  // ── 大小限制 ────────────────────────────────────────────────
+
+  describe('大小限制', () => {
+    it('超过 maxBackupFileBytes 的文件只记录 skippedFiles，不生成物理备份', () => {
+      const mgr = createManager({ maxBackupFileBytes: 10 })
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'big.txt')
+      writeFileSync(filePath, 'x'.repeat(20), 'utf8')
+      mgr.backupBeforeWrite(filePath, false)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toHaveLength(0)
+      expect(manifest!.skippedFiles).toHaveLength(1)
+      expect(manifest!.skippedFiles![0]).toMatchObject({
+        path: 'big.txt',
+        reason: 'oversized'
+      })
+      expect(manifest!.skippedFiles![0].bytes).toBeGreaterThan(10)
+
+      const backupPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'files', 'big.txt')
+      expect(existsSync(backupPath)).toBe(false)
+    })
+
+    it('未超过上限的文件正常备份', () => {
+      const mgr = createManager({ maxBackupFileBytes: 1024 })
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'small.txt')
+      writeFileSync(filePath, 'small content', 'utf8')
+      mgr.backupBeforeWrite(filePath, false)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toContain('small.txt')
+      expect(manifest!.skippedFiles ?? []).toHaveLength(0)
+    })
+  })
+
+  // ── 排除规则 ────────────────────────────────────────────────
+
+  describe('排除规则', () => {
+    it('node_modules 目录命中排除，只记录 skippedFiles', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      mkdirSync(join(TMP, 'node_modules', 'foo'), { recursive: true })
+      const filePath = join(TMP, 'node_modules', 'foo', 'index.js')
+      writeFileSync(filePath, 'module code', 'utf8')
+      mgr.backupBeforeWrite(filePath, false)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toHaveLength(0)
+      expect(manifest!.skippedFiles).toHaveLength(1)
+      expect(manifest!.skippedFiles![0]).toMatchObject({
+        path: 'node_modules/foo/index.js',
+        reason: 'excluded'
+      })
+
+      const backupPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'files', 'node_modules', 'foo', 'index.js')
+      expect(existsSync(backupPath)).toBe(false)
+    })
+
+    it('.env 文件命中排除，只记录 skippedFiles', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, '.env')
+      writeFileSync(filePath, 'SECRET=123', 'utf8')
+      mgr.backupBeforeWrite(filePath, false)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toHaveLength(0)
+      expect(manifest!.skippedFiles).toHaveLength(1)
+      expect(manifest!.skippedFiles![0].reason).toBe('excluded')
+    })
+
+    it('二进制扩展名命中排除', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'logo.png')
+      writeFileSync(filePath, 'fake image bytes', 'utf8')
+      mgr.backupBeforeWrite(filePath, false)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toHaveLength(0)
+      expect(manifest!.skippedFiles).toHaveLength(1)
+      expect(manifest!.skippedFiles![0].reason).toBe('excluded')
+    })
+  })
+
+  // ── 滚动清理 ────────────────────────────────────────────────
+
+  describe('滚动清理', () => {
+    it('保留最近 N 条消息的 files/，更早的 manifest 被打 backupPruned 标记', () => {
+      const mgr = createManager({ keepRecentCheckpointMessages: 2 })
+
+      // 消息 1：修改 a.ts
+      mgr.beginMessage('msg-001')
+      mgr.backupBeforeWrite(join(TMP, 'existing.txt'), false)
+      mgr.endMessage()
+
+      // 消息 2：修改 src/main.ts
+      mgr.beginMessage('msg-002')
+      mgr.backupBeforeWrite(join(TMP, 'src', 'main.ts'), false)
+      mgr.endMessage()
+
+      // 消息 3：触发清理，应保留消息 2、3，清理消息 1
+      mgr.beginMessage('msg-003')
+      mgr.backupBeforeWrite(join(TMP, 'existing.txt'), false)
+      mgr.endMessage()
+
+      const oldFilesDir = join(CHECKPOINT_ROOT, SESSION_ID, 'msg-001', 'files')
+      const oldManifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, 'msg-001')
+      expect(existsSync(oldFilesDir)).toBe(false)
+      expect(oldManifest!.backupPruned).toBe(true)
+      expect(oldManifest!.prunedAt).toBeGreaterThan(0)
+
+      // 最近的两条消息仍保留 files/
+      expect(existsSync(join(CHECKPOINT_ROOT, SESSION_ID, 'msg-002', 'files'))).toBe(true)
+      expect(existsSync(join(CHECKPOINT_ROOT, SESSION_ID, 'msg-003', 'files'))).toBe(true)
+    })
+
+    it('消息数未超过保留上限时不清理', () => {
+      const mgr = createManager({ keepRecentCheckpointMessages: 10 })
+
+      mgr.beginMessage('msg-001')
+      mgr.backupBeforeWrite(join(TMP, 'existing.txt'), false)
+      mgr.endMessage()
+
+      const filesDir = join(CHECKPOINT_ROOT, SESSION_ID, 'msg-001', 'files')
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, 'msg-001')
+      expect(existsSync(filesDir)).toBe(true)
+      expect(manifest!.backupPruned).toBeUndefined()
     })
   })
 

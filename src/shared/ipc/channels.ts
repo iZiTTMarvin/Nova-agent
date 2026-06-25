@@ -69,6 +69,12 @@ export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
 export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
 /** 回滚到某条消息之前 */
 export const WORKSPACE_ROLLBACK_MESSAGE = 'workspace:rollback-message' as const
+// ── 存储治理（WS3 后端） ──────────────────────
+export const STORAGE_USAGE = 'storage:usage' as const
+export const STORAGE_PRUNE_SESSION_CHECKPOINTS = 'storage:prune-session-checkpoints' as const
+export const STORAGE_PRUNE_ALL_CHECKPOINTS = 'storage:prune-all-checkpoints' as const
+export const STORAGE_DELETE_SESSION = 'storage:delete-session' as const
+export const STORAGE_RUN_GC = 'storage:run-gc' as const
 // ── 权限持久化规则（PRD §5.2） ──────────────────────
 export const PERMISSION_LIST = 'permission:list' as const
 export const PERMISSION_UPSERT = 'permission:upsert' as const

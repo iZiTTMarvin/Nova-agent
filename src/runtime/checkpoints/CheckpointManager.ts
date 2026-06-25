@@ -7,10 +7,18 @@
  * 3. 同一消息内多次修改同一文件只备份一次
  * 4. 支持按消息开始/结束来管理事务边界
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'fs'
 import { join, relative, dirname } from 'path'
-import type { CheckpointConfig, CheckpointManifest } from './types'
+import type { CheckpointConfig, CheckpointManifest, SkippedFileInfo } from './types'
 import { writeManifest, readManifest, getFilesDir } from './manifest'
+import { isExcludedPath } from './exclusions'
+import { pruneOldCheckpoints } from './prune'
+
+/** 默认单个文件备份上限：5MB */
+const DEFAULT_MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024
+
+/** 默认保留最近 checkpoint 消息数 */
+const DEFAULT_KEEP_RECENT_CHECKPOINT_MESSAGES = 30
 
 export class CheckpointManager {
   private config: CheckpointConfig
@@ -20,7 +28,21 @@ export class CheckpointManager {
   private backedUpFiles: Set<string> = new Set()
 
   constructor(config: CheckpointConfig) {
-    this.config = config
+    this.config = {
+      maxBackupFileBytes: DEFAULT_MAX_BACKUP_FILE_BYTES,
+      keepRecentCheckpointMessages: DEFAULT_KEEP_RECENT_CHECKPOINT_MESSAGES,
+      ...config
+    }
+  }
+
+  /** 获取生效的单个文件大小上限（字节） */
+  private getMaxBackupFileBytes(): number {
+    return this.config.maxBackupFileBytes ?? DEFAULT_MAX_BACKUP_FILE_BYTES
+  }
+
+  /** 获取生效的滚动保留消息数 */
+  private getKeepRecentCheckpointMessages(): number {
+    return this.config.keepRecentCheckpointMessages ?? DEFAULT_KEEP_RECENT_CHECKPOINT_MESSAGES
   }
 
   /** 获取 checkpoint 根目录 */
@@ -37,6 +59,18 @@ export class CheckpointManager {
   beginMessage(messageId: string): void {
     this.currentMessageId = messageId
     this.backedUpFiles.clear()
+
+    // 每条新消息开始时，按保留策略滚动清理旧的物理备份。
+    // 当前消息已占一条保留名额，因此旧消息保留 keepRecent - 1 条。
+    // 只删除 files/ 目录，保留 manifest.json 作为历史记录。
+    const keepRecent = this.getKeepRecentCheckpointMessages()
+    if (keepRecent > 1) {
+      pruneOldCheckpoints(
+        this.config.checkpointDir,
+        this.config.sessionId,
+        keepRecent - 1
+      )
+    }
   }
 
   /** 获取当前消息 ID */
@@ -74,25 +108,74 @@ export class CheckpointManager {
         manifest.createdFiles.push(relPath)
       }
     } else {
-      // 已有文件：备份原始内容，记录到 modifiedFiles
-      const filesDir = getFilesDir(
-        this.config.checkpointDir,
-        this.config.sessionId,
-        this.currentMessageId
-      )
-      mkdirSync(filesDir, { recursive: true })
+      // 已有文件：先经过排除规则与大小限制，再决定是否物理备份
+      const skipInfo = this.checkShouldSkipBackup(absoluteFilePath, relPath)
+      if (skipInfo) {
+        this.addSkippedFile(manifest, skipInfo)
+      } else {
+        // 备份原始内容，记录到 modifiedFiles
+        const filesDir = getFilesDir(
+          this.config.checkpointDir,
+          this.config.sessionId,
+          this.currentMessageId
+        )
+        mkdirSync(filesDir, { recursive: true })
 
-      // 用相对路径的目录结构保存备份，避免文件名冲突
-      const backupPath = join(filesDir, relPath)
-      mkdirSync(join(backupPath, '..'), { recursive: true })
-      copyFileSync(absoluteFilePath, backupPath)
+        // 用相对路径的目录结构保存备份，避免文件名冲突
+        const backupPath = join(filesDir, relPath)
+        mkdirSync(join(backupPath, '..'), { recursive: true })
+        copyFileSync(absoluteFilePath, backupPath)
 
-      if (!manifest.modifiedFiles.includes(relPath)) {
-        manifest.modifiedFiles.push(relPath)
+        if (!manifest.modifiedFiles.includes(relPath)) {
+          manifest.modifiedFiles.push(relPath)
+        }
       }
     }
 
     writeManifest(this.config.checkpointDir, manifest)
+  }
+
+  /**
+   * 判断已有文件是否应跳过备份。
+   *
+   * 返回 SkippedFileInfo 表示需要跳过（命中排除规则或超过大小上限），
+   * 返回 null 表示可以正常备份。
+   */
+  private checkShouldSkipBackup(
+    absoluteFilePath: string,
+    relPath: string
+  ): SkippedFileInfo | null {
+    // 1. 排除规则：node_modules / dist / build / .git / .env / 二进制媒体 / 日志等
+    if (isExcludedPath(relPath)) {
+      return { path: relPath, reason: 'excluded', bytes: 0 }
+    }
+
+    // 2. 大小上限：超过阈值时只记录、不物理备份
+    try {
+      const stats = statSync(absoluteFilePath)
+      const maxBytes = this.getMaxBackupFileBytes()
+      if (stats.isFile() && stats.size > maxBytes) {
+        return { path: relPath, reason: 'oversized', bytes: stats.size }
+      }
+    } catch {
+      // stat 失败时不应阻塞正常备份流程，交由 copyFileSync 自行报错
+    }
+
+    return null
+  }
+
+  /** 将跳过信息写入 manifest，避免重复记录 */
+  private addSkippedFile(
+    manifest: CheckpointManifest,
+    skipInfo: SkippedFileInfo
+  ): void {
+    if (!manifest.skippedFiles) {
+      manifest.skippedFiles = []
+    }
+    const existing = manifest.skippedFiles.find(s => s.path === skipInfo.path)
+    if (!existing) {
+      manifest.skippedFiles.push(skipInfo)
+    }
   }
 
   /** 获取当前 manifest，不存在则创建初始版本 */
@@ -179,38 +262,79 @@ export class CheckpointManager {
     this.backedUpFiles.add(relPath)
 
     const manifest = this.getOrCreateManifest()
-    const filesDir = getFilesDir(
-      this.config.checkpointDir,
-      this.config.sessionId,
-      this.currentMessageId
-    )
 
     if (isDeleted) {
-      // 被删除的文件：将原始内容保存到备份，以便恢复
-      mkdirSync(filesDir, { recursive: true })
-      const backupPath = join(filesDir, relPath)
-      mkdirSync(dirname(backupPath), { recursive: true })
-      // 不带 encoding：Buffer 字节级写入，二进制安全
-      writeFileSync(backupPath, originalContent)
-      if (!manifest.deletedFiles.includes(relPath)) {
-        manifest.deletedFiles.push(relPath)
+      // 被删除的文件：需要备份原始内容才能恢复
+      const skipInfo = this.checkContentShouldSkipBackup(relPath, originalContent)
+      if (skipInfo) {
+        this.addSkippedFile(manifest, skipInfo)
+      } else {
+        this.writeBackupContent(relPath, originalContent)
+        if (!manifest.deletedFiles.includes(relPath)) {
+          manifest.deletedFiles.push(relPath)
+        }
       }
     } else if (isNewFile) {
       if (!manifest.createdFiles.includes(relPath)) {
         manifest.createdFiles.push(relPath)
       }
     } else {
-      // 修改的文件：将原始内容保存到备份
-      mkdirSync(filesDir, { recursive: true })
-      const backupPath = join(filesDir, relPath)
-      mkdirSync(dirname(backupPath), { recursive: true })
-      // 不带 encoding：Buffer 字节级写入，二进制安全
-      writeFileSync(backupPath, originalContent)
-      if (!manifest.modifiedFiles.includes(relPath)) {
-        manifest.modifiedFiles.push(relPath)
+      // 修改的文件：先经过排除规则与大小限制，再决定是否物理备份
+      const skipInfo = this.checkContentShouldSkipBackup(relPath, originalContent)
+      if (skipInfo) {
+        this.addSkippedFile(manifest, skipInfo)
+      } else {
+        this.writeBackupContent(relPath, originalContent)
+        if (!manifest.modifiedFiles.includes(relPath)) {
+          manifest.modifiedFiles.push(relPath)
+        }
       }
     }
 
     writeManifest(this.config.checkpointDir, manifest)
+  }
+
+  /**
+   * 将内容写入当前消息对应的 files/ 备份目录。
+   */
+  private writeBackupContent(
+    relPath: string,
+    content: Buffer | string
+  ): void {
+    if (!this.currentMessageId) return
+
+    const filesDir = getFilesDir(
+      this.config.checkpointDir,
+      this.config.sessionId,
+      this.currentMessageId
+    )
+    mkdirSync(filesDir, { recursive: true })
+
+    const backupPath = join(filesDir, relPath)
+    mkdirSync(dirname(backupPath), { recursive: true })
+    // 不带 encoding：Buffer 字节级写入，二进制安全
+    writeFileSync(backupPath, content)
+  }
+
+  /**
+   * 基于内容和相对路径判断 bash 变更是否应跳过备份。
+   *
+   * 返回 SkippedFileInfo 表示需要跳过，null 表示可以备份。
+   */
+  private checkContentShouldSkipBackup(
+    relPath: string,
+    content: Buffer | string
+  ): SkippedFileInfo | null {
+    if (isExcludedPath(relPath)) {
+      return { path: relPath, reason: 'excluded', bytes: 0 }
+    }
+
+    const bytes = Buffer.isBuffer(content) ? content.length : Buffer.byteLength(content, 'utf8')
+    const maxBytes = this.getMaxBackupFileBytes()
+    if (bytes > maxBytes) {
+      return { path: relPath, reason: 'oversized', bytes }
+    }
+
+    return null
   }
 }

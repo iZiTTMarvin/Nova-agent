@@ -35,6 +35,10 @@ import type {
   RollbackMessageParams
 } from '../workspace/types'
 import type {
+  StorageUsageReport,
+  StorageCleanupResult
+} from '../storage/types'
+import type {
   PermissionRuleDto,
   PermissionListParams,
   PermissionUpsertParams,
@@ -305,6 +309,27 @@ export interface IpcCommands {
   'reject-all-files': {
     params: { sessionId: string; messageId: string; filePaths: string[] }
     result: { restored: string[]; failed: Array<{ filePath: string; error: string }> }
+  }
+  // ── 存储治理（WS3 后端） ──
+  'storage:usage': {
+    params: void
+    result: StorageUsageReport
+  }
+  'storage:prune-session-checkpoints': {
+    params: { sessionId: string }
+    result: StorageCleanupResult
+  }
+  'storage:prune-all-checkpoints': {
+    params: void
+    result: StorageCleanupResult
+  }
+  'storage:delete-session': {
+    params: { sessionId: string }
+    result: StorageCleanupResult
+  }
+  'storage:run-gc': {
+    params: { snapshotRetentionDays?: number }
+    result: StorageCleanupResult
   }
 }
 

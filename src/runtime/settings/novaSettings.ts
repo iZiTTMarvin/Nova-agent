@@ -34,7 +34,8 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
   theme: 'system',
   diffAutoExpand: false,
-  lastProjectPath: null
+  lastProjectPath: null,
+  snapshotRetentionDays: 30
 }
 
 /** 返回 ~/.nova 目录路径 */
@@ -97,6 +98,14 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.lastProjectPath === 'string') {
     result.lastProjectPath = obj.lastProjectPath
   }
+  if (
+    typeof obj.snapshotRetentionDays === 'number' &&
+    Number.isInteger(obj.snapshotRetentionDays) &&
+    obj.snapshotRetentionDays >= 0 &&
+    obj.snapshotRetentionDays <= 365
+  ) {
+    result.snapshotRetentionDays = obj.snapshotRetentionDays
+  }
 
   return result
 }
@@ -142,6 +151,16 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   }
   if ('editorFontFamily' in patch && patch.editorFontFamily !== undefined && typeof patch.editorFontFamily !== 'string') {
     errors.push('editorFontFamily 必须是字符串')
+  }
+  if ('snapshotRetentionDays' in patch && patch.snapshotRetentionDays !== undefined) {
+    if (
+      typeof patch.snapshotRetentionDays !== 'number' ||
+      !Number.isInteger(patch.snapshotRetentionDays) ||
+      patch.snapshotRetentionDays < 0 ||
+      patch.snapshotRetentionDays > 365
+    ) {
+      errors.push('snapshotRetentionDays 必须是 0~365 之间的整数（0 表示关闭自动 GC）')
+    }
   }
   return errors
 }

@@ -36,6 +36,8 @@ export interface NovaSettingsDto {
   diffAutoExpand: boolean
   /** 上次打开的项目路径（启动时恢复，空表示无） */
   lastProjectPath: string | null
+  /** 陈旧快照自动保留天数（超过此天数的 checkpoint files/ 会被启动时 GC 清理） */
+  snapshotRetentionDays: number
 }
 
 export interface RulesListParams {

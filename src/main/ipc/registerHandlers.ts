@@ -11,6 +11,7 @@ import { registerSubagentsHandler } from './subagentsHandler'
 import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
+import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { getSessionStore } from './sessionHandler'
 import { getMainWindow } from '../index'
@@ -57,6 +58,12 @@ export function registerIpcHandlers(): void {
   workspaceService.initOnStartup()
   registerWorkspaceHandler(getMainWindow)
 
+  // 存储治理 IPC（WS3 后端）
+  registerStorageHandler()
+
   // 权限持久化规则（PRD §5.2）
   registerPermissionHandler()
+
+  // 启动时静默执行一次存储 GC（清理临时日志 + 陈旧快照）
+  runStartupStorageGc()
 }

@@ -19,6 +19,22 @@ export interface CheckpointManifest {
   createdAt: number
   /** 文件级审查状态，key 为相对路径 */
   fileReviews?: Record<string, DiffReviewStatus>
+  /** 本轮因过大或命中排除规则而跳过备份的文件 */
+  skippedFiles?: SkippedFileInfo[]
+  /** 是否已被滚动清理：true 表示 files/ 目录已被删除，只剩 manifest 记录 */
+  backupPruned?: boolean
+  /** 滚动清理发生的时间戳（毫秒） */
+  prunedAt?: number
+}
+
+/** 被跳过备份的文件记录 */
+export interface SkippedFileInfo {
+  /** 相对路径（相对于工作区根目录） */
+  path: string
+  /** 跳过原因：过大或命中排除规则 */
+  reason: 'oversized' | 'excluded'
+  /** 文件大小（字节），排除规则下可为 0 */
+  bytes: number
 }
 
 /** CheckpointManager 的初始化配置 */
@@ -29,4 +45,14 @@ export interface CheckpointConfig {
   sessionId: string
   /** 工作区根目录 */
   workspaceRoot: string
+  /**
+   * 单个文件备份大小上限（字节）。
+   * 默认 5MB；超过此阈值的文件不会被物理备份，仅记录到 manifest.skippedFiles。
+   */
+  maxBackupFileBytes?: number
+  /**
+   * 每个会话保留的最近 checkpoint 消息数。
+   * 默认 30；更早消息的 files/ 目录会被物理删除，manifest 保留并标记 backupPruned。
+   */
+  keepRecentCheckpointMessages?: number
 }

@@ -268,6 +268,39 @@ describe('revertToMessage', () => {
     expect(result).toBe(true)
     expect(readWorkspaceFile('src/c.ts')).toBeNull()
   })
+
+  it('预检失败时不应修改任何工作区文件或 checkpoint（原子性）', () => {
+    // 消息 1：正常修改 a.ts，备份存在
+    writeWorkspaceFile('src/a.ts', 'modified a')
+    writeBackupFile('msg_1', 'src/a.ts', 'original a')
+    createManifest('msg_1', {
+      modifiedFiles: ['src/a.ts'],
+      createdAt: 1000
+    })
+
+    // 消息 2：修改 b.ts，但备份缺失
+    writeWorkspaceFile('src/b.ts', 'modified b')
+    // 故意不创建 msg_2 的备份
+    createManifest('msg_2', {
+      modifiedFiles: ['src/b.ts'],
+      createdAt: 2000
+    })
+
+    const allManifests = listManifests(checkpointRoot, sessionId)
+
+    // 从 msg_1 回退会同时处理 msg_2，预检应发现 msg_2 的 b.ts 备份缺失并抛错
+    expect(() =>
+      revertToMessage(checkpointRoot, workspaceRoot, sessionId, 'msg_1', allManifests)
+    ).toThrow('预检失败')
+
+    // 工作区文件应未被改动
+    expect(readWorkspaceFile('src/a.ts')).toBe('modified a')
+    expect(readWorkspaceFile('src/b.ts')).toBe('modified b')
+
+    // 两个 checkpoint 目录都应保留（未执行删除）
+    expect(fs.existsSync(getCheckpointDir(checkpointRoot, sessionId, 'msg_1'))).toBe(true)
+    expect(fs.existsSync(getCheckpointDir(checkpointRoot, sessionId, 'msg_2'))).toBe(true)
+  })
 })
 
 // ── listManifests ─────────────────────────────────────────
@@ -297,6 +330,65 @@ describe('listManifests', () => {
 })
 
 // ── C2 回归：二进制文件字节级回退（不再因 utf8 编码损坏） ──
+
+describe('缺失备份硬校验', () => {
+  it('rejectFile 恢复 modifiedFiles 时备份缺失会抛 Error', () => {
+    writeWorkspaceFile('src/app.ts', 'modified content')
+    // 故意不创建备份
+    createManifest('msg_missing', { modifiedFiles: ['src/app.ts'] })
+
+    expect(() =>
+      rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_missing', 'src/app.ts')
+    ).toThrow('备份文件不存在')
+  })
+
+  it('rejectFile 恢复 deletedFiles 时备份缺失会抛 Error', () => {
+    createManifest('msg_missing', { deletedFiles: ['src/app.ts'] })
+
+    expect(() =>
+      rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_missing', 'src/app.ts')
+    ).toThrow('备份文件不存在')
+  })
+
+  it('backupPruned 的 manifest 触发 rejectFile 时给出滚动清理提示', () => {
+    writeWorkspaceFile('src/app.ts', 'modified content')
+    const manifest = createManifest('msg_pruned', { modifiedFiles: ['src/app.ts'] })
+    manifest.backupPruned = true
+    manifest.prunedAt = Date.now()
+    writeManifest(checkpointRoot, manifest)
+
+    expect(() =>
+      rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_pruned', 'src/app.ts')
+    ).toThrow('已被滚动清理')
+  })
+
+  it('revertToMessage 遇到缺失备份时抛 Error', () => {
+    writeWorkspaceFile('src/a.ts', 'modified a')
+    createManifest('msg_missing', { modifiedFiles: ['src/a.ts'], createdAt: 1000 })
+
+    expect(() =>
+      revertToMessage(
+        checkpointRoot, workspaceRoot, sessionId, 'msg_missing',
+        listManifests(checkpointRoot, sessionId)
+      )
+    ).toThrow('备份文件不存在')
+  })
+
+  it('backupPruned 的 manifest 触发 revertToMessage 时给出滚动清理提示', () => {
+    writeWorkspaceFile('src/a.ts', 'modified a')
+    const manifest = createManifest('msg_pruned', { modifiedFiles: ['src/a.ts'], createdAt: 1000 })
+    manifest.backupPruned = true
+    manifest.prunedAt = Date.now()
+    writeManifest(checkpointRoot, manifest)
+
+    expect(() =>
+      revertToMessage(
+        checkpointRoot, workspaceRoot, sessionId, 'msg_pruned',
+        listManifests(checkpointRoot, sessionId)
+      )
+    ).toThrow('已被滚动清理')
+  })
+})
 
 describe('C2: 二进制文件回退字节级一致', () => {
   /** 构造一个最小有效 PNG（1×1 红色像素），含非 utf8 字节序列 */

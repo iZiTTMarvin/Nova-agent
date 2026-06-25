@@ -3,7 +3,7 @@ import { migrateSessionData, CURRENT_SESSION_SCHEMA_VERSION } from '../../../../
 import type { SessionData } from '../../../../src/runtime/sessions/types'
 
 describe('migrateSessionData', () => {
-  it('v1 会话自动升级到 v2，原有字段不丢失', () => {
+  it('v1 会话自动升级到当前版本，原有字段不丢失', () => {
     const v1: SessionData = {
       schemaVersion: 1,
       id: 'sess_test',
@@ -38,7 +38,7 @@ describe('migrateSessionData', () => {
     expect(migrated.frozenSystemPrompt).toBe('frozen')
   })
 
-  it('无 schemaVersion 的旧数据经 v0→v1→v2 链迁移', () => {
+  it('无 schemaVersion 的旧数据经迁移链升级到当前版本', () => {
     const legacy = {
       id: 'legacy',
       workspaceRoot: '/ws',
@@ -49,7 +49,7 @@ describe('migrateSessionData', () => {
     }
 
     const migrated = migrateSessionData(legacy)
-    expect(migrated.schemaVersion).toBe(2)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.mode).toBe('plan')
   })
 
@@ -65,6 +65,6 @@ describe('migrateSessionData', () => {
     }
 
     expect(() => migrateSessionData(v1)).not.toThrow()
-    expect(migrateSessionData(v1).schemaVersion).toBe(2)
+    expect(migrateSessionData(v1).schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
   })
 })

@@ -99,8 +99,11 @@ export interface SessionToolCall {
   truncationMeta?: ToolTruncationMeta
 }
 
-/** 会话持久化文件名 */
+/** 会话元数据持久化文件名 */
 export const SESSION_DATA_FILE = 'session.json'
+
+/** 会话消息体追加持久化文件名（JSONL，每行一条 SessionMessage） */
+export const SESSION_MESSAGES_FILE = 'messages.jsonl'
 
 /** 上下文快照文件名（与 SESSION_DATA_FILE 并列） */
 export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'

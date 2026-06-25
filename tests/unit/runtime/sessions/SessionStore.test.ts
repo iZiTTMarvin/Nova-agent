@@ -91,9 +91,11 @@ describe('SessionStore', () => {
       expect(store.list()).toHaveLength(0)
     })
 
-    it('返回所有会话摘要按 updatedAt 降序排列', () => {
+    it('返回所有会话摘要按 updatedAt 降序排列', async () => {
       const store = new SessionStore(tmpDir)
       const s1 = store.create('/project/a')
+      // 确保 s2 的 updatedAt 严格大于 s1，避免 Date.now() 相同导致排序不稳定
+      await new Promise(r => setTimeout(r, 15))
       const s2 = store.create('/project/b')
 
       const list = store.list()
@@ -496,6 +498,227 @@ describe('SessionStore', () => {
 
       store.clearContextSnapshot(session.id)
       expect(store.loadContextSnapshot(session.id)).toBeNull()
+    })
+  })
+
+  describe('JSONL 追加存储', () => {
+    it('appendMessage 后消息写入 messages.jsonl，session.json 只含元数据', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, {
+        id: 'msg_1',
+        role: 'user',
+        content: 'hello',
+        timestamp: Date.now()
+      })
+
+      const sessionDir = path.join(tmpDir, 'sessions', session.id)
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.messages).toBeUndefined()
+      expect(metadata.id).toBe(session.id)
+
+      const jsonl = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
+      const lines = jsonl.trim().split('\n')
+      expect(lines).toHaveLength(1)
+      expect(JSON.parse(lines[0]).content).toBe('hello')
+    })
+
+    it('load 从 messages.jsonl 重组完整消息历史', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, { id: 'msg_1', role: 'user', content: 'a', timestamp: 1 })
+      store.appendMessage(session.id, { id: 'msg_2', role: 'assistant', content: 'b', timestamp: 2 })
+
+      const loaded = store.load(session.id)
+      expect(loaded!.messages).toHaveLength(2)
+      expect(loaded!.messages[0].content).toBe('a')
+      expect(loaded!.messages[1].content).toBe('b')
+    })
+
+    it('messages.jsonl 存在损坏行时跳过该行', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const sessionDir = path.join(tmpDir, 'sessions', session.id)
+
+      store.appendMessage(session.id, { id: 'msg_1', role: 'user', content: 'ok', timestamp: 1 })
+      fs.appendFileSync(path.join(sessionDir, 'messages.jsonl'), 'not-valid-json\n', 'utf8')
+
+      const loaded = store.load(session.id)
+      expect(loaded!.messages).toHaveLength(1)
+      expect(loaded!.messages[0].content).toBe('ok')
+    })
+
+    it('save 重写 messages.jsonl 实现截断回退', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, { id: 'msg_1', role: 'user', content: 'a', timestamp: 1 })
+      store.appendMessage(session.id, { id: 'msg_2', role: 'assistant', content: 'b', timestamp: 2 })
+
+      const loaded = store.load(session.id)!
+      loaded.messages = loaded.messages.slice(0, 1)
+      store.save(loaded)
+
+      const reloaded = store.load(session.id)
+      expect(reloaded!.messages).toHaveLength(1)
+      expect(reloaded!.messages[0].id).toBe('msg_1')
+    })
+
+    it('updateTodos 只改 session.json，不碰 messages.jsonl', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, { id: 'msg_1', role: 'user', content: 'a', timestamp: 1 })
+
+      const sessionDir = path.join(tmpDir, 'sessions', session.id)
+      const jsonlBefore = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
+
+      store.updateTodos(session.id, [{ content: 'todo', status: 'pending', priority: 'high' }])
+
+      const jsonlAfter = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
+      expect(jsonlAfter).toBe(jsonlBefore)
+
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.todos).toHaveLength(1)
+    })
+
+    it('updateMode 只改 session.json，不碰 messages.jsonl', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, { id: 'msg_1', role: 'user', content: 'a', timestamp: 1 })
+
+      const sessionDir = path.join(tmpDir, 'sessions', session.id)
+      const jsonlBefore = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
+
+      store.updateMode(session.id, 'auto' as Mode)
+
+      const jsonlAfter = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
+      expect(jsonlAfter).toBe(jsonlBefore)
+
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.mode).toBe('auto')
+    })
+
+    it('appendMessage 对未迁移的旧版会话直接追加，旧消息不丢', () => {
+      const sessionId = 'sess_append_legacy'
+      const sessionDir = path.join(tmpDir, 'sessions', sessionId)
+      fs.mkdirSync(sessionDir, { recursive: true })
+
+      const legacy = {
+        schemaVersion: 2,
+        id: sessionId,
+        workspaceRoot: '/legacy',
+        mode: 'default',
+        messages: [
+          { id: 'm1', role: 'user', content: 'legacy old', timestamp: 1 }
+        ],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify(legacy, null, 2), 'utf8')
+
+      const store = new SessionStore(tmpDir)
+      // 不先调用 load，直接 appendMessage
+      store.appendMessage(sessionId, { id: 'm2', role: 'assistant', content: 'new appended', timestamp: 3 })
+
+      const loaded = store.load(sessionId)
+      expect(loaded!.messages).toHaveLength(2)
+      expect(loaded!.messages[0].content).toBe('legacy old')
+      expect(loaded!.messages[1].content).toBe('new appended')
+
+      // 旧版内联消息应已拆出
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.messages).toBeUndefined()
+      expect(metadata.schemaVersion).toBe(3)
+    })
+  })
+
+  describe('旧版会话懒迁移', () => {
+    it('v2 含内联 messages 的旧版 session.json 加载时自动拆出到 messages.jsonl', () => {
+      const sessionId = 'sess_legacy_v2'
+      const sessionDir = path.join(tmpDir, 'sessions', sessionId)
+      fs.mkdirSync(sessionDir, { recursive: true })
+
+      const legacy = {
+        schemaVersion: 2,
+        id: sessionId,
+        workspaceRoot: '/legacy',
+        mode: 'default',
+        messages: [
+          { id: 'm1', role: 'user', content: 'v2 message', timestamp: 1 }
+        ],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify(legacy, null, 2), 'utf8')
+
+      const store = new SessionStore(tmpDir)
+      const loaded = store.load(sessionId)
+      expect(loaded!.messages).toHaveLength(1)
+      expect(loaded!.messages[0].content).toBe('v2 message')
+      expect(loaded!.schemaVersion).toBe(3)
+
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.messages).toBeUndefined()
+      expect(metadata.schemaVersion).toBe(3)
+    })
+
+    it('v1 含内联 messages 的旧版 session.json 加载时自动拆出到 messages.jsonl', () => {
+      const sessionId = 'sess_legacy_v1'
+      const sessionDir = path.join(tmpDir, 'sessions', sessionId)
+      fs.mkdirSync(sessionDir, { recursive: true })
+
+      const legacy = {
+        schemaVersion: 1,
+        id: sessionId,
+        workspaceRoot: '/legacy',
+        mode: 'default',
+        messages: [
+          { id: 'm1', role: 'user', content: 'v1 message a', timestamp: 1 },
+          { id: 'm2', role: 'assistant', content: 'v1 message b', timestamp: 2 }
+        ],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify(legacy, null, 2), 'utf8')
+
+      const store = new SessionStore(tmpDir)
+      const loaded = store.load(sessionId)
+      expect(loaded!.messages).toHaveLength(2)
+      expect(loaded!.messages[0].content).toBe('v1 message a')
+      expect(loaded!.messages[1].content).toBe('v1 message b')
+      expect(loaded!.schemaVersion).toBe(3)
+
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.messages).toBeUndefined()
+      expect(metadata.schemaVersion).toBe(3)
+    })
+
+    it('无 schemaVersion 的旧版 session.json 加载时自动拆出到 messages.jsonl', () => {
+      const sessionId = 'sess_legacy_v0'
+      const sessionDir = path.join(tmpDir, 'sessions', sessionId)
+      fs.mkdirSync(sessionDir, { recursive: true })
+
+      const legacy = {
+        id: sessionId,
+        workspaceRoot: '/legacy',
+        mode: 'plan',
+        messages: [
+          { id: 'm1', role: 'user', content: 'v0 message', timestamp: 1 }
+        ],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify(legacy, null, 2), 'utf8')
+
+      const store = new SessionStore(tmpDir)
+      const loaded = store.load(sessionId)
+      expect(loaded!.messages).toHaveLength(1)
+      expect(loaded!.messages[0].content).toBe('v0 message')
+      expect(loaded!.schemaVersion).toBe(3)
+      expect(loaded!.mode).toBe('plan')
+
+      const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
+      expect(metadata.messages).toBeUndefined()
+      expect(metadata.schemaVersion).toBe(3)
     })
   })
 })

@@ -45,18 +45,25 @@ export function rejectFile(
   const absFilePath = join(workspaceRoot, relFilePath)
   const filesDir = getFilesDir(checkpointRoot, sessionId, messageId)
 
-  // 修改过的文件：从备份恢复原始内容
+  // 修改过的文件：从备份恢复原始内容，备份缺失时严禁静默跳过
   if (manifest.modifiedFiles.includes(relFilePath)) {
     const backupPath = join(filesDir, relFilePath)
-    if (existsSync(backupPath)) {
-      // 确保目标目录存在
-      const targetDir = dirname(absFilePath)
-      if (!existsSync(targetDir)) {
-        mkdirSync(targetDir, { recursive: true })
-      }
-      // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
-      writeFileSync(absFilePath, readFileSync(backupPath))
+    if (!existsSync(backupPath)) {
+      const reason = manifest.backupPruned
+        ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法恢复'
+        : '备份文件不存在'
+      throw new Error(
+        `[rejectFile] ${reason}: session=${sessionId}, message=${messageId}, file=${relFilePath}`
+      )
     }
+
+    // 确保目标目录存在
+    const targetDir = dirname(absFilePath)
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true })
+    }
+    // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+    writeFileSync(absFilePath, readFileSync(backupPath))
     manifest.modifiedFiles = manifest.modifiedFiles.filter(f => f !== relFilePath)
   }
   // 新建的文件：从工作区删除
@@ -66,17 +73,24 @@ export function rejectFile(
     }
     manifest.createdFiles = manifest.createdFiles.filter(f => f !== relFilePath)
   }
-  // 删除的文件：从备份恢复原始内容到工作区
+  // 删除的文件：从备份恢复原始内容到工作区，备份缺失时严禁静默跳过
   else if (manifest.deletedFiles.includes(relFilePath)) {
     const backupPath = join(filesDir, relFilePath)
-    if (existsSync(backupPath)) {
-      const targetDir = dirname(absFilePath)
-      if (!existsSync(targetDir)) {
-        mkdirSync(targetDir, { recursive: true })
-      }
-      // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
-      writeFileSync(absFilePath, readFileSync(backupPath))
+    if (!existsSync(backupPath)) {
+      const reason = manifest.backupPruned
+        ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法恢复'
+        : '备份文件不存在'
+      throw new Error(
+        `[rejectFile] ${reason}: session=${sessionId}, message=${messageId}, file=${relFilePath}`
+      )
     }
+
+    const targetDir = dirname(absFilePath)
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true })
+    }
+    // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+    writeFileSync(absFilePath, readFileSync(backupPath))
     manifest.deletedFiles = manifest.deletedFiles.filter(f => f !== relFilePath)
   }
   else {
@@ -126,24 +140,35 @@ export function revertToMessage(
     .filter(m => m.createdAt >= targetManifest.createdAt && m.status === 'active')
     .sort((a, b) => a.createdAt - b.createdAt)
 
+  // 先预检：确认所有需要恢复的备份文件都存在，避免半回退。
+  // 任何备份缺失都抛 Error，不修改任何工作区文件或 checkpoint 目录。
+  verifyRevertPossible(checkpointRoot, sessionId, manifestsToRevert)
+
   // 逐个处理 checkpoint：恢复文件，然后删除目录
   for (const manifest of manifestsToRevert) {
     const checkpointDir = getCheckpointDir(checkpointRoot, sessionId, manifest.messageId)
     const filesDir = getFilesDir(checkpointRoot, sessionId, manifest.messageId)
 
-    // 恢复修改过的文件：从备份还原原始内容
+    // 恢复修改过的文件：从备份还原原始内容，备份缺失时严禁静默跳过
     for (const relPath of manifest.modifiedFiles) {
       const backupPath = join(filesDir, relPath)
       const absPath = join(workspaceRoot, relPath)
 
-      if (existsSync(backupPath)) {
-        const targetDir = dirname(absPath)
-        if (!existsSync(targetDir)) {
-          mkdirSync(targetDir, { recursive: true })
-        }
-        // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
-        writeFileSync(absPath, readFileSync(backupPath))
+      if (!existsSync(backupPath)) {
+        const reason = manifest.backupPruned
+          ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法回退'
+          : '备份文件不存在'
+        throw new Error(
+          `[revertToMessage] ${reason}: session=${sessionId}, message=${manifest.messageId}, file=${relPath}`
+        )
       }
+
+      const targetDir = dirname(absPath)
+      if (!existsSync(targetDir)) {
+        mkdirSync(targetDir, { recursive: true })
+      }
+      // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+      writeFileSync(absPath, readFileSync(backupPath))
     }
 
     // 删除新建的文件
@@ -154,19 +179,26 @@ export function revertToMessage(
       }
     }
 
-    // 恢复被删除的文件：从备份还原原始内容
+    // 恢复被删除的文件：从备份还原原始内容，备份缺失时严禁静默跳过
     for (const relPath of manifest.deletedFiles) {
       const backupPath = join(filesDir, relPath)
       const absPath = join(workspaceRoot, relPath)
 
-      if (existsSync(backupPath)) {
-        const targetDir = dirname(absPath)
-        if (!existsSync(targetDir)) {
-          mkdirSync(targetDir, { recursive: true })
-        }
-        // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
-        writeFileSync(absPath, readFileSync(backupPath))
+      if (!existsSync(backupPath)) {
+        const reason = manifest.backupPruned
+          ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法回退'
+          : '备份文件不存在'
+        throw new Error(
+          `[revertToMessage] ${reason}: session=${sessionId}, message=${manifest.messageId}, file=${relPath}`
+        )
       }
+
+      const targetDir = dirname(absPath)
+      if (!existsSync(targetDir)) {
+        mkdirSync(targetDir, { recursive: true })
+      }
+      // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
+      writeFileSync(absPath, readFileSync(backupPath))
     }
 
     // 注意：deletedFiles 的文件在更早期的 checkpoint 中可能被修改，
@@ -180,6 +212,45 @@ export function revertToMessage(
   }
 
   return true
+}
+
+/**
+ * 预检回退是否可行：扫描所有待回退 manifest，确认需要恢复原始内容的备份都存在。
+ *
+ * 任何备份缺失都抛 Error，调用方应据此阻止回退并提示用户。
+ */
+function verifyRevertPossible(
+  checkpointRoot: string,
+  sessionId: string,
+  manifestsToRevert: CheckpointManifest[]
+): void {
+  for (const manifest of manifestsToRevert) {
+    const filesDir = getFilesDir(checkpointRoot, sessionId, manifest.messageId)
+
+    for (const relPath of manifest.modifiedFiles) {
+      const backupPath = join(filesDir, relPath)
+      if (!existsSync(backupPath)) {
+        const reason = manifest.backupPruned
+          ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法回退'
+          : '备份文件不存在'
+        throw new Error(
+          `[revertToMessage] 预检失败，${reason}: session=${sessionId}, message=${manifest.messageId}, file=${relPath}`
+        )
+      }
+    }
+
+    for (const relPath of manifest.deletedFiles) {
+      const backupPath = join(filesDir, relPath)
+      if (!existsSync(backupPath)) {
+        const reason = manifest.backupPruned
+          ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法回退'
+          : '备份文件不存在'
+        throw new Error(
+          `[revertToMessage] 预检失败，${reason}: session=${sessionId}, message=${manifest.messageId}, file=${relPath}`
+        )
+      }
+    }
+  }
 }
 
 /**

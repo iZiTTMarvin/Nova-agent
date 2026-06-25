@@ -12,10 +12,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { SessionData, SessionMessage } from './types'
-import { SESSION_DATA_FILE } from './types'
+import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE } from './types'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 2
+export const CURRENT_SESSION_SCHEMA_VERSION = 3
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -91,10 +91,26 @@ function migrateV1ToV2(data: unknown): SessionData {
   }
 }
 
+/**
+ * v2 → v3：升级 schemaVersion。
+ *
+ * 消息体从 session.json 内联数组拆出到 messages.jsonl 的物理操作
+ * 由 migrateSessionFile 完成：它先调用 migrateSessionData 得到完整 SessionData（含 messages），
+ * 再写入 messages.jsonl，最后写回 session.json 时排除 messages 字段。
+ */
+function migrateV2ToV3(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 3
+  }
+}
+
 /** 迁移函数链：索引 = 起始版本 */
 const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV0ToV1, // v0 → v1
-  migrateV1ToV2  // v1 → v2
+  migrateV1ToV2, // v1 → v2
+  migrateV2ToV3  // v2 → v3
 ]
 
 /**
@@ -183,15 +199,33 @@ export function migrateSessionFile(
     throw new Error(`会话 ${sessionId} 迁移前备份失败，已中止: ${(err as Error).message}`)
   }
 
-  // 执行迁移
+  // 执行迁移：migrateSessionData 会把任意旧版本补齐为完整 SessionData（含 messages）
   const migrated = migrateSessionData(parsed)
 
-  // 写回
+  // 需要把 messages 拆出到 messages.jsonl（无论原始版本是 v0/v1/v2，migrated.messages 都完整）
+  const messages = migrated.messages
+
+  // 写回 session.json（不含 messages，只保留元数据）
   try {
-    fs.writeFileSync(filePath, JSON.stringify(migrated, null, 2), 'utf8')
+    const { messages: _messages, ...metadata } = migrated
+    fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
   } catch (err) {
     throw new Error(`会话 ${sessionId} 迁移后写盘失败，原文件已备份: ${(err as Error).message}`)
   }
 
+  // 拆出 messages.jsonl
+  if (messages && messages.length > 0) {
+    const messagesPath = path.join(sessionsDir, sessionId, SESSION_MESSAGES_FILE)
+    try {
+      const lines = messages.map(m => JSON.stringify(m)).join('\n')
+      fs.writeFileSync(messagesPath, lines + '\n', 'utf8')
+    } catch (err) {
+      throw new Error(
+        `会话 ${sessionId} 迁移后拆出 messages.jsonl 失败: ${(err as Error).message}`
+      )
+    }
+  }
+
   return migrated
 }
+
