@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { open, readdir, readFile as readFileAsync } from 'fs/promises'
+import { open, readdir } from 'fs/promises'
 import { join, relative } from 'path'
 import { createInterface } from 'readline'
 import { resolveAndValidatePath } from './ToolRegistry'
@@ -9,21 +9,14 @@ import { OutputSink } from './OutputSink'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { resolveToolArg } from './toolArgResolver'
 import type { GrepInput, GrepOutputMode, GrepToolOptions } from './grep-types'
+// T4：目录排除清单与 gitignore 解析统一走共享模块，消除与 findTool 的重复。
+import { isPathSkipped, loadIgnoreMatcher, type IgnoreMatcher } from './pathExclusions'
 
-// picomatch 是 Vite 传递依赖，node_modules 中可用但无自带类型声明。
-// 用 @ts-expect-error 抑制 TS7016，仅本文件使用，影响面可控。
+// picomatch 仅用于 glob 参数匹配（GlobMatcher）；gitignore 解析已移至 pathExclusions。
 // @ts-expect-error - picomatch is a transitive dep without @types/picomatch
 import picomatch from 'picomatch'
 
 const REGEX_META_CHARS = /[.*+?[\](){}|^$\\]/
-
-// 硬编码目录排除基线。参考 snapshot.ts 的 SKIP_DIRS，并补充常见构建产物目录。
-// 与 .gitignore 解析无关，纯粹的"永远不搜索"清单，避免污染结果。
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'out',
-  '__pycache__', '.next', 'target', '.cache', '.nova',
-  'coverage', '.turbo', '.nuxt', '.output', '.parcel-cache'
-])
 
 // 回退路径共享的早停/统计状态。跨 searchDir/grepFile 递归传递。
 interface FallbackState {
@@ -41,7 +34,6 @@ interface FallbackMatch {
   text: string
 }
 
-type IgnoreMatcher = (relPath: string, isDir: boolean) => boolean
 type GlobMatcher = (relPath: string) => boolean
 
 interface SearchOptions {
@@ -540,76 +532,6 @@ async function executeFallback(
 }
 
 /**
- * 加载工作区根目录的 .gitignore 并编译匹配器。
- *
- * 返回的 shouldIgnore 函数遵循 git 的"最后匹配规则生效"语义：
- * - `!pattern` 是取反模式，会覆盖之前的 ignore 判定
- * - 目录模式（如 `dist/`）会通过祖先继承作用于其下所有文件
- * - 文件不存在或解析失败时返回"永不忽略"的空匹配器
- *
- * 这是简化版解析：不支持 `[abc]` 字符类、`\#` 转义、双星 `**` 的复杂路径匹配。
- * 覆盖 95%+ 常见 .gitignore 模式；fail-open（不识别就放行）保证不影响主流程。
- */
-async function loadIgnoreMatcher(workspaceRoot: string): Promise<IgnoreMatcher> {
-  interface CompiledRule {
-    negated: boolean
-    match: (candidate: string) => boolean
-  }
-  const rules: CompiledRule[] = []
-
-  let content: string
-  try {
-    content = await readFileAsync(join(workspaceRoot, '.gitignore'), 'utf-8')
-  } catch {
-    // .gitignore 不存在或不可读 → 永不忽略
-    return () => false
-  }
-
-  for (const rawLine of content.split(/\r?\n/)) {
-    const trimmed = rawLine.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-
-    const negated = trimmed.startsWith('!')
-    const body = negated ? trimmed.slice(1).trim() : trimmed
-    // 去掉末尾的目录指示符 /
-    const cleaned = body.endsWith('/') ? body.slice(0, -1) : body
-    if (!cleaned) continue
-
-    try {
-      const matcher = picomatch(cleaned, { dot: true })
-      rules.push({ negated, match: (candidate) => matcher(candidate) })
-    } catch {
-      // 模式不合法，跳过该行（fail-open）
-    }
-  }
-
-  if (rules.length === 0) return () => false
-
-  return (relPath: string, _isDir: boolean): boolean => {
-    if (!relPath) return false
-    // 候选路径 = 路径自身 + 每个祖先目录
-    // 例如 "dist/build/foo.ts" → ["dist", "dist/build", "dist/build/foo.ts"]
-    // 这样 "dist" 模式能匹配到 dist 下的所有文件
-    const parts = relPath.split('/')
-    const candidates: string[] = []
-    for (let i = 1; i <= parts.length; i++) {
-      candidates.push(parts.slice(0, i).join('/'))
-    }
-
-    let ignored = false
-    for (const rule of rules) {
-      for (const candidate of candidates) {
-        if (rule.match(candidate)) {
-          ignored = !rule.negated
-          break
-        }
-      }
-    }
-    return ignored
-  }
-}
-
-/**
  * 异步递归遍历目录。在每层入口和每个 entry 处理前检查 state.cancelled，
  * 配合 grepFile 的 onLine 回调返回 false 实现真正的 head_limit 早停。
  */
@@ -628,10 +550,10 @@ async function searchDir(dir: string, state: FallbackState, opts: SearchOptions)
     if (state.cancelled) return
 
     const name = entry.name
-    // 硬编码排除优先于 .gitignore：避免某些仓库 .gitignore 缺失时污染结果
-    if (SKIP_DIRS.has(name)) continue
-    // 隐藏目录（.git, .vscode, .idea 等）默认跳过，与原实现保持一致
-    if (name.startsWith('.')) continue
+    // 硬编码排除优先于 .gitignore：避免某些仓库 .gitignore 缺失时污染结果。
+    // isPathSkipped 合并了"隐藏目录(.开头)"与"BUILD_SKIP_DIRS"两层判断，
+    // 与 findTool 保持一致的排除语义。
+    if (isPathSkipped(name)) continue
 
     const fullPath = join(dir, name)
     const relPath = relative(opts.workingDir, fullPath).replace(/\\/g, '/')

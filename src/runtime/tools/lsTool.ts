@@ -1,8 +1,13 @@
 /**
  * lsTool — 列出目录内容
  * 显示指定目录下的文件和子目录，限制在工作区内
+ *
+ * T2 异步化：readdirSync/statSync → readdir({withFileTypes}) + Dirent。
+ * 单层列目录不接入 isPathSkipped 过滤——ls 应照常显示 target/ 这类目录条目
+ * （让模型知道它存在），只是 ls 天然不递归，不会进入其内部。find 的递归遍历
+ * 才用 isPathSkipped 排除构建产物。这是文档 T5.2 钉死的边界差异。
  */
-import { readdirSync, statSync } from 'fs'
+import { readdir } from 'fs/promises'
 import { join, relative } from 'path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { resolveToolArg } from './toolArgResolver'
@@ -32,17 +37,18 @@ export const lsTool: ToolExecutor = {
     }
 
     try {
-      const entries = readdirSync(validated.path)
+      // withFileTypes 返回 Dirent，可直接 isDirectory()，免去逐条 statSync 系统调用。
+      // 异步 readdir 让出事件循环，即便目录条目极多也不会锁死主线程。
+      const entries = await readdir(validated.path, { withFileTypes: true })
       const lines: string[] = []
 
       for (const entry of entries) {
-        const fullPath = join(validated.path, entry)
+        const rel = relative(context.workingDir, join(validated.path, entry.name)).replace(/\\/g, '/')
+        //Dirent.isDirectory() 免 statSync；不可读条目（符号链接断裂等）走 catch 跳过
         try {
-          const stat = statSync(fullPath)
-          const rel = relative(context.workingDir, fullPath).replace(/\\/g, '/')
-          lines.push(stat.isDirectory() ? `${rel}/` : rel)
+          lines.push(entry.isDirectory() ? `${rel}/` : rel)
         } catch {
-          // 无权限等异常跳过
+          // 极少数 Dirent 判定异常，跳过该条目
         }
       }
 

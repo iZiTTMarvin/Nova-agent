@@ -66,6 +66,17 @@ describe('只读工具', () => {
       expect(result.success).toBe(false)
       expect(result.error).toContain('越界')
     })
+
+    // ── T5.2 边界：ls 是单层列目录，不递归，所以 target/ 目录条目本身应显示 ──
+    // （与 find 的递归排除语义不同：find 进入 target/ 内部才排除，ls 只列一层）
+    it('单层列出时照常显示构建产物目录条目本身', async () => {
+      mkdirSync(join(TMP, 'target'), { recursive: true })
+      writeFileSync(join(TMP, 'target', 'a.class'), 'x\n')
+      const result = await lsTool.execute({ path: '.' }, createContext())
+      expect(result.success).toBe(true)
+      // target/ 作为目录条目要显示（让模型知道它存在）
+      expect(result.output).toContain('target/')
+    })
   })
 
   // ── readTool ──────────────────────────────────────────────
@@ -187,6 +198,81 @@ describe('只读工具', () => {
       const result = await findTool.execute({ pattern: '*', path: '../../etc' }, createContext())
       expect(result.success).toBe(false)
       expect(result.error).toContain('越界')
+    })
+
+    // ── T5 新增：构建产物排除（本次卡死根因的回归保护） ────────
+
+    describe('构建产物目录排除', () => {
+      // 在 TMP 下额外构造 target/ build/ node_modules/ 目录树，
+      // 验证 find 递归时不会进入这些目录（卡死根因：target/ 内数千 .class）。
+      beforeEach(() => {
+        mkdirSync(join(TMP, 'target', 'classes', 'com', 'example'), { recursive: true })
+        mkdirSync(join(TMP, 'build', 'obj'), { recursive: true })
+        mkdirSync(join(TMP, 'node_modules', 'some-pkg'), { recursive: true })
+        // 真实源码
+        writeFileSync(join(TMP, 'target', 'classes', 'com', 'example', 'Main.class'), 'fake bytecode\n')
+        writeFileSync(join(TMP, 'build', 'obj', 'x.obj'), 'obj\n')
+        writeFileSync(join(TMP, 'node_modules', 'some-pkg', 'index.js'), 'module.exports = 1\n')
+        // 用户真实源码（应被找到）
+        writeFileSync(join(TMP, 'src', 'real.ts'), 'real source\n')
+      })
+
+      it('不遍历 target/ 目录（Java/Maven 卡死根因）', async () => {
+        const result = await findTool.execute({ pattern: '**/*' }, createContext())
+        expect(result.success).toBe(true)
+        expect(result.output).toContain('real.ts')
+        // target 内的 .class 绝不能出现在结果里
+        expect(result.output).not.toContain('Main.class')
+        expect(result.output).not.toContain('target')
+      })
+
+      it('不遍历 build/ 目录', async () => {
+        const result = await findTool.execute({ pattern: '**/*' }, createContext())
+        expect(result.output).not.toContain('x.obj')
+        expect(result.output).not.toContain('build')
+      })
+
+      it('不遍历 node_modules/ 目录', async () => {
+        const result = await findTool.execute({ pattern: '**/*.js' }, createContext())
+        expect(result.output).not.toContain('some-pkg')
+        expect(result.output).not.toContain('node_modules')
+      })
+
+      it('按扩展名查找时构建产物不污染结果', async () => {
+        const result = await findTool.execute({ pattern: '**/*.ts' }, createContext())
+        expect(result.output).toContain('real.ts')
+        expect(result.output).not.toContain('.class')
+        expect(result.output).not.toContain('.obj')
+      })
+    })
+
+    // ── T5 新增：abortSignal 中断递归 ────────────────────────
+
+    describe('取消信号', () => {
+      it('abortSignal 触发时中断递归并返回取消提示', async () => {
+        const ac = new AbortController()
+        const ctx = createContext()
+        ctx.abortSignal = ac.signal
+        // 遍历开始前立即取消（模拟用户在 find 启动瞬间点取消）
+        ac.abort()
+        const result = await findTool.execute({ pattern: '**/*.ts' }, ctx)
+        expect(result.success).toBe(true)
+        expect(result.output).toContain('操作已取消')
+      })
+    })
+
+    // ── T5 新增：gitignore 生效 ──────────────────────────────
+
+    describe('gitignore 过滤', () => {
+      it('尊重工作区 .gitignore 规则', async () => {
+        writeFileSync(join(TMP, '.gitignore'), '*.log\n')
+        writeFileSync(join(TMP, 'app.log'), 'log\n')
+        writeFileSync(join(TMP, 'keep.txt'), 'keep\n')
+
+        const result = await findTool.execute({ pattern: '*' }, createContext())
+        expect(result.output).toContain('keep.txt')
+        expect(result.output).not.toContain('app.log')
+      })
     })
   })
 })
