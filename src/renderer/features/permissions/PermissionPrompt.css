@@ -1,36 +1,50 @@
 .permission-prompt__overlay {
-  position: fixed;
-  inset: 0;
+  width: 100%;
   display: flex;
-  align-items: center;
   justify-content: center;
-  padding: 24px;
-  background-color: rgba(20, 20, 19, 0.5);
-  z-index: 1100;
-  animation: permissionPromptFadeIn var(--transition-fast) forwards;
+  margin-bottom: 12px;
+  animation: permissionPromptSlideIn var(--transition-fast) forwards;
 }
 
-@keyframes permissionPromptFadeIn {
+@keyframes permissionPromptSlideIn {
   from {
     opacity: 0;
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 }
 
 .permission-prompt {
-  width: min(620px, 100%);
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 28px;
+  gap: 14px;
+  padding: 20px 24px;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--border-warm);
+  border: 1px solid rgba(56, 152, 236, 0.6);
   background:
-    radial-gradient(circle at top right, rgba(196, 140, 65, 0.14), transparent 40%),
+    radial-gradient(circle at top right, rgba(56, 152, 236, 0.08), transparent 40%),
     var(--bg-card);
-  box-shadow: var(--shadow-popup);
+  box-shadow: 0 0 8px rgba(56, 152, 236, 0.3), var(--shadow-popup);
+  animation: borderGlow 3s infinite ease-in-out;
+}
+
+@keyframes borderGlow {
+  0% {
+    border-color: rgba(56, 152, 236, 0.4);
+    box-shadow: 0 0 6px rgba(56, 152, 236, 0.15), var(--shadow-popup);
+  }
+  50% {
+    border-color: rgba(56, 152, 236, 0.85);
+    box-shadow: 0 0 14px rgba(56, 152, 236, 0.45), var(--shadow-popup);
+  }
+  100% {
+    border-color: rgba(56, 152, 236, 0.4);
+    box-shadow: 0 0 6px rgba(56, 152, 236, 0.15), var(--shadow-popup);
+  }
 }
 
 .permission-prompt__header {
@@ -198,57 +212,111 @@
   transform: scale(0.98);
 }
 
-/* ── 记忆选项（持久化规则） ── */
-.permission-prompt__remember {
-  margin-top: 10px;
-  border-top: 1px dashed var(--border-warm);
-  padding-top: 10px;
+/* ── 允许按钮组与下拉菜单 ── */
+.permission-prompt__btn-group {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
-.permission-prompt__remember-toggle {
+.permission-prompt__btn-group .permission-prompt__btn--allow {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.permission-prompt__btn-dropdown-toggle {
+  background-color: var(--color-brand);
+  color: #ffffff;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  padding: 10px 12px;
+  height: 100%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.permission-prompt__btn-dropdown-toggle:hover:not(:disabled) {
+  background-color: var(--color-brand-hover);
+}
+
+.permission-prompt__btn-dropdown-toggle:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.permission-prompt__btn-dropdown-toggle:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.permission-prompt__dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: 240px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-md);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12), var(--shadow-popup);
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 1200;
+}
+
+.permission-prompt__dropdown-menu button {
   background: none;
   border: none;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  cursor: pointer;
-  padding: 4px 0;
-  width: 100%;
+  padding: 10px 16px;
   text-align: left;
-}
-
-.permission-prompt__remember-toggle:hover {
+  font-size: 0.85rem;
   color: var(--text-primary);
+  cursor: pointer;
+  width: 100%;
+  transition: background-color var(--transition-fast);
 }
 
-.permission-prompt__remember-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+.permission-prompt__dropdown-menu button:hover {
+  background-color: var(--bg-sidebar);
 }
 
-.permission-prompt__btn--remember-allow {
-  color: #2e7d32;
-  background-color: rgba(46, 125, 50, 0.08);
-  border: 1px solid rgba(46, 125, 50, 0.2);
-  font-size: 0.78rem;
-  padding: 7px 12px;
+.permission-prompt__dropdown-menu .danger-option {
+  color: var(--color-error);
 }
 
-.permission-prompt__btn--remember-allow:hover:not(:disabled) {
-  background-color: rgba(46, 125, 50, 0.14);
-}
-
-.permission-prompt__btn--remember-deny {
-  color: #b53333;
+.permission-prompt__dropdown-menu .danger-option:hover {
   background-color: rgba(181, 51, 51, 0.06);
-  border: 1px solid rgba(181, 51, 51, 0.2);
-  font-size: 0.78rem;
-  padding: 7px 12px;
 }
 
-.permission-prompt__btn--remember-deny:hover:not(:disabled) {
-  background-color: rgba(181, 51, 51, 0.12);
+.permission-prompt__dropdown-divider {
+  height: 1px;
+  background-color: var(--border-cream);
+  margin: 4px 0;
+}
+
+/* ── 批量命令展示 ── */
+.permission-prompt__commands-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  background-color: var(--bg-sidebar);
+}
+
+.permission-prompt__commands-list .permission-prompt__command {
+  border: none;
+  background-color: transparent;
+  padding: 6px 8px;
 }
 
 @media (max-width: 640px) {

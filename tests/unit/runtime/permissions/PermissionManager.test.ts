@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { PermissionManager, grantSessionPermission, clearSessionWhitelist } from '../../../../src/runtime/permissions/PermissionManager'
 import type { Mode } from '../../../../src/shared/session/types'
 
 describe('PermissionManager', () => {
@@ -183,6 +183,45 @@ describe('PermissionManager', () => {
       expect(pm.check(query, 'plan').decision).toBe('deny')
       expect(pm.check(query, 'default').decision).toBe('ask')
       expect(pm.check(query, 'auto').decision).toBe('allow')
+    })
+  })
+
+  // ── 会话级临时内存白名单 ──
+
+  describe('会话级临时白名单', () => {
+    it('命中白名单前缀的 bash 命令直接放行', () => {
+      pm.setSessionId('session-1')
+      grantSessionPermission('session-1', 'npm')
+
+      // npm 命令应该放行
+      const res1 = pm.check({ toolName: 'bash', args: { command: 'npm install' } }, 'default')
+      expect(res1.decision).toBe('allow')
+
+      // 其他命令依然需要 ask
+      const res2 = pm.check({ toolName: 'bash', args: { command: 'git status' } }, 'default')
+      expect(res2.decision).toBe('ask')
+    })
+
+    it('会话之间互相隔离', () => {
+      grantSessionPermission('session-1', 'git')
+
+      // session-1 应该放行
+      pm.setSessionId('session-1')
+      expect(pm.check({ toolName: 'bash', args: { command: 'git commit' } }, 'default').decision).toBe('allow')
+
+      // session-2 依然 ask
+      pm.setSessionId('session-2')
+      expect(pm.check({ toolName: 'bash', args: { command: 'git commit' } }, 'default').decision).toBe('ask')
+    })
+
+    it('清理白名单后失效', () => {
+      pm.setSessionId('session-3')
+      grantSessionPermission('session-3', 'python')
+
+      expect(pm.check({ toolName: 'bash', args: { command: 'python script.py' } }, 'default').decision).toBe('allow')
+
+      clearSessionWhitelist('session-3')
+      expect(pm.check({ toolName: 'bash', args: { command: 'python script.py' } }, 'default').decision).toBe('ask')
     })
   })
 })

@@ -57,6 +57,10 @@ export interface ToolBatchExecutionOptions {
   checkpointManager: CheckpointManager | null
   abortSignal: AbortSignal | undefined
   checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string) => Promise<{ allowed: boolean; reason: string; aborted?: boolean }>
+  checkBatchPermission?: (
+    items: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>,
+    messageId: string
+  ) => Promise<Map<string, { allowed: boolean; reason: string; aborted?: boolean }>>
   emit: (event: AgentEvent) => void
   applyTruncation: (output: string, maxSize: number) => string
   maxParallelToolCalls: number
@@ -364,31 +368,44 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     return { outcomes: [], aborted: false }
   }
 
-  const precheckOutcomes: ToolExecutionOutcome[] = []
-  const executionCandidates: PreparedToolCall[] = []
+  // ── 阶段 1：参数预处理 ──
+  // 解析 arguments、修复 native 协议，并优先运行 preToolUse hook，
+  // 从而在任何权限校验之前拿到经过 hook 修改后的“最终参数”
+  const preparedCalls: Array<{
+    index: number
+    toolCall: ChatToolCall
+    args: Record<string, unknown>
+    tool: ToolExecutor | undefined
+    precheckOutcome?: ToolExecutionOutcome
+  }> = []
+
   const toolContext = buildToolContext(options)
 
   for (let index = 0; index < options.toolCalls.length; index++) {
     if (options.abortSignal?.aborted) {
       for (let i = index; i < options.toolCalls.length; i++) {
         const toolCall = options.toolCalls[i]
-        precheckOutcomes.push(createSkippedOutcome(i, toolCall, parseArgs(toolCall.arguments)))
+        preparedCalls.push({
+          index: i,
+          toolCall,
+          args: parseArgs(toolCall.arguments),
+          tool: undefined,
+          precheckOutcome: createSkippedOutcome(i, toolCall, parseArgs(toolCall.arguments))
+        })
       }
       break
     }
 
     const toolCall = options.toolCalls[index]
     let args = parseArgs(toolCall.arguments)
-    // Native 协议参数修复：部分模型/中转把 XML 工具调用塞进 function.arguments，
-    // 导致 args 结构错位（key 变成 'invoke name="..."' 或 '/path' 残片）。
-    // 这里在执行前统一修复，避免「缺少 path/filePath 参数」类错误。
-    // 见 nativeArgsRepair.ts 的背景说明与日志证据。
     if (needsRepair(toolCall.arguments, args)) {
       args = repairNativeArguments(toolCall.name, toolCall.arguments, args)
     }
     const tool = options.toolRegistry?.getTool(toolCall.name)
 
     // preToolUse：拦截或修改参数
+    let blocked = false
+    let blockedOutcome: ToolExecutionOutcome | undefined
     if (options.hookManager && tool) {
       const pre = await options.hookManager.trigger({
         event: 'preToolUse',
@@ -398,64 +415,149 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         toolArgs: args
       })
       if (pre?.block) {
+        blocked = true
         const reason = pre.reason ?? 'hook 拦截'
-        const outcome = createErrorOutcome(index, toolCall, args, `工具被 hook 拦截: ${reason}`)
-        precheckOutcomes.push(outcome)
-        options.emit({
-          type: 'tool_result',
-          messageId: options.messageId,
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          result: sanitizeToolOutput(toolCall.name, outcome.resultText, true)
-        })
-        continue
+        blockedOutcome = createErrorOutcome(index, toolCall, args, `工具被 hook 拦截: ${reason}`)
       }
-      if (pre?.modifiedArgs) args = { ...args, ...pre.modifiedArgs }
+      if (pre?.modifiedArgs) {
+        args = { ...args, ...pre.modifiedArgs }
+      }
     }
 
-    if (!tool) {
-      const outcome = createErrorOutcome(index, toolCall, args, `工具 "${toolCall.name}" 不可用：未注册工具`)
-      precheckOutcomes.push(outcome)
-      // 失败路径走更激进的 2KB 截断（isError=true）
-      options.emit({
-        type: 'tool_result',
-        messageId: options.messageId,
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        result: sanitizeToolOutput(toolCall.name, outcome.resultText, true)
+    if (blocked && blockedOutcome) {
+      preparedCalls.push({
+        index,
+        toolCall,
+        args,
+        tool,
+        precheckOutcome: blockedOutcome
       })
       continue
     }
 
-    const permissionResult = await options.checkPermission(toolCall.name, args, options.messageId)
+    if (!tool) {
+      const outcome = createErrorOutcome(index, toolCall, args, `工具 "${toolCall.name}" 不可用：未注册工具`)
+      preparedCalls.push({
+        index,
+        toolCall,
+        args,
+        tool: undefined,
+        precheckOutcome: outcome
+      })
+      continue
+    }
+
+    preparedCalls.push({
+      index,
+      toolCall,
+      args,
+      tool
+    })
+  }
+
+  // ── 阶段 2：扫描连续且未被前置拦截的 bash 组进行批量校验 ──
+  const bashGroups: Array<Array<{ index: number; toolCall: ChatToolCall; args: Record<string, unknown> }>> = []
+  let currentGroup: Array<{ index: number; toolCall: ChatToolCall; args: Record<string, unknown> }> = []
+
+  for (const item of preparedCalls) {
+    if (item.toolCall.name === 'bash' && !item.precheckOutcome) {
+      currentGroup.push({ index: item.index, toolCall: item.toolCall, args: item.args })
+    } else {
+      if (currentGroup.length > 0) {
+        bashGroups.push(currentGroup)
+        currentGroup = []
+      }
+    }
+  }
+  if (currentGroup.length > 0) {
+    bashGroups.push(currentGroup)
+  }
+
+  const permissionResults = new Map<string, { allowed: boolean; reason: string; aborted?: boolean }>()
+
+  for (const group of bashGroups) {
+    if (options.checkBatchPermission) {
+      const items = group.map(item => ({
+        toolCallId: item.toolCall.id,
+        toolName: 'bash',
+        args: item.args
+      }))
+      const batchRes = await options.checkBatchPermission(items, options.messageId)
+      for (const [id, res] of batchRes.entries()) {
+        permissionResults.set(id, res)
+      }
+    } else {
+      // 降级回退：逐个询问
+      for (const item of group) {
+        const res = await options.checkPermission(item.toolCall.name, item.args, options.messageId)
+        permissionResults.set(item.toolCall.id, res)
+      }
+    }
+  }
+
+  // ── 阶段 3：分发前置拦截、校验最终权限并入队待执行项 ──
+  const precheckOutcomes: ToolExecutionOutcome[] = []
+  const executionCandidates: PreparedToolCall[] = []
+
+  for (const item of preparedCalls) {
+    if (item.precheckOutcome) {
+      precheckOutcomes.push(item.precheckOutcome)
+      options.emit({
+        type: 'tool_result',
+        messageId: options.messageId,
+        toolCallId: item.toolCall.id,
+        toolName: item.toolCall.name,
+        result: sanitizeToolOutput(item.toolCall.name, item.precheckOutcome.resultText, true)
+      })
+      continue
+    }
+
+    if (options.abortSignal?.aborted) {
+      precheckOutcomes.push(createSkippedOutcome(item.index, item.toolCall, item.args))
+      continue
+    }
+
+    // 运行最终权限校验（此时的 item.args 已是经过 hook 改写后的最新实际参数）
+    let permissionResult: { allowed: boolean; reason: string; aborted?: boolean }
+    if (item.toolCall.name === 'bash') {
+      permissionResult = permissionResults.get(item.toolCall.id) || { allowed: false, reason: '未找到权限校验结果' }
+    } else {
+      permissionResult = await options.checkPermission(item.toolCall.name, item.args, options.messageId)
+    }
+
     if (permissionResult.aborted || options.abortSignal?.aborted) {
-      for (let i = index; i < options.toolCalls.length; i++) {
+      for (let i = item.index; i < options.toolCalls.length; i++) {
         const pendingCall = options.toolCalls[i]
-        precheckOutcomes.push(createSkippedOutcome(i, pendingCall, parseArgs(pendingCall.arguments)))
+        if (!precheckOutcomes.some(o => o.toolCall.id === pendingCall.id) &&
+            !executionCandidates.some(c => c.toolCall.id === pendingCall.id)) {
+          let pendingArgs = parseArgs(pendingCall.arguments)
+          const prepared = preparedCalls.find(p => p.toolCall.id === pendingCall.id)
+          if (prepared) pendingArgs = prepared.args
+          precheckOutcomes.push(createSkippedOutcome(i, pendingCall, pendingArgs))
+        }
       }
       break
     }
 
     if (!permissionResult.allowed) {
-      const outcome = createErrorOutcome(index, toolCall, args, `权限拒绝: ${permissionResult.reason}`)
+      const outcome = createErrorOutcome(item.index, item.toolCall, item.args, `权限拒绝: ${permissionResult.reason}`)
       precheckOutcomes.push(outcome)
-      // 失败路径走更激进的 2KB 截断（isError=true）
       options.emit({
         type: 'tool_result',
         messageId: options.messageId,
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        result: sanitizeToolOutput(toolCall.name, outcome.resultText, true)
+        toolCallId: item.toolCall.id,
+        toolName: item.toolCall.name,
+        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true)
       })
       continue
     }
 
     executionCandidates.push({
-      index,
-      toolCall,
-      args,
-      tool,
-      canParallel: options.toolExecution !== 'sequential' && isConcurrencySafe(tool, args, toolContext)
+      index: item.index,
+      toolCall: item.toolCall,
+      args: item.args,
+      tool: item.tool!,
+      canParallel: options.toolExecution !== 'sequential' && isConcurrencySafe(item.tool!, item.args, toolContext)
     })
   }
 

@@ -6,7 +6,6 @@ import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { NovaLogo, SettingsIcon } from './components/Icons'
 import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './features/chat/ChatPanel'
-import { PermissionPrompt } from './features/permissions/PermissionPrompt'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
@@ -255,9 +254,6 @@ function App(): JSX.Element {
 
         {/* 模型参数配置模态窗 */}
         <SettingsModal />
-
-        {/* 权限确认弹窗 */}
-        <PermissionPrompt />
       </div>
     </div>
   )

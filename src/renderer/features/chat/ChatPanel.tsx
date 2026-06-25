@@ -18,6 +18,7 @@ import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { RecoveryBanner } from './RecoveryBanner'
+import { PermissionPrompt } from '../permissions/PermissionPrompt'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
   fileToImageAttachment,
@@ -500,6 +501,8 @@ export const ChatPanel: React.FC = () => {
         }`}
       >
         <div className="w-full max-w-3xl flex flex-col items-center pointer-events-auto">
+          {/* 权限卡片 */}
+          <PermissionPrompt />
 
           {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
           <RecoveryBanner messageId={currentGeneratingMessageId} />

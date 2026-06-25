@@ -705,6 +705,7 @@ export class AgentLoop implements IdleCompactionTarget {
         checkpointManager: this.checkpointManager,
         abortSignal: this.abortController?.signal,
         checkPermission: createPermissionExtension(this),
+        checkBatchPermission: (items, msgId) => this.checkBatchPermission(items, msgId),
         emit: (event) => this.eventBus.emit(event),
         applyTruncation: createToolPostProcessExtension(this),
         maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
@@ -989,6 +990,116 @@ export class AgentLoop implements IdleCompactionTarget {
     // 如果还在 running，也走 cancel 流程触发 onCancel hook
     if (this.state === 'running') {
       this.cancel()
+    }
+  }
+
+  /**
+   * 批量权限检查入口
+   */
+  public async checkBatchPermission(
+    items: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>,
+    messageId: string
+  ): Promise<Map<string, { allowed: boolean; reason: string; aborted?: boolean }>> {
+    const results = new Map<string, { allowed: boolean; reason: string; aborted?: boolean }>()
+
+    if (items.length === 0) {
+      return results
+    }
+
+    // 没有 PermissionManager 时，全部放行
+    if (!this.permissionManager) {
+      for (const item of items) {
+        if (this.mode === 'plan' && WRITE_TOOLS[item.toolName]) {
+          results.set(item.toolCallId, {
+            allowed: false,
+            reason: `当前为 plan 模式，"${item.toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
+          })
+        } else {
+          results.set(item.toolCallId, { allowed: true, reason: '' })
+        }
+      }
+      return results
+    }
+
+    // 逐个匹配本地规则 (持久化与模式规则)
+    const askItems: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string }> = []
+    
+    for (const item of items) {
+      const result = this.permissionManager.check({ toolName: item.toolName, args: item.args }, this.mode)
+      if (result.decision === 'allow') {
+        results.set(item.toolCallId, { allowed: true, reason: '' })
+      } else if (result.decision === 'deny') {
+        results.set(item.toolCallId, { allowed: false, reason: result.reason })
+      } else {
+        // decision === 'ask'
+        askItems.push({
+          toolCallId: item.toolCallId,
+          toolName: item.toolName,
+          args: item.args,
+          riskLevel: result.riskLevel,
+          reason: result.reason
+        })
+      }
+    }
+
+    // 如果没有需要询问用户的项，直接返回
+    if (askItems.length === 0) {
+      return results
+    }
+
+    // 对需要询问的项，合并成一个批量 permission_request 弹卡片
+    const requestId = randomUUID()
+    const permissionResponse = this.waitForPermissionResponse(requestId)
+
+    // 收集所有需要 ask 的命令文本
+    const commands: string[] = []
+    let maxRiskLevel: 'low' | 'medium' | 'high' = 'low'
+    const riskLevelsWeight = { low: 1, medium: 2, high: 3 }
+    const reasons: string[] = []
+
+    for (const item of askItems) {
+      const cmd = typeof item.args.command === 'string' ? item.args.command : JSON.stringify(item.args)
+      commands.push(cmd)
+      
+      // 提取最高风险等级
+      if (riskLevelsWeight[item.riskLevel] > riskLevelsWeight[maxRiskLevel]) {
+        maxRiskLevel = item.riskLevel
+      }
+      reasons.push(item.reason)
+    }
+
+    // 合并说明文案
+    const combinedReason = Array.from(new Set(reasons)).join('; ')
+
+    this.eventBus.emit({
+      type: 'permission_request',
+      messageId,
+      requestId,
+      toolName: 'bash', // 既然合并了，以主类型 bash 描述
+      args: askItems[0].args, // 兼容旧字段
+      riskLevel: maxRiskLevel,
+      reason: combinedReason,
+      commands // 传入批量命令列表
+    })
+
+    try {
+      const granted = await permissionResponse
+      for (const item of askItems) {
+        if (!granted) {
+          results.set(item.toolCallId, { allowed: false, reason: `用户拒绝了 "${item.toolName}" 工具的执行请求` })
+        } else {
+          results.set(item.toolCallId, { allowed: true, reason: '' })
+        }
+      }
+      return results
+    } catch (err) {
+      if (err instanceof PermissionAbortedError) {
+        for (const item of askItems) {
+          results.set(item.toolCallId, { allowed: false, reason: '', aborted: true })
+        }
+        return results
+      }
+      throw err
     }
   }
 

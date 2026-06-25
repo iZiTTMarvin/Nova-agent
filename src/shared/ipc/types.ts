@@ -298,6 +298,10 @@ export interface IpcCommands {
     params: PermissionDeleteParams
     result: { deleted: boolean }
   }
+  'permission:grant-session-scope': {
+    params: { sessionId: string; commandPrefix: string }
+    result: void
+  }
   // ── DiffViewer 批量审阅（PRD §5.3） ──
   'accept-all-files': {
     params: { sessionId: string; messageId: string; filePaths: string[] }
@@ -376,6 +380,7 @@ export interface IpcEvents {
     args: Record<string, unknown>
     riskLevel: 'low' | 'medium' | 'high'
     reason: string
+    commands?: string[]
   }
   'agent:diff-update': {
     messageId: string

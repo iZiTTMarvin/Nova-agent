@@ -228,6 +228,7 @@ export function registerAgentHandler(
     // PRD §5.2：注入持久化权限规则 + 当前项目路径，用于匹配 allow/deny/ask
     permissionManager.setRules(listPermissionRules(projectPath))
     permissionManager.setCurrentProjectPath(projectPath)
+    permissionManager.setSessionId(params.sessionId)
 
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(lsTool)
@@ -833,7 +834,8 @@ export function forwardEventToRenderer(
         toolName: event.toolName,
         args: event.args,
         riskLevel: event.riskLevel,
-        reason: event.reason
+        reason: event.reason,
+        commands: event.commands
       })
       break
     case 'diff_update':

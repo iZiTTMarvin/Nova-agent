@@ -8,7 +8,8 @@
  * - 当前项目路径从 main 进程全局状态读取，不接受 renderer 传入的任意路径。
  */
 import { ipcMain } from 'electron'
-import { PERMISSION_LIST, PERMISSION_UPSERT, PERMISSION_DELETE } from '../../shared/ipc/channels'
+import { grantSessionPermission } from '../../runtime/permissions/PermissionManager'
+import { PERMISSION_LIST, PERMISSION_UPSERT, PERMISSION_DELETE, PERMISSION_GRANT_SESSION_SCOPE } from '../../shared/ipc/channels'
 import {
   listPermissionRules,
   upsertPermissionRule,
@@ -67,5 +68,9 @@ export function registerPermissionHandler(): void {
     const projectPath = params.projectPath ?? getCurrentProjectPath()
     const deleted = deletePermissionRule(params.ruleId, projectPath)
     return { deleted }
+  })
+
+  ipcMain.handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: { sessionId: string; commandPrefix: string }) => {
+    grantSessionPermission(params.sessionId, params.commandPrefix)
   })
 }

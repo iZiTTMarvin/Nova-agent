@@ -14,11 +14,31 @@ import { getBaseDecision, assessCommandRisk, getRiskDescription } from './rules'
 import { matchPermission, type MatchInput } from './PermissionMatcher'
 import type { PermissionRule } from './PermissionRule'
 
+/** 会话级临时内存白名单：Map<sessionId, Set<commandPrefix>> */
+const sessionWhitelists = new Map<string, Set<string>>()
+
+/** 授权临时白名单（外部调用） */
+export function grantSessionPermission(sessionId: string, commandPrefix: string): void {
+  let whitelist = sessionWhitelists.get(sessionId)
+  if (!whitelist) {
+    whitelist = new Set()
+    sessionWhitelists.set(sessionId, whitelist)
+  }
+  whitelist.add(commandPrefix)
+}
+
+/** 清理指定会话的临时白名单 */
+export function clearSessionWhitelist(sessionId: string): void {
+  sessionWhitelists.delete(sessionId)
+}
+
 export class PermissionManager {
   /** 持久化规则集合（由外部注入，运行时可热更新） */
   private rules: PermissionRule[] = []
   /** 当前项目路径（用于匹配项目级规则） */
   private currentProjectPath: string | null = null
+  /** 当前会话 ID */
+  private sessionId: string | null = null
 
   /** 注入持久化规则集合（供 agentHandler 在加载/变更时调用） */
   setRules(rules: PermissionRule[]): void {
@@ -30,12 +50,18 @@ export class PermissionManager {
     this.currentProjectPath = path
   }
 
+  /** 设置当前会话 ID（供会话白名单过滤） */
+  setSessionId(sessionId: string | null): void {
+    this.sessionId = sessionId
+  }
+
   /**
    * 查询指定工具+模式下的权限决策
    *
    * 决策顺序：
-   * 1. 先匹配持久化规则（PRD §5.2）：deny 直接拒、allow 直接放行。
-   * 2. 命中 ask 或无匹配 → 走 mode + 黑名单逻辑。
+   * 1. 优先比对会话级临时白名单（内存态）
+   * 2. 先匹配持久化规则（PRD §5.2）：deny 直接拒、allow 直接放行。
+   * 3. 命中 ask 或无匹配 → 走 mode + 黑名单逻辑。
    *
    * - plan 模式：只读工具 allow，写入和 bash 全部 deny
    * - default 模式：只读和写入 allow，bash 工具 ask（需用户确认）
@@ -43,6 +69,22 @@ export class PermissionManager {
    */
   check(query: PermissionQuery, mode: Mode): PermissionResult {
     const { toolName, args } = query
+
+    // ── 优先比对会话级临时白名单 ──
+    if (toolName === 'bash' && this.sessionId) {
+      const whitelist = sessionWhitelists.get(this.sessionId)
+      if (whitelist) {
+        const command = typeof args.command === 'string' ? args.command.trim() : ''
+        const firstToken = command.split(/\s+/)[0]
+        if (firstToken && whitelist.has(firstToken)) {
+          return {
+            decision: 'allow',
+            riskLevel: 'low',
+            reason: `本会话临时白名单允许执行前缀为 "${firstToken}" 的命令`
+          }
+        }
+      }
+    }
 
     // ── PRD §5.2：先匹配持久化规则 ──
     if (this.rules.length > 0) {

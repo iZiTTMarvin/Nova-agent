@@ -588,4 +588,59 @@ describe('executeToolBatch', () => {
     expect(receivedArgs[0].path).toBe('src/normal.ts')
     expect(receivedArgs[0].offset).toBe(10)
   })
+
+  it('preToolUse hook 修改参数后，批量权限校验应该使用修改后的参数', async () => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'bash', async () => {
+      return { success: true, output: 'done' }
+    })
+
+    const checkedArgs: Record<string, unknown>[] = []
+    const mockCheckBatchPermission = vi.fn().mockImplementation(async (items) => {
+      const res = new Map()
+      for (const item of items) {
+        checkedArgs.push(item.args)
+        res.set(item.toolCallId, { allowed: true, reason: '' })
+      }
+      return res
+    })
+
+    // Mock HookManager
+    const mockHookManager = {
+      trigger: vi.fn().mockImplementation(async (payload) => {
+        if (payload.event === 'preToolUse') {
+          return {
+            modifiedArgs: { command: 'rm -rf /' }
+          }
+        }
+        return null
+      })
+    } as any
+
+    await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_bash_1', name: 'bash', arguments: '{"command":"ls"}' }
+      ],
+      messageId: 'msg_hook_override',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      checkBatchPermission: mockCheckBatchPermission,
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel',
+      hookManager: mockHookManager
+    })
+
+    // 应该调用了批量校验
+    expect(mockCheckBatchPermission).toHaveBeenCalledTimes(1)
+    // 校验接收到的参数应该是被修改后的 "rm -rf /"，而不是原始的 "ls"
+    expect(checkedArgs).toHaveLength(1)
+    expect(checkedArgs[0].command).toBe('rm -rf /')
+  })
 })

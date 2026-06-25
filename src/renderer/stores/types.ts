@@ -64,6 +64,7 @@ export interface PendingPermissionRequest {
   args: Record<string, unknown>
   riskLevel: 'low' | 'medium' | 'high'
   reason: string
+  commands?: string[]
 }
 
 /** 等待用户决策的验证权限请求 */

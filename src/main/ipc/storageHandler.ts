@@ -12,6 +12,7 @@
  * - 删除类操作返回具体释放字节数，供 UI 展示
  */
 import { ipcMain, app } from 'electron'
+import { clearSessionWhitelist } from '../../runtime/permissions/PermissionManager'
 import {
   STORAGE_USAGE,
   STORAGE_PRUNE_SESSION_CHECKPOINTS,
@@ -44,6 +45,7 @@ export function registerStorageHandler(): void {
   })
 
   ipcMain.handle(STORAGE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
+    clearSessionWhitelist(params.sessionId)
     return deleteSessionCompletely(appDataPath, params.sessionId)
   })
 
