@@ -121,11 +121,17 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
       // 这里直接用 ctx.readState.clone()（task 工具运行在主 loop 的 ToolContext 中）。
       subLoop.setReadState(ctx.readState.clone())
 
+      // 注册活跃子 loop：父 agent cancel 时通过 permissionBridge.cancelAll() 联动终止。
+      // 必须在 sendMessage 之前注册，否则 cancel 来时子代理已在跑但未注册（bindings 为空时
+      // 纯只读 explore 子代理无法被 cancel —— 见 subAgentBridge 的 activeLoops 设计）。
+      permissionBridge.register(subLoop)
+
       // 3. checkpoint 隔离：不注入 checkpointManager
       try {
         await subLoop.sendMessage(task)
       } finally {
         unsub()
+        permissionBridge.unregister(subLoop)
         permissionBridge.clearForLoop(subLoop)
         // 释放 subLoop 资源：cancel() 在 idle 时空操作，dispose 才能停掉 idleTimer，
         // 避免 266 秒后子 agent 的 IdleCompressionTimer 触发后台压缩烧 token

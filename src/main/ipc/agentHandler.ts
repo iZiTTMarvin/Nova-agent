@@ -401,7 +401,11 @@ export function registerAgentHandler(
   })
 
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
+    // 先停父 agent，再联动停所有活跃子代理。
+    // 顺序：父先 cancel 可避免父在子停止后又派新的工具调用；子 cancel 后父的
+    // await subLoop.sendMessage(task) 才会在最近的 abort 检查点返回。
     agentLoop?.cancel()
+    defaultSubAgentPermissionBridge.cancelAll()
     defaultSubAgentPermissionBridge.clear()
     markActiveStreamsCancelled()
     clearAllPendingVerificationPermissions()
