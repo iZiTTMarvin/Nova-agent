@@ -123,4 +123,40 @@ describe('tool-call-text-fallback', () => {
     const code = 'while (a < b && c > d) {}'
     expect(stripLeakedToolMarkup(code)).toBe(code)
   })
+
+  // ── 2026-06-25 卡死根因回归：parseFencedJsonToolCall 灾难性回溯防护 ──
+
+  it('不含 ``` 的长文本不误判、不卡（灾难回溯防护）', () => {
+    // 旧正则在此类文本上 O(N²) 回溯，200KB 实测 7 秒。
+    // 预检后应为 O(n) indexOf，毫秒级返回 null。
+    const longTextNoFence = '这是一段不含代码块标记的技术说明文字。'.repeat(5000) // ~150KB
+    const t0 = Date.now()
+    const result = parseTextToolCalls(longTextNoFence)
+    const elapsed = Date.now() - t0
+    expect(result).toBeNull()
+    // 防护阈值：150KB 文本必须在 500ms 内返回（旧实现要数秒）。
+    // 留足余量，CI/慢机也不会误报。
+    expect(elapsed).toBeLessThan(500)
+  })
+
+  it('stripTextToolCalls 对无 fence 的长文本原样返回（不卡）', () => {
+    const longText = '普通正文内容，没有任何 fence。'.repeat(3000)
+    const t0 = Date.now()
+    const result = stripTextToolCalls(longText)
+    const elapsed = Date.now() - t0
+    expect(result).toBe(longText)
+    expect(elapsed).toBeLessThan(500)
+  })
+
+  it('正常 fenced JSON 工具调用仍能正确解析（修复不回归功能）', () => {
+    const text = ['我来看看当前目录。', '', '```json', '{ "name": "ls", "arguments": { "path": "." } }', '```'].join('\n')
+    const parsed = parseTextToolCalls(text)
+    expect(parsed?.toolCalls).toHaveLength(1)
+    expect(parsed?.toolCalls[0]).toEqual({
+      rawToolName: 'ls',
+      toolName: 'ls',
+      arguments: { path: '.' }
+    })
+    expect(parsed?.visibleText).toBe('我来看看当前目录。')
+  })
 })

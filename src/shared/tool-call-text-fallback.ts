@@ -230,10 +230,27 @@ function parseInlineJsonToolCall(text: string): { prefix: string; calls: ParsedT
   return { prefix: '', calls, suffix: visibleText }
 }
 
-/** 解析 fenced JSON block，返回 {prefix, call}。 */
+/**
+ * 解析 fenced JSON block，返回 {prefix, call}。
+ *
+ * 性能关键（2026-06-25 卡死根因修复）：
+ * 旧正则 `/([\s\S]*?)```...([\s\S]*?)\s*```\s*$/i` 在「不含结尾 ```」的文本上
+ * 会灾难性回溯——`[\s\S]*?` 被末尾 `$` 锚定强制扫到文本尾，逐字符回溯，
+ * O(N²)。实测 200KB 文本 7.1 秒，30KB 文本 0.3~2 秒，派子代理瞬间累计卡死 16 秒。
+ *
+ * 修复：两道廉价预检把 99%+ 的正常文本挡在正则之外，并把第一个捕获组收紧为
+ * `(?:(?!```)[\s\S])*?`（遇第一个 ``` 即停），彻底消除跨 fence 回溯。
+ */
 function parseFencedJsonToolCall(text: string): { prefix: string; calls: ParsedTextToolCall[] } | null {
+  // 预检 1：根本不含 ``` → 不可能是 fenced 块。O(n) indexOf，挡掉绝大多数文本。
+  if (!text.includes('```')) return null
+
   const trimmed = text.trimEnd()
-  const match = trimmed.match(/([\s\S]*?)```(?:json|tool|tool_call)?\s*([\s\S]*?)\s*```\s*$/i)
+  // 预检 2：必须以 ``` 结尾（$ 锚定的真实要求）。否则正则必然回溯到死。
+  if (!trimmed.endsWith('```')) return null
+
+  // 第一个捕获组用 (?:(?!```)[\s\S])*?：遇到第一个 ``` 立即停止，杜绝跨 fence 回溯。
+  const match = trimmed.match(/((?:(?!```)[\s\S])*?)```(?:json|tool|tool_call)?\s*([\s\S]*?)\s*```$/i)
   if (!match) return null
 
   const payload = match[2] ?? ''

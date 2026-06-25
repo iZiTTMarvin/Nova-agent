@@ -14,7 +14,7 @@ import { resolve, relative, isAbsolute } from 'path'
 import { realpathSync } from 'fs'
 import type { ChildProcess } from 'child_process'
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
-import { snapshotWorkspace, snapshotMtimes, diffSnapshots } from '../../checkpoints/snapshot'
+import { snapshotWorkspace, snapshotMtimes, diffSnapshots, type WorkspaceSnapshot } from '../../checkpoints/snapshot'
 import { join } from 'path'
 import { getShellConfig, getShellEnv, killProcessTree, spawnShell, waitForChildProcess } from './shell'
 import { OutputAccumulator } from './output-accumulator'
@@ -115,7 +115,7 @@ export const bashTool: ToolExecutor = {
 
     // 拍快照（如果存在 checkpointManager）
     const beforeSnapshot = context.checkpointManager
-      ? snapshotWorkspace(context.workingDir)
+      ? await snapshotWorkspace(context.workingDir, { abortSignal: context.abortSignal })
       : null
 
     // 大输出优先落到会话 artifact 目录，便于 ArtifactStore 认领
@@ -192,12 +192,12 @@ export const bashTool: ToolExecutor = {
         accumulator.finish()
         const snapshot = accumulator.snapshot()
         await accumulator.closeTempFile()
-        recordCheckpoint(beforeSnapshot, context)
+        await recordCheckpoint(beforeSnapshot, context)
         return composeResult(null, terminationReason, timeoutMs, snapshot, context)
       }
       // 非 abort 错误：spawn ENOENT 等
       accumulator.finish()
-      recordCheckpoint(beforeSnapshot, context)
+      await recordCheckpoint(beforeSnapshot, context)
       return { success: false, output: '', error: `命令执行失败: ${execError.message}` }
     }
 
@@ -205,7 +205,7 @@ export const bashTool: ToolExecutor = {
     const snapshot = accumulator.snapshot()
     await accumulator.closeTempFile()
 
-    recordCheckpoint(beforeSnapshot, context)
+    await recordCheckpoint(beforeSnapshot, context)
 
     return composeResult(exitCode, terminationReason, timeoutMs, snapshot, context)
   }
@@ -259,13 +259,13 @@ function parseTimeout(value: unknown): number {
   return DEFAULT_TIMEOUT_MS
 }
 
-function recordCheckpoint(
-  beforeSnapshot: ReturnType<typeof snapshotWorkspace> | null,
+async function recordCheckpoint(
+  beforeSnapshot: WorkspaceSnapshot | null,
   context: ToolContext
-): void {
+): Promise<void> {
   if (!beforeSnapshot || !context.checkpointManager) return
   try {
-    const afterMtimes = snapshotMtimes(context.workingDir)
+    const afterMtimes = await snapshotMtimes(context.workingDir, { abortSignal: context.abortSignal })
     const changes = diffSnapshots(beforeSnapshot, afterMtimes)
 
     const deletedSet = new Set(changes.deleted)

@@ -42,6 +42,7 @@ import { createInvokeSkillTool } from '../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../runtime/tools/taskTool'
 import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBridge'
 import { createReadState, type ReadState } from '../../runtime/tools/editTool'
+import { createEventStallDetector } from '../../shared/diagnostics/stallDetector'
 import { ArtifactStore } from '../../runtime/artifacts/ArtifactStore'
 import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
@@ -386,7 +387,12 @@ export function registerAgentHandler(
     }
     sessionStore.appendMessage(params.sessionId, userMessage)
 
+    // 常驻黑匣子：主进程事件间隔 stall 检测，定位偶发卡顿时用。
+    // 设 NOVA_STALL_DEBUG=0 可静默。详见 shared/diagnostics/stallDetector.ts
+    const stallMark = createEventStallDetector()
+
     eventBus.on((event: AgentEvent) => {
+      stallMark(event.type)
       forwardEventToRenderer(getMainWindow(), event)
       accumulateStreamEvent(capturedSessionId, event, {
         mode: capturedMode,
