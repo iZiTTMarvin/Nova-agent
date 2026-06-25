@@ -255,6 +255,8 @@ export interface ChatState {
   recoveryHints: Record<string, Array<{ hint: string; attempt: number }>>
   /** 每条消息累积的 Hook 执行异常 */
   hookErrors: Record<string, Array<{ hookEvent: HookEvent; error: string }>>
+  /** 每条消息回滚失败的错误提示（key 为 messageId） */
+  rollbackErrors: Record<string, string>
 
   // ── Actions ──
 
@@ -444,6 +446,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   recoveryState: {},
   recoveryHints: {},
   hookErrors: {},
+  rollbackErrors: {},
 
   loadSessions: async () => {
     try {
@@ -544,8 +547,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const { useWorkspaceStore } = await import('./useWorkspaceStore')
       await useWorkspaceStore.getState().rollbackMessage(sessionId, messageId)
+      // 成功时清除该消息的历史错误提示
+      set(state => {
+        const { [messageId]: _, ...rest } = state.rollbackErrors
+        return { rollbackErrors: rest }
+      })
     } catch (err) {
+      const error = err instanceof Error ? err.message : '回滚失败'
       console.error('回滚消息出错:', err)
+      set(state => ({
+        rollbackErrors: { ...state.rollbackErrors, [messageId]: error }
+      }))
     }
   },
 
@@ -598,7 +610,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         nextLoading.delete(messageId)
         const { [messageId]: _drop, ...nextPlaceholders } = s.loadingDiffPlaceholders
         return {
-          messageDiffs: { ...s.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews } },
+          messageDiffs: { ...s.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews, skippedFiles: result.skippedFiles } },
           loadingDiffs: nextLoading,
           loadingDiffPlaceholders: nextPlaceholders
         }

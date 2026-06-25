@@ -9,7 +9,8 @@
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'fs'
 import { join, relative, dirname } from 'path'
-import type { CheckpointConfig, CheckpointManifest, SkippedFileInfo } from './types'
+import type { CheckpointConfig, CheckpointManifest } from './types'
+import type { SkippedFileInfo } from '../../shared/diff/types'
 import { writeManifest, readManifest, getFilesDir } from './manifest'
 import { isExcludedPath } from './exclusions'
 import { pruneOldCheckpoints } from './prune'

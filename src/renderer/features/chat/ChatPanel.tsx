@@ -57,6 +57,7 @@ export const ChatPanel: React.FC = () => {
   const messageDiffs = useChatStore(state => state.messageDiffs)
   const loadingDiffs = useChatStore(state => state.loadingDiffs)
   const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
+  const rollbackErrors = useChatStore(state => state.rollbackErrors)
   const rejectFile = useChatStore(state => state.rejectFile)
   const acceptFile = useChatStore(state => state.acceptFile)
   const acceptAllFiles = useChatStore(state => state.acceptAllFiles)
@@ -424,6 +425,7 @@ export const ChatPanel: React.FC = () => {
               currentMode={currentMode}
               currentSessionId={currentSessionId}
               onRollback={handleRollback}
+              rollbackError={rollbackErrors[msg.id]}
               onAcceptFile={handleAcceptFile}
               onRejectFile={handleRejectFile}
               onAcceptAllFiles={acceptAllFiles}

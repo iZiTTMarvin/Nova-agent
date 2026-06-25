@@ -281,6 +281,18 @@
   transform: scale(0.9);
 }
 
+.chat-msg__action-btn--disabled,
+.chat-msg__action-btn--disabled:hover,
+.chat-msg__action-btn--disabled:active {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--text-muted);
+  border-color: var(--border-cream);
+  background-color: var(--bg-sand);
+  box-shadow: none;
+  transform: none;
+}
+
 /* ── 验证结果摘要 ────────────────────────────────────────── */
 .verification-summary {
   margin-top: 10px;

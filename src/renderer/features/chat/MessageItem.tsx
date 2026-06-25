@@ -26,6 +26,8 @@ export interface MessageItemProps {
   currentMode: Mode
   currentSessionId: string | null
   onRollback: (messageId: string) => void
+  /** 该消息回滚失败时的错误提示；存在时回退按钮应置灰并展示 Tooltip */
+  rollbackError?: string
   onAcceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   onRejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   /** PRD §5.3：批量接受 */
@@ -100,6 +102,7 @@ function MessageItemInner({
   currentMode,
   currentSessionId,
   onRollback,
+  rollbackError,
   onAcceptFile,
   onRejectFile,
   onAcceptAllFiles,
@@ -147,9 +150,10 @@ function MessageItemInner({
         {isAssistant && !isGenerating && (
           <div className="chat-msg__actions">
             <button
-              className="chat-msg__action-btn"
+              className={`chat-msg__action-btn${rollbackError ? ' chat-msg__action-btn--disabled' : ''}`}
               onClick={() => onRollback(msg.id)}
-              title="回退到此消息之前的状态"
+              disabled={!!rollbackError}
+              title={rollbackError ? `无法回退：${rollbackError}` : '回退到此消息之前的状态'}
             >
               <UndoIcon size={13} />
             </button>
@@ -258,10 +262,13 @@ function MessageItemInner({
         )}
 
         {/* diff 最终数据 */}
-        {isAssistant && currentSessionId && !isDiffLoading && diffCache && diffCache.diffs.length > 0 && (
+        {isAssistant && currentSessionId && !isDiffLoading && diffCache && (
+          diffCache.diffs.length > 0 || (diffCache.skippedFiles && diffCache.skippedFiles.length > 0)
+        ) && (
           <DiffViewer
             diffs={diffCache.diffs}
             reviews={diffCache.reviews}
+            skippedFiles={diffCache.skippedFiles}
             sessionId={currentSessionId}
             messageId={msg.id}
             onRejectFile={(filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
@@ -293,6 +300,7 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.currentMode === next.currentMode &&
     prev.currentSessionId === next.currentSessionId &&
     prev.onRollback === next.onRollback &&
+    prev.rollbackError === next.rollbackError &&
     prev.onAcceptFile === next.onAcceptFile &&
     prev.onRejectFile === next.onRejectFile &&
     prev.onAcceptAllFiles === next.onAcceptAllFiles &&

@@ -14,7 +14,7 @@ import type {
   ImageBlock,
   ToolCall
 } from '../../shared/session/types'
-import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
+import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../shared/diff/types'
 
 /** 流式增量阶段携带的额外字段：原始 JSON 字符串 */
 export type RendererToolBlock = ToolBlock & { argumentsRaw?: string }
@@ -76,6 +76,8 @@ export interface PendingVerificationRequest {
 export interface MessageDiffCache {
   diffs: DiffEntry[]
   reviews: Record<string, DiffReviewStatus>
+  /** 因过大等原因未生成 snapshot 的文件 */
+  skippedFiles?: SkippedFileInfo[]
 }
 
 /** 工具调用持久化时携带的 tool_call 结果映射（仅后端 IPC 协议用） */

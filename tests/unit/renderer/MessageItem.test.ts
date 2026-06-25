@@ -84,6 +84,12 @@ describe('MessageItem areEqual', () => {
     expect(areEqual(prev, next)).toBe(false)
   })
 
+  it('rollbackError 不同应返回 false', () => {
+    const prev = makeProps()
+    const next = makeProps({ rollbackError: '备份缺失' })
+    expect(areEqual(prev, next)).toBe(false)
+  })
+
   it('diffCache 引用不同应返回 false', () => {
     const prev = makeProps({ diffCache: { diffs: [], reviews: {} } })
     const next = makeProps({ diffCache: { diffs: [], reviews: {} } })

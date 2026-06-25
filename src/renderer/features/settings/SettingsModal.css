@@ -573,6 +573,120 @@
   margin-bottom: 0;
 }
 
+/* ── StorageSettingsPanel：存储与数据管理 ── */
+.storage-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.storage-result {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background-color: rgba(46, 125, 50, 0.08);
+  border: 1px solid rgba(46, 125, 50, 0.15);
+  color: #2e7d32;
+  font-size: 0.8rem;
+}
+
+.storage-result--empty {
+  background-color: rgba(0, 0, 0, 0.03);
+  border-color: var(--border-cream);
+  color: var(--text-muted);
+}
+
+.storage-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: 0.78rem;
+  background-color: var(--bg-input);
+}
+
+.storage-table__header,
+.storage-table__row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 80px 90px 70px 80px 110px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.storage-table__header {
+  font-weight: 600;
+  color: var(--text-secondary);
+  background-color: var(--bg-sand);
+  border-bottom: 1px solid var(--border-warm);
+}
+
+.storage-table__row {
+  border-bottom: 1px solid var(--border-cream);
+  background-color: var(--bg-card);
+}
+
+.storage-table__row:last-child {
+  border-bottom: none;
+}
+
+.storage-table__cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.storage-table__cell--right {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.storage-table__cell--id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.storage-table__cell--total {
+  font-weight: 600;
+}
+
+.storage-table__cell--actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.storage-table__action {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid var(--border-warm);
+  background-color: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.storage-table__action:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.storage-table__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.storage-table__action--danger:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
 /* ── PermissionsSettingsPanel：权限规则列表 ── */
 .perm-rules-list {
   display: flex;

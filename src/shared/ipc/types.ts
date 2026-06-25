@@ -4,7 +4,7 @@
  */
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig, LlmRegistry } from '../config'
-import type { DiffEntry, DiffReviewStatus } from '../diff'
+import type { DiffEntry, DiffReviewStatus, MessageDiffsState } from '../diff'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
 import type { ToolTruncationMeta } from '../../runtime/tools/types'
@@ -129,10 +129,7 @@ export interface IpcCommands {
   }
   'get-message-diffs': {
     params: { sessionId: string; messageId: string }
-    result: {
-      diffs: DiffEntry[]
-      reviews: Record<string, DiffReviewStatus>
-    }
+    result: MessageDiffsState
   }
   'reject-file': {
     params: { sessionId: string; messageId: string; filePath: string }

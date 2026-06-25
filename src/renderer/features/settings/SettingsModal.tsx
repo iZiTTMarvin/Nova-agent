@@ -10,11 +10,12 @@ import { RulesSettingsPanel } from './RulesSettingsPanel'
 import { SkillsSettingsPanel } from './SkillsSettingsPanel'
 import { SubagentsSettingsPanel } from './SubagentsSettingsPanel'
 import { PermissionsSettingsPanel } from './PermissionsSettingsPanel'
+import { StorageSettingsPanel } from './StorageSettingsPanel'
 import './SettingsModal.css'
 
 const NAV_STORAGE_KEY = 'nova-settings-nav'
 
-export type SettingsSection = 'general' | 'llm' | 'rules' | 'skills' | 'subagents' | 'permissions'
+export type SettingsSection = 'general' | 'llm' | 'rules' | 'skills' | 'subagents' | 'permissions' | 'storage'
 
 const NAV_ITEMS: { id: SettingsSection; label: string }[] = [
   { id: 'general', label: '通用' },
@@ -22,13 +23,17 @@ const NAV_ITEMS: { id: SettingsSection; label: string }[] = [
   { id: 'rules', label: '规则' },
   { id: 'skills', label: '技能' },
   { id: 'subagents', label: '子代理' },
-  { id: 'permissions', label: '权限' }
+  { id: 'permissions', label: '权限' },
+  { id: 'storage', label: '存储' }
 ]
 
 function readStoredSection(): SettingsSection {
   try {
     const raw = sessionStorage.getItem(NAV_STORAGE_KEY)
-    if (raw === 'general' || raw === 'llm' || raw === 'rules' || raw === 'skills' || raw === 'subagents' || raw === 'permissions') {
+    if (
+      raw === 'general' || raw === 'llm' || raw === 'rules' || raw === 'skills' ||
+      raw === 'subagents' || raw === 'permissions' || raw === 'storage'
+    ) {
       return raw
     }
   } catch {
@@ -95,6 +100,7 @@ export const SettingsModal: React.FC = () => {
             {section === 'skills' && <SkillsSettingsPanel />}
             {section === 'subagents' && <SubagentsSettingsPanel />}
             {section === 'permissions' && <PermissionsSettingsPanel />}
+            {section === 'storage' && <StorageSettingsPanel />}
           </div>
         </div>
       </div>

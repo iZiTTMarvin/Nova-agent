@@ -8,12 +8,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { readManifest, getFilesDir } from './manifest'
 import { computeFileDiff } from '../../shared/diff/compute'
-import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
-
-export interface MessageDiffsState {
-  diffs: DiffEntry[]
-  reviews: Record<string, DiffReviewStatus>
-}
+import type { DiffEntry, DiffReviewStatus, MessageDiffsState } from '../../shared/diff/types'
 
 export function buildMessageDiffState(
   checkpointRoot: string,
@@ -23,7 +18,7 @@ export function buildMessageDiffState(
 ): MessageDiffsState {
   const manifest = readManifest(checkpointRoot, sessionId, messageId)
   if (!manifest || manifest.status !== 'active') {
-    return { diffs: [], reviews: {} }
+    return { diffs: [], reviews: {}, skippedFiles: [] }
   }
 
   const filesDir = getFilesDir(checkpointRoot, sessionId, messageId)
@@ -65,6 +60,7 @@ export function buildMessageDiffState(
 
   return {
     diffs,
-    reviews: filteredReviews
+    reviews: filteredReviews,
+    skippedFiles: manifest.skippedFiles ?? []
   }
 }

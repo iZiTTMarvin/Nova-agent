@@ -517,3 +517,82 @@
   gap: 4px;
   padding: 6px;
 }
+
+/* ── WS1.1：被跳过快照的文件提示 ── */
+.diff-viewer__skipped {
+  padding: 10px 14px;
+  background-color: rgba(183, 110, 28, 0.06);
+  border-bottom: 1px solid var(--border-cream);
+}
+
+.diff-viewer__skipped-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.diff-viewer__skipped-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--color-error);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.diff-viewer__skipped-count {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  background-color: var(--border-cream);
+  border-radius: var(--radius-sm);
+}
+
+.diff-viewer__skipped-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.diff-viewer__skipped-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-card);
+  font-size: 0.75rem;
+  min-width: 0;
+}
+
+.diff-viewer__skipped-name {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-viewer__skipped-reason {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 1px 5px;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-sand);
+}

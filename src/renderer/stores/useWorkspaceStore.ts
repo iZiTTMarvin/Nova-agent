@@ -119,6 +119,8 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 回滚消息失败:', err)
+      // 交给调用方处理，使其可以置灰按钮并展示 Tooltip 提示
+      throw err
     }
   }
 }))

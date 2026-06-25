@@ -10,7 +10,7 @@
  * 6. PRD §5.3：批量审阅（全部接受 / 全部拒绝 / 只看未审阅 / 按目录折叠）
  */
 import React, { useMemo, useState } from 'react'
-import type { DiffEntry, DiffHunk, DiffReviewStatus } from '../../../shared/diff/types'
+import type { DiffEntry, DiffHunk, DiffReviewStatus, SkippedFileInfo } from '../../../shared/diff/types'
 import { ChevronIcon, CheckIcon, UndoIcon } from '../../components/Icons'
 import { highlightLine } from './syntaxHighlight'
 import { highlightLineCached } from '../../lib/highlightCache'
@@ -31,6 +31,8 @@ export interface DiffViewerProps {
    * 用 spinner 表达「正在加载详细差异」。
    */
   loadingPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
+  /** 因过大或命中排除规则而跳过备份的文件 */
+  skippedFiles?: SkippedFileInfo[]
   onRejectFile?: (filePath: string) => Promise<void>
   onAcceptFile?: (filePath: string) => Promise<void>
   /** PRD §5.3：批量接受（接受全部 pending 文件） */
@@ -258,13 +260,15 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   messageId,
   isLoading = false,
   loadingPlaceholders,
+  skippedFiles,
   onRejectFile,
   onAcceptFile,
   onAcceptAll,
   onRejectAll
 }) => {
-  // T04：DiffViewer 外层默认折叠
-  const [expanded, setExpanded] = useState(false)
+  const hasSkippedFiles = skippedFiles && skippedFiles.length > 0
+  // T04：DiffViewer 外层默认折叠；但存在 skippedFiles 时默认展开，确保用户看到未备份提示
+  const [expanded, setExpanded] = useState(hasSkippedFiles)
   // PRD §5.3：只看未审阅
   const [onlyPending, setOnlyPending] = useState(false)
   // PRD §5.3：按目录折叠
@@ -307,7 +311,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     )
   }
 
-  if (!diffs || diffs.length === 0) return null
+  if ((!diffs || diffs.length === 0) && !hasSkippedFiles) return null
 
   const totalAdded = diffs.reduce(
     (sum, d) => sum + d.hunks.reduce(
@@ -388,6 +392,27 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 
       {expanded && (
         <div className="diff-viewer__body">
+          {/* WS1.1：标记因过大或排除规则未生成 snapshot 的文件 */}
+          {skippedFiles && skippedFiles.length > 0 && (
+            <div className="diff-viewer__skipped">
+              <div className="diff-viewer__skipped-header">
+                <span className="diff-viewer__skipped-icon">!</span>
+                <span>以下文件未生成快照（无法回退/拒绝恢复）</span>
+                <span className="diff-viewer__skipped-count">{skippedFiles.length} 个</span>
+              </div>
+              <div className="diff-viewer__skipped-list">
+                {skippedFiles.map(file => (
+                  <div key={file.path} className="diff-viewer__skipped-item" title={file.reason === 'oversized' ? `文件大小 ${formatBytes(file.bytes)}，超过备份上限` : '命中排除规则'}>
+                    <span className="diff-viewer__skipped-name">{file.path}</span>
+                    <span className="diff-viewer__skipped-reason">
+                      {file.reason === 'oversized' ? `过大 ${formatBytes(file.bytes)}` : '排除规则'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* PRD §5.3：批量工具栏 */}
           {pendingCount > 0 && (onAcceptAll || onRejectAll) && (
             <div className="diff-viewer__toolbar" onClick={e => e.stopPropagation()}>
@@ -457,6 +482,15 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
       )}
     </div>
   )
+}
+
+/** 将字节数格式化为可读字符串 */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
 /** 按目录分组的小折叠面板 */

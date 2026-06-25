@@ -2,7 +2,7 @@
  * Checkpoint 层类型定义
  * 每条用户消息是一个事务边界，第一次修改文件前备份原始内容
  */
-import type { DiffReviewStatus } from '../../shared/diff/types'
+import type { DiffReviewStatus, SkippedFileInfo } from '../../shared/diff/types'
 
 /** Checkpoint manifest 记录一次消息级别的文件变更快照 */
 export interface CheckpointManifest {
@@ -25,16 +25,6 @@ export interface CheckpointManifest {
   backupPruned?: boolean
   /** 滚动清理发生的时间戳（毫秒） */
   prunedAt?: number
-}
-
-/** 被跳过备份的文件记录 */
-export interface SkippedFileInfo {
-  /** 相对路径（相对于工作区根目录） */
-  path: string
-  /** 跳过原因：过大或命中排除规则 */
-  reason: 'oversized' | 'excluded'
-  /** 文件大小（字节），排除规则下可为 0 */
-  bytes: number
 }
 
 /** CheckpointManager 的初始化配置 */
