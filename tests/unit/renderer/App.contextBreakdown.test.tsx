@@ -16,10 +16,6 @@ vi.mock('../../../src/renderer/features/chat/ChatPanel', () => ({
   ChatPanel: () => null
 }))
 
-vi.mock('../../../src/renderer/features/permissions/PermissionPrompt', () => ({
-  PermissionPrompt: () => null
-}))
-
 vi.mock('../../../src/renderer/features/settings/SettingsModal', () => ({
   SettingsModal: () => null
 }))

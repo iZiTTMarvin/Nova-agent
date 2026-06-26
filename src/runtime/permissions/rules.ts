@@ -2,13 +2,17 @@
  * 三模式权限规则表 + 危险命令检测
  *
  * 规则矩阵：
- * | 工具              | plan    | default | auto    |
- * |-------------------|---------|---------|---------|
- * | ls/read/grep/find | allow   | allow   | allow   |
- * | edit/write        | deny    | allow   | allow   |
- * | bash              | deny    | ask     | allow*  |
+ * | 工具                 | plan    | default | auto    |
+ * |----------------------|---------|---------|---------|
+ * | ls/read/grep/find    | allow   | allow   | allow   |
+ * | edit/write           | deny    | allow   | allow   |
+ * | bash                 | deny    | ask     | allow*  |
+ * | task/invoke_skill    | deny    | allow   | allow   |
  *
  * *auto 模式下危险命令（sudo、rm -rf、curl|sh 等）强制 deny
+ *
+ * task/invoke_skill 为编排类（orchestration）：派遣动作本身无副作用，直接放行；
+ * 真正的副作用由子代理内部工具各自走权限检查（不在派遣层重复拦截）。
  */
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getToolCapability } from '../../shared/session/toolVisibility'
@@ -96,6 +100,7 @@ export function getRiskDescription(toolName: string, riskLevel: RiskLevel): stri
   const category = capability === 'unknown' ? 'bash' : capability
   if (category === 'readonly') return '只读操作'
   if (category === 'write') return '文件修改操作'
+  if (category === 'orchestration') return '调度子任务'
   if (riskLevel === 'high') return '高危命令执行'
   return '命令执行'
 }

@@ -56,7 +56,7 @@ export interface ToolBatchExecutionOptions {
   supportsVision: boolean
   checkpointManager: CheckpointManager | null
   abortSignal: AbortSignal | undefined
-  checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string) => Promise<{ allowed: boolean; reason: string; aborted?: boolean }>
+  checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string, toolCallId?: string) => Promise<{ allowed: boolean; reason: string; aborted?: boolean }>
   checkBatchPermission?: (
     items: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>,
     messageId: string
@@ -489,7 +489,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     } else {
       // 降级回退：逐个询问
       for (const item of group) {
-        const res = await options.checkPermission(item.toolCall.name, item.args, options.messageId)
+        const res = await options.checkPermission(item.toolCall.name, item.args, options.messageId, item.toolCall.id)
         permissionResults.set(item.toolCall.id, res)
       }
     }
@@ -522,7 +522,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     if (item.toolCall.name === 'bash') {
       permissionResult = permissionResults.get(item.toolCall.id) || { allowed: false, reason: '未找到权限校验结果' }
     } else {
-      permissionResult = await options.checkPermission(item.toolCall.name, item.args, options.messageId)
+      permissionResult = await options.checkPermission(item.toolCall.name, item.args, options.messageId, item.toolCall.id)
     }
 
     if (permissionResult.aborted || options.abortSignal?.aborted) {

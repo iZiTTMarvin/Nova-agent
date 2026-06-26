@@ -835,7 +835,8 @@ export function forwardEventToRenderer(
         args: event.args,
         riskLevel: event.riskLevel,
         reason: event.reason,
-        commands: event.commands
+        commands: event.commands,
+        toolCallIds: event.toolCallIds
       })
       break
     case 'diff_update':

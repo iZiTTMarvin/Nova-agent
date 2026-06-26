@@ -60,6 +60,13 @@ describe('PermissionManager', () => {
       }
     })
 
+    it('编排类工具 task / invoke_skill 直接放行，不弹窗（副作用由子代理内部工具把关）', () => {
+      const task = pm.check({ toolName: 'task', args: { subagent_type: 'code', task: '修复 bug' } }, mode)
+      expect(task.decision).toBe('allow')
+      const skill = pm.check({ toolName: 'invoke_skill', args: { skill_name: 'onboard', task: '了解项目' } }, mode)
+      expect(skill.decision).toBe('allow')
+    })
+
     it('bash 命令需要用户确认（ask）', () => {
       const result = pm.check({ toolName: 'bash', args: { command: 'npm test' } }, mode)
       expect(result.decision).toBe('ask')

@@ -21,6 +21,10 @@ export function getToolDisplayName(toolName: string): string {
       return '修改文件 (edit)'
     case 'bash':
       return '执行命令 (bash)'
+    case 'task':
+      return '调度子代理 (task)'
+    case 'invoke_skill':
+      return '调用技能 (invoke_skill)'
     case 'todo_write':
       return '更新任务列表 (todo_write)'
     default:
@@ -101,6 +105,24 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
     case 'todo_write': {
       const todos = Array.isArray(args.todos) ? args.todos : []
       return `正在更新任务列表（${todos.length} 项）`
+    }
+    case 'task': {
+      // 子代理调度：展示子代理类型 + 任务摘要，避免卡片头部空白
+      const sub = (args.subagent_type as string) || ''
+      const task = (args.task as string) || ''
+      const display = task.length > 50 ? task.slice(0, 47) + '...' : task
+      if (sub && display) return `子代理 ${sub}：${display}`
+      if (sub) return `子代理 ${sub}`
+      return display || '调度子代理'
+    }
+    case 'invoke_skill': {
+      // 技能调用：展示技能名 + 任务摘要
+      const skill = (args.skill_name as string) || ''
+      const task = (args.task as string) || ''
+      const display = task.length > 50 ? task.slice(0, 47) + '...' : task
+      if (skill && display) return `技能 ${skill}：${display}`
+      if (skill) return `技能 ${skill}`
+      return display || '调用技能'
     }
     default:
       return ''

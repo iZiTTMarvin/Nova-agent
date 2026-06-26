@@ -1079,7 +1079,10 @@ export class AgentLoop implements IdleCompactionTarget {
       args: askItems[0].args, // 兼容旧字段
       riskLevel: maxRiskLevel,
       reason: combinedReason,
-      commands // 传入批量命令列表
+      commands, // 传入批量命令列表
+      // 内联放行：携带本批命令对应的 toolCallId 列表，
+      // 渲染层据此把放行卡片直接挂到消息流中对应命令卡片上（锚点取末尾一张）。
+      toolCallIds: askItems.map(item => item.toolCallId)
     })
 
     try {
@@ -1113,7 +1116,8 @@ export class AgentLoop implements IdleCompactionTarget {
   private async checkPermission(
     toolName: string,
     args: Record<string, unknown>,
-    messageId: string
+    messageId: string,
+    toolCallId?: string
   ): Promise<{ allowed: boolean; reason: string; aborted?: boolean }> {
     // 没有 PermissionManager 时退化为简单 plan 模式检查
     if (!this.permissionManager) {
@@ -1147,7 +1151,9 @@ export class AgentLoop implements IdleCompactionTarget {
       toolName,
       args,
       riskLevel: result.riskLevel,
-      reason: result.reason
+      reason: result.reason,
+      // 内联放行：单工具场景把自身 toolCallId 作为唯一锚点传给渲染层
+      ...(toolCallId ? { toolCallIds: [toolCallId] } : {})
     })
 
     try {

@@ -65,6 +65,8 @@ export interface PendingPermissionRequest {
   riskLevel: 'low' | 'medium' | 'high'
   reason: string
   commands?: string[]
+  /** 本次请求对应的工具卡片 id 列表，内联放行据此锚定到具体卡片（锚点取末尾一张） */
+  toolCallIds?: string[]
 }
 
 /** 等待用户决策的验证权限请求 */

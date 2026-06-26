@@ -1,0 +1,180 @@
+/**
+ * InlinePermissionBar 样式 —— 内联放行条
+ *
+ * 形态目标：紧贴所在命令卡片底部的轻量操作条，跟随消息流滚动。
+ * 不使用全屏遮罩、不使用呼吸动画，保持轻量，避免合成层开销。
+ */
+
+.inline-perm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-cream, rgba(0, 0, 0, 0.1));
+}
+
+.inline-perm__reason {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm, 6px);
+  background-color: var(--bg-sidebar, rgba(0, 0, 0, 0.03));
+}
+
+/* 风险等级左边框提示 */
+.inline-perm__reason--low {
+  border-left: 3px solid #7a8a53;
+}
+.inline-perm__reason--medium {
+  border-left: 3px solid #b77a2d;
+}
+.inline-perm__reason--high {
+  border-left: 3px solid var(--color-error, #b53333);
+}
+
+.inline-perm__error {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid rgba(181, 51, 51, 0.18);
+  background-color: rgba(181, 51, 51, 0.08);
+  color: var(--color-error, #b53333);
+}
+
+.inline-perm__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-perm__btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-md, 8px);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast, 0.12s),
+    background-color var(--transition-fast, 0.12s),
+    border-color var(--transition-fast, 0.12s);
+}
+
+.inline-perm__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inline-perm__btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.inline-perm__btn--deny {
+  color: var(--text-charcoal, var(--text-primary));
+  background-color: var(--bg-sand, transparent);
+  border: 1px solid var(--border-warm, var(--border-cream, rgba(0, 0, 0, 0.15)));
+}
+
+.inline-perm__btn--deny:hover:not(:disabled) {
+  background-color: var(--border-warm, rgba(0, 0, 0, 0.06));
+}
+
+.inline-perm__btn--allow {
+  color: #ffffff;
+  background-color: var(--color-brand, #3898ec);
+  border: none;
+}
+
+.inline-perm__btn--allow:hover:not(:disabled) {
+  background-color: var(--color-brand-hover, #2f86d4);
+}
+
+/* ── 允许按钮组 + 下拉 ── */
+.inline-perm__btn-group {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.inline-perm__btn-group .inline-perm__btn--allow {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.inline-perm__btn-dropdown-toggle {
+  background-color: var(--color-brand, #3898ec);
+  color: #ffffff;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-top-right-radius: var(--radius-md, 8px);
+  border-bottom-right-radius: var(--radius-md, 8px);
+  padding: 0 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    transform var(--transition-fast, 0.12s),
+    background-color var(--transition-fast, 0.12s);
+}
+
+.inline-perm__btn-dropdown-toggle:hover:not(:disabled) {
+  background-color: var(--color-brand-hover, #2f86d4);
+}
+
+.inline-perm__btn-dropdown-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inline-perm__dropdown-arrow {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.inline-perm__dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: 230px;
+  background-color: var(--bg-card, #fff);
+  border: 1px solid var(--border-cream, rgba(0, 0, 0, 0.1));
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12), var(--shadow-popup, 0 4px 16px rgba(0, 0, 0, 0.12));
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 1200;
+}
+
+.inline-perm__dropdown-menu button {
+  background: none;
+  border: none;
+  padding: 9px 14px;
+  text-align: left;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  width: 100%;
+  transition: background-color var(--transition-fast, 0.12s);
+}
+
+.inline-perm__dropdown-menu button:hover {
+  background-color: var(--bg-sidebar, rgba(0, 0, 0, 0.04));
+}
+
+.inline-perm__danger-option {
+  color: var(--color-error, #b53333) !important;
+}
+
+.inline-perm__danger-option:hover {
+  background-color: rgba(181, 51, 51, 0.06) !important;
+}
+
+.inline-perm__dropdown-divider {
+  height: 1px;
+  background-color: var(--border-cream, rgba(0, 0, 0, 0.1));
+  margin: 4px 0;
+}

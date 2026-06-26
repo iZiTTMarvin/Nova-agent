@@ -206,6 +206,11 @@
   background-color: var(--bg-sidebar);
 }
 
+/* 内联放行容器：位于卡片底部，承载 InlinePermissionBar */
+.tool-box__permission {
+  padding: 0 14px 12px;
+}
+
 .tool-box__section {
   display: flex;
   flex-direction: column;

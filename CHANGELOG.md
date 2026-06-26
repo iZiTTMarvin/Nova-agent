@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-06-26
+
+- **feat(permissions)**: bash 权限放行改为内联卡片，按钮直接长在命令卡片上（学 Windsurf）
+  - 形态变更：去掉 composer 上方那张独立的浮动权限卡片，改为把「拒绝 / 允许 ▾」按钮直接渲染在消息流里对应命令卡片（ToolBox）底部，跟随消息一起滚动
+  - 锚定机制：`permission_request` 事件新增 `toolCallIds` 字段，渲染层据此把放行条对应到具体卡片；一批连续 bash 合并授权时，按钮锚定到该批最后一张卡片，主按钮文案为「全部允许（N 条）」
+  - 性能：ToolBox 通过 zustand selector 订阅，selector 命中返回稳定引用、否则返回 null，保证只有锚点卡片重渲染，其余卡片不受影响，符合轻量目标
+  - 保留原有授权粒度下拉：仅本次 / 本会话 / 本项目永久 / 全局永久 / 始终拒绝
+  - 删除已被取代的 `PermissionPrompt.tsx`/`.css`，新增 `InlinePermissionBar.tsx`/`.css`
+  - 链路改动：`runtime/agent/types.ts`、`AgentLoop`、`permissionExtension`、`toolBatchExecutor`、`agentHandler`、`shared/ipc/types.ts` 透传 `toolCallIds`；typecheck 与权限/渲染相关单测全绿
+
+- **fix(permissions)**: 派遣子代理 / 调用技能不再误触发权限拦截
+  - 根因：`task`、`invoke_skill` 在 `toolVisibility` 里未声明能力（`unknown`），`rules.ts` 把 `unknown` 一律按 bash 类处理 → default 模式下变成 `ask`，导致派遣子代理 / 调用技能时弹出权限卡片（reason 还是通用的"命令执行"）
+  - 本质：编排类工具本身没有文件系统 / shell 副作用，真正的副作用由子代理内部的 bash/write 各自走权限检查（经 `subAgentBridge` 桥接回父 UI）。在派遣层再拦一次属纯冗余，且与主流 agent 行为不一致
+  - 修复：新增 `orchestration` 能力分类，`task`/`invoke_skill` 归入其中——default/auto 直接放行，plan 模式仍按非只读处理（deny + 隐藏，与现状一致，无回归）
+  - 配套：`toolDisplay.ts` 给 `task`/`invoke_skill` 补显示名与头部摘要（展示子代理类型 / 技能名 + 任务摘要），卡片不再空白
+  - 测试：`toolVisibility`、`PermissionManager` 新增编排类回归用例，全绿
+
 ## 2026-06-23
 
 - **fix(agent)**: 工具调用方言改为 native 优先，根治 DeepSeek V4 DSML 泄漏与跨 provider 工具消息 400

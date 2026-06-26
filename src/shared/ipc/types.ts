@@ -381,6 +381,8 @@ export interface IpcEvents {
     riskLevel: 'low' | 'medium' | 'high'
     reason: string
     commands?: string[]
+    /** 本次请求对应的工具卡片 id 列表，渲染层据此把放行卡片内联到消息流（锚点取末尾一张） */
+    toolCallIds?: string[]
   }
   'agent:diff-update': {
     messageId: string

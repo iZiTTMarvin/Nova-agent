@@ -28,6 +28,11 @@ describe('toolVisibility', () => {
       expect(getToolCapability('todo_write')).toBe('readonly')
     })
 
+    it('task / invoke_skill 归为 orchestration（编排类，派遣动作本身无副作用）', () => {
+      expect(getToolCapability('task')).toBe('orchestration')
+      expect(getToolCapability('invoke_skill')).toBe('orchestration')
+    })
+
     it('未知工具归为 unknown', () => {
       expect(getToolCapability('some_future_tool')).toBe('unknown')
     })

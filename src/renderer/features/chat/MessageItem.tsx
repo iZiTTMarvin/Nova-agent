@@ -204,7 +204,7 @@ function MessageItemInner({
                     : { toolCallId: block.toolCallId, toolName: block.toolName, status: block.status, argumentsRaw: block.argumentsRaw, result: block.result }
                   return <StreamingFileCard key={block.toolCallId} {...cardProps} />
                 }
-                return <ToolBox key={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} isLiveStreaming={isCurrentAssistantGenerating && block.status === 'running'} />
+                return <ToolBox key={block.toolCallId} toolCallId={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} isLiveStreaming={isCurrentAssistantGenerating && block.status === 'running'} />
               }
             }
           })
@@ -226,7 +226,7 @@ function MessageItemInner({
                       : { toolCallId: tc.id, toolName: tc.name, status: tc.status, argumentsRaw: tc.argumentsRaw, result: tc.result }
                     return <StreamingFileCard key={tc.id} {...cardProps} />
                   }
-                  return <ToolBox key={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} isLiveStreaming={isCurrentAssistantGenerating && tc.status === 'running'} />
+                  return <ToolBox key={tc.id} toolCallId={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} isLiveStreaming={isCurrentAssistantGenerating && tc.status === 'running'} />
                 })}
               </div>
             )}

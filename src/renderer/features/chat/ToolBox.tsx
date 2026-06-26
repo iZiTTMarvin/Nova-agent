@@ -3,15 +3,40 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { CheckIcon, AlertIcon, TerminalIcon, ChevronIcon } from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
+import { useAgentStore } from '../../stores/useAgentStore'
+import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
+import type { PendingPermissionRequest } from '../../stores/types'
 
 /** 折叠式工具调用状态卡片 */
 export interface ToolBoxProps {
+  /** 该工具调用的唯一 id，用于把内联放行请求锚定到本卡片 */
+  toolCallId?: string
   name: string
   args: Record<string, unknown>
   status: 'running' | 'success' | 'error'
   result?: string
   /** 是否处于 assistant 流式生成中。true 时启用入场动画。 */
   isLiveStreaming?: boolean
+}
+
+/**
+ * 选择「本卡片是否为某个待授权请求的锚点」。
+ *
+ * 一个权限请求可能对应一批连续 bash 命令（toolCallIds 多个）。为避免在每张卡片上
+ * 都重复渲染放行按钮，约定锚点为列表中的最后一张卡片（命令都列在其上方，按钮置底，
+ * 符合 Windsurf 观感）。
+ *
+ * selector 只返回稳定引用（命中时返回 request 本身，否则返回 null），
+ * 因此只有锚点卡片会因该订阅重渲染，其余卡片 selector 结果恒为 null，不触发重渲染。
+ */
+function selectAnchoredRequest(
+  request: PendingPermissionRequest | null,
+  toolCallId: string | undefined
+): PendingPermissionRequest | null {
+  if (!request || !toolCallId) return null
+  const ids = request.toolCallIds
+  if (!ids || ids.length === 0) return null
+  return ids[ids.length - 1] === toolCallId ? request : null
 }
 
 /**
@@ -24,10 +49,18 @@ export interface ToolBoxProps {
 export const LIVE_ENTER_SPRING = { type: 'spring' as const, stiffness: 300, damping: 30, mass: 0.8 }
 export const NO_ANIMATION = { duration: 0 }
 
-export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ name, args, status, result, isLiveStreaming = false }) {
+export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ toolCallId, name, args, status, result, isLiveStreaming = false }) {
   const [isOpen, setIsOpen] = useState(false)
   const shouldHideArguments = isPermissionDeniedResult(result)
   const summary = getToolSummary(name, args)
+
+  /**
+   * 内联放行：仅当存在待授权请求且本卡片为其锚点时返回非空。
+   * selector 返回稳定引用，保证只有锚点卡片重渲染。
+   */
+  const anchoredRequest = useAgentStore(
+    state => selectAnchoredRequest(state.pendingPermissionRequest, toolCallId)
+  )
 
   /** 系统偏好 + framer-motion 层的双重门控：减少动效时跳过 spring */
   const prefersReducedMotion = useReducedMotion()
@@ -101,6 +134,13 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ nam
               <pre className="tool-box__content">{result}</pre>
             </div>
           )}
+        </div>
+      )}
+
+      {/* 内联放行条：本卡片为待授权请求锚点时渲染，跟随消息流滚动 */}
+      {anchoredRequest && (
+        <div className="tool-box__permission">
+          <InlinePermissionBar request={anchoredRequest} />
         </div>
       )}
     </motion.div>
