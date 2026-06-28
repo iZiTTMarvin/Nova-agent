@@ -27,6 +27,8 @@ export function getToolDisplayName(toolName: string): string {
       return '调用技能 (invoke_skill)'
     case 'todo_write':
       return '更新任务列表 (todo_write)'
+    case 'web_search':
+      return '联网搜索 (web_search)'
     default:
       return `运行自动化工具 (${toolName})`
   }
@@ -123,6 +125,11 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (skill && display) return `技能 ${skill}：${display}`
       if (skill) return `技能 ${skill}`
       return display || '调用技能'
+    }
+    case 'web_search': {
+      const query = (args.query as string) || ''
+      const display = query.length > 60 ? query.slice(0, 57) + '...' : query
+      return display ? `搜索 "${display}"` : '联网搜索'
     }
     default:
       return ''

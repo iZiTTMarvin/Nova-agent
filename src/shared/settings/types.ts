@@ -38,6 +38,8 @@ export interface NovaSettingsDto {
   lastProjectPath: string | null
   /** 陈旧快照自动保留天数（超过此天数的 checkpoint files/ 会被启动时 GC 清理） */
   snapshotRetentionDays: number
+  /** Tavily API Key（本地明文存储，不上传） */
+  webSearchTavilyApiKey?: string
 }
 
 export interface RulesListParams {

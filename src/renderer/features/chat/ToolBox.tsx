@@ -5,6 +5,7 @@ import { isPermissionDeniedResult } from './renderingPolicy'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
+import { WebSearchCard } from './WebSearchCard'
 import type { PendingPermissionRequest } from '../../stores/types'
 
 /** 折叠式工具调用状态卡片 */
@@ -131,7 +132,18 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ too
           {result && (
             <div className="tool-box__section">
               <div className="tool-box__sec-title">执行结果</div>
-              <pre className="tool-box__content">{result}</pre>
+              {name === 'web_search' ? (
+                <WebSearchCard output={result} />
+              ) : (
+                <pre className="tool-box__content">{result}</pre>
+              )}
+            </div>
+          )}
+
+          {name === 'web_search' && status === 'running' && !result && (
+            <div className="tool-box__section">
+              <div className="tool-box__sec-title">执行结果</div>
+              <WebSearchCard output="" loading />
             </div>
           )}
         </div>

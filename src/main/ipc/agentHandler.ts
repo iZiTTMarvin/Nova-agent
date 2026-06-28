@@ -19,6 +19,7 @@ import { lsTool } from '../../runtime/tools/lsTool'
 import { readTool } from '../../runtime/tools/readTool'
 import { createGrepTool } from '../../runtime/tools/grepTool'
 import { findTool } from '../../runtime/tools/findTool'
+import { webSearchTool } from '../../runtime/tools/webSearch'
 import { editTool } from '../../runtime/tools/editTool'
 import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
@@ -48,6 +49,7 @@ import type { ContentBlock } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+import { syncTavilyApiKeyFromSettings } from '../../runtime/settings/syncTavilyApiKey'
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -209,6 +211,7 @@ export function registerAgentHandler(
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
     const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
     const novaSettings = loadNovaSettings()
+    syncTavilyApiKeyFromSettings()
 
     const skillService = getSkillService()
     if (skillService.getWorkspaceRoot() !== projectPath) {
@@ -235,6 +238,7 @@ export function registerAgentHandler(
     toolRegistry.register(readTool)
     toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
     toolRegistry.register(findTool)
+    toolRegistry.register(webSearchTool)
     toolRegistry.register(editTool)
     toolRegistry.register(writeTool)
     toolRegistry.register(bashTool)

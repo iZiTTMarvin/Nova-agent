@@ -35,7 +35,8 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   theme: 'system',
   diffAutoExpand: false,
   lastProjectPath: null,
-  snapshotRetentionDays: 30
+  snapshotRetentionDays: 30,
+  webSearchTavilyApiKey: undefined
 }
 
 /** 返回 ~/.nova 目录路径 */
@@ -106,6 +107,9 @@ function migrateAndFill(raw: unknown): NovaSettings {
   ) {
     result.snapshotRetentionDays = obj.snapshotRetentionDays
   }
+  if (typeof obj.webSearchTavilyApiKey === 'string') {
+    result.webSearchTavilyApiKey = obj.webSearchTavilyApiKey
+  }
 
   return result
 }
@@ -160,6 +164,11 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
       patch.snapshotRetentionDays > 365
     ) {
       errors.push('snapshotRetentionDays 必须是 0~365 之间的整数（0 表示关闭自动 GC）')
+    }
+  }
+  if ('webSearchTavilyApiKey' in patch && patch.webSearchTavilyApiKey !== undefined) {
+    if (typeof patch.webSearchTavilyApiKey !== 'string') {
+      errors.push('webSearchTavilyApiKey 必须是字符串')
     }
   }
   return errors

@@ -4,6 +4,7 @@ import { join } from 'path'
 import { spawn } from 'child_process'
 import { registerIpcHandlers } from './ipc/registerHandlers'
 import { registerAgentHandler } from './ipc/agentHandler'
+import { syncTavilyApiKeyFromSettings } from '../runtime/settings/syncTavilyApiKey'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
 import { resolveActiveModelConfig } from '../shared/config/llmRegistry'
@@ -166,6 +167,9 @@ app.whenReady().then(async () => {
   
   // 3. 注册所有 renderer → main 的 IPC 处理器
   registerIpcHandlers()
+
+  // 3.1 启动时同步 Tavily API Key 到环境变量（供 web_search 工具使用）
+  syncTavilyApiKeyFromSettings()
 
   // 3.5 应用启动时加载内置 + 全局技能（无需先发消息）
   getSkillService().load(null)

@@ -10,6 +10,7 @@ export function getToolCapability(toolName: string): ToolCapability {
     case 'read':
     case 'grep':
     case 'find':
+    case 'web_search':
       return 'readonly'
     case 'edit':
     case 'write':

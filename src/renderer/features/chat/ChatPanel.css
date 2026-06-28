@@ -239,6 +239,101 @@
   color: var(--text-primary);
 }
 
+/* ── web_search 搜索结果卡片 ─────────────────────────────── */
+.web-search-card {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.web-search-card__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+}
+
+.web-search-card__spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-cream);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: web-search-spin 0.8s linear infinite;
+}
+
+@keyframes web-search-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.web-search-card__answer {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.web-search-card__sources-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.web-search-card__sources-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.web-search-card__source-title {
+  color: var(--color-brand);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.web-search-card__source-title:hover {
+  text-decoration: underline;
+}
+
+.web-search-card__source-url {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+.web-search-card__source-snippet {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.web-search-card__raw {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 8px 10px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 
 
 /* 消息悬浮操作栏 */

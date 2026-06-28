@@ -13,6 +13,7 @@ describe('toolVisibility', () => {
       expect(getToolCapability('read')).toBe('readonly')
       expect(getToolCapability('grep')).toBe('readonly')
       expect(getToolCapability('find')).toBe('readonly')
+      expect(getToolCapability('web_search')).toBe('readonly')
     })
 
     it('写类工具归为 write', () => {
@@ -51,6 +52,7 @@ describe('toolVisibility', () => {
     it('plan 模式下只读工具可见', () => {
       expect(isToolVisibleInMode('plan', 'read')).toBe(true)
       expect(isToolVisibleInMode('plan', 'ls')).toBe(true)
+      expect(isToolVisibleInMode('plan', 'web_search')).toBe(true)
     })
 
     it('plan 模式下写类工具不可见', () => {
