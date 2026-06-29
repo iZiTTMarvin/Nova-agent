@@ -11,44 +11,12 @@
  * - 输出 JSON 与 kilocode 对齐，方便模型复用既有阅读习惯
  */
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
-import type { TodoItem, TodoStatus, TodoPriority, TodoViewInfo } from '../../shared/todo/types'
-import { TODO_STATUSES, TODO_PRIORITIES } from '../../shared/todo/types'
+import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
+import { normalizeTodos } from '../../shared/todo/normalize'
 import { calculateTodoView } from './todoView'
 import { TODO_WRITE_DESCRIPTION } from './todoWriteDescription'
 
-/**
- * 把模型传入的入参做防御性归一化，丢弃脏数据、补默认值。
- * 失败/缺字段策略与 kilocode 对齐但更稳：优先降级而不是抛错，
- * 因为这类工具是"模型自检契约"的一部分，硬失败会让 AgentLoop 主循环卡住。
- */
-export function normalizeTodos(input: unknown): TodoItem[] {
-  if (!Array.isArray(input)) {
-    return []
-  }
-
-  const result: TodoItem[] = []
-  for (const raw of input) {
-    if (!raw || typeof raw !== 'object') continue
-    const obj = raw as Record<string, unknown>
-
-    const content = typeof obj.content === 'string' ? obj.content.trim() : ''
-    if (!content) {
-      // 空 content 直接丢弃；模型把空串塞进来常见于"先占位再补"的草稿状态
-      continue
-    }
-
-    const status: TodoStatus = TODO_STATUSES.includes(obj.status as TodoStatus)
-      ? (obj.status as TodoStatus)
-      : 'pending'
-
-    const priority: TodoPriority = TODO_PRIORITIES.includes(obj.priority as TodoPriority)
-      ? (obj.priority as TodoPriority)
-      : 'medium'
-
-    result.push({ content, status, priority })
-  }
-  return result
-}
+export { normalizeTodos } from '../../shared/todo/normalize'
 
 function formatTodosOutput(todos: TodoItem[]): string {
   if (todos.length === 0) {

@@ -10,10 +10,10 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock, shouldRenderToolBlock } from './renderingPolicy'
-import { StreamingFileCard, type StreamingFileCardProps } from './StreamingFileCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import { ToolBox } from './ToolBox'
-import { AskQuestionToolCard } from './AskQuestionToolCard'
+import { ToolCallGroup } from './ToolCallGroup'
+import { buildBlockRenderUnits, buildToolCallRenderUnits } from './toolCallGrouping'
+import { renderToolBlock } from './renderToolBlock'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { UndoIcon } from '../../components/Icons'
 import type { Mode } from '../../../shared/session/types'
@@ -178,61 +178,57 @@ function MessageItemInner({
         {shouldShowPending && <AssistantPendingIndicator />}
 
         {hasBlocks ? (
-          /* blocks 顺序渲染：按真实流式事件顺序展示 */
-          msg.blocks!.map((block, idx) => {
-            switch (block.type) {
-              case 'thinking':
-                return (
-                  <ThinkingBlock
-                    key={idx}
-                    thinking={block.content}
-                    active={isActiveThinkingBlock(
-                      msg.blocks!,
-                      idx,
-                      streamingActive,
-                      msg.id,
-                      currentGeneratingMessageId
-                    )}
-                  />
-                )
-              case 'text':
-                return (
-                  <StreamingTextBlock
-                    key={`${idx}-${msg.id}`}
-                    fullContent={block.content}
-                    isStreaming={isCurrentAssistantGenerating}
-                    onRenderPoolTick={onRenderPoolTick}
-                  />
-                )
-              case 'image':
-                return null
-              case 'tool': {
-                if (!shouldRenderToolBlock(currentMode, block.toolName)) {
-                  return null
-                }
-                if (block.toolName === 'write' || block.toolName === 'edit') {
-                  // 通道互斥：流式期 argumentsRaw 存在 → 只传流式通道；
-                  // finalize 后 store 会删掉 block.argumentsRaw → 只传完整 args 通道。
-                  // 避免两条通道同时存在导致 StreamingFileCard 内部 useMemo 依赖 argsProp 引用变化而失效。
-                  const cardProps: StreamingFileCardProps = block.argumentsRaw === undefined
-                    ? { toolCallId: block.toolCallId, toolName: block.toolName, status: block.status, args: block.arguments, result: block.result }
-                    : { toolCallId: block.toolCallId, toolName: block.toolName, status: block.status, argumentsRaw: block.argumentsRaw, result: block.result }
-                  return <StreamingFileCard key={block.toolCallId} {...cardProps} />
-                }
-                if (block.toolName === 'askQuestion') {
+          /* blocks 顺序渲染：分组后的 tool 单元 + 原始 thinking/text */
+          buildBlockRenderUnits(msg.blocks, currentMode).map((unit) => {
+            if (unit.kind === 'block') {
+              const { block, index } = unit
+              switch (block.type) {
+                case 'thinking':
                   return (
-                    <AskQuestionToolCard
-                      key={block.toolCallId}
-                      toolCallId={block.toolCallId}
-                      args={block.arguments}
-                      status={block.status}
-                      isLiveStreaming={isCurrentAssistantGenerating && block.status === 'running'}
+                    <ThinkingBlock
+                      key={`thinking-${index}`}
+                      thinking={block.content}
+                      active={isActiveThinkingBlock(
+                        msg.blocks!,
+                        index,
+                        streamingActive,
+                        msg.id,
+                        currentGeneratingMessageId
+                      )}
                     />
                   )
-                }
-                return <ToolBox key={block.toolCallId} toolCallId={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} isLiveStreaming={isCurrentAssistantGenerating && block.status === 'running'} />
+                case 'text':
+                  return (
+                    <StreamingTextBlock
+                      key={`text-${index}-${msg.id}`}
+                      fullContent={block.content}
+                      isStreaming={isCurrentAssistantGenerating}
+                      onRenderPoolTick={onRenderPoolTick}
+                    />
+                  )
+                case 'image':
+                  return null
+                default:
+                  return null
               }
             }
+
+            if (unit.kind === 'toolGroup') {
+              const groupKey = unit.blocks.map(b => b.toolCallId).join('-')
+              return (
+                <ToolCallGroup
+                  key={`group-${groupKey}`}
+                  toolName={unit.toolName}
+                  blocks={unit.blocks}
+                />
+              )
+            }
+
+            if (unit.kind === 'tool') {
+              return renderToolBlock(unit.block, isCurrentAssistantGenerating)
+            }
+
+            return null
           })
         ) : (
           /* 旧渲染路径：无 blocks 时走分桶逻辑 */
@@ -243,27 +239,21 @@ function MessageItemInner({
             {textContent && <MarkdownRenderer content={textContent} isStreaming={isCurrentAssistantGenerating} />}
             {msg.toolCalls && msg.toolCalls.length > 0 && (
               <div style={{ marginTop: '12px' }}>
-                {msg.toolCalls.map(tc => {
-                  if (!shouldRenderToolBlock(currentMode, tc.name)) return null
-                  if (tc.name === 'write' || tc.name === 'edit') {
-                    // 通道互斥：见 blocks 路径同位置注释。
-                    const cardProps: StreamingFileCardProps = tc.argumentsRaw === undefined
-                      ? { toolCallId: tc.id, toolName: tc.name, status: tc.status, args: tc.arguments, result: tc.result }
-                      : { toolCallId: tc.id, toolName: tc.name, status: tc.status, argumentsRaw: tc.argumentsRaw, result: tc.result }
-                    return <StreamingFileCard key={tc.id} {...cardProps} />
-                  }
-                  if (tc.name === 'askQuestion') {
+                {buildToolCallRenderUnits(msg.toolCalls, currentMode).map((unit) => {
+                  if (unit.kind === 'toolGroup') {
+                    const groupKey = unit.blocks.map(b => b.toolCallId).join('-')
                     return (
-                      <AskQuestionToolCard
-                        key={tc.id}
-                        toolCallId={tc.id}
-                        args={tc.arguments}
-                        status={tc.status}
-                        isLiveStreaming={isCurrentAssistantGenerating && tc.status === 'running'}
+                      <ToolCallGroup
+                        key={`group-${groupKey}`}
+                        toolName={unit.toolName}
+                        blocks={unit.blocks}
                       />
                     )
                   }
-                  return <ToolBox key={tc.id} toolCallId={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} isLiveStreaming={isCurrentAssistantGenerating && tc.status === 'running'} />
+                  if (unit.kind === 'tool') {
+                    return renderToolBlock(unit.block, isCurrentAssistantGenerating)
+                  }
+                  return null
                 })}
               </div>
             )}

@@ -13,7 +13,7 @@
  * - 写入前快照 previousTodos 正确传入 calculateTodoView
  */
 import { describe, expect, it, vi } from 'vitest'
-import { todoWriteTool, normalizeTodos } from '../../../../src/runtime/tools/todoWriteTool'
+import { todoWriteTool } from '../../../../src/runtime/tools/todoWriteTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import type { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { TodoItem, TodoViewInfo } from '../../../../src/shared/todo/types'
@@ -47,61 +47,6 @@ function createContext(opts: {
     sessionStore
   }
 }
-
-describe('normalizeTodos', () => {
-  it('正常字段透传', () => {
-    const result = normalizeTodos([
-      { content: 'A', status: 'in_progress', priority: 'high' },
-      { content: 'B', status: 'completed', priority: 'low' }
-    ])
-    expect(result).toEqual([
-      { content: 'A', status: 'in_progress', priority: 'high' },
-      { content: 'B', status: 'completed', priority: 'low' }
-    ])
-  })
-
-  it('缺 status → pending', () => {
-    const result = normalizeTodos([{ content: 'A', priority: 'high' }])
-    expect(result[0].status).toBe('pending')
-  })
-
-  it('缺 priority → medium', () => {
-    const result = normalizeTodos([{ content: 'A', status: 'pending' }])
-    expect(result[0].priority).toBe('medium')
-  })
-
-  it('空 content → 丢弃', () => {
-    const result = normalizeTodos([
-      { content: '', status: 'pending', priority: 'medium' },
-      { content: '   ', status: 'pending', priority: 'medium' },
-      { content: 'Real', status: 'pending', priority: 'medium' }
-    ])
-    expect(result).toHaveLength(1)
-    expect(result[0].content).toBe('Real')
-  })
-
-  it('非法 status → 降级 pending', () => {
-    const result = normalizeTodos([{ content: 'A', status: 'weird', priority: 'high' }])
-    expect(result[0].status).toBe('pending')
-  })
-
-  it('非法 priority → 降级 medium', () => {
-    const result = normalizeTodos([{ content: 'A', status: 'pending', priority: 'urgent' }])
-    expect(result[0].priority).toBe('medium')
-  })
-
-  it('非数组输入 → 空数组', () => {
-    expect(normalizeTodos(null)).toEqual([])
-    expect(normalizeTodos({})).toEqual([])
-    expect(normalizeTodos('hello')).toEqual([])
-  })
-
-  it('非对象条目直接跳过', () => {
-    const result = normalizeTodos([null, 'string', 42, { content: 'OK', status: 'pending', priority: 'high' }])
-    expect(result).toHaveLength(1)
-    expect(result[0].content).toBe('OK')
-  })
-})
 
 describe('todoWriteTool.execute', () => {
   it('正常替换：store 更新、emit todos_updated、返回 JSON', async () => {
