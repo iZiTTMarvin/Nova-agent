@@ -130,6 +130,30 @@ describe('AskQuestionPanel 单选题', () => {
 
     expect(mockInvoke).not.toHaveBeenCalled()
   })
+
+  it('单题单选选中后须手动点提交，不会在 120ms 后误提交空答案', async () => {
+    vi.useFakeTimers()
+    mockInvoke.mockResolvedValue(undefined)
+    useAgentStore.setState({
+      pendingAskQuestion: makeRequest([
+        { question: 'RAG 智能客服系统后续重点做什么？', options: ['A', 'B', '补 PDF / Word 解析 (Apache Tika)', 'D'], header: '接下来' }
+      ])
+    })
+    const renderer = renderPanel()
+    const root = renderer.root
+
+    const thirdOption = findAllByType(root, 'input')[2]
+    act(() => thirdOption.props.onChange())
+
+    await act(async () => {
+      vi.advanceTimersByTime(200)
+      await Promise.resolve()
+    })
+
+    // 回归：旧版 autoSubmit 因闭包陈旧会在此刻提交 selectedLabels: []，模型误判为「跳过」
+    expect(mockInvoke).not.toHaveBeenCalled()
+    expect(useAgentStore.getState().pendingAskQuestion).not.toBeNull()
+  })
 })
 
 describe('AskQuestionPanel 多选题', () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAgentStore } from '../../stores/useAgentStore'
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import './AskQuestionPanel.css'
@@ -13,7 +13,7 @@ import './AskQuestionPanel.css'
  * - 推荐项渲染 "(Recommended)" 标记
  * - custom !== false 时显示自定义输入框；custom === false 时不显示
  * - "跳过全部" → dismissAskQuestion（IPC 传空数组，工具输出 dismissed）
- * - 单题且非多选时，选中选项后自动提交（带 120ms debounce）
+ * - 单题单选须用户点击「提交答案」；不在选项点击时自动提交，避免闭包陈旧导致空答案被当成跳过
  *
  * 局部状态：currentStep / answers / customInputs。提交 / dismiss 后均重置，
  * 避免下一轮提问残留上一轮选择。
@@ -27,7 +27,6 @@ export const AskQuestionPanel: React.FC = () => {
   const [answers, setAnswers] = useState<Map<number, AskQuestionAnswer>>(new Map())
   const [customInputs, setCustomInputs] = useState<Map<number, string>>(new Map())
   const [showCustom, setShowCustom] = useState(false)
-  const autoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // pending 变化时（新一轮提问或刚提交清空），重置局部状态
   useEffect(() => {
@@ -36,16 +35,6 @@ export const AskQuestionPanel: React.FC = () => {
     setCustomInputs(new Map())
     setShowCustom(false)
   }, [pending?.requestId])
-
-  // 卸载时清理自动提交定时器，避免 pending 清空后仍触发 respond
-  useEffect(() => {
-    return () => {
-      if (autoSubmitTimerRef.current) {
-        clearTimeout(autoSubmitTimerRef.current)
-        autoSubmitTimerRef.current = null
-      }
-    }
-  }, [])
 
   if (!pending) return null
 
@@ -63,18 +52,6 @@ export const AskQuestionPanel: React.FC = () => {
     setAnswers(next)
   }
 
-  /** 单题且非多选场景下，选中后自动提交 */
-  const scheduleAutoSubmit = (): void => {
-    if (questions.length !== 1 || current.multiple) return
-    if (autoSubmitTimerRef.current) {
-      clearTimeout(autoSubmitTimerRef.current)
-    }
-    autoSubmitTimerRef.current = setTimeout(() => {
-      autoSubmitTimerRef.current = null
-      void handleSubmit()
-    }, 120)
-  }
-
   /** 选项点击：单选覆盖、多选切换包含/排除 */
   const toggleOption = (label: string): void => {
     const ans = getAnswer(currentStep)
@@ -86,7 +63,6 @@ export const AskQuestionPanel: React.FC = () => {
       updateAnswer(currentStep, { ...ans, selectedLabels: nextSelected })
     } else {
       updateAnswer(currentStep, { ...ans, selectedLabels: [label] })
-      scheduleAutoSubmit()
     }
   }
 
@@ -104,10 +80,6 @@ export const AskQuestionPanel: React.FC = () => {
 
   /** 提交：未访问过的题默认 { selectedLabels: [] }，按顺序组装 answers 数组 */
   const handleSubmit = async (): Promise<void> => {
-    if (autoSubmitTimerRef.current) {
-      clearTimeout(autoSubmitTimerRef.current)
-      autoSubmitTimerRef.current = null
-    }
     const allAnswers: AskQuestionAnswer[] = questions.map((_, i) =>
       answers.get(i) ?? { selectedLabels: [] }
     )
@@ -115,10 +87,6 @@ export const AskQuestionPanel: React.FC = () => {
   }
 
   const handleDismiss = async (): Promise<void> => {
-    if (autoSubmitTimerRef.current) {
-      clearTimeout(autoSubmitTimerRef.current)
-      autoSubmitTimerRef.current = null
-    }
     await dismissAskQuestion()
   }
 
