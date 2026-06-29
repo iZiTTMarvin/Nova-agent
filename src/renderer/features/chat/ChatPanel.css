@@ -239,6 +239,19 @@
   color: var(--text-primary);
 }
 
+.tool-box__truncation-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 4px 2px 6px;
+  line-height: 1.4;
+}
+
+/* static 分层：仅消息正文参与 content-visibility，操作栏留在容器外避免 contain:paint 裁切溢出 */
+.chat-msg__static-body {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
 /* ── web_search 搜索结果卡片 ─────────────────────────────── */
 .web-search-card {
   font-size: 0.85rem;
@@ -922,17 +935,17 @@
 /* ──────────────────────────────────────────────────────────
    Tool Box Live Enter（流式期间的入场动画）
 
-   职责分工：
-   - opacity 由本 CSS @keyframes 驱动（96ms，64% 处 opacity 1）
-   - scale 由 framer-motion spring 驱动（ToolBox.tsx motion.div）
-   两者独立可关：
-   - CSS 层：prefers-reduced-motion 媒体查询
-   - framer-motion 层：useReducedMotion hook
+   仅用 CSS opacity 做入场（96ms，64% 处 opacity 1），走合成器、开销极低。
+   历史上 scale 由 framer-motion spring 驱动，但其 JS 动画每帧写内联 transform，
+   会触发主线程 Recalculate style，bash/流式期间大量卡片叠加巨大 DOM 时拖垮合成循环，
+   已移除（见 ToolBox.tsx）。
+
+   注意：这里不再加 will-change。will-change 会为每张 live 卡片常驻一个合成层，
+   卡片一多会显著抬高 Layerize 成本；而 96ms 的 opacity 动画并不需要持久提层。
    ────────────────────────────────────────────────────────── */
 
 .tool-box--live-enter {
   animation: tool-box-live-enter 96ms ease-out both;
-  will-change: opacity;
 }
 
 @keyframes tool-box-live-enter {
@@ -1018,7 +1031,6 @@
 
 .ask-question-tool-card--live-enter {
   animation: tool-box-live-enter 96ms ease-out both;
-  will-change: opacity;
 }
 
 @media (prefers-reduced-motion: reduce) {

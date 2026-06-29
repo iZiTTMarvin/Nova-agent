@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import React, { useState, useMemo } from 'react'
 import { CheckIcon, AlertIcon, TerminalIcon, ChevronIcon } from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
+import { clampBashShellOutputForDisplay } from './bashOutputDisplay'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { WebSearchCard } from './WebSearchCard'
@@ -43,9 +43,12 @@ function selectAnchoredRequest(
 /**
  * 流式入场动画参数。
  *
- * 职责分工：opacity 由 CSS @keyframes tool-box-live-enter 驱动（96ms，64% 处 opacity 1），
- * scale 由 framer-motion spring 驱动。两者独立可关：CSS 层通过 prefers-reduced-motion，
- * framer-motion 层通过 useReducedMotion hook。
+ * 历史上 scale 由 framer-motion spring 驱动，但 framer-motion 的 JS 动画每帧写内联
+ * transform，会触发主线程 Recalculate style；在 bash/流式期间大量卡片同时挂载时，
+ * 叠加巨大消息 DOM 会让合成循环打满、界面卡死。现已改为纯 CSS 入场（仅 opacity，
+ * 见 tool-box--live-enter，96ms、走合成器），不再使用 framer-motion。
+ *
+ * 这两个常量仅为兼容既有测试保留，组件已不再使用。
  */
 export const LIVE_ENTER_SPRING = { type: 'spring' as const, stiffness: 300, damping: 30, mass: 0.8 }
 export const NO_ANIMATION = { duration: 0 }
@@ -63,9 +66,11 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ too
     state => selectAnchoredRequest(state.pendingPermissionRequest, toolCallId)
   )
 
-  /** 系统偏好 + framer-motion 层的双重门控：减少动效时跳过 spring */
-  const prefersReducedMotion = useReducedMotion()
-  const animateLive = isLiveStreaming && !prefersReducedMotion
+  /** bash 展开区展示用：保留尾部，避免超长输出拖垮 layout */
+  const bashDisplay = useMemo(() => {
+    if (name !== 'bash' || !result) return null
+    return clampBashShellOutputForDisplay(result)
+  }, [name, result])
 
   const renderStatusIcon = () => {
     switch (status) {
@@ -102,10 +107,7 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ too
   }
 
   return (
-    <motion.div
-      initial={animateLive ? { scale: 0.98 } : false}
-      animate={{ scale: 1 }}
-      transition={animateLive ? LIVE_ENTER_SPRING : NO_ANIMATION}
+    <div
       className={isLiveStreaming ? 'tool-box tool-box--live-enter' : 'tool-box'}
     >
       <div className="tool-box__header" onClick={() => setIsOpen(!isOpen)}>
@@ -134,6 +136,16 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ too
               <div className="tool-box__sec-title">执行结果</div>
               {name === 'web_search' ? (
                 <WebSearchCard output={result} />
+              ) : name === 'bash' && bashDisplay ? (
+                <>
+                  {bashDisplay.truncated && (
+                    <div className="tool-box__truncation-hint">
+                      输出过长，已省略前 {bashDisplay.omittedChars.toLocaleString()} 个字符（展示末尾{' '}
+                      {bashDisplay.text.length.toLocaleString()} 字）
+                    </div>
+                  )}
+                  <pre className="tool-box__content">{bashDisplay.text}</pre>
+                </>
               ) : (
                 <pre className="tool-box__content">{result}</pre>
               )}
@@ -155,6 +167,6 @@ export const ToolBox: React.FC<ToolBoxProps> = React.memo(function ToolBox({ too
           <InlinePermissionBar request={anchoredRequest} />
         </div>
       )}
-    </motion.div>
+    </div>
   )
 })

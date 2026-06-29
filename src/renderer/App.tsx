@@ -11,6 +11,7 @@ import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
+import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import './App.css'
 
 /**
@@ -56,6 +57,7 @@ function App(): JSX.Element {
   //    PRD §5.1：会话列表改为由 workspace:get 统一拉取（单一事实源），
   //    startWorkspaceDispatcher 订阅 workspace:changed 并分发到 chat/settings/agent。
   useEffect(() => {
+    installStreamingPerfMonitor()
     loadModelConfig()
     // 启动工作区分发器（订阅 workspace:changed）
     const stopDispatcher = startWorkspaceDispatcher()

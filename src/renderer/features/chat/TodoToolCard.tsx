@@ -4,7 +4,6 @@
  * 只读当次 arguments.todos，不订阅 useTodoStore（与顶部 TodoPanel 双轨共存）。
  */
 import React, { useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronIcon } from '../../components/Icons'
 import { parseTodoSnapshot, countTodoProgress, splitTodoContentSegments } from './todoSnapshot'
 import type { TodoItem, TodoStatus } from '../../../shared/todo/types'
@@ -99,18 +98,13 @@ export const TodoToolCard: React.FC<TodoToolCardProps> = React.memo(function Tod
 }) {
   const todos = parseTodoSnapshot(args)
   const { completed, total } = countTodoProgress(todos)
-  const prefersReducedMotion = useReducedMotion()
-  const animateLive = isLiveStreaming && !prefersReducedMotion
   const defaultOpen = isLiveStreaming && status === 'running'
   const [isOpen, setIsOpen] = useState(defaultOpen)
 
   const headerLabel = total > 0 ? `${completed} / ${total} 项已完成` : '暂无任务'
 
   return (
-    <motion.div
-      initial={animateLive ? { scale: 0.98 } : false}
-      animate={{ scale: 1 }}
-      transition={animateLive ? LIVE_ENTER_SPRING : NO_ANIMATION}
+    <div
       className={isLiveStreaming ? 'todo-tool-card todo-tool-card--live-enter' : 'todo-tool-card'}
     >
       <details
@@ -132,6 +126,6 @@ export const TodoToolCard: React.FC<TodoToolCardProps> = React.memo(function Tod
           </div>
         )}
       </details>
-    </motion.div>
+    </div>
   )
 })

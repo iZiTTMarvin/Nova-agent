@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, Profiler } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -14,7 +14,19 @@ import { MessageItem } from './MessageItem'
 import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { ModelSelector } from './ModelSelector'
-import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
+import {
+  browserFrameScheduler,
+  canFollowAutoScroll,
+  createStreamAutoScrollController,
+  createStreamingScrollPoller,
+  isWithinProgrammaticScrollGuard,
+  markProgrammaticScroll,
+  scrollContainerToBottom,
+  syncAutoScrollModeOnScroll,
+  type AutoScrollMode
+} from './autoScroll'
+import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
+import { resolveMessageRenderMode } from './messageRenderTier'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
@@ -35,6 +47,24 @@ import './ChatPanel.css'
 import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
+
+/**
+ * 仅在开发环境用 React.Profiler 包裹 children；生产环境直接透传 children，
+ * 避免生产包携带 Profiler 的插桩开销（onRender 回调、commit 计时）。
+ */
+const MaybeProfiler: React.FC<{
+  enabled: boolean
+  id: string
+  onRender: React.ProfilerOnRenderCallback
+  children: React.ReactNode
+}> = ({ enabled, id, onRender, children }) => {
+  if (!enabled) return <>{children}</>
+  return (
+    <Profiler id={id} onRender={onRender}>
+      {children}
+    </Profiler>
+  )
+}
 
 
 export const ChatPanel: React.FC = () => {
@@ -133,12 +163,15 @@ export const ChatPanel: React.FC = () => {
       })
     }
   }, [composerPrefill, clearComposerPrefill])
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  // 用户是否主动上滚，上滚期间停止自动跟随
-  const userScrolledUpRef = useRef(false)
-  // 生成阶段专用的滚动调度器：统一管理 rAF 节流与取消逻辑
+  /** 自动滚动模式：off=用户上滚远离底部；stream=流式跟随；user=用户点击回底 */
+  const autoScrollModeRef = useRef<AutoScrollMode>('off')
+  /** 程序滚动保护截止时间戳 */
+  const programmaticScrollUntilRef = useRef(0)
+  const lastScrollTopRef = useRef(0)
+  // 生成阶段 rAF 合并滚动（render-pool tick 补充路径）
   const streamAutoScrollRef = useRef<ReturnType<typeof createStreamAutoScrollController> | null>(null)
+  const streamScrollPollerRef = useRef<ReturnType<typeof createStreamingScrollPoller> | null>(null)
 
   // 图片附件状态
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
@@ -152,56 +185,111 @@ export const ChatPanel: React.FC = () => {
   // 隐藏的文件上传 input
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 瞬时跳到底部（流式阶段用，避免 smooth 动画排队）
-  const scrollToBottomInstant = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+  const canAutoScroll = useCallback(() => {
+    return canFollowAutoScroll(autoScrollModeRef.current)
   }, [])
+
+  // 对滚动容器滚到底（scrollTo，避免 scrollIntoView 强制同步布局整棵消息树）
+  const scrollToBottomInstant = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    markProgrammaticScroll(programmaticScrollUntilRef)
+    scrollContainerToBottom(container, behavior)
+  }, [])
+
+  const syncBottomState = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const metrics = {
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      clientHeight: container.clientHeight
+    }
+    const isProgrammatic = isWithinProgrammaticScrollGuard(programmaticScrollUntilRef.current)
+    autoScrollModeRef.current = syncAutoScrollModeOnScroll({
+      metrics,
+      previousScrollTop: lastScrollTopRef.current,
+      autoScrollMode: autoScrollModeRef.current,
+      isOutputting: isGenerating,
+      isProgrammaticScroll: isProgrammatic
+    })
+    lastScrollTopRef.current = container.scrollTop
+  }, [isGenerating])
 
   useEffect(() => {
     const controller = createStreamAutoScrollController(
-      scrollToBottomInstant,
-      () => userScrolledUpRef.current,
+      () => scrollToBottomInstant(),
+      () => !canAutoScroll(),
       browserFrameScheduler
     )
     streamAutoScrollRef.current = controller
 
+    const poller = createStreamingScrollPoller({
+      shouldPoll: () => isGenerating && !pendingAskQuestion,
+      shouldScroll: () => canAutoScroll(),
+      scrollToBottom: () => scrollToBottomInstant()
+    })
+    streamScrollPollerRef.current = poller
+
     return () => {
       controller.cancel()
       streamAutoScrollRef.current = null
+      poller.stop()
+      streamScrollPollerRef.current = null
     }
-  }, [scrollToBottomInstant])
+  }, [scrollToBottomInstant, canAutoScroll, isGenerating, pendingAskQuestion])
 
-  // 检测用户是否主动上滚：距底部超过阈值则视为上滚
   const handleScroll = useCallback(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    userScrolledUpRef.current = shouldPauseAutoFollow({
-      scrollHeight: container.scrollHeight,
-      scrollTop: container.scrollTop,
-      clientHeight: container.clientHeight
-    })
-  }, [])
+    syncBottomState()
+  }, [syncBottomState])
 
-  // 新消息加入时自动滚到底部（用户上滚状态重置）
+  // 新消息加入时滚到底，但尊重用户上滚：
+  // mode === 'off'（用户已主动上滚离开底部）时不打断他阅读历史。
+  // 用户「主动发送」的场景由 handleSend 先把模式置回 stream，故仍会跟随。
   useEffect(() => {
-    userScrolledUpRef.current = false
+    if (autoScrollModeRef.current === 'off') return
     scrollToBottomInstant()
   }, [messages.length, scrollToBottomInstant])
 
-  // 流式阶段：render pool 每次 tick 触发自动滚动，让滚动节奏与字符放出节奏同步
-  // Phase 4 之前是监听 messages 变化，但 messages 在 Phase 2 buffer 后频率已大幅降低，
-  // 改为 render pool tick 触发后能精确跟随"用户看到的字符展开"。
-  // 取消与 scroll 都被 streamAutoScrollRef 内部用 rAF 节流，重复触发安全。
+  // 流式输出且未等待 askQuestion → stream 模式 + 启动轮询；否则停轮询。
+  //
+  // 关键：依赖必须包含 pendingAskQuestion。创建 poller 的 effect 依赖
+  // [isGenerating, pendingAskQuestion]，会在 askQuestion 答完（pendingAskQuestion
+  // 由 true→false）时重建出一个「停止态」的新 poller；本 effect 若只依赖 isGenerating
+  // 就不会重跑、不会 start()，导致 500ms 轮询永久失效（bash 撑高列表不再跟随底部）。
+  // 把 pendingAskQuestion 一并纳入依赖后，重建（effect 顺序在前）→ 重启（本 effect 在后）
+  // 时序正确闭合。
+  useEffect(() => {
+    if (isGenerating && !pendingAskQuestion) {
+      autoScrollModeRef.current = 'stream'
+      streamScrollPollerRef.current?.start()
+    } else {
+      // 仅在轮次真正结束时归零模式；等待 askQuestion 期间只停轮询、不动模式，
+      // 这样答完恢复时上面的分支能重新进入 stream。
+      if (!isGenerating) autoScrollModeRef.current = 'off'
+      streamScrollPollerRef.current?.stop()
+      streamAutoScrollRef.current?.cancel()
+    }
+  }, [isGenerating, pendingAskQuestion])
+
+  // render-pool tick 补充：打字机放出字符时 rAF 合并滚一次（轮询覆盖 bash 撑高场景）
   const scheduleStreamAutoScroll = useCallback(() => {
     streamAutoScrollRef.current?.schedule()
   }, [])
 
-  // 流式期间才挂自动滚动调度；非流式阶段由 messages 长度变化 effect 接管
-  useEffect(() => {
-    if (!isGenerating) {
-      streamAutoScrollRef.current?.cancel()
-    }
-  }, [isGenerating])
+  const handleChatProfilerRender = useCallback(
+    (
+      _id: string,
+      phase: 'mount' | 'update' | 'nested-update',
+      actualDuration: number
+    ) => {
+      if (phase === 'mount' || phase === 'update') {
+        recordStreamingReactCommit(actualDuration, { phase, id: _id })
+      }
+    },
+    []
+  )
 
   // 处理文本域自动折行高度自适应
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -227,6 +315,9 @@ export const ChatPanel: React.FC = () => {
 
     const text = inputVal.trim()
     const images = imageAttachments
+
+    // 用户主动发送：无论之前是否上滚离开底部，都恢复跟随，让用户看到自己刚发的消息。
+    autoScrollModeRef.current = 'stream'
 
     // askQuestion 面板仍开着时用户发了新消息：先 dismiss 当前提问（resolve 空 answers），
     // 让旧轮次能正常走到 message_end。否则新消息只会进 steering 队列，而旧轮次被
@@ -421,18 +512,22 @@ export const ChatPanel: React.FC = () => {
           className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32"
           ref={scrollContainerRef}
           onScroll={handleScroll}
+          style={{ overflowAnchor: 'none' }}
         >
           {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
           <TodoPanel sessionId={currentSessionId} />
 
-        {messages.map(msg => {
+        <MaybeProfiler enabled={isStreamingPerfEnabled()} id="ChatPanel-messages" onRender={handleChatProfilerRender}>
+        {messages.map((msg, rowIndex) => {
           const diffCache = messageDiffs[msg.id]
           const isDiffLoading = loadingDiffs.has(msg.id)
           const diffPlaceholders = loadingDiffPlaceholders[msg.id]
+          const renderMode = resolveMessageRenderMode(rowIndex, messages.length, isGenerating)
           return (
             <MessageItem
               key={msg.id}
               msg={msg}
+              renderMode={renderMode}
               isGenerating={isGenerating}
               currentGeneratingMessageId={currentGeneratingMessageId}
               currentMode={currentMode}
@@ -501,7 +596,7 @@ export const ChatPanel: React.FC = () => {
             </div>
           </div>
         )}
-        <div ref={messagesEndRef} />
+        </MaybeProfiler>
       </div>
       )}
 
@@ -519,9 +614,15 @@ export const ChatPanel: React.FC = () => {
             </div>
           )}
 
-          <motion.div
-            layout
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+          {/*
+            composer 外层容器。
+            历史上这里是 `motion.div layout`，但 framer-motion 的 layout 动画会在每次渲染时
+            getBoundingClientRect 强制同步 flush 布局。ChatPanel 在 bash/流式期间因 store
+            更新频繁重渲染，每次都会触发对上方巨大消息 DOM 的强制 layout + 投影 spring，
+            导致合成循环（Recalculate style / Pre-paint / Layerize / Commit）持续打满、界面卡死。
+            composer 不需要布局补间动画，改为普通 div。
+          */}
+          <div
             className="w-full flex flex-col items-center pointer-events-auto"
           >
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
@@ -543,9 +644,9 @@ export const ChatPanel: React.FC = () => {
               )}
             </AnimatePresence>
 
-            <motion.div
+            {/* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */}
+            <div
               ref={composerBoxRef}
-              layout
               className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
                 isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
               }`}
@@ -642,9 +743,9 @@ export const ChatPanel: React.FC = () => {
                   )}
                 </div>
               </div>
-            </motion.div>
+            </div>
 
-          </motion.div>
+          </div>
 
         </div>
       </div>

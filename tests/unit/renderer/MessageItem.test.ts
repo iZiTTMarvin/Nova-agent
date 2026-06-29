@@ -66,6 +66,12 @@ describe('MessageItem areEqual', () => {
     expect(areEqual(prev, next)).toBe(false)
   })
 
+  it('renderMode 不同应返回 false', () => {
+    const prev = makeProps({ renderMode: 'live' })
+    const next = makeProps({ renderMode: 'static' })
+    expect(areEqual(prev, next)).toBe(false)
+  })
+
   it('isPausedForInput 变化应返回 false（等待用户输入暂停切换需重渲染以停掉流式动画）', () => {
     // 回归保护：等待 askQuestion / 权限决策时 isGenerating 仍为 true，靠 isPausedForInput 切换
     // 让生成中的消息重渲染，从而停掉 ThinkingBlock 计时器 / render pool 的 rAF（卡死修复）

@@ -1,5 +1,4 @@
 import React from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import { getToolDisplayName, getToolSummary } from './toolDisplay'
 
 /**
@@ -32,8 +31,6 @@ export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.mem
 }) {
   const title = getToolDisplayName('askQuestion')
   const summary = getToolSummary('askQuestion', args)
-  const prefersReducedMotion = useReducedMotion()
-  const animateLive = isLiveStreaming && !prefersReducedMotion
 
   const renderStatusIcon = () => {
     switch (status) {
@@ -75,10 +72,7 @@ export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.mem
   }
 
   return (
-    <motion.div
-      initial={animateLive ? { scale: 0.98 } : false}
-      animate={{ scale: 1 }}
-      transition={animateLive ? LIVE_ENTER_SPRING : NO_ANIMATION}
+    <div
       className={isLiveStreaming ? 'ask-question-tool-card ask-question-tool-card--live-enter' : 'ask-question-tool-card'}
     >
       <div className="ask-question-tool-card__header">
@@ -86,6 +80,6 @@ export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.mem
         <span className="ask-question-tool-card__title">{title}</span>
         {summary && <span className="ask-question-tool-card__summary">{summary}</span>}
       </div>
-    </motion.div>
+    </div>
   )
 })

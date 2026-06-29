@@ -191,3 +191,91 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     expect(current!.isPausedForInput).toBe(true)
   })
 })
+
+/**
+ * 自动滚动轮询接线回归测试。
+ *
+ * 回归对象：askQuestion 答完（pendingAskQuestion 由 true→false）后，500ms 流式滚动
+ * 轮询必须重新启动。历史 bug 是「创建 poller 的 effect 依赖含 pendingAskQuestion，但
+ * 启动 poller 的 effect 只依赖 isGenerating」——答完时 poller 被重建成停止态却不再 start，
+ * 轮询永久失效（bash 撑高列表不再跟随底部）。
+ *
+ * react-test-renderer 默认宿主 ref 为 null，scrollTo 不会触发；这里用 createNodeMock
+ * 提供带 scrollTo / 尺寸的假节点，并用假定时器驱动 setInterval。
+ */
+describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    messageItemPropsByRender.length = 0
+    resetChatStoreForTests()
+    resetSettingsStoreForTests()
+    resetAgentStoreForTests()
+    mockInvoke.mockResolvedValue(undefined)
+    global.window = {
+      ...global.window,
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
+    } as unknown as Window & typeof globalThis
+    // rAF 桩成不回调，隔离出 setInterval 轮询路径
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('pendingAskQuestion true→false 后，500ms 轮询仍会滚到底部', () => {
+    const scrollTo = vi.fn()
+    // 所有宿主节点共用同一个假节点：提供 scrollTo + 距底部 > 阈值，保证轮询有滚动动机
+    const nodeMock = { scrollTo, scrollHeight: 2000, scrollTop: 0, clientHeight: 400 }
+
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        isGenerating: true,
+        currentGeneratingMessageId: 'msg_2',
+        messages: [makeAssistantMessage('msg_2')]
+      })
+      useAgentStore.setState({ pendingAskQuestion: null })
+    })
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ChatPanel), {
+        createNodeMock: () => nodeMock
+      })
+    })
+
+    // 1) 弹出 askQuestion（暂停轮询）
+    act(() => {
+      useAgentStore.setState({
+        pendingAskQuestion: {
+          requestId: 'req_1',
+          questions: [{ question: '继续？', options: [{ label: 'A' }] }]
+        }
+      })
+    })
+
+    // 2) 答完 askQuestion（恢复）——此处是回归点：轮询应被重新启动
+    act(() => {
+      useAgentStore.setState({ pendingAskQuestion: null })
+    })
+
+    // 清掉挂载/恢复瞬间的滚动，只观察后续轮询
+    scrollTo.mockClear()
+
+    // 3) 推进一个轮询周期
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+
+    expect(scrollTo).toHaveBeenCalled()
+
+    act(() => {
+      renderer?.unmount()
+    })
+  })
+})

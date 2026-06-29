@@ -19,9 +19,15 @@ import { UndoIcon } from '../../components/Icons'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock, MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
+import type { MessageRenderMode } from './messageRenderTier'
 
 export interface MessageItemProps {
   msg: ExtendedMessage
+  /**
+   * 列表尾部分层：static 消息关闭流式动画与工具卡入场，减轻长会话 DOM 压力。
+   * 默认 live，由 ChatPanel 按行下标计算。
+   */
+  renderMode?: MessageRenderMode
   isGenerating: boolean
   /**
    * 是否因等待用户输入（askQuestion / bash 权限 / 验证权限）而暂停。
@@ -107,6 +113,7 @@ function parseThinking(msg: ThinkingParseSource, isGenerating: boolean, currentG
 
 function MessageItemInner({
   msg,
+  renderMode = 'live',
   isGenerating,
   isPausedForInput = false,
   currentGeneratingMessageId,
@@ -126,10 +133,10 @@ function MessageItemInner({
 }: MessageItemProps) {
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user'
+  const isStaticRow = renderMode === 'static'
 
-  // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停。
-  // 等待 askQuestion / 权限决策时 isGenerating 仍为 true，但应停掉打字机 / 思考计时器等常驻循环。
-  const streamingActive = isGenerating && !isPausedForInput
+  // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停；static 行强制关闭。
+  const streamingActive = isGenerating && !isPausedForInput && !isStaticRow
 
   // T06：assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
   useEffect(() => {
@@ -146,10 +153,17 @@ function MessageItemInner({
     ? parseThinking(msg, streamingActive, currentGeneratingMessageId)
     : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
   const isCurrentAssistantGenerating = isAssistant && streamingActive && msg.id === currentGeneratingMessageId
+  // 「轮次是否进行中」：与 streamingActive 不同，它**不**受 isPausedForInput 影响。
+  // 专门用于控制 StreamingTextBlock 的终态高亮时机——等待 bash 权限 / askQuestion
+  // 期间轮次仍在进行，此时若把 isStreaming 打成 false，会触发整条消息代码块的逐行
+  // 高亮（每行炸出大量 token span），在权限弹窗瞬间造成同步重排卡死。
+  const isTurnActiveForThisMsg =
+    isAssistant && isGenerating && msg.id === currentGeneratingMessageId && !isStaticRow
   const hasVisibleContent = hasBlocks
     ? hasVisibleBlocks(msg.blocks, currentMode)
     : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
   const shouldShowPending = isCurrentAssistantGenerating && !hasVisibleContent
+  const handleRenderPoolTick = isStaticRow ? undefined : onRenderPoolTick
 
   // 用户消息图片提取（用于图片网格渲染）
   const userImageBlocks = isUser
@@ -161,7 +175,7 @@ function MessageItemInner({
       className={`chat-msg-wrapper chat-msg-wrapper--${msg.role === 'user' ? 'user' : 'assistant'}`}
     >
       <div className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'} ${msg.isError ? 'chat-msg--error' : ''}`}>
-        {/* 悬浮操作栏：仅在 assistant 消息上显示，且必须是生成完毕状态 */}
+        {/* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出 */}
         {isAssistant && !isGenerating && (
           <div className="chat-msg__actions">
             <button
@@ -175,6 +189,7 @@ function MessageItemInner({
           </div>
         )}
 
+        <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>
         {shouldShowPending && <AssistantPendingIndicator />}
 
         {hasBlocks ? (
@@ -202,8 +217,9 @@ function MessageItemInner({
                     <StreamingTextBlock
                       key={`text-${index}-${msg.id}`}
                       fullContent={block.content}
-                      isStreaming={isCurrentAssistantGenerating}
-                      onRenderPoolTick={onRenderPoolTick}
+                      isStreaming={isTurnActiveForThisMsg}
+                      paused={isPausedForInput}
+                      onRenderPoolTick={handleRenderPoolTick}
                     />
                   )
                 case 'image':
@@ -236,7 +252,7 @@ function MessageItemInner({
             {thinkingContent && (
               <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
             )}
-            {textContent && <MarkdownRenderer content={textContent} isStreaming={isCurrentAssistantGenerating} />}
+            {textContent && <MarkdownRenderer content={textContent} isStreaming={isTurnActiveForThisMsg} />}
             {msg.toolCalls && msg.toolCalls.length > 0 && (
               <div style={{ marginTop: '12px' }}>
                 {buildToolCallRenderUnits(msg.toolCalls, currentMode).map((unit) => {
@@ -311,6 +327,7 @@ function MessageItemInner({
             <pre className="verification-summary__content">{msg.verificationSummary}</pre>
           </div>
         )}
+        </div>
       </div>
     </div>
   )
@@ -322,6 +339,7 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
   return (
     prev.msg.id === next.msg.id &&
     prev.msg._revision === next.msg._revision &&
+    prev.renderMode === next.renderMode &&
     prev.isGenerating === next.isGenerating &&
     prev.isPausedForInput === next.isPausedForInput &&
     prev.currentGeneratingMessageId === next.currentGeneratingMessageId &&
