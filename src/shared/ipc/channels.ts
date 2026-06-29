@@ -48,6 +48,7 @@ export const RESPOND_VERIFICATION_PERMISSION = 'respond-verification-permission'
 export const RESPOND_ASK_QUESTION = 'respond-ask-question' as const
 export const LOAD_SESSIONS = 'load-sessions' as const
 export const LOAD_SESSION = 'load-session' as const
+export const LOAD_SESSION_MESSAGES = 'load-session-messages' as const
 export const CREATE_SESSION = 'create-session' as const
 export const DELETE_SESSION = 'delete-session' as const
 export const GET_MESSAGE_DIFFS = 'get-message-diffs' as const

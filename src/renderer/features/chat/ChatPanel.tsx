@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, Profiler } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, Profiler } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -67,6 +67,9 @@ const MaybeProfiler: React.FC<{
 }
 
 
+/** 距列表顶部小于此像素时触发向更早方向补载历史 */
+const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
+
 export const ChatPanel: React.FC = () => {
   // ── settings store（项目/模型/模式/配置弹窗） ──
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -99,6 +102,9 @@ export const ChatPanel: React.FC = () => {
   const pendingUserMessages = useChatStore(state => state.pendingUserMessages)
   const enqueuePendingMessage = useChatStore(state => state.enqueuePendingMessage)
   const removePendingMessage = useChatStore(state => state.removePendingMessage)
+  const hasMoreMessagesAbove = useChatStore(state => state.hasMoreMessagesAbove)
+  const isLoadingOlderMessages = useChatStore(state => state.isLoadingOlderMessages)
+  const loadOlderMessages = useChatStore(state => state.loadOlderMessages)
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
@@ -163,12 +169,19 @@ export const ChatPanel: React.FC = () => {
       })
     }
   }, [composerPrefill, clearComposerPrefill])
+
+  useEffect(() => {
+    scrollHeightBeforePrependRef.current = null
+  }, [currentSessionId])
+
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   /** 自动滚动模式：off=用户上滚远离底部；stream=流式跟随；user=用户点击回底 */
   const autoScrollModeRef = useRef<AutoScrollMode>('off')
   /** 程序滚动保护截止时间戳 */
   const programmaticScrollUntilRef = useRef(0)
   const lastScrollTopRef = useRef(0)
+  /** prepend 历史消息前记录的 scrollHeight，用于补载后修正 scrollTop 防止视口跳动 */
+  const scrollHeightBeforePrependRef = useRef<number | null>(null)
   // 生成阶段 rAF 合并滚动（render-pool tick 补充路径）
   const streamAutoScrollRef = useRef<ReturnType<typeof createStreamAutoScrollController> | null>(null)
   const streamScrollPollerRef = useRef<ReturnType<typeof createStreamingScrollPoller> | null>(null)
@@ -217,6 +230,15 @@ export const ChatPanel: React.FC = () => {
     lastScrollTopRef.current = container.scrollTop
   }, [isGenerating])
 
+  const tryLoadOlderMessages = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container || !hasMoreMessagesAbove || isLoadingOlderMessages) return
+    if (container.scrollTop > HISTORY_LOAD_SCROLL_THRESHOLD_PX) return
+
+    scrollHeightBeforePrependRef.current = container.scrollHeight
+    void loadOlderMessages()
+  }, [hasMoreMessagesAbove, isLoadingOlderMessages, loadOlderMessages])
+
   useEffect(() => {
     const controller = createStreamAutoScrollController(
       () => scrollToBottomInstant(),
@@ -242,7 +264,21 @@ export const ChatPanel: React.FC = () => {
 
   const handleScroll = useCallback(() => {
     syncBottomState()
-  }, [syncBottomState])
+    tryLoadOlderMessages()
+  }, [syncBottomState, tryLoadOlderMessages])
+
+  // prepend 早期消息后按高度差修正 scrollTop（overflow-anchor:none 下需手动锚定）
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current
+    const prevHeight = scrollHeightBeforePrependRef.current
+    if (!container || prevHeight === null || isLoadingOlderMessages) return
+
+    const delta = container.scrollHeight - prevHeight
+    if (delta > 0) {
+      container.scrollTop += delta
+    }
+    scrollHeightBeforePrependRef.current = null
+  }, [messages, isLoadingOlderMessages])
 
   // 新消息加入时滚到底，但尊重用户上滚：
   // mode === 'off'（用户已主动上滚离开底部）时不打断他阅读历史。
@@ -516,6 +552,12 @@ export const ChatPanel: React.FC = () => {
         >
           {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
           <TodoPanel sessionId={currentSessionId} />
+
+          {(isLoadingOlderMessages || hasMoreMessagesAbove) && (
+            <div className="chat-messages__history-hint" aria-live="polite">
+              {isLoadingOlderMessages ? '正在加载更早的消息…' : '向上滚动加载更早的消息'}
+            </div>
+          )}
 
         <MaybeProfiler enabled={isStreamingPerfEnabled()} id="ChatPanel-messages" onRender={handleChatProfilerRender}>
         {messages.map((msg, rowIndex) => {

@@ -21,6 +21,7 @@ import type {
   Mode,
   PermissionDecision
 } from '../../shared/session/types'
+import { SESSION_HISTORY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
@@ -258,6 +259,19 @@ export interface ChatState {
   /** 每条消息回滚失败的错误提示（key 为 messageId） */
   rollbackErrors: Record<string, string>
 
+  /** 当前视窗顶部之前是否还有更早消息（可上滚补载） */
+  hasMoreMessagesAbove: boolean
+  /** 上滚补载进行中，防重入 */
+  isLoadingOlderMessages: boolean
+  /** 当前视窗内最早一条消息的 id，作为下次 beforeId 游标 */
+  oldestLoadedMessageId: string | null
+  /**
+   * 用户已向上翻历史并 prepend 过时为 true，暂停 trimMessageWindow 头部裁剪。
+   * 避免 prepend 的早期消息被流式 trim 立刻弹走。切换会话 / 回退重载时重置。
+   * 未上滚时若流式累计触发头部裁剪，游标由 paginationPatchAfterHeadTrim 同步到新窗口首条。
+   */
+  suspendHeadTrim: boolean
+
   // ── Actions ──
 
   /** 加载会话列表 */
@@ -284,6 +298,8 @@ export interface ChatState {
   loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
   /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
   clearMessageDiffs: (messageId: string) => void
+  /** 上滚到顶时加载更早一页消息并 prepend 到视窗 */
+  loadOlderMessages: () => Promise<void>
 
   /**
    * Phase 2 批量应用流式 delta：
@@ -396,17 +412,44 @@ export type StreamDeltaBatch = StreamDelta[]
 function trimMessageWindow(
   messages: ExtendedMessage[],
   index: Record<string, number>
-): { messages: ExtendedMessage[]; index: Record<string, number> } {
-  if (messages.length <= MESSAGE_WINDOW_MAX_SIZE) return { messages, index }
+): { messages: ExtendedMessage[]; index: Record<string, number>; headTrimmed: boolean } {
+  if (messages.length <= MESSAGE_WINDOW_MAX_SIZE) {
+    return { messages, index, headTrimmed: false }
+  }
   const tailPreserve = messages.length - MESSAGE_WINDOW_TAIL_PRESERVE
   const trimCount = Math.min(messages.length - MESSAGE_WINDOW_MAX_SIZE, Math.max(0, tailPreserve))
-  if (trimCount <= 0) return { messages, index }
+  if (trimCount <= 0) return { messages, index, headTrimmed: false }
   const trimmed = messages.slice(trimCount)
   const newIndex: Record<string, number> = {}
   for (let i = 0; i < trimmed.length; i++) {
     newIndex[trimmed[i].id] = i
   }
-  return { messages: trimmed, index: newIndex }
+  return { messages: trimmed, index: newIndex, headTrimmed: true }
+}
+
+/**
+ * 头部裁剪后同步分页游标：被裁消息仍在盘上，可通过 loadOlderMessages 补回。
+ */
+function paginationPatchAfterHeadTrim(
+  trimResult: { messages: ExtendedMessage[]; headTrimmed: boolean }
+): Pick<ChatState, 'oldestLoadedMessageId' | 'hasMoreMessagesAbove'> | Record<string, never> {
+  if (!trimResult.headTrimmed) return {}
+  return {
+    oldestLoadedMessageId: trimResult.messages[0]?.id ?? null,
+    hasMoreMessagesAbove: true
+  }
+}
+
+/**
+ * 在 suspendHeadTrim 时跳过头部裁剪（P1-c：用户上滚补载后保留已 prepend 的早期历史）。
+ */
+function applyMessageWindowTrim(
+  messages: ExtendedMessage[],
+  index: Record<string, number>,
+  suspendHeadTrim: boolean
+): { messages: ExtendedMessage[]; index: Record<string, number>; headTrimmed: boolean } {
+  if (suspendHeadTrim) return { messages, index, headTrimmed: false }
+  return trimMessageWindow(messages, index)
 }
 
 /**
@@ -447,6 +490,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   recoveryHints: {},
   hookErrors: {},
   rollbackErrors: {},
+  hasMoreMessagesAbove: false,
+  isLoadingOlderMessages: false,
+  oldestLoadedMessageId: null,
+  suspendHeadTrim: false,
 
   loadSessions: async () => {
     try {
@@ -508,11 +555,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set(state => {
       const nextMessages = [...state.messages, userMsg]
-      // T05：裁剪消息窗口
-      const trimmed = trimMessageWindow(nextMessages, { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 })
+      const trimmed = applyMessageWindowTrim(
+        nextMessages,
+        { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 },
+        state.suspendHeadTrim
+      )
       return {
         messages: trimmed.messages,
         messageIndexById: trimmed.index,
+        ...paginationPatchAfterHeadTrim(trimmed),
         isGenerating: true
       }
     })
@@ -694,6 +745,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const { [messageId]: _drop, ...rest } = state.messageDiffs
       return { messageDiffs: rest }
     })
+  },
+
+  loadOlderMessages: async () => {
+    const {
+      currentSessionId,
+      oldestLoadedMessageId,
+      hasMoreMessagesAbove,
+      isLoadingOlderMessages
+    } = get()
+
+    if (!currentSessionId || !hasMoreMessagesAbove || isLoadingOlderMessages || !oldestLoadedMessageId) {
+      return
+    }
+
+    const sessionIdAtStart = currentSessionId
+    set({ isLoadingOlderMessages: true })
+
+    try {
+      const result = await window.api.invoke('load-session-messages', {
+        sessionId: sessionIdAtStart,
+        beforeId: oldestLoadedMessageId,
+        limit: SESSION_HISTORY_PAGE_SIZE
+      })
+
+      if (get().currentSessionId !== sessionIdAtStart) {
+        set({ isLoadingOlderMessages: false })
+        return
+      }
+
+      const older = restoreSessionMessages(result.messages)
+      if (older.length === 0) {
+        set({ hasMoreMessagesAbove: result.hasMore, isLoadingOlderMessages: false })
+        return
+      }
+
+      set(state => {
+        const merged = [...older, ...state.messages]
+        return {
+          messages: merged,
+          messageIndexById: buildMessageIndex(merged),
+          hasMoreMessagesAbove: result.hasMore,
+          oldestLoadedMessageId: merged[0]?.id ?? null,
+          isLoadingOlderMessages: false,
+          suspendHeadTrim: true
+        }
+      })
+    } catch (err) {
+      console.error('[useChatStore] loadOlderMessages 失败:', err)
+      if (get().currentSessionId === sessionIdAtStart) {
+        set({ isLoadingOlderMessages: false })
+      }
+    }
   },
 
   // ── 主进程流式事件响应器 ────────────────────────────────────
@@ -1334,10 +1437,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // T05：流式 delta 处理完后裁剪消息窗口
       let finalResult: Partial<ChatState>
       if (messagesChanged) {
-        const trimmed = trimMessageWindow(nextMessages, state.messageIndexById)
+        const trimmed = applyMessageWindowTrim(
+          nextMessages,
+          state.messageIndexById,
+          state.suspendHeadTrim
+        )
         finalResult = {
           messages: trimmed.messages,
           ...(trimmed.messages !== nextMessages ? { messageIndexById: trimmed.index } : {}),
+          ...paginationPatchAfterHeadTrim(trimmed),
           ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
         }
       } else {
@@ -1359,21 +1467,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // 2. 若 currentSessionId 变化，重新加载消息（或清空）
     if (sessionChanged) {
-      // 清空 diff 缓存，避免跨会话污染
-      set({ messageDiffs: {}, loadingDiffPlaceholders: {} })
+      // 清空 diff 缓存与分页视窗，避免跨会话污染
+      set({
+        messageDiffs: {},
+        loadingDiffPlaceholders: {},
+        hasMoreMessagesAbove: false,
+        isLoadingOlderMessages: false,
+        oldestLoadedMessageId: null,
+        suspendHeadTrim: false
+      })
 
       if (next.currentSessionId) {
-        // 异步加载该会话的完整消息历史
+        // 异步加载该会话首屏尾部消息（主进程只返回最近 N 条 + hasMore 标记）
         void (async () => {
           try {
             const detail: SessionDetail = await window.api.invoke('load-session', { sessionId: next.currentSessionId! })
             // 二次校验：加载期间用户可能又切了会话，只有 still current 时才 set
             if (get().currentSessionId !== next.currentSessionId) return
             const restored = restoreSessionMessages(detail.messages)
-            const trimmed = trimMessageWindow(restored, buildMessageIndex(restored))
             set({
-              messages: trimmed.messages,
-              messageIndexById: trimmed.index
+              messages: restored,
+              messageIndexById: buildMessageIndex(restored),
+              hasMoreMessagesAbove: detail.hasMoreMessagesAbove ?? false,
+              oldestLoadedMessageId: restored[0]?.id ?? null,
+              isLoadingOlderMessages: false,
+              suspendHeadTrim: false
             })
           } catch (err) {
             console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)
@@ -1406,6 +1524,11 @@ export function resetChatStoreForTests(): void {
     pendingUserMessages: [],
     recoveryState: {},
     recoveryHints: {},
-    hookErrors: {}
+    hookErrors: {},
+    rollbackErrors: {},
+    hasMoreMessagesAbove: false,
+    isLoadingOlderMessages: false,
+    oldestLoadedMessageId: null,
+    suspendHeadTrim: false
   })
 }

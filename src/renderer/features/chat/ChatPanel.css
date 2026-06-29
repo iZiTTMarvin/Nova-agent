@@ -22,6 +22,17 @@
   min-width: 0;
 }
 
+.chat-messages__history-hint {
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background-color: var(--bg-sand);
+  border: 1px dashed var(--border-warm);
+  user-select: none;
+}
+
 .chat-msg-wrapper {
   display: flex;
   width: 100%;

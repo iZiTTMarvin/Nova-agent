@@ -11,6 +11,7 @@ import { ipcMain, app } from 'electron'
 import {
   LOAD_SESSIONS,
   LOAD_SESSION,
+  LOAD_SESSION_MESSAGES,
   CREATE_SESSION,
   DELETE_SESSION,
   ACCEPT_FILE,
@@ -36,6 +37,7 @@ import { calculateContextBreakdown } from '../../runtime/agent'
 import { getSkillService } from '../services/SkillServiceHost'
 import { loadModelConfig } from '../../runtime/model/config'
 import { inferContextWindow } from '../../shared/config/types'
+import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
 
@@ -81,15 +83,22 @@ function pushContextBreakdownForSession(session: SessionData): void {
 }
 
 /** 将持久化 SessionData 转换为共享 SessionDetail 格式（含消息历史） */
-function toSessionDetail(data: SessionData): SessionDetail {
+function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): SessionDetail {
+  const tailOnly = options?.tailOnly ?? false
+  const totalCount = data.messages.length
+  const sourceMessages = tailOnly
+    ? data.messages.slice(-INITIAL_SESSION_DISPLAY_PAGE_SIZE)
+    : data.messages
+
   return {
     id: data.id,
     workspaceRoot: data.workspaceRoot,
     mode: data.mode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
-    messageCount: data.messages.length,
-    messages: data.messages.map(msg => ({
+    messageCount: totalCount,
+    hasMoreMessagesAbove: tailOnly ? totalCount > sourceMessages.length : undefined,
+    messages: sourceMessages.map(msg => ({
       ...toMessage(msg),
       sessionId: data.id
     }))
@@ -121,8 +130,32 @@ export function registerSessionHandler(): void {
     setCurrentMode(data.mode)
     // 立即推送上下文容量拆分，renderer 无需等待 LLM 调用即可显示
     pushContextBreakdownForSession(data)
-    return toSessionDetail(data)
+    return toSessionDetail(data, { tailOnly: true })
   })
+
+  // 按游标加载更早的消息页（只读，不触发会话切换副作用）
+  ipcMain.handle(
+    LOAD_SESSION_MESSAGES,
+    async (
+      _event,
+      params: { sessionId: string; beforeId?: string; limit: number }
+    ): Promise<{ messages: Message[]; hasMore: boolean }> => {
+      const page = sessionStore.loadMessagesPage(params.sessionId, {
+        beforeId: params.beforeId,
+        limit: params.limit
+      })
+      if (!page) {
+        throw new Error(`会话 ${params.sessionId} 不存在`)
+      }
+      return {
+        messages: page.messages.map(msg => ({
+          ...toMessage(msg),
+          sessionId: params.sessionId
+        })),
+        hasMore: page.hasMore
+      }
+    }
+  )
 
   // 创建新会话
   ipcMain.handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {

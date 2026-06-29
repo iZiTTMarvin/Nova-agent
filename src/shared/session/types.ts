@@ -85,4 +85,9 @@ export interface Session {
 /** 会话详情（含完整消息列表，用于加载历史对话） */
 export interface SessionDetail extends Session {
   messages: Message[]
+  /**
+   * 首屏是否只返回了尾部子集；为 true 时表示 messages 之前还有更早历史，
+   * 可通过 load-session-messages 按游标补载。
+   */
+  hasMoreMessagesAbove?: boolean
 }

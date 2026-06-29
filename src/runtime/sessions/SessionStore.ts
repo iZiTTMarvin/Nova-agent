@@ -322,6 +322,33 @@ export class SessionStore {
     if (!fs.existsSync(filePath)) return
     fs.unlinkSync(filePath)
   }
+
+  /**
+   * 按游标反向分页读取 messages.jsonl 子集（不替换 load() 全量读）。
+   *
+   * - 无 beforeId：返回最新 limit 条（首屏尾部）
+   * - 有 beforeId：返回该 id 之前的 limit 条；id 不存在时返回空且 hasMore=false
+   */
+  loadMessagesPage(
+    sessionId: string,
+    options: { beforeId?: string; limit: number }
+  ): { messages: SessionMessage[]; hasMore: boolean } | null {
+    const filePath = path.join(this.sessionsDir, sessionId, SESSION_DATA_FILE)
+    if (!fs.existsSync(filePath)) return null
+
+    try {
+      const migrated = migrateSessionFile(this.sessionsDir, sessionId)
+      if (!migrated) {
+        const content = fs.readFileSync(filePath, 'utf8')
+        migrateSessionData(JSON.parse(content))
+      }
+      const allMessages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+      return sliceMessagesPage(allMessages, options)
+    } catch (err) {
+      console.error(`[SessionStore] 分页读取会话 ${sessionId} 消息失败:`, err)
+      return null
+    }
+  }
 }
 
 /**
@@ -408,5 +435,40 @@ function countMessagesJsonlLines(filePath: string): number {
     return count
   } catch {
     return 0
+  }
+}
+
+/**
+ * 在已解析的消息数组上按游标切片（时间正序）。
+ * 供 loadMessagesPage 与单测复用。
+ */
+export function sliceMessagesPage(
+  allMessages: SessionMessage[],
+  options: { beforeId?: string; limit: number }
+): { messages: SessionMessage[]; hasMore: boolean } {
+  const { beforeId, limit } = options
+  if (limit <= 0 || allMessages.length === 0) {
+    return { messages: [], hasMore: false }
+  }
+
+  if (!beforeId) {
+    if (allMessages.length <= limit) {
+      return { messages: allMessages, hasMore: false }
+    }
+    return {
+      messages: allMessages.slice(-limit),
+      hasMore: true
+    }
+  }
+
+  const idx = allMessages.findIndex(m => m.id === beforeId)
+  if (idx <= 0) {
+    return { messages: [], hasMore: false }
+  }
+
+  const start = Math.max(0, idx - limit)
+  return {
+    messages: allMessages.slice(start, idx),
+    hasMore: start > 0
   }
 }

@@ -164,6 +164,10 @@ export interface IpcCommands {
     params: { sessionId: string }
     result: SessionDetail
   }
+  'load-session-messages': {
+    params: { sessionId: string; beforeId?: string; limit: number }
+    result: { messages: Message[]; hasMore: boolean }
+  }
   'create-session': {
     params: { workspaceRoot: string; mode?: Mode }
     result: SessionDetail

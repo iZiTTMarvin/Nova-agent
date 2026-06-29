@@ -2,6 +2,12 @@
 
 ## 2026-06-29
 
+- **feat(renderer)**: 会话消息显示分页（P1-c）
+  - 进入会话仅渲染最近 20 条尾部消息；用户上滚到顶时按游标每次补载 40 条更早历史并 prepend，修正 scrollTop 避免视口跳动
+  - 主进程 `LOAD_SESSION` 仍全量读盘用于上下文容量拆分，但返回 renderer 的 `SessionDetail.messages` 改为尾部子集 + `hasMoreMessagesAbove`
+  - 新增 `load-session-messages` IPC 与 `SessionStore.loadMessagesPage`；用户上滚补载后暂停 `trimMessageWindow` 头部裁剪，恢复对超长会话早期历史的可访问性
+  - 测试：SessionStore 分页、sliceMessagesPage、useChatStore loadOlderMessages；typecheck + build
+
 - **fix(renderer)**: 修复 bash 权限确认期间工具卡片渲染卡顿
   - 根因：bash / 验证命令权限确认也会让 Agent 等用户决策，期间 `message_end` 不会触发、`isGenerating` 仍为 true；此前只有 askQuestion 会传入 `isPausedForInput` 暂停流式动画，权限等待态仍会让 `ThinkingBlock` / `useStreamingRenderPool` 按生成中状态运行
   - 修复：`ChatPanel` 将 `pendingAskQuestion`、`pendingPermissionRequest`、`pendingVerificationRequest` 统一折叠为“等待用户输入”暂停态，并只传给等待用户决策的目标消息；同时 `useStreamingRenderPool` 在待渲染字符池清空后停止 rAF，后续文本增长时再重新启动，避免空池每帧空转

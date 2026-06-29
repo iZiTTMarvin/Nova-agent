@@ -13,6 +13,11 @@ export {
 } from './types'
 
 export {
+  INITIAL_SESSION_DISPLAY_PAGE_SIZE,
+  SESSION_HISTORY_PAGE_SIZE
+} from './messagePagination'
+
+export {
   getToolCapability,
   isToolVisibleInMode,
   isModeHiddenWriteTool,

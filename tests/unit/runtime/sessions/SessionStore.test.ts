@@ -721,4 +721,73 @@ describe('SessionStore', () => {
       expect(metadata.schemaVersion).toBe(3)
     })
   })
+
+  describe('loadMessagesPage', () => {
+    function appendMessages(store: SessionStore, sessionId: string, count: number) {
+      for (let i = 0; i < count; i++) {
+        store.appendMessage(sessionId, {
+          id: `msg_${i}`,
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          content: `content-${i}`,
+          timestamp: i + 1
+        })
+      }
+    }
+
+    it('空会话返回空页', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const page = store.loadMessagesPage(session.id, { limit: 20 })
+      expect(page).toEqual({ messages: [], hasMore: false })
+    })
+
+    it('无 beforeId 时返回最新 limit 条', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      appendMessages(store, session.id, 30)
+
+      const page = store.loadMessagesPage(session.id, { limit: 20 })
+      expect(page!.messages).toHaveLength(20)
+      expect(page!.messages[0].id).toBe('msg_10')
+      expect(page!.messages[19].id).toBe('msg_29')
+      expect(page!.hasMore).toBe(true)
+    })
+
+    it('不足一页时 hasMore 为 false', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      appendMessages(store, session.id, 5)
+
+      const page = store.loadMessagesPage(session.id, { limit: 20 })
+      expect(page!.messages).toHaveLength(5)
+      expect(page!.hasMore).toBe(false)
+    })
+
+    it('beforeId 返回其之前的 limit 条', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      appendMessages(store, session.id, 50)
+
+      const page = store.loadMessagesPage(session.id, { beforeId: 'msg_30', limit: 10 })
+      expect(page!.messages.map(m => m.id)).toEqual([
+        'msg_20', 'msg_21', 'msg_22', 'msg_23', 'msg_24',
+        'msg_25', 'msg_26', 'msg_27', 'msg_28', 'msg_29'
+      ])
+      expect(page!.hasMore).toBe(true)
+    })
+
+    it('beforeId 不存在时返回空且 hasMore=false', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      appendMessages(store, session.id, 3)
+
+      const page = store.loadMessagesPage(session.id, { beforeId: 'missing', limit: 10 })
+      expect(page).toEqual({ messages: [], hasMore: false })
+    })
+
+    it('会话不存在返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      expect(store.loadMessagesPage('no-such', { limit: 10 })).toBeNull()
+    })
+  })
 })
