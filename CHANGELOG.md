@@ -2,6 +2,11 @@
 
 ## 2026-06-29
 
+- **fix(renderer)**: 修复 bash 权限确认期间工具卡片渲染卡顿
+  - 根因：bash / 验证命令权限确认也会让 Agent 等用户决策，期间 `message_end` 不会触发、`isGenerating` 仍为 true；此前只有 askQuestion 会传入 `isPausedForInput` 暂停流式动画，权限等待态仍会让 `ThinkingBlock` / `useStreamingRenderPool` 按生成中状态运行
+  - 修复：`ChatPanel` 将 `pendingAskQuestion`、`pendingPermissionRequest`、`pendingVerificationRequest` 统一折叠为“等待用户输入”暂停态，并只传给等待用户决策的目标消息；同时 `useStreamingRenderPool` 在待渲染字符池清空后停止 rAF，后续文本增长时再重新启动，避免空池每帧空转
+  - 测试：补充 `ChatPanel.test.tsx` 的 bash 权限等待接线断言，补充 `useStreamingRenderPool.test.ts` 的空池停止 rAF 与增长后恢复断言
+
 - **fix(renderer)**: 真正落地 askQuestion 卡死的接线修复 + 解除"面板开着发新消息"死锁（前序条目误标为已完成）
   - 勘误：上文 2026-06-29 `fix(renderer): 修复调用 askQuestion 后 UI 持续卡顿 / 卡死` 条目称 "`ChatPanel` 把 `isPausedForInput = pendingAskQuestion !== null` 传入 `MessageItem`"，但**该接线从未落地**——`MessageItem` 侧（prop / `streamingActive` / `areEqual` / 单测）已全部就绪，唯独 `ChatPanel.tsx` 渲染 `<MessageItem>` 时漏传 `isPausedForInput`。因此卡死现象实际未被修复，本次补上接线
   - 修复 #1（卡死主根因）：`ChatPanel` 渲染 `MessageItem` 时补 `isPausedForInput={!!pendingAskQuestion}`。等待用户回答期间 `streamingActive = isGenerating && !isPausedForInput` 为 false，`ThinkingBlock` 100ms 计时器与 `useStreamingRenderPool` 的 rAF 循环各自 cleanup 停转，消除渲染线程 churn（这正是"聊天区卡死、窗口仍能关/缩"的成因）

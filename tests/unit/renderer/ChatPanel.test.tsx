@@ -11,9 +11,10 @@ import type { ExtendedMessage } from '../../../src/renderer/stores/types'
  * ChatPanel 接线测试（修 GPT P2 指出的测试缺口）。
  *
  * 本次 bug 的本质：MessageItem 侧 isPausedForInput 全部就绪，但 ChatPanel 渲染时漏传 →
- * askQuestion 等待期间流式动画常驻循环不停 → 卡死。sendOrchestration.test.ts 只验证
+ * 等待用户决策期间流式动画常驻循环不停 → 卡死。sendOrchestration.test.ts 只验证
  * preSendGate 逻辑，无法捕捉"接线是否真的传了 isPausedForInput"。本文件通过 mock
- * MessageItem 捕获其实际收到的 props，断言 pendingAskQuestion 真值性正确流向 isPausedForInput。
+ * MessageItem 捕获其实际收到的 props，断言 pendingAskQuestion / pendingPermissionRequest
+ * 真值性正确流向 isPausedForInput。
  *
  * 这是 MessageItem.test.ts（只测 areEqual）与 sendOrchestration.test.ts（只测 dismiss）之间的
  * 关键衔接测试，三者互补。
@@ -111,11 +112,13 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     expect(captured!.isPausedForInput).toBe(false)
   })
 
-  it('有 pending askQuestion 时（面板开着等回答），MessageItem 收到 isPausedForInput=true', () => {
+  it('有 pending askQuestion 时（面板开着等回答），只有当前生成消息收到 isPausedForInput=true', () => {
     act(() => {
       useChatStore.setState({
         currentSessionId: 'sess_1',
-        messages: [makeAssistantMessage('msg_1')]
+        isGenerating: true,
+        currentGeneratingMessageId: 'msg_2',
+        messages: [makeAssistantMessage('msg_1'), makeAssistantMessage('msg_2')]
       })
     })
 
@@ -130,7 +133,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
         pendingAskQuestion: {
           requestId: 'req_1',
           questions: [
-            { id: 'q1', question: '选哪个？', type: 'single-select', options: [{ id: 'a', label: 'A' }] }
+            { question: '选哪个？', options: [{ label: 'A' }] }
           ]
         }
       })
@@ -139,9 +142,52 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
       renderer?.unmount()
     })
 
-    // 取面板打开后最近一次该消息的渲染
-    const captured = messageItemPropsByRender.filter(p => p.msgId === 'msg_1').pop()
-    expect(captured).toBeDefined()
-    expect(captured!.isPausedForInput).toBe(true)
+    // 取面板打开后最近一次渲染：历史消息不暂停，当前生成消息才暂停。
+    const historical = messageItemPropsByRender.filter(p => p.msgId === 'msg_1').pop()
+    const current = messageItemPropsByRender.filter(p => p.msgId === 'msg_2').pop()
+    expect(historical).toBeDefined()
+    expect(historical!.isPausedForInput).toBe(false)
+    expect(current).toBeDefined()
+    expect(current!.isPausedForInput).toBe(true)
+  })
+
+  it('有 pending bash 权限请求时，只有权限所属消息收到 isPausedForInput=true', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        isGenerating: true,
+        currentGeneratingMessageId: 'msg_2',
+        messages: [makeAssistantMessage('msg_1'), makeAssistantMessage('msg_2')]
+      })
+    })
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ChatPanel))
+    })
+
+    act(() => {
+      useAgentStore.setState({
+        pendingPermissionRequest: {
+          messageId: 'msg_2',
+          requestId: 'perm_1',
+          toolName: 'bash',
+          args: { command: 'npm test' },
+          riskLevel: 'medium',
+          reason: '命令执行需要确认',
+          toolCallIds: ['tool_1']
+        }
+      })
+    })
+    act(() => {
+      renderer?.unmount()
+    })
+
+    const historical = messageItemPropsByRender.filter(p => p.msgId === 'msg_1').pop()
+    const current = messageItemPropsByRender.filter(p => p.msgId === 'msg_2').pop()
+    expect(historical).toBeDefined()
+    expect(historical!.isPausedForInput).toBe(false)
+    expect(current).toBeDefined()
+    expect(current!.isPausedForInput).toBe(true)
   })
 })

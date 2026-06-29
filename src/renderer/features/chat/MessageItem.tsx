@@ -24,12 +24,12 @@ export interface MessageItemProps {
   msg: ExtendedMessage
   isGenerating: boolean
   /**
-   * 是否因等待用户输入（askQuestion 面板打开）而暂停。
+   * 是否因等待用户输入（askQuestion / bash 权限 / 验证权限）而暂停。
    *
    * 暂停期间 message_end 不会触发，isGenerating 仍为 true（轮次未结束、composer 仍显运行态、
    * 不显示回退按钮），但实际上没有任何内容在流式输出。此时必须停掉流式动画
    * （ThinkingBlock 100ms 计时器 + useStreamingRenderPool 的 rAF 循环），
-   * 否则它们会在用户回答前持续空转重渲染，导致 UI 卡顿（见 askQuestion 卡死修复）。
+   * 否则它们会在用户决策前持续空转重渲染，导致 UI 卡顿。
    */
   isPausedForInput?: boolean
   currentGeneratingMessageId: string | null
@@ -128,7 +128,7 @@ function MessageItemInner({
   const isUser = msg.role === 'user'
 
   // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停。
-  // 等待 askQuestion 回答时 isGenerating 仍为 true，但应停掉打字机 / 思考计时器等常驻循环。
+  // 等待 askQuestion / 权限决策时 isGenerating 仍为 true，但应停掉打字机 / 思考计时器等常驻循环。
   const streamingActive = isGenerating && !isPausedForInput
 
   // T06：assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）

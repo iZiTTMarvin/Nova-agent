@@ -151,9 +151,10 @@ export function useStreamingRenderPool(
     }
   }, [targetLength, isStreaming])
 
-  // 流式期间启动 rAF tick 循环
+  // 流式期间只在待放出的字符池非空时启动 rAF tick 循环
   useEffect(() => {
     if (!isStreaming) return
+    if (targetLengthRef.current <= renderedLengthRef.current) return
 
     // 重新开始计时
     lastTickAtRef.current = 0
@@ -175,7 +176,11 @@ export function useStreamingRenderPool(
         }
       }
 
-      rafRef.current = requestFrame(tick)
+      if (targetLengthRef.current > renderedLengthRef.current) {
+        rafRef.current = requestFrame(tick)
+      } else {
+        rafRef.current = null
+      }
     }
 
     rafRef.current = requestFrame(tick)
@@ -185,7 +190,7 @@ export function useStreamingRenderPool(
         rafRef.current = null
       }
     }
-  }, [config, isStreaming, requestFrame, cancelFrame])
+  }, [config, isStreaming, requestFrame, cancelFrame, targetLength])
 
   const safeRenderedLength = Math.min(renderedLength, targetLength)
 

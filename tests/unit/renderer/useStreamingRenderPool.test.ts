@@ -286,6 +286,7 @@ describe('useStreamingRenderPool', () => {
     }
     expect(ref.current!.renderedLength).toBe(ref.current!.targetLength) // 追赶完成
     expect(ref.current!.poolSize).toBe(0)
+    expect(fakeRaf.pending).toHaveLength(0)
 
     act(() => {
       renderer?.unmount()
@@ -319,6 +320,7 @@ describe('useStreamingRenderPool', () => {
     })
     expect(ref.current!.targetLength).toBe(205)
     expect(ref.current!.poolSize).toBe(200)
+    expect(fakeRaf.pending.length).toBeGreaterThan(0)
 
     // 推进一帧：应再次开始追赶
     act(() => {

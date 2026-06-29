@@ -72,10 +72,13 @@ export const ChatPanel: React.FC = () => {
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
+  const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
   const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
+  const isPausedForUserInput = !!pendingAskQuestion || !!pendingPermissionRequest || !!pendingVerificationRequest
+  const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
 
   // 处理消息回退操作（useCallback 稳定引用，供 MessageItem areEqual 比较）
   const handleRollback = useCallback(async (messageId: string) => {
@@ -441,7 +444,7 @@ export const ChatPanel: React.FC = () => {
               onAcceptAllFiles={acceptAllFiles}
               onRejectAllFiles={rejectAllFiles}
               onRenderPoolTick={scheduleStreamAutoScroll}
-              isPausedForInput={!!pendingAskQuestion}
+              isPausedForInput={isPausedForUserInput && msg.id === pausedMessageId}
               diffCache={diffCache}
               isDiffLoading={isDiffLoading}
               diffPlaceholders={diffPlaceholders}
