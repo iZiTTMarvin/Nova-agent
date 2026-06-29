@@ -347,10 +347,18 @@ async function composeResult(
     }
   }
   if (exitCode !== 0) {
+    // 命令已正常跑完，只是返回了非零退出码。这不等于"工具故障"——
+    // grep/findstr 无匹配、where 未找到、构建报错等都属于业务结果，模型需要
+    // 拿到完整 stdout/stderr 才能判断是正常结果还是真错误。
+    //
+    // 历史问题：这里曾返回 success:false，上层 toolBatchExecutor 在失败分支会丢弃
+    // output、只把 "命令退出码: N" 喂给模型，导致模型看不到任何输出而盲目重试。
+    // 现在统一按"工具执行成功、命令退出码非零"处理：保留完整输出 + 退出码标注，
+    // 由模型自行判断。真正的工具故障（超时 / 取消 / 信号终止 / spawn 失败）仍走
+    // success:false 分支。
     return {
-      success: false,
-      output: outputWithPath,
-      error: `命令退出码: ${exitCode}`,
+      success: true,
+      output: prependExitCodeNotice(outputWithPath, exitCode),
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
     }
@@ -409,6 +417,18 @@ async function buildOutputWithArtifact(
   return {
     output: appendFullOutputPath(snapshot.content, snapshot.fullOutputPath)
   }
+}
+
+/**
+ * 给"退出码非零但已正常跑完"的输出加一行退出码标注。
+ *
+ * 标注里显式说明"非 0 不一定是错误"，避免模型一看到非零就误判为工具故障、
+ * 进而盲目换命令重试。完整 stdout/stderr 原样保留在标注下方。
+ */
+function prependExitCodeNotice(content: string, exitCode: number): string {
+  const marker = `[命令退出码: ${exitCode}（命令已执行完成；非 0 不一定是错误，请阅读下方输出判断）]`
+  if (content.length === 0) return `${marker}\n(无输出)`
+  return `${marker}\n${content}`
 }
 
 function appendFullOutputPath(content: string, path: string | undefined): string {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-30
+
+- **fix(runtime)**: bash 命令退出码非零不再误判为工具故障，且失败时保留完整输出
+  - 根因：`bash/index.ts` 的 `composeResult` 把退出码非 0 一律判为 `success:false`，而上层 `toolBatchExecutor` 在失败分支会**丢弃 output、只把 `命令退出码: N` 喂给模型**。导致 grep/findstr 无匹配、where 未找到、mvn 编译报错等情况下，模型看不到任何 stdout/stderr，只能盲目换命令反复重试
+  - 改动 #1（`bash/index.ts`）：命令正常跑完、仅退出码非零时改为 `success:true`，并在 output 顶部加 `[命令退出码: N（命令已执行完成；非 0 不一定是错误，请阅读下方输出判断）]` 标注；超时 / 取消 / 信号终止 / spawn 失败仍为 `success:false`
+  - 改动 #2（`toolBatchExecutor.ts`）：失败分支不再只回传 error 文案，将工具已产出的 output（如超时前的部分日志）附加在 error 之后，确保模型在真失败时也能拿到可用信息
+  - 连带收益：业务性非零退出不再计入 `stopPolicyExtension` 的重复失败熔断，也不再被 UI 标红；真正的工具故障行为不变
+  - 测试：更新 `bashTool.test.ts` 两条退出码用例，typecheck + bashTool/toolBatchExecutor/AgentLoop 共 68 用例通过
+
 ## 2026-06-29
 
 - **feat(renderer)**: 会话消息显示分页（P1-c）

@@ -237,7 +237,15 @@ async function executePreparedToolCall(
       artifactId = toolResult.artifactId
       truncationMeta = toolResult.truncationMeta
     } else {
-      resultText = `工具执行失败: ${toolResult.error}`
+      // 工具执行失败：仍保留工具已产出的 output（如超时前的部分日志、错误堆栈）。
+      // 历史问题：失败分支只回传 error 文案、把 output 整个丢弃，导致模型拿不到任何
+      // 可用于自救的信息（例如只看到"命令执行超时"却看不到超时前已经打印的报错），
+      // 只能盲目重试。这里把 output 附在 error 之后一起回传。
+      const detail =
+        typeof toolResult.output === 'string' && toolResult.output.trim().length > 0
+          ? `\n${toolResult.output}`
+          : ''
+      resultText = `工具执行失败: ${toolResult.error}${detail}`
       failed = true
     }
   } catch (err) {

@@ -46,13 +46,15 @@ describe('bashTool', () => {
     expect(result.output).toContain('line2')
   })
 
-  it('命令执行失败时返回错误信息', async () => {
+  it('命令退出码非零（exit 1）→ success=true 且 output 含退出码标注', async () => {
     const result = await bashTool.execute(
       { command: 'exit 1' },
       createContext()
     )
-    expect(result.success).toBe(false)
-    expect(result.error).toBeTruthy()
+    // 退出码非零属于"命令已执行完成的业务结果"，不是工具故障：success 应为 true，
+    // 完整输出连同退出码标注一起回传，由模型判断。
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('退出码: 1')
   })
 
   it('缺少 command 参数时返回错误', async () => {
@@ -251,13 +253,14 @@ describe('bashTool', () => {
     expect(result.success).toBe(true)
   })
 
-  it('退出码 1 → success=false, error 含退出码', async () => {
+  it('退出码 1 → success=true，output 含退出码标注', async () => {
     const result = await bashTool.execute(
       { command: 'node -e "process.exit(1)"' },
       createContext()
     )
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('退出码')
+    // 命令正常跑完、仅退出码非零 → 工具执行成功，退出码以标注形式出现在 output 中。
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('退出码: 1')
   })
 
   // ── bashTool 描述（动态渲染） ────────────────────────
