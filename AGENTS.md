@@ -128,13 +128,25 @@ npx vitest run tests/unit/renderer/MessageItem.test.ts
 
 - TypeScript 严格模式开启，不接收隐式 `any`。
 - 代码注释优先中文，除非仓库已有明确的英文注释规范。
-- Git commit message 使用中文，遵循 Conventional Commits：
-  ```text
-  type(scope): 中文描述
+- Git commit message 使用中文，遵循这样子的格式，举个例子：
+```
+  fix(renderer): 根治流式/bash 权限期间消息区卡顿
+
+修复：
+  bash 权限弹窗或工具卡出现时 UI 数秒无响应（Idle 飙高、主线程硬卡）
+
+  等待 askQuestion/权限期间误触发整条消息 Markdown 逐行高亮尖峰
+  
+改动： 
+StreamingTextBlock：区分 paused 与轮次结束，暂停期停打字机、不做终态高亮
+
+MessageItem：拆分 isPausedForInput / isTurnActiveForThisMsg；接入 static/live 分层
+
   ```
 - 不要读取 `.env` 或私钥文件，也不要在代码中硬编码密钥。
 - 注释里禁止写 `PRD §6.4`、`§8 Phase 3`、`pi-agent §4.3` 这类外部文档章节引用。没有上下文的人看不懂，应改为描述当前代码里的**具体行为、职责或边界条件**。重点！！！！
 - 新增 tools 必须放在 `src/runtime/tools/<toolName>/` 子文件夹内，并通过子文件夹的 `index.ts` 统一对外导出（参考 `src/runtime/tools/webSearch/`）。禁止在 `src/runtime/tools/` 根目录直接新增单个平铺文件。 重点！！！！
+
                            
 ---
 
