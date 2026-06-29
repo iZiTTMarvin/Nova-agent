@@ -8,6 +8,7 @@ import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
 import type { RecoveryState } from './recovery/RecoveryStateMachine'
 import type { ToolTruncationMeta } from '../tools/types'
+import type { AskQuestionItem } from '../../shared/askQuestion/types'
 
 /** Hook 系统 9 个固定事件（供 renderer / 扩展监听） */
 export type HookEvent =
@@ -91,6 +92,17 @@ export type AgentEvent =
       sessionId: string
       todos: TodoItem[]
       view: TodoViewInfo
+    }
+  | {
+      /** askQuestion 工具请求事件，转发到 renderer 展示提问 UI */
+      type: 'ask_question_request'
+      requestId: string
+      questions: AskQuestionItem[]
+    }
+  | {
+      /** askQuestion 用户回复事件，renderer 收到后清除 pending 状态 */
+      type: 'ask_question_resolved'
+      requestId: string
     }
 
 /** 事件监听回调 */

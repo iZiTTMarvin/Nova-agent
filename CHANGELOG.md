@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-06-29
+
+- **fix(renderer)**: 真正落地 askQuestion 卡死的接线修复 + 解除"面板开着发新消息"死锁（前序条目误标为已完成）
+  - 勘误：上文 2026-06-29 `fix(renderer): 修复调用 askQuestion 后 UI 持续卡顿 / 卡死` 条目称 "`ChatPanel` 把 `isPausedForInput = pendingAskQuestion !== null` 传入 `MessageItem`"，但**该接线从未落地**——`MessageItem` 侧（prop / `streamingActive` / `areEqual` / 单测）已全部就绪，唯独 `ChatPanel.tsx` 渲染 `<MessageItem>` 时漏传 `isPausedForInput`。因此卡死现象实际未被修复，本次补上接线
+  - 修复 #1（卡死主根因）：`ChatPanel` 渲染 `MessageItem` 时补 `isPausedForInput={!!pendingAskQuestion}`。等待用户回答期间 `streamingActive = isGenerating && !isPausedForInput` 为 false，`ThinkingBlock` 100ms 计时器与 `useStreamingRenderPool` 的 rAF 循环各自 cleanup 停转，消除渲染线程 churn（这正是"聊天区卡死、窗口仍能关/缩"的成因）
+  - 修复 #2（隐蔽死锁）：用户在 askQuestion 面板仍开着时于输入框发新消息，旧实现只 `enqueuePendingMessage` 进 steering queue，而队列只在 `message_end` 时 drain、旧轮次又被未 resolve 的 askQuestion 阻塞 → 互等死锁。新增 `preSendGate`：发新消息前若有 pending askQuestion 先 `dismissAskQuestion`（resolve 空 answers），让旧轮次能正常走到 `message_end`，新消息照常 enqueue 等 turn boundary drain
+  - 修复 #3（dismiss 后入队竞态）：`handleSend` 在 `await preSendGate()` 后若仍用本次 render 捕获的旧 `isGenerating` 决定 enqueue/send，会因 IPC 往返期间旧轮次已 `message_end`、`dispatchNextPending` 因队列为空提前 return 而错过 drain，新消息被塞进已结束的轮次队列、永久滞留。改为 await 后重读 `useChatStore.getState().isGenerating`：仍生成则 enqueue、已结束则直接 sendMessage
+  - 缓存命中中性：本项目每次 `SEND_MESSAGE` 都 `dispose` 旧 loop 并从持久化历史重建 `context`，从不复用内存 loop；前缀缓存由 LLM 服务商按历史前缀命中。dismiss 路径让旧轮次正常完成（不 abort）、新消息走同一份历史重建，前缀不变，缓存不受影响
+  - 测试：新增 `sendOrchestration.test.ts`（锁定 `preSendGate`：无 pending 不 dismiss / 有 pending 先 dismiss / 错误冒泡不静默吞）；新增 `ChatPanel.test.tsx`（接线测试：mock `MessageItem` 捕获 props，断言有 pending askQuestion 时收到 `isPausedForInput=true`、无 pending 时为 false——本次 bug 的本质就是接线漏传，故此测试是关键防线）；`MessageItem.test.ts` 补注释说明其只覆盖 `areEqual`、接线由 `ChatPanel.test.tsx` 保障。typecheck + 全量 1497 单测 + build 通过
+
+- **feat(renderer)**: askQuestion UI 改造为底部 Dock + 工具状态卡片
+  - 新增轻量工具状态卡片 `AskQuestionToolCard`，在消息流中显示 "询问用户 (askQuestion)" 运行/完成状态，不承载交互、不折叠、不暴露 JSON 参数
+  - `AskQuestionPanel` 从消息流内部迁移为 composer 上方的 dock，复用 `chat-panel__composer-area` 布局并显式设置 `pointer-events-auto`
+  - dock 形态精简 header：多题显示 `问题 N / M`，单题显示 `current.header` 或默认兜底；单题且非多选时选中选项后 120ms debounce 自动提交
+  - `ChatPanel` composer placeholder 在提问期间变为"请先回答上方问题，再发送新消息（或输入排队）"，发送按钮逻辑不变以兼容 Steering Queue
+  - 回归：保持 `isPausedForInput` 语义，`MessageItem.areEqual` 不新增 props；新增 `AskQuestionPanel` 10 个 renderer 单元测试
+  - 验证：typecheck + build + 全量 1492 单测通过
+
+- **fix(renderer)**: 修复调用 askQuestion 后 UI 持续卡顿 / 卡死
+  - 现象：模型调用 askQuestion、提问面板打开等待用户回答期间，界面明显卡顿；性能录制显示满屏 `requestAnimationFrame` / `Recalculate Style` / React 调度器持续 churn（CPU 未打满但持续重渲染）
+  - 根因：askQuestion 阻塞工具执行期间 `message_end` 不会触发，`isGenerating` 一直为 `true`，导致生成中消息的两个流式动画常驻循环永不停止——(1) `ThinkingBlock` 最后一个思考块 `active` 恒真，100ms `setInterval` 每秒 10 次重渲染（计时器还会一直往上涨）；(2) `useStreamingRenderPool` 的 rAF tick 无条件重排，即使待渲染池已空也每帧空转
+  - 修复：引入"等待用户输入即暂停"语义。`ChatPanel` 把 `isPausedForInput = pendingAskQuestion !== null` 传入 `MessageItem`；`MessageItem` 用 `streamingActive = isGenerating && !isPausedForInput` 驱动流式动画（`isCurrentAssistantGenerating` / `isActiveThinkingBlock` / `parseThinking`），暂停时 `StreamingTextBlock` 收到 `isStreaming=false`、`ThinkingBlock` 收到 `active=false`，两个循环的 effect 各自 cleanup 停止。`isGenerating` 本身语义不变（轮次未结束、composer 仍显运行态、不显示回退按钮）。用户回答后暂停解除，流式动画对后续内容正常恢复
+  - 测试：`MessageItem.test.ts` 新增 `isPausedForInput` 变化触发重渲染的回归断言；typecheck + 渲染相关单测全绿
+
+- **fix(permissions)**: askQuestion 不再被误判为命令工具而要求"执行前确认"
+  - 根因（与 2026-06-26 task/invoke_skill 修复同源）：askQuestion 在 `toolVisibility.ts` 未声明能力（落到 `unknown`），`rules.ts` 把 `unknown` 一律按 bash 处理 → default 模式下变成 `ask`，导致模型发起提问时先弹权限确认；同时 UI 因无显示名映射把卡片标题渲染成兜底的"运行自动化工具 (askQuestion)"
+  - 修复：`toolVisibility.getToolCapability` 新增 `askQuestion` 分支归为 `readonly`（用户交互工具，无文件系统 / shell 副作用，所有模式直接放行、plan 模式可见可用）；`toolDisplay.ts` 补显示名"询问用户 (askQuestion)"与一句话摘要（取首题文本 + 多题题数）
+  - 测试：`toolVisibility` 新增 askQuestion 归类回归用例，锁定不再退回 unknown；typecheck + 相关单测全绿
+
+- **feat(agent)**: 新增 askQuestion 工具，模型可向用户结构化提问（多选项 / 单选多选 / 自定义输入 / 推荐项 / 多题向导）
+  - 用途：模型遇到需要用户决策或补充偏好的场景时，调用本工具发起结构化提问，前端面板阻塞等待用户回答；用户回答后通过 IPC resolve 工具 Promise，模型收到格式化答案字符串继续推进
+  - 阻塞链路复用 verification permission 模式（模块级 pendingMap + EventBus 推送 + IPC resolve）：`agentHandler` 维护 `pendingAskQuestions` Map，通过 `setAskQuestionHandler` 把"创建 Promise → 存 resolve → emit 事件 → IPC resolve"封装成回调，经 `AgentLoop.askQuestionHandler` → `toolBatchExecutor.buildToolContext` → `ToolContext.askQuestion` 透传进工具 execute
+  - 三条兜底出口防止永久卡死：(1) 用户回答 / dismiss 走 `respond-ask-question`；(2) 用户在面板打开时发送新消息，`SEND_MESSAGE` 开头自动 guardFollowup 全部 dismiss；(3) 用户点击取消，`CANCEL_EXECUTION` 清理所有挂起请求
+  - 子 agent 降级：`askQuestion` 回调只注入主 AgentLoop；task / skill fork 子 agent 不注入，工具 execute 命中降级路径返回 `askQuestion skipped: no askQuestion context.`
+  - 改动文件：新建 `shared/askQuestion/types.ts`、`runtime/tools/askQuestionTool.ts` + `askQuestionDescription.ts`、`renderer/features/ask/AskQuestionPanel.tsx` + `.css`；修改 `tools/types.ts`、`agent/types.ts`、`shared/ipc/{channels,types}.ts`、`runtime/agent/AgentLoop.ts`、`runtime/agent/execution/toolBatchExecutor.ts`、`main/ipc/agentHandler.ts`（六处改动：模块级 Map + setAskQuestionHandler + forwardEventToRenderer + RESPOND_ASK_QUESTION + guardFollowup + CANCEL 清理 + 注册工具）、`renderer/stores/useAgentStore.ts`（5 个新方法 + reset 块补清空）、`renderer/App.tsx`（直接订阅 useAgentStore，不经 useAppStore 兼容层）、`renderer/features/chat/ChatPanel.tsx`（pendingVerificationRequest 块后追加面板渲染）
+  - 验证：新增 13 个单元测试（5 个核心场景 + 8 个边界场景），全量 1477 用例通过；typecheck + build 双绿
+  - 详见 `docs/askQuestion-落地方案.md`、`tasks/askQuestion工具落地todo清单.md`
+
 ## 2026-06-26
 
 - **feat(permissions)**: bash 权限放行改为内联卡片，按钮直接长在命令卡片上（学 Windsurf）

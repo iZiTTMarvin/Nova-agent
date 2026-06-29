@@ -34,6 +34,7 @@ import type { SkillRegistry } from '../skills/SkillRegistry'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
+import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 
 import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
@@ -264,6 +265,14 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 统一 skill 调度：slash inject / fork */
   private skillRegistry: SkillRegistry | null = null
   private skillForkDeps: RunSkillForkDeps | null = null
+
+  /**
+   * askQuestion 阻塞回调（可选）。
+   * 由 agentHandler 通过 setAskQuestionHandler 注入；executeBatch 时透传给
+   * toolBatchExecutor → ToolContext.askQuestion，供 askQuestion 工具发起提问。
+   * 不调用时 askQuestion 工具降级为 no-op，主要用于子 agent / 测试场景。
+   */
+  private askQuestionHandler?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
 
   /**
    * 文件读取状态：记录"已 read 过哪些文件"，edit/write 工具的"先读后改"校验依赖此。
@@ -527,6 +536,16 @@ export class AgentLoop implements IdleCompactionTarget {
     this.readState = rs
   }
 
+  /**
+   * 注入 askQuestion 阻塞回调（由 agentHandler 调用）。
+   * 不调用时 askQuestion 工具降级为 no-op，主要用于子 agent / 测试场景。
+   */
+  setAskQuestionHandler(
+    handler: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  ): void {
+    this.askQuestionHandler = handler
+  }
+
   /** 获取当前 readState（供 toolBatchExecutor 注入到 ToolContext） */
   getReadState(): ReadState {
     return this.readState
@@ -715,7 +734,8 @@ export class AgentLoop implements IdleCompactionTarget {
         eventBus: this.eventBus,
         hookManager: this.hookManager,
         readState: this.readState,
-        artifactStore: this.artifactStore
+        artifactStore: this.artifactStore,
+        askQuestion: this.askQuestionHandler
       })
 
     const loopConfig: LoopConfig = {

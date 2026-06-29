@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { useAppStore } from './stores/useAppStore'
+import { useAgentStore } from './stores/useAgentStore'
 import { useChatStore } from './stores/useChatStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
@@ -44,6 +45,9 @@ function App(): JSX.Element {
   const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
   const handleVerificationPermissionRequest = useAppStore(state => state.handleVerificationPermissionRequest)
   const clearVerificationPermissionRequest = useAppStore(state => state.clearVerificationPermissionRequest)
+  // askQuestion 直接走 useAgentStore，不经 useAppStore 兼容层（避免 mergeState 漏扩展导致 selector 返回 undefined）
+  const handleAskQuestionRequest = useAgentStore(state => state.handleAskQuestionRequest)
+  const clearAskQuestionRequest = useAgentStore(state => state.clearAskQuestionRequest)
 
   // todo: 由事件总线独立维护，订阅 IPC 即可
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
@@ -147,6 +151,16 @@ function App(): JSX.Element {
       clearVerificationPermissionRequest(data.requestId)
     })
 
+    // 监听：askQuestion 工具请求 → 写入 pendingAskQuestion 触发面板渲染
+    const unsubAskQuestionRequest = window.api.on('agent:ask-question-request', (data) => {
+      handleAskQuestionRequest({ requestId: data.requestId, questions: data.questions })
+    })
+
+    // 监听：askQuestion 已被 resolve（用户回答 / dismiss / guardFollowup / cancel）→ 清前端状态
+    const unsubAskQuestionResolved = window.api.on('agent:ask-question-resolved', (data) => {
+      clearAskQuestionRequest(data.requestId)
+    })
+
     // 监听：todo 列表更新（task 5 IPC 链路终点）
     const unsubTodosUpdated = window.api.on('agent:todos-updated', (data) => {
       applyTodoUpdate({ sessionId: data.sessionId, todos: data.todos, view: data.view })
@@ -211,6 +225,8 @@ function App(): JSX.Element {
       unsubVerificationResult()
       unsubVerificationPermissionRequest()
       unsubVerificationPermissionCleared()
+      unsubAskQuestionRequest()
+      unsubAskQuestionResolved()
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
@@ -232,6 +248,8 @@ function App(): JSX.Element {
     handleVerificationResult,
     handleVerificationPermissionRequest,
     clearVerificationPermissionRequest,
+    handleAskQuestionRequest,
+    clearAskQuestionRequest,
     applyTodoUpdate,
     handleMessageEnd,
     handleUsage,

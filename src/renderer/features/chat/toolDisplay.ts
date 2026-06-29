@@ -29,6 +29,8 @@ export function getToolDisplayName(toolName: string): string {
       return '更新任务列表 (todo_write)'
     case 'web_search':
       return '联网搜索 (web_search)'
+    case 'askQuestion':
+      return '询问用户 (askQuestion)'
     default:
       return `运行自动化工具 (${toolName})`
   }
@@ -130,6 +132,19 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const query = (args.query as string) || ''
       const display = query.length > 60 ? query.slice(0, 57) + '...' : query
       return display ? `搜索 "${display}"` : '联网搜索'
+    }
+    case 'askQuestion': {
+      // 取首题问题文本作摘要；多题时附带题数，便于不展开卡片就知道在问什么
+      const questions = Array.isArray(args.questions) ? args.questions : []
+      const first = questions[0] && typeof questions[0] === 'object'
+        ? (questions[0] as Record<string, unknown>).question
+        : ''
+      const q = typeof first === 'string' ? first : ''
+      const display = q.length > 50 ? q.slice(0, 47) + '...' : q
+      if (questions.length > 1) {
+        return display ? `提问：${display}（共 ${questions.length} 题）` : `向用户提问（${questions.length} 题）`
+      }
+      return display ? `提问：${display}` : '向用户提问'
     }
     default:
       return ''

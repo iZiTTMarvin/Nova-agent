@@ -44,6 +44,7 @@ import type {
   PermissionUpsertParams,
   PermissionDeleteParams
 } from '../permissions/types'
+import type { AskQuestionItem, AskQuestionAnswer } from '../askQuestion/types'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -145,6 +146,14 @@ export interface IpcCommands {
   }
   'respond-verification-permission': {
     params: { requestId: string; granted: boolean }
+    result: void
+  }
+  'respond-ask-question': {
+    params: {
+      requestId: string
+      /** 用户提交的答案列表；用户 dismiss 时传空数组 */
+      answers: AskQuestionAnswer[]
+    }
     result: void
   }
   'load-sessions': {
@@ -407,6 +416,13 @@ export interface IpcEvents {
   }
   'agent:verification-permission-cleared': {
     messageId: string
+    requestId: string
+  }
+  'agent:ask-question-request': {
+    requestId: string
+    questions: AskQuestionItem[]
+  }
+  'agent:ask-question-resolved': {
     requestId: string
   }
   'agent:todos-updated': {

@@ -7,6 +7,7 @@ import type { ToolDefinition } from '../model/types'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { EventBus } from '../agent/EventBus'
 import type { ReadState } from './editTool'
+import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
@@ -60,6 +61,20 @@ export interface ToolContext {
    * bash / grep / read 在大输出时写入 artifact 目录，上下文只保留截断块 + 指针。
    */
   artifactStore?: import('../artifacts/ArtifactStore').ArtifactStore
+  /**
+   * askQuestion 阻塞回调（可选）。
+   *
+   * 注入路径（与 eventBus / readState 同一条透传链，不是在 agentHandler 直接拼 ToolContext）：
+   *   agentHandler（setAskQuestionHandler，闭包捕获本次 eventBus + pendingAskQuestions）
+   *     → AgentLoop（实例字段 askQuestionHandler）
+   *       → executeBatch 的 options.askQuestion
+   *         → toolBatchExecutor.buildToolContext 注入到 ToolContext
+   *
+   * 工具调用它发起一次提问请求，返回 Promise，resolve 时拿到用户答案。
+   * 回调内部负责：创建 Promise → 存 resolve 到模块级 pendingAskQuestions → emit 事件到 renderer → IPC 回复时 resolve。
+   * 不存在时工具降级为 no-op（不阻塞）：主 agent 正常注入；子 agent（task / skill fork）未注入会走降级跳过。
+   */
+  askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */

@@ -13,6 +13,7 @@
 import { create } from 'zustand'
 import type { PermissionDecision } from '../../shared/session/types'
 import type { PendingPermissionRequest, PendingVerificationRequest } from './types'
+import type { AskQuestionRequest, AskQuestionAnswer } from '../../shared/askQuestion/types'
 
 export interface AgentState {
   // ── 状态 ──
@@ -20,6 +21,8 @@ export interface AgentState {
   isSubmittingPermission: boolean
   permissionError: string | null
   pendingVerificationRequest: PendingVerificationRequest | null
+  /** askQuestion 工具发起的提问请求；为空时面板不渲染 */
+  pendingAskQuestion: AskQuestionRequest | null
 
   // ── Actions ──
   /**
@@ -50,6 +53,16 @@ export interface AgentState {
   /** 用户回应验证权限请求 */
   respondVerificationPermission: (granted: boolean) => void
 
+  /** 收到 askQuestion 工具请求，写入 pendingAskQuestion 触发面板渲染 */
+  handleAskQuestionRequest: (request: AskQuestionRequest) => void
+  /** 主进程 resolved（用户已回答 / dismissed / 新消息 guardFollowup / cancel）后清除前端状态。
+   *  仅当 requestId 匹配时清空，避免清错新请求 */
+  clearAskQuestionRequest: (requestId: string) => void
+  /** 用户提交答案：先清空 state 防重复提交，再 invoke IPC 让主进程 resolve 工具 Promise */
+  respondAskQuestion: (answers: AskQuestionAnswer[]) => Promise<void>
+  /** 用户点击跳过全部：invoke 传空数组，工具 formatAnswers 输出 dismissed */
+  dismissAskQuestion: () => Promise<void>
+
   /** 切换会话 / 取消时统一清空所有挂起权限（被 useChatStore 调用） */
   resetAgentRuntime: () => void
 }
@@ -74,6 +87,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   isSubmittingPermission: false,
   permissionError: null,
   pendingVerificationRequest: null,
+  pendingAskQuestion: null,
 
   cancelExecution: async () => {
     try {
@@ -196,12 +210,45 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set({ pendingVerificationRequest: null })
   },
 
+  handleAskQuestionRequest: (request: AskQuestionRequest) => {
+    set({ pendingAskQuestion: request })
+  },
+
+  clearAskQuestionRequest: (requestId: string) => {
+    const current = get().pendingAskQuestion
+    if (current?.requestId === requestId) {
+      set({ pendingAskQuestion: null })
+    }
+  },
+
+  respondAskQuestion: async (answers: AskQuestionAnswer[]) => {
+    const pending = get().pendingAskQuestion
+    if (!pending) return
+    // 先清空 state，避免用户连点导致重复提交
+    set({ pendingAskQuestion: null })
+    await window.api.invoke('respond-ask-question', {
+      requestId: pending.requestId,
+      answers
+    })
+  },
+
+  dismissAskQuestion: async () => {
+    const pending = get().pendingAskQuestion
+    if (!pending) return
+    set({ pendingAskQuestion: null })
+    await window.api.invoke('respond-ask-question', {
+      requestId: pending.requestId,
+      answers: []
+    })
+  },
+
   resetAgentRuntime: () => {
     set({
       pendingPermissionRequest: null,
       isSubmittingPermission: false,
       permissionError: null,
-      pendingVerificationRequest: null
+      pendingVerificationRequest: null,
+      pendingAskQuestion: null
     })
   }
 }))
@@ -212,6 +259,7 @@ export function resetAgentStoreForTests(): void {
     pendingPermissionRequest: null,
     isSubmittingPermission: false,
     permissionError: null,
-    pendingVerificationRequest: null
+    pendingVerificationRequest: null,
+    pendingAskQuestion: null
   })
 }

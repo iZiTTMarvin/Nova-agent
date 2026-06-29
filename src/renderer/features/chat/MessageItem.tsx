@@ -13,6 +13,7 @@ import { isActiveThinkingBlock, shouldRenderToolBlock } from './renderingPolicy'
 import { StreamingFileCard, type StreamingFileCardProps } from './StreamingFileCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ToolBox } from './ToolBox'
+import { AskQuestionToolCard } from './AskQuestionToolCard'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { UndoIcon } from '../../components/Icons'
 import type { Mode } from '../../../shared/session/types'
@@ -22,6 +23,15 @@ import type { DiffEntry } from '../../../shared/diff/types'
 export interface MessageItemProps {
   msg: ExtendedMessage
   isGenerating: boolean
+  /**
+   * 是否因等待用户输入（askQuestion 面板打开）而暂停。
+   *
+   * 暂停期间 message_end 不会触发，isGenerating 仍为 true（轮次未结束、composer 仍显运行态、
+   * 不显示回退按钮），但实际上没有任何内容在流式输出。此时必须停掉流式动画
+   * （ThinkingBlock 100ms 计时器 + useStreamingRenderPool 的 rAF 循环），
+   * 否则它们会在用户回答前持续空转重渲染，导致 UI 卡顿（见 askQuestion 卡死修复）。
+   */
+  isPausedForInput?: boolean
   currentGeneratingMessageId: string | null
   currentMode: Mode
   currentSessionId: string | null
@@ -98,6 +108,7 @@ function parseThinking(msg: ThinkingParseSource, isGenerating: boolean, currentG
 function MessageItemInner({
   msg,
   isGenerating,
+  isPausedForInput = false,
   currentGeneratingMessageId,
   currentMode,
   currentSessionId,
@@ -116,6 +127,10 @@ function MessageItemInner({
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user'
 
+  // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停。
+  // 等待 askQuestion 回答时 isGenerating 仍为 true，但应停掉打字机 / 思考计时器等常驻循环。
+  const streamingActive = isGenerating && !isPausedForInput
+
   // T06：assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
   useEffect(() => {
     if (isAssistant && currentSessionId && onLoadDiffs && !diffCache && !isDiffLoading) {
@@ -128,9 +143,9 @@ function MessageItemInner({
 
   // 旧路径兼容：无 blocks 时走 parseThinking 正则兜底
   const { thinkingContent, textContent, isThinkingActive } = isAssistant && !hasBlocks
-    ? parseThinking(msg, isGenerating, currentGeneratingMessageId)
+    ? parseThinking(msg, streamingActive, currentGeneratingMessageId)
     : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
-  const isCurrentAssistantGenerating = isAssistant && isGenerating && msg.id === currentGeneratingMessageId
+  const isCurrentAssistantGenerating = isAssistant && streamingActive && msg.id === currentGeneratingMessageId
   const hasVisibleContent = hasBlocks
     ? hasVisibleBlocks(msg.blocks, currentMode)
     : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
@@ -174,7 +189,7 @@ function MessageItemInner({
                     active={isActiveThinkingBlock(
                       msg.blocks!,
                       idx,
-                      isGenerating,
+                      streamingActive,
                       msg.id,
                       currentGeneratingMessageId
                     )}
@@ -204,6 +219,17 @@ function MessageItemInner({
                     : { toolCallId: block.toolCallId, toolName: block.toolName, status: block.status, argumentsRaw: block.argumentsRaw, result: block.result }
                   return <StreamingFileCard key={block.toolCallId} {...cardProps} />
                 }
+                if (block.toolName === 'askQuestion') {
+                  return (
+                    <AskQuestionToolCard
+                      key={block.toolCallId}
+                      toolCallId={block.toolCallId}
+                      args={block.arguments}
+                      status={block.status}
+                      isLiveStreaming={isCurrentAssistantGenerating && block.status === 'running'}
+                    />
+                  )
+                }
                 return <ToolBox key={block.toolCallId} toolCallId={block.toolCallId} name={block.toolName} args={block.arguments} status={block.status} result={block.result} isLiveStreaming={isCurrentAssistantGenerating && block.status === 'running'} />
               }
             }
@@ -225,6 +251,17 @@ function MessageItemInner({
                       ? { toolCallId: tc.id, toolName: tc.name, status: tc.status, args: tc.arguments, result: tc.result }
                       : { toolCallId: tc.id, toolName: tc.name, status: tc.status, argumentsRaw: tc.argumentsRaw, result: tc.result }
                     return <StreamingFileCard key={tc.id} {...cardProps} />
+                  }
+                  if (tc.name === 'askQuestion') {
+                    return (
+                      <AskQuestionToolCard
+                        key={tc.id}
+                        toolCallId={tc.id}
+                        args={tc.arguments}
+                        status={tc.status}
+                        isLiveStreaming={isCurrentAssistantGenerating && tc.status === 'running'}
+                      />
+                    )
                   }
                   return <ToolBox key={tc.id} toolCallId={tc.id} name={tc.name} args={tc.arguments} status={tc.status} result={tc.result} isLiveStreaming={isCurrentAssistantGenerating && tc.status === 'running'} />
                 })}
@@ -296,6 +333,7 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.msg.id === next.msg.id &&
     prev.msg._revision === next.msg._revision &&
     prev.isGenerating === next.isGenerating &&
+    prev.isPausedForInput === next.isPausedForInput &&
     prev.currentGeneratingMessageId === next.currentGeneratingMessageId &&
     prev.currentMode === next.currentMode &&
     prev.currentSessionId === next.currentSessionId &&

@@ -5,7 +5,7 @@
  * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION } from '../../shared/ipc/channels'
+import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
 import { app } from 'electron'
 import { join } from 'path'
 import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContext, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
@@ -24,12 +24,14 @@ import { editTool } from '../../runtime/tools/editTool'
 import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
 import { todoWriteTool } from '../../runtime/tools/todoWriteTool'
+import { askQuestionTool } from '../../runtime/tools/askQuestionTool'
 import { PermissionManager } from '../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../runtime/permissions/PermissionService'
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { readManifest } from '../../runtime/checkpoints/manifest'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { RendererRecoveryState } from '../../shared/ipc/types'
+import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
@@ -85,6 +87,14 @@ interface PendingVerificationPermissionEntry {
 
 /** 等待用户对验证权限请求的响应（verificationRequestId → 挂起状态） */
 export const pendingVerificationPermissions = new Map<string, PendingVerificationPermissionEntry>()
+
+interface PendingAskQuestionEntry {
+  resolve: (answers: AskQuestionAnswer[]) => void
+  eventBus: EventBus
+}
+
+/** 等待用户回复的 askQuestion 请求（requestId → 挂起状态）。与 verification permission 不同，无超时 */
+export const pendingAskQuestions = new Map<string, PendingAskQuestionEntry>()
 
 function clearVerificationPermissionRequest(requestId: string, granted: boolean): void {
   const entry = pendingVerificationPermissions.get(requestId)
@@ -185,6 +195,16 @@ export function registerAgentHandler(
 ): void {
   // 发送消息命令
   ipcMain.handle(SEND_MESSAGE, async (_event, params: { sessionId: string; content: string; images?: Array<{ fileName: string; data: string; mimeType: string }> }): Promise<void> => {
+    // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 所有挂起的 askQuestion 请求，
+    // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
+    if (pendingAskQuestions.size > 0) {
+      for (const [requestId, entry] of pendingAskQuestions) {
+        pendingAskQuestions.delete(requestId)
+        entry.resolve([])
+        entry.eventBus.emit({ type: 'ask_question_resolved', requestId })
+      }
+    }
+
     const modelClient = getModelClient()
     if (!modelClient) {
       throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
@@ -234,6 +254,9 @@ export function registerAgentHandler(
     permissionManager.setSessionId(params.sessionId)
 
     const toolRegistry = new ToolRegistry()
+    // ⚠️ 新增工具时除了在此 register，还必须：(1) 在 shared/session/toolVisibility.getToolCapability
+    // 登记能力分类（否则落 unknown→被权限层当 bash 误弹确认）；(2) 在 renderer toolDisplay 补显示名。
+    // 回归守卫见 tests/unit/runtime/tools/toolCapabilityCoverage.test.ts（漏登记会直接变红）。
     toolRegistry.register(lsTool)
     toolRegistry.register(readTool)
     toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
@@ -243,6 +266,7 @@ export function registerAgentHandler(
     toolRegistry.register(writeTool)
     toolRegistry.register(bashTool)
     toolRegistry.register(todoWriteTool)
+    toolRegistry.register(askQuestionTool)
     toolRegistry.register(createInvokeSkillTool({
       modelClient,
       skillRegistry,
@@ -330,6 +354,15 @@ export function registerAgentHandler(
     // 注入主 readState：跨多次 SEND_MESSAGE 复用，使得同一会话连发消息时
     // 第二条消息能继续享受第一条消息的 read 状态（I1 实例化）
     agentLoop.setReadState(mainReadState)
+    // 注入 askQuestion 阻塞回调：工具 execute() 通过它拿 Promise 并阻塞等待 renderer 回复。
+    // 回调闭包捕获本次 eventBus，与 pendingVerificationPermissions 同隔离模式（每次 SEND_MESSAGE 都 new EventBus）。
+    // 不设 timeout：用户必须显式回答 / dismiss / 新消息 / cancel 四条出口之一，不做自动兜底。
+    agentLoop.setAskQuestionHandler((requestId, questions) => {
+      return new Promise<AskQuestionAnswer[]>((resolve) => {
+        pendingAskQuestions.set(requestId, { resolve, eventBus })
+        eventBus.emit({ type: 'ask_question_request', requestId, questions })
+      })
+    })
 
     // 从 session 历史恢复多轮对话上下文（快照优先 + 增量补齐，锚点失效则全量重建）
     restoreOrInjectHistory(
@@ -420,6 +453,12 @@ export function registerAgentHandler(
     defaultSubAgentPermissionBridge.clear()
     markActiveStreamsCancelled()
     clearAllPendingVerificationPermissions()
+    // 清理挂起的 askQuestion：空 answers 让工具走 dismissed 路径，UI 面板随之关闭
+    for (const [requestId, entry] of pendingAskQuestions) {
+      pendingAskQuestions.delete(requestId)
+      entry.resolve([])
+      entry.eventBus.emit({ type: 'ask_question_resolved', requestId })
+    }
   })
 
   ipcMain.handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
@@ -432,6 +471,16 @@ export function registerAgentHandler(
 
   ipcMain.handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: { requestId: string; granted: boolean }): Promise<void> => {
     clearVerificationPermissionRequest(params.requestId, params.granted)
+  })
+
+  ipcMain.handle(RESPOND_ASK_QUESTION, async (_event, params: { requestId: string; answers: AskQuestionAnswer[] }): Promise<void> => {
+    const entry = pendingAskQuestions.get(params.requestId)
+    if (!entry) return
+    pendingAskQuestions.delete(params.requestId)
+    // resolve 工具的 Promise，让 execute 继续往下走
+    entry.resolve(params.answers)
+    // 通知 renderer 清除 pending 状态
+    entry.eventBus.emit({ type: 'ask_question_resolved', requestId: params.requestId })
   })
 }
 
@@ -872,6 +921,17 @@ export function forwardEventToRenderer(
         sessionId: event.sessionId,
         todos: event.todos,
         view: event.view
+      })
+      break
+    case 'ask_question_request':
+      webContents.send('agent:ask-question-request', {
+        requestId: event.requestId,
+        questions: event.questions
+      })
+      break
+    case 'ask_question_resolved':
+      webContents.send('agent:ask-question-resolved', {
+        requestId: event.requestId
       })
       break
     case 'usage':

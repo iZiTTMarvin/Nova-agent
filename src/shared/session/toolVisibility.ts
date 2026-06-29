@@ -22,6 +22,12 @@ export function getToolCapability(toolName: string): ToolCapability {
       // 归为 readonly：plan 模式下可见且可用，UI 不会被染成危险操作色，
       // PermissionManager 走读类工具的宽松默认规则。
       return 'readonly'
+    case 'askQuestion':
+      // askQuestion 是用户交互工具：阻塞等待用户回答，不触碰文件系统 / shell，无副作用。
+      // 归为 readonly，使其在所有模式下直接放行、无需"执行前确认"，且 plan 模式下可见可用
+      // （在 plan 阶段向用户澄清偏好/方案选择正是其典型用途）。
+      // 若不分类，会落到 default 分支 'unknown'，被权限层当作 bash 处理而要求确认（已知 bug）。
+      return 'readonly'
     case 'task':
     case 'invoke_skill':
       // 编排类工具：本身没有文件系统/shell 副作用，只负责派遣子代理 / 调用技能。

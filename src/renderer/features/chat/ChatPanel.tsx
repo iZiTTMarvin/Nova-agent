@@ -11,12 +11,14 @@ import {
   ImageIcon
 } from '../../components/Icons'
 import { MessageItem } from './MessageItem'
+import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { ModelSelector } from './ModelSelector'
 import { browserFrameScheduler, createStreamAutoScrollController, shouldPauseAutoFollow } from './autoScroll'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
+import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
@@ -68,10 +70,12 @@ export const ChatPanel: React.FC = () => {
   const enqueuePendingMessage = useChatStore(state => state.enqueuePendingMessage)
   const removePendingMessage = useChatStore(state => state.removePendingMessage)
 
-  // ── agent store（权限/取消/验证权限） ──
+  // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
   const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
   const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
+  const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
+  const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
 
   // 处理消息回退操作（useCallback 稳定引用，供 MessageItem areEqual 比较）
   const handleRollback = useCallback(async (messageId: string) => {
@@ -205,7 +209,7 @@ export const ChatPanel: React.FC = () => {
     }
   }
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
     if (!modelConfig) {
       alert("请先在设置中配置 LLM 服务商与模型！")
@@ -221,20 +225,26 @@ export const ChatPanel: React.FC = () => {
     const text = inputVal.trim()
     const images = imageAttachments
 
+    // askQuestion 面板仍开着时用户发了新消息：先 dismiss 当前提问（resolve 空 answers），
+    // 让旧轮次能正常走到 message_end。否则新消息只会进 steering 队列，而旧轮次被
+    // 未 resolve 的 askQuestion 阻塞、永不到达 message_end → 互等死锁。
+    await preSendGate({ hasPendingAskQuestion: !!pendingAskQuestion, dismissAskQuestion })
+
+    // 竞态修复：await 跨了一个 IPC 往返，期间旧轮次可能已 message_end（isGenerating 翻 false、
+    // dispatchNextPending 已尝试 drain 但队列为空提前返回）。此处必须重读最新 isGenerating，
+    // 不能用本次 render 捕获的旧值——否则会用过期 true 把消息塞进队列，而轮次已结束、再无
+    // message_end 来 drain，消息永久卡在 steering 队列。
+    const stillGenerating = useChatStore.getState().isGenerating
+
     // Phase 6：Steering Queue
     // Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
-    if (isGenerating) {
+    if (stillGenerating) {
       enqueuePendingMessage(text, images)
-      setInputVal('')
-      setImageAttachments([])
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-      }
-      return
+    } else {
+      // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列
+      sendMessage(text, images)
     }
 
-    // 正常路径：直接发送
-    sendMessage(text, images)
     setInputVal('')
     setImageAttachments([])
     if (textareaRef.current) {
@@ -431,6 +441,7 @@ export const ChatPanel: React.FC = () => {
               onAcceptAllFiles={acceptAllFiles}
               onRejectAllFiles={rejectAllFiles}
               onRenderPoolTick={scheduleStreamAutoScroll}
+              isPausedForInput={!!pendingAskQuestion}
               diffCache={diffCache}
               isDiffLoading={isDiffLoading}
               diffPlaceholders={diffPlaceholders}
@@ -492,134 +503,148 @@ export const ChatPanel: React.FC = () => {
       )}
 
       {/* 底部输入框 / 空状态中央输入框 */}
-      <motion.div
-        layout
-        transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className={`absolute left-0 right-0 flex flex-col items-center justify-center px-4 pointer-events-none ${
-          isEmptyState ? 'top-0 bottom-0' : 'bottom-6'
+      <div
+        className={`chat-panel__composer-area ${
+          isEmptyState ? 'chat-panel__composer-area--empty' : ''
         }`}
       >
-        <div className="w-full max-w-3xl flex flex-col items-center pointer-events-auto">
-          {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
-          <RecoveryBanner messageId={currentGeneratingMessageId} />
-
-          <AnimatePresence>
-            {isEmptyState && (
-              <motion.div
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="mb-8 flex flex-col items-center justify-center space-y-4"
-              >
-                <NovaLogo size={48} className="text-[#d97757]" />
-                <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
-                  说出你的想法
-                </h1>
-              </motion.div>
-            )}
-          </AnimatePresence>
+        <div className="chat-panel__composer-inner">
+          {/* askQuestion 工具发起的提问面板：pendingAskQuestion 为 null 时组件内自返回 null */}
+          {pendingAskQuestion && (
+            <div className="ask-question-dock">
+              <AskQuestionPanel />
+            </div>
+          )}
 
           <motion.div
-            ref={composerBoxRef}
             layout
-            className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
-              isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
-            }`}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="w-full flex flex-col items-center pointer-events-auto"
           >
-            {/* 图片预览条 */}
-            <ImagePreviewBar
-              attachments={imageAttachments}
-              onRemove={removeAttachment}
-              onPreview={openPreviewFromBar}
-            />
+            {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
+            <RecoveryBanner messageId={currentGeneratingMessageId} />
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={handleFileInputChange}
-            />
-
-            <SkillAC
-              ref={skillACRef}
-              inputValue={inputVal}
-              anchorRef={composerBoxRef}
-              skills={slashSkills}
-              onSelect={handleSlashSelect}
-              isComposing={isComposing}
-            />
-
-            <textarea
-              ref={textareaRef}
-              className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
-              placeholder={isGenerating
-                ? 'Agent 正在运行，输入将进入排队队列...'
-                : '向 Nova 提问或分配编程任务...'}
-              rows={1}
-              value={inputVal}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onCompositionStart={() => setIsComposing(true)}
-              onCompositionEnd={() => setIsComposing(false)}
-              onPaste={handlePaste}
-              // Phase 6：textarea 在 Agent 运行期间不再 disabled，
-              // 用户可以继续输入，新消息进入 Steering Queue 等 turn boundary 自动 dispatch
-            />
-            <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
-              <div className="flex items-center gap-2">
-                <button
-                  className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors text-sm font-medium"
-                  onClick={handleSlashButton}
-                  title="插入 / 命令"
-                  type="button"
+            <AnimatePresence>
+              {isEmptyState && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="mb-8 flex flex-col items-center justify-center space-y-4"
                 >
-                  /
-                </button>
-                {supportsVision && (
+                  <NovaLogo size={48} className="text-[#d97757]" />
+                  <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
+                    说出你的想法
+                  </h1>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <motion.div
+              ref={composerBoxRef}
+              layout
+              className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
+                isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
+              }`}
+            >
+              {/* 图片预览条 */}
+              <ImagePreviewBar
+                attachments={imageAttachments}
+                onRemove={removeAttachment}
+                onPreview={openPreviewFromBar}
+              />
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
+
+              <SkillAC
+                ref={skillACRef}
+                inputValue={inputVal}
+                anchorRef={composerBoxRef}
+                skills={slashSkills}
+                onSelect={handleSlashSelect}
+                isComposing={isComposing}
+              />
+
+              <textarea
+                ref={textareaRef}
+                className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
+                placeholder={pendingAskQuestion
+                  ? '请先回答上方问题，再发送新消息（或输入排队）'
+                  : isGenerating
+                    ? 'Agent 正在运行，输入将进入排队队列...'
+                    : '向 Nova 提问或分配编程任务...'}
+                rows={1}
+                value={inputVal}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onCompositionStart={() => setIsComposing(true)}
+                onCompositionEnd={() => setIsComposing(false)}
+                onPaste={handlePaste}
+                // Phase 6：textarea 在 Agent 运行期间不再 disabled，
+                // 用户可以继续输入，新消息进入 Steering Queue 等 turn boundary 自动 dispatch
+              />
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
+                <div className="flex items-center gap-2">
                   <button
-                    className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors"
-                    onClick={() => fileInputRef.current?.click()}
-                    title="上传图片"
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors text-sm font-medium"
+                    onClick={handleSlashButton}
+                    title="插入 / 命令"
                     type="button"
                   >
-                    <ImageIcon size={16} />
+                    /
                   </button>
-                )}
-                <ModelSelector />
-                <ModeSwitch />
-                <ContextIndicator />
+                  {supportsVision && (
+                    <button
+                      className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="上传图片"
+                      type="button"
+                    >
+                      <ImageIcon size={16} />
+                    </button>
+                  )}
+                  <ModelSelector />
+                  <ModeSwitch />
+                  <ContextIndicator />
+                </div>
+                <div>
+                  {isGenerating ? (
+                    <button
+                      className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                      onClick={cancelExecution}
+                      title="中断生成"
+                    >
+                      <StopIcon size={14} />
+                    </button>
+                  ) : (
+                    <button
+                      className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
+                        inputVal.trim() || imageAttachments.length > 0
+                          ? 'bg-text-primary text-white hover:bg-gray-800'
+                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      }`}
+                      onClick={handleSend}
+                      disabled={!inputVal.trim() && imageAttachments.length === 0}
+                      title="发送"
+                    >
+                      <SendIcon size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
-              <div>
-                {isGenerating ? (
-                  <button
-                    className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-                    onClick={cancelExecution}
-                    title="中断生成"
-                  >
-                    <StopIcon size={14} />
-                  </button>
-                ) : (
-                  <button
-                    className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
-                      inputVal.trim() || imageAttachments.length > 0
-                        ? 'bg-text-primary text-white hover:bg-gray-800'
-                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    }`}
-                    onClick={handleSend}
-                    disabled={!inputVal.trim() && imageAttachments.length === 0}
-                    title="发送"
-                  >
-                    <SendIcon size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
+            </motion.div>
+
           </motion.div>
 
         </div>
-      </motion.div>
+      </div>
 
       {/* 全屏图片预览 */}
       <ImagePreviewDialog

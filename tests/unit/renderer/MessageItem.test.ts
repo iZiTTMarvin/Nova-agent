@@ -35,6 +35,12 @@ function makeProps(overrides: Partial<MessageItemProps> = {}): MessageItemProps 
   }
 }
 
+/**
+ * 覆盖范围说明：
+ * 本文件只验证 MessageItem 的 React.memo 比较函数 areEqual（含 isPausedForInput 切换会重渲染）。
+ * 它不覆盖 ChatPanel 是否真的把 pendingAskQuestion → isPausedForInput 传给了 MessageItem
+ * （即"接线"）。那条接线由 ChatPanel.test.tsx 保障，二者互补，缺一不可。
+ */
 describe('MessageItem areEqual', () => {
   it('完全相同的 props 应返回 true', () => {
     const prev = makeProps()
@@ -57,6 +63,14 @@ describe('MessageItem areEqual', () => {
   it('isGenerating 不同应返回 false', () => {
     const prev = makeProps()
     const next = makeProps({ isGenerating: true })
+    expect(areEqual(prev, next)).toBe(false)
+  })
+
+  it('isPausedForInput 变化应返回 false（askQuestion 暂停切换需重渲染以停掉流式动画）', () => {
+    // 回归保护：等待 askQuestion 回答时 isGenerating 仍为 true，靠 isPausedForInput 切换
+    // 让生成中的消息重渲染，从而停掉 ThinkingBlock 计时器 / render pool 的 rAF（卡死修复）
+    const prev = makeProps({ isPausedForInput: false })
+    const next = makeProps({ isPausedForInput: true })
     expect(areEqual(prev, next)).toBe(false)
   })
 

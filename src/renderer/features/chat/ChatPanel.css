@@ -799,6 +799,48 @@
 }
 
 /* ──────────────────────────────────────────────────────────
+   Composer 区域 + AskQuestion Dock
+   ────────────────────────────────────────────────────────── */
+.chat-panel__composer-area {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 1rem 1.5rem;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.chat-panel__composer-area--empty {
+  top: 0;
+  bottom: 0;
+  justify-content: center;
+}
+
+.chat-panel__composer-inner {
+  width: 100%;
+  max-width: 48rem; /* 与 composer 的 max-w-3xl 对齐 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.ask-question-dock {
+  width: 100%;
+  max-width: 100%;
+  max-height: min(42vh, 380px);
+  margin-bottom: 0.75rem;
+  pointer-events: auto;
+  /* 当内部面板受限时，dock 本身不需要额外滚动；面板内部已带 overflow-y:auto */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ──────────────────────────────────────────────────────────
    Phase 6：Steering Queue 提示
    Agent 运行期间，用户入队的消息以淡蓝虚线框展示在消息流底部，
    turn boundary 自动 dispatch 时逐条消失。
@@ -907,6 +949,80 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tool-box--live-enter {
+    animation: none;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────
+   AskQuestion 工具状态卡片
+   ────────────────────────────────────────────────────────── */
+.ask-question-tool-card {
+  background-color: var(--bg-sidebar);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  margin: 12px 0;
+  padding: 10px 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(20, 20, 19, 0.02);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ask-question-tool-card__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+  background-color: var(--bg-card);
+}
+
+.ask-question-tool-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ask-question-tool-card__icon--running {
+  color: var(--color-brand);
+  animation: spin 1.5s linear infinite;
+}
+
+.ask-question-tool-card__icon--success {
+  color: var(--color-success);
+}
+
+.ask-question-tool-card__icon--error {
+  color: var(--color-error);
+}
+
+.ask-question-tool-card__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-charcoal);
+  flex-shrink: 0;
+}
+
+.ask-question-tool-card__summary {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.ask-question-tool-card--live-enter {
+  animation: tool-box-live-enter 96ms ease-out both;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-question-tool-card--live-enter {
     animation: none;
   }
 }

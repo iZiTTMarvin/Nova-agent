@@ -29,6 +29,11 @@ describe('toolVisibility', () => {
       expect(getToolCapability('todo_write')).toBe('readonly')
     })
 
+    it('askQuestion 归为 readonly（用户交互工具，无副作用，所有模式放行且 plan 可见）', () => {
+      // 回归保护：曾因未分类落到 unknown→被权限层当 bash 处理，default 模式误弹"执行前确认"
+      expect(getToolCapability('askQuestion')).toBe('readonly')
+    })
+
     it('task / invoke_skill 归为 orchestration（编排类，派遣动作本身无副作用）', () => {
       expect(getToolCapability('task')).toBe('orchestration')
       expect(getToolCapability('invoke_skill')).toBe('orchestration')

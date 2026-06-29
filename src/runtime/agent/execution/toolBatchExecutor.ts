@@ -9,6 +9,7 @@ import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta } from
 import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
+import type { AskQuestionItem, AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import { sanitizeToolOutput } from '../../../shared/tool-input-sanitizer'
 import { needsRepair, repairNativeArguments } from '../stream/nativeArgsRepair'
 
@@ -85,6 +86,11 @@ export interface ToolBatchExecutionOptions {
    * 每个 AgentLoop 实例持有独立 readState（sub agent 通过 clone 隔离）。
    */
   readState: ReadState
+  /**
+   * askQuestion 阻塞回调（可选）。透传给 ToolContext，供 askQuestion 工具发起提问。
+   * 仅主 AgentLoop 注入；子 agent（task / skill fork）不注入，工具走降级跳过。
+   */
+  askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
 }
 
 interface ToolRunResult {
@@ -112,7 +118,8 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     ...(options.eventBus ? { eventBus: options.eventBus } : {}),
     ...(options.shellPath ? { shellPath: options.shellPath } : {}),
     ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {}),
-    ...(options.artifactStore ? { artifactStore: options.artifactStore } : {})
+    ...(options.artifactStore ? { artifactStore: options.artifactStore } : {}),
+    ...(options.askQuestion ? { askQuestion: options.askQuestion } : {})
   }
 }
 
