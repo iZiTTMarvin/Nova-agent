@@ -33,6 +33,8 @@ export interface DiffViewerProps {
   loadingPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
   /** 因过大或命中排除规则而跳过备份的文件 */
   skippedFiles?: SkippedFileInfo[]
+  /** Tier 1：工作区未重放此分支改动，diff 仅历史展示、不可审阅 */
+  tier1Stale?: boolean
   onRejectFile?: (filePath: string) => Promise<void>
   onAcceptFile?: (filePath: string) => Promise<void>
   /** PRD §5.3：批量接受（接受全部 pending 文件） */
@@ -261,6 +263,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   isLoading = false,
   loadingPlaceholders,
   skippedFiles,
+  tier1Stale = false,
   onRejectFile,
   onAcceptFile,
   onAcceptAll,
@@ -374,10 +377,12 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   )
 
   return (
-    <div className="diff-viewer">
+    <div className={`diff-viewer${tier1Stale ? ' diff-viewer--tier1-stale' : ''}`} title={tier1Stale ? '此消息的文件改动未同步到当前工作区，以下 diff 仅作历史参考' : undefined}>
       <div className="diff-viewer__header" onClick={() => setExpanded(!expanded)}>
         <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
-        <span className="diff-viewer__title">文件变更审查</span>
+        <span className="diff-viewer__title">
+          {tier1Stale ? '文件变更（历史记录，工作区未同步）' : '文件变更审查'}
+        </span>
         <span className="diff-viewer__stats">
           <span className="diff-viewer__stat diff-viewer__stat--added">+{totalAdded}</span>
           <span className="diff-viewer__stat diff-viewer__stat--removed">-{totalRemoved}</span>

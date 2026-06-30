@@ -2,6 +2,15 @@
 
 ## 2026-06-30
 
+- **feat(session)**: 会话树模型阶段 1–3 + Tier 2 forward 快照
+  - 数据：v4 `parentId` / `currentLeafId`、`tree.ts` 纯函数、`migrateV3ToV4`；`SessionStore.appendMessage` 自动挂 parent；上下文与分页走 active path
+  - 分叉：`workspace:edit-resend`、`workspace:regenerate`、`workspace:switch-branch`；用户消息编辑、assistant 重新生成、翻页器 `‹ k/n ›`；`BranchMeta` 由主进程折叠下发
+  - 刷新：`WorkspaceState.messagesRevision` 双轨策略（switch 立即 bump；edit/regenerate 流式结束后 `finishBranchMetaRefresh`）；`workspace:bump-messages-revision`
+  - 文件：Tier 2 `forward/` 快照 + `revertWorkspaceForMessageIds`（非破坏性）+ `applyForwardForMessageIds`；切分支全额重放成功无 Tier 1 横幅；缺 forward 降级灰显 diff
+  - 清理：删除 `rollback-message` / `workspace:rollback-message` 死代码
+  - 测试：+6 用例（`forward.test.ts`、`WorkspaceService.branch.test.ts` 等）；全量 1585 通过
+  - 详见 `docs/未来目标/会话树模型设计.md`；阶段 4（delete-branch / repair-forward / compaction 树）见 §18
+
 - **fix(runtime)**: bash 命令退出码非零不再误判为工具故障，且失败时保留完整输出
   - 根因：`bash/index.ts` 的 `composeResult` 把退出码非 0 一律判为 `success:false`，而上层 `toolBatchExecutor` 在失败分支会**丢弃 output、只把 `命令退出码: N` 喂给模型**。导致 grep/findstr 无匹配、where 未找到、mvn 编译报错等情况下，模型看不到任何 stdout/stderr，只能盲目换命令反复重试
   - 改动 #1（`bash/index.ts`）：命令正常跑完、仅退出码非零时改为 `success:true`，并在 output 顶部加 `[命令退出码: N（命令已执行完成；非 0 不一定是错误，请阅读下方输出判断）]` 标注；超时 / 取消 / 信号终止 / spawn 失败仍为 `success:false`

@@ -7,7 +7,7 @@ import type { IpcCommands, IpcCommandChannel, IpcEvents, IpcEventChannel } from 
 import {
   PING, SELECT_PROJECT, SEND_MESSAGE, CANCEL_EXECUTION,
   SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG, SET_MODE,
-  ACCEPT_FILE, REJECT_FILE, ROLLBACK_MESSAGE,
+  ACCEPT_FILE, REJECT_FILE,
   RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION,
   CREATE_SESSION,
   AGENT_MESSAGE_START, AGENT_TEXT_DELTA, AGENT_TOOL_CALL,
@@ -17,16 +17,16 @@ import {
 } from '../../src/shared/ipc/channels'
 
 describe('IPC channel 常量', () => {
-  it('定义了 14 个命令 channel', () => {
+  it('定义了 13 个命令 channel', () => {
     const commandChannels = [
       PING, SELECT_PROJECT, SEND_MESSAGE, CANCEL_EXECUTION,
       SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG, SET_MODE,
-      ACCEPT_FILE, REJECT_FILE, ROLLBACK_MESSAGE,
+      ACCEPT_FILE, REJECT_FILE,
       RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION, CREATE_SESSION
     ]
-    expect(commandChannels).toHaveLength(14)
+    expect(commandChannels).toHaveLength(13)
     // 每个 channel 都是唯一的字符串
-    expect(new Set(commandChannels).size).toBe(14)
+    expect(new Set(commandChannels).size).toBe(13)
   })
 
   it('定义了 9 个事件 channel', () => {

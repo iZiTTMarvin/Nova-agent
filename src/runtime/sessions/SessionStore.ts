@@ -13,13 +13,13 @@
  * 设计约束：
  * - 纯 TypeScript 模块，不依赖 Electron API，支持脱离 Electron 单测
  * - 调用方通过构造函数注入 appDataPath（在主进程中为 app.getPath('userData')）
- * - 会话是线性的，不支持分支或合并
+ * - 会话消息以树形存储；激活路径由 currentLeafId + parentId 派生
  * - 消息体追加写，避免 session.json 整份重写造成的 Event Loop 阻塞与写放大
  */
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import type { SessionSummary, SessionData, SessionMessage, ContextSnapshot } from './types'
+import type { SessionSummary, SessionData, SessionMessage, SessionMessageAppend, ContextSnapshot } from './types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
@@ -29,6 +29,12 @@ import {
 import type { Mode } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
+import {
+  computeActivePath,
+  resolveCurrentLeafId,
+  ensureMessageParentChain,
+  attachBranchMeta
+} from './tree'
 
 export class SessionStore {
   private readonly sessionsDir: string
@@ -46,6 +52,7 @@ export class SessionStore {
       workspaceRoot,
       mode,
       messages: [],
+      currentLeafId: null,
       createdAt: now,
       updatedAt: now
     }
@@ -63,10 +70,13 @@ export class SessionStore {
    * - 只改元数据（mode/todos）应使用 saveMetadata，避免碰 messages.jsonl
    */
   save(session: SessionData): void {
-    this.saveMetadata(session)
+    const messages = ensureMessageParentChain(session.messages)
+    const currentLeafId = resolveCurrentLeafId(messages, session.currentLeafId)
+    const normalized: SessionData = { ...session, messages, currentLeafId }
+    this.saveMetadata(normalized)
     writeMessagesJsonl(
       path.join(this.sessionsDir, session.id),
-      session.messages
+      messages
     )
   }
 
@@ -115,10 +125,13 @@ export class SessionStore {
    * 从 session.json 元数据 + messages.jsonl 组装完整 SessionData。
    */
   private loadFromMetadataAndJsonl(metadata: SessionData, sessionId: string): SessionData {
-    const messages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+    const rawMessages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+    const messages = ensureMessageParentChain(rawMessages)
+    const currentLeafId = resolveCurrentLeafId(messages, metadata.currentLeafId)
     return {
       ...metadata,
-      messages
+      messages,
+      currentLeafId
     }
   }
 
@@ -150,9 +163,9 @@ export class SessionStore {
         // list 也走迁移，确保侧边栏展示的会话都是最新结构
         const data = migrateSessionFile(this.sessionsDir, entry.name)
         if (!data) continue
-        const messageCount = countMessagesJsonlLines(
-          path.join(this.sessionsDir, entry.name, SESSION_MESSAGES_FILE)
-        )
+        const messages = readMessagesJsonl(path.join(this.sessionsDir, entry.name))
+        const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
+        const messageCount = computeActivePath(messages, leafId).length
         summaries.push({
           id: data.id,
           workspaceRoot: data.workspaceRoot,
@@ -188,10 +201,10 @@ export class SessionStore {
    * 实现为 messages.jsonl 追加一行 + 重写小体积 session.json 元数据，
    * 避免每次追加都重写整个消息数组。
    *
-   * 追加前会走 migrateSessionFile 确保旧版会话已完成物理迁移（v0/v1/v2 → v3），
+   * 追加前会走 migrateSessionFile 确保旧版会话已完成物理迁移（v0…v3 → v4），
    * 避免隐式依赖"load/list 先跑过"的假设。
    */
-  appendMessage(sessionId: string, message: SessionMessage): SessionData | null {
+  appendMessage(sessionId: string, message: SessionMessageAppend): SessionData | null {
     const dir = path.join(this.sessionsDir, sessionId)
     const sessionFile = path.join(dir, SESSION_DATA_FILE)
     if (!fs.existsSync(sessionFile)) return null
@@ -217,19 +230,23 @@ export class SessionStore {
   }
 
   /**
-   * 向已确认是 v3 结构的会话追加一条消息。
+   * 向已迁移会话追加一条消息：自动设 parentId、推进 currentLeafId。
    */
   private appendMessageToMetadata(
     metadata: SessionData,
     sessionId: string,
-    message: SessionMessage
+    message: SessionMessageAppend
   ): SessionData {
     const dir = path.join(this.sessionsDir, sessionId)
 
-    // 追加 JSONL 行
-    appendMessagesJsonl(dir, [message])
+    const messageWithParent: SessionMessage = {
+      ...message,
+      parentId: metadata.currentLeafId ?? null
+    }
 
-    // 更新元数据中的 updatedAt
+    appendMessagesJsonl(dir, [messageWithParent])
+
+    metadata.currentLeafId = messageWithParent.id
     metadata.updatedAt = Date.now()
     fs.writeFileSync(
       path.join(dir, SESSION_DATA_FILE),
@@ -237,8 +254,31 @@ export class SessionStore {
       'utf8'
     )
 
-    // 返回包含完整历史的会话（供调用方需要时直接使用）
     return this.loadFromMetadataAndJsonl(metadata, sessionId)
+  }
+
+  /**
+   * 仅更新 currentLeafId（只写 session.json 元数据，不碰 messages.jsonl）。
+   *
+   * 用于分叉操作（编辑重发 / 切分支）把激活叶子倒回某个分叉点：
+   * - leafId 为某节点 id：下次 appendMessage 的新节点挂到该节点下。
+   * - leafId 为 null：倒回「所有消息之前」，下次 appendMessage 成森林新根
+   *   （编辑首条用户消息的场景）。
+   *
+   * 不删除任何消息：旧分支节点原样保留在 messages.jsonl。
+   */
+  setCurrentLeaf(sessionId: string, leafId: string | null): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    if (leafId !== null && !session.messages.some(m => m.id === leafId)) {
+      throw new Error(`[SessionStore] setCurrentLeaf: 叶子 ${leafId} 不在会话 ${sessionId} 中`)
+    }
+
+    session.currentLeafId = leafId
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
   }
 
   /** 更新会话模式并持久化（只写 session.json 元数据，不碰 messages.jsonl） */
@@ -338,12 +378,22 @@ export class SessionStore {
 
     try {
       const migrated = migrateSessionFile(this.sessionsDir, sessionId)
-      if (!migrated) {
+      let metadata: SessionData
+      if (migrated) {
+        metadata = migrated
+      } else {
         const content = fs.readFileSync(filePath, 'utf8')
-        migrateSessionData(JSON.parse(content))
+        metadata = migrateSessionData(JSON.parse(content)) as SessionData
       }
+
       const allMessages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
-      return sliceMessagesPage(allMessages, options)
+      const currentLeafId = resolveCurrentLeafId(allMessages, metadata.currentLeafId)
+      const activePath = computeActivePath(allMessages, currentLeafId)
+      const page = sliceMessagesPage(activePath, options)
+      return {
+        messages: attachBranchMeta(page.messages, allMessages),
+        hasMore: page.hasMore
+      }
     } catch (err) {
       console.error(`[SessionStore] 分页读取会话 ${sessionId} 消息失败:`, err)
       return null
@@ -409,34 +459,6 @@ function appendMessagesJsonl(sessionDir: string, messages: SessionMessage[]): vo
   fs.appendFileSync(filePath, lines, 'utf8')
 }
 
-/**
- * 快速统计 messages.jsonl 行数（不解析 JSON）。
- * 最后一行无换行符时仍按有效行计算。
- */
-function countMessagesJsonlLines(filePath: string): number {
-  if (!fs.existsSync(filePath)) return 0
-
-  try {
-    const content = fs.readFileSync(filePath, 'utf8')
-    if (!content.trim()) return 0
-
-    let count = 0
-    let inLine = false
-    for (const char of content) {
-      if (char === '\n') {
-        if (inLine) count++
-        inLine = false
-      } else if (char !== '\r') {
-        inLine = true
-      }
-    }
-    // 最后一行没有换行符但非空
-    if (inLine) count++
-    return count
-  } catch {
-    return 0
-  }
-}
 
 /**
  * 在已解析的消息数组上按游标切片（时间正序）。

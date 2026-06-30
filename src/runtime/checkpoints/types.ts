@@ -23,8 +23,12 @@ export interface CheckpointManifest {
   skippedFiles?: SkippedFileInfo[]
   /** 是否已被滚动清理：true 表示 files/ 目录已被删除，只剩 manifest 记录 */
   backupPruned?: boolean
+  /** 是否已被滚动清理：true 表示 forward/ 目录已被删除 */
+  forwardPruned?: boolean
   /** 滚动清理发生的时间戳（毫秒） */
   prunedAt?: number
+  /** Tier 2：消息结束时是否已捕获改动后快照（forward/） */
+  forwardCaptured?: boolean
 }
 
 /** CheckpointManager 的初始化配置 */
@@ -45,4 +49,6 @@ export interface CheckpointConfig {
    * 默认 30；更早消息的 files/ 目录会被物理删除，manifest 保留并标记 backupPruned。
    */
   keepRecentCheckpointMessages?: number
+  /** 返回当前激活路径消息 id 集合，供滚动清理时只计 active path */
+  getActivePathMessageIds?: () => Set<string> | undefined
 }

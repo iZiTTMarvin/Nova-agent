@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, Profiler } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Profiler } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -88,7 +88,9 @@ export const ChatPanel: React.FC = () => {
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const currentGeneratingMessageId = useChatStore(state => state.currentGeneratingMessageId)
   const sendMessage = useChatStore(state => state.sendMessage)
-  const rollbackMessage = useChatStore(state => state.rollbackMessage)
+  const regenerateAssistant = useChatStore(state => state.regenerateAssistant)
+  const switchBranch = useChatStore(state => state.switchBranch)
+  const editResend = useChatStore(state => state.editResend)
   const messageDiffs = useChatStore(state => state.messageDiffs)
   const loadingDiffs = useChatStore(state => state.loadingDiffs)
   const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
@@ -105,6 +107,12 @@ export const ChatPanel: React.FC = () => {
   const hasMoreMessagesAbove = useChatStore(state => state.hasMoreMessagesAbove)
   const isLoadingOlderMessages = useChatStore(state => state.isLoadingOlderMessages)
   const loadOlderMessages = useChatStore(state => state.loadOlderMessages)
+  const tier1BranchContext = useChatStore(state => state.tier1BranchContext)
+  const dismissTier1BranchNotice = useChatStore(state => state.dismissTier1BranchNotice)
+  const tier1StaleDiffSet = useMemo(
+    () => new Set(tier1BranchContext?.staleDiffMessageIds ?? []),
+    [tier1BranchContext]
+  )
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
@@ -116,13 +124,21 @@ export const ChatPanel: React.FC = () => {
   const isPausedForUserInput = !!pendingAskQuestion || !!pendingPermissionRequest || !!pendingVerificationRequest
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
 
-  // 处理消息回退操作（useCallback 稳定引用，供 MessageItem areEqual 比较）
-  const handleRollback = useCallback(async (messageId: string) => {
+  const handleRegenerate = useCallback(async (messageId: string) => {
     if (!currentSessionId) return
-    if (window.confirm('确定要回退到此消息执行前的状态吗？这将物理恢复工作区文件，并移除此消息之后的所有对话记录。')) {
-      await rollbackMessage(currentSessionId, messageId)
-    }
-  }, [currentSessionId, rollbackMessage])
+    await regenerateAssistant(currentSessionId, messageId)
+  }, [currentSessionId, regenerateAssistant])
+
+  const handleSwitchBranch = useCallback(async (targetMessageId: string) => {
+    if (!currentSessionId) return
+    await switchBranch(currentSessionId, targetMessageId)
+  }, [currentSessionId, switchBranch])
+
+  // 编辑用户消息并重发（分叉保留旧分支，走 workspace:edit-resend + 普通 sendMessage）
+  const handleEditResend = useCallback(async (messageId: string, newContent: string) => {
+    if (!currentSessionId) return
+    await editResend(currentSessionId, messageId, newContent)
+  }, [currentSessionId, editResend])
 
   // acceptFile / rejectFile 用 useCallback 包裹 store action，稳定引用
   const handleAcceptFile = useCallback(async (sessionId: string, messageId: string, filePath: string) => {
@@ -553,6 +569,25 @@ export const ChatPanel: React.FC = () => {
           {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
           <TodoPanel sessionId={currentSessionId} />
 
+          {tier1BranchContext && (
+            <div className="chat-tier1-notice" role="status">
+              <span className="chat-tier1-notice__text">
+                已切换到分支 {tier1BranchContext.branchIndex}/{tier1BranchContext.branchTotal}
+                {tier1BranchContext.partialReplay
+                  ? '（部分文件改动因缺少 forward 快照未能重放）'
+                  : '（仅对话历史，工作区停在分叉点状态）'}
+              </span>
+              <button
+                type="button"
+                className="chat-tier1-notice__dismiss"
+                onClick={dismissTier1BranchNotice}
+                aria-label="关闭提示"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
           {(isLoadingOlderMessages || hasMoreMessagesAbove) && (
             <div className="chat-messages__history-hint" aria-live="polite">
               {isLoadingOlderMessages ? '正在加载更早的消息…' : '向上滚动加载更早的消息'}
@@ -565,6 +600,11 @@ export const ChatPanel: React.FC = () => {
           const isDiffLoading = loadingDiffs.has(msg.id)
           const diffPlaceholders = loadingDiffPlaceholders[msg.id]
           const renderMode = resolveMessageRenderMode(rowIndex, messages.length, isGenerating)
+          const prevMsg = rowIndex > 0 ? messages[rowIndex - 1] : undefined
+          const regenerateBlocked =
+            msg.role === 'assistant'
+            && prevMsg?.role === 'user'
+            && !!prevMsg.blocks?.some(b => b.type === 'image')
           return (
             <MessageItem
               key={msg.id}
@@ -574,7 +614,11 @@ export const ChatPanel: React.FC = () => {
               currentGeneratingMessageId={currentGeneratingMessageId}
               currentMode={currentMode}
               currentSessionId={currentSessionId}
-              onRollback={handleRollback}
+              onRegenerate={handleRegenerate}
+              regenerateBlocked={regenerateBlocked}
+              onSwitchBranch={handleSwitchBranch}
+              tier1DiffStale={tier1StaleDiffSet.has(msg.id)}
+              onEditResend={handleEditResend}
               rollbackError={rollbackErrors[msg.id]}
               onAcceptFile={handleAcceptFile}
               onRejectFile={handleRejectFile}

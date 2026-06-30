@@ -42,7 +42,6 @@ export const FETCH_PROVIDER_MODELS = 'fetch-provider-models' as const
 export const SET_MODE = 'set-mode' as const
 export const ACCEPT_FILE = 'accept-file' as const
 export const REJECT_FILE = 'reject-file' as const
-export const ROLLBACK_MESSAGE = 'rollback-message' as const
 export const RESPOND_PERMISSION = 'respond-permission' as const
 export const RESPOND_VERIFICATION_PERMISSION = 'respond-verification-permission' as const
 export const RESPOND_ASK_QUESTION = 'respond-ask-question' as const
@@ -69,8 +68,14 @@ export const WORKSPACE_DELETE_SESSION = 'workspace:delete-session' as const
 export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
 /** 切换运行模式 */
 export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
-/** 回滚到某条消息之前 */
-export const WORKSPACE_ROLLBACK_MESSAGE = 'workspace:rollback-message' as const
+/** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */
+export const WORKSPACE_REGENERATE = 'workspace:regenerate' as const
+/** 切换兄弟分支（LCA 文件 undo + setCurrentLeaf） */
+export const WORKSPACE_SWITCH_BRANCH = 'workspace:switch-branch' as const
+/** 递增 messagesRevision，触发 renderer 同会话重拉（分叉完成补 branch 元信息 / desync 纠正） */
+export const WORKSPACE_BUMP_MESSAGES_REVISION = 'workspace:bump-messages-revision' as const
+/** 编辑用户消息并重发（分叉准备：undo 文件 + 倒回 currentLeafId 到分叉点） */
+export const WORKSPACE_EDIT_RESEND = 'workspace:edit-resend' as const
 // ── 存储治理（WS3 后端） ──────────────────────
 export const STORAGE_USAGE = 'storage:usage' as const
 export const STORAGE_PRUNE_SESSION_CHECKPOINTS = 'storage:prune-session-checkpoints' as const

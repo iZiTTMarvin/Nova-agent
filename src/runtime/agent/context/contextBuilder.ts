@@ -11,6 +11,7 @@
  */
 import type { ChatMessage, ContentBlock } from '../../model/types'
 import type { SessionData } from '../../sessions/types'
+import { getSessionActiveMessages } from '../../sessions/tree'
 import type { Mode } from '../../../shared/session/types'
 import { stripLeakedToolMarkup } from '../../../shared/tool-call-text-fallback'
 
@@ -42,7 +43,9 @@ export function buildConversationContext(
 ): ChatMessage[] {
   const context: ChatMessage[] = []
 
-  for (const msg of session.messages) {
+  const activeMessages = getSessionActiveMessages(session)
+
+  for (const msg of activeMessages) {
     // system 消息跳过：由 AgentLoop 构造时的 frozenSystemPrompt 提供
     if (msg.role === 'system') continue
 

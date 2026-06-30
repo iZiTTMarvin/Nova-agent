@@ -6,6 +6,7 @@ export {
   type Message,
   type Session,
   type SessionDetail,
+  type BranchMeta,
   type ThinkingBlock,
   type TextBlock,
   type ToolBlock,

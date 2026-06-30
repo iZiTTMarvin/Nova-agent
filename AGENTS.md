@@ -157,7 +157,15 @@ MessageItem：拆分 isPausedForInput / isTurnActiveForThisMsg；接入 static/l
 - `src/runtime/agent/AgentLoop.ts`：核心循环门面，装配模型、工具、权限、上下文压缩。
 - `src/runtime/tools/index.ts`：工具统一出口。
 - `src/runtime/model/dialect.ts`：模型工具调用方言判定（native / XML），当前默认 native 优先。
-- `src/runtime/checkpoints/CheckpointManager.ts`：文件快照与消息级回退。
+- `src/runtime/checkpoints/CheckpointManager.ts`：文件快照；`endMessage` 写 `forward/`（Tier 2 分支重放）。
+
+### 会话树（已落地，详设 `docs/未来目标/会话树模型设计.md`）
+
+- 分叉 IPC：`workspace:edit-resend`、`workspace:regenerate`、`workspace:switch-branch`（均在 `WorkspaceService`）。
+- 同会话刷新靠 `WorkspaceState.messagesRevision`，renderer `syncFromWorkspace` 在 revision 变化时重拉 `load-session`。
+- 树分叉 undo 用 `revertWorkspaceForMessageIds`（**不要**对分叉路径调 `revertToMessage`，会删 checkpoint 目录）。
+- 切分支文件：`revertWorkspace` → `applyForward`；缺 forward 时 `tier1BranchContext` 灰显 diff。
+- 阶段 4（delete-branch / repair-forward）仅设计见设计文档 §18，代码未实现。
 
 ---
 

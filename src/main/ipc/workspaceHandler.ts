@@ -12,7 +12,10 @@ import {
   WORKSPACE_DELETE_SESSION,
   WORKSPACE_SELECT_SESSION,
   WORKSPACE_SET_MODE,
-  WORKSPACE_ROLLBACK_MESSAGE,
+  WORKSPACE_REGENERATE,
+  WORKSPACE_SWITCH_BRANCH,
+  WORKSPACE_BUMP_MESSAGES_REVISION,
+  WORKSPACE_EDIT_RESEND,
   WORKSPACE_CHANGED
 } from '../../shared/ipc/channels'
 import type { WorkspaceState } from '../../shared/workspace/types'
@@ -54,7 +57,19 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
     return service.setMode(params)
   })
 
-  ipcMain.handle(WORKSPACE_ROLLBACK_MESSAGE, async (_event, params: { sessionId: string; messageId: string }) => {
-    return service.rollbackMessage(params)
+  ipcMain.handle(WORKSPACE_REGENERATE, async (_event, params: { sessionId: string; messageId: string }) => {
+    return service.prepareRegenerate(params)
+  })
+
+  ipcMain.handle(WORKSPACE_SWITCH_BRANCH, async (_event, params: { sessionId: string; targetMessageId: string }) => {
+    return service.switchBranch(params)
+  })
+
+  ipcMain.handle(WORKSPACE_BUMP_MESSAGES_REVISION, async () => {
+    return service.bumpMessagesRevision()
+  })
+
+  ipcMain.handle(WORKSPACE_EDIT_RESEND, async (_event, params: { sessionId: string; messageId: string }) => {
+    return service.prepareEditResend(params)
   })
 }

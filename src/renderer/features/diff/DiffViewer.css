@@ -596,3 +596,13 @@
   border-radius: var(--radius-sm);
   background-color: var(--bg-sand);
 }
+
+/* Tier 1：工作区未重放分支改动，diff 仅历史展示 */
+.diff-viewer--tier1-stale {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+.diff-viewer--tier1-stale .diff-viewer__title {
+  color: var(--text-muted);
+}

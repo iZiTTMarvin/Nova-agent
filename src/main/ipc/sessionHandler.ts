@@ -4,8 +4,7 @@
  * 职责：
  * 1. 创建/加载/列表/删除会话（通过 SessionStore）
  * 2. 按文件拒绝（reject-file）：从 checkpoint 恢复单个文件
- * 3. 按消息回退（rollback-message）：回退到某条消息之前的状态
- * 4. 接受文件改动（accept-file）：标记文件已审查
+ * 3. 接受文件改动（accept-file）：标记文件已审查
  */
 import { ipcMain, app } from 'electron'
 import {
@@ -16,18 +15,18 @@ import {
   DELETE_SESSION,
   ACCEPT_FILE,
   REJECT_FILE,
-  ROLLBACK_MESSAGE,
   ACCEPT_ALL_FILES,
   REJECT_ALL_FILES
 } from '../../shared/ipc/channels'
 import { SessionStore } from '../../runtime/sessions/SessionStore'
-import { rejectFile, revertToMessage, listManifests } from '../../runtime/checkpoints/restore'
+import { rejectFile } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
 import { setCurrentMode, setCurrentProjectPath, getMainWindow } from '../index'
-import type { Session, SessionDetail, Message } from '../../shared/session'
+import type { Session, SessionDetail, Message, BranchMeta } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
+import { getSessionActiveMessages, attachBranchMeta, ensureMessageParentChain, resolveCurrentLeafId } from '../../runtime/sessions/tree'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
@@ -41,20 +40,22 @@ import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messageP
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
 
-/** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果 */
-function toMessage(msg: SessionMessage): Message & { _toolCallResults?: Record<string, string> } {
-  return toSharedMessage(msg)
+/** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果与分支元信息 */
+function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
+  const shared = toSharedMessage(msg)
+  return msg.branch ? { ...shared, branch: msg.branch } : shared
 }
 
 /** 将持久化 SessionData 转换为共享 Session 摘要格式 */
 function toSessionSummary(data: SessionData): Session {
+  const activeMessages = getSessionActiveMessages(data)
   return {
     id: data.id,
     workspaceRoot: data.workspaceRoot,
     mode: data.mode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
-    messageCount: data.messages.length
+    messageCount: activeMessages.length
   }
 }
 
@@ -85,10 +86,14 @@ function pushContextBreakdownForSession(session: SessionData): void {
 /** 将持久化 SessionData 转换为共享 SessionDetail 格式（含消息历史） */
 function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): SessionDetail {
   const tailOnly = options?.tailOnly ?? false
-  const totalCount = data.messages.length
+  const activeMessages = getSessionActiveMessages(data)
+  const totalCount = activeMessages.length
   const sourceMessages = tailOnly
-    ? data.messages.slice(-INITIAL_SESSION_DISPLAY_PAGE_SIZE)
-    : data.messages
+    ? activeMessages.slice(-INITIAL_SESSION_DISPLAY_PAGE_SIZE)
+    : activeMessages
+  const allMessages = ensureMessageParentChain(data.messages)
+  const withBranch = attachBranchMeta(sourceMessages, allMessages)
+  const currentLeafId = resolveCurrentLeafId(allMessages, data.currentLeafId)
 
   return {
     id: data.id,
@@ -98,7 +103,8 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     updatedAt: data.updatedAt,
     messageCount: totalCount,
     hasMoreMessagesAbove: tailOnly ? totalCount > sourceMessages.length : undefined,
-    messages: sourceMessages.map(msg => ({
+    currentLeafId,
+    messages: withBranch.map(msg => ({
       ...toMessage(msg),
       sessionId: data.id
     }))
@@ -254,52 +260,6 @@ export function registerSessionHandler(): void {
       manifest.fileReviews[params.filePath] = 'rejected'
       writeManifest(checkpointRoot, manifest)
     }
-  })
-
-  // 按消息回退：回退到某条消息之前的状态
-  ipcMain.handle(ROLLBACK_MESSAGE, async (
-    _event,
-    params: { sessionId: string; messageId: string }
-  ) => {
-    // 使用会话绑定的 workspaceRoot 而非全局 currentProjectPath
-    const session = sessionStore.load(params.sessionId)
-    if (!session) {
-      throw new Error(`会话 ${params.sessionId} 不存在`)
-    }
-
-    const checkpointRoot = sessionStore.getSessionsDir()
-
-    // 1. 收集该会话所有 active 状态的 manifest
-    const allManifests = listManifests(checkpointRoot, params.sessionId)
-
-    // 2. 执行物理回退（恢复文件、删除 checkpoint 目录）
-    const success = revertToMessage(
-      checkpointRoot,
-      session.workspaceRoot,
-      params.sessionId,
-      params.messageId,
-      allManifests
-    )
-
-    if (!success) {
-      throw new Error('回退失败：找不到目标消息对应的 checkpoint')
-    }
-
-    // 3. 从会话数据中删除该消息及之后的所有消息
-    const targetIdx = session.messages.findIndex(m => m.id === params.messageId)
-    if (targetIdx !== -1) {
-      session.messages = session.messages.slice(0, targetIdx)
-      session.updatedAt = Date.now()
-      sessionStore.save(session)
-      // 历史截断后锚点失效，清除过期上下文快照
-      sessionStore.clearContextSnapshot(params.sessionId)
-    }
-
-    // 4. 清空 readState：磁盘文件已回退到旧版本，readState 里"已读过"的快照
-    // 反映的是回退前的内容，会误导后续 edit 的"外部修改"校验，必须丢弃。
-    // I2 修复：之前的实现只回退 session 数据 + 磁盘文件，readState 仍指向新版本，
-    // 导致用户回退后继续 edit 会得到错误的 stale 判定或悄悄跳过 stale 校验。
-    getMainReadState().clear()
   })
 }
 

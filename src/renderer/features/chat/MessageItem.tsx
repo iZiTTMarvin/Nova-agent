@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { DiffViewer } from '../diff/DiffViewer'
@@ -15,7 +15,7 @@ import { ToolCallGroup } from './ToolCallGroup'
 import { buildBlockRenderUnits, buildToolCallRenderUnits } from './toolCallGrouping'
 import { renderToolBlock } from './renderToolBlock'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
-import { UndoIcon } from '../../components/Icons'
+import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock, MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
@@ -41,9 +41,17 @@ export interface MessageItemProps {
   currentGeneratingMessageId: string | null
   currentMode: Mode
   currentSessionId: string | null
-  onRollback: (messageId: string) => void
-  /** 该消息回滚失败时的错误提示；存在时回退按钮应置灰并展示 Tooltip */
+  /** Tier 1：工作区未重放此分支文件改动，diff 仅作历史展示 */
+  tier1DiffStale?: boolean
+  onRegenerate: (messageId: string) => void
+  /** 该消息操作失败时的错误提示；存在时操作按钮应置灰并展示 Tooltip */
   rollbackError?: string
+  /** 含图等暂不支持 regenerate 时禁用重生成按钮 */
+  regenerateBlocked?: boolean
+  /** 切换到兄弟分支（翻页器） */
+  onSwitchBranch?: (targetMessageId: string) => void
+  /** 编辑用户消息并重发：分叉出新分支（保留旧分支），随后流式生成新回答 */
+  onEditResend?: (messageId: string, newContent: string) => void
   onAcceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   onRejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   /** PRD §5.3：批量接受 */
@@ -119,8 +127,12 @@ function MessageItemInner({
   currentGeneratingMessageId,
   currentMode,
   currentSessionId,
-  onRollback,
+  onRegenerate,
+  regenerateBlocked = false,
+  tier1DiffStale = false,
   rollbackError,
+  onSwitchBranch,
+  onEditResend,
   onAcceptFile,
   onRejectFile,
   onAcceptAllFiles,
@@ -134,6 +146,10 @@ function MessageItemInner({
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user'
   const isStaticRow = renderMode === 'static'
+
+  // 用户消息编辑态（编辑重发）：本地受控，确认后调用 onEditResend 走分叉重发
+  const [isEditing, setIsEditing] = useState(false)
+  const [editText, setEditText] = useState('')
 
   // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停；static 行强制关闭。
   const streamingActive = isGenerating && !isPausedForInput && !isStaticRow
@@ -179,12 +195,64 @@ function MessageItemInner({
         {isAssistant && !isGenerating && (
           <div className="chat-msg__actions">
             <button
-              className={`chat-msg__action-btn${rollbackError ? ' chat-msg__action-btn--disabled' : ''}`}
-              onClick={() => onRollback(msg.id)}
-              disabled={!!rollbackError}
-              title={rollbackError ? `无法回退：${rollbackError}` : '回退到此消息之前的状态'}
+              className={`chat-msg__action-btn${rollbackError || regenerateBlocked ? ' chat-msg__action-btn--disabled' : ''}`}
+              onClick={() => onRegenerate(msg.id)}
+              disabled={!!rollbackError || regenerateBlocked}
+              title={
+                rollbackError
+                  ? `无法重新生成：${rollbackError}`
+                  : regenerateBlocked
+                    ? '重新生成暂不支持含图片的消息'
+                    : '重新生成此回答（保留原分支）'
+              }
             >
-              <UndoIcon size={13} />
+              <RegenerateIcon size={13} />
+            </button>
+          </div>
+        )}
+
+        {/* 兄弟分支翻页器：‹ k/n › */}
+        {msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating && (
+          <div className="chat-msg__branch-flipper">
+            <button
+              type="button"
+              className="chat-msg__branch-btn"
+              disabled={msg.branch.index <= 1 || !!rollbackError}
+              onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index - 2]!)}
+              title="上一条分支"
+              aria-label="上一条分支"
+            >
+              ‹
+            </button>
+            <span className="chat-msg__branch-label">
+              {msg.branch.index} / {msg.branch.total}
+            </span>
+            <button
+              type="button"
+              className="chat-msg__branch-btn"
+              disabled={msg.branch.index >= msg.branch.total || !!rollbackError}
+              onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index]!)}
+              title="下一条分支"
+              aria-label="下一条分支"
+            >
+              ›
+            </button>
+          </div>
+        )}
+
+        {/* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */}
+        {isUser && !isGenerating && !isEditing && onEditResend && userImageBlocks.length === 0 && (
+          <div className="chat-msg__actions">
+            <button
+              className={`chat-msg__action-btn${rollbackError ? ' chat-msg__action-btn--disabled' : ''}`}
+              onClick={() => {
+                setEditText(typeof textContent === 'string' ? textContent : '')
+                setIsEditing(true)
+              }}
+              disabled={!!rollbackError}
+              title={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
+            >
+              <EditIcon size={13} />
             </button>
           </div>
         )}
@@ -252,7 +320,53 @@ function MessageItemInner({
             {thinkingContent && (
               <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
             )}
-            {textContent && <MarkdownRenderer content={textContent} isStreaming={isTurnActiveForThisMsg} />}
+            {textContent && !(isUser && isEditing) && <MarkdownRenderer content={textContent} isStreaming={isTurnActiveForThisMsg} />}
+            {isUser && isEditing && (
+              <div className="chat-msg__edit">
+                <textarea
+                  className="chat-msg__edit-input"
+                  value={editText}
+                  onChange={e => setEditText(e.target.value)}
+                  autoFocus
+                  rows={Math.min(10, Math.max(2, editText.split('\n').length))}
+                  onKeyDown={e => {
+                    // Esc 取消；Ctrl/⌘+Enter 确认重发
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setIsEditing(false)
+                    } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault()
+                      const t = editText.trim()
+                      if (t) {
+                        setIsEditing(false)
+                        onEditResend?.(msg.id, t)
+                      }
+                    }
+                  }}
+                />
+                <div className="chat-msg__edit-actions">
+                  <button
+                    className="chat-msg__edit-btn chat-msg__edit-btn--cancel"
+                    onClick={() => setIsEditing(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="chat-msg__edit-btn chat-msg__edit-btn--confirm"
+                    disabled={!editText.trim()}
+                    onClick={() => {
+                      const t = editText.trim()
+                      if (t) {
+                        setIsEditing(false)
+                        onEditResend?.(msg.id, t)
+                      }
+                    }}
+                  >
+                    重发
+                  </button>
+                </div>
+              </div>
+            )}
             {msg.toolCalls && msg.toolCalls.length > 0 && (
               <div style={{ marginTop: '12px' }}>
                 {buildToolCallRenderUnits(msg.toolCalls, currentMode).map((unit) => {
@@ -301,6 +415,7 @@ function MessageItemInner({
             messageId={msg.id}
             isLoading={true}
             loadingPlaceholders={diffPlaceholders}
+            tier1Stale={tier1DiffStale}
           />
         )}
 
@@ -314,10 +429,11 @@ function MessageItemInner({
             skippedFiles={diffCache.skippedFiles}
             sessionId={currentSessionId}
             messageId={msg.id}
-            onRejectFile={(filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
-            onAcceptFile={(filePath) => onAcceptFile(currentSessionId, msg.id, filePath)}
-            {...(onAcceptAllFiles ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
-            {...(onRejectAllFiles ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
+            tier1Stale={tier1DiffStale}
+            onRejectFile={tier1DiffStale ? undefined : (filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
+            onAcceptFile={tier1DiffStale ? undefined : (filePath) => onAcceptFile(currentSessionId, msg.id, filePath)}
+            {...(onAcceptAllFiles && !tier1DiffStale ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
+            {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
           />
         )}
 
@@ -345,8 +461,14 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.currentGeneratingMessageId === next.currentGeneratingMessageId &&
     prev.currentMode === next.currentMode &&
     prev.currentSessionId === next.currentSessionId &&
-    prev.onRollback === next.onRollback &&
+    prev.onRegenerate === next.onRegenerate &&
+    prev.regenerateBlocked === next.regenerateBlocked &&
+    prev.tier1DiffStale === next.tier1DiffStale &&
     prev.rollbackError === next.rollbackError &&
+    prev.onSwitchBranch === next.onSwitchBranch &&
+    prev.msg.branch?.index === next.msg.branch?.index &&
+    prev.msg.branch?.total === next.msg.branch?.total &&
+    prev.onEditResend === next.onEditResend &&
     prev.onAcceptFile === next.onAcceptFile &&
     prev.onRejectFile === next.onRejectFile &&
     prev.onAcceptAllFiles === next.onAcceptAllFiles &&

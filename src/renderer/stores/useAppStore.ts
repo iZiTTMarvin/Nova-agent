@@ -76,7 +76,9 @@ export interface AppState {
   selectSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
   createNewSession: (workspaceRoot?: string) => Promise<void>
-  rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
+  regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
+  switchBranch: (sessionId: string, targetMessageId: string) => Promise<void>
+  editResend: (sessionId: string, messageId: string, newContent: string) => Promise<void>
   rejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
   acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
@@ -173,7 +175,9 @@ function mergeState(
     selectSession: chat.selectSession,
     deleteSession: chat.deleteSession,
     createNewSession: chat.createNewSession,
-    rollbackMessage: chat.rollbackMessage,
+    regenerateAssistant: chat.regenerateAssistant,
+    switchBranch: chat.switchBranch,
+    editResend: chat.editResend,
     rejectFile: chat.rejectFile,
     loadMessageDiffs: chat.loadMessageDiffs,
     acceptFile: chat.acceptFile,
@@ -248,7 +252,9 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   selectSession: 'chat',
   deleteSession: 'chat',
   createNewSession: 'chat',
-  rollbackMessage: 'chat',
+  regenerateAssistant: 'chat',
+  switchBranch: 'chat',
+  editResend: 'chat',
   rejectFile: 'chat',
   loadMessageDiffs: 'chat',
   acceptFile: 'chat',

@@ -14,7 +14,7 @@
  * action 不直接 setState（避免与广播双写产生歧义）。
  */
 import { create } from 'zustand'
-import type { Mode, Session } from '../../shared/session/types'
+import type { Mode, Session, BranchMeta } from '../../shared/session/types'
 import type { WorkspaceState } from '../../shared/workspace/types'
 
 export interface WorkspaceStoreState {
@@ -39,8 +39,14 @@ export interface WorkspaceStoreState {
   selectSession: (sessionId: string) => Promise<void>
   /** 切换模式 */
   setMode: (mode: Mode) => Promise<void>
-  /** 回滚消息 */
-  rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
+  /** 重新生成助手消息的分叉准备 */
+  prepareRegenerate: (sessionId: string, messageId: string) => Promise<void>
+  /** 切换到兄弟分支 */
+  switchBranch: (sessionId: string, targetMessageId: string) => Promise<void>
+  /** 递增 messagesRevision，触发同会话消息重拉 */
+  bumpMessagesRevision: () => Promise<void>
+  /** 编辑用户消息并重发的分叉准备（undo 文件 + 倒回 currentLeafId 到分叉点） */
+  prepareEditResend: (sessionId: string, messageId: string) => Promise<void>
 }
 
 export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
@@ -112,16 +118,29 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
     }
   },
 
-  rollbackMessage: async (sessionId: string, messageId: string) => {
-    try {
-      const state = await window.api.invoke('workspace:rollback-message', { sessionId, messageId })
-      const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
-      dispatchWorkspaceChange(state)
-    } catch (err) {
-      console.error('[useWorkspaceStore] 回滚消息失败:', err)
-      // 交给调用方处理，使其可以置灰按钮并展示 Tooltip 提示
-      throw err
-    }
+  prepareRegenerate: async (sessionId: string, messageId: string) => {
+    const state = await window.api.invoke('workspace:regenerate', { sessionId, messageId })
+    const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+    dispatchWorkspaceChange(state)
+  },
+
+  switchBranch: async (sessionId: string, targetMessageId: string) => {
+    const state = await window.api.invoke('workspace:switch-branch', { sessionId, targetMessageId })
+    const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+    dispatchWorkspaceChange(state)
+  },
+
+  bumpMessagesRevision: async () => {
+    const state = await window.api.invoke('workspace:bump-messages-revision')
+    const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+    dispatchWorkspaceChange(state)
+  },
+
+  prepareEditResend: async (sessionId: string, messageId: string) => {
+    // 不吞错：失败时让调用方（useChatStore.editResend）据此中止后续乐观截断与发送
+    const state = await window.api.invoke('workspace:edit-resend', { sessionId, messageId })
+    const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+    dispatchWorkspaceChange(state)
   }
 }))
 

@@ -72,6 +72,24 @@ describe('CheckpointManager', () => {
       expect(readFileSync(backupPath, 'utf-8')).toBe('原始内容\n')
     })
 
+    it('endMessage 应将改动后内容写入 forward/（Tier 2）', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'existing.txt')
+      mgr.backupBeforeWrite(filePath, false)
+      writeFileSync(filePath, '改动后内容\n')
+
+      mgr.endMessage()
+
+      const forwardPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'forward', 'existing.txt')
+      expect(existsSync(forwardPath)).toBe(true)
+      expect(readFileSync(forwardPath, 'utf-8')).toBe('改动后内容\n')
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest?.forwardCaptured).toBe(true)
+    })
+
     it('子目录中的文件也能正确备份', () => {
       const mgr = createManager()
       mgr.beginMessage(MESSAGE_ID)

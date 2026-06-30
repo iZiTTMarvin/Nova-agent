@@ -373,6 +373,7 @@ export class AgentLoop implements IdleCompactionTarget {
         messages: this.context
           .filter(m => m.role !== 'system')
           .map(m => this.toSessionMessageForBreakdown(m)),
+        currentLeafId: null,
         frozenSystemPrompt: this.frozenSystemPrompt,
         schemaVersion: 2,
         createdAt: Date.now(),
@@ -394,6 +395,7 @@ export class AgentLoop implements IdleCompactionTarget {
   private toSessionMessageForBreakdown(m: ChatMessage): import('../sessions/types').SessionMessage {
     return {
       id: '',
+      parentId: null,
       role: m.role,
       content: typeof m.content === 'string' ? m.content : extractTextFromContent(m.content),
       toolCalls: m.toolCalls?.map(tc => ({

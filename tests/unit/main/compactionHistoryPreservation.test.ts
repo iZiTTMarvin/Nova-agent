@@ -101,19 +101,18 @@ function legacyOnCompactionOverwrite(
   store.save(compactedSession)
 }
 
-/** 构造带多轮对话 + 工具调用的会话，贴近真实持久化结构 */
+/** 构造带多轮对话 + 工具调用的会话，贴近真实持久化结构（经 appendMessage 写入树链） */
 function makeLongSession(store: SessionStore): SessionData {
   const session = store.create('/tmp/project', 'default')
-  const messages: SessionData['messages'] = []
 
   for (let i = 0; i < 12; i++) {
-    messages.push({
+    store.appendMessage(session.id, {
       id: `user_${i}`,
       role: 'user',
       content: `第 ${i + 1} 轮用户问题：` + 'x'.repeat(500),
       timestamp: i * 10
     })
-    messages.push({
+    store.appendMessage(session.id, {
       id: `assistant_${i}`,
       role: 'assistant',
       content: `第 ${i + 1} 轮助手回复：` + 'y'.repeat(500),
@@ -124,9 +123,7 @@ function makeLongSession(store: SessionStore): SessionData {
     })
   }
 
-  session.messages = messages
-  store.save(session)
-  return session
+  return store.load(session.id)!
 }
 
 /** 注入足以触发阈值压缩的历史（与 AgentLoop.test.ts 压缩用例对齐） */

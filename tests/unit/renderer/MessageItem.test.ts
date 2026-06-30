@@ -4,7 +4,7 @@ import type { MessageItemProps } from '../../../src/renderer/features/chat/Messa
 import type { ExtendedMessage, MessageDiffCache } from '../../../src/renderer/stores/types'
 
 /** 稳定的回调引用，跨 makeProps 调用共享 */
-const stableRollback = async (_messageId: string) => {}
+const stableRegenerate = async (_messageId: string) => {}
 const stableAcceptFile = async (_sid: string, _mid: string, _fp: string) => {}
 const stableRejectFile = async (_sid: string, _mid: string, _fp: string) => {}
 const stableRenderPoolTick = () => {}
@@ -24,7 +24,8 @@ function makeProps(overrides: Partial<MessageItemProps> = {}): MessageItemProps 
     currentGeneratingMessageId: null,
     currentMode: 'default' as const,
     currentSessionId: 'sess_1',
-    onRollback: stableRollback,
+    onRegenerate: stableRegenerate,
+    regenerateBlocked: false,
     onAcceptFile: stableAcceptFile,
     onRejectFile: stableRejectFile,
     onRenderPoolTick: stableRenderPoolTick,
@@ -98,9 +99,9 @@ describe('MessageItem areEqual', () => {
     expect(areEqual(prev, next)).toBe(false)
   })
 
-  it('onRollback 引用不同应返回 false', () => {
+  it('onRegenerate 引用不同应返回 false', () => {
     const prev = makeProps()
-    const next = makeProps({ onRollback: () => {} })
+    const next = makeProps({ onRegenerate: () => {} })
     expect(areEqual(prev, next)).toBe(false)
   })
 

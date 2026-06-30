@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useAppStore } from '../../../src/renderer/stores/useAppStore'
+import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 import { resetWorkspaceDispatcherForTests } from '../../../src/renderer/stores/workspaceDispatcher'
 
@@ -20,24 +21,30 @@ global.window = {
 
 /**
  * 构造一个 WorkspaceState 广播载荷（PRD §5.1 新架构）。
- * selectSession / rollbackMessage / setMode 等操作的主进程返回值都是这个结构。
+ * selectSession / regenerateAssistant / switchBranch / setMode 等操作的主进程返回值都是这个结构。
  */
 function makeWorkspaceState(overrides: Partial<{
   currentSessionId: string | null
   currentProjectPath: string | null
   currentMode: 'plan' | 'default' | 'auto'
   availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'auto'; createdAt: number; updatedAt: number; messageCount: number }>
+  messagesRevision: number
+  tier1BranchContext: null
 }> = {}): {
   currentSessionId: string | null
   currentProjectPath: string | null
   currentMode: 'plan' | 'default' | 'auto'
   availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'auto'; createdAt: number; updatedAt: number; messageCount: number }>
+  messagesRevision: number
+  tier1BranchContext: null
 } {
   return {
     currentSessionId: null,
     currentProjectPath: '/project/root',
     currentMode: 'default',
     availableSessions: [],
+    messagesRevision: 0,
+    tier1BranchContext: null,
     ...overrides
   }
 }
@@ -47,6 +54,7 @@ describe('useAppStore Zustand Store', () => {
     vi.clearAllMocks()
 
     // 重置 store 状态到默认值
+    resetChatStoreForTests()
     useAppStore.setState({
       currentProject: null,
       currentMode: 'default',
@@ -317,10 +325,9 @@ describe('useAppStore Zustand Store', () => {
     expect(message.blocks).toEqual([{ type: 'text', content: '真正正文' }])
   })
 
-  it('回退后重新加载会话时应复用同一套工具结果恢复逻辑', async () => {
-    // PRD §5.1 新链路：workspace:rollback-message（WorkspaceState）→ load-session（SessionDetail）
+  it('切换分支后重新加载会话时应复用同一套工具结果恢复逻辑', async () => {
     mockInvoke
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_1', currentMode: 'auto' }))
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_1', currentMode: 'auto', messagesRevision: 1 }))
       .mockResolvedValueOnce({
         id: 'sess_1',
         workspaceRoot: '/project/root',
@@ -349,12 +356,12 @@ describe('useAppStore Zustand Store', () => {
         ]
       })
 
-    await useAppStore.getState().rollbackMessage('sess_1', 'msg_user_1')
+    await useAppStore.getState().switchBranch('sess_1', 'msg_user_2')
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:rollback-message', {
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:switch-branch', {
       sessionId: 'sess_1',
-      messageId: 'msg_user_1'
+      targetMessageId: 'msg_user_2'
     })
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'load-session', { sessionId: 'sess_1' })
 
@@ -362,6 +369,228 @@ describe('useAppStore Zustand Store', () => {
     expect(state.currentMode).toBe('auto')
     expect(state.messages[0].toolCalls?.[0].result).toBe('构建成功')
     expect(state.messages[0].toolCalls?.[0].status).toBe('success')
+  })
+
+  it('同会话切换分支时 messagesRevision 递增应触发重拉消息', async () => {
+    const { dispatchWorkspaceChange } = await import('../../../src/renderer/stores/workspaceDispatcher')
+
+    // 先选中会话并加载首屏
+    mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_rev', messagesRevision: 0 }))
+      .mockResolvedValueOnce({
+        id: 'sess_rev',
+        workspaceRoot: '/project/root',
+        mode: 'default',
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 2,
+        messages: [
+          { id: 'u1', sessionId: 'sess_rev', role: 'user', content: '旧', timestamp: 1 },
+          { id: 'a1', sessionId: 'sess_rev', role: 'assistant', content: '答', timestamp: 2 }
+        ]
+      })
+
+    await useAppStore.getState().selectSession('sess_rev')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(useAppStore.getState().messages).toHaveLength(2)
+    expect(useChatStore.getState().lastMessagesRevision).toBe(0)
+
+    mockInvoke.mockClear()
+    mockInvoke.mockResolvedValueOnce({
+      id: 'sess_rev',
+      workspaceRoot: '/project/root',
+      mode: 'default',
+      createdAt: 1,
+      updatedAt: 3,
+      messageCount: 1,
+      messages: [
+        { id: 'u1', sessionId: 'sess_rev', role: 'user', content: '旧', timestamp: 1 }
+      ]
+    })
+
+    dispatchWorkspaceChange(makeWorkspaceState({ currentSessionId: 'sess_rev', messagesRevision: 1 }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(mockInvoke).toHaveBeenCalledWith('load-session', { sessionId: 'sess_rev' })
+    expect(useAppStore.getState().messages).toHaveLength(1)
+    expect(useAppStore.getState().messages[0].id).toBe('u1')
+  })
+
+  it('editResend 应先分叉准备再发送新内容', async () => {
+    useWorkspaceStore.setState({
+      currentSessionId: 'sess_edit',
+      currentProjectPath: '/project/root',
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: true
+    })
+    useAppStore.setState({
+      currentProject: '/project/root',
+      currentSessionId: 'sess_edit',
+      messages: [
+        { id: 'u1', sessionId: 'sess_edit', role: 'user', content: '你好', timestamp: 1, _revision: 0 },
+        { id: 'a1', sessionId: 'sess_edit', role: 'assistant', content: '嗨', timestamp: 2, _revision: 0 }
+      ],
+      messageIndexById: { u1: 0, a1: 1 }
+    })
+    useChatStore.setState({ lastMessagesRevision: 0 })
+
+    mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_edit', messagesRevision: 0 }))
+      .mockResolvedValueOnce(undefined) // send-message
+
+    await useAppStore.getState().editResend('sess_edit', 'u1', '你好呀')
+
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:edit-resend', {
+      sessionId: 'sess_edit',
+      messageId: 'u1'
+    })
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'send-message', expect.objectContaining({
+      sessionId: 'sess_edit',
+      content: '你好呀',
+      userMessageId: expect.stringMatching(/^msg_\d+_user$/)
+    }))
+    // 乐观截断后 sendMessage 会追加新用户消息
+    const after = useAppStore.getState()
+    expect(after.messages).toHaveLength(1)
+    expect(after.messages[0].content).toBe('你好呀')
+    expect(after.messages[0].role).toBe('user')
+    // IPC 携带的 userMessageId 须与界面乐观消息 id 一致
+    const sendCall = mockInvoke.mock.calls[1]?.[1] as { userMessageId?: string }
+    expect(sendCall.userMessageId).toBe(after.messages[0].id)
+  })
+
+  it('sendMessage 应向主进程传递与乐观 UI 相同的 userMessageId', async () => {
+    useWorkspaceStore.setState({
+      currentSessionId: 'sess_send',
+      currentProjectPath: '/project/root',
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: true
+    })
+    useChatStore.setState({
+      currentSessionId: 'sess_send',
+      messages: [],
+      messageIndexById: {}
+    })
+    mockInvoke.mockResolvedValue(undefined)
+
+    await useChatStore.getState().sendMessage('你好')
+
+    const userMsg = useChatStore.getState().messages[0]
+    expect(userMsg?.role).toBe('user')
+    expect(mockInvoke).toHaveBeenCalledWith('send-message', expect.objectContaining({
+      sessionId: 'sess_send',
+      content: '你好',
+      userMessageId: userMsg!.id
+    }))
+  })
+
+  it('regenerateAssistant 应先分叉准备再以 regenerate 模式发送', async () => {
+    useWorkspaceStore.setState({
+      currentSessionId: 'sess_regen',
+      currentProjectPath: '/project/root',
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: true
+    })
+    useAppStore.setState({
+      currentProject: '/project/root',
+      currentSessionId: 'sess_regen',
+      messages: [
+        { id: 'u1', sessionId: 'sess_regen', role: 'user', content: '你好', timestamp: 1, _revision: 0 },
+        { id: 'a1', sessionId: 'sess_regen', role: 'assistant', content: '嗨', timestamp: 2, _revision: 0 }
+      ],
+      messageIndexById: { u1: 0, a1: 1 }
+    })
+
+    mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_regen', messagesRevision: 0 }))
+      .mockResolvedValueOnce(undefined)
+
+    await useAppStore.getState().regenerateAssistant('sess_regen', 'a1')
+
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:regenerate', {
+      sessionId: 'sess_regen',
+      messageId: 'a1'
+    })
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'send-message', {
+      sessionId: 'sess_regen',
+      content: '',
+      regenerate: true
+    })
+    expect(useAppStore.getState().messages).toHaveLength(1)
+    expect(useAppStore.getState().messages[0].id).toBe('u1')
+  })
+
+  it('finishBranchMetaRefresh 应在 pending 时 bump revision 并触发 load-session', async () => {
+    mockInvoke.mockReset()
+    useWorkspaceStore.setState({
+      currentSessionId: 'sess_branch',
+      currentProjectPath: '/project/root',
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: true
+    })
+    useChatStore.setState({
+      currentSessionId: 'sess_branch',
+      lastMessagesRevision: 0,
+      pendingBranchMetaReload: true,
+      messages: [{ id: 'u1', sessionId: 'sess_branch', role: 'user', content: 'x', timestamp: 1, _revision: 0 }],
+      messageIndexById: { u1: 0 }
+    })
+
+    mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_branch', messagesRevision: 1 }))
+      .mockResolvedValueOnce({
+        id: 'sess_branch',
+        messages: [
+          { id: 'u1', sessionId: 'sess_branch', role: 'user', content: 'x', timestamp: 1, branch: { index: 1, total: 2, siblingIds: ['u1', 'u2'] } }
+        ],
+        hasMoreMessagesAbove: false
+      })
+
+    await useChatStore.getState().finishBranchMetaRefresh()
+
+    expect(mockInvoke).toHaveBeenCalledWith('workspace:bump-messages-revision')
+    expect(useChatStore.getState().pendingBranchMetaReload).toBe(false)
+    expect(useChatStore.getState().lastMessagesRevision).toBe(1)
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().messages[0]?.branch?.total).toBe(2)
+    })
+  })
+
+  it('editResend send 失败时应 await finishBranchMetaRefresh 对齐主进程', async () => {
+    mockInvoke.mockReset()
+    useWorkspaceStore.setState({
+      currentSessionId: 'sess_fail',
+      currentProjectPath: '/project/root',
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: true
+    })
+    useChatStore.setState({
+      currentSessionId: 'sess_fail',
+      lastMessagesRevision: 0,
+      messages: [
+        { id: 'u1', sessionId: 'sess_fail', role: 'user', content: '你好', timestamp: 1, _revision: 0 },
+        { id: 'a1', sessionId: 'sess_fail', role: 'assistant', content: '嗨', timestamp: 2, _revision: 0 }
+      ],
+      messageIndexById: { u1: 0, a1: 1 }
+    })
+
+    mockInvoke
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_fail', messagesRevision: 0 }))
+      .mockRejectedValueOnce(new Error('send failed'))
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_fail', messagesRevision: 1 }))
+      .mockResolvedValueOnce({ id: 'sess_fail', messages: [], hasMoreMessagesAbove: false })
+
+    await useAppStore.getState().editResend('sess_fail', 'u1', '你好呀')
+
+    expect(mockInvoke).toHaveBeenCalledWith('workspace:bump-messages-revision')
+    expect(useChatStore.getState().pendingBranchMetaReload).toBe(false)
+    expect(useChatStore.getState().branchForkInProgress).toBe(false)
+    expect(useChatStore.getState().isGenerating).toBe(false)
   })
 
   it('loadMessageDiffs 应缓存 diff 与审查状态', async () => {

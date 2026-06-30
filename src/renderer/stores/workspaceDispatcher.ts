@@ -36,7 +36,9 @@ export function dispatchWorkspaceChange(state: WorkspaceState): void {
   // 1. chat store：同步 sessions + currentSessionId（内部按需重载消息）
   useChatStore.getState().syncFromWorkspace({
     currentSessionId: state.currentSessionId,
-    availableSessions: state.availableSessions
+    availableSessions: state.availableSessions,
+    messagesRevision: state.messagesRevision,
+    tier1BranchContext: state.tier1BranchContext
   })
 
   // 2. settings store：同步镜像（currentProject / currentMode）

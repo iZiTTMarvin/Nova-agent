@@ -11,7 +11,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, statS
 import { join, relative, dirname } from 'path'
 import type { CheckpointConfig, CheckpointManifest } from './types'
 import type { SkippedFileInfo } from '../../shared/diff/types'
-import { writeManifest, readManifest, getFilesDir } from './manifest'
+import { writeManifest, readManifest, getFilesDir, getForwardDir } from './manifest'
 import { isExcludedPath } from './exclusions'
 import { pruneOldCheckpoints } from './prune'
 
@@ -69,7 +69,8 @@ export class CheckpointManager {
       pruneOldCheckpoints(
         this.config.checkpointDir,
         this.config.sessionId,
-        keepRecent - 1
+        keepRecent - 1,
+        this.config.getActivePathMessageIds?.()
       )
     }
   }
@@ -231,10 +232,50 @@ export class CheckpointManager {
     }
   }
 
-  /** 结束当前消息事务，更新 manifest 状态 */
+  /** 结束当前消息事务，捕获 forward 快照后清理内存态 */
   endMessage(): void {
+    if (this.currentMessageId) {
+      this.captureForwardSnapshot(this.currentMessageId)
+    }
     this.currentMessageId = null
     this.backedUpFiles.clear()
+  }
+
+  /**
+   * Tier 2：在消息结束时把改动后工作区内容写入 forward/，供切分支正向重放。
+   * 跳过 excluded/oversized 条目（与 reverse 备份策略一致，无法无损重放）。
+   */
+  private captureForwardSnapshot(messageId: string): void {
+    const manifest = readManifest(
+      this.config.checkpointDir,
+      this.config.sessionId,
+      messageId
+    )
+    if (!manifest || manifest.status !== 'active') return
+
+    const hasChanges =
+      manifest.createdFiles.length > 0
+      || manifest.modifiedFiles.length > 0
+      || manifest.deletedFiles.length > 0
+    if (!hasChanges) return
+
+    const skippedPaths = new Set((manifest.skippedFiles ?? []).map(s => s.path))
+    const forwardDir = getForwardDir(
+      this.config.checkpointDir,
+      this.config.sessionId,
+      messageId
+    )
+
+    for (const relPath of [...manifest.modifiedFiles, ...manifest.createdFiles]) {
+      if (skippedPaths.has(relPath)) continue
+      const absPath = join(this.config.workspaceRoot, relPath)
+      if (!existsSync(absPath)) continue
+      mkdirSync(dirname(join(forwardDir, relPath)), { recursive: true })
+      copyFileSync(absPath, join(forwardDir, relPath))
+    }
+
+    manifest.forwardCaptured = true
+    writeManifest(this.config.checkpointDir, manifest)
   }
 
   /**

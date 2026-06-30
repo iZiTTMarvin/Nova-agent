@@ -15,7 +15,7 @@ import type { SessionData, SessionMessage } from './types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE } from './types'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 3
+export const CURRENT_SESSION_SCHEMA_VERSION = 4
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -43,6 +43,7 @@ function migrateV0ToV1(data: unknown): SessionData {
       ? raw.mode
       : 'default') as SessionData['mode'],
     messages,
+    currentLeafId: messages.at(-1)?.id ?? null,
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now()
   }
@@ -63,6 +64,10 @@ function normalizeMessageV0(msg: unknown): SessionMessage {
   const m = (msg ?? {}) as Record<string, unknown>
   return {
     id: typeof m.id === 'string' ? m.id : '',
+    parentId:
+      typeof m.parentId === 'string' || m.parentId === null
+        ? m.parentId
+        : null,
     role: (m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool'
       ? m.role
       : 'assistant') as SessionMessage['role'],
@@ -106,11 +111,33 @@ function migrateV2ToV3(data: unknown): SessionData {
   }
 }
 
+/**
+ * v3 → v4：线性消息链升级为树结构。
+ *
+ * 按原 messages 数组顺序串 parentId 链，currentLeafId 指向末条。
+ * messages.jsonl 的物理重写由 migrateSessionFile 完成。
+ */
+export function migrateV3ToV4(data: unknown): SessionData {
+  const session = data as SessionData
+  const messages = session.messages.map((msg, i) => ({
+    ...msg,
+    parentId: i === 0 ? null : session.messages[i - 1]!.id
+  }))
+
+  return {
+    ...session,
+    schemaVersion: 4,
+    messages,
+    currentLeafId: messages.at(-1)?.id ?? null
+  }
+}
+
 /** 迁移函数链：索引 = 起始版本 */
 const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV0ToV1, // v0 → v1
   migrateV1ToV2, // v1 → v2
-  migrateV2ToV3  // v2 → v3
+  migrateV2ToV3, // v2 → v3
+  migrateV3ToV4  // v3 → v4
 ]
 
 /**
@@ -124,9 +151,20 @@ export function migrateSessionData(data: unknown): SessionData {
   const raw = (data ?? {}) as Record<string, unknown>
   const rawVersion = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0
 
-  // 已经是当前版本：只做轻量补全（确保 schemaVersion 字段存在）
+  // 已经是当前版本：补全树字段后原样返回
   if (rawVersion >= CURRENT_SESSION_SCHEMA_VERSION) {
-    return { ...(raw as unknown as SessionData), schemaVersion: CURRENT_SESSION_SCHEMA_VERSION }
+    const session = raw as unknown as SessionData
+    const messages = Array.isArray(session.messages) ? session.messages : []
+    const withTree =
+      messages.length > 0 && messages.some(m => m.parentId === undefined)
+        ? migrateV3ToV4({ ...session, messages }).messages
+        : messages
+    return {
+      ...session,
+      messages: withTree,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      currentLeafId: session.currentLeafId ?? withTree.at(-1)?.id ?? null
+    }
   }
 
   // 从 rawVersion 顺序迁移到 CURRENT
@@ -140,6 +178,9 @@ export function migrateSessionData(data: unknown): SessionData {
 
   const result = current as unknown as SessionData
   result.schemaVersion = CURRENT_SESSION_SCHEMA_VERSION
+  if (result.currentLeafId === undefined) {
+    result.currentLeafId = result.messages.at(-1)?.id ?? null
+  }
   return result
 }
 
@@ -180,11 +221,24 @@ export function migrateSessionFile(
     throw new Error(`会话 ${sessionId} 的 JSON 解析失败，无法迁移: ${(err as Error).message}`)
   }
 
-  // 已经是当前版本：不写盘
   const rawObj = (parsed ?? {}) as Record<string, unknown>
   const rawVersion = typeof rawObj.schemaVersion === 'number' ? rawObj.schemaVersion : 0
+
+  // v3+ 消息体在 messages.jsonl：迁移前合并进内存，供 v3→v4 补 parentId
+  let inputForMigration: unknown = parsed
+  if (rawVersion < CURRENT_SESSION_SCHEMA_VERSION) {
+    const inlineMessages = Array.isArray(rawObj.messages) ? rawObj.messages : []
+    if (inlineMessages.length === 0) {
+      const fromJsonl = readMessagesJsonlForMigration(sessionsDir, sessionId)
+      if (fromJsonl.length > 0) {
+        inputForMigration = { ...rawObj, messages: fromJsonl }
+      }
+    }
+  }
+
+  // 已经是当前版本：不写盘
   if (rawVersion >= CURRENT_SESSION_SCHEMA_VERSION) {
-    return migrateSessionData(parsed)
+    return migrateSessionData(inputForMigration)
   }
 
   // 迁移前备份（覆盖式：同一 session 重复迁移只保留最新备份，避免堆积）
@@ -200,7 +254,7 @@ export function migrateSessionFile(
   }
 
   // 执行迁移：migrateSessionData 会把任意旧版本补齐为完整 SessionData（含 messages）
-  const migrated = migrateSessionData(parsed)
+  const migrated = migrateSessionData(inputForMigration)
 
   // 需要把 messages 拆出到 messages.jsonl（无论原始版本是 v0/v1/v2，migrated.messages 都完整）
   const messages = migrated.messages
@@ -227,5 +281,32 @@ export function migrateSessionFile(
   }
 
   return migrated
+}
+
+/** 迁移时从 messages.jsonl 读取消息（与 SessionStore 读逻辑同构，避免循环依赖） */
+function readMessagesJsonlForMigration(
+  sessionsDir: string,
+  sessionId: string
+): SessionMessage[] {
+  const filePath = path.join(sessionsDir, sessionId, SESSION_MESSAGES_FILE)
+  if (!fs.existsSync(filePath)) return []
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf8')
+    if (!content.trim()) return []
+
+    const messages: SessionMessage[] = []
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        messages.push(JSON.parse(line) as SessionMessage)
+      } catch {
+        // 损坏行跳过
+      }
+    }
+    return messages
+  } catch {
+    return []
+  }
 }
 

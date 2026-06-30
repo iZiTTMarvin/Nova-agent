@@ -417,6 +417,141 @@
   transform: none;
 }
 
+/* ── 用户消息编辑重发 ────────────────────────────────────── */
+.chat-msg__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.chat-msg__edit-input {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 8px 10px;
+  border: 1px solid var(--border-cream);
+  border-radius: 8px;
+  background: var(--bg-surface, #fff);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.chat-msg__edit-input:focus {
+  outline: none;
+  border-color: var(--color-brand, #c96442);
+  box-shadow: 0 0 0 2px var(--color-brand-dim, rgba(201, 100, 66, 0.15));
+}
+
+.chat-msg__edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chat-msg__edit-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  border: 1px solid var(--border-cream);
+  background: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.chat-msg__edit-btn--confirm {
+  border-color: var(--color-brand, #c96442);
+  background: var(--color-brand, #c96442);
+  color: #fff;
+}
+
+.chat-msg__edit-btn--confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-msg__edit-btn--cancel:hover {
+  background: var(--bg-cream);
+}
+
+.chat-msg__edit-btn--confirm:not(:disabled):hover {
+  filter: brightness(1.05);
+}
+
+/* ── 兄弟分支翻页器 ‹ k/n › ─────────────────────────────── */
+.chat-msg__branch-flipper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  user-select: none;
+}
+
+.chat-msg__branch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-subtle, #ddd);
+  border-radius: 4px;
+  background: var(--bg-surface, #fff);
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.chat-msg__branch-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-msg__branch-btn:not(:disabled):hover {
+  background: var(--bg-cream, #f5f5f0);
+}
+
+.chat-msg__branch-label {
+  min-width: 2.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Tier 1 切分支提示横幅 ─────────────────────────────────── */
+.chat-tier1-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, #d8d4c8);
+  background: var(--bg-cream, #f8f6f0);
+  font-size: 0.82rem;
+  color: var(--text-secondary, #5c5c5c);
+}
+
+.chat-tier1-notice__dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0 4px;
+}
+
+.chat-tier1-notice__dismiss:hover {
+  opacity: 1;
+}
+
 /* ── 验证结果摘要 ────────────────────────────────────────── */
 .verification-summary {
   margin-top: 10px;

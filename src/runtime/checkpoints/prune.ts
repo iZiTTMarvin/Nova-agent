@@ -13,7 +13,7 @@
  */
 import { existsSync, rmSync, readdirSync } from 'fs'
 import type { CheckpointManifest } from './types'
-import { getCheckpointDir, getFilesDir, writeManifest, readManifest } from './manifest'
+import { getCheckpointDir, getFilesDir, getForwardDir, writeManifest, readManifest } from './manifest'
 
 /**
  * 滚动清理指定会话的过期 checkpoint 备份。
@@ -30,14 +30,19 @@ import { getCheckpointDir, getFilesDir, writeManifest, readManifest } from './ma
 export function pruneOldCheckpoints(
   checkpointRoot: string,
   sessionId: string,
-  keepRecent: number
+  keepRecent: number,
+  /** 若提供，仅统计激活路径上的 checkpoint（树模型下非激活分支不占保留名额） */
+  activePathMessageIds?: Set<string>
 ): void {
   if (keepRecent <= 0) return
 
   const sessionDir = getCheckpointDir(checkpointRoot, sessionId, '')
   if (!existsSync(sessionDir)) return
 
-  const manifests = listSessionManifests(checkpointRoot, sessionId)
+  let manifests = listSessionManifests(checkpointRoot, sessionId)
+  if (activePathMessageIds) {
+    manifests = manifests.filter(m => activePathMessageIds.has(m.messageId))
+  }
   if (manifests.length <= keepRecent) return
 
   // 按时间从新到旧排序，后面的都是要清理的
@@ -57,10 +62,14 @@ function pruneSingleManifest(
   manifest: CheckpointManifest
 ): void {
   const filesDir = getFilesDir(checkpointRoot, manifest.sessionId, manifest.messageId)
+  const forwardDir = getForwardDir(checkpointRoot, manifest.sessionId, manifest.messageId)
 
   try {
     if (existsSync(filesDir)) {
       rmSync(filesDir, { recursive: true, force: true })
+    }
+    if (existsSync(forwardDir)) {
+      rmSync(forwardDir, { recursive: true, force: true })
     }
 
     // 重新读取，避免覆盖并发改动；读取失败则跳过
@@ -68,6 +77,7 @@ function pruneSingleManifest(
     if (!fresh) return
 
     fresh.backupPruned = true
+    fresh.forwardPruned = true
     fresh.prunedAt = Date.now()
     writeManifest(checkpointRoot, fresh)
   } catch (err) {

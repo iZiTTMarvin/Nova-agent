@@ -23,6 +23,7 @@ import type {
 } from '../../shared/session/types'
 import { SESSION_HISTORY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
+import type { Tier1BranchContext } from '../../shared/workspace/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { HookEvent } from '../../runtime/agent/types'
 import type { RendererRecoveryState } from '../../shared/ipc/types'
@@ -223,6 +224,20 @@ export interface ChatState {
   messages: ExtendedMessage[]
   /** id → 数组索引，用于 delta handler O(1) 定位 */
   messageIndexById: Record<string, number>
+  /**
+   * 上次 syncFromWorkspace 见到的 messagesRevision。
+   * 用于检测「同会话内消息序列变化」（回退/切分支），据此绕过 sessionChanged 守卫重拉消息。
+   */
+  lastMessagesRevision: number
+  /**
+   * 编辑/重新生成分叉后，待本轮流式结束再 bump messagesRevision，
+   * 以便 load-session 下发 branch 元信息（翻页器可见）。
+   */
+  pendingBranchMetaReload: boolean
+  /** prepare 与 send-message 之间的短窗口：禁止 switchBranch */
+  branchForkInProgress: boolean
+  /** Tier 1 切分支后的提示与 diff 灰显上下文（来自 WorkspaceState） */
+  tier1BranchContext: Tier1BranchContext | null
   /** 与消息生成生命周期强绑定，写入由 sendMessage / handleMessageStart / handleError 触发 */
   isGenerating: boolean
   currentGeneratingMessageId: string | null
@@ -285,7 +300,11 @@ export interface ChatState {
   /** 发送用户消息（含图片） */
   sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>
   /** 按消息回退到某条消息之前的状态 */
-  rollbackMessage: (sessionId: string, messageId: string) => Promise<void>
+  regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
+  /** 切换到兄弟分支（翻页器） */
+  switchBranch: (sessionId: string, targetMessageId: string) => Promise<void>
+  /** 编辑某条用户消息并重发：分叉手术 + 乐观截断 + 复用流式发送 */
+  editResend: (sessionId: string, messageId: string, newContent: string) => Promise<void>
   /** 按文件接受改动 */
   acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
   /** 按文件拒绝改动 */
@@ -300,6 +319,12 @@ export interface ChatState {
   clearMessageDiffs: (messageId: string) => void
   /** 上滚到顶时加载更早一页消息并 prepend 到视窗 */
   loadOlderMessages: () => Promise<void>
+  /**
+   * 分叉轮次结束后 bump revision，拉取 branch 元信息；或 send 失败时强制与主进程对齐。
+   */
+  finishBranchMetaRefresh: () => Promise<void>
+  /** 用户关闭 Tier 1 横幅 */
+  dismissTier1BranchNotice: () => void
 
   /**
    * Phase 2 批量应用流式 delta：
@@ -346,7 +371,7 @@ export interface ChatState {
    * 调用方拿到 Promise resolve 时 store 状态已稳定（pending 已 dispatch）。
    */
   handleMessageEnd: (messageId: string, interrupted?: boolean) => Promise<void>
-  handleError: (messageId: string, error: string) => void
+  handleError: (messageId: string, error: string) => Promise<void>
   handleVerificationResult: (messageId: string, result: string) => void
   /** 主进程 recovery_state 事件：更新当前消息的恢复状态机 */
   handleRecoveryState: (messageId: string, state: RendererRecoveryState) => void
@@ -382,6 +407,9 @@ export interface ChatState {
   syncFromWorkspace: (next: {
     currentSessionId: string | null
     availableSessions: Session[]
+    /** 同会话内消息序列版本号；与上次不同则强制重拉消息（回退/切分支用，绕过 sessionChanged 守卫） */
+    messagesRevision: number
+    tier1BranchContext: Tier1BranchContext | null
   }) => void
 }
 
@@ -479,6 +507,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentSessionId: null,
   messages: [],
   messageIndexById: {},
+  lastMessagesRevision: 0,
+  pendingBranchMetaReload: false,
+  branchForkInProgress: false,
+  tier1BranchContext: null,
   isGenerating: false,
   currentGeneratingMessageId: null,
   streamingToolArgs: {},
@@ -518,6 +550,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (content: string, images?: ImageAttachment[]) => {
     const { currentSessionId, isGenerating } = get()
     if (isGenerating) return
+
+    // 新发消息会改变工作区语义，退出 Tier 1「仅对话历史」视图
+    set({ tier1BranchContext: null })
 
     // PRD §5.1：project 路径统一从 workspace store 读取（单一事实源）
     const { useWorkspaceStore } = await import('./useWorkspaceStore')
@@ -573,6 +608,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await window.api.invoke('send-message', {
         sessionId: activeSessionId,
         content,
+        userMessageId: userMsg.id,
         images: images?.map(img => ({
           fileName: img.fileName,
           data: img.dataUrl,
@@ -580,8 +616,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }))
       })
     } catch (err) {
-      get().handleError('msg_err_' + Date.now(), (err as Error).message)
+      await get().handleError('msg_err_' + Date.now(), (err as Error).message)
     }
+  },
+
+  finishBranchMetaRefresh: async () => {
+    if (!get().pendingBranchMetaReload) return
+    set({ pendingBranchMetaReload: false })
+    try {
+      const { useWorkspaceStore } = await import('./useWorkspaceStore')
+      await useWorkspaceStore.getState().bumpMessagesRevision()
+    } catch (err) {
+      console.error('[useChatStore] finishBranchMetaRefresh 失败:', err)
+    }
+  },
+
+  dismissTier1BranchNotice: () => {
+    set({ tier1BranchContext: null })
   },
 
   selectSession: async (sessionId: string) => {
@@ -592,24 +643,127 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await useWorkspaceStore.getState().selectSession(sessionId)
   },
 
-  rollbackMessage: async (sessionId: string, messageId: string) => {
-    // PRD §5.1：回滚统一走 workspace store，主进程广播 workspace:changed 后
-    // dispatchWorkspaceChange 负责重新加载该会话的消息。
+  regenerateAssistant: async (sessionId: string, messageId: string) => {
+    if (get().isGenerating) return
+
+    const { messages } = get()
+    const assistantIdx = messages.findIndex(m => m.id === messageId)
+    const parentUser = assistantIdx > 0 ? messages[assistantIdx - 1] : undefined
+    if (parentUser?.role === 'user' && parentUser.blocks?.some(b => b.type === 'image')) {
+      set(state => ({
+        rollbackErrors: {
+          ...state.rollbackErrors,
+          [messageId]: '重新生成暂不支持含图片的消息'
+        }
+      }))
+      return
+    }
+
+    set({ branchForkInProgress: true })
+
     try {
       const { useWorkspaceStore } = await import('./useWorkspaceStore')
-      await useWorkspaceStore.getState().rollbackMessage(sessionId, messageId)
-      // 成功时清除该消息的历史错误提示
+      await useWorkspaceStore.getState().prepareRegenerate(sessionId, messageId)
       set(state => {
         const { [messageId]: _, ...rest } = state.rollbackErrors
         return { rollbackErrors: rest }
       })
     } catch (err) {
-      const error = err instanceof Error ? err.message : '回滚失败'
-      console.error('回滚消息出错:', err)
+      set({ branchForkInProgress: false })
+      const error = err instanceof Error ? err.message : '重新生成失败'
+      console.error('重新生成出错:', err)
       set(state => ({
         rollbackErrors: { ...state.rollbackErrors, [messageId]: error }
       }))
+      return
     }
+
+    if (assistantIdx !== -1) {
+      const truncated = messages.slice(0, assistantIdx)
+      set({
+        messages: truncated,
+        messageIndexById: buildMessageIndex(truncated),
+        messageDiffs: {},
+        loadingDiffPlaceholders: {},
+        loadingDiffs: new Set()
+      })
+    }
+
+    set({ pendingBranchMetaReload: true })
+
+    try {
+      await window.api.invoke('send-message', {
+        sessionId,
+        content: '',
+        regenerate: true
+      })
+    } catch (err) {
+      await get().handleError('msg_err_' + Date.now(), (err as Error).message)
+    }
+  },
+
+  switchBranch: async (sessionId: string, targetMessageId: string) => {
+    if (get().isGenerating || get().branchForkInProgress) return
+
+    try {
+      const { useWorkspaceStore } = await import('./useWorkspaceStore')
+      await useWorkspaceStore.getState().switchBranch(sessionId, targetMessageId)
+      set(state => {
+        const { [targetMessageId]: _, ...rest } = state.rollbackErrors
+        return { rollbackErrors: rest }
+      })
+    } catch (err) {
+      const error = err instanceof Error ? err.message : '切换分支失败'
+      console.error('切换分支出错:', err)
+      set(state => ({
+        rollbackErrors: { ...state.rollbackErrors, [targetMessageId]: error }
+      }))
+    }
+  },
+
+  editResend: async (sessionId: string, messageId: string, newContent: string) => {
+    if (get().isGenerating) return
+
+    // 分叉准备 + 发送全程禁止翻页/切分支（prepare 与 send-message 是两段 IPC，中间须锁住）
+    set({ branchForkInProgress: true })
+
+    try {
+      const { useWorkspaceStore } = await import('./useWorkspaceStore')
+      await useWorkspaceStore.getState().prepareEditResend(sessionId, messageId)
+      set(state => {
+        const { [messageId]: _drop, ...rest } = state.rollbackErrors
+        return { rollbackErrors: rest }
+      })
+    } catch (err) {
+      set({ branchForkInProgress: false })
+      const error = err instanceof Error ? err.message : '编辑重发失败'
+      console.error('编辑重发出错:', err)
+      set(state => ({
+        rollbackErrors: { ...state.rollbackErrors, [messageId]: error }
+      }))
+      return
+    }
+
+    // 2. 乐观截断视图到分叉点（移除被编辑消息及其之后）。
+    //    主进程 prepareEditResend 不 bump messagesRevision，不会触发 reload 覆盖这里。
+    const { messages } = get()
+    const idx = messages.findIndex(m => m.id === messageId)
+    if (idx !== -1) {
+      const truncated = messages.slice(0, idx)
+      set({
+        messages: truncated,
+        messageIndexById: buildMessageIndex(truncated),
+        // 分叉后旧 diff 缓存与磁盘可能不一致，清空避免误导
+        messageDiffs: {},
+        loadingDiffPlaceholders: {},
+        loadingDiffs: new Set()
+      })
+    }
+
+    // 3. 复用普通发送：乐观追加新用户消息 + 流式渲染。
+    //    appendMessage 在主进程会把新用户消息的 parentId 设为分叉点，天然成兄弟分支。
+    set({ pendingBranchMetaReload: true })
+    await get().sendMessage(newContent)
   },
 
   /**
@@ -1126,6 +1280,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: nextMessages,
         isGenerating: false,
         currentGeneratingMessageId: null,
+        branchForkInProgress: false,
         ...omitRecoveryFieldsForMessage(state, messageId),
         // 中断时清空所有流式工具参数累积
         ...(interrupted ? { streamingToolArgs: {} } : {})
@@ -1150,9 +1305,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Phase 6：turn boundary 自动 dispatch 挂起消息
     await dispatchNextPending(get)
+
+    // 分叉轮次正常结束：补 bump revision 拉取 branch 元信息（翻页器）
+    await get().finishBranchMetaRefresh()
   },
 
-  handleError: (messageId: string, error: string) => {
+  handleError: async (messageId: string, error: string) => {
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
 
@@ -1174,10 +1332,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
         isGenerating: false,
         currentGeneratingMessageId: null,
+        branchForkInProgress: false,
         // error 路径不发射 message-end，此处同步清理恢复状态，避免残留
         ...omitRecoveryFieldsForMessage(state, messageId)
       }
     })
+
+    if (get().pendingBranchMetaReload) {
+      await get().finishBranchMetaRefresh()
+    }
   },
 
   handleVerificationResult: (messageId: string, result: string) => {
@@ -1461,12 +1624,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   syncFromWorkspace: (next) => {
     const prev = get()
     const sessionChanged = prev.currentSessionId !== next.currentSessionId
+    // 同会话内消息序列变化（回退/切分支）：currentSessionId 不变但 revision 递增。
+    // 单纯靠 sessionChanged 会漏掉这类变更，导致「主进程切了、界面没切」。
+    const revisionChanged = next.messagesRevision !== prev.lastMessagesRevision
 
-    // 1. 同步 sessions 列表 + currentSessionId
-    set({ sessions: next.availableSessions, currentSessionId: next.currentSessionId })
+    // 1. 同步 sessions 列表 + currentSessionId + revision + Tier 1 上下文
+    set({
+      sessions: next.availableSessions,
+      currentSessionId: next.currentSessionId,
+      lastMessagesRevision: next.messagesRevision,
+      tier1BranchContext: sessionChanged ? null : next.tier1BranchContext
+    })
 
-    // 2. 若 currentSessionId 变化，重新加载消息（或清空）
-    if (sessionChanged) {
+    // 2. 会话切换 或 同会话内消息序列变化时，重新加载消息（或清空）
+    if (sessionChanged || revisionChanged) {
       // 清空 diff 缓存与分页视窗，避免跨会话污染
       set({
         messageDiffs: {},
@@ -1515,6 +1686,10 @@ export function resetChatStoreForTests(): void {
     currentSessionId: null,
     messages: [],
     messageIndexById: {},
+    lastMessagesRevision: 0,
+    pendingBranchMetaReload: false,
+    branchForkInProgress: false,
+    tier1BranchContext: null,
     isGenerating: false,
     currentGeneratingMessageId: null,
     streamingToolArgs: {},

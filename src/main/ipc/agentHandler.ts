@@ -34,7 +34,9 @@ import type { RendererRecoveryState } from '../../shared/ipc/types'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
-import type { SessionMessage, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
+import type { SessionMessageAppend, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
+import { extractTextFromSerializableContent } from '../../runtime/sessions/types'
+import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import type { MessageBlock } from '../../shared/session/types'
 import {
   persistCompactionSnapshot,
@@ -52,6 +54,14 @@ import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 import { syncTavilyApiKeyFromSettings } from '../../runtime/settings/syncTavilyApiKey'
+
+/** Agent 轮次是否进行中（send-message 从进入到 sendMessage 返回） */
+let agentTurnInProgress = false
+
+/** 供 WorkspaceService 分叉 IPC 守卫：生成中禁止改 currentLeafId */
+export function isAgentTurnInProgress(): boolean {
+  return agentTurnInProgress
+}
 
 /** 管理 AgentLoop 的生命周期 */
 let agentLoop: AgentLoop | null = null
@@ -194,7 +204,13 @@ export function registerAgentHandler(
   getModelClient: () => ModelClient | null
 ): void {
   // 发送消息命令
-  ipcMain.handle(SEND_MESSAGE, async (_event, params: { sessionId: string; content: string; images?: Array<{ fileName: string; data: string; mimeType: string }> }): Promise<void> => {
+  ipcMain.handle(SEND_MESSAGE, async (_event, params: {
+    sessionId: string
+    content: string
+    userMessageId?: string
+    images?: Array<{ fileName: string; data: string; mimeType: string }>
+    regenerate?: boolean
+  }): Promise<void> => {
     // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 所有挂起的 askQuestion 请求，
     // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
     if (pendingAskQuestions.size > 0) {
@@ -382,48 +398,68 @@ export function registerAgentHandler(
     const checkpointManager = new CheckpointManager({
       checkpointDir: sessionsDir,
       sessionId: params.sessionId,
-      workspaceRoot: projectPath
+      workspaceRoot: projectPath,
+      getActivePathMessageIds: () => {
+        const s = sessionStore.load(params.sessionId)
+        if (!s) return undefined
+        return new Set(getSessionActiveMessages(s).map(m => m.id))
+      }
     })
     agentLoop.setCheckpointManager(checkpointManager)
+
+    const isRegenerate = params.regenerate === true
 
     // 构建用户消息内容（含图片时为 ContentBlock[]，否则为 string）
     // modeInstruction 统一由 AgentLoop.sendMessage 追加，持久化中不包含
     let sendContent: string | ContentBlock[]
-    let persistContent: string | SerializableContentBlock[]
-    const persistBlocks: import('../../shared/session/types').MessageBlock[] = []
-
-    if (params.images && params.images.length > 0) {
-      const imageContentBlocks: ContentBlock[] = [
-        { type: 'text', text: params.content },
-        ...params.images.map(img => ({
-          type: 'image_url' as const,
-          image_url: { url: img.data }
-        }))
-      ]
-      // ContentBlock 与 SerializableContentBlock 结构兼容，复用同一数组
-      sendContent = imageContentBlocks
-      persistContent = imageContentBlocks as SerializableContentBlock[]
-      persistBlocks.push({ type: 'text', content: params.content })
-      persistBlocks.push(...params.images.map(img => ({
-        type: 'image' as const,
-        fileName: img.fileName,
-        dataUrl: img.data,
-        mimeType: img.mimeType
-      })))
+    if (isRegenerate) {
+      const activePath = getSessionActiveMessages(session)
+      const leafUser = activePath[activePath.length - 1]
+      if (!leafUser || leafUser.role !== 'user') {
+        throw new Error('重新生成失败：当前激活叶子不是用户消息')
+      }
+      if (params.images && params.images.length > 0) {
+        throw new Error('重新生成暂不支持含图片的消息')
+      }
+      sendContent = extractTextFromSerializableContent(leafUser.content)
     } else {
-      // slash 调度由 AgentLoop.invokeSkill 处理；持久化保留用户原始输入
-      sendContent = params.content
-      persistContent = params.content
-    }
+      let persistContent: string | SerializableContentBlock[]
+      const persistBlocks: import('../../shared/session/types').MessageBlock[] = []
 
-    const userMessage: SessionMessage = {
-      id: `msg_${Date.now()}_user`,
-      role: 'user',
-      content: persistContent,
-      blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
-      timestamp: Date.now()
+      if (params.images && params.images.length > 0) {
+        const imageContentBlocks: ContentBlock[] = [
+          { type: 'text', text: params.content },
+          ...params.images.map(img => ({
+            type: 'image_url' as const,
+            image_url: { url: img.data }
+          }))
+        ]
+        // ContentBlock 与 SerializableContentBlock 结构兼容，复用同一数组
+        sendContent = imageContentBlocks
+        persistContent = imageContentBlocks as SerializableContentBlock[]
+        persistBlocks.push({ type: 'text', content: params.content })
+        persistBlocks.push(...params.images.map(img => ({
+          type: 'image' as const,
+          fileName: img.fileName,
+          dataUrl: img.data,
+          mimeType: img.mimeType
+        })))
+      } else {
+        // slash 调度由 AgentLoop.invokeSkill 处理；持久化保留用户原始输入
+        sendContent = params.content
+        persistContent = params.content
+      }
+
+      const userMessage: SessionMessageAppend = {
+        // 与 renderer 乐观消息共用 id，避免分叉/编辑时「目标不在激活路径」
+        id: params.userMessageId ?? `msg_${Date.now()}_user`,
+        role: 'user',
+        content: persistContent,
+        blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
+        timestamp: Date.now()
+      }
+      sessionStore.appendMessage(params.sessionId, userMessage)
     }
-    sessionStore.appendMessage(params.sessionId, userMessage)
 
     // 常驻黑匣子：主进程事件间隔 stall 检测，定位偶发卡顿时用。
     // 设 NOVA_STALL_DEBUG=0 可静默。详见 shared/diagnostics/stallDetector.ts
@@ -441,7 +477,12 @@ export function registerAgentHandler(
       })
     })
 
-    await agentLoop.sendMessage(sendContent)
+    agentTurnInProgress = true
+    try {
+      await agentLoop.sendMessage(sendContent)
+    } finally {
+      agentTurnInProgress = false
+    }
   })
 
   ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
@@ -766,7 +807,7 @@ function saveAssistantMessage(
   interrupted?: boolean
 ): void {
   const sessionStore = getSessionStore()
-  const assistantMessage: SessionMessage = {
+  const assistantMessage: SessionMessageAppend = {
     id: messageId,
     role: 'assistant',
     content,
@@ -813,7 +854,7 @@ function dropPermissionDeniedResiduals(
 /** 保存错误消息到会话存储 */
 function saveErrorMessage(sessionId: string, messageId: string, error: string): void {
   const sessionStore = getSessionStore()
-  const errorMessage: SessionMessage = {
+  const errorMessage: SessionMessageAppend = {
     id: messageId,
     role: 'assistant',
     content: error,

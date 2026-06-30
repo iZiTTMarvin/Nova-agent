@@ -18,6 +18,34 @@ export interface WorkspaceState {
   currentMode: Mode
   /** 当前可用的会话列表（供侧边栏展示，避免 renderer 二次拉取） */
   availableSessions: Session[]
+  /**
+   * 当前会话「激活路径消息集合」的版本号，每次发生「不换会话但消息序列变化」的操作
+   * （切分支 / 分叉完成补同步 / desync 纠正等）时由主进程 +1。
+   *
+   * 存在原因：renderer 的 syncFromWorkspace 仅在 currentSessionId 变化时才重拉消息，
+   * 回退/切分支不换会话会被该守卫拦截，导致「主进程切了、界面没切」。renderer 据此
+   * revision 变化来触发同会话内的消息重拉，绕过 sessionChanged 守卫。
+   */
+  messagesRevision: number
+  /**
+   * Tier 1 切分支后的视图上下文：工作区停在 LCA，仅展示对话历史。
+   * 非切分支操作为 null。
+   */
+  tier1BranchContext: Tier1BranchContext | null
+}
+
+/** Tier 1 分支视图：磁盘未重放目标分支的文件改动 */
+export interface Tier1BranchContext {
+  /** 当前激活路径上翻页器序号（1-based） */
+  branchIndex: number
+  branchTotal: number
+  /**
+   * Tier 1/2 切分支后的 diff 灰显列表：forward 重放未完成时，对应 assistant 消息的 diff 仅作历史展示。
+   * partialReplay=true 表示部分消息已成功重放，仅灰显未完成项。
+   */
+  staleDiffMessageIds: string[]
+  /** true=部分 forward 重放成功；false=全部未能重放（Tier 1 回退） */
+  partialReplay?: boolean
 }
 
 /** 选择项目操作的参数（预留扩展） */
@@ -37,10 +65,4 @@ export interface SetModeParams {
   mode: Mode
   /** 若提供则同时持久化到指定会话；否则用当前会话 */
   sessionId?: string
-}
-
-/** 回滚消息操作的参数 */
-export interface RollbackMessageParams {
-  sessionId: string
-  messageId: string
 }

@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
 import type { Mode } from '../../../../src/shared/session'
 
 /** 创建临时目录用于测试 */
@@ -26,6 +27,7 @@ describe('SessionStore', () => {
       expect(session.workspaceRoot).toBe('/project/root')
       expect(session.mode).toBe('default')
       expect(session.messages).toHaveLength(0)
+      expect(session.currentLeafId).toBeNull()
       expect(session.createdAt).toBeGreaterThan(0)
       expect(session.updatedAt).toBe(session.createdAt)
     })
@@ -194,6 +196,90 @@ describe('SessionStore', () => {
 
       const loaded = store.load(session.id)
       expect(loaded!.messages).toHaveLength(2)
+    })
+
+    it('追加消息自动设置 parentId 链并推进 currentLeafId', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      store.appendMessage(session.id, {
+        id: 'msg_1',
+        role: 'user',
+        content: 'hello',
+        timestamp: 1
+      })
+      store.appendMessage(session.id, {
+        id: 'msg_2',
+        role: 'assistant',
+        content: 'world',
+        timestamp: 2
+      })
+
+      const loaded = store.load(session.id)!
+      expect(loaded.messages[0].parentId).toBe(null)
+      expect(loaded.messages[1].parentId).toBe('msg_1')
+      expect(loaded.currentLeafId).toBe('msg_2')
+
+      const meta = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, 'sessions', session.id, 'session.json'), 'utf8')
+      )
+      expect(meta.currentLeafId).toBe('msg_2')
+    })
+  })
+
+  describe('setCurrentLeaf', () => {
+    it('倒回 null 后激活路径为空，下次 append 挂为新根', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      store.appendMessage(session.id, {
+        id: 'u1',
+        role: 'user',
+        content: 'hello',
+        timestamp: 1
+      })
+      store.appendMessage(session.id, {
+        id: 'a1',
+        role: 'assistant',
+        content: 'world',
+        timestamp: 2
+      })
+
+      store.setCurrentLeaf(session.id, null)
+
+      const afterFork = store.load(session.id)!
+      expect(afterFork.currentLeafId).toBe(null)
+      expect(afterFork.messages).toHaveLength(2)
+
+      store.appendMessage(session.id, {
+        id: 'u2',
+        role: 'user',
+        content: 'hello again',
+        timestamp: 3
+      })
+
+      const loaded = store.load(session.id)!
+      expect(loaded.messages).toHaveLength(3)
+      const u2 = loaded.messages.find(m => m.id === 'u2')!
+      expect(u2.parentId).toBe(null)
+      expect(loaded.currentLeafId).toBe('u2')
+    })
+
+    it('倒回到中间节点后下次 append 挂为其子节点', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      store.appendMessage(session.id, { id: 'u1', role: 'user', content: 'a', timestamp: 1 })
+      store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: 'b', timestamp: 2 })
+      store.appendMessage(session.id, { id: 'u2', role: 'user', content: 'c', timestamp: 3 })
+
+      store.setCurrentLeaf(session.id, 'a1')
+      store.appendMessage(session.id, { id: 'a1b', role: 'assistant', content: 'branch', timestamp: 4 })
+
+      const loaded = store.load(session.id)!
+      const branch = loaded.messages.find(m => m.id === 'a1b')!
+      expect(branch.parentId).toBe('a1')
+      expect(loaded.currentLeafId).toBe('a1b')
     })
   })
 
@@ -627,7 +713,7 @@ describe('SessionStore', () => {
       // 旧版内联消息应已拆出
       const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
       expect(metadata.messages).toBeUndefined()
-      expect(metadata.schemaVersion).toBe(3)
+      expect(metadata.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     })
   })
 
@@ -654,11 +740,11 @@ describe('SessionStore', () => {
       const loaded = store.load(sessionId)
       expect(loaded!.messages).toHaveLength(1)
       expect(loaded!.messages[0].content).toBe('v2 message')
-      expect(loaded!.schemaVersion).toBe(3)
+      expect(loaded!.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
 
       const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
       expect(metadata.messages).toBeUndefined()
-      expect(metadata.schemaVersion).toBe(3)
+      expect(metadata.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     })
 
     it('v1 含内联 messages 的旧版 session.json 加载时自动拆出到 messages.jsonl', () => {
@@ -685,11 +771,11 @@ describe('SessionStore', () => {
       expect(loaded!.messages).toHaveLength(2)
       expect(loaded!.messages[0].content).toBe('v1 message a')
       expect(loaded!.messages[1].content).toBe('v1 message b')
-      expect(loaded!.schemaVersion).toBe(3)
+      expect(loaded!.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
 
       const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
       expect(metadata.messages).toBeUndefined()
-      expect(metadata.schemaVersion).toBe(3)
+      expect(metadata.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     })
 
     it('无 schemaVersion 的旧版 session.json 加载时自动拆出到 messages.jsonl', () => {
@@ -713,12 +799,40 @@ describe('SessionStore', () => {
       const loaded = store.load(sessionId)
       expect(loaded!.messages).toHaveLength(1)
       expect(loaded!.messages[0].content).toBe('v0 message')
-      expect(loaded!.schemaVersion).toBe(3)
+      expect(loaded!.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
       expect(loaded!.mode).toBe('plan')
 
       const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
       expect(metadata.messages).toBeUndefined()
-      expect(metadata.schemaVersion).toBe(3)
+      expect(metadata.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    })
+
+    it('v3 messages.jsonl 会话加载时迁移到 v4 并补 parentId', () => {
+      const sessionId = 'sess_legacy_v3_jsonl'
+      const sessionDir = path.join(tmpDir, 'sessions', sessionId)
+      fs.mkdirSync(sessionDir, { recursive: true })
+
+      const v3meta = {
+        schemaVersion: 3,
+        id: sessionId,
+        workspaceRoot: '/legacy',
+        mode: 'default',
+        createdAt: 1,
+        updatedAt: 2
+      }
+      fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify(v3meta, null, 2), 'utf8')
+      const jsonl = [
+        JSON.stringify({ id: 'm1', role: 'user', content: 'a', timestamp: 1 }),
+        JSON.stringify({ id: 'm2', role: 'assistant', content: 'b', timestamp: 2 })
+      ].join('\n') + '\n'
+      fs.writeFileSync(path.join(sessionDir, 'messages.jsonl'), jsonl, 'utf8')
+
+      const store = new SessionStore(tmpDir)
+      const loaded = store.load(sessionId)!
+      expect(loaded.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+      expect(loaded.messages[0].parentId).toBe(null)
+      expect(loaded.messages[1].parentId).toBe('m1')
+      expect(loaded.currentLeafId).toBe('m2')
     })
   })
 

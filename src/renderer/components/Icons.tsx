@@ -269,3 +269,20 @@ export const ArrowUpIcon: React.FC<IconProps> = ({ size = 12, ...props }) => (
     <polyline points="5 12 12 5 19 12" />
   </svg>
 )
+
+/** 铅笔图标 - 编辑用户消息并重发 */
+export const EditIcon: React.FC<IconProps> = ({ size = 14, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+  </svg>
+)
+
+/** 循环箭头图标 - 重新生成助手回答 */
+export const RegenerateIcon: React.FC<IconProps> = ({ size = 14, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polyline points="23 4 23 10 17 10" />
+    <polyline points="1 20 1 14 7 14" />
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+  </svg>
+)

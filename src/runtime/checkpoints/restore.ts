@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, rmSync, readdirSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import type { CheckpointManifest } from './types'
-import { readManifest, writeManifest, getCheckpointDir, getFilesDir } from './manifest'
+import { readManifest, writeManifest, getCheckpointDir, getFilesDir, getForwardDir } from './manifest'
 
 /**
  * 按文件拒绝：恢复单个文件到 checkpoint 中的原始内容
@@ -280,4 +280,193 @@ export function listManifests(
   }
 
   return manifests.sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/** applyForward 结果：完整重放与因缺少 forward 快照而跳过的消息 */
+export interface ApplyForwardResult {
+  appliedMessageIds: string[]
+  incompleteMessageIds: string[]
+}
+
+/**
+ * 非破坏性工作区回退：仅还原磁盘文件，保留 checkpoint 目录与 manifest（树模型分叉必备）。
+ * 按 createdAt 从新到旧依次撤销指定消息 id 集合内的 active checkpoint。
+ */
+export function revertWorkspaceForMessageIds(
+  checkpointRoot: string,
+  workspaceRoot: string,
+  sessionId: string,
+  messageIds: Set<string>,
+  allManifests: CheckpointManifest[]
+): void {
+  if (messageIds.size === 0) return
+
+  const toRevert = allManifests
+    .filter(m => messageIds.has(m.messageId) && m.status === 'active')
+    .sort((a, b) => b.createdAt - a.createdAt)
+
+  verifyWorkspaceRevertPossible(checkpointRoot, sessionId, toRevert)
+
+  for (const manifest of toRevert) {
+    undoSingleManifestWorkspace(checkpointRoot, workspaceRoot, sessionId, manifest)
+  }
+}
+
+/**
+ * Tier 2：沿目标路径正向重放 forward 快照（LCA → target 区间内的 assistant checkpoint）。
+ * messageIds 须按时间升序传入。
+ */
+export function applyForwardForMessageIds(
+  checkpointRoot: string,
+  workspaceRoot: string,
+  sessionId: string,
+  messageIds: string[],
+  allManifests: CheckpointManifest[]
+): ApplyForwardResult {
+  const manifestById = new Map(allManifests.map(m => [m.messageId, m]))
+  const appliedMessageIds: string[] = []
+  const incompleteMessageIds: string[] = []
+
+  for (const messageId of messageIds) {
+    const manifest = manifestById.get(messageId)
+    if (!manifest || manifest.status !== 'active') continue
+
+    const hasChanges =
+      manifest.createdFiles.length > 0
+      || manifest.modifiedFiles.length > 0
+      || manifest.deletedFiles.length > 0
+    if (!hasChanges) {
+      appliedMessageIds.push(messageId)
+      continue
+    }
+
+    if (!manifest.forwardCaptured || manifest.forwardPruned) {
+      incompleteMessageIds.push(messageId)
+      continue
+    }
+
+    const ok = applySingleManifestForward(
+      checkpointRoot,
+      workspaceRoot,
+      sessionId,
+      manifest
+    )
+    if (ok) {
+      appliedMessageIds.push(messageId)
+    } else {
+      incompleteMessageIds.push(messageId)
+    }
+  }
+
+  return { appliedMessageIds, incompleteMessageIds }
+}
+
+/** 撤销单条 manifest 对工作区的改动（不删 checkpoint 目录） */
+function undoSingleManifestWorkspace(
+  checkpointRoot: string,
+  workspaceRoot: string,
+  sessionId: string,
+  manifest: CheckpointManifest
+): void {
+  const filesDir = getFilesDir(checkpointRoot, sessionId, manifest.messageId)
+
+  for (const relPath of manifest.modifiedFiles) {
+    restoreFileFromBackup(filesDir, workspaceRoot, relPath, manifest)
+  }
+  for (const relPath of manifest.createdFiles) {
+    const absPath = join(workspaceRoot, relPath)
+    if (existsSync(absPath)) {
+      unlinkSync(absPath)
+    }
+  }
+  for (const relPath of manifest.deletedFiles) {
+    restoreFileFromBackup(filesDir, workspaceRoot, relPath, manifest)
+  }
+}
+
+/** 将单条 manifest 的 forward 快照应用到工作区 */
+function applySingleManifestForward(
+  checkpointRoot: string,
+  workspaceRoot: string,
+  sessionId: string,
+  manifest: CheckpointManifest
+): boolean {
+  const forwardDir = getForwardDir(checkpointRoot, sessionId, manifest.messageId)
+  const skippedPaths = new Set((manifest.skippedFiles ?? []).map(s => s.path))
+
+  for (const relPath of manifest.modifiedFiles) {
+    if (skippedPaths.has(relPath)) return false
+    if (!writeForwardFileToWorkspace(forwardDir, workspaceRoot, relPath)) return false
+  }
+  for (const relPath of manifest.createdFiles) {
+    if (skippedPaths.has(relPath)) return false
+    if (!writeForwardFileToWorkspace(forwardDir, workspaceRoot, relPath)) return false
+  }
+  for (const relPath of manifest.deletedFiles) {
+    const absPath = join(workspaceRoot, relPath)
+    if (existsSync(absPath)) {
+      unlinkSync(absPath)
+    }
+  }
+  return true
+}
+
+function restoreFileFromBackup(
+  filesDir: string,
+  workspaceRoot: string,
+  relPath: string,
+  manifest: CheckpointManifest
+): void {
+  const backupPath = join(filesDir, relPath)
+  if (!existsSync(backupPath)) {
+    const reason = manifest.backupPruned
+      ? '该消息备份已被滚动清理，无法回退'
+      : '备份文件不存在'
+    throw new Error(
+      `[revertWorkspace] ${reason}: message=${manifest.messageId}, file=${relPath}`
+    )
+  }
+  const absPath = join(workspaceRoot, relPath)
+  const targetDir = dirname(absPath)
+  if (!existsSync(targetDir)) {
+    mkdirSync(targetDir, { recursive: true })
+  }
+  writeFileSync(absPath, readFileSync(backupPath))
+}
+
+function writeForwardFileToWorkspace(
+  forwardDir: string,
+  workspaceRoot: string,
+  relPath: string
+): boolean {
+  const forwardPath = join(forwardDir, relPath)
+  if (!existsSync(forwardPath)) return false
+  const absPath = join(workspaceRoot, relPath)
+  const targetDir = dirname(absPath)
+  if (!existsSync(targetDir)) {
+    mkdirSync(targetDir, { recursive: true })
+  }
+  writeFileSync(absPath, readFileSync(forwardPath))
+  return true
+}
+
+function verifyWorkspaceRevertPossible(
+  checkpointRoot: string,
+  sessionId: string,
+  manifestsToRevert: CheckpointManifest[]
+): void {
+  for (const manifest of manifestsToRevert) {
+    const filesDir = getFilesDir(checkpointRoot, sessionId, manifest.messageId)
+    for (const relPath of [...manifest.modifiedFiles, ...manifest.deletedFiles]) {
+      const backupPath = join(filesDir, relPath)
+      if (!existsSync(backupPath)) {
+        const reason = manifest.backupPruned
+          ? '该消息备份已被滚动清理，无法回退'
+          : '备份文件不存在'
+        throw new Error(
+          `[revertWorkspace] 预检失败，${reason}: message=${manifest.messageId}, file=${relPath}`
+        )
+      }
+    }
+  }
 }

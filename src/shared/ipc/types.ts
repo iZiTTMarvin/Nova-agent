@@ -31,8 +31,7 @@ import type {
   WorkspaceState,
   SelectProjectParams,
   CreateSessionParams,
-  SetModeParams,
-  RollbackMessageParams
+  SetModeParams
 } from '../workspace/types'
 import type {
   StorageUsageReport,
@@ -83,12 +82,19 @@ export interface IpcCommands {
     params: {
       sessionId: string
       content: string
+      /**
+       * 渲染进程乐观追加的用户消息 id，主进程 appendMessage 必须复用，
+       * 否则 UI 与磁盘 id 不一致会导致 edit-resend / diff 等按 id 查找失败。
+       */
+      userMessageId?: string
       images?: Array<{
         fileName: string
         /** base64 data: URI（renderer 端 FileReader.readAsDataURL 编码） */
         data: string
         mimeType: string
       }>
+      /** true 时跳过用户消息 append，从当前 leaf（user）取内容重新生成 assistant */
+      regenerate?: boolean
     }
     result: void
   }
@@ -134,10 +140,6 @@ export interface IpcCommands {
   }
   'reject-file': {
     params: { sessionId: string; messageId: string; filePath: string }
-    result: void
-  }
-  'rollback-message': {
-    params: { sessionId: string; messageId: string }
     result: void
   }
   'respond-permission': {
@@ -294,8 +296,20 @@ export interface IpcCommands {
     params: SetModeParams
     result: WorkspaceState
   }
-  'workspace:rollback-message': {
-    params: RollbackMessageParams
+  'workspace:regenerate': {
+    params: { sessionId: string; messageId: string }
+    result: WorkspaceState
+  }
+  'workspace:switch-branch': {
+    params: { sessionId: string; targetMessageId: string }
+    result: WorkspaceState
+  }
+  'workspace:bump-messages-revision': {
+    params: void
+    result: WorkspaceState
+  }
+  'workspace:edit-resend': {
+    params: { sessionId: string; messageId: string }
     result: WorkspaceState
   }
   // ── 权限持久化规则（PRD §5.2） ──

@@ -52,6 +52,16 @@ export type MessageBlock = ThinkingBlock | TextBlock | ToolBlock | ImageBlock
 
 // ── 消息类型 ──────────────────────────────────────────────
 
+/** 分叉点 UI 元信息（主进程折叠 active path 时附加） */
+export interface BranchMeta {
+  /** 当前节点在兄弟中的序号（1-based） */
+  index: number
+  /** 兄弟分支总数 */
+  total: number
+  /** 所有兄弟节点 id（含自身），按 timestamp 升序 */
+  siblingIds: string[]
+}
+
 /** 单条消息 */
 export interface Message {
   id: string
@@ -69,6 +79,8 @@ export interface Message {
    * 历史会话加载后 UI 据此显示「已中断」标识。
    */
   interrupted?: boolean
+  /** 存在兄弟分支时由主进程附加，供 UI 翻页器展示 ‹ k/n › */
+  branch?: BranchMeta
   timestamp: number
 }
 
@@ -90,4 +102,6 @@ export interface SessionDetail extends Session {
    * 可通过 load-session-messages 按游标补载。
    */
   hasMoreMessagesAbove?: boolean
+  /** 当前激活叶子 id；正常 UI 不依赖，调试与 Tier 1 上下文用 */
+  currentLeafId?: string | null
 }

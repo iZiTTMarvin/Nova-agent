@@ -1,10 +1,8 @@
 /**
  * 会话层类型定义
  *
- * 会话是线性的消息序列，每条用户消息是一个事务边界，
- * 对应一组 checkpoint 和 diff。回退操作从某条消息开始，
- * 删除该消息及之后的所有内容（checkpoint、历史、diff）。
- * 不支持分支或合并。
+ * 会话消息以树形存储（parentId 链 + currentLeafId），激活路径为当前展示与喂模型的线性视图。
+ * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
 import type { Mode, MessageBlock } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
@@ -32,6 +30,11 @@ export interface SessionData {
   workspaceRoot: string
   mode: Mode
   messages: SessionMessage[]
+  /**
+   * 当前激活的叶子节点 id。空会话为 null。
+   * 下一次 appendMessage 会把新节点的 parentId 设为 currentLeafId。
+   */
+  currentLeafId: string | null
   createdAt: number
   updatedAt: number
   /**
@@ -67,6 +70,8 @@ export function extractTextFromSerializableContent(
 /** 会话中单条消息的持久化格式 */
 export interface SessionMessage {
   id: string
+  /** 父节点 id；顶层节点（森林根）为 null */
+  parentId: string | null
   role: 'user' | 'assistant' | 'system' | 'tool'
   /** 消息内容。纯文本为 string，含图片时为 ContentBlock[]（兼容旧会话的 string 格式） */
   content: string | SerializableContentBlock[]
@@ -86,6 +91,9 @@ export interface SessionMessage {
   interrupted?: boolean
   timestamp: number
 }
+
+/** 追加消息入参：parentId 由 SessionStore.appendMessage 根据 currentLeafId 自动写入 */
+export type SessionMessageAppend = Omit<SessionMessage, 'parentId'>
 
 /** 持久化的工具调用记录 */
 export interface SessionToolCall {

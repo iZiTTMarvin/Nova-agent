@@ -14,6 +14,7 @@ import {
   type ContextSnapshot,
   type SessionData
 } from './types'
+import { getSessionActiveMessages } from './tree'
 
 /**
  * 从压缩后的运行时上下文构建快照对象（不落盘）。
@@ -28,7 +29,7 @@ export function buildSnapshotFromCompaction(
     version: CONTEXT_SNAPSHOT_VERSION,
     summary: meta.summary,
     recentMessages: compactedContext.filter(m => m.role !== 'system'),
-    lastMessageId: session.messages.at(-1)?.id ?? '',
+    lastMessageId: getSessionActiveMessages(session).at(-1)?.id ?? '',
     compactionLevel: meta.compactionLevel,
     updatedAt: Date.now()
   }
@@ -63,12 +64,13 @@ export function restoreOrInjectHistory(
   session: SessionData,
   snapshot: ContextSnapshot | null
 ): void {
+  const activeMessages = getSessionActiveMessages(session)
   const anchorIdx = snapshot
-    ? session.messages.findIndex(m => m.id === snapshot.lastMessageId)
+    ? activeMessages.findIndex(m => m.id === snapshot.lastMessageId)
     : -1
 
   if (snapshot && anchorIdx >= 0) {
-    const delta = session.messages.slice(anchorIdx + 1)
+    const delta = activeMessages.slice(anchorIdx + 1)
     const deltaContext = buildConversationContext({ ...session, messages: delta }, session.mode)
     const recent = [...snapshot.recentMessages, ...deltaContext]
     agentLoop.restoreCompactedContext(snapshot.summary, recent, snapshot.compactionLevel)

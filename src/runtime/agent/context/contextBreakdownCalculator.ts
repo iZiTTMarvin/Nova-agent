@@ -12,6 +12,7 @@ import { buildSkillContext } from '../promptBuilder/buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
 import { renderBaseRules } from '../promptRenderer'
 import { extractTextFromSerializableContent, type SessionData } from '../../sessions/types'
+import { getSessionActiveMessages } from '../../sessions/tree'
 import type { ChatMessage } from '../../model/types'
 import type { SkillManifest } from '../../skills/types'
 import type { ContextBreakdown } from '../../../renderer/stores/useSettingsStore'
@@ -78,7 +79,7 @@ export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownRes
   const systemPromptTokens = Math.max(0, rawSystemTokens - skillsTokens - toolsTokens)
 
   // 把历史消息转成 ChatMessage 口径估算（含 toolCalls.arguments）
-  const historyMessages: ChatMessage[] = session.messages
+  const historyMessages: ChatMessage[] = getSessionActiveMessages(session)
     .filter(m => m.role !== 'system')
     .map(m => ({
       role: m.role,

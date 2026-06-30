@@ -27,13 +27,22 @@ export function getManifestPath(
   return join(getCheckpointDir(checkpointRoot, sessionId, messageId), MANIFEST_FILE)
 }
 
-/** 获取备份文件目录 */
+/** 获取 reverse 备份目录（改动前内容） */
 export function getFilesDir(
   checkpointRoot: string,
   sessionId: string,
   messageId: string
 ): string {
   return join(getCheckpointDir(checkpointRoot, sessionId, messageId), 'files')
+}
+
+/** 获取 forward 快照目录（改动后内容，Tier 2 分支重放用） */
+export function getForwardDir(
+  checkpointRoot: string,
+  sessionId: string,
+  messageId: string
+): string {
+  return join(getCheckpointDir(checkpointRoot, sessionId, messageId), 'forward')
 }
 
 /** 创建并写入 manifest 文件（目录不存在时自动创建） */
