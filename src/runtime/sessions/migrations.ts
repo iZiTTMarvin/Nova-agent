@@ -12,10 +12,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { SessionData, SessionMessage } from './types'
-import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE } from './types'
+import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 4
+export const CURRENT_SESSION_SCHEMA_VERSION = 5
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -132,12 +132,42 @@ export function migrateV3ToV4(data: unknown): SessionData {
   }
 }
 
+/**
+ * v4 → v5：补全会话标题字段。
+ *
+ * 有含文字的用户消息时按首条截取生成标题；否则写入占位标题。
+ */
+function migrateV4ToV5(data: unknown): SessionData {
+  const session = data as SessionData
+
+  for (const msg of session.messages) {
+    if (msg.role !== 'user') continue
+    const text = extractTextFromSerializableContent(msg.content).trim()
+    if (text !== '') {
+      return {
+        ...session,
+        schemaVersion: 5,
+        title: generateSessionTitleFromText(text),
+        titleSource: 'generated'
+      }
+    }
+  }
+
+  return {
+    ...session,
+    schemaVersion: 5,
+    title: SESSION_MIGRATED_EMPTY_TITLE,
+    titleSource: 'placeholder'
+  }
+}
+
 /** 迁移函数链：索引 = 起始版本 */
 const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV0ToV1, // v0 → v1
   migrateV1ToV2, // v1 → v2
   migrateV2ToV3, // v2 → v3
-  migrateV3ToV4  // v3 → v4
+  migrateV3ToV4, // v3 → v4
+  migrateV4ToV5  // v4 → v5
 ]
 
 /**

@@ -1,6 +1,12 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useAppStore } from '../stores/useAppStore'
-import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon } from './Icons'
+import type { Session } from '../../shared/session/types'
+import {
+  SESSION_PLACEHOLDER_TITLE,
+  SESSION_TITLE_MAX_LENGTH,
+  clampSessionTitle
+} from '../../shared/session/title'
+import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon, EditIcon } from './Icons'
 import { motion, AnimatePresence } from 'framer-motion'
 
 export const Sidebar: React.FC = () => {
@@ -12,6 +18,20 @@ export const Sidebar: React.FC = () => {
   const selectSession = useAppStore(state => state.selectSession)
   const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
   const deleteSession = useAppStore(state => state.deleteSession)
+  const renameSession = useAppStore(state => state.renameSession)
+
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const editInputRef = useRef<HTMLInputElement>(null)
+  /** Escape 取消时阻止紧随其后的 blur 误提交 */
+  const editCancelledRef = useRef(false)
+
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus()
+      editInputRef.current.select()
+    }
+  }, [editingId])
 
   // 按项目对会话进行分组
   const projectGroups = sessions.reduce((acc, session) => {
@@ -35,6 +55,11 @@ export const Sidebar: React.FC = () => {
     return parts[parts.length - 1] || pathStr
   }
 
+  /** 侧边栏会话标题：持久化 title 为唯一来源，极端缺字段时回退占位名 */
+  const getDisplayTitle = (session: Session) => {
+    return session.title || SESSION_PLACEHOLDER_TITLE
+  }
+
   const formatTime = (ts: number) => {
     const d = new Date(ts)
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -49,6 +74,48 @@ export const Sidebar: React.FC = () => {
     })
     if (response === 1) {
       deleteSession(sessionId)
+    }
+  }
+
+  const startEditing = (e: React.MouseEvent, session: Session) => {
+    e.stopPropagation()
+    editCancelledRef.current = false
+    setEditingId(session.id)
+    setEditValue(getDisplayTitle(session))
+  }
+
+  const cancelEditing = () => {
+    setEditingId(null)
+    setEditValue('')
+  }
+
+  const submitRename = async (sessionId: string) => {
+    if (editCancelledRef.current) {
+      editCancelledRef.current = false
+      return
+    }
+    const session = sessions.find(s => s.id === sessionId)
+    const trimmed = editValue.trim()
+    if (!session || !trimmed) {
+      cancelEditing()
+      return
+    }
+    const finalTitle = clampSessionTitle(trimmed)
+    if (finalTitle !== getDisplayTitle(session)) {
+      await renameSession(sessionId, finalTitle)
+    }
+    cancelEditing()
+  }
+
+  const handleEditKeyDown = (e: React.KeyboardEvent, sessionId: string) => {
+    e.stopPropagation()
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void submitRename(sessionId)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      editCancelledRef.current = true
+      cancelEditing()
     }
   }
 
@@ -127,27 +194,57 @@ export const Sidebar: React.FC = () => {
                       <div className="pl-6 pr-1 py-1 space-y-1 border-l border-border-cream ml-[11px]">
                         {projectSessions.map(session => {
                           const isActive = session.id === currentSessionId
+                          const isEditing = editingId === session.id
+                          const displayTitle = getDisplayTitle(session)
+
                           return (
                             <div 
                               key={session.id}
-                              onClick={() => selectSession(session.id)}
+                              onClick={() => !isEditing && selectSession(session.id)}
                               className={`group relative flex flex-col px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
                                 isActive ? 'bg-white shadow-sm border border-border-warm' : 'hover:bg-gray-200/50'
                               }`}
                             >
-                              <div className="flex items-center justify-between">
-                                <span className={`text-sm truncate ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}>
-                                  {session.messageCount > 0 ? `${session.messageCount} 条对话` : '新对话'}
-                                </span>
-                                <button
-                                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
-                                  onClick={(e) => handleDelete(e, session.id)}
-                                >
-                                  <TrashIcon size={12} />
-                                </button>
+                              <div className="flex items-center justify-between gap-1 min-w-0">
+                                {isEditing ? (
+                                  <input
+                                    ref={editInputRef}
+                                    className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
+                                    value={editValue}
+                                    maxLength={SESSION_TITLE_MAX_LENGTH}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onKeyDown={(e) => handleEditKeyDown(e, session.id)}
+                                    onBlur={() => void submitRename(session.id)}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                ) : (
+                                  <span
+                                    className={`text-sm truncate flex-1 min-w-0 ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}
+                                    title={displayTitle}
+                                  >
+                                    {displayTitle}
+                                  </span>
+                                )}
+                                <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-text-primary transition-all"
+                                    title="重命名会话"
+                                    onClick={(e) => startEditing(e, session)}
+                                  >
+                                    <EditIcon size={12} />
+                                  </button>
+                                  <button
+                                    className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
+                                    title="删除会话"
+                                    onClick={(e) => handleDelete(e, session.id)}
+                                  >
+                                    <TrashIcon size={12} />
+                                  </button>
+                                </div>
                               </div>
                               <span className="text-[10px] text-text-muted mt-0.5">
                                 {formatTime(session.updatedAt)}
+                                {session.messageCount > 0 && ` · ${session.messageCount} 条对话`}
                               </span>
                             </div>
                           )

@@ -28,6 +28,8 @@ describe('SessionStore', () => {
       expect(session.mode).toBe('default')
       expect(session.messages).toHaveLength(0)
       expect(session.currentLeafId).toBeNull()
+      expect(session.title).toBe('新会话')
+      expect(session.titleSource).toBe('placeholder')
       expect(session.createdAt).toBeGreaterThan(0)
       expect(session.updatedAt).toBe(session.createdAt)
     })
@@ -298,6 +300,41 @@ describe('SessionStore', () => {
     it('更新不存在的会话模式返回 null', () => {
       const store = new SessionStore(tmpDir)
       expect(store.updateMode('missing-session', 'plan')).toBeNull()
+    })
+  })
+
+  describe('updateTitle', () => {
+    it('自动生成标题写入并持久化', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      const updated = store.updateTitle(session.id, '帮我写登录页', 'generated')
+
+      expect(updated!.title).toBe('帮我写登录页')
+      expect(updated!.titleSource).toBe('generated')
+      expect(store.load(session.id)!.title).toBe('帮我写登录页')
+    })
+
+    it('manual 标题后 generated 不再覆盖', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      store.updateTitle(session.id, '自定义标题', 'manual')
+      const after = store.updateTitle(session.id, '自动标题', 'generated')
+
+      expect(after!.title).toBe('自定义标题')
+      expect(after!.titleSource).toBe('manual')
+    })
+
+    it('list 摘要透传 title 字段', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.updateTitle(session.id, '列表标题', 'generated')
+
+      const summaries = store.list()
+      const found = summaries.find(s => s.id === session.id)
+      expect(found?.title).toBe('列表标题')
+      expect(found?.titleSource).toBe('generated')
     })
   })
 

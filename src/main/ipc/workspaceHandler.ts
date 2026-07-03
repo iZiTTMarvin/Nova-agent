@@ -10,6 +10,7 @@ import {
   WORKSPACE_SELECT_PROJECT,
   WORKSPACE_CREATE_SESSION,
   WORKSPACE_DELETE_SESSION,
+  WORKSPACE_RENAME_SESSION,
   WORKSPACE_SELECT_SESSION,
   WORKSPACE_SET_MODE,
   WORKSPACE_REGENERATE,
@@ -47,6 +48,10 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
 
   ipcMain.handle(WORKSPACE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
     return service.deleteSession(params.sessionId)
+  })
+
+  ipcMain.handle(WORKSPACE_RENAME_SESSION, async (_event, params: { sessionId: string; title: string }) => {
+    return service.renameSession(params)
   })
 
   ipcMain.handle(WORKSPACE_SELECT_SESSION, async (_event, params: { sessionId: string }) => {

@@ -13,6 +13,7 @@
 import { dialog, BrowserWindow, app } from 'electron'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionData } from '../../runtime/sessions/types'
+import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, Session, SessionDetail } from '../../shared/session'
 import type { WorkspaceState, Tier1BranchContext } from '../../shared/workspace/types'
@@ -33,7 +34,8 @@ function toSession(data: SessionData): Session {
     mode: data.mode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
-    messageCount: activeMessages.length
+    messageCount: activeMessages.length,
+    title: data.title
   }
 }
 /** 计算并直接推送某会话的上下文容量拆分给 renderer */
@@ -257,6 +259,33 @@ export class WorkspaceService {
       this.state = { ...this.state, availableSessions: remaining }
     }
 
+    this.broadcast()
+    return this.getState()
+  }
+
+  /**
+   * 手动重命名会话标题（titleSource 固定为 manual，后续自动截取不再覆盖）。
+   */
+  renameSession(params: { sessionId: string; title: string }): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    const trimmed = params.title.trim()
+    if (!trimmed) {
+      throw new Error('标题不能为空')
+    }
+    const finalTitle = clampSessionTitle(trimmed)
+    store.updateTitle(params.sessionId, finalTitle, 'manual')
+
+    this.state = { ...this.state, availableSessions: store.list() }
+    this.broadcast()
+    return this.getState()
+  }
+
+  /**
+   * 刷新侧边栏会话列表并广播（自动生成标题后调用，不走 messagesRevision）。
+   */
+  refreshAvailableSessions(): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    this.state = { ...this.state, availableSessions: store.list() }
     this.broadcast()
     return this.getState()
   }

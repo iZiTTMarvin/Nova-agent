@@ -8,6 +8,16 @@ import type { Mode, MessageBlock } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
+export {
+  SESSION_PLACEHOLDER_TITLE,
+  SESSION_MIGRATED_EMPTY_TITLE,
+  SESSION_TITLE_MAX_LENGTH,
+  clampSessionTitle,
+  generateSessionTitleFromText
+} from '../../shared/session/title'
+
+/** 会话标题来源：占位名 → 自动截取 → 用户手动改名 */
+export type SessionTitleSource = 'placeholder' | 'generated' | 'manual'
 
 /** 会话摘要（用于列表展示，不含完整消息） */
 export interface SessionSummary {
@@ -17,6 +27,8 @@ export interface SessionSummary {
   createdAt: number
   updatedAt: number
   messageCount: number
+  title?: string
+  titleSource?: SessionTitleSource
 }
 
 /** 会话完整数据（含所有消息） */
@@ -49,6 +61,10 @@ export interface SessionData {
    * 旧会话没有此字段，反序列化后视为空数组。
    */
   todos?: TodoItem[]
+  /** 侧边栏展示的会话标题 */
+  title?: string
+  /** 标题来源，用于覆盖保护（manual 后不再被自动逻辑改写） */
+  titleSource?: SessionTitleSource
 }
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */

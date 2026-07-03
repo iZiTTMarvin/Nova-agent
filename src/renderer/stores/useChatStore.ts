@@ -295,6 +295,8 @@ export interface ChatState {
   selectSession: (sessionId: string) => Promise<void>
   /** 删除会话（当前会话被删时切到下一条或清空） */
   deleteSession: (sessionId: string) => Promise<void>
+  /** 重命名会话标题 */
+  renameSession: (sessionId: string, title: string) => Promise<void>
   /** 创建新会话 */
   createNewSession: (workspaceRoot?: string) => Promise<void>
   /** 发送用户消息（含图片） */
@@ -545,6 +547,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       console.error('删除会话出错:', err)
     }
+  },
+
+  renameSession: async (sessionId: string, title: string) => {
+    const { useWorkspaceStore } = await import('./useWorkspaceStore')
+    await useWorkspaceStore.getState().renameSession(sessionId, title)
   },
 
   sendMessage: async (content: string, images?: ImageAttachment[]) => {

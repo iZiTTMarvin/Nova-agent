@@ -75,6 +75,7 @@ export interface AppState {
   loadSessions: () => Promise<void>
   selectSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
+  renameSession: (sessionId: string, title: string) => Promise<void>
   createNewSession: (workspaceRoot?: string) => Promise<void>
   regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
   switchBranch: (sessionId: string, targetMessageId: string) => Promise<void>
@@ -174,6 +175,7 @@ function mergeState(
     loadSessions: chat.loadSessions,
     selectSession: chat.selectSession,
     deleteSession: chat.deleteSession,
+    renameSession: chat.renameSession,
     createNewSession: chat.createNewSession,
     regenerateAssistant: chat.regenerateAssistant,
     switchBranch: chat.switchBranch,
@@ -251,6 +253,7 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   loadSessions: 'chat',
   selectSession: 'chat',
   deleteSession: 'chat',
+  renameSession: 'chat',
   createNewSession: 'chat',
   regenerateAssistant: 'chat',
   switchBranch: 'chat',

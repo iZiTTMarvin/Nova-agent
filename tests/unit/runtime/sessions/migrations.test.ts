@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { migrateSessionData, migrateV3ToV4, CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
+import { SESSION_MIGRATED_EMPTY_TITLE } from '../../../../src/shared/session/title'
 import type { SessionData } from '../../../../src/runtime/sessions/types'
 
 describe('migrateSessionData', () => {
@@ -92,5 +93,42 @@ describe('migrateSessionData', () => {
     expect(v4.messages[0].parentId).toBe(null)
     expect(v4.messages[1].parentId).toBe('m1')
     expect(v4.currentLeafId).toBe('m2')
+  })
+
+  it('v4 会话经完整迁移链补全标题字段', () => {
+    const v4: SessionData = {
+      schemaVersion: 4,
+      id: 'sess_v4',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      messages: [
+        { id: 'm1', parentId: null, role: 'user', content: '帮我写一个登录页面', timestamp: 1 }
+      ],
+      currentLeafId: 'm1',
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const migrated = migrateSessionData(v4)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.title).toBe('帮我写一个登录页面')
+    expect(migrated.titleSource).toBe('generated')
+  })
+
+  it('v4 无用户消息的会话迁移后写入占位标题', () => {
+    const v4: SessionData = {
+      schemaVersion: 4,
+      id: 'sess_empty',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const migrated = migrateSessionData(v4)
+    expect(migrated.title).toBe(SESSION_MIGRATED_EMPTY_TITLE)
+    expect(migrated.titleSource).toBe('placeholder')
   })
 })

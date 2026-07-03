@@ -55,7 +55,8 @@ function toSessionSummary(data: SessionData): Session {
     mode: data.mode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
-    messageCount: activeMessages.length
+    messageCount: activeMessages.length,
+    title: data.title
   }
 }
 

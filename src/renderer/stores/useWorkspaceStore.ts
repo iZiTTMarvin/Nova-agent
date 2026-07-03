@@ -35,6 +35,8 @@ export interface WorkspaceStoreState {
   createSession: (workspaceRoot: string, mode?: Mode) => Promise<void>
   /** 删除会话 */
   deleteSession: (sessionId: string) => Promise<void>
+  /** 重命名会话标题 */
+  renameSession: (sessionId: string, title: string) => Promise<void>
   /** 切换会话 */
   selectSession: (sessionId: string) => Promise<void>
   /** 切换模式 */
@@ -95,6 +97,17 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 删除会话失败:', err)
+    }
+  },
+
+  renameSession: async (sessionId: string, title: string) => {
+    try {
+      const state = await window.api.invoke('workspace:rename-session', { sessionId, title })
+      const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+      dispatchWorkspaceChange(state)
+    } catch (err) {
+      console.error('[useWorkspaceStore] 重命名会话失败:', err)
+      throw err
     }
   },
 

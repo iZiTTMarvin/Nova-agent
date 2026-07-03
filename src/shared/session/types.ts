@@ -92,6 +92,8 @@ export interface Session {
   createdAt: number
   updatedAt: number
   messageCount: number
+  /** 侧边栏展示的会话标题 */
+  title?: string
 }
 
 /** 会话详情（含完整消息列表，用于加载历史对话） */

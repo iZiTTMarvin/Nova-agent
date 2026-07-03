@@ -35,9 +35,10 @@ import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestio
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
 import type { SessionMessageAppend, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
-import { extractTextFromSerializableContent } from '../../runtime/sessions/types'
+import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import type { MessageBlock } from '../../shared/session/types'
+import { getWorkspaceService } from '../services/WorkspaceService'
 import {
   persistCompactionSnapshot,
   restoreOrInjectHistory
@@ -409,6 +410,11 @@ export function registerAgentHandler(
 
     const isRegenerate = params.regenerate === true
 
+    // 追加前记录是否已有含文字的用户消息（用于首条文字消息自动生成标题）
+    const hadTextUserMsg = session.messages.some(
+      m => m.role === 'user' && extractTextFromSerializableContent(m.content).trim() !== ''
+    )
+
     // 构建用户消息内容（含图片时为 ContentBlock[]，否则为 string）
     // modeInstruction 统一由 AgentLoop.sendMessage 追加，持久化中不包含
     let sendContent: string | ContentBlock[]
@@ -459,6 +465,17 @@ export function registerAgentHandler(
         timestamp: Date.now()
       }
       sessionStore.appendMessage(params.sessionId, userMessage)
+
+      // 首条含文字的用户消息后自动生成标题，并刷新侧边栏列表
+      if (!hadTextUserMsg) {
+        const newText = extractTextFromSerializableContent(persistContent).trim()
+        if (newText !== '') {
+          const title = generateSessionTitleFromText(newText)
+          if (sessionStore.updateTitle(params.sessionId, title, 'generated')) {
+            getWorkspaceService().refreshAvailableSessions()
+          }
+        }
+      }
     }
 
     // 常驻黑匣子：主进程事件间隔 stall 检测，定位偶发卡顿时用。

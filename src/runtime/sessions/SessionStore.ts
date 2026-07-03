@@ -19,13 +19,14 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import type { SessionSummary, SessionData, SessionMessage, SessionMessageAppend, ContextSnapshot } from './types'
+import type { SessionSummary, SessionData, SessionMessage, SessionMessageAppend, ContextSnapshot, SessionTitleSource } from './types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
   SESSION_CONTEXT_SNAPSHOT_FILE,
   CONTEXT_SNAPSHOT_VERSION
 } from './types'
+import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
@@ -54,7 +55,9 @@ export class SessionStore {
       messages: [],
       currentLeafId: null,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      title: SESSION_PLACEHOLDER_TITLE,
+      titleSource: 'placeholder'
     }
 
     this.save(session)
@@ -172,7 +175,9 @@ export class SessionStore {
           mode: data.mode,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
-          messageCount
+          messageCount,
+          title: data.title,
+          titleSource: data.titleSource
         })
       } catch {
         // 损坏的会话文件静默跳过
@@ -287,6 +292,25 @@ export class SessionStore {
     if (!session) return null
 
     session.mode = mode
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /**
+   * 更新会话标题（只写 session.json 元数据）。
+   * 覆盖保护：当前 titleSource 为 manual 时，非 manual 来源的写入会被忽略。
+   */
+  updateTitle(sessionId: string, title: string, source: SessionTitleSource): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    if (source !== 'manual' && session.titleSource === 'manual') {
+      return session
+    }
+
+    session.title = title
+    session.titleSource = source
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return session

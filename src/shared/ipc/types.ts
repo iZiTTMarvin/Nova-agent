@@ -288,6 +288,10 @@ export interface IpcCommands {
     params: { sessionId: string }
     result: WorkspaceState
   }
+  'workspace:rename-session': {
+    params: { sessionId: string; title: string }
+    result: WorkspaceState
+  }
   'workspace:select-session': {
     params: { sessionId: string }
     result: WorkspaceState

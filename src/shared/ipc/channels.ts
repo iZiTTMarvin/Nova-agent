@@ -64,6 +64,8 @@ export const WORKSPACE_SELECT_PROJECT = 'workspace:select-project' as const
 export const WORKSPACE_CREATE_SESSION = 'workspace:create-session' as const
 /** 删除会话（删除当前会话时自动切到下一条或清空） */
 export const WORKSPACE_DELETE_SESSION = 'workspace:delete-session' as const
+/** 重命名会话标题 */
+export const WORKSPACE_RENAME_SESSION = 'workspace:rename-session' as const
 /** 切换当前会话 */
 export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
 /** 切换运行模式 */
