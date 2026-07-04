@@ -24,6 +24,14 @@ export interface StreamingTextBlockProps {
    */
   isStreaming: boolean
   /**
+   * 是否启用打字机放出节奏（仅对「当前仍在接收 delta 的最后一个 text 块」为 true）。
+   *
+   * 工具调用会在 blocks 序列中切开正文：已封口的历史 text 块若仍走打字机，
+   * 会在工具卡片之间露出残片（如单独的「token 消费 SSE」、被截断的反引号「`方法」）。
+   * 封口块应立刻展示全文，仅保留「流式中、无终态高亮」的渲染路径。
+   */
+  enableTypewriter?: boolean
+  /**
    * 是否因等待用户输入（bash 权限 / askQuestion / 验证权限）而暂停。
    *
    * 暂停期间：停掉打字机 rAF（避免空转重渲染），直接显示已累积的全文，
@@ -47,14 +55,15 @@ export interface StreamingTextBlockProps {
 export const StreamingTextBlock = React.memo(function StreamingTextBlock({
   fullContent,
   isStreaming,
+  enableTypewriter = true,
   paused = false,
   style = 'agile',
   onRenderPoolTick
 }: StreamingTextBlockProps) {
-  // 是否真正驱动打字机：轮次进行中且未暂停。
+  // 是否真正驱动打字机：轮次进行中、当前块仍接收 delta、且未暂停。
   // 暂停（等待权限）时关掉 rAF 循环，render pool 会直接把 renderedLength 拉到末尾，
   // pool.text === fullContent，即「显示全文但不再逐字动画」。
-  const animating = isStreaming && !paused
+  const animating = isStreaming && enableTypewriter && !paused
   const pool = useStreamingRenderPool(fullContent, animating, style)
   const lastReportedLengthRef = useRef<number>(pool.renderedLength)
 
@@ -73,13 +82,15 @@ export const StreamingTextBlock = React.memo(function StreamingTextBlock({
     return <MarkdownRenderer content={fullContent} isStreaming={false} />
   }
 
-  if (!pool.text) return null
+  // 已封口块：轮次未结束但不再接收 delta，直接全文展示，避免工具间残片闪烁。
+  const displayContent = animating ? pool.text : fullContent
+  if (!displayContent) return null
 
   // 轮次进行中（含暂停等待权限）：始终按「流式中」渲染（纯文本、跳过高亮），
   // 避免暂停瞬间把整条消息的代码块重新逐行高亮，导致同步重排卡死。
   return (
     <div className="contents">
-      <MarkdownRenderer content={pool.text} isStreaming={true} />
+      <MarkdownRenderer content={displayContent} isStreaming={true} />
     </div>
   )
 })

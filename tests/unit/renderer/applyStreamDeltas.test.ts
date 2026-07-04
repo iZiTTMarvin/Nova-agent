@@ -298,6 +298,31 @@ describe('useChatStore.applyStreamDeltas', () => {
     expect(toolCall!.arguments).toEqual({ path: 'index.html', content: 'body-full' })
   })
 
+  it('回归：toolCallStart 前须先落盘 text delta，否则旁白会错落到 tool 块之后', () => {
+    // 复现截图类 bug：text_delta 走 16ms 缓冲，tool_call_start 直达 store。
+    // 若 start 抢先插入 tool 块，本应属于 tool 之前的正文会开新 text 块挂在 tool 后面，
+    // UI 上表现为工具卡片之间冒出残片、Markdown 在反引号处被截断（如「`方法」）。
+    useChatStore.getState().handleMessageStart('msg_order')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'text', messageId: 'msg_order', delta: '调用前先说明' }
+    ])
+    // App.tsx 在 handleToolCallStart 前会 buffer.flushNow()，等价于 text 已写入 store
+    useChatStore.getState().handleToolCallStart('msg_order', 'tc_order', 'read')
+
+    const ordered = useChatStore.getState().messages[0]
+    expect(ordered.blocks?.map(b => b.type)).toEqual(['text', 'tool'])
+    expect(ordered.blocks?.[0]).toMatchObject({ type: 'text', content: '调用前先说明' })
+
+    // 反例：若 tool 块先占位、text 后 flush，会把旁白错挂到 tool 之后
+    useChatStore.getState().handleMessageStart('msg_wrong')
+    useChatStore.getState().handleToolCallStart('msg_wrong', 'tc_wrong', 'read')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'text', messageId: 'msg_wrong', delta: '本应在前面的旁白' }
+    ])
+    const wrong = useChatStore.getState().messages.find(m => m.id === 'msg_wrong')
+    expect(wrong?.blocks?.map(b => b.type)).toEqual(['tool', 'text'])
+  })
+
   it('handleToolCall 会剥掉正文末尾的伪工具调用 JSON，避免和真实工具卡片重复展示', () => {
     useChatStore.getState().handleMessageStart('msg_text_tool')
     useChatStore.getState().handleTextDelta(

@@ -107,6 +107,10 @@ function App(): JSX.Element {
 
     // 监听：Agent 流式工具调用开始（low-freq 元数据，直接 store）
     const unsubToolCallStart = window.api.on('agent:tool-call-start', (data) => {
+      // 与 tool-call 最终事件同理：text_delta 走 16ms 缓冲而 start 直达 store。
+      // 若不先 flush，本应落在 tool 块之前的正文会被追加到 tool 之后的 text 块，
+      // 造成工具卡片与旁白顺序颠倒、Markdown 在工具边界被截断（如孤立的「`方法」）。
+      buffer.flushNow()
       handleToolCallStart(data.messageId, data.toolCallId, data.toolName)
     })
 

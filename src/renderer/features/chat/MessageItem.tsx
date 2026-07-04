@@ -13,6 +13,7 @@ import { isActiveThinkingBlock, shouldRenderToolBlock } from './renderingPolicy'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ToolCallGroup } from './ToolCallGroup'
 import { buildBlockRenderUnits, buildToolCallRenderUnits } from './toolCallGrouping'
+import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
@@ -286,6 +287,11 @@ function MessageItemInner({
                       key={`text-${index}-${msg.id}`}
                       fullContent={block.content}
                       isStreaming={isTurnActiveForThisMsg}
+                      enableTypewriter={shouldEnableTextBlockTypewriter({
+                        isTurnActive: isTurnActiveForThisMsg,
+                        blockIndex: index,
+                        blocks: msg.blocks
+                      })}
                       paused={isPausedForInput}
                       onRenderPoolTick={handleRenderPoolTick}
                     />
