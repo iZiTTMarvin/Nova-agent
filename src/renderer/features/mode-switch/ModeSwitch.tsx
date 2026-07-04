@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useAppStore } from '../../stores/useAppStore'
-import { CodeIcon, HandIcon, PlanIcon, CheckSmallIcon, ArrowUpIcon } from '../../components/Icons'
+import { HandIcon, PlanIcon, CodeIcon, CheckSmallIcon, ArrowUpIcon } from '../../components/Icons'
 import type { Mode } from '../../../shared/session/types'
 import { motion, AnimatePresence } from 'framer-motion'
-// 遗留引用，已在组件内转为 Tailwind
 import './ModeSwitch.css'
 
 interface ModeOption {
@@ -16,28 +15,29 @@ interface ModeOption {
 export const ModeSwitch: React.FC = () => {
   const currentMode = useAppStore(state => state.currentMode)
   const setMode = useAppStore(state => state.setMode)
-  
+
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // 行为模式三档；权限档位（ask/auto）已迁到设置
   const modeOptions: ModeOption[] = [
     {
       id: 'default',
-      name: '执行前确认',
-      desc: 'Nova 将在执行每次代码编辑前请求您的批准',
+      name: '默认模式',
+      desc: '模型自主循环协作；工具批准策略见设置',
       icon: <HandIcon size={14} />
-    },
-    {
-      id: 'auto',
-      name: '自动执行',
-      desc: 'Nova 将自动编辑您选中的代码或整个文件',
-      icon: <CodeIcon size={14} />
     },
     {
       id: 'plan',
       name: '计划模式',
-      desc: 'Nova 将在执行编辑前先探索代码并向您展示计划',
+      desc: '只读分析，禁止写入与执行命令',
       icon: <PlanIcon size={14} />
+    },
+    {
+      id: 'compose',
+      name: '编排模式',
+      desc: '由编排脚本强制推进开发全流程',
+      icon: <CodeIcon size={14} />
     }
   ]
 
@@ -59,7 +59,6 @@ export const ModeSwitch: React.FC = () => {
 
   return (
     <div className="relative" ref={containerRef}>
-      {/* 触发按钮 */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#2d2d2d] hover:bg-[#3d3d3d] text-[#e0e0e0] border border-[#3d3d3d] transition-colors font-medium text-[13px]"
@@ -68,7 +67,6 @@ export const ModeSwitch: React.FC = () => {
         <span>{activeOption.name}</span>
       </button>
 
-      {/* 弹出菜单 */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -78,7 +76,6 @@ export const ModeSwitch: React.FC = () => {
             transition={{ duration: 0.15, ease: "easeOut" }}
             className="absolute bottom-[calc(100%+8px)] left-0 w-[320px] bg-[#1e1e1e] border border-[#333] rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col"
           >
-            {/* Header */}
             <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#2d2d2d]">
               <span className="text-[#a0a0a0] text-xs font-medium">模式选择</span>
               <div className="flex items-center gap-1 text-[#666] text-[10px]">
@@ -93,7 +90,6 @@ export const ModeSwitch: React.FC = () => {
               </div>
             </div>
 
-            {/* Options */}
             <div className="flex flex-col p-1.5">
               {modeOptions.map(option => {
                 const isActive = currentMode === option.id

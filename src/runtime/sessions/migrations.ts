@@ -12,10 +12,12 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { SessionData, SessionMessage } from './types'
+import type { Mode } from '../../shared/session/types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
+import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 5
+export const CURRENT_SESSION_SCHEMA_VERSION = 6
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -39,9 +41,7 @@ function migrateV0ToV1(data: unknown): SessionData {
     schemaVersion: 1,
     id: typeof raw.id === 'string' ? raw.id : '',
     workspaceRoot: typeof raw.workspaceRoot === 'string' ? raw.workspaceRoot : '',
-    mode: (raw.mode === 'plan' || raw.mode === 'default' || raw.mode === 'auto'
-      ? raw.mode
-      : 'default') as SessionData['mode'],
+    mode: normalizeLegacyMode(raw.mode),
     messages,
     currentLeafId: messages.at(-1)?.id ?? null,
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
@@ -161,13 +161,48 @@ function migrateV4ToV5(data: unknown): SessionData {
   }
 }
 
+/**
+ * v5 → v6：Mode 去掉 auto。
+ * mode==='auto' → default，并尽量把用户 permissionPolicy 写成 auto（保留习惯）。
+ */
+function migrateV5ToV6(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    mode: normalizeLegacyMode(session.mode),
+    schemaVersion: 6
+  }
+}
+
+/** 旧字面量 auto → default；非法值兜底 default */
+function normalizeLegacyMode(mode: unknown): Mode {
+  if (mode === 'plan' || mode === 'default' || mode === 'compose') return mode
+  if (mode === 'auto') {
+    tryPromotePermissionPolicyToAuto()
+    return 'default'
+  }
+  return 'default'
+}
+
+/** 会话从 auto 迁出时，尽量把全局策略写成 auto（失败不阻断迁移） */
+function tryPromotePermissionPolicyToAuto(): void {
+  try {
+    const settings = loadNovaSettings()
+    if (settings.permissionPolicy === 'auto') return
+    saveNovaSettings({ permissionPolicy: 'auto' })
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 迁移函数链：索引 = 起始版本 */
 const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV0ToV1, // v0 → v1
   migrateV1ToV2, // v1 → v2
   migrateV2ToV3, // v2 → v3
   migrateV3ToV4, // v3 → v4
-  migrateV4ToV5  // v4 → v5
+  migrateV4ToV5, // v4 → v5
+  migrateV5ToV6  // v5 → v6
 ]
 
 /**

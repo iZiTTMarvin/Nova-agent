@@ -69,6 +69,18 @@ export interface SkillManifest {
   hasSupportingFiles: boolean
   /** 运行时 model 调用开关（默认跟随 modelInvocable） */
   enabled: boolean
+  /**
+   * 隐藏技能：仅 compose 模式对模型可见（编排 skill）。
+   * 非 compose 的 listForContext 会过滤掉。
+   */
+  hidden?: boolean
+  /**
+   * 编排脚本名：slash 触发时走 workflow 而非 inject/fork。
+   * 例：workflow: br-full-dev
+   */
+  workflow?: string
+  /** 编排 skill 的 whenToUse（写入 compose_skills 块） */
+  whenToUse?: string
 }
 
 /** invokeSkill 调度结果 */
@@ -77,3 +89,4 @@ export type SkillDispatchResult =
   | { kind: 'system_notice'; text: string }
   | { kind: 'fork'; skill: SkillManifest; args: string }
   | { kind: 'inject'; assistantContent: string; userContent: string }
+  | { kind: 'workflow'; scriptName: string; args: string }

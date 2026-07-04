@@ -89,7 +89,7 @@ describe('MessageItem areEqual', () => {
 
   it('currentMode 不同应返回 false', () => {
     const prev = makeProps()
-    const next = makeProps({ currentMode: 'auto' as const })
+    const next = makeProps({ currentMode: 'compose' as const })
     expect(areEqual(prev, next)).toBe(false)
   })
 

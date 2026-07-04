@@ -31,6 +31,9 @@ import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
+import { ComposeProgressPanel } from '../compose/ComposeProgressPanel'
+import { ComposeAskUserPanel } from '../compose/ComposeAskUserPanel'
+import { useComposeStore } from '../compose/useComposeStore'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
@@ -121,8 +124,21 @@ export const ChatPanel: React.FC = () => {
   const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
-  const isPausedForUserInput = !!pendingAskQuestion || !!pendingPermissionRequest || !!pendingVerificationRequest
+  const pendingComposeAskUser = useComposeStore(state => state.pendingAskUser)
+  const loadComposeState = useComposeStore(state => state.loadStateFromDisk)
+  const isPausedForUserInput =
+    !!pendingAskQuestion ||
+    !!pendingPermissionRequest ||
+    !!pendingVerificationRequest ||
+    !!pendingComposeAskUser
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+
+  // 切换项目时拉取磁盘上的编排 state（恢复进度面板）
+  useEffect(() => {
+    if (currentProject) {
+      void loadComposeState(currentProject)
+    }
+  }, [currentProject, loadComposeState])
 
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!currentSessionId) return
@@ -566,6 +582,9 @@ export const ChatPanel: React.FC = () => {
           onScroll={handleScroll}
           style={{ overflowAnchor: 'none' }}
         >
+          {/* 编排进度面板（无 state 时返回 null） */}
+          <ComposeProgressPanel />
+
           {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
           <TodoPanel sessionId={currentSessionId} />
 
@@ -693,6 +712,13 @@ export const ChatPanel: React.FC = () => {
         }`}
       >
         <div className="chat-panel__composer-inner">
+          {/* 编排 askUser：阶段 5 发布确认等 */}
+          {pendingComposeAskUser && (
+            <div className="ask-question-dock">
+              <ComposeAskUserPanel />
+            </div>
+          )}
+
           {/* askQuestion 工具发起的提问面板：pendingAskQuestion 为 null 时组件内自返回 null */}
           {pendingAskQuestion && (
             <div className="ask-question-dock">

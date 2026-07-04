@@ -32,9 +32,28 @@ function copyAgentPrompts(): Plugin {
   }
 }
 
+/** 构建时将编排内置脚本复制到 out/main/workflow/builtin，供 builtin.ts 按 __dirname 读取 */
+function copyWorkflowBuiltins(): Plugin {
+  return {
+    name: 'copy-workflow-builtins',
+    closeBundle() {
+      const src = resolve('src/runtime/workflow/builtin')
+      const dest = resolve('out/main/workflow/builtin')
+      if (existsSync(src)) {
+        cpSync(src, dest, { recursive: true })
+      }
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), copyNovaBuiltinSkills(), copyAgentPrompts()],
+    plugins: [
+      externalizeDepsPlugin(),
+      copyNovaBuiltinSkills(),
+      copyAgentPrompts(),
+      copyWorkflowBuiltins()
+    ],
     resolve: {
       alias: {
         '@main': resolve('src/main'),

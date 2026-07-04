@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import type { Mode } from '../../shared/session/types'
+import type { Mode, PermissionPolicy } from '../../shared/session/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 
 /** 应用级设置字段（与 NovaSettingsDto 完全对齐） */
@@ -26,6 +26,7 @@ const CURRENT_SETTINGS_VERSION = 1
 export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   loadThirdPartySkills: true,
   defaultMode: 'default',
+  permissionPolicy: 'ask',
   defaultShell: '',
   defaultShellTimeout: 120_000,
   verificationEnabled: true,
@@ -64,8 +65,18 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.loadThirdPartySkills === 'boolean') {
     result.loadThirdPartySkills = obj.loadThirdPartySkills
   }
-  if (obj.defaultMode === 'plan' || obj.defaultMode === 'default' || obj.defaultMode === 'auto') {
+  // 旧 Mode 含 auto：迁为 default，并尽量把 permissionPolicy 写成 auto
+  let migratedAutoMode = false
+  if (obj.defaultMode === 'auto') {
+    result.defaultMode = 'default'
+    migratedAutoMode = true
+  } else if (obj.defaultMode === 'plan' || obj.defaultMode === 'default' || obj.defaultMode === 'compose') {
     result.defaultMode = obj.defaultMode as Mode
+  }
+  if (obj.permissionPolicy === 'ask' || obj.permissionPolicy === 'auto') {
+    result.permissionPolicy = obj.permissionPolicy as PermissionPolicy
+  } else if (migratedAutoMode) {
+    result.permissionPolicy = 'auto'
   }
   if (typeof obj.defaultShell === 'string') {
     result.defaultShell = obj.defaultShell
@@ -121,8 +132,13 @@ function migrateAndFill(raw: unknown): NovaSettings {
 function validatePatch(patch: Partial<NovaSettings>): string[] {
   const errors: string[] = []
   if ('defaultMode' in patch && patch.defaultMode !== undefined) {
-    if (!['plan', 'default', 'auto'].includes(patch.defaultMode)) {
-      errors.push('defaultMode 必须是 plan / default / auto 之一')
+    if (!['plan', 'default', 'compose'].includes(patch.defaultMode)) {
+      errors.push('defaultMode 必须是 plan / default / compose 之一')
+    }
+  }
+  if ('permissionPolicy' in patch && patch.permissionPolicy !== undefined) {
+    if (!['ask', 'auto'].includes(patch.permissionPolicy)) {
+      errors.push('permissionPolicy 必须是 ask / auto 之一')
     }
   }
   if ('defaultShellTimeout' in patch && patch.defaultShellTimeout !== undefined) {

@@ -8,7 +8,8 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
 import { app } from 'electron'
 import { join } from 'path'
-import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContext, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
+import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContextForMode, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
+import { runWorkflow } from '../../runtime/workflow'
 import { loadModelConfig } from '../../runtime/model/config'
 import { inferContextWindow, inferVisionSupport, inferCacheStrategy } from '../../shared/config/types'
 import { preferredToolDialect } from '../../runtime/model/dialect'
@@ -235,10 +236,12 @@ export function registerAgentHandler(
 
     const projectPath = session.workspaceRoot
     const sessionsDir = sessionStore.getSessionsDir()
+    const novaSettings = loadNovaSettings()
 
     // 在闭包中捕获本次调用的全部上下文，后续所有操作只读这些值
     const capturedSessionId = params.sessionId
     const capturedMode = session.mode
+    const capturedPermissionPolicy = novaSettings.permissionPolicy
     const capturedWorkspaceRoot = projectPath
     const capturedSessionsDir = sessionsDir
     const artifactStore = new ArtifactStore(sessionsDir)
@@ -247,7 +250,6 @@ export function registerAgentHandler(
     const persistedConfig = loadModelConfig(app.getPath('userData'))
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
     const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
-    const novaSettings = loadNovaSettings()
     syncTavilyApiKeyFromSettings()
 
     const skillService = getSkillService()
@@ -259,16 +261,22 @@ export function registerAgentHandler(
     const projectRules = discoverProjectRules(projectPath)?.text ?? ''
     /** 行为契约层：模板化 base rules，与模式指令（挂 user 尾部）分离以保缓存前缀稳定 */
     const baseRules = renderBaseRules()
-    const skillContext = buildSkillContext(skillRegistry.listForContext())
+    const skillContext = buildSkillContextForMode(
+      session.mode,
+      (profile, opts) => skillRegistry.listForContext(profile, opts),
+      () => skillRegistry.listHidden()
+    )
     /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
     const skillsTokenEstimate = estimateTokens(skillContext)
 
     const eventBus = new EventBus()
     const permissionManager = new PermissionManager()
-    // PRD §5.2：注入持久化权限规则 + 当前项目路径，用于匹配 allow/deny/ask
+    // 注入持久化权限规则 + 当前项目路径，用于匹配 allow/deny/ask
     permissionManager.setRules(listPermissionRules(projectPath))
     permissionManager.setCurrentProjectPath(projectPath)
     permissionManager.setSessionId(params.sessionId)
+    // 工具批准策略（仅约束 default；compose 固定 auto 语义）
+    permissionManager.setPermissionPolicy(novaSettings.permissionPolicy)
 
     const toolRegistry = new ToolRegistry()
     // ⚠️ 新增工具时除了在此 register，还必须：(1) 在 shared/session/toolVisibility.getToolCapability
@@ -363,6 +371,15 @@ export function registerAgentHandler(
 
     agentLoop.setPermissionManager(permissionManager)
     agentLoop.setMode(session.mode)
+    // 统一 slash 调度：skill 注册表 + fork 依赖
+    agentLoop.setSkillRegistry(skillRegistry)
+    agentLoop.setSkillForkDeps({
+      modelClient,
+      parentEventBus: eventBus,
+      resolveTool: (name) => toolRegistry.getTool(name),
+      contextWindow,
+      supportsVision
+    })
     // 注入会话上下文：todo_write 工具通过它写会话元数据
     // 必须在 injectHistory 之前设置 sessionId，否则恢复历史后触发的
     // context_breakdown 事件会带上空 sessionId。
@@ -407,6 +424,46 @@ export function registerAgentHandler(
       }
     })
     agentLoop.setCheckpointManager(checkpointManager)
+
+    // 编排脚本 runner：/br-full-dev 等 workflow skill 入口
+    agentLoop.setWorkflowRunner(async (scriptName, args) => {
+      if (session.mode !== 'compose') {
+        getWorkspaceService().setMode({ mode: 'compose', sessionId: params.sessionId })
+        agentLoop!.setMode('compose')
+      }
+      // compose run 内固定 auto 权限语义
+      permissionManager.setPermissionPolicy('auto')
+
+      const outcome = await runWorkflow({
+        script: scriptName,
+        args: { requirement: args, task: args },
+        deps: {
+          modelClient,
+          parentEventBus: eventBus,
+          resolveTool: (name) => toolRegistry.getTool(name),
+          resolveSkill: (name) => skillRegistry.get(name),
+          workspaceRoot: projectPath,
+          permissionBridge: defaultSubAgentPermissionBridge,
+          checkpointManager,
+          contextWindow,
+          supportsVision,
+          mode: 'compose',
+          sessionId: params.sessionId
+        }
+      })
+
+      if (outcome.status === 'completed') {
+        const summary =
+          typeof outcome.result === 'string'
+            ? outcome.result
+            : `编排完成（runId=${outcome.runId}）\n${JSON.stringify(outcome.result, null, 2)}`
+        return { summary }
+      }
+      if (outcome.status === 'cancelled') {
+        return { summary: `编排已取消（runId=${outcome.runId}）` }
+      }
+      throw new Error(outcome.error || `编排失败（runId=${outcome.runId}）`)
+    })
 
     const isRegenerate = params.regenerate === true
 
@@ -487,6 +544,7 @@ export function registerAgentHandler(
       forwardEventToRenderer(getMainWindow(), event)
       accumulateStreamEvent(capturedSessionId, event, {
         mode: capturedMode,
+        permissionPolicy: capturedPermissionPolicy,
         workspaceRoot: capturedWorkspaceRoot,
         sessionsDir: capturedSessionsDir,
         eventBus,
@@ -545,6 +603,8 @@ export function registerAgentHandler(
 /** 每次消息处理需要的上下文快照，避免读全局变量 */
 export interface MessageContext {
   mode: Mode
+  /** 工具批准策略（验证弹窗：default+ask 才确认） */
+  permissionPolicy: import('../../shared/session/types').PermissionPolicy
   workspaceRoot: string
   sessionsDir: string
   eventBus: EventBus
@@ -756,6 +816,7 @@ export function triggerVerificationIfNeeded(
       const result = await runVerification({
         workingDir: ctx.workspaceRoot,
         mode: ctx.mode,
+        permissionPolicy: ctx.permissionPolicy,
         hasModifications: true,
         // default 模式：通过 EventBus → IPC 推送到 renderer 等待用户确认
         permissionCallback: async (command: string): Promise<boolean> => {
@@ -1043,6 +1104,45 @@ export function forwardEventToRenderer(
       webContents.send('agent:message-end', {
         messageId: event.messageId,
         ...(event.interrupted ? { interrupted: true } : {})
+      })
+      break
+    case 'workflow_phase':
+      webContents.send('compose:phase-change', {
+        runId: event.runId,
+        phase: event.phase
+      })
+      break
+    case 'workflow_log':
+      webContents.send('compose:log', {
+        runId: event.runId,
+        message: event.message
+      })
+      break
+    case 'workflow_agent_failed':
+      // 可观测事件，阶段 E UI 可订阅；当前仅转发为 log
+      webContents.send('compose:log', {
+        runId: event.runId,
+        message: `[agent-failed] ${event.reason}`
+      })
+      break
+    case 'workflow_ask_user':
+      webContents.send('compose:ask-user', {
+        runId: event.runId,
+        requestId: event.requestId,
+        question: event.question,
+        options: event.options
+      })
+      break
+    case 'workflow_task_update':
+      webContents.send('compose:task-update', {
+        runId: event.runId,
+        tasks: event.tasks
+      })
+      break
+    case 'workflow_state':
+      webContents.send('compose:state', {
+        runId: event.runId,
+        state: event.state
       })
       break
   }

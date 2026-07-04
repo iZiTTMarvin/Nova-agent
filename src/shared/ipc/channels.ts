@@ -92,7 +92,15 @@ export const PERMISSION_GRANT_SESSION_SCOPE = 'permission:grant-session-scope' a
 // ── DiffViewer 批量审阅（PRD §5.3） ──────────────────────
 export const ACCEPT_ALL_FILES = 'accept-all-files' as const
 export const REJECT_ALL_FILES = 'reject-all-files' as const
-
+// ── 编排模式 compose ──────────────────────
+export const COMPOSE_RUN = 'compose:run' as const
+export const COMPOSE_CANCEL = 'compose:cancel' as const
+export const COMPOSE_STATUS = 'compose:status' as const
+export const COMPOSE_RESUME = 'compose:resume' as const
+/** 回复编排 askUser（解除脚本阻塞） */
+export const COMPOSE_RESPOND_ASK_USER = 'compose:respond-ask-user' as const
+/** 读取当前工作区 `.nova/compose/state.json` */
+export const COMPOSE_GET_STATE = 'compose:get-state' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 
@@ -123,3 +131,9 @@ export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */
 export const WORKSPACE_CHANGED = 'workspace:changed' as const
+/** 编排 phase / task / log / ask-user */
+export const COMPOSE_PHASE_CHANGE = 'compose:phase-change' as const
+export const COMPOSE_TASK_UPDATE = 'compose:task-update' as const
+export const COMPOSE_ASK_USER = 'compose:ask-user' as const
+export const COMPOSE_LOG = 'compose:log' as const
+export const COMPOSE_STATE = 'compose:state' as const

@@ -363,6 +363,31 @@ export interface IpcCommands {
     params: { snapshotRetentionDays?: number }
     result: StorageCleanupResult
   }
+  // ── 编排模式 compose ──
+  'compose:run': {
+    params: { scriptName: string; args?: string; workspaceRoot: string; sessionId?: string }
+    result: { runId: string; status: string }
+  }
+  'compose:cancel': {
+    params: { runId: string }
+    result: { cancelled: boolean }
+  }
+  'compose:status': {
+    params: { runId: string }
+    result: { runId: string; status: string; phase?: string } | null
+  }
+  'compose:resume': {
+    params: { runId: string; scriptName: string; args?: string; workspaceRoot: string; sessionId?: string }
+    result: { runId: string; status: string }
+  }
+  'compose:respond-ask-user': {
+    params: { runId: string; requestId: string; answer: string }
+    result: { ok: boolean }
+  }
+  'compose:get-state': {
+    params: { workspaceRoot: string }
+    result: Record<string, unknown> | null
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -522,6 +547,28 @@ export interface IpcEvents {
   /** 工作区状态变更广播（PRD §5.1）。主进程是唯一写入方。 */
   'workspace:changed': {
     state: WorkspaceState
+  }
+  'compose:phase-change': {
+    runId: string
+    phase: string
+  }
+  'compose:task-update': {
+    runId: string
+    tasks: unknown[]
+  }
+  'compose:ask-user': {
+    runId: string
+    requestId: string
+    question: string
+    options: string[]
+  }
+  'compose:log': {
+    runId: string
+    message: string
+  }
+  'compose:state': {
+    runId: string
+    state: Record<string, unknown>
   }
 }
 

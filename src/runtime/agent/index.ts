@@ -7,7 +7,11 @@ export type { AgentEvent, AgentEventCallback, AgentState, AgentLoopConfig } from
 export { renderToolInventory } from './promptBuilder/toolPromptRenderer'
 export { buildStableSystemPrompt, normalizeFrozenSystemPrompt, getStableSystemPrompt } from './promptBuilder/modePrompt'
 export type { RecoveryState } from './recovery/RecoveryStateMachine'
-export { buildSkillContext } from './promptBuilder/buildSkillContext'
+export {
+  buildSkillContext,
+  buildSkillContextForMode,
+  buildComposeSkillContext
+} from './promptBuilder/buildSkillContext'
 export { estimateTokens, estimateContextTokens, estimateChatMessageTokens } from './tokenEstimator'
 export { discoverProjectRules, discoverProjectRulesFile } from './context/projectRulesDiscovery'
 export { renderBaseRules } from './promptRenderer'

@@ -12,7 +12,7 @@ describe('buildStableSystemPrompt', () => {
     expect(prompt).toContain('D:\\work')
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('auto')
+    expect(prompt).toContain('compose')
   })
 })
 
@@ -21,7 +21,7 @@ describe('getStableSystemPrompt', () => {
     const prompt = getStableSystemPrompt()
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('auto')
+    expect(prompt).toContain('compose')
   })
 
   it('多次调用返回逐字节相同内容', () => {

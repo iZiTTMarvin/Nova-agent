@@ -4,7 +4,7 @@
  * 验证服务负责在 agent 修改代码后自动选择并执行验证命令，
  * 把结果通过回调推送给调用方。服务本身不依赖任何全局状态。
  */
-import type { Mode } from '../../shared/session/types'
+import type { Mode, PermissionPolicy } from '../../shared/session/types'
 
 /** 验证命令类型，按优先级排列 */
 export type VerificationCommandType = 'test' | 'lint' | 'build'
@@ -49,6 +49,11 @@ export interface VerificationOptions {
   workingDir: string
   /** 当前模式 */
   mode: Mode
+  /**
+   * 工具批准策略（仅 default 模式生效）。
+   * ask：验证前弹确认；auto / compose：直接跑。
+   */
+  permissionPolicy?: PermissionPolicy
   /** 取消信号 */
   abortSignal?: AbortSignal
   /**
@@ -57,7 +62,7 @@ export interface VerificationOptions {
    */
   hasModifications: boolean
   /**
-   * 权限确认回调（default 模式必需）
+   * 权限确认回调（default + ask 时必需）
    * 由调用方注入，负责弹出确认弹窗并等待用户决策
    */
   permissionCallback?: PermissionCallback

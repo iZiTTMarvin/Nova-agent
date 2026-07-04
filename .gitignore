@@ -5,7 +5,7 @@ dist/
 .DS_Store
 Thumbs.db
 
-
+.nova
 .spec-workflow
 tasks/*
 !tasks/todo.md

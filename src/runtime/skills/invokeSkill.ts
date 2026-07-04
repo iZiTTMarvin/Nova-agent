@@ -61,6 +61,11 @@ export function invokeSkill(opts: InvokeSkillOptions): SkillDispatchResult {
   const skill = parsed.skill!
   const args = parsed.args?.trim() ?? ''
 
+  // 编排入口：frontmatter 声明 workflow: <scriptName>
+  if (skill.workflow) {
+    return { kind: 'workflow', scriptName: skill.workflow, args }
+  }
+
   if (skill.forkAgent) {
     return { kind: 'fork', skill, args }
   }

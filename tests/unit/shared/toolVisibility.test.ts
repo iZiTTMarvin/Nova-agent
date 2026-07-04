@@ -45,9 +45,9 @@ describe('toolVisibility', () => {
   })
 
   describe('isToolVisibleInMode', () => {
-    it('default / auto 模式下所有工具可见', () => {
+    it('default / compose 模式下所有工具可见', () => {
       expect(isToolVisibleInMode('default', 'bash')).toBe(true)
-      expect(isToolVisibleInMode('auto', 'edit')).toBe(true)
+      expect(isToolVisibleInMode('compose', 'edit')).toBe(true)
     })
 
     it('plan 模式下 todo_write 可见', () => {
@@ -77,9 +77,9 @@ describe('toolVisibility', () => {
       expect(isModeHiddenWriteTool('plan', 'bash')).toBe(true)
     })
 
-    it('default / auto 模式下没有工具被隐藏', () => {
+    it('default / compose 模式下没有工具被隐藏', () => {
       expect(isModeHiddenWriteTool('default', 'bash')).toBe(false)
-      expect(isModeHiddenWriteTool('auto', 'edit')).toBe(false)
+      expect(isModeHiddenWriteTool('compose', 'edit')).toBe(false)
     })
   })
 })

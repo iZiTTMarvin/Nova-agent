@@ -1,0 +1,85 @@
+/**
+ * 编排 askUser Dock — 与 AskQuestionPanel 视觉连贯
+ */
+
+.compose-ask-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(56, 152, 236, 0.35);
+  border-radius: var(--radius-lg, 16px);
+  background-color: var(--bg-card, #fff);
+  box-shadow: 0 1px 8px rgba(56, 152, 236, 0.08);
+}
+
+.compose-ask-panel__header {
+  display: flex;
+  align-items: baseline;
+}
+
+.compose-ask-panel__title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.compose-ask-panel__question {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.compose-ask-panel__options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.compose-ask-panel__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-size: 0.86rem;
+  color: var(--text-primary);
+  transition: background-color 0.12s, border-color 0.12s;
+}
+
+.compose-ask-panel__option:hover {
+  background-color: var(--bg-sand, rgba(0, 0, 0, 0.03));
+}
+
+.compose-ask-panel__option.selected {
+  border-color: var(--color-brand, #3898ec);
+  background-color: rgba(56, 152, 236, 0.06);
+}
+
+.compose-ask-panel__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.compose-ask-panel__submit {
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-brand, #3898ec);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.compose-ask-panel__submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.compose-ask-panel__submit:not(:disabled):hover {
+  filter: brightness(1.05);
+}

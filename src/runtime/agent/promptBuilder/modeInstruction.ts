@@ -17,7 +17,7 @@ function buildPlanInstruction(opts?: ModeInstructionOptions): string {
     '你只能使用 ls、read、grep、find 工具读取和分析项目。',
     '不能编辑文件、不能写入、不能执行 bash。',
     '输出应为分析、计划、风险说明和需要确认的问题。',
-    '如果用户要求直接实现，请说明需要切换到 default 或 auto 模式。'
+    '如果用户要求直接实现，请说明需要切换到默认模式或编排模式。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('请继续用 system prompt 中指定的 XML \u003cinvoke\u003e 格式调用这些工具。')
@@ -27,8 +27,8 @@ function buildPlanInstruction(opts?: ModeInstructionOptions): string {
 
 function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: default — 标准模式]',
-    '你可以读取、修改和验证工作区，高风险操作需用户审批。'
+    '[当前模式: default — 默认模式]',
+    '你可以读取、修改和验证工作区；工具批准策略由用户设置决定（执行前确认或自动执行）。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
@@ -36,10 +36,12 @@ function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
   return lines.join('\n')
 }
 
-function buildAutoInstruction(opts?: ModeInstructionOptions): string {
+function buildComposeInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: auto — 主动模式]',
-    '你可以主动推进实现和验证，遵守安全边界。'
+    '[当前模式: compose — 编排模式]',
+    '开发流程由编排脚本强制推进，你作为子 agent 执行脚本指派的阶段任务。',
+    '可以读取、修改和验证工作区；危险命令仍会被拦截。',
+    '发布前或连续失败时会通过 askUser 询问用户，不要擅自跳过阶段。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
@@ -52,8 +54,8 @@ export function getModeInstruction(mode: Mode, opts?: ModeInstructionOptions): s
   switch (mode) {
     case 'plan':
       return buildPlanInstruction(opts)
-    case 'auto':
-      return buildAutoInstruction(opts)
+    case 'compose':
+      return buildComposeInstruction(opts)
     case 'default':
     default:
       return buildDefaultInstruction(opts)

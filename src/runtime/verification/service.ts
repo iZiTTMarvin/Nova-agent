@@ -14,6 +14,7 @@
  *
  * 不依赖任何全局状态，不直接操作 EventBus / IPC / SessionStore
  */
+import { isAutoPermissionSemantics } from '../permissions/rules'
 import { selectVerificationCommand } from './strategy'
 import { runVerificationCommand } from './runner'
 import type { VerificationOptions, VerificationResult } from './types'
@@ -36,14 +37,13 @@ export async function runVerification(options: VerificationOptions): Promise<Ver
   const candidate = selectVerificationCommand(options.workingDir)
   if (!candidate) return null
 
-  // default 模式需要用户确认
-  if (options.mode === 'default') {
+  // default + ask：弹确认；default + auto / compose：直接跑
+  const policy = options.permissionPolicy ?? 'ask'
+  if (!isAutoPermissionSemantics(options.mode, policy)) {
     if (!options.permissionCallback) return null
     const granted = await options.permissionCallback(candidate.command)
     if (!granted) return null
   }
-
-  // auto 模式：常规验证命令直接执行
 
   const result = await runVerificationCommand(
     candidate.command,

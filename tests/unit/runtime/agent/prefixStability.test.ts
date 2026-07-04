@@ -29,7 +29,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
   })
 
   it('getModeInstruction 为每种模式返回非空文本', () => {
-    const modes: Mode[] = ['plan', 'default', 'auto']
+    const modes: Mode[] = ['plan', 'default', 'compose']
     for (const mode of modes) {
       const instruction = getModeInstruction(mode)
       expect(instruction).toBeTruthy()
@@ -40,17 +40,17 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
   it('getModeInstruction 包含模式名称标记', () => {
     expect(getModeInstruction('plan')).toContain('plan')
     expect(getModeInstruction('default')).toContain('default')
-    expect(getModeInstruction('auto')).toContain('auto')
+    expect(getModeInstruction('compose')).toContain('compose')
   })
 
   it('不同模式的 mode instruction 互不相同', () => {
     const planInstruction = getModeInstruction('plan')
     const defaultInstruction = getModeInstruction('default')
-    const autoInstruction = getModeInstruction('auto')
+    const composeInstruction = getModeInstruction('compose')
 
     expect(planInstruction).not.toBe(defaultInstruction)
-    expect(defaultInstruction).not.toBe(autoInstruction)
-    expect(planInstruction).not.toBe(autoInstruction)
+    expect(defaultInstruction).not.toBe(composeInstruction)
+    expect(planInstruction).not.toBe(composeInstruction)
   })
 
   it('AgentLoop frozenSystemPrompt 包含 Base Rules 层', () => {

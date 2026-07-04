@@ -12,6 +12,7 @@ import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
 import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
+import { registerComposeHandler } from './composeHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { getSessionStore } from './sessionHandler'
 import { getMainWindow } from '../index'
@@ -63,6 +64,9 @@ export function registerIpcHandlers(): void {
 
   // 权限持久化规则（PRD §5.2）
   registerPermissionHandler()
+
+  // 编排模式 compose IPC
+  registerComposeHandler(getMainWindow)
 
   // 启动时静默执行一次存储 GC（清理临时日志 + 陈旧快照）
   runStartupStorageGc()

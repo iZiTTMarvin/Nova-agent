@@ -5,7 +5,7 @@
  * 所有改动通过 settings:set 持久化，主进程做 schema 校验。
  */
 import React, { useEffect, useState } from 'react'
-import type { NovaSettingsDto } from '../../../shared/settings/types'
+import type { NovaSettingsDto, PermissionPolicy } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
 
 export const GeneralSettingsPanel: React.FC = () => {
@@ -71,15 +71,29 @@ export const GeneralSettingsPanel: React.FC = () => {
           <label className="settings-modal__label">默认运行模式</label>
           <select
             className="settings-modal__input settings-modal__select"
-            value={settings.defaultMode}
+            value={settings.defaultMode === 'compose' ? 'default' : settings.defaultMode}
             onChange={e => void update('defaultMode', e.target.value as Mode)}
             disabled={saving}
           >
-            <option value="default">default（协作模式，写入需确认）</option>
-            <option value="auto">auto（全自动，危险命令仍拦截）</option>
-            <option value="plan">plan（只读分析）</option>
+            <option value="default">默认模式（模型自主循环）</option>
+            <option value="plan">计划模式（只读分析）</option>
           </select>
-          <span className="settings-modal__help">新建会话时使用的默认模式。</span>
+          <span className="settings-modal__help">新建会话时使用的默认行为模式。</span>
+        </div>
+
+        {/* 工具批准策略（仅约束默认模式） */}
+        <div className="settings-modal__field">
+          <label className="settings-modal__label">工具批准</label>
+          <select
+            className="settings-modal__input settings-modal__select"
+            value={settings.permissionPolicy}
+            onChange={e => void update('permissionPolicy', e.target.value as PermissionPolicy)}
+            disabled={saving}
+          >
+            <option value="ask">执行前确认（bash 需批准）</option>
+            <option value="auto">自动执行（危险命令仍拦截）</option>
+          </select>
+          <span className="settings-modal__help">仅约束默认模式；计划模式始终只读，编排模式 run 内固定自动执行语义。</span>
         </div>
 
         {/* bash 默认 shell */}

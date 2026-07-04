@@ -168,13 +168,16 @@ export function parseSkillMarkdown(content: string, opts: ParseSkillOptions): Sk
     name = opts.fallbackName
   }
 
-  // description：必填；可拼接 when_to_use
+  // description：必填；可拼接 when_to_use（同时保留 whenToUse 字段供 compose_skills）
   let description = getYamlString(data, 'description') ?? ''
-  const whenToUse = getYamlString(data, 'when_to_use')
+  const whenToUse =
+    getYamlString(data, 'when_to_use') ?? getYamlString(data, 'whenToUse')
   if (whenToUse) {
     description = description ? `${description} ${whenToUse}` : whenToUse
     warnings.push('when_to_use 已合并入 description')
   }
+  const hidden = getYamlBool(data, 'hidden', false)
+  const workflow = getYamlString(data, 'workflow')
   if (!description) {
     description = firstParagraph(body)
   }
@@ -225,6 +228,9 @@ export function parseSkillMarkdown(content: string, opts: ParseSkillOptions): Sk
     warnings,
     hasSupportingFiles: detectSupportingFiles(opts.directory),
     enabled: true,
-    invalid: false
+    invalid: false,
+    ...(hidden ? { hidden: true } : {}),
+    ...(workflow ? { workflow } : {}),
+    ...(whenToUse ? { whenToUse } : {})
   }
 }

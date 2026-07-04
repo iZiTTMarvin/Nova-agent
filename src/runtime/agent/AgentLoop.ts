@@ -262,9 +262,16 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 当前轮次 messageId（cancel / onCancel 使用） */
   private currentMessageId: string | null = null
 
-  /** 统一 skill 调度：slash inject / fork */
+  /** 统一 skill 调度：slash inject / fork / workflow */
   private skillRegistry: SkillRegistry | null = null
   private skillForkDeps: RunSkillForkDeps | null = null
+  /**
+   * 编排脚本 runner（由 agentHandler 注入）。
+   * 返回摘要文本推给 UI；失败抛错由 sendMessage 捕获。
+   */
+  private workflowRunner:
+    | ((scriptName: string, args: string) => Promise<{ summary: string }>)
+    | null = null
 
   /**
    * askQuestion 阻塞回调（可选）。
@@ -530,6 +537,13 @@ export class AgentLoop implements IdleCompactionTarget {
     this.skillForkDeps = deps
   }
 
+  /** 注入编排脚本 runner（/br-full-dev 等 workflow skill） */
+  setWorkflowRunner(
+    runner: ((scriptName: string, args: string) => Promise<{ summary: string }>) | null
+  ): void {
+    this.workflowRunner = runner
+  }
+
   /**
    * 注入主 readState（由 agentHandler 调用，跨 SEND_MESSAGE 复用）。
    * 不调用时使用 loop 自带的独立实例（用于 sub agent 隔离测试）。
@@ -637,6 +651,30 @@ export class AgentLoop implements IdleCompactionTarget {
         profile: this.mode,
         templateContext: { workspacePath: this.workingDir ?? undefined }
       })
+
+      if (dispatch.kind === 'workflow' && this.workflowRunner) {
+        // 编排入口：自动切入 compose，跑脚本，摘要推 UI
+        if (this.mode !== 'compose') {
+          this.setMode('compose')
+        }
+        try {
+          const wfResult = await this.workflowRunner(dispatch.scriptName, dispatch.args)
+          this.context.push({ role: 'assistant', content: wfResult.summary })
+          this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
+        } catch (err) {
+          const errMsg = (err as Error).message
+          await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+          this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+          this.state = 'error'
+          this.checkpointManager?.endMessage()
+          this.eventBus.emit({ type: 'message_end', messageId })
+          this.idleTimer?.cancel()
+          this.idleTimer = null
+          return
+        }
+        await this.finishMessageRound(messageId)
+        return
+      }
 
       if (dispatch.kind === 'fork' && this.skillForkDeps) {
         try {

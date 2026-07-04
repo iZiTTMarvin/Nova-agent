@@ -26,15 +26,15 @@ global.window = {
 function makeWorkspaceState(overrides: Partial<{
   currentSessionId: string | null
   currentProjectPath: string | null
-  currentMode: 'plan' | 'default' | 'auto'
-  availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'auto'; createdAt: number; updatedAt: number; messageCount: number }>
+  currentMode: 'plan' | 'default' | 'compose'
+  availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'compose'; createdAt: number; updatedAt: number; messageCount: number }>
   messagesRevision: number
   tier1BranchContext: null
 }> = {}): {
   currentSessionId: string | null
   currentProjectPath: string | null
-  currentMode: 'plan' | 'default' | 'auto'
-  availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'auto'; createdAt: number; updatedAt: number; messageCount: number }>
+  currentMode: 'plan' | 'default' | 'compose'
+  availableSessions: Array<{ id: string; workspaceRoot: string; mode: 'plan' | 'default' | 'compose'; createdAt: number; updatedAt: number; messageCount: number }>
   messagesRevision: number
   tier1BranchContext: null
 } {
@@ -327,11 +327,11 @@ describe('useAppStore Zustand Store', () => {
 
   it('切换分支后重新加载会话时应复用同一套工具结果恢复逻辑', async () => {
     mockInvoke
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_1', currentMode: 'auto', messagesRevision: 1 }))
+      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_1', currentMode: 'compose', messagesRevision: 1 }))
       .mockResolvedValueOnce({
         id: 'sess_1',
         workspaceRoot: '/project/root',
-        mode: 'auto',
+        mode: 'compose',
         createdAt: 1,
         updatedAt: 4,
         messageCount: 1,
@@ -366,7 +366,7 @@ describe('useAppStore Zustand Store', () => {
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'load-session', { sessionId: 'sess_1' })
 
     const state = useAppStore.getState()
-    expect(state.currentMode).toBe('auto')
+    expect(state.currentMode).toBe('compose')
     expect(state.messages[0].toolCalls?.[0].result).toBe('构建成功')
     expect(state.messages[0].toolCalls?.[0].status).toBe('success')
   })

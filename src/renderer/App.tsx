@@ -10,6 +10,7 @@ import { ChatPanel } from './features/chat/ChatPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
+import { useComposeStore } from './features/compose/useComposeStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import './App.css'
@@ -52,6 +53,13 @@ function App(): JSX.Element {
 
   // todo: 由事件总线独立维护，订阅 IPC 即可
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
+
+  // 编排进度 / askUser：独立 store，订阅 compose:* 事件
+  const applyComposeState = useComposeStore(state => state.applyState)
+  const applyComposePhase = useComposeStore(state => state.applyPhase)
+  const applyComposeTasks = useComposeStore(state => state.applyTasks)
+  const appendComposeLog = useComposeStore(state => state.appendLog)
+  const handleComposeAskUser = useComposeStore(state => state.handleAskUser)
 
   // 1. 初始化时加载持久化的配置和会话列表
   //    PRD §5.1：会话列表改为由 workspace:get 统一拉取（单一事实源），
@@ -207,6 +215,28 @@ function App(): JSX.Element {
       useChatStore.getState().handleRecoveryState(data.messageId, data.state)
     })
 
+    // 编排：state / phase / tasks / log / askUser
+    const unsubComposeState = window.api.on('compose:state', (data) => {
+      applyComposeState(data.runId, data.state)
+    })
+    const unsubComposePhase = window.api.on('compose:phase-change', (data) => {
+      applyComposePhase(data.runId, data.phase)
+    })
+    const unsubComposeTasks = window.api.on('compose:task-update', (data) => {
+      applyComposeTasks(data.runId, data.tasks)
+    })
+    const unsubComposeLog = window.api.on('compose:log', (data) => {
+      appendComposeLog(data.runId, data.message)
+    })
+    const unsubComposeAskUser = window.api.on('compose:ask-user', (data) => {
+      handleComposeAskUser({
+        runId: data.runId,
+        requestId: data.requestId,
+        question: data.question,
+        options: data.options
+      })
+    })
+
     // 清理函数：解绑所有主进程事件监听器，释放 buffer
     // 顺序很关键（防御性）：
     // 1. 先解绑所有主进程 IPC 监听器，避免清理过程中又有新 delta 进来
@@ -236,6 +266,11 @@ function App(): JSX.Element {
       unsubHookError()
       unsubRecoveryHint()
       unsubRecoveryState()
+      unsubComposeState()
+      unsubComposePhase()
+      unsubComposeTasks()
+      unsubComposeLog()
+      unsubComposeAskUser()
       buffer.flushNow()
       buffer.dispose()
     }
@@ -253,6 +288,11 @@ function App(): JSX.Element {
     handleAskQuestionRequest,
     clearAskQuestionRequest,
     applyTodoUpdate,
+    applyComposeState,
+    applyComposePhase,
+    applyComposeTasks,
+    appendComposeLog,
+    handleComposeAskUser,
     handleMessageEnd,
     handleUsage,
     setContextBreakdown

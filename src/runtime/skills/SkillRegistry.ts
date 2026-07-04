@@ -79,8 +79,12 @@ export class SkillRegistry {
     return this.loader.getShadowed()
   }
 
-  listForContext(profile?: string): SkillManifest[] {
-    return this.loader.listForContext(profile)
+  listForContext(profile?: string, opts?: { includeHidden?: boolean }): SkillManifest[] {
+    return this.loader.listForContext(profile, opts)
+  }
+
+  listHidden(): SkillManifest[] {
+    return this.loader.listHidden()
   }
 
   listUserInvocable(): SkillManifest[] {

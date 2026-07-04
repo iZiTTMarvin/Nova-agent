@@ -104,6 +104,44 @@ export type AgentEvent =
       type: 'ask_question_resolved'
       requestId: string
     }
+  | {
+      /** 编排脚本 phase()：阶段切换（compose 进度面板） */
+      type: 'workflow_phase'
+      runId: string
+      phase: string
+    }
+  | {
+      /** 编排脚本 log()：脚本日志行 */
+      type: 'workflow_log'
+      runId: string
+      message: string
+    }
+  | {
+      /** 编排 agent() 失败（超时/取消/错误），仅可观测，不中断脚本 */
+      type: 'workflow_agent_failed'
+      runId: string
+      reason: string
+    }
+  | {
+      /** 编排 askUser：阻塞等待用户选择（阶段 E 弹窗；测试可注入 resolver） */
+      type: 'workflow_ask_user'
+      runId: string
+      requestId: string
+      question: string
+      options: string[]
+    }
+  | {
+      /** 编排任务列表变更（进度面板） */
+      type: 'workflow_task_update'
+      runId: string
+      tasks: unknown[]
+    }
+  | {
+      /** 编排 state.json 快照（进度面板全量同步） */
+      type: 'workflow_state'
+      runId: string
+      state: Record<string, unknown>
+    }
 
 /** 事件监听回调 */
 export type AgentEventCallback = (event: AgentEvent) => void

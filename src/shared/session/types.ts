@@ -1,5 +1,15 @@
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
-export type Mode = 'plan' | 'default' | 'auto'
+/**
+ * 行为模式（ModeSwitch）：
+ * - default：模型自主循环（协作聊天）
+ * - plan：只读规划
+ * - compose：编排脚本强制推进（阶段 C1）
+ * 权限档位已迁出为 PermissionPolicy（设置），不再用 Mode 表达 auto。
+ */
+export type Mode = 'plan' | 'default' | 'compose'
+
+/** 工具批准策略（仅约束 default 模式；plan/compose 由模式硬约束） */
+export type PermissionPolicy = 'ask' | 'auto'
 
 /** 权限决策：允许 / 需确认 / 拒绝 */
 export type PermissionDecision = 'allow' | 'ask' | 'deny'

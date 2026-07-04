@@ -1,16 +1,21 @@
 /**
  * PermissionManager — 权限决策引擎
- * 根据当前模式（plan/default/auto）和工具类型做出权限决策
+ * 根据当前模式（plan/default/compose）+ 权限策略（ask/auto）和工具类型做出权限决策
  * bash 工具额外检查命令风险等级
  *
- * PRD §5.2：在 mode-based 决策之前先调用 PermissionMatcher 匹配持久化规则：
- * - 命中 deny → 直接拒绝（优先级最高，覆盖 auto 模式 allow）
+ * 在 mode-based 决策之前先调用 PermissionMatcher 匹配持久化规则：
+ * - 命中 deny → 直接拒绝（优先级最高，覆盖 auto 语义 allow）
  * - 命中 allow → 直接放行
- * - 命中 ask 或无匹配 → 走现有 mode + 黑名单逻辑
+ * - 命中 ask 或无匹配 → 走现有 mode + policy + 黑名单逻辑
  */
-import type { Mode } from '../../shared/session/types'
-import type { PermissionQuery, PermissionResult, RiskLevel } from './types'
-import { getBaseDecision, assessCommandRisk, getRiskDescription } from './rules'
+import type { Mode, PermissionPolicy } from '../../shared/session/types'
+import type { PermissionQuery, PermissionResult } from './types'
+import {
+  getBaseDecision,
+  assessCommandRisk,
+  getRiskDescription,
+  isAutoPermissionSemantics
+} from './rules'
 import { matchPermission, type MatchInput } from './PermissionMatcher'
 import type { PermissionRule } from './PermissionRule'
 
@@ -39,6 +44,8 @@ export class PermissionManager {
   private currentProjectPath: string | null = null
   /** 当前会话 ID */
   private sessionId: string | null = null
+  /** 工具批准策略（仅约束 default；compose 固定 auto 语义） */
+  private permissionPolicy: PermissionPolicy = 'ask'
 
   /** 注入持久化规则集合（供 agentHandler 在加载/变更时调用） */
   setRules(rules: PermissionRule[]): void {
@@ -55,22 +62,26 @@ export class PermissionManager {
     this.sessionId = sessionId
   }
 
+  /** 设置工具批准策略（来自 ~/.nova/settings.json） */
+  setPermissionPolicy(policy: PermissionPolicy): void {
+    this.permissionPolicy = policy
+  }
+
+  getPermissionPolicy(): PermissionPolicy {
+    return this.permissionPolicy
+  }
+
   /**
    * 查询指定工具+模式下的权限决策
    *
    * 决策顺序：
    * 1. 优先比对会话级临时白名单（内存态）
-   * 2. 先匹配持久化规则（PRD §5.2）：deny 直接拒、allow 直接放行。
-   * 3. 命中 ask 或无匹配 → 走 mode + 黑名单逻辑。
-   *
-   * - plan 模式：只读工具 allow，写入和 bash 全部 deny
-   * - default 模式：只读和写入 allow，bash 工具 ask（需用户确认）
-   * - auto 模式：全部 allow，但 bash 危险命令强制 deny
+   * 2. 先匹配持久化规则：deny 直接拒、allow 直接放行。
+   * 3. 命中 ask 或无匹配 → 走 mode + policy + 黑名单逻辑。
    */
   check(query: PermissionQuery, mode: Mode): PermissionResult {
     const { toolName, args } = query
 
-    // ── 优先比对会话级临时白名单 ──
     if (toolName === 'bash' && this.sessionId) {
       const whitelist = sessionWhitelists.get(this.sessionId)
       if (whitelist) {
@@ -86,7 +97,6 @@ export class PermissionManager {
       }
     }
 
-    // ── PRD §5.2：先匹配持久化规则 ──
     if (this.rules.length > 0) {
       const input: MatchInput = {
         toolName,
@@ -108,13 +118,10 @@ export class PermissionManager {
           reason: match.reason
         }
       }
-      // 'ask' 或 'no-match'：继续走 mode 逻辑
     }
 
-    // 获取基础决策（不考虑命令级别细节）
-    const baseDecision = getBaseDecision(mode, toolName)
+    const baseDecision = getBaseDecision(mode, toolName, this.permissionPolicy)
 
-    // bash 工具需要额外检查命令风险
     if (toolName === 'bash') {
       return this.checkBash(args.command as string, mode, baseDecision)
     }
@@ -126,13 +133,11 @@ export class PermissionManager {
     }
   }
 
-  /** bash 工具的详细权限检查 */
   private checkBash(
     command: string,
     mode: Mode,
     baseDecision: 'allow' | 'ask' | 'deny'
   ): PermissionResult {
-    // plan 模式直接拒绝
     if (mode === 'plan') {
       return {
         decision: 'deny',
@@ -143,25 +148,22 @@ export class PermissionManager {
 
     const { riskLevel, isDangerous, reason } = assessCommandRisk(command || '')
 
-    // auto 模式下危险命令强制拒绝
-    if (mode === 'auto' && isDangerous) {
+    // auto 语义下危险命令强制拒绝
+    if (isAutoPermissionSemantics(mode, this.permissionPolicy) && isDangerous) {
       return {
         decision: 'deny',
         riskLevel: 'high',
-        reason: `auto 模式下禁止执行危险命令: ${reason}`
+        reason: `自动执行策略下禁止危险命令: ${reason}`
       }
     }
 
     return {
       decision: baseDecision,
       riskLevel,
-      reason: isDangerous
-        ? reason
-        : getRiskDescription('bash', riskLevel)
+      reason: isDangerous ? reason : getRiskDescription('bash', riskLevel)
     }
   }
 
-  /** 构建决策原因说明 */
   private buildReason(
     toolName: string,
     mode: Mode,
@@ -169,7 +171,7 @@ export class PermissionManager {
   ): string {
     if (decision === 'deny') {
       if (mode === 'plan') {
-        return `plan 模式下禁止使用 "${toolName}" 工具，请切换到 default 或 auto 模式`
+        return `plan 模式下禁止使用 "${toolName}" 工具，请切换到默认模式或编排模式`
       }
       return `权限策略拒绝执行 "${toolName}"`
     }

@@ -18,8 +18,9 @@ describe('todo_write 权限基础规则', () => {
     expect(getBaseDecision('default', 'todo_write')).toBe('allow')
   })
 
-  it('auto 模式 → allow', () => {
-    expect(getBaseDecision('auto', 'todo_write')).toBe('allow')
+  it('default+auto / compose → allow', () => {
+    expect(getBaseDecision('default', 'todo_write', 'auto')).toBe('allow')
+    expect(getBaseDecision('compose', 'todo_write')).toBe('allow')
   })
 
   it('三模式都不调用 bash 命令检测（不传 command）', () => {

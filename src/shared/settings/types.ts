@@ -3,7 +3,9 @@
  */
 import type { RuleFileEntry, RuleScope } from '../../runtime/agent/context/rulesDiscovery'
 import type { SubAgentSpec } from '../../runtime/agent/core/SubAgentConfig'
-import type { Mode } from '../session/types'
+import type { Mode, PermissionPolicy } from '../session/types'
+
+export type { PermissionPolicy }
 
 /**
  * 应用级用户偏好（持久化到 ~/.nova/settings.json）
@@ -18,6 +20,11 @@ export interface NovaSettingsDto {
   // ── PRD §5.6 新增：通用偏好 ──
   /** 默认运行模式（新建会话时使用） */
   defaultMode: Mode
+  /**
+   * 工具批准策略（仅约束 default 模式）：
+   * ask ≈ 原 default（bash 需确认）；auto ≈ 原 auto（自动执行，危险命令仍拦）
+   */
+  permissionPolicy: PermissionPolicy
   /** bash 工具默认 shell 路径（空表示用系统默认） */
   defaultShell: string
   /** bash 命令默认超时（毫秒，0 表示不超时） */

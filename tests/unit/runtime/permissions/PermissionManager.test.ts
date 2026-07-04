@@ -80,10 +80,14 @@ describe('PermissionManager', () => {
     })
   })
 
-  // ── auto 模式 ─────────────────────────────────────────
+  // ── default + policy=auto（原 auto 模式语义）──────────
 
-  describe('auto 模式', () => {
-    const mode: Mode = 'auto'
+  describe('default + policy=auto', () => {
+    const mode: Mode = 'default'
+
+    beforeEach(() => {
+      pm.setPermissionPolicy('auto')
+    })
 
     it('只读工具允许执行', () => {
       for (const tool of ['ls', 'read', 'grep', 'find']) {
@@ -188,8 +192,11 @@ describe('PermissionManager', () => {
       const query = { toolName: 'bash', args: { command: 'ls' } }
 
       expect(pm.check(query, 'plan').decision).toBe('deny')
+      pm.setPermissionPolicy('ask')
       expect(pm.check(query, 'default').decision).toBe('ask')
-      expect(pm.check(query, 'auto').decision).toBe('allow')
+      pm.setPermissionPolicy('auto')
+      expect(pm.check(query, 'default').decision).toBe('allow')
+      expect(pm.check(query, 'compose').decision).toBe('allow')
     })
   })
 
