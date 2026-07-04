@@ -78,6 +78,10 @@ describe('AgentLoop context_breakdown', () => {
       breakdown.systemPrompt + breakdown.skills + breakdown.tools + breakdown.messages + breakdown.other
     )
     expect(breakdown.skills).toBeGreaterThan(0)
+    // 回归：emitContextBreakdown 内部构造的 session 是 AgentLoop 自身线性 this.context 的快照，
+    // 不应因 getSessionActiveMessages 的 currentLeafId 树形回溯语义而把已入 context 的
+    // user 消息算丢（历史 bug：currentLeafId 恒为 null 导致 messages 桶恒为 0）。
+    expect(breakdown.messages).toBeGreaterThan(0)
   })
 
   it('无 usage 事件时兜底 emit context_breakdown', async () => {
@@ -160,7 +164,12 @@ describe('AgentLoop context_breakdown', () => {
 
     await loop.sendMessage('list')
 
-    const breakdownEvents = events.filter((e) => e.type === 'context_breakdown')
+    const breakdownEvents = events.filter((e) => e.type === 'context_breakdown') as Array<
+      Extract<AgentEvent, { type: 'context_breakdown' }>
+    >
     expect(breakdownEvents).toHaveLength(2)
+    // 回归：第二轮已把第一轮的 tool_call/tool_result 追加进 this.context，
+    // messages 桶理应比第一轮更大——而不是像历史 bug 那样恒为 0 保持不变。
+    expect(breakdownEvents[1]!.breakdown.messages).toBeGreaterThan(breakdownEvents[0]!.breakdown.messages)
   })
 })
