@@ -15,7 +15,10 @@ export function renderToolBlock(
   block: RendererToolBlock,
   isCurrentAssistantGenerating: boolean
 ): React.ReactNode {
+  // 工具级：瞬时工具（askQuestion / write / edit / 默认行）流式态，工具完成即结束
   const isLive = isCurrentAssistantGenerating && block.status === 'running'
+  // 轮次级：todo_write 是持续路线图，整个轮次进行中保持可见，不随单次工具完成而收起
+  const isLiveForTurn = isCurrentAssistantGenerating
 
   if (block.toolName === 'askQuestion') {
     return (
@@ -36,7 +39,7 @@ export function renderToolBlock(
         toolCallId={block.toolCallId}
         args={block.arguments}
         status={block.status}
-        isLiveStreaming={isLive}
+        isLiveStreaming={isLiveForTurn}
       />
     )
   }

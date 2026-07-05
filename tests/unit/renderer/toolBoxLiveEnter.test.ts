@@ -114,3 +114,38 @@ describe('useReducedMotion 双重门控', () => {
     expect(isLiveStreaming && !false).toBe(false) // prefersReducedMotion=false
   })
 })
+
+/**
+ * todo_write 走轮次级 isLiveStreaming（isCurrentAssistantGenerating，不合并 status），
+ * 与上面工具级真值表刻意不同：todo_write 是瞬时工具（写快照即转 success），
+ * 但路线图应在整个轮次进行中常驻可见，而非单次工具完成即收起。
+ */
+describe('TodoToolCard isLiveStreaming 门控条件（轮次级，todo_write 专用）', () => {
+  it('isCurrentAssistantGenerating=true 且 status=success → isLiveStreaming=true（工具完成仍展开，本次修复核心）', () => {
+    const isCurrentAssistantGenerating = true
+    const blockStatus: 'running' | 'success' | 'error' = 'success'
+    const isLiveStreaming = isCurrentAssistantGenerating
+    expect(isLiveStreaming).toBe(true)
+  })
+
+  it('isCurrentAssistantGenerating=true 且 status=running → isLiveStreaming=true', () => {
+    const isCurrentAssistantGenerating = true
+    const blockStatus: 'running' | 'success' | 'error' = 'running'
+    const isLiveStreaming = isCurrentAssistantGenerating
+    expect(isLiveStreaming).toBe(true)
+  })
+
+  it('isCurrentAssistantGenerating=false（轮次结束 / 历史回看）→ isLiveStreaming=false', () => {
+    const isCurrentAssistantGenerating = false
+    const blockStatus: 'running' | 'success' | 'error' = 'success'
+    const isLiveStreaming = isCurrentAssistantGenerating
+    expect(isLiveStreaming).toBe(false)
+  })
+
+  it('isCurrentAssistantGenerating=false 且 status=running → isLiveStreaming=false', () => {
+    const isCurrentAssistantGenerating = false
+    const blockStatus: 'running' | 'success' | 'error' = 'running'
+    const isLiveStreaming = isCurrentAssistantGenerating
+    expect(isLiveStreaming).toBe(false)
+  })
+})
