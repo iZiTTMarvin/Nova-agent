@@ -155,13 +155,13 @@ describe('buildToolCallRenderUnits', () => {
 })
 
 describe('getToolGroupSummary', () => {
-  it('read：首个文件名 + 等 N 个文件', () => {
+  it('read：L3 Action + 首个文件名 + 等 N 个文件', () => {
     const blocks = [
       toolBlock('1', 'read', { path: 'src/webSearchTool.ts' }),
       toolBlock('2', 'read', { path: 'b.ts' }),
       toolBlock('3', 'read', { path: 'c.ts' })
     ]
-    expect(getToolGroupSummary('read', blocks)).toBe('读取 webSearchTool.ts 等 3 个文件')
+    expect(getToolGroupSummary('read', blocks)).toBe('Read webSearchTool.ts 等 3 个文件')
   })
 
   it('read：2 条时写「等 2 个文件」', () => {
@@ -170,11 +170,12 @@ describe('getToolGroupSummary', () => {
       toolBlock('2', 'read', { path: 'b.ts' })
     ]
     expect(getToolGroupSummaryParts('read', blocks).suffix).toBe('等 2 个文件')
+    expect(getToolGroupSummaryParts('read', blocks).prefix).toBe('Read')
   })
 
   it('grep：缺 pattern 时回退', () => {
     const blocks = [toolBlock('1', 'grep', {}), toolBlock('2', 'grep', { pattern: 'x' })]
-    expect(getToolGroupSummary('grep', blocks)).toContain('搜索')
+    expect(getToolGroupSummary('grep', blocks)).toContain('Grepped')
     expect(getToolGroupSummary('grep', blocks)).toContain('等 2 次')
   })
 
@@ -184,14 +185,14 @@ describe('getToolGroupSummary', () => {
       toolBlock('2', 'web_search', { query: 'vue' }),
       toolBlock('3', 'web_search', { query: 'svelte' })
     ]
-    expect(getToolGroupSummary('web_search', blocks)).toBe('搜索 react hook 等 3 次')
+    expect(getToolGroupSummary('web_search', blocks)).toBe('Searched react hook 等 3 次')
   })
 
-  it('find / ls 中文摘要', () => {
+  it('find / ls L3 Action 摘要', () => {
     const findBlocks = [toolBlock('1', 'find', { pattern: '*.ts' }), toolBlock('2', 'find', { pattern: '*.tsx' })]
-    expect(getToolGroupSummary('find', findBlocks)).toBe('定位 *.ts 等 2 次')
+    expect(getToolGroupSummary('find', findBlocks)).toBe('Found *.ts 等 2 次')
 
     const lsBlocks = [toolBlock('1', 'ls', { path: 'src' }), toolBlock('2', 'ls', { path: 'tests' })]
-    expect(getToolGroupSummary('ls', lsBlocks)).toBe('列出 src 等 2 个目录')
+    expect(getToolGroupSummary('ls', lsBlocks)).toBe('Listed src 等 2 个目录')
   })
 })

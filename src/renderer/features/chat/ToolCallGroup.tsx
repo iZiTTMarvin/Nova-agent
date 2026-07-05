@@ -1,10 +1,12 @@
 /**
- * ToolCallGroup — 相邻同类只读工具调用的折叠聚合行
+ * ToolCallGroup — 相邻同类只读工具的 L3 聚合行
+ *
+ * 与单条 ToolTraceRow 同一过程轨视觉；展开仅列出各条目 Target。
  */
 import React, { useState } from 'react'
 import { ChevronIcon } from '../../components/Icons'
 import { getToolGroupSummaryParts } from './toolCallGrouping'
-import { getToolSummary } from './toolDisplay'
+import { getToolTraceTarget } from './toolTraceDisplay'
 import type { RendererToolBlock } from '../../stores/types'
 import './ToolCallGroup.css'
 
@@ -37,12 +39,17 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
         onClick={() => setIsOpen(prev => !prev)}
         aria-expanded={isOpen}
       >
-        <ChevronIcon size={14} direction={isOpen ? 'down' : 'right'} className="tool-call-group__chevron" />
-        <span className="tool-call-group__summary">
-          <span>{prefix} </span>
-          <span className="tool-call-group__pill">{pill}</span>
-          {suffix ? <span> {suffix}</span> : null}
+        <GroupStatusDot status={aggregateStatus(blocks)} />
+        <span className="tool-call-group__action">{prefix}</span>
+        <span className="tool-call-group__target">
+          <span>{pill}</span>
+          {suffix ? <span className="tool-call-group__suffix"> {suffix}</span> : null}
         </span>
+        <ChevronIcon
+          size={12}
+          direction={isOpen ? 'down' : 'right'}
+          className="tool-call-group__chevron"
+        />
       </button>
 
       {isOpen && (
@@ -51,7 +58,7 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
             <li key={block.toolCallId} className="tool-call-group__item">
               <GroupStatusDot status={block.status} />
               <span className="tool-call-group__item-text">
-                {getToolSummary(toolName, block.arguments) || getToolDisplayNameFallback(toolName)}
+                {getToolTraceTarget(toolName, block.arguments ?? {})}
               </span>
             </li>
           ))}
@@ -61,6 +68,8 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
   )
 })
 
-function getToolDisplayNameFallback(toolName: string): string {
-  return toolName
+function aggregateStatus(blocks: RendererToolBlock[]): RendererToolBlock['status'] {
+  if (blocks.some(b => b.status === 'running')) return 'running'
+  if (blocks.some(b => b.status === 'error')) return 'error'
+  return 'success'
 }

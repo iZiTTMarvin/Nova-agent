@@ -1,68 +1,90 @@
 /**
- * ToolCallGroup 样式 — 轻量单行聚合头 + 展开列表
+ * ToolCallGroup — 与 ToolTraceRow 同一过程轨
  */
 .tool-call-group {
-  margin: 6px 0;
+  margin: 2px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-warm, rgba(20, 20, 19, 0.12));
+  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
   font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted, #8a857d);
 }
 
 .tool-call-group__header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   width: 100%;
-  padding: 2px 0;
+  padding: 3px 0;
   border: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
-  color: var(--text-secondary, #6b6760);
-  font-size: inherit;
-  font-family: inherit;
+  color: inherit;
+  font: inherit;
+  min-width: 0;
+  border-radius: 3px;
 }
 
 .tool-call-group__header:hover {
+  color: var(--text-secondary, #6b6760);
+  background: rgba(20, 20, 19, 0.03);
+}
+
+.tool-call-group__action {
+  flex-shrink: 0;
+  min-width: 5em;
   color: var(--text-primary, #1f1d1a);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.tool-call-group__target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary, #6b6760);
+  font-size: 12.5px;
+}
+
+.tool-call-group__suffix {
+  color: var(--text-muted, #8a857d);
 }
 
 .tool-call-group__chevron {
   flex-shrink: 0;
+  opacity: 0.45;
 }
 
-.tool-call-group__summary {
-  line-height: 1.4;
-}
-
-.tool-call-group__pill {
-  font-family: var(--font-mono, 'Menlo', 'Consolas', monospace);
-  font-size: 0.92em;
-  background-color: var(--bg-sand, #f5f0e8);
-  color: var(--text-primary, #1f1d1a);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid rgba(20, 20, 19, 0.08);
+.tool-call-group__header:hover .tool-call-group__chevron {
+  opacity: 0.8;
 }
 
 .tool-call-group__list {
   list-style: none;
-  margin: 6px 0 0 20px;
+  margin: 4px 0 6px 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .tool-call-group__item {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-muted, #8a857d);
   line-height: 1.4;
+  min-width: 0;
+  padding-left: 2px;
 }
 
 .tool-call-group__status {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -72,7 +94,7 @@
 }
 
 .tool-call-group__status--success {
-  background-color: var(--color-success, #3d9a5f);
+  background-color: #16a34a;
 }
 
 .tool-call-group__status--error {
@@ -81,4 +103,5 @@
 
 .tool-call-group__item-text {
   word-break: break-word;
+  min-width: 0;
 }

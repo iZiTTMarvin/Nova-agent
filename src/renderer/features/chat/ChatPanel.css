@@ -80,6 +80,37 @@
   color: var(--color-error);
 }
 
+/* ── 过程轨与正文间距：工具行之间紧凑，与 Markdown 文字之间留白 ── */
+.chat-msg--assistant .markdown-body + .tool-trace-row,
+.chat-msg--assistant .markdown-body + .tool-call-group,
+.chat-msg--assistant .markdown-body + .thinking-block,
+.chat-msg--assistant .markdown-body + .todo-tool-card,
+.chat-msg--assistant .tool-trace-row + .markdown-body,
+.chat-msg--assistant .tool-call-group + .markdown-body,
+.chat-msg--assistant .thinking-block + .markdown-body,
+.chat-msg--assistant .todo-tool-card + .markdown-body {
+  margin-top: 14px;
+}
+
+.chat-msg--assistant .todo-tool-card + .tool-trace-row,
+.chat-msg--assistant .todo-tool-card + .tool-call-group,
+.chat-msg--assistant .tool-trace-row + .todo-tool-card,
+.chat-msg--assistant .tool-call-group + .todo-tool-card,
+.chat-msg--assistant .thinking-block + .tool-trace-row,
+.chat-msg--assistant .thinking-block + .tool-call-group,
+.chat-msg--assistant .tool-trace-row + .thinking-block,
+.chat-msg--assistant .tool-call-group + .thinking-block {
+  margin-top: 10px;
+}
+
+/* 连续工具行保持紧凑，覆盖上面的大间距 */
+.chat-msg--assistant .tool-trace-row + .tool-trace-row,
+.chat-msg--assistant .tool-call-group + .tool-call-group,
+.chat-msg--assistant .tool-trace-row + .tool-call-group,
+.chat-msg--assistant .tool-call-group + .tool-trace-row {
+  margin-top: 2px;
+}
+
 /* Assistant 等待态：替代空白气泡，让用户知道模型已经开始处理 */
 .assistant-pending {
   display: inline-flex;

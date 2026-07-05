@@ -1,11 +1,14 @@
 /**
- * 单条工具块渲染：按工具类型分发到专用卡片或通用 ToolBox
+ * 单条工具块渲染分发
+ *
+ * - 默认：L3 ToolTraceRow（等宽原子行，L4 按需挂载）
+ * - askQuestion：交互冒泡，专用卡片
+ * - todo_write：轻量 Checklist 冒泡（Roadmap，默认可见）
  */
 import React from 'react'
-import { StreamingFileCard, type StreamingFileCardProps } from './StreamingFileCard'
 import { AskQuestionToolCard } from './AskQuestionToolCard'
 import { TodoToolCard } from './TodoToolCard'
-import { ToolBox } from './ToolBox'
+import { ToolTraceRow } from './ToolTraceRow'
 import type { RendererToolBlock } from '../../stores/types'
 
 export function renderToolBlock(
@@ -13,25 +16,6 @@ export function renderToolBlock(
   isCurrentAssistantGenerating: boolean
 ): React.ReactNode {
   const isLive = isCurrentAssistantGenerating && block.status === 'running'
-
-  if (block.toolName === 'write' || block.toolName === 'edit') {
-    const cardProps: StreamingFileCardProps = block.argumentsRaw === undefined
-      ? {
-          toolCallId: block.toolCallId,
-          toolName: block.toolName,
-          status: block.status,
-          args: block.arguments,
-          result: block.result
-        }
-      : {
-          toolCallId: block.toolCallId,
-          toolName: block.toolName,
-          status: block.status,
-          argumentsRaw: block.argumentsRaw,
-          result: block.result
-        }
-    return <StreamingFileCard key={block.toolCallId} {...cardProps} />
-  }
 
   if (block.toolName === 'askQuestion') {
     return (
@@ -57,8 +41,26 @@ export function renderToolBlock(
     )
   }
 
+  // write/edit 流式：优先 argumentsRaw（primitive），finalize 后走 args
+  if (
+    (block.toolName === 'write' || block.toolName === 'edit') &&
+    block.argumentsRaw !== undefined
+  ) {
+    return (
+      <ToolTraceRow
+        key={block.toolCallId}
+        toolCallId={block.toolCallId}
+        name={block.toolName}
+        argumentsRaw={block.argumentsRaw}
+        status={block.status}
+        result={block.result}
+        isLiveStreaming={isLive}
+      />
+    )
+  }
+
   return (
-    <ToolBox
+    <ToolTraceRow
       key={block.toolCallId}
       toolCallId={block.toolCallId}
       name={block.toolName}

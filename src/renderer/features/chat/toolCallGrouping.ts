@@ -9,6 +9,7 @@
  */
 import type { Mode } from '../../../shared/session/types'
 import { shouldRenderToolBlock } from './renderingPolicy'
+import { getToolGroupTraceParts } from './toolTraceDisplay'
 import type { ExtendedToolCall, RendererMessageBlock, RendererToolBlock } from '../../stores/types'
 
 /** 可聚合的只读探索类工具 */
@@ -164,84 +165,24 @@ export function basenameFromPath(path: string): string {
   return parts[parts.length - 1] || path
 }
 
-/** 截断展示文本 */
-function truncate(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text
-  return text.slice(0, maxLen - 3) + '...'
-}
-
 export interface ToolGroupSummaryParts {
-  /** 折叠头前缀文案（不含 pill） */
+  /** L3 Action（短动词） */
   prefix: string
-  /** pill 内展示的首项标识（路径/关键词等） */
+  /** L3 Target（首项路径/关键词） */
   pill: string
   /** 折叠头后缀文案（「等 N 个文件」等） */
   suffix: string
 }
 
 /**
- * 生成工具聚合行的中文摘要片段（供 ToolCallGroup 渲染 pill）。
+ * 生成工具聚合行的 L3 摘要片段（与单条 ToolTraceRow 同一套 Action/Target 语言）。
  */
 export function getToolGroupSummaryParts(
   toolName: string,
   blocks: RendererToolBlock[]
 ): ToolGroupSummaryParts {
-  const count = blocks.length
-  const firstArgs = blocks[0]?.arguments ?? {}
-
-  switch (toolName) {
-    case 'read': {
-      const path = (firstArgs.path as string) || ''
-      const name = path ? basenameFromPath(path) : '文件'
-      return {
-        prefix: '读取',
-        pill: name,
-        suffix: count >= 2 ? `等 ${count} 个文件` : ''
-      }
-    }
-    case 'grep': {
-      const pattern = (firstArgs.pattern as string) || ''
-      const pill = pattern ? truncate(pattern, 40) : '文本'
-      return {
-        prefix: '搜索',
-        pill,
-        suffix: count >= 2 ? `等 ${count} 次` : ''
-      }
-    }
-    case 'find': {
-      const pattern = (firstArgs.pattern as string) || ''
-      const pill = pattern ? truncate(pattern, 40) : '文件'
-      return {
-        prefix: '定位',
-        pill,
-        suffix: count >= 2 ? `等 ${count} 次` : ''
-      }
-    }
-    case 'ls': {
-      const path = (firstArgs.path as string) || ''
-      const name = path ? basenameFromPath(path) : '目录'
-      return {
-        prefix: '列出',
-        pill: name,
-        suffix: count >= 2 ? `等 ${count} 个目录` : ''
-      }
-    }
-    case 'web_search': {
-      const query = (firstArgs.query as string) || ''
-      const pill = query ? truncate(query, 40) : '关键词'
-      return {
-        prefix: '搜索',
-        pill,
-        suffix: count >= 2 ? `等 ${count} 次` : ''
-      }
-    }
-    default:
-      return {
-        prefix: '执行',
-        pill: toolName,
-        suffix: count >= 2 ? `等 ${count} 次` : ''
-      }
-  }
+  const { action, target, suffix } = getToolGroupTraceParts(toolName, blocks)
+  return { prefix: action, pill: target, suffix }
 }
 
 /** 纯文本摘要（测试与无障碍用） */

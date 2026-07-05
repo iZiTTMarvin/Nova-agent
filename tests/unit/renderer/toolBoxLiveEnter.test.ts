@@ -60,48 +60,36 @@ describe('ToolBox isLiveStreaming 门控条件', () => {
   })
 })
 
-describe('ToolBox className 组合逻辑', () => {
-  it('isLiveStreaming=true 时 className 应包含 tool-box--live-enter 修饰符', () => {
+describe('ToolTraceRow className 组合逻辑（ToolBox 兼容出口）', () => {
+  it('isLiveStreaming=true 时 className 应包含 tool-trace-row--live 修饰符', () => {
     const isLiveStreaming = true
-    const className = isLiveStreaming ? 'tool-box tool-box--live-enter' : 'tool-box'
-    expect(className).toContain('tool-box--live-enter')
-    expect(className).toContain('tool-box')
+    const className = [
+      'tool-trace-row',
+      isLiveStreaming ? 'tool-trace-row--live' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    expect(className).toContain('tool-trace-row--live')
+    expect(className).toContain('tool-trace-row')
   })
 
-  it('isLiveStreaming=false 时 className 应只有 tool-box 基类', () => {
+  it('isLiveStreaming=false 时 className 应只有 tool-trace-row 基类', () => {
     const isLiveStreaming = false
-    const className = isLiveStreaming ? 'tool-box tool-box--live-enter' : 'tool-box'
-    expect(className).toBe('tool-box')
-    expect(className).not.toContain('live-enter')
+    const className = [
+      'tool-trace-row',
+      isLiveStreaming ? 'tool-trace-row--live' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    expect(className).toBe('tool-trace-row')
+    expect(className).not.toContain('live')
   })
 })
 
-describe('ToolBox motion.div 职责分工（opacity=CSS, scale=framer-motion）', () => {
-  it('animateLive=true 时 initial 只包含 scale（opacity 由 CSS keyframe 驱动）', () => {
-    const animateLive = true
-    const initial = animateLive ? { scale: 0.98 } : false
-    expect(initial).toEqual({ scale: 0.98 })
-    // opacity 不在 initial 中——由 CSS @keyframes tool-box-live-enter 管理
-    expect(initial).not.toHaveProperty('opacity')
-  })
-
-  it('animateLive=false 时 initial 为 false（跳过初始动画）', () => {
-    const animateLive = false
-    const initial = animateLive ? { scale: 0.98 } : false
-    expect(initial).toBe(false)
-  })
-
-  it('animateLive=true 时 transition 使用 LIVE_ENTER_SPRING', () => {
-    const animateLive = true
-    const transition = animateLive ? LIVE_ENTER_SPRING : NO_ANIMATION
-    expect(transition).toBe(LIVE_ENTER_SPRING)
-  })
-
-  it('animateLive=false 时 transition 使用 NO_ANIMATION（duration=0）', () => {
-    const animateLive = false
-    const transition = animateLive ? LIVE_ENTER_SPRING : NO_ANIMATION
-    expect(transition).toBe(NO_ANIMATION)
-    expect(transition).toEqual({ duration: 0 })
+describe('流式入场常量（历史 spring 门控，现由 CSS opacity 驱动）', () => {
+  it('LIVE_ENTER_SPRING / NO_ANIMATION 仍可被门控逻辑选用', () => {
+    expect(LIVE_ENTER_SPRING.type).toBe('spring')
+    expect(NO_ANIMATION).toEqual({ duration: 0 })
   })
 })
 

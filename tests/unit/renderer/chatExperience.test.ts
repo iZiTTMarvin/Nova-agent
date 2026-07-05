@@ -116,7 +116,7 @@ describe('聊天体验回归', () => {
     })
   })
 
-  it('思考块完成后保持展开状态，避免页面高度突然塌陷', () => {
+  it('思考块结束后自动收起为 Thought 行（Cursor 风）', () => {
     let renderer: TestRenderer.ReactTestRenderer | null = null
     act(() => {
       renderer = TestRenderer.create(
@@ -132,7 +132,10 @@ describe('聊天体验回归', () => {
       )
     })
 
-    expect(renderer!.root.findByType('details').props.open).toBe(true)
+    // 结束后默认折叠，只留 Thought for Xs 一行
+    expect(renderer!.root.findByType('details').props.open).toBe(false)
+    const title = renderer!.root.findByProps({ className: 'thinking-block__title' })
+    expect(String(title.children.join(''))).toMatch(/^Thought/)
 
     act(() => {
       renderer?.unmount()
@@ -178,7 +181,7 @@ describe('聊天体验回归', () => {
     })
   })
 
-  it('加载带摘要化 write 卡片的历史会话时不应白屏', () => {
+  it('加载带摘要化 write 的历史会话时不应白屏（L3 原子行）', () => {
     const sanitizedWriteArgs = sanitizeToolInput('write', {
       path: 'index.html',
       content: '<!doctype html>\n' + '<section>hello</section>\n'.repeat(600)
@@ -210,8 +213,13 @@ describe('聊天体验回归', () => {
       renderer = TestRenderer.create(React.createElement(ChatPanel))
     })
 
-    const filename = renderer!.root.findByProps({ className: 'streaming-card__filename' })
-    expect(filename.children).toEqual(['index.html'])
+    // L3：默认只渲染等宽行，不挂载 streaming-card / 大段 content DOM
+    const action = renderer!.root.findByProps({ className: 'tool-trace-row__action' })
+    expect(action.children).toEqual(['Wrote'])
+    const target = renderer!.root.findByProps({ className: 'tool-trace-row__target' })
+    expect(String(target.children.join(''))).toContain('index.html')
+    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row__detail' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ className: 'streaming-card__filename' })).toHaveLength(0)
 
     act(() => {
       renderer?.unmount()
