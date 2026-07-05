@@ -967,16 +967,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const activeSessionId = currentSessionId || 'session_default'
 
     // 收到 Assistant 消息开始，向消息队列追加一个空的 assistant 卡片
+    const now = Date.now()
     const assistantMsg: ExtendedMessage = {
       id: messageId,
       sessionId: activeSessionId,
       role: 'assistant',
       content: '',
       toolCalls: [],
-      timestamp: Date.now(),
+      timestamp: now,
       thinking: '',
       blocks: [],
-      _revision: 0
+      _revision: 0,
+      turnStartedAt: now
     }
 
     set(state => {
@@ -1279,7 +1281,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...msg,
             interrupted: true,
             blocks,
-            toolCalls
+            toolCalls,
+            turnEndedAt: Date.now()
+          })
+        } else {
+          nextMessages[idx] = bumpRevision({
+            ...msg,
+            turnEndedAt: Date.now()
           })
         }
       }

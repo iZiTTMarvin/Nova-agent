@@ -6,7 +6,7 @@
  *
  * 重渲染隔离：React.memo + args 引用比较。
  */
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { ChevronIcon } from '../../components/Icons'
 import { parseTodoSnapshot, countTodoProgress, splitTodoContentSegments } from './todoSnapshot'
 import type { TodoItem, TodoStatus } from '../../../shared/todo/types'
@@ -101,8 +101,15 @@ export const TodoToolCard: React.FC<TodoToolCardProps> = React.memo(function Tod
   status,
   isLiveStreaming = false
 }) {
-  // 默认展开：Roadmap 需可感知；用户可手动折叠
-  const [isOpen, setIsOpen] = useState(true)
+  // 进行中默认展开；轮次结束后自动收起（未手动操作时），避免历史消息占满视口
+  const [isOpen, setIsOpen] = useState(isLiveStreaming)
+  const userToggledRef = useRef(false)
+
+  useEffect(() => {
+    if (userToggledRef.current) return
+    setIsOpen(isLiveStreaming)
+  }, [isLiveStreaming])
+
   const todos = parseTodoSnapshot(args)
   const { completed, total } = countTodoProgress(todos)
 
@@ -121,7 +128,10 @@ export const TodoToolCard: React.FC<TodoToolCardProps> = React.memo(function Tod
       <button
         type="button"
         className="todo-tool-card__header"
-        onClick={() => setIsOpen(prev => !prev)}
+        onClick={() => {
+          userToggledRef.current = true
+          setIsOpen(prev => !prev)
+        }}
         aria-expanded={isOpen}
       >
         <span className="todo-tool-card__label">Todos</span>

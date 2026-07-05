@@ -68,7 +68,12 @@ describe('聊天体验回归', () => {
         removeAllListeners: mockRemoveAllListeners
       },
       nova: { skill: createNovaSkillMock() },
-      confirm: vi.fn(() => false)
+      confirm: vi.fn(() => false),
+      matchMedia: vi.fn().mockImplementation(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      }))
     } as unknown as Window & typeof globalThis
     resetStore()
   })
@@ -181,7 +186,7 @@ describe('聊天体验回归', () => {
     })
   })
 
-  it('加载带摘要化 write 的历史会话时不应白屏（L3 原子行）', () => {
+  it('加载带摘要化 write 的历史会话时不应白屏（TurnProcessTree 默认折叠 L3）', () => {
     const sanitizedWriteArgs = sanitizeToolInput('write', {
       path: 'index.html',
       content: '<!doctype html>\n' + '<section>hello</section>\n'.repeat(600)
@@ -213,13 +218,28 @@ describe('聊天体验回归', () => {
       renderer = TestRenderer.create(React.createElement(ChatPanel))
     })
 
-    // L3：默认只渲染等宽行，不挂载 streaming-card / 大段 content DOM
+    // completed 默认 L1 折叠：过程树头可见，L3 不 mount
+    const l1 = renderer!.root.findByProps({ 'data-testid': 'turn-process-l1' })
+    expect(String(l1.findByProps({ className: 'turn-process-tree__l1-title' }).children.join(''))).toMatch(/^Worked/)
+    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ className: 'streaming-card__filename' })).toHaveLength(0)
+
+    // 展开 L1 → L2 后仍无 L3
+    act(() => {
+      l1.props.onClick()
+    })
+    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
+
+    // 展开 L2 → 挂载 L3 等宽行
+    const l2 = renderer!.root.findByProps({ 'data-testid': 'turn-process-l2' })
+    act(() => {
+      l2.props.onClick()
+    })
     const action = renderer!.root.findByProps({ className: 'tool-trace-row__action' })
     expect(action.children).toEqual(['Wrote'])
     const target = renderer!.root.findByProps({ className: 'tool-trace-row__target' })
     expect(String(target.children.join(''))).toContain('index.html')
     expect(renderer!.root.findAllByProps({ className: 'tool-trace-row__detail' })).toHaveLength(0)
-    expect(renderer!.root.findAllByProps({ className: 'streaming-card__filename' })).toHaveLength(0)
 
     act(() => {
       renderer?.unmount()

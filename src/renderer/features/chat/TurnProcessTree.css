@@ -1,0 +1,131 @@
+/**
+ * TurnProcessTree 样式：muted 灰色 L1/L2，结论区与过程区视觉分层
+ */
+.turn-process-tree {
+  margin: 4px 0 10px;
+  /* 避免父级 chat-msg__static-body 的 content-visibility 导致展开后子树不绘制 */
+  content-visibility: visible;
+  contain: none;
+}
+
+.turn-process-tree__l1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted, #8a857d);
+}
+
+.turn-process-tree__l1:hover {
+  color: var(--text-secondary, #6b6760);
+}
+
+.turn-process-tree__l1-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.turn-process-tree__chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+  color: inherit;
+}
+
+.turn-process-tree__l2-wrap {
+  margin-top: 2px;
+}
+
+.turn-process-tree__l2 {
+  padding-left: 2px;
+}
+
+.turn-process-tree__thought-preview {
+  margin: 2px 0 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-muted, #8a857d);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.turn-process-tree__l2-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted, #8a857d);
+}
+
+.turn-process-tree__l2-bar:hover {
+  color: var(--text-secondary, #6b6760);
+}
+
+.turn-process-tree__l2-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-process-tree__l2-diff {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, 'Menlo', 'Consolas', monospace);
+  font-size: 12px;
+}
+
+.turn-process-tree__l2-diff--placeholder {
+  opacity: 0.65;
+}
+
+.turn-process-tree__l2-diff:not(.turn-process-tree__l2-diff--placeholder) {
+  /* diff 就绪：绿增红删 */
+}
+
+.turn-process-tree__l2-diff:not(.turn-process-tree__l2-diff--placeholder)::before {
+  content: none;
+}
+
+/* 过程区内中间状态句：比思考块更易读，但仍浅于结论区正文 */
+.turn-process-text {
+  margin: 4px 0 6px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary, #6b6760);
+}
+
+.turn-process-text .markdown-body {
+  color: var(--text-secondary, #6b6760);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.turn-process-trace-list {
+  margin-top: 4px;
+  content-visibility: visible;
+  contain: none;
+}
+
+/* tabular-nums 工具类（L2 diff 防跳动） */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
