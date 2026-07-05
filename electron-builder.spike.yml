@@ -1,0 +1,20 @@
+# Spike S0 打包冒烟专用 electron-builder 配置（最小 portable exe，无图标/签名）
+appId: com.nova-agent.spike
+productName: NovaAgent-Spike
+extraMetadata:
+  main: scripts/spike/pack-spike-main.mjs
+directories:
+  output: release/spike-s0
+files:
+  - package.json
+  - node_modules/better-sqlite3/**/*
+  - scripts/spike/pack-spike-main.mjs
+asar: true
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+win:
+  target:
+    - portable
+  signAndEditExecutable: false
+portable:
+  artifactName: NovaAgent-Spike-${version}.exe

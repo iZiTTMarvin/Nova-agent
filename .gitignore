@@ -5,6 +5,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+# electron-builder 打包产物（含 Spike S0 冒烟 exe，可 npm run pack:spike 重建）
+release/
+
 .nova
 .spec-workflow
 tasks/*

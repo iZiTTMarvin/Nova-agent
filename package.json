@@ -11,10 +11,18 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "validate:skills": "node scripts/validate-skill-frontmatter.mjs"
+    "test:memory-integration": "node scripts/rebuild-better-sqlite3-node.mjs && vitest run --config vitest.memory-integration.config.ts && npm run rebuild:native:electron",
+    "validate:skills": "node scripts/validate-skill-frontmatter.mjs",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:native:node": "node scripts/rebuild-better-sqlite3-node.mjs",
+    "spike:memory-electron": "electron scripts/spike/memory-electron.mjs",
+    "pack:spike": "electron-builder --config electron-builder.spike.yml --win portable",
+    "pack:spike:verify": "node scripts/spike/run-pack-spike-exe.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",
+    "better-sqlite3": "^11.9.1",
     "framer-motion": "^12.40.0",
     "gray-matter": "^4.0.3",
     "iconv-lite": "^0.7.2",
@@ -27,6 +35,8 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/react-test-renderer": "^18.3.1",
@@ -34,6 +44,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.5.0",
     "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
     "postcss": "^8.5.15",
     "react-test-renderer": "^18.3.1",

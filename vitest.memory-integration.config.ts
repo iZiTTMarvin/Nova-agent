@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 
+/** 记忆 FTS5 集成测试专用配置（加载 better-sqlite3 原生模块） */
 export default defineConfig({
   resolve: {
     alias: {
@@ -11,8 +12,6 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
-    // 集成测试加载 better-sqlite3 原生模块，仅由 test:memory-integration 执行
-    exclude: ['tests/integration/**']
+    include: ['tests/integration/**/*.test.ts']
   }
 })
