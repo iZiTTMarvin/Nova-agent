@@ -4,6 +4,7 @@
 
 import Database from 'better-sqlite3'
 import type { MemoryDb, MemoryDbStatement } from './MemoryDb'
+import { initMemorySchema } from './MemorySchema'
 
 /** 将 better-sqlite3 Statement 适配为 MemoryDbStatement */
 class BetterSqliteStatement implements MemoryDbStatement {
@@ -24,8 +25,8 @@ class BetterSqliteStatement implements MemoryDbStatement {
 }
 
 /**
- * MemoryDb 的 better-sqlite3 实现骨架。
- * P1 将在此扩展 search / upsert 等记忆业务方法。
+ * MemoryDb 的 better-sqlite3 实现。
+ * P1 记忆业务通过 MemoryIndexer / MemoryService 访问，勿在单测默认套件 import 本文件。
  */
 export class BetterSqliteMemoryDb implements MemoryDb {
   private readonly db: Database.Database
@@ -50,4 +51,14 @@ export class BetterSqliteMemoryDb implements MemoryDb {
   close(): void {
     this.db.close()
   }
+}
+
+/**
+ * 打开记忆库并初始化 schema（主进程 / 集成测试入口）
+ * @param dbPath 通常为 {memoryRoot}/memory.db
+ */
+export function openBetterSqliteMemoryDb(dbPath: string): BetterSqliteMemoryDb {
+  const db = new BetterSqliteMemoryDb(dbPath)
+  initMemorySchema(db)
+  return db
 }

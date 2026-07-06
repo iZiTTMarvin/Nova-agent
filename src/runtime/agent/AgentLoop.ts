@@ -354,6 +354,7 @@ export class AgentLoop implements IdleCompactionTarget {
         agentRole: layers.agentRole,
         baseRules: layers.baseRules ?? '',
         projectRules: layers.projectRules ?? '',
+        memoryContext: layers.memoryContext ?? '',
         skillContext: layers.skillContext ?? '',
         modeInstruction: layers.modeInstruction ?? '',
         toolSummary: layers.toolSummary ?? ''

@@ -13,7 +13,17 @@ import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
 import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
 import { registerComposeHandler } from './composeHandler'
+import { registerMemoryHandler } from './memoryHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
+import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
+import {
+  drainAndSchedulePersist,
+  cleanupObservationCaptureSession
+} from '../services/MemoryConsolidationHost'
+import {
+  extractOnSessionLeave,
+  isMemoryExtractEnabled
+} from '../services/MemoryExtractHost'
 import { getSessionStore } from './sessionHandler'
 import { getMainWindow } from '../index'
 
@@ -54,7 +64,20 @@ export function registerIpcHandlers(): void {
   // 启动时从磁盘加载会话列表，让 renderer 首屏即可拿到 availableSessions。
   const workspaceService = initWorkspaceService({
     getSessionStore,
-    getMainWindow
+    getMainWindow,
+    onWorkspaceRootChanged: (workspaceRoot) => {
+      scheduleMemoryReconcileForWorkspace(workspaceRoot)
+    },
+    onSessionLeaving: (sessionId, workspaceRoot) => {
+      if (isMemoryExtractEnabled()) {
+        extractOnSessionLeave(sessionId, workspaceRoot, getSessionStore())
+      } else {
+        drainAndSchedulePersist(sessionId, workspaceRoot)
+      }
+    },
+    onSessionCaptureCleanup: (sessionId) => {
+      cleanupObservationCaptureSession(sessionId)
+    }
   })
   workspaceService.initOnStartup()
   registerWorkspaceHandler(getMainWindow)
@@ -67,6 +90,9 @@ export function registerIpcHandlers(): void {
 
   // 编排模式 compose IPC
   registerComposeHandler(getMainWindow)
+
+  // 跨会话记忆浏览/编辑 IPC（P2-1）
+  registerMemoryHandler()
 
   // 启动时静默执行一次存储 GC（清理临时日志 + 陈旧快照）
   runStartupStorageGc()

@@ -67,6 +67,15 @@ export interface WorkspaceServiceDeps {
   getSessionStore: () => SessionStore
   /** 获取主窗口（用于文件夹选择对话框） */
   getMainWindow: () => BrowserWindow | null
+  /** 工作区根路径变更时回调（如触发记忆索引 reconcile，勿阻塞） */
+  onWorkspaceRootChanged?: (workspaceRoot: string | null) => void
+  /**
+   * 离开会话前回调（切走/删除/新建前）：主进程 sync drain + fire-and-forget 落盘。
+   * 须在 SessionStore 删除会话之前调用，以便拿到 workspaceRoot。
+   */
+  onSessionLeaving?: (sessionId: string, workspaceRoot: string) => void
+  /** 会话采集收尾：清 pending/buffer 注册表 */
+  onSessionCaptureCleanup?: (sessionId: string) => void
 }
 
 export class WorkspaceService {
@@ -94,6 +103,28 @@ export class WorkspaceService {
   private broadcaster: ((state: WorkspaceState) => void) | null = null
 
   constructor(private readonly deps: WorkspaceServiceDeps) {}
+
+  /** 工作区根路径变更时触发外部回调（记忆 reconcile 等后台任务） */
+  private notifyWorkspaceRootChanged(workspaceRoot: string | null): void {
+    this.deps.onWorkspaceRootChanged?.(workspaceRoot)
+  }
+
+  /** 离开会话：drain 巩固 + 采集收尾 */
+  private leaveSession(sessionId: string, workspaceRoot: string): void {
+    this.deps.onSessionLeaving?.(sessionId, workspaceRoot)
+    this.deps.onSessionCaptureCleanup?.(sessionId)
+  }
+
+  private maybeLeaveCurrentSession(store: SessionStore, exceptSessionId?: string): void {
+    const prevId = this.state.currentSessionId
+    if (!prevId || prevId === exceptSessionId) {
+      return
+    }
+    const prevDetail = store.load(prevId)
+    if (prevDetail) {
+      this.leaveSession(prevId, prevDetail.workspaceRoot)
+    }
+  }
 
   /** 注入广播函数（handler 层负责实际 webContents.send） */
   setBroadcaster(fn: (state: WorkspaceState) => void): void {
@@ -178,6 +209,7 @@ export class WorkspaceService {
     // 同步主进程全局路径（供 AgentLoop 等模块使用 workingDir 边界）
     setCurrentProjectPath(selectedPath)
     reloadSkillsForWorkspace(selectedPath)
+    this.notifyWorkspaceRootChanged(selectedPath)
 
     // 创建新会话
     const data = store.create(selectedPath, this.state.currentMode)
@@ -198,9 +230,11 @@ export class WorkspaceService {
   createSession(params: { workspaceRoot: string; mode?: Mode }): WorkspaceState {
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
+    this.maybeLeaveCurrentSession(store)
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode)
     getMainReadState().clear()
     setCurrentProjectPath(params.workspaceRoot)
+    this.notifyWorkspaceRootChanged(params.workspaceRoot)
     setCurrentMode(data.mode)
 
     this.state = {
@@ -221,6 +255,12 @@ export class WorkspaceService {
   deleteSession(sessionId: string): WorkspaceState {
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
+
+    const deletingDetail = store.load(sessionId)
+    if (deletingDetail) {
+      this.leaveSession(sessionId, deletingDetail.workspaceRoot)
+    }
+
     store.delete(sessionId)
 
     const remaining = store.list()
@@ -235,6 +275,7 @@ export class WorkspaceService {
           getMainReadState().clear()
           setCurrentProjectPath(detail.workspaceRoot)
           setCurrentMode(detail.mode)
+          this.notifyWorkspaceRootChanged(detail.workspaceRoot)
           this.state = {
             currentSessionId: detail.id,
             currentProjectPath: detail.workspaceRoot,
@@ -294,6 +335,7 @@ export class WorkspaceService {
   selectSession(sessionId: string): WorkspaceState {
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
+    this.maybeLeaveCurrentSession(store, sessionId)
     const detail = store.load(sessionId)
     if (!detail) {
       throw new Error(`会话 ${sessionId} 不存在`)
@@ -302,6 +344,7 @@ export class WorkspaceService {
     getMainReadState().clear()
     setCurrentProjectPath(detail.workspaceRoot)
     setCurrentMode(detail.mode)
+    this.notifyWorkspaceRootChanged(detail.workspaceRoot)
 
     this.state = {
       currentSessionId: detail.id,

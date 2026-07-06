@@ -11,6 +11,7 @@ export function getToolCapability(toolName: string): ToolCapability {
     case 'grep':
     case 'find':
     case 'web_search':
+    case 'memory_search':
       return 'readonly'
     case 'edit':
     case 'write':

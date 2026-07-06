@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:memory-integration": "node scripts/rebuild-better-sqlite3-node.mjs && vitest run --config vitest.memory-integration.config.ts && npm run rebuild:native:electron",
+    "test:memory-integration": "node scripts/run-memory-integration-test.mjs",
     "validate:skills": "node scripts/validate-skill-frontmatter.mjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",

@@ -21,6 +21,7 @@ import { readTool } from '../../runtime/tools/readTool'
 import { createGrepTool } from '../../runtime/tools/grepTool'
 import { findTool } from '../../runtime/tools/findTool'
 import { webSearchTool } from '../../runtime/tools/webSearch'
+import { createMemorySearchTool } from '../../runtime/tools/memorySearch'
 import { editTool } from '../../runtime/tools/editTool'
 import { writeTool } from '../../runtime/tools/writeTool'
 import { bashTool } from '../../runtime/tools/bashTool'
@@ -52,10 +53,21 @@ import { createReadState, type ReadState } from '../../runtime/tools/editTool'
 import { createEventStallDetector } from '../../shared/diagnostics/stallDetector'
 import { ArtifactStore } from '../../runtime/artifacts/ArtifactStore'
 import type { ContentBlock } from '../../runtime/model/types'
+import { extractTextFromContent } from '../../runtime/model/types'
 import { runVerification } from '../../runtime/verification/service'
 import { formatVerificationSummary } from '../../runtime/verification/format'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 import { syncTavilyApiKeyFromSettings } from '../../runtime/settings/syncTavilyApiKey'
+import {
+  computeWorkspaceHash,
+  buildL1MemoryContext
+} from '../../runtime/memory'
+import { subscribeObservationCapture } from '../../runtime/memory/MemoryObservationBridge'
+import { ensureObservationCaptureForSession } from '../services/MemoryConsolidationHost'
+import { onUserTurnCompleteForExtract } from '../services/MemoryExtractHost'
+import {
+  getMemoryService
+} from '../services/MemoryServiceHost'
 
 /** Agent 轮次是否进行中（send-message 从进入到 sendMessage 返回） */
 let agentTurnInProgress = false
@@ -269,6 +281,20 @@ export function registerAgentHandler(
     /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
     const skillsTokenEstimate = estimateTokens(skillContext)
 
+    // L1 项目记忆：直读 MEMORY.md 注入 system prompt（不进 context hook / 不写 SessionStore）
+    const scopeId = computeWorkspaceHash(projectPath)
+    let memoryContext: string | null = null
+    if (novaSettings.memoryEnabled) {
+      try {
+        const memoryService = getMemoryService()
+        const essence = memoryService.getProjectEssence(scopeId)
+        memoryContext = buildL1MemoryContext(essence)
+      } catch (err) {
+        console.warn('[agentHandler] L1 记忆注入失败，本轮降级跳过:', err)
+        memoryContext = null
+      }
+    }
+
     const eventBus = new EventBus()
     const permissionManager = new PermissionManager()
     // 注入持久化权限规则 + 当前项目路径，用于匹配 allow/deny/ask
@@ -287,6 +313,10 @@ export function registerAgentHandler(
     toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
     toolRegistry.register(findTool)
     toolRegistry.register(webSearchTool)
+    toolRegistry.register(createMemorySearchTool({
+      getMemoryService,
+      loadSettings: loadNovaSettings
+    }))
     toolRegistry.register(editTool)
     toolRegistry.register(writeTool)
     toolRegistry.register(bashTool)
@@ -343,6 +373,7 @@ export function registerAgentHandler(
         agentRole: frozenPrompt,
         baseRules,
         projectRules,
+        memoryContext,
         skillContext,
         toolSummary
       },
@@ -552,9 +583,21 @@ export function registerAgentHandler(
       })
     })
 
+    // P2-2/3：工具轨迹采集（memoryEnabled 一键统控；巩固落盘由会话生命周期 / LLM 提炼触发）
+    if (novaSettings.memoryEnabled && capturedWorkspaceRoot) {
+      ensureObservationCaptureForSession(params.sessionId, capturedWorkspaceRoot)
+      subscribeObservationCapture(eventBus, params.sessionId)
+    }
+
     agentTurnInProgress = true
     try {
       await agentLoop.sendMessage(sendContent)
+      onUserTurnCompleteForExtract(
+        params.sessionId,
+        projectPath,
+        sessionStore,
+        modelPool
+      )
     } finally {
       agentTurnInProgress = false
     }

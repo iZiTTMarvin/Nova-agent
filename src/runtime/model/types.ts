@@ -49,6 +49,11 @@ export interface ChatMessage {
    * 适用场景：压缩指令、运行时临时提示等动态信息
    */
   internal?: boolean
+  /**
+   * 排除出缓存断点选择，但仍发送给模型（用于每轮变化的尾部注入，如记忆 L2）。
+   * 与 internal 不同：internal 默认不发送；skipCacheMarker 始终发送，只是不参与 cache_control 标记。
+   */
+  skipCacheMarker?: boolean
 }
 
 /** 模型返回的工具调用 */

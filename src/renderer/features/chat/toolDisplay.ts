@@ -29,6 +29,8 @@ export function getToolDisplayName(toolName: string): string {
       return '更新任务列表 (todo_write)'
     case 'web_search':
       return '联网搜索 (web_search)'
+    case 'memory_search':
+      return '检索记忆 (memory_search)'
     case 'askQuestion':
       return '询问用户 (askQuestion)'
     default:

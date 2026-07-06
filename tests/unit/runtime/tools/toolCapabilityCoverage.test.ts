@@ -24,6 +24,8 @@ import { readTool } from '../../../../src/runtime/tools/readTool'
 import { createGrepTool } from '../../../../src/runtime/tools/grepTool'
 import { findTool } from '../../../../src/runtime/tools/findTool'
 import { webSearchTool } from '../../../../src/runtime/tools/webSearch'
+import { createMemorySearchTool } from '../../../../src/runtime/tools/memorySearch'
+import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
 import { editTool } from '../../../../src/runtime/tools/editTool'
 import { writeTool } from '../../../../src/runtime/tools/writeTool'
 import { bashTool } from '../../../../src/runtime/tools/bashTool'
@@ -49,6 +51,10 @@ function buildFullRegistry(): ToolRegistry {
   registry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
   registry.register(findTool)
   registry.register(webSearchTool)
+  registry.register(createMemorySearchTool({
+    getMemoryService: () => null,
+    loadSettings: () => DEFAULT_NOVA_SETTINGS
+  }))
   registry.register(editTool)
   registry.register(writeTool)
   registry.register(bashTool)

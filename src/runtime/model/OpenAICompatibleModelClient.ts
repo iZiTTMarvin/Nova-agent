@@ -293,6 +293,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (preserveInternal && msg.internal === true) {
       result.internal = true
     }
+    if (preserveInternal && msg.skipCacheMarker === true) {
+      result.skipCacheMarker = true
+    }
 
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       result.tool_calls = msg.toolCalls.map(tc => ({
@@ -312,10 +315,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
     return result
   }
 
-  /** 在真正发请求前剥离 internal 等本地标记，避免污染 API 消息字节。 */
+  /** 在真正发请求前剥离 internal / skipCacheMarker 等本地标记，避免污染 API 消息字节。 */
   private stripInternalMarker(msg: Record<string, unknown>): Record<string, unknown> {
-    if (!('internal' in msg)) return msg
-    const { internal: _internal, ...rest } = msg
+    const { internal: _internal, skipCacheMarker: _skip, ...rest } = msg
+    if (!('internal' in msg) && !('skipCacheMarker' in msg)) {
+      return msg
+    }
     return rest
   }
 }

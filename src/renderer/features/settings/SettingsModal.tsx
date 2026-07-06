@@ -12,16 +12,18 @@ import { SubagentsSettingsPanel } from './SubagentsSettingsPanel'
 import { PermissionsSettingsPanel } from './PermissionsSettingsPanel'
 import { StorageSettingsPanel } from './StorageSettingsPanel'
 import { WebSearchSettingsPanel } from './WebSearchSettingsPanel'
+import { MemorySettingsPanel } from './MemorySettingsPanel'
 import './SettingsModal.css'
 
 const NAV_STORAGE_KEY = 'nova-settings-nav'
 
-export type SettingsSection = 'general' | 'llm' | 'rules' | 'skills' | 'subagents' | 'permissions' | 'storage' | 'websearch'
+export type SettingsSection = 'general' | 'llm' | 'rules' | 'skills' | 'subagents' | 'permissions' | 'storage' | 'websearch' | 'memory'
 
 const NAV_ITEMS: { id: SettingsSection; label: string }[] = [
   { id: 'general', label: '通用' },
   { id: 'llm', label: 'LLM 配置' },
   { id: 'websearch', label: '联网搜索' },
+  { id: 'memory', label: '记忆' },
   { id: 'rules', label: '规则' },
   { id: 'skills', label: '技能' },
   { id: 'subagents', label: '子代理' },
@@ -34,7 +36,8 @@ function readStoredSection(): SettingsSection {
     const raw = sessionStorage.getItem(NAV_STORAGE_KEY)
     if (
       raw === 'general' || raw === 'llm' || raw === 'rules' || raw === 'skills' ||
-      raw === 'subagents' || raw === 'permissions' || raw === 'storage' || raw === 'websearch'
+      raw === 'subagents' || raw === 'permissions' || raw === 'storage' || raw === 'websearch' ||
+      raw === 'memory'
     ) {
       return raw
     }
@@ -99,6 +102,7 @@ export const SettingsModal: React.FC = () => {
             {section === 'general' && <GeneralSettingsPanel />}
             {section === 'llm' && <LlmSettingsPanel />}
             {section === 'websearch' && <WebSearchSettingsPanel />}
+            {section === 'memory' && <MemorySettingsPanel />}
             {section === 'rules' && <RulesSettingsPanel />}
             {section === 'skills' && <SkillsSettingsPanel />}
             {section === 'subagents' && <SubagentsSettingsPanel />}

@@ -44,6 +44,13 @@ import type {
   PermissionDeleteParams
 } from '../permissions/types'
 import type { AskQuestionItem, AskQuestionAnswer } from '../askQuestion/types'
+import type {
+  MemoryScopeFileEntry,
+  MemoryScopeStats,
+  MemoryReadFileParams,
+  MemoryWriteFileParams,
+  ReconcileStats
+} from '../memory/types'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -387,6 +394,31 @@ export interface IpcCommands {
   'compose:get-state': {
     params: { workspaceRoot: string }
     result: Record<string, unknown> | null
+  }
+  // ── 跨会话记忆（P2-1 可观测/可编辑）──
+  'memory:list-files': {
+    params: void
+    result: MemoryScopeFileEntry[]
+  }
+  'memory:read-file': {
+    params: MemoryReadFileParams
+    result: string
+  }
+  'memory:write-file': {
+    params: MemoryWriteFileParams
+    result: void
+  }
+  'memory:reconcile': {
+    params: void
+    result: ReconcileStats
+  }
+  'memory:stats': {
+    params: void
+    result: MemoryScopeStats
+  }
+  'memory:open-dir': {
+    params: void
+    result: void
   }
 }
 

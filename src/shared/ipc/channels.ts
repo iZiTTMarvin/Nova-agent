@@ -101,6 +101,14 @@ export const COMPOSE_RESUME = 'compose:resume' as const
 export const COMPOSE_RESPOND_ASK_USER = 'compose:respond-ask-user' as const
 /** 读取当前工作区 `.nova/compose/state.json` */
 export const COMPOSE_GET_STATE = 'compose:get-state' as const
+/** 跨会话记忆：列出 scope 下 md 文件 */
+export const MEMORY_LIST_FILES = 'memory:list-files' as const
+export const MEMORY_READ_FILE = 'memory:read-file' as const
+export const MEMORY_WRITE_FILE = 'memory:write-file' as const
+export const MEMORY_RECONCILE = 'memory:reconcile' as const
+export const MEMORY_STATS = 'memory:stats' as const
+/** 在系统文件管理器中打开当前 scope 记忆目录 */
+export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 

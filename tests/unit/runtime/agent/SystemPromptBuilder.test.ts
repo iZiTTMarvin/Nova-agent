@@ -26,6 +26,26 @@ describe('SystemPromptBuilder', () => {
     expect(modeIdx).toBeLessThan(toolIdx)
   })
 
+  it('memoryContext 插在 projectRules 之后、skillContext 之前', () => {
+    const out = SystemPromptBuilder.build({
+      ...fullLayers,
+      memoryContext: '用户偏好：注释用中文'
+    })
+    const projIdx = out.indexOf('=== Project Rules')
+    const memIdx = out.indexOf('=== Project Memory ===')
+    const skillIdx = out.indexOf('=== Skills ===')
+    expect(memIdx).toBeGreaterThan(projIdx)
+    expect(memIdx).toBeLessThan(skillIdx)
+    expect(out).toContain('用户偏好：注释用中文')
+  })
+
+  it('memoryContext 为空或 null 时跳过该层', () => {
+    const withNull = SystemPromptBuilder.build({ agentRole: 'r', memoryContext: null })
+    const withEmpty = SystemPromptBuilder.build({ agentRole: 'r', memoryContext: '   ' })
+    expect(withNull).not.toContain('Project Memory')
+    expect(withEmpty).not.toContain('Project Memory')
+  })
+
   it('空层自动跳过', () => {
     const out = SystemPromptBuilder.build({ agentRole: 'role only', baseRules: '' })
     expect(out).toContain('=== Agent Role ===')

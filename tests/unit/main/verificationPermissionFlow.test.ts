@@ -33,6 +33,11 @@ vi.mock('../../../src/main/ipc/sessionHandler', () => ({
   getSessionStore: () => mockStore
 }))
 
+vi.mock('../../../src/main/index', () => ({
+  setCurrentProjectPath: vi.fn(),
+  setCurrentMode: vi.fn()
+}))
+
 // mock checkpoint 的 readManifest，让 hasRealModifications 返回 true
 vi.mock('../../../src/runtime/checkpoints/manifest', () => ({
   readManifest: () => ({

@@ -60,6 +60,24 @@ describe('messageFormat 缓存标记适配器', () => {
       expect(userContent[0].cache_control).toEqual({ type: 'ephemeral' })
     })
 
+    it('跳过 skipCacheMarker 消息，不标记缓存', () => {
+      const messages = [
+        { role: 'system', content: 'system' },
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'response' },
+        { role: 'user', content: 'L2 memory block', skipCacheMarker: true }
+      ]
+      const result = applyCacheMarkers(messages, 'anthropic')
+
+      // skipCacheMarker 消息（最后一条 user）不被标记
+      expect(result[3].content).toBe('L2 memory block')
+
+      // 倒数第 2 条非 system 非 skipCacheMarker 消息（assistant）被标记
+      expect(Array.isArray(result[2].content)).toBe(true)
+      const content2 = result[2].content as Array<Record<string, unknown>>
+      expect(content2[0].cache_control).toEqual({ type: 'ephemeral' })
+    })
+
     it('跳过 internal 消息，不标记缓存', () => {
       const messages = [
         { role: 'system', content: 'system' },

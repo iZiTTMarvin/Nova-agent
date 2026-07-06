@@ -37,7 +37,20 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   diffAutoExpand: false,
   lastProjectPath: null,
   snapshotRetentionDays: 30,
-  webSearchTavilyApiKey: undefined
+  webSearchTavilyApiKey: undefined,
+  memoryEnabled: false,
+  memorySearchLimit: 10,
+  memoryScoreFloor: 0.15,
+  memoryReconcileOnSearch: false,
+  // 用户视角下记忆只有「总开关」一个按钮（memoryEnabled）。
+  // 下列三个子开关默认 true：开启记忆即一并启用采集 / 提炼 / episodic 落盘，
+  // 不再要求用户逐个勾选。UI 不暴露这三个开关。
+  memoryCaptureEnabled: true,
+  memoryEpisodicSummaryEnabled: true,
+  memoryExtractEnabled: true,
+  // 自动合并到 MEMORY.md 会改写用户手写的权威语义记忆，
+  // 测试版阶段默认关；UI 仍保留这一个开关供用户主动开启。
+  memoryAutoMergeEnabled: false
 }
 
 /** 返回 ~/.nova 目录路径 */
@@ -121,6 +134,38 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.webSearchTavilyApiKey === 'string') {
     result.webSearchTavilyApiKey = obj.webSearchTavilyApiKey
   }
+  if (typeof obj.memoryEnabled === 'boolean') {
+    result.memoryEnabled = obj.memoryEnabled
+  }
+  if (
+    typeof obj.memorySearchLimit === 'number' &&
+    Number.isInteger(obj.memorySearchLimit) &&
+    obj.memorySearchLimit >= 1
+  ) {
+    result.memorySearchLimit = obj.memorySearchLimit
+  }
+  if (
+    typeof obj.memoryScoreFloor === 'number' &&
+    obj.memoryScoreFloor >= 0 &&
+    obj.memoryScoreFloor <= 1
+  ) {
+    result.memoryScoreFloor = obj.memoryScoreFloor
+  }
+  if (typeof obj.memoryReconcileOnSearch === 'boolean') {
+    result.memoryReconcileOnSearch = obj.memoryReconcileOnSearch
+  }
+  if (typeof obj.memoryCaptureEnabled === 'boolean') {
+    result.memoryCaptureEnabled = obj.memoryCaptureEnabled
+  }
+  if (typeof obj.memoryEpisodicSummaryEnabled === 'boolean') {
+    result.memoryEpisodicSummaryEnabled = obj.memoryEpisodicSummaryEnabled
+  }
+  if (typeof obj.memoryAutoMergeEnabled === 'boolean') {
+    result.memoryAutoMergeEnabled = obj.memoryAutoMergeEnabled
+  }
+  if (typeof obj.memoryExtractEnabled === 'boolean') {
+    result.memoryExtractEnabled = obj.memoryExtractEnabled
+  }
 
   return result
 }
@@ -185,6 +230,54 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   if ('webSearchTavilyApiKey' in patch && patch.webSearchTavilyApiKey !== undefined) {
     if (typeof patch.webSearchTavilyApiKey !== 'string') {
       errors.push('webSearchTavilyApiKey 必须是字符串')
+    }
+  }
+  if ('memoryEnabled' in patch && patch.memoryEnabled !== undefined) {
+    if (typeof patch.memoryEnabled !== 'boolean') {
+      errors.push('memoryEnabled 必须是布尔值')
+    }
+  }
+  if ('memorySearchLimit' in patch && patch.memorySearchLimit !== undefined) {
+    if (
+      typeof patch.memorySearchLimit !== 'number' ||
+      !Number.isInteger(patch.memorySearchLimit) ||
+      patch.memorySearchLimit < 1
+    ) {
+      errors.push('memorySearchLimit 必须是正整数')
+    }
+  }
+  if ('memoryScoreFloor' in patch && patch.memoryScoreFloor !== undefined) {
+    if (
+      typeof patch.memoryScoreFloor !== 'number' ||
+      patch.memoryScoreFloor < 0 ||
+      patch.memoryScoreFloor > 1
+    ) {
+      errors.push('memoryScoreFloor 必须是 0~1 之间的数')
+    }
+  }
+  if ('memoryReconcileOnSearch' in patch && patch.memoryReconcileOnSearch !== undefined) {
+    if (typeof patch.memoryReconcileOnSearch !== 'boolean') {
+      errors.push('memoryReconcileOnSearch 必须是布尔值')
+    }
+  }
+  if ('memoryCaptureEnabled' in patch && patch.memoryCaptureEnabled !== undefined) {
+    if (typeof patch.memoryCaptureEnabled !== 'boolean') {
+      errors.push('memoryCaptureEnabled 必须是布尔值')
+    }
+  }
+  if ('memoryEpisodicSummaryEnabled' in patch && patch.memoryEpisodicSummaryEnabled !== undefined) {
+    if (typeof patch.memoryEpisodicSummaryEnabled !== 'boolean') {
+      errors.push('memoryEpisodicSummaryEnabled 必须是布尔值')
+    }
+  }
+  if ('memoryAutoMergeEnabled' in patch && patch.memoryAutoMergeEnabled !== undefined) {
+    if (typeof patch.memoryAutoMergeEnabled !== 'boolean') {
+      errors.push('memoryAutoMergeEnabled 必须是布尔值')
+    }
+  }
+  if ('memoryExtractEnabled' in patch && patch.memoryExtractEnabled !== undefined) {
+    if (typeof patch.memoryExtractEnabled !== 'boolean') {
+      errors.push('memoryExtractEnabled 必须是布尔值')
     }
   }
   return errors

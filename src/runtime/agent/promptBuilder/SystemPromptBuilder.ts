@@ -1,5 +1,5 @@
 /**
- * SystemPromptBuilder — 6 层 system prompt 流水线拼装
+ * SystemPromptBuilder — 7 层 system prompt 流水线拼装
  * 每层独立包裹标题，顺序固定以保障缓存前缀稳定性
  */
 import type { SystemPromptLayers } from '../types'
@@ -8,6 +8,7 @@ const LAYER_TITLES: Record<keyof SystemPromptLayers, string> = {
   agentRole: 'Agent Role',
   baseRules: 'Base Rules',
   projectRules: 'Project Rules',
+  memoryContext: 'Project Memory',
   skillContext: 'Skills',
   modeInstruction: 'Mode',
   toolSummary: 'Available Tools'
@@ -16,12 +17,18 @@ const LAYER_TITLES: Record<keyof SystemPromptLayers, string> = {
 export class SystemPromptBuilder {
   /**
    * 拼装完整 system prompt
-   * @param layers 6 层内容（空层自动跳过）
+   * @param layers 各层内容（空层自动跳过）
    */
   static build(layers: SystemPromptLayers): string {
     const parts: string[] = []
     const ordered: (keyof SystemPromptLayers)[] = [
-      'agentRole', 'baseRules', 'projectRules', 'skillContext', 'modeInstruction', 'toolSummary'
+      'agentRole',
+      'baseRules',
+      'projectRules',
+      'memoryContext',
+      'skillContext',
+      'modeInstruction',
+      'toolSummary'
     ]
     for (const key of ordered) {
       const content = layers[key]

@@ -7,7 +7,7 @@ Thumbs.db
 
 # electron-builder 打包产物（含 Spike S0 冒烟 exe，可 npm run pack:spike 重建）
 release/
-
+scripts/trigram-fact-check.mjs
 .nova
 .spec-workflow
 tasks/*

@@ -11,6 +11,11 @@ vi.mock('../../../src/main/ipc/sessionHandler', () => ({
   })
 }))
 
+vi.mock('../../../src/main/index', () => ({
+  setCurrentProjectPath: vi.fn(),
+  setCurrentMode: vi.fn()
+}))
+
 import { forwardEventToRenderer } from '../../../src/main/ipc/agentHandler'
 
 /** 构造可 spy 的 BrowserWindow mock */

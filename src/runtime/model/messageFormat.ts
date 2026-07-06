@@ -126,8 +126,9 @@ export function applyCacheMarkers(
   for (let i = apiMessages.length - 1; i >= 0 && count < 2; i--) {
     const msg = apiMessages[i]
     if (msg.role === 'system') continue
-    // 跳过内部消息（如压缩指令），不标记缓存
+    // 跳过内部消息（如压缩指令）与每轮变化的尾部注入（如记忆 L2），不标记缓存
     if (msg.internal === true) continue
+    if (msg.skipCacheMarker === true) continue
     markerIndices.add(i)
     count++
   }

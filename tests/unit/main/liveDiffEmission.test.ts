@@ -21,6 +21,11 @@ vi.mock('../../../src/main/ipc/sessionHandler', () => ({
   })
 }))
 
+vi.mock('../../../src/main/index', () => ({
+  setCurrentProjectPath: vi.fn(),
+  setCurrentMode: vi.fn()
+}))
+
 // 模拟 manifest：本轮修改了两个文件，新建了一个
 vi.mock('../../../src/runtime/checkpoints/manifest', () => ({
   readManifest: vi.fn(() => ({

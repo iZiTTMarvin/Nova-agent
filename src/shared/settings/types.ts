@@ -47,6 +47,26 @@ export interface NovaSettingsDto {
   snapshotRetentionDays: number
   /** Tavily API Key（本地明文存储，不上传） */
   webSearchTavilyApiKey?: string
+
+  // ── 跨会话记忆（P1）──
+  /** 是否启用跨会话记忆（L1/L2 注入与 FTS 检索） */
+  memoryEnabled: boolean
+  /** L2 FTS 检索返回条数上限（正整数） */
+  memorySearchLimit: number
+  /** L2 相关性分数下限（0~1，BM25 归一化后） */
+  memoryScoreFloor: number
+  /** search 热路径是否触发 reconcile（默认 false，热路径只查索引） */
+  memoryReconcileOnSearch: boolean
+
+  // ── 跨会话记忆采集（P2，默认全关）──
+  /** 是否自动采集工具/消息观察写入 working 记忆 */
+  memoryCaptureEnabled: boolean
+  /** 是否将会话结束摘要写入 episodic 记忆 */
+  memoryEpisodicSummaryEnabled: boolean
+  /** 是否自动合并 working → episodic / MEMORY.md */
+  memoryAutoMergeEnabled: boolean
+  /** 记忆 LLM 提炼开关（测试版，默认关） */
+  memoryExtractEnabled: boolean
 }
 
 export interface RulesListParams {

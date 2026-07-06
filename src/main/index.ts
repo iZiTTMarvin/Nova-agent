@@ -13,6 +13,11 @@ import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
 import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
 import { bindSkillServiceWindow, getSkillService } from './services/SkillServiceHost'
+import { closeMemoryService } from './services/MemoryServiceHost'
+import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
+import { extractOnSessionLeave, isMemoryExtractEnabled } from './services/MemoryExtractHost'
+import { getSessionStore } from './ipc/sessionHandler'
+import { getWorkspaceService } from './services/WorkspaceService'
 
 /** 主窗口实例 */
 let mainWindow: BrowserWindow | null = null
@@ -194,4 +199,20 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('will-quit', () => {
+  try {
+    const ws = getWorkspaceService().getState()
+    if (ws.currentSessionId && ws.currentProjectPath) {
+      if (isMemoryExtractEnabled()) {
+        extractOnSessionLeave(ws.currentSessionId, ws.currentProjectPath, getSessionStore())
+      } else {
+        flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+      }
+    }
+  } catch {
+    // WorkspaceService 未初始化时跳过
+  }
+  closeMemoryService()
 })
