@@ -165,32 +165,39 @@ app.whenReady().then(async () => {
   // 0. 主进程 event-loop lag 采样（只读观测，dev 下暴露 window.__novaMainLoopLag）
   installMainLoopLagMonitor({ devOnly: true })
 
-  // 0.1 探测 ripgrep 是否可用
-  await probeRipgrep()
-
   // 1. 移除默认菜单栏，使用自定义标题栏
   Menu.setApplicationMenu(null)
 
   // 2. 尝试从本地加载模型配置以初始化 modelClient
+  //    同步毫秒级；保留在 show 前避免「用户极快点击发送时模型未就绪」窗口。
   loadModelConfigOnStartup()
-  
-  // 3. 注册所有 renderer → main 的 IPC 处理器
+
+  // 3. 注册所有 renderer → main 的 IPC 处理器（含 WorkspaceService.initOnStartup → store.list）
+  //    必须在 createMainWindow 之前完成：renderer mount 即发 workspace:get / window-is-maximized 等
+  //    invoke，handler 未注册会 reject；且 initOnStartup 不 broadcast，延后会让侧边栏永久空。
   registerIpcHandlers()
 
-  // 3.1 启动时同步 Tavily API Key 到环境变量（供 web_search 工具使用）
-  syncTavilyApiKeyFromSettings()
-
-  // 3.5 应用启动时加载内置 + 全局技能（无需先发消息）
-  getSkillService().load(null)
-  
   // 4. 注册 Agent 运行时专属事件与通道
   registerAgentHandler(getMainWindow, getModelClient)
 
   // 4.5. 注册窗口控制的 IPC 处理器
   registerWindowHandler(getMainWindow)
-  
-  // 5. 创建渲染视窗
+
+  // 5. 创建渲染视窗（窗口尽早诞生，loadURL → ready-to-show → show 异步进行）
   createMainWindow()
+
+  // ── 6. 窗口已开始加载，把不阻塞首屏的重活推迟到下一个事件循环 tick ──
+  //    这些步骤均有降级或非首屏路径依赖：
+  //    - probeRipgrep：rgAvailable 默认 false，grep 工具自动降级 Node 搜索（不崩）；
+  //      原 await spawn(timeout:5000) 是首屏 LCP 5.57s 的主因，改后台执行后不再阻塞窗口诞生。
+  //    - getSkillService().load(null)：builtin 技能预热，send-message/selectSession 有 load(projectPath) 兜底。
+  //    - syncTavilyApiKeyFromSettings：仅设置环境变量供 web_search，非首屏路径。
+  //    注意：runStartupStorageGc 仍在 registerIpcHandlers 内同步执行（次要耗时，且为减小改动面保留）。
+  setImmediate(() => {
+    void probeRipgrep()
+    getSkillService().load(null)
+    syncTavilyApiKeyFromSettings()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

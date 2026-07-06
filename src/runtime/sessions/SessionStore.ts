@@ -101,13 +101,9 @@ export class SessionStore {
       fs.mkdirSync(dir, { recursive: true })
     }
 
-    const toWrite =
-      options?.recomputeMessageCount === true
-        ? {
-            ...session,
-            messageCount: computeMessageCount(session.messages, session.currentLeafId)
-          }
-        : session
+    const messageCount = this.resolveMessageCountForMetadata(session, options?.recomputeMessageCount === true)
+
+    const toWrite = { ...session, messageCount }
 
     const metadata = this.toMetadata(toWrite)
     const filePath = path.join(dir, SESSION_DATA_FILE)
@@ -367,6 +363,22 @@ export class SessionStore {
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
   getSessionsDir(): string {
     return this.sessionsDir
+  }
+
+  /**
+   * 写 session.json 前解析 messageCount。
+   * - 分叉 setCurrentLeaf 等必须 forceRecompute
+   * - 内存里缺字段时（旧会话首次 load 后走 updateMode 等）用 messages 回算，避免把 undefined 写回磁盘
+   * - 已有缓存且未强制重算时原样保留（updateMode/title/todos 不改激活路径）
+   */
+  private resolveMessageCountForMetadata(session: SessionData, forceRecompute: boolean): number {
+    if (forceRecompute) {
+      return computeMessageCount(session.messages, session.currentLeafId)
+    }
+    if (typeof session.messageCount === 'number') {
+      return session.messageCount
+    }
+    return computeMessageCount(session.messages, session.currentLeafId)
   }
 
   /**

@@ -67,7 +67,8 @@ export interface SessionData {
   titleSource?: SessionTitleSource
   /**
    * 当前激活路径上的消息条数（侧边栏 list 缓存）。
-   * 旧会话可能缺失，首次 list/load 时按 computeActivePath 回算并写回。
+   * 磁盘上旧会话可能缺失；load/list/migrate/saveMetadata 会在写盘前补全。
+   * 类型保持 optional，以便 JSON.parse 旧 session.json 时不强造默认值。
    */
   messageCount?: number
 }
