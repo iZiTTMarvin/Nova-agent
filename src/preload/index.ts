@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents } from '../shared/ipc/types'
+import type { RendererMainLoopLagApi } from '../shared/diagnostics/mainLoopLagTypes'
+import {
+  DEV_MAIN_LOOP_LAG_RESET,
+  DEV_MAIN_LOOP_LAG_SNAPSHOT
+} from '../shared/ipc/channels'
 import { skillApi } from './skill-api'
 
 /**
@@ -48,4 +53,20 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+
+// 开发环境：主进程 event-loop lag（与 renderer streamingPerf 对齐的 snapshot/reset API）
+if (process.env.NODE_ENV === 'development') {
+  const mainLoopLag: RendererMainLoopLagApi = {
+    snapshot: () => ipcRenderer.invoke(DEV_MAIN_LOOP_LAG_SNAPSHOT),
+    reset: () => ipcRenderer.invoke(DEV_MAIN_LOOP_LAG_RESET)
+  }
+  contextBridge.exposeInMainWorld('__novaMainLoopLag', mainLoopLag)
+}
+
 contextBridge.exposeInMainWorld('nova', { skill: skillApi })
+
+declare global {
+  interface Window {
+    __novaMainLoopLag?: RendererMainLoopLagApi
+  }
+}

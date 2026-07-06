@@ -50,6 +50,65 @@ describe('computeActivePath', () => {
     const messages = [msg('orphan', 'missing', 'user', 1)]
     expect(computeActivePath(messages, 'orphan').map(m => m.id)).toEqual(['orphan'])
   })
+
+  /** 参考实现：循环内 unshift（改前算法），用于顺序逐字节对照 */
+  function computeActivePathUnshiftReference(
+    messages: SessionMessage[],
+    currentLeafId: string | null
+  ): SessionMessage[] {
+    if (!currentLeafId || messages.length === 0) return []
+    const byId = new Map(messages.map(m => [m.id, m]))
+    const path: SessionMessage[] = []
+    const seen = new Set<string>()
+    let id: string | null = currentLeafId
+    while (id !== null) {
+      if (seen.has(id)) break
+      seen.add(id)
+      const node = byId.get(id)
+      if (!node) break
+      path.unshift(node)
+      id = node.parentId ?? null
+    }
+    return path
+  }
+
+  it('深度 1200 链：返回顺序与 unshift 参考实现逐 id 一致', () => {
+    const depth = 1200
+    const messages: SessionMessage[] = []
+    for (let i = 0; i < depth; i++) {
+      messages.push(msg(`n${i}`, i === 0 ? null : `n${i - 1}`, 'user', i))
+    }
+    const leaf = `n${depth - 1}`
+
+    const optimized = computeActivePath(messages, leaf)
+    const reference = computeActivePathUnshiftReference(messages, leaf)
+
+    expect(optimized.map(m => m.id)).toEqual(reference.map(m => m.id))
+    expect(optimized.map(m => m.id)).toEqual(messages.map(m => m.id))
+  })
+
+  it('深度 1200 链：push+reverse 耗时应明显低于 unshift 参考', () => {
+    const depth = 1200
+    const messages: SessionMessage[] = []
+    for (let i = 0; i < depth; i++) {
+      messages.push(msg(`n${i}`, i === 0 ? null : `n${i - 1}`, 'user', i))
+    }
+    const leaf = `n${depth - 1}`
+
+    const t0 = performance.now()
+    for (let i = 0; i < 50; i++) {
+      computeActivePath(messages, leaf)
+    }
+    const optimizedMs = performance.now() - t0
+
+    const t1 = performance.now()
+    for (let i = 0; i < 50; i++) {
+      computeActivePathUnshiftReference(messages, leaf)
+    }
+    const referenceMs = performance.now() - t1
+
+    expect(optimizedMs).toBeLessThan(referenceMs)
+  })
 })
 
 describe('buildChildrenIndex / getBranchPosition', () => {

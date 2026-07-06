@@ -43,11 +43,21 @@ export function computeActivePath(
       break
     }
 
-    path.unshift(node)
+    path.push(node)
     id = node.parentId ?? null
   }
 
+  path.reverse()
   return path
+}
+
+/** 激活路径上的消息条数（侧边栏 list 缓存的计算基准） */
+export function computeMessageCount(
+  messages: SessionMessage[],
+  currentLeafId: string | null
+): number {
+  const leafId = resolveCurrentLeafId(messages, currentLeafId)
+  return computeActivePath(messages, leafId).length
 }
 
 /** 构建 parentId → children[] 索引（children 按 timestamp 升序） */

@@ -51,6 +51,7 @@ import type {
   MemoryWriteFileParams,
   ReconcileStats
 } from '../memory/types'
+import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -68,6 +69,14 @@ export interface IpcCommands {
   ping: {
     params: void
     result: string
+  }
+  'dev:main-loop-lag-snapshot': {
+    params: void
+    result: MainLoopLagSnapshot
+  }
+  'dev:main-loop-lag-reset': {
+    params: void
+    result: void
   }
   'dialog:confirm': {
     params: {

@@ -26,6 +26,7 @@ import {
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from './sessionHandler'
 import { getMainWindow } from '../index'
+import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 
 /**
  * 注册所有主进程与渲染进程的 IPC 命令通信处理器
@@ -36,6 +37,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(PING, async () => {
     return 'pong'
   })
+
+  // 开发环境诊断（event-loop lag 等）
+  registerDevDiagnosticsHandlers()
   // 注册异步对话框 IPC（替代阻塞的 window.confirm）
   registerDialogHandler()
 

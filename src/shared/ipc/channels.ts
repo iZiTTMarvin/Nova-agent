@@ -6,6 +6,9 @@
 // ── renderer → main（invoke 命令） ──────────────────────
 
 export const PING = 'ping' as const
+/** 开发环境：主进程 event-loop lag 快照（仅 dev） */
+export const DEV_MAIN_LOOP_LAG_SNAPSHOT = 'dev:main-loop-lag-snapshot' as const
+export const DEV_MAIN_LOOP_LAG_RESET = 'dev:main-loop-lag-reset' as const
 export const SELECT_PROJECT = 'select-project' as const
 export const SEND_MESSAGE = 'send-message' as const
 /** Skill 管理 IPC（renderer → main） */

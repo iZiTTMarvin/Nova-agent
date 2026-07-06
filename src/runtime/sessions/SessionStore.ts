@@ -32,6 +32,7 @@ import type { TodoItem } from '../../shared/todo/types'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
 import {
   computeActivePath,
+  computeMessageCount,
   resolveCurrentLeafId,
   ensureMessageParentChain,
   attachBranchMeta
@@ -57,7 +58,8 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       title: SESSION_PLACEHOLDER_TITLE,
-      titleSource: 'placeholder'
+      titleSource: 'placeholder',
+      messageCount: 0
     }
 
     this.save(session)
@@ -75,7 +77,8 @@ export class SessionStore {
   save(session: SessionData): void {
     const messages = ensureMessageParentChain(session.messages)
     const currentLeafId = resolveCurrentLeafId(messages, session.currentLeafId)
-    const normalized: SessionData = { ...session, messages, currentLeafId }
+    const messageCount = computeMessageCount(messages, currentLeafId)
+    const normalized: SessionData = { ...session, messages, currentLeafId, messageCount }
     this.saveMetadata(normalized)
     writeMessagesJsonl(
       path.join(this.sessionsDir, session.id),
@@ -86,15 +89,27 @@ export class SessionStore {
   /**
    * 只写 session.json 元数据，不碰 messages.jsonl。
    *
-   * 用于 mode/todos 等只改元数据的高频操作，避免无意义重写整份消息历史。
+   * @param options.recomputeMessageCount 为 true 时按 session.messages + currentLeafId 重算 messageCount
+   *   （分叉 setCurrentLeaf 等只改元数据、激活路径长度变化时必须开启）。
    */
-  private saveMetadata(session: SessionData): void {
+  private saveMetadata(
+    session: SessionData,
+    options?: { recomputeMessageCount?: boolean }
+  ): void {
     const dir = path.join(this.sessionsDir, session.id)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
 
-    const metadata = this.toMetadata(session)
+    const toWrite =
+      options?.recomputeMessageCount === true
+        ? {
+            ...session,
+            messageCount: computeMessageCount(session.messages, session.currentLeafId)
+          }
+        : session
+
+    const metadata = this.toMetadata(toWrite)
     const filePath = path.join(dir, SESSION_DATA_FILE)
     fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
   }
@@ -166,9 +181,7 @@ export class SessionStore {
         // list 也走迁移，确保侧边栏展示的会话都是最新结构
         const data = migrateSessionFile(this.sessionsDir, entry.name)
         if (!data) continue
-        const messages = readMessagesJsonl(path.join(this.sessionsDir, entry.name))
-        const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
-        const messageCount = computeActivePath(messages, leafId).length
+        const messageCount = this.resolveMessageCountForList(entry.name, data)
         summaries.push({
           id: data.id,
           workspaceRoot: data.workspaceRoot,
@@ -253,6 +266,8 @@ export class SessionStore {
 
     metadata.currentLeafId = messageWithParent.id
     metadata.updatedAt = Date.now()
+    const allMessages = readMessagesJsonl(dir)
+    metadata.messageCount = computeMessageCount(allMessages, metadata.currentLeafId)
     fs.writeFileSync(
       path.join(dir, SESSION_DATA_FILE),
       JSON.stringify(this.toMetadata(metadata), null, 2),
@@ -282,7 +297,7 @@ export class SessionStore {
 
     session.currentLeafId = leafId
     session.updatedAt = Date.now()
-    this.saveMetadata(session)
+    this.saveMetadata(session, { recomputeMessageCount: true })
     return session
   }
 
@@ -352,6 +367,29 @@ export class SessionStore {
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
   getSessionsDir(): string {
     return this.sessionsDir
+  }
+
+  /**
+   * list() 用：读 metadata.messageCount；缺失时按原算法回算并写回 session.json。
+   */
+  private resolveMessageCountForList(sessionId: string, data: SessionData): number {
+    if (typeof data.messageCount === 'number') {
+      return data.messageCount
+    }
+
+    const messages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+    const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
+    const messageCount = computeMessageCount(messages, leafId)
+
+    // 旧会话迁移兜底：写回缓存，避免下次 list 再全量读 jsonl
+    try {
+      const withCount: SessionData = { ...data, messageCount }
+      this.saveMetadata(withCount)
+    } catch {
+      // 写回失败不阻塞 list，仍返回正确计数
+    }
+
+    return messageCount
   }
 
   /** 写入上下文快照（派生缓存，独立于 session.json） */

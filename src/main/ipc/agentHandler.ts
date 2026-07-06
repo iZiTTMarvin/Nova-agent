@@ -51,6 +51,11 @@ import { createTaskTool } from '../../runtime/tools/taskTool'
 import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBridge'
 import { createReadState, type ReadState } from '../../runtime/tools/editTool'
 import { createEventStallDetector } from '../../shared/diagnostics/stallDetector'
+import {
+  flushMainDeltaCoalescer,
+  pushMainTextDelta,
+  pushMainThinkingDelta
+} from './mainDeltaCoalescer'
 import { ArtifactStore } from '../../runtime/artifacts/ArtifactStore'
 import type { ContentBlock } from '../../runtime/model/types'
 import { extractTextFromContent } from '../../runtime/model/types'
@@ -1013,15 +1018,27 @@ export function forwardEventToRenderer(
   const webContents = mainWindow.webContents
   if (webContents.isDestroyed()) return
 
+  // 轮次边界：先 flush 合帧缓冲，避免 delta 与终态事件错位
+  const flushBeforeSend =
+    event.type === 'message_start' ||
+    event.type === 'tool_call_start' ||
+    event.type === 'tool_call' ||
+    event.type === 'message_end' ||
+    event.type === 'error'
+
+  if (flushBeforeSend) {
+    flushMainDeltaCoalescer(mainWindow)
+  }
+
   switch (event.type) {
     case 'message_start':
       webContents.send('agent:message-start', { messageId: event.messageId })
       break
     case 'thinking_delta':
-      webContents.send('agent:thinking-delta', { messageId: event.messageId, delta: event.delta })
+      pushMainThinkingDelta(mainWindow, event.messageId, event.delta)
       break
     case 'text_delta':
-      webContents.send('agent:text-delta', { messageId: event.messageId, delta: event.delta })
+      pushMainTextDelta(mainWindow, event.messageId, event.delta)
       break
     case 'tool_call_start':
       webContents.send('agent:tool-call-start', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName })

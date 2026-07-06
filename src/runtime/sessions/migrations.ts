@@ -14,6 +14,7 @@ import * as path from 'path'
 import type { SessionData, SessionMessage } from './types'
 import type { Mode } from '../../shared/session/types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
+import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
@@ -301,9 +302,23 @@ export function migrateSessionFile(
     }
   }
 
-  // 已经是当前版本：不写盘
+  // 已经是当前版本：不写盘（messageCount 缺失时补算并写回元数据）
   if (rawVersion >= CURRENT_SESSION_SCHEMA_VERSION) {
-    return migrateSessionData(inputForMigration)
+    const migrated = migrateSessionData(inputForMigration)
+    if (typeof migrated.messageCount !== 'number') {
+      const messages = readMessagesJsonlForMigration(sessionsDir, sessionId)
+      const leafId = resolveCurrentLeafId(messages, migrated.currentLeafId)
+      const messageCount = computeActivePath(messages, leafId).length
+      const withCount = { ...migrated, messageCount }
+      try {
+        const { messages: _messages, ...metadata } = withCount
+        fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
+      } catch {
+        // 写回失败不阻断，list() 仍会按原算法兜底
+      }
+      return withCount
+    }
+    return migrated
   }
 
   // 迁移前备份（覆盖式：同一 session 重复迁移只保留最新备份，避免堆积）
@@ -324,8 +339,11 @@ export function migrateSessionFile(
   // 需要把 messages 拆出到 messages.jsonl（无论原始版本是 v0/v1/v2，migrated.messages 都完整）
   const messages = migrated.messages
 
-  // 写回 session.json（不含 messages，只保留元数据）
+  // 写回 session.json（不含 messages，只保留元数据；含 messageCount 缓存）
   try {
+    const messages = readMessagesJsonlForMigration(sessionsDir, sessionId)
+    const leafId = resolveCurrentLeafId(messages, migrated.currentLeafId)
+    migrated.messageCount = computeActivePath(messages, leafId).length
     const { messages: _messages, ...metadata } = migrated
     fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
   } catch (err) {

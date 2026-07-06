@@ -18,6 +18,7 @@ import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
 import { extractOnSessionLeave, isMemoryExtractEnabled } from './services/MemoryExtractHost'
 import { getSessionStore } from './ipc/sessionHandler'
 import { getWorkspaceService } from './services/WorkspaceService'
+import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 
 /** 主窗口实例 */
 let mainWindow: BrowserWindow | null = null
@@ -161,7 +162,10 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  // 0. 探测 ripgrep 是否可用
+  // 0. 主进程 event-loop lag 采样（只读观测，dev 下暴露 window.__novaMainLoopLag）
+  installMainLoopLagMonitor({ devOnly: true })
+
+  // 0.1 探测 ripgrep 是否可用
   await probeRipgrep()
 
   // 1. 移除默认菜单栏，使用自定义标题栏

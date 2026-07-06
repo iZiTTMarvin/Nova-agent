@@ -65,6 +65,11 @@ export interface SessionData {
   title?: string
   /** 标题来源，用于覆盖保护（manual 后不再被自动逻辑改写） */
   titleSource?: SessionTitleSource
+  /**
+   * 当前激活路径上的消息条数（侧边栏 list 缓存）。
+   * 旧会话可能缺失，首次 list/load 时按 computeActivePath 回算并写回。
+   */
+  messageCount?: number
 }
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */
