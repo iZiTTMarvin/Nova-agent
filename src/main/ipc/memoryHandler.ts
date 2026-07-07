@@ -2,7 +2,8 @@
  * 跨会话记忆 IPC — scope 文件浏览/编辑与索引维护
  */
 import { mkdirSync } from 'fs'
-import { ipcMain, shell } from 'electron'
+import { shell } from 'electron'
+import { handle } from './secureIpc'
 import {
   MEMORY_LIST_FILES,
   MEMORY_READ_FILE,
@@ -32,32 +33,32 @@ function requireScopeId(): string {
 }
 
 export function registerMemoryHandler(): void {
-  ipcMain.handle(MEMORY_LIST_FILES, async (): Promise<MemoryScopeFileEntry[]> => {
+  handle(MEMORY_LIST_FILES, async (): Promise<MemoryScopeFileEntry[]> => {
     const scopeId = requireScopeId()
     return getMemoryService().listScopeFiles(scopeId)
   })
 
-  ipcMain.handle(MEMORY_READ_FILE, async (_event, params: MemoryReadFileParams): Promise<string> => {
+  handle(MEMORY_READ_FILE, async (_event, params: MemoryReadFileParams): Promise<string> => {
     const scopeId = requireScopeId()
     return getMemoryService().readScopeFile(scopeId, params.relPath)
   })
 
-  ipcMain.handle(MEMORY_WRITE_FILE, async (_event, params: MemoryWriteFileParams): Promise<void> => {
+  handle(MEMORY_WRITE_FILE, async (_event, params: MemoryWriteFileParams): Promise<void> => {
     const scopeId = requireScopeId()
     getMemoryService().upsertMarkdown(scopeId, params.relPath, params.content)
   })
 
-  ipcMain.handle(MEMORY_RECONCILE, async (): Promise<ReconcileStats> => {
+  handle(MEMORY_RECONCILE, async (): Promise<ReconcileStats> => {
     const scopeId = requireScopeId()
     return getMemoryService().reconcile(scopeId)
   })
 
-  ipcMain.handle(MEMORY_STATS, async (): Promise<MemoryScopeStats> => {
+  handle(MEMORY_STATS, async (): Promise<MemoryScopeStats> => {
     const scopeId = requireScopeId()
     return getMemoryService().stats(scopeId)
   })
 
-  ipcMain.handle(MEMORY_OPEN_DIR, async (): Promise<void> => {
+  handle(MEMORY_OPEN_DIR, async (): Promise<void> => {
     const scopeId = requireScopeId()
     const memoryService = getMemoryService()
     const stats = memoryService.stats(scopeId)

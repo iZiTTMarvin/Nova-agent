@@ -4,7 +4,8 @@
  * 注册所有 workspace:* 命令并负责把 workspace:changed 事件推给 renderer。
  * 所有命令都委托给 WorkspaceService，handler 本身无业务逻辑。
  */
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
+import { handle } from './secureIpc'
 import {
   WORKSPACE_GET,
   WORKSPACE_SELECT_PROJECT,
@@ -34,47 +35,47 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
     }
   })
 
-  ipcMain.handle(WORKSPACE_GET, async () => {
+  handle(WORKSPACE_GET, async () => {
     return service.getState()
   })
 
-  ipcMain.handle(WORKSPACE_SELECT_PROJECT, async (_event, params?: { path?: string }) => {
+  handle(WORKSPACE_SELECT_PROJECT, async (_event, params?: { path?: string }) => {
     return await service.selectProject(params ?? {})
   })
 
-  ipcMain.handle(WORKSPACE_CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: import('../../shared/session').Mode }) => {
+  handle(WORKSPACE_CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: import('../../shared/session').Mode }) => {
     return service.createSession(params)
   })
 
-  ipcMain.handle(WORKSPACE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
+  handle(WORKSPACE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
     return service.deleteSession(params.sessionId)
   })
 
-  ipcMain.handle(WORKSPACE_RENAME_SESSION, async (_event, params: { sessionId: string; title: string }) => {
+  handle(WORKSPACE_RENAME_SESSION, async (_event, params: { sessionId: string; title: string }) => {
     return service.renameSession(params)
   })
 
-  ipcMain.handle(WORKSPACE_SELECT_SESSION, async (_event, params: { sessionId: string }) => {
+  handle(WORKSPACE_SELECT_SESSION, async (_event, params: { sessionId: string }) => {
     return service.selectSession(params.sessionId)
   })
 
-  ipcMain.handle(WORKSPACE_SET_MODE, async (_event, params: { mode: import('../../shared/session').Mode; sessionId?: string }) => {
+  handle(WORKSPACE_SET_MODE, async (_event, params: { mode: import('../../shared/session').Mode; sessionId?: string }) => {
     return service.setMode(params)
   })
 
-  ipcMain.handle(WORKSPACE_REGENERATE, async (_event, params: { sessionId: string; messageId: string }) => {
+  handle(WORKSPACE_REGENERATE, async (_event, params: { sessionId: string; messageId: string }) => {
     return service.prepareRegenerate(params)
   })
 
-  ipcMain.handle(WORKSPACE_SWITCH_BRANCH, async (_event, params: { sessionId: string; targetMessageId: string }) => {
+  handle(WORKSPACE_SWITCH_BRANCH, async (_event, params: { sessionId: string; targetMessageId: string }) => {
     return service.switchBranch(params)
   })
 
-  ipcMain.handle(WORKSPACE_BUMP_MESSAGES_REVISION, async () => {
+  handle(WORKSPACE_BUMP_MESSAGES_REVISION, async () => {
     return service.bumpMessagesRevision()
   })
 
-  ipcMain.handle(WORKSPACE_EDIT_RESEND, async (_event, params: { sessionId: string; messageId: string }) => {
+  handle(WORKSPACE_EDIT_RESEND, async (_event, params: { sessionId: string; messageId: string }) => {
     return service.prepareEditResend(params)
   })
 }

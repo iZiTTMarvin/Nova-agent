@@ -1,4 +1,6 @@
-import { ipcMain } from 'electron'
+import { app } from 'electron'
+import { cleanupStaleAtomicTmpFiles } from '../../runtime/storage/atomicFile'
+import { handle } from './secureIpc'
 import { PING } from '../../shared/ipc/channels'
 import { registerProjectHandler } from './projectHandler'
 import { registerConfigHandler } from './configHandler'
@@ -33,8 +35,11 @@ import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
  * 统一分发并代理各类具体功能处理器
  */
 export function registerIpcHandlers(): void {
+  // 清理上次崩溃遗留的原子写 .tmp 文件
+  cleanupStaleAtomicTmpFiles(app.getPath('userData'))
+
   // ping/pong 基础连通测试
-  ipcMain.handle(PING, async () => {
+  handle(PING, async () => {
     return 'pong'
   })
 

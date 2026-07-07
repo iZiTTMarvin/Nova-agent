@@ -13,6 +13,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
 import { join, dirname } from 'path'
 import type { SessionStore } from '../sessions/SessionStore'
+import { ToolRegistry } from '../tools/ToolRegistry'
 import { rejectFile } from './restore'
 import { readManifest, writeManifest } from './manifest'
 
@@ -25,6 +26,8 @@ export interface RejectAllResult {
 }
 
 export class DiffReviewService {
+  private readonly pathValidator = new ToolRegistry()
+
   constructor(private readonly sessionStore: SessionStore) {}
 
   private get checkpointRoot(): string {
@@ -51,6 +54,7 @@ export class DiffReviewService {
     if (!session) {
       throw new Error(`会话 ${sessionId} 不存在`)
     }
+    this.assertPathsWithinWorkspace(session.workspaceRoot, [filePath])
     const success = rejectFile(
       this.checkpointRoot,
       session.workspaceRoot,
@@ -72,6 +76,12 @@ export class DiffReviewService {
 
   /** 批量接受：更新 manifest，所有目标标记为 accepted */
   acceptAllFiles(sessionId: string, messageId: string, filePaths: string[]): void {
+    const session = this.sessionStore.load(sessionId)
+    if (!session) {
+      throw new Error(`会话 ${sessionId} 不存在`)
+    }
+    this.assertPathsWithinWorkspace(session.workspaceRoot, filePaths)
+
     const manifest = readManifest(this.checkpointRoot, sessionId, messageId)
     if (!manifest) {
       throw new Error('批量接受失败：找不到对应的 checkpoint')
@@ -98,6 +108,7 @@ export class DiffReviewService {
       throw new Error(`会话 ${sessionId} 不存在`)
     }
     const workspaceRoot = session.workspaceRoot
+    this.assertPathsWithinWorkspace(workspaceRoot, filePaths)
 
     // 1. 快照所有目标文件的当前内容（改后状态），供失败回滚使用
     //    只快照存在的文件；不存在的（如 created 文件待删除）记录为 null
@@ -143,6 +154,15 @@ export class DiffReviewService {
     }
 
     return { restored, failed: [] }
+  }
+
+  /** 校验文件相对路径均落在工作区内，越界则整批拒绝 */
+  private assertPathsWithinWorkspace(workspaceRoot: string, filePaths: string[]): void {
+    for (const fp of filePaths) {
+      if (!this.pathValidator.isWithinWorkspace(workspaceRoot, fp)) {
+        throw new Error(`路径越界: "${fp}" 位于工作区 "${workspaceRoot}" 之外`)
+      }
+    }
   }
 
   /**

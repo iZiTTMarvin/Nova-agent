@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from 'electron'
+import { app, BrowserWindow, Menu, shell } from 'electron'
 import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
 import { resolveAppIconPath } from './appIcon'
 import { join } from 'path'
@@ -16,13 +16,12 @@ import type { Mode } from '../shared/session'
 import { bindSkillServiceWindow, getSkillService } from './services/SkillServiceHost'
 import { closeMemoryService } from './services/MemoryServiceHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
-import { extractOnSessionLeave, isMemoryExtractEnabled } from './services/MemoryExtractHost'
-import { getSessionStore } from './ipc/sessionHandler'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
+import { getMainWindow, setMainWindow } from './mainWindowRef'
 
-/** 主窗口实例 */
-let mainWindow: BrowserWindow | null = null
+/** 退出流程是否已进入同步落盘阶段（可重入守卫） */
+let quitInProgress = false
 
 /** 模型客户端实例，运行时通过配置初始化 */
 let modelClient: ModelClient | null = null
@@ -34,9 +33,7 @@ let currentProjectPath: string | null = null
 let currentMode: Mode = 'default'
 
 /** 获取主窗口实例 */
-export function getMainWindow(): BrowserWindow | null {
-  return mainWindow
-}
+export { getMainWindow } from './mainWindowRef'
 
 /** 获取模型客户端 */
 export function getModelClient(): ModelClient | null {
@@ -125,7 +122,7 @@ async function probeRipgrep(): Promise<void> {
  */
 function createMainWindow(): void {
   const iconPath = resolveAppIconPath()
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 900,
@@ -133,34 +130,51 @@ function createMainWindow(): void {
     frame: false,
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      preload: join(__dirname, '../preload/index.js')
     },
     title: 'Nova Agent',
     show: false
   })
+  setMainWindow(win)
 
-  mainWindow.on('ready-to-show', () => {
-    if (mainWindow) {
-      watchWindowMaximizeState(mainWindow)
-      bindSkillServiceWindow(mainWindow)
+  win.on('ready-to-show', () => {
+    if (getMainWindow()) {
+      watchWindowMaximizeState(win)
+      bindSkillServiceWindow(win)
     }
-    mainWindow?.show()
+    win.show()
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
+  win.on('closed', () => {
+    setMainWindow(null)
+  })
+
+  const contents = win.webContents
+
+  // 导航安全：永不在应用内开新窗口；http(s) 外链走系统浏览器
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  contents.on('will-navigate', (event, navigationUrl) => {
+    if (navigationUrl.startsWith('http://') || navigationUrl.startsWith('https://')) {
+      event.preventDefault()
+      void shell.openExternal(navigationUrl)
+    }
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
   // 开发模式下自动打开开发者工具（修复 F12 打不开的问题）
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.webContents.openDevTools({ mode: 'right' })
+    win.webContents.openDevTools({ mode: 'right' })
   }
 }
 
@@ -220,18 +234,21 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('will-quit', () => {
+app.on('will-quit', (event) => {
+  if (quitInProgress) return
+
+  event.preventDefault()
+  quitInProgress = true
+
   try {
     const ws = getWorkspaceService().getState()
     if (ws.currentSessionId && ws.currentProjectPath) {
-      if (isMemoryExtractEnabled()) {
-        extractOnSessionLeave(ws.currentSessionId, ws.currentProjectPath, getSessionStore())
-      } else {
-        flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
-      }
+      // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
+      flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
     }
   } catch {
     // WorkspaceService 未初始化时跳过
   }
   closeMemoryService()
+  app.exit(0)
 })

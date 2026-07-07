@@ -2,7 +2,8 @@
  * 窗口控制 IPC Handler
  * 处理最小化、最大化、关闭等窗口操作
  */
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
+import { handle } from './secureIpc'
 import {
   WINDOW_MINIMIZE,
   WINDOW_MAXIMIZE,
@@ -17,11 +18,11 @@ import {
 export function registerWindowHandler(
   getMainWindow: () => BrowserWindow | null
 ): void {
-  ipcMain.handle(WINDOW_MINIMIZE, async () => {
+  handle(WINDOW_MINIMIZE, async () => {
     getMainWindow()?.minimize()
   })
 
-  ipcMain.handle(WINDOW_MAXIMIZE, async () => {
+  handle(WINDOW_MAXIMIZE, async () => {
     const win = getMainWindow()
     if (!win) return
     if (win.isMaximized()) {
@@ -31,11 +32,11 @@ export function registerWindowHandler(
     }
   })
 
-  ipcMain.handle(WINDOW_CLOSE, async () => {
+  handle(WINDOW_CLOSE, async () => {
     getMainWindow()?.close()
   })
 
-  ipcMain.handle(WINDOW_IS_MAXIMIZED, async () => {
+  handle(WINDOW_IS_MAXIMIZED, async () => {
     return getMainWindow()?.isMaximized() ?? false
   })
 }

@@ -1,5 +1,5 @@
 import { BrowserWindow, dialog } from 'electron'
-import { ipcMain } from 'electron'
+import { handle } from './secureIpc'
 
 export interface ConfirmDialogOptions {
   type?: 'none' | 'info' | 'error' | 'question' | 'warning'
@@ -12,7 +12,7 @@ export interface ConfirmDialogOptions {
 }
 
 export function registerDialogHandler(): void {
-  ipcMain.handle(
+  handle(
     'dialog:confirm',
     async (_event, options: ConfirmDialogOptions): Promise<number> => {
       const win = BrowserWindow.getFocusedWindow()

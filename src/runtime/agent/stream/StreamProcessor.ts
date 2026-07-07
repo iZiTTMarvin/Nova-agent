@@ -66,6 +66,9 @@ export class StreamProcessor {
    */
   private modelErrorAttempt = 0
   private contextOverflowRetryAttempted = false
+  private contextOverflowRetryCount = 0
+
+  private static readonly MAX_CONTEXT_OVERFLOW_RETRIES = 3
 
   constructor(opts: StreamProcessorOptions) {
     this.modelPool = opts.modelPool
@@ -84,6 +87,7 @@ export class StreamProcessor {
   resetRetryState(): void {
     this.modelErrorAttempt = 0
     this.contextOverflowRetryAttempted = false
+    this.contextOverflowRetryCount = 0
   }
 
   /**
@@ -202,6 +206,7 @@ export class StreamProcessor {
           break
 
         case 'tool_call':
+          finishReason = 'tool_calls'
           toolCalls.push(event.toolCall)
           this.emit({ type: 'tool_call', messageId, toolCallId: event.toolCall.id, toolName: event.toolCall.name, args: JSON.parse(event.toolCall.arguments || '{}') })
           break
@@ -215,9 +220,13 @@ export class StreamProcessor {
           this.emit({ type: 'recovery_state', messageId, state: overflowState })
           await this.hookManager.trigger({ event: 'onError', messageId, error: event.rawError })
 
+          if (this.contextOverflowRetryCount >= StreamProcessor.MAX_CONTEXT_OVERFLOW_RETRIES) {
+            return { kind: 'error', error: event.rawError }
+          }
           if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
             return { kind: 'error', error: event.rawError }
           }
+          this.contextOverflowRetryCount++
           this.contextOverflowRetryAttempted = true
 
           if (overflowState.kind === 'recovering') {

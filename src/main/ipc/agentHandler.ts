@@ -4,9 +4,9 @@
  * 将 AgentEvent 通过 IPC 推送到 renderer
  * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow, app } from 'electron'
+import { handle } from './secureIpc'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
-import { app } from 'electron'
 import { join } from 'path'
 import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContextForMode, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
 import { runWorkflow } from '../../runtime/workflow'
@@ -223,13 +223,17 @@ export function registerAgentHandler(
   getModelClient: () => ModelClient | null
 ): void {
   // 发送消息命令
-  ipcMain.handle(SEND_MESSAGE, async (_event, params: {
+  handle(SEND_MESSAGE, async (_event, params: {
     sessionId: string
     content: string
     userMessageId?: string
     images?: Array<{ fileName: string; data: string; mimeType: string }>
     regenerate?: boolean
   }): Promise<void> => {
+    if (agentTurnInProgress) {
+      throw new Error('上一轮 Agent 尚未结束，拒绝并发请求')
+    }
+
     // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 所有挂起的 askQuestion 请求，
     // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
     if (pendingAskQuestions.size > 0) {
@@ -608,7 +612,7 @@ export function registerAgentHandler(
     }
   })
 
-  ipcMain.handle(CANCEL_EXECUTION, async (): Promise<void> => {
+  handle(CANCEL_EXECUTION, async (): Promise<void> => {
     // 先停父 agent，再联动停所有活跃子代理。
     // 顺序：父先 cancel 可避免父在子停止后又派新的工具调用；子 cancel 后父的
     // await subLoop.sendMessage(task) 才会在最近的 abort 检查点返回。
@@ -625,7 +629,7 @@ export function registerAgentHandler(
     }
   })
 
-  ipcMain.handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
+  handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
     const granted = params.decision === 'allow'
     // 子代理权限（sub: 前缀）路由到子 AgentLoop，其余走父循环
     if (defaultSubAgentPermissionBridge.resolve(params.requestId, granted)) return
@@ -633,11 +637,11 @@ export function registerAgentHandler(
     agentLoop.respondPermission(params.requestId, granted)
   })
 
-  ipcMain.handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: { requestId: string; granted: boolean }): Promise<void> => {
+  handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: { requestId: string; granted: boolean }): Promise<void> => {
     clearVerificationPermissionRequest(params.requestId, params.granted)
   })
 
-  ipcMain.handle(RESPOND_ASK_QUESTION, async (_event, params: { requestId: string; answers: AskQuestionAnswer[] }): Promise<void> => {
+  handle(RESPOND_ASK_QUESTION, async (_event, params: { requestId: string; answers: AskQuestionAnswer[] }): Promise<void> => {
     const entry = pendingAskQuestions.get(params.requestId)
     if (!entry) return
     pendingAskQuestions.delete(params.requestId)

@@ -37,12 +37,35 @@ import {
   ensureMessageParentChain,
   attachBranchMeta
 } from './tree'
+import { atomicWriteFileSync } from '../storage/atomicFile'
+
+/** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 
 export class SessionStore {
   private readonly sessionsDir: string
 
   constructor(appDataPath: string) {
     this.sessionsDir = path.join(appDataPath, 'sessions')
+  }
+
+  /**
+   * 校验 sessionId 并解析会话目录绝对路径。
+   * 所有公共方法拼路径必须经此入口，防止 ../../ 等畸形 ID 逃逸 sessions 目录。
+   */
+  private resolveSessionDir(sessionId: string): string {
+    if (!SESSION_ID_PATTERN.test(sessionId)) {
+      throw new Error(`[SessionStore] 非法 sessionId: ${sessionId}`)
+    }
+    const resolvedDir = path.resolve(this.sessionsDir, sessionId)
+    const normalizedSessions = path.resolve(this.sessionsDir)
+    if (
+      resolvedDir !== normalizedSessions &&
+      !resolvedDir.startsWith(normalizedSessions + path.sep)
+    ) {
+      throw new Error(`[SessionStore] sessionId 路径越界: ${sessionId}`)
+    }
+    return resolvedDir
   }
 
   /** 创建新会话，返回完整会话数据 */
@@ -80,10 +103,7 @@ export class SessionStore {
     const messageCount = computeMessageCount(messages, currentLeafId)
     const normalized: SessionData = { ...session, messages, currentLeafId, messageCount }
     this.saveMetadata(normalized)
-    writeMessagesJsonl(
-      path.join(this.sessionsDir, session.id),
-      messages
-    )
+    writeMessagesJsonl(this.resolveSessionDir(session.id), messages)
   }
 
   /**
@@ -96,7 +116,7 @@ export class SessionStore {
     session: SessionData,
     options?: { recomputeMessageCount?: boolean }
   ): void {
-    const dir = path.join(this.sessionsDir, session.id)
+    const dir = this.resolveSessionDir(session.id)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
@@ -107,7 +127,7 @@ export class SessionStore {
 
     const metadata = this.toMetadata(toWrite)
     const filePath = path.join(dir, SESSION_DATA_FILE)
-    fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
+    atomicWriteFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
   }
 
   /**
@@ -116,7 +136,13 @@ export class SessionStore {
    * 迁移失败返回 null（与"文件损坏静默跳过"行为一致），避免阻塞 UI。
    */
   load(sessionId: string): SessionData | null {
-    const filePath = path.join(this.sessionsDir, sessionId, SESSION_DATA_FILE)
+    let sessionDir: string
+    try {
+      sessionDir = this.resolveSessionDir(sessionId)
+    } catch {
+      return null
+    }
+    const filePath = path.join(sessionDir, SESSION_DATA_FILE)
     if (!fs.existsSync(filePath)) return null
 
     try {
@@ -139,7 +165,7 @@ export class SessionStore {
    * 从 session.json 元数据 + messages.jsonl 组装完整 SessionData。
    */
   private loadFromMetadataAndJsonl(metadata: SessionData, sessionId: string): SessionData {
-    const rawMessages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+    const rawMessages = readMessagesJsonl(this.resolveSessionDir(sessionId))
     const messages = ensureMessageParentChain(rawMessages)
     const currentLeafId = resolveCurrentLeafId(messages, metadata.currentLeafId)
     return {
@@ -202,7 +228,7 @@ export class SessionStore {
 
   /** 删除会话及其关联的 checkpoint 数据 */
   delete(sessionId: string): boolean {
-    const sessionDir = path.join(this.sessionsDir, sessionId)
+    const sessionDir = this.resolveSessionDir(sessionId)
     if (!fs.existsSync(sessionDir)) return false
 
     fs.rmSync(sessionDir, { recursive: true, force: true })
@@ -219,7 +245,12 @@ export class SessionStore {
    * 避免隐式依赖"load/list 先跑过"的假设。
    */
   appendMessage(sessionId: string, message: SessionMessageAppend): SessionData | null {
-    const dir = path.join(this.sessionsDir, sessionId)
+    let dir: string
+    try {
+      dir = this.resolveSessionDir(sessionId)
+    } catch {
+      return null
+    }
     const sessionFile = path.join(dir, SESSION_DATA_FILE)
     if (!fs.existsSync(sessionFile)) return null
 
@@ -264,7 +295,7 @@ export class SessionStore {
     metadata.updatedAt = Date.now()
     const allMessages = readMessagesJsonl(dir)
     metadata.messageCount = computeMessageCount(allMessages, metadata.currentLeafId)
-    fs.writeFileSync(
+    atomicWriteFileSync(
       path.join(dir, SESSION_DATA_FILE),
       JSON.stringify(this.toMetadata(metadata), null, 2),
       'utf8'
@@ -389,7 +420,7 @@ export class SessionStore {
       return data.messageCount
     }
 
-    const messages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+    const messages = readMessagesJsonl(this.resolveSessionDir(sessionId))
     const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
     const messageCount = computeMessageCount(messages, leafId)
 
@@ -406,19 +437,24 @@ export class SessionStore {
 
   /** 写入上下文快照（派生缓存，独立于 session.json） */
   saveContextSnapshot(sessionId: string, snapshot: ContextSnapshot): void {
-    const dir = path.join(this.sessionsDir, sessionId)
+    const dir = this.resolveSessionDir(sessionId)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
     const filePath = path.join(dir, SESSION_CONTEXT_SNAPSHOT_FILE)
-    fs.writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8')
+    atomicWriteFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8')
   }
 
   /**
    * 加载上下文快照。文件不存在、JSON 损坏或版本不符时返回 null。
    */
   loadContextSnapshot(sessionId: string): ContextSnapshot | null {
-    const filePath = path.join(this.sessionsDir, sessionId, SESSION_CONTEXT_SNAPSHOT_FILE)
+    let filePath: string
+    try {
+      filePath = path.join(this.resolveSessionDir(sessionId), SESSION_CONTEXT_SNAPSHOT_FILE)
+    } catch {
+      return null
+    }
     if (!fs.existsSync(filePath)) return null
 
     try {
@@ -432,7 +468,7 @@ export class SessionStore {
 
   /** 删除上下文快照文件；不存在时静默返回 */
   clearContextSnapshot(sessionId: string): void {
-    const filePath = path.join(this.sessionsDir, sessionId, SESSION_CONTEXT_SNAPSHOT_FILE)
+    const filePath = path.join(this.resolveSessionDir(sessionId), SESSION_CONTEXT_SNAPSHOT_FILE)
     if (!fs.existsSync(filePath)) return
     fs.unlinkSync(filePath)
   }
@@ -447,7 +483,13 @@ export class SessionStore {
     sessionId: string,
     options: { beforeId?: string; limit: number }
   ): { messages: SessionMessage[]; hasMore: boolean } | null {
-    const filePath = path.join(this.sessionsDir, sessionId, SESSION_DATA_FILE)
+    let sessionDir: string
+    try {
+      sessionDir = this.resolveSessionDir(sessionId)
+    } catch {
+      return null
+    }
+    const filePath = path.join(sessionDir, SESSION_DATA_FILE)
     if (!fs.existsSync(filePath)) return null
 
     try {
@@ -460,7 +502,7 @@ export class SessionStore {
         metadata = migrateSessionData(JSON.parse(content)) as SessionData
       }
 
-      const allMessages = readMessagesJsonl(path.join(this.sessionsDir, sessionId))
+      const allMessages = readMessagesJsonl(sessionDir)
       const currentLeafId = resolveCurrentLeafId(allMessages, metadata.currentLeafId)
       const activePath = computeActivePath(allMessages, currentLeafId)
       const page = sliceMessagesPage(activePath, options)
@@ -511,14 +553,13 @@ function readMessagesJsonl(sessionDir: string): SessionMessage[] {
 function writeMessagesJsonl(sessionDir: string, messages: SessionMessage[]): void {
   const filePath = path.join(sessionDir, SESSION_MESSAGES_FILE)
   if (messages.length === 0) {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath)
-    }
+    // 原子写空文件，避免 unlink 与存在性判断之间的窗口期
+    atomicWriteFileSync(filePath, '', 'utf8')
     return
   }
 
   const lines = messages.map(m => JSON.stringify(m)).join('\n')
-  fs.writeFileSync(filePath, lines + '\n', 'utf8')
+  atomicWriteFileSync(filePath, lines + '\n', 'utf8')
 }
 
 /**

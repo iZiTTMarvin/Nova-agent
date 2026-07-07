@@ -11,7 +11,8 @@
  * - 只操作主进程可访问的本地文件系统
  * - 删除类操作返回具体释放字节数，供 UI 展示
  */
-import { ipcMain, app } from 'electron'
+import { app } from 'electron'
+import { handle } from './secureIpc'
 import { clearSessionWhitelist } from '../../runtime/permissions/PermissionManager'
 import {
   STORAGE_USAGE,
@@ -32,24 +33,24 @@ import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 export function registerStorageHandler(): void {
   const appDataPath = app.getPath('userData')
 
-  ipcMain.handle(STORAGE_USAGE, async () => {
+  handle(STORAGE_USAGE, async () => {
     return getStorageUsageReport(appDataPath)
   })
 
-  ipcMain.handle(STORAGE_PRUNE_SESSION_CHECKPOINTS, async (_event, params: { sessionId: string }) => {
+  handle(STORAGE_PRUNE_SESSION_CHECKPOINTS, async (_event, params: { sessionId: string }) => {
     return pruneSessionCheckpoints(appDataPath, params.sessionId)
   })
 
-  ipcMain.handle(STORAGE_PRUNE_ALL_CHECKPOINTS, async () => {
+  handle(STORAGE_PRUNE_ALL_CHECKPOINTS, async () => {
     return pruneAllCheckpoints(appDataPath)
   })
 
-  ipcMain.handle(STORAGE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
+  handle(STORAGE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
     clearSessionWhitelist(params.sessionId)
     return deleteSessionCompletely(appDataPath, params.sessionId)
   })
 
-  ipcMain.handle(STORAGE_RUN_GC, async (_event, params?: { snapshotRetentionDays?: number }) => {
+  handle(STORAGE_RUN_GC, async (_event, params?: { snapshotRetentionDays?: number }) => {
     const days = params?.snapshotRetentionDays ?? loadNovaSettings().snapshotRetentionDays
     return runStartupGc(appDataPath, days)
   })

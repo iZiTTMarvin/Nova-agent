@@ -253,6 +253,37 @@ describe('AgentLoop', () => {
     expect(client.getCalls()).toHaveLength(2)
   })
 
+  it('finish_reason 为 stop 但携带 tool_calls 时仍执行工具', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'call_stop', name: 'ls', arguments: '{"path":"."}' }
+        },
+        // 部分 provider 在 native tool_calls 时仍返回 stop
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: unknown[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('列出目录')
+
+    expect(events.filter((e: { type?: string }) => e.type === 'tool_result').length).toBeGreaterThanOrEqual(1)
+    expect(client.getCalls()).toHaveLength(2)
+  })
+
   it('模型把工具调用误写成 JSON 文本时，仍会兜底解析并继续对话', async () => {
     const client = new MockModelClient()
     client.addResponse({
@@ -1410,5 +1441,32 @@ describe('AgentLoop', () => {
         }
       }
     }
+  })
+
+  it('context_overflow 压缩成功但模型持续溢出，第 4 次直接失败', async () => {
+    const client = new MockModelClient()
+
+    const addOverflowWithCompaction = () => {
+      client.addResponse({
+        events: [{ type: 'message_start' }, { type: 'context_overflow', rawError: 'context overflow token limit' }]
+      })
+      client.addResponse({
+        events: [{ type: 'text_delta', delta: '压缩摘要' }, { type: 'message_end', finishReason: 'stop' }]
+      })
+    }
+
+    addOverflowWithCompaction()
+    addOverflowWithCompaction()
+    addOverflowWithCompaction()
+    // 第 4 次溢出应被重试上限拦截，不再进入压缩
+    client.addResponse({
+      events: [{ type: 'message_start' }, { type: 'context_overflow', rawError: 'context overflow token limit' }]
+    })
+
+    const { loop } = createLoop(client)
+    loop.injectHistory(Array.from({ length: 30 }, (_, i) => ({ role: 'user' as const, content: `历史 ${i}` })))
+
+    await loop.sendMessage('hi')
+    expect(loop.getState()).toBe('error')
   })
 })

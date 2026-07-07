@@ -7,7 +7,7 @@
  * - 项目级规则的 projectPath 必须是当前打开的项目路径，否则拒绝（防恶意项目静默写规则）。
  * - 当前项目路径从 main 进程全局状态读取，不接受 renderer 传入的任意路径。
  */
-import { ipcMain } from 'electron'
+import { handle } from './secureIpc'
 import { grantSessionPermission } from '../../runtime/permissions/PermissionManager'
 import { PERMISSION_LIST, PERMISSION_UPSERT, PERMISSION_DELETE, PERMISSION_GRANT_SESSION_SCOPE } from '../../shared/ipc/channels'
 import {
@@ -30,14 +30,14 @@ function toDto(rule: PermissionRule): PermissionRuleDto {
 }
 
 export function registerPermissionHandler(): void {
-  ipcMain.handle(PERMISSION_LIST, async (_event, params: PermissionListParams) => {
+  handle(PERMISSION_LIST, async (_event, params: PermissionListParams) => {
     // projectPath 优先用 renderer 传入值，兜底用主进程当前项目路径
     const projectPath = params?.projectPath ?? getCurrentProjectPath()
     const rules = listPermissionRules(projectPath)
     return rules.map(toDto)
   })
 
-  ipcMain.handle(PERMISSION_UPSERT, async (_event, params: PermissionUpsertParams) => {
+  handle(PERMISSION_UPSERT, async (_event, params: PermissionUpsertParams) => {
     // 安全校验：项目级规则的 projectPath 必须等于当前打开项目
     if (params.scope === 'project') {
       const current = getCurrentProjectPath()
@@ -64,13 +64,13 @@ export function registerPermissionHandler(): void {
     return toDto(rule)
   })
 
-  ipcMain.handle(PERMISSION_DELETE, async (_event, params: PermissionDeleteParams) => {
+  handle(PERMISSION_DELETE, async (_event, params: PermissionDeleteParams) => {
     const projectPath = params.projectPath ?? getCurrentProjectPath()
     const deleted = deletePermissionRule(params.ruleId, projectPath)
     return { deleted }
   })
 
-  ipcMain.handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: { sessionId: string; commandPrefix: string }) => {
+  handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: { sessionId: string; commandPrefix: string }) => {
     grantSessionPermission(params.sessionId, params.commandPrefix)
   })
 }

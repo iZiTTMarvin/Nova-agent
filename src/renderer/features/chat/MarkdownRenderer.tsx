@@ -19,6 +19,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
+import { isSafeMarkdownHref } from './safeMarkdownLink'
 import './MarkdownRenderer.css'
 
 // hast 节点的最小结构，避免引入 @types/hast 这一额外依赖
@@ -174,6 +175,9 @@ const STATIC_MARKDOWN_COMPONENTS: Omit<Components, 'pre'> = {
   },
   a({ children, href, ...rest }) {
     const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
+    if (!isSafeMarkdownHref(href)) {
+      return <span className="markdown-link-text">{children}</span>
+    }
     return (
       <a
         className="markdown-link"

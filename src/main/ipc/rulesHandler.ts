@@ -3,7 +3,7 @@
  */
 import { existsSync } from 'fs'
 import { join, normalize } from 'path'
-import { ipcMain } from 'electron'
+import { handle } from './secureIpc'
 import { RULES_LIST, RULES_READ, RULES_WRITE, RULES_CREATE } from '../../shared/ipc/channels'
 import {
   listRuleFiles,
@@ -52,11 +52,11 @@ function assertRulePathAllowed(absolutePath: string, workspaceRoot?: string | nu
 }
 
 export function registerRulesHandler(): void {
-  ipcMain.handle(RULES_LIST, async (_event, params: RulesListParams = {}): Promise<RuleFileEntry[]> => {
+  handle(RULES_LIST, async (_event, params: RulesListParams = {}): Promise<RuleFileEntry[]> => {
     return listRuleFiles(params.workspaceRoot)
   })
 
-  ipcMain.handle(RULES_READ, async (_event, params: RulesReadParams): Promise<string> => {
+  handle(RULES_READ, async (_event, params: RulesReadParams): Promise<string> => {
     assertRulePathAllowed(params.absolutePath, params.workspaceRoot)
     if (!existsSync(params.absolutePath)) {
       throw new Error('规则文件不存在')
@@ -64,12 +64,12 @@ export function registerRulesHandler(): void {
     return readRuleFile(params.absolutePath)
   })
 
-  ipcMain.handle(RULES_WRITE, async (_event, params: RulesWriteParams): Promise<void> => {
+  handle(RULES_WRITE, async (_event, params: RulesWriteParams): Promise<void> => {
     assertRulePathAllowed(params.absolutePath, params.workspaceRoot)
     writeRuleFile(params.absolutePath, params.content)
   })
 
-  ipcMain.handle(RULES_CREATE, async (_event, params: RulesCreateParams): Promise<RuleFileEntry> => {
+  handle(RULES_CREATE, async (_event, params: RulesCreateParams): Promise<RuleFileEntry> => {
     const content = params.content ?? `# ${params.name}\n\n`
     let absolutePath: string
     if (params.scope === 'global') {

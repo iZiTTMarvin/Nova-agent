@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handle } from './secureIpc'
 import { SET_MODE } from '../../shared/ipc/channels'
 import type { Mode } from '../../shared/session'
 import { setCurrentMode } from '../index'
@@ -9,7 +9,7 @@ import { getSessionStore } from './sessionHandler'
  * 监听渲染进程的模式变更请求，并记录在主进程全局状态中以供 Agent 调度
  */
 export function registerModeHandler(): void {
-  ipcMain.handle(SET_MODE, async (_event, params: { mode: Mode; sessionId?: string }): Promise<void> => {
+  handle(SET_MODE, async (_event, params: { mode: Mode; sessionId?: string }): Promise<void> => {
     setCurrentMode(params.mode)
 
     if (!params.sessionId) return

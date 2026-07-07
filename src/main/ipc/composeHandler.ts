@@ -6,7 +6,8 @@
  * 依赖装配与 agentHandler 的 workflowRunner 同构，避免 COMPOSE_RUN 路径
  * 缺少 checkpoint / permissionBridge / contextWindow 等能力。
  */
-import { ipcMain, BrowserWindow, app } from 'electron'
+import { BrowserWindow, app } from 'electron'
+import { handle } from './secureIpc'
 import {
   COMPOSE_RUN,
   COMPOSE_CANCEL,
@@ -144,7 +145,7 @@ function wireComposeEvents(
 }
 
 export function registerComposeHandler(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle(COMPOSE_RUN, async (_e, params: {
+  handle(COMPOSE_RUN, async (_e, params: {
     scriptName: string
     args?: string
     workspaceRoot: string
@@ -164,17 +165,17 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     }
   })
 
-  ipcMain.handle(COMPOSE_CANCEL, async (_e, params: { runId: string }) => {
+  handle(COMPOSE_CANCEL, async (_e, params: { runId: string }) => {
     return { cancelled: cancelWorkflow(params.runId) }
   })
 
-  ipcMain.handle(COMPOSE_STATUS, async (_e, params: { runId: string }) => {
+  handle(COMPOSE_STATUS, async (_e, params: { runId: string }) => {
     const s = getWorkflowStatus(params.runId)
     if (!s) return null
     return { runId: s.runId, status: s.status, phase: s.phase }
   })
 
-  ipcMain.handle(COMPOSE_RESUME, async (_e, params: {
+  handle(COMPOSE_RESUME, async (_e, params: {
     runId: string
     scriptName: string
     args?: string
@@ -198,7 +199,7 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
   })
 
   // 阶段 E 弹窗会调此接口；阶段 D 提供最小后端，测试也可直接调 resolveWorkflowAskUser
-  ipcMain.handle(COMPOSE_RESPOND_ASK_USER, async (_e, params: {
+  handle(COMPOSE_RESPOND_ASK_USER, async (_e, params: {
     runId: string
     requestId: string
     answer: string
@@ -206,7 +207,7 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     return { ok: resolveWorkflowAskUser(params.runId, params.requestId, params.answer) }
   })
 
-  ipcMain.handle(COMPOSE_GET_STATE, async (_e, params: { workspaceRoot: string }) => {
+  handle(COMPOSE_GET_STATE, async (_e, params: { workspaceRoot: string }) => {
     const state = readComposeState(params.workspaceRoot)
     if (!state) return null
     try {

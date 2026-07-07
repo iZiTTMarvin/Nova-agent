@@ -6,7 +6,8 @@
  * 2. 按文件拒绝（reject-file）：从 checkpoint 恢复单个文件
  * 3. 接受文件改动（accept-file）：标记文件已审查
  */
-import { ipcMain, app } from 'electron'
+import { app } from 'electron'
+import { handle } from './secureIpc'
 import {
   LOAD_SESSIONS,
   LOAD_SESSION,
@@ -118,14 +119,14 @@ export function registerSessionHandler(): void {
   sessionStore = new SessionStore(appDataPath)
 
   // 加载会话列表
-  ipcMain.handle(LOAD_SESSIONS, async () => {
+  handle(LOAD_SESSIONS, async () => {
     const summaries = sessionStore.list()
     return summaries
   })
 
 
   // 加载单个会话的完整数据（含消息历史）
-  ipcMain.handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
+  handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
     const data = sessionStore.load(params.sessionId)
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
@@ -141,7 +142,7 @@ export function registerSessionHandler(): void {
   })
 
   // 按游标加载更早的消息页（只读，不触发会话切换副作用）
-  ipcMain.handle(
+  handle(
     LOAD_SESSION_MESSAGES,
     async (
       _event,
@@ -165,7 +166,7 @@ export function registerSessionHandler(): void {
   )
 
   // 创建新会话
-  ipcMain.handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
+  handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
     const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
     // 新建会话时清除先读后改状态，防止跨会话污染
     getMainReadState().clear()
@@ -177,7 +178,7 @@ export function registerSessionHandler(): void {
   })
 
   // 接受文件改动：标记为已审查
-  ipcMain.handle(ACCEPT_FILE, async (
+  handle(ACCEPT_FILE, async (
     _event,
     params: { sessionId: string; messageId: string; filePath: string }
   ): Promise<void> => {
@@ -193,7 +194,7 @@ export function registerSessionHandler(): void {
   })
 
   // 批量接受文件改动（PRD §5.3）：委托给 WorkspaceService
-  ipcMain.handle(ACCEPT_ALL_FILES, async (
+  handle(ACCEPT_ALL_FILES, async (
     _event,
     params: { sessionId: string; messageId: string; filePaths: string[] }
   ): Promise<void> => {
@@ -203,7 +204,7 @@ export function registerSessionHandler(): void {
 
   // 批量拒绝文件改动（PRD §5.3）：委托给 WorkspaceService
   // 逐个从 checkpoint 恢复，任一失败收集到 failed 数组返回（不中断剩余）
-  ipcMain.handle(REJECT_ALL_FILES, async (
+  handle(REJECT_ALL_FILES, async (
     _event,
     params: { sessionId: string; messageId: string; filePaths: string[] }
   ): Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }> => {
@@ -212,7 +213,7 @@ export function registerSessionHandler(): void {
   })
 
   // 获取某条消息的所有文件 diff（含审查状态）
-  ipcMain.handle(GET_MESSAGE_DIFFS, async (
+  handle(GET_MESSAGE_DIFFS, async (
     _event,
     params: { sessionId: string; messageId: string }
   ): Promise<MessageDiffsState> => {
@@ -230,7 +231,7 @@ export function registerSessionHandler(): void {
   })
 
   // 按文件拒绝：从 checkpoint 恢复该文件到原始内容
-  ipcMain.handle(REJECT_FILE, async (
+  handle(REJECT_FILE, async (
     _event,
     params: { sessionId: string; messageId: string; filePath: string }
   ) => {

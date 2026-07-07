@@ -3,7 +3,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { ipcMain } from 'electron'
+import { handle } from './secureIpc'
 import { SUBAGENTS_LIST, SUBAGENTS_SAVE, SUBAGENTS_DELETE } from '../../shared/ipc/channels'
 import { BUILTIN_SUBAGENTS, type SubAgentSpec } from '../../runtime/agent'
 import { getNovaHomeDir } from '../../runtime/settings/novaSettings'
@@ -92,11 +92,11 @@ export function validateSpec(spec: SubAgentSpec): void {
 }
 
 export function registerSubagentsHandler(): void {
-  ipcMain.handle(SUBAGENTS_LIST, async (_event, params: SubagentsListParams = {}): Promise<SubagentListItem[]> => {
+  handle(SUBAGENTS_LIST, async (_event, params: SubagentsListParams = {}): Promise<SubagentListItem[]> => {
     return listAllSubagents(params.workspaceRoot)
   })
 
-  ipcMain.handle(SUBAGENTS_SAVE, async (_event, params: SubagentsSaveParams): Promise<SubagentListItem> => {
+  handle(SUBAGENTS_SAVE, async (_event, params: SubagentsSaveParams): Promise<SubagentListItem> => {
     validateSpec(params.spec)
     const dir =
       params.location === 'project'
@@ -120,7 +120,7 @@ export function registerSubagentsHandler(): void {
     }
   })
 
-  ipcMain.handle(SUBAGENTS_DELETE, async (_event, params: SubagentsDeleteParams): Promise<void> => {
+  handle(SUBAGENTS_DELETE, async (_event, params: SubagentsDeleteParams): Promise<void> => {
     if (BUILTIN_NAMES.has(params.name)) {
       throw new Error('内置子代理不可删除')
     }

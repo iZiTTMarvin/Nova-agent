@@ -186,7 +186,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       }
 
       // ── assistant 续接（对标现状 L797-829）──
-      const { assistantContent, toolCalls, finishReason, sawUsage } = turnResult
+      const { assistantContent, toolCalls, sawUsage } = turnResult
 
       const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent }
       if (toolCalls.length > 0) assistantMsg.toolCalls = toolCalls
@@ -200,9 +200,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       await hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
 
       // 没有工具调用，本轮正常结束（对标现状 L817-819）
-      if (toolCalls.length === 0 || finishReason !== 'tool_calls') {
-        break
-      }
+      if (toolCalls.length === 0) break
 
       // native 空参修复（对标现状 L825-829）
       const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent)

@@ -1,4 +1,5 @@
-import { ipcMain, app } from 'electron'
+import { app } from 'electron'
+import { handle } from './secureIpc'
 import {
   SAVE_MODEL_CONFIG,
   LOAD_MODEL_CONFIG,
@@ -53,29 +54,29 @@ function syncActiveModelFromRegistry(registry: LlmRegistry): void {
  */
 export function registerConfigHandler(): void {
   // v1 兼容：保存单 ModelConfig
-  ipcMain.handle(SAVE_MODEL_CONFIG, async (_event, rawConfig: ModelConfig): Promise<void> => {
+  handle(SAVE_MODEL_CONFIG, async (_event, rawConfig: ModelConfig): Promise<void> => {
     const config = saveModelConfig(rawConfig, app.getPath('userData'))
     applyModelConfigToClient(config)
   })
 
   // v1 兼容：加载活跃 ModelConfig
-  ipcMain.handle(LOAD_MODEL_CONFIG, async (): Promise<ModelConfig | null> => {
+  handle(LOAD_MODEL_CONFIG, async (): Promise<ModelConfig | null> => {
     return loadModelConfig(app.getPath('userData'))
   })
 
   // v2：加载完整注册表
-  ipcMain.handle(LOAD_LLM_REGISTRY, async (): Promise<LlmRegistry | null> => {
+  handle(LOAD_LLM_REGISTRY, async (): Promise<LlmRegistry | null> => {
     return loadLlmRegistry(app.getPath('userData'))
   })
 
   // v2：保存注册表
-  ipcMain.handle(SAVE_LLM_REGISTRY, async (_event, registry: LlmRegistry): Promise<void> => {
+  handle(SAVE_LLM_REGISTRY, async (_event, registry: LlmRegistry): Promise<void> => {
     const saved = saveLlmRegistry(app.getPath('userData'), registry)
     syncActiveModelFromRegistry(saved)
   })
 
   // v2：快速切换活跃模型
-  ipcMain.handle(
+  handle(
     SET_ACTIVE_MODEL,
     async (_event, ref: { providerId: string; modelEntryId: string }): Promise<void> => {
       const registry = setActiveModelInRegistry(app.getPath('userData'), ref)
@@ -84,7 +85,7 @@ export function registerConfigHandler(): void {
   )
 
   // 从服务商 API 拉取模型列表
-  ipcMain.handle(
+  handle(
     FETCH_PROVIDER_MODELS,
     async (_event, params: { baseUrl: string; apiKey: string }) => {
       return fetchProviderModels(params)

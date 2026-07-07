@@ -10,10 +10,11 @@
  * - upsert 语义：相同 id 的规则覆盖，避免重复"始终允许"堆积。
  * - 删除按 id 定位。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join, isAbsolute } from 'path'
 import { homedir } from 'os'
 import { createPermissionRule, type PermissionRule } from './PermissionRule'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 
 const GLOBAL_DIR = join(homedir(), '.nova')
 const GLOBAL_FILE = join(GLOBAL_DIR, 'permissions.json')
@@ -37,7 +38,7 @@ function writeRulesFile(filePath: string, dir: string, rules: PermissionRule[]):
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
   }
-  writeFileSync(filePath, JSON.stringify(rules, null, 2), 'utf-8')
+  atomicWriteFileSync(filePath, JSON.stringify(rules, null, 2), 'utf-8')
 }
 
 /** 项目规则文件路径 */

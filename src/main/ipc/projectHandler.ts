@@ -1,4 +1,5 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { dialog, BrowserWindow } from 'electron'
+import { handle } from './secureIpc'
 import { SELECT_PROJECT } from '../../shared/ipc/channels'
 import { setCurrentProjectPath } from '../index'
 import { reloadSkillsForWorkspace } from '../services/SkillServiceHost'
@@ -10,7 +11,7 @@ import { reloadSkillsForWorkspace } from '../services/SkillServiceHost'
  * @param getMainWindow 获取当前活跃的主窗口实例，用作对话框的父窗口
  */
 export function registerProjectHandler(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle(SELECT_PROJECT, async (): Promise<string | null> => {
+  handle(SELECT_PROJECT, async (): Promise<string | null> => {
     const window = getMainWindow()
     if (!window) {
       return null

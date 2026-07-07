@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handle } from './secureIpc'
 import {
   DEV_MAIN_LOOP_LAG_RESET,
   DEV_MAIN_LOOP_LAG_SNAPSHOT
@@ -12,11 +12,11 @@ import { getMainLoopLagApi } from '../diagnostics/mainLoopLagMonitor'
 export function registerDevDiagnosticsHandlers(): void {
   if (process.env.NODE_ENV !== 'development') return
 
-  ipcMain.handle(DEV_MAIN_LOOP_LAG_SNAPSHOT, () => {
+  handle(DEV_MAIN_LOOP_LAG_SNAPSHOT, () => {
     return getMainLoopLagApi().snapshot()
   })
 
-  ipcMain.handle(DEV_MAIN_LOOP_LAG_RESET, () => {
+  handle(DEV_MAIN_LOOP_LAG_RESET, () => {
     getMainLoopLagApi().reset()
   })
 }

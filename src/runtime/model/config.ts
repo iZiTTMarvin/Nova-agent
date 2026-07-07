@@ -18,6 +18,7 @@ import {
   isLlmRegistryV2
 } from '../../shared/config/llmRegistry'
 import { validateModelConfig } from './configLegacy'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 
 /** 配置文件相对路径（相对于 AppData 根目录） */
 const CONFIG_RELATIVE_PATH = path.join('settings', 'model.json')
@@ -92,7 +93,7 @@ export function saveLlmRegistry(appDataPath: string, registry: LlmRegistry): Llm
     fs.mkdirSync(configDir, { recursive: true })
   }
 
-  fs.writeFileSync(configPath, JSON.stringify(validation.registry, null, 2), 'utf8')
+  atomicWriteFileSync(configPath, JSON.stringify(validation.registry, null, 2), 'utf8')
   return validation.registry
 }
 
