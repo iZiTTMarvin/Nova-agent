@@ -416,23 +416,22 @@ export class SessionStore {
    * list() 用：读 metadata.messageCount；缺失时按原算法回算并写回 session.json。
    */
   private resolveMessageCountForList(sessionId: string, data: SessionData): number {
-    if (typeof data.messageCount === 'number') {
-      return data.messageCount
-    }
-
     const messages = readMessagesJsonl(this.resolveSessionDir(sessionId))
     const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
-    const messageCount = computeMessageCount(messages, leafId)
 
-    // 旧会话迁移兜底：写回缓存，避免下次 list 再全量读 jsonl
-    try {
-      const withCount: SessionData = { ...data, messageCount }
-      this.saveMetadata(withCount)
-    } catch {
-      // 写回失败不阻塞 list，仍返回正确计数
+    // messageCount 缺失或为 0 但 jsonl 非空：按激活路径重算并自愈写回
+    if (typeof data.messageCount !== 'number' || (data.messageCount === 0 && messages.length > 0)) {
+      const messageCount = computeMessageCount(messages, leafId)
+      try {
+        const withCount: SessionData = { ...data, messageCount }
+        this.saveMetadata(withCount)
+      } catch {
+        // 写回失败不阻塞 list，仍返回正确计数
+      }
+      return messageCount
     }
 
-    return messageCount
+    return data.messageCount
   }
 
   /** 写入上下文快照（派生缓存，独立于 session.json） */

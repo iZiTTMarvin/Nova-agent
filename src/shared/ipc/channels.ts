@@ -112,6 +112,8 @@ export const MEMORY_RECONCILE = 'memory:reconcile' as const
 export const MEMORY_STATS = 'memory:stats' as const
 /** 在系统文件管理器中打开当前 scope 记忆目录 */
 export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
+/** 安装已下载的应用更新并重启 */
+export const INSTALL_APP_UPDATE = 'app:install-update' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 
@@ -147,4 +149,6 @@ export const COMPOSE_PHASE_CHANGE = 'compose:phase-change' as const
 export const COMPOSE_TASK_UPDATE = 'compose:task-update' as const
 export const COMPOSE_ASK_USER = 'compose:ask-user' as const
 export const COMPOSE_LOG = 'compose:log' as const
+/** 自动更新已下载，提示用户重启安装 */
+export const APP_UPDATE_DOWNLOADED = 'app:update-downloaded' as const
 export const COMPOSE_STATE = 'compose:state' as const

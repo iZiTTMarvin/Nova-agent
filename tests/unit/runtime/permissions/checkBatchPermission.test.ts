@@ -46,7 +46,8 @@ describe('checkBatchPermission 批量权限校验', () => {
 
     const items = [
       { toolCallId: 'call-1', toolName: 'bash', args: { command: 'ls -la' } },
-      { toolCallId: 'call-2', toolName: 'bash', args: { command: 'rm -rf /' } }
+      // 非危险 rm（无 -r/-f），由持久化 deny 规则直接拒绝，不弹窗
+      { toolCallId: 'call-2', toolName: 'bash', args: { command: 'rm tempfile.txt' } }
     ]
 
     // 监听是否触发弹窗事件

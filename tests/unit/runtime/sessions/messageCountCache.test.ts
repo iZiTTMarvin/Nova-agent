@@ -127,6 +127,26 @@ describe('messageCount 缓存对照', () => {
     expect(rewritten.mode).toBe('plan')
   })
 
+  it('messageCount 为 0 但 jsonl 非空：list 自愈重算', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/proj')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: 'hi', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: 'ok', timestamp: 2 })
+
+    const metaPath = path.join(tmpDir, 'sessions', session.id, 'session.json')
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+    meta.messageCount = 0
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2))
+
+    const loaded = store.load(session.id)!
+    const expected = legacyListMessageCount(store, session.id, loaded.currentLeafId)
+    expect(store.list()[0].messageCount).toBe(expected)
+    expect(expected).toBe(2)
+
+    const rewritten = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+    expect(rewritten.messageCount).toBe(2)
+  })
+
   it('多会话树构造：缓存与逐会话旧算法全等', () => {
     const store = new SessionStore(tmpDir)
 

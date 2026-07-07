@@ -429,6 +429,10 @@ export interface IpcCommands {
     params: void
     result: void
   }
+  'app:install-update': {
+    params: void
+    result: void
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -610,6 +614,9 @@ export interface IpcEvents {
   'compose:state': {
     runId: string
     state: Record<string, unknown>
+  }
+  'app:update-downloaded': {
+    version: string
   }
 }
 

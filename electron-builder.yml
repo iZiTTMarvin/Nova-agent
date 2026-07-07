@@ -25,10 +25,16 @@ extraResources:
   - from: build/icon.png
     to: icon.png
 
+publish:
+  provider: github
+  owner: iZiTTMarvin
+  repo: nova-agent
+
 win:
   target:
     - nsis
   icon: build/icon.png
+  # 代码签名：CI 注入 CSC_LINK / CSC_KEY_PASSWORD；本地无证书时跳过签名
   # 无证书时仍会跳过签名，但必须允许 rcedit 写入 exe 图标（false 会导致桌面/任务栏仍是 Electron 默认图标）
 
 nsis:

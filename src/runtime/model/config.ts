@@ -19,6 +19,7 @@ import {
 } from '../../shared/config/llmRegistry'
 import { validateModelConfig } from './configLegacy'
 import { atomicWriteFileSync } from '../storage/atomicFile'
+import { decryptRegistryFromDisk, encryptRegistryForDisk } from './registryCrypto'
 
 /** 配置文件相对路径（相对于 AppData 根目录） */
 const CONFIG_RELATIVE_PATH = path.join('settings', 'model.json')
@@ -59,13 +60,13 @@ export function parseLlmRegistryFromDisk(raw: unknown): LlmRegistry | null {
 
   if (isLlmRegistryV2(raw)) {
     const validation = validateLlmRegistry(raw)
-    return validation.valid ? validation.registry : null
+    return validation.valid ? decryptRegistryFromDisk(validation.registry) : null
   }
 
   // v1：单 ModelConfig
   const v1Result = validateModelConfig(raw as Partial<ModelConfig>)
   if (!v1Result.valid) return null
-  return migrateV1ToV2(v1Result.config)
+  return decryptRegistryFromDisk(migrateV1ToV2(v1Result.config))
 }
 
 /**
@@ -93,7 +94,7 @@ export function saveLlmRegistry(appDataPath: string, registry: LlmRegistry): Llm
     fs.mkdirSync(configDir, { recursive: true })
   }
 
-  atomicWriteFileSync(configPath, JSON.stringify(validation.registry, null, 2), 'utf8')
+  atomicWriteFileSync(configPath, JSON.stringify(encryptRegistryForDisk(validation.registry), null, 2), 'utf8')
   return validation.registry
 }
 

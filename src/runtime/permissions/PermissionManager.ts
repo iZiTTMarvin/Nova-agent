@@ -3,10 +3,8 @@
  * 根据当前模式（plan/default/compose）+ 权限策略（ask/auto）和工具类型做出权限决策
  * bash 工具额外检查命令风险等级
  *
- * 在 mode-based 决策之前先调用 PermissionMatcher 匹配持久化规则：
- * - 命中 deny → 直接拒绝（优先级最高，覆盖 auto 语义 allow）
- * - 命中 allow → 直接放行
- * - 命中 ask 或无匹配 → 走现有 mode + policy + 黑名单逻辑
+ * bash 不变量：assessCommandRisk 对整段命令永远最先执行；
+ * 白名单与 allow 规则只拥有「把 ask 降为 allow」的权力，永远无权豁免高危命令。
  */
 import type { Mode, PermissionPolicy } from '../../shared/session/types'
 import type { PermissionQuery, PermissionResult } from './types'
@@ -16,6 +14,7 @@ import {
   getRiskDescription,
   isAutoPermissionSemantics
 } from './rules'
+import { isCommandFullyWhitelisted } from './commandSegments'
 import { matchPermission, type MatchInput } from './PermissionMatcher'
 import type { PermissionRule } from './PermissionRule'
 
@@ -74,58 +73,48 @@ export class PermissionManager {
   /**
    * 查询指定工具+模式下的权限决策
    *
-   * 决策顺序：
-   * 1. 优先比对会话级临时白名单（内存态）
-   * 2. 先匹配持久化规则：deny 直接拒、allow 直接放行。
-   * 3. 命中 ask 或无匹配 → 走 mode + policy + 黑名单逻辑。
+   * bash 决策顺序：
+   * 1. assessCommandRisk（高危命令不可被白名单/allow 规则豁免）
+   * 2. 持久化 deny 规则
+   * 3. 会话白名单（每一段首 token 均命中）
+   * 4. 持久化 allow 规则
+   * 5. mode + policy 基线决策
    */
   check(query: PermissionQuery, mode: Mode): PermissionResult {
     const { toolName, args } = query
 
-    if (toolName === 'bash' && this.sessionId) {
-      const whitelist = sessionWhitelists.get(this.sessionId)
-      if (whitelist) {
-        const command = typeof args.command === 'string' ? args.command.trim() : ''
-        const firstToken = command.split(/\s+/)[0]
-        if (firstToken && whitelist.has(firstToken)) {
+    if (toolName === 'bash') {
+      const command = typeof args.command === 'string' ? args.command.trim() : ''
+      const dangerous = this.resolveDangerousBash(command, mode)
+      if (dangerous) return dangerous
+
+      const denyFromRules = this.matchPersistentDecision(toolName, args, 'deny')
+      if (denyFromRules) return denyFromRules
+
+      if (this.sessionId) {
+        const whitelist = sessionWhitelists.get(this.sessionId)
+        if (whitelist && isCommandFullyWhitelisted(command, whitelist)) {
           return {
             decision: 'allow',
             riskLevel: 'low',
-            reason: `本会话临时白名单允许执行前缀为 "${firstToken}" 的命令`
+            reason: '本会话临时白名单允许执行该命令'
           }
         }
       }
+
+      const allowFromRules = this.matchPersistentDecision(toolName, args, 'allow')
+      if (allowFromRules) return allowFromRules
+
+      return this.checkBashSafe(command, mode)
     }
 
-    if (this.rules.length > 0) {
-      const input: MatchInput = {
-        toolName,
-        args,
-        currentProjectPath: this.currentProjectPath
-      }
-      const match = matchPermission(this.rules, input)
-      if (match.decision === 'deny') {
-        return {
-          decision: 'deny',
-          riskLevel: 'high',
-          reason: match.reason
-        }
-      }
-      if (match.decision === 'allow') {
-        return {
-          decision: 'allow',
-          riskLevel: 'low',
-          reason: match.reason
-        }
-      }
-    }
+    const denyFromRules = this.matchPersistentDecision(toolName, args, 'deny')
+    if (denyFromRules) return denyFromRules
+
+    const allowFromRules = this.matchPersistentDecision(toolName, args, 'allow')
+    if (allowFromRules) return allowFromRules
 
     const baseDecision = getBaseDecision(mode, toolName, this.permissionPolicy)
-
-    if (toolName === 'bash') {
-      return this.checkBash(args.command as string, mode, baseDecision)
-    }
-
     return {
       decision: baseDecision,
       riskLevel: baseDecision === 'deny' ? 'high' : 'low',
@@ -133,11 +122,8 @@ export class PermissionManager {
     }
   }
 
-  private checkBash(
-    command: string,
-    mode: Mode,
-    baseDecision: 'allow' | 'ask' | 'deny'
-  ): PermissionResult {
+  /** 高危 bash：auto 语义 deny，ask 语义强制 ask（白名单/allow 不可覆盖） */
+  private resolveDangerousBash(command: string, mode: Mode): PermissionResult | null {
     if (mode === 'plan') {
       return {
         decision: 'deny',
@@ -147,9 +133,9 @@ export class PermissionManager {
     }
 
     const { riskLevel, isDangerous, reason } = assessCommandRisk(command || '')
+    if (!isDangerous) return null
 
-    // auto 语义下危险命令强制拒绝
-    if (isAutoPermissionSemantics(mode, this.permissionPolicy) && isDangerous) {
+    if (isAutoPermissionSemantics(mode, this.permissionPolicy)) {
       return {
         decision: 'deny',
         riskLevel: 'high',
@@ -158,9 +144,43 @@ export class PermissionManager {
     }
 
     return {
+      decision: 'ask',
+      riskLevel,
+      reason
+    }
+  }
+
+  private matchPersistentDecision(
+    toolName: string,
+    args: Record<string, unknown>,
+    target: 'allow' | 'deny'
+  ): PermissionResult | null {
+    if (this.rules.length === 0) return null
+
+    const input: MatchInput = {
+      toolName,
+      args,
+      currentProjectPath: this.currentProjectPath
+    }
+    const match = matchPermission(this.rules, input)
+    if (match.decision !== target) return null
+
+    return {
+      decision: target,
+      riskLevel: target === 'deny' ? 'high' : 'low',
+      reason: match.reason
+    }
+  }
+
+  /** 已通过危险检测的 bash：走 mode + policy 基线 */
+  private checkBashSafe(command: string, mode: Mode): PermissionResult {
+    const baseDecision = getBaseDecision(mode, 'bash', this.permissionPolicy)
+    const { riskLevel } = assessCommandRisk(command || '')
+
+    return {
       decision: baseDecision,
       riskLevel,
-      reason: isDangerous ? reason : getRiskDescription('bash', riskLevel)
+      reason: getRiskDescription('bash', riskLevel)
     }
   }
 

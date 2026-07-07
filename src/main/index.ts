@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, Menu, shell, dialog } from 'electron'
 import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
 import { resolveAppIconPath } from './appIcon'
 import { join } from 'path'
@@ -19,9 +19,17 @@ import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
+import { initMainLogger, mainLog } from './logger'
+import { initAutoUpdater } from './updater'
+import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
+import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeyStorage'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
 let quitInProgress = false
+
+/** 渲染进程崩溃自动恢复次数上限（防循环崩溃） */
+const MAX_RENDER_RELOAD_ATTEMPTS = 3
+let renderReloadAttempts = 0
 
 /** 模型客户端实例，运行时通过配置初始化 */
 let modelClient: ModelClient | null = null
@@ -166,6 +174,28 @@ function createMainWindow(): void {
     }
   })
 
+  // 渲染进程崩溃自愈：记日志 + reload（带上限防循环）
+  contents.on('render-process-gone', (_event, details) => {
+    mainLog.error('[render-process-gone]', details)
+    if (renderReloadAttempts >= MAX_RENDER_RELOAD_ATTEMPTS) {
+      void dialog.showMessageBox(win, {
+        type: 'error',
+        title: 'Nova Agent',
+        message: '界面多次崩溃，请重启应用。',
+        buttons: ['确定']
+      })
+      return
+    }
+    renderReloadAttempts++
+    if (!contents.isDestroyed()) {
+      contents.reload()
+    }
+  })
+
+  contents.on('did-finish-load', () => {
+    renderReloadAttempts = 0
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -179,6 +209,9 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  initMainLogger()
+  bindRegistryApiKeyCrypto(encryptApiKeyForDisk, decryptApiKeyFromDisk)
+
   // Windows 任务栏分组与固定快捷方式需要稳定的 AppUserModelId
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.nova-agent.app')
@@ -207,6 +240,8 @@ app.whenReady().then(async () => {
 
   // 5. 创建渲染视窗（窗口尽早诞生，loadURL → ready-to-show → show 异步进行）
   createMainWindow()
+
+  initAutoUpdater(getMainWindow)
 
   // ── 6. 窗口已开始加载，把不阻塞首屏的重活推迟到下一个事件循环 tick ──
   //    这些步骤均有降级或非首屏路径依赖：

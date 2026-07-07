@@ -37,11 +37,31 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: />\s*\/dev\//, reason: '直接写入设备文件' },
   { pattern: /\bservice\s+\w+\s+start/, reason: '启动系统服务' },
   { pattern: /\bsystemctl\s+(start|enable)/, reason: '启动或启用系统服务' },
-  { pattern: /\brmdir\s+\/[sS]\s+\/[qQ]/, reason: 'Windows 静默递归删除目录' },
-  { pattern: /\bdel\s+\/[sS]\s+\/[fF]\s+\/[qQ]/, reason: 'Windows 静默强制递归删除文件' },
+  // Windows cmd：rd 为 rmdir 别名；del 的 /f /s /q 顺序无关
+  { pattern: /\b(rmdir|rd)\s+\/[sSqQ]\s+\/[qQ]/i, reason: 'Windows 静默递归删除目录' },
+  {
+    pattern: /\bdel\b(?=[^\r\n]*\/[fFsS])(?=[^\r\n]*\/[sS])(?=[^\r\n]*\/[qQ])/i,
+    reason: 'Windows 静默强制递归删除文件'
+  },
   { pattern: /\bformat\s+[a-zA-Z]:/, reason: '格式化磁盘驱动器' },
-  { pattern: /\bpowershell\b.*Remove-Item.*-Recurse.*-Force/i, reason: 'PowerShell 强制递归删除' },
-  { pattern: /\bpowershell\b.*Invoke-WebRequest.*\|\s*Invoke-Expression/i, reason: '从网络下载并执行脚本' },
+  // PowerShell cmdlet 辨识度极高，不依赖命令串是否含 powershell 一词
+  {
+    pattern: /Remove-Item\b[^\r\n]*-(?:Recurse|Force)/i,
+    reason: 'PowerShell 强制递归删除'
+  },
+  { pattern: /\b(Invoke-Expression|iex)\b/i, reason: 'PowerShell 动态执行' },
+  {
+    pattern: /\b(Invoke-WebRequest|iwr|Invoke-RestMethod)\b[^\r\n]*\|\s*(iex|Invoke-Expression)\b/i,
+    reason: '从网络下载并执行脚本'
+  },
+  { pattern: /\b(Format-Volume|Clear-Disk|Initialize-Disk)\b/i, reason: 'PowerShell 磁盘破坏性操作' },
+  { pattern: /\bSet-ExecutionPolicy\b/i, reason: '修改 PowerShell 执行策略' },
+  { pattern: /\b(Stop-Computer|Restart-Computer)\b/i, reason: '关闭或重启计算机' },
+  { pattern: /\bStart-Process\b[^\r\n]*-Verb\s+RunAs/i, reason: '提权启动进程' },
+  {
+    pattern: /\b(Set-ItemProperty|Remove-ItemProperty)\b[^\r\n]*(HKLM:|HKCU:)/i,
+    reason: '修改注册表'
+  },
   { pattern: /\bnet\s+(user|localgroup)\s+/i, reason: '修改系统用户或用户组' },
   { pattern: /\breg\s+(add|delete)\s+/i, reason: '修改或删除系统注册表' },
   { pattern: /\bschtasks\s+\/(create|delete)\s+/i, reason: '创建或删除计划任务' },

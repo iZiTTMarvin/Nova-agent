@@ -241,6 +241,10 @@ export interface ChatState {
   /** 与消息生成生命周期强绑定，写入由 sendMessage / handleMessageStart / handleError 触发 */
   isGenerating: boolean
   currentGeneratingMessageId: string | null
+  /** 当前 Agent 轮次归属的会话 ID（切走后用于过滤旧会话事件） */
+  activeAgentSessionId: string | null
+  /** 发送请求已发出、尚未收到首个流式事件（防连点） */
+  sendInFlight: boolean
 
   /**
    * 流式工具调用参数累积：toolCallId → 已累积的 arguments 字符串。
@@ -300,7 +304,13 @@ export interface ChatState {
   /** 创建新会话 */
   createNewSession: (workspaceRoot?: string) => Promise<void>
   /** 发送用户消息（含图片） */
-  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>
+  sendMessage: (
+    content: string,
+    images?: ImageAttachment[],
+    options?: {
+      rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
+    }
+  ) => Promise<void>
   /** 按消息回退到某条消息之前的状态 */
   regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
   /** 切换到兄弟分支（翻页器） */
@@ -515,6 +525,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tier1BranchContext: null,
   isGenerating: false,
   currentGeneratingMessageId: null,
+  activeAgentSessionId: null,
+  sendInFlight: false,
   streamingToolArgs: {},
   messageDiffs: {},
   loadingDiffs: new Set(),
@@ -554,9 +566,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await useWorkspaceStore.getState().renameSession(sessionId, title)
   },
 
-  sendMessage: async (content: string, images?: ImageAttachment[]) => {
-    const { currentSessionId, isGenerating } = get()
-    if (isGenerating) return
+  sendMessage: async (content: string, images?: ImageAttachment[], options?: {
+    /** IPC 失败时恢复乐观截断前的消息树 */
+    rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
+  }) => {
+    const { currentSessionId, isGenerating, sendInFlight } = get()
+    if (isGenerating || sendInFlight) return
 
     // 新发消息会改变工作区语义，退出 Tier 1「仅对话历史」视图
     set({ tier1BranchContext: null })
@@ -606,7 +621,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: trimmed.messages,
         messageIndexById: trimmed.index,
         ...paginationPatchAfterHeadTrim(trimmed),
-        isGenerating: true
+        isGenerating: true,
+        sendInFlight: true,
+        activeAgentSessionId: activeSessionId
       }
     })
 
@@ -623,6 +640,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }))
       })
     } catch (err) {
+      if (options?.rollbackSnapshot) {
+        set({
+          messages: options.rollbackSnapshot.messages,
+          messageIndexById: options.rollbackSnapshot.messageIndexById,
+          sendInFlight: false,
+          activeAgentSessionId: null,
+          isGenerating: false,
+          branchForkInProgress: false,
+          pendingBranchMetaReload: false
+        })
+        try {
+          const { useWorkspaceStore } = await import('./useWorkspaceStore')
+          await useWorkspaceStore.getState().bumpMessagesRevision()
+        } catch (reloadErr) {
+          console.error('[sendMessage] 回滚后重载会话失败:', reloadErr)
+        }
+        set(state => ({
+          rollbackErrors: {
+            ...state.rollbackErrors,
+            [userMsg.id]: (err as Error).message
+          }
+        }))
+        return
+      }
+      set({ sendInFlight: false, activeAgentSessionId: null, isGenerating: false })
       await get().handleError('msg_err_' + Date.now(), (err as Error).message)
     }
   },
@@ -686,17 +728,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     if (assistantIdx !== -1) {
+      const preTruncate = {
+        messages: [...messages],
+        messageIndexById: buildMessageIndex(messages)
+      }
       const truncated = messages.slice(0, assistantIdx)
       set({
         messages: truncated,
         messageIndexById: buildMessageIndex(truncated),
         messageDiffs: {},
         loadingDiffPlaceholders: {},
-        loadingDiffs: new Set()
+        loadingDiffs: new Set(),
+        isGenerating: true,
+        sendInFlight: true,
+        activeAgentSessionId: sessionId
       })
+
+      set({ pendingBranchMetaReload: true })
+
+      try {
+        await window.api.invoke('send-message', {
+          sessionId,
+          content: '',
+          regenerate: true
+        })
+      } catch (err) {
+        set({
+          messages: preTruncate.messages,
+          messageIndexById: preTruncate.messageIndexById,
+          branchForkInProgress: false,
+          isGenerating: false,
+          sendInFlight: false,
+          activeAgentSessionId: null,
+          pendingBranchMetaReload: false
+        })
+        try {
+          const { useWorkspaceStore } = await import('./useWorkspaceStore')
+          await useWorkspaceStore.getState().bumpMessagesRevision()
+        } catch (reloadErr) {
+          console.error('[regenerateAssistant] 回滚后重载会话失败:', reloadErr)
+        }
+        set(state => ({
+          rollbackErrors: {
+            ...state.rollbackErrors,
+            [messageId]: err instanceof Error ? err.message : '重新生成失败'
+          }
+        }))
+      }
+      return
     }
 
-    set({ pendingBranchMetaReload: true })
+    set({ pendingBranchMetaReload: true, isGenerating: true, sendInFlight: true, activeAgentSessionId: sessionId })
 
     try {
       await window.api.invoke('send-message', {
@@ -705,7 +787,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         regenerate: true
       })
     } catch (err) {
-      await get().handleError('msg_err_' + Date.now(), (err as Error).message)
+      set({
+        branchForkInProgress: false,
+        isGenerating: false,
+        sendInFlight: false,
+        activeAgentSessionId: null,
+        pendingBranchMetaReload: false
+      })
+      set(state => ({
+        rollbackErrors: {
+          ...state.rollbackErrors,
+          [messageId]: err instanceof Error ? err.message : '重新生成失败'
+        }
+      }))
     }
   },
 
@@ -755,6 +849,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     //    主进程 prepareEditResend 不 bump messagesRevision，不会触发 reload 覆盖这里。
     const { messages } = get()
     const idx = messages.findIndex(m => m.id === messageId)
+    const rollbackSnapshot = {
+      messages: [...messages],
+      messageIndexById: buildMessageIndex(messages)
+    }
     if (idx !== -1) {
       const truncated = messages.slice(0, idx)
       set({
@@ -770,7 +868,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 3. 复用普通发送：乐观追加新用户消息 + 流式渲染。
     //    appendMessage 在主进程会把新用户消息的 parentId 设为分叉点，天然成兄弟分支。
     set({ pendingBranchMetaReload: true })
-    await get().sendMessage(newContent)
+    await get().sendMessage(newContent, undefined, { rollbackSnapshot })
   },
 
   /**
@@ -986,7 +1084,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         messages: nextMessages,
         messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
-        currentGeneratingMessageId: messageId
+        currentGeneratingMessageId: messageId,
+        sendInFlight: false
       }
     })
   },
@@ -1295,6 +1394,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: nextMessages,
         isGenerating: false,
         currentGeneratingMessageId: null,
+        activeAgentSessionId: null,
+        sendInFlight: false,
         branchForkInProgress: false,
         ...omitRecoveryFieldsForMessage(state, messageId),
         // 中断时清空所有流式工具参数累积
@@ -1665,12 +1766,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const revisionChanged = next.messagesRevision !== prev.lastMessagesRevision
 
     // 1. 同步 sessions 列表 + currentSessionId + revision + Tier 1 上下文
-    set({
+    const patch: Partial<ChatState> = {
       sessions: next.availableSessions,
       currentSessionId: next.currentSessionId,
       lastMessagesRevision: next.messagesRevision,
       tier1BranchContext: sessionChanged ? null : next.tier1BranchContext
-    })
+    }
+
+    // 会话切换：重置生成态与排队队列，避免旧会话 message_end drain 到新会话
+    if (sessionChanged) {
+      patch.isGenerating = false
+      patch.currentGeneratingMessageId = null
+      patch.sendInFlight = false
+      patch.pendingUserMessages = []
+      patch.branchForkInProgress = false
+      patch.streamingToolArgs = {}
+    }
+
+    set(patch)
 
     // 2. 会话切换 或 同会话内消息序列变化时，重新加载消息（或清空）
     if (sessionChanged || revisionChanged) {
@@ -1728,6 +1841,8 @@ export function resetChatStoreForTests(): void {
     tier1BranchContext: null,
     isGenerating: false,
     currentGeneratingMessageId: null,
+    activeAgentSessionId: null,
+    sendInFlight: false,
     streamingToolArgs: {},
     messageDiffs: {},
     loadingDiffs: new Set(),

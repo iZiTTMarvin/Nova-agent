@@ -13,6 +13,7 @@ import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStore } from './features/compose/useComposeStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
+import { gateAgentEvent } from './lib/agentEventGate'
 import './App.css'
 
 /**
@@ -91,36 +92,36 @@ function App(): JSX.Element {
     })
 
     // 监听：Agent 思考开始
-    const unsubMessageStart = window.api.on('agent:message-start', (data) => {
+    const unsubMessageStart = window.api.on('agent:message-start', gateAgentEvent('message-start', (data) => {
       handleMessageStart(data.messageId)
-    })
+    }))
 
     // 监听：Agent 思考实时增量 → 进 buffer
-    const unsubThinkingDelta = window.api.on('agent:thinking-delta', (data) => {
+    const unsubThinkingDelta = window.api.on('agent:thinking-delta', gateAgentEvent('thinking-delta', (data) => {
       buffer.pushThinking(data.messageId, data.delta)
-    })
+    }))
 
     // 监听：Agent 流式字符输出 → 进 buffer
-    const unsubTextDelta = window.api.on('agent:text-delta', (data) => {
+    const unsubTextDelta = window.api.on('agent:text-delta', gateAgentEvent('text-delta', (data) => {
       buffer.pushText(data.messageId, data.delta)
-    })
+    }))
 
     // 监听：Agent 流式工具调用开始（low-freq 元数据，直接 store）
-    const unsubToolCallStart = window.api.on('agent:tool-call-start', (data) => {
+    const unsubToolCallStart = window.api.on('agent:tool-call-start', gateAgentEvent('tool-call-start', (data) => {
       // 与 tool-call 最终事件同理：text_delta 走 16ms 缓冲而 start 直达 store。
       // 若不先 flush，本应落在 tool 块之前的正文会被追加到 tool 之后的 text 块，
       // 造成工具卡片与旁白顺序颠倒、Markdown 在工具边界被截断（如孤立的「`方法」）。
       buffer.flushNow()
       handleToolCallStart(data.messageId, data.toolCallId, data.toolName)
-    })
+    }))
 
     // 监听：Agent 流式工具调用参数增量 → 进 buffer
-    const unsubToolCallDelta = window.api.on('agent:tool-call-delta', (data) => {
+    const unsubToolCallDelta = window.api.on('agent:tool-call-delta', gateAgentEvent('tool-call-delta', (data) => {
       buffer.pushToolCallDelta(data.messageId, data.toolCallId, data.argumentsDelta)
-    })
+    }))
 
     // 监听：Agent 工具调用完成（最终事件，携带完整参数）→ 直接 store
-    const unsubToolCall = window.api.on('agent:tool-call', (data) => {
+    const unsubToolCall = window.api.on('agent:tool-call', gateAgentEvent('tool-call', (data) => {
       // 关键修复（竞态）：工具参数 delta 走 300ms 缓冲，而本最终事件直接进 store。
       // 若不先 flush，缓冲中迟到的 partial delta 会在 handleToolCall 写入完整 args 之后
       // 才 flush，用残缺的 partial 解析结果覆盖完整 args，导致文件名/内容丢失
@@ -128,28 +129,28 @@ function App(): JSX.Element {
       // 因此先把缓冲中该轮残留的 delta 同步刷入 store，再用完整 args 覆盖，保证顺序正确。
       buffer.flushNow()
       handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args)
-    })
+    }))
 
     // 监听：Agent 工具执行完毕拿到结果
-    const unsubToolResult = window.api.on('agent:tool-result', (data) => {
+    const unsubToolResult = window.api.on('agent:tool-result', gateAgentEvent('tool-result', (data) => {
       handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result)
-    })
+    }))
 
     // 监听：Agent 请求用户确认权限
-    const unsubPermissionRequest = window.api.on('agent:permission-request', (data) => {
+    const unsubPermissionRequest = window.api.on('agent:permission-request', gateAgentEvent('permission-request', (data) => {
       handlePermissionRequest(data)
-    })
+    }))
 
     // 监听：Agent 执行中实时 diff 更新
-    const unsubDiffUpdate = window.api.on('agent:diff-update', (data) => {
+    const unsubDiffUpdate = window.api.on('agent:diff-update', gateAgentEvent('diff-update', (data) => {
       handleDiffUpdate(data.messageId, data.phase, data.diffs, data.reviews)
-    })
+    }))
 
     // 监听：Agent 执行出错 → 强制 flush 后再走最终事件
-    const unsubError = window.api.on('agent:error', (data) => {
+    const unsubError = window.api.on('agent:error', gateAgentEvent('error', (data) => {
       buffer.flushNow()
       handleError(data.messageId, data.error)
-    })
+    }))
 
     // 监听：验证结果
     const unsubVerificationResult = window.api.on('agent:verification-result', (data) => {
@@ -181,20 +182,18 @@ function App(): JSX.Element {
     })
 
     // 监听：Agent 本轮思考和应答全部完成 → 强制 flush
-    const unsubMessageEnd = window.api.on('agent:message-end', (data) => {
+    const unsubMessageEnd = window.api.on('agent:message-end', gateAgentEvent('message-end', (data) => {
       buffer.flushNow()
       // await dispatchNextPending 的潜在异常，catch 后避免静默吞掉导致 UI 卡死
       Promise.resolve(handleMessageEnd(data.messageId, data.interrupted)).catch((err) => {
         console.error('[message-end] handleMessageEnd 异常:', err)
       })
-      // dispose 之后下一次 message-start 来临会由 React 重新 effect 重建 buffer。
-      // 为简化：保持 buffer 实例跨 turn 复用，dispose 仅在 App 卸载时执行。
-    })
+    }))
 
     // 监听：Token 用量统计
-    const unsubUsage = window.api.on('agent:usage', (data) => {
+    const unsubUsage = window.api.on('agent:usage', gateAgentEvent('usage', (data) => {
       handleUsage(data.usage)
-    })
+    }))
 
     const unsubContextBreakdown = window.api.on('agent:context-breakdown', (data) => {
       // 不能在 effect 建立时捕获 currentSessionId；会话切换/首次打开历史会话后，
@@ -205,19 +204,19 @@ function App(): JSX.Element {
     })
 
     // 监听：Hook 执行异常（不中断 Agent，仅 UI 提示）
-    const unsubHookError = window.api.on('agent:hook-error', (data) => {
+    const unsubHookError = window.api.on('agent:hook-error', gateAgentEvent('hook-error', (data) => {
       useChatStore.getState().handleHookError(data.messageId, data.hookEvent, data.error)
-    })
+    }))
 
     // 监听：恢复提示（重试 / 压缩上下文等）
-    const unsubRecoveryHint = window.api.on('agent:recovery-hint', (data) => {
+    const unsubRecoveryHint = window.api.on('agent:recovery-hint', gateAgentEvent('recovery-hint', (data) => {
       useChatStore.getState().handleRecoveryHint(data.messageId, data.hint, data.attempt)
-    })
+    }))
 
     // 监听：恢复状态机切换（retrying / recovering 等）
-    const unsubRecoveryState = window.api.on('agent:recovery-state', (data) => {
+    const unsubRecoveryState = window.api.on('agent:recovery-state', gateAgentEvent('recovery-state', (data) => {
       useChatStore.getState().handleRecoveryState(data.messageId, data.state)
-    })
+    }))
 
     // 编排：state / phase / tasks / log / askUser
     const unsubComposeState = window.api.on('compose:state', (data) => {
@@ -239,6 +238,14 @@ function App(): JSX.Element {
         question: data.question,
         options: data.options
       })
+    })
+
+    // 自动更新：下载完成后提示重启安装
+    const unsubUpdateDownloaded = window.api.on('app:update-downloaded', (data) => {
+      const install = window.confirm(`新版本 ${data.version} 已下载，是否立即重启安装？`)
+      if (install) {
+        void window.api.invoke('app:install-update')
+      }
     })
 
     // 清理函数：解绑所有主进程事件监听器，释放 buffer
@@ -275,6 +282,7 @@ function App(): JSX.Element {
       unsubComposeTasks()
       unsubComposeLog()
       unsubComposeAskUser()
+      unsubUpdateDownloaded()
       buffer.flushNow()
       buffer.dispose()
     }

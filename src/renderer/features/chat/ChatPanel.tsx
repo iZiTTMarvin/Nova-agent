@@ -88,6 +88,7 @@ export const ChatPanel: React.FC = () => {
   // ── chat store（消息/会话/diff/流式） ──
   const messages = useChatStore(state => state.messages)
   const isGenerating = useChatStore(state => state.isGenerating)
+  const sendInFlight = useChatStore(state => state.sendInFlight)
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const currentGeneratingMessageId = useChatStore(state => state.currentGeneratingMessageId)
   const sendMessage = useChatStore(state => state.sendMessage)
@@ -370,6 +371,7 @@ export const ChatPanel: React.FC = () => {
 
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
+    if (isGenerating || sendInFlight) return
     if (!modelConfig) {
       alert("请先在设置中配置 LLM 服务商与模型！")
       useSettingsStore.getState().openLlmSettings()
@@ -831,7 +833,7 @@ export const ChatPanel: React.FC = () => {
                   <ContextIndicator />
                 </div>
                 <div>
-                  {isGenerating ? (
+                  {isGenerating || sendInFlight ? (
                     <button
                       className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
                       onClick={cancelExecution}
