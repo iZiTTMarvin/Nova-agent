@@ -8,12 +8,64 @@
  * - system prompt 由 AgentLoop 构造时注入（frozenSystemPrompt），此处不再处理
  * - thinking 内容不进入模型上下文
  * - assistant 的 toolCalls 恢复为结构化 tool_calls，result 拆成独立 tool 消息
+ * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL（base64 data URL）；
+ *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
 import type { ChatMessage, ContentBlock } from '../../model/types'
 import type { SessionData } from '../../sessions/types'
 import { getSessionActiveMessages } from '../../sessions/tree'
 import type { Mode } from '../../../shared/session/types'
 import { stripLeakedToolMarkup } from '../../../shared/tool-call-text-fallback'
+
+/** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
+function isInternalImageUrl(url: string): boolean {
+  return typeof url === 'string' && url.startsWith('nova-image://')
+}
+
+/**
+ * 对 content（string 或 ContentBlock[]）中的 image_url 块应用 URL 转换。
+ * 非 image_url 块与纯文本 content 原样返回。
+ */
+function resolveImageUrlsInContent(
+  content: string | ContentBlock[],
+  resolveImageUrl: (url: string) => string
+): string | ContentBlock[] {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return content
+
+  let changed = false
+  const next = content.map(block => {
+    if (block.type === 'image_url' && isInternalImageUrl(block.image_url.url)) {
+      changed = true
+      return {
+        ...block,
+        image_url: { ...block.image_url, url: resolveImageUrl(block.image_url.url) }
+      }
+    }
+    return block
+  })
+  return changed ? next : content
+}
+
+/**
+ * 对一组 ChatMessage 扫描并转换其中的内部图片 URL。
+ * 用于压缩快照（recentMessages）恢复路径——快照持久化时存的也是 nova-image:// URL。
+ */
+export function resolveImageUrlsInMessages(
+  messages: ChatMessage[],
+  resolveImageUrl: (url: string) => string
+): ChatMessage[] {
+  let changed = false
+  const next = messages.map(msg => {
+    const resolved = resolveImageUrlsInContent(msg.content, resolveImageUrl)
+    if (resolved !== msg.content) {
+      changed = true
+      return { ...msg, content: resolved }
+    }
+    return msg
+  })
+  return changed ? next : messages
+}
 
 /** 清洗 assistant 正文中泄漏的模型原生工具标记（如 DeepSeek DSML） */
 function sanitizeAssistantContent(content: string | ContentBlock[]): string | ContentBlock[] {
@@ -36,10 +88,14 @@ function sanitizeAssistantContent(content: string | ContentBlock[]): string | Co
  *
  * system prompt 由 agentHandler 通过 AgentLoop 构造时注入（frozenSystemPrompt），
  * 此处只恢复 user / assistant / tool 历史消息，保证前缀稳定。
+ *
+ * @param resolveImageUrl 可选的图片 URL 转换器：把持久化的内部协议 URL（nova-image://）
+ *   转回模型可识别的 base64 data URL。未传入时 image_url 原样透传（单测路径）。
  */
 export function buildConversationContext(
   session: SessionData,
-  _mode: Mode
+  _mode: Mode,
+  resolveImageUrl?: (url: string) => string
 ): ChatMessage[] {
   const context: ChatMessage[] = []
 
@@ -107,10 +163,12 @@ export function buildConversationContext(
       continue
     }
 
-    // user 消息：原样保留（content 可能是 string 或 ContentBlock[]）
+    // user 消息：原样保留（content 可能是 string 或 ContentBlock[]）。
+    // 若含内部图片协议 URL（nova-image://），经 resolveImageUrl 转回 base64 data URL 供模型识别。
+    const userContent = msg.content as string | ContentBlock[]
     context.push({
       role: msg.role,
-      content: msg.content as string | ContentBlock[]
+      content: resolveImageUrl ? resolveImageUrlsInContent(userContent, resolveImageUrl) : userContent
     })
   }
 

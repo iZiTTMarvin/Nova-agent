@@ -114,6 +114,8 @@ export const MEMORY_STATS = 'memory:stats' as const
 export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
 /** 安装已下载的应用更新并重启 */
 export const INSTALL_APP_UPDATE = 'app:install-update' as const
+/** 图片落盘：用户上传的 base64 data URL → 主进程写盘 → 返回 nova-image:// URL */
+export const IMAGE_SAVE = 'image:save' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 

@@ -5,7 +5,7 @@
  * 约束：只读写 context-snapshot.json，不修改 session.messages。
  */
 import { AgentLoop } from '../agent/AgentLoop'
-import { buildConversationContext } from '../agent/context/contextBuilder'
+import { buildConversationContext, resolveImageUrlsInMessages } from '../agent/context/contextBuilder'
 import type { CompactionMeta } from '../agent/types'
 import type { ChatMessage } from '../model/types'
 import type { SessionStore } from './SessionStore'
@@ -58,11 +58,15 @@ export function persistCompactionSnapshot(
  * @param agentLoop 已完成 setToolRegistry 的实例
  * @param session handler 入口加载的会话（新用户消息尚未 append）
  * @param snapshot loadContextSnapshot 的结果，可传 null
+ * @param resolveImageUrl 可选的图片 URL 转换器：把持久化的 nova-image:// URL 转回 base64 data URL。
+ *   历史消息与压缩快照里存的都是内部协议 URL，模型 API 不认识，必须转换后才能发给模型。
+ *   不传则原样透传（单测路径）。
  */
 export function restoreOrInjectHistory(
   agentLoop: AgentLoop,
   session: SessionData,
-  snapshot: ContextSnapshot | null
+  snapshot: ContextSnapshot | null,
+  resolveImageUrl?: (url: string) => string
 ): void {
   const activeMessages = getSessionActiveMessages(session)
   const anchorIdx = snapshot
@@ -71,10 +75,14 @@ export function restoreOrInjectHistory(
 
   if (snapshot && anchorIdx >= 0) {
     const delta = activeMessages.slice(anchorIdx + 1)
-    const deltaContext = buildConversationContext({ ...session, messages: delta }, session.mode)
-    const recent = [...snapshot.recentMessages, ...deltaContext]
+    const deltaContext = buildConversationContext({ ...session, messages: delta }, session.mode, resolveImageUrl)
+    // 快照里的 recentMessages 持久化时同样存了 nova-image:// URL，需一并转换
+    const recentResolved = resolveImageUrl
+      ? resolveImageUrlsInMessages(snapshot.recentMessages, resolveImageUrl)
+      : snapshot.recentMessages
+    const recent = [...recentResolved, ...deltaContext]
     agentLoop.restoreCompactedContext(snapshot.summary, recent, snapshot.compactionLevel)
   } else {
-    agentLoop.injectHistory(buildConversationContext(session, session.mode))
+    agentLoop.injectHistory(buildConversationContext(session, session.mode, resolveImageUrl))
   }
 }

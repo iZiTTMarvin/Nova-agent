@@ -456,8 +456,14 @@ export const ChatPanel: React.FC = () => {
       return
     }
 
+    // 无会话时不落盘（fileToImageAttachment 需 sessionId 决定落盘目录）
+    if (!currentSessionId) {
+      showToast('请先选择或创建会话')
+      return
+    }
+
     const toProcess = files.slice(0, remainingSlots)
-    const results = await Promise.all(toProcess.map(f => fileToImageAttachment(f)))
+    const results = await Promise.all(toProcess.map(f => fileToImageAttachment(f, currentSessionId)))
 
     const valid: ImageAttachment[] = []
     for (const res of results) {
@@ -474,7 +480,7 @@ export const ChatPanel: React.FC = () => {
     if (files.length > toProcess.length) {
       showToast('最多上传 10 张图片')
     }
-  }, [imageAttachments.length, showToast])
+  }, [imageAttachments.length, showToast, currentSessionId])
 
   /** 文件 input onChange */
   const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {

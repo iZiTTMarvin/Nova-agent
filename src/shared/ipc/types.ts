@@ -105,7 +105,10 @@ export interface IpcCommands {
       userMessageId?: string
       images?: Array<{
         fileName: string
-        /** base64 data: URI（renderer 端 FileReader.readAsDataURL 编码） */
+        /**
+         * 图片引用。渲染层上传时已落盘，通常为 nova-image:// URL；
+         * 主进程发给模型 API 时会临时读回 base64 data URL（模型不认识自定义协议）。
+         */
         data: string
         mimeType: string
       }>
@@ -432,6 +435,19 @@ export interface IpcCommands {
   'app:install-update': {
     params: void
     result: void
+  }
+  'image:save': {
+    params: {
+      sessionId: string
+      fileName: string
+      /** base64 data URL（data:{mime};base64,...），主进程写盘后不再持有 */
+      dataUrl: string
+      mimeType: string
+    }
+    result: {
+      /** nova-image:// URL，渲染层 <img src> 与持久化引用 */
+      url: string
+    }
   }
 }
 

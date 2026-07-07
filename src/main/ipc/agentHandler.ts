@@ -5,6 +5,7 @@
  * S9：集成 CheckpointManager、SessionStore、流式内容累积
  */
 import { BrowserWindow, app } from 'electron'
+import * as fs from 'fs'
 import { handle } from './secureIpc'
 import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
 import { join } from 'path'
@@ -40,6 +41,7 @@ import type { SessionMessageAppend, SessionToolCall, SerializableContentBlock } 
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import type { MessageBlock } from '../../shared/session/types'
+import { ImageStore } from '../../runtime/storage/ImageStore'
 import { getWorkspaceService } from '../services/WorkspaceService'
 import {
   persistCompactionSnapshot,
@@ -214,13 +216,47 @@ export function markActiveStreamsCancelled(): void {
 }
 
 /**
+ * 把 nova-image:// URL 临时读回 base64 data URL，仅供发给模型 API（模型不认识自定义协议）。
+ * 不持久化——持久化始终只存 nova-image:// URL。
+ *
+ * 读盘失败时回退为最小占位 data URL（1x1 png），避免整条消息因单张图读盘失败而中断；
+ * 落盘失败属异常路径，会记 error 日志便于排查。
+ *
+ * 同步读盘：图片通常 <5MB，读盘 <10ms，远小于一次模型 API 调用（数秒），不是性能瓶颈。
+ * 若未来支持超大图片，可在此处改异步（但会向上传导到 contextBuilder 整条链路）。
+ */
+function resolveToDataUrl(imageStore: ImageStore, url: string, fallbackMime?: string): string {
+  const resolved = imageStore.resolveUrl(url)
+  if (!resolved) {
+    console.error(`[agentHandler] 图片 URL 解析失败，回退占位: ${url}`)
+    return PLACEHOLDER_PNG_DATA_URL
+  }
+  try {
+    const buffer = fs.readFileSync(resolved.filePath)
+    // octet-stream 表示扩展名未能推导 MIME，用渲染层传入的 mimeType 兜底
+    const mime = resolved.mimeType === 'application/octet-stream' && fallbackMime
+      ? fallbackMime
+      : resolved.mimeType
+    return `data:${mime};base64,${buffer.toString('base64')}`
+  } catch (err) {
+    console.error(`[agentHandler] 图片读盘失败，回退占位: ${resolved.filePath}`, err)
+    return PLACEHOLDER_PNG_DATA_URL
+  }
+}
+
+/** 1x1 透明 PNG，作为图片读盘异常时的占位兜底 */
+const PLACEHOLDER_PNG_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+
+/**
  * 注册 agent 相关的 IPC handler
  * @param getMainWindow 获取当前活跃的 Electron 主窗口
  * @param getModelClient 获取当前配置的 ModelClient 实例
  */
 export function registerAgentHandler(
   getMainWindow: () => BrowserWindow | null,
-  getModelClient: () => ModelClient | null
+  getModelClient: () => ModelClient | null,
+  getImageStore: () => ImageStore
 ): void {
   // 发送消息命令
   handle(SEND_MESSAGE, async (_event, params: {
@@ -438,11 +474,13 @@ export function registerAgentHandler(
       })
     })
 
-    // 从 session 历史恢复多轮对话上下文（快照优先 + 增量补齐，锚点失效则全量重建）
+    // 从 session 历史恢复多轮对话上下文（快照优先 + 增量补齐，锚点失效则全量重建）。
+    // 历史消息里的图片以 nova-image:// URL 持久化，模型不认识，恢复时需转回 base64。
     restoreOrInjectHistory(
       agentLoop,
       session,
-      sessionStore.loadContextSnapshot(params.sessionId)
+      sessionStore.loadContextSnapshot(params.sessionId),
+      (url) => resolveToDataUrl(getImageStore(), url)
     )
 
     toolRegistry.register(createTaskTool({
@@ -530,16 +568,28 @@ export function registerAgentHandler(
       const persistBlocks: import('../../shared/session/types').MessageBlock[] = []
 
       if (params.images && params.images.length > 0) {
+        // img.data 是 nova-image:// URL（渲染层上传时已落盘）。
+        // 持久化只存 URL（几十字节）；发给模型时再把 URL 临时转回 base64 data URL。
+        const imageReader = getImageStore()
+
         const imageContentBlocks: ContentBlock[] = [
           { type: 'text', text: params.content },
           ...params.images.map(img => ({
             type: 'image_url' as const,
-            image_url: { url: img.data }
+            // 模型 API 仅认识 http(s) URL 或 data URL，nova-image:// 需转回 base64
+            image_url: { url: resolveToDataUrl(imageReader, img.data, img.mimeType) }
           }))
         ]
-        // ContentBlock 与 SerializableContentBlock 结构兼容，复用同一数组
         sendContent = imageContentBlocks
-        persistContent = imageContentBlocks as SerializableContentBlock[]
+
+        // 持久化：content 与 blocks 都只存 nova-image:// URL，不再内联 base64
+        persistContent = [
+          { type: 'text', text: params.content },
+          ...params.images.map(img => ({
+            type: 'image_url' as const,
+            image_url: { url: img.data }
+          })) as SerializableContentBlock[]
+        ]
         persistBlocks.push({ type: 'text', content: params.content })
         persistBlocks.push(...params.images.map(img => ({
           type: 'image' as const,

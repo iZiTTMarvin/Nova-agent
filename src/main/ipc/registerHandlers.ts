@@ -1,5 +1,7 @@
 import { app } from 'electron'
+import { join } from 'path'
 import { cleanupStaleAtomicTmpFiles } from '../../runtime/storage/atomicFile'
+import { ImageStore } from '../../runtime/storage/ImageStore'
 import { handle } from './secureIpc'
 import { PING } from '../../shared/ipc/channels'
 import { registerProjectHandler } from './projectHandler'
@@ -16,6 +18,7 @@ import { registerDialogHandler } from './dialogHandler'
 import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
 import { registerComposeHandler } from './composeHandler'
 import { registerMemoryHandler } from './memoryHandler'
+import { registerImageHandler } from './imageHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
 import {
@@ -33,8 +36,11 @@ import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 /**
  * 注册所有主进程与渲染进程的 IPC 命令通信处理器
  * 统一分发并代理各类具体功能处理器
+ *
+ * 返回 ImageStore 实例：主进程入口需复用它注册 nova-image:// 协议 handler
+ * （协议 handler 必须在 createMainWindow 之前注册，与 IPC handler 共用同一落盘实例）。
  */
-export function registerIpcHandlers(): void {
+export function registerIpcHandlers(): ImageStore {
   // 清理上次崩溃遗留的原子写 .tmp 文件
   cleanupStaleAtomicTmpFiles(app.getPath('userData'))
 
@@ -103,6 +109,13 @@ export function registerIpcHandlers(): void {
   // 跨会话记忆浏览/编辑 IPC（P2-1）
   registerMemoryHandler()
 
+  // 图片落盘 IPC + nova-image:// 协议 handler 共用同一 ImageStore 实例。
+  // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。
+  const imageStore = new ImageStore(join(app.getPath('userData'), 'sessions'))
+  registerImageHandler(() => imageStore)
+
   // 启动时静默执行一次存储 GC（清理临时日志 + 陈旧快照）
   runStartupStorageGc()
+
+  return imageStore
 }

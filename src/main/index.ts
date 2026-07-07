@@ -1,4 +1,6 @@
 import { app, BrowserWindow, Menu, shell, dialog } from 'electron'
+// registerSchemesAsPrivileged 必须在 app.whenReady 之前调用，放模块顶层最早执行
+import { registerNovaImageScheme, registerNovaImageHandler } from './protocol/novaImageProtocol'
 import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
 import { resolveAppIconPath } from './appIcon'
 import { join } from 'path'
@@ -42,6 +44,10 @@ let currentMode: Mode = 'default'
 
 /** 获取主窗口实例 */
 export { getMainWindow } from './mainWindowRef'
+
+// 注册 nova-image:// scheme 属性。必须在 app.whenReady 之前执行，
+// 否则 registerSchemesAsPrivileged 静默失败，<img src="nova-image://..."> 无法加载。
+registerNovaImageScheme()
 
 /** 获取模型客户端 */
 export function getModelClient(): ModelClient | null {
@@ -230,13 +236,18 @@ app.whenReady().then(async () => {
   // 3. 注册所有 renderer → main 的 IPC 处理器（含 WorkspaceService.initOnStartup → store.list）
   //    必须在 createMainWindow 之前完成：renderer mount 即发 workspace:get / window-is-maximized 等
   //    invoke，handler 未注册会 reject；且 initOnStartup 不 broadcast，延后会让侧边栏永久空。
-  registerIpcHandlers()
+  //    返回 ImageStore 实例：nova-image:// 协议 handler 需复用它读盘。
+  const imageStore = registerIpcHandlers()
 
-  // 4. 注册 Agent 运行时专属事件与通道
-  registerAgentHandler(getMainWindow, getModelClient)
+  // 4. 注册 Agent 运行时专属事件与通道（复用 imageStore，用于历史图片 URL→base64 转换）
+  registerAgentHandler(getMainWindow, getModelClient, () => imageStore)
 
   // 4.5. 注册窗口控制的 IPC 处理器
   registerWindowHandler(getMainWindow)
+
+  // 4.6. 注册 nova-image:// 协议 handler（必须在 createMainWindow 之前；
+  //      scheme 属性已在模块顶层通过 registerSchemesAsPrivileged 注册）
+  registerNovaImageHandler(imageStore)
 
   // 5. 创建渲染视窗（窗口尽早诞生，loadURL → ready-to-show → show 异步进行）
   createMainWindow()
