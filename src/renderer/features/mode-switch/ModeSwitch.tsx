@@ -35,8 +35,8 @@ export const ModeSwitch: React.FC = () => {
     },
     {
       id: 'compose',
-      name: '编排模式',
-      desc: '由编排脚本强制推进开发全流程',
+      name: 'XForge',
+      desc: '智能路由开发：输入需求，自动编排设计/实现/验证流程',
       icon: <CodeIcon size={14} />
     }
   ]

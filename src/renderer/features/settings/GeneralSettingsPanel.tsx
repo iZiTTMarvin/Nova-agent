@@ -93,7 +93,7 @@ export const GeneralSettingsPanel: React.FC = () => {
             <option value="ask">执行前确认（bash 需批准）</option>
             <option value="auto">自动执行（危险命令仍拦截）</option>
           </select>
-          <span className="settings-modal__help">仅约束默认模式；计划模式始终只读，编排模式 run 内固定自动执行语义。</span>
+          <span className="settings-modal__help">仅约束默认模式；计划模式始终只读，XForge 模式 run 内固定自动执行语义。</span>
         </div>
 
         {/* bash 默认 shell */}

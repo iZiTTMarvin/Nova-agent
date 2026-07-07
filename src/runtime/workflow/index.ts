@@ -37,6 +37,7 @@ export {
 } from './journal'
 export { makeSemaphore, makeRunSemaphore, getGlobalSemaphore } from './semaphore'
 export { topoSort } from './topo'
+export { extractJson } from './jsonExtract'
 export {
   readComposeState,
   writeComposeState,

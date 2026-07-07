@@ -40,7 +40,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
   it('getModeInstruction 包含模式名称标记', () => {
     expect(getModeInstruction('plan')).toContain('plan')
     expect(getModeInstruction('default')).toContain('default')
-    expect(getModeInstruction('compose')).toContain('compose')
+    expect(getModeInstruction('compose')).toContain('XForge')
   })
 
   it('不同模式的 mode instruction 互不相同', () => {

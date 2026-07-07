@@ -23,7 +23,7 @@ function buildNoticeText(reason: string, skillName: string, suggestions: string[
   return lines.join('\n')
 }
 
-function expandSkillBody(skill: SkillManifest, args: string | undefined, ctx: TemplateContext): string {
+export function expandSkillBody(skill: SkillManifest, args: string | undefined, ctx: TemplateContext): string {
   const { content, warnings } = expandTemplate(skill.body, {
     ...ctx,
     arguments: args ?? ctx.arguments ?? ''

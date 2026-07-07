@@ -36,7 +36,8 @@ import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 
-import { invokeSkill } from '../skills/invokeSkill'
+import { invokeSkill, expandSkillBody } from '../skills/invokeSkill'
+import { routeComposeInput } from './composeRouter'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
@@ -331,6 +332,7 @@ export class AgentLoop implements IdleCompactionTarget {
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
       useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false,
+      composeAutoRoute: config?.composeAutoRoute !== false,
       skillsTokenEstimate: config?.skillsTokenEstimate
     }
     /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
@@ -657,12 +659,43 @@ export class AgentLoop implements IdleCompactionTarget {
       this.config.useUnifiedSkillDispatch !== false
 
     if (useSkillDispatch) {
-      const dispatch = invokeSkill({
+      let dispatch = invokeSkill({
         input: content,
         registry: this.skillRegistry!,
         profile: this.mode,
         templateContext: { workspacePath: this.workingDir ?? undefined }
       })
+
+      // XForge 自动路由：compose + passthrough + 已注入 workflowRunner 时，用 LLM 改写 dispatch
+      if (
+        this.mode === 'compose' &&
+        dispatch.kind === 'passthrough' &&
+        this.workflowRunner &&
+        this.config.composeAutoRoute !== false
+      ) {
+        const routeResult = await routeComposeInput(
+          content as string,
+          this.modelPool,
+          { abortSignal: this.abortController?.signal }
+        )
+        if (routeResult.route === 'full') {
+          dispatch = { kind: 'workflow', scriptName: 'br-full-dev', args: content as string }
+        } else if (routeResult.route === 'plan' && this.skillRegistry) {
+          const skill = this.skillRegistry.get('br-brainstorming')
+          if (skill) {
+            const assistantContent = expandSkillBody(skill, content as string, {
+              workspacePath: this.workingDir ?? undefined
+            })
+            dispatch = {
+              kind: 'inject',
+              assistantContent,
+              userContent: `请按上述设计指引产出方案文档。需求：${content}`
+            }
+          }
+          // skill 不存在则保持 passthrough（降级）
+        }
+        // route === 'quick' 保持 passthrough 不变
+      }
 
       if (dispatch.kind === 'workflow' && this.workflowRunner) {
         // 编排入口：自动切入 compose，跑脚本，摘要推 UI

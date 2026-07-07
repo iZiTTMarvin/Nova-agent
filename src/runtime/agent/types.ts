@@ -196,6 +196,11 @@ export interface AgentLoopConfig {
    */
   useUnifiedSkillDispatch?: boolean
   /**
+   * compose 模式下是否启用 XForge 自动路由（轻量 LLM 意图分类）。
+   * 默认 true；测试或调试时可设为 false 跳过路由。
+   */
+  composeAutoRoute?: boolean
+  /**
    * 工具调用方言用户覆盖（来自 ModelConfig.toolDialect）。
    * 'auto'/未设置时走 preferredToolDialect 自动判定。
    */

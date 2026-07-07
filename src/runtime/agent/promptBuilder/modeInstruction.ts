@@ -38,10 +38,12 @@ function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
 
 function buildComposeInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: compose — 编排模式]',
+    '[当前模式: XForge — 智能路由开发]',
     '开发流程由编排脚本强制推进，你作为子 agent 执行脚本指派的阶段任务。',
     '可以读取、修改和验证工作区；危险命令仍会被拦截。',
-    '发布前或连续失败时会通过 askUser 询问用户，不要擅自跳过阶段。'
+    '发布前或连续失败时会通过 askUser 询问用户，不要擅自跳过阶段。',
+    '若是单点改动，完成后主动用 br-verify 验证相关测试是否通过；改动范围较大时先用 br-scope-check 评估影响面。',
+    '这些验证步骤是你的默认肌肉记忆，无需用户提醒。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
