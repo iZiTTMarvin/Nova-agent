@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
+import { resolveAppIconPath } from './appIcon'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { registerIpcHandlers } from './ipc/registerHandlers'
@@ -123,12 +124,14 @@ async function probeRipgrep(): Promise<void> {
  * 加载 renderer 页面，开发环境使用 dev server，生产环境加载构建产物
  */
 function createMainWindow(): void {
+  const iconPath = resolveAppIconPath()
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 900,
     minHeight: 650,
     frame: false,
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -162,6 +165,11 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // Windows 任务栏分组与固定快捷方式需要稳定的 AppUserModelId
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.nova-agent.app')
+  }
+
   // 0. 主进程 event-loop lag 采样（只读观测，dev 下暴露 window.__novaMainLoopLag）
   installMainLoopLagMonitor({ devOnly: true })
 

@@ -153,6 +153,34 @@ export function findModelEntry(provider: ProviderConfig, modelEntryId: string): 
 }
 
 /**
+ * 计算保存某个服务商后，registry 应使用的 activeModel 引用。
+ *
+ * 触发锚定到 savingProvider 首个模型的两种情况：
+ *   1. 当前 activeModel 指向的 provider 已不在 nextProviders 中
+ *      —— 首次配置（activeModel 为空）、provider 被删除、id 漂移均归此列；
+ *   2. 当前 activeModel 正指向本次保存的服务商（含 preset 占位 id `preset-<id>`）。
+ * 其余情况 activeModel 仍有效，保持不变。
+ *
+ * 调用方需保证 savingProvider.models 非空（保存前已校验）。
+ */
+export function resolveActiveModelAfterSave(
+  currentActive: ActiveModelRef,
+  savingProvider: ProviderConfig,
+  nextProviders: ProviderConfig[]
+): ActiveModelRef {
+  const currentStillExists = nextProviders.some(p => p.id === currentActive.providerId)
+  const savingIsActive =
+    currentActive.providerId === savingProvider.id ||
+    (!!savingProvider.presetId &&
+      currentActive.providerId === `preset-${savingProvider.presetId}`)
+
+  if (!currentStillExists || savingIsActive) {
+    return { providerId: savingProvider.id, modelEntryId: savingProvider.models[0]!.id }
+  }
+  return currentActive
+}
+
+/**
  * 将 ActiveModelRef 解析为运行时 ModelConfig。
  * provider 未启用、缺 key、模型不存在时返回 null。
  */

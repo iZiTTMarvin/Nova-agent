@@ -1,0 +1,43 @@
+# Nova Agent 正式 Windows NSIS 安装包配置
+# 使用：npm run build && npm run pack
+appId: com.nova-agent.app
+productName: Nova Agent
+copyright: Copyright © 2026 Nova Agent
+
+directories:
+  output: release
+  buildResources: build
+
+# electron-vite 产物在 out/；运行时依赖仍从 node_modules 加载（externalizeDeps）
+files:
+  - out/**/*
+  - package.json
+
+asar: true
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/@vscode/ripgrep/**"
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@img/**"
+
+# 任务栏 / 窗口图标（开发态与打包后路径不同，见 src/main/appIcon.ts）
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+
+win:
+  target:
+    - nsis
+  icon: build/icon.png
+  # 无证书时仍会跳过签名，但必须允许 rcedit 写入 exe 图标（false 会导致桌面/任务栏仍是 Electron 默认图标）
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Nova Agent
+  installerLanguages:
+    - zh_CN
+    - en_US
+  artifactName: NovaAgent-Setup-${version}.exe

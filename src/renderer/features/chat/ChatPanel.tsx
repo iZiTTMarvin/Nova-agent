@@ -748,7 +748,7 @@ export const ChatPanel: React.FC = () => {
                   exit={{ opacity: 0, y: -20 }}
                   className="mb-8 flex flex-col items-center justify-center space-y-4"
                 >
-                  <NovaLogo size={48} className="text-[#d97757]" />
+                  <NovaLogo size={48} />
                   <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
                     说出你的想法
                   </h1>

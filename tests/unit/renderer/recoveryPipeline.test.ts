@@ -82,6 +82,33 @@ describe('useChatStore recovery / hookError handlers', () => {
     expect(state.isGenerating).toBe(false)
   })
 
+  it('handleMessageStart → handleError：不应产生重复消息（防止 React key 冲突）', async () => {
+    // 复现路径：模型在返回任何内容前即报错
+    // handleMessageStart 追加空气泡，handleError 应就地更新而非再追加
+    useChatStore.getState().handleMessageStart('msg_dup')
+    await useChatStore.getState().handleError('msg_dup', 'API error')
+
+    const { messages, messageIndexById } = useChatStore.getState()
+    const byId = messages.filter(m => m.id === 'msg_dup')
+    expect(byId).toHaveLength(1)                    // 不能有两条相同 id
+    expect(byId[0]!.isError).toBe(true)             // 应标记为错误
+    expect(byId[0]!.content).toBe('API error')      // 错误内容应就地写入
+    // messageIndexById 指向的索引应与实际消息位置一致
+    const idx = messageIndexById['msg_dup']
+    expect(idx).toBeDefined()
+    expect(messages[idx!]?.id).toBe('msg_dup')
+  })
+
+  it('handleError 在无 handleMessageStart 的情况下应 fallback 追加（error 先于 message_start）', async () => {
+    // 罕见情况：error 在 message_start 之前到达，此时列表里还没有这条消息
+    await useChatStore.getState().handleError('msg_early_err', 'early error')
+
+    const { messages } = useChatStore.getState()
+    const byId = messages.filter(m => m.id === 'msg_early_err')
+    expect(byId).toHaveLength(1)
+    expect(byId[0]!.isError).toBe(true)
+  })
+
   it('handleMessageEnd 应清理该 messageId 的恢复 / hook 状态', async () => {
     useChatStore.getState().handleMessageStart('msg_end')
     useChatStore.getState().handleRecoveryState('msg_end', {

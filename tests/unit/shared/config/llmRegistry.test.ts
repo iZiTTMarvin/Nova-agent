@@ -7,9 +7,10 @@ import {
   createProviderFromPreset,
   mergeFetchedModelEntries,
   groupSelectableModels,
+  resolveActiveModelAfterSave,
   PRESET_PROVIDERS
 } from '../../../../src/shared/config/llmRegistry'
-import type { ModelConfig } from '../../../../src/shared/config'
+import type { ModelConfig, ProviderConfig } from '../../../../src/shared/config'
 
 describe('llmRegistry', () => {
   const v1: ModelConfig = {
@@ -158,5 +159,54 @@ describe('llmRegistry', () => {
     if (result.valid) {
       expect(result.registry.providers[0].models[0].reasoningEffort).toBeUndefined()
     }
+  })
+})
+
+describe('resolveActiveModelAfterSave', () => {
+  it('首次配置（activeModel 为空）应锚定到本次保存的服务商', () => {
+    const saving = createProviderFromPreset('glm', 'key')
+    const nextProviders = [saving]
+    const result = resolveActiveModelAfterSave(
+      { providerId: '', modelEntryId: '' },
+      saving,
+      nextProviders
+    )
+    expect(result).toEqual({ providerId: saving.id, modelEntryId: saving.models[0]!.id })
+  })
+
+  it('当前 activeModel 指向已被删除的 provider 时，应锚定到本次保存的服务商', () => {
+    const saving = createProviderFromPreset('glm', 'key')
+    const nextProviders = [saving]
+    const result = resolveActiveModelAfterSave(
+      { providerId: 'custom-deleted', modelEntryId: 'm-old' },
+      saving,
+      nextProviders
+    )
+    expect(result).toEqual({ providerId: saving.id, modelEntryId: saving.models[0]!.id })
+  })
+
+  it('当前 activeModel 指向其他仍有效的 provider 时，应保持不变', () => {
+    const saving = createProviderFromPreset('glm', 'key')
+    const other = createProviderFromPreset('deepseek', 'key2')
+    const nextProviders = [other, saving]
+    const currentActive = { providerId: other.id, modelEntryId: other.models[0]!.id }
+    const result = resolveActiveModelAfterSave(currentActive, saving, nextProviders)
+    expect(result).toBe(currentActive)
+  })
+
+  it('当前 activeModel 正指向本次保存的服务商（含 preset 占位 id）时，应更新到 toSave.id + 首个模型', () => {
+    // 渲染层首次选中预设时落进 draft 的占位 id 为 `preset-<id>`，保存后 toSave.id 沿用占位 id
+    const saving: ProviderConfig = {
+      ...createProviderFromPreset('glm', 'key'),
+      id: 'preset-glm',
+      presetId: 'glm'
+    }
+    const nextProviders = [saving]
+    const result = resolveActiveModelAfterSave(
+      { providerId: 'preset-glm', modelEntryId: 'stale' },
+      saving,
+      nextProviders
+    )
+    expect(result).toEqual({ providerId: 'preset-glm', modelEntryId: saving.models[0]!.id })
   })
 })

@@ -1329,27 +1329,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
 
-    // 发生异常时，向队列追加一条明显的错误卡片
-    const errorMsg: ExtendedMessage = {
-      id: messageId,
-      sessionId: activeSessionId,
-      role: 'assistant',
-      content: error,
-      isError: true,
-      timestamp: Date.now(),
-      _revision: 0
-    }
-
     set(state => {
-      const nextMessages = [...state.messages, errorMsg]
-      return {
-        messages: nextMessages,
-        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+      const idx = state.messageIndexById[messageId]
+      const commonFields = {
         isGenerating: false,
         currentGeneratingMessageId: null,
         branchForkInProgress: false,
         // error 路径不发射 message-end，此处同步清理恢复状态，避免残留
         ...omitRecoveryFieldsForMessage(state, messageId)
+      }
+
+      if (idx !== undefined && state.messages[idx]) {
+        // 消息已存在（handleMessageStart 已追加空气泡）：就地更新为错误卡片，
+        // 避免同一 messageId 在列表中出现两条，导致 React key 冲突与界面闪烁
+        const nextMessages = state.messages.slice()
+        nextMessages[idx] = bumpRevision({
+          ...state.messages[idx]!,
+          content: error,
+          isError: true,
+          // 清空流式中间态，避免空气泡残留
+          thinking: undefined,
+          blocks: undefined,
+          toolCalls: undefined
+        })
+        return { messages: nextMessages, ...commonFields }
+      }
+
+      // 罕见 fallback：error 在 message_start 之前到达，此时列表里还没有这条消息，
+      // 才走追加路径（保持 messageIndexById 一致性）
+      const errorMsg: ExtendedMessage = {
+        id: messageId,
+        sessionId: activeSessionId,
+        role: 'assistant',
+        content: error,
+        isError: true,
+        timestamp: Date.now(),
+        _revision: 0
+      }
+      const nextMessages = [...state.messages, errorMsg]
+      return {
+        messages: nextMessages,
+        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        ...commonFields
       }
     })
 

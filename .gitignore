@@ -5,8 +5,16 @@ dist/
 .DS_Store
 Thumbs.db
 
-# electron-builder 打包产物（含 Spike S0 冒烟 exe，可 npm run pack:spike 重建）
+# electron-builder 打包产物（NSIS 安装包 NovaAgent-Setup-*.exe、win-unpacked、Spike 冒烟 exe 等）
+# 本地重建：npm run dist  或  npm run pack:spike
 release/
+
+# electron-builder 在 buildResources 目录生成的临时图标转换缓存（勿提交）
+build/.icon-ico/
+
+# 品牌源图：assets/brand/（提交）
+# 打包/开发用图标：build/icon.png、src/renderer/assets/app-icon.png（npm run sync:icon 同步，建议一并提交）
+
 scripts/trigram-fact-check.mjs
 .nova
 .spec-workflow

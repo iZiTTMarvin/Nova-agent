@@ -1,11 +1,12 @@
 {
   "name": "nova-agent",
   "version": "0.1.0",
-  "description": "Mini Coding Workbench — 极简桌面编程工作台",
+  "description": "长会话与多 Agent 编排的本地桌面 Agent — 缓存感知上下文、Compose 工作流、会话树与记忆检索",
+  "author": "许皓辰",
   "license": "MIT",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "npm run sync:icon && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
@@ -13,12 +14,15 @@
     "test:watch": "vitest",
     "test:memory-integration": "node scripts/run-memory-integration-test.mjs",
     "validate:skills": "node scripts/validate-skill-frontmatter.mjs",
+    "sync:icon": "node scripts/sync-build-icon.mjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",
     "rebuild:native:node": "node scripts/rebuild-better-sqlite3-node.mjs",
     "spike:memory-electron": "electron scripts/spike/memory-electron.mjs",
+    "pack": "npm run sync:icon && electron-builder --config electron-builder.yml --win nsis",
     "pack:spike": "electron-builder --config electron-builder.spike.yml --win portable",
-    "pack:spike:verify": "node scripts/spike/run-pack-spike-exe.mjs"
+    "pack:spike:verify": "node scripts/spike/run-pack-spike-exe.mjs",
+    "dist": "npm run build && npm run pack && node scripts/verify-pack-icons.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",

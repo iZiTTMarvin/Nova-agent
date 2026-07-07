@@ -15,6 +15,7 @@ import {
   createProviderFromPreset,
   createCustomProvider,
   mergeFetchedModelEntries,
+  resolveActiveModelAfterSave,
   generateLocalId
 } from '../../../shared/config/llmRegistry'
 import { ChevronIcon } from '../../components/Icons'
@@ -241,14 +242,9 @@ export const LlmSettingsPanel: React.FC = () => {
       nextProviders.push(toSave)
     }
 
-    // 若活跃模型正好指向当前保存的服务商，更新其引用到正式 id 与首个模型
-    const wasActive =
-      draft.activeModel.providerId === editingProvider.id ||
-      (editingProvider.presetId &&
-        draft.activeModel.providerId === `preset-${editingProvider.presetId}`)
-    const activeModel = wasActive
-      ? { providerId: toSave.id, modelEntryId: toSave.models[0].id }
-      : draft.activeModel
+    // 计算 activeModel：当前 active 失效（首次配置为空 / 引用的 provider 不存在）
+    // 或正指向本次保存的服务商时，锚定到 toSave；否则保持不变。
+    const activeModel = resolveActiveModelAfterSave(draft.activeModel, toSave, nextProviders)
 
     const nextRegistry: LlmRegistry = {
       ...draft,

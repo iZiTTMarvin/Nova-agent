@@ -33,7 +33,7 @@
 }
 
 .title-bar__logo {
-  color: var(--color-brand);
+  border-radius: 3px;
 }
 
 .title-bar__title {

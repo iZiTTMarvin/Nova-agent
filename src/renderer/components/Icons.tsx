@@ -1,4 +1,5 @@
 import React from 'react'
+import brandIconUrl from '../assets/app-icon.png'
 
 interface IconProps extends React.SVGProps<SVGSVGElement> {
   size?: number | string
@@ -119,24 +120,36 @@ export const UserCheckIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   </svg>
 )
 
-/** 应用 Logo - 顶栏或侧边栏顶部的呼吸标 */
-export const NovaLogo: React.FC<IconProps & { animating?: boolean }> = ({ size = 24, animating = false, ...props }) => (
-  <svg 
-    width={size} 
-    height={size} 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    xmlns="http://www.w3.org/2000/svg"
+/** 应用品牌 Logo（npm run sync:icon 从 assets/brand 同步到 app-icon.png） */
+interface BrandLogoProps extends React.ImgHTMLAttributes<HTMLImageElement> {
+  size?: number | string
+  animating?: boolean
+}
+
+export const NovaLogo: React.FC<BrandLogoProps> = ({
+  size = 24,
+  animating = false,
+  className,
+  style,
+  alt = 'Nova Agent',
+  ...props
+}) => (
+  <img
+    src={brandIconUrl}
+    width={size}
+    height={size}
+    alt={alt}
+    draggable={false}
+    className={className}
     style={{
-      color: 'var(--color-brand)',
-      animation: animating ? 'nova-pulse 2s infinite ease-in-out' : 'none',
-      ...props.style
+      display: 'block',
+      objectFit: 'contain',
+      flexShrink: 0,
+      animation: animating ? 'nova-pulse 2s infinite ease-in-out' : undefined,
+      ...style
     }}
     {...props}
-  >
-    <path d="M12 2L2 22h20L12 2zm0 4.8l6.4 12.8H5.6L12 6.8z" fill="currentColor" fillRule="evenodd" clipRule="evenodd" />
-    <circle cx="12" cy="13" r="2.5" fill="currentColor" />
-  </svg>
+  />
 )
 
 /** 垃圾桶图标 - 删除会话 */

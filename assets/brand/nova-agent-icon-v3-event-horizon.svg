@@ -1,0 +1,80 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Nova Agent Event Horizon icon</title>
+  <desc id="desc">An ultra-minimal Nova Agent app icon with a glowing event-horizon arc over a pure black void and small NOVA typography.</desc>
+  <defs>
+    <radialGradient id="voidGradient" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(510 504) rotate(90) scale(508)">
+      <stop stop-color="#080706"/>
+      <stop offset="0.58" stop-color="#030303"/>
+      <stop offset="1" stop-color="#000000"/>
+    </radialGradient>
+    <radialGradient id="innerAbsence" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(509 520) rotate(90) scale(286 332)">
+      <stop stop-color="#000000"/>
+      <stop offset="0.72" stop-color="#000000" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="coronaGradient" x1="256" y1="662" x2="790" y2="292" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#491016" stop-opacity="0.25"/>
+      <stop offset="0.18" stop-color="#751924" stop-opacity="0.78"/>
+      <stop offset="0.45" stop-color="#C3422B"/>
+      <stop offset="0.7" stop-color="#FF8A2C"/>
+      <stop offset="0.9" stop-color="#FFD27A"/>
+      <stop offset="1" stop-color="#FFF3C7"/>
+    </linearGradient>
+    <linearGradient id="hotEdge" x1="358" y1="624" x2="754" y2="346" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5B1018" stop-opacity="0"/>
+      <stop offset="0.38" stop-color="#B73628" stop-opacity="0.72"/>
+      <stop offset="0.72" stop-color="#FF7B23"/>
+      <stop offset="1" stop-color="#FFF1B7"/>
+    </linearGradient>
+    <linearGradient id="redBleed" x1="274" y1="675" x2="546" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#230508" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#5E1018" stop-opacity="0.52"/>
+      <stop offset="1" stop-color="#B43023" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="tileShadow" x="36" y="38" width="952" height="966" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="30"/>
+      <feGaussianBlur stdDeviation="28"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.012 0 0 0 0 0.01 0 0 0 0 0.009 0 0 0 0.58 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="shadow"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="shadow" result="shape"/>
+    </filter>
+    <filter id="wideGlow" x="74" y="106" width="878" height="812" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="42"/>
+    </filter>
+    <filter id="softGlow" x="150" y="166" width="738" height="654" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <filter id="pinGlow" x="360" y="234" width="510" height="466" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <clipPath id="iconClip">
+      <rect x="64" y="64" width="896" height="896" rx="220"/>
+    </clipPath>
+  </defs>
+
+  <g filter="url(#tileShadow)">
+    <rect x="64" y="64" width="896" height="896" rx="220" fill="#000000"/>
+    <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#voidGradient)"/>
+    <rect x="66.5" y="66.5" width="891" height="891" rx="217.5" stroke="#FFFFFF" stroke-opacity="0.045" stroke-width="5"/>
+  </g>
+
+  <g clip-path="url(#iconClip)">
+    <ellipse cx="512" cy="520" rx="282" ry="338" fill="url(#innerAbsence)"/>
+    <path d="M211 647C314 446 469 331 642 290C720 272 791 272 850 287" stroke="url(#redBleed)" stroke-width="132" stroke-linecap="round" filter="url(#wideGlow)" opacity="0.9"/>
+    <path d="M218 649C320 449 473 336 643 297C718 280 786 281 843 296" stroke="url(#coronaGradient)" stroke-width="72" stroke-linecap="round" filter="url(#softGlow)" opacity="0.86"/>
+    <path d="M238 642C336 458 484 354 646 321C715 307 778 310 829 326" stroke="url(#coronaGradient)" stroke-width="34" stroke-linecap="round"/>
+    <path d="M364 562C450 424 560 347 678 326C737 316 789 323 827 340" stroke="url(#hotEdge)" stroke-width="12" stroke-linecap="round" filter="url(#pinGlow)"/>
+    <path d="M565 389C612 354 664 335 721 333C772 331 812 342 841 359" stroke="#FFF5CC" stroke-opacity="0.82" stroke-width="5" stroke-linecap="round"/>
+    <path d="M247 656C342 464 489 352 651 313" stroke="#24070A" stroke-opacity="0.8" stroke-width="18" stroke-linecap="round"/>
+    <path d="M286 645C377 489 502 398 645 365C697 353 743 352 782 359" stroke="#000000" stroke-opacity="0.5" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="514" cy="518" r="190" fill="#000000" opacity="0.92"/>
+    <circle cx="514" cy="518" r="143" fill="#000000"/>
+
+    <path d="M720 735H842" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="2"/>
+    <text x="720" y="785" fill="#F9EBDD" fill-opacity="0.86" font-family="Geist Mono, JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="56" font-weight="600" letter-spacing="9">NOVA</text>
+    <text x="722" y="786" fill="#FF8A2C" fill-opacity="0.2" font-family="Geist Mono, JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="56" font-weight="600" letter-spacing="9">NOVA</text>
+  </g>
+</svg>

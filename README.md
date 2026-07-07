@@ -1,350 +1,219 @@
-# Nova Agent
+<p align="center">
+  <img src="assets/brand/nova-agent-icon-v3-event-horizon-512.png" width="120" alt="Nova Agent logo">
+</p>
 
-极简桌面编程工作台 — 基于 Electron 的本地 AI Agent Coding Cowork，对接任意 OpenAI 兼容 API，在你的项目工作区内读代码、改文件、跑命令、管理技能与子代理。
+<h1 align="center">Nova Agent</h1>
 
-当前版本：**0.1.0**（活跃开发中）
+<p align="center">
+  <strong>说出来，剩下交给它。</strong>
+</p>
 
----
+<p align="center">
+  适合新手、懒人、业余开发者使用的本地桌面 Agent · 长会话不丢上下文 · 一句话跑完全流程
+</p>
 
-## 目录
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/Version-0.1.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platforms">
+  <img src="https://img.shields.io/badge/Tests-1500%2B-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Stack-Electron%20%2B%20React%20%2B%20TypeScript-9cf" alt="Stack">
+</p>
 
-- [特性](#特性)
-- [环境要求](#环境要求)
-- [快速开始](#快速开始)
-- [使用说明](#使用说明)
-- [技能（Skills）](#技能skills)
-- [规则与子代理](#规则与子代理)
-- [目录与配置路径](#目录与配置路径)
-- [架构概览](#架构概览)
-- [项目结构](#项目结构)
-- [开发](#开发)
-- [文档与变更记录](#文档与变更记录)
-- [许可证](#许可证)
-
----
-
-## 特性
-
-### 对话与 Agent 运行时
-
-- **OpenAI 兼容接口**：支持多服务商（MiniMax / GLM / DeepSeek 预设 + 自定义），每个服务商可配置多个模型，Composer 内一键切换
-- **模型方言自适应**：Claude/GPT 走原生 `tool_calls`；MiniMax / GLM / DeepSeek / Kimi / Qwen 走 XML inband，正文中以 `<invoke>` 标签调用工具
-- **多轮工具调用**：内置 `ls` / `read` / `grep` / `find` / `edit` / `write` / `bash` / `todo_write` / `task` / `invoke_skill` 等工具
-- **并行工具执行**：自动识别可并行工具（默认最多 4 个），串行依赖自动降级为串行
-- **运行模式**：`plan`（只读规划）、`default`（写入需确认）、`auto`（自动执行，危险命令仍拦截）
-- **权限审批**：高风险操作（如 `bash`）弹出确认；支持会话级 diff 审阅与文件回滚
-- **检查点**：工具改文件前自动快照，支持按消息回退工作区
-- **恢复管线**：模型临时错误自动重试 + 主备降级（`ModelClientPool`）；上下文溢出时紧急压缩恢复；输入框上方展示恢复状态条
-- **上下文压缩**：token 超阈值时自动 AI 摘要压缩；消息结束后 266 秒无活动触发空闲压缩；支持上下文占用分项展示
-- **Steering Queue**：Agent 运行中可将新消息排队，当前轮次结束后自动发送
-- **图片输入**：在支持 Vision 的模型下可粘贴或拖拽图片
-
-### Skill 子系统
-
-- **多源加载**：内置 / 全局 `~/.nova/skills` / 项目 `.nova/skills`，按优先级合并
-- **Slash 命令**：输入 `/` 触发自动补全（如 `onboard (skill)`），选中后注入主对话
-- **统一调度**：`/skill-name` 走 `invokeSkill` 注入或 `fork_agent` 子代理，与 `invoke_skill` 工具共用逻辑
-- **设置页管理**：启用/禁用、来源标识、一键填入 Composer
-
-### 设置与工作区
-
-- **左右分栏设置**：LLM 多服务商配置、规则（Rules）、技能（Skills）、子代理（Subagents）
-- **规则文件**：支持 `AGENTS.md`、`CLAUDE.md`、`.cursorrules` 及 `.nova/rules/*.md`
-- **子代理**：内置 `explore`（只读探索）与 `code`（受限编程），可扩展自定义 JSON 配置
-- **多会话**：按工作区管理会话历史，切换项目时技能列表自动 reload
-
-### 工程化
-
-- TypeScript 全栈类型安全；主进程与渲染进程通过类型化 IPC 通信
-- Vitest 单元测试（1280+ 用例）；内置 skill frontmatter 校验脚本
+<p align="center">
+  <a href="#它能帮你做什么">它能做什么</a> •
+  <a href="#和别人有啥不一样">核心差异</a> •
+  <a href="#3-分钟上手">快速上手</a> •
+  <a href="#现成能用的小帮手">内置技能</a> •
+  <a href="#常见问题">FAQ</a>
+</p>
 
 ---
 
-## 环境要求
+## 一句话介绍
 
-| 依赖 | 版本建议 |
-|------|----------|
-| Node.js | 18+ |
-| npm | 9+ |
-| 操作系统 | Windows / macOS / Linux |
+想做个小工具？想让 AI 帮你改个 bug？想从零搭个项目？
 
-可选：系统安装 [ripgrep](https://github.com/BurntSushi/ripgrep)（`grep` 工具会优先使用内置 `@vscode/ripgrep`，亦可回退系统 `rg`）。
+别再一步步敲命令了。打开 Nova Agent，**像跟朋友聊天一样说一句话**——
+
+> "帮我做一个待办事项 app"
+> "修一下登录页那个 bug"
+> "给这个项目加个深色模式"
+
+它会自己想清楚要做什么、自己动手做、自己检查一遍、最后把结果交给你。
+
+**你不是 prompt 工程师，也不是全栈开发者，你只是有个想法的人。** Nova Agent 帮你把想法变成能用的东西。
+
+> 适合：新手、业余开发者、想偷懒的打工人。
 
 ---
 
-## 快速开始
+## 它能帮你做什么
+
+### 一次说完整件事
+别人家的 AI 助手让你一步步来——`/plan` 看规划，`/run` 跑任务，`/test` 跑测试……学起来累不累？
+
+**Nova Agent 不这样。** 你就一句话：`/br-full-dev 帮我做一个番茄钟 app`。
+剩下的流程它自动跑：先想清楚 → 拆任务 → 一个个实现 → 自己测一遍 → 给你汇报。
+
+半路崩了？没关系。**接着来，已经做完的不会重做。**
+
+### 聊久了也不会失忆、不会爆金币
+AI 助手最烦人的两个毛病：聊着聊着忘了前面说过什么、账单越烧越离谱。
+Nova Agent 专门把这两件事做扎实了——长会话不丢上下文，成本也压得住。**跑几个小时的活儿，账单不会爆。**
+
+### 聊错了可以反悔
+AI 给的回答不满意？想换个方向试试？
+**直接分叉。** 在某条消息那里开个新分支，让它重新来——之前的工作不丢，只是被你"存档"了，可以随时切回去。
+
+### 它记得你的项目
+今天聊过的项目背景、文件结构、你的偏好——**它会记着**。
+下次开新会话，不用重新介绍一遍"我这个项目是做啥的"。
+
+### 你说什么它都会干
+读文件、改文件、跑命令、搜代码、装依赖、查文档……常用的事 Nova Agent 都会干。
+高危操作（删文件、跑危险命令）会有确认弹窗，**不会偷偷搞坏你的项目**。
+
+---
+
+## 和别人有啥不一样
+
+| 你用别人家... | 用 Nova Agent... |
+|--------------|------------------|
+| 一步步 `/plan` `/run` `/test` | 一句话 `/br-full-dev`，全自动 |
+| 长会话账单爆炸 | 专门做了缓存治理，成本压得住 |
+| 聊错方向就完蛋 | 随时分叉，反悔不丢工作 |
+| 换项目要重新介绍背景 | 项目记忆自动续上 |
+| 只有 IDE 插件 | 完整桌面 app，独立的 |
+| 跟着别人用哪个模型 | 想用啥用啥，自带 Key 接任意兼容服务 |
+
+---
+
+## 3 分钟上手
+
+需要装 [Node.js 18+](https://nodejs.org/)。准备好你的 API Key（MiniMax / GLM / DeepSeek / Ollama / 自建都行）。
 
 ```bash
-# 克隆仓库
 git clone <repository-url>
 cd nova-agent
-
-# 安装依赖
 npm install
-
-# 开发模式（Electron + 热更新）
 npm run dev
 ```
 
-首次启动后：
+启动后：
 
-1. 点击左下角 **设置 → LLM 配置**，为 MiniMax / GLM / DeepSeek 等服务商填写 API Key（或添加自定义服务商）
-2. 在对话框底部 **模型选择器** 中切换要使用的模型
-3. 在侧边栏 **选择或新建项目工作区**
-4. 在 Composer 中输入任务，或使用 `/onboard` 运行内置入门向导
+1. 填 API Key（左下角 **设置 → LLM 配置**）
+2. 选个模型
+3. 选个项目文件夹
 
-生产构建：
+然后——**在对话框里直接说你想做什么**。
+
+第一次不知道说啥？输入 `/onboard`，Nova Agent 会带你熟悉一遍。
+
+想直接爽一把？输入 `/br-full-dev 帮我做一个待办事项 app`，看它自动跑完。
+
+---
+
+## 现成能用的"小帮手"
+
+Nova Agent 装好就有这些开箱即用的技能，输入 `/` 就能用：
+
+**通用：**
+
+| 名称 | 干啥用 |
+|------|--------|
+| `/onboard` | 打开工作区后，让 AI 带你快速熟悉项目结构 |
+| `/br-full-dev <需求>` | **一句话跑完整个开发流程**（核心） |
+| `/skill-creator` | 想自己做技能？照着做 |
+| `/skill-add` | 从网上装个新技能 |
+
+**开发流程：**
+
+| 名称 | 干啥用 |
+|------|--------|
+| `/br-debug` | 卡 bug 了？让 AI 帮你找根因 |
+| `/br-test` | 帮你写测试、跑测试 |
+| `/br-review` | 改完了？让 AI 审查一遍代码 |
+| `/br-ship` | 要发布了？走发布流程 |
+| `/br-verify` | 改完不放心？让 AI 验证一遍 |
+| `/br-task-breakdown` | 任务太复杂？让 AI 拆成小步骤 |
+| `/br-scope-check` | 项目范围太大？让 AI 帮你砍 |
+
+**想法阶段：**
+
+| 名称 | 干啥用 |
+|------|--------|
+| `/br-brainstorming` | 没想法？让 AI 帮你头脑风暴 |
+| `/br-idea` | 想法太笼统？让 AI 帮你具象化 |
+| `/br-office-hours` | 想被"产品经理"挑战一下？ |
+
+要装新技能？把 `SKILL.md` 丢进 `~/.nova/skills/<name>/`，重启就生效。
+
+---
+
+## 钱怎么算
+
+Nova Agent 本身**免费**（MIT 开源）。你只需要自己出 AI 调用的钱——也就是你 API Key 对应服务商的价格。
+
+Nova Agent 在「长会话省钱」这件事上做了不少功夫：尽量不重复计费、自动在合适时机压缩长对话、分支探索不污染主线开销。**长跑几个小时的活，账单比一般 Agent 明显低。**
+
+---
+
+## 跑得动什么、跑不动什么
+
+- **跑得动**：长任务（小时级）、多步骤、多文件改动的活儿
+- **跑得动**：跑测试、装依赖、查文档、读代码、改代码
+- **不擅长**：需要你实时看屏幕做判断的事
+- **不擅长**：连上你的真机做部署
+
+---
+
+## 文件都放哪
+
+| 用途 | 位置 |
+|------|------|
+| 应用配置 | `~/.nova/` |
+| 你的项目 | 你选哪个文件夹都行 |
+| 项目内的配置 | `<你的项目>/.nova/` |
+
+新会话、缓存、检查点这些由应用自动管理，你不用管。
+
+---
+
+## 常见问题
+
+**Q: 我不会写代码能用吗？**
+A: 可以。你不用写代码，你只需要用**自然语言告诉它你想做什么**。
+
+**Q: Windows 能装吗？**
+A: 能。还可以打成一键安装包（`npm run dist` 出来就是个 `.exe`）。
+
+**Q: 跟 Cursor / Claude Code 比呢？**
+A: 那些主要在编辑器里用，前提是你得会写代码。Nova Agent 是**完整的桌面 app**，核心卖点是听你一句话就能跑完整流程，不用你懂命令。
+
+**Q: 数据安全吗？**
+A: Nova Agent 是**本地桌面 app**，对话、文件、检查点都存在你电脑上，不上传第三方。AI 调用走你自己的 API Key，流量只在你和服务商之间。
+
+**Q: API Key 必须用自己的？**
+A: 对。Nova Agent 不收 Key、不中转请求、不抽成。
+
+**Q: 出错了怎么办？**
+A: 大部分小问题它自己就处理了：网络抖了自动重试、对话太长自动压缩、主模型挂了自动切备选。
+
+---
+
+## 想自己改代码 / 参与开发？
+
+Nova Agent 是 MIT 开源的，TypeScript 写的。
 
 ```bash
-npm run build
-npm run preview   # 预览构建产物
+npm run typecheck   # 查类型
+npm test            # 跑测试（1800+ 用例）
+npm run validate:skills  # 校验内置技能
 ```
 
----
-
-## 使用说明
-
-### 配置模型
-
-打开 **设置 → LLM 配置**：
-
-- **预设服务商**：MiniMax、GLM、DeepSeek — 填写 API Key 即可，内置常用模型列表
-- **自定义服务商**：可添加 Ollama 等任意 OpenAI 兼容端点（Base URL + API Key）
-- **模型列表**：支持手动添加/删除；点击 **刷新模型列表** 可从 `/models` 接口拉取
-- **对话框切换**：Composer 底部模型选择器可快速切换；多模型服务商以子菜单展示
-
-高级选项（按服务商）：
-
-- **工具调用方式**：自动 / 原生 / XML
-- **Context Window / Vision**：可在模型条目中扩展（活跃模型自动推断）
-
-配置持久化在 Electron `userData` 目录下的模型配置文件中。
-
-### 运行模式
-
-| 模式 | 说明 |
-|------|------|
-| `plan` | 只读：禁止 `edit` / `write` / `bash` |
-| `default` | 写入工具可用；`bash` 需用户确认 |
-| `auto` | 自动执行；仍拦截高风险 shell 命令 |
-
-在 Composer 旁的模式切换器中切换。
-
-### Slash 命令与 Composer
-
-- 输入 `/` 打开技能自动补全列表
-- 选择项后输入框填充为 `/skill-name `（不含 `(skill)` 后缀）
-- 发送后由 `AgentLoop` 解析并注入 skill 正文，或由模型通过 `invoke_skill` 工具调用
-
-### 权限与 Diff
-
-- Agent 修改文件后，可在消息流中查看 diff、逐文件接受或拒绝
-- 支持将对话回退到某条消息之前的状态（含工作区文件物理恢复）
-
----
-
-## 技能（Skills）
-
-### 内置技能
-
-仓库自带 4 个核心 skill（构建时打包进应用）：
-
-| 名称 | 说明 |
-|------|------|
-| `onboard` | 首次启动向导，熟悉工作区与配置 |
-| `skill-creator` | 创建与优化 skill 的指引 |
-| `skill-add` | 从 URL / zip 安装 skill 的指引 |
-| `new` | 空白 skill 脚手架模板 |
-
-在 Composer 中输入 `/onboard` 即可触发。
-
-### 安装路径与优先级
-
-优先级（高覆盖低）：**project > global > builtin**
-
-| 来源 | 路径 |
-|------|------|
-| 内置 | 应用内 `.nova/skills/<name>/SKILL.md` |
-| 全局 | `~/.nova/skills/<name>/SKILL.md` |
-| 项目 | `<workspace>/.nova/skills/<name>/SKILL.md` |
-
-每个 skill 为目录 + `SKILL.md`，frontmatter 至少包含 `name`、`description`；默认可通过 `/` 调用（`user-invocable: true`）。
-
-### 自定义 Skill 示例
-
-`~/.nova/skills/my-review/SKILL.md`：
-
-```markdown
----
-name: my-review
-description: 对当前变更做代码审查
-user-invocable: true
----
-
-请审查工作区中最近的代码变更，从正确性、可读性、安全风险三方面给出建议。
-```
-
-保存后重启或切换工作区，输入 `/my-review` 即可调用。
-
-### 校验内置 Skill
-
-```bash
-npm run validate:skills
-```
-
----
-
-## 规则与子代理
-
-### 规则（Rules）
-
-Agent 系统提示词会合并项目规则，扫描顺序：
-
-1. 工作区根目录：`AGENTS.md` → `CLAUDE.md` → `.cursorrules`
-2. 工作区：`.nova/rules/*.md`
-3. 全局：`~/.nova/rules/*.md`
-
-在 **设置 → 规则** 中可浏览、编辑与新建规则文件。
-
-### 子代理（Subagents）
-
-主 Agent 可通过 `task` 工具委派子任务：
-
-| 内置名称 | 能力 |
-|----------|------|
-| `explore` | 只读探索（ls / read / grep / find） |
-| `code` | 受限编程（含 edit / write / bash，写操作走父 Agent 权限） |
-
-自定义配置：
-
-- 全局：`~/.nova/subagents/<name>.json`
-- 项目：`<workspace>/.nova/subagents/<name>.json`
-
-JSON 字段对齐 `SubAgentSpec`（`name`、`description`、`allowedTools`、`prompt` 等）。在 **设置 → 子代理** 中管理。
-
-部分 skill 支持 `fork_agent: true`，slash 调用时会直接 fork 子 Agent 执行。
-
----
-
-## 目录与配置路径
-
-| 用途 | 路径 |
-|------|------|
-| 全局 Nova 配置 | `~/.nova/settings.json` |
-| 技能启停状态 | `~/.nova/skill-state.json` |
-| 全局技能 | `~/.nova/skills/` |
-| 全局规则 | `~/.nova/rules/` |
-| 全局子代理 | `~/.nova/subagents/` |
-| 项目技能 | `<workspace>/.nova/skills/` |
-| 项目规则 | `<workspace>/.nova/rules/` |
-| 项目子代理 | `<workspace>/.nova/subagents/` |
-| 会话与检查点 | Electron `userData`（由应用管理） |
-
-设置项 `loadThirdPartySkills`（默认 `true`）用于后续接入 Claude Code 技能目录，详见 `CHANGELOG.md` 与实施计划。
-
----
-
-## 架构概览
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  Renderer (React + Zustand)                             │
-│  ChatPanel · SkillAC · SettingsModal · DiffViewer       │
-│       │ preload: window.api / window.nova.skill         │
-└───────┼─────────────────────────────────────────────────┘
-        │ IPC (类型化 channels)
-┌───────▼─────────────────────────────────────────────────┐
-│  Main (Electron)                                        │
-│  agentHandler · skillHandler · rulesHandler · ...       │
-│       │                                                 │
-│  ┌────▼─────────────────────────────────────────────┐   │
-│  │  Runtime                                         │   │
-│  │  ┌─────────────────────────────────────────────┐  │   │
-│  │  │ AgentLoop (Facade)                          │  │   │
-│  │  │  ├─ runAgentLoop ── StreamProcessor        │  │   │
-│  │  │  ├─ executeToolBatch ── ToolPipeline       │  │   │
-│  │  │  ├─ compaction/ ── IdleCompressionTimer     │  │   │
-│  │  │  ├─ recovery/ ── RecoveryStateMachine       │  │   │
-│  │  │  ├─ promptBuilder/ ── SystemPromptBuilder   │  │   │
-│  │  │  └─ extensions/ ── permission / stopPolicy   │  │   │
-│  │  └─────────────────────────────────────────────┘  │   │
-│  │  ModelClientPool · dialect · ToolRegistry         │   │
-│  │  SkillRegistry · CheckpointManager               │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-```
-
-**数据流（发送消息）**：
-
-1. Renderer 通过 `send-message` IPC 提交用户输入（支持文本 / 图片）
-2. `invokeSkill` 预处理 slash 命令（`inject` 注入正文 / `fork` 子代理 / `system_notice`）
-3. `AgentLoop` 拼装 system prompt（含规则、skill 上下文、方言化工具目录），调用 `ModelClientPool`
-4. `StreamProcessor` 消费 SSE 流：native 路径直接解析 `tool_calls`；XML 方言路径用增量状态机从正文扫描 `<invoke>`
-5. 模型返回 tool calls → `executeToolBatch` 做权限检查 / 截断 / 串并行分组 → 工具执行 → 结果回注上下文
-6. 流式事件（`text-delta`、`tool-call-delta`、`tool-call`、`tool-result`、`context-breakdown` 等）推送至 UI
-
----
-
-## 项目结构
-
-```
-nova-agent/
-├── .nova/skills/          # 内置 skill 源码（构建时复制到产物）
-├── src/
-│   ├── main/              # Electron 主进程、IPC handlers
-│   ├── preload/           # contextBridge API
-│   ├── renderer/          # React UI
-│   ├── runtime/           # Agent、工具、技能、会话、检查点
-│   │   ├── agent/         # Agent 循环（已模块化：core/ stream/ execution/ compaction/ recovery/ context/ promptBuilder/ extensions/）
-│   │   ├── model/         # ModelClientPool、方言判定、缓存诊断
-│   │   ├── tools/         # 10+ 工具实现（含 bash/、子代理桥接）
-│   │   ├── skills/        # Skill 注册、调用与 fork
-│   │   ├── permissions/   # 权限决策引擎
-│   │   ├── sessions/      # 会话持久化
-│   │   └── checkpoints/ # 文件快照与回退
-│   └── shared/            # IPC 类型、会话类型、配置类型
-├── tests/unit/            # Vitest 单元测试（1000+ 用例）
-├── scripts/               # 校验与辅助脚本
-├── electron.vite.config.ts
-├── CHANGELOG.md
-└── package.json
-```
-
----
-
-## 开发
-
-```bash
-# 类型检查
-npm run typecheck
-
-# 运行全部测试
-npm test
-
-# 监听模式
-npm run test:watch
-
-# 校验内置 skill frontmatter
-npm run validate:skills
-```
-
-### 添加 IPC 通道
-
-1. 在 `src/shared/ipc/channels.ts` 声明 channel 常量
-2. 在 `src/shared/ipc/types.ts` 补充 `IpcCommands` / `IpcEvents` 类型
-3. 在 `src/main/ipc/` 实现 handler，并于 `registerHandlers.ts` 注册
-4. 如需暴露给渲染端，在 `src/preload/` 封装并在 `preload.d.ts` 声明
-
-### 添加工具
-
-在 `src/runtime/tools/` 实现 `ToolExecutor`，于 `agentHandler` 注册到 `ToolRegistry`。注意 `plan` 模式下的可见性与 `PermissionManager` 规则。
-
----
-
-## 文档与变更记录
-
-- 版本历史与近期功能：[CHANGELOG.md](./CHANGELOG.md)
-- Skill 系统设计（若仓库内保留）：`docs/skill-system-design.md`
+技术架构、变更记录看 [CHANGELOG.md](./CHANGELOG.md)。
+开发约定、目录结构、IPC 流程看 [AGENTS.md](./AGENTS.md)。
 
 ---
 
@@ -352,8 +221,10 @@ npm run validate:skills
 
 [MIT](./LICENSE) — Copyright (c) 2026 Harrison Xu
 
+随便用，保留版权就行。
+
 ---
 
 ## 致谢
 
-Nova Agent 在架构上参考了诸多主流高质量Agent工具，致谢：pi-agent、opencode、kilo code、openclacky
+参考了 pi-agent、opencode、kilo code、openclacky 等优秀项目。
