@@ -49,21 +49,37 @@ export function resolveDefaultSkillDirs(opts: SkillLoaderOptions = {}): Required
 }
 
 /**
- * 开发模式 builtin 路径：项目根 .nova/skills
+ * 解析 builtin 技能目录。
+ *
+ * 三种运行态各自命中一个候选，互不干扰：
+ *   1. 打包态：主进程被 bundle 进 out/main/index.js，运行时 __dirname 指向
+ *      app.asar/out/main/，而 copyNovaBuiltinSkills 插件已把 .nova/skills
+ *      复制到 out/main/.nova/skills —— 此候选直接命中，与 prompts/workflow
+ *      的 __dirname 定位机制完全一致（asar 内可读，无需 asarUnpack）。
+ *   2. 测试 / 注入态：getAppPath() 指向的根下直接挂 .nova/skills
+ *      （SkillService.test 用例构造的 appRoot 形态），优先级高于 cwd 兜底。
+ *   3. 开发态（electron-vite dev，无 getAppPath 或返回项目根的 .nova/skills
+ *      不存在时）：回退到 process.cwd()/.nova/skills，即项目源码根目录。
+ *
+ * 不再用 app.getAppPath() 作为打包态首选——它返回 asar 根，而资源实际在
+ * asar/out/main/ 下，二者路径错位会导致打包后 builtin skills 全部丢失。
  */
 export function resolveDevBuiltinDir(): string {
   return join(process.cwd(), '.nova', 'skills')
 }
 
-/**
- * 解析 builtin 技能目录：生产优先 app.getAppPath()/.nova/skills，否则回退开发路径
- * @param getAppPath Electron app.getAppPath；非 Electron 环境可省略
- */
 export function resolveBuiltinSkillsDir(getAppPath?: () => string): string {
+  // 打包态首选：与 prompts / workflow 内置脚本使用同一套 __dirname 定位机制
+  const dirBasedBuiltin = join(__dirname, '.nova', 'skills')
+  if (existsSync(dirBasedBuiltin)) return dirBasedBuiltin
+
+  // 测试 / 注入态：getAppPath 根下直接挂 .nova/skills
   if (getAppPath) {
     const appBuiltin = join(getAppPath(), '.nova', 'skills')
     if (existsSync(appBuiltin)) return appBuiltin
   }
+
+  // 开发态兜底：项目根 .nova/skills
   return resolveDevBuiltinDir()
 }
 

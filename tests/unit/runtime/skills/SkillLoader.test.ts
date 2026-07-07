@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { SkillLoader } from '../../../../src/runtime/skills/SkillLoader'
+import { SkillLoader, resolveBuiltinSkillsDir, resolveDevBuiltinDir } from '../../../../src/runtime/skills/SkillLoader'
 
 function writeSkill(base: string, dirName: string, content: string): void {
   const dir = join(base, dirName)
@@ -88,5 +88,43 @@ describe('SkillLoader', () => {
     writeSkill(globalDir, 'b', md('b', 'ok'))
     const loader = SkillLoader.loadAll({ globalDir })
     expect(loader.listUserInvocable().map(s => s.name)).toEqual(['b'])
+  })
+})
+
+describe('resolveBuiltinSkillsDir', () => {
+  // 注意：首个候选 join(__dirname, '.nova', 'skills') 在 vitest 下解析到
+  // src/runtime/skills/.nova/skills —— 源码树里不存在该目录，故不会误命中，
+  // 各用例得以单独验证 getAppPath 候选与 dev 兜底分支。
+  // 打包态下 __dirname = app.asar/out/main/，资源由 copyNovaBuiltinSkills
+  // 复制到 out/main/.nova/skills，此候选直接命中（无法在单测里模拟 asar 环境）。
+
+  it('getAppPath 候选命中：根下直接挂 .nova/skills 时返回该目录', () => {
+    const appRoot = join(tmpdir(), `nova-resolve-app-${Date.now()}`)
+    const appBuiltin = join(appRoot, '.nova', 'skills')
+    mkdirSync(appBuiltin, { recursive: true })
+    try {
+      const resolved = resolveBuiltinSkillsDir(() => appRoot)
+      expect(resolved).toBe(appBuiltin)
+    } finally {
+      rmSync(appRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('dev 兜底：无 getAppPath 时回退到 process.cwd()/.nova/skills', () => {
+    // 源码树下 __dirname 候选不存在（见上注释），且不传 getAppPath → 走兜底
+    const expected = resolveDevBuiltinDir()
+    const resolved = resolveBuiltinSkillsDir()
+    expect(resolved).toBe(expected)
+    expect(resolved).toBe(join(process.cwd(), '.nova', 'skills'))
+  })
+
+  it('getAppPath 候选不存在时回退到 dev 路径，不返回无效路径', () => {
+    // getAppPath 指向一个不存在的临时目录（其下无 .nova/skills）
+    const ghostAppPath = join(tmpdir(), `nova-ghost-${Date.now()}`)
+    const resolved = resolveBuiltinSkillsDir(() => ghostAppPath)
+    // 不应返回 ghostAppPath/.nova/skills（该路径不存在）
+    expect(resolved).not.toBe(join(ghostAppPath, '.nova', 'skills'))
+    // 应回退到 dev 兜底路径
+    expect(resolved).toBe(resolveDevBuiltinDir())
   })
 })
