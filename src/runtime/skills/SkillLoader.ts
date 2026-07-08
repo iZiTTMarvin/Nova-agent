@@ -51,14 +51,19 @@ export function resolveDefaultSkillDirs(opts: SkillLoaderOptions = {}): Required
 /**
  * 解析 builtin 技能目录。
  *
- * 三种运行态各自命中一个候选，互不干扰：
- *   1. 打包态：主进程被 bundle 进 out/main/index.js，运行时 __dirname 指向
- *      app.asar/out/main/，而 copyNovaBuiltinSkills 插件已把 .nova/skills
- *      复制到 out/main/.nova/skills —— 此候选直接命中，与 prompts/workflow
- *      的 __dirname 定位机制完全一致（asar 内可读，无需 asarUnpack）。
- *   2. 测试 / 注入态：getAppPath() 指向的根下直接挂 .nova/skills
+ * 四个候选按顺序探测，命中即返回，互不干扰：
+ *   1. 打包态 unpacked（首选）：electron-builder.yml 的 asarUnpack 把
+ *      out/main/.nova/skills/** 真实落盘到 app.asar.unpacked/out/main/.nova/skills。
+ *      必须优先用 unpacked 真实路径——SkillLoader 对 skill 目录做 readdirSync +
+ *      Dirent.isDirectory() 等"目录级" fs 操作，asar 虚目录撞 Electron 拦截器
+ *      会抛 ENOENT not found in app.asar。__dirname 在 unpack 后仍指向 asar 虚路径，
+ *      靠字符串替换 app.asar → app.asar.unpacked 得到真实落盘路径。
+ *   2. 打包态 asar 虚路径（兼容回退）：未 unpack 的旧包，或 unpack 候选不存在时，
+ *      回退到 asar 内路径。existsSync 对 asar 虚路径返回 true（透明代理），
+ *      单文件 readFileSync 能用，但目录级操作有 ENOENT 风险——仅作过渡兼容。
+ *   3. 测试 / 注入态：getAppPath() 指向的根下直接挂 .nova/skills
  *      （SkillService.test 用例构造的 appRoot 形态），优先级高于 cwd 兜底。
- *   3. 开发态（electron-vite dev，无 getAppPath 或返回项目根的 .nova/skills
+ *   4. 开发态（electron-vite dev，无 getAppPath 或返回项目根的 .nova/skills
  *      不存在时）：回退到 process.cwd()/.nova/skills，即项目源码根目录。
  *
  * 不再用 app.getAppPath() 作为打包态首选——它返回 asar 根，而资源实际在
@@ -68,8 +73,35 @@ export function resolveDevBuiltinDir(): string {
   return join(process.cwd(), '.nova', 'skills')
 }
 
+/**
+ * 把 asar 虚路径转为 unpacked 真实路径。
+ * 打包态 __dirname 形如 D:\...\resources\app.asar\out\main，
+ * 对应的 unpacked 落盘路径为 D:\...\resources\app.asar.unpacked\out\main。
+ * 非 asar 路径（dev / 测试态，__dirname 不含 app.asar 段）返回 null，
+ * 确保不干扰其它候选。
+ */
+function tryResolveUnpackedSkillsDir(): string | null {
+  return resolveUnpackedSkillsDirFrom(__dirname)
+}
+
+/**
+ * 纯函数：给定基准目录，推算其对应的 unpacked skill 目录（若存在）。
+ * 抽离出来便于单测字符串替换语义，不依赖运行时 __dirname。
+ * @param baseDir 基准目录（打包态为 __dirname，形如 .../app.asar/out/main）
+ * @returns unpacked 真实路径并 existsSync 命中时返回该路径；否则 null
+ */
+export function resolveUnpackedSkillsDirFrom(baseDir: string): string | null {
+  if (!baseDir.includes('app.asar')) return null
+  const unpackedDir = join(baseDir.replace('app.asar', 'app.asar.unpacked'), '.nova', 'skills')
+  return existsSync(unpackedDir) ? unpackedDir : null
+}
+
 export function resolveBuiltinSkillsDir(getAppPath?: () => string): string {
-  // 打包态首选：与 prompts / workflow 内置脚本使用同一套 __dirname 定位机制
+  // 打包态首选：unpacked 真实落盘路径（asarUnpack 配置生效才有）
+  const unpacked = tryResolveUnpackedSkillsDir()
+  if (unpacked) return unpacked
+
+  // 打包态兼容回退：asar 虚路径（旧包 / 未 unpack 场景）
   const dirBasedBuiltin = join(__dirname, '.nova', 'skills')
   if (existsSync(dirBasedBuiltin)) return dirBasedBuiltin
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { SkillLoader, resolveBuiltinSkillsDir, resolveDevBuiltinDir } from '../../../../src/runtime/skills/SkillLoader'
+import { SkillLoader, resolveBuiltinSkillsDir, resolveDevBuiltinDir, resolveUnpackedSkillsDirFrom } from '../../../../src/runtime/skills/SkillLoader'
 
 function writeSkill(base: string, dirName: string, content: string): void {
   const dir = join(base, dirName)
@@ -126,5 +126,78 @@ describe('resolveBuiltinSkillsDir', () => {
     expect(resolved).not.toBe(join(ghostAppPath, '.nova', 'skills'))
     // 应回退到 dev 兜底路径
     expect(resolved).toBe(resolveDevBuiltinDir())
+  })
+})
+
+/**
+ * unpacked 候选：打包态 asarUnpack 把 .nova/skills 真实落盘到
+ * app.asar.unpacked/out/main/.nova/skills，resolveBuiltinSkillsDir 必须优先命中它，
+ * 避免对 asar 虚目录做目录级 fs 操作时抛 ENOENT。
+ */
+describe('resolveUnpackedSkillsDirFrom（unpacked 候选推算）', () => {
+  it('非 asar 路径返回 null（dev / 测试态不干扰）', () => {
+    // vitest 下 __dirname 指向源码目录，不含 app.asar
+    expect(resolveUnpackedSkillsDirFrom(__dirname)).toBeNull()
+    expect(resolveUnpackedSkillsDirFrom('D:/project/out/main')).toBeNull()
+    expect(resolveUnpackedSkillsDirFrom('/home/user/nova/out/main')).toBeNull()
+  })
+
+  it('asar 路径但 unpacked 目录不存在时返回 null（回退到后续候选）', () => {
+    // 构造一个含 app.asar 但实际没有 unpacked 落盘的路径
+    const ghostAsarDir = join(tmpdir(), `nova-ghost-asar-${Date.now()}`, 'app.asar', 'out', 'main')
+    expect(resolveUnpackedSkillsDirFrom(ghostAsarDir)).toBeNull()
+  })
+
+  it('asar 路径且 unpacked 目录存在时返回真实落盘路径', () => {
+    // 模拟打包态：构造 .../app.asar.unpacked/out/main/.nova/skills 真实目录
+    const root = mkdtempSync(join(tmpdir(), 'nova-unpacked-'))
+    const unpackedBase = join(root, 'app.asar.unpacked', 'out', 'main')
+    const skillsDir = join(unpackedBase, '.nova', 'skills')
+    const onboardDir = join(skillsDir, 'onboard')
+    mkdirSync(onboardDir, { recursive: true })
+    writeFileSync(join(onboardDir, 'SKILL.md'), '---\nname: onboard\ndescription: x\n---\nbody')
+    try {
+      // 基准目录是 asar 虚路径（app.asar 段），unpacked 落盘在 app.asar.unpacked 段
+      const asarBase = join(root, 'app.asar', 'out', 'main')
+      const resolved = resolveUnpackedSkillsDirFrom(asarBase)
+      expect(resolved).toBe(skillsDir)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('替换只作用于 app.asar 段，不误伤路径中其它同名子串', () => {
+    // 路径里 app.asar 只应被替换一次，且必须是路径段而非文件名片段
+    const root = mkdtempSync(join(tmpdir(), 'nova-unpacked-edge-'))
+    const unpackedBase = join(root, 'app.asar.unpacked', 'out', 'main')
+    const skillsDir = join(unpackedBase, '.nova', 'skills')
+    mkdirSync(skillsDir, { recursive: true })
+    try {
+      // 基准路径形如 .../app.asar/out/main，应替换为 .../app.asar.unpacked/out/main
+      const asarBase = join(root, 'app.asar', 'out', 'main')
+      expect(resolveUnpackedSkillsDirFrom(asarBase)).toBe(skillsDir)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('resolveBuiltinSkillsDir 不被 unpacked 候选干扰（回归保护）', () => {
+  // vitest 下 __dirname 不含 app.asar → tryResolveUnpackedSkillsDir 返回 null
+  // → resolveBuiltinSkillsDir 走原有候选链，行为不变
+  it('dev 兜底仍生效（unpacked 候选在非 asar 环境返回 null）', () => {
+    const resolved = resolveBuiltinSkillsDir()
+    expect(resolved).toBe(resolveDevBuiltinDir())
+  })
+
+  it('getAppPath 候选仍优先于 dev 兜底', () => {
+    const appRoot = join(tmpdir(), `nova-regress-${Date.now()}`)
+    const appBuiltin = join(appRoot, '.nova', 'skills')
+    mkdirSync(appBuiltin, { recursive: true })
+    try {
+      expect(resolveBuiltinSkillsDir(() => appRoot)).toBe(appBuiltin)
+    } finally {
+      rmSync(appRoot, { recursive: true, force: true })
+    }
   })
 })

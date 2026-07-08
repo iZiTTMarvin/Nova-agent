@@ -19,6 +19,10 @@ asarUnpack:
   - "**/node_modules/@vscode/ripgrep/**"
   - "**/node_modules/sharp/**"
   - "**/node_modules/@img/**"
+  # builtin skill 目录必须真实落盘：SkillLoader 对其做 readdirSync + Dirent.isDirectory()
+  # 等"目录级" fs 操作，asar 虚目录撞 Electron 拦截器会抛 ENOENT not found in app.asar。
+  # prompts(base-rules.md) / workflow 脚本(br-full-dev.js)只读单文件，asar 透明代理稳定，留 asar 内。
+  - "out/main/.nova/skills/**"
 
 # 任务栏 / 窗口图标（开发态与打包后路径不同，见 src/main/appIcon.ts）
 extraResources:

@@ -8,7 +8,7 @@ Thumbs.db
 # electron-builder 打包产物（NSIS 安装包 NovaAgent-Setup-*.exe、win-unpacked、Spike 冒烟 exe 等）
 # 本地重建：npm run dist  或  npm run pack:spike
 release/
-
+.zcode
 # electron-builder 在 buildResources 目录生成的临时图标转换缓存（勿提交）
 build/.icon-ico/
 
