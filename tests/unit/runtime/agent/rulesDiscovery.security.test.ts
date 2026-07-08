@@ -20,3 +20,14 @@ describe('isPathInsideRoot', () => {
     expect(isPathInsideRoot(join('C:', 'other', 'secret.md'), root)).toBe(false)
   })
 })
+
+/** Windows 跨盘符：relative 返回绝对路径时不得误判为根内 */
+describe.runIf(process.platform === 'win32')('isPathInsideRoot 跨盘符（Windows）', () => {
+  it('拒绝跨盘符绝对路径', () => {
+    expect(isPathInsideRoot('C:\\secret\\passwd.md', 'D:\\workspace\\proj')).toBe(false)
+  })
+
+  it('同盘符根内仍允许', () => {
+    expect(isPathInsideRoot('D:\\workspace\\proj\\.nova\\rules\\a.md', 'D:\\workspace\\proj')).toBe(true)
+  })
+})

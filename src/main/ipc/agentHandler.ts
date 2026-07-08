@@ -374,7 +374,11 @@ export function registerAgentHandler(
       parentEventBus: eventBus,
       resolveTool: (name) => toolRegistry.getTool(name),
       contextWindow,
-      supportsVision
+      supportsVision,
+      // 工具创建早于 AgentLoop；执行时 agentLoop 已赋值，闭包惰性读取模块级变量
+      onSkillInvoked: (skill) => {
+        agentLoop?.addSkillRoot(skill.directory)
+      }
     }))
 
     // PRD §5.4：构建带 fallback 的 ModelClientPool（若配置了 fallbacks）

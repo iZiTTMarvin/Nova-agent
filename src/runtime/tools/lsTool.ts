@@ -31,7 +31,8 @@ export const lsTool: ToolExecutor = {
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const inputPath = resolveToolArg(args, 'path') ?? '.'
 
-    const validated = resolveAndValidatePath(context.workingDir, inputPath)
+    // 第三参：本会话已触发的 skill 目录可作为额外只读根
+    const validated = resolveAndValidatePath(context.workingDir, inputPath, context.extraAllowedRoots)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }

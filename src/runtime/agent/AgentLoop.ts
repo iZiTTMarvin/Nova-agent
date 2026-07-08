@@ -267,6 +267,12 @@ export class AgentLoop implements IdleCompactionTarget {
   private skillRegistry: SkillRegistry | null = null
   private skillForkDeps: RunSkillForkDeps | null = null
   /**
+   * 本会话已触发 skill 的目录集合，随 executeBatch 透传给只读工具。
+   * 写入口仅限 addSkillRoot（inject / fork / invoke_skill），不接受模型参数直接注入。
+   * 轻量版不清理：会话内累积，dispose 时随实例销毁；不持久化到会话元数据。
+   */
+  private skillRoots = new Set<string>()
+  /**
    * 编排脚本 runner（由 agentHandler 注入）。
    * 返回摘要文本推给 UI；失败抛错由 sendMessage 捕获。
    */
@@ -546,6 +552,16 @@ export class AgentLoop implements IdleCompactionTarget {
     this.skillRegistry = registry
   }
 
+  /**
+   * 注册一个 skill 目录为额外可读根（skill inject / fork / invoke_skill 工具触发时调用）。
+   * 空串 / 空白忽略；幂等（Set）。
+   */
+  addSkillRoot(dir: string): void {
+    const trimmed = dir.trim()
+    if (!trimmed) return
+    this.skillRoots.add(trimmed)
+  }
+
   /** 注入 fork skill 执行依赖 */
   setSkillForkDeps(deps: RunSkillForkDeps | null): void {
     this.skillForkDeps = deps
@@ -683,13 +699,17 @@ export class AgentLoop implements IdleCompactionTarget {
         } else if (routeResult.route === 'plan' && this.skillRegistry) {
           const skill = this.skillRegistry.get('br-brainstorming')
           if (skill) {
+            // XForge 自动路由：注册 skill 目录，供后续只读工具读取 references
+            this.addSkillRoot(skill.directory)
             const assistantContent = expandSkillBody(skill, content as string, {
-              workspacePath: this.workingDir ?? undefined
+              workspacePath: this.workingDir ?? undefined,
+              skillDirectory: skill.directory
             })
             dispatch = {
               kind: 'inject',
               assistantContent,
-              userContent: `请按上述设计指引产出方案文档。需求：${content}`
+              userContent: `请按上述设计指引产出方案文档。需求：${content}`,
+              skillDirectory: skill.directory
             }
           }
           // skill 不存在则保持 passthrough（降级）
@@ -753,6 +773,10 @@ export class AgentLoop implements IdleCompactionTarget {
       }
 
       if (dispatch.kind === 'inject') {
+        // slash / 自动路由 inject：把该 skill 目录登记为额外只读根
+        if (dispatch.skillDirectory) {
+          this.addSkillRoot(dispatch.skillDirectory)
+        }
         this.context.push({ role: 'assistant', content: dispatch.assistantContent })
         this.context.push({
           role: 'user',
@@ -820,7 +844,9 @@ export class AgentLoop implements IdleCompactionTarget {
         hookManager: this.hookManager,
         readState: this.readState,
         artifactStore: this.artifactStore,
-        askQuestion: this.askQuestionHandler
+        askQuestion: this.askQuestionHandler,
+        // 本会话已触发的 skill 目录 → 只读工具的额外允许根
+        extraAllowedRoots: [...this.skillRoots]
       })
 
     const loopConfig: LoopConfig = {

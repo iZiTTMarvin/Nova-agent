@@ -7,6 +7,7 @@ import type { SkillRegistry } from '../skills/SkillRegistry'
 import { invokeSkillForTool } from '../skills/invokeSkill'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import type { EventBus } from '../agent/EventBus'
+import type { SkillManifest } from '../skills/types'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
 export interface InvokeSkillToolDeps {
@@ -19,6 +20,11 @@ export interface InvokeSkillToolDeps {
   resolveTool?: (name: string) => ToolExecutor | undefined
   contextWindow?: number
   supportsVision?: boolean
+  /**
+   * skill 展开成功后回调，宿主用它把 skill.directory 注册为可读根。
+   * 写入口在 AgentLoop.addSkillRoot，不接受模型参数直接注入。
+   */
+  onSkillInvoked?: (skill: SkillManifest) => void
 }
 
 /**
@@ -57,6 +63,11 @@ export function createInvokeSkillTool(deps: InvokeSkillToolDeps): ToolExecutor {
         return { success: false, output: '', error: result.error }
       }
 
+      // 展开成功（含 fork）后回调宿主登记 skill 目录为可读根
+      if (result.skill) {
+        deps.onSkillInvoked?.(result.skill)
+      }
+
       // fork skill：隔离子代理执行
       if (result.fork && deps.parentEventBus && deps.resolveTool) {
         const forkDeps: RunSkillForkDeps = {
@@ -70,7 +81,11 @@ export function createInvokeSkillTool(deps: InvokeSkillToolDeps): ToolExecutor {
           skill: result.fork,
           args: task,
           ctx,
-          templateContext: { workspacePath: ctx.workingDir, arguments: task }
+          templateContext: {
+            workspacePath: ctx.workingDir,
+            arguments: task,
+            skillDirectory: result.fork.directory
+          }
         })
         return {
           success: forkResult.success,

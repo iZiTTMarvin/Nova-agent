@@ -75,6 +75,11 @@ export interface ToolContext {
    * 不存在时工具降级为 no-op（不阻塞）：主 agent 正常注入；子 agent（task / skill fork）未注入会走降级跳过。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /**
+   * 额外允许读取的根目录（绝对路径），当前唯一来源是「本会话已触发的 skill 目录」。
+   * 只对只读工具（read/ls/grep/find）生效；edit/write 不消费此字段。
+   */
+  extraAllowedRoots?: string[]
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */

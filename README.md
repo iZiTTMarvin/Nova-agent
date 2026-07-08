@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/Version-0.1.0-blue" alt="Version">
+concondacondaoadsncasdclasksdlkcnalscksdnksdackjlascnasdkcnksadcklasdcnksdcnaksdccas  <img src="https://img.shields.io/badge/Version-0.1.1-blue" alt="Version">
   <img src="https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platforms">
   <img src="https://img.shields.io/badge/Tests-1500%2B-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/Stack-Electron%20%2B%20React%20%2B%20TypeScript-9cf" alt="Stack">

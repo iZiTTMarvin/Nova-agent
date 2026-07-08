@@ -11,6 +11,7 @@ import type { ChatMessage } from '../../../src/runtime/model/types'
 import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator'
 import { AGING_GROUP_BYTES_THRESHOLD } from '../../../src/runtime/agent/compaction/toolResultAging'
 import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
+import { readTool } from '../../../src/runtime/tools/readTool'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -1291,6 +1292,122 @@ describe('AgentLoop', () => {
     expect(String(userFollowUp?.content)).toContain('请按上述技能指令执行')
 
     rmSync(skillsDir, { recursive: true, force: true })
+  })
+
+  it('slash inject 后后续工具能读该 skill 目录下的 reference', async () => {
+    const skillsDir = join(tmpdir(), `loop-skill-root-${Date.now()}`)
+    const skillName = 'ref-test'
+    const skillDir = join(skillsDir, skillName)
+    mkdirSync(join(skillDir, 'references'), { recursive: true })
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      `---\nname: ${skillName}\ndescription: ref test\n---\nRead <%= skillDirectory %>/references/rule.md`
+    )
+    writeFileSync(join(skillDir, 'references', 'rule.md'), 'REF-TOKEN-ABC\n')
+    const skillRegistry = SkillRegistry.load({ globalDir: skillsDir })
+    const refPath = join(skillDir, 'references', 'rule.md')
+
+    const client = new MockModelClient()
+    // 第一轮：slash inject 后模型发起 read
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'call_ref',
+            name: 'read',
+            arguments: JSON.stringify({ path: refPath })
+          }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'got ref' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const workDir = join(tmpdir(), `loop-ws-${Date.now()}`)
+    mkdirSync(workDir, { recursive: true })
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    const registry = new ToolRegistry()
+    registry.register(readTool)
+    loop.setToolRegistry(registry)
+    loop.setWorkingDir(workDir)
+    loop.setSkillRegistry(skillRegistry)
+    loop.setPermissionManager(new PermissionManager())
+
+    const events: Array<{ type: string; result?: string; success?: boolean }> = []
+    eventBus.on((e) => events.push(e as { type: string; result?: string; success?: boolean }))
+
+    await loop.sendMessage(`/${skillName}`)
+
+    const toolResults = events.filter(e => e.type === 'tool_result')
+    expect(toolResults.length).toBeGreaterThanOrEqual(1)
+    const output = toolResults.map(e => e.result ?? '').join('\n')
+    expect(output).toContain('REF-TOKEN-ABC')
+
+    rmSync(skillsDir, { recursive: true, force: true })
+    rmSync(workDir, { recursive: true, force: true })
+  })
+
+  it('未触发 skill 时直接 read skill 目录仍越界', async () => {
+    const skillsDir = join(tmpdir(), `loop-skill-deny-${Date.now()}`)
+    const skillDir = join(skillsDir, 'hidden')
+    mkdirSync(join(skillDir, 'references'), { recursive: true })
+    writeFileSync(join(skillDir, 'references', 'secret.md'), 'SHOULD-NOT-READ\n')
+    const refPath = join(skillDir, 'references', 'secret.md')
+
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'call_deny',
+            name: 'read',
+            arguments: JSON.stringify({ path: refPath })
+          }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'denied' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const workDir = join(tmpdir(), `loop-ws-deny-${Date.now()}`)
+    mkdirSync(workDir, { recursive: true })
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus)
+    const registry = new ToolRegistry()
+    registry.register(readTool)
+    loop.setToolRegistry(registry)
+    loop.setWorkingDir(workDir)
+    loop.setPermissionManager(new PermissionManager())
+
+    const events: Array<{ type: string; result?: string; success?: boolean }> = []
+    eventBus.on((e) => events.push(e as { type: string; result?: string; success?: boolean }))
+
+    await loop.sendMessage('普通对话，不要触发 skill')
+
+    const toolResults = events.filter(e => e.type === 'tool_result')
+    expect(toolResults.length).toBeGreaterThanOrEqual(1)
+    const blob = JSON.stringify(toolResults)
+    expect(blob).toMatch(/越界|success":false/)
+
+    rmSync(skillsDir, { recursive: true, force: true })
+    rmSync(workDir, { recursive: true, force: true })
   })
 
   // ── S1 回归：error / overflow 路径不应启动 idleTimer ────────

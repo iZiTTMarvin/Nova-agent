@@ -441,4 +441,43 @@ describe('editTool 集成测试', () => {
     expect(editResult.success).toBe(true)
     expect(readFileSync(join(TMP, 'over.ts'), 'utf-8')).toBe('edited\n')
   })
+
+  // ── skill 目录只读保证：即使 ToolContext 带 extraAllowedRoots，edit/write 仍拒 ──
+
+  it('edit 对 skill 目录路径仍拒绝（不消费 extraAllowedRoots）', async () => {
+    const skillDir = join(process.cwd(), '.test-skill-root-edit')
+    mkdirSync(join(skillDir, 'references'), { recursive: true })
+    writeFileSync(join(skillDir, 'references', 'rule.md'), 'do-not-edit\n')
+    try {
+      const target = join(skillDir, 'references', 'rule.md')
+      // 即使上下文带了额外根（read 会放行），edit 仍双参校验 → 越界
+      const result = await editTool.execute(
+        { filePath: target, edits: [{ oldText: 'do-not-edit', newText: 'hacked' }] },
+        createContext({ extraAllowedRoots: [skillDir] })
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('越界')
+      expect(readFileSync(target, 'utf-8')).toBe('do-not-edit\n')
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true })
+    }
+  })
+
+  it('write 对 skill 目录路径仍拒绝（不消费 extraAllowedRoots）', async () => {
+    const skillDir = join(process.cwd(), '.test-skill-root-write')
+    mkdirSync(join(skillDir, 'references'), { recursive: true })
+    writeFileSync(join(skillDir, 'references', 'rule.md'), 'original\n')
+    try {
+      const target = join(skillDir, 'references', 'rule.md')
+      const result = await writeTool.execute(
+        { path: target, content: 'hacked\n' },
+        createContext({ extraAllowedRoots: [skillDir] })
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('越界')
+      expect(readFileSync(target, 'utf-8')).toBe('original\n')
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true })
+    }
+  })
 })

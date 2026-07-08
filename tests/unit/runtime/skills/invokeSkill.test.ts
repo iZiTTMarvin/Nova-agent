@@ -51,6 +51,22 @@ describe('invokeSkill', () => {
     if (r.kind === 'inject') {
       expect(r.assistantContent).toContain('/ws')
       expect(r.userContent).toContain('请按上述')
+      // inject 必须带回 skillDirectory，供 AgentLoop 注册可读根
+      expect(r.skillDirectory).toBeTruthy()
+      expect(r.skillDirectory).toContain('onboard')
+    }
+  })
+
+  it('inject 自动合入 skillDirectory 模板变量', () => {
+    const reg = registryWith({
+      reftest: md('reftest', '读 <%= skillDirectory %>/references/rule.md')
+    })
+    const r = invokeSkill({ input: '/reftest', registry: reg })
+    expect(r.kind).toBe('inject')
+    if (r.kind === 'inject') {
+      expect(r.assistantContent).toContain('/references/rule.md')
+      expect(r.assistantContent).not.toContain('<%= skillDirectory %>')
+      expect(r.skillDirectory).toBeTruthy()
     }
   })
 

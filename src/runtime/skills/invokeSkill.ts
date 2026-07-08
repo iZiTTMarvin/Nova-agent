@@ -70,12 +70,21 @@ export function invokeSkill(opts: InvokeSkillOptions): SkillDispatchResult {
     return { kind: 'fork', skill, args }
   }
 
-  const assistantContent = expandSkillBody(skill, args, templateContext)
+  // 注入 skillDirectory，供 SKILL.md 模板写 <%= skillDirectory %>/references/...
+  const assistantContent = expandSkillBody(skill, args, {
+    ...templateContext,
+    skillDirectory: skill.directory
+  })
   const userContent = args
     ? `${DEFAULT_USER_PROMPT}\n\n参数：${args}`
     : DEFAULT_USER_PROMPT
 
-  return { kind: 'inject', assistantContent, userContent }
+  return {
+    kind: 'inject',
+    assistantContent,
+    userContent,
+    skillDirectory: skill.directory
+  }
 }
 
 /**
@@ -86,7 +95,14 @@ export function invokeSkillForTool(
   task: string,
   registry: SkillRegistry,
   templateContext: TemplateContext = {}
-): { success: boolean; output: string; error?: string; fork?: SkillManifest } {
+): {
+  success: boolean
+  output: string
+  error?: string
+  fork?: SkillManifest
+  /** 成功展开（含 fork）时带回 skill 引用，宿主据此注册 skill.directory 为可读根 */
+  skill?: SkillManifest
+} {
   const skill = registry.get(skillName)
   if (!skill) {
     return { success: false, output: '', error: `技能 "${skillName}" 未找到` }
@@ -96,10 +112,15 @@ export function invokeSkillForTool(
   }
 
   if (skill.forkAgent) {
-    return { success: true, output: '', fork: skill }
+    return { success: true, output: '', fork: skill, skill }
   }
 
-  const body = expandSkillBody(skill, task, { ...templateContext, arguments: task })
+  // 注入 skillDirectory，供模板写 <%= skillDirectory %>/references/...
+  const body = expandSkillBody(skill, task, {
+    ...templateContext,
+    arguments: task,
+    skillDirectory: skill.directory
+  })
   const output = `${body}\n\n---\n\n任务：${task}`
-  return { success: true, output }
+  return { success: true, output, skill }
 }

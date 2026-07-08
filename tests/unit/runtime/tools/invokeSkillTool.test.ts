@@ -33,6 +33,25 @@ describe('invokeSkillTool', () => {
     expect(result.output).toContain('do it')
   })
 
+  it('展开成功后调用 onSkillInvoked（登记可读根）', async () => {
+    const dir = join(tmpdir(), `skill-oninvoked-${Date.now()}`)
+    mkdirSync(join(dir, 'demo'), { recursive: true })
+    writeFileSync(join(dir, 'demo', 'SKILL.md'), `---\nname: demo\ndescription: d\n---\nbody <%= skillDirectory %>`)
+    const reg = SkillRegistry.load({ globalDir: dir })
+    const invoked: string[] = []
+    const tool = createInvokeSkillTool({
+      modelClient: new MockModelClient(),
+      skillRegistry: reg,
+      onSkillInvoked: (skill) => invoked.push(skill.directory)
+    })
+    const result = await tool.execute({ skill_name: 'demo', task: 't' }, ctx)
+    rmSync(dir, { recursive: true, force: true })
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('demo') // skillDirectory 已展开进 body
+    expect(invoked).toHaveLength(1)
+    expect(invoked[0]).toContain('demo')
+  })
+
   it('flag=false 时走旧版独立 chat', async () => {
     const dir = join(tmpdir(), `skill-legacy-${Date.now()}`)
     mkdirSync(join(dir, 'demo'), { recursive: true })

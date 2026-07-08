@@ -40,9 +40,11 @@ export async function runSkillFork(
   params: RunSkillForkParams
 ): Promise<{ success: boolean; summary: string }> {
   const { skill, args, ctx, templateContext = {} } = params
+  // 合入 skillDirectory，供 SKILL.md 写 <%= skillDirectory %>/references/...
   const { content: skillBody } = expandTemplate(skill.body, {
     ...templateContext,
-    arguments: args
+    arguments: args,
+    skillDirectory: skill.directory
   })
 
   const forbidden = new Set(skill.forbiddenTools ?? [])
@@ -105,6 +107,8 @@ export async function runSkillFork(
   subLoop.setToolRegistry(subRegistry)
   subLoop.setPermissionManager(subPermission)
   subLoop.setMode('default' as Mode)
+  // fork 子代理有独立 AgentLoop，单独登记本 skill 目录为可读根（不与主循环互相污染）
+  subLoop.addSkillRoot(skill.directory)
   if (ctx.shellPath || ctx.binDirs) {
     subLoop.setBashEnvironment({ shellPath: ctx.shellPath, binDirs: ctx.binDirs })
   }

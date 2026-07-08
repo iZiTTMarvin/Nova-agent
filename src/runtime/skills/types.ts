@@ -88,5 +88,11 @@ export type SkillDispatchResult =
   | { kind: 'passthrough' }
   | { kind: 'system_notice'; text: string }
   | { kind: 'fork'; skill: SkillManifest; args: string }
-  | { kind: 'inject'; assistantContent: string; userContent: string }
+  | {
+      kind: 'inject'
+      assistantContent: string
+      userContent: string
+      /** 本 skill 所在目录；调用方据此注册为额外只读根，供模型按需 read reference */
+      skillDirectory?: string
+    }
   | { kind: 'workflow'; scriptName: string; args: string }

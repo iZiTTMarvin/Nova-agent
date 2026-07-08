@@ -91,6 +91,12 @@ export interface ToolBatchExecutionOptions {
    * 仅主 AgentLoop 注入；子 agent（task / skill fork）不注入，工具走降级跳过。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /**
+   * 额外允许读取的根目录（绝对路径）。
+   * 来源：AgentLoop.skillRoots（本会话已触发的 skill 目录）。
+   * 只对只读工具生效；edit/write 不消费此字段。
+   */
+  extraAllowedRoots?: string[]
 }
 
 interface ToolRunResult {
@@ -119,7 +125,10 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     ...(options.shellPath ? { shellPath: options.shellPath } : {}),
     ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {}),
     ...(options.artifactStore ? { artifactStore: options.artifactStore } : {}),
-    ...(options.askQuestion ? { askQuestion: options.askQuestion } : {})
+    ...(options.askQuestion ? { askQuestion: options.askQuestion } : {}),
+    ...(options.extraAllowedRoots && options.extraAllowedRoots.length > 0
+      ? { extraAllowedRoots: options.extraAllowedRoots }
+      : {})
   }
 }
 

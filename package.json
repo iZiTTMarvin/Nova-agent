@@ -1,6 +1,6 @@
 {
   "name": "nova-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "长会话与多 Agent 编排的本地桌面 Agent — 缓存感知上下文、Compose 工作流、会话树与记忆检索",
   "author": "许皓辰",
   "license": "MIT",
