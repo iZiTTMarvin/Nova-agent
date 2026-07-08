@@ -16,7 +16,7 @@ build/.icon-ico/
 # 打包/开发用图标：build/icon.png、src/renderer/assets/app-icon.png（npm run sync:icon 同步，建议一并提交）
 
 scripts/trigram-fact-check.mjs
-.nova
+
 .spec-workflow
 tasks/*
 !tasks/todo.md
