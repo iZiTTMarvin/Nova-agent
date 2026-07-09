@@ -1,85 +1,127 @@
-import React from 'react'
-import { getToolDisplayName, getToolSummary } from './toolDisplay'
-
 /**
- * AskQuestionToolCard —— askQuestion 专用轻量状态卡片
+ * AskQuestionToolCard —— 消息流内 askQuestion 状态行
  *
- * 职责：
- * - 在消息流中显示 "询问用户" 的运行/完成状态
- * - 不承载交互，不折叠，不展开 JSON 参数
- * - 标题和摘要由 toolDisplay 提供
+ * 不承载答题交互（答题在底部 AskQuestionPanel）。
+ * running：正在询问；success：已询问 N 个问题，可展开回看问答摘要。
  */
+import React, { useState } from 'react'
+import { ChevronIcon } from '../../components/Icons'
+
 export interface AskQuestionToolCardProps {
-  /** 工具调用 id，用于 React key */
   toolCallId?: string
-  /** 工具参数 */
   args: Record<string, unknown>
-  /** 执行状态 */
   status: 'running' | 'success' | 'error'
-  /** 是否处于 assistant 流式生成中。true 时启用入场动画。 */
+  result?: string
   isLiveStreaming?: boolean
 }
 
-/** 流式入场动画参数，与 ToolBox 保持一致 */
-export const LIVE_ENTER_SPRING = { type: 'spring' as const, stiffness: 300, damping: 30, mass: 0.8 }
-export const NO_ANIMATION = { duration: 0 }
+export interface AskQuestionQAPair {
+  question: string
+  answer: string
+}
 
-export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.memo(function AskQuestionToolCard({
-  args,
-  status,
-  isLiveStreaming = false
-}) {
-  const title = getToolDisplayName('askQuestion')
-  const summary = getToolSummary('askQuestion', args)
-
-  const renderStatusIcon = () => {
-    switch (status) {
-      case 'running':
-        return (
-          <div className="ask-question-tool-card__icon ask-question-tool-card__icon--running">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-              <line x1="12" y1="2" x2="12" y2="6" />
-              <line x1="12" y1="18" x2="12" y2="22" />
-              <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
-              <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
-              <line x1="2" y1="12" x2="6" y2="12" />
-              <line x1="18" y1="12" x2="22" y2="12" />
-              <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
-              <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
-            </svg>
-          </div>
-        )
-      case 'success':
-        return (
-          <div className="ask-question-tool-card__icon ask-question-tool-card__icon--success">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </div>
-        )
-      case 'error':
-        return (
-          <div className="ask-question-tool-card__icon ask-question-tool-card__icon--error">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </div>
-        )
-      default:
-        return null
-    }
+/** 解析 formatAnswers 输出，供展开回看 */
+export function parseAskQuestionResult(result: string | undefined): {
+  dismissed: boolean
+  pairs: AskQuestionQAPair[]
+} {
+  if (!result?.trim()) return { dismissed: false, pairs: [] }
+  const trimmed = result.trim()
+  if (trimmed === 'User dismissed the question.') {
+    return { dismissed: true, pairs: [] }
   }
 
-  return (
-    <div
-      className={isLiveStreaming ? 'ask-question-tool-card ask-question-tool-card--live-enter' : 'ask-question-tool-card'}
-    >
-      <div className="ask-question-tool-card__header">
-        {renderStatusIcon()}
-        <span className="ask-question-tool-card__title">{title}</span>
-        {summary && <span className="ask-question-tool-card__summary">{summary}</span>}
+  const prefix = 'User has answered your questions: '
+  if (!trimmed.startsWith(prefix)) return { dismissed: false, pairs: [] }
+
+  let body = trimmed.slice(prefix.length)
+  if (body.endsWith('.')) body = body.slice(0, -1)
+
+  const pairs: AskQuestionQAPair[] = []
+  // "问题"="答案" 或 "问题"=[dismissed]；可带 , custom="…"；多题以 "; " 分隔
+  const parts = body.split('; ')
+  for (const part of parts) {
+    const dismissed = part.match(/^"((?:\\.|[^"\\])*)"=\[dismissed\]/)
+    if (dismissed) {
+      pairs.push({ question: dismissed[1].replace(/\\"/g, '"'), answer: '[已跳过]' })
+      continue
+    }
+    const m = part.match(/^"((?:\\.|[^"\\])*)"="((?:\\.|[^"\\])*)"(?:, custom="((?:\\.|[^"\\])*)")?/)
+    if (!m) continue
+    const question = m[1].replace(/\\"/g, '"')
+    let answer = m[2].replace(/\\"/g, '"')
+    if (m[3]) answer = `${answer}（自定义：${m[3].replace(/\\"/g, '"')}）`
+    pairs.push({ question, answer })
+  }
+  return { dismissed: false, pairs }
+}
+
+function questionCount(args: Record<string, unknown>): number {
+  const questions = Array.isArray(args.questions) ? args.questions : []
+  return questions.length
+}
+
+export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.memo(
+  function AskQuestionToolCard({ args, status, result, isLiveStreaming = false }) {
+    const [expanded, setExpanded] = useState(false)
+    const count = questionCount(args)
+    const parsed = parseAskQuestionResult(result)
+    const canExpand = status === 'success' && (parsed.pairs.length > 0 || parsed.dismissed)
+
+    let label = '正在询问'
+    if (status === 'success') {
+      if (parsed.dismissed) label = '已跳过提问'
+      else label = count > 0 ? `已询问 ${count} 个问题` : '已询问'
+    } else if (status === 'error') {
+      label = '提问失败'
+    }
+
+    const rootClass = [
+      'ask-question-tool-card',
+      isLiveStreaming ? 'ask-question-tool-card--live-enter' : '',
+      expanded ? 'ask-question-tool-card--expanded' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+    return (
+      <div className={rootClass}>
+        <button
+          type="button"
+          className="ask-question-tool-card__header"
+          onClick={() => {
+            if (canExpand) setExpanded(prev => !prev)
+          }}
+          aria-expanded={canExpand ? expanded : undefined}
+          disabled={!canExpand}
+        >
+          <span className={`ask-question-tool-card__glyph ask-question-tool-card__glyph--${status}`} aria-hidden="true">
+            ?
+          </span>
+          <span className="ask-question-tool-card__label">{label}</span>
+          {canExpand && (
+            <span className="ask-question-tool-card__chevron" data-expanded={expanded} aria-hidden="true">
+              <ChevronIcon size={14} direction={expanded ? 'up' : 'down'} />
+            </span>
+          )}
+        </button>
+
+        {expanded && parsed.pairs.length > 0 && (
+          <div className="ask-question-tool-card__detail">
+            {parsed.pairs.map((pair, i) => (
+              <div key={i} className="ask-question-tool-card__qa">
+                <div className="ask-question-tool-card__q">{pair.question}</div>
+                <div className="ask-question-tool-card__a">{pair.answer}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {expanded && parsed.dismissed && (
+          <div className="ask-question-tool-card__detail">
+            <div className="ask-question-tool-card__a">用户跳过了提问</div>
+          </div>
+        )}
       </div>
-    </div>
-  )
-})
+    )
+  }
+)

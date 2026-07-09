@@ -2,7 +2,7 @@
  * 单条工具块渲染分发
  *
  * - 默认：L3 ToolTraceRow（等宽原子行，L4 按需挂载）
- * - askQuestion：交互工具，专用卡片（结论区尾部）
+ * - askQuestion：消息内状态行（正在询问 / 已询问 N 题）；答题在底部 AskQuestionPanel
  * - todo_write：由会话顶部 TodoPanel 统一渲染，此处返回 null 避免与消息流重复
  */
 import React from 'react'
@@ -29,6 +29,7 @@ export function renderToolBlock(
         toolCallId={block.toolCallId}
         args={block.arguments}
         status={block.status}
+        result={block.result}
         isLiveStreaming={isLive}
       />
     )

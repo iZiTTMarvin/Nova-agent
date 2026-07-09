@@ -20,10 +20,13 @@ import type { DiffHunk } from '../../../shared/diff/types'
 export type TurnPhase = 'live' | 'completed'
 
 /**
- * 结论区尾部工具：不进过程树，去重后追加到 answerUnits 末尾。
- * 与结论文案同区展示，避免顶置冒泡造成「卡片在上、说明在下」。
+ * askQuestion 不参与「最后一个可见工具」边界判定：
+ * 避免把 ask 当成过程终点，把后续结论文案卷进过程树。
+ * ask 仍按 blocks 原序进入 process 或 answer。
  */
-const ANSWER_TAIL_TOOL_NAMES = new Set(['askQuestion'])
+function isAskQuestionTool(toolName: string): boolean {
+  return toolName === 'askQuestion'
+}
 
 export interface TurnSummary {
   editedFileCount: number
@@ -50,47 +53,6 @@ export interface TurnRenderModel {
   processTimeline: ProcessSegment[]
   answerUnits: RenderUnit[]
   summary: TurnSummary
-}
-
-function isAnswerTailTool(toolName: string): boolean {
-  return ANSWER_TAIL_TOOL_NAMES.has(toolName)
-}
-
-/**
- * 结论区尾部 askQuestion：仅保留最后一次，不堆叠历史。
- */
-export function prepareAnswerAskBlocks(
-  blocks: RendererMessageBlock[],
-  mode: Mode
-): RendererMessageBlock[] {
-  let lastAsk: RendererToolBlock | undefined
-
-  for (const block of blocks) {
-    if (block.type !== 'tool') continue
-    if (block.toolName !== 'askQuestion') continue
-    if (!shouldRenderToolBlock(mode, block.toolName)) continue
-    lastAsk = block
-  }
-
-  return lastAsk ? [lastAsk] : []
-}
-
-/** 旧路径 toolCalls：与 prepareAnswerAskBlocks 同一套去重 */
-function prepareAnswerAskToolCalls(
-  toolCalls: ExtendedToolCall[] | undefined,
-  mode: Mode
-): ExtendedToolCall[] {
-  if (!toolCalls?.length) return []
-
-  let lastAsk: ExtendedToolCall | undefined
-
-  for (const tc of toolCalls) {
-    if (tc.name !== 'askQuestion') continue
-    if (!shouldRenderToolBlock(mode, tc.name)) continue
-    lastAsk = tc
-  }
-
-  return lastAsk ? [lastAsk] : []
 }
 
 function extractPath(args: Record<string, unknown>): string | undefined {
@@ -142,7 +104,7 @@ function collectToolSummaryFromBlocks(
   for (const block of blocks) {
     if (block.type !== 'tool') continue
     if (!shouldRenderToolBlock(mode, block.toolName)) continue
-    if (isAnswerTailTool(block.toolName)) continue
+    if (isAskQuestionTool(block.toolName)) continue
 
     const args = block.arguments ?? {}
     const path = extractPath(args)
@@ -187,7 +149,7 @@ function collectToolSummaryFromToolCalls(
 function findLastVisibleToolIndex(blocks: RendererMessageBlock[], mode: Mode): number {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (block.type === 'tool' && shouldRenderToolBlock(mode, block.toolName) && !isAnswerTailTool(block.toolName)) {
+    if (block.type === 'tool' && shouldRenderToolBlock(mode, block.toolName) && !isAskQuestionTool(block.toolName)) {
       return i
     }
   }
@@ -242,7 +204,8 @@ export function buildProcessTimeline(
     const block = blocks[i]
 
     if (block.type === 'tool') {
-      if (!shouldRenderToolBlock(mode, block.toolName) || isAnswerTailTool(block.toolName)) {
+      // askQuestion 不计入 lastToolIndex，但仍按时间线进入 process（若落在边界内）
+      if (!shouldRenderToolBlock(mode, block.toolName)) {
         continue
       }
       toolRun.push(block)
@@ -321,20 +284,21 @@ export function buildTurnRenderModel(input: {
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]
-      // askQuestion 不进 process/answer 主列表，最后追加到 answer 末尾
-      if (block.type === 'tool' && isAnswerTailTool(block.toolName) && shouldRenderToolBlock(mode, block.toolName)) {
-        continue
-      }
       if (!hasProcess) {
         answerBlocks.push(block)
         continue
       }
       if (i <= lastToolIndex) {
-        if (block.type !== 'tool' || (shouldRenderToolBlock(mode, block.toolName) && !isAnswerTailTool(block.toolName))) {
+        // ask 落在过程边界内：进 timeline；摘要统计仍跳过 ask
+        if (block.type === 'tool') {
+          if (!shouldRenderToolBlock(mode, block.toolName)) continue
+          if (!isAskQuestionTool(block.toolName)) {
+            processBlocksForSummary.push(block)
+          }
+        } else {
           processBlocksForSummary.push(block)
         }
       } else {
-        // 结论区不收纳模式隐藏的 tool（如 plan 下 write），避免无效 block 进入 answerUnits
         if (block.type === 'tool' && !shouldRenderToolBlock(mode, block.toolName)) {
           continue
         }
@@ -344,7 +308,6 @@ export function buildTurnRenderModel(input: {
 
     const toolSummary = collectToolSummaryFromBlocks(processBlocksForSummary, mode)
     const thoughtPreview = buildThoughtPreview(processBlocksForSummary)
-    const askTailUnits = blocksToRenderUnits(prepareAnswerAskBlocks(blocks, mode), mode)
 
     return {
       phase,
@@ -352,7 +315,7 @@ export function buildTurnRenderModel(input: {
       durationMs,
       bubbleUnits: [],
       processTimeline: hasProcess ? buildProcessTimeline(blocks, lastToolIndex, mode) : [],
-      answerUnits: [...blocksToRenderUnits(answerBlocks, mode), ...askTailUnits],
+      answerUnits: blocksToRenderUnits(answerBlocks, mode),
       summary: {
         ...toolSummary,
         ...diffPart,
@@ -362,9 +325,13 @@ export function buildTurnRenderModel(input: {
   }
 
   // ── 旧路径降级：toolCalls + content/thinking ──
-  const visibleToolCalls = toolCalls?.filter(tc => shouldRenderToolBlock(mode, tc.name) && !isAnswerTailTool(tc.name)) ?? []
-  const hasProcess = visibleToolCalls.length > 0
-  const toolUnits = buildToolCallRenderUnits(visibleToolCalls, mode).filter(
+  // askQuestion 不参与过程边界，但按调用顺序追加到 answer
+  const processToolCalls =
+    toolCalls?.filter(tc => shouldRenderToolBlock(mode, tc.name) && !isAskQuestionTool(tc.name)) ?? []
+  const askToolCalls =
+    toolCalls?.filter(tc => tc.name === 'askQuestion' && shouldRenderToolBlock(mode, tc.name)) ?? []
+  const hasProcess = processToolCalls.length > 0
+  const toolUnits = buildToolCallRenderUnits(processToolCalls, mode).filter(
     (u): u is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
       u.kind === 'tool' || u.kind === 'toolGroup'
   )
@@ -394,12 +361,10 @@ export function buildTurnRenderModel(input: {
   } else if (content?.trim()) {
     answerUnits.push({ kind: 'block', block: { type: 'text', content }, index: -1 })
   }
-
-  const askTailUnits = buildToolCallRenderUnits(prepareAnswerAskToolCalls(toolCalls, mode), mode)
-  answerUnits.push(...askTailUnits)
+  answerUnits.push(...buildToolCallRenderUnits(askToolCalls, mode))
 
   const toolSummary = hasProcess
-    ? collectToolSummaryFromToolCalls(visibleToolCalls, mode)
+    ? collectToolSummaryFromToolCalls(processToolCalls, mode)
     : { editedFileCount: 0, exploredFileCount: 0, searchCount: 0, commandCount: 0 }
   const thoughtPreview = buildThoughtPreview(legacyProcessBlocks)
 

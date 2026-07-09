@@ -5,8 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildProcessTimeline,
   buildTurnRenderModel,
-  countHunkLineChanges,
-  prepareAnswerAskBlocks
+  countHunkLineChanges
 } from '../../../src/renderer/features/chat/turnProcessModel'
 import { computeFileDiff } from '../../../src/shared/diff/compute'
 import type { RendererMessageBlock, RendererToolBlock } from '../../../src/renderer/stores/types'
@@ -24,12 +23,6 @@ function toolBlock(
     arguments: args,
     status: 'success'
   }
-}
-
-/** answerUnits 末尾的 askQuestion tool unit */
-function lastAnswerAsk(model: ReturnType<typeof buildTurnRenderModel>) {
-  const tools = model.answerUnits.filter(u => u.kind === 'tool')
-  return tools.length > 0 ? tools[tools.length - 1] : undefined
 }
 
 describe('buildTurnRenderModel', () => {
@@ -102,7 +95,7 @@ describe('buildTurnRenderModel', () => {
     expect(model.bubbleUnits).toHaveLength(0)
   })
 
-  it('text + askQuestion：bubble 空，ask 在 answer 末尾', () => {
+  it('text + askQuestion：按时间线 text 后紧跟 ask', () => {
     const blocks: RendererMessageBlock[] = [
       { type: 'text', content: '我将询问你' },
       toolBlock('q1', 'askQuestion', { questions: [{ question: 'Q1', options: [{ label: 'A' }] }] })
@@ -112,14 +105,13 @@ describe('buildTurnRenderModel', () => {
     expect(model.hasProcess).toBe(false)
     expect(model.answerUnits).toHaveLength(2)
     expect(model.answerUnits[0].kind).toBe('block')
-    const ask = lastAnswerAsk(model)
-    expect(ask?.kind).toBe('tool')
-    if (ask?.kind === 'tool') {
-      expect(ask.block.toolCallId).toBe('q1')
+    expect(model.answerUnits[1].kind).toBe('tool')
+    if (model.answerUnits[1].kind === 'tool') {
+      expect(model.answerUnits[1].block.toolCallId).toBe('q1')
     }
   })
 
-  it('read + text + askQuestion：ask 在 answer 末尾，不在 process', () => {
+  it('read + text + askQuestion：ask 紧跟引导文案，不在 process', () => {
     const blocks: RendererMessageBlock[] = [
       toolBlock('1', 'read', { path: 'a.ts' }),
       { type: 'text', content: '我将询问你' },
@@ -128,56 +120,44 @@ describe('buildTurnRenderModel', () => {
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
     expect(model.bubbleUnits).toHaveLength(0)
     expect(model.processTimeline.some(s => s.kind === 'tool' && s.block.toolName === 'askQuestion')).toBe(false)
+    expect(model.answerUnits).toHaveLength(2)
     expect(model.answerUnits[0].kind).toBe('block')
-    const ask = lastAnswerAsk(model)
-    expect(ask?.kind).toBe('tool')
-    if (ask?.kind === 'tool') {
-      expect(ask.block.toolCallId).toBe('q1')
+    if (model.answerUnits[0].kind === 'block') {
+      expect((model.answerUnits[0].block as { content: string }).content).toBe('我将询问你')
+    }
+    expect(model.answerUnits[1].kind).toBe('tool')
+    if (model.answerUnits[1].kind === 'tool') {
+      expect(model.answerUnits[1].block.toolCallId).toBe('q1')
     }
   })
 
-  it('多次 askQuestion：answer 末尾仅保留最后一次', () => {
+  it('多次 askQuestion：按时间线各保留一次', () => {
     const blocks: RendererMessageBlock[] = [
+      { type: 'text', content: '第一问' },
       toolBlock('q1', 'askQuestion', { questions: [{ question: 'Q1', options: [{ label: 'A' }] }] }),
-      toolBlock('q2', 'askQuestion', { questions: [{ question: 'Q2', options: [{ label: 'B' }] }] }),
-      toolBlock('1', 'read', { path: 'a.ts' }),
-      { type: 'text', content: 'done' }
+      { type: 'text', content: '第二问' },
+      toolBlock('q2', 'askQuestion', { questions: [{ question: 'Q2', options: [{ label: 'B' }] }] })
     ]
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
     expect(model.bubbleUnits).toHaveLength(0)
     const askTools = model.answerUnits.filter(u => u.kind === 'tool')
-    expect(askTools).toHaveLength(1)
-    if (askTools[0].kind === 'tool') {
-      expect(askTools[0].block.toolCallId).toBe('q2')
+    expect(askTools).toHaveLength(2)
+    if (askTools[0].kind === 'tool' && askTools[1].kind === 'tool') {
+      expect(askTools[0].block.toolCallId).toBe('q1')
+      expect(askTools[1].block.toolCallId).toBe('q2')
     }
   })
 
-  it('进行中的 askQuestion：answer 末尾仅保留最后一次', () => {
+  it('ask 落在后续可见工具之前：进入 process timeline', () => {
     const blocks: RendererMessageBlock[] = [
-      { ...toolBlock('q1', 'askQuestion', { questions: [] }), status: 'success' },
-      { ...toolBlock('q2', 'askQuestion', { questions: [] }), status: 'running' },
+      { type: 'text', content: '先问' },
+      toolBlock('q1', 'askQuestion', { questions: [] }),
       toolBlock('1', 'read', { path: 'a.ts' }),
       { type: 'text', content: 'done' }
     ]
-    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'live' })
-    expect(model.bubbleUnits).toHaveLength(0)
-    const ask = lastAnswerAsk(model)
-    expect(ask?.kind).toBe('tool')
-    if (ask?.kind === 'tool') {
-      expect(ask.block.toolCallId).toBe('q2')
-    }
-  })
-
-  it('prepareAnswerAskBlocks 仅保留最后一次 askQuestion', () => {
-    const blocks: RendererMessageBlock[] = [
-      { ...toolBlock('q1', 'askQuestion', { questions: [] }), status: 'running' },
-      toolBlock('t1', 'todo_write', { todos: [] }),
-      toolBlock('q2', 'askQuestion', { questions: [] })
-    ]
-    const prepared = prepareAnswerAskBlocks(blocks, 'default')
-    expect(prepared).toHaveLength(1)
-    expect(prepared[0].type).toBe('tool')
-    expect((prepared[0] as RendererToolBlock).toolCallId).toBe('q2')
+    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
+    expect(model.processTimeline.some(s => s.kind === 'tool' && s.block.toolName === 'askQuestion')).toBe(true)
+    expect(model.answerUnits.filter(u => u.kind === 'tool')).toHaveLength(0)
   })
 
   it('T6: 连续 read×3 → process timeline 含 toolGroup', () => {
