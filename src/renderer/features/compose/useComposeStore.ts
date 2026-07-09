@@ -112,7 +112,7 @@ export const useComposeStore = create<ComposeUiState>((set, get) => ({
         ...prev,
         phase: {
           current: phase,
-          label: prev.phase?.label === phase ? phase : phase,
+          label: phase,
           entered_at: prev.phase?.current === phase
             ? prev.phase.entered_at
             : new Date().toISOString()

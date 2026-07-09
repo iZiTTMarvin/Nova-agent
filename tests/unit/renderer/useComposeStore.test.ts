@@ -22,7 +22,6 @@ function makeState(overrides: {
   id?: string
   status?: string
   session_id?: string
-  phaseLabel?: string
 } = {}): Record<string, unknown> {
   return {
     run: {
@@ -38,7 +37,7 @@ function makeState(overrides: {
     },
     phase: {
       current: 'plan',
-      label: overrides.phaseLabel ?? '阶段 2：计划',
+      label: '阶段 2：计划',
       entered_at: '2026-07-09T00:00:00.000Z'
     },
     tasks: [],
