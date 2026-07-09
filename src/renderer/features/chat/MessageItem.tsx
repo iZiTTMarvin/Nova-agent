@@ -120,7 +120,7 @@ function parseThinking(msg: ThinkingParseSource, isGenerating: boolean, currentG
   return { thinkingContent, textContent, isThinkingActive }
 }
 
-/** 渲染单个 RenderUnit（冒泡区 / 结论区共用） */
+/** 渲染单个 RenderUnit（结论区） */
 function renderMessageUnit(
   unit: RenderUnit,
   ctx: {
@@ -385,13 +385,8 @@ function MessageItemInner({
         {shouldShowPending && <AssistantPendingIndicator />}
 
         {hasBlocks && isAssistant && turnModel ? (
-          /* assistant blocks 路径：冒泡 → 过程树 → 结论 */
+          /* assistant blocks：过程树 → 结论（含 ask 卡片） */
           <>
-            {turnModel.bubbleUnits.map((unit, i) => (
-              <React.Fragment key={`bubble-${i}`}>
-                {renderMessageUnit(unit, unitRenderCtx)}
-              </React.Fragment>
-            ))}
             {turnModel.hasProcess && (
               <TurnProcessTree
                 model={turnModel}
@@ -423,11 +418,6 @@ function MessageItemInner({
           <>
             {isAssistant && turnModel ? (
               <>
-                {turnModel.bubbleUnits.map((unit, i) => (
-                  <React.Fragment key={`bubble-${i}`}>
-                    {renderMessageUnit(unit, unitRenderCtx)}
-                  </React.Fragment>
-                ))}
                 {turnModel.hasProcess && (
                   <TurnProcessTree
                     model={turnModel}

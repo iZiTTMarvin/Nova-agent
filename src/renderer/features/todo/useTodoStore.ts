@@ -37,6 +37,8 @@ export interface TodoSessionState {
   total: number
   /** 最近一次更新时的 epoch ms（用于"刚刚更新"动画/排序） */
   updatedAt: number
+  /** 本轮是否已收到 todo_write；dock 显示门控，防止新轮秒弹上一轮残留 */
+  turnTouched: boolean
 }
 
 interface TodoStoreActions {
@@ -46,6 +48,8 @@ interface TodoStoreActions {
   reset: () => void
   /** 主动设置某会话的 todo 状态（用于 selectSession 时从持久化恢复） */
   setSessionTodos: (sessionId: string, todos: TodoItem[]) => void
+  /** 新轮发起时清零 turnTouched；会话尚无 state 时 no-op */
+  resetTurnTouched: (sessionId: string) => void
 }
 
 function summarize(todos: TodoItem[]): { completed: number; total: number } {
@@ -68,7 +72,7 @@ export const useTodoStore = create<TodoStoreState & TodoStoreActions>((set) => (
     set((state) => ({
       bySession: {
         ...state.bySession,
-        [sessionId]: { todos, view, completed, total, updatedAt: Date.now() }
+        [sessionId]: { todos, view, completed, total, updatedAt: Date.now(), turnTouched: true }
       },
       seen: { ...state.seen, [sessionId]: true }
     }))
@@ -79,10 +83,24 @@ export const useTodoStore = create<TodoStoreState & TodoStoreActions>((set) => (
     set((state) => ({
       bySession: {
         ...state.bySession,
-        [sessionId]: { todos, view: EMPTY_VIEW, completed, total, updatedAt: Date.now() }
+        // 从持久化恢复的数据视为已知，直接可显示
+        [sessionId]: { todos, view: EMPTY_VIEW, completed, total, updatedAt: Date.now(), turnTouched: true }
       },
       seen: { ...state.seen, [sessionId]: true }
     }))
+  },
+
+  resetTurnTouched: (sessionId) => {
+    set((state) => {
+      const existing = state.bySession[sessionId]
+      if (!existing) return state
+      return {
+        bySession: {
+          ...state.bySession,
+          [sessionId]: { ...existing, turnTouched: false }
+        }
+      }
+    })
   },
 
   reset: () => {

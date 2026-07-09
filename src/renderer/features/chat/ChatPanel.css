@@ -84,18 +84,12 @@
 .chat-msg--assistant .markdown-body + .tool-trace-row,
 .chat-msg--assistant .markdown-body + .tool-call-group,
 .chat-msg--assistant .markdown-body + .thinking-block,
-.chat-msg--assistant .markdown-body + .todo-tool-card,
 .chat-msg--assistant .tool-trace-row + .markdown-body,
 .chat-msg--assistant .tool-call-group + .markdown-body,
-.chat-msg--assistant .thinking-block + .markdown-body,
-.chat-msg--assistant .todo-tool-card + .markdown-body {
+.chat-msg--assistant .thinking-block + .markdown-body {
   margin-top: 14px;
 }
 
-.chat-msg--assistant .todo-tool-card + .tool-trace-row,
-.chat-msg--assistant .todo-tool-card + .tool-call-group,
-.chat-msg--assistant .tool-trace-row + .todo-tool-card,
-.chat-msg--assistant .tool-call-group + .todo-tool-card,
 .chat-msg--assistant .thinking-block + .tool-trace-row,
 .chat-msg--assistant .thinking-block + .tool-call-group,
 .chat-msg--assistant .tool-trace-row + .thinking-block,

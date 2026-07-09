@@ -19,8 +19,11 @@ import type { DiffHunk } from '../../../shared/diff/types'
 /** 回合阶段 */
 export type TurnPhase = 'live' | 'completed'
 
-/** 冒泡区工具：永不进入过程树 */
-export const BUBBLE_TOOL_NAMES = new Set(['todo_write', 'askQuestion'])
+/**
+ * 结论区尾部工具：不进过程树，去重后追加到 answerUnits 末尾。
+ * 与结论文案同区展示，避免顶置冒泡造成「卡片在上、说明在下」。
+ */
+const ANSWER_TAIL_TOOL_NAMES = new Set(['askQuestion'])
 
 export interface TurnSummary {
   editedFileCount: number
@@ -42,72 +45,52 @@ export interface TurnRenderModel {
   phase: TurnPhase
   hasProcess: boolean
   durationMs?: number
+  /** 恒为空；历史字段保留以免破坏解构 */
   bubbleUnits: RenderUnit[]
   processTimeline: ProcessSegment[]
   answerUnits: RenderUnit[]
   summary: TurnSummary
 }
 
-function isBubbleTool(toolName: string): boolean {
-  return BUBBLE_TOOL_NAMES.has(toolName)
+function isAnswerTailTool(toolName: string): boolean {
+  return ANSWER_TAIL_TOOL_NAMES.has(toolName)
 }
 
 /**
- * 冒泡区 block 准备：去重 + 固定顺序（Todos 在上，askQuestion 在下）。
- *
- * - todo_write：仅保留最后一次快照
- * - askQuestion：仅保留最后一次（进行中或已完成各一张，不堆叠历史）
+ * 结论区尾部 askQuestion：仅保留最后一次，不堆叠历史。
  */
-export function prepareBubbleBlocks(
+export function prepareAnswerAskBlocks(
   blocks: RendererMessageBlock[],
   mode: Mode
 ): RendererMessageBlock[] {
-  let lastTodo: RendererToolBlock | undefined
   let lastAsk: RendererToolBlock | undefined
 
   for (const block of blocks) {
     if (block.type !== 'tool') continue
+    if (block.toolName !== 'askQuestion') continue
     if (!shouldRenderToolBlock(mode, block.toolName)) continue
-    if (!isBubbleTool(block.toolName)) continue
-
-    if (block.toolName === 'todo_write') {
-      lastTodo = block
-    } else if (block.toolName === 'askQuestion') {
-      lastAsk = block
-    }
+    lastAsk = block
   }
 
-  const result: RendererMessageBlock[] = []
-  if (lastTodo) result.push(lastTodo)
-  if (lastAsk) result.push(lastAsk)
-  return result
+  return lastAsk ? [lastAsk] : []
 }
 
-/** 旧路径 toolCalls 冒泡区：与 prepareBubbleBlocks 同一套去重规则 */
-function prepareBubbleToolCalls(
+/** 旧路径 toolCalls：与 prepareAnswerAskBlocks 同一套去重 */
+function prepareAnswerAskToolCalls(
   toolCalls: ExtendedToolCall[] | undefined,
   mode: Mode
 ): ExtendedToolCall[] {
   if (!toolCalls?.length) return []
 
-  let lastTodo: ExtendedToolCall | undefined
   let lastAsk: ExtendedToolCall | undefined
 
   for (const tc of toolCalls) {
+    if (tc.name !== 'askQuestion') continue
     if (!shouldRenderToolBlock(mode, tc.name)) continue
-    if (!isBubbleTool(tc.name)) continue
-
-    if (tc.name === 'todo_write') {
-      lastTodo = tc
-    } else if (tc.name === 'askQuestion') {
-      lastAsk = tc
-    }
+    lastAsk = tc
   }
 
-  const result: ExtendedToolCall[] = []
-  if (lastTodo) result.push(lastTodo)
-  if (lastAsk) result.push(lastAsk)
-  return result
+  return lastAsk ? [lastAsk] : []
 }
 
 function extractPath(args: Record<string, unknown>): string | undefined {
@@ -159,7 +142,7 @@ function collectToolSummaryFromBlocks(
   for (const block of blocks) {
     if (block.type !== 'tool') continue
     if (!shouldRenderToolBlock(mode, block.toolName)) continue
-    if (isBubbleTool(block.toolName)) continue
+    if (isAnswerTailTool(block.toolName)) continue
 
     const args = block.arguments ?? {}
     const path = extractPath(args)
@@ -204,7 +187,7 @@ function collectToolSummaryFromToolCalls(
 function findLastVisibleToolIndex(blocks: RendererMessageBlock[], mode: Mode): number {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (block.type === 'tool' && shouldRenderToolBlock(mode, block.toolName) && !isBubbleTool(block.toolName)) {
+    if (block.type === 'tool' && shouldRenderToolBlock(mode, block.toolName) && !isAnswerTailTool(block.toolName)) {
       return i
     }
   }
@@ -259,7 +242,7 @@ export function buildProcessTimeline(
     const block = blocks[i]
 
     if (block.type === 'tool') {
-      if (!shouldRenderToolBlock(mode, block.toolName) || isBubbleTool(block.toolName)) {
+      if (!shouldRenderToolBlock(mode, block.toolName) || isAnswerTailTool(block.toolName)) {
         continue
       }
       toolRun.push(block)
@@ -338,8 +321,8 @@ export function buildTurnRenderModel(input: {
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]
-      if (block.type === 'tool' && isBubbleTool(block.toolName) && shouldRenderToolBlock(mode, block.toolName)) {
-        // 冒泡工具不参与 process/answer 分区；渲染时由 prepareBubbleBlocks 去重
+      // askQuestion 不进 process/answer 主列表，最后追加到 answer 末尾
+      if (block.type === 'tool' && isAnswerTailTool(block.toolName) && shouldRenderToolBlock(mode, block.toolName)) {
         continue
       }
       if (!hasProcess) {
@@ -347,7 +330,7 @@ export function buildTurnRenderModel(input: {
         continue
       }
       if (i <= lastToolIndex) {
-        if (block.type !== 'tool' || (shouldRenderToolBlock(mode, block.toolName) && !isBubbleTool(block.toolName))) {
+        if (block.type !== 'tool' || (shouldRenderToolBlock(mode, block.toolName) && !isAnswerTailTool(block.toolName))) {
           processBlocksForSummary.push(block)
         }
       } else {
@@ -361,14 +344,15 @@ export function buildTurnRenderModel(input: {
 
     const toolSummary = collectToolSummaryFromBlocks(processBlocksForSummary, mode)
     const thoughtPreview = buildThoughtPreview(processBlocksForSummary)
+    const askTailUnits = blocksToRenderUnits(prepareAnswerAskBlocks(blocks, mode), mode)
 
     return {
       phase,
       hasProcess,
       durationMs,
-      bubbleUnits: blocksToRenderUnits(prepareBubbleBlocks(blocks, mode), mode),
+      bubbleUnits: [],
       processTimeline: hasProcess ? buildProcessTimeline(blocks, lastToolIndex, mode) : [],
-      answerUnits: blocksToRenderUnits(answerBlocks, mode),
+      answerUnits: [...blocksToRenderUnits(answerBlocks, mode), ...askTailUnits],
       summary: {
         ...toolSummary,
         ...diffPart,
@@ -378,9 +362,8 @@ export function buildTurnRenderModel(input: {
   }
 
   // ── 旧路径降级：toolCalls + content/thinking ──
-  const visibleToolCalls = toolCalls?.filter(tc => shouldRenderToolBlock(mode, tc.name) && !isBubbleTool(tc.name)) ?? []
+  const visibleToolCalls = toolCalls?.filter(tc => shouldRenderToolBlock(mode, tc.name) && !isAnswerTailTool(tc.name)) ?? []
   const hasProcess = visibleToolCalls.length > 0
-  const bubbleUnits = buildToolCallRenderUnits(prepareBubbleToolCalls(toolCalls, mode), mode)
   const toolUnits = buildToolCallRenderUnits(visibleToolCalls, mode).filter(
     (u): u is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
       u.kind === 'tool' || u.kind === 'toolGroup'
@@ -412,6 +395,9 @@ export function buildTurnRenderModel(input: {
     answerUnits.push({ kind: 'block', block: { type: 'text', content }, index: -1 })
   }
 
+  const askTailUnits = buildToolCallRenderUnits(prepareAnswerAskToolCalls(toolCalls, mode), mode)
+  answerUnits.push(...askTailUnits)
+
   const toolSummary = hasProcess
     ? collectToolSummaryFromToolCalls(visibleToolCalls, mode)
     : { editedFileCount: 0, exploredFileCount: 0, searchCount: 0, commandCount: 0 }
@@ -421,7 +407,7 @@ export function buildTurnRenderModel(input: {
     phase,
     hasProcess,
     durationMs,
-    bubbleUnits,
+    bubbleUnits: [],
     processTimeline,
     answerUnits,
     summary: {

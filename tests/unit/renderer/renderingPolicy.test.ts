@@ -21,6 +21,12 @@ describe('renderingPolicy', () => {
     expect(shouldRenderToolBlock('default', 'write')).toBe(true)
   })
 
+  it('todo_write 由顶部面板统一展示，所有模式都不在消息流渲染', () => {
+    expect(shouldRenderToolBlock('default', 'todo_write')).toBe(false)
+    expect(shouldRenderToolBlock('plan', 'todo_write')).toBe(false)
+    expect(shouldRenderToolBlock('compose', 'todo_write')).toBe(false)
+  })
+
   it('权限拒绝结果应隐藏 arguments', () => {
     expect(isPermissionDeniedResult('权限拒绝: 当前为 plan 模式')).toBe(true)
     expect(isPermissionDeniedResult('工具执行失败: boom')).toBe(false)

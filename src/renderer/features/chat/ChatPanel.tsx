@@ -30,6 +30,7 @@ import { resolveMessageRenderMode } from './messageRenderTier'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
+import { useTodoStore } from '../todo/useTodoStore'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { ComposeProgressPanel } from '../compose/ComposeProgressPanel'
 import { ComposeAskUserPanel } from '../compose/ComposeAskUserPanel'
@@ -133,6 +134,15 @@ export const ChatPanel: React.FC = () => {
     !!pendingVerificationRequest ||
     !!pendingComposeAskUser
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+
+  // 新轮发起（isGenerating false→true）时清 turnTouched，避免 dock 秒弹上一轮残留 todo
+  const prevGeneratingRef = useRef(isGenerating)
+  useEffect(() => {
+    if (!prevGeneratingRef.current && isGenerating && currentSessionId) {
+      useTodoStore.getState().resetTurnTouched(currentSessionId)
+    }
+    prevGeneratingRef.current = isGenerating
+  }, [isGenerating, currentSessionId])
 
   // 切换项目时拉取磁盘上的编排 state（恢复进度面板）
   useEffect(() => {
@@ -585,16 +595,13 @@ export const ChatPanel: React.FC = () => {
       {/* 消息流区域，只有非空状态时才显示并占据空间 */}
       {!isEmptyState && (
         <div
-          className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-32"
+          className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-64"
           ref={scrollContainerRef}
           onScroll={handleScroll}
           style={{ overflowAnchor: 'none' }}
         >
           {/* 编排进度面板（无 state 时返回 null） */}
           <ComposeProgressPanel />
-
-          {/* 当前会话的 todo 计划面板（无数据时返回 null，不占视觉空间） */}
-          <TodoPanel sessionId={currentSessionId} />
 
           {tier1BranchContext && (
             <div className="chat-tier1-notice" role="status">
@@ -747,6 +754,14 @@ export const ChatPanel: React.FC = () => {
           >
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
+
+            {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条 */}
+            <div className="w-full px-3 pointer-events-auto">
+              <TodoPanel
+                sessionId={currentSessionId}
+                priorityDockOccupied={!!pendingAskQuestion || !!pendingComposeAskUser}
+              />
+            </div>
 
             <AnimatePresence>
               {isEmptyState && (

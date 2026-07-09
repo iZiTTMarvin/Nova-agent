@@ -6,15 +6,30 @@
  * 状态色挑低饱和度，避免在浅底上刺眼。
  */
 
+.todo-dock {
+  width: 100%;
+  margin: 0 0 12px 0;
+}
+
+.todo-dock:first-child {
+  margin-top: 0;
+}
+
 .todo-panel {
-  margin: 12px 16px 0 16px;
   border: 1px solid var(--border-warm, #e7e0d3);
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(8px);
   border-radius: 12px;
-  overflow: hidden;
+  /* overflow: hidden 会让内部滚动区域裁掉 focus 环，改 visible 由 body 自管滚动 */
+  overflow: visible;
   font-size: 13px;
   transition: box-shadow 0.15s ease;
+  /* dock 高度上限：composer 区是 absolute bottom:0，dock 向上堆叠。
+     没有上限时 >5 项 todo 会顶到 200px+ 挤压上方消息区末条。
+     40vh 既能完整看到约 8-10 项，又给消息区留出足够底部留白。 */
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .todo-panel:hover {
@@ -32,6 +47,11 @@
   cursor: pointer;
   text-align: left;
   color: var(--text-primary, #1f1d1a);
+}
+
+/* 细条态略收紧，少占 composer 上方空间 */
+.todo-panel[data-expanded="false"] .todo-panel__header {
+  padding: 6px 12px;
 }
 
 .todo-panel__header:hover {
@@ -68,6 +88,9 @@
 .todo-panel__body {
   border-top: 1px solid var(--border-warm, #ece6da);
   padding: 6px 4px 8px 4px;
+  /* 头部固定，body 独占剩余高度并内部滚动；父容器已 max-height: 40vh */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .todo-panel__range {

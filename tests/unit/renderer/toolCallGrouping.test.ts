@@ -107,14 +107,15 @@ describe('buildBlockRenderUnits', () => {
     expect(units.map(u => u.kind)).toEqual(['toolGroup', 'tool', 'toolGroup'])
   })
 
-  it('todo_write 单独输出，不进入 group', () => {
+  it('todo_write 由顶部面板统一展示，不在 buildBlockRenderUnits 中输出', () => {
     const blocks = [
       toolBlock('1', 'read', { path: 'a.ts' }),
       toolBlock('2', 'todo_write', { todos: [] }),
       toolBlock('3', 'read', { path: 'b.ts' })
     ]
     const units = buildBlockRenderUnits(blocks, 'default')
-    expect(units.map(u => u.kind)).toEqual(['tool', 'tool', 'tool'])
+    // todo_write 被 shouldRenderToolBlock 过滤，两侧 read 仍视为连续同类段
+    expect(units.map(u => u.kind)).toEqual(['toolGroup'])
   })
 
   it('plan 模式隐藏 write 时跳过但不 flush，两侧 read 可继续聚合', () => {

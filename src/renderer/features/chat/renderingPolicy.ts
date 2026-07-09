@@ -21,7 +21,8 @@ export function isPermissionDeniedResult(result?: string): boolean {
   return Boolean(result?.startsWith('权限拒绝:'))
 }
 
-/** plan 模式下历史/异常事件里的写入工具卡也不应该重新出现在聊天流里 */
+/** 不在消息流里渲染的工具：plan 模式隐藏写入类，以及由会话级面板统一展示的 todo_write */
 export function shouldRenderToolBlock(mode: Mode, toolName: string): boolean {
+  if (toolName === 'todo_write') return false
   return !isModeHiddenWriteTool(mode, toolName)
 }
