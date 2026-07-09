@@ -474,6 +474,11 @@ export function registerAgentHandler(
     agentLoop.setMode(session.mode)
     // 统一 slash 调度：skill 注册表 + fork 依赖
     agentLoop.setSkillRegistry(skillRegistry)
+    // 跨轮恢复：上次 send-message 已 dispose 旧 loop，从会话元数据灌回 skill 可读根
+    agentLoop.restoreSkillRoots(session.grantedSkillRoots)
+    agentLoop.setOnSkillRootAdded((dir) => {
+      sessionStore.addGrantedSkillRoot(capturedSessionId, dir)
+    })
     agentLoop.setSkillForkDeps({
       modelClient,
       parentEventBus: eventBus,
@@ -596,6 +601,13 @@ export function registerAgentHandler(
       const persistBlocks: import('../../shared/session/types').MessageBlock[] = []
 
       if (params.images && params.images.length > 0) {
+        // 主进程双门闩：非视觉模型拒绝写入会话，避免 image_url 污染历史导致整段会话废掉。
+        // 磁盘上已有的 nova-image 资产不在此删除；发 API 时由 visionProjection 按能力剥离。
+        if (!supportsVision) {
+          throw new Error(
+            '当前模型不支持图片输入。请切换到支持视觉的模型后再发送图片，或仅发送文字。'
+          )
+        }
         // img.data 是 nova-image:// URL（渲染层上传时已落盘）。
         // 持久化只存 URL（几十字节）；发给模型时再把 URL 临时转回 base64 data URL。
         const imageReader = getImageStore()

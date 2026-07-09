@@ -62,7 +62,12 @@ export interface PresetProviderMeta {
   presetId: PresetProviderId
   name: string
   baseUrl: string
-  defaultModels: Array<{ modelId: string; displayName?: string }>
+  defaultModels: Array<{
+    modelId: string
+    displayName?: string
+    /** 显式视觉能力；未设时由 inferVisionSupport(modelId) 推断 */
+    supportsVision?: boolean
+  }>
 }
 
 /** 三个内置预设服务商 */
@@ -90,8 +95,9 @@ export const PRESET_PROVIDERS: Record<PresetProviderId, PresetProviderMeta> = {
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModels: [
-      { modelId: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' },
-      { modelId: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro' }
+      // DeepSeek 官方 Chat Completions 当前无视觉；显式 false，避免仅靠推断漂移
+      { modelId: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash', supportsVision: false },
+      { modelId: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro', supportsVision: false }
     ]
   }
 }
@@ -123,7 +129,8 @@ export function createProviderFromPreset(
     models: meta.defaultModels.map(m => ({
       id: generateLocalId('model'),
       modelId: m.modelId,
-      displayName: m.displayName
+      displayName: m.displayName,
+      ...(m.supportsVision !== undefined ? { supportsVision: m.supportsVision } : {})
     })),
     toolDialect: 'auto'
   }

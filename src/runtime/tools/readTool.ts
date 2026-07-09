@@ -379,7 +379,12 @@ export const readTool: ToolExecutor = {
     // 第三参：本会话已触发的 skill 目录可作为额外只读根
     const validated = resolveAndValidatePath(context.workingDir, inputPath, context.extraAllowedRoots)
     if (!validated.ok) {
-      return { success: false, output: '', error: validated.error }
+      // 区外图片路径：补充可操作提示（不放宽安全边界）
+      const lookLikeImage = IMAGE_EXTENSIONS.has(extname(inputPath).toLowerCase())
+      const hint = lookLikeImage
+        ? ' 若需让模型看图：请用输入框图片按钮上传（需当前模型支持视觉），或把文件放进当前工作区后再 read。'
+        : ''
+      return { success: false, output: '', error: `${validated.error}${hint}` }
     }
 
     const absolutePath = validated.path
@@ -393,6 +398,16 @@ export const readTool: ToolExecutor = {
       const fileStat = await asyncStat(absolutePath)
       if (signal?.aborted) {
         return { success: false, output: '', error: '读取已取消' }
+      }
+
+      // 目录不能当文件读：给出明确指引，避免落到 readFile 抛 EISDIR
+      if (fileStat.isDirectory()) {
+        return {
+          success: false,
+          output: '',
+          error:
+            `"${inputPath}" 是目录，无法用 read 读取。请用 ls 查看内容，或指定具体文件路径（例如该目录下的 SKILL.md / references/*.md）。`
+        }
       }
 
       // ── 图片 MIME 检测（基于文件头签名，优先于二进制扩展名检测） ──

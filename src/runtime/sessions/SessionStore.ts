@@ -391,6 +391,26 @@ export class SessionStore {
     return { session, previousTodos }
   }
 
+  /**
+   * 登记本会话已触发的 skill 目录为额外只读根（幂等）。
+   * 供跨轮 AgentLoop 重建后恢复 extraAllowedRoots。
+   */
+  addGrantedSkillRoot(sessionId: string, skillDirectory: string): SessionData | null {
+    const trimmed = skillDirectory.trim()
+    if (!trimmed) return this.load(sessionId)
+
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    const existing = Array.isArray(session.grantedSkillRoots) ? session.grantedSkillRoots : []
+    if (existing.includes(trimmed)) return session
+
+    session.grantedSkillRoots = [...existing, trimmed]
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
   getSessionsDir(): string {
     return this.sessionsDir

@@ -87,6 +87,11 @@ export interface ModelClientConfig {
    * 'low'/'medium'/'high' 按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
    */
   reasoningEffort?: 'auto' | 'low' | 'medium' | 'high'
+  /**
+   * 是否支持图片输入。未设置时由 inferVisionSupport(modelId) 在发请求前推断。
+   * 用于 API 层视觉投影（剥离 / provider 适配），与 UI 门控共用同一语义。
+   */
+  supportsVision?: boolean
 }
 
 // ── Token 用量 ────────────────────────────────────────────

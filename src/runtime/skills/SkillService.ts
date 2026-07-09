@@ -94,14 +94,26 @@ export class SkillService {
       novaHomeDir: this.novaHomeDir
     })
 
+    const builtinDir = resolveBuiltinSkillsDir(this.getAppPath)
     this.registry = SkillRegistry.load({
       workspaceRoot: this.workspaceRoot ?? undefined,
-      builtinDir: resolveBuiltinSkillsDir(this.getAppPath),
+      builtinDir,
       globalDir: this.globalDir,
       // 开关开启时从缓存目录加载 third_party_claude 源
       thirdPartyDir: claudeSync?.cacheDir
     })
     this.applySkillState()
+    // 诊断：builtin 为空时 `/` 补全会无候选项，便于排查打包路径错位
+    const builtinCount = this.registry
+      .getLoader()
+      .listAll()
+      .filter(s => s.source === 'builtin' && !s.invalid).length
+    if (builtinCount === 0) {
+      console.warn(
+        `[SkillService] 未加载到任何内置技能（builtinDir=${builtinDir}）。` +
+          '斜杠 `/` 补全可能为空；请确认打包 asarUnpack 与 resolveBuiltinSkillsDir 路径。'
+      )
+    }
     return this.registry
   }
 

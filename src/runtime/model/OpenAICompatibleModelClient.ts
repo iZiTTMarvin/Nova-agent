@@ -9,7 +9,9 @@ import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
 import { buildReasoningParams } from './reasoningDialect'
+import { projectMessagesForVision } from './visionProjection'
 import type { CacheStrategy } from '../../shared/config/types'
+import { inferVisionSupport } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
 
 export class OpenAICompatibleModelClient implements ModelClient {
@@ -50,7 +52,16 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 否则报 400。共享历史可能因 abort 残留、压缩边界、跨 provider 切换产生孤立消息，
     // 这里统一规整以覆盖所有来源。详见 sanitizeToolMessages 注释。
     const pairedMessages = sanitizeToolMessages(selectedMessages)
-    const apiMessages = pairedMessages.map(m => this.toApiMessage(m, true))
+    // 按当前模型视觉能力投影：非视觉剥离 image_url；MiMo 等把 tool 多模态提升为后续 user。
+    // 只改 API 字节流，不碰 SessionStore——换视觉模型后历史图可恢复。
+    const supportsVision =
+      this.config.supportsVision ?? inferVisionSupport(this.config.modelId)
+    const projectedMessages = projectMessagesForVision(pairedMessages, {
+      supportsVision,
+      modelId: this.config.modelId,
+      baseUrl: this.config.baseUrl
+    })
+    const apiMessages = projectedMessages.map(m => this.toApiMessage(m, true))
     const markedMessages = applyCacheMarkers(apiMessages, this.cacheStrategy)
       .map(msg => this.stripInternalMarker(msg))
 

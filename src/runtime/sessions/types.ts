@@ -71,6 +71,12 @@ export interface SessionData {
    * 类型保持 optional，以便 JSON.parse 旧 session.json 时不强造默认值。
    */
   messageCount?: number
+  /**
+   * 本会话已触发过的 skill 目录（绝对路径，去重）。
+   * 每次 send-message 会 new AgentLoop，内存中的 skillRoots 会丢；
+   * 从此字段恢复，保证跨轮仍能 read references（如 asar.unpacked 下的 builtin skill）。
+   */
+  grantedSkillRoots?: string[]
 }
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */

@@ -359,6 +359,31 @@ describe('SessionStore', () => {
     })
   })
 
+  describe('grantedSkillRoots 持久化', () => {
+    it('addGrantedSkillRoot 幂等写入并跨 load 恢复', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const root = '/skills/nova-frontend'
+
+      const once = store.addGrantedSkillRoot(session.id, root)
+      expect(once?.grantedSkillRoots).toEqual([root])
+
+      const twice = store.addGrantedSkillRoot(session.id, root)
+      expect(twice?.grantedSkillRoots).toEqual([root])
+
+      const reloaded = store.load(session.id)
+      expect(reloaded?.grantedSkillRoots).toEqual([root])
+      expect(reloaded?.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    })
+
+    it('空白路径忽略', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.addGrantedSkillRoot(session.id, '   ')
+      expect(store.load(session.id)?.grantedSkillRoots).toBeUndefined()
+    })
+  })
+
   describe('todo 持久化', () => {
     it('初始会话 getTodos 返回空数组', () => {
       const store = new SessionStore(tmpDir)

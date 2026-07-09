@@ -66,16 +66,40 @@ export function inferContextWindow(modelId: string): number {
 
 /**
  * 基于模型 ID 推断是否支持图片输入（vision）。
- * 默认 true（现代模型大多支持 vision，仅对已知纯文本模型返回 false）。
+ * 策略偏保守：未知模型默认 false，避免误开上传按钮污染会话。
  * 当 ModelConfig.supportsVision 未设置时作为兜底推断。
  */
 export function inferVisionSupport(modelId: string): boolean {
   const lower = modelId.toLowerCase()
-  // 已知不支持 vision 的模型
-  if (lower.includes('gpt-3.5')) return false
+  if (!lower) return false
+
+  // 显式纯文本标记
   if (lower.includes('text-only')) return false
-  // deepseek-chat（非 VL 版本）不支持 vision
-  if (lower.includes('deepseek-chat') && !lower.includes('vl')) return false
-  if (lower.includes('deepseek-reasoner')) return false
-  return true
+  if (lower.includes('gpt-3.5')) return false
+
+  // DeepSeek：仅 VL 变体支持视觉；v4-pro/flash/chat/reasoner 均为纯文本
+  if (lower.includes('deepseek')) {
+    return lower.includes('vl')
+  }
+
+  // 已知支持视觉的模型族 / 关键字
+  if (lower.includes('mimo')) return true
+  if (lower.includes('gpt-4o')) return true
+  if (lower.includes('gpt-4.1')) return true
+  if (lower.includes('gpt-4-turbo')) return true
+  if (lower.includes('gpt-4-vision')) return true
+  if (lower.includes('claude-3')) return true
+  if (lower.includes('claude-4')) return true
+  if (lower.includes('claude-sonnet')) return true
+  if (lower.includes('claude-opus')) return true
+  if (lower.includes('claude-haiku')) return true
+  if (lower.includes('gemini')) return true
+  if (lower.includes('glm-4v') || lower.includes('glm-4.1v') || lower.includes('glm-4.5v')) return true
+  if (lower.includes('qwen-vl') || lower.includes('qwen2-vl') || lower.includes('qwen2.5-vl')) return true
+  if (lower.includes('minimax')) return true
+  // 通用 VL / vision 后缀
+  if (lower.includes('-vl') || lower.includes('_vl') || lower.includes('vision')) return true
+
+  // 未知模型：默认不开放视觉，避免误放行图片污染会话
+  return false
 }

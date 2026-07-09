@@ -734,4 +734,28 @@ describe('readTool', () => {
       expect(result.error).toContain('越界')
     })
   })
+
+  describe('目录与区外图片提示', () => {
+    it('对目录路径返回友好错误而非 EISDIR', async () => {
+      const dir = join(TMP, 'some-folder')
+      mkdirSync(dir, { recursive: true })
+      const result = await readTool.execute({ path: 'some-folder' }, createContext())
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('是目录')
+      expect(result.error).not.toMatch(/EISDIR/i)
+    })
+
+    it('区外图片路径错误附带上传提示', async () => {
+      const outside = join(tmpdir(), `outside-img-${Date.now()}.png`)
+      writeFileSync(outside, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+      try {
+        const result = await readTool.execute({ path: outside }, createContext())
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('越界')
+        expect(result.error).toContain('图片按钮')
+      } finally {
+        rmSync(outside, { force: true })
+      }
+    })
+  })
 })

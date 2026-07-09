@@ -1356,6 +1356,85 @@ describe('AgentLoop', () => {
     rmSync(workDir, { recursive: true, force: true })
   })
 
+  it('restoreSkillRoots 后新 loop 仍能读已授权 skill 目录（模拟跨轮 dispose）', async () => {
+    const skillsDir = join(tmpdir(), `loop-skill-restore-${Date.now()}`)
+    const skillName = 'restore-ref'
+    const skillDir = join(skillsDir, skillName)
+    mkdirSync(join(skillDir, 'references'), { recursive: true })
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      `---\nname: ${skillName}\ndescription: restore test\n---\nbody`
+    )
+    writeFileSync(join(skillDir, 'references', 'rule.md'), 'RESTORED-REF-XYZ\n')
+    const refPath = join(skillDir, 'references', 'rule.md')
+
+    const workDir = join(tmpdir(), `loop-ws-restore-${Date.now()}`)
+    mkdirSync(workDir, { recursive: true })
+
+    // 第一轮：slash 登记 skill 根
+    const client1 = new MockModelClient()
+    client1.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const loop1 = new AgentLoop(client1, new EventBus())
+    loop1.setToolRegistry(new ToolRegistry())
+    loop1.setWorkingDir(workDir)
+    loop1.setSkillRegistry(SkillRegistry.load({ globalDir: skillsDir }))
+    loop1.setPermissionManager(new PermissionManager())
+    const persisted: string[] = []
+    loop1.setOnSkillRootAdded(dir => persisted.push(dir))
+    await loop1.sendMessage(`/${skillName}`)
+    expect(persisted).toContain(skillDir)
+    const roots = loop1.getSkillRoots()
+    loop1.dispose()
+
+    // 第二轮：新实例只 restore，不再 slash，应仍可读
+    const client2 = new MockModelClient()
+    client2.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'call_restore',
+            name: 'read',
+            arguments: JSON.stringify({ path: refPath })
+          }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client2.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'got' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const eventBus2 = new EventBus()
+    const loop2 = new AgentLoop(client2, eventBus2)
+    const registry2 = new ToolRegistry()
+    registry2.register(readTool)
+    loop2.setToolRegistry(registry2)
+    loop2.setWorkingDir(workDir)
+    loop2.setPermissionManager(new PermissionManager())
+    loop2.restoreSkillRoots(roots)
+
+    const events: Array<{ type: string; result?: string }> = []
+    eventBus2.on((e) => events.push(e as { type: string; result?: string }))
+    await loop2.sendMessage('请读 reference')
+
+    const output = events.filter(e => e.type === 'tool_result').map(e => e.result ?? '').join('\n')
+    expect(output).toContain('RESTORED-REF-XYZ')
+
+    rmSync(skillsDir, { recursive: true, force: true })
+    rmSync(workDir, { recursive: true, force: true })
+  })
+
   it('未触发 skill 时直接 read skill 目录仍越界', async () => {
     const skillsDir = join(tmpdir(), `loop-skill-deny-${Date.now()}`)
     const skillDir = join(skillsDir, 'hidden')

@@ -56,6 +56,24 @@ describe('llmRegistry', () => {
     expect(provider.models.length).toBeGreaterThan(0)
   })
 
+  it('deepseek 预设模型显式 supportsVision: false', () => {
+    const provider = createProviderFromPreset('deepseek', 'key')
+    expect(provider.models.every(m => m.supportsVision === false)).toBe(true)
+    const registry = validateLlmRegistry({
+      version: 2,
+      providers: [provider],
+      activeModel: {
+        providerId: provider.id,
+        modelEntryId: provider.models[0].id
+      }
+    })
+    expect(registry.valid).toBe(true)
+    if (registry.valid) {
+      const cfg = resolveActiveModelConfig(registry.registry)
+      expect(cfg?.supportsVision).toBe(false)
+    }
+  })
+
   it('resolveModelConfig 在缺 key 时返回 null', () => {
     const provider = createProviderFromPreset('deepseek', '')
     const registry = validateLlmRegistry({

@@ -269,9 +269,12 @@ export class AgentLoop implements IdleCompactionTarget {
   /**
    * 本会话已触发 skill 的目录集合，随 executeBatch 透传给只读工具。
    * 写入口仅限 addSkillRoot（inject / fork / invoke_skill），不接受模型参数直接注入。
-   * 轻量版不清理：会话内累积，dispose 时随实例销毁；不持久化到会话元数据。
+   * 实例内累积；跨轮由宿主从 session.grantedSkillRoots 经 restoreSkillRoots 恢复，
+   * 新登记经 onSkillRootAdded 写回会话元数据。
    */
   private skillRoots = new Set<string>()
+  /** 新 skill 根登记时通知宿主持久化（restore 路径不触发） */
+  private onSkillRootAdded: ((dir: string) => void) | null = null
   /**
    * 编排脚本 runner（由 agentHandler 注入）。
    * 返回摘要文本推给 UI；失败抛错由 sendMessage 捕获。
@@ -561,11 +564,36 @@ export class AgentLoop implements IdleCompactionTarget {
   /**
    * 注册一个 skill 目录为额外可读根（skill inject / fork / invoke_skill 工具触发时调用）。
    * 空串 / 空白忽略；幂等（Set）。
+   * 新登记时回调 onSkillRootAdded，供宿主写入 session.grantedSkillRoots。
    */
   addSkillRoot(dir: string): void {
     const trimmed = dir.trim()
     if (!trimmed) return
+    if (this.skillRoots.has(trimmed)) return
     this.skillRoots.add(trimmed)
+    this.onSkillRootAdded?.(trimmed)
+  }
+
+  /** 批量恢复会话级已授权 skill 根（不触发持久化回调，避免写放大） */
+  restoreSkillRoots(dirs: string[] | undefined | null): void {
+    if (!dirs || dirs.length === 0) return
+    for (const dir of dirs) {
+      const trimmed = dir.trim()
+      if (trimmed) this.skillRoots.add(trimmed)
+    }
+  }
+
+  /** 当前已登记的 skill 可读根（只读快照） */
+  getSkillRoots(): string[] {
+    return [...this.skillRoots]
+  }
+
+  /**
+   * 新 skill 根登记时的持久化钩子（如写入 SessionStore.grantedSkillRoots）。
+   * restoreSkillRoots 不会触发此回调。
+   */
+  setOnSkillRootAdded(cb: ((dir: string) => void) | null): void {
+    this.onSkillRootAdded = cb
   }
 
   /** 注入 fork skill 执行依赖 */
