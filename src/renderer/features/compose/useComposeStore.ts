@@ -112,7 +112,8 @@ export const useComposeStore = create<ComposeUiState>((set, get) => ({
         ...prev,
         phase: {
           current: phase,
-          label: phase,
+          // phase 事件只带裸名；完整 label 由先到达的 workflow_state 维护
+          label: prev.phase?.label ?? phase,
           entered_at: prev.phase?.current === phase
             ? prev.phase.entered_at
             : new Date().toISOString()
