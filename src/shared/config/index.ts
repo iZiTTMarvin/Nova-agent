@@ -28,3 +28,10 @@ export {
   findModelEntry,
   resolveActiveModelAfterSave
 } from './llmRegistry'
+
+export { resolveSupportsVision } from './types'
+export {
+  lookupModelCapability,
+  MODEL_CAPABILITY_REGISTRY,
+  type ModelCapabilityEntry
+} from './modelRegistry'

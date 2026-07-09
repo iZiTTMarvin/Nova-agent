@@ -32,7 +32,7 @@ import type { WorkflowRuntimeDeps } from '../../runtime/workflow'
 import { EventBus } from '../../runtime/agent/EventBus'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow, inferVisionSupport } from '../../shared/config/types'
+import { inferContextWindow, resolveSupportsVision } from '../../shared/config/types'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
 import { lsTool } from '../../runtime/tools/lsTool'
 import { readTool } from '../../runtime/tools/readTool'
@@ -59,7 +59,7 @@ function buildComposeDeps(
     modelId: persisted?.modelId ?? ''
   })
   const contextWindow = persisted?.contextWindow ?? inferContextWindow(persisted?.modelId ?? '')
-  const supportsVision = persisted?.supportsVision ?? inferVisionSupport(persisted?.modelId ?? '')
+  const supportsVision = resolveSupportsVision(persisted?.modelId ?? '', persisted?.supportsVision)
 
   const toolRegistry = new ToolRegistry()
   toolRegistry.register(lsTool)

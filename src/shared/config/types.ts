@@ -3,6 +3,8 @@
  * 全局唯一的 OpenAI-compatible 模型配置
  */
 
+import { lookupModelCapability } from './modelRegistry'
+
 /** 缓存策略：auto = 前缀稳定即自动命中；anthropic = 显式 cache_control 标记 */
 export type CacheStrategy = 'auto' | 'anthropic'
 
@@ -17,7 +19,7 @@ export interface ModelConfig {
   cacheStrategy?: CacheStrategy
   /** 模型最大上下文窗口（tokens），未设置时从 modelId 自动推断 */
   contextWindow?: number
-  /** 是否支持图片输入。未设置时由 inferVisionSupport(modelId) 推断 */
+  /** 是否支持图片输入。未设置时按优先级查注册表→字符串兜底→默认 false（见 resolveSupportsVision） */
   supportsVision?: boolean
   /**
    * PRD §5.4：备用模型配置链（fallback）。
@@ -102,4 +104,18 @@ export function inferVisionSupport(modelId: string): boolean {
 
   // 未知模型：默认不开放视觉，避免误放行图片污染会话
   return false
+}
+
+/**
+ * 解析模型是否支持图片输入，统一优先级链：
+ *   1. 用户显式勾选 explicit（非 undefined 即采纳）
+ *   2. 精确注册表 MODEL_CAPABILITY_REGISTRY
+ *   3. 字符串模糊兜底 inferVisionSupport
+ *   4. 默认 false
+ */
+export function resolveSupportsVision(modelId: string, explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit
+  const entry = lookupModelCapability(modelId)
+  if (entry?.supportsVision !== undefined) return entry.supportsVision
+  return inferVisionSupport(modelId)
 }

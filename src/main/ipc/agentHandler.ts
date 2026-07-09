@@ -12,7 +12,7 @@ import { join } from 'path'
 import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContextForMode, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
 import { runWorkflow } from '../../runtime/workflow'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow, inferVisionSupport, inferCacheStrategy } from '../../shared/config/types'
+import { inferContextWindow, resolveSupportsVision, inferCacheStrategy } from '../../shared/config/types'
 import { preferredToolDialect } from '../../runtime/model/dialect'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../runtime/model/ModelClientPool'
@@ -327,7 +327,10 @@ export function registerAgentHandler(
     // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
     const persistedConfig = loadModelConfig(app.getPath('userData'))
     const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
-    const supportsVision = persistedConfig?.supportsVision ?? inferVisionSupport(persistedConfig?.modelId ?? '')
+    const supportsVision = resolveSupportsVision(
+      persistedConfig?.modelId ?? '',
+      persistedConfig?.supportsVision
+    )
     syncTavilyApiKeyFromSettings()
 
     const skillService = getSkillService()

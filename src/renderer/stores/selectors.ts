@@ -7,7 +7,7 @@
  * 这里的 selector 不绑定具体 store，而是接收各 store 的 state 切片参数，
  * 让调用方按需从各自 store 读取后再传入，避免隐式跨 store 订阅导致的重渲染失控。
  */
-import { inferVisionSupport } from '../../shared/config/types'
+import { resolveSupportsVision } from '../../shared/config/types'
 import type { ModelConfig } from '../../shared/config'
 
 /**
@@ -18,5 +18,5 @@ import type { ModelConfig } from '../../shared/config'
  */
 export function selectSupportsVisionFromConfig(modelConfig: ModelConfig | null): boolean {
   const modelId = modelConfig?.modelId ?? ''
-  return modelConfig?.supportsVision ?? inferVisionSupport(modelId)
+  return resolveSupportsVision(modelId, modelConfig?.supportsVision)
 }

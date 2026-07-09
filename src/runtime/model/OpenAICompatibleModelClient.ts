@@ -11,7 +11,7 @@ import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from '.
 import { buildReasoningParams } from './reasoningDialect'
 import { projectMessagesForVision } from './visionProjection'
 import type { CacheStrategy } from '../../shared/config/types'
-import { inferVisionSupport } from '../../shared/config/types'
+import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
 
 export class OpenAICompatibleModelClient implements ModelClient {
@@ -54,8 +54,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const pairedMessages = sanitizeToolMessages(selectedMessages)
     // 按当前模型视觉能力投影：非视觉剥离 image_url；MiMo 等把 tool 多模态提升为后续 user。
     // 只改 API 字节流，不碰 SessionStore——换视觉模型后历史图可恢复。
-    const supportsVision =
-      this.config.supportsVision ?? inferVisionSupport(this.config.modelId)
+    const supportsVision = resolveSupportsVision(this.config.modelId, this.config.supportsVision)
     const projectedMessages = projectMessagesForVision(pairedMessages, {
       supportsVision,
       modelId: this.config.modelId,
