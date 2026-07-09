@@ -20,7 +20,8 @@ vi.mock('../../../src/runtime/agent', () => ({
 
 vi.mock('../../../src/main/ipc/agentHandler', () => ({
   getMainReadState: () => ({ clear: vi.fn() }),
-  isAgentTurnInProgress: vi.fn(() => false)
+  isAgentTurnInProgress: vi.fn(() => false),
+  getActiveTurnSessionId: vi.fn(() => false)
 }))
 
 vi.mock('../../../src/main/index', () => ({

@@ -183,4 +183,25 @@ throw new Error("boom");
       expect(outcome.error).toMatch(/boom/)
     }
   })
+
+  it('已 aborted 的 abortSignal → cancelled，pendingAskUsers 清空且 activeRuns 无残留', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const script = `
+export const meta = { name: "preabort", description: "preabort" };
+await agent("noop");
+return { done: true };
+`
+    const outcome = await runWorkflow({
+      script,
+      deps: makeDeps(tmp, new MockModelClient()),
+      runId: 'preabort-1',
+      abortSignal: ac.signal
+    })
+
+    expect(outcome.status).toBe('cancelled')
+    // 终态后 activeRuns 已删除，无残留
+    expect(listWorkflows()).toHaveLength(0)
+    expect(listWorkflows().some((w) => w.runId === 'preabort-1')).toBe(false)
+  })
 })

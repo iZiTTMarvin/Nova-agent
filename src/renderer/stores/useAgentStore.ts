@@ -23,6 +23,12 @@ export interface AgentState {
   pendingVerificationRequest: PendingVerificationRequest | null
   /** askQuestion 工具发起的提问请求；为空时面板不渲染 */
   pendingAskQuestion: AskQuestionRequest | null
+  /**
+   * 主进程当前进行中轮次所属的会话 id（agent:turn-state 广播）。
+   * 与 chat store 的 isGenerating 不同：它是跨会话的全局事实，
+   * 切会话不会被重置，用于「另一个会话正在运行」提示与跨会话停止入口。
+   */
+  mainTurnSessionId: string | null
 
   // ── Actions ──
   /**
@@ -63,6 +69,9 @@ export interface AgentState {
   /** 用户点击跳过全部：invoke 传空数组，工具 formatAnswers 输出 dismissed */
   dismissAskQuestion: () => Promise<void>
 
+  /** 主进程 agent:turn-state 广播：同步全局轮次归属 */
+  handleTurnState: (inProgress: boolean, sessionId: string | null) => void
+
   /** 切换会话 / 取消时统一清空所有挂起权限（被 useChatStore 调用） */
   resetAgentRuntime: () => void
 }
@@ -88,6 +97,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   permissionError: null,
   pendingVerificationRequest: null,
   pendingAskQuestion: null,
+  mainTurnSessionId: null,
 
   cancelExecution: async () => {
     try {
@@ -242,7 +252,12 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     })
   },
 
+  handleTurnState: (inProgress, sessionId) => {
+    set({ mainTurnSessionId: inProgress ? sessionId : null })
+  },
+
   resetAgentRuntime: () => {
+    // 注意：不清 mainTurnSessionId——它是主进程广播的全局事实，与会话切换无关
     set({
       pendingPermissionRequest: null,
       isSubmittingPermission: false,
@@ -260,6 +275,7 @@ export function resetAgentStoreForTests(): void {
     isSubmittingPermission: false,
     permissionError: null,
     pendingVerificationRequest: null,
-    pendingAskQuestion: null
+    pendingAskQuestion: null,
+    mainTurnSessionId: null
   })
 }

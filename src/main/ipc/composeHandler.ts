@@ -122,24 +122,25 @@ function wireComposeEvents(
     const wc = win.webContents
     if (wc.isDestroyed()) return
     if (event.type === 'workflow_phase') {
-      wc.send(COMPOSE_PHASE_CHANGE, { runId: event.runId, phase: event.phase })
+      wc.send(COMPOSE_PHASE_CHANGE, { runId: event.runId, sessionId: event.sessionId, phase: event.phase })
     }
     if (event.type === 'workflow_log') {
-      wc.send(COMPOSE_LOG, { runId: event.runId, message: event.message })
+      wc.send(COMPOSE_LOG, { runId: event.runId, sessionId: event.sessionId, message: event.message })
     }
     if (event.type === 'workflow_ask_user') {
       wc.send(COMPOSE_ASK_USER, {
         runId: event.runId,
+        sessionId: event.sessionId,
         requestId: event.requestId,
         question: event.question,
         options: event.options
       })
     }
     if (event.type === 'workflow_task_update') {
-      wc.send(COMPOSE_TASK_UPDATE, { runId: event.runId, tasks: event.tasks })
+      wc.send(COMPOSE_TASK_UPDATE, { runId: event.runId, sessionId: event.sessionId, tasks: event.tasks })
     }
     if (event.type === 'workflow_state') {
-      wc.send(COMPOSE_STATE, { runId: event.runId, state: event.state })
+      wc.send(COMPOSE_STATE, { runId: event.runId, sessionId: event.sessionId, state: event.state })
     }
   })
 }

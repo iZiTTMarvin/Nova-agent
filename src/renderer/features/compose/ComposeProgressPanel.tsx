@@ -1,9 +1,10 @@
 /**
  * 编排进度面板：渲染 phase / tasks / stats / global_check / 失败诊断
- * 挂载于 ChatPanel 消息区顶部；无活跃 state 时不渲染。
+ * 挂载于 ChatPanel composer dock；默认折叠为一行细条，无活跃 state 时不渲染。
  */
 import React, { useState } from 'react'
 import { useComposeStore } from './useComposeStore'
+import { useAgentStore } from '../../stores/useAgentStore'
 import type { ComposeTaskView } from './types'
 import './ComposeProgressPanel.css'
 
@@ -23,7 +24,8 @@ const STATUS_LABEL: Record<string, string> = {
   failed: '失败',
   running: '进行中',
   completed: '已完成',
-  cancelled: '已取消'
+  cancelled: '已取消',
+  interrupted: '已中断'
 }
 
 function statusIcon(status: string): string {
@@ -43,6 +45,11 @@ function taskNote(task: ComposeTaskView): string {
   }
   if (task.status === 'in_progress') return '执行中…'
   return '—'
+}
+
+/** label 已含「阶段」前缀时不再叠 meta「阶段」标签 */
+function phaseLabelAlreadyPrefixed(label: string): boolean {
+  return label.includes('阶段')
 }
 
 const FailureDetail: React.FC<{ task: ComposeTaskView }> = ({ task }) => {
@@ -144,7 +151,12 @@ const TaskRow: React.FC<{
 
 export const ComposeProgressPanel: React.FC = () => {
   const state = useComposeStore((s) => s.state)
-  const [collapsed, setCollapsed] = useState(false)
+  const runId = useComposeStore((s) => s.runId)
+  const viewStatus = useComposeStore((s) => s.viewStatus)
+  const dismiss = useComposeStore((s) => s.dismiss)
+  const cancelExecution = useAgentStore((s) => s.cancelExecution)
+  // 默认折叠为一行细条（与 TodoPanel dock 一致）
+  const [collapsed, setCollapsed] = useState(true)
   /** 用户手动收起的任务 id（skipped/failed 默认展开） */
   const [userClosed, setUserClosed] = useState<Set<string>>(new Set())
   /** 用户手动展开的任务 id（非默认展开的） */
@@ -161,7 +173,16 @@ export const ComposeProgressPanel: React.FC = () => {
 
   const tasks = state.tasks ?? []
   const runStatus = String(state.run.status)
-  const isActive = runStatus === 'running'
+  // viewStatus 优先：崩溃残留 running 时展示「已中断」
+  const displayStatus = viewStatus === 'interrupted' ? 'interrupted' : runStatus
+  const isActive = displayStatus === 'running'
+  const isTerminal =
+    displayStatus === 'completed' ||
+    displayStatus === 'failed' ||
+    displayStatus === 'cancelled' ||
+    displayStatus === 'interrupted'
+
+  const phaseText = state.phase?.label || state.phase?.current || ''
 
   // skipped/failed 默认展开诊断；用户可点击收起/再展开
   const isExpanded = (task: ComposeTaskView): boolean => {
@@ -191,117 +212,170 @@ export const ComposeProgressPanel: React.FC = () => {
     }
   }
 
+  /** 停止：先走 AgentLoop 取消，再幂等 compose:cancel 兜底 */
+  const handleStop = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    void cancelExecution()
+    if (runId) {
+      void window.api.invoke('compose:cancel', { runId }).catch(() => undefined)
+    }
+  }
+
+  const handleDismiss = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    dismiss()
+  }
+
   const gc = state.global_check
 
+  // header 右侧摘要：无任务时显示阶段名，避免「0/0 完成」
+  const progressSummary =
+    stats.total === 0
+      ? phaseText || '编排中'
+      : `${stats.done}/${stats.total} 完成${stats.skipped > 0 ? ` · ${stats.skipped} 跳过` : ''}${stats.failed > 0 ? ` · ${stats.failed} 失败` : ''}`
+
   return (
-    <div
-      className={`compose-panel${isActive ? ' compose-panel--active' : ''}`}
-      data-status={runStatus}
-    >
-      <button
-        type="button"
-        className="compose-panel__header"
-        onClick={() => setCollapsed((c) => !c)}
-        aria-expanded={!collapsed}
+    <div className="compose-dock">
+      <div
+        className={`compose-panel${isActive ? ' compose-panel--active' : ''}`}
+        data-status={displayStatus}
+        data-expanded={!collapsed}
       >
-        <span className="compose-panel__caret" data-collapsed={collapsed} aria-hidden="true">
-          ▾
-        </span>
-        <span className="compose-panel__title">编排进度</span>
-        <span className="compose-panel__badge" data-status={runStatus}>
-          {statusLabel(runStatus)}
-        </span>
-        <span className="compose-panel__progress" aria-label={`完成 ${stats.done} / ${stats.total}`}>
-          {stats.done}/{stats.total} 完成
-          {stats.skipped > 0 ? ` · ${stats.skipped} 跳过` : ''}
-          {stats.failed > 0 ? ` · ${stats.failed} 失败` : ''}
-        </span>
-      </button>
-
-      {!collapsed && (
-        <div className="compose-panel__body">
-          <div className="compose-panel__meta">
-            <div>
-              <span className="compose-panel__meta-label">命令</span>
-              <span>{state.run.command}</span>
-            </div>
-            {state.phase && (
-              <div>
-                <span className="compose-panel__meta-label">阶段</span>
-                <span>{state.phase.label || state.phase.current}</span>
-              </div>
+        <div className="compose-panel__header-row">
+          <button
+            type="button"
+            className="compose-panel__header"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-expanded={!collapsed}
+          >
+            <span className="compose-panel__caret" data-collapsed={collapsed} aria-hidden="true">
+              ▾
+            </span>
+            <span className="compose-panel__badge" data-status={displayStatus}>
+              {statusLabel(displayStatus)}
+            </span>
+            {phaseText && (
+              <span className="compose-panel__phase-inline" title={phaseText}>
+                {phaseText}
+              </span>
             )}
-          </div>
-
-          {tasks.length > 0 && (
-            <table className="compose-panel__table">
-              <thead>
-                <tr>
-                  <th>任务</th>
-                  <th>状态</th>
-                  <th>说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tasks.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    expanded={isExpanded(task)}
-                    onToggle={() => handleToggle(task)}
-                  />
-                ))}
-              </tbody>
-            </table>
+            <span
+              className="compose-panel__progress"
+              aria-label={stats.total > 0 ? `完成 ${stats.done} / ${stats.total}` : phaseText || '编排中'}
+            >
+              {progressSummary}
+            </span>
+          </button>
+          {isActive && (
+            <button
+              type="button"
+              className="compose-panel__action compose-panel__action--stop"
+              onClick={handleStop}
+              title="停止编排"
+            >
+              停止
+            </button>
           )}
-
-          {gc && (gc.test || gc.build || gc.lint) && (
-            <div className="compose-panel__checks">
-              <span className="compose-panel__meta-label">全量检查</span>
-              {gc.test && (
-                <span data-status={gc.test.status}>
-                  test: {gc.test.status}
-                </span>
-              )}
-              {gc.build && (
-                <span data-status={gc.build.status}>
-                  build: {gc.build.status}
-                </span>
-              )}
-              {gc.lint && (
-                <span data-status={gc.lint.status}>
-                  lint: {gc.lint.status}
-                </span>
-              )}
-            </div>
-          )}
-
-          {state.artifacts && (state.artifacts.spec || state.artifacts.plan || state.artifacts.report) && (
-            <div className="compose-panel__artifacts">
-              <span className="compose-panel__meta-label">产物</span>
-              <ul>
-                {state.artifacts.spec && <li>设计：{state.artifacts.spec}</li>}
-                {state.artifacts.plan && <li>计划：{state.artifacts.plan}</li>}
-                {state.artifacts.report && <li>报告：{state.artifacts.report}</li>}
-              </ul>
-            </div>
-          )}
-
-          {state.auto_decisions && state.auto_decisions.length > 0 && (
-            <details className="compose-panel__decisions">
-              <summary>自动决策（{state.auto_decisions.length}）</summary>
-              <ol>
-                {state.auto_decisions.map((d, i) => (
-                  <li key={i}>
-                    <strong>{d.decision}</strong>
-                    {d.reason ? ` — ${d.reason}` : ''}
-                  </li>
-                ))}
-              </ol>
-            </details>
+          {isTerminal && (
+            <button
+              type="button"
+              className="compose-panel__action compose-panel__action--dismiss"
+              onClick={handleDismiss}
+              title="关闭"
+              aria-label="关闭编排面板"
+            >
+              ×
+            </button>
           )}
         </div>
-      )}
+
+        {!collapsed && (
+          <div className="compose-panel__body">
+            <div className="compose-panel__meta">
+              <div>
+                <span className="compose-panel__meta-label">命令</span>
+                <span>{state.run.command}</span>
+              </div>
+              {state.phase && (
+                <div>
+                  {!phaseLabelAlreadyPrefixed(state.phase.label || state.phase.current) && (
+                    <span className="compose-panel__meta-label">阶段</span>
+                  )}
+                  <span>{state.phase.label || state.phase.current}</span>
+                </div>
+              )}
+            </div>
+
+            {tasks.length > 0 && (
+              <table className="compose-panel__table">
+                <thead>
+                  <tr>
+                    <th>任务</th>
+                    <th>状态</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      expanded={isExpanded(task)}
+                      onToggle={() => handleToggle(task)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {gc && (gc.test || gc.build || gc.lint) && (
+              <div className="compose-panel__checks">
+                <span className="compose-panel__meta-label">全量检查</span>
+                {gc.test && (
+                  <span data-status={gc.test.status}>
+                    test: {gc.test.status}
+                  </span>
+                )}
+                {gc.build && (
+                  <span data-status={gc.build.status}>
+                    build: {gc.build.status}
+                  </span>
+                )}
+                {gc.lint && (
+                  <span data-status={gc.lint.status}>
+                    lint: {gc.lint.status}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {state.artifacts && (state.artifacts.spec || state.artifacts.plan || state.artifacts.report) && (
+              <div className="compose-panel__artifacts">
+                <span className="compose-panel__meta-label">产物</span>
+                <ul>
+                  {state.artifacts.spec && <li>设计：{state.artifacts.spec}</li>}
+                  {state.artifacts.plan && <li>计划：{state.artifacts.plan}</li>}
+                  {state.artifacts.report && <li>报告：{state.artifacts.report}</li>}
+                </ul>
+              </div>
+            )}
+
+            {state.auto_decisions && state.auto_decisions.length > 0 && (
+              <details className="compose-panel__decisions">
+                <summary>自动决策（{state.auto_decisions.length}）</summary>
+                <ol>
+                  {state.auto_decisions.map((d, i) => (
+                    <li key={i}>
+                      <strong>{d.decision}</strong>
+                      {d.reason ? ` — ${d.reason}` : ''}
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

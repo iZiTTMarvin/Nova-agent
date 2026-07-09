@@ -144,6 +144,22 @@
   color: var(--text-muted);
 }
 
+.assistant-pending__text {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assistant-pending__log {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #6b6760);
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @keyframes assistant-pending-dot {
   0%, 80%, 100% {
     transform: translateY(0);
@@ -575,6 +591,44 @@
 
 .chat-tier1-notice__dismiss:hover {
   opacity: 1;
+}
+
+/* ── 跨会话 / 失忆轮次提示（composer dock 顶部） ─────────────── */
+.chat-cross-turn-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(207, 34, 46, 0.2);
+  background: rgba(207, 34, 46, 0.06);
+  font-size: 0.82rem;
+  color: var(--text-secondary, #5c5c5c);
+  box-sizing: border-box;
+}
+
+.chat-cross-turn-notice__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-cross-turn-notice__stop {
+  flex-shrink: 0;
+  padding: 2px 12px;
+  border: 1px solid rgba(207, 34, 46, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  color: #a40e26;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.chat-cross-turn-notice__stop:hover {
+  background: rgba(207, 34, 46, 0.1);
 }
 
 /* ── 验证结果摘要 ────────────────────────────────────────── */

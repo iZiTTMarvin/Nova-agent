@@ -329,6 +329,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
               deps.parentEventBus.emit({
                 type: 'workflow_agent_failed',
                 runId,
+                sessionId: deps.sessionId,
                 reason: 'directory-spawn-failed'
               })
               return null
@@ -394,6 +395,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
               deps.parentEventBus.emit({
                 type: 'workflow_agent_failed',
                 runId,
+                sessionId: deps.sessionId,
                 reason: 'worktree-spawn-failed'
               })
               return null
@@ -437,6 +439,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
             deps.parentEventBus.emit({
               type: 'workflow_agent_failed',
               runId,
+              sessionId: deps.sessionId,
               reason: 'agent-null'
             })
           }
@@ -453,6 +456,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     deps.parentEventBus.emit({
       type: 'workflow_phase',
       runId,
+      sessionId: deps.sessionId,
       phase: title
     })
     return undefined
@@ -479,6 +483,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     deps.parentEventBus.emit({
       type: 'workflow_log',
       runId,
+      sessionId: deps.sessionId,
       message
     })
     return undefined
@@ -570,6 +575,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       deps.parentEventBus.emit({
         type: 'workflow_ask_user',
         runId,
+        sessionId: deps.sessionId,
         requestId,
         question,
         options
@@ -606,6 +612,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       deps.parentEventBus.emit({
         type: 'workflow_ask_user',
         runId,
+        sessionId: deps.sessionId,
         requestId,
         question,
         options
@@ -622,6 +629,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       deps.parentEventBus.emit({
         type: 'workflow_task_update',
         runId,
+        sessionId: deps.sessionId,
         tasks: marshalOut(ctx.composeState.tasks) as unknown[]
       })
     }

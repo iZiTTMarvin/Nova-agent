@@ -121,19 +121,32 @@ export const ChatPanel: React.FC = () => {
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
+  const mainTurnSessionId = useAgentStore(state => state.mainTurnSessionId)
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
   const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
   const pendingComposeAskUser = useComposeStore(state => state.pendingAskUser)
+  const composeSessionId = useComposeStore(state => state.sessionId)
   const loadComposeState = useComposeStore(state => state.loadStateFromDisk)
+  /** 编排面板/askUser 仅归属当前会话时渲染 */
+  const composeBelongsToCurrent =
+    !!currentSessionId && composeSessionId === currentSessionId
   const isPausedForUserInput =
     !!pendingAskQuestion ||
     !!pendingPermissionRequest ||
     !!pendingVerificationRequest ||
-    !!pendingComposeAskUser
+    (!!pendingComposeAskUser && composeBelongsToCurrent)
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+
+  // 跨会话运行提示：他会话在跑，或本会话失忆（切走再切回 isGenerating 未恢复）
+  const showCrossSessionTurnBanner =
+    !!mainTurnSessionId &&
+    !!currentSessionId &&
+    (mainTurnSessionId !== currentSessionId || !isGenerating)
+  const crossSessionTurnIsOther =
+    !!mainTurnSessionId && mainTurnSessionId !== currentSessionId
 
   // 新轮发起（isGenerating false→true）时清 turnTouched，避免 dock 秒弹上一轮残留 todo
   const prevGeneratingRef = useRef(isGenerating)
@@ -144,12 +157,12 @@ export const ChatPanel: React.FC = () => {
     prevGeneratingRef.current = isGenerating
   }, [isGenerating, currentSessionId])
 
-  // 切换项目时拉取磁盘上的编排 state（恢复进度面板）
+  // 切换会话/项目时按 sessionId 拉取磁盘编排 state（过滤归属）
   useEffect(() => {
-    if (currentProject) {
-      void loadComposeState(currentProject)
+    if (currentProject && currentSessionId) {
+      void loadComposeState(currentProject, currentSessionId)
     }
-  }, [currentProject, loadComposeState])
+  }, [currentSessionId, currentProject, loadComposeState])
 
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!currentSessionId) return
@@ -382,6 +395,10 @@ export const ChatPanel: React.FC = () => {
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
     if (isGenerating || sendInFlight) return
+    // 另一会话仍有主进程轮次：友好拦截，避免裸 IPC 错误
+    if (mainTurnSessionId && currentSessionId && mainTurnSessionId !== currentSessionId) {
+      return
+    }
     if (!modelConfig) {
       alert("请先在设置中配置 LLM 服务商与模型！")
       useSettingsStore.getState().openLlmSettings()
@@ -600,9 +617,6 @@ export const ChatPanel: React.FC = () => {
           onScroll={handleScroll}
           style={{ overflowAnchor: 'none' }}
         >
-          {/* 编排进度面板（无 state 时返回 null） */}
-          <ComposeProgressPanel />
-
           {tier1BranchContext && (
             <div className="chat-tier1-notice" role="status">
               <span className="chat-tier1-notice__text">
@@ -727,8 +741,26 @@ export const ChatPanel: React.FC = () => {
         }`}
       >
         <div className="chat-panel__composer-inner">
-          {/* 编排 askUser：阶段 5 发布确认等 */}
-          {pendingComposeAskUser && (
+          {/* 跨会话 / 失忆轮次提示：提供停止入口，避免裸 IPC 拒发 */}
+          {showCrossSessionTurnBanner && (
+            <div className="chat-cross-turn-notice" role="status">
+              <span className="chat-cross-turn-notice__text">
+                {crossSessionTurnIsOther
+                  ? '另一个会话正在运行任务'
+                  : '当前会话仍有任务在后台运行'}
+              </span>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => void cancelExecution()}
+              >
+                停止
+              </button>
+            </div>
+          )}
+
+          {/* 编排 askUser：仅归属当前会话时展示 */}
+          {composeBelongsToCurrent && pendingComposeAskUser && (
             <div className="ask-question-dock">
               <ComposeAskUserPanel />
             </div>
@@ -755,11 +787,21 @@ export const ChatPanel: React.FC = () => {
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 
+            {/* 编排进度 dock：ask 面板与 TodoPanel 之间；按会话门控 */}
+            {composeBelongsToCurrent && (
+              <div className="w-full px-3 pointer-events-auto">
+                <ComposeProgressPanel />
+              </div>
+            )}
+
             {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条 */}
             <div className="w-full px-3 pointer-events-auto">
               <TodoPanel
                 sessionId={currentSessionId}
-                priorityDockOccupied={!!pendingAskQuestion || !!pendingComposeAskUser}
+                priorityDockOccupied={
+                  !!pendingAskQuestion ||
+                  (!!pendingComposeAskUser && composeBelongsToCurrent)
+                }
               />
             </div>
 

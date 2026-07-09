@@ -611,25 +611,37 @@ export interface IpcEvents {
   }
   'compose:phase-change': {
     runId: string
+    /** 发起编排的会话 id；renderer 据此按会话隔离面板 */
+    sessionId?: string
     phase: string
   }
   'compose:task-update': {
     runId: string
+    sessionId?: string
     tasks: unknown[]
   }
   'compose:ask-user': {
     runId: string
+    sessionId?: string
     requestId: string
     question: string
     options: string[]
   }
   'compose:log': {
     runId: string
+    sessionId?: string
     message: string
   }
   'compose:state': {
     runId: string
+    sessionId?: string
     state: Record<string, unknown>
+  }
+  /** 主进程 Agent 轮次开始/结束广播（跨会话运行提示与停止入口） */
+  'agent:turn-state': {
+    inProgress: boolean
+    /** 进行中轮次所属会话 id；结束时为 null */
+    sessionId: string | null
   }
   'app:update-downloaded': {
     version: string

@@ -62,6 +62,9 @@ function App(): JSX.Element {
   const appendComposeLog = useComposeStore(state => state.appendLog)
   const handleComposeAskUser = useComposeStore(state => state.handleAskUser)
 
+  // 主进程轮次归属广播（跨会话运行提示）
+  const handleTurnState = useAgentStore(state => state.handleTurnState)
+
   // 1. 初始化时加载持久化的配置和会话列表
   //    PRD §5.1：会话列表改为由 workspace:get 统一拉取（单一事实源），
   //    startWorkspaceDispatcher 订阅 workspace:changed 并分发到 chat/settings/agent。
@@ -218,26 +221,34 @@ function App(): JSX.Element {
       useChatStore.getState().handleRecoveryState(data.messageId, data.state)
     }))
 
-    // 编排：state / phase / tasks / log / askUser
+    // 编排：state / phase / tasks / log / askUser（透传 sessionId 供门控）
     const unsubComposeState = window.api.on('compose:state', (data) => {
-      applyComposeState(data.runId, data.state)
+      applyComposeState(data.runId, data.state, data.sessionId)
     })
     const unsubComposePhase = window.api.on('compose:phase-change', (data) => {
-      applyComposePhase(data.runId, data.phase)
+      applyComposePhase(data.runId, data.phase, data.sessionId)
     })
     const unsubComposeTasks = window.api.on('compose:task-update', (data) => {
-      applyComposeTasks(data.runId, data.tasks)
+      applyComposeTasks(data.runId, data.tasks, data.sessionId)
     })
     const unsubComposeLog = window.api.on('compose:log', (data) => {
-      appendComposeLog(data.runId, data.message)
+      appendComposeLog(data.runId, data.message, data.sessionId)
     })
     const unsubComposeAskUser = window.api.on('compose:ask-user', (data) => {
-      handleComposeAskUser({
-        runId: data.runId,
-        requestId: data.requestId,
-        question: data.question,
-        options: data.options
-      })
+      handleComposeAskUser(
+        {
+          runId: data.runId,
+          requestId: data.requestId,
+          question: data.question,
+          options: data.options
+        },
+        data.sessionId
+      )
+    })
+
+    // 主进程 Agent 轮次开始/结束：同步跨会话运行归属
+    const unsubTurnState = window.api.on('agent:turn-state', (data) => {
+      handleTurnState(data.inProgress, data.sessionId)
     })
 
     // 自动更新：下载完成后提示重启安装
@@ -282,6 +293,7 @@ function App(): JSX.Element {
       unsubComposeTasks()
       unsubComposeLog()
       unsubComposeAskUser()
+      unsubTurnState()
       unsubUpdateDownloaded()
       buffer.flushNow()
       buffer.dispose()
@@ -305,6 +317,7 @@ function App(): JSX.Element {
     applyComposeTasks,
     appendComposeLog,
     handleComposeAskUser,
+    handleTurnState,
     handleMessageEnd,
     handleUsage,
     setContextBreakdown

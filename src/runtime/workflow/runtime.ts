@@ -143,7 +143,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
     pendingAskUsers
   })
 
-  const composeState = createInitialState({ runId, scriptName, startedAt })
+  const composeState = createInitialState({
+    runId,
+    scriptName,
+    startedAt,
+    sessionId: deps.sessionId
+  })
 
   const persistState = (): void => {
     writeComposeState(deps.workspaceRoot, composeState)
@@ -157,10 +162,25 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
     deps.parentEventBus.emit({
       type: 'workflow_state',
       runId,
+      sessionId: deps.sessionId,
       state: snapshot
     })
   }
   persistState()
+
+  // 外部取消信号（停止按钮 → AgentLoop.cancel → 这里）：
+  // 等价于 cancelWorkflow(runId)，保证「一次停止」能穿透整个编排链路。
+  const externalSignal = opts.abortSignal
+  const onExternalAbort = (): void => {
+    cancelWorkflow(runId)
+  }
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort()
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true })
+    }
+  }
 
   const currentPhase = { name: '' }
   const hookCtx: HookContext = {
@@ -228,6 +248,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   updateStateStatus(composeState, finalStatus, finishedAt)
   persistState()
   activeRuns.delete(runId)
+  externalSignal?.removeEventListener('abort', onExternalAbort)
 
   return outcome
 }

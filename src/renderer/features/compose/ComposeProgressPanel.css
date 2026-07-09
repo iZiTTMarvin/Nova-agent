@@ -1,15 +1,28 @@
 /**
- * 编排进度面板样式 — 与 TodoPanel 暖色调一致
+ * 编排进度面板样式 — 与 TodoPanel dock 暖色调一致
+ * 默认细条折叠；展开后 body 限高滚动。
  */
 
+.compose-dock {
+  width: 100%;
+  margin: 0 0 12px 0;
+}
+
 .compose-panel {
-  margin: 12px 16px 0 16px;
   border: 1px solid var(--border-warm, #e7e0d3);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(8px);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   font-size: 13px;
+  transition: box-shadow 0.15s ease;
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.compose-panel:hover {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.04);
 }
 
 .compose-panel--active {
@@ -17,17 +30,29 @@
   box-shadow: 0 0 0 1px rgba(56, 152, 236, 0.08);
 }
 
+.compose-panel__header-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .compose-panel__header {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: transparent;
   border: 0;
   cursor: pointer;
   text-align: left;
   color: var(--text-primary, #1f1d1a);
+}
+
+.compose-panel[data-expanded='true'] .compose-panel__header {
+  padding: 8px 12px;
 }
 
 .compose-panel__header:hover {
@@ -37,6 +62,7 @@
 .compose-panel__caret {
   display: inline-block;
   width: 14px;
+  flex-shrink: 0;
   color: var(--text-secondary, #6b6760);
   font-size: 11px;
   transition: transform 0.15s ease;
@@ -46,12 +72,8 @@
   transform: rotate(-90deg);
 }
 
-.compose-panel__title {
-  font-weight: 600;
-  color: var(--text-primary, #1f1d1a);
-}
-
 .compose-panel__badge {
+  flex-shrink: 0;
   font-size: 11px;
   padding: 1px 8px;
   border-radius: 999px;
@@ -75,11 +97,64 @@
   color: #a40e26;
 }
 
+.compose-panel__badge[data-status='interrupted'] {
+  background: rgba(107, 103, 96, 0.14);
+  color: #5c574f;
+}
+
+.compose-panel__phase-inline {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary, #1f1d1a);
+}
+
 .compose-panel__progress {
   margin-left: auto;
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary, #6b6760);
   font-size: 12px;
+}
+
+.compose-panel__action {
+  flex-shrink: 0;
+  margin-right: 8px;
+  padding: 2px 10px;
+  border: 1px solid var(--border-warm, #e7e0d3);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary, #6b6760);
+  line-height: 1.4;
+}
+
+.compose-panel__action:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.compose-panel__action--stop {
+  color: #a40e26;
+  border-color: rgba(207, 34, 46, 0.25);
+}
+
+.compose-panel__action--stop:hover {
+  background: rgba(207, 34, 46, 0.08);
+}
+
+.compose-panel__action--dismiss {
+  padding: 2px 8px;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.compose-panel__action--dismiss:hover {
+  opacity: 1;
 }
 
 .compose-panel__body {
@@ -87,6 +162,9 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
+  max-height: calc(40vh - 40px);
+  min-height: 0;
 }
 
 .compose-panel__meta {

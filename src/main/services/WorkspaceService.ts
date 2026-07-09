@@ -19,7 +19,7 @@ import type { Mode, Session, SessionDetail } from '../../shared/session'
 import type { WorkspaceState, Tier1BranchContext } from '../../shared/workspace/types'
 import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests } from '../../runtime/checkpoints/restore'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
-import { getMainReadState, isAgentTurnInProgress } from '../ipc/agentHandler'
+import { getMainReadState, isAgentTurnInProgress, getActiveTurnSessionId } from '../ipc/agentHandler'
 import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
 import { calculateContextBreakdown } from '../../runtime/agent'
@@ -253,6 +253,11 @@ export class WorkspaceService {
    * 删除的是当前会话时，自动切到剩余列表的第一条；没有剩余会话则清空工作区。
    */
   deleteSession(sessionId: string): WorkspaceState {
+    // 该会话有进行中的 Agent 轮次（含编排 run）时禁止删除：
+    // 否则 run 变成无主孤儿，持续占用 agentTurnInProgress 并向已删除会话写数据。
+    if (getActiveTurnSessionId() === sessionId) {
+      throw new Error('该会话的 Agent 正在运行，请先停止再删除')
+    }
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
 
@@ -356,7 +361,7 @@ export class WorkspaceService {
     pushContextBreakdownForSession(detail, this.deps.getMainWindow)
     return this.getState()
   }
-  /** 切换运行模式（并持久化到当前会话） */
+  /** 切换运行模式（并持久化到目标会话） */
   setMode(params: { mode: Mode; sessionId?: string }): WorkspaceState {
     const store = this.deps.getSessionStore()
     const sessionId = params.sessionId ?? this.state.currentSessionId
@@ -367,12 +372,18 @@ export class WorkspaceService {
       this.state.availableSessions = store.list()
     }
 
-    setCurrentMode(params.mode)
-    this.state = { ...this.state, currentMode: params.mode }
+    // 只有目标会话仍是当前会话时才改全局 currentMode。
+    // 编排 run（workflowRunner）会用发起时的 sessionId 调本方法，若用户此刻
+    // 已切到别的会话，全局模式不应被后台 run 篡改（否则 UI 模式随机跳变）。
+    const targetIsCurrent = !sessionId || sessionId === this.state.currentSessionId
+    if (targetIsCurrent) {
+      setCurrentMode(params.mode)
+      this.state = { ...this.state, currentMode: params.mode }
+    }
     this.broadcast()
 
     // 模式变更可能影响 system prompt 长度，重新推送上下文拆分
-    const session = sessionId ? store.load(sessionId) : null
+    const session = targetIsCurrent && sessionId ? store.load(sessionId) : null
     if (session) {
       pushContextBreakdownForSession(session, this.deps.getMainWindow)
     }

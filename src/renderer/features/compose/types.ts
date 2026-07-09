@@ -43,6 +43,8 @@ export interface ComposeStateView {
     started_at: string
     updated_at: string
     status: ComposeRunStatus | string
+    /** 发起编排的会话 id；门控与磁盘过滤用 */
+    session_id?: string
   }
   phase?: {
     current: string

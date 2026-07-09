@@ -51,6 +51,12 @@ export interface RunWorkflowOptions {
   resume?: boolean
   /** 阶段 B：per-run 并发上限 */
   maxConcurrentAgents?: number
+  /**
+   * 外部取消信号（如 AgentLoop 的 abortController）。
+   * 触发后等价于 cancelWorkflow(runId)：解除 askUser 挂起、终止子 agent、
+   * run 以 cancelled 终态收尾。没有它「停止按钮」无法穿透到编排 run。
+   */
+  abortSignal?: AbortSignal
 }
 
 /** 运行时依赖：禁止把 AgentLoop 引用直接塞进沙箱 */
@@ -205,6 +211,8 @@ export interface ComposeState {
     started_at: string
     updated_at: string
     status: RunStatus
+    /** 发起编排的会话 id；进度面板据此只在所属会话中展示 */
+    session_id?: string
   }
   phase?: {
     current: string

@@ -108,24 +108,29 @@ export type AgentEvent =
       /** 编排脚本 phase()：阶段切换（compose 进度面板） */
       type: 'workflow_phase'
       runId: string
+      /** 发起编排的会话 id；renderer 据此做面板的会话隔离 */
+      sessionId?: string
       phase: string
     }
   | {
       /** 编排脚本 log()：脚本日志行 */
       type: 'workflow_log'
       runId: string
+      sessionId?: string
       message: string
     }
   | {
       /** 编排 agent() 失败（超时/取消/错误），仅可观测，不中断脚本 */
       type: 'workflow_agent_failed'
       runId: string
+      sessionId?: string
       reason: string
     }
   | {
       /** 编排 askUser：阻塞等待用户选择（阶段 E 弹窗；测试可注入 resolver） */
       type: 'workflow_ask_user'
       runId: string
+      sessionId?: string
       requestId: string
       question: string
       options: string[]
@@ -134,12 +139,14 @@ export type AgentEvent =
       /** 编排任务列表变更（进度面板） */
       type: 'workflow_task_update'
       runId: string
+      sessionId?: string
       tasks: unknown[]
     }
   | {
       /** 编排 state.json 快照（进度面板全量同步） */
       type: 'workflow_state'
       runId: string
+      sessionId?: string
       state: Record<string, unknown>
     }
 

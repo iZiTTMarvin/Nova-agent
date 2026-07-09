@@ -79,9 +79,17 @@ import {
 /** Agent 轮次是否进行中（send-message 从进入到 sendMessage 返回） */
 let agentTurnInProgress = false
 
+/** 进行中轮次所属的会话 id（轮次结束后归 null） */
+let activeTurnSessionId: string | null = null
+
 /** 供 WorkspaceService 分叉 IPC 守卫：生成中禁止改 currentLeafId */
 export function isAgentTurnInProgress(): boolean {
   return agentTurnInProgress
+}
+
+/** 供跨会话守卫使用：返回当前轮次所属会话 id（无进行中轮次时为 null） */
+export function getActiveTurnSessionId(): string | null {
+  return agentTurnInProgress ? activeTurnSessionId : null
 }
 
 /** 管理 AgentLoop 的生命周期 */
@@ -258,6 +266,16 @@ export function registerAgentHandler(
   getModelClient: () => ModelClient | null,
   getImageStore: () => ImageStore
 ): void {
+  /** 广播主进程轮次状态（跨会话运行提示 + 停止入口），renderer 订阅 agent:turn-state */
+  const broadcastTurnState = (): void => {
+    const win = getMainWindow()
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+    win.webContents.send('agent:turn-state', {
+      inProgress: agentTurnInProgress,
+      sessionId: agentTurnInProgress ? activeTurnSessionId : null
+    })
+  }
+
   // 发送消息命令
   handle(SEND_MESSAGE, async (_event, params: {
     sessionId: string
@@ -267,7 +285,10 @@ export function registerAgentHandler(
     regenerate?: boolean
   }): Promise<void> => {
     if (agentTurnInProgress) {
-      throw new Error('上一轮 Agent 尚未结束，拒绝并发请求')
+      const where = activeTurnSessionId && activeTurnSessionId !== params.sessionId
+        ? '（在另一个会话中）'
+        : ''
+      throw new Error(`Agent 正在运行${where}，请先点击停止按钮结束当前任务后再发送`)
     }
 
     // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 所有挂起的 askQuestion 请求，
@@ -508,7 +529,7 @@ export function registerAgentHandler(
     agentLoop.setCheckpointManager(checkpointManager)
 
     // 编排脚本 runner：/br-full-dev 等 workflow skill 入口
-    agentLoop.setWorkflowRunner(async (scriptName, args) => {
+    agentLoop.setWorkflowRunner(async (scriptName, args, opts) => {
       if (session.mode !== 'compose') {
         getWorkspaceService().setMode({ mode: 'compose', sessionId: params.sessionId })
         agentLoop!.setMode('compose')
@@ -519,6 +540,9 @@ export function registerAgentHandler(
       const outcome = await runWorkflow({
         script: scriptName,
         args: { requirement: args, task: args },
+        // 停止按钮 → AgentLoop.cancel() 的信号在此接入编排 run（否则 run 停不下来，
+        // sendMessage 永挂起 → agentTurnInProgress 卡 true → 全局拒发消息）
+        abortSignal: opts?.abortSignal,
         deps: {
           modelClient,
           parentEventBus: eventBus,
@@ -653,6 +677,8 @@ export function registerAgentHandler(
     }
 
     agentTurnInProgress = true
+    activeTurnSessionId = params.sessionId
+    broadcastTurnState()
     try {
       await agentLoop.sendMessage(sendContent)
       onUserTurnCompleteForExtract(
@@ -663,6 +689,8 @@ export function registerAgentHandler(
       )
     } finally {
       agentTurnInProgress = false
+      activeTurnSessionId = null
+      broadcastTurnState()
     }
   })
 
@@ -1227,12 +1255,14 @@ export function forwardEventToRenderer(
     case 'workflow_phase':
       webContents.send('compose:phase-change', {
         runId: event.runId,
+        sessionId: event.sessionId,
         phase: event.phase
       })
       break
     case 'workflow_log':
       webContents.send('compose:log', {
         runId: event.runId,
+        sessionId: event.sessionId,
         message: event.message
       })
       break
@@ -1240,12 +1270,14 @@ export function forwardEventToRenderer(
       // 可观测事件，阶段 E UI 可订阅；当前仅转发为 log
       webContents.send('compose:log', {
         runId: event.runId,
+        sessionId: event.sessionId,
         message: `[agent-failed] ${event.reason}`
       })
       break
     case 'workflow_ask_user':
       webContents.send('compose:ask-user', {
         runId: event.runId,
+        sessionId: event.sessionId,
         requestId: event.requestId,
         question: event.question,
         options: event.options
@@ -1254,12 +1286,14 @@ export function forwardEventToRenderer(
     case 'workflow_task_update':
       webContents.send('compose:task-update', {
         runId: event.runId,
+        sessionId: event.sessionId,
         tasks: event.tasks
       })
       break
     case 'workflow_state':
       webContents.send('compose:state', {
         runId: event.runId,
+        sessionId: event.sessionId,
         state: event.state
       })
       break

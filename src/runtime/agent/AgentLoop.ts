@@ -275,9 +275,15 @@ export class AgentLoop implements IdleCompactionTarget {
   /**
    * 编排脚本 runner（由 agentHandler 注入）。
    * 返回摘要文本推给 UI；失败抛错由 sendMessage 捕获。
+   * opts.abortSignal 是本轮 AgentLoop 的取消信号——runner 必须把它接到
+   * runWorkflow，否则停止按钮无法终止编排 run（会全局卡死 send-message）。
    */
   private workflowRunner:
-    | ((scriptName: string, args: string) => Promise<{ summary: string }>)
+    | ((
+        scriptName: string,
+        args: string,
+        opts?: { abortSignal?: AbortSignal }
+      ) => Promise<{ summary: string }>)
     | null = null
 
   /**
@@ -569,7 +575,13 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 注入编排脚本 runner（/br-full-dev 等 workflow skill） */
   setWorkflowRunner(
-    runner: ((scriptName: string, args: string) => Promise<{ summary: string }>) | null
+    runner:
+      | ((
+          scriptName: string,
+          args: string,
+          opts?: { abortSignal?: AbortSignal }
+        ) => Promise<{ summary: string }>)
+      | null
   ): void {
     this.workflowRunner = runner
   }
@@ -723,7 +735,11 @@ export class AgentLoop implements IdleCompactionTarget {
           this.setMode('compose')
         }
         try {
-          const wfResult = await this.workflowRunner(dispatch.scriptName, dispatch.args)
+          // 透传本轮取消信号：停止按钮 → cancel() → abortController.abort()
+          // → runWorkflow 内部 cancelWorkflow，编排 run 才能真正终止。
+          const wfResult = await this.workflowRunner(dispatch.scriptName, dispatch.args, {
+            abortSignal: this.abortController?.signal
+          })
           this.context.push({ role: 'assistant', content: wfResult.summary })
           this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
         } catch (err) {

@@ -49,6 +49,7 @@ export function createInitialState(opts: {
   runId: string
   scriptName: string
   startedAt: string
+  sessionId?: string
 }): ComposeState {
   return {
     run: {
@@ -57,7 +58,8 @@ export function createInitialState(opts: {
       script: opts.scriptName,
       started_at: opts.startedAt,
       updated_at: opts.startedAt,
-      status: 'running'
+      status: 'running',
+      ...(opts.sessionId ? { session_id: opts.sessionId } : {})
     },
     tasks: [],
     auto_decisions: [],
