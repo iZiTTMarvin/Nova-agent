@@ -1,11 +1,12 @@
 /**
  * agent() 结果 journal：同步落盘，供 resume 跳过已成功调用。
- * 哈希只含五字段（prompt/agentType/model/schema/phase）；null 不缓存。
+ * inputHash 纳入 prompt/agentType/model/schema/phase/tools/isolation/timeoutMs。
  */
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { runJournalPath } from './paths'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 
 /** 递归排序对象键，保证 JSON.stringify 与字段书写顺序无关 */
 export function canonical(value: unknown): unknown {
@@ -24,19 +25,32 @@ export interface JournalKeyOpts {
   model?: unknown
   schema?: unknown
   phase?: string
+  /** 工具白名单：必须纳入 hash，避免同 prompt 不同 tools 错误复用 */
+  tools?: string[] | null
+  /** worktree / none：必须纳入 hash */
+  isolation?: string | null
+  /** 超时：必须纳入 hash */
+  timeoutMs?: number | null
 }
 
 /**
- * 内容哈希：仅五字段。label/tools/isolation/timeoutMs 必须排除。
- * opts.skill 由调用方映射为 agentType 后再传入。
+ * 内容哈希：纳入会影响副作用的全部字段。
+ * label 仍排除（仅展示用）；tools/isolation/timeoutMs 必须参与。
  */
 export function journalKeyBase(prompt: string, opts: JournalKeyOpts): string {
+  const tools =
+    opts.tools == null
+      ? null
+      : [...opts.tools].map(String).sort()
   const material = canonical({
     prompt,
     agentType: opts.agentType ?? null,
     model: opts.model ?? null,
     schema: opts.schema ?? null,
-    phase: opts.phase ?? null
+    phase: opts.phase ?? null,
+    tools,
+    isolation: opts.isolation ?? null,
+    timeoutMs: opts.timeoutMs ?? null
   })
   return createHash('sha256').update(JSON.stringify(material)).digest('hex')
 }
@@ -115,12 +129,12 @@ export function scriptSha(script: string): string {
   return createHash('sha256').update(script).digest('hex')
 }
 
-/** 持久化 script_sha，供 resume 比对 */
+/** 持久化 script_sha，供 resume 比对（原子写） */
 export function writeScriptSha(workspaceRoot: string, runId: string, sha: string): void {
   assertSafeRunId(runId)
   const path = runJournalPath(workspaceRoot, runId).replace(/journal\.jsonl$/, 'script.sha')
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, sha, 'utf-8')
+  atomicWriteFileSync(path, sha)
 }
 
 export function readScriptSha(workspaceRoot: string, runId: string): string | null {
@@ -128,4 +142,52 @@ export function readScriptSha(workspaceRoot: string, runId: string): string | nu
   const path = runJournalPath(workspaceRoot, runId).replace(/journal\.jsonl$/, 'script.sha')
   if (!existsSync(path)) return null
   return readFileSync(path, 'utf-8').trim()
+}
+
+/**
+ * 脚本源变化时的恢复策略。
+ * - reject：拒绝 resume，调用方应报错（v2 默认）
+ * - migrate：显式清空 journal 后允许继续（需调用方声明）
+ * - clear（v1 兼容）：静默清空（仅非 v2 路径）
+ */
+export type ScriptShaMismatchPolicy = 'reject' | 'migrate' | 'clear'
+
+export class ScriptShaMismatchError extends Error {
+  readonly prevSha: string
+  readonly nextSha: string
+  readonly runId: string
+
+  constructor(runId: string, prevSha: string, nextSha: string) {
+    super(
+      `workflow script source changed for run ${runId}; refuse silent resume ` +
+        `(prev=${prevSha.slice(0, 8)}… next=${nextSha.slice(0, 8)}…). ` +
+        `Pass scriptShaMismatch:'migrate' to clear journal and continue, or start a new run.`
+    )
+    this.name = 'ScriptShaMismatchError'
+    this.runId = runId
+    this.prevSha = prevSha
+    this.nextSha = nextSha
+  }
+}
+
+/**
+ * resume 时处理 script_sha。
+ * v2 默认 reject；显式 migrate 才清 journal。
+ */
+export function handleScriptShaOnResume(
+  workspaceRoot: string,
+  runId: string,
+  nextSha: string,
+  policy: ScriptShaMismatchPolicy = 'reject'
+): { matched: boolean; cleared: boolean } {
+  const prev = readScriptSha(workspaceRoot, runId)
+  if (prev === null || prev === nextSha) {
+    return { matched: true, cleared: false }
+  }
+  if (policy === 'reject') {
+    throw new ScriptShaMismatchError(runId, prev, nextSha)
+  }
+  // migrate / clear：显式清空后继续
+  clearJournal(workspaceRoot, runId)
+  return { matched: false, cleared: true }
 }

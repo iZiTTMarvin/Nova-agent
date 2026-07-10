@@ -62,14 +62,14 @@ function makeDeps(workspaceRoot: string, client: ModelClient): WorkflowRuntimeDe
 describe('workflow parallel', () => {
   let tmp: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-wf-par-'))
-    _resetWorkflowRuntimeForTests()
+    await _resetWorkflowRuntimeForTests()
     _resetGlobalSemaphoreForTests(16)
   })
 
-  afterEach(() => {
-    _resetWorkflowRuntimeForTests()
+  afterEach(async () => {
+    await _resetWorkflowRuntimeForTests()
     rmSync(tmp, { recursive: true, force: true })
   })
 

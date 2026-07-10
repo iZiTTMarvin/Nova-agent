@@ -7,6 +7,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { createHostHooks, type HookContext } from '../../../../src/runtime/workflow/hooks'
 import { makeRunSemaphore } from '../../../../src/runtime/workflow/semaphore'
+import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
 import type { WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 import type { ToolResult } from '../../../../src/runtime/tools/types'
 
@@ -32,10 +33,19 @@ function makeDeps(workspaceRoot: string, client: MockModelClient): WorkflowRunti
 function makeCtx(deps: WorkflowRuntimeDeps, abort?: AbortController): HookContext {
   const ac = abort ?? new AbortController()
   const { runSem, globalSem } = makeRunSemaphore(4)
+  // 测试用 scope：若传入 abort，用其 signal 关联（通过 parent 不可行，直接挂外部 abort）
+  const scope = new TaskScope({ label: 'test-agent' })
+  if (abort) {
+    abort.signal.addEventListener('abort', () => {
+      void scope.close('cancelled')
+    }, { once: true })
+  }
   return {
     runId: 'test-run',
     deps,
-    abortSignal: ac.signal,
+    abortSignal: scope.signal,
+    scope,
+    scopeGeneration: scope.captureGeneration(),
     currentPhase: { name: '' },
     onPhase: () => {},
     onLog: () => {},

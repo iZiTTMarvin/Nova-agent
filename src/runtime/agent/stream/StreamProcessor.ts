@@ -29,8 +29,7 @@ import { extractTextFromContent } from '../../model/types'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 import { repairEmptyArgsFromContent } from './nativeArgsRepair'
-import { decideFallback } from '../recovery/FallbackDecider'
-import { MAX_RETRY_ATTEMPTS } from '../recovery/RecoveryStateMachine'
+import { AttemptController } from '../recovery/AttemptController'
 import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
@@ -39,6 +38,11 @@ import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
 import type { StreamProcessorDeps, StreamRunParams, TurnStreamResult } from './streamTypes'
 import { estimateContextTokens } from '../tokenEstimator'
+import {
+  metricAttemptStart,
+  metricAttemptTtft,
+  metricAttemptEnd
+} from '../../../shared/diagnostics/metrics'
 
 /**
  * StreamProcessor 依赖（除 StreamProcessorDeps 外的运行时依赖）。
@@ -57,14 +61,13 @@ export class StreamProcessor {
   private emitContextBreakdown: (messageId: string, promptTokens: number) => void
   private runOverflowCompaction: (mode: 'standard' | 'aggressive') => Promise<boolean>
   private hookManager: HookManager
+  /** 统一 retry/fallback attempt 所有权（修复 P0-2） */
+  private attemptController: AttemptController
 
   /**
-   * 单轮重试态（PRD §6.3 注释：跨 retry 的 modelErrorAttempt / contextOverflowRetryAttempted
-   * 由 Processor 自持）。
-   * - modelErrorAttempt：跨 retry 累积（retry 重跑本轮时不重置），仅在新消息开始 / fallback 切换时重置。
+   * 单轮溢出压缩守卫（与 AttemptController 正交）。
    * - contextOverflowRetryAttempted：单轮一次性守卫，新消息开始时重置。
    */
-  private modelErrorAttempt = 0
   private contextOverflowRetryAttempted = false
   private contextOverflowRetryCount = 0
 
@@ -78,14 +81,18 @@ export class StreamProcessor {
     this.emitContextBreakdown = opts.emitContextBreakdown
     this.runOverflowCompaction = opts.runOverflowCompaction
     this.hookManager = opts.hookManager
+    this.attemptController = new AttemptController({
+      recovery: opts.recovery,
+      modelPool: opts.modelPool
+    })
   }
 
   /**
-   * 重置单轮重试态（等价现状 sendMessage 开头 modelErrorAttempt=0 / contextOverflowRetryAttempted=false）。
-   * 由 Facade 在每条新消息开始时调用一次。retry 重跑本轮时不调用——重试计数跨 retry 累积。
+   * 重置单轮重试态。由 Facade 在每条新消息开始时调用一次。
+   * retry 重跑本轮时不调用——AttemptController 跨 retry 累积计数。
    */
   resetRetryState(): void {
-    this.modelErrorAttempt = 0
+    this.attemptController.reset()
     this.contextOverflowRetryAttempted = false
     this.contextOverflowRetryCount = 0
   }
@@ -93,10 +100,8 @@ export class StreamProcessor {
   /**
    * 消费一次模型调用的完整流，返回确定结果。
    *
-   * 重试态所有权（PRD §6.3）：modelErrorAttempt / contextOverflowRetryAttempted 为
-   * Processor 单轮态，跨 retry 累积（retry 重跑本轮时不重置）。仅由 Facade 在每条
-   * 新消息开始时调用 resetRetryState() 重置一次。fallback 切换时 Processor 内部重置
-   * modelErrorAttempt=0（对新模型重新开始重试链）。
+   * attempt 所有权在 AttemptController：每次 run 开始 beginAttempt()，
+   * error 时 onError() 原子决定 retry / fallback / fail。
    */
   async run(params: StreamRunParams & {
     /** 读取取消态：返回 cancelled 时调用方据此设 cancelled。Processor 不持有 Facade 的 cancelled 字段 */
@@ -105,6 +110,24 @@ export class StreamProcessor {
     sleep: (ms: number) => Promise<void>
   }): Promise<TurnStreamResult> {
     const { messageId, chatMessages, nativeTools, context, signal } = params
+
+    // 每次模型尝试分配唯一 attemptId（失败 attempt 与成功 attempt 隔离）
+    const begunId = this.attemptController.beginAttempt()
+    if (!begunId) {
+      return {
+        kind: 'error',
+        error: `已达全 run attempt 预算上限（${this.attemptController.getTotalAttempts()}）`
+      }
+    }
+    const attemptId = begunId
+    const attemptStartedAt = Date.now()
+    let ttftRecorded = false
+    metricAttemptStart(attemptId)
+    /** 统一收尾：记录 attempt.end，不改变返回值语义 */
+    const finish = <T extends TurnStreamResult>(result: T): T => {
+      metricAttemptEnd(attemptId, Date.now() - attemptStartedAt, result.kind)
+      return result
+    }
 
     const stream = this.modelPool.chat(chatMessages, nativeTools, signal ? { abortSignal: signal } : undefined)
 
@@ -177,135 +200,215 @@ export class StreamProcessor {
       }
     }
 
-    for await (const event of stream) {
-      if (params.isCancelled()) break
+    try {
+      for await (const event of stream) {
+        if (params.isCancelled()) break
 
-      switch (event.type) {
-        case 'thinking_delta':
-          this.emit({ type: 'thinking_delta', messageId, delta: event.delta })
-          break
-
-        case 'text_delta':
-          if (scanner) {
-            rawContent += event.delta
-            for (const scanEvent of scanner.feed(event.delta)) {
-              processScanEvent(scanEvent)
-            }
-          } else {
-            assistantContent += event.delta
-            this.emit({ type: 'text_delta', messageId, delta: event.delta })
-          }
-          break
-
-        case 'tool_call_start':
-          this.emit({ type: 'tool_call_start', messageId, toolCallId: event.toolCallId, toolName: event.toolName })
-          break
-
-        case 'tool_call_delta':
-          this.emit({ type: 'tool_call_delta', messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta })
-          break
-
-        case 'tool_call':
-          finishReason = 'tool_calls'
-          toolCalls.push(event.toolCall)
-          this.emit({ type: 'tool_call', messageId, toolCallId: event.toolCall.id, toolName: event.toolCall.name, args: JSON.parse(event.toolCall.arguments || '{}') })
-          break
-
-        case 'cancelled':
-          // 模型请求被取消：返回 cancelled，调用方据此设 Facade.cancelled
-          return { kind: 'cancelled' }
-
-        case 'context_overflow': {
-          const overflowState = this.recovery.classify(event.rawError, this.modelErrorAttempt)
-          this.emit({ type: 'recovery_state', messageId, state: overflowState })
-          await this.hookManager.trigger({ event: 'onError', messageId, error: event.rawError })
-
-          if (this.contextOverflowRetryCount >= StreamProcessor.MAX_CONTEXT_OVERFLOW_RETRIES) {
-            return { kind: 'error', error: event.rawError }
-          }
-          if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
-            return { kind: 'error', error: event.rawError }
-          }
-          this.contextOverflowRetryCount++
-          this.contextOverflowRetryAttempted = true
-
-          if (overflowState.kind === 'recovering') {
-            const hint = this.recovery.buildRecoveryHint(overflowState)
-            this.emit({ type: 'recovery_hint', messageId, hint, attempt: this.modelErrorAttempt })
-          }
-
-          const standardOk = await this.runOverflowCompaction('standard')
-          if (standardOk) {
-            shouldRetryChat = true
-            break
-          }
-          const aggressiveOk = await this.runOverflowCompaction('aggressive')
-          if (aggressiveOk) {
-            shouldRetryChat = true
-            break
-          }
-          return { kind: 'error', error: event.rawError }
+        // 首 token（text / thinking / tool）记 TTFT
+        if (
+          !ttftRecorded &&
+          (event.type === 'text_delta' ||
+            event.type === 'thinking_delta' ||
+            event.type === 'tool_call_start' ||
+            event.type === 'tool_call')
+        ) {
+          metricAttemptTtft(attemptId, Date.now() - attemptStartedAt)
+          ttftRecorded = true
         }
 
-        case 'error': {
-          const errState = this.recovery.classify(event.error, this.modelErrorAttempt)
-          this.emit({ type: 'recovery_state', messageId, state: errState })
-          await this.hookManager.trigger({ event: 'onError', messageId, error: event.error })
+        switch (event.type) {
+          case 'thinking_delta':
+            this.emit({ type: 'thinking_delta', messageId, delta: event.delta })
+            break
 
-          if (errState.kind === 'retrying' && this.recovery.shouldRetry(errState)) {
-            this.modelErrorAttempt = errState.attempt
-            const hint = this.recovery.buildRecoveryHint(errState)
-            this.emit({ type: 'recovery_hint', messageId, hint, attempt: errState.attempt })
-            await params.sleep(this.recovery.backoffMs(errState.attempt))
-            shouldRetryChat = true
+          case 'text_delta':
+            if (scanner) {
+              rawContent += event.delta
+              for (const scanEvent of scanner.feed(event.delta)) {
+                processScanEvent(scanEvent)
+              }
+            } else {
+              assistantContent += event.delta
+              this.emit({ type: 'text_delta', messageId, delta: event.delta })
+            }
+            break
+
+          case 'tool_call_start':
+            this.emit({ type: 'tool_call_start', messageId, toolCallId: event.toolCallId, toolName: event.toolName })
+            break
+
+          case 'tool_call_delta':
+            this.emit({ type: 'tool_call_delta', messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta })
+            break
+
+          case 'tool_call':
+            finishReason = 'tool_calls'
+            toolCalls.push(event.toolCall)
+            this.emit({ type: 'tool_call', messageId, toolCallId: event.toolCall.id, toolName: event.toolCall.name, args: JSON.parse(event.toolCall.arguments || '{}') })
+            break
+
+          case 'cancelled':
+            // 模型请求被取消：返回 cancelled，调用方据此设 Facade.cancelled
+            return finish({ kind: 'cancelled' })
+
+          case 'context_overflow': {
+            // 溢出压缩与 AttemptController 正交：仍用 recovery.classify 取 recovering 态
+            const overflowState = this.attemptController.classifyForEmit(event.rawError)
+            this.emit({ type: 'recovery_state', messageId, state: overflowState })
+            await this.hookManager.trigger({ event: 'onError', messageId, error: event.rawError })
+
+            if (this.contextOverflowRetryCount >= StreamProcessor.MAX_CONTEXT_OVERFLOW_RETRIES) {
+              return finish({ kind: 'error', error: event.rawError })
+            }
+            if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
+              return finish({ kind: 'error', error: event.rawError })
+            }
+            this.contextOverflowRetryCount++
+            this.contextOverflowRetryAttempted = true
+
+            if (overflowState.kind === 'recovering') {
+              const hint = this.recovery.buildRecoveryHint(overflowState)
+              this.emit({
+                type: 'recovery_hint',
+                messageId,
+                hint,
+                attempt: this.attemptController.getProviderAttempt()
+              })
+            }
+
+            const standardOk = await this.runOverflowCompaction('standard')
+            if (standardOk) {
+              shouldRetryChat = true
+              break
+            }
+            const aggressiveOk = await this.runOverflowCompaction('aggressive')
+            if (aggressiveOk) {
+              shouldRetryChat = true
+              break
+            }
+            return finish({ kind: 'error', error: event.rawError })
+          }
+
+          case 'error': {
+            // AttemptController 原子决定 retry / fallback / fail（修复 P0-2）
+            const errState = this.attemptController.classifyForEmit(event.error)
+            this.emit({ type: 'recovery_state', messageId, state: errState })
+            await this.hookManager.trigger({ event: 'onError', messageId, error: event.error })
+
+            const decision = this.attemptController.onError(event.error)
+            if (decision.action === 'retry' || decision.action === 'fallback') {
+              // 丢弃本 attempt 临时输出，避免与下一次 attempt 文本重复
+              this.emit({
+                type: 'attempt_failed',
+                messageId,
+                attemptId,
+                error: event.error
+              })
+              assistantContent = ''
+              rawContent = ''
+              toolCalls.length = 0
+              finishReason = ''
+            }
+            switch (decision.action) {
+              case 'retry': {
+                this.emit({
+                  type: 'recovery_hint',
+                  messageId,
+                  hint: decision.hint,
+                  attempt: decision.attempt
+                })
+                await params.sleep(decision.backoffMs)
+                shouldRetryChat = true
+                break
+              }
+              case 'fallback': {
+                this.emit({
+                  type: 'model_switched',
+                  messageId,
+                  modelId: decision.modelId,
+                  fallbackIndex: decision.fallbackIndex,
+                  reason: decision.reason
+                })
+                shouldRetryChat = true
+                break
+              }
+              case 'recover_context': {
+                shouldRetryChat = true
+                break
+              }
+              case 'fail':
+                return finish({ kind: 'error', error: decision.error })
+            }
             break
           }
 
-          const fallbackDecision = decideFallback({
-            currentError: event.error,
-            retryAttempt: this.modelErrorAttempt,
-            maxAttempts: MAX_RETRY_ATTEMPTS,
-            currentFallbackIndex: this.modelPool.getActiveFallbackIndex(),
-            availableFallbackCount: this.modelPool.getFallbackCount()
+          case 'usage':
+            roundSawUsage = true
+            this.emit({ type: 'usage', messageId, usage: event.usage })
+            {
+              const diag = this.cacheDiagnostics.checkResponse(
+                event.usage.cachedTokens,
+                extractTextFromContent(context.messages.find(m => m.role === 'system')?.content ?? ''),
+                context.toolRegistry?.getToolDefinitions()
+              )
+              if (diag.cacheBreakDetected) {
+                this.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
+              }
+            }
+            this.emitContextBreakdown(messageId, event.usage.promptTokens)
+            break
+
+          case 'message_end':
+            if (finishReason !== 'tool_calls') {
+              finishReason = event.finishReason
+            }
+            break
+        }
+      }
+    } catch (streamErr) {
+      // 流读取抛异常（未 yield ChatEvent.error）→ 规范化后走 AttemptController，不直接 terminal
+      if (params.isCancelled() || (streamErr as Error)?.name === 'AbortError') {
+        return finish({ kind: 'cancelled' })
+      }
+      const errMsg = `network_reset: ${(streamErr as Error)?.message ?? String(streamErr)}`
+      const errState = this.attemptController.classifyForEmit(errMsg)
+      this.emit({ type: 'recovery_state', messageId, state: errState })
+      await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+      this.emit({ type: 'attempt_failed', messageId, attemptId, error: errMsg })
+      assistantContent = ''
+      rawContent = ''
+      toolCalls.length = 0
+
+      const decision = this.attemptController.onError(errMsg)
+      switch (decision.action) {
+        case 'retry': {
+          this.emit({
+            type: 'recovery_hint',
+            messageId,
+            hint: decision.hint,
+            attempt: decision.attempt
           })
-          if (fallbackDecision.shouldFallback && fallbackDecision.nextFallbackIndex !== undefined) {
-            const nextIndex = fallbackDecision.nextFallbackIndex
-            this.modelPool.switchToFallback(nextIndex)
-            this.modelErrorAttempt = 0
-            const provider = this.modelPool.getActiveProvider()
-            this.emit({ type: 'model_switched', messageId, modelId: provider.modelId, fallbackIndex: provider.fallbackIndex, reason: fallbackDecision.reason })
-            shouldRetryChat = true
-            break
-          }
-
-          return { kind: 'error', error: event.error }
+          await params.sleep(decision.backoffMs)
+          return finish({ kind: 'retry' })
         }
-
-        case 'usage':
-          roundSawUsage = true
-          this.emit({ type: 'usage', messageId, usage: event.usage })
-          {
-            const diag = this.cacheDiagnostics.checkResponse(
-              event.usage.cachedTokens,
-              extractTextFromContent(context.messages.find(m => m.role === 'system')?.content ?? ''),
-              context.toolRegistry?.getToolDefinitions()
-            )
-            if (diag.cacheBreakDetected) {
-              this.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
-            }
-          }
-          this.emitContextBreakdown(messageId, event.usage.promptTokens)
-          break
-
-        case 'message_end':
-          if (finishReason !== 'tool_calls') {
-            finishReason = event.finishReason
-          }
-          break
+        case 'fallback': {
+          this.emit({
+            type: 'model_switched',
+            messageId,
+            modelId: decision.modelId,
+            fallbackIndex: decision.fallbackIndex,
+            reason: decision.reason
+          })
+          return finish({ kind: 'retry' })
+        }
+        case 'recover_context':
+          return finish({ kind: 'retry' })
+        case 'fail':
+          return finish({ kind: 'error', error: decision.error })
       }
     }
 
-    if (params.isCancelled()) return { kind: 'cancelled' }
+    if (params.isCancelled()) return finish({ kind: 'cancelled' })
 
     if (scanner) {
       for (const scanEvent of scanner.flush()) {
@@ -313,7 +416,7 @@ export class StreamProcessor {
       }
     }
 
-    if (shouldRetryChat) return { kind: 'retry' }
+    if (shouldRetryChat) return finish({ kind: 'retry' })
 
     // ── 三层兜底解析（逐分支对标 sendMessage L1081-1205）──
     this.applyFallbackParse({
@@ -331,13 +434,13 @@ export class StreamProcessor {
       }
     })
 
-    return {
+    return finish({
       kind: 'assistant',
       assistantContent,
       toolCalls,
       finishReason,
       sawUsage: roundSawUsage
-    }
+    })
   }
 
   /**

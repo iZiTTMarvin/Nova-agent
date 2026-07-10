@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { useAppStore } from '../../stores/useAppStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import { HandIcon, PlanIcon, CodeIcon, CheckSmallIcon, ArrowUpIcon } from '../../components/Icons'
 import type { Mode } from '../../../shared/session/types'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -13,8 +13,8 @@ interface ModeOption {
 }
 
 export const ModeSwitch: React.FC = () => {
-  const currentMode = useAppStore(state => state.currentMode)
-  const setMode = useAppStore(state => state.setMode)
+  const currentMode = useSettingsStore(state => state.currentMode)
+  const setMode = useSettingsStore(state => state.setMode)
 
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)

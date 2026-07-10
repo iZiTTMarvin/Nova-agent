@@ -4,10 +4,11 @@
  * 负责：
  * - 权限请求与提交状态
  * - 验证权限请求
- * - 取消执行（cancelExecution）
+ * - 取消执行（cancelExecution）：由 RunCoordinator 确认终态，不再本地 5s 宣布结束
  *
  * 依赖方向：
  * - useAgentStore → useChatStore（取消时需要把 running 工具标记为 error）
+ * - useAgentStore → useRunStore（cancelling / snapshot 终态）
  * - 不被 useChatStore 内部状态依赖
  */
 import { create } from 'zustand'
@@ -23,8 +24,10 @@ export interface AgentState {
   pendingVerificationRequest: PendingVerificationRequest | null
   /** askQuestion 工具发起的提问请求；为空时面板不渲染 */
   pendingAskQuestion: AskQuestionRequest | null
+  /** askQuestion 提交中（ACK 前不删 pending） */
+  isSubmittingAskQuestion: boolean
   /**
-   * 主进程当前进行中轮次所属的会话 id（agent:turn-state 广播）。
+   * 主进程当前进行中轮次所属的会话 id（由 run:snapshot → useRunStore 投影）。
    * 与 chat store 的 isGenerating 不同：它是跨会话的全局事实，
    * 切会话不会被重置，用于「另一个会话正在运行」提示与跨会话停止入口。
    */
@@ -32,18 +35,16 @@ export interface AgentState {
 
   // ── Actions ──
   /**
-   * Phase 3：中断当前的流式生成。
-   * - 只发 IPC 信号，不在本地擦 messages 状态
-   * - 主进程 cancel → AgentLoop 中断 → 最终发送 message_end(interrupted: true)
-   * - 前端通过 useChatStore.handleMessageEnd 收到 interrupted 事件，标记消息
-   * - 本地立即清空 pendingPermissionRequest，避免弹窗卡死
-   * - 5 秒兜底超时：主进程未响应时强制恢复 isGenerating = false
+   * 中断当前流式生成。
+   * - 立即进入 cancelling（按钮「正在停止」）
+   * - 等 RunCoordinator snapshot 确认 terminal 后才 idle
+   * - 超 grace 由 useRunStore 显示「部分任务未退出」+ 强制终止
+   * - Renderer 不能独立宣布后台 run 已结束
    */
   cancelExecution: () => Promise<void>
 
   /**
-   * 清除 5s 兜底定时器。由 useChatStore.handleMessageEnd / markRunningAsCancelled 在
-   * 正常完成路径上调用，避免空跑定时器。
+   * 兼容旧 clearCancelFallback：现由 run snapshot 终态驱动，保留空实现避免调用方报错。
    */
   clearCancelFallback: () => void
 
@@ -64,31 +65,23 @@ export interface AgentState {
   /** 主进程 resolved（用户已回答 / dismissed / 新消息 guardFollowup / cancel）后清除前端状态。
    *  仅当 requestId 匹配时清空，避免清错新请求 */
   clearAskQuestionRequest: (requestId: string) => void
-  /** 用户提交答案：先清空 state 防重复提交，再 invoke IPC 让主进程 resolve 工具 Promise */
+  /** 用户提交答案：ACK 前只置 submitting，不提前删 pending */
   respondAskQuestion: (answers: AskQuestionAnswer[]) => Promise<void>
   /** 用户点击跳过全部：invoke 传空数组，工具 formatAnswers 输出 dismissed */
   dismissAskQuestion: () => Promise<void>
 
-  /** 主进程 agent:turn-state 广播：同步全局轮次归属 */
+  /** 由 useRunStore 根据 run:snapshot 投影全局轮次归属 */
   handleTurnState: (inProgress: boolean, sessionId: string | null) => void
 
-  /** 切换会话 / 取消时统一清空所有挂起权限（被 useChatStore 调用） */
+  /**
+   * 切换会话时清空本地 pending 投影。
+   * snapshot-first 会在随后 pullSnapshot 中按新会话恢复；此处只清 UI，不宣布 run 结束。
+   */
   resetAgentRuntime: () => void
 }
 
-/** Phase 3 兜底超时：主进程未在此时长内推 message-end 时强制恢复 */
-const CANCEL_FALLBACK_TIMEOUT_MS = 5_000
-
-// 兜底定时器句柄。模块级变量，确保同一时刻只有一个待触发定时器。
-// 收到 message-end 正常完成（markRunningAsCancelled）后立即 clearTimeout，
-// 避免定时器空跑 5s 浪费资源。
-let cancelFallbackTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearCancelFallbackTimer(): void {
-  if (cancelFallbackTimer !== null) {
-    clearTimeout(cancelFallbackTimer)
-    cancelFallbackTimer = null
-  }
+function newCommandId(): string {
+  return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
 }
 
 export const useAgentStore = create<AgentState>((set, get) => ({
@@ -97,71 +90,44 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   permissionError: null,
   pendingVerificationRequest: null,
   pendingAskQuestion: null,
+  isSubmittingAskQuestion: false,
   mainTurnSessionId: null,
 
   cancelExecution: async () => {
     try {
-      // 记录取消时刻的 currentGeneratingMessageId 与时间戳，
-      // 5s 兜底定时器触发时只有当"还没开始新消息"才真正 markRunningAsCancelled，
-      // 避免误杀正常的下一轮生成。
-      const { useChatStore } = await import('./useChatStore')
-      const chatAtCancel = useChatStore.getState()
-      const cancelledMessageId = chatAtCancel.currentGeneratingMessageId
+      const { useRunStore } = await import('./useRunStore')
+      const runState = useRunStore.getState()
+      // 停止按钮只针对当前选中会话的活动 run，不能误取消后台其他会话。
+      const runId =
+        (runState.selectedSessionId
+          ? runState.activeRunIdBySessionId[runState.selectedSessionId]
+          : runState.snapshot?.runId) ??
+        get().mainTurnSessionId /* 仅作占位；真正 runId 由 IPC 返回 */
 
-      // 边界：cancelledMessageId 为 null 表示当前没有正在生成的消息（双击取消按钮、刷新后立即点击等）。
-      // 此时没必要启动兜底定时器，只发 IPC 信号即可。
-      if (!cancelledMessageId) {
-        // 本地仍清空弹窗相关状态
-        set({
-          pendingPermissionRequest: null,
-          isSubmittingPermission: false,
-          permissionError: null
-        })
-        await window.api.invoke('cancel-execution')
-        return
-      }
+      // 本地立即进入 cancelling，不清 isGenerating（等 snapshot 终态）
+      useRunStore.getState().beginLocalCancel(runId ?? 'unknown')
 
-      // 替换可能存在的旧定时器（防双击）：先 clear 再 setTimeout
-      clearCancelFallbackTimer()
-
-      // 本地立即清空弹窗相关状态，避免用户卡在已取消的弹窗上
+      // 本地清空弹窗，避免卡在已取消的交互上
       set({
         pendingPermissionRequest: null,
         isSubmittingPermission: false,
-        permissionError: null
+        permissionError: null,
+        pendingAskQuestion: null,
+        isSubmittingAskQuestion: false
       })
 
-      // 发起 IPC 取消信号
-      await window.api.invoke('cancel-execution')
-
-      // 兜底超时：主进程在 5s 内未推 message-end（极端卡死场景），
-      // 强制把 chat store 的 isGenerating 复位，避免 UI 永远卡在生成中。
-      // 重要：触发时必须检查"当前正在生成的消息"是否还是取消时的那条。
-      // 如果主进程已正常推 message-end 并触发 dispatchNextPending 发了新消息，
-      // 此时 isGenerating=true 但 currentGeneratingMessageId 已不是 cancelledMessageId，
-      // 不能误杀新消息。
-      cancelFallbackTimer = setTimeout(() => {
-        cancelFallbackTimer = null
-        const chat = useChatStore.getState()
-        const isStillSameTurn =
-          chat.isGenerating &&
-          chat.currentGeneratingMessageId === cancelledMessageId
-        if (isStillSameTurn) {
-          console.warn('[cancelExecution] 兜底超时触发，强制复位 isGenerating')
-          chat.markRunningAsCancelled()
-        }
-      }, CANCEL_FALLBACK_TIMEOUT_MS)
+      const result = await window.api.invoke('cancel-execution')
+      if (result?.runId) {
+        useRunStore.getState().beginLocalCancel(result.runId)
+      }
+      // 不在此处复位 isGenerating——等 run:snapshot 终态或 force-terminate
     } catch (err) {
       console.error('取消执行失败:', err)
     }
   },
 
-  /**
-   * 清除兜底定时器。由 useChatStore.handleMessageEnd / markRunningAsCancelled 调用，
-   * 表示主进程已正常完成，取消流程不再需要兜底。
-   */
   clearCancelFallback: () => {
-    clearCancelFallbackTimer()
+    // 旧 5s 兜底已移除；保留空实现兼容调用方
   },
 
   handlePermissionRequest: (request: PendingPermissionRequest) => {
@@ -178,11 +144,30 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     set({ isSubmittingPermission: true, permissionError: null })
 
+    const commandId = newCommandId()
     try {
-      await window.api.invoke('respond-permission', {
+      const result = await window.api.invoke('respond-permission', {
         requestId: pendingPermissionRequest.requestId,
-        decision
+        decision,
+        commandId,
+        expectedVersion: pendingPermissionRequest.version,
+        interactionId: pendingPermissionRequest.interactionId ?? pendingPermissionRequest.requestId
       })
+
+      // 新路径：根据 ACK 决定是否清除；旧路径 result 为 void 视为成功
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        set({
+          isSubmittingPermission: false,
+          permissionError: result.message || '提交权限决策失败'
+        })
+        // 刷新 snapshot
+        if (pendingPermissionRequest.sessionId) {
+          const { useRunStore } = await import('./useRunStore')
+          void useRunStore.getState().pullSnapshot(pendingPermissionRequest.sessionId)
+        }
+        return
+      }
+
       set({
         pendingPermissionRequest: null,
         isSubmittingPermission: false,
@@ -221,35 +206,71 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   handleAskQuestionRequest: (request: AskQuestionRequest) => {
-    set({ pendingAskQuestion: request })
+    set({ pendingAskQuestion: request, isSubmittingAskQuestion: false })
   },
 
   clearAskQuestionRequest: (requestId: string) => {
     const current = get().pendingAskQuestion
     if (current?.requestId === requestId) {
-      set({ pendingAskQuestion: null })
+      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false })
     }
   },
 
   respondAskQuestion: async (answers: AskQuestionAnswer[]) => {
     const pending = get().pendingAskQuestion
-    if (!pending) return
-    // 先清空 state，避免用户连点导致重复提交
-    set({ pendingAskQuestion: null })
-    await window.api.invoke('respond-ask-question', {
-      requestId: pending.requestId,
-      answers
-    })
+    if (!pending || get().isSubmittingAskQuestion) return
+    // ACK 前只置 submitting，不提前删 pending
+    set({ isSubmittingAskQuestion: true })
+    const commandId = newCommandId()
+    try {
+      const result = await window.api.invoke('respond-ask-question', {
+        requestId: pending.requestId,
+        answers,
+        commandId,
+        expectedVersion: pending.version,
+        interactionId: pending.interactionId ?? pending.requestId
+      })
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        set({ isSubmittingAskQuestion: false })
+        if (pending.sessionId) {
+          const { useRunStore } = await import('./useRunStore')
+          void useRunStore.getState().pullSnapshot(pending.sessionId)
+        }
+        return
+      }
+      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false })
+    } catch (err) {
+      console.error('respondAskQuestion 失败:', err)
+      set({ isSubmittingAskQuestion: false })
+    }
   },
 
   dismissAskQuestion: async () => {
     const pending = get().pendingAskQuestion
-    if (!pending) return
-    set({ pendingAskQuestion: null })
-    await window.api.invoke('respond-ask-question', {
-      requestId: pending.requestId,
-      answers: []
-    })
+    if (!pending || get().isSubmittingAskQuestion) return
+    set({ isSubmittingAskQuestion: true })
+    const commandId = newCommandId()
+    try {
+      const result = await window.api.invoke('respond-ask-question', {
+        requestId: pending.requestId,
+        answers: [],
+        commandId,
+        expectedVersion: pending.version,
+        interactionId: pending.interactionId ?? pending.requestId
+      })
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        set({ isSubmittingAskQuestion: false })
+        if (pending.sessionId) {
+          const { useRunStore } = await import('./useRunStore')
+          void useRunStore.getState().pullSnapshot(pending.sessionId)
+        }
+        return
+      }
+      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false })
+    } catch (err) {
+      console.error('dismissAskQuestion 失败:', err)
+      set({ isSubmittingAskQuestion: false })
+    }
   },
 
   handleTurnState: (inProgress, sessionId) => {
@@ -258,12 +279,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   resetAgentRuntime: () => {
     // 注意：不清 mainTurnSessionId——它是主进程广播的全局事实，与会话切换无关
+    // snapshot-first 会在切会话后 pullSnapshot 恢复本会话 pending
     set({
       pendingPermissionRequest: null,
       isSubmittingPermission: false,
       permissionError: null,
       pendingVerificationRequest: null,
-      pendingAskQuestion: null
+      pendingAskQuestion: null,
+      isSubmittingAskQuestion: false
     })
   }
 }))
@@ -276,6 +299,7 @@ export function resetAgentStoreForTests(): void {
     permissionError: null,
     pendingVerificationRequest: null,
     pendingAskQuestion: null,
+    isSubmittingAskQuestion: false,
     mainTurnSessionId: null
   })
 }

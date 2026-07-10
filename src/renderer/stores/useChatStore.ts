@@ -348,6 +348,11 @@ export interface ChatState {
   // ── 主进程事件 handler ──
   handleMessageStart: (messageId: string) => void
   /**
+   * 某次模型 attempt 失败：清空该消息的临时流式内容，
+   * 保留消息气泡，供下一次 attempt 重新写入，避免 UI 重复文本。
+   */
+  handleAttemptFailed: (messageId: string, attemptId: string) => void
+  /**
    * @deprecated 自 Phase 2 引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
    * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
    * 未来版本会移除；新代码请改用 `applyStreamDeltas`（buffer 在 App 端直接喂批量 delta）。
@@ -915,12 +920,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       const result = await window.api.invoke('get-message-diffs', { sessionId, messageId })
+      // 防御：IPC 异常返回时不写坏缓存
+      if (!result || !Array.isArray(result.diffs)) {
+        set(s => {
+          const nextLoading = new Set(s.loadingDiffs)
+          nextLoading.delete(messageId)
+          return { loadingDiffs: nextLoading }
+        })
+        return
+      }
       set(s => {
         const nextLoading = new Set(s.loadingDiffs)
         nextLoading.delete(messageId)
         const { [messageId]: _drop, ...nextPlaceholders } = s.loadingDiffPlaceholders
         return {
-          messageDiffs: { ...s.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews, skippedFiles: result.skippedFiles } },
+          messageDiffs: { ...s.messageDiffs, [messageId]: { diffs: result.diffs, reviews: result.reviews ?? {}, skippedFiles: result.skippedFiles } },
           loadingDiffs: nextLoading,
           loadingDiffPlaceholders: nextPlaceholders
         }
@@ -1087,6 +1101,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         currentGeneratingMessageId: messageId,
         sendInFlight: false
       }
+    })
+  },
+
+  handleAttemptFailed: (messageId: string, _attemptId: string) => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+      // 清空临时流式块；已成功落盘的 tool_result 不应出现在失败 attempt 中
+      const next = [...state.messages]
+      next[idx] = {
+        ...msg,
+        content: '',
+        thinking: '',
+        toolCalls: [],
+        blocks: [],
+        _revision: (msg._revision ?? 0) + 1
+      }
+      return { messages: next }
     })
   },
 

@@ -73,6 +73,11 @@ export type AgentEvent =
   | { type: 'recovery_hint'; messageId: string; hint: string; attempt: number }
   | { type: 'recovery_state'; messageId: string; state: RecoveryState }
   | { type: 'model_switched'; messageId: string; modelId: string; fallbackIndex: number; reason: string }
+  /**
+   * 某次模型 attempt 失败（将重试或切 fallback）。
+   * Renderer / activeStreams 应丢弃该 attempt 的临时流式块，避免与下一次 attempt 文本重复。
+   */
+  | { type: 'attempt_failed'; messageId: string; attemptId: string; error: string }
   | {
       type: 'message_end'
       messageId: string
@@ -98,6 +103,12 @@ export type AgentEvent =
       type: 'ask_question_request'
       requestId: string
       questions: AskQuestionItem[]
+      /** 可选归属（由 agentHandler 注入后转发） */
+      sessionId?: string
+      messageId?: string
+      runId?: string
+      interactionId?: string
+      version?: number
     }
   | {
       /** askQuestion 用户回复事件，renderer 收到后清除 pending 状态 */

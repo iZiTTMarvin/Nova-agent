@@ -1,11 +1,11 @@
 import React from 'react'
-import { useAppStore } from '../../stores/useAppStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import { FolderIcon } from '../../components/Icons'
 import './ProjectPicker.css'
 
 export const ProjectPicker: React.FC = () => {
-  const currentProject = useAppStore(state => state.currentProject)
-  const selectProject = useAppStore(state => state.selectProject)
+  const currentProject = useSettingsStore(state => state.currentProject)
+  const selectProject = useSettingsStore(state => state.selectProject)
 
   return (
     <div className="project-picker-narrow">

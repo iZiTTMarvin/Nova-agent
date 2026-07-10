@@ -47,6 +47,8 @@ const TRANSIENT_PATTERNS = [
   /timeout/i,
   /ECONNRESET/i,
   /network/i,
+  /network_reset/i,
+  /http_retryable/i,
   /temporarily unavailable/i,
   /EBUSY/i,
   /EAGAIN/i

@@ -580,32 +580,15 @@ describe('黄金测试 §9.9 模型瞬时错误重试', () => {
 
 // ============================================================
 // 场景 10：模型降级 fallback
-// 期望：重试耗尽 → model_switched → 对新模型重置重试链 → 成功
-// 编排：主模型连续 429 到重试耗尽，fallback 模型成功
-// ============================================================
-// ============================================================
-// 场景 10：模型降级 fallback
 //
-// 现状观察（Phase 0 基线如实记录）：
-// RecoveryStateMachine.classify 在 attempt < MAX_RETRY_ATTEMPTS(3) 时返回 retrying，
-// shouldRetry 在 attempt < maxAttempts 时为 true。重试分支内才更新 modelErrorAttempt。
-// 因此瞬态错误的重试轨迹为：
-//   classify(err,0)→retrying(1)→shouldRetry(1<3)=T→modelErrorAttempt=1→重试
-//   classify(err,1)→retrying(2)→shouldRetry(2<3)=T→modelErrorAttempt=2→重试
-//   classify(err,2)→retrying(3)→shouldRetry(3<3)=F→不进重试分支→进 decideFallback
-// 此时 modelErrorAttempt 仍为 2（未在重试分支被更新为 3），
-// decideFallback(retryAttempt=2) 判定 "2 < 3 重试未耗尽" → shouldFallback=false → 走 error 终态。
-//
-// 即：在当前 RecoveryStateMachine + FallbackDecider 的耦合下，纯瞬态错误无法触发
-// model_switched。黄金测试如实锁定这一现状行为：3 次 recovery_state/recovery_hint 后
-// 进入 error 终态。重构后此行为必须保持一致（逐事件 diff=0）。
-// 若未来修复此耦合使 fallback 可触发，应新增独立场景，而非修改本基线。
+// FIXME(P0-2): 待 AttemptController 修复后，本场景应断言「应切 fallback」。
+// 根因：modelErrorAttempt 只在 shouldRetry=true 分支更新，耗尽时停在 2，
+// decideFallback 收到陈旧值 → 永不切 fallback。黄金测试不再把该缺陷锁成基线。
 // ============================================================
-describe('黄金测试 §9.10 模型重试链耗尽', () => {
-  it('主模型连续 429 → 3 轮 recovery_state/recovery_hint → 最终 error 终态', async () => {
+describe('黄金测试 模型降级 fallback', () => {
+  it('契约：主模型连续 429 → model_switched → fallback 成功完成', async () => {
     vi.useFakeTimers()
     const primary = new MockModelClient()
-    // 3 次 error response：对应 attempt 0/1/2 触发的三次 chat 调用
     primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
     primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
     primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
@@ -624,21 +607,11 @@ describe('黄金测试 §9.10 模型重试链耗尽', () => {
     const events = await runAndCollectDrained(loop, eventBus, 'hi')
     const seq = types(events)
 
-    // 3 次 error → 3 个 recovery_state（每次 error 都 classify + emit）；
-    // 但 recovery_hint 只在进入重试分支时 emit（shouldRetry=true）。
-    // 第 1/2 次 error 进入重试分支（attempt 1/2），第 3 次 shouldRetry(3<3)=false 不进 → 仅 2 个 hint。
-    expect(seq.filter(t => t === 'recovery_state')).toHaveLength(3)
-    expect(seq.filter(t => t === 'recovery_hint')).toHaveLength(2)
-    // recovery_hint 的 attempt 序列：1, 2（第 3 次 error 不进重试分支，无 hint）
-    const hints = events.filter(e => e.type === 'recovery_hint') as Array<Extract<AgentEvent, { type: 'recovery_hint' }>>
-    expect(hints.map(h => h.attempt)).toEqual([1, 2])
-    // 最终进入 error 终态（详见上方现状观察）
-    expect(seq).toContain('error')
-    // error 终态不经过 finishMessageRound，无 message_end
-    expect(seq).not.toContain('message_end')
-    expect(loop.getState()).toBe('error')
-    // fallback 未被触发（现状行为）
-    expect(seq).not.toContain('model_switched')
+    expect(seq).toContain('model_switched')
+    expect(seq).toContain('text_delta')
+    expect(seq).toContain('message_end')
+    expect(seq).not.toContain('error')
+    expect(loop.getState()).toBe('idle')
   })
 })
 

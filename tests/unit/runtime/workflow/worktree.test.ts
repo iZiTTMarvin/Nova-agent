@@ -66,15 +66,15 @@ function addText(client: MockModelClient, text: string): void {
 describe('workflow worktree isolation', () => {
   let tmp: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-wf-wt-'))
-    _resetWorkflowRuntimeForTests()
+    await _resetWorkflowRuntimeForTests()
     _resetWorktreeLocksForTests()
     initRepo(tmp)
   })
 
-  afterEach(() => {
-    _resetWorkflowRuntimeForTests()
+  afterEach(async () => {
+    await _resetWorkflowRuntimeForTests()
     _resetWorktreeLocksForTests()
     rmSync(tmp, { recursive: true, force: true })
   })

@@ -1,6 +1,6 @@
 /**
  * 编排进度面板：渲染 phase / tasks / stats / global_check / 失败诊断
- * 挂载于 ChatPanel composer dock；默认折叠为一行细条，无活跃 state 时不渲染。
+ * interrupted 提供：继续 / 从步骤重跑 / 查看将跳过 / 回滚 / 新建分析
  */
 import React, { useState } from 'react'
 import { useComposeStore } from './useComposeStore'
@@ -154,13 +154,19 @@ export const ComposeProgressPanel: React.FC = () => {
   const runId = useComposeStore((s) => s.runId)
   const viewStatus = useComposeStore((s) => s.viewStatus)
   const dismiss = useComposeStore((s) => s.dismiss)
+  const resumeRun = useComposeStore((s) => s.resumeRun)
+  const inspectResume = useComposeStore((s) => s.inspectResume)
+  const rollbackRun = useComposeStore((s) => s.rollbackRun)
+  const newAnalysisRun = useComposeStore((s) => s.newAnalysisRun)
+  const resumePreview = useComposeStore((s) => s.resumePreview)
+  const busyAction = useComposeStore((s) => s.busyAction)
   const cancelExecution = useAgentStore((s) => s.cancelExecution)
-  // 默认折叠为一行细条（与 TodoPanel dock 一致）
   const [collapsed, setCollapsed] = useState(true)
-  /** 用户手动收起的任务 id（skipped/failed 默认展开） */
   const [userClosed, setUserClosed] = useState<Set<string>>(new Set())
-  /** 用户手动展开的任务 id（非默认展开的） */
   const [userOpened, setUserOpened] = useState<Set<string>>(new Set())
+  const [showPreview, setShowPreview] = useState(false)
+  const [rerunStepId, setRerunStepId] = useState('')
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
 
   if (!state) return null
 
@@ -173,9 +179,9 @@ export const ComposeProgressPanel: React.FC = () => {
 
   const tasks = state.tasks ?? []
   const runStatus = String(state.run.status)
-  // viewStatus 优先：崩溃残留 running 时展示「已中断」
   const displayStatus = viewStatus === 'interrupted' ? 'interrupted' : runStatus
   const isActive = displayStatus === 'running'
+  const isInterrupted = displayStatus === 'interrupted'
   const isTerminal =
     displayStatus === 'completed' ||
     displayStatus === 'failed' ||
@@ -183,8 +189,12 @@ export const ComposeProgressPanel: React.FC = () => {
     displayStatus === 'interrupted'
 
   const phaseText = state.phase?.label || state.phase?.current || ''
+  const isV2Preview = resumePreview?.engine === 'v2'
+  // v2 完成前：按钮称「重新执行并复用结果」；v2 有 step 后称「从未完成步骤继续」
+  const continueLabel = isV2Preview
+    ? '从未完成步骤继续'
+    : '重新执行并复用结果'
 
-  // skipped/failed 默认展开诊断；用户可点击收起/再展开
   const isExpanded = (task: ComposeTaskView): boolean => {
     if (userClosed.has(task.id)) return false
     if (userOpened.has(task.id)) return true
@@ -212,7 +222,6 @@ export const ComposeProgressPanel: React.FC = () => {
     }
   }
 
-  /** 停止：先走 AgentLoop 取消，再幂等 compose:cancel 兜底 */
   const handleStop = (e: React.MouseEvent): void => {
     e.stopPropagation()
     void cancelExecution()
@@ -226,13 +235,54 @@ export const ComposeProgressPanel: React.FC = () => {
     dismiss()
   }
 
-  const gc = state.global_check
+  const handleContinue = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    setActionMsg(null)
+    await resumeRun()
+  }
 
-  // header 右侧摘要：无任务时显示阶段名，避免「0/0 完成」
+  const handleRerunFrom = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    if (!rerunStepId.trim()) {
+      setActionMsg('请先填写要重跑的步骤 ID')
+      return
+    }
+    setActionMsg(null)
+    await resumeRun({ rerunFromStepId: rerunStepId.trim() })
+  }
+
+  const handleInspect = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    setActionMsg(null)
+    const plan = await inspectResume(rerunStepId.trim() || undefined)
+    setShowPreview(true)
+    if (!plan) setActionMsg('无法加载步骤预览')
+  }
+
+  const handleRollback = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    setActionMsg(null)
+    const result = await rollbackRun()
+    if (result.ok) {
+      setActionMsg('已回滚到编排开始时的 git baseline')
+    } else {
+      setActionMsg(result.error ?? '回滚失败')
+    }
+  }
+
+  const handleNewAnalysis = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    setActionMsg(null)
+    await newAnalysisRun()
+  }
+
+  const gc = state.global_check
   const progressSummary =
     stats.total === 0
       ? phaseText || '编排中'
       : `${stats.done}/${stats.total} 完成${stats.skipped > 0 ? ` · ${stats.skipped} 跳过` : ''}${stats.failed > 0 ? ` · ${stats.failed} 失败` : ''}`
+
+  const busy = busyAction !== null
 
   return (
     <div className="compose-dock">
@@ -305,6 +355,121 @@ export const ComposeProgressPanel: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* interrupted：继续 / 查看 / 回滚 三路径 */}
+            {isInterrupted && (
+              <div className="compose-panel__resume" role="region" aria-label="中断恢复操作">
+                <div className="compose-panel__resume-title">编排已中断，可选择：</div>
+                <div className="compose-panel__resume-actions">
+                  <button
+                    type="button"
+                    className="compose-panel__btn compose-panel__btn--primary"
+                    disabled={busy}
+                    onClick={handleContinue}
+                    title={continueLabel}
+                  >
+                    {busyAction === 'resume' ? '继续中…' : continueLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="compose-panel__btn"
+                    disabled={busy}
+                    onClick={handleInspect}
+                  >
+                    {busyAction === 'inspect' ? '加载中…' : '查看将跳过/重跑'}
+                  </button>
+                  <button
+                    type="button"
+                    className="compose-panel__btn compose-panel__btn--danger"
+                    disabled={busy}
+                    onClick={handleRollback}
+                  >
+                    {busyAction === 'rollback' ? '回滚中…' : '回滚文件修改'}
+                  </button>
+                  <button
+                    type="button"
+                    className="compose-panel__btn"
+                    disabled={busy}
+                    onClick={handleNewAnalysis}
+                  >
+                    {busyAction === 'new' ? '启动中…' : '新建分析'}
+                  </button>
+                </div>
+                <div className="compose-panel__rerun-row">
+                  <label className="compose-panel__meta-label" htmlFor="compose-rerun-step">
+                    从步骤后重跑
+                  </label>
+                  <input
+                    id="compose-rerun-step"
+                    className="compose-panel__input"
+                    value={rerunStepId}
+                    onChange={(e) => setRerunStepId(e.target.value)}
+                    placeholder="stepId，如 plan:write-plan"
+                    disabled={busy}
+                  />
+                  <button
+                    type="button"
+                    className="compose-panel__btn"
+                    disabled={busy || !rerunStepId.trim()}
+                    onClick={handleRerunFrom}
+                  >
+                    重跑
+                  </button>
+                </div>
+                {actionMsg && (
+                  <div className="compose-panel__action-msg" role="status">
+                    {actionMsg}
+                  </div>
+                )}
+                {showPreview && resumePreview && (
+                  <div className="compose-panel__preview">
+                    <div className="compose-panel__meta-label">
+                      引擎 {resumePreview.engine}
+                      {resumePreview.engine === 'v1'
+                        ? '（将重新执行并复用 journal 结果）'
+                        : ''}
+                    </div>
+                    {resumePreview.skip.length > 0 && (
+                      <details open>
+                        <summary>将跳过（{resumePreview.skip.length}）</summary>
+                        <ul>
+                          {resumePreview.skip.map((s) => (
+                            <li key={s.stepId}>
+                              <code>{s.stepId}</code> · {s.kind}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                    {resumePreview.run.length > 0 && (
+                      <details open>
+                        <summary>将执行（{resumePreview.run.length}）</summary>
+                        <ul>
+                          {resumePreview.run.map((s) => (
+                            <li key={s.stepId}>
+                              <code>{s.stepId}</code> · {s.kind} · {s.status}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                    {resumePreview.blocked.length > 0 && (
+                      <details>
+                        <summary>受阻（{resumePreview.blocked.length}）</summary>
+                        <ul>
+                          {resumePreview.blocked.map((s) => (
+                            <li key={s.stepId}>
+                              <code>{s.stepId}</code>
+                              {s.error ? ` — ${s.error}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {tasks.length > 0 && (
               <table className="compose-panel__table">

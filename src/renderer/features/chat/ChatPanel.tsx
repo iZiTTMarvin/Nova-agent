@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Profiler } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
+import { useRunStore } from '../../stores/useRunStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { selectSupportsVisionFromConfig } from '../../stores/selectors'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -10,7 +11,7 @@ import {
   NovaLogo,
   ImageIcon
 } from '../../components/Icons'
-import { MessageItem } from './MessageItem'
+import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { ModelSelector } from './ModelSelector'
@@ -26,7 +27,6 @@ import {
   type AutoScrollMode
 } from './autoScroll'
 import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
-import { resolveMessageRenderMode } from './messageRenderTier'
 import { ContextIndicator } from './ContextIndicator'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
@@ -121,6 +121,13 @@ export const ChatPanel: React.FC = () => {
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
+  const cancelling = useRunStore(state => state.cancelling)
+  const cancelGraceExceeded = useRunStore(state => state.cancelGraceExceeded)
+  const forceTerminate = useRunStore(state => state.forceTerminate)
+  const interruptedRunId = useRunStore(state => state.interruptedRunId)
+  const interruptedAction = useRunStore(state => state.interruptedAction)
+  const clearInterrupted = useRunStore(state => state.clearInterrupted)
+  const interruptedSteps = useRunStore(state => state.interruptedSteps)
   const mainTurnSessionId = useAgentStore(state => state.mainTurnSessionId)
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
@@ -191,6 +198,8 @@ export const ChatPanel: React.FC = () => {
 
   const [inputVal, setInputVal] = useState('')
   const [isComposing, setIsComposing] = useState(false)
+  /** 用户上滚离开底部时显示「回到底部」 */
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSkills = useSkillsStore(state => state.setSkills)
@@ -230,7 +239,14 @@ export const ChatPanel: React.FC = () => {
     scrollHeightBeforePrependRef.current = null
   }, [currentSessionId])
 
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  /** 可变滚动容器引用（callback ref 写入；不用 RefObject 以免 current 只读） */
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  /** 供虚拟列表订阅的滚动节点（callback ref 写入，触发一次重渲染） */
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
+  const bindScrollContainer = useCallback((node: HTMLDivElement | null) => {
+    scrollContainerRef.current = node
+    setScrollElement(node)
+  }, [])
   /** 自动滚动模式：off=用户上滚远离底部；stream=流式跟随；user=用户点击回底 */
   const autoScrollModeRef = useRef<AutoScrollMode>('off')
   /** 程序滚动保护截止时间戳 */
@@ -284,7 +300,15 @@ export const ChatPanel: React.FC = () => {
       isProgrammaticScroll: isProgrammatic
     })
     lastScrollTopRef.current = container.scrollTop
+    // 离开底部时露出「回到底部」；跟随流式时隐藏
+    setShowScrollToBottom(autoScrollModeRef.current === 'off')
   }, [isGenerating])
+
+  const handleScrollToBottomClick = useCallback(() => {
+    autoScrollModeRef.current = 'user'
+    setShowScrollToBottom(false)
+    scrollToBottomInstant('smooth')
+  }, [scrollToBottomInstant])
 
   const tryLoadOlderMessages = useCallback(() => {
     const container = scrollContainerRef.current
@@ -613,7 +637,7 @@ export const ChatPanel: React.FC = () => {
       {!isEmptyState && (
         <div
           className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-64"
-          ref={scrollContainerRef}
+          ref={bindScrollContainer}
           onScroll={handleScroll}
           style={{ overflowAnchor: 'none' }}
         >
@@ -643,44 +667,30 @@ export const ChatPanel: React.FC = () => {
           )}
 
         <MaybeProfiler enabled={isStreamingPerfEnabled()} id="ChatPanel-messages" onRender={handleChatProfilerRender}>
-        {messages.map((msg, rowIndex) => {
-          const diffCache = messageDiffs[msg.id]
-          const isDiffLoading = loadingDiffs.has(msg.id)
-          const diffPlaceholders = loadingDiffPlaceholders[msg.id]
-          const renderMode = resolveMessageRenderMode(rowIndex, messages.length, isGenerating)
-          const prevMsg = rowIndex > 0 ? messages[rowIndex - 1] : undefined
-          const regenerateBlocked =
-            msg.role === 'assistant'
-            && prevMsg?.role === 'user'
-            && !!prevMsg.blocks?.some(b => b.type === 'image')
-          return (
-            <MessageItem
-              key={msg.id}
-              msg={msg}
-              renderMode={renderMode}
-              isGenerating={isGenerating}
-              currentGeneratingMessageId={currentGeneratingMessageId}
-              currentMode={currentMode}
-              currentSessionId={currentSessionId}
-              onRegenerate={handleRegenerate}
-              regenerateBlocked={regenerateBlocked}
-              onSwitchBranch={handleSwitchBranch}
-              tier1DiffStale={tier1StaleDiffSet.has(msg.id)}
-              onEditResend={handleEditResend}
-              rollbackError={rollbackErrors[msg.id]}
-              onAcceptFile={handleAcceptFile}
-              onRejectFile={handleRejectFile}
-              onAcceptAllFiles={acceptAllFiles}
-              onRejectAllFiles={rejectAllFiles}
-              onRenderPoolTick={scheduleStreamAutoScroll}
-              isPausedForInput={isPausedForUserInput && msg.id === pausedMessageId}
-              diffCache={diffCache}
-              isDiffLoading={isDiffLoading}
-              diffPlaceholders={diffPlaceholders}
-              onLoadDiffs={loadMessageDiffs}
-            />
-          )
-        })}
+        <VirtualMessageList
+          messages={messages}
+          scrollElement={scrollElement}
+          isGenerating={isGenerating}
+          currentGeneratingMessageId={currentGeneratingMessageId}
+          currentMode={currentMode}
+          currentSessionId={currentSessionId}
+          onRegenerate={handleRegenerate}
+          onSwitchBranch={handleSwitchBranch}
+          onEditResend={handleEditResend}
+          tier1StaleDiffSet={tier1StaleDiffSet}
+          rollbackErrors={rollbackErrors}
+          onAcceptFile={handleAcceptFile}
+          onRejectFile={handleRejectFile}
+          onAcceptAllFiles={acceptAllFiles}
+          onRejectAllFiles={rejectAllFiles}
+          onRenderPoolTick={scheduleStreamAutoScroll}
+          isPausedForUserInput={isPausedForUserInput}
+          pausedMessageId={pausedMessageId}
+          messageDiffs={messageDiffs}
+          loadingDiffs={loadingDiffs}
+          loadingDiffPlaceholders={loadingDiffPlaceholders}
+          onLoadDiffs={loadMessageDiffs}
+        />
         {/* 验证权限确认：用户决定是否允许执行验证命令 */}
         {pendingVerificationRequest && (
           <div className="verification-permission">
@@ -731,6 +741,17 @@ export const ChatPanel: React.FC = () => {
           </div>
         )}
         </MaybeProfiler>
+
+        {showScrollToBottom && (
+          <button
+            type="button"
+            className="chat-messages__scroll-bottom"
+            onClick={handleScrollToBottomClick}
+            aria-label="回到底部"
+          >
+            回到底部
+          </button>
+        )}
       </div>
       )}
 
@@ -754,7 +775,61 @@ export const ChatPanel: React.FC = () => {
                 className="chat-cross-turn-notice__stop"
                 onClick={() => void cancelExecution()}
               >
-                停止
+                {cancelling ? '正在停止' : '停止'}
+              </button>
+            </div>
+          )}
+
+          {/* 取消 grace 超时：部分任务未退出 + 强制终止 */}
+          {cancelGraceExceeded && (
+            <div className="chat-cross-turn-notice" role="alert">
+              <span className="chat-cross-turn-notice__text">部分任务未退出</span>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => void forceTerminate()}
+              >
+                强制终止
+              </button>
+            </div>
+          )}
+
+          {/* interrupted run：继续分析 / 回滚本轮 / 查看已执行步骤 */}
+          {interruptedRunId && (
+            <div className="chat-cross-turn-notice" role="status">
+              <span className="chat-cross-turn-notice__text">
+                上次任务异常中断
+                {interruptedSteps.length > 0
+                  ? `（已记录 ${interruptedSteps.length} 个工具步骤）`
+                  : ''}
+              </span>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => void interruptedAction('continue')}
+              >
+                继续分析
+              </button>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => void interruptedAction('rollback')}
+              >
+                回滚本轮
+              </button>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => void interruptedAction('inspect')}
+              >
+                查看已执行步骤
+              </button>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => clearInterrupted()}
+              >
+                关闭
               </button>
             </div>
           )}
@@ -896,11 +971,12 @@ export const ChatPanel: React.FC = () => {
                   <ContextIndicator />
                 </div>
                 <div>
-                  {isGenerating || sendInFlight ? (
+                  {isGenerating || sendInFlight || cancelling ? (
                     <button
                       className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
-                      onClick={cancelExecution}
-                      title="中断生成"
+                      onClick={() => void cancelExecution()}
+                      title={cancelling ? '正在停止' : '中断生成'}
+                      disabled={cancelling && !cancelGraceExceeded}
                     >
                       <StopIcon size={14} />
                     </button>

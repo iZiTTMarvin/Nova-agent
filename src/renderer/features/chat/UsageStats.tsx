@@ -1,5 +1,5 @@
 import React from 'react'
-import { useAppStore } from '../../stores/useAppStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 
 interface UsageStatsProps {
   /** compact: 旧的工具栏摘要；panel: hover 内的详细统计 */
@@ -20,7 +20,7 @@ function formatTokenCount(n: number): string {
  * - panel：放进 ContextIndicator hover，避免与“上下文容量”形成两套相似 UI
  */
 export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) => {
-  const sessionUsage = useAppStore(state => state.sessionUsage)
+  const sessionUsage = useSettingsStore(state => state.sessionUsage)
 
   if (!sessionUsage || sessionUsage.totalPromptTokens === 0) {
     if (variant === 'panel') {

@@ -74,6 +74,11 @@ export interface PendingPermissionRequest {
   commands?: string[]
   /** 本次请求对应的工具卡片 id 列表，内联放行据此锚定到具体卡片（锚点取末尾一张） */
   toolCallIds?: string[]
+  /** InteractionInbox 归属（阶段 2，可选兼容旧事件） */
+  interactionId?: string
+  runId?: string
+  sessionId?: string
+  version?: number
 }
 
 /** 等待用户决策的验证权限请求 */

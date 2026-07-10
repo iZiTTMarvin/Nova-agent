@@ -101,12 +101,26 @@ export interface SessionMessage {
   /** 父节点 id；顶层节点（森林根）为 null */
   parentId: string | null
   role: 'user' | 'assistant' | 'system' | 'tool'
-  /** 消息内容。纯文本为 string，含图片时为 ContentBlock[]（兼容旧会话的 string 格式） */
+  /**
+   * 消息内容。纯文本为 string，含图片时为 ContentBlock[]（兼容旧会话的 string 格式）。
+   * schema v8+：content 为 blocks 的投影字段，加载时由 blocks 派生，不在内存双向可写。
+   */
   content: string | SerializableContentBlock[]
-  /** assistant 消息可携带工具调用 */
+  /**
+   * assistant 消息可携带工具调用。
+   * schema v8+：toolCalls 为 blocks 的投影字段，加载时由 tool 块派生。
+   */
   toolCalls?: SessionToolCall[]
-  /** 顺序块数组，按流式事件顺序排列 */
+  /**
+   * 顺序块数组，按流式事件顺序排列。
+   * schema v8+：有序 blocks 为唯一事实源；content/toolCalls 仅作兼容投影。
+   */
   blocks?: MessageBlock[]
+  /**
+   * 单条消息 schema 子版本（与 SessionData.schemaVersion 独立）。
+   * 1 = blocks 为事实源；缺省视为旧格式，加载时按需迁移。
+   */
+  messageSchemaVersion?: number
   /** 工具消息关联的 toolCallId */
   toolCallId?: string
   /** 验证结果摘要（修改后自动验证的结果） */

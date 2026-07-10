@@ -3,23 +3,18 @@
  *
  * 职责：
  * 1. 通过 react-markdown + remark-gfm 渲染 CommonMark 与 GFM 扩展
- *    （表格 / 任务列表 / 删除线 / 自动链接 / 标题 / 列表 / 引用 / 链接）
- * 2. 代码块复用 syntaxHighlight 做 token 上色，右上角始终显示语言标签
- * 3. 代码块右上角提供"复制"按钮，复制成功后回写 ✓ 已复制
- * 4. 链接默认在新窗口打开，避免打断用户对话上下文
+ * 2. 代码块复用 syntaxHighlight；流式期间跳过逐行高亮
+ * 3. 两阶段增量：已封口 prefix blocks（解析一次冻结）+ 活动 tail（只重解析尾部）
  *
- * Phase 5 优化：
- * - MARKDOWN_COMPONENTS 提升为模块级常量，引用稳定，配合 React.memo
- *   避免 react-markdown 每次 render 重建 AST
- * - CodeBlock 接受 isStreaming：流式期间跳过 highlightLine 逐行解析，
- *   改用纯文本展示，结束后再启用完整高亮
+ * ⚠️ 禁止只叠 React.memo 但仍每帧对完整 content 跑 ReactMarkdown。
  */
-import React, { Fragment, useCallback, useMemo, useState } from 'react'
+import React, { Fragment, useCallback, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
+import { splitIncrementalMarkdown } from './incrementalMarkdown'
 import './MarkdownRenderer.css'
 
 // hast 节点的最小结构，避免引入 @types/hast 这一额外依赖
@@ -34,7 +29,6 @@ interface HastElementNode {
   children?: Array<HastElementNode | HastTextNode>
 }
 
-// 把 markdown 语言标签映射成 highlightLine 能识别的假文件后缀
 const LANG_EXT_MAP: Record<string, string> = {
   typescript: 'ts',
   ts: 'ts',
@@ -75,7 +69,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
         window.setTimeout(() => setCopied(false), 1800)
       },
       () => {
-        // 剪贴板权限被拒时静默忽略，避免弹出错误打断对话流
+        // 剪贴板权限被拒时静默忽略
       }
     )
   }, [code])
@@ -102,11 +96,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
           {lines.map((line, idx) => (
             <Fragment key={idx}>
               {idx > 0 && '\n'}
-              {/*
-                流式期间：跳过 highlightLine 逐行 token 解析，避免每 chunk 重新走词法分析。
-                文本节点直接渲染，纯文本展示；不输出 diff-token span 类。
-                流式结束后恢复正常高亮。
-              */}
               {isStreaming ? line : highlightLine(line, fakePath).map((token, tIdx) => (
                 <span key={tIdx} className={`diff-token diff-token--${token.type}`}>
                   {token.text}
@@ -145,27 +134,15 @@ function getCodeFromPreNode(node: unknown): { language: string; code: string } |
 interface MarkdownRendererProps {
   content: string
   /**
-   * 是否处于流式生成中。流式期间代码块跳过语法高亮，避免每 chunk 重解析。
-   * 默认 false。
+   * 是否处于流式生成中。流式期间：
+   * - 走两阶段增量（sealed + tail），避免全文重解析
+   * - 代码块跳过语法高亮
    */
   isStreaming?: boolean
 }
 
-/**
- * 模块级 Markdown 组件映射表。
- *
- * 关键：引用稳定，React.memo 才能正确短路。
- * 之前内联对象每次 render 重建，导致 react-markdown 每次都全量重建 AST，
- * 在历史消息多时严重拖慢长循环渲染。
- *
- * 注意：pre / code / a / table 都是无状态组件，引用稳定；
- * 但 pre 需要捕获 isStreaming 决定是否走代码块高亮降级，因此实际传给
- * react-markdown 的 components 由组件内部 useMemo 拼装（见下）。
- */
 const STATIC_MARKDOWN_COMPONENTS: Omit<Components, 'pre'> = {
-  // 走到这里的都是 inline code（fence 已被 pre 拦截）
   code({ children, ...rest }) {
-    // 只透传必要属性，避免 react-markdown 的 node 注入到 DOM
     const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
     return (
       <code className="markdown-inline-code" {...domSafe}>
@@ -199,23 +176,44 @@ const STATIC_MARKDOWN_COMPONENTS: Omit<Components, 'pre'> = {
   }
 }
 
-/** 模块级 remark 插件数组，引用稳定 */
 const REMARK_PLUGINS = [remarkGfm]
 
-/**
- * 用 React.memo 包裹：流式生成期间，每个 text_delta 都会触发 ChatPanel 整体重渲染，
- * 若不做 memo，所有历史消息的 Markdown 都会被 react-markdown 重新解析、代码块逐行
- * 重新高亮，产生 O(消息数 × 内容量) 的解析/ DOM 开销，长循环下直接撑爆渲染进程
- * （Blink/Oilpan OOM 白屏）。content 为字符串，浅比较即可精确命中「内容未变则跳过」。
- */
-export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({ content, isStreaming = false }) {
-  // 流式期间内层 code 组件已经通过 CodeBlock 的 isStreaming 跳过高亮；
-  // 这里额外 memo remarkPlugins 防不必要的 prop 引用变化。
+/** 单块 Markdown 解析单元；content 不变时 React.memo 短路，不再重建 AST */
+const MarkdownChunk = React.memo<{
+  content: string
+  isStreaming: boolean
+  remarkPlugins: typeof REMARK_PLUGINS
+  components: Components
+}>(function MarkdownChunk({ content, remarkPlugins, components }) {
+  if (!content) return null
+  return (
+    <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+      {content}
+    </ReactMarkdown>
+  )
+})
+
+/** 测试用：累计「本帧重解析字符数」（仅 activeTail / 终态全文） */
+let __markdownReparseChars = 0
+export function __takeMarkdownReparseChars(): number {
+  const n = __markdownReparseChars
+  __markdownReparseChars = 0
+  return n
+}
+
+interface SealedCache {
+  /** 内容身份：会话切换 / 非流式重置时清空 */
+  contentPrefix: string
+  sealedEnd: number
+  parts: string[]
+}
+
+export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({
+  content,
+  isStreaming = false
+}) {
   const remarkPlugins = useMemo(() => REMARK_PLUGINS, [])
 
-  // pre 组件需要捕获 isStreaming（决定 CodeBlock 走不走高亮降级路径），
-  // 因此不能在模块级常量里固定。改在组件内 useMemo 拼装，把 isStreaming 闭包进去。
-  // 当 isStreaming 翻转时，引用变化 → react-markdown 重建组件树 → 高亮路径正确切换。
   const components = useMemo<Components>(() => ({
     ...STATIC_MARKDOWN_COMPONENTS,
     pre({ node, children }) {
@@ -225,16 +223,74 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
     }
   }), [isStreaming])
 
+  // 跨 render 累积已封口块：只追加，不回退；content 前缀不匹配时重置
+  const sealedCacheRef = useRef<SealedCache>({ contentPrefix: '', sealedEnd: 0, parts: [] })
+
   if (!content) return null
 
+  // 终态：整段一次解析 + 完整高亮；清空流式缓存
+  if (!isStreaming) {
+    sealedCacheRef.current = { contentPrefix: '', sealedEnd: 0, parts: [] }
+    __markdownReparseChars += content.length
+    return (
+      <div className="markdown-body">
+        <MarkdownChunk
+          content={content}
+          isStreaming={false}
+          remarkPlugins={remarkPlugins}
+          components={components}
+        />
+      </div>
+    )
+  }
+
+  // 流式增量：在已有 sealedEnd 基础上继续封口
+  const cache = sealedCacheRef.current
+  if (cache.sealedEnd > 0 && !content.startsWith(cache.contentPrefix.slice(0, Math.min(cache.sealedEnd, cache.contentPrefix.length)))) {
+    // 内容被替换（attempt 重试等）：整段重来
+    sealedCacheRef.current = { contentPrefix: '', sealedEnd: 0, parts: [] }
+  }
+
+  const prevEnd = sealedCacheRef.current.sealedEnd
+  const split = splitIncrementalMarkdown(content, false, prevEnd)
+
+  if (split.sealedEndOffset > prevEnd) {
+    const newlySealed = content.slice(prevEnd, split.sealedEndOffset)
+    // 新封口段按空行切块追加；已有 parts 保持引用稳定
+    const newParts = splitIncrementalMarkdown(newlySealed, true).sealedParts
+    sealedCacheRef.current = {
+      contentPrefix: content.slice(0, split.sealedEndOffset),
+      sealedEnd: split.sealedEndOffset,
+      parts: [...sealedCacheRef.current.parts, ...newParts.filter(p => p.length > 0)]
+    }
+  } else if (sealedCacheRef.current.contentPrefix.length === 0 && split.sealedEndOffset === 0) {
+    sealedCacheRef.current.contentPrefix = content
+  }
+
+  const { parts: sealedParts } = sealedCacheRef.current
+  const activeTail = content.slice(sealedCacheRef.current.sealedEnd)
+  __markdownReparseChars += activeTail.length
+
   return (
-    <div className="markdown-body">
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        components={components}
-      >
-        {content}
-      </ReactMarkdown>
+    <div className="markdown-body markdown-body--incremental">
+      {sealedParts.map((part, idx) => (
+        <MarkdownChunk
+          key={`sealed-${idx}`}
+          content={part}
+          isStreaming={true}
+          remarkPlugins={remarkPlugins}
+          components={components}
+        />
+      ))}
+      {activeTail ? (
+        <MarkdownChunk
+          key="active-tail"
+          content={activeTail}
+          isStreaming={true}
+          remarkPlugins={remarkPlugins}
+          components={components}
+        />
+      ) : null}
     </div>
   )
 })

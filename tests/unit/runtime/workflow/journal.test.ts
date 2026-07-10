@@ -7,6 +7,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { createHostHooks, type HookContext } from '../../../../src/runtime/workflow/hooks'
 import { makeRunSemaphore } from '../../../../src/runtime/workflow/semaphore'
+import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
 import {
   appendJournalSync,
   clearJournal,
@@ -50,10 +51,13 @@ function makeCtx(
 ): HookContext {
   const { runSem, globalSem } = makeRunSemaphore(4)
   ensureRunDir(deps.workspaceRoot, 'j-run')
+  const scope = new TaskScope({ label: 'test-journal' })
   return {
     runId: 'j-run',
     deps,
-    abortSignal: new AbortController().signal,
+    abortSignal: scope.signal,
+    scope,
+    scopeGeneration: scope.captureGeneration(),
     currentPhase: { name: 'p1' },
     onPhase: () => {},
     onLog: () => {},
@@ -90,13 +94,13 @@ function addText(client: MockModelClient, text: string): void {
 describe('workflow journal', () => {
   let tmp: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-wf-journal-'))
-    _resetWorkflowRuntimeForTests()
+    await _resetWorkflowRuntimeForTests()
   })
 
-  afterEach(() => {
-    _resetWorkflowRuntimeForTests()
+  afterEach(async () => {
+    await _resetWorkflowRuntimeForTests()
     rmSync(tmp, { recursive: true, force: true })
   })
 
@@ -169,12 +173,29 @@ return { r };
     expect(a).toBe(b)
   })
 
-  it('hash 边界：label / isolation 不参与哈希，schema 参与', () => {
+  it('hash 边界：tools/isolation/timeoutMs 参与哈希，label 不参与', () => {
     const base = { agentType: 'general', model: null, phase: 'p' }
     const k1 = journalKeyBase('prompt', { ...base, schema: null })
-    // label / isolation / timeoutMs 不在 journalKeyBase 入参中，无法影响哈希
-    const k2 = journalKeyBase('prompt', { ...base, schema: null })
-    expect(k1).toBe(k2)
+    const kTools = journalKeyBase('prompt', {
+      ...base,
+      schema: null,
+      tools: ['bash', 'read']
+    })
+    expect(kTools).not.toBe(k1)
+
+    const kIso = journalKeyBase('prompt', {
+      ...base,
+      schema: null,
+      isolation: 'worktree'
+    })
+    expect(kIso).not.toBe(k1)
+
+    const kTimeout = journalKeyBase('prompt', {
+      ...base,
+      schema: null,
+      timeoutMs: 60_000
+    })
+    expect(kTimeout).not.toBe(k1)
 
     const kSchema = journalKeyBase('prompt', {
       ...base,
@@ -195,7 +216,7 @@ return { r };
     expect(loaded.results.size).toBe(1)
   })
 
-  it('resume：未失败 key 直接返回缓存；script_sha 不匹配清空 journal', async () => {
+  it('resume：未失败 key 直接返回缓存；script_sha 不匹配默认拒绝，migrate 才清空', async () => {
     const client = new MockModelClient()
     addText(client, 'persisted')
 
@@ -226,7 +247,7 @@ return { r };
     }
     expect(client2.getCalls().length).toBe(0)
 
-    // 改脚本（prompt 仍为 step，但脚本体 sha 变了）→ 清空 journal，重新跑
+    // 改脚本 → 默认 reject
     const scriptV2 = `
 export const meta = { name: "jr", description: "j" };
 // script changed
@@ -235,17 +256,31 @@ return { r };
 `
     const client3 = new MockModelClient()
     addText(client3, 'fresh')
-    const outcome3 = await runWorkflow({
+    await expect(
+      runWorkflow({
+        script: scriptV2,
+        deps: makeDeps(tmp, client3),
+        runId: 'resume-1',
+        resume: true
+      })
+    ).rejects.toThrow(/script source changed|refuse silent resume/i)
+    expect(client3.getCalls().length).toBe(0)
+
+    // 显式 migrate：清空 journal 后重跑
+    const client4 = new MockModelClient()
+    addText(client4, 'fresh')
+    const outcome4 = await runWorkflow({
       script: scriptV2,
-      deps: makeDeps(tmp, client3),
+      deps: makeDeps(tmp, client4),
       runId: 'resume-1',
-      resume: true
+      resume: true,
+      scriptShaMismatch: 'migrate'
     })
-    expect(outcome3.status).toBe('completed')
-    if (outcome3.status === 'completed') {
-      expect(outcome3.result).toEqual({ r: 'fresh' })
+    expect(outcome4.status).toBe('completed')
+    if (outcome4.status === 'completed') {
+      expect(outcome4.result).toEqual({ r: 'fresh' })
     }
-    expect(client3.getCalls().length).toBe(1)
+    expect(client4.getCalls().length).toBe(1)
     expect(readScriptSha(tmp, 'resume-1')).toBe(scriptSha(scriptV2))
   })
 

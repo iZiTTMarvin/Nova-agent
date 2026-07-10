@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useAppStore } from '../../stores/useAppStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import { UsageStats } from './UsageStats'
 
 /** 分项 token 行定义 */
@@ -54,8 +54,8 @@ const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ra
 }
 
 export const ContextIndicator: React.FC = () => {
-  const contextLimit = useAppStore(state => state.contextLimit)
-  const contextBreakdown = useAppStore(state => state.contextBreakdown)
+  const contextLimit = useSettingsStore(state => state.contextLimit)
+  const contextBreakdown = useSettingsStore(state => state.contextBreakdown)
 
   // 优先使用 breakdown 自带的 contextLimit(加载会话时直接计算的场景),
   // 回退到 store 的 contextLimit

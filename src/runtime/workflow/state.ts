@@ -1,8 +1,10 @@
 /**
- * `.nova/compose/state.json` 读写与增量更新。
- * 脚本通过 updateState host hook 调用本模块；runtime 在 phase/终态时也会写。
+ * Compose state 读写与增量更新。
+ * v2：每 run 写 `.nova/compose/runs/<runId>/state.json`（原子写）。
+ * v1 全局 `.nova/compose/state.json`：默认只读加载旧产物；仅显式 mirrorV1 时写入。
  */
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 import type {
   ComposeAutoDecision,
   ComposeCheckResult,
@@ -14,7 +16,13 @@ import type {
   ComposeTaskFailure,
   RunStatus
 } from './types'
-import { ensureComposeRoot, statePath } from './paths'
+import {
+  ensureComposeRoot,
+  ensureRunDir,
+  runStatePath,
+  sessionCurrentPath,
+  statePath
+} from './paths'
 
 /** 中文 phase 标题 / 英文键 → state.phase */
 const PHASE_META: Record<string, { current: ComposePhaseKey; label: string }> = {
@@ -30,7 +38,24 @@ const PHASE_META: Record<string, { current: ComposePhaseKey; label: string }> = 
   ship: { current: 'ship', label: '阶段 5：发布' }
 }
 
-export function readComposeState(workspaceRoot: string): ComposeState | null {
+/**
+ * 读取 compose state。
+ * 优先：指定 runId 的 v2 路径 → v1 全局 state.json。
+ */
+export function readComposeState(
+  workspaceRoot: string,
+  runId?: string
+): ComposeState | null {
+  if (runId) {
+    const v2 = runStatePath(workspaceRoot, runId)
+    if (existsSync(v2)) {
+      try {
+        return JSON.parse(readFileSync(v2, 'utf-8')) as ComposeState
+      } catch {
+        // v2 损坏时尝试 v1
+      }
+    }
+  }
   const p = statePath(workspaceRoot)
   if (!existsSync(p)) return null
   try {
@@ -40,9 +65,52 @@ export function readComposeState(workspaceRoot: string): ComposeState | null {
   }
 }
 
-export function writeComposeState(workspaceRoot: string, state: ComposeState): void {
+export interface WriteComposeStateOptions {
+  /**
+   * 是否镜像写 v1 `.nova/compose/state.json`。
+   * 默认 false（阶段 6：v2 为权威路径，旧 v1 产物仅只读加载）。
+   * 显式 engine:'v1' 的工作流应传 true，便于旧测试 / 兼容读取。
+   */
+  mirrorV1?: boolean
+}
+
+/**
+ * 原子写入 compose state。
+ * 始终写 v2 `runs/<runId>/state.json`；仅 mirrorV1=true 时写 v1 `state.json`。
+ * 有 sessionId 时更新 sessions/<sessionId>/current.json 指针。
+ */
+export function writeComposeState(
+  workspaceRoot: string,
+  state: ComposeState,
+  opts?: WriteComposeStateOptions
+): void {
   ensureComposeRoot(workspaceRoot)
-  writeFileSync(statePath(workspaceRoot), JSON.stringify(state, null, 2), 'utf-8')
+  const runId = state.run.id
+  ensureRunDir(workspaceRoot, runId)
+  const payload = JSON.stringify(state, null, 2)
+
+  // v2 权威路径
+  atomicWriteFileSync(runStatePath(workspaceRoot, runId), payload)
+
+  // v1 镜像：仅显式 opt-in（engine:'v1'）
+  if (opts?.mirrorV1) {
+    atomicWriteFileSync(statePath(workspaceRoot), payload)
+  }
+
+  // 会话当前 run 指针
+  const sessionId = state.run.session_id
+  if (sessionId) {
+    const pointer = JSON.stringify(
+      {
+        runId,
+        updated_at: state.run.updated_at,
+        status: state.run.status
+      },
+      null,
+      2
+    )
+    atomicWriteFileSync(sessionCurrentPath(workspaceRoot, sessionId), pointer)
+  }
 }
 
 export function createInitialState(opts: {
@@ -209,17 +277,14 @@ export function applyStatePatch(
     )
   }
   if (patch.auto_decisions && Array.isArray(patch.auto_decisions)) {
-    // 追加而非替换，避免脚本误覆盖历史决策
     for (const d of patch.auto_decisions as ComposeAutoDecision[]) {
       appendAutoDecision(state, d, at)
     }
   }
-  // 单任务增量：{ task: { id, ...patch } }
   if (patch.task && typeof patch.task === 'object') {
     const t = patch.task as Partial<ComposeTask> & { id: string }
     if (t.id) updateTask(state, t.id, t, at)
   }
-  // 失败写入：{ failure: { taskId, ...failure fields } }
   if (patch.failure && typeof patch.failure === 'object') {
     const f = patch.failure as ComposeTaskFailure & {
       taskId: string

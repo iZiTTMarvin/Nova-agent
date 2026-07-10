@@ -18,7 +18,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 7
+export const CURRENT_SESSION_SCHEMA_VERSION = 8
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -187,6 +187,20 @@ function migrateV6ToV7(data: unknown): SessionData {
   }
 }
 
+/**
+ * v7 → v8：消息以有序 blocks 为唯一事实源。
+ *
+ * 只升级会话级 schemaVersion；单条消息的 blocks 投影在加载时按需完成
+ * （normalizeMessageToBlocksSource），不强制启动时全量重写 messages.jsonl。
+ */
+function migrateV7ToV8(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 8
+  }
+}
+
 /** 旧字面量 auto → default；非法值兜底 default */
 function normalizeLegacyMode(mode: unknown): Mode {
   if (mode === 'plan' || mode === 'default' || mode === 'compose') return mode
@@ -216,7 +230,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV3ToV4, // v3 → v4
   migrateV4ToV5, // v4 → v5
   migrateV5ToV6, // v5 → v6
-  migrateV6ToV7  // v6 → v7
+  migrateV6ToV7, // v6 → v7
+  migrateV7ToV8  // v7 → v8
 ]
 
 /**

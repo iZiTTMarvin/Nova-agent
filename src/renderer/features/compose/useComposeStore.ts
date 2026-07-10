@@ -44,6 +44,30 @@ export interface ComposeUiState {
   clear: () => void
   /** UI「关闭」入口，语义等同 clear */
   dismiss: () => void
+  /** 从未完成步骤继续 / 从指定步骤重跑 */
+  resumeRun: (opts?: {
+    rerunFromStepId?: string
+    scriptShaMismatch?: 'reject' | 'migrate'
+  }) => Promise<void>
+  /** 预览将跳过/重跑的步骤 */
+  inspectResume: (rerunFromStepId?: string) => Promise<{
+    engine: 'v1' | 'v2'
+    skip: Array<{ stepId: string; kind: string; status: string }>
+    run: Array<{ stepId: string; kind: string; status: string }>
+    blocked: Array<{ stepId: string; kind: string; error?: string }>
+  } | null>
+  /** 回滚本 run 文件修改 */
+  rollbackRun: () => Promise<{ ok: boolean; error?: string }>
+  /** 保留工作区，新建分析 run */
+  newAnalysisRun: (args?: string) => Promise<void>
+  /** inspect 结果缓存（面板展示） */
+  resumePreview: {
+    engine: 'v1' | 'v2'
+    skip: Array<{ stepId: string; kind: string; status: string }>
+    run: Array<{ stepId: string; kind: string; status: string }>
+    blocked: Array<{ stepId: string; kind: string; error?: string }>
+  } | null
+  busyAction: 'resume' | 'rollback' | 'inspect' | 'new' | null
 }
 
 const MAX_LOGS = 50
@@ -55,7 +79,9 @@ const EMPTY_SLICE = {
   logs: [] as string[],
   pendingAskUser: null as PendingComposeAskUser | null,
   isSubmittingAskUser: false,
-  viewStatus: null as ComposeViewStatus
+  viewStatus: null as ComposeViewStatus,
+  resumePreview: null as ComposeUiState['resumePreview'],
+  busyAction: null as ComposeUiState['busyAction']
 }
 
 export const useComposeStore = create<ComposeUiState>((set, get) => ({
@@ -160,14 +186,20 @@ export const useComposeStore = create<ComposeUiState>((set, get) => ({
   respondAskUser: async (answer) => {
     const pending = get().pendingAskUser
     if (!pending || get().isSubmittingAskUser) return
-    set({ isSubmittingAskUser: true, pendingAskUser: null })
+    // ACK 前只置 submitting，不提前删 pending（exactly-once）
+    set({ isSubmittingAskUser: true })
     try {
-      await window.api.invoke('compose:respond-ask-user', {
+      const result = await window.api.invoke('compose:respond-ask-user', {
         runId: pending.runId,
         requestId: pending.requestId,
         answer
       })
-    } finally {
+      if (result && typeof result === 'object' && 'ok' in result && (result as { ok: boolean }).ok === false) {
+        set({ isSubmittingAskUser: false })
+        return
+      }
+      set({ pendingAskUser: null, isSubmittingAskUser: false })
+    } catch {
       set({ isSubmittingAskUser: false })
     }
   },
@@ -223,6 +255,94 @@ export const useComposeStore = create<ComposeUiState>((set, get) => ({
 
   dismiss: () => {
     set({ ...EMPTY_SLICE })
+  },
+
+  resumeRun: async (opts) => {
+    const { runId, state, sessionId, busyAction } = get()
+    if (!runId || !state || busyAction) return
+    const workspaceRoot = (
+      await import('../../stores/useWorkspaceStore')
+    ).useWorkspaceStore.getState().currentProjectPath
+    if (!workspaceRoot) return
+    set({ busyAction: 'resume', viewStatus: null })
+    try {
+      await window.api.invoke('compose:resume', {
+        runId,
+        scriptName: state.run.script || state.run.command || 'br-full-dev',
+        workspaceRoot,
+        sessionId: sessionId ?? undefined,
+        rerunFromStepId: opts?.rerunFromStepId,
+        scriptShaMismatch: opts?.scriptShaMismatch
+      })
+    } finally {
+      set({ busyAction: null })
+    }
+  },
+
+  inspectResume: async (rerunFromStepId) => {
+    const { runId, busyAction } = get()
+    if (!runId || busyAction) return null
+    const workspaceRoot = (
+      await import('../../stores/useWorkspaceStore')
+    ).useWorkspaceStore.getState().currentProjectPath
+    if (!workspaceRoot) return null
+    set({ busyAction: 'inspect' })
+    try {
+      const plan = await window.api.invoke('compose:inspect-resume', {
+        workspaceRoot,
+        runId,
+        rerunFromStepId
+      })
+      set({ resumePreview: plan })
+      return plan
+    } catch {
+      set({ resumePreview: null })
+      return null
+    } finally {
+      set({ busyAction: null })
+    }
+  },
+
+  rollbackRun: async () => {
+    const { runId, sessionId, busyAction } = get()
+    if (!runId || busyAction) return { ok: false, error: '无活跃 run' }
+    const workspaceRoot = (
+      await import('../../stores/useWorkspaceStore')
+    ).useWorkspaceStore.getState().currentProjectPath
+    if (!workspaceRoot) return { ok: false, error: '无工作区' }
+    set({ busyAction: 'rollback' })
+    try {
+      const result = await window.api.invoke('compose:rollback', {
+        workspaceRoot,
+        runId,
+        sessionId: sessionId ?? undefined
+      })
+      return result
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      set({ busyAction: null })
+    }
+  },
+
+  newAnalysisRun: async (args) => {
+    const { state, sessionId, busyAction } = get()
+    if (busyAction) return
+    const workspaceRoot = (
+      await import('../../stores/useWorkspaceStore')
+    ).useWorkspaceStore.getState().currentProjectPath
+    if (!workspaceRoot) return
+    set({ busyAction: 'new' })
+    try {
+      await window.api.invoke('compose:new-analysis', {
+        scriptName: state?.run.script || state?.run.command || 'br-full-dev',
+        args: args ?? '',
+        workspaceRoot,
+        sessionId: sessionId ?? undefined
+      })
+    } finally {
+      set({ busyAction: null })
+    }
   }
 }))
 

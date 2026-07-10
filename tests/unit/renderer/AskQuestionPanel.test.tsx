@@ -104,10 +104,15 @@ describe('AskQuestionPanel 单选题', () => {
       await Promise.resolve()
     })
 
-    expect(mockInvoke).toHaveBeenCalledWith('respond-ask-question', {
-      requestId: 'req_1',
-      answers: [{ selectedLabels: ['React'] }]
-    })
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-ask-question',
+      expect.objectContaining({
+        requestId: 'req_1',
+        answers: [{ selectedLabels: ['React'] }],
+        commandId: expect.any(String),
+        interactionId: 'req_1'
+      })
+    )
   })
 
   it('单题多选时不自动提交', async () => {
@@ -182,10 +187,15 @@ describe('AskQuestionPanel 多选题', () => {
       await Promise.resolve()
     })
 
-    expect(mockInvoke).toHaveBeenCalledWith('respond-ask-question', {
-      requestId: 'req_1',
-      answers: [{ selectedLabels: ['lodash', 'axios'] }]
-    })
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-ask-question',
+      expect.objectContaining({
+        requestId: 'req_1',
+        answers: [{ selectedLabels: ['lodash', 'axios'] }],
+        commandId: expect.any(String),
+        interactionId: 'req_1'
+      })
+    )
   })
 })
 
@@ -213,10 +223,15 @@ describe('AskQuestionPanel custom 输入', () => {
       await Promise.resolve()
     })
 
-    expect(mockInvoke).toHaveBeenCalledWith('respond-ask-question', {
-      requestId: 'req_1',
-      answers: [{ selectedLabels: [], customInput: '我的自定义回答' }]
-    })
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-ask-question',
+      expect.objectContaining({
+        requestId: 'req_1',
+        answers: [{ selectedLabels: [], customInput: '我的自定义回答' }],
+        commandId: expect.any(String),
+        interactionId: 'req_1'
+      })
+    )
   })
 })
 
@@ -237,10 +252,15 @@ describe('AskQuestionPanel dismiss', () => {
       await Promise.resolve()
     })
 
-    expect(mockInvoke).toHaveBeenCalledWith('respond-ask-question', {
-      requestId: 'req_1',
-      answers: []
-    })
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-ask-question',
+      expect.objectContaining({
+        requestId: 'req_1',
+        answers: [],
+        commandId: expect.any(String),
+        interactionId: 'req_1'
+      })
+    )
   })
 })
 
@@ -299,13 +319,18 @@ describe('AskQuestionPanel 多题向导', () => {
       await Promise.resolve()
     })
 
-    expect(mockInvoke).toHaveBeenCalledWith('respond-ask-question', {
-      requestId: 'req_1',
-      answers: [
-        { selectedLabels: ['A1'] },
-        { selectedLabels: ['B2'] }
-      ]
-    })
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-ask-question',
+      expect.objectContaining({
+        requestId: 'req_1',
+        answers: [
+          { selectedLabels: ['A1'] },
+          { selectedLabels: ['B2'] }
+        ],
+        commandId: expect.any(String),
+        interactionId: 'req_1'
+      })
+    )
   })
 })
 

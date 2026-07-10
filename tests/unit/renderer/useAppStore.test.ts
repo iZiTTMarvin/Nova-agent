@@ -53,6 +53,17 @@ describe('useAppStore Zustand Store', () => {
   beforeEach(() => {
     vi.clearAllMocks()
 
+    // 默认处理 run:* IPC，避免 dispatcher/pullSnapshot 吞掉用例里的 mockResolvedValueOnce
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') {
+        return { snapshot: null, waitingSessions: [] }
+      }
+      if (channel === 'run:list-waiting-sessions') {
+        return { waitingSessions: [] }
+      }
+      return undefined
+    })
+
     // 重置 store 状态到默认值
     resetChatStoreForTests()
     useAppStore.setState({
@@ -204,10 +215,15 @@ describe('useAppStore Zustand Store', () => {
 
     await useAppStore.getState().respondPermissionRequest('allow')
 
-    expect(mockInvoke).toHaveBeenCalledWith('respond-permission', {
-      requestId: 'req_2',
-      decision: 'allow'
-    })
+    // T2-6：回答携带 commandId（幂等）；其余字段与旧契约兼容
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-permission',
+      expect.objectContaining({
+        requestId: 'req_2',
+        decision: 'allow',
+        commandId: expect.any(String)
+      })
+    )
     expect(useAppStore.getState().pendingPermissionRequest).toBeNull()
     expect(useAppStore.getState().isSubmittingPermission).toBe(false)
   })
@@ -441,11 +457,13 @@ describe('useAppStore Zustand Store', () => {
 
     await useAppStore.getState().editResend('sess_edit', 'u1', '你好呀')
 
-    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:edit-resend', {
+    expect(mockInvoke).toHaveBeenCalledWith('workspace:edit-resend', {
       sessionId: 'sess_edit',
       messageId: 'u1'
     })
-    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'send-message', expect.objectContaining({
+    const sendCall = mockInvoke.mock.calls.find(c => c[0] === 'send-message')
+    expect(sendCall).toBeDefined()
+    expect(sendCall![1]).toEqual(expect.objectContaining({
       sessionId: 'sess_edit',
       content: '你好呀',
       userMessageId: expect.stringMatching(/^msg_\d+_user$/)
@@ -456,8 +474,7 @@ describe('useAppStore Zustand Store', () => {
     expect(after.messages[0].content).toBe('你好呀')
     expect(after.messages[0].role).toBe('user')
     // IPC 携带的 userMessageId 须与界面乐观消息 id 一致
-    const sendCall = mockInvoke.mock.calls[1]?.[1] as { userMessageId?: string }
-    expect(sendCall.userMessageId).toBe(after.messages[0].id)
+    expect((sendCall![1] as { userMessageId?: string }).userMessageId).toBe(after.messages[0].id)
   })
 
   it('sendMessage 应向主进程传递与乐观 UI 相同的 userMessageId', async () => {
@@ -510,15 +527,17 @@ describe('useAppStore Zustand Store', () => {
 
     await useAppStore.getState().regenerateAssistant('sess_regen', 'a1')
 
-    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:regenerate', {
+    expect(mockInvoke).toHaveBeenCalledWith('workspace:regenerate', {
       sessionId: 'sess_regen',
       messageId: 'a1'
     })
-    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'send-message', {
+    const sendCall = mockInvoke.mock.calls.find(c => c[0] === 'send-message')
+    expect(sendCall).toBeDefined()
+    expect(sendCall![1]).toEqual(expect.objectContaining({
       sessionId: 'sess_regen',
       content: '',
       regenerate: true
-    })
+    }))
     expect(useAppStore.getState().messages).toHaveLength(1)
     expect(useAppStore.getState().messages[0].id).toBe('u1')
   })
@@ -561,7 +580,6 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('editResend send 失败时应 await finishBranchMetaRefresh 对齐主进程', async () => {
-    mockInvoke.mockReset()
     useWorkspaceStore.setState({
       currentSessionId: 'sess_fail',
       currentProjectPath: '/project/root',
@@ -579,11 +597,22 @@ describe('useAppStore Zustand Store', () => {
       messageIndexById: { u1: 0, a1: 1 }
     })
 
-    mockInvoke
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_fail', messagesRevision: 0 }))
-      .mockRejectedValueOnce(new Error('send failed'))
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_fail', messagesRevision: 1 }))
-      .mockResolvedValueOnce({ id: 'sess_fail', messages: [], hasMoreMessagesAbove: false })
+    // 按 channel 路由，避免 run:get-snapshot 抢走 once 队列
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
+      if (channel === 'run:list-waiting-sessions') return { waitingSessions: [] }
+      if (channel === 'workspace:edit-resend') {
+        return makeWorkspaceState({ currentSessionId: 'sess_fail', messagesRevision: 0 })
+      }
+      if (channel === 'send-message') throw new Error('send failed')
+      if (channel === 'workspace:bump-messages-revision') {
+        return makeWorkspaceState({ currentSessionId: 'sess_fail', messagesRevision: 1 })
+      }
+      if (channel === 'load-session') {
+        return { id: 'sess_fail', messages: [], hasMoreMessagesAbove: false }
+      }
+      return undefined
+    })
 
     await useAppStore.getState().editResend('sess_fail', 'u1', '你好呀')
 
@@ -594,17 +623,15 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('loadMessageDiffs 应缓存 diff 与审查状态', async () => {
-    mockInvoke.mockResolvedValueOnce({
-      diffs: [
-        {
-          filePath: 'src/app.ts',
-          status: 'modified',
-          hunks: []
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
+      if (channel === 'get-message-diffs') {
+        return {
+          diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [] }],
+          reviews: { 'src/app.ts': 'accepted' }
         }
-      ],
-      reviews: {
-        'src/app.ts': 'accepted'
       }
+      return undefined
     })
 
     await useAppStore.getState().loadMessageDiffs('sess_1', 'msg_1')
@@ -727,7 +754,11 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('rejectFile 失败时应继续向上抛错，供 UI 显示错误', async () => {
-    mockInvoke.mockRejectedValueOnce(new Error('boom'))
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
+      if (channel === 'reject-file') throw new Error('boom')
+      return undefined
+    })
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     try {
@@ -773,13 +804,19 @@ describe('useAppStore Zustand Store', () => {
     ])
 
     // 3. 模拟 message_end 触发 loadMessageDiffs，后端返回完整 hunks
-    mockInvoke.mockResolvedValueOnce({
-      diffs: [{
-        filePath: 'src/foo.ts',
-        status: 'modified',
-        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }]
-      }],
-      reviews: {}
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
+      if (channel === 'get-message-diffs') {
+        return {
+          diffs: [{
+            filePath: 'src/foo.ts',
+            status: 'modified',
+            hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }]
+          }],
+          reviews: {}
+        }
+      }
+      return undefined
     })
     // handleMessageEnd 内部会调 loadMessageDiffs(currentSessionId, messageId)
     useAppStore.getState().handleMessageEnd(messageId)

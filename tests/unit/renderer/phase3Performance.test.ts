@@ -5,6 +5,14 @@ import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
 
+/**
+ * ⚠️ 局限（阶段 4 / T4-4）：
+ * 本文件用 ReactTestRenderer，无真实 DOM / Chromium layout。
+ * 通过时仍可能出现 DOM 缺失或 detached tree 噪音，只能粗测 store 更新与虚拟树 commit，
+ * **不能**作为「真实 Electron Renderer 不卡」的证明。
+ * 真实门禁见 tests/perf/（npm run test:perf）与 tests/perf/README.md。
+ */
+
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 import { createNovaSkillMock } from './_novaSkillMock'
 

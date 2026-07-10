@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { useAppStore } from '../stores/useAppStore'
+import { useChatStore } from '../stores/useChatStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
 import type { Session } from '../../shared/session/types'
 import {
   SESSION_PLACEHOLDER_TITLE,
@@ -8,17 +9,19 @@ import {
 } from '../../shared/session/title'
 import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon, EditIcon } from './Icons'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useRunStore } from '../stores/useRunStore'
 
 export const Sidebar: React.FC = () => {
-  const sessions = useAppStore(state => state.sessions)
-  const currentSessionId = useAppStore(state => state.currentSessionId)
-  const currentProject = useAppStore(state => state.currentProject)
-  const selectProject = useAppStore(state => state.selectProject)
-  const createNewSession = useAppStore(state => state.createNewSession)
-  const selectSession = useAppStore(state => state.selectSession)
-  const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
-  const deleteSession = useAppStore(state => state.deleteSession)
-  const renameSession = useAppStore(state => state.renameSession)
+  const sessions = useChatStore(state => state.sessions)
+  const currentSessionId = useChatStore(state => state.currentSessionId)
+  const createNewSession = useChatStore(state => state.createNewSession)
+  const selectSession = useChatStore(state => state.selectSession)
+  const deleteSession = useChatStore(state => state.deleteSession)
+  const renameSession = useChatStore(state => state.renameSession)
+  const currentProject = useSettingsStore(state => state.currentProject)
+  const selectProject = useSettingsStore(state => state.selectProject)
+  const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
+  const waitingSessions = useRunStore(state => state.waitingSessions)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -196,6 +199,8 @@ export const Sidebar: React.FC = () => {
                           const isActive = session.id === currentSessionId
                           const isEditing = editingId === session.id
                           const displayTitle = getDisplayTitle(session)
+                          const waitingBadge = waitingSessions.find(w => w.sessionId === session.id)
+                          const showWaiting = !!waitingBadge && !isActive
 
                           return (
                             <div 
@@ -204,6 +209,7 @@ export const Sidebar: React.FC = () => {
                               className={`group relative flex flex-col px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
                                 isActive ? 'bg-white shadow-sm border border-border-warm' : 'hover:bg-gray-200/50'
                               }`}
+                              title={showWaiting ? '等待你处理' : undefined}
                             >
                               <div className="flex items-center justify-between gap-1 min-w-0">
                                 {isEditing ? (
@@ -223,6 +229,14 @@ export const Sidebar: React.FC = () => {
                                     title={displayTitle}
                                   >
                                     {displayTitle}
+                                  </span>
+                                )}
+                                {showWaiting && (
+                                  <span
+                                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                                    title="等待你处理"
+                                  >
+                                    等待你处理
                                   </span>
                                 )}
                                 <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">

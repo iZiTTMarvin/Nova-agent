@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useAppStore } from '../../stores/useAppStore'
+import { useAgentStore } from '../../stores/useAgentStore'
+import { useChatStore } from '../../stores/useChatStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import type { PermissionDecision } from '../../../shared/session/types'
 import type { PendingPermissionRequest } from '../../stores/types'
@@ -38,10 +39,10 @@ export interface InlinePermissionBarProps {
 }
 
 export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ request }) => {
-  const isSubmitting = useAppStore(state => state.isSubmittingPermission)
-  const permissionError = useAppStore(state => state.permissionError)
-  const respondPermissionRequest = useAppStore(state => state.respondPermissionRequest)
-  const currentSessionId = useAppStore(state => state.currentSessionId)
+  const isSubmitting = useAgentStore(state => state.isSubmittingPermission)
+  const permissionError = useAgentStore(state => state.permissionError)
+  const respondPermissionRequest = useAgentStore(state => state.respondPermissionRequest)
+  const currentSessionId = useChatStore(state => state.currentSessionId)
 
   const [showDropdown, setShowDropdown] = useState(false)
   const groupRef = useRef<HTMLDivElement>(null)

@@ -77,10 +77,21 @@ export interface Message {
   id: string
   sessionId: string
   role: MessageRole
+  /**
+   * 正文文本。新版本以 blocks 为事实源时，content 为加载投影，勿与 blocks 双向同步写。
+   */
   content: string
+  /**
+   * 工具调用列表。新版本由 blocks 中 tool 块投影而来。
+   */
   toolCalls?: ToolCall[]
-  /** 顺序块数组 (S13)，按流式事件顺序排列的 thinking/text/tool 块 */
+  /**
+   * 顺序块数组，按流式事件顺序排列的 thinking/text/tool 块。
+   * 新版本消息以此为唯一事实源。
+   */
   blocks?: MessageBlock[]
+  /** 单条消息 schema 子版本；1 = blocks 为事实源 */
+  messageSchemaVersion?: number
   /** 验证结果摘要 (S14)，修改后自动验证的结果 */
   verificationSummary?: string
   /**

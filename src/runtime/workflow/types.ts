@@ -57,6 +57,20 @@ export interface RunWorkflowOptions {
    * run 以 cancelled 终态收尾。没有它「停止按钮」无法穿透到编排 run。
    */
   abortSignal?: AbortSignal
+  /**
+   * 脚本源变化时的 resume 策略。
+   * - reject（resume 默认）：拒绝恢复，抛 ScriptShaMismatchError
+   * - migrate：显式清空 journal 后继续
+   * - clear：静默清空（仅非 resume / 兼容路径）
+   */
+  scriptShaMismatch?: 'reject' | 'migrate' | 'clear'
+  /**
+   * 引擎版本：v1=沙箱脚本+journal；v2=step graph（内置 br-full-dev 优先）。
+   * 缺省：内置 br-full-dev 走 v2，其余 v1。
+   */
+  engine?: 'v1' | 'v2'
+  /** v2：从指定 step 之后重跑（含该 step） */
+  rerunFromStepId?: string
 }
 
 /** 运行时依赖：禁止把 AgentLoop 引用直接塞进沙箱 */

@@ -8,6 +8,7 @@ import { mkdirSync, constants } from 'fs'
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, stat as fsStat } from 'fs/promises'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { resolveToolArg } from './toolArgResolver'
+import { metricReadStateStats } from '../../shared/diagnostics/metrics'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
@@ -32,20 +33,57 @@ const nodeEditOperations: EditOperations = {
   },
 }
 
-// ── ReadState ─────────────────────────────────────────────────────────────────
+// ── ReadState（LRU + 字节预算）────────────────────────────────────────────────
 
+/** 默认总字节预算（约 32MB UTF-16 近似） */
+export const READ_STATE_DEFAULT_BUDGET_BYTES = 32 * 1024 * 1024
+/** 单文件 content 上限（约 4MB UTF-16 近似）；超限只留元数据 */
+export const READ_STATE_DEFAULT_MAX_ENTRY_BYTES = 4 * 1024 * 1024
+
+export interface ReadStateBudgetOptions {
+  /** 所有 entry content 的总字节预算（UTF-16 近似：length * 2） */
+  budgetBytes?: number
+  /** 单文件 content 上限；超限不保留 content，只留元数据 */
+  maxEntryBytes?: number
+}
+
+/**
+ * ReadState 条目。
+ * content 仅在预算内保留；被淘汰或超单文件上限时为 undefined，
+ * edit 命中无 content 的 entry 必须重新 read（不降低「先读后改」安全性）。
+ */
 export interface ReadStateEntry {
-  content: string
+  /** 规范化路径（查找键） */
+  normalizedPath: string
+  /** 读取时的 mtimeMs */
   timestamp: number
+  /** 文件字节大小（stat.size）；未知时为 content 的 UTF-8 近似 */
+  size: number
+  /** 内容哈希（用于外部修改检测的轻量指纹） */
+  contentHash: string
+  /** 全文；预算外或被 LRU 淘汰后为 undefined */
+  content?: string
+}
+
+/** 对外暴露的缓存统计 */
+export interface ReadStateStats {
+  entries: number
+  bytes: number
+  evictions: number
+  hits: number
+  misses: number
+  hitRate: number
 }
 
 export interface ReadState {
   get(path: string): ReadStateEntry | undefined
-  set(path: string, entry: ReadStateEntry): void
+  set(path: string, entry: ReadStateEntry | { content: string; timestamp: number; size?: number }): void
   has(path: string): boolean
   clear(): void
   /** 深拷贝：用于 sub agent 创建独立 readState，避免污染父 agent */
   clone(): ReadState
+  /** 当前统计（entries / bytes / evictions / hitRate） */
+  getStats(): ReadStateStats
 }
 
 /**
@@ -71,26 +109,179 @@ function normalizeReadStateKey(path: string): string {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
+/** 近似 UTF-16 字节占用 */
+function contentByteSize(content: string | undefined): number {
+  return content ? content.length * 2 : 0
+}
+
+/** 轻量内容指纹（不引入 crypto 依赖到热路径的大开销；FNV-1a 64 截断） */
+export function hashReadContent(content: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < content.length; i++) {
+    h ^= content.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/**
+ * LRU + 总字节预算 + 单文件上限的 ReadState 实现。
+ * Map 插入序模拟 LRU：get/set 时 delete+reinsert 移到末尾；淘汰从头部开始。
+ */
 class ReadStateMap implements ReadState {
   private store = new Map<string, ReadStateEntry>()
-  get(path: string): ReadStateEntry | undefined { return this.store.get(normalizeReadStateKey(path)) }
-  set(path: string, entry: ReadStateEntry): void { this.store.set(normalizeReadStateKey(path), entry) }
-  has(path: string): boolean { return this.store.has(normalizeReadStateKey(path)) }
-  clear(): void { this.store.clear() }
+  private totalBytes = 0
+  private evictions = 0
+  private hits = 0
+  private misses = 0
+  private readonly budgetBytes: number
+  private readonly maxEntryBytes: number
 
-  /** 深拷贝：用于 sub agent 创建独立 readState，避免污染父 agent */
+  constructor(opts?: ReadStateBudgetOptions) {
+    this.budgetBytes = opts?.budgetBytes ?? READ_STATE_DEFAULT_BUDGET_BYTES
+    this.maxEntryBytes = opts?.maxEntryBytes ?? READ_STATE_DEFAULT_MAX_ENTRY_BYTES
+  }
+
+  get(path: string): ReadStateEntry | undefined {
+    const key = normalizeReadStateKey(path)
+    const entry = this.store.get(key)
+    if (!entry) {
+      this.misses++
+      return undefined
+    }
+    // 无 content 的元数据条目对 edit 无效 → 视为 miss（要求重新 read）
+    if (entry.content === undefined) {
+      this.misses++
+      return undefined
+    }
+    this.hits++
+    // LRU：移到末尾
+    this.store.delete(key)
+    this.store.set(key, entry)
+    return entry
+  }
+
+  set(
+    path: string,
+    raw: ReadStateEntry | { content: string; timestamp: number; size?: number }
+  ): void {
+    const key = normalizeReadStateKey(path)
+    const content = 'content' in raw ? raw.content : undefined
+    const timestamp = raw.timestamp
+    const size =
+      'size' in raw && typeof raw.size === 'number'
+        ? raw.size
+        : content !== undefined
+          ? Buffer.byteLength(content, 'utf8')
+          : 0
+    const contentHash =
+      'contentHash' in raw && typeof (raw as ReadStateEntry).contentHash === 'string'
+        ? (raw as ReadStateEntry).contentHash
+        : content !== undefined
+          ? hashReadContent(content)
+          : ''
+
+    let keepContent = content
+    let bytes = contentByteSize(keepContent)
+    // 单文件超限：只留元数据，不占预算
+    if (bytes > this.maxEntryBytes) {
+      keepContent = undefined
+      bytes = 0
+    }
+
+    const prev = this.store.get(key)
+    if (prev) {
+      this.totalBytes -= contentByteSize(prev.content)
+      this.store.delete(key)
+    }
+
+    const entry: ReadStateEntry = {
+      normalizedPath: key,
+      timestamp,
+      size,
+      contentHash,
+      ...(keepContent !== undefined ? { content: keepContent } : {})
+    }
+    this.store.set(key, entry)
+    this.totalBytes += bytes
+    this.evictUntilWithinBudget()
+    this.emitStats()
+  }
+
+  has(path: string): boolean {
+    const entry = this.store.get(normalizeReadStateKey(path))
+    // 与 get 一致：无 content 视为未读
+    return entry !== undefined && entry.content !== undefined
+  }
+
+  clear(): void {
+    this.store.clear()
+    this.totalBytes = 0
+    this.emitStats()
+  }
+
   clone(): ReadState {
-    const copy = new ReadStateMap()
+    const copy = new ReadStateMap({
+      budgetBytes: this.budgetBytes,
+      maxEntryBytes: this.maxEntryBytes
+    })
     for (const [key, value] of this.store) {
       copy.store.set(key, { ...value })
+      copy.totalBytes += contentByteSize(value.content)
     }
+    copy.evictions = this.evictions
+    copy.hits = this.hits
+    copy.misses = this.misses
     return copy
+  }
+
+  getStats(): ReadStateStats {
+    const total = this.hits + this.misses
+    return {
+      entries: this.store.size,
+      bytes: this.totalBytes,
+      evictions: this.evictions,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total === 0 ? 0 : this.hits / total
+    }
+  }
+
+  /** 超出总预算时从 LRU 头部淘汰 content（保留元数据或整条删除以释放） */
+  private evictUntilWithinBudget(): void {
+    while (this.totalBytes > this.budgetBytes && this.store.size > 0) {
+      const oldestKey = this.store.keys().next().value as string | undefined
+      if (oldestKey === undefined) break
+      const oldest = this.store.get(oldestKey)
+      if (!oldest) {
+        this.store.delete(oldestKey)
+        continue
+      }
+      const bytes = contentByteSize(oldest.content)
+      if (bytes > 0 && oldest.content !== undefined) {
+        // 先剥 content，保留元数据供诊断；下次 get 仍视为 miss
+        this.totalBytes -= bytes
+        this.store.set(oldestKey, { ...oldest, content: undefined })
+        // 移到头部以外：delete 再插到当前（已是被访问？）——保持淘汰序：删掉再插到开头较难，
+        // 简单策略：整条删除，强制重新 read
+        this.store.delete(oldestKey)
+        this.evictions++
+      } else {
+        this.store.delete(oldestKey)
+        this.evictions++
+      }
+    }
+  }
+
+  private emitStats(): void {
+    const s = this.getStats()
+    metricReadStateStats(s.entries, s.bytes, s.evictions)
   }
 }
 
 /** 工厂：创建独立的 readState 实例（每个 AgentLoop 一个，sub agent 通过 clone 隔离） */
-export function createReadState(): ReadState {
-  return new ReadStateMap()
+export function createReadState(opts?: ReadStateBudgetOptions): ReadState {
+  return new ReadStateMap(opts)
 }
 
 // ── lineEnding ────────────────────────────────────────────────────────────────
@@ -385,7 +576,8 @@ async function safetyGate(
   currentNormalizedContent: string,
 ): Promise<void> {
   const lastRead = rs.get(path)
-  if (!lastRead) {
+  // get() 在 content 被淘汰时返回 undefined → 要求重新 read
+  if (!lastRead || lastRead.content === undefined) {
     throw new Error(
       `File has not been read yet. Use the read tool first to read "${path}" before editing.`
     )
@@ -586,6 +778,7 @@ export const editTool: ToolExecutor = {
         context.readState.set(absolutePath, {
           content: newContent,
           timestamp: newStat.mtimeMs,
+          size: newStat.size
         })
 
         const diff = lineDiff(readResult.normalized, newContent)

@@ -142,8 +142,52 @@ export async function create(workspaceRoot: string, name?: string): Promise<Work
   })
 }
 
+/** Windows EBUSY / 句柄占用时的有界退避（ms）；禁止无限重试或只靠拉长测试 timeout */
+const REMOVE_RETRY_DELAYS_MS = [50, 100, 200, 400, 800, 1600] as const
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isBusyFsError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const code = (err as NodeJS.ErrnoException).code
+  return code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY' || code === 'EACCES'
+}
+
 /**
- * 删除 worktree：fsmonitor stop → git worktree remove --force → fs.rm → branch -D
+ * 有界退避删除目录：child/句柄未释放时 Windows 常报 EBUSY。
+ * 耗尽后抛出，并附带仍占用路径，便于日志定位（禁止静默忽略）。
+ */
+async function rmDirWithBusyRetry(directory: string): Promise<void> {
+  if (!existsSync(directory)) return
+  let lastErr: unknown
+  for (let i = 0; i <= REMOVE_RETRY_DELAYS_MS.length; i++) {
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+      if (!existsSync(directory)) return
+    } catch (err) {
+      lastErr = err
+      if (!isBusyFsError(err) && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw err
+      }
+    }
+    if (!existsSync(directory)) return
+    const delay = REMOVE_RETRY_DELAYS_MS[i]
+    if (delay === undefined) break
+    await sleepMs(delay)
+  }
+  const detail = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown')
+  throw new Error(
+    `Failed to remove worktree directory (busy after retries): ${directory}; last=${detail}`
+  )
+}
+
+/**
+ * 删除 worktree：fsmonitor stop → git worktree remove --force → fs.rm（有界 EBUSY 退避）→ branch -D
+ *
+ * 调用方应先确保占用该目录的 child process 已退出（TaskScope.close / waitForChildProcess），
+ * 再调用本函数；本层只处理「进程已退但句柄短暂占用」的 Windows 竞态。
  */
 export async function remove(input: {
   workspaceRoot: string
@@ -168,7 +212,7 @@ export async function remove(input: {
     const removed = runGit(['worktree', 'remove', '--force', directory], workspaceRoot)
 
     if (existsSync(directory)) {
-      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      await rmDirWithBusyRetry(directory)
     }
 
     if (branch) {

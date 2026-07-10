@@ -51,13 +51,13 @@ function prepareSmokeClient(client: MockModelClient): void {
 describe('workflow runtime', () => {
   let tmp: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-wf-rt-'))
-    _resetWorkflowRuntimeForTests()
+    await _resetWorkflowRuntimeForTests()
   })
 
-  afterEach(() => {
-    _resetWorkflowRuntimeForTests()
+  afterEach(async () => {
+    await _resetWorkflowRuntimeForTests()
     rmSync(tmp, { recursive: true, force: true })
   })
 

@@ -10,8 +10,9 @@
  *
  * 1. 渲染进程：PerformanceObserver longtask —— 任何 > 500ms 的主线程长任务
  *    自动 console.warn（浏览器原生 API，零侵入，生产环境也安全）。
- * 2. 主进程：事件间隔 stall 检测 —— 在 AgentEvent 流上打时间戳，任意两个相邻
- *    事件间隔超过阈值时打印 [STALL] X → Y，精确框定"卡在哪个事件之间"。
+ * 2. 主进程：RunCoordinator 驱动的 stall 检测 —— 只在 status===running 且
+ *    事件间隔超时时报 [STALL]。waiting_user（权限 / askQuestion /
+ *    composeAskUser）与终态一律不算 stall，避免误报。
  *
  * 两者对照即可区分：卡的是主进程（agent 循环）还是渲染进程（UI）。
  *
@@ -71,66 +72,92 @@ export function installRendererStallDetector(): void {
   }
 }
 
-// ── 主进程：事件间隔 stall 检测 ──────────────────────────────
+// ── 主进程：RunCoordinator 驱动的 stall 检测 ─────────────────
 
 /** 触发 stall 告警的事件间隔阈值（ms） */
 const STALL_THRESHOLD_MS = 2000
 
+/** RunCoordinator 提供的 liveness 快照（避免 detector 依赖 Electron） */
+export interface StallRunLiveness {
+  status: string
+  lastHeartbeatAt: number
+  /** true = 处于 running，超时未心跳才应告警 */
+  expectHeartbeat: boolean
+}
+
+export interface EventStallDetectorOptions {
+  /**
+   * 查询当前 run 的权威状态。由 RunCoordinator.getStallLiveness 注入。
+   * 未注入时退化为「仅按事件间隔」旧行为（测试兼容）。
+   */
+  getRunLiveness?: () => StallRunLiveness | null
+  /** 覆盖默认阈值（测试用） */
+  thresholdMs?: number
+  /** 覆盖 now（测试用）；须与 Date.now 同量纲 */
+  now?: () => number
+}
+
 /**
- * 创建一个事件流 stall 检测器。在 AgentEvent 流上调用 markEvent(eventName)，
- * 当两个相邻事件间隔超过阈值时打印 [STALL] X → Y，框定卡顿区间。
+ * 创建一个事件流 stall 检测器。
  *
- * ⚠️ 重要局限（决定如何正确解读输出）：
- * 父 agent 的 EventBus 在以下「合法空闲」期间会天然静默，间隔不代表卡顿：
- *   - permission_request 之后：在等用户点按钮（任意时长）
- *   - 派 task 子代理期间：父在 await subLoop.sendMessage，子代理的 tool_call/
- *     tool_result 等事件不转发到父 EventBus，父事件流静默到子代理跑完
- *   - 等 LLM 首 token 的网络往返
+ * 阶段 6：不再用 USER_WAIT_EVENTS 白名单猜「等用户」。
+ * 权威规则：仅当 RunCoordinator 报告 expectHeartbeat（status===running）
+ * 且相邻 markEvent 间隔超过阈值时打印 [STALL]。
+ * waiting_user / retrying / cancelling / 终态 → 静默并清空计时基准。
  *
- * 因此本检测器对这些场景做了抑制（见 USER_WAIT_EVENTS + 子代理运行判定），
- * 但仍可能漏报/误报。**判断主进程是否真正卡死的可靠方法是：看渲染进程 Console
- * 是否同时出现 [longtask]。若 [STALL] 与 [longtask] 同时出现 → 主进程真卡；
- * 若只有 [STALL] → 多半是合法空闲（子代理/等用户/等网络）。**
- *
- * @returns markEvent 函数，传入当前事件名（如 'message_start'）
+ * @returns markEvent 函数，传入当前事件名（如 'message_start'）供日志上下文
  */
-
-/** 这些事件之后是在等用户决策，间隔不算 stall（清空计时起点） */
-const USER_WAIT_EVENTS = new Set([
-  'permission_request',
-  'verification_permission_request'
-])
-
-export function createEventStallDetector(): (eventName: string) => void {
+export function createEventStallDetector(
+  options?: EventStallDetectorOptions
+): (eventName: string) => void {
+  const threshold = options?.thresholdMs ?? STALL_THRESHOLD_MS
+  const nowFn = options?.now ?? (() => Date.now())
   let lastEvent: string | null = null
-  /** 上一个事件时间戳；null 表示「等待中/无基准」，不参与 stall 判定 */
-  let lastTime: number | null = null
+  /** 上一次 markEvent 的墙钟时间（仅 running 期间有效） */
+  let lastMarkAt: number | null = null
 
   return (eventName: string): void => {
     if (!STALL_DEBUG) return
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const now = nowFn()
 
-    // 当前事件是「等用户决策」类 → 清空计时，下一个事件重新起算
-    // （permission_request → tool_result 之间「等用户点按钮」的 N 秒不算 stall）
-    if (USER_WAIT_EVENTS.has(eventName)) {
-      lastEvent = null
-      lastTime = null
+    const liveness = options?.getRunLiveness?.() ?? null
+    if (liveness) {
+      // 权威路径：只发现「running 且事件间隔超时」
+      if (!liveness.expectHeartbeat) {
+        // waiting_user / 终态：清空基准，避免把合法等待时长算进 stall
+        lastEvent = null
+        lastMarkAt = null
+        return
+      }
+      if (lastMarkAt !== null) {
+        const gap = now - lastMarkAt
+        if (gap >= threshold) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[STALL] run status=${liveness.status} 自上次事件 ` +
+            `${gap.toFixed(0)}ms 无进展（${lastEvent ?? '?'} → ${eventName}）。` +
+            `若同时渲染进程 Console 有 [longtask]，才是主进程真卡死。`
+          )
+        }
+      }
+      lastEvent = eventName
+      lastMarkAt = now
       return
     }
 
-    if (lastEvent !== null && lastTime !== null) {
-      const dt = now - lastTime
-      if (dt >= STALL_THRESHOLD_MS) {
+    // 退化路径（无 getRunLiveness）：保留事件间隔检测，供单测
+    if (lastEvent !== null && lastMarkAt !== null) {
+      const dt = now - lastMarkAt
+      if (dt >= threshold) {
         // eslint-disable-next-line no-console
         console.warn(
           `[STALL] ${lastEvent} → ${eventName} 间隔 ${dt.toFixed(0)}ms。` +
-          `注意：若此期间派了子代理/等了用户/等网络首token，这是正常空闲；` +
-          `若同时渲染进程Console有[longtask]，才是主进程真卡死。`
+          `注意：未接入 RunCoordinator 时无法区分合法等待与真卡顿。`
         )
       }
     }
 
     lastEvent = eventName
-    lastTime = now
+    lastMarkAt = now
   }
 }

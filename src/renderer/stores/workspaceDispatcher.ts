@@ -16,6 +16,7 @@ import { useWorkspaceStore } from './useWorkspaceStore'
 import { useChatStore } from './useChatStore'
 import { useSettingsStore } from './useSettingsStore'
 import { useAgentStore } from './useAgentStore'
+import { useRunStore } from './useRunStore'
 
 /** 上一次处理的 currentSessionId，用于判断是否需要 resetAgentRuntime */
 let lastDispatchedSessionId: string | null | undefined = undefined
@@ -44,11 +45,15 @@ export function dispatchWorkspaceChange(state: WorkspaceState): void {
   // 2. settings store：同步镜像（currentProject / currentMode）
   useSettingsStore.getState().syncFromWorkspace(state.currentProjectPath, state.currentMode)
 
-  // 3. agent store：会话切换时清空挂起权限 + 重置 usage（与原 selectSession 行为一致）
+  // 3. agent store：会话切换时清空挂起权限投影；随后 snapshot-first 恢复本会话交互
   if (lastDispatchedSessionId !== state.currentSessionId) {
     useAgentStore.getState().resetAgentRuntime()
     useSettingsStore.getState().resetSessionUsage()
     lastDispatchedSessionId = state.currentSessionId
+    // snapshot-first：切会话后拉取权威快照，恢复等待卡片与停止入口
+    if (state.currentSessionId) {
+      void useRunStore.getState().pullSnapshot(state.currentSessionId)
+    }
   }
 }
 

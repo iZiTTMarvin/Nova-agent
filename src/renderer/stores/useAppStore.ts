@@ -1,18 +1,12 @@
 /**
- * useAppStore — 兼容层
+ * useAppStore — 非 React 静态 facade（阶段 6 / T6-2）
  *
- * 把 useChatStore / useAgentStore / useSettingsStore 三个 store 的状态与 actions
- * 合并成与原 useAppStore 相同的形状，让现有组件可以零改动继续工作。
+ * React 合并订阅已删除：当作 hook 调用会抛错。
+ * 生产组件必须直接用 useChatStore / useAgentStore / useSettingsStore（带 selector）。
  *
- * 架构方向：
- * - 三个子 store 是 source of truth
- * - useAppStore 通过订阅三个子 store 派生合并视图
- * - setState 自动按字段归属分发到对应子 store
- *
- * 后续组件应逐步改为直接导入 useChatStore / useAgentStore / useSettingsStore，
- * 本兼容层只用于过渡期，不推荐新增调用方。
+ * 本模块仅保留 getState / setState / subscribe 合并视图，供尚未迁完的单测使用；
+ * 新测试请直接操作子 store。
  */
-import { useMemo } from 'react'
 import { useChatStore } from './useChatStore'
 import { useAgentStore } from './useAgentStore'
 import { useSettingsStore } from './useSettingsStore'
@@ -36,7 +30,7 @@ import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { ImageAttachment } from '../lib/image-attachments'
 
-/** 与旧 useAppStore 形状完全一致的合并 state，供 selector 与组件使用 */
+/** 与旧 useAppStore 形状完全一致的合并 state，供 getState / 测试使用 */
 export interface AppState {
   // ── settings ──
   currentProject: string | null
@@ -132,7 +126,7 @@ export interface AppState {
   clearPendingMessages: () => void
 }
 
-/** 把三个 store 的 state 合并成单一 AppState（不含 actions，因为 actions 走 getState()） */
+/** 把三个 store 的 state 合并成单一 AppState */
 function mergeState(
   chat: ReturnType<typeof useChatStore.getState>,
   agent: ReturnType<typeof useAgentStore.getState>,
@@ -159,11 +153,11 @@ function mergeState(
     loadingDiffPlaceholders: chat.loadingDiffPlaceholders,
     streamingToolArgs: chat.streamingToolArgs,
     // agent
-  pendingPermissionRequest: agent.pendingPermissionRequest,
-  isSubmittingPermission: agent.isSubmittingPermission,
-  permissionError: agent.permissionError,
-  pendingVerificationRequest: agent.pendingVerificationRequest,
-  pendingUserMessages: chat.pendingUserMessages,
+    pendingPermissionRequest: agent.pendingPermissionRequest,
+    isSubmittingPermission: agent.isSubmittingPermission,
+    permissionError: agent.permissionError,
+    pendingVerificationRequest: agent.pendingVerificationRequest,
+    pendingUserMessages: chat.pendingUserMessages,
     // actions（按子 store 转发）
     selectProject: settings.selectProject,
     setMode: settings.setMode,
@@ -199,25 +193,19 @@ function mergeState(
     handleVerificationResult: chat.handleVerificationResult,
     handlePermissionRequest: agent.handlePermissionRequest,
     respondPermissionRequest: agent.respondPermissionRequest,
-  handleVerificationPermissionRequest: agent.handleVerificationPermissionRequest,
-  clearVerificationPermissionRequest: agent.clearVerificationPermissionRequest,
-  respondVerificationPermission: agent.respondVerificationPermission,
-  applyStreamDeltas: chat.applyStreamDeltas,
-  // Phase 6：Steering Queue
-  enqueuePendingMessage: chat.enqueuePendingMessage,
-  removePendingMessage: chat.removePendingMessage,
-  clearPendingMessages: chat.clearPendingMessages
-}
+    handleVerificationPermissionRequest: agent.handleVerificationPermissionRequest,
+    clearVerificationPermissionRequest: agent.clearVerificationPermissionRequest,
+    respondVerificationPermission: agent.respondVerificationPermission,
+    applyStreamDeltas: chat.applyStreamDeltas,
+    enqueuePendingMessage: chat.enqueuePendingMessage,
+    removePendingMessage: chat.removePendingMessage,
+    clearPendingMessages: chat.clearPendingMessages
+  }
 }
 
-/** setState 字段归属映射：每个 key 归属的子 store
- * 改用 Record<keyof AppState, ...> 而非裸对象，确保新增 key 时 TypeScript 报错
- * （避免拼写错误或遗漏导致分发到错误子 store）。但允许 owner 字段为 undefined
- * （用于不归任何子 store 的纯派生字段，此处用 '_' 标记并跳过分发）。
- */
+/** setState 字段归属映射：每个 key 归属的子 store */
 type Owner = 'chat' | 'agent' | 'settings' | '_'
 const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
-  // settings
   currentProject: 'settings',
   currentMode: 'settings',
   modelConfig: 'settings',
@@ -225,7 +213,6 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   isConfigModalOpen: 'settings',
   sessionUsage: 'settings',
   contextBreakdown: 'settings',
-  // chat
   sessions: 'chat',
   currentSessionId: 'chat',
   messages: 'chat',
@@ -236,13 +223,11 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   loadingDiffs: 'chat',
   loadingDiffPlaceholders: 'chat',
   streamingToolArgs: 'chat',
-  // agent
   pendingPermissionRequest: 'agent',
   isSubmittingPermission: 'agent',
   permissionError: 'agent',
   pendingVerificationRequest: 'agent',
   pendingUserMessages: 'chat',
-  // actions are read-only references, never set via setState
   selectProject: 'settings',
   setMode: 'settings',
   sendMessage: 'chat',
@@ -287,38 +272,18 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
 }
 
 /**
- * useAppStore — 兼容旧 API 的合并 hook + 静态 API
- *
- * 用法：
- * - `useAppStore(state => state.x)`：hook 形式
- * - `useAppStore.getState()`：读取合并状态
- * - `useAppStore.setState(partial)`：把 partial 按字段归属分发到三个子 store
- * - `useAppStore.subscribe(listener)`：订阅任一子 store 变化
+ * 非 React facade：仅 getState / setState / subscribe。
+ * 若误当作 React hook 调用，会抛错，强制改用子 store selector。
  */
-function useAppStoreImpl(): AppState
-function useAppStoreImpl<T>(selector: (state: AppState) => T): T
-function useAppStoreImpl<T>(selector?: (state: AppState) => T): T | AppState {
-  // 订阅三个子 store（zustand 的 useStore 无 selector 时返回整个 state）
-  // 使用 React.useSyncExternalStore 风格：每个子 store 都订阅以触发重渲染
-  const chatState = useChatStore()
-  const agentState = useAgentStore()
-  const settingsState = useSettingsStore()
-
-  const merged = useMemo(
-    () => mergeState(chatState, agentState, settingsState),
-    [chatState, agentState, settingsState]
+function useAppStoreHookGuard(): never {
+  throw new Error(
+    '[useAppStore] 已移除 React 合并订阅。请直接使用 useChatStore / useAgentStore / useSettingsStore（带 selector）。'
   )
-
-  if (selector) {
-    return selector(merged)
-  }
-  return merged
 }
 
-/** 静态 API：getState / setState / subscribe */
-const useAppStoreStatic = useAppStoreImpl as unknown as {
-  <T>(selector: (state: AppState) => T): T
-  (): AppState
+const useAppStoreStatic = useAppStoreHookGuard as unknown as {
+  (): never
+  <T>(_selector: (state: AppState) => T): never
   getState: () => AppState
   setState: (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void
   subscribe: (listener: (state: AppState, prevState: AppState) => void) => () => void
@@ -344,12 +309,8 @@ useAppStoreStatic.setState = (partial) => {
     if (owner === 'chat') chatPatch[key] = value
     else if (owner === 'agent') agentPatch[key] = value
     else if (owner === 'settings') settingsPatch[key] = value
-    // owner === '_' 视为派生 / 内部字段，setState 不分发到任何子 store
   }
 
-  // 子 store setState 接受 Partial<...>，但因为我们是从合并视图切片得到的，
-  // 类型对不上（合并视图字段多于子 store 字段），用类型断言绕过。
-  // 这是 zustand 多 store 合并层的固有限制：合并视图 ≠ 子 store 视图。
   if (Object.keys(chatPatch).length > 0) {
     useChatStore.setState(chatPatch as Partial<ReturnType<typeof useChatStore.getState>>)
   }
@@ -363,7 +324,7 @@ useAppStoreStatic.setState = (partial) => {
 
 /**
  * 订阅合并状态变化。返回取消订阅函数。
- * 当任一子 store 状态变化时触发 listener（合并后状态对比）。
+ * 当任一子 store 状态变化时触发 listener。
  */
 useAppStoreStatic.subscribe = (listener) => {
   let prevMerged = useAppStoreStatic.getState()
@@ -386,7 +347,6 @@ useAppStoreStatic.subscribe = (listener) => {
 
 export const useAppStore = useAppStoreStatic
 
-// 重新导出关键类型与跨 store selector，保持与旧模块相同的导出面
 export type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock, RendererToolBlock }
 
 /** 与旧 useAppStore 同名的跨 store selector：当前模型是否支持图片输入 */

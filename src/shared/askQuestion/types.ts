@@ -63,4 +63,14 @@ export interface AskQuestionResult {
 export interface AskQuestionRequest {
   requestId: string
   questions: AskQuestionItem[]
+  /** 会话归属（阶段 2）；旧事件可能缺失，snapshot-first 路径必有 */
+  sessionId?: string
+  /** 当前 assistant 消息 id */
+  messageId?: string
+  /** 所属 run */
+  runId?: string
+  /** InteractionInbox 稳定 id（与 requestId 可相同或独立） */
+  interactionId?: string
+  /** 乐观并发版本，回答时回传 */
+  version?: number
 }

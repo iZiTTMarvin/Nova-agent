@@ -17,7 +17,7 @@ import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
 import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
-import { ageToolResults } from './compaction/toolResultAging'
+import { defaultContextBudgetManager } from './ContextBudgetManager'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
@@ -857,8 +857,8 @@ export class AgentLoop implements IdleCompactionTarget {
     // 每轮 user 消息递增压缩冷却计数
     this.userTurnsSinceCompaction++
 
-    // 旧工具结果老化 + 刷新 token 估算（在 shouldCompact 之前）
-    this.context = ageToolResults(this.context)
+    // 统一上下文预算（与工具批次后共用 ContextBudgetManager）
+    this.context = defaultContextBudgetManager.apply(this.context)
     this.lastEstimatedTokens = estimateContextTokens(this.context)
 
     // 主循环下沉到 runAgentLoop：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
@@ -956,13 +956,8 @@ export class AgentLoop implements IdleCompactionTarget {
 
     this.checkpointManager?.endMessage()
 
-    if (this.cancelled && this.currentMessageId) {
-      await this.hookManager.trigger({
-        event: 'onCancel',
-        messageId: this.currentMessageId,
-        interrupted: true
-      })
-    }
+    // onCancel 由 RunCoordinator.commitTerminal 统一触发（exactly-once）；
+    // 此处不再重复 hook，避免 cancel() + finishMessageRound 双触发。
     this.currentMessageId = null
 
     this.eventBus.emit({
@@ -1001,7 +996,9 @@ export class AgentLoop implements IdleCompactionTarget {
     recentMessages: ChatMessage[],
     pulledBackMessages?: ChatMessage[]
   ): void {
-    this.context = rebuildWithCompression(systemPrompt, summary, recentMessages, pulledBackMessages)
+    // compaction 与 aging 共用 ContextBudgetManager，避免两套规则互覆盖
+    const rebuilt = rebuildWithCompression(systemPrompt, summary, recentMessages, pulledBackMessages)
+    this.context = defaultContextBudgetManager.apply(rebuilt)
     this.compactionLevel++
     this.userTurnsSinceCompaction = 0
     // 重置 token 估算，防止下轮立即重新触发压缩
@@ -1123,13 +1120,8 @@ export class AgentLoop implements IdleCompactionTarget {
       this.cancelled = true
       this.state = 'cancelled'
       this.abortController?.abort()
-      if (this.currentMessageId) {
-        void this.hookManager.trigger({
-          event: 'onCancel',
-          messageId: this.currentMessageId,
-          interrupted: true
-        })
-      }
+      // onCancel 改由 RunCoordinator 在 commitTerminal 时 exactly-once 触发；
+      // 此处不再直接 hook，避免与 finishMessageRound 双触发。
       // 拒绝所有等待中的权限请求（用 PermissionAbortedError 而非 resolve(false)，
       // 这样 checkPermission 不会把它当成"用户拒绝"生成权限拒绝 tool_result）
       for (const [id, entry] of this.pendingPermissions) {

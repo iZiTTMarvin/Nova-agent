@@ -254,7 +254,7 @@ export class WorkspaceService {
    */
   deleteSession(sessionId: string): WorkspaceState {
     // 该会话有进行中的 Agent 轮次（含编排 run）时禁止删除：
-    // 否则 run 变成无主孤儿，持续占用 agentTurnInProgress 并向已删除会话写数据。
+    // 否则 run 变成无主孤儿，持续占用 RunCoordinator 非终态并向已删除会话写数据。
     if (getActiveTurnSessionId() === sessionId) {
       throw new Error('该会话的 Agent 正在运行，请先停止再删除')
     }

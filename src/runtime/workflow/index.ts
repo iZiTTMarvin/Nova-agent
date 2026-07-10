@@ -33,7 +33,8 @@ export {
   journalKey,
   appendJournalSync,
   loadJournal,
-  clearJournal
+  clearJournal,
+  ScriptShaMismatchError
 } from './journal'
 export { makeSemaphore, makeRunSemaphore, getGlobalSemaphore } from './semaphore'
 export { topoSort } from './topo'
@@ -45,3 +46,11 @@ export {
   writeTaskFailure,
   recomputeStats
 } from './state'
+export { TaskScope, withTaskScope } from './TaskScope'
+export {
+  inspectComposeResume,
+  getComposeV2Manifest,
+  isV2Workflow,
+  buildResumePlanFromDisk
+} from './v2'
+export type { ResumePlan, StepRecord, WorkflowV2Manifest } from './v2/types'

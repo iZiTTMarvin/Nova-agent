@@ -20,6 +20,8 @@ const TRANSIENT_PATTERNS = [
   /timeout/i,
   /ECONNRESET/i,
   /network/i,
+  /network_reset/i,
+  /http_retryable/i,
   /temporarily unavailable/i,
   /文件.*占用/,
   /EBUSY/i,

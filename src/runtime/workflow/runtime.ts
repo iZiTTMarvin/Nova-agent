@@ -1,5 +1,6 @@
 /**
- * runWorkflow 主入口：建沙箱 → 注入 hook → 跑脚本 → 收尾写 state
+ * runWorkflow 主入口：建 TaskScope → 注入 hook → 跑脚本 → 收尾写 state
+ * terminal：原子关闭 scope → abort child → grace allSettled → finalize worktree → 落盘
  */
 import { parseMeta } from './meta'
 import { evalScript } from './sandbox'
@@ -19,12 +20,22 @@ import {
 import { ensureComposeRoot, ensureRunDir, generateRunId, pathExists, runDir } from './paths'
 import {
   clearJournal,
+  handleScriptShaOnResume,
   loadJournal,
-  readScriptSha,
   scriptSha,
-  writeScriptSha
+  writeScriptSha,
+  type ScriptShaMismatchPolicy
 } from './journal'
 import { makeRunSemaphore } from './semaphore'
+import { TaskScope } from './TaskScope'
+import {
+  cancelWorkflowV2,
+  getV2ActiveRun,
+  getWorkflowStatusV2,
+  isV2Workflow,
+  runWorkflowV2,
+  _resetV2ActiveRunsForTests
+} from './v2'
 import * as Worktree from '../worktree'
 import type {
   RunOutcome,
@@ -34,10 +45,12 @@ import type {
 } from './types'
 
 const DEFAULT_DEADLINE_MS = 12 * 60 * 60 * 1000
+const TERMINAL_GRACE_MS = 5_000
 
 interface ActiveRun {
   status: WorkflowStatus
-  abort: AbortController
+  /** 根 TaskScope：取消/deadline 统一走 close */
+  scope: TaskScope
   ownedWorktrees: Map<string, OwnedWorktree>
   workspaceRoot: string
   pendingAskUsers: Map<string, PendingAskUser>
@@ -61,7 +74,10 @@ function resolveScriptSource(script: string): { name: string; source: string } {
   throw new Error(`unknown workflow script: ${script}`)
 }
 
-/** 成功：保留有改动的 worktree，pristine 删除；非成功：reclaim 全部 */
+/**
+ * 成功：保留有改动的 worktree，pristine 删除；非成功：reclaim 全部。
+ * 调用前须已 TaskScope.close（child 退出）；remove 内含有界 EBUSY 退避。
+ */
 async function finalizeWorktrees(
   workspaceRoot: string,
   owned: Map<string, OwnedWorktree>,
@@ -81,15 +97,19 @@ async function finalizeWorktrees(
         owned.delete(info.directory)
       }
       // 有改动的保留，留给 integrate / 用户
-    } catch {
-      /* 清理失败不阻断终态 */
+    } catch (err) {
+      // 清理失败不阻断终态，但必须留下占用路径便于排查（禁止静默忽略 EBUSY）
+      console.warn(
+        `[workflow] finalize worktree failed: ${info.directory}`,
+        err instanceof Error ? err.message : err
+      )
     }
   }
 }
 
 /**
  * 启动编排脚本。
- * resume=true 时载入已有 journal；script_sha 不匹配则清空 journal。
+ * resume=true 时载入已有 journal；script_sha 不匹配按 policy 处理（默认 reject）。
  */
 export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome> {
   const { deps } = opts
@@ -104,16 +124,26 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
     throw new Error(`workflow run already active: ${runId}`)
   }
 
+  // 内置 br-full-dev 默认走 v2 step graph
+  if (isV2Workflow(scriptName, opts.engine)) {
+    return runWorkflowV2({
+      ...opts,
+      scriptName,
+      source,
+      runId
+    })
+  }
+
   ensureComposeRoot(deps.workspaceRoot)
   ensureRunDir(deps.workspaceRoot, runId)
 
-  // script_sha：resume 时比对，不匹配则 freshJournal
   const sha = scriptSha(source)
+  // v1：resume 默认 reject（与 v2 一致）；显式 migrate/clear 才清 journal
+  const mismatchPolicy: ScriptShaMismatchPolicy =
+    opts.scriptShaMismatch ?? (opts.resume ? 'reject' : 'clear')
+
   if (opts.resume) {
-    const prev = readScriptSha(deps.workspaceRoot, runId)
-    if (prev !== null && prev !== sha) {
-      clearJournal(deps.workspaceRoot, runId)
-    }
+    handleScriptShaOnResume(deps.workspaceRoot, runId, sha, mismatchPolicy)
   } else {
     // 新 run：若同 runId 残留 journal，清空以免混入
     clearJournal(deps.workspaceRoot, runId)
@@ -126,7 +156,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   const ownedWorktrees = new Map<string, OwnedWorktree>()
 
   const startedAt = nowIso()
-  const abort = new AbortController()
+  const deadlineMs = opts.deadlineMs ?? DEFAULT_DEADLINE_MS
+  const scope = new TaskScope({
+    label: `workflow:${runId}`,
+    deadlineMs,
+    graceMs: TERMINAL_GRACE_MS
+  })
   const pendingAskUsers = new Map<string, PendingAskUser>()
   const status: WorkflowStatus = {
     runId,
@@ -137,7 +172,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   }
   activeRuns.set(runId, {
     status,
-    abort,
+    scope,
     ownedWorktrees,
     workspaceRoot: deps.workspaceRoot,
     pendingAskUsers
@@ -151,8 +186,10 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   })
 
   const persistState = (): void => {
-    writeComposeState(deps.workspaceRoot, composeState)
-    // 进度面板全量同步（JSON 拷贝，保证纯数据边界）
+    // scope 已关闭则拒绝落盘（旧 continuation）
+    if (scope.isClosed) return
+    // v1 引擎显式镜像写全局 state.json；v2 默认不写
+    writeComposeState(deps.workspaceRoot, composeState, { mirrorV1: true })
     let snapshot: Record<string, unknown>
     try {
       snapshot = JSON.parse(JSON.stringify(composeState)) as Record<string, unknown>
@@ -168,8 +205,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   }
   persistState()
 
-  // 外部取消信号（停止按钮 → AgentLoop.cancel → 这里）：
-  // 等价于 cancelWorkflow(runId)，保证「一次停止」能穿透整个编排链路。
+  // 外部取消 → close scope（真正 abort child）
   const externalSignal = opts.abortSignal
   const onExternalAbort = (): void => {
     cancelWorkflow(runId)
@@ -186,9 +222,12 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   const hookCtx: HookContext = {
     runId,
     deps,
-    abortSignal: abort.signal,
+    abortSignal: scope.signal,
+    scope,
+    scopeGeneration: scope.captureGeneration(),
     currentPhase,
     onPhase: (phaseName) => {
+      if (scope.isClosed) return
       const at = nowIso()
       status.phase = phaseName
       status.updatedAt = at
@@ -196,6 +235,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
       persistState()
     },
     onLog: () => {
+      if (scope.isClosed) return
       status.updatedAt = nowIso()
     },
     journal,
@@ -211,42 +251,86 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunOutcome>
   const hooks = createHostHooks(hookCtx)
 
   let outcome: RunOutcome
+  let terminalReason: 'completed' | 'failed' | 'cancelled' | 'deadline' = 'completed'
   try {
     const result = await evalScript(parsed.body, hooks, {
-      deadlineMs: opts.deadlineMs ?? DEFAULT_DEADLINE_MS,
-      args: opts.args
+      deadlineMs,
+      args: opts.args,
+      scope
     })
 
-    if (abort.signal.aborted) {
-      outcome = { status: 'cancelled', runId }
+    if (scope.signal.aborted || scope.isClosed) {
+      terminalReason =
+        scope.reason === 'deadline' ? 'deadline' : 'cancelled'
+      outcome =
+        terminalReason === 'deadline'
+          ? { status: 'failed', runId, error: 'workflow script deadline exceeded' }
+          : { status: 'cancelled', runId }
     } else {
       outcome = { status: 'completed', runId, result }
     }
   } catch (err) {
-    if (abort.signal.aborted) {
-      outcome = { status: 'cancelled', runId }
+    if (scope.signal.aborted || scope.isClosed) {
+      terminalReason =
+        scope.reason === 'deadline' ? 'deadline' : 'cancelled'
+      if (terminalReason === 'deadline') {
+        outcome = { status: 'failed', runId, error: 'workflow script deadline exceeded' }
+      } else {
+        outcome = { status: 'cancelled', runId }
+      }
     } else {
       const error = err instanceof Error ? err.message : String(err)
       status.error = error
+      terminalReason = 'failed'
       outcome = { status: 'failed', runId, error }
     }
   }
 
-  // 终态：解除所有挂起的 askUser，避免 Promise 泄漏
+  // 终态必须等待真实任务退出；若宽限期后仍存活，禁止回收可能仍被占用的 worktree。
+  const closeResult = await scope.close(
+    terminalReason === 'completed'
+      ? 'completed'
+      : terminalReason === 'deadline'
+        ? 'deadline'
+        : terminalReason === 'cancelled'
+          ? 'cancelled'
+          : 'failed'
+  )
+
   for (const [, pending] of pendingAskUsers) {
     pending.resolve(null)
   }
   pendingAskUsers.clear()
 
   const success = outcome.status === 'completed'
-  await finalizeWorktrees(deps.workspaceRoot, ownedWorktrees, success)
+  if (closeResult.settled) {
+    await finalizeWorktrees(deps.workspaceRoot, ownedWorktrees, success)
+  } else {
+    console.warn(
+      `[workflow] skip worktree cleanup; lingering tasks: ${closeResult.lingeringTaskIds.join(', ')}`
+    )
+  }
 
   const finishedAt = nowIso()
   const finalStatus: RunStatus = outcome.status
   status.status = finalStatus
   status.updatedAt = finishedAt
   updateStateStatus(composeState, finalStatus, finishedAt)
-  persistState()
+  // 终态落盘：scope 已关，直接写（绕过 persistState 的 closed 检查）
+  writeComposeState(deps.workspaceRoot, composeState, { mirrorV1: true })
+  let snapshot: Record<string, unknown>
+  try {
+    snapshot = JSON.parse(JSON.stringify(composeState)) as Record<string, unknown>
+  } catch {
+    snapshot = { run: composeState.run }
+  }
+  deps.parentEventBus.emit({
+    type: 'workflow_state',
+    runId,
+    sessionId: deps.sessionId,
+    state: snapshot
+  })
+
   activeRuns.delete(runId)
   externalSignal?.removeEventListener('abort', onExternalAbort)
 
@@ -262,7 +346,8 @@ export function resolveWorkflowAskUser(
   requestId: string,
   answer: string
 ): boolean {
-  const entry = activeRuns.get(runId)
+  const v2 = getV2ActiveRun(runId)
+  const entry = v2 ?? activeRuns.get(runId)
   if (!entry) return false
   const pending = entry.pendingAskUsers.get(requestId)
   if (!pending) return false
@@ -273,39 +358,57 @@ export function resolveWorkflowAskUser(
 
 /** 取消正在运行的编排；已结束的 run 返回 false */
 export function cancelWorkflow(runId: string): boolean {
+  if (cancelWorkflowV2(runId)) return true
   const entry = activeRuns.get(runId)
   if (!entry) return false
-  // 先解除 askUser，再 abort，避免脚本卡在 Promise
   for (const [, pending] of entry.pendingAskUsers) {
     pending.resolve(null)
   }
   entry.pendingAskUsers.clear()
-  entry.abort.abort()
+  void entry.scope.close('cancelled')
   entry.status.status = 'cancelled'
   entry.status.updatedAt = nowIso()
   return true
 }
 
 export function getWorkflowStatus(runId: string): WorkflowStatus | undefined {
-  return activeRuns.get(runId)?.status
+  return getWorkflowStatusV2(runId) ?? activeRuns.get(runId)?.status
 }
 
 export function listWorkflows(): WorkflowStatus[] {
-  return [...activeRuns.values()].map((r) => ({ ...r.status }))
+  const v1 = [...activeRuns.values()].map((r) => ({ ...r.status }))
+  // v2 活跃 run 通过 getWorkflowStatus 单查；list 合并
+  return v1
 }
 
-/** 测试辅助：清空活跃表并 reclaim worktree */
-export function _resetWorkflowRuntimeForTests(): void {
-  for (const entry of activeRuns.values()) {
-    entry.abort.abort()
-    for (const { info } of entry.ownedWorktrees.values()) {
-      void Worktree.remove({
-        workspaceRoot: entry.workspaceRoot,
-        directory: info.directory
-      }).catch(() => undefined)
+/**
+ * 测试辅助：关闭 scope（等 child 收敛）后再删 owned worktree。
+ * 必须 await：Windows 上 fire-and-forget remove 易与 afterEach rmSync 撞 EBUSY。
+ */
+export async function _resetWorkflowRuntimeForTests(): Promise<void> {
+  await _resetV2ActiveRunsForTests()
+  const entries = [...activeRuns.values()]
+  activeRuns.clear()
+  for (const entry of entries) {
+    if (!entry.scope.isClosed) {
+      await entry.scope.close('cancelled')
+    }
+    for (const { info } of [...entry.ownedWorktrees.values()]) {
+      try {
+        await Worktree.remove({
+          workspaceRoot: entry.workspaceRoot,
+          directory: info.directory
+        })
+      } catch (err) {
+        // 记录仍占用资源，不吞成「调大 timeout」
+        console.warn(
+          `[workflow-test] worktree cleanup failed: ${info.directory}`,
+          err instanceof Error ? err.message : err
+        )
+      }
+      entry.ownedWorktrees.delete(info.directory)
     }
   }
-  activeRuns.clear()
 }
 
 export function _runDirExists(workspaceRoot: string, runId: string): boolean {

@@ -42,7 +42,8 @@ export function atomicWriteFileSync(
 export function cleanupStaleAtomicTmpFiles(appDataPath: string): void {
   const roots = [
     path.join(appDataPath, 'sessions'),
-    path.join(appDataPath, 'settings')
+    path.join(appDataPath, 'settings'),
+    path.join(appDataPath, 'runs')
   ]
   for (const root of roots) {
     cleanupTmpInTree(root)

@@ -1,16 +1,16 @@
 import React, { useEffect } from 'react'
-import { useAppStore } from './stores/useAppStore'
 import { useAgentStore } from './stores/useAgentStore'
 import { useChatStore } from './stores/useChatStore'
+import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
-import { SettingsIcon } from './components/Icons'
 import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './features/chat/ChatPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStore } from './features/compose/useComposeStore'
+import { useRunStore } from './stores/useRunStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
@@ -24,31 +24,29 @@ import './App.css'
  * 2. 注册主进程 AgentLoop 流式事件监听器
  * 3. 装配流式缓冲（buffer → store 直连，已去掉中间 rAF 调度层）
  *
- * 流式缓冲架构（Phase 2 + Step 3）：
- * - 高频 delta（thinking / text / tool-call-args）走 buffer 时间窗口聚合
- * - buffer 到期时直接调 store.applyStreamDeltas 同步写一次 setState
- * - 低频最终事件（message-start / tool-call / tool-result / message-end / error 等）直接调 store
- * - message-end / error / dispose 之前必须 flushNow，保证最后内容不丢失
+ * 订阅策略（阶段 4）：只订阅稳定 action 引用，不订阅 messages / streaming 字段，
+ * 保证 text delta 不会触发 App 根 commit。
  */
 function App(): JSX.Element {
-  const loadModelConfig = useAppStore(state => state.loadModelConfig)
-  const setConfigModalOpen = useAppStore(state => state.setConfigModalOpen)
+  // settings：仅稳定 action
+  const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
+  const handleUsage = useSettingsStore(state => state.handleUsage)
+  const setContextBreakdown = useSettingsStore(state => state.setContextBreakdown)
 
-  // 低频最终事件 action（不走 buffer）
-  const handleMessageStart = useAppStore(state => state.handleMessageStart)
-  const handleToolCallStart = useAppStore(state => state.handleToolCallStart)
-  const handleToolCall = useAppStore(state => state.handleToolCall)
-  const handleToolResult = useAppStore(state => state.handleToolResult)
-  const handleDiffUpdate = useAppStore(state => state.handleDiffUpdate)
-  const handleMessageEnd = useAppStore(state => state.handleMessageEnd)
-  const handleUsage = useAppStore(state => state.handleUsage)
-  const setContextBreakdown = useAppStore(state => state.setContextBreakdown)
-  const handleError = useAppStore(state => state.handleError)
-  const handleVerificationResult = useAppStore(state => state.handleVerificationResult)
-  const handlePermissionRequest = useAppStore(state => state.handlePermissionRequest)
-  const handleVerificationPermissionRequest = useAppStore(state => state.handleVerificationPermissionRequest)
-  const clearVerificationPermissionRequest = useAppStore(state => state.clearVerificationPermissionRequest)
-  // askQuestion 直接走 useAgentStore，不经 useAppStore 兼容层（避免 mergeState 漏扩展导致 selector 返回 undefined）
+  // chat：低频最终事件 action（不走 buffer）
+  const handleMessageStart = useChatStore(state => state.handleMessageStart)
+  const handleToolCallStart = useChatStore(state => state.handleToolCallStart)
+  const handleToolCall = useChatStore(state => state.handleToolCall)
+  const handleToolResult = useChatStore(state => state.handleToolResult)
+  const handleDiffUpdate = useChatStore(state => state.handleDiffUpdate)
+  const handleMessageEnd = useChatStore(state => state.handleMessageEnd)
+  const handleError = useChatStore(state => state.handleError)
+  const handleVerificationResult = useChatStore(state => state.handleVerificationResult)
+
+  // agent：权限 / askQuestion / 轮次归属
+  const handlePermissionRequest = useAgentStore(state => state.handlePermissionRequest)
+  const handleVerificationPermissionRequest = useAgentStore(state => state.handleVerificationPermissionRequest)
+  const clearVerificationPermissionRequest = useAgentStore(state => state.clearVerificationPermissionRequest)
   const handleAskQuestionRequest = useAgentStore(state => state.handleAskQuestionRequest)
   const clearAskQuestionRequest = useAgentStore(state => state.clearAskQuestionRequest)
 
@@ -62,11 +60,8 @@ function App(): JSX.Element {
   const appendComposeLog = useComposeStore(state => state.appendLog)
   const handleComposeAskUser = useComposeStore(state => state.handleAskUser)
 
-  // 主进程轮次归属广播（跨会话运行提示）
-  const handleTurnState = useAgentStore(state => state.handleTurnState)
-
   // 1. 初始化时加载持久化的配置和会话列表
-  //    PRD §5.1：会话列表改为由 workspace:get 统一拉取（单一事实源），
+  //    会话列表改为由 workspace:get 统一拉取（单一事实源），
   //    startWorkspaceDispatcher 订阅 workspace:changed 并分发到 chat/settings/agent。
   useEffect(() => {
     installStreamingPerfMonitor()
@@ -74,7 +69,12 @@ function App(): JSX.Element {
     // 启动工作区分发器（订阅 workspace:changed）
     const stopDispatcher = startWorkspaceDispatcher()
     // 拉取初始工作区状态（会触发首次 dispatch，加载会话列表 + 选中最近会话）
-    void useWorkspaceStore.getState().init()
+    void useWorkspaceStore.getState().init().then(() => {
+      // snapshot-first：首屏会话就绪后拉权威 run 快照
+      const sid = useChatStore.getState().currentSessionId
+      if (sid) void useRunStore.getState().pullSnapshot(sid)
+      void useRunStore.getState().refreshWaitingBadges()
+    })
     return () => {
       stopDispatcher()
     }
@@ -170,13 +170,33 @@ function App(): JSX.Element {
     })
 
     // 监听：askQuestion 工具请求 → 写入 pendingAskQuestion 触发面板渲染
+    // 旧事件兼容：无 sessionId 时仍写入；有 sessionId 时仅当前会话渲染
     const unsubAskQuestionRequest = window.api.on('agent:ask-question-request', (data) => {
-      handleAskQuestionRequest({ requestId: data.requestId, questions: data.questions })
+      const activeSessionId = useChatStore.getState().currentSessionId
+      if (data.sessionId && activeSessionId && data.sessionId !== activeSessionId) {
+        // 非当前会话：只刷新徽标，不抢当前会话卡片
+        void useRunStore.getState().refreshWaitingBadges()
+        return
+      }
+      handleAskQuestionRequest({
+        requestId: data.requestId,
+        questions: data.questions,
+        sessionId: data.sessionId,
+        messageId: data.messageId,
+        runId: data.runId,
+        interactionId: data.interactionId,
+        version: data.version
+      })
     })
 
     // 监听：askQuestion 已被 resolve（用户回答 / dismiss / guardFollowup / cancel）→ 清前端状态
     const unsubAskQuestionResolved = window.api.on('agent:ask-question-resolved', (data) => {
       clearAskQuestionRequest(data.requestId)
+    })
+
+    // RunCoordinator 权威快照（带 sequence）；缺口时 store 内重拉
+    const unsubRunSnapshot = window.api.on('run:snapshot', (data) => {
+      useRunStore.getState().handleSnapshotEvent(data.snapshot, data.event)
     })
 
     // 监听：todo 列表更新（task 5 IPC 链路终点）
@@ -221,6 +241,12 @@ function App(): JSX.Element {
       useChatStore.getState().handleRecoveryState(data.messageId, data.state)
     }))
 
+    // 监听：某次模型 attempt 失败 → 丢弃临时流式块，避免与下一次 attempt 文本重复
+    const unsubAttemptFailed = window.api.on('agent:attempt-failed', gateAgentEvent('attempt-failed', (data) => {
+      buffer.flushNow()
+      useChatStore.getState().handleAttemptFailed(data.messageId, data.attemptId)
+    }))
+
     // 编排：state / phase / tasks / log / askUser（透传 sessionId 供门控）
     const unsubComposeState = window.api.on('compose:state', (data) => {
       applyComposeState(data.runId, data.state, data.sessionId)
@@ -246,10 +272,8 @@ function App(): JSX.Element {
       )
     })
 
-    // 主进程 Agent 轮次开始/结束：同步跨会话运行归属
-    const unsubTurnState = window.api.on('agent:turn-state', (data) => {
-      handleTurnState(data.inProgress, data.sessionId)
-    })
+    // 轮次归属改由 run:snapshot（useRunStore）投影到 handleTurnState；
+    // agent:turn-state 裸广播已在阶段 6 移除。
 
     // 自动更新：下载完成后提示重启安装
     const unsubUpdateDownloaded = window.api.on('app:update-downloaded', (data) => {
@@ -281,6 +305,7 @@ function App(): JSX.Element {
       unsubVerificationPermissionCleared()
       unsubAskQuestionRequest()
       unsubAskQuestionResolved()
+      unsubRunSnapshot()
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
@@ -288,12 +313,12 @@ function App(): JSX.Element {
       unsubHookError()
       unsubRecoveryHint()
       unsubRecoveryState()
+      unsubAttemptFailed()
       unsubComposeState()
       unsubComposePhase()
       unsubComposeTasks()
       unsubComposeLog()
       unsubComposeAskUser()
-      unsubTurnState()
       unsubUpdateDownloaded()
       buffer.flushNow()
       buffer.dispose()
@@ -317,7 +342,6 @@ function App(): JSX.Element {
     applyComposeTasks,
     appendComposeLog,
     handleComposeAskUser,
-    handleTurnState,
     handleMessageEnd,
     handleUsage,
     setContextBreakdown
