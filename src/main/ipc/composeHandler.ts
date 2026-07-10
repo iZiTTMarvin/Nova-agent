@@ -51,7 +51,8 @@ import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import { getSkillService } from '../services/SkillServiceHost'
 import { getSessionStore } from './sessionHandler'
-import { getRunCoordinator } from '../services/RunCoordinatorHost'
+import { getRunCoordinator, getRunExecutionRegistry, setActiveRunId } from '../services/RunCoordinatorHost'
+import { runComposeWithLifecycle } from './composeRunLifecycle'
 
 function buildComposeDeps(
   workspaceRoot: string,
@@ -180,23 +181,65 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
   }) => {
     const eventBus = new EventBus()
     const unsub = wireComposeEvents(eventBus, getMainWindow)
+    const coord = getRunCoordinator()
+    const registry = getRunExecutionRegistry()
+    let capturedRunId = ''
     try {
-      const outcome = await runWorkflow({
-        script: params.scriptName,
-        args: { requirement: params.args ?? '', task: params.args ?? '' },
-        deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId)
-      })
-      return { runId: outcome.runId, status: outcome.status }
+      const result = await runComposeWithLifecycle(
+        {
+          coord,
+          registry,
+          runWorkflow,
+          cancelWorkflow
+        },
+        {
+          workspaceRoot: params.workspaceRoot,
+          sessionId: params.sessionId,
+          onRunStarted: (runId) => {
+            capturedRunId = runId
+            setActiveRunId(runId)
+          },
+          workflowOpts: {
+            script: params.scriptName,
+            args: { requirement: params.args ?? '', task: params.args ?? '' },
+            deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId)
+          }
+        }
+      )
+      return { runId: result.runId, status: result.status }
     } finally {
+      if (capturedRunId) setActiveRunId(null)
       unsub()
     }
   })
 
   handle(COMPOSE_CANCEL, async (_e, params: { runId: string }) => {
-    return { cancelled: cancelWorkflow(params.runId) }
+    const coord = getRunCoordinator()
+    const registry = getRunExecutionRegistry()
+    coord.beginCancel(params.runId)
+    coord.inbox.cancelAllForRun(params.runId)
+    // 先经 registry.abort（触发 cancelWorkflow），再兜底 cancelWorkflow
+    await registry.abort(params.runId, 'compose_cancel')
+    const cancelled = cancelWorkflow(params.runId)
+    return { cancelled: cancelled || true }
   })
 
   handle(COMPOSE_STATUS, async (_e, params: { runId: string }) => {
+    // 优先 RunCoordinator 权威快照；无则回落 workflow 进程内状态
+    try {
+      const snap = getRunCoordinator().getSnapshot(params.runId)
+      if (snap) {
+        return {
+          runId: snap.runId,
+          status: snap.status,
+          phase: typeof snap.progress?.extras?.phase === 'string'
+            ? snap.progress.extras.phase
+            : snap.progress?.label
+        }
+      }
+    } catch {
+      /* coordinator 未初始化 */
+    }
     const s = getWorkflowStatus(params.runId)
     if (!s) return null
     return { runId: s.runId, status: s.status, phase: s.phase }
@@ -214,16 +257,28 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     const eventBus = new EventBus()
     const unsub = wireComposeEvents(eventBus, getMainWindow)
     try {
-      const outcome = await runWorkflow({
-        script: params.scriptName,
-        args: { requirement: params.args ?? '', task: params.args ?? '' },
-        deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId),
-        runId: params.runId,
-        resume: true,
-        rerunFromStepId: params.rerunFromStepId,
-        scriptShaMismatch: params.scriptShaMismatch
-      })
-      return { runId: outcome.runId, status: outcome.status }
+      const result = await runComposeWithLifecycle(
+        {
+          coord: getRunCoordinator(),
+          registry: getRunExecutionRegistry(),
+          runWorkflow,
+          cancelWorkflow
+        },
+        {
+          workspaceRoot: params.workspaceRoot,
+          sessionId: params.sessionId,
+          runId: params.runId,
+          resume: true,
+          workflowOpts: {
+            script: params.scriptName,
+            args: { requirement: params.args ?? '', task: params.args ?? '' },
+            deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId),
+            rerunFromStepId: params.rerunFromStepId,
+            scriptShaMismatch: params.scriptShaMismatch
+          }
+        }
+      )
+      return { runId: result.runId, status: result.status }
     } finally {
       unsub()
     }
@@ -346,12 +401,24 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     const eventBus = new EventBus()
     const unsub = wireComposeEvents(eventBus, getMainWindow)
     try {
-      const outcome = await runWorkflow({
-        script: params.scriptName,
-        args: { requirement: params.args ?? '', task: params.args ?? '' },
-        deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId)
-      })
-      return { runId: outcome.runId, status: outcome.status }
+      const result = await runComposeWithLifecycle(
+        {
+          coord: getRunCoordinator(),
+          registry: getRunExecutionRegistry(),
+          runWorkflow,
+          cancelWorkflow
+        },
+        {
+          workspaceRoot: params.workspaceRoot,
+          sessionId: params.sessionId,
+          workflowOpts: {
+            script: params.scriptName,
+            args: { requirement: params.args ?? '', task: params.args ?? '' },
+            deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId)
+          }
+        }
+      )
+      return { runId: result.runId, status: result.status }
     } finally {
       unsub()
     }
