@@ -140,7 +140,10 @@ export async function runWorkflowV2(
     ownedWorktrees,
     composeState,
     pendingAskUsers,
-    persistState
+    persistState,
+    ...(opts.assertExecutionCurrent
+      ? { assertExecutionCurrent: opts.assertExecutionCurrent }
+      : {})
   }
 
   const hooks = createHostHooks(hookCtx)

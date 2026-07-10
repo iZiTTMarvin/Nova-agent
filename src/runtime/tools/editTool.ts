@@ -10,6 +10,7 @@ import { resolveAndValidatePath } from './ToolRegistry'
 import { resolveToolArg } from './toolArgResolver'
 import { metricReadStateStats } from '../../shared/diagnostics/metrics'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { assertSideEffectAllowed } from './types'
 import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
 import { lineDiff, renderLineDiff, computeFirstChangedLine, generateUnifiedPatch, extractSnippet } from './editDiff'
@@ -750,6 +751,8 @@ export const editTool: ToolExecutor = {
 
     try {
       return await withFileMutationQueue(absolutePath, async () => {
+        // 副作用入口：abort + generation fencing（假终止后禁止写盘）
+        assertSideEffectAllowed(context, 'edit')
         throwIfAborted()
 
         await ops.access(absolutePath)
@@ -768,6 +771,7 @@ export const editTool: ToolExecutor = {
         throwIfAborted()
 
         if (context.checkpointManager) {
+          assertSideEffectAllowed(context, 'checkpoint backup')
           context.checkpointManager.backupBeforeWrite(absolutePath, false)
         }
 

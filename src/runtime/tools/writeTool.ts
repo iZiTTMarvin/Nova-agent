@@ -10,6 +10,7 @@ import { dirname } from 'node:path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { withFileMutationQueue } from './file-mutation-queue'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
+import { assertSideEffectAllowed } from './types'
 import { resolveToolArg } from './toolArgResolver'
 
 /**
@@ -84,6 +85,9 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
       const dir = dirname(absolutePath)
 
       return withFileMutationQueue(absolutePath, async () => {
+        // 副作用入口：abort + generation fencing（假终止后禁止写盘）
+        assertSideEffectAllowed(context, 'write')
+
         // 推迟拒绝：不在 abort 事件监听器中拒绝，避免在文件系统操作
         // 仍在进行时释放变更队列。在每个 await 后检查 signal.aborted
         // 可以达到同样的取消效果，同时保持队列锁定直到当前操作完成。
@@ -98,6 +102,7 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
         // 在队列内判断是否为新文件并备份，避免并发写入时的竞态
         const isNewFile = !existsSync(absolutePath)
         if (context.checkpointManager) {
+          assertSideEffectAllowed(context, 'checkpoint backup')
           context.checkpointManager.backupBeforeWrite(absolutePath, isNewFile)
         }
 

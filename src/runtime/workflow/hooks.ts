@@ -3,6 +3,7 @@
  * 每个 hook 返回纯数据；agent() never-throw（失败/超时/取消 → null）。
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 import { dirname, join, relative } from 'path'
 import { readdir } from 'fs/promises'
 import { randomUUID, createHash } from 'crypto'
@@ -69,6 +70,11 @@ export interface HookContext {
   pendingAskUsers: Map<string, PendingAskUser>
   /** 落盘并广播 state 快照（进度面板） */
   persistState: () => void
+  /**
+   * 可选：父 run 的 execution generation fencing。
+   * 与 TaskScope 叠加——任一侧失效都拒绝副作用。
+   */
+  assertExecutionCurrent?: () => boolean
 }
 
 /** host hook 提交副作用前：scope 仍有效才允许写 */
@@ -77,6 +83,10 @@ function assertScopeLive(ctx: HookContext): boolean {
     return false
   }
   if (ctx.abortSignal.aborted) {
+    return false
+  }
+  // 父 Agent run generation 失效时同样拒绝（嵌套 workflow 场景）
+  if (ctx.assertExecutionCurrent && !ctx.assertExecutionCurrent()) {
     return false
   }
   return true
@@ -89,7 +99,8 @@ function isAborted(signal: AbortSignal): boolean {
 function buildToolContext(
   deps: WorkflowRuntimeDeps,
   signal: AbortSignal,
-  workingDir?: string
+  workingDir?: string,
+  assertExecutionCurrent?: () => boolean
 ): ToolContext {
   return {
     workingDir: workingDir ?? deps.workspaceRoot,
@@ -98,7 +109,8 @@ function buildToolContext(
     abortSignal: signal,
     supportsVision: deps.supportsVision,
     sessionId: deps.sessionId,
-    eventBus: deps.parentEventBus
+    eventBus: deps.parentEventBus,
+    ...(assertExecutionCurrent ? { assertExecutionCurrent } : {})
   }
 }
 
@@ -186,7 +198,7 @@ async function spawnAgent(
     toolExecution: 'sequential'
   })
 
-  const toolCtx = buildToolContext(deps, abortSignal, agentCwd)
+  const toolCtx = buildToolContext(deps, abortSignal, agentCwd, ctx.assertExecutionCurrent)
   // 子 agent 文件操作全部落在 agentCwd（worktree 隔离时为独立目录）
   subLoop.setWorkingDir(agentCwd)
   subLoop.setToolRegistry(subRegistry)
@@ -552,7 +564,8 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       mkdirSync(backupDir, { recursive: true })
       beforeCheckpointRel = `effect-backups/${effectId}.bak`
       const backupAbs = join(backupDir, `${effectId}.bak`)
-      writeFileSync(backupAbs, beforeBuf)
+      // 与 prepared receipt 同级持久性：atomic + fsync，避免崩溃后 receipt 声称有 backup 但文件缺失
+      atomicWriteFileSync(backupAbs, beforeBuf)
     }
 
     const prepared = buildFileEffectReceipt({
@@ -623,7 +636,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       }
     }
     // 编排 run 内固定 auto 语义直接执行；危险命令仍由 PermissionManager 拦截
-    const toolCtx = buildToolContext(deps, abortSignal)
+    const toolCtx = buildToolContext(deps, abortSignal, undefined, ctx.assertExecutionCurrent)
     const result = await bashTool.execute({ command }, toolCtx)
     if (!assertScopeLive(ctx)) {
       return { exitCode: -1, stdout: '', stderr: 'cancelled', passed: false }

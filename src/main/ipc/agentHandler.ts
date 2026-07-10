@@ -157,10 +157,10 @@ interface PendingAskQuestionEntry {
 export const pendingAskQuestions = new Map<string, PendingAskQuestionEntry>()
 
 /**
- * 当前 AgentLoop 引用：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
- * 每次 SEND_MESSAGE 更新；dispose 后置空。
+ * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
+ * 多并发 run 时按 snapshot.runId 精确查找，避免打到「最新一个」错误 loop。
  */
-let currentAgentLoopForHooks: AgentLoop | null = null
+const agentLoopsByRunId = new Map<string, AgentLoop>()
 let terminalHooksRegistered = false
 
 function ensureTerminalHooksRegistered(): void {
@@ -169,7 +169,7 @@ function ensureTerminalHooksRegistered(): void {
   try {
     const coord = getRunCoordinator()
     coord.onTerminalHook('onCancel', async (ctx) => {
-      const loop = currentAgentLoopForHooks
+      const loop = agentLoopsByRunId.get(ctx.snapshot.runId)
       const messageId = ctx.snapshot.messageId
       if (!loop || !messageId) return
       await loop.getHookManager().trigger({
@@ -520,9 +520,9 @@ export function registerAgentHandler(
         }
       }
     })
-    currentAgentLoopForHooks = agentLoop
 
     // 仅提前取得协调器；所有会抛错的装配和输入准备完成后才创建 run。
+    // AgentLoop 按 runId 注册（见 startRun 之后），供 onCancel 精确查找。
     const runCoordinator = getRunCoordinator()
     let capturedRunId = ''
     let executionGeneration = 0
@@ -639,6 +639,11 @@ export function registerAgentHandler(
         // 停止按钮 → AgentLoop.cancel() 的信号在此接入编排 run（否则 run 停不下来，
         // sendMessage 永挂起 → RunCoordinator 非终态占位 → 全局拒发消息）
         abortSignal: opts?.abortSignal,
+        // 嵌套 workflow 副作用与父 Agent run generation 对齐
+        assertExecutionCurrent: () =>
+          !capturedRunId ||
+          executionGeneration === 0 ||
+          runCoordinator.isExecutionCurrent(capturedRunId, executionGeneration),
         deps: {
           modelClient,
           parentEventBus: eventBus,
@@ -821,6 +826,12 @@ export function registerAgentHandler(
       settled: executionSettled
     })
     runCoordinator.bindExecutionGeneration(capturedRunId, executionGeneration)
+    // 副作用入口 fencing：write/edit/checkpoint 经 ToolContext 校验 generation
+    agentLoop.setExecutionFence(() =>
+      runCoordinator.isExecutionCurrent(capturedRunId, executionGeneration)
+    )
+    // onCancel 按 runId 精确解析 loop（多并发时不打到错误实例）
+    agentLoopsByRunId.set(capturedRunId, agentLoop)
     setActiveRunId(capturedRunId)
     runCoordinator.markRunning(capturedRunId)
 
@@ -859,6 +870,7 @@ export function registerAgentHandler(
       }
       resolveExecutionSettled()
       executionRegistry.unregister(capturedRunId, executionGeneration)
+      agentLoopsByRunId.delete(capturedRunId)
       setActiveRunId(null)
     }
   })

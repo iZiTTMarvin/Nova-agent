@@ -220,5 +220,17 @@ describe('写入工具', () => {
       expect(result.success).toBe(true)
       expect(readFileSync(join(TMP, 'empty.txt'), 'utf-8')).toBe('')
     })
+
+    it('execution generation 失效时拒绝写入', async () => {
+      const ctx = createContext()
+      ctx.assertExecutionCurrent = () => false
+      const result = await writeTool.execute(
+        { path: 'hello.txt', content: 'should-not-write\n' },
+        ctx
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/generation 已失效/)
+      expect(readFileSync(join(TMP, 'hello.txt'), 'utf-8')).toBe('hello world\n')
+    })
   })
 })

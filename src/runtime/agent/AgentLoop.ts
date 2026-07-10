@@ -293,6 +293,12 @@ export class AgentLoop implements IdleCompactionTarget {
     | null = null
 
   /**
+   * 执行 generation fencing：副作用前校验（由 agentHandler 注入）。
+   * 绑定当前 runId/generation；grace 超时或 interrupted 后拒绝写文件与 checkpoint。
+   */
+  private assertExecutionCurrent: (() => boolean) | null = null
+
+  /**
    * askQuestion 阻塞回调（可选）。
    * 由 agentHandler 通过 setAskQuestionHandler 注入；executeBatch 时透传给
    * toolBatchExecutor → ToolContext.askQuestion，供 askQuestion 工具发起提问。
@@ -638,6 +644,14 @@ export class AgentLoop implements IdleCompactionTarget {
     this.askQuestionHandler = handler
   }
 
+  /**
+   * 注入执行 generation fencing（由 agentHandler 在 bindExecutionGeneration 后调用）。
+   * 不注入时工具/checkpoint 仅依赖 abortSignal（单测 / 子 agent 场景）。
+   */
+  setExecutionFence(assertCurrent: () => boolean): void {
+    this.assertExecutionCurrent = assertCurrent
+  }
+
   /** 获取当前 readState（供 toolBatchExecutor 注入到 ToolContext） */
   getReadState(): ReadState {
     return this.readState
@@ -693,7 +707,10 @@ export class AgentLoop implements IdleCompactionTarget {
     // 空闲压缩：新消息到达时取消任何正在运行的压缩
     this.idleTimer?.cancel()
 
-    // 开启 checkpoint 事务边界
+    // 开启 checkpoint 事务边界（generation 失效时拒绝，避免假终止后仍建快照）
+    if (this.assertExecutionCurrent && !this.assertExecutionCurrent()) {
+      throw new Error('checkpoint 被拒绝：执行 generation 已失效')
+    }
     this.checkpointManager?.beginMessage(messageId)
 
     this.eventBus.emit({ type: 'message_start', messageId })
@@ -896,7 +913,10 @@ export class AgentLoop implements IdleCompactionTarget {
         artifactStore: this.artifactStore,
         askQuestion: this.askQuestionHandler,
         // 本会话已触发的 skill 目录 → 只读工具的额外允许根
-        extraAllowedRoots: [...this.skillRoots]
+        extraAllowedRoots: [...this.skillRoots],
+        ...(this.assertExecutionCurrent
+          ? { assertExecutionCurrent: this.assertExecutionCurrent }
+          : {})
       })
 
     const loopConfig: LoopConfig = {

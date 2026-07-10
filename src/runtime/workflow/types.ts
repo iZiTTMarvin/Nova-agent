@@ -71,6 +71,11 @@ export interface RunWorkflowOptions {
   engine?: 'v1' | 'v2'
   /** v2：从指定 step 之后重跑（含该 step） */
   rerunFromStepId?: string
+  /**
+   * 父 Agent run 的 execution generation fencing。
+   * 嵌套 workflow 写文件前校验；与 TaskScope 叠加。
+   */
+  assertExecutionCurrent?: () => boolean
 }
 
 /** 运行时依赖：禁止把 AgentLoop 引用直接塞进沙箱 */

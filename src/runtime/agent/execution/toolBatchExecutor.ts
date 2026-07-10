@@ -97,6 +97,11 @@ export interface ToolBatchExecutionOptions {
    * 只对只读工具生效；edit/write 不消费此字段。
    */
   extraAllowedRoots?: string[]
+  /**
+   * 执行 generation fencing：副作用前校验。
+   * 由 AgentLoop 注入，绑定当前 runId/generation。
+   */
+  assertExecutionCurrent?: () => boolean
 }
 
 interface ToolRunResult {
@@ -128,6 +133,9 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     ...(options.askQuestion ? { askQuestion: options.askQuestion } : {}),
     ...(options.extraAllowedRoots && options.extraAllowedRoots.length > 0
       ? { extraAllowedRoots: options.extraAllowedRoots }
+      : {}),
+    ...(options.assertExecutionCurrent
+      ? { assertExecutionCurrent: options.assertExecutionCurrent }
       : {})
   }
 }

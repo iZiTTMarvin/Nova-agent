@@ -80,6 +80,21 @@ export interface ToolContext {
    * 只对只读工具（read/ls/grep/find）生效；edit/write 不消费此字段。
    */
   extraAllowedRoots?: string[]
+  /**
+   * 执行 generation fencing：副作用前必须为 true。
+   * generation 失效（grace 超时 / interrupted）后拒绝写文件与 checkpoint。
+   */
+  assertExecutionCurrent?: () => boolean
+}
+
+/** 副作用入口统一 fencing：abort + generation */
+export function assertSideEffectAllowed(context: ToolContext, label = '操作'): void {
+  if (context.abortSignal?.aborted) {
+    throw new Error(`${label}已取消`)
+  }
+  if (context.assertExecutionCurrent && !context.assertExecutionCurrent()) {
+    throw new Error(`${label}被拒绝：执行 generation 已失效`)
+  }
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */
