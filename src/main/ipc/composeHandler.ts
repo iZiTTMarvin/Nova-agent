@@ -15,6 +15,9 @@ import {
   COMPOSE_RESUME,
   COMPOSE_RESPOND_ASK_USER,
   COMPOSE_GET_STATE,
+  COMPOSE_INSPECT_RESUME,
+  COMPOSE_ROLLBACK,
+  COMPOSE_NEW_ANALYSIS,
   COMPOSE_PHASE_CHANGE,
   COMPOSE_LOG,
   COMPOSE_ASK_USER,
@@ -26,7 +29,9 @@ import {
   cancelWorkflow,
   getWorkflowStatus,
   resolveWorkflowAskUser,
-  readComposeState
+  readComposeState,
+  inspectComposeResume,
+  getComposeV2Manifest
 } from '../../runtime/workflow'
 import type { WorkflowRuntimeDeps } from '../../runtime/workflow'
 import { EventBus } from '../../runtime/agent/EventBus'
@@ -182,6 +187,8 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     args?: string
     workspaceRoot: string
     sessionId?: string
+    rerunFromStepId?: string
+    scriptShaMismatch?: 'reject' | 'migrate'
   }) => {
     const eventBus = new EventBus()
     const unsub = wireComposeEvents(eventBus, getMainWindow)
@@ -191,7 +198,9 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
         args: { requirement: params.args ?? '', task: params.args ?? '' },
         deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId),
         runId: params.runId,
-        resume: true
+        resume: true,
+        rerunFromStepId: params.rerunFromStepId,
+        scriptShaMismatch: params.scriptShaMismatch
       })
       return { runId: outcome.runId, status: outcome.status }
     } finally {
@@ -208,13 +217,79 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     return { ok: resolveWorkflowAskUser(params.runId, params.requestId, params.answer) }
   })
 
-  handle(COMPOSE_GET_STATE, async (_e, params: { workspaceRoot: string }) => {
-    const state = readComposeState(params.workspaceRoot)
+  handle(COMPOSE_GET_STATE, async (_e, params: { workspaceRoot: string; runId?: string }) => {
+    const state = readComposeState(params.workspaceRoot, params.runId)
     if (!state) return null
     try {
       return JSON.parse(JSON.stringify(state)) as Record<string, unknown>
     } catch {
       return null
+    }
+  })
+
+  handle(COMPOSE_INSPECT_RESUME, async (_e, params: {
+    workspaceRoot: string
+    runId: string
+    rerunFromStepId?: string
+  }) => {
+    const manifest = getComposeV2Manifest(params.workspaceRoot, params.runId)
+    if (!manifest) {
+      // v1：无 step graph，告知 UI 只能「重新执行并复用结果」
+      return {
+        engine: 'v1' as const,
+        skip: [] as Array<{ stepId: string; kind: string; status: string }>,
+        run: [] as Array<{ stepId: string; kind: string; status: string }>,
+        blocked: [] as Array<{ stepId: string; kind: string; error?: string }>
+      }
+    }
+    const plan = inspectComposeResume(
+      params.workspaceRoot,
+      params.runId,
+      params.rerunFromStepId
+    )
+    if (!plan) return null
+    return {
+      engine: 'v2' as const,
+      skip: plan.skip,
+      run: plan.run,
+      blocked: plan.blocked
+    }
+  })
+
+  handle(COMPOSE_ROLLBACK, async (_e, params: {
+    workspaceRoot: string
+    runId: string
+    sessionId?: string
+  }) => {
+    // 禁止对用户工作区执行 git reset --hard / git clean -fd：
+    // 会删除与本 run 无关的修改和未跟踪文件。安全回滚改由 RollbackService
+    //（按 FileEffectReceipt 逆序恢复）承接；在其落地前明确失败，绝不半回退。
+    void params
+    return {
+      ok: false,
+      error:
+        '自动 Git 硬回滚已禁用（会误删无关改动）。请使用会话消息回退 / 逐文件 checkpoint；完整按 effect 凭证回滚即将接入。'
+    }
+  })
+
+  handle(COMPOSE_NEW_ANALYSIS, async (_e, params: {
+    scriptName: string
+    args?: string
+    workspaceRoot: string
+    sessionId?: string
+  }) => {
+    // 保留工作区，开新 runId（不 resume）
+    const eventBus = new EventBus()
+    const unsub = wireComposeEvents(eventBus, getMainWindow)
+    try {
+      const outcome = await runWorkflow({
+        script: params.scriptName,
+        args: { requirement: params.args ?? '', task: params.args ?? '' },
+        deps: buildComposeDeps(params.workspaceRoot, eventBus, params.sessionId)
+      })
+      return { runId: outcome.runId, status: outcome.status }
+    } finally {
+      unsub()
     }
   })
 }

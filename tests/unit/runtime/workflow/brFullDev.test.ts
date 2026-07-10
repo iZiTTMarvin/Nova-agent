@@ -153,17 +153,35 @@ function queueVerifyFail3x(client: MockModelClient): void {
   })
 }
 
+/** afterEach 删临时目录：有界退避重试 EBUSY，禁止只靠拉长 vitest timeout */
+async function rmTmpDirSafe(dir: string): Promise<void> {
+  const delays = [50, 100, 200, 400, 800]
+  for (let i = 0; i <= delays.length; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code
+      if (code !== 'EBUSY' && code !== 'EPERM' && code !== 'ENOTEMPTY') throw err
+      const d = delays[i]
+      if (d === undefined) throw err
+      await new Promise((r) => setTimeout(r, d))
+    }
+  }
+}
+
 describe('br-full-dev 阶段 D', () => {
   let tmp: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-br-full-'))
-    _resetWorkflowRuntimeForTests()
+    await _resetWorkflowRuntimeForTests()
   })
 
-  afterEach(() => {
-    _resetWorkflowRuntimeForTests()
-    rmSync(tmp, { recursive: true, force: true })
+  afterEach(async () => {
+    // 先等 scope/child 退出并清理 owned worktree，再删 tmp（修 Windows EBUSY flaky）
+    await _resetWorkflowRuntimeForTests()
+    await rmTmpDirSafe(tmp)
   })
 
   it('happy path：写出 specs/plans/reports，askUser 后 pendingCommit', async () => {
@@ -178,6 +196,7 @@ describe('br-full-dev 阶段 D', () => {
     })
 
     const outcome = await runWorkflow({
+      engine: 'v1',
       script: 'br-full-dev',
       args: { requirement: '实现一个 Todo CLI' },
       deps,
@@ -217,6 +236,7 @@ describe('br-full-dev 阶段 D', () => {
     })
 
     const outcome = await runWorkflow({
+      engine: 'v1',
       script: 'br-full-dev',
       args: { requirement: '必失败需求' },
       deps,
@@ -258,6 +278,7 @@ return { answer };
 
     let settled = false
     const runPromise = runWorkflow({
+      engine: 'v1',
       script,
       args: {},
       deps,
@@ -283,7 +304,7 @@ return { answer };
     }
   })
 
-  it('resume：journal 跳过已成功 agent；script_sha 不匹配则 freshJournal', async () => {
+  it('resume：journal 跳过已成功 agent；script_sha 不匹配需显式 migrate', async () => {
     const client = new MockModelClient()
     // 第一次：简单脚本写 journal
     const scriptV1 = `
@@ -297,6 +318,7 @@ return { a, b };
     queueText(client, 'B1')
     const deps1 = makeDeps(tmp, client)
     const o1 = await runWorkflow({
+      engine: 'v1',
       script: scriptV1,
       deps: deps1,
       runId: '2026-07-04-resume'
@@ -308,6 +330,7 @@ return { a, b };
     const client2 = new MockModelClient()
     const deps2 = makeDeps(tmp, client2)
     const o2 = await runWorkflow({
+      engine: 'v1',
       script: scriptV1,
       deps: deps2,
       runId: '2026-07-04-resume',
@@ -318,7 +341,7 @@ return { a, b };
       expect(o2.result).toEqual({ a: 'A1', b: 'B1' })
     }
 
-    // 改脚本后 resume：script_sha 不匹配 → freshJournal，需新响应
+    // 改脚本后 resume：默认拒绝；显式 migrate 才 freshJournal
     const scriptV2 = `
 export const meta = { name: "resume-test", description: "r", phases: [{ title: "探索" }] };
 phase("探索");
@@ -329,10 +352,12 @@ return { a };
     queueText(client3, 'A2')
     const deps3 = makeDeps(tmp, client3)
     const o3 = await runWorkflow({
+      engine: 'v1',
       script: scriptV2,
       deps: deps3,
       runId: '2026-07-04-resume',
-      resume: true
+      resume: true,
+      scriptShaMismatch: 'migrate'
     })
     expect(o3.status).toBe('completed')
     if (o3.status === 'completed') {
@@ -351,8 +376,8 @@ return { a };
     expect(entry!.script).toMatch(/directory:\s*wtDir/)
   })
 
-  it('放弃本次改动：回滚到编排前 HEAD', async () => {
-    // 需要真实 git 仓库才能 reset
+  it('放弃本次改动：不执行破坏性 Git 回滚，保留工作区改动', async () => {
+    // 需要真实 git 仓库（脚本仍会记录 baseline SHA，但不得 reset/clean）
     const git = (args: string[]) => {
       const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf-8', windowsHide: true })
       if (r.status !== 0) throw new Error(r.stderr || r.stdout || args.join(' '))
@@ -364,9 +389,9 @@ return { a };
     git(['add', '.'])
     git(['commit', '-m', 'init'])
 
-    // 模拟编排期间改动了已跟踪文件
+    // 模拟编排期间改动了已跟踪文件 + 未跟踪文件
     writeFileSync(join(tmp, 'README.md'), '# dirty-from-compose\n', 'utf-8')
-    writeFileSync(join(tmp, 'untracked.txt'), 'should-be-cleaned\n', 'utf-8')
+    writeFileSync(join(tmp, 'untracked.txt'), 'should-be-kept\n', 'utf-8')
 
     const client = new MockModelClient()
     queueHappyPath(client)
@@ -375,6 +400,7 @@ return { a };
     })
 
     const outcome = await runWorkflow({
+      engine: 'v1',
       script: 'br-full-dev',
       args: { requirement: '实现一个 Todo CLI' },
       deps,
@@ -383,13 +409,16 @@ return { a };
 
     expect(outcome.status).toBe('completed')
     if (outcome.status === 'completed') {
-      expect(outcome.result).toMatchObject({ abandoned: true, reverted: true })
+      expect(outcome.result).toMatchObject({ abandoned: true, reverted: false })
+      expect(String((outcome.result as { revertError?: string }).revertError ?? '')).toMatch(
+        /已禁用|checkpoint|消息回退/
+      )
     }
-    // Windows 下 git 可能写出 CRLF，只比较语义内容
+    // 工作区改动必须保留（禁止 git reset / clean）
     expect(readFileSync(join(tmp, 'README.md'), 'utf-8').replace(/\r\n/g, '\n')).toBe(
-      '# original\n'
+      '# dirty-from-compose\n'
     )
-    expect(existsSync(join(tmp, 'untracked.txt'))).toBe(false)
+    expect(existsSync(join(tmp, 'untracked.txt'))).toBe(true)
     // .nova 编排产物应保留
     const state = JSON.parse(readFileSync(statePath(tmp), 'utf-8')) as ComposeState
     expect(state.artifacts?.report).toBeTruthy()
@@ -430,6 +459,7 @@ return loadState();
 `
     const deps = makeDeps(tmp, client)
     const outcome = await runWorkflow({
+      engine: 'v1',
       script,
       deps,
       runId: '2026-07-04-state'

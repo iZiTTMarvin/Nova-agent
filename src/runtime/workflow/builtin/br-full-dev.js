@@ -794,29 +794,17 @@ if (proceed === "提交并推送") {
 }
 
 if (proceed === "放弃本次改动") {
-  let reverted = false;
-  let revertError = null;
-  // 回滚到编排开始时的 HEAD，并清理未跟踪文件（保留 .nova 编排产物）
-  if (gitBaseline) {
-    const reset = await bash("git reset --hard " + gitBaseline);
-    const clean = await bash("git clean -fd -e .nova");
-    reverted = !!(reset && reset.passed && clean && clean.passed);
-    if (!reverted) {
-      revertError =
-        (reset && !reset.passed ? reset.stderr || reset.stdout : "") +
-        (clean && !clean.passed ? clean.stderr || clean.stdout : "");
-    }
-  } else {
-    revertError = "非 git 仓库或无法读取 HEAD，工作区改动未自动回滚";
-  }
+  // 禁止 git reset --hard / git clean：会删除用户无关修改与未跟踪文件。
+  // 工作区改动保留；用户可用消息回退 / checkpoint / 后续 RollbackService 安全恢复。
+  const revertError =
+    "自动 Git 硬回滚已禁用（会误删无关改动）。工作区改动已保留，请用消息回退或逐文件 checkpoint 恢复。" +
+    (gitBaseline ? " 编排基线 SHA=" + gitBaseline : "");
   updateState({
     auto_decisions: [
       {
         phase: "ship",
-        decision: reverted ? "已回滚工作区到编排前基线" : "放弃改动但回滚未完成",
-        reason: reverted
-          ? "git reset --hard " + gitBaseline
-          : revertError || "回滚失败",
+        decision: "放弃改动但未自动回滚工作区",
+        reason: revertError,
         auto: false,
       },
     ],
@@ -825,7 +813,7 @@ if (proceed === "放弃本次改动") {
     status: "completed",
     pendingCommit: false,
     abandoned: true,
-    reverted: reverted,
+    reverted: false,
     gitBaseline: gitBaseline,
     revertError: revertError,
     artifacts: { spec: specPath, plan: planPath, report: reportPath },

@@ -35,6 +35,14 @@ export const SUBAGENTS_LIST = 'subagents:list' as const
 export const SUBAGENTS_SAVE = 'subagents:save' as const
 export const SUBAGENTS_DELETE = 'subagents:delete' as const
 export const CANCEL_EXECUTION = 'cancel-execution' as const
+/** 查询 Run 权威快照（snapshot-first） */
+export const RUN_GET_SNAPSHOT = 'run:get-snapshot' as const
+/** 列出各会话等待用户处理的徽标数据 */
+export const RUN_LIST_WAITING = 'run:list-waiting' as const
+/** 强制终止仍未退出的 run（grace 超时后） */
+export const RUN_FORCE_TERMINATE = 'run:force-terminate' as const
+/** interrupted run：继续分析 / 回滚本轮 / 查看已执行步骤 */
+export const RUN_INTERRUPTED_ACTION = 'run:interrupted-action' as const
 export const SAVE_MODEL_CONFIG = 'save-model-config' as const
 export const LOAD_MODEL_CONFIG = 'load-model-config' as const
 /** LLM 多服务商注册表 */
@@ -104,6 +112,12 @@ export const COMPOSE_RESUME = 'compose:resume' as const
 export const COMPOSE_RESPOND_ASK_USER = 'compose:respond-ask-user' as const
 /** 读取当前工作区 `.nova/compose/state.json` */
 export const COMPOSE_GET_STATE = 'compose:get-state' as const
+/** 预览 resume：将跳过 / 将执行的 step */
+export const COMPOSE_INSPECT_RESUME = 'compose:inspect-resume' as const
+/** 回滚本 run 文件修改（按 effect 凭证；禁止 git reset/clean） */
+export const COMPOSE_ROLLBACK = 'compose:rollback' as const
+/** 新建分析 run（保留工作区，开新 runId） */
+export const COMPOSE_NEW_ANALYSIS = 'compose:new-analysis' as const
 /** 跨会话记忆：列出 scope 下 md 文件 */
 export const MEMORY_LIST_FILES = 'memory:list-files' as const
 export const MEMORY_READ_FILE = 'memory:read-file' as const
@@ -142,6 +156,10 @@ export const AGENT_HOOK_ERROR = 'agent:hook-error' as const
 export const AGENT_RECOVERY_HINT = 'agent:recovery-hint' as const
 export const AGENT_RECOVERY_STATE = 'agent:recovery-state' as const
 export const AGENT_MODEL_SWITCHED = 'agent:model-switched' as const
+/** 某次模型 attempt 失败（将重试/切 fallback）；renderer 应丢弃该 attempt 临时流式块 */
+export const AGENT_ATTEMPT_FAILED = 'agent:attempt-failed' as const
+/** RunCoordinator 权威快照推送（带 sequence） */
+export const RUN_SNAPSHOT = 'run:snapshot' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */
