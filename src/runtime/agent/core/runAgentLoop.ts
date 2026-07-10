@@ -31,7 +31,6 @@ import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
-import { defaultContextBudgetManager } from '../ContextBudgetManager'
 
 /** 将 toolCall.arguments 字符串解析为对象，供空参护栏统计 */
 function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown> {
@@ -231,8 +230,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
           })
         }
-        // 每个工具批次后跑统一预算器（不只 sendMessage 入口）
-        context.messages = defaultContextBudgetManager.apply(context.messages)
+        // 每个工具批次后跑统一预算器（生产硬上限；超限抛错）
+        if (config.applyContextBudget) {
+          context.messages = config.applyContextBudget(context.messages)
+        }
         context.lastEstimatedTokens = estimateContextTokens(context.messages)
       }
 

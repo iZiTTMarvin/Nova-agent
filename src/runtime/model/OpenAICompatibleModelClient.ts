@@ -203,6 +203,16 @@ export class OpenAICompatibleModelClient implements ModelClient {
               bodyReader.markSemanticEvent()
             }
 
+            // SSE chunk.error：无 choice 时也必须产出明确 error，不能只 mark 后跳过
+            if (chunk.error && !choice) {
+              const errMsg =
+                typeof chunk.error === 'string'
+                  ? chunk.error
+                  : String(chunk.error?.message ?? JSON.stringify(chunk.error))
+              yield { type: 'error', error: errMsg }
+              continue
+            }
+
             // 末尾 usage chunk：无 choices 但有 usage 字段
             if (chunk.usage) {
               rawUsage = chunk.usage as Record<string, unknown>

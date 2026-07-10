@@ -17,7 +17,7 @@ import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
 import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
-import { defaultContextBudgetManager } from './ContextBudgetManager'
+import { createProductionContextBudgetManager, type ContextBudgetManager } from './ContextBudgetManager'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
@@ -186,6 +186,9 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
 
+  /** 生产路径上下文硬预算（按 contextWindow 配置） */
+  private contextBudgetManager: ContextBudgetManager
+
   /** 缓存诊断跟踪器：检测 system prompt / 工具定义变化导致的缓存失效 */
   private cacheDiagnostics = new CacheDiagnostics()
 
@@ -353,6 +356,9 @@ export class AgentLoop implements IdleCompactionTarget {
     /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
     this.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
     this.maxToolRounds = this.config.maxToolRounds ?? 20
+    this.contextBudgetManager = createProductionContextBudgetManager({
+      contextWindow: this.config.contextWindow ?? 200_000
+    })
     this.hookManager = new HookManager(eventBus)
     this.frozenSystemPrompt = this.buildFrozenSystemPrompt()
 
@@ -857,8 +863,8 @@ export class AgentLoop implements IdleCompactionTarget {
     // 每轮 user 消息递增压缩冷却计数
     this.userTurnsSinceCompaction++
 
-    // 统一上下文预算（与工具批次后共用 ContextBudgetManager）
-    this.context = defaultContextBudgetManager.apply(this.context)
+    // 统一上下文预算（生产硬上限；超限抛错阻断模型请求）
+    this.context = this.contextBudgetManager.apply(this.context)
     this.lastEstimatedTokens = estimateContextTokens(this.context)
 
     // 主循环下沉到 runAgentLoop：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
@@ -899,7 +905,8 @@ export class AgentLoop implements IdleCompactionTarget {
       maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
       supportsVision: this.config.supportsVision ?? true,
       shouldStopAfterTurn: (args) => this.stopPolicy.shouldStopAfterTurn(args),
-      onCompaction: (context, meta) => this.config.onCompaction?.(context, meta)
+      onCompaction: (context, meta) => this.config.onCompaction?.(context, meta),
+      applyContextBudget: (messages) => this.contextBudgetManager.apply(messages)
     }
 
     const endResult: LoopEndResult = await runAgentLoop({
@@ -998,7 +1005,7 @@ export class AgentLoop implements IdleCompactionTarget {
   ): void {
     // compaction 与 aging 共用 ContextBudgetManager，避免两套规则互覆盖
     const rebuilt = rebuildWithCompression(systemPrompt, summary, recentMessages, pulledBackMessages)
-    this.context = defaultContextBudgetManager.apply(rebuilt)
+    this.context = this.contextBudgetManager.apply(rebuilt)
     this.compactionLevel++
     this.userTurnsSinceCompaction = 0
     // 重置 token 估算，防止下轮立即重新触发压缩

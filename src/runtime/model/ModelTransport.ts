@@ -17,6 +17,7 @@ export type TransportErrorClass =
   | 'timeout_connect'
   | 'timeout_first_byte'
   | 'timeout_idle'
+  | 'timeout_total'
   | 'network_reset'
   | 'http_retryable'
   | 'http_fatal'
@@ -74,8 +75,12 @@ export class TransportAttempt {
       else userSignal.addEventListener('abort', this.onUserAbort, { once: true })
     }
     if (totalMs && totalMs > 0) {
-      // 总时长覆盖 headers 与整个 body，不能在 fetch 返回后提前清除。
-      this.totalTimer = setTimeout(() => this.controller.abort(), totalMs)
+      // 总时长覆盖 headers 与整个 body；abort reason 带 timeout_total，避免误判 cancelled
+      this.totalTimer = setTimeout(() => {
+        this.controller.abort(
+          new Error(formatTransportError('timeout_total', `总时长超时（${totalMs}ms）`))
+        )
+      }, totalMs)
     }
   }
 
@@ -117,16 +122,22 @@ export function formatTransportError(cls: TransportErrorClass, detail: string): 
 
 /** 从未知错误推断类别 */
 export function classifyThrownError(err: unknown): TransportErrorClass {
-  if ((err as Error)?.name === 'AbortError') return 'cancelled'
   const msg = String((err as Error)?.message ?? err ?? '')
+  const reasonMsg = String((err as { cause?: unknown })?.cause ?? (err as { reason?: unknown })?.reason ?? '')
+  const combined = `${msg} ${reasonMsg}`
+
+  if (/timeout_total/i.test(combined)) return 'timeout_total'
+  if ((err as Error)?.name === 'AbortError') {
+    return 'cancelled'
+  }
   const code = String((err as NodeJS.ErrnoException)?.code ?? '')
-  if (/ECONNRESET/i.test(msg) || /ECONNRESET/i.test(code) || /network_reset/i.test(msg)) {
+  if (/ECONNRESET/i.test(combined) || /ECONNRESET/i.test(code) || /network_reset/i.test(combined)) {
     return 'network_reset'
   }
-  if (/timeout_connect/i.test(msg)) return 'timeout_connect'
-  if (/timeout_first_byte|first.?byte/i.test(msg)) return 'timeout_first_byte'
-  if (/timeout_idle|idle/i.test(msg)) return 'timeout_idle'
-  if (/timeout/i.test(msg)) return 'timeout_idle'
+  if (/timeout_connect/i.test(combined)) return 'timeout_connect'
+  if (/timeout_first_byte|first.?byte/i.test(combined)) return 'timeout_first_byte'
+  if (/timeout_idle|idle/i.test(combined)) return 'timeout_idle'
+  if (/timeout/i.test(combined)) return 'timeout_idle'
   return 'network_reset'
 }
 
@@ -424,14 +435,14 @@ function concatChunks(chunks: Uint8Array[], bytes: number): Uint8Array {
  * 用户取消 → cancelled；其余 → error（带分类前缀）。
  */
 export function transportErrorToChatEvent(err: unknown): ChatEvent {
-  if ((err as Error)?.name === 'AbortError' || classifyThrownError(err) === 'cancelled') {
+  const cls = classifyThrownError(err)
+  if (cls === 'cancelled') {
     return { type: 'cancelled' }
   }
   const msg = String((err as Error)?.message ?? err)
   if (/^timeout_|^network_reset:|^http_/.test(msg)) {
     return { type: 'error', error: msg }
   }
-  const cls = classifyThrownError(err)
   return { type: 'error', error: formatTransportError(cls, msg) }
 }
 

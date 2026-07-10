@@ -323,8 +323,15 @@ function assertToolPairing(messages: ChatMessage[]): void {
 export class ContextBudgetManager {
   constructor(private readonly options: ContextBudgetOptions = {}) {}
 
+  /** 仅返回消息；硬预算仍超限时抛错，禁止继续发模型请求 */
   apply(context: ChatMessage[]): ChatMessage[] {
-    return applyContextBudget(context, this.options).messages
+    const result = applyContextBudget(context, this.options)
+    if (result.exceededHardBudget) {
+      throw new Error(
+        `ContextBudgetExceeded: estimatedTokens=${result.estimatedTokens} serializedBytes=${result.serializedBytes}`
+      )
+    }
+    return result.messages
   }
 
   applyWithProvenance(context: ChatMessage[]): ContextBudgetResult {
@@ -332,6 +339,24 @@ export class ContextBudgetManager {
   }
 }
 
+/** 无硬上限的默认实例（仅测试/兼容）；生产路径必须用 createProductionContextBudgetManager */
 export const defaultContextBudgetManager = new ContextBudgetManager()
+
+/** 按 contextWindow 创建带真实硬上限的预算器 */
+export function createProductionContextBudgetManager(opts: {
+  contextWindow: number
+  reservedOutputTokens?: number
+}): ContextBudgetManager {
+  const reserved = opts.reservedOutputTokens ?? Math.min(8192, Math.floor(opts.contextWindow * 0.15))
+  const maxEstimatedTokens = Math.max(1024, opts.contextWindow - reserved)
+  const maxSerializedBytes = maxEstimatedTokens * 4
+  return new ContextBudgetManager({
+    maxEstimatedTokens,
+    maxSerializedBytes,
+    reservedOutputTokens: reserved,
+    agingUserTurnThreshold: AGING_USER_TURN_THRESHOLD,
+    agingGroupBytesThreshold: AGING_GROUP_BYTES_THRESHOLD
+  })
+}
 
 export { AGING_GROUP_BYTES_THRESHOLD, AGING_USER_TURN_THRESHOLD }

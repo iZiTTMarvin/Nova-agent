@@ -115,6 +115,12 @@ export interface AgentLoopConfig {
   /** 持久化压缩态回调（透传现状 config.onCompaction） */
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
 
+  /**
+   * 工具批次后应用上下文硬预算。
+   * 超限必须抛错，禁止继续请求模型。
+   */
+  applyContextBudget?: (messages: ChatMessage[]) => ChatMessage[]
+
   // —— future 接口位，本期不实现 ——
   getSteeringMessages?: () => Promise<ChatMessage[]>
   getFollowUpMessages?: () => Promise<ChatMessage[]>
