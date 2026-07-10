@@ -7,19 +7,25 @@ import * as path from 'path'
 import * as os from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { SESSION_MESSAGES_FILE } from '../../../../src/runtime/sessions/types'
-import {
-  SESSION_MESSAGE_INDEX_FILE,
-  loadMessageIndex
-} from '../../../../src/runtime/sessions/messageIndex'
+import { SESSION_MESSAGE_INDEX_FILE } from '../../../../src/runtime/sessions/messageIndex'
 import { SESSION_MESSAGE_PATCHES_FILE, readMessagePatches } from '../../../../src/runtime/sessions/messagePatches'
+import { createMemorySessionIndexDb } from '../../../../src/runtime/sessions/SessionIndexDb'
+import {
+  getSessionIndex,
+  resetSessionIndexHostForTests,
+  setSessionIndexOpenFnForTests
+} from '../../../../src/runtime/sessions/SessionIndexHost'
 
 let tmpDir: string
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-t5-session-'))
+  resetSessionIndexHostForTests()
+  setSessionIndexOpenFnForTests(() => createMemorySessionIndexDb())
 })
 
 afterEach(() => {
+  resetSessionIndexHostForTests()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
@@ -50,13 +56,12 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     expect(m2.meta.messageCount).toBe(2)
     expect(m2.meta.currentLeafId).toBe('msg_2')
 
-    // 索引文件应存在且 activeCount 对齐
+    // 派生索引应存在且 activeCount 对齐
     const dir = path.join(tmpDir, 'sessions', session.id)
-    const index = loadMessageIndex(dir)
-    expect(index).not.toBeNull()
-    expect(index!.activeCount).toBe(2)
-    expect(index!.entries['msg_1']).toBeDefined()
-    expect(index!.entries['msg_2']!.activeDepth).toBe(1)
+    const index = getSessionIndex(dir)
+    expect(index.activeCount()).toBe(2)
+    expect(index.getEntry('msg_1')).not.toBeNull()
+    expect(index.getEntry('msg_2')!.activeDepth).toBe(1)
   })
 
   it('连续追加后 loadActivePath 可读完整激活路径', () => {
@@ -140,7 +145,7 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     expect(a?.hasMore).toBe(true)
   })
 
-  it('索引文件在追加后写入', () => {
+  it('追加后 SQLite 派生索引有对应 entry（不再写 legacy index 文件）', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/ws')
     store.appendMessageFast(session.id, {
@@ -149,8 +154,10 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
       content: 'x',
       timestamp: 1
     })
-    const indexPath = path.join(tmpDir, 'sessions', session.id, SESSION_MESSAGE_INDEX_FILE)
-    expect(fs.existsSync(indexPath)).toBe(true)
+    const dir = path.join(tmpDir, 'sessions', session.id)
+    const indexPath = path.join(dir, SESSION_MESSAGE_INDEX_FILE)
+    expect(fs.existsSync(indexPath)).toBe(false)
+    expect(getSessionIndex(dir).getEntry('x')).not.toBeNull()
   })
 
   it('同 messageId 重试返回 already_exists，不重复追加 JSONL', () => {

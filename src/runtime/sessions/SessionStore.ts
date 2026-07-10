@@ -40,11 +40,9 @@ import {
 import { atomicWriteFileSync } from '../storage/atomicFile'
 import { metricSessionAppend } from '../../shared/diagnostics/metrics'
 import {
-  appendActiveIndexEntry,
   buildMessageIndex,
   isIndexFresh,
   loadMessageIndex,
-  saveMessageIndex,
   type MessageIndexSnapshot
 } from './messageIndex'
 import {
@@ -58,6 +56,8 @@ import {
   normalizeMessageToBlocksSource,
   serializeMessageForDisk
 } from './messageProjection'
+import { ensureSessionIndexFresh } from './SessionIndexHost'
+import type { SessionIndexEntryRow } from './SessionIndexDb'
 
 /** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
@@ -127,7 +127,10 @@ export class SessionStore {
     writeMessagesJsonl(dir, messages)
     clearMessagePatches(dir)
     try {
-      saveMessageIndex(dir, buildMessageIndex(messages, currentLeafId))
+      const jsonlPath = path.join(dir, SESSION_MESSAGES_FILE)
+      const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
+      const sqlite = ensureSessionIndexFresh(dir, fileSize, currentLeafId)
+      sqlite.rebuildFromMessagesJsonl(dir)
     } catch {
       // 索引写失败不阻断 save
     }
@@ -208,7 +211,8 @@ export class SessionStore {
   }
 
   /**
-   * 确保大会话索引存在且与 jsonl 文件大小一致；过期则全量重建。
+   * 确保派生索引与 jsonl 对齐。
+   * 优先维护 SQLite；旧 entries.jsonl 仅作只读 fallback，不再写入。
    */
   private ensureMessageIndex(
     sessionDir: string,
@@ -223,18 +227,18 @@ export class SessionStore {
       fileSize = 0
     }
 
+    try {
+      ensureSessionIndexFresh(sessionDir, fileSize, currentLeafId)
+    } catch {
+      // SQLite 失败不阻断加载
+    }
+
+    // 旧索引只读：若仍 fresh 可复用；否则从内存消息重建快照（不落盘）
     const existing = loadMessageIndex(sessionDir)
     if (existing && isIndexFresh(existing, fileSize)) {
       return existing
     }
-
-    const rebuilt = buildMessageIndex(messages, currentLeafId)
-    try {
-      saveMessageIndex(sessionDir, rebuilt)
-    } catch {
-      // 索引写失败不阻断加载
-    }
-    return rebuilt
+    return buildMessageIndex(messages, currentLeafId)
   }
 
   /**
@@ -357,6 +361,7 @@ export class SessionStore {
 
   /**
    * 活跃分支热追加实现：messageCount = previousActiveCount + 1。
+   * 派生索引以 SQLite 为准；不再写入 messages.index.entries.jsonl。
    */
   private appendMessageFastToMetadata(
     metadata: SessionData,
@@ -380,14 +385,35 @@ export class SessionStore {
     } catch {
       fileSize = 0
     }
-    let index = loadMessageIndex(dir)
-    if (!index || !isIndexFresh(index, fileSize)) {
-      const existing = readMessagesJsonl(dir)
-      index = buildMessageIndex(existing, metadata.currentLeafId ?? null)
+
+    // 唯一性 + activeCount：优先 SQLite；失败则只读旧索引 / 全量扫
+    let previousActiveCount: number
+    let alreadyExists = false
+    try {
+      const sqlite = ensureSessionIndexFresh(dir, fileSize, metadata.currentLeafId ?? null)
+      if (sqlite.getEntry(messageWithParent.id)) {
+        alreadyExists = true
+      }
+      previousActiveCount =
+        typeof metadata.messageCount === 'number'
+          ? metadata.messageCount
+          : sqlite.activeCount()
+    } catch {
+      let index = loadMessageIndex(dir)
+      if (!index || !isIndexFresh(index, fileSize)) {
+        const existing = readMessagesJsonl(dir)
+        index = buildMessageIndex(existing, metadata.currentLeafId ?? null)
+      }
+      if (index.entries[messageWithParent.id]) {
+        alreadyExists = true
+      }
+      previousActiveCount =
+        typeof metadata.messageCount === 'number'
+          ? metadata.messageCount
+          : index.activeCount
     }
 
-    // messageId 唯一性：已存在则幂等返回，不重复追加
-    if (index.entries[messageWithParent.id]) {
+    if (alreadyExists) {
       const { messages: _m, ...metaOnly } = metadata
       return { ok: true, status: 'already_exists', meta: metaOnly }
     }
@@ -395,7 +421,7 @@ export class SessionStore {
     const line = JSON.stringify(messageWithParent) + '\n'
     const lineBytes = Buffer.byteLength(line, 'utf8')
 
-    // JSONL 追加 + fsync，再更新索引（索引失败不得吞掉）
+    // JSONL 追加 + fsync（事实源）；索引失败不得阻断
     const fd = fs.openSync(jsonlPath, 'a')
     try {
       fs.writeSync(fd, line, null, 'utf8')
@@ -404,15 +430,22 @@ export class SessionStore {
       fs.closeSync(fd)
     }
 
-    const previousActiveCount =
-      typeof metadata.messageCount === 'number'
-        ? metadata.messageCount
-        : index.activeCount
-
-    index = appendActiveIndexEntry(index, messageWithParent, lineBytes)
-    index.activeCount = previousActiveCount + 1
-    index.currentLeafId = messageWithParent.id
-    saveMessageIndex(dir, index)
+    // 只写 SQLite 派生索引，停写 entries.jsonl / meta / legacy
+    try {
+      const sqlite = ensureSessionIndexFresh(dir, fileSize, metadata.currentLeafId ?? null)
+      sqlite.appendEntry({
+        messageId: messageWithParent.id,
+        parentId: messageWithParent.parentId ?? null,
+        offset: fileSize,
+        length: lineBytes,
+        activeDepth: previousActiveCount
+      })
+    } catch (err) {
+      console.warn(
+        `[SessionStore] SQLite 索引写入失败 session=${sessionId}，将在下次 load/append 时从 jsonl 重建:`,
+        err
+      )
+    }
 
     metadata.currentLeafId = messageWithParent.id
     metadata.updatedAt = Date.now()
@@ -485,7 +518,15 @@ export class SessionStore {
       clearMessagePatches(dir)
       const meta = this.loadMetadataOnly(sessionId)
       const leaf = meta?.currentLeafId ?? merged.at(-1)?.id ?? null
-      saveMessageIndex(dir, buildMessageIndex(merged, leaf))
+      // 重建 SQLite 派生索引；不再写 entries.jsonl
+      try {
+        const jsonlPath = path.join(dir, SESSION_MESSAGES_FILE)
+        const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
+        const sqlite = ensureSessionIndexFresh(dir, fileSize, leaf)
+        sqlite.rebuildFromMessagesJsonl(dir)
+      } catch (err) {
+        console.warn(`[SessionStore] compact 后重建 SQLite 索引失败 session=${sessionId}:`, err)
+      }
       return true
     } catch (err) {
       console.error(`[SessionStore] compact patches 失败 session=${sessionId}:`, err)
@@ -506,8 +547,28 @@ export class SessionStore {
 
   /**
    * 加载当前激活路径上的消息（含 patch 叠加与 blocks 投影）。
+   * 优先走 SQLite 激活链 + 字节范围随机读；失败回退全量 load。
    */
   loadActivePath(sessionId: string): SessionData | null {
+    let sessionDir: string
+    try {
+      sessionDir = this.resolveSessionDir(sessionId)
+    } catch {
+      return null
+    }
+    const meta = this.loadMetadataOnly(sessionId)
+    if (!meta) return null
+
+    try {
+      const loaded = this.loadActivePathViaIndex(sessionDir, meta)
+      if (loaded) return loaded
+    } catch (err) {
+      console.warn(
+        `[SessionStore] SQLite loadActivePath 失败，回退全量 load session=${sessionId}:`,
+        err
+      )
+    }
+
     const full = this.load(sessionId)
     if (!full) return null
     const active = computeActivePath(full.messages, full.currentLeafId)
@@ -516,16 +577,6 @@ export class SessionStore {
       messages: attachBranchMeta(active, full.messages),
       messageCount: active.length
     }
-  }
-
-  /**
-   * 按游标反向分页读取激活路径子集（别名：与 loadMessagesPage 同语义）。
-   */
-  loadSessionPage(
-    sessionId: string,
-    options: { beforeId?: string; limit: number }
-  ): { messages: SessionMessage[]; hasMore: boolean } | null {
-    return this.loadMessagesPage(sessionId, options)
   }
 
   /**
@@ -549,7 +600,30 @@ export class SessionStore {
     session.currentLeafId = leafId
     session.updatedAt = Date.now()
     this.saveMetadata(session, { recomputeMessageCount: true })
+
+    // 分叉后同步派生索引的 activeDepth（SQLite + 下次 ensure 的 leaf 校验）
+    try {
+      const dir = this.resolveSessionDir(sessionId)
+      const jsonlPath = path.join(dir, SESSION_MESSAGES_FILE)
+      const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
+      const sqlite = ensureSessionIndexFresh(dir, fileSize, leafId)
+      // ensure 在 leaf 不匹配时已 rebuild；此处再强制从 jsonl 重建以保证 activeDepth
+      sqlite.rebuildFromMessagesJsonl(dir)
+    } catch (err) {
+      console.warn(`[SessionStore] setCurrentLeaf 后重建 SQLite 索引失败 session=${sessionId}:`, err)
+    }
+
     return session
+  }
+
+  /**
+   * 按游标反向分页读取激活路径子集（别名：与 loadMessagesPage 同语义）。
+   */
+  loadSessionPage(
+    sessionId: string,
+    options: { beforeId?: string; limit: number }
+  ): { messages: SessionMessage[]; hasMore: boolean } | null {
+    return this.loadMessagesPage(sessionId, options)
   }
 
   /** 更新会话模式并持久化（只写 session.json 元数据，不碰 messages.jsonl） */
@@ -657,15 +731,33 @@ export class SessionStore {
   }
 
   /**
-   * list() 用：读 metadata.messageCount；缺失时按原算法回算并写回 session.json。
+   * list() 用：读 metadata.messageCount；缺失时按 SQLite activeCount（或旧算法）回算并写回。
    */
   private resolveMessageCountForList(sessionId: string, data: SessionData): number {
-    const messages = readMessagesJsonl(this.resolveSessionDir(sessionId))
-    const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
+    const sessionDir = this.resolveSessionDir(sessionId)
+    const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
+    let fileSize = 0
+    let jsonlNonEmpty = false
+    try {
+      if (fs.existsSync(jsonlPath)) {
+        fileSize = fs.statSync(jsonlPath).size
+        jsonlNonEmpty = fileSize > 0
+      }
+    } catch {
+      fileSize = 0
+    }
 
     // messageCount 缺失或为 0 但 jsonl 非空：按激活路径重算并自愈写回
-    if (typeof data.messageCount !== 'number' || (data.messageCount === 0 && messages.length > 0)) {
-      const messageCount = computeMessageCount(messages, leafId)
+    if (typeof data.messageCount !== 'number' || (data.messageCount === 0 && jsonlNonEmpty)) {
+      let messageCount: number
+      try {
+        const sqlite = ensureSessionIndexFresh(sessionDir, fileSize, data.currentLeafId ?? null)
+        messageCount = sqlite.activeCount()
+      } catch {
+        const messages = readMessagesJsonl(sessionDir)
+        const leafId = resolveCurrentLeafId(messages, data.currentLeafId)
+        messageCount = computeMessageCount(messages, leafId)
+      }
       try {
         const withCount: SessionData = { ...data, messageCount }
         this.saveMetadata(withCount)
@@ -721,6 +813,8 @@ export class SessionStore {
    *
    * - 无 beforeId：返回最新 limit 条（首屏尾部）
    * - 有 beforeId：返回该 id 之前的 limit 条；id 不存在时返回空且 hasMore=false
+   *
+   * 优先：SQLite 激活链 + 字节范围随机读；失败回退全量 readMessagesJsonl。
    */
   loadMessagesPage(
     sessionId: string,
@@ -745,6 +839,16 @@ export class SessionStore {
         metadata = migrateSessionData(JSON.parse(content)) as SessionData
       }
 
+      try {
+        const viaIndex = this.loadMessagesPageViaIndex(sessionDir, metadata, options)
+        if (viaIndex) return viaIndex
+      } catch (err) {
+        console.warn(
+          `[SessionStore] SQLite 分页失败，回退全量读 session=${sessionId}:`,
+          err
+        )
+      }
+
       const allMessages = applyMessagePatches(
         readMessagesJsonl(sessionDir),
         readMessagePatches(sessionDir)
@@ -761,6 +865,192 @@ export class SessionStore {
       return null
     }
   }
+
+  /**
+   * SQLite 索引驱动的激活路径加载。
+   * @returns null 表示索引不可用，调用方应回退
+   */
+  private loadActivePathViaIndex(
+    sessionDir: string,
+    metadata: SessionData
+  ): SessionData | null {
+    const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
+    const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
+    const leafId = metadata.currentLeafId ?? null
+    const sqlite = ensureSessionIndexFresh(sessionDir, fileSize, leafId)
+    if (!sqlite.isFresh(fileSize)) {
+      sqlite.rebuildFromMessagesJsonl(sessionDir)
+    }
+
+    const activeCount = sqlite.activeCount()
+    const activeRows = sqlite.queryActivePathRange(0, activeCount)
+    const activeMessages = this.readAndHydrateMessages(sessionDir, activeRows)
+
+    // branchMeta 需要兄弟节点：按 parentId 从索引取子节点并补读
+    const branchContext = this.loadBranchContextMessages(sessionDir, sqlite, activeMessages)
+    const withMeta = attachBranchMeta(activeMessages, branchContext)
+
+    return {
+      ...metadata,
+      messages: withMeta,
+      currentLeafId: leafId,
+      messageCount: activeMessages.length
+    }
+  }
+
+  /**
+   * SQLite 索引驱动的分页：只随机读当前页字节范围。
+   */
+  private loadMessagesPageViaIndex(
+    sessionDir: string,
+    metadata: SessionData,
+    options: { beforeId?: string; limit: number }
+  ): { messages: SessionMessage[]; hasMore: boolean } | null {
+    const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
+    const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
+    const leafId = metadata.currentLeafId ?? null
+    const sqlite = ensureSessionIndexFresh(sessionDir, fileSize, leafId)
+    if (!sqlite.isFresh(fileSize)) {
+      sqlite.rebuildFromMessagesJsonl(sessionDir)
+    }
+
+    const activeCount = sqlite.activeCount()
+    if (activeCount === 0 || options.limit <= 0) {
+      return { messages: [], hasMore: false }
+    }
+
+    let fromDepth: number
+    let count: number
+    let hasMore: boolean
+
+    if (!options.beforeId) {
+      fromDepth = Math.max(0, activeCount - options.limit)
+      count = activeCount - fromDepth
+      hasMore = fromDepth > 0
+    } else {
+      const before = sqlite.getEntry(options.beforeId)
+      if (!before || before.activeDepth === null) {
+        return { messages: [], hasMore: false }
+      }
+      const beforeDepth = before.activeDepth
+      if (beforeDepth <= 0) {
+        return { messages: [], hasMore: false }
+      }
+      const start = Math.max(0, beforeDepth - options.limit)
+      fromDepth = start
+      count = beforeDepth - start
+      hasMore = start > 0
+    }
+
+    const pageRows = sqlite.queryActivePathRange(fromDepth, count)
+    const pageMessages = this.readAndHydrateMessages(sessionDir, pageRows)
+    const branchContext = this.loadBranchContextMessages(sessionDir, sqlite, pageMessages)
+
+    return {
+      messages: attachBranchMeta(pageMessages, branchContext),
+      hasMore
+    }
+  }
+
+  /** 按索引行随机读 jsonl 字节 → patch → blocks 投影 */
+  private readAndHydrateMessages(
+    sessionDir: string,
+    rows: SessionIndexEntryRow[]
+  ): SessionMessage[] {
+    if (rows.length === 0) return []
+    const raw = readMessagesByRanges(
+      sessionDir,
+      rows.map(r => ({ offset: r.offset, length: r.length }))
+    )
+    // 保持与 rows 顺序一致（按 activeDepth）
+    const byId = new Map(raw.map(m => [m.id, m]))
+    const ordered = rows
+      .map(r => byId.get(r.messageId))
+      .filter((m): m is SessionMessage => m !== undefined)
+
+    const patches = readMessagePatches(sessionDir)
+    const idSet = new Set(ordered.map(m => m.id))
+    const relevant = patches.filter(p => idSet.has(p.messageId))
+    return applyMessagePatches(ordered, relevant).map(normalizeMessageToBlocksSource)
+  }
+
+  /**
+   * 为 branchMeta 补齐兄弟节点消息（含非激活分支）。
+   * 只读 page 内出现过的 parentId 下的子节点，避免全量扫 jsonl。
+   */
+  private loadBranchContextMessages(
+    sessionDir: string,
+    sqlite: { queryByParentId: (parentId: string | null) => SessionIndexEntryRow[]; getEntry: (id: string) => SessionIndexEntryRow | null },
+    pageMessages: SessionMessage[]
+  ): SessionMessage[] {
+    const needed = new Map<string, SessionIndexEntryRow>()
+    for (const msg of pageMessages) {
+      const self = sqlite.getEntry(msg.id)
+      if (self) needed.set(self.messageId, self)
+      const parentId = msg.parentId ?? null
+      for (const sibling of sqlite.queryByParentId(parentId)) {
+        needed.set(sibling.messageId, sibling)
+      }
+    }
+    if (needed.size === 0) return pageMessages
+
+    const already = new Map(pageMessages.map(m => [m.id, m]))
+    const missing = [...needed.values()].filter(r => !already.has(r.messageId))
+    if (missing.length === 0) return pageMessages
+
+    const extra = this.readAndHydrateMessages(sessionDir, missing)
+    return [...pageMessages, ...extra]
+  }
+}
+
+/**
+ * 按字节范围随机读取 messages.jsonl 中的若干行。
+ * 供分页 / 激活路径加载使用，避免全量 readFile。
+ */
+let __jsonlRangeBytesRead = 0
+let __jsonlFullReads = 0
+
+/** 测试探针：累计随机读字节数 */
+export function __takeJsonlRangeBytesRead(): number {
+  const n = __jsonlRangeBytesRead
+  __jsonlRangeBytesRead = 0
+  return n
+}
+
+/** 测试探针：全量 readMessagesJsonl 调用次数 */
+export function __takeJsonlFullReads(): number {
+  const n = __jsonlFullReads
+  __jsonlFullReads = 0
+  return n
+}
+
+function readMessagesByRanges(
+  sessionDir: string,
+  ranges: Array<{ offset: number; length: number }>
+): SessionMessage[] {
+  const filePath = path.join(sessionDir, SESSION_MESSAGES_FILE)
+  if (!fs.existsSync(filePath) || ranges.length === 0) return []
+
+  const fd = fs.openSync(filePath, 'r')
+  try {
+    const messages: SessionMessage[] = []
+    for (const { offset, length } of ranges) {
+      if (length <= 0) continue
+      const buf = Buffer.alloc(length)
+      const bytesRead = fs.readSync(fd, buf, 0, length, offset)
+      __jsonlRangeBytesRead += bytesRead
+      const text = buf.subarray(0, bytesRead).toString('utf8').replace(/\n$/, '')
+      if (!text.trim()) continue
+      try {
+        messages.push(JSON.parse(text) as SessionMessage)
+      } catch (err) {
+        console.warn('[SessionStore] messages.jsonl 范围读损坏已跳过:', err)
+      }
+    }
+    return messages
+  } finally {
+    fs.closeSync(fd)
+  }
 }
 
 /**
@@ -768,6 +1058,7 @@ export class SessionStore {
  * 损坏行跳过，不阻塞整条会话加载。
  */
 function readMessagesJsonl(sessionDir: string): SessionMessage[] {
+  __jsonlFullReads += 1
   const filePath = path.join(sessionDir, SESSION_MESSAGES_FILE)
   if (!fs.existsSync(filePath)) return []
 

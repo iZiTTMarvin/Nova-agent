@@ -4,12 +4,15 @@ import * as path from 'path'
 import * as os from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
+import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import type { Mode } from '../../../../src/shared/session'
 
 /** 创建临时目录用于测试 */
 let tmpDir: string
 
 beforeEach(() => {
+  // 防止 SessionIndexHost 模块级缓存跨测试文件泄漏
+  resetSessionIndexHostForTests()
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-session-test-'))
 })
 
