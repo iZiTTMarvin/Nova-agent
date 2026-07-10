@@ -1,9 +1,9 @@
 /**
  * 消息格式适配器 — 缓存标记注入
  *
- * 根据 cacheStrategy 决定是否向消息和工具定义注入 cache_control 标记。
- * - auto：不做任何事（OpenAI/DeepSeek 等服务端自动缓存）
- * - anthropic：对 system 消息 + 最后 2 条非 system 消息 + 最后一个工具定义
+ * 由 CacheProfile.marker 驱动是否向消息和工具定义注入 cache_control：
+ * - none：不做任何事（OpenAI/DeepSeek 等服务端自动缓存）
+ * - cache_control：对 system 消息 + 最后 2 条非 system 消息 + 最后一个工具定义
  *   打 cache_control: { type: 'ephemeral' }
  *
  * 标记点设计（参考 OpenClacky + Claude Code）：
@@ -14,7 +14,7 @@
  *
  * 总标记点 = 1(system) + 2(消息) + 1(工具) = 4，刚好在 Anthropic 的 4 断点限制内
  */
-import type { CacheStrategy } from '../../shared/config/types'
+import type { CacheMarker } from './cacheProfile'
 import type { ChatMessage } from './types'
 import { extractTextFromContent } from './types'
 
@@ -99,9 +99,9 @@ export function sanitizeToolMessages(messages: ChatMessage[]): ChatMessage[] {
 /** 向 API 消息数组注入 cache_control 标记（返回新数组，不修改原数组） */
 export function applyCacheMarkers(
   apiMessages: Record<string, unknown>[],
-  strategy: CacheStrategy
+  marker: CacheMarker
 ): Record<string, unknown>[] {
-  if (strategy !== 'anthropic' || apiMessages.length === 0) {
+  if (marker !== 'cache_control' || apiMessages.length === 0) {
     return apiMessages
   }
 
@@ -144,9 +144,9 @@ export function applyCacheMarkers(
 /** 向工具定义数组的最后一个工具注入 cache_control */
 export function applyToolCacheMarker(
   apiTools: Record<string, unknown>[],
-  strategy: CacheStrategy
+  marker: CacheMarker
 ): Record<string, unknown>[] {
-  if (strategy !== 'anthropic' || apiTools.length === 0) {
+  if (marker !== 'cache_control' || apiTools.length === 0) {
     return apiTools
   }
 

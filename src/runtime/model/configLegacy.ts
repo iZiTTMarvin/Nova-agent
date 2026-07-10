@@ -74,6 +74,9 @@ export function validateModelConfig(config: Partial<ModelConfig> | null | undefi
       apiKey,
       modelId,
       ...(config.cacheStrategy ? { cacheStrategy: config.cacheStrategy } : {}),
+      ...(config.cacheProfile && config.cacheProfile !== 'auto'
+        ? { cacheProfile: config.cacheProfile }
+        : {}),
       ...(config.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {}),
       ...(config.supportsVision !== undefined ? { supportsVision: config.supportsVision } : {}),
       ...(config.fallbacks && config.fallbacks.length > 0 ? { fallbacks: config.fallbacks } : {}),

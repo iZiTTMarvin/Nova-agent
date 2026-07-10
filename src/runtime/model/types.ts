@@ -4,6 +4,7 @@
  */
 
 import type { ToolTruncationMeta } from '../tools/types'
+import type { CacheStrategy, CacheProfileId } from '../../shared/config/types'
 
 // ── 消息格式 ──────────────────────────────────────────────
 
@@ -80,8 +81,16 @@ export interface ModelClientConfig {
   baseUrl: string
   apiKey: string
   modelId: string
-  /** 缓存策略，默认 'auto'（前缀稳定即自动命中） */
-  cacheStrategy?: 'auto' | 'anthropic'
+  /**
+   * 缓存策略（兼容字段）。唯一类型来源：shared/config/types.CacheStrategy。
+   * 与 cacheProfile 一并交给 resolveCacheProfile；缺省时按 URL/modelId 自动判定。
+   */
+  cacheStrategy?: CacheStrategy
+  /**
+   * 缓存档案覆盖。唯一类型来源：shared/config/types.CacheProfileId。
+   * 'auto'/缺省时走 resolveCacheProfile 自动判定。
+   */
+  cacheProfile?: 'auto' | CacheProfileId
   /**
    * 思考强度覆盖。缺省或 'auto' 时不发送该参数（零行为变化）；
    * 'low'/'medium'/'high' 按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。

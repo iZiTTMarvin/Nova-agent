@@ -12,8 +12,9 @@ import { join } from 'path'
 import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContextForMode, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
 import { runWorkflow } from '../../runtime/workflow'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow, resolveSupportsVision, inferCacheStrategy } from '../../shared/config/types'
+import { inferContextWindow, resolveSupportsVision } from '../../shared/config/types'
 import { preferredToolDialect } from '../../runtime/model/dialect'
+import { resolveCacheProfile } from '../../runtime/model/cacheProfile'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../runtime/tools/ToolRegistry'
@@ -222,9 +223,12 @@ function buildModelPoolWithFallbacks(primary: ModelClient): ModelClient | ModelC
       try {
         if (!fb.baseUrl || !fb.apiKey || !fb.modelId) continue
         const fbClient = new OpenAICompatibleModelClient(fb)
-        if (!fb.cacheStrategy) {
-          fbClient.setCacheStrategy(inferCacheStrategy(fb.baseUrl))
-        }
+        // 按 fallback 自身 baseUrl/modelId 解析 profile，禁止沿用主模型
+        const fbProfile = resolveCacheProfile(fb.baseUrl, fb.modelId, {
+          cacheProfile: fb.cacheProfile,
+          cacheStrategy: fb.cacheStrategy
+        })
+        fbClient.setCacheStrategy(fbProfile.marker === 'cache_control' ? 'anthropic' : 'auto')
         fallbackSlots.push({ config: fb, client: fbClient })
       } catch (err) {
         console.error('[agentHandler] 创建 fallback client 失败，已跳过:', err)

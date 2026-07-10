@@ -240,10 +240,28 @@ export class AgentLoop implements IdleCompactionTarget {
         emit: (event) => this.eventBus.emit(event),
         emitContextBreakdown: (messageId, promptTokens) => this.emitContextBreakdown(messageId, promptTokens),
         runOverflowCompaction: (mode) => this.runOverflowCompaction(mode),
-        hookManager: this.hookManager
+        hookManager: this.hookManager,
+        syncToolDialect: (context) => {
+          this.syncToolDialectFromActiveProvider()
+          context.dialect = this.toolDialect
+        }
       })
     }
     return this.streamProcessor
+  }
+
+  /**
+   * 按 ModelClientPool 当前 active provider 重算工具方言。
+   * fallback 切换后必须调用，避免沿用主模型 dialect。
+   */
+  private syncToolDialectFromActiveProvider(): void {
+    const provider = this.modelPool.getActiveProvider()
+    const override = this.config.toolDialectOverride ?? provider.toolDialect
+    this.toolDialect = preferredToolDialect(
+      provider.modelId,
+      provider.baseUrl,
+      override
+    )
   }
 
   /**
@@ -336,15 +354,6 @@ export class AgentLoop implements IdleCompactionTarget {
           modelId: clientConfig?.modelId ?? 'primary'
         }
       })
-    // 根据当前主模型决定工具调用方言
-    // TODO: fallback 切换跨方言时需重算 dialect（ModelClientPool.switchToFallback 不改 toolDialect）
-    const primaryProvider = this.modelPool.getActiveProvider()
-    const dialectOverride = config?.toolDialectOverride ?? primaryProvider.toolDialect
-    this.toolDialect = preferredToolDialect(
-      primaryProvider.modelId,
-      primaryProvider.baseUrl,
-      dialectOverride
-    )
     this.eventBus = eventBus
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
@@ -357,8 +366,11 @@ export class AgentLoop implements IdleCompactionTarget {
       onCompaction: config?.onCompaction,
       useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false,
       composeAutoRoute: config?.composeAutoRoute !== false,
-      skillsTokenEstimate: config?.skillsTokenEstimate
+      skillsTokenEstimate: config?.skillsTokenEstimate,
+      toolDialectOverride: config?.toolDialectOverride
     }
+    // 按当前 active provider 判定方言；fallback 切换后由 StreamProcessor 重算
+    this.syncToolDialectFromActiveProvider()
     /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
     this.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
     this.maxToolRounds = this.config.maxToolRounds ?? 20

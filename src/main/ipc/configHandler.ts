@@ -12,7 +12,7 @@ import {
 import type { ModelConfig } from '../../shared/config'
 import type { LlmRegistry } from '../../shared/config/llmRegistry'
 import { maskApiKey, isMaskedApiKey } from '../../shared/config/apiKeyMask'
-import { inferCacheStrategy } from '../../shared/config/types'
+import { resolveCacheProfile } from '../../runtime/model/cacheProfile'
 import { resolveActiveModelConfig, resolveFallbackModelConfigs } from '../../shared/config/llmRegistry'
 import {
   saveModelConfig,
@@ -56,16 +56,20 @@ function mergeRegistryApiKeys(incoming: LlmRegistry, onDisk: LlmRegistry | null)
 
 /** 用 ModelConfig 更新主进程全局 ModelClient */
 function applyModelConfigToClient(config: ModelConfig): void {
+  const profile = resolveCacheProfile(config.baseUrl, config.modelId, {
+    cacheProfile: config.cacheProfile,
+    cacheStrategy: config.cacheStrategy
+  })
+  const strategy = profile.marker === 'cache_control' ? 'anthropic' : 'auto'
+
   const activeClient = getModelClient()
   if (activeClient) {
     activeClient.updateConfig(config)
     if (activeClient instanceof OpenAICompatibleModelClient) {
-      const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
       activeClient.setCacheStrategy(strategy)
     }
   } else {
     const client = new OpenAICompatibleModelClient(config)
-    const strategy = config.cacheStrategy ?? inferCacheStrategy(config.baseUrl)
     client.setCacheStrategy(strategy)
     setModelClient(client)
   }

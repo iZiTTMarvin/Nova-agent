@@ -10,6 +10,7 @@ import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
 import { buildReasoningParams } from './reasoningDialect'
 import { projectMessagesForVision } from './visionProjection'
+import { resolveCacheProfile, type CacheMarker } from './cacheProfile'
 import type { CacheStrategy } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
@@ -24,21 +25,33 @@ import {
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
-  private cacheStrategy: CacheStrategy = 'auto'
+  /** 由 resolveCacheProfile 解析；仅 marker 本轮接线 */
+  private cacheMarker: CacheMarker = 'none'
 
   constructor(config: ModelClientConfig) {
     this.config = config
-    this.cacheStrategy = config.cacheStrategy ?? 'auto'
+    this.cacheMarker = this.resolveMarker(config)
   }
 
   updateConfig(config: ModelClientConfig): void {
     this.config = config
-    this.cacheStrategy = config.cacheStrategy ?? 'auto'
+    this.cacheMarker = this.resolveMarker(config)
   }
 
-  /** 设置缓存策略（可由外部显式覆盖） */
+  /**
+   * 兼容旧 API：显式覆盖 marker。
+   * 'anthropic' → cache_control；'auto' → none。
+   */
   setCacheStrategy(strategy: CacheStrategy): void {
-    this.cacheStrategy = strategy
+    this.cacheMarker = strategy === 'anthropic' ? 'cache_control' : 'none'
+  }
+
+  /** 按当前配置重算 marker（判定集中在 cacheProfile.ts） */
+  private resolveMarker(config: ModelClientConfig): CacheMarker {
+    return resolveCacheProfile(config.baseUrl, config.modelId, {
+      cacheProfile: config.cacheProfile,
+      cacheStrategy: config.cacheStrategy
+    }).marker
   }
 
   async *chat(
@@ -69,7 +82,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       baseUrl: this.config.baseUrl
     })
     const apiMessages = projectedMessages.map(m => this.toApiMessage(m, true))
-    const markedMessages = applyCacheMarkers(apiMessages, this.cacheStrategy)
+    const markedMessages = applyCacheMarkers(apiMessages, this.cacheMarker)
       .map(msg => this.stripInternalMarker(msg))
 
     const body: Record<string, unknown> = {
@@ -96,7 +109,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
           parameters: t.parameters
         }
       }))
-      body.tools = applyToolCacheMarker(rawTools, this.cacheStrategy)
+      body.tools = applyToolCacheMarker(rawTools, this.cacheMarker)
     }
 
     let response: Response

@@ -11,7 +11,7 @@ import { syncTavilyApiKeyFromSettings } from '../runtime/settings/syncTavilyApiK
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
 import { resolveActiveModelConfig } from '../shared/config/llmRegistry'
-import { inferCacheStrategy } from '../shared/config/types'
+import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
 import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
@@ -88,9 +88,11 @@ function loadModelConfigOnStartup(): void {
     const config = loadModelConfig(app.getPath('userData'))
     if (config) {
       const client = new OpenAICompatibleModelClient(config)
-      if (!config.cacheStrategy) {
-        client.setCacheStrategy(inferCacheStrategy(config.baseUrl))
-      }
+      const profile = resolveCacheProfile(config.baseUrl, config.modelId, {
+        cacheProfile: config.cacheProfile,
+        cacheStrategy: config.cacheStrategy
+      })
+      client.setCacheStrategy(profile.marker === 'cache_control' ? 'anthropic' : 'auto')
       modelClient = client
       return
     }
@@ -100,9 +102,11 @@ function loadModelConfigOnStartup(): void {
       const active = resolveActiveModelConfig(registry)
       if (active) {
         const client = new OpenAICompatibleModelClient(active)
-        if (!active.cacheStrategy) {
-          client.setCacheStrategy(inferCacheStrategy(active.baseUrl))
-        }
+        const profile = resolveCacheProfile(active.baseUrl, active.modelId, {
+          cacheProfile: active.cacheProfile,
+          cacheStrategy: active.cacheStrategy
+        })
+        client.setCacheStrategy(profile.marker === 'cache_control' ? 'anthropic' : 'auto')
         modelClient = client
       }
     }

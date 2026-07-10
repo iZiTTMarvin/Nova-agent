@@ -51,6 +51,11 @@ import {
  */
 export interface StreamProcessorOptions extends StreamProcessorDeps {
   hookManager: HookManager
+  /**
+   * fallback 切换后同步 dialect 到 AgentContext。
+   * 由 AgentLoop 注入，保证按 active provider 重算，不沿用主模型。
+   */
+  syncToolDialect?: (context: AgentContext) => void
 }
 
 export class StreamProcessor {
@@ -63,6 +68,7 @@ export class StreamProcessor {
   private hookManager: HookManager
   /** 统一 retry/fallback attempt 所有权（修复 P0-2） */
   private attemptController: AttemptController
+  private syncToolDialect: StreamProcessorOptions['syncToolDialect']
 
   /**
    * 单轮溢出压缩守卫（与 AttemptController 正交）。
@@ -81,6 +87,7 @@ export class StreamProcessor {
     this.emitContextBreakdown = opts.emitContextBreakdown
     this.runOverflowCompaction = opts.runOverflowCompaction
     this.hookManager = opts.hookManager
+    this.syncToolDialect = opts.syncToolDialect
     this.attemptController = new AttemptController({
       recovery: opts.recovery,
       modelPool: opts.modelPool
@@ -322,6 +329,8 @@ export class StreamProcessor {
                 break
               }
               case 'fallback': {
+                // 按新 active provider 重算 dialect + cache 侧已由各 client 自带 profile
+                this.syncToolDialect?.(context)
                 this.emit({
                   type: 'model_switched',
                   messageId,
@@ -392,6 +401,7 @@ export class StreamProcessor {
           return finish({ kind: 'retry' })
         }
         case 'fallback': {
+          this.syncToolDialect?.(context)
           this.emit({
             type: 'model_switched',
             messageId,

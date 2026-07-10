@@ -4,23 +4,23 @@ import type { ChatMessage } from '../../../../src/runtime/model/types'
 
 describe('messageFormat 缓存标记适配器', () => {
   describe('applyCacheMarkers', () => {
-    it('auto 策略不注入任何标记', () => {
+    it('none marker不注入任何标记', () => {
       const messages = [
         { role: 'system', content: 'system' },
         { role: 'user', content: 'hello' }
       ]
-      const result = applyCacheMarkers(messages, 'auto')
+      const result = applyCacheMarkers(messages, 'none')
       expect(result).toEqual(messages)
     })
 
-    it('anthropic 策略对 system 消息 + 最后 2 条非 system 消息注入 cache_control', () => {
+    it('cache_control marker对 system 消息 + 最后 2 条非 system 消息注入 cache_control', () => {
       const messages = [
         { role: 'system', content: 'system prompt' },
         { role: 'user', content: 'msg1' },
         { role: 'assistant', content: 'msg2' },
         { role: 'user', content: 'msg3' }
       ]
-      const result = applyCacheMarkers(messages, 'anthropic')
+      const result = applyCacheMarkers(messages, 'cache_control')
 
       // system 消息也被标记缓存
       expect(Array.isArray(result[0].content)).toBe(true)
@@ -47,7 +47,7 @@ describe('messageFormat 缓存标记适配器', () => {
         { role: 'system', content: '你是编程助手' },
         { role: 'user', content: 'hello' }
       ]
-      const result = applyCacheMarkers(messages, 'anthropic')
+      const result = applyCacheMarkers(messages, 'cache_control')
 
       // system 被标记
       expect(Array.isArray(result[0].content)).toBe(true)
@@ -67,7 +67,7 @@ describe('messageFormat 缓存标记适配器', () => {
         { role: 'assistant', content: 'response' },
         { role: 'user', content: 'L2 memory block', skipCacheMarker: true }
       ]
-      const result = applyCacheMarkers(messages, 'anthropic')
+      const result = applyCacheMarkers(messages, 'cache_control')
 
       // skipCacheMarker 消息（最后一条 user）不被标记
       expect(result[3].content).toBe('L2 memory block')
@@ -85,7 +85,7 @@ describe('messageFormat 缓存标记适配器', () => {
         { role: 'assistant', content: 'response' },
         { role: 'user', content: 'compression instruction', internal: true }
       ]
-      const result = applyCacheMarkers(messages, 'anthropic')
+      const result = applyCacheMarkers(messages, 'cache_control')
 
       // internal 消息（最后一条 user）不被标记
       expect(result[3].content).toBe('compression instruction')
@@ -97,12 +97,12 @@ describe('messageFormat 缓存标记适配器', () => {
     })
 
     it('空消息数组返回空数组', () => {
-      expect(applyCacheMarkers([], 'anthropic')).toEqual([])
+      expect(applyCacheMarkers([], 'cache_control')).toEqual([])
     })
 
     it('只有 system 消息时也标记 system', () => {
       const messages = [{ role: 'system', content: 'system' }]
-      const result = applyCacheMarkers(messages, 'anthropic')
+      const result = applyCacheMarkers(messages, 'cache_control')
       // system 消息被标记缓存
       expect(Array.isArray(result[0].content)).toBe(true)
       const sysContent = result[0].content as Array<Record<string, unknown>>
@@ -113,33 +113,33 @@ describe('messageFormat 缓存标记适配器', () => {
       const messages = [
         { role: 'user', content: 'hello' }
       ]
-      const result = applyCacheMarkers(messages, 'anthropic')
+      const result = applyCacheMarkers(messages, 'cache_control')
       expect(messages[0].content).toBe('hello')
       expect(result[0].content).not.toBe('hello')
     })
   })
 
   describe('applyToolCacheMarker', () => {
-    it('auto 策略不注入', () => {
+    it('none marker不注入', () => {
       const tools = [{ type: 'function', function: { name: 'ls' } }]
-      const result = applyToolCacheMarker(tools, 'auto')
+      const result = applyToolCacheMarker(tools, 'none')
       expect(result[0]).not.toHaveProperty('cache_control')
     })
 
-    it('anthropic 策略对最后一个工具注入 cache_control', () => {
+    it('cache_control marker对最后一个工具注入 cache_control', () => {
       const tools = [
         { type: 'function', function: { name: 'ls' } },
         { type: 'function', function: { name: 'read' } },
         { type: 'function', function: { name: 'bash' } }
       ]
-      const result = applyToolCacheMarker(tools, 'anthropic')
+      const result = applyToolCacheMarker(tools, 'cache_control')
       expect(result[0]).not.toHaveProperty('cache_control')
       expect(result[1]).not.toHaveProperty('cache_control')
       expect(result[2].cache_control).toEqual({ type: 'ephemeral' })
     })
 
     it('空工具数组返回空数组', () => {
-      expect(applyToolCacheMarker([], 'anthropic')).toEqual([])
+      expect(applyToolCacheMarker([], 'cache_control')).toEqual([])
     })
   })
 

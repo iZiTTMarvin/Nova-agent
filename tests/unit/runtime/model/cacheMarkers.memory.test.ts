@@ -53,7 +53,7 @@ describe('applyCacheMarkers — L2 skipCacheMarker 隔离（P1-C）', () => {
   ]
 
   it('L2 消息不带 cache_control，断点落在 user(current) 与稳定 assistant', () => {
-    const result = applyCacheMarkers(withL2Messages, 'anthropic')
+    const result = applyCacheMarkers(withL2Messages, 'cache_control')
 
     expect(result).toHaveLength(5)
 
@@ -75,8 +75,8 @@ describe('applyCacheMarkers — L2 skipCacheMarker 隔离（P1-C）', () => {
   })
 
   it('有 L2 时稳定消息断点位置与无 L2 基线一致', () => {
-    const baselineMarked = applyCacheMarkers(baselineMessages, 'anthropic')
-    const withL2Marked = applyCacheMarkers(withL2Messages, 'anthropic')
+    const baselineMarked = applyCacheMarkers(baselineMessages, 'cache_control')
+    const withL2Marked = applyCacheMarkers(withL2Messages, 'cache_control')
 
     const baselineIndices = cacheMarkerIndices(baselineMarked)
     const withL2Indices = cacheMarkerIndices(withL2Marked)

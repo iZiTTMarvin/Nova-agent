@@ -8,21 +8,40 @@ import { lookupModelCapability } from './modelRegistry'
 /** 缓存策略：auto = 前缀稳定即自动命中；anthropic = 显式 cache_control 标记 */
 export type CacheStrategy = 'auto' | 'anthropic'
 
+/**
+ * 缓存档案标识（与 runtime/model/cacheProfile.ts 对齐）。
+ * 'auto' 表示交给 resolveCacheProfile 自动判定，不是档案本身。
+ */
+export type CacheProfileId =
+  | 'anthropic'
+  | 'deepseek'
+  | 'kimi'
+  | 'glm'
+  | 'minimax'
+  | 'openai'
+  | 'generic'
+
 export interface ModelConfig {
   baseUrl: string
   apiKey: string
   modelId: string
   /**
-   * 缓存策略。默认 'auto'。
+   * 缓存策略（兼容字段，保留不删）。默认 'auto'。
    * 'anthropic' 适用于 Anthropic 原生 API 或中转，会对最后 2 条消息打 cache_control 标记。
+   * 新代码优先读 cacheProfile；未设置 cacheProfile 时仍尊重本字段。
    */
   cacheStrategy?: CacheStrategy
+  /**
+   * 缓存档案覆盖。默认 'auto'（按 baseUrl/modelId 判定，并兼容旧 cacheStrategy）。
+   * 显式指定时优先于 cacheStrategy 与自动判定。
+   */
+  cacheProfile?: 'auto' | CacheProfileId
   /** 模型最大上下文窗口（tokens），未设置时从 modelId 自动推断 */
   contextWindow?: number
   /** 是否支持图片输入。未设置时按优先级查注册表→字符串兜底→默认 false（见 resolveSupportsVision） */
   supportsVision?: boolean
   /**
-   * PRD §5.4：备用模型配置链（fallback）。
+   * 备用模型配置链（fallback）。
    * 主模型出现 429/5xx 等瞬态错误且重试链耗尽时，按顺序切换到这些模型继续任务。
    * 第一个元素是第一顺位 fallback，依次类推。
    * 留空或未设置表示不启用降级（保持原行为）。
