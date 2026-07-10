@@ -5,7 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join, relative } from 'path'
 import { readdir } from 'fs/promises'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { AgentLoop } from '../agent/AgentLoop'
 import { EventBus } from '../agent/EventBus'
 import { SystemPromptBuilder } from '../agent/promptBuilder/SystemPromptBuilder'
@@ -25,6 +25,7 @@ import type { Semaphore } from './semaphore'
 import { applyStatePatch } from './state'
 import { topoSort, type TopoTask } from './topo'
 import { extractJson } from './jsonExtract'
+import type { TaskScope } from './TaskScope'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是编排子代理，不要反问父 agent。'
 const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000
@@ -46,6 +47,10 @@ export interface HookContext {
   runId: string
   deps: WorkflowRuntimeDeps
   abortSignal: AbortSignal
+  /** 本 run 的 TaskScope；副作用提交前校验 generation */
+  scope: TaskScope
+  /** spawn/hook 捕获的 generation；close 后失效 */
+  scopeGeneration: number
   /** 当前 phase 名（phase() 更新） */
   currentPhase: { name: string }
   /** 写 state / 事件用 */
@@ -64,6 +69,17 @@ export interface HookContext {
   pendingAskUsers: Map<string, PendingAskUser>
   /** 落盘并广播 state 快照（进度面板） */
   persistState: () => void
+}
+
+/** host hook 提交副作用前：scope 仍有效才允许写 */
+function assertScopeLive(ctx: HookContext): boolean {
+  if (!ctx.scope.isCurrent(ctx.scopeGeneration)) {
+    return false
+  }
+  if (ctx.abortSignal.aborted) {
+    return false
+  }
+  return true
 }
 
 function isAborted(signal: AbortSignal): boolean {
@@ -406,11 +422,15 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     }
 
     // 共享工作区：journal 缓存 + 两层信号量
+    // tools/isolation/timeoutMs 必须纳入 hash，避免错误复用
     const keyOpts = {
       agentType: resolveAgentType(o),
       model: o.model,
       schema: o.schema,
-      phase: o.phase
+      phase: o.phase,
+      tools: o.tools ?? null,
+      isolation: o.isolation ?? null,
+      timeoutMs: o.timeoutMs ?? null
     }
     const base = journalKeyBase(promptStr, keyOpts)
     const n = ctx.occ.get(base) ?? 0
@@ -424,9 +444,11 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     return ctx.runSem
       .run(() =>
         ctx.globalSem.run(async () => {
+          if (!assertScopeLive(ctx)) return null
           const result = await spawnAgent(promptStr, o, ctx)
-          // 失败不缓存：null 不写 journal，下次 resume 可 self-heal
+          // 失败不缓存：null 不写 journal；写前再校验 generation
           if (result !== null) {
+            if (!assertScopeLive(ctx)) return result
             try {
               appendJournalSync(workspaceRoot, runId, [
                 { t: 'agent', key, result, pass: ctx.journal.pass }
@@ -450,6 +472,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
   }
 
   const phase: HostFn = (name: unknown) => {
+    if (!assertScopeLive(ctx)) return undefined
     const title = String(name ?? '')
     ctx.currentPhase.name = title
     ctx.onPhase(title)
@@ -463,6 +486,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
   }
 
   const log: HostFn = (...args: unknown[]) => {
+    if (!assertScopeLive(ctx)) return undefined
     const message = args
       .map((a) => {
         if (typeof a === 'string') return a
@@ -497,10 +521,15 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
   }
 
   const write: HostFn = async (pathArg: unknown, content: unknown) => {
+    if (!assertScopeLive(ctx)) {
+      throw new Error('TaskScope closed: cannot write')
+    }
     const validated = resolveAndValidatePath(workspaceRoot, String(pathArg ?? ''))
     if (!validated.ok) throw new Error(validated.error)
     const abs = validated.path
     const isNew = !existsSync(abs)
+    const beforeBuf = isNew ? null : readFileSync(abs)
+    const beforeHash = beforeBuf ? createHash('sha256').update(beforeBuf).digest('hex') : null
     mkdirSync(dirname(abs), { recursive: true })
     if (deps.checkpointManager) {
       if (!deps.checkpointManager.getCurrentMessageId()) {
@@ -508,7 +537,41 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       }
       deps.checkpointManager.backupBeforeWrite(abs, isNew)
     }
-    writeFileSync(abs, String(content ?? ''), 'utf-8')
+    // 写盘前再校验：deadline/cancel 后旧 continuation 无权落盘
+    if (!assertScopeLive(ctx)) {
+      throw new Error('TaskScope closed: cannot write')
+    }
+    const text = String(content ?? '')
+    writeFileSync(abs, text, 'utf-8')
+    const afterHash = createHash('sha256').update(text).digest('hex')
+
+    // FileEffectReceipt：改前内容写入 effect-backups，回滚不依赖 git
+    try {
+      const { buildFileEffectReceipt, recordFileEffect } = await import('./v2/EffectReceipt')
+      const effectId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      let beforeCheckpointRef: string | null = null
+      if (!isNew && beforeBuf) {
+        const backupDir = join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'effect-backups')
+        mkdirSync(backupDir, { recursive: true })
+        beforeCheckpointRef = join(backupDir, `${effectId}.bak`)
+        writeFileSync(beforeCheckpointRef, beforeBuf)
+      }
+      recordFileEffect(
+        workspaceRoot,
+        buildFileEffectReceipt({
+          workspaceRoot,
+          runId,
+          absPath: abs,
+          action: isNew ? 'create' : 'modify',
+          beforeHash,
+          beforeCheckpointRef,
+          afterHash,
+          effectId
+        })
+      )
+    } catch (err) {
+      console.warn('[hooks.write] effect receipt 写入失败:', err)
+    }
     return undefined
   }
 
@@ -528,7 +591,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
   }
 
   const bash: HostFn = async (cmd: unknown) => {
-    if (isAborted(abortSignal)) {
+    if (!assertScopeLive(ctx) || isAborted(abortSignal)) {
       return { exitCode: -1, stdout: '', stderr: 'cancelled', passed: false }
     }
     const command = String(cmd ?? '')
@@ -548,6 +611,9 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     // 编排 run 内固定 auto 语义直接执行；危险命令仍由 PermissionManager 拦截
     const toolCtx = buildToolContext(deps, abortSignal)
     const result = await bashTool.execute({ command }, toolCtx)
+    if (!assertScopeLive(ctx)) {
+      return { exitCode: -1, stdout: '', stderr: 'cancelled', passed: false }
+    }
     const exitCode = result.success ? 0 : 1
     return {
       exitCode,
@@ -622,6 +688,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
 
   /** 增量更新 state.json（脚本侧写 artifacts / tasks / failure / review 等） */
   const updateState: HostFn = (patch: unknown) => {
+    if (!assertScopeLive(ctx)) return undefined
     if (!patch || typeof patch !== 'object') return undefined
     applyStatePatch(ctx.composeState, patch as Record<string, unknown>)
     ctx.persistState()
@@ -639,7 +706,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
   /** 读取当前 state 快照（纯数据） */
   const loadState: HostFn = () => marshalOut(ctx.composeState)
 
-  /** 清理已合并的 worktree（integrate 后调用） */
+  /** 清理已合并的 worktree（integrate 后调用；内部有界 EBUSY 退避） */
   const cleanupWorktree: HostFn = async (wt: unknown) => {
     let directory = ''
     if (typeof wt === 'string') {
@@ -649,11 +716,16 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       directory = String(o.directory ?? '')
     }
     if (!directory) return false
+    // 先从 owned 摘掉，避免 finalize 与显式 cleanup 双删竞态
+    ctx.ownedWorktrees.delete(directory)
     try {
       await Worktree.remove({ workspaceRoot, directory })
-      ctx.ownedWorktrees.delete(directory)
       return true
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[compose] cleanupWorktree failed: ${directory}`,
+        err instanceof Error ? err.message : err
+      )
       return false
     }
   }

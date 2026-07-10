@@ -302,14 +302,29 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     runId: string
     sessionId?: string
   }) => {
-    // 禁止对用户工作区执行 git reset --hard / git clean -fd：
-    // 会删除与本 run 无关的修改和未跟踪文件。安全回滚改由 RollbackService
-    //（按 FileEffectReceipt 逆序恢复）承接；在其落地前明确失败，绝不半回退。
-    void params
+    // 禁止 git reset --hard / git clean；仅按 FileEffectReceipt 逆序安全回滚。
+    void params.sessionId
+    const { listFileEffects, previewRollback, confirmRollback } = await import(
+      '../../runtime/workflow/v2/EffectReceipt'
+    )
+    const effects = listFileEffects(params.workspaceRoot, params.runId)
+    if (effects.length === 0) {
+      return {
+        ok: false,
+        error:
+          '无可回滚的文件副作用凭证。请使用会话消息回退 / 逐文件 checkpoint；未执行任何文件回滚。'
+      }
+    }
+    const preview = previewRollback(params.workspaceRoot, params.runId)
+    const result = confirmRollback(params.workspaceRoot, params.runId)
     return {
-      ok: false,
-      error:
-        '自动 Git 硬回滚已禁用（会误删无关改动）。请使用会话消息回退 / 逐文件 checkpoint；完整按 effect 凭证回滚即将接入。'
+      ok: result.ok,
+      restored: result.results.filter((r) => r.status === 'restored' || r.status === 'deleted').length,
+      error: result.ok
+        ? undefined
+        : `回滚未完全成功：冲突 ${preview.conflicts.length}，缺备份 ${preview.missingBackup.length}`,
+      preview,
+      results: result.results
     }
   })
 

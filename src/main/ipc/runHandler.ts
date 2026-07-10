@@ -8,13 +8,7 @@ import {
   RUN_FORCE_TERMINATE,
   RUN_INTERRUPTED_ACTION
 } from '../../shared/ipc/channels'
-import {
-  getRunCoordinator,
-  getRunExecutionRegistry,
-  getActiveRunId,
-  setActiveRunId
-} from '../services/RunCoordinatorHost'
-import { getSessionStore } from './sessionHandler'
+import { getRunCoordinator, getRunExecutionRegistry, getActiveRunId, setActiveRunId } from '../services/RunCoordinatorHost'
 
 export function registerRunHandler(): void {
   handle(RUN_GET_SNAPSHOT, async (_event, params: { sessionId: string; runId?: string }) => {
@@ -75,22 +69,40 @@ export function registerRunHandler(): void {
     }
 
     if (params.action === 'rollback') {
-      // 最小钩子：回滚本轮依赖 checkpoint；此处仅标记意图并返回已提交工具列表供 UI
-      // 实际文件回滚仍走既有 revertWorkspaceForMessageIds / checkpoint 路径
+      // 禁止假成功：无 FileEffectReceipt / checkpoint 绑定时明确失败
       const committed = (snap.toolCommits ?? []).filter(c => c.phase === 'committed')
       try {
-        const sessionStore = getSessionStore()
-        // 仅提供 API 入口；具体 undo 由 renderer/WorkspaceService 既有能力承接
-        void sessionStore
+        const { previewRollback, confirmRollback, listFileEffects } = await import(
+          '../../runtime/workflow/v2/EffectReceipt'
+        )
+        // workspaceId 在 agent run 中即工作区根路径
+        const workspaceRoot = snap.workspaceId
+        const effects = listFileEffects(workspaceRoot, params.runId)
+        if (effects.length === 0) {
+          return {
+            ok: false,
+            steps: committed,
+            message:
+              '无可回滚的文件副作用凭证。请使用会话消息回退 / 逐文件 checkpoint；未执行任何文件回滚。',
+            snapshot: snap
+          }
+        }
+        const preview = previewRollback(workspaceRoot, params.runId)
+        const result = confirmRollback(workspaceRoot, params.runId)
         return {
-          ok: true,
+          ok: result.ok,
           steps: committed,
-          message: '请使用消息回退 / checkpoint 回滚本轮已提交的文件修改',
-          snapshot: snap
+          message: result.ok
+            ? `已按 effect 凭证回滚：恢复 ${preview.willRestore.length}，删除 ${preview.willDelete.length}，冲突 ${preview.conflicts.length}`
+            : `回滚部分失败（缺备份 ${preview.missingBackup.length}）；冲突文件未覆盖`,
+          snapshot: snap,
+          preview,
+          results: result.results
         }
       } catch (err) {
         return {
           ok: false,
+          steps: committed,
           message: err instanceof Error ? err.message : '回滚失败',
           snapshot: snap
         }
