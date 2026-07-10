@@ -54,6 +54,17 @@ export function shouldPauseAutoFollow(
   return getDistanceFromBottom(metrics) > threshold
 }
 
+/**
+ * 「回到底部」按钮显隐：只看距底部距离，与 autoScrollMode 解耦。
+ * 距底超过阈值 → 显示；在底部附近 → 隐藏。
+ */
+export function shouldShowScrollToBottom(
+  metrics: ScrollMetrics,
+  threshold = AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+): boolean {
+  return getDistanceFromBottom(metrics) > threshold
+}
+
 /** 是否处于程序滚动保护窗口内 */
 export function isWithinProgrammaticScrollGuard(
   programmaticScrollUntil: number,
@@ -93,7 +104,7 @@ export interface SyncAutoScrollModeInput {
  * 根据 scroll 事件同步自动滚动模式。
  *
  * - 用户明显上滚且远离底部 → off
- * - 回到底部且仍在输出 → stream
+ * - 回到底部：仍在输出 → stream；未输出 → user（离开 off，允许后续跟随）
  */
 export function syncAutoScrollModeOnScroll(input: SyncAutoScrollModeInput): AutoScrollMode {
   const distance = getDistanceFromBottom(input.metrics)
@@ -109,8 +120,9 @@ export function syncAutoScrollModeOnScroll(input: SyncAutoScrollModeInput): Auto
   }
 
   const atBottom = distance <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX
-  if (atBottom && input.isOutputting && input.autoScrollMode === 'off') {
-    return 'stream'
+  if (atBottom && input.autoScrollMode === 'off') {
+    // 无论是否在输出，回到底部都应离开 off；按钮显隐另由 shouldShowScrollToBottom 决定
+    return input.isOutputting ? 'stream' : 'user'
   }
 
   return input.autoScrollMode

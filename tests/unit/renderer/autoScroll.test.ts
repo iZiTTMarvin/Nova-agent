@@ -12,6 +12,7 @@ import {
   markProgrammaticScroll,
   scrollContainerToBottom,
   shouldPauseAutoFollow,
+  shouldShowScrollToBottom,
   syncAutoScrollModeOnScroll,
   type FrameScheduler
 } from '../../../src/renderer/features/chat/autoScroll'
@@ -157,6 +158,34 @@ describe('autoScroll', () => {
       isProgrammaticScroll: false
     })
     expect(mode).toBe('stream')
+  })
+
+  it('syncAutoScrollModeOnScroll 手动回到底部且未输出时应离开 off 进入 user', () => {
+    const metrics = {
+      scrollHeight: 1000,
+      scrollTop: 956,
+      clientHeight: 400
+    }
+    expect(getDistanceFromBottom(metrics)).toBeLessThanOrEqual(AUTO_SCROLL_BOTTOM_THRESHOLD_PX)
+    const mode = syncAutoScrollModeOnScroll({
+      metrics,
+      previousScrollTop: 900,
+      autoScrollMode: 'off',
+      isOutputting: false,
+      isProgrammaticScroll: false
+    })
+    expect(mode).toBe('user')
+  })
+
+  it('shouldShowScrollToBottom 仅按距底部距离决定显隐', () => {
+    const atBottom = { scrollHeight: 1000, scrollTop: 960, clientHeight: 400 }
+    const away = { scrollHeight: 1000, scrollTop: 500, clientHeight: 400 }
+
+    expect(getDistanceFromBottom(atBottom)).toBeLessThanOrEqual(AUTO_SCROLL_BOTTOM_THRESHOLD_PX)
+    expect(shouldShowScrollToBottom(atBottom)).toBe(false)
+
+    expect(getDistanceFromBottom(away)).toBeGreaterThan(AUTO_SCROLL_BOTTOM_THRESHOLD_PX)
+    expect(shouldShowScrollToBottom(away)).toBe(true)
   })
 
   it('canFollowAutoScroll 仅 stream/user 模式允许跟随', () => {

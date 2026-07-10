@@ -16,13 +16,16 @@ import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { ModelSelector } from './ModelSelector'
 import {
+  AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
   browserFrameScheduler,
   canFollowAutoScroll,
   createStreamAutoScrollController,
   createStreamingScrollPoller,
+  getDistanceFromBottom,
   isWithinProgrammaticScrollGuard,
   markProgrammaticScroll,
   scrollContainerToBottom,
+  shouldShowScrollToBottom,
   syncAutoScrollModeOnScroll,
   type AutoScrollMode
 } from './autoScroll'
@@ -300,8 +303,8 @@ export const ChatPanel: React.FC = () => {
       isProgrammaticScroll: isProgrammatic
     })
     lastScrollTopRef.current = container.scrollTop
-    // 离开底部时露出「回到底部」；跟随流式时隐藏
-    setShowScrollToBottom(autoScrollModeRef.current === 'off')
+    // 显隐只看距底部距离，与 autoScrollMode 解耦
+    setShowScrollToBottom(shouldShowScrollToBottom(metrics))
   }, [isGenerating])
 
   const handleScrollToBottomClick = useCallback(() => {
@@ -381,9 +384,24 @@ export const ChatPanel: React.FC = () => {
       autoScrollModeRef.current = 'stream'
       streamScrollPollerRef.current?.start()
     } else {
-      // 仅在轮次真正结束时归零模式；等待 askQuestion 期间只停轮询、不动模式，
-      // 这样答完恢复时上面的分支能重新进入 stream。
-      if (!isGenerating) autoScrollModeRef.current = 'off'
+      // 等待 askQuestion 期间只停轮询、不动模式，答完后上面分支能重新进入 stream。
+      // 轮次真正结束时按当前距底决定 mode，并同步按钮显隐（避免等下一次 scroll）。
+      if (!isGenerating) {
+        const container = scrollContainerRef.current
+        if (container) {
+          const metrics = {
+            scrollHeight: container.scrollHeight,
+            scrollTop: container.scrollTop,
+            clientHeight: container.clientHeight
+          }
+          const atBottom =
+            getDistanceFromBottom(metrics) <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+          autoScrollModeRef.current = atBottom ? 'user' : 'off'
+          setShowScrollToBottom(shouldShowScrollToBottom(metrics))
+        } else {
+          autoScrollModeRef.current = 'off'
+        }
+      }
       streamScrollPollerRef.current?.stop()
       streamAutoScrollRef.current?.cancel()
     }
@@ -741,17 +759,6 @@ export const ChatPanel: React.FC = () => {
           </div>
         )}
         </MaybeProfiler>
-
-        {showScrollToBottom && (
-          <button
-            type="button"
-            className="chat-messages__scroll-bottom"
-            onClick={handleScrollToBottomClick}
-            aria-label="回到底部"
-          >
-            回到底部
-          </button>
-        )}
       </div>
       )}
 
@@ -762,6 +769,32 @@ export const ChatPanel: React.FC = () => {
         }`}
       >
         <div className="chat-panel__composer-inner">
+          {/* 回到底部：放在 composer 栈顶，AskQuestion/Todo dock 展开时自然上移，不重叠 */}
+          {!isEmptyState && showScrollToBottom && (
+            <button
+              type="button"
+              className="chat-scroll-to-bottom"
+              onClick={handleScrollToBottomClick}
+              aria-label="回到底部"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 6.5L8 10.5L12 6.5"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
+
           {/* 跨会话 / 失忆轮次提示：提供停止入口，避免裸 IPC 拒发 */}
           {showCrossSessionTurnBanner && (
             <div className="chat-cross-turn-notice" role="status">

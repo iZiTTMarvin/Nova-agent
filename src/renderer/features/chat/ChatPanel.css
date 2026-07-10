@@ -40,23 +40,27 @@
   min-width: 0;
 }
 
-.chat-messages__scroll-bottom {
-  position: sticky;
-  bottom: 12px;
-  align-self: center;
-  z-index: 5;
-  margin-top: auto;
-  padding: 6px 14px;
-  font-size: 0.8rem;
+/* Cursor 风格：圆形向下箭头，叠在 composer 栈顶 */
+.chat-scroll-to-bottom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
   color: var(--text-primary);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
   border: 1px solid var(--border-warm);
-  border-radius: 999px;
+  border-radius: 50%;
   box-shadow: var(--shadow-card);
   cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.chat-messages__scroll-bottom:hover {
+.chat-scroll-to-bottom:hover {
   background: var(--bg-sand);
 }
 
