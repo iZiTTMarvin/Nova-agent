@@ -127,6 +127,12 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         await p.runCompactionIfThreshold()
       }
 
+      // 压缩后再套硬预算：仍超限则抛错，阻断模型请求（禁止带着超限上下文发 API）
+      if (config.applyContextBudget) {
+        context.messages = config.applyContextBudget(context.messages)
+      }
+      context.lastEstimatedTokens = estimateContextTokens(context.messages)
+
       // ── 工具定义 + 缓存诊断基线（对标现状 L733-741）──
       const tools = context.toolRegistry?.getToolDefinitions()
       const systemPrompt = extractTextFromContent(

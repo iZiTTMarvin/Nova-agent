@@ -880,8 +880,8 @@ export class AgentLoop implements IdleCompactionTarget {
     // 每轮 user 消息递增压缩冷却计数
     this.userTurnsSinceCompaction++
 
-    // 统一上下文预算（生产硬上限；超限抛错阻断模型请求）
-    this.context = this.contextBudgetManager.apply(this.context)
+    // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。
+    // 硬上限在压缩之后、发模型之前套用（见 runAgentLoop），避免大历史无法进入压缩。
     this.lastEstimatedTokens = estimateContextTokens(this.context)
 
     // 主循环下沉到 runAgentLoop：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。

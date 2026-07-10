@@ -697,17 +697,23 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
       modelId: 'gpt-4o',
       client,
       config: {
-        contextWindow: 200, // 极小窗口，threshold=160，强制硬触发
+        // 默认 200k 窗口：阈值≈160k；注入大历史触发压缩，压缩后硬预算仍可满足。
+        // 勿用极小 contextWindow（如 200）：压缩后保留的最近消息仍会超过硬上限。
         onCompaction: () => {
           compactionCalled = true
         }
       }
     })
     // shouldCompact 守卫：context.length > MIN_RECENT_MESSAGES(20) + 2 = 22 才往下判断。
-    // system(1) + 注入 25 条历史 + 本轮 user(1) = 27 条，过守卫；且每条足够长使 token > 160。
-    loop.injectHistory(
-      Array.from({ length: 25 }, (_, i) => ({ role: 'user' as const, content: `历史消息编号 ${i} `.repeat(30) }))
-    )
+    // 注入 48 条大消息使 token > 160k 硬触发阈值压缩。
+    const history: { role: 'user' | 'assistant'; content: string }[] = []
+    for (let i = 0; i < 24; i++) {
+      history.push(
+        { role: 'user', content: 'x'.repeat(20_000) },
+        { role: 'assistant', content: 'y'.repeat(20_000) }
+      )
+    }
+    loop.injectHistory(history)
 
     await runAndCollectDrained(loop, eventBus, '继续')
 
