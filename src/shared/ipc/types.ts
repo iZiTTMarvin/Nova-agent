@@ -45,6 +45,11 @@ import type {
 } from '../permissions/types'
 import type { AskQuestionItem, AskQuestionAnswer } from '../askQuestion/types'
 import type {
+  RunSnapshot,
+  InteractionAnswerResult,
+  ToolCommitRecord
+} from '../../runtime/run/types'
+import type {
   MemoryScopeFileEntry,
   MemoryScopeStats,
   MemoryReadFileParams,
@@ -119,7 +124,39 @@ export interface IpcCommands {
   }
   'cancel-execution': {
     params: void
-    result: void
+    /** 立即返回 cancelling 快照；终态需等 run:snapshot */
+    result: { runId: string | null; status: string }
+  }
+  /** snapshot-first：按 session 拉取权威 Run 快照 */
+  'run:get-snapshot': {
+    params: { sessionId: string; runId?: string }
+    result: {
+      snapshot: RunSnapshot | null
+      /** 同会话其他仍在等待的交互数（侧边栏徽标用全局 list-waiting） */
+      waitingSessions: Array<{ sessionId: string; runId: string; pendingCount: number }>
+    }
+  }
+  'run:list-waiting': {
+    params: void
+    result: Array<{ sessionId: string; runId: string; pendingCount: number }>
+  }
+  'run:force-terminate': {
+    params: { runId: string }
+    result: { ok: boolean; snapshot: RunSnapshot | null }
+  }
+  /** interrupted run 恢复入口 */
+  'run:interrupted-action': {
+    params: {
+      runId: string
+      action: 'continue' | 'rollback' | 'inspect'
+    }
+    result: {
+      ok: boolean
+      /** inspect：已执行工具步骤；continue/rollback：操作结果说明 */
+      steps?: ToolCommitRecord[]
+      message?: string
+      snapshot?: RunSnapshot | null
+    }
   }
   'save-model-config': {
     params: ModelConfig
@@ -162,8 +199,15 @@ export interface IpcCommands {
     result: void
   }
   'respond-permission': {
-    params: { requestId: string; decision: PermissionDecision }
-    result: void
+    params: {
+      requestId: string
+      decision: PermissionDecision
+      /** exactly-once 命令 id（可选，兼容旧调用） */
+      commandId?: string
+      expectedVersion?: number
+      interactionId?: string
+    }
+    result: void | InteractionAnswerResult
   }
   'respond-verification-permission': {
     params: { requestId: string; granted: boolean }
@@ -174,8 +218,12 @@ export interface IpcCommands {
       requestId: string
       /** 用户提交的答案列表；用户 dismiss 时传空数组 */
       answers: AskQuestionAnswer[]
+      commandId?: string
+      expectedVersion?: number
+      interactionId?: string
     }
-    result: void
+    /** 旧调用方可忽略；新路径根据 ok 决定是否清除 pending */
+    result: void | InteractionAnswerResult
   }
   'load-sessions': {
     params: void
@@ -396,7 +444,17 @@ export interface IpcCommands {
     result: { runId: string; status: string; phase?: string } | null
   }
   'compose:resume': {
-    params: { runId: string; scriptName: string; args?: string; workspaceRoot: string; sessionId?: string }
+    params: {
+      runId: string
+      scriptName: string
+      args?: string
+      workspaceRoot: string
+      sessionId?: string
+      /** 从指定 step 起重跑（v2） */
+      rerunFromStepId?: string
+      /** 脚本源变化时：migrate 显式清 journal/steps */
+      scriptShaMismatch?: 'reject' | 'migrate'
+    }
     result: { runId: string; status: string }
   }
   'compose:respond-ask-user': {
@@ -404,8 +462,30 @@ export interface IpcCommands {
     result: { ok: boolean }
   }
   'compose:get-state': {
-    params: { workspaceRoot: string }
+    params: { workspaceRoot: string; runId?: string }
     result: Record<string, unknown> | null
+  }
+  'compose:inspect-resume': {
+    params: { workspaceRoot: string; runId: string; rerunFromStepId?: string }
+    result: {
+      engine: 'v1' | 'v2'
+      skip: Array<{ stepId: string; kind: string; status: string }>
+      run: Array<{ stepId: string; kind: string; status: string }>
+      blocked: Array<{ stepId: string; kind: string; error?: string }>
+    } | null
+  }
+  'compose:rollback': {
+    params: { workspaceRoot: string; runId: string; sessionId?: string }
+    result: { ok: boolean; error?: string; restored?: number }
+  }
+  'compose:new-analysis': {
+    params: {
+      scriptName: string
+      args?: string
+      workspaceRoot: string
+      sessionId?: string
+    }
+    result: { runId: string; status: string }
   }
   // ── 跨会话记忆（P2-1 可观测/可编辑）──
   'memory:list-files': {
@@ -529,9 +609,24 @@ export interface IpcEvents {
   'agent:ask-question-request': {
     requestId: string
     questions: AskQuestionItem[]
+    /** 可选归属字段（阶段 2）；旧事件可能缺失 */
+    sessionId?: string
+    messageId?: string
+    runId?: string
+    interactionId?: string
+    version?: number
   }
   'agent:ask-question-resolved': {
     requestId: string
+  }
+  /** RunCoordinator 权威快照推送 */
+  'run:snapshot': {
+    snapshot: RunSnapshot
+    event: {
+      sequence: number
+      type: string
+      at: number
+    }
   }
   'agent:todos-updated': {
     sessionId: string
@@ -599,6 +694,12 @@ export interface IpcEvents {
     fallbackIndex: number
     reason: string
   }
+  /** 失败 attempt 的临时流式块应回滚，避免与下一次 attempt 文本重复 */
+  'agent:attempt-failed': {
+    messageId: string
+    attemptId: string
+    error: string
+  }
   'window:maximize-change': {
     isMaximized: boolean
   }
@@ -637,10 +738,12 @@ export interface IpcEvents {
     sessionId?: string
     state: Record<string, unknown>
   }
-  /** 主进程 Agent 轮次开始/结束广播（跨会话运行提示与停止入口） */
+  /**
+   * @deprecated 阶段 6 起不再广播。轮次归属请订阅 `run:snapshot`。
+   * 类型保留一版，避免旧 preload 监听方类型报错。
+   */
   'agent:turn-state': {
     inProgress: boolean
-    /** 进行中轮次所属会话 id；结束时为 null */
     sessionId: string | null
   }
   'app:update-downloaded': {

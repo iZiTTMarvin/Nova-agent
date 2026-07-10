@@ -37,9 +37,10 @@ import type { RendererRecoveryState } from '../../shared/ipc/types'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { Mode, PermissionDecision } from '../../shared/session/types'
 import { getSessionStore } from './sessionHandler'
-import type { SessionMessageAppend, SessionToolCall, SerializableContentBlock } from '../../runtime/sessions/types'
+import type { SessionMessageAppend, SerializableContentBlock } from '../../runtime/sessions/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
+import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../runtime/sessions/messageProjection'
 import type { MessageBlock } from '../../shared/session/types'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import { getWorkspaceService } from '../services/WorkspaceService'
@@ -75,21 +76,40 @@ import { onUserTurnCompleteForExtract } from '../services/MemoryExtractHost'
 import {
   getMemoryService
 } from '../services/MemoryServiceHost'
+import {
+  getRunCoordinator,
+  getRunExecutionRegistry,
+  getActiveRunId,
+  setActiveRunId
+} from '../services/RunCoordinatorHost'
 
-/** Agent 轮次是否进行中（send-message 从进入到 sendMessage 返回） */
-let agentTurnInProgress = false
-
-/** 进行中轮次所属的会话 id（轮次结束后归 null） */
-let activeTurnSessionId: string | null = null
-
-/** 供 WorkspaceService 分叉 IPC 守卫：生成中禁止改 currentLeafId */
+/**
+ * 供 WorkspaceService 分叉 IPC 守卫：生成中禁止改 currentLeafId。
+ * 权威来源：RunCoordinator 非终态 run（不再维护独立 agentTurnInProgress 标志）。
+ */
 export function isAgentTurnInProgress(): boolean {
-  return agentTurnInProgress
+  try {
+    return getRunCoordinator().listActiveRuns().length > 0
+  } catch {
+    return getActiveRunId() !== null
+  }
 }
 
-/** 供跨会话守卫使用：返回当前轮次所属会话 id（无进行中轮次时为 null） */
+/** 供跨会话守卫：当前活跃轮次所属会话 id（无进行中轮次时为 null） */
 export function getActiveTurnSessionId(): string | null {
-  return agentTurnInProgress ? activeTurnSessionId : null
+  try {
+    const active = getRunCoordinator().listActiveRuns()
+    if (active.length === 0) return null
+    // 优先当前 SEND_MESSAGE 绑定的 run
+    const bound = getActiveRunId()
+    if (bound) {
+      const snap = active.find(s => s.runId === bound)
+      if (snap) return snap.sessionId
+    }
+    return active[0]?.sessionId ?? null
+  } catch {
+    return null
+  }
 }
 
 /** 管理 AgentLoop 的生命周期 */
@@ -134,6 +154,33 @@ interface PendingAskQuestionEntry {
 
 /** 等待用户回复的 askQuestion 请求（requestId → 挂起状态）。与 verification permission 不同，无超时 */
 export const pendingAskQuestions = new Map<string, PendingAskQuestionEntry>()
+
+/**
+ * 当前 AgentLoop 引用：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
+ * 每次 SEND_MESSAGE 更新；dispose 后置空。
+ */
+let currentAgentLoopForHooks: AgentLoop | null = null
+let terminalHooksRegistered = false
+
+function ensureTerminalHooksRegistered(): void {
+  if (terminalHooksRegistered) return
+  terminalHooksRegistered = true
+  try {
+    const coord = getRunCoordinator()
+    coord.onTerminalHook('onCancel', async (ctx) => {
+      const loop = currentAgentLoopForHooks
+      const messageId = ctx.snapshot.messageId
+      if (!loop || !messageId) return
+      await loop.getHookManager().trigger({
+        event: 'onCancel',
+        messageId,
+        interrupted: true
+      })
+    })
+  } catch {
+    // RunCoordinator 尚未初始化时跳过；registerHandlers 会先 init
+  }
+}
 
 function clearVerificationPermissionRequest(requestId: string, granted: boolean): void {
   const entry = pendingVerificationPermissions.get(requestId)
@@ -197,12 +244,11 @@ function buildModelPoolWithFallbacks(primary: ModelClient): ModelClient | ModelC
 
 /**
  * 流式内容累积器
- * 在 message_start 到 message_end 之间累积 assistant 消息的完整内容，
- * 包括文本增量和工具调用记录，用于最终保存到 SessionStore
+ * 在 message_start 到 message_end 之间以有序 blocks 为唯一事实源累积 assistant 消息。
+ * content / toolCalls 仅在落盘时由 blocks 投影，不在内存双向可写。
  */
 interface StreamAccumulator {
-  content: string
-  toolCalls: SessionToolCall[]
+  /** 有序块：thinking / text / tool —— 唯一事实源 */
   blocks: MessageBlock[]
   /**
    * 是否在累积过程中被取消。
@@ -266,15 +312,7 @@ export function registerAgentHandler(
   getModelClient: () => ModelClient | null,
   getImageStore: () => ImageStore
 ): void {
-  /** 广播主进程轮次状态（跨会话运行提示 + 停止入口），renderer 订阅 agent:turn-state */
-  const broadcastTurnState = (): void => {
-    const win = getMainWindow()
-    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
-    win.webContents.send('agent:turn-state', {
-      inProgress: agentTurnInProgress,
-      sessionId: agentTurnInProgress ? activeTurnSessionId : null
-    })
-  }
+  ensureTerminalHooksRegistered()
 
   // 发送消息命令
   handle(SEND_MESSAGE, async (_event, params: {
@@ -284,8 +322,10 @@ export function registerAgentHandler(
     images?: Array<{ fileName: string; data: string; mimeType: string }>
     regenerate?: boolean
   }): Promise<void> => {
-    if (agentTurnInProgress) {
-      const where = activeTurnSessionId && activeTurnSessionId !== params.sessionId
+    // 守卫改读 RunCoordinator：有非终态 run 则拒发（UI 侧靠 run:snapshot 同步）
+    if (isAgentTurnInProgress()) {
+      const whereSession = getActiveTurnSessionId()
+      const where = whereSession && whereSession !== params.sessionId
         ? '（在另一个会话中）'
         : ''
       throw new Error(`Agent 正在运行${where}，请先点击停止按钮结束当前任务后再发送`)
@@ -312,6 +352,18 @@ export function registerAgentHandler(
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
 
+    // Preflight：不得在这些可预见的输入错误前创建 run。
+    if (params.regenerate === true) {
+      const activePath = getSessionActiveMessages(session)
+      const leafUser = activePath[activePath.length - 1]
+      if (!leafUser || leafUser.role !== 'user') {
+        throw new Error('重新生成失败：当前激活叶子不是用户消息')
+      }
+      if (params.images && params.images.length > 0) {
+        throw new Error('重新生成暂不支持含图片的消息')
+      }
+    }
+
     const projectPath = session.workspaceRoot
     const sessionsDir = sessionStore.getSessionsDir()
     const novaSettings = loadNovaSettings()
@@ -331,6 +383,11 @@ export function registerAgentHandler(
       persistedConfig?.modelId ?? '',
       persistedConfig?.supportsVision
     )
+    if (params.images && params.images.length > 0 && !supportsVision) {
+      throw new Error(
+        '当前模型不支持图片输入。请切换到支持视觉的模型后再发送图片，或仅发送文字。'
+      )
+    }
     syncTavilyApiKeyFromSettings()
 
     const skillService = getSkillService()
@@ -462,6 +519,14 @@ export function registerAgentHandler(
         }
       }
     })
+    currentAgentLoopForHooks = agentLoop
+
+    // 仅提前取得协调器；所有会抛错的装配和输入准备完成后才创建 run。
+    const runCoordinator = getRunCoordinator()
+    let capturedRunId = ''
+    let executionGeneration = 0
+    let resolveExecutionSettled!: () => void
+    const executionRegistry = getRunExecutionRegistry()
 
     agentLoop.setWorkingDir(projectPath)
     // PRD §5.1：把工具注册表注入 AgentLoop
@@ -500,10 +565,32 @@ export function registerAgentHandler(
     // 注入 askQuestion 阻塞回调：工具 execute() 通过它拿 Promise 并阻塞等待 renderer 回复。
     // 回调闭包捕获本次 eventBus，与 pendingVerificationPermissions 同隔离模式（每次 SEND_MESSAGE 都 new EventBus）。
     // 不设 timeout：用户必须显式回答 / dismiss / 新消息 / cancel 四条出口之一，不做自动兜底。
+    // 同时写入 InteractionInbox（持久化归属），供 snapshot-first 恢复。
     agentLoop.setAskQuestionHandler((requestId, questions) => {
       return new Promise<AskQuestionAnswer[]>((resolve) => {
         pendingAskQuestions.set(requestId, { resolve, eventBus })
-        eventBus.emit({ type: 'ask_question_request', requestId, questions })
+        const messageId =
+          [...activeStreams.keys()].at(-1) ??
+          runCoordinator.getSnapshot(capturedRunId)?.messageId ??
+          ''
+        const interaction = runCoordinator.inbox.enqueue({
+          runId: capturedRunId,
+          sessionId: capturedSessionId,
+          messageId,
+          type: 'askQuestion',
+          interactionId: requestId,
+          payload: { requestId, questions }
+        })
+        eventBus.emit({
+          type: 'ask_question_request',
+          requestId,
+          questions,
+          sessionId: capturedSessionId,
+          messageId,
+          runId: capturedRunId,
+          interactionId: interaction.interactionId,
+          version: interaction.version
+        })
       })
     })
 
@@ -549,7 +636,7 @@ export function registerAgentHandler(
         script: scriptName,
         args: { requirement: args, task: args },
         // 停止按钮 → AgentLoop.cancel() 的信号在此接入编排 run（否则 run 停不下来，
-        // sendMessage 永挂起 → agentTurnInProgress 卡 true → 全局拒发消息）
+        // sendMessage 永挂起 → RunCoordinator 非终态占位 → 全局拒发消息）
         abortSignal: opts?.abortSignal,
         deps: {
           modelClient,
@@ -668,11 +755,25 @@ export function registerAgentHandler(
       }
     }
 
-    // 常驻黑匣子：主进程事件间隔 stall 检测，定位偶发卡顿时用。
+    // 常驻黑匣子：stall 只认「RunCoordinator=running 且 heartbeat 超时」
     // 设 NOVA_STALL_DEBUG=0 可静默。详见 shared/diagnostics/stallDetector.ts
-    const stallMark = createEventStallDetector()
+    const stallMark = createEventStallDetector({
+      getRunLiveness: () => {
+        try {
+          return getRunCoordinator().getStallLiveness(capturedRunId)
+        } catch {
+          return null
+        }
+      }
+    })
 
     eventBus.on((event: AgentEvent) => {
+      // 投影关键事件到 RunCoordinator（工具对账 + message 绑定 + 权限 inbox）
+      projectAgentEventToRun(capturedRunId, capturedSessionId, event)
+      // 轻量刷新心跳（不落盘），stall 只认 running + heartbeat 超时
+      try {
+        getRunCoordinator().touchHeartbeat(capturedRunId)
+      } catch { /* ignore */ }
       stallMark(event.type)
       forwardEventToRenderer(getMainWindow(), event)
       accumulateStreamEvent(capturedSessionId, event, {
@@ -691,9 +792,28 @@ export function registerAgentHandler(
       subscribeObservationCapture(eventBus, params.sessionId)
     }
 
-    agentTurnInProgress = true
-    activeTurnSessionId = params.sessionId
-    broadcastTurnState()
+    // Execution：此后立即进入 try/catch/finally，run 的每个出口都由同一处收敛。
+    const runSnap = runCoordinator.startRun({
+      kind: session.mode === 'compose' ? 'compose' : 'agent',
+      workspaceId: projectPath,
+      sessionId: params.sessionId
+    })
+    capturedRunId = runSnap.runId
+    executionGeneration = Date.now()
+    const executionSettled = new Promise<void>(resolve => {
+      resolveExecutionSettled = resolve
+    })
+    executionRegistry.register({
+      runId: capturedRunId,
+      generation: executionGeneration,
+      kind: session.mode === 'compose' ? 'compose' : 'agent',
+      abort: () => agentLoop?.cancel(),
+      settled: executionSettled
+    })
+    setActiveRunId(capturedRunId)
+    runCoordinator.markRunning(capturedRunId)
+
+    let turnFailed = false
     try {
       await agentLoop.sendMessage(sendContent)
       onUserTurnCompleteForExtract(
@@ -702,14 +822,46 @@ export function registerAgentHandler(
         sessionStore,
         modelPool
       )
+    } catch (err) {
+      turnFailed = true
+      const reason = err instanceof Error ? err.message : String(err)
+      try {
+        getRunCoordinator().commitTerminal({
+          runId: capturedRunId,
+          status: 'failed',
+          reason
+        })
+      } catch { /* ignore */ }
+      throw err
     } finally {
-      agentTurnInProgress = false
-      activeTurnSessionId = null
-      broadcastTurnState()
+      // 若尚未终态（正常完成或取消路径已 commit），补 completed
+      const coord = getRunCoordinator()
+      const snap = coord.getSnapshot(capturedRunId)
+      if (snap && !['completed', 'failed', 'cancelled', 'interrupted'].includes(snap.status)) {
+        if (!turnFailed) {
+          const cancelled = snap.status === 'cancelling'
+          coord.commitTerminal({
+            runId: capturedRunId,
+            status: cancelled ? 'cancelled' : 'completed'
+          })
+        }
+      }
+      resolveExecutionSettled()
+      executionRegistry.unregister(capturedRunId, executionGeneration)
+      setActiveRunId(null)
     }
   })
 
-  handle(CANCEL_EXECUTION, async (): Promise<void> => {
+  handle(CANCEL_EXECUTION, async (): Promise<{ runId: string | null; status: string }> => {
+    const runId = getActiveRunId()
+    const coord = getRunCoordinator()
+    if (runId) {
+      coord.beginCancel(runId)
+      coord.inbox.cancelAllForRun(runId)
+      // abort 会等待执行收敛；终态仍由 SEND_MESSAGE 的 finally 统一提交。
+      await getRunExecutionRegistry().abort(runId, 'cancel_execution')
+    }
+
     // 先停父 agent，再联动停所有活跃子代理。
     // 顺序：父先 cancel 可避免父在子停止后又派新的工具调用；子 cancel 后父的
     // await subLoop.sendMessage(task) 才会在最近的 abort 检查点返回。
@@ -724,29 +876,200 @@ export function registerAgentHandler(
       entry.resolve([])
       entry.eventBus.emit({ type: 'ask_question_resolved', requestId })
     }
+
+    // 终态由 sendMessage finally / commitTerminal 确认；此处只返回 cancelling
+    const snap = runId ? coord.getSnapshot(runId) : null
+    return { runId, status: snap?.status ?? 'idle' }
   })
 
-  handle(RESPOND_PERMISSION, async (_event, params: { requestId: string; decision: PermissionDecision }): Promise<void> => {
+  handle(RESPOND_PERMISSION, async (_event, params: {
+    requestId: string
+    decision: PermissionDecision
+    commandId?: string
+    expectedVersion?: number
+    interactionId?: string
+  }): Promise<void | import('../../runtime/run').InteractionAnswerResult> => {
     const granted = params.decision === 'allow'
+    const interactionId = params.interactionId ?? params.requestId
+    const coord = getRunCoordinator()
+    const found = coord.findInteraction(interactionId)
+
+    // InteractionInbox 幂等路径（有 commandId 时）
+    if (params.commandId && found) {
+      const result = coord.inbox.answer({
+        interactionId,
+        commandId: params.commandId,
+        expectedVersion: params.expectedVersion ?? found.version,
+        outcome: granted ? 'answered' : 'dismissed',
+        payload: { decision: params.decision }
+      })
+      if (!result.ok) return result
+    }
+
     // 子代理权限（sub: 前缀）路由到子 AgentLoop，其余走父循环
     if (defaultSubAgentPermissionBridge.resolve(params.requestId, granted)) return
     if (!agentLoop) return
     agentLoop.respondPermission(params.requestId, granted)
+    if (params.commandId && found) {
+      return {
+        ok: true,
+        interaction: coord.findInteraction(interactionId)!,
+        snapshot: coord.getSnapshot(found.runId)!
+      }
+    }
   })
 
   handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: { requestId: string; granted: boolean }): Promise<void> => {
     clearVerificationPermissionRequest(params.requestId, params.granted)
   })
 
-  handle(RESPOND_ASK_QUESTION, async (_event, params: { requestId: string; answers: AskQuestionAnswer[] }): Promise<void> => {
+  handle(RESPOND_ASK_QUESTION, async (_event, params: {
+    requestId: string
+    answers: AskQuestionAnswer[]
+    commandId?: string
+    expectedVersion?: number
+    interactionId?: string
+  }): Promise<void | import('../../runtime/run').InteractionAnswerResult> => {
+    const interactionId = params.interactionId ?? params.requestId
+    const coord = getRunCoordinator()
+    const found = coord.findInteraction(interactionId)
+    const dismissed = !params.answers || params.answers.length === 0
+
+    if (params.commandId && found) {
+      const result = coord.inbox.answer({
+        interactionId,
+        commandId: params.commandId,
+        expectedVersion: params.expectedVersion ?? found.version,
+        outcome: dismissed ? 'dismissed' : 'answered',
+        payload: { answers: params.answers }
+      })
+      if (!result.ok) return result
+    }
+
     const entry = pendingAskQuestions.get(params.requestId)
-    if (!entry) return
+    if (!entry) {
+      if (params.commandId) {
+        return {
+          ok: false,
+          code: 'not_found',
+          message: `askQuestion ${params.requestId} 不存在`
+        }
+      }
+      return
+    }
     pendingAskQuestions.delete(params.requestId)
     // resolve 工具的 Promise，让 execute 继续往下走
     entry.resolve(params.answers)
     // 通知 renderer 清除 pending 状态
     entry.eventBus.emit({ type: 'ask_question_resolved', requestId: params.requestId })
+
+    if (params.commandId && found) {
+      return {
+        ok: true,
+        interaction: coord.findInteraction(interactionId) ?? found,
+        snapshot: coord.getSnapshot(found.runId)!
+      }
+    }
   })
+}
+
+/**
+ * 将 AgentEvent 投影到 RunCoordinator（工具对账 / 权限 inbox / message 绑定）。
+ * 旧 EventBus → IPC 路径保持不变，本函数只做旁路持久化。
+ */
+function projectAgentEventToRun(
+  runId: string,
+  sessionId: string,
+  event: AgentEvent
+): void {
+  let coord: ReturnType<typeof getRunCoordinator>
+  try {
+    coord = getRunCoordinator()
+  } catch {
+    return
+  }
+
+  switch (event.type) {
+    case 'message_start':
+      coord.setMessageId(runId, event.messageId)
+      if (!coord.getSnapshot(runId)?.turnStartedAt) {
+        coord.markRunning(runId, event.messageId)
+      }
+      break
+    case 'tool_call': {
+      // prepared → executing：工具参数已就绪，即将执行
+      const idempotent = isIdempotentToolName(event.toolName)
+      coord.recordToolPhase(runId, event.toolCallId, event.toolName, 'prepared', { idempotent })
+      coord.recordToolPhase(runId, event.toolCallId, event.toolName, 'executing', { idempotent })
+      break
+    }
+    case 'tool_result': {
+      const isError =
+        event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')
+      coord.recordToolPhase(
+        runId,
+        event.toolCallId,
+        event.toolName,
+        isError ? 'failed' : 'committed',
+        { idempotent: isIdempotentToolName(event.toolName) }
+      )
+      break
+    }
+    case 'permission_request': {
+      coord.inbox.enqueue({
+        runId,
+        sessionId,
+        messageId: event.messageId,
+        type: 'permission',
+        interactionId: event.requestId,
+        payload: {
+          requestId: event.requestId,
+          toolName: event.toolName,
+          args: event.args,
+          riskLevel: event.riskLevel,
+          reason: event.reason,
+          commands: event.commands,
+          toolCallIds: event.toolCallIds
+        }
+      })
+      break
+    }
+    case 'verification_permission_request': {
+      coord.inbox.enqueue({
+        runId,
+        sessionId,
+        messageId: event.messageId,
+        type: 'verification',
+        interactionId: event.requestId,
+        payload: {
+          requestId: event.requestId,
+          command: event.command
+        }
+      })
+      break
+    }
+    case 'message_end': {
+      // 终态由 SEND_MESSAGE finally 统一 commit；此处只心跳
+      coord.heartbeat(runId, { label: event.interrupted ? 'interrupted' : 'message_end' })
+      break
+    }
+    default:
+      break
+  }
+}
+
+/** 只读类工具可视为幂等；写入类默认非幂等，中断后不自动重放 */
+function isIdempotentToolName(toolName: string): boolean {
+  const readOnly = new Set([
+    'read',
+    'ls',
+    'grep',
+    'find',
+    'webSearch',
+    'memorySearch',
+    'askQuestion'
+  ])
+  return readOnly.has(toolName)
 }
 
 /** 每次消息处理需要的上下文快照，避免读全局变量 */
@@ -766,9 +1089,10 @@ export interface MessageContext {
 export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx: MessageContext): void {
   // 注意：tool_call_start / tool_call_delta 是流式增量事件，不写 stream 累积器。
   // 持久化只关心最终完整 tool_call（由 tool_call 事件写入），增量不落盘。
+  // 累积器以有序 blocks 为唯一事实源；content/toolCalls 仅在 message_end 投影。
   switch (event.type) {
     case 'message_start': {
-      activeStreams.set(event.messageId, { content: '', toolCalls: [], blocks: [], cancelled: false })
+      activeStreams.set(event.messageId, { blocks: [], cancelled: false })
       break
     }
     case 'thinking_delta': {
@@ -786,7 +1110,6 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
     case 'text_delta': {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
-        stream.content += event.delta
         const last = stream.blocks[stream.blocks.length - 1]
         if (last && last.type === 'text') {
           last.content += event.delta
@@ -799,12 +1122,6 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
     case 'tool_call': {
       const stream = activeStreams.get(event.messageId)
       if (stream) {
-        stream.toolCalls.push({
-          id: event.toolCallId,
-          name: event.toolName,
-          arguments: JSON.stringify(event.args),
-          result: undefined
-        })
         stream.blocks.push({
           type: 'tool',
           toolCallId: event.toolCallId,
@@ -819,16 +1136,6 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       const stream = activeStreams.get(event.messageId)
       if (stream) {
         const isError = event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')
-        const targetIdx = stream.toolCalls.findIndex(tc => tc.id === event.toolCallId)
-        if (targetIdx !== -1) {
-          stream.toolCalls[targetIdx].result = event.result
-          if (event.artifactId) {
-            stream.toolCalls[targetIdx].artifactId = event.artifactId
-          }
-          if (event.truncationMeta) {
-            stream.toolCalls[targetIdx].truncationMeta = event.truncationMeta
-          }
-        }
         const blockIdx = stream.blocks.findIndex(b => b.type === 'tool' && b.toolCallId === event.toolCallId)
         if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
           const block = stream.blocks[blockIdx]
@@ -849,13 +1156,12 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       if (stream) {
         activeStreams.delete(event.messageId)
 
-        // T3-3 兜底：cancel 期间残留的"权限拒绝"工具结果不应进入持久化历史，
-        // 否则下次进入会话会看到莫名其妙的拒绝卡片。
-        const { toolCalls, blocks } = stream.cancelled
-          ? dropPermissionDeniedResiduals(stream.toolCalls, stream.blocks)
-          : { toolCalls: stream.toolCalls, blocks: stream.blocks }
+        // cancel 期间残留的"权限拒绝"工具块不应进入持久化历史
+        const blocks = stream.cancelled
+          ? dropPermissionDeniedResidualBlocks(stream.blocks)
+          : stream.blocks
 
-        saveAssistantMessage(sessionId, event.messageId, stream.content, toolCalls, blocks, event.interrupted)
+        saveAssistantMessage(sessionId, event.messageId, blocks, event.interrupted)
         triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
@@ -866,6 +1172,14 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         activeStreams.delete(event.messageId)
       }
       saveErrorMessage(sessionId, event.messageId, event.error)
+      break
+    }
+    case 'attempt_failed': {
+      // 失败 attempt：清空累积器中的临时块，保留条目供下一次 attempt 继续写
+      const stream = activeStreams.get(event.messageId)
+      if (stream) {
+        stream.blocks = []
+      }
       break
     }
   }
@@ -1011,35 +1325,28 @@ export function triggerVerificationIfNeeded(
   verifyAsync()
 }
 
-/** 将验证摘要追加到已保存的 assistant 消息 */
+/** 将验证摘要追加到已保存的 assistant 消息（append-only patch，不重写全历史） */
 function appendVerificationSummary(sessionId: string, messageId: string, summary: string): void {
   const sessionStore = getSessionStore()
-  const session = sessionStore.load(sessionId)
-  if (!session) return
-
-  const msgIndex = session.messages.findIndex(m => m.id === messageId)
-  if (msgIndex === -1) return
-
-  session.messages[msgIndex].verificationSummary = summary
-  sessionStore.save(session)
+  sessionStore.appendMessagePatch(sessionId, messageId, { verificationSummary: summary })
 }
 
-/** 保存完整的 assistant 消息到会话存储 */
+/** 保存完整的 assistant 消息到会话存储（blocks 为事实源，content/toolCalls 为投影） */
 function saveAssistantMessage(
   sessionId: string,
   messageId: string,
-  content: string,
-  toolCalls: SessionToolCall[],
   blocks: MessageBlock[],
   interrupted?: boolean
 ): void {
   const sessionStore = getSessionStore()
+  const projected = projectAssistantFieldsFromBlocks(blocks)
   const assistantMessage: SessionMessageAppend = {
     id: messageId,
     role: 'assistant',
-    content,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    blocks: blocks.length > 0 ? blocks : undefined,
+    content: projected.content,
+    toolCalls: projected.toolCalls,
+    blocks: projected.blocks.length > 0 ? projected.blocks : undefined,
+    messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE,
     timestamp: Date.now(),
     // 取消中断的消息也持久化 interrupted 标记，下次加载时 UI 仍能区分
     ...(interrupted ? { interrupted: true } : {})
@@ -1048,34 +1355,15 @@ function saveAssistantMessage(
 }
 
 /**
- * 兜底过滤：剔除"权限拒绝: 用户拒绝"残留
- *
- * 当 cancel 在权限弹窗弹出时被触发，理论上 AgentLoop 已经走 PermissionAbortedError
- * 路径不再发出 tool_result 事件；但这里再做一道兜底，让旧版本 runtime 或异常路径
- * 也不会污染会话历史。
- *
- * 只剔除"由用户拒绝产生"的权限拒绝条目（reason 含「用户拒绝」），保留模式策略
- * 引发的拒绝（如 plan 模式拒写工具），后者是 Agent 真实经历过的事实。
+ * 兜底过滤：剔除"权限拒绝: 用户拒绝"残留 tool 块。
+ * 只剔除用户拒绝产生的条目，保留模式策略引发的拒绝。
  */
-function dropPermissionDeniedResiduals(
-  toolCalls: SessionToolCall[],
-  blocks: MessageBlock[]
-): { toolCalls: SessionToolCall[]; blocks: MessageBlock[] } {
-  const isUserDenied = (result?: string): boolean =>
-    typeof result === 'string' && result.startsWith('权限拒绝:') && result.includes('用户拒绝')
-
-  const droppedIds = new Set<string>()
-  for (const tc of toolCalls) {
-    if (isUserDenied(tc.result)) droppedIds.add(tc.id)
-  }
-  if (droppedIds.size === 0) {
-    return { toolCalls, blocks }
-  }
-
-  return {
-    toolCalls: toolCalls.filter(tc => !droppedIds.has(tc.id)),
-    blocks: blocks.filter(b => b.type !== 'tool' || !droppedIds.has(b.toolCallId))
-  }
+function dropPermissionDeniedResidualBlocks(blocks: MessageBlock[]): MessageBlock[] {
+  return blocks.filter(b => {
+    if (b.type !== 'tool') return true
+    const result = b.result ?? ''
+    return !(result.startsWith('权限拒绝:') && result.includes('用户拒绝'))
+  })
 }
 
 /** 保存错误消息到会话存储 */
@@ -1125,7 +1413,8 @@ export function forwardEventToRenderer(
     event.type === 'tool_call_start' ||
     event.type === 'tool_call' ||
     event.type === 'message_end' ||
-    event.type === 'error'
+    event.type === 'error' ||
+    event.type === 'attempt_failed'
 
   if (flushBeforeSend) {
     flushMainDeltaCoalescer(mainWindow)
@@ -1206,7 +1495,12 @@ export function forwardEventToRenderer(
     case 'ask_question_request':
       webContents.send('agent:ask-question-request', {
         requestId: event.requestId,
-        questions: event.questions
+        questions: event.questions,
+        ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+        ...(event.messageId ? { messageId: event.messageId } : {}),
+        ...(event.runId ? { runId: event.runId } : {}),
+        ...(event.interactionId ? { interactionId: event.interactionId } : {}),
+        ...(event.version !== undefined ? { version: event.version } : {})
       })
       break
     case 'ask_question_resolved':
@@ -1259,6 +1553,13 @@ export function forwardEventToRenderer(
         modelId: event.modelId,
         fallbackIndex: event.fallbackIndex,
         reason: event.reason
+      })
+      break
+    case 'attempt_failed':
+      webContents.send('agent:attempt-failed', {
+        messageId: event.messageId,
+        attemptId: event.attemptId,
+        error: event.error
       })
       break
     case 'message_end':
