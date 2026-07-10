@@ -22,9 +22,14 @@ import type { AgentEvent } from '../../../src/runtime/agent/types'
  */
 
 // mock sessionHandler 的 getSessionStore，避免真实磁盘 IO
+// 生产热路径已切到 appendMessageFast，mock 必须对齐真实接口（禁止生产加慢路径 fallback）
 const mockAppendMessage = vi.fn()
+const mockAppendMessageFast = vi.fn()
+const mockAppendMessagePatch = vi.fn()
 const mockStore = {
   appendMessage: mockAppendMessage,
+  appendMessageFast: mockAppendMessageFast,
+  appendMessagePatch: mockAppendMessagePatch,
   save: vi.fn(),
   load: vi.fn(),
   getSessionsDir: () => '/tmp/test-sessions'
@@ -100,23 +105,27 @@ describe('agentHandler 真实入口测试', () => {
       accumulateStreamEvent('sess_1', { type: 'text_delta', messageId: 'msg_1', delta: '世界。' }, ctx)
 
       const stream = activeStreams.get('msg_1')!
-      expect(stream.content).toBe('你好，世界。')
+      expect(stream.blocks).toHaveLength(1)
+      expect(stream.blocks[0]).toMatchObject({ type: 'text', content: '你好，世界。' })
 
       accumulateStreamEvent('sess_1', { type: 'message_end', messageId: 'msg_1' }, ctx)
 
       // message_end 后 activeStreams 应清理
       expect(activeStreams.has('msg_1')).toBe(false)
 
-      // 通过 mock 的 getSessionStore 验证 appendMessage 被调用
+      // 热路径走 appendMessageFast（content 由 blocks 投影）
       const store = getSessionStore()
-      expect(store.appendMessage).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      expect(store.appendMessageFast).toHaveBeenCalledWith('sess_1', expect.objectContaining({
         id: 'msg_1',
         role: 'assistant',
-        content: '你好，世界。'
+        content: '你好，世界。',
+        blocks: expect.arrayContaining([
+          expect.objectContaining({ type: 'text', content: '你好，世界。' })
+        ])
       }))
     })
 
-    it('tool_call 和 tool_result 累积到 blocks 和 toolCalls', () => {
+    it('tool_call 和 tool_result 累积到 blocks（事实源），落盘时投影 toolCalls', () => {
       const ctx = makeCtx()
 
       accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_2' }, ctx)
@@ -129,10 +138,11 @@ describe('agentHandler 真实入口测试', () => {
       }, ctx)
 
       const stream = activeStreams.get('msg_2')!
-      expect(stream.toolCalls).toHaveLength(1)
-      expect(stream.toolCalls[0].name).toBe('ls')
       expect(stream.blocks).toHaveLength(1)
       expect(stream.blocks[0].type).toBe('tool')
+      if (stream.blocks[0].type === 'tool') {
+        expect(stream.blocks[0].toolName).toBe('ls')
+      }
 
       accumulateStreamEvent('sess_1', {
         type: 'tool_result',
@@ -142,8 +152,10 @@ describe('agentHandler 真实入口测试', () => {
         result: 'file1.ts\nfile2.ts'
       }, ctx)
 
-      expect(stream.toolCalls[0].result).toBe('file1.ts\nfile2.ts')
       expect(stream.blocks[0].status).toBe('success')
+      if (stream.blocks[0].type === 'tool') {
+        expect(stream.blocks[0].result).toBe('file1.ts\nfile2.ts')
+      }
     })
 
     it('error 事件清理累积器并保存错误消息', () => {
@@ -156,7 +168,7 @@ describe('agentHandler 真实入口测试', () => {
       expect(activeStreams.has('msg_3')).toBe(false)
 
       const store = getSessionStore()
-      expect(store.appendMessage).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      expect(store.appendMessageFast).toHaveBeenCalledWith('sess_1', expect.objectContaining({
         id: 'msg_3',
         role: 'assistant',
         content: 'API 超时'
@@ -212,7 +224,7 @@ describe('agentHandler 真实入口测试', () => {
       accumulateStreamEvent('sess_1', { type: 'message_end', messageId: 'msg_cancel' }, ctx)
 
       const store = getSessionStore()
-      const lastCall = vi.mocked(store.appendMessage).mock.calls.find(
+      const lastCall = vi.mocked(store.appendMessageFast).mock.calls.find(
         c => (c[1] as any).id === 'msg_cancel'
       )
       expect(lastCall).toBeDefined()
@@ -250,7 +262,7 @@ describe('agentHandler 真实入口测试', () => {
       accumulateStreamEvent('sess_1', { type: 'message_end', messageId: 'msg_normal' }, ctx)
 
       const store = getSessionStore()
-      const savedCall = vi.mocked(store.appendMessage).mock.calls.find(
+      const savedCall = vi.mocked(store.appendMessageFast).mock.calls.find(
         c => (c[1] as any).id === 'msg_normal'
       )
       expect(savedCall).toBeDefined()

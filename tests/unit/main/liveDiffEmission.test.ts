@@ -15,6 +15,8 @@ import type { AgentEvent } from '../../../src/runtime/agent/types'
 vi.mock('../../../src/main/ipc/sessionHandler', () => ({
   getSessionStore: () => ({
     appendMessage: vi.fn(),
+    // 与生产热路径对齐：accumulateStreamEvent 落盘走 appendMessageFast
+    appendMessageFast: vi.fn(),
     save: vi.fn(),
     load: vi.fn(),
     getSessionsDir: () => '/tmp/test-sessions'

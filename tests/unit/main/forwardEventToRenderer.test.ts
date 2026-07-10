@@ -5,6 +5,7 @@ import type { AgentEvent } from '../../../src/runtime/agent/types'
 vi.mock('../../../src/main/ipc/sessionHandler', () => ({
   getSessionStore: () => ({
     appendMessage: vi.fn(),
+    appendMessageFast: vi.fn(),
     save: vi.fn(),
     load: vi.fn(),
     getSessionsDir: () => '/tmp/test-sessions'

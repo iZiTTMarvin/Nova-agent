@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:perf": "node scripts/run-perf-gate.mjs",
     "test:memory-integration": "node scripts/run-memory-integration-test.mjs",
     "validate:skills": "node scripts/validate-skill-frontmatter.mjs",
     "sync:icon": "node scripts/sync-build-icon.mjs",
@@ -25,6 +26,7 @@
     "dist": "npm run build && npm run pack && node scripts/verify-pack-icons.mjs"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.5",
     "@vscode/ripgrep": "^1.18.0",
     "better-sqlite3": "^11.9.1",
     "electron-log": "^5.4.4",
