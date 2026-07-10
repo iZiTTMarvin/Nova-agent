@@ -709,6 +709,25 @@ export class SessionStore {
     return session
   }
 
+  /**
+   * 确保会话有 cacheRoutingKey：已有则原样返回，否则懒生成 UUID 并只写元数据。
+   * 不重写 messages.jsonl；同一会话树分支共享此 key。
+   */
+  ensureCacheRoutingKey(sessionId: string): string | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    if (typeof session.cacheRoutingKey === 'string' && session.cacheRoutingKey.length > 0) {
+      return session.cacheRoutingKey
+    }
+
+    const key = randomUUID()
+    session.cacheRoutingKey = key
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return key
+  }
+
   /** 获取会话目录绝对路径（供 CheckpointManager 使用） */
   getSessionsDir(): string {
     return this.sessionsDir

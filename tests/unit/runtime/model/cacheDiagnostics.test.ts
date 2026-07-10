@@ -1,7 +1,7 @@
-import { createHash } from 'crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
+import { fingerprintFinalRequestBody as fingerprintBody } from '../../../../src/runtime/model/requestFingerprint'
 import type { ChatMessage, ToolDefinition } from '../../../../src/runtime/model/types'
 
 const SYSTEM_PROMPT = '你是编程助手'
@@ -10,16 +10,12 @@ const TOOLS: ToolDefinition[] = [
   { name: 'read', description: '读取文件', parameters: { type: 'object' } }
 ]
 
-/**
- * 基于最终 API 请求体结构的匿名指纹（T0-3 / 约束 5）。
- * 只纳入角色序列、工具名序、字段存在性、内容长度——不含 prompt 正文、API key、thinking。
- * 供后续 T1 会话级诊断对齐；当前 CacheDiagnostics 仍只用 system+tools 哈希。
- */
-function fingerprintFinalRequestBody(body: Record<string, unknown>): string {
+/** 调用生产指纹函数，并断言结构字段不含敏感明文（约束 5） */
+function assertFingerprintSafe(body: Record<string, unknown>): string {
+  const fp = fingerprintBody(body)
   const messages = (body.messages as Array<Record<string, unknown>> | undefined) ?? []
   const tools = (body.tools as Array<Record<string, unknown>> | undefined) ?? []
-
-  const structural = {
+  const structural = JSON.stringify({
     model: typeof body.model === 'string' ? body.model : '',
     messageRoles: messages.map(m => String(m.role ?? '')),
     messageContentLens: messages.map(m => {
@@ -35,14 +31,10 @@ function fingerprintFinalRequestBody(body: Record<string, unknown>): string {
     }),
     hasPromptCacheKey: 'prompt_cache_key' in body,
     hasCacheControlSomewhere: JSON.stringify(body).includes('"cache_control"')
-  }
-
-  // 防御：指纹输入不得携带敏感明文
-  const raw = JSON.stringify(structural)
-  expect(raw).not.toContain('sk-')
-  expect(raw).not.toMatch(/你是编程助手|内部推理|thinking|apiKey|Authorization/i)
-
-  return createHash('sha256').update(raw).digest('hex').slice(0, 16)
+  })
+  expect(structural).not.toContain('sk-')
+  expect(structural).not.toMatch(/你是编程助手|内部推理|thinking|apiKey|Authorization/i)
+  return fp
 }
 
 /** 模拟 agentHandler：每次 SEND_MESSAGE dispose 旧 loop 后 new 新的（诊断实例随之丢弃） */
@@ -309,8 +301,8 @@ describe('T0-3 CacheDiagnostics 会话边界基线（改造前）', () => {
     }
 
     expect(capturedBody).not.toBeNull()
-    const fp1 = fingerprintFinalRequestBody(capturedBody!)
-    const fp2 = fingerprintFinalRequestBody(capturedBody!)
+    const fp1 = assertFingerprintSafe(capturedBody!)
+    const fp2 = assertFingerprintSafe(capturedBody!)
     expect(fp1).toBe(fp2)
     expect(fp1).toMatch(/^[a-f0-9]{16}$/)
     // 指纹本身是哈希，不含明文

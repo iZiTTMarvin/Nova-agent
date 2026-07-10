@@ -23,7 +23,13 @@ export interface SettingsState {
   isConfigModalOpen: boolean
   currentProject: string | null
   currentMode: Mode
+  /**
+   * 全部分桶合计（兼容旧 UI / 测试）。
+   * 有数据时非 null；reset 后清空。
+   */
   sessionUsage: SessionUsageStats | null
+  /** 按 cacheProfileId 分桶的会话用量；fallback 后进新桶 */
+  sessionUsageByProfile: Record<string, SessionUsageStats>
   contextBreakdown: ContextBreakdown | null
   composerPrefill: string | null
 
@@ -43,7 +49,11 @@ export interface SettingsState {
   openLlmSettings: () => void
   selectProject: () => Promise<void>
   setMode: (mode: Mode) => Promise<void>
-  handleUsage: (usage: NormalizedUsage) => void
+  /**
+   * 累计本轮 usage。
+   * @param cacheProfileId 实际 provider 档案；缺省时归入 'unknown'（兼容旧测试调用）
+   */
+  handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => void
   resetSessionUsage: () => void
   setContextBreakdown: (payload: ContextBreakdown) => void
   syncFromWorkspace: (project: string | null, mode: Mode) => void
@@ -57,6 +67,84 @@ const EMPTY_USAGE: SessionUsageStats = {
   totalCachedTokens: 0,
   totalCacheWriteTokens: 0,
   hitRate: 0
+}
+
+/** 无 profileId 时的兜底桶名（旧测试 / 未接线路径） */
+const UNKNOWN_PROFILE_BUCKET = 'unknown'
+
+/** 把单轮 usage 累加进已有 SessionUsageStats */
+function accumulateUsage(prev: SessionUsageStats, usage: NormalizedUsage): SessionUsageStats {
+  const totalPrompt = prev.totalPromptTokens + usage.promptTokens
+  const totalCached = prev.totalCachedTokens + usage.cachedTokens
+  const totalCacheWrite = prev.totalCacheWriteTokens + (usage.cacheWriteTokens ?? 0)
+  const hasMissThisRound = usage.cacheMissTokens !== undefined
+  const totalMiss = hasMissThisRound
+    ? (prev.totalCacheMissTokens ?? 0) + usage.cacheMissTokens!
+    : prev.totalCacheMissTokens
+
+  let hitRate: number
+  if (hasMissThisRound) {
+    const denom = totalCached + (totalMiss ?? 0)
+    hitRate = denom > 0 ? totalCached / denom : 0
+  } else {
+    const totalInput = totalPrompt + totalCacheWrite
+    hitRate = totalInput > 0 ? totalCached / totalInput : 0
+  }
+
+  const next: SessionUsageStats = {
+    totalPromptTokens: totalPrompt,
+    totalCompletionTokens: prev.totalCompletionTokens + usage.completionTokens,
+    totalCachedTokens: totalCached,
+    totalCacheWriteTokens: totalCacheWrite,
+    hitRate
+  }
+  if (totalMiss !== undefined) {
+    next.totalCacheMissTokens = totalMiss
+  }
+  return next
+}
+
+/** 多分桶合计，供兼容 sessionUsage 与 compact 摘要 */
+function aggregateUsageBuckets(buckets: Record<string, SessionUsageStats>): SessionUsageStats | null {
+  const values = Object.values(buckets)
+  if (values.length === 0) return null
+
+  let totalPrompt = 0
+  let totalCompletion = 0
+  let totalCached = 0
+  let totalCacheWrite = 0
+  let totalMiss: number | undefined
+
+  for (const b of values) {
+    totalPrompt += b.totalPromptTokens
+    totalCompletion += b.totalCompletionTokens
+    totalCached += b.totalCachedTokens
+    totalCacheWrite += b.totalCacheWriteTokens
+    if (b.totalCacheMissTokens !== undefined) {
+      totalMiss = (totalMiss ?? 0) + b.totalCacheMissTokens
+    }
+  }
+
+  let hitRate: number
+  if (totalMiss !== undefined) {
+    const denom = totalCached + totalMiss
+    hitRate = denom > 0 ? totalCached / denom : 0
+  } else {
+    const totalInput = totalPrompt + totalCacheWrite
+    hitRate = totalInput > 0 ? totalCached / totalInput : 0
+  }
+
+  const next: SessionUsageStats = {
+    totalPromptTokens: totalPrompt,
+    totalCompletionTokens: totalCompletion,
+    totalCachedTokens: totalCached,
+    totalCacheWriteTokens: totalCacheWrite,
+    hitRate
+  }
+  if (totalMiss !== undefined) {
+    next.totalCacheMissTokens = totalMiss
+  }
+  return next
 }
 
 export interface ContextBreakdown {
@@ -100,6 +188,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   currentProject: null,
   currentMode: 'default',
   sessionUsage: null,
+  sessionUsageByProfile: {},
   contextBreakdown: null,
   composerPrefill: null,
 
@@ -190,27 +279,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await useWorkspaceStore.getState().setMode(mode)
   },
 
-  handleUsage: (usage: NormalizedUsage) => {
+  handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => {
+    const bucketId = cacheProfileId && cacheProfileId.length > 0
+      ? cacheProfileId
+      : UNKNOWN_PROFILE_BUCKET
     set(state => {
-      const prev = state.sessionUsage ?? EMPTY_USAGE
-      const totalPrompt = prev.totalPromptTokens + usage.promptTokens
-      const totalCached = prev.totalCachedTokens + usage.cachedTokens
-      const totalCacheWrite = prev.totalCacheWriteTokens + (usage.cacheWriteTokens ?? 0)
-      const totalInput = totalPrompt + totalCacheWrite
+      const prevBucket = state.sessionUsageByProfile[bucketId] ?? EMPTY_USAGE
+      const nextBucket = accumulateUsage(prevBucket, usage)
+      const sessionUsageByProfile = {
+        ...state.sessionUsageByProfile,
+        [bucketId]: nextBucket
+      }
       return {
-        sessionUsage: {
-          totalPromptTokens: totalPrompt,
-          totalCompletionTokens: prev.totalCompletionTokens + usage.completionTokens,
-          totalCachedTokens: totalCached,
-          totalCacheWriteTokens: totalCacheWrite,
-          hitRate: totalInput > 0 ? totalCached / totalInput : 0
-        }
+        sessionUsageByProfile,
+        sessionUsage: aggregateUsageBuckets(sessionUsageByProfile)
       }
     })
   },
 
   resetSessionUsage: () => {
-    set({ sessionUsage: null })
+    set({ sessionUsage: null, sessionUsageByProfile: {} })
   },
 
   setContextBreakdown: (payload) => {
@@ -246,6 +334,7 @@ export function resetSettingsStoreForTests(): void {
     currentProject: null,
     currentMode: 'default',
     sessionUsage: null,
+    sessionUsageByProfile: {},
     contextBreakdown: null,
     composerPrefill: null
   })

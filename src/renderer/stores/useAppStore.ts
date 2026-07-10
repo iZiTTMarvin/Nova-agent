@@ -107,7 +107,7 @@ export interface AppState {
     reviews: Record<string, DiffReviewStatus>
   ) => void
   handleMessageEnd: (messageId: string, interrupted?: boolean) => void
-  handleUsage: (usage: NormalizedUsage) => void
+  handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => void
   setContextBreakdown: (payload: import('./useSettingsStore').ContextBreakdown) => void
   handleError: (messageId: string, error: string) => void
   handleVerificationResult: (messageId: string, result: string) => void

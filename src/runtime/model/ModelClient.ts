@@ -23,6 +23,11 @@ export interface ChatOptions {
     idleMs?: number
     totalMs?: number
   }
+  /**
+   * 会话级 prompt 缓存路由 key（来自 SessionData.cacheRoutingKey）。
+   * 本阶段只准备字段透传；OpenAICompatibleModelClient 暂不写入 body（T2-4 再按 profile 白名单注入）。
+   */
+  promptCacheKey?: string
 }
 
 export interface ModelClient {

@@ -213,9 +213,9 @@ function App(): JSX.Element {
       })
     }))
 
-    // 监听：Token 用量统计
+    // 监听：Token 用量统计（按实际 provider 的 cacheProfileId 分桶）
     const unsubUsage = window.api.on('agent:usage', gateAgentEvent('usage', (data) => {
-      handleUsage(data.usage)
+      handleUsage(data.usage, data.cacheProfileId)
     }))
 
     const unsubContextBreakdown = window.api.on('agent:context-breakdown', (data) => {

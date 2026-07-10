@@ -26,7 +26,7 @@ interface ProviderSlot {
   isPrimary: boolean
 }
 
-/** 活跃 provider 信息（供 UI 展示与方言判定） */
+/** 活跃 provider 信息（供 UI 展示与方言/缓存档案判定） */
 export interface ActiveProviderInfo {
   /** 当前使用的模型 ID */
   modelId: string
@@ -36,6 +36,10 @@ export interface ActiveProviderInfo {
   baseUrl: string
   /** 用户配置的工具调用方言覆盖（'auto' 或未设置时走自动判定） */
   toolDialect?: ModelConfig['toolDialect']
+  /** 显式缓存档案覆盖，交给 resolveCacheProfile */
+  cacheProfile?: ModelConfig['cacheProfile']
+  /** 旧 cacheStrategy 兼容字段 */
+  cacheStrategy?: ModelConfig['cacheStrategy']
 }
 
 export interface ModelClientPoolOptions {
@@ -117,7 +121,9 @@ export class ModelClientPool implements ModelClient {
       modelId: slot.config.modelId,
       fallbackIndex: this.activeIndex,
       baseUrl: slot.config.baseUrl,
-      toolDialect: slot.config.toolDialect
+      toolDialect: slot.config.toolDialect,
+      cacheProfile: slot.config.cacheProfile,
+      cacheStrategy: slot.config.cacheStrategy
     }
   }
 }

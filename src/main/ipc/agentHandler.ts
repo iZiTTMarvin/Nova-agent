@@ -504,6 +504,12 @@ export function registerAgentHandler(
       agentLoop.dispose()
     }
 
+    // 会话级缓存路由 key：懒生成并持久化，注入 AgentLoop（本阶段不写 API body）
+    const cacheRoutingKey = sessionStore.ensureCacheRoutingKey(params.sessionId) ?? undefined
+    if (cacheRoutingKey) {
+      session.cacheRoutingKey = cacheRoutingKey
+    }
+
     agentLoop = new AgentLoop(modelPool, eventBus, {
       systemPromptLayers: {
         agentRole: frozenPrompt,
@@ -519,6 +525,7 @@ export function registerAgentHandler(
       supportsVision,
       maxToolRounds: novaSettings.maxToolRounds,
       toolDialectOverride: persistedConfig?.toolDialect,
+      promptCacheKey: cacheRoutingKey,
       onCompaction: (compactedContext, meta) => {
         if (!persistCompactionSnapshot(sessionStore, capturedSessionId, compactedContext, meta)) {
           console.error(`[onCompaction] 找不到会话 ${capturedSessionId}，快照未写`)
@@ -1743,7 +1750,11 @@ export function forwardEventToRenderer(
       })
       break
     case 'usage':
-      webContents.send('agent:usage', { messageId: event.messageId, usage: event.usage })
+      webContents.send('agent:usage', {
+        messageId: event.messageId,
+        usage: event.usage,
+        cacheProfileId: event.cacheProfileId
+      })
       break
     case 'context_breakdown':
       webContents.send('agent:context-breakdown', {

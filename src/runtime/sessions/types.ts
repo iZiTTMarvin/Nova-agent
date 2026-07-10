@@ -77,6 +77,12 @@ export interface SessionData {
    * 从此字段恢复，保证跨轮仍能 read references（如 asar.unpacked 下的 builtin skill）。
    */
   grantedSkillRoots?: string[]
+  /**
+   * 会话级缓存路由 key（匿名 UUID）。
+   * 首次需要时懒生成并持久化；同一会话树各分支复用，不同会话绝不共享。
+   * 不派生自标题 / 工作区路径 / apiKey。body 注入由后续阶段按 profile 白名单完成。
+   */
+  cacheRoutingKey?: string
 }
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */

@@ -18,7 +18,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 8
+export const CURRENT_SESSION_SCHEMA_VERSION = 9
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -201,6 +201,19 @@ function migrateV7ToV8(data: unknown): SessionData {
   }
 }
 
+/**
+ * v8 → v9：引入可选 cacheRoutingKey。
+ * 不在迁移时批量生成 key（避免无谓写盘）；首次需要时由 SessionStore 懒生成。
+ * 不重写 messages.jsonl，不改 session id / 分支 / checkpoint 语义。
+ */
+function migrateV8ToV9(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 9
+  }
+}
+
 /** 旧字面量 auto → default；非法值兜底 default */
 function normalizeLegacyMode(mode: unknown): Mode {
   if (mode === 'plan' || mode === 'default' || mode === 'compose') return mode
@@ -231,7 +244,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV4ToV5, // v4 → v5
   migrateV5ToV6, // v5 → v6
   migrateV6ToV7, // v6 → v7
-  migrateV7ToV8  // v7 → v8
+  migrateV7ToV8, // v7 → v8
+  migrateV8ToV9  // v8 → v9
 ]
 
 /**

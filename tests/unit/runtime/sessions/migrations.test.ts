@@ -131,4 +131,20 @@ describe('migrateSessionData', () => {
     expect(migrated.title).toBe(SESSION_MIGRATED_EMPTY_TITLE)
     expect(migrated.titleSource).toBe('placeholder')
   })
+
+  it('v8 会话升级到当前版本，不强制生成 cacheRoutingKey', () => {
+    const v8 = {
+      schemaVersion: 8,
+      id: 'sess_v8',
+      workspaceRoot: '/ws',
+      mode: 'default' as const,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const migrated = migrateSessionData(v8)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.cacheRoutingKey).toBeUndefined()
+  })
 })

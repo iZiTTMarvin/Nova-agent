@@ -241,6 +241,7 @@ export class AgentLoop implements IdleCompactionTarget {
         emitContextBreakdown: (messageId, promptTokens) => this.emitContextBreakdown(messageId, promptTokens),
         runOverflowCompaction: (mode) => this.runOverflowCompaction(mode),
         hookManager: this.hookManager,
+        promptCacheKey: this.config.promptCacheKey,
         syncToolDialect: (context) => {
           this.syncToolDialectFromActiveProvider()
           context.dialect = this.toolDialect
@@ -367,7 +368,8 @@ export class AgentLoop implements IdleCompactionTarget {
       useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false,
       composeAutoRoute: config?.composeAutoRoute !== false,
       skillsTokenEstimate: config?.skillsTokenEstimate,
-      toolDialectOverride: config?.toolDialectOverride
+      toolDialectOverride: config?.toolDialectOverride,
+      promptCacheKey: config?.promptCacheKey
     }
     // 按当前 active provider 判定方言；fallback 切换后由 StreamProcessor 重算
     this.syncToolDialectFromActiveProvider()
@@ -1081,7 +1083,8 @@ export class AgentLoop implements IdleCompactionTarget {
     try {
       const stream = this.modelPool.chat(compactionContext, undefined, {
         abortSignal: this.abortController?.signal,
-        includeInternalMessages: true
+        includeInternalMessages: true,
+        ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
       })
       for await (const event of stream) {
         if (this.cancelled) return
@@ -1458,7 +1461,8 @@ export class AgentLoop implements IdleCompactionTarget {
       let summary = ''
       const stream = this.modelPool.chat(this.context, undefined, {
         abortSignal: this.abortController?.signal,
-        includeInternalMessages: true
+        includeInternalMessages: true,
+        ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
       })
       for await (const event of stream) {
         if (this.cancelled) {

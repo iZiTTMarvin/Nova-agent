@@ -18,7 +18,7 @@ import type { SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { MessageBlock } from '../../../../src/shared/session'
 
 describe('T5-4 消息 block 单一事实源', () => {
-  it('schema 升级到 v8', () => {
+  it('schema 升级到当前版本（含 v8 blocks 源）', () => {
     const v7 = {
       schemaVersion: 7,
       id: 'sess',
@@ -30,8 +30,9 @@ describe('T5-4 消息 block 单一事实源', () => {
       updatedAt: 2
     }
     const migrated = migrateSessionData(v7)
-    expect(migrated.schemaVersion).toBe(8)
-    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(8)
+    // v7→v8 引入 blocks 源；后续版本（如 v9 cacheRoutingKey）只升 schema，不改消息语义
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(CURRENT_SESSION_SCHEMA_VERSION).toBeGreaterThanOrEqual(8)
   })
 
   it('有 blocks 时 content/toolCalls 由投影派生', () => {

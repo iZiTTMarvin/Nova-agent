@@ -26,6 +26,7 @@
 import { randomUUID } from 'crypto'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
+import { resolveCacheProfile } from '../../model/cacheProfile'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 import { repairEmptyArgsFromContent } from './nativeArgsRepair'
@@ -56,6 +57,10 @@ export interface StreamProcessorOptions extends StreamProcessorDeps {
    * 由 AgentLoop 注入，保证按 active provider 重算，不沿用主模型。
    */
   syncToolDialect?: (context: AgentContext) => void
+  /**
+   * 会话级 promptCacheKey；透传到每次 modelPool.chat，本阶段不写 body。
+   */
+  promptCacheKey?: string
 }
 
 export class StreamProcessor {
@@ -69,6 +74,8 @@ export class StreamProcessor {
   /** 统一 retry/fallback attempt 所有权（修复 P0-2） */
   private attemptController: AttemptController
   private syncToolDialect: StreamProcessorOptions['syncToolDialect']
+  /** 会话路由 key，注入 ChatOptions（不写 API body） */
+  private promptCacheKey: string | undefined
 
   /**
    * 单轮溢出压缩守卫（与 AttemptController 正交）。
@@ -88,6 +95,7 @@ export class StreamProcessor {
     this.runOverflowCompaction = opts.runOverflowCompaction
     this.hookManager = opts.hookManager
     this.syncToolDialect = opts.syncToolDialect
+    this.promptCacheKey = opts.promptCacheKey
     this.attemptController = new AttemptController({
       recovery: opts.recovery,
       modelPool: opts.modelPool
@@ -136,7 +144,10 @@ export class StreamProcessor {
       return result
     }
 
-    const stream = this.modelPool.chat(chatMessages, nativeTools, signal ? { abortSignal: signal } : undefined)
+    const stream = this.modelPool.chat(chatMessages, nativeTools, {
+      ...(signal ? { abortSignal: signal } : {}),
+      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
+    })
 
     let assistantContent = ''
     let rawContent = ''
@@ -353,8 +364,19 @@ export class StreamProcessor {
 
           case 'usage':
             roundSawUsage = true
-            this.emit({ type: 'usage', messageId, usage: event.usage })
             {
+              // 按当前 active provider 解析档案；fallback 切换后归属新 provider，不沿用主模型
+              const provider = this.modelPool.getActiveProvider()
+              const profile = resolveCacheProfile(provider.baseUrl, provider.modelId, {
+                cacheProfile: provider.cacheProfile,
+                cacheStrategy: provider.cacheStrategy
+              })
+              this.emit({
+                type: 'usage',
+                messageId,
+                usage: event.usage,
+                cacheProfileId: profile.id
+              })
               const diag = this.cacheDiagnostics.checkResponse(
                 event.usage.cachedTokens,
                 extractTextFromContent(context.messages.find(m => m.role === 'system')?.content ?? ''),

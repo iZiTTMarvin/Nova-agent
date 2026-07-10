@@ -105,10 +105,15 @@ export interface SessionUsageStats {
   totalCachedTokens: number
   totalCacheWriteTokens: number
   /**
-   * 缓存命中率 = totalCachedTokens / (totalPromptTokens + totalCacheWriteTokens)
-   *
-   * Anthropic 总输入 = input_tokens + cache_read_input_tokens + cache_creation_input_tokens。
-   * 其中 promptTokens 已包含前两项，所以分母必须补上 cache_creation_input_tokens。
+   * 缓存未命中累计（仅当某轮 usage 确有 cacheMissTokens 时累计）。
+   * optional：无 miss 报告的会话不出现该字段，UI 不得显示为 0。
+   */
+  totalCacheMissTokens?: number
+  /**
+   * 缓存命中率口径：
+   * - 本轮确有 cacheMissTokens 时：hit / (hit + miss)（DeepSeek）
+   * - 否则：totalCachedTokens / (totalPromptTokens + totalCacheWriteTokens)
+   *   （Anthropic 须把 cache_creation 纳入分母）
    */
   hitRate: number
 }

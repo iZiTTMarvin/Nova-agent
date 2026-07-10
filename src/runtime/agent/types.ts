@@ -48,7 +48,7 @@ export type AgentEvent =
   | { type: 'verification_permission_request'; messageId: string; requestId: string; command: string }
   | { type: 'verification_permission_cleared'; messageId: string; requestId: string }
   | { type: 'verification_result'; messageId: string; result: string }
-  | { type: 'usage'; messageId: string; usage: NormalizedUsage }
+  | { type: 'usage'; messageId: string; usage: NormalizedUsage; cacheProfileId: string }
   | {
       type: 'context_breakdown'
       sessionId: string
@@ -223,6 +223,11 @@ export interface AgentLoopConfig {
    * 'auto'/未设置时走 preferredToolDialect 自动判定。
    */
   toolDialectOverride?: 'auto' | 'native' | 'xml'
+  /**
+   * 会话级缓存路由 key，透传到每次 modelPool.chat 的 ChatOptions.promptCacheKey。
+   * 主对话 / 压缩 / 工具子轮共用；本阶段不写 API body。
+   */
+  promptCacheKey?: string
 }
 
 /** 压缩完成时传给 onCompaction 的元数据 */

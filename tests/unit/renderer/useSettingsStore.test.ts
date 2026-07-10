@@ -125,4 +125,73 @@ describe('useSettingsStore.handleUsage', () => {
 
     expect(useSettingsStore.getState().sessionUsage).toBeNull()
   })
+
+  it('DeepSeek 本轮有 miss 时命中率用 hit/(hit+miss)', () => {
+    useSettingsStore.getState().handleUsage({
+      promptTokens: 2000,
+      completionTokens: 100,
+      cachedTokens: 1500,
+      cacheWriteTokens: 0,
+      cacheMissTokens: 500
+    })
+    const stats = useSettingsStore.getState().sessionUsage
+
+    expect(stats!.totalCacheMissTokens).toBe(500)
+    // 1500 / (1500 + 500) = 0.75；不得误用 1500/2000
+    expect(stats!.hitRate).toBeCloseTo(0.75)
+  })
+
+  it('无 miss 字段时不写入 totalCacheMissTokens，保持 Anthropic 口径', () => {
+    useSettingsStore.getState().handleUsage({
+      promptTokens: 8000,
+      completionTokens: 500,
+      cachedTokens: 7000,
+      cacheWriteTokens: 2000
+    })
+    const stats = useSettingsStore.getState().sessionUsage
+
+    expect(stats).not.toHaveProperty('totalCacheMissTokens')
+    expect(stats!.hitRate).toBeCloseTo(0.7)
+  })
+
+  it('按 cacheProfileId 分桶累计；fallback 后进新桶', () => {
+    useSettingsStore.getState().handleUsage(
+      {
+        promptTokens: 1000,
+        completionTokens: 50,
+        cachedTokens: 800,
+        cacheWriteTokens: 0
+      },
+      'openai'
+    )
+    useSettingsStore.getState().handleUsage(
+      {
+        promptTokens: 2000,
+        completionTokens: 100,
+        cachedTokens: 1500,
+        cacheWriteTokens: 0,
+        cacheMissTokens: 500
+      },
+      'deepseek'
+    )
+
+    const buckets = useSettingsStore.getState().sessionUsageByProfile
+    expect(Object.keys(buckets).sort()).toEqual(['deepseek', 'openai'])
+    expect(buckets.openai.totalPromptTokens).toBe(1000)
+    expect(buckets.deepseek.totalPromptTokens).toBe(2000)
+    expect(buckets.deepseek.hitRate).toBeCloseTo(0.75)
+    // 合计仍写入 sessionUsage（兼容旧 UI）
+    expect(useSettingsStore.getState().sessionUsage!.totalPromptTokens).toBe(3000)
+  })
+
+  it('resetSessionUsage 清空全部分桶', () => {
+    useSettingsStore.getState().handleUsage(
+      { promptTokens: 100, completionTokens: 10, cachedTokens: 0, cacheWriteTokens: 0 },
+      'kimi'
+    )
+    useSettingsStore.getState().resetSessionUsage()
+    expect(useSettingsStore.getState().sessionUsage).toBeNull()
+    expect(useSettingsStore.getState().sessionUsageByProfile).toEqual({})
+  })
 })
+

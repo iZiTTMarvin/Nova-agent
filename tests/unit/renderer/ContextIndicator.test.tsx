@@ -83,7 +83,7 @@ describe('ContextIndicator', () => {
     })
   })
 
-  it('本会话还没有 usage 时，在 hover 内明确提示暂无数据', () => {
+  it('本会话还没有 usage 时，在 hover 内明确提示未报告', () => {
     setContextState({ sessionUsage: null })
 
     let renderer: TestRenderer.ReactTestRenderer | null = null
@@ -97,8 +97,9 @@ describe('ContextIndicator', () => {
       vi.advanceTimersByTime(100)
     })
 
-    expect(renderer!.root.findByProps({ className: 'context-usage__summary' }).children).toEqual(['暂无数据'])
-    expect(renderer!.root.findByProps({ className: 'context-usage__hint' }).children.join('')).toContain('至少完成一轮模型调用后')
+    // T1-3：无 usage 必须显示「未报告」，不得伪装成 0 命中
+    expect(renderer!.root.findByProps({ className: 'context-usage__summary' }).children).toEqual(['未报告'])
+    expect(renderer!.root.findByProps({ className: 'context-usage__hint' }).children.join('')).toContain('不会把未知显示为 0')
 
     act(() => {
       renderer?.unmount()

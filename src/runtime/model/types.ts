@@ -116,6 +116,11 @@ export interface NormalizedUsage {
   cachedTokens: number
   /** 写入缓存的 token 数（创建缓存的部分，仅 Anthropic 类 provider 有值） */
   cacheWriteTokens: number
+  /**
+   * 缓存未命中 token 数（DeepSeek 等返回 prompt_cache_miss_tokens 时有值）。
+   * 必须 optional：多数 provider 不返回该字段，不能破坏现存对象字面量。
+   */
+  cacheMissTokens?: number
 }
 
 // ── 流式事件 ─────────────────────────────────────────────
