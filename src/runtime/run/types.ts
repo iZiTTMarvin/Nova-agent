@@ -120,6 +120,41 @@ export interface ToolCommitRecord {
   checkpointRef?: string
 }
 
+/**
+ * 执行中 assistant 草稿：工具边界的唯一事实源。
+ * 终态 finalize 后写入 SessionStore，再从 snapshot 清除。
+ */
+export interface TurnDraft {
+  messageId: string
+  attemptId: string
+  /** 有序消息块（与 MessageBlock 同构的可序列化结构） */
+  blocks: Array<Record<string, unknown>>
+  /** 是否已幂等写入 SessionStore */
+  finalized: boolean
+  updatedAt: number
+}
+
+/** Interaction 命令回执（跨进程幂等） */
+export interface InteractionCommandAck {
+  commandId: string
+  interactionId: string
+  at: number
+  /** 精简结果：ok + code，完整 interaction 可从 pendingInteractions 重建 */
+  ok: boolean
+  code?: string
+  message?: string
+}
+
+/** 终态 hook 持久化 outbox 条目 */
+export interface TerminalOutboxEntry {
+  key: string
+  runId: string
+  terminalTransitionId: string
+  hookName: string
+  status: 'pending' | 'delivered'
+  at: number
+}
+
 /** 权威 Run 快照 */
 export interface RunSnapshot {
   runId: string
@@ -144,6 +179,12 @@ export interface RunSnapshot {
   turnStartedAt?: number
   /** 终态提交去重 id（terminalTransitionId） */
   terminalTransitionId?: string
+  /** 执行中消息草稿（工具边界 fsync） */
+  turnDraft?: TurnDraft | null
+  /** 已处理的 interaction command 回执（跨重启幂等） */
+  commandAcks?: InteractionCommandAck[]
+  /** 终态 hook durable outbox */
+  terminalOutbox?: TerminalOutboxEntry[]
 }
 
 /** append-only 事件（落盘 events.jsonl） */

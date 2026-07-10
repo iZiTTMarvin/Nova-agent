@@ -458,7 +458,7 @@ export interface IpcCommands {
     result: { runId: string; status: string }
   }
   'compose:respond-ask-user': {
-    params: { runId: string; requestId: string; answer: string }
+    params: { runId: string; requestId: string; answer: string; commandId?: string }
     result: { ok: boolean }
   }
   'compose:get-state': {

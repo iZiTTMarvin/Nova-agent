@@ -51,6 +51,7 @@ import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import { getSkillService } from '../services/SkillServiceHost'
 import { getSessionStore } from './sessionHandler'
+import { getRunCoordinator } from '../services/RunCoordinatorHost'
 
 function buildComposeDeps(
   workspaceRoot: string,
@@ -133,6 +134,26 @@ function wireComposeEvents(
       wc.send(COMPOSE_LOG, { runId: event.runId, sessionId: event.sessionId, message: event.message })
     }
     if (event.type === 'workflow_ask_user') {
+      // 统一纳入 InteractionInbox，重启后可从 snapshot 恢复挂起交互
+      try {
+        const coord = getRunCoordinator()
+        if (event.sessionId) {
+          coord.inbox.enqueue({
+            runId: event.runId,
+            sessionId: event.sessionId,
+            messageId: event.requestId,
+            type: 'composeAskUser',
+            interactionId: event.requestId,
+            payload: {
+              requestId: event.requestId,
+              question: event.question,
+              options: event.options
+            }
+          })
+        }
+      } catch {
+        // RunCoordinator 未初始化时仍转发 IPC（测试 / 早期启动）
+      }
       wc.send(COMPOSE_ASK_USER, {
         runId: event.runId,
         sessionId: event.sessionId,
@@ -208,12 +229,32 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     }
   })
 
-  // 阶段 E 弹窗会调此接口；阶段 D 提供最小后端，测试也可直接调 resolveWorkflowAskUser
+  // 阶段 E 弹窗会调此接口；应答经 InteractionInbox 幂等后再解除脚本阻塞
   handle(COMPOSE_RESPOND_ASK_USER, async (_e, params: {
     runId: string
     requestId: string
     answer: string
+    commandId?: string
   }) => {
+    try {
+      const coord = getRunCoordinator()
+      const inter = coord.inbox.find(params.requestId)
+      if (inter) {
+        const result = coord.inbox.answer({
+          interactionId: params.requestId,
+          commandId: params.commandId ?? `compose-ask-${params.requestId}-${Date.now()}`,
+          expectedVersion: inter.version,
+          outcome: 'answered',
+          payload: { answer: params.answer }
+        })
+        // 重复 command 仍继续 resolve（脚本侧只应成功一次）
+        if (!result.ok && result.code !== 'already_answered' && result.code !== 'duplicate_command') {
+          // inbox 拒绝时仍尝试解除脚本，避免永久卡住
+        }
+      }
+    } catch {
+      // RunCoordinator 不可用时降级为直接 resolve
+    }
     return { ok: resolveWorkflowAskUser(params.runId, params.requestId, params.answer) }
   })
 

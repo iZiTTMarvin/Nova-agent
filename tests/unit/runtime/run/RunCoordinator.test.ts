@@ -171,4 +171,108 @@ describe('RunCoordinator', () => {
     const t = coord.commitTerminal({ runId: snap.runId, status: 'cancelled' })
     expect(t?.status).toBe('cancelled')
   })
+
+  it('turnDraft：工具边界落盘，finalize 后可清除', () => {
+    const snap = coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's1'
+    })
+    coord.markRunning(snap.runId, 'msg_draft')
+    coord.upsertTurnDraft(snap.runId, {
+      messageId: 'msg_draft',
+      blocks: [
+        { type: 'tool', toolCallId: 'tc1', toolName: 'write', status: 'success', result: 'ok' }
+      ]
+    })
+    const mid = store.loadSnapshot(snap.runId)
+    expect(mid?.turnDraft?.messageId).toBe('msg_draft')
+    expect(mid?.turnDraft?.finalized).toBe(false)
+    expect(mid?.turnDraft?.blocks).toHaveLength(1)
+
+    // 模拟进程重启：草稿仍在
+    const coord2 = new RunCoordinator({ store })
+    const reloaded = coord2.getSnapshot(snap.runId)
+    expect(reloaded?.turnDraft?.blocks[0]).toMatchObject({ toolCallId: 'tc1', status: 'success' })
+
+    coord2.upsertTurnDraft(snap.runId, {
+      messageId: 'msg_draft',
+      blocks: reloaded!.turnDraft!.blocks,
+      finalized: true
+    })
+    coord2.clearTurnDraft(snap.runId)
+    expect(store.loadSnapshot(snap.runId)?.turnDraft).toBeNull()
+  })
+
+  it('commandId 回执跨重启幂等', () => {
+    const snap = coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's1',
+      messageId: 'm1'
+    })
+    coord.markRunning(snap.runId, 'm1')
+    const inter = coord.inbox.enqueue({
+      runId: snap.runId,
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'askQuestion',
+      interactionId: 'ask_persist',
+      payload: { questions: [] }
+    })
+    const r1 = coord.inbox.answer({
+      interactionId: inter.interactionId,
+      commandId: 'cmd_persist_1',
+      expectedVersion: inter.version,
+      outcome: 'answered',
+      payload: { answers: [] }
+    })
+    expect(r1.ok).toBe(true)
+    expect(store.loadSnapshot(snap.runId)?.commandAcks?.some(a => a.commandId === 'cmd_persist_1')).toBe(
+      true
+    )
+
+    // 新进程：内存 Map 空，应从 snapshot 恢复
+    const coord2 = new RunCoordinator({ store })
+    const r2 = coord2.inbox.answer({
+      interactionId: 'ask_persist',
+      commandId: 'cmd_persist_1',
+      expectedVersion: 1,
+      outcome: 'answered'
+    })
+    expect(r2.ok).toBe(true)
+  })
+
+  it('terminal outbox 跨重启标记 delivered，不再重复触发', async () => {
+    const snap = coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's1'
+    })
+    coord.markRunning(snap.runId)
+    let calls = 0
+    coord.onTerminalHook('onComplete', () => {
+      calls += 1
+    })
+    coord.commitTerminal({
+      runId: snap.runId,
+      status: 'completed',
+      terminalTransitionId: 'tid_outbox'
+    })
+    await new Promise(r => setTimeout(r, 30))
+    expect(calls).toBe(1)
+    const disk = store.loadSnapshot(snap.runId)
+    expect(disk?.terminalOutbox?.some(e => e.key.includes('tid_outbox') && e.status === 'delivered')).toBe(
+      true
+    )
+
+    const coord2 = new RunCoordinator({ store })
+    let calls2 = 0
+    coord2.onTerminalHook('onComplete', () => {
+      calls2 += 1
+    })
+    // 再次提交同终态应被硬终态短路；hasFired 应从 outbox 读到
+    expect(coord2.hasFiredTerminalHook(snap.runId, 'tid_outbox', 'onComplete')).toBe(true)
+    expect(calls2).toBe(0)
+  })
 })

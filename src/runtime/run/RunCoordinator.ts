@@ -15,6 +15,7 @@ import {
   isTerminalRunStatus,
   RUN_STATUS_TRANSITIONS,
   type CommitTerminalParams,
+  type InteractionCommandAck,
   type PendingInteraction,
   type RunAttemptInfo,
   type RunEventRecord,
@@ -23,6 +24,7 @@ import {
   type RunSnapshot,
   type RunStatus,
   type StartRunParams,
+  type TerminalOutboxEntry,
   type ToolCommitPhase,
   type ToolCommitRecord
 } from './types'
@@ -92,7 +94,10 @@ export class RunCoordinator {
       lastHeartbeatAt: now,
       createdAt: now,
       updatedAt: now,
-      toolCommits: []
+      toolCommits: [],
+      turnDraft: null,
+      commandAcks: [],
+      terminalOutbox: []
     }
     this.commit(snapshot, 'run_started', { kind: params.kind })
     return cloneSnapshot(snapshot)
@@ -490,6 +495,88 @@ export class RunCoordinator {
     })
   }
 
+  /**
+   * 写入/更新执行中 turnDraft（工具边界 fsync）。
+   * blocks 为当前 assistant 草稿的完整快照；finalized=true 表示已写入 SessionStore。
+   */
+  upsertTurnDraft(
+    runId: string,
+    draft: {
+      messageId: string
+      attemptId?: string
+      blocks: Array<Record<string, unknown>>
+      finalized?: boolean
+    }
+  ): RunSnapshot | null {
+    const snap = this.requireMutable(runId)
+    if (!snap) return null
+    const now = Date.now()
+    snap.turnDraft = {
+      messageId: draft.messageId,
+      attemptId: draft.attemptId ?? snap.currentAttempt?.attemptId ?? 'default',
+      blocks: draft.blocks.map(b => ({ ...b })),
+      finalized: draft.finalized ?? false,
+      updatedAt: now
+    }
+    if (draft.messageId) snap.messageId = draft.messageId
+    snap.updatedAt = now
+    this.commit(snap, draft.finalized ? 'turn_draft_finalized' : 'turn_draft_upsert', {
+      messageId: draft.messageId,
+      blockCount: draft.blocks.length,
+      finalized: draft.finalized ?? false
+    })
+    return cloneSnapshot(snap)
+  }
+
+  /** 终态后清除草稿（仅在 SessionStore 已幂等写入后调用） */
+  clearTurnDraft(runId: string): void {
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!snap) return
+    if (!snap.turnDraft) return
+    snap.turnDraft = null
+    snap.updatedAt = Date.now()
+    // 终态后仍允许清草稿：绕过 requireMutable 的硬终态限制
+    this.runs.set(runId, snap)
+    this.store.saveSnapshot(snap)
+    this.store.appendEvent({
+      sequence: ++snap.sequence,
+      runId,
+      type: 'turn_draft_cleared',
+      at: Date.now()
+    })
+  }
+
+  /** 持久化 interaction command 回执（跨重启幂等） */
+  rememberCommandAck(runId: string, ack: InteractionCommandAck): void {
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!snap) return
+    const list = snap.commandAcks ?? (snap.commandAcks = [])
+    if (list.some(a => a.commandId === ack.commandId)) return
+    list.push(ack)
+    // 限制体积：只保留最近 200 条
+    if (list.length > 200) list.splice(0, list.length - 200)
+    snap.updatedAt = Date.now()
+    this.runs.set(runId, snap)
+    this.store.saveSnapshot(snap)
+  }
+
+  /** 查找已持久化的 command 回执 */
+  findCommandAck(commandId: string): InteractionCommandAck | null {
+    for (const snap of this.runs.values()) {
+      const hit = snap.commandAcks?.find(a => a.commandId === commandId)
+      if (hit) return hit
+    }
+    // 磁盘扫描（冷启动后内存未热加载时）
+    for (const runId of this.store.listRunIds()) {
+      const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      if (!snap) continue
+      this.runs.set(runId, snap)
+      const hit = snap.commandAcks?.find(a => a.commandId === commandId)
+      if (hit) return hit
+    }
+    return null
+  }
+
   // ── 启动扫描 / 中断对账 ──────────────────────────────────
 
   /**
@@ -561,11 +648,37 @@ export class RunCoordinator {
     snapshot: RunSnapshot
   ): Promise<void> {
     const key = `${runId}|${terminalTransitionId}|${hookName}`
-    if (this.firedTerminalHooks.has(key)) return
+    // 先查 durable outbox，再查进程内 Set（兼容同进程重复调用）
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    const outbox = snap?.terminalOutbox ?? []
+    const existing = outbox.find(e => e.key === key)
+    if (existing?.status === 'delivered' || this.firedTerminalHooks.has(key)) {
+      this.firedTerminalHooks.add(key)
+      return
+    }
     this.firedTerminalHooks.add(key)
 
+    // 持久化 pending → 执行 → delivered（effectively-once）
+    if (snap && !existing) {
+      const entry: TerminalOutboxEntry = {
+        key,
+        runId,
+        terminalTransitionId,
+        hookName,
+        status: 'pending',
+        at: Date.now()
+      }
+      const list = snap.terminalOutbox ?? (snap.terminalOutbox = [])
+      list.push(entry)
+      this.runs.set(runId, snap)
+      this.store.saveSnapshot(snap)
+    }
+
     const handlers = this.terminalHookHandlers.get(hookName)
-    if (!handlers || handlers.size === 0) return
+    if (!handlers || handlers.size === 0) {
+      this.markOutboxDelivered(runId, key)
+      return
+    }
 
     const ctx: TerminalHookContext = {
       runId,
@@ -580,6 +693,18 @@ export class RunCoordinator {
         console.error(`[RunCoordinator] terminal hook ${hookName} 失败:`, err)
       }
     }
+    this.markOutboxDelivered(runId, key)
+  }
+
+  private markOutboxDelivered(runId: string, key: string): void {
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!snap?.terminalOutbox) return
+    const entry = snap.terminalOutbox.find(e => e.key === key)
+    if (!entry || entry.status === 'delivered') return
+    entry.status = 'delivered'
+    entry.at = Date.now()
+    this.runs.set(runId, snap)
+    this.store.saveSnapshot(snap)
   }
 
   /** 供外部（AgentLoop 适配）查询某 hook 是否已对当前 terminal 触发过 */
@@ -588,7 +713,10 @@ export class RunCoordinator {
     terminalTransitionId: string,
     hookName: TerminalHookName
   ): boolean {
-    return this.firedTerminalHooks.has(`${runId}|${terminalTransitionId}|${hookName}`)
+    if (this.firedTerminalHooks.has(`${runId}|${terminalTransitionId}|${hookName}`)) return true
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    const key = `${runId}|${terminalTransitionId}|${hookName}`
+    return snap?.terminalOutbox?.some(e => e.key === key && e.status === 'delivered') ?? false
   }
 
   // ── 内部 ─────────────────────────────────────────────────
@@ -644,7 +772,15 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
     pendingInteractions: snap.pendingInteractions.map(i => ({ ...i, payload: { ...i.payload } })),
     currentAttempt: snap.currentAttempt ? { ...snap.currentAttempt } : null,
     progress: snap.progress ? { ...snap.progress } : null,
-    toolCommits: snap.toolCommits?.map(c => ({ ...c }))
+    toolCommits: snap.toolCommits?.map(c => ({ ...c })),
+    turnDraft: snap.turnDraft
+      ? {
+          ...snap.turnDraft,
+          blocks: snap.turnDraft.blocks.map(b => ({ ...b }))
+        }
+      : snap.turnDraft,
+    commandAcks: snap.commandAcks?.map(a => ({ ...a })),
+    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e }))
   }
 }
 

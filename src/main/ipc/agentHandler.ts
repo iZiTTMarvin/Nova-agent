@@ -782,7 +782,8 @@ export function registerAgentHandler(
         workspaceRoot: capturedWorkspaceRoot,
         sessionsDir: capturedSessionsDir,
         eventBus,
-        getMainWindow
+        getMainWindow,
+        runId: capturedRunId
       })
     })
 
@@ -1081,6 +1082,8 @@ export interface MessageContext {
   sessionsDir: string
   eventBus: EventBus
   getMainWindow: () => BrowserWindow | null
+  /** 当前权威 runId；用于工具边界写入 turnDraft */
+  runId?: string
 }
 
 /**
@@ -1129,6 +1132,8 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           arguments: event.args,
           status: 'running'
         })
+        // 工具参数就绪即落盘草稿，崩溃后可恢复「已准备未执行」边界
+        persistTurnDraft(ctx.runId, event.messageId, stream.blocks)
       }
       break
     }
@@ -1145,6 +1150,8 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             result: event.result
           } as typeof block
         }
+        // 工具结果边界：turnDraft 是执行中唯一事实源（fsync via RunStore）
+        persistTurnDraft(ctx.runId, event.messageId, stream.blocks)
       }
       // 异步调度：让 tool_result 当前的 EventBus 调用栈（含其他订阅者、IPC 转发）
       // 先全部跑完，避免 manifest 读盘阻塞下一个 thinking_delta 的处理。
@@ -1161,7 +1168,10 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           ? dropPermissionDeniedResidualBlocks(stream.blocks)
           : stream.blocks
 
+        // 所有权转移：先标记草稿 finalized，再写入 SessionStore，最后清除草稿
+        persistTurnDraft(ctx.runId, event.messageId, blocks, true)
         saveAssistantMessage(sessionId, event.messageId, blocks, event.interrupted)
+        clearTurnDraftAfterFinalize(ctx.runId)
         triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
@@ -1352,6 +1362,38 @@ function saveAssistantMessage(
     ...(interrupted ? { interrupted: true } : {})
   }
   sessionStore.appendMessage(sessionId, assistantMessage)
+}
+
+/**
+ * 工具边界：把当前 blocks 写入 RunSnapshot.turnDraft（fsync）。
+ * 执行中唯一事实源；SessionStore 仅在 finalize 后接手。
+ */
+function persistTurnDraft(
+  runId: string | undefined,
+  messageId: string,
+  blocks: MessageBlock[],
+  finalized = false
+): void {
+  if (!runId) return
+  try {
+    getRunCoordinator().upsertTurnDraft(runId, {
+      messageId,
+      blocks: blocks as unknown as Array<Record<string, unknown>>,
+      finalized
+    })
+  } catch (err) {
+    console.error('[persistTurnDraft] 写入失败:', err)
+  }
+}
+
+/** SessionStore 写入成功后清除草稿，完成所有权转移 */
+function clearTurnDraftAfterFinalize(runId: string | undefined): void {
+  if (!runId) return
+  try {
+    getRunCoordinator().clearTurnDraft(runId)
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
