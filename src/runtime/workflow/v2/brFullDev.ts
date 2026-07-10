@@ -1,13 +1,18 @@
 /**
  * br-full-dev Workflow v2：稳定 step ID 的可恢复 DAG。
  * worktree / bash / integrate / agent / write 均为 step；committed 不重复。
+ *
+ * v2 幂等由 StepEngine 的 stepId+inputHash 保证（step 级跳过）；
+ * journal 仅作单 run 内 agent 结果缓存，不承担跨 resume 的副作用去重。
+ * 实际副作用（write/bash/worktree/integrate）通过显式传入 StepRunContext
+ * 消费 idempotencyKey 写 receipt，实现 at-least-once + handler 去重。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { createHostHooks, type HookContext } from '../hooks'
 import { scriptSha } from '../journal'
 import { StepEngine } from './StepEngine'
-import type { StepDefinition } from './types'
+import type { StepRunContext } from './types'
 import type { ComposeState, WorkflowRuntimeDeps } from '../types'
 import type { TaskScope } from '../TaskScope'
 
@@ -124,20 +129,23 @@ export interface BrFullDevV2Context {
   requirement: string
 }
 
-/** 通过 host hook 调 agent（已含 journal/scope 校验） */
+/** 通过 host hook 调 agent（已含 journal/scope 校验）；可显式带上 stepCtx */
 async function callAgent(
   hooks: BrFullDevV2Context['hooks'],
   prompt: string,
-  opts: Record<string, unknown>
+  opts: Record<string, unknown>,
+  stepCtx?: StepRunContext
 ): Promise<unknown> {
-  return hooks.agent!(prompt, opts)
+  const o = stepCtx ? { ...opts, stepCtx } : opts
+  return hooks.agent!(prompt, o)
 }
 
 async function callBash(
   hooks: BrFullDevV2Context['hooks'],
-  cmd: string
+  cmd: string,
+  stepCtx?: StepRunContext
 ): Promise<{ exitCode: number; stdout: string; stderr: string; passed: boolean }> {
-  return (await hooks.bash!(cmd)) as {
+  return (await hooks.bash!(cmd, stepCtx)) as {
     exitCode: number
     stdout: string
     stderr: string
@@ -157,14 +165,14 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
     return { error: 'no-requirement', message: 'Pass /br-full-dev <需求>' }
   }
 
-  // ── bash: 记录 git baseline（可恢复）──
+  // ── bash: 记录 git baseline（只读幂等，可安全 resume 复用）──
   engine.register({
     id: 'bash:git-baseline',
     kind: 'bash',
-    policy: { retryable: true, sideEffect: 'bash' },
+    policy: { retryable: true, sideEffect: 'bash', idempotent: true },
     input: { cmd: 'git rev-parse HEAD', phase: 'explore' },
-    run: async () => {
-      const head = await callBash(hooks, 'git rev-parse HEAD')
+    run: async (sc) => {
+      const head = await callBash(hooks, 'git rev-parse HEAD', sc)
       let gitBaseline: string | null = null
       if (head?.passed) {
         const sha = String(head.stdout || '').trim()
@@ -271,7 +279,7 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
       const designTitle = design.title || requirement.slice(0, 30)
       const specPath =
         '.nova/compose/specs/' + today() + '-' + slug(designTitle) + '-design.md'
-      await hooks.write!(specPath, design.body)
+      await hooks.write!(specPath, design.body, sc)
       await hooks.updateState!({ artifacts: { spec: specPath } })
       return { specPath, designTitle }
     }
@@ -315,7 +323,7 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
           { skill: routeSkill, schema: DESIGN_SHAPE, label: 'scope-fix-' + i }
         )) as { body?: string } | null
         if (!fixed?.body) break
-        await hooks.write!(specPath, fixed.body)
+        await hooks.write!(specPath, fixed.body, sc)
         scope = (await callAgent(
           hooks,
           '执行 br-scope-check，审查设计文档：' + specPath,
@@ -372,7 +380,7 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
       const planPath =
         '.nova/compose/plans/' + today() + '-' + slug(planTitle) + '-plan.md'
       const body = plan.body || JSON.stringify(plan.tasks, null, 2)
-      await hooks.write!(planPath, body)
+      await hooks.write!(planPath, body, sc)
       const tasks = plan.tasks.map((t, i) => ({
         id: String(t.id || 'task-' + String(i + 1).padStart(3, '0')),
         title: String(t.title || 'task-' + (i + 1)),
@@ -440,7 +448,7 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
         schema: IMPL_SHAPE,
         skill: 'br-implement'
       },
-      run: async () => {
+      run: async (sc) => {
         await hooks.updateState!({
           task: { id: task.id, status: 'in_progress', started_at: new Date().toISOString() }
         })
@@ -452,7 +460,8 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
             schema: IMPL_SHAPE,
             isolation: 'worktree',
             label: 'impl-' + task.id
-          }
+          },
+          sc
         )
         return out
       }
@@ -510,7 +519,8 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
       id: `execute:${task.id}:integrate`,
       kind: 'integrate',
       deps: [verifyId],
-      policy: { retryable: true, sideEffect: 'integrate' },
+      // integrate：非幂等；有 receipt 则跳过，中断无 receipt 则 blocked
+      policy: { retryable: false, sideEffect: 'integrate', idempotent: false },
       input: { taskId: task.id, schema: INTEGRATE_SHAPE },
       run: async (sc) => {
         const prev = sc.getOutput<{
@@ -519,15 +529,15 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
         }>(verifyId)
         const wt = prev?.impl && typeof prev.impl === 'object' ? prev.impl._worktree : undefined
         if (!prev?.verify?.allPassed || !wt?.changed) {
-          if (wt) await hooks.cleanupWorktree!(wt)
+          if (wt) await hooks.cleanupWorktree!(wt, sc)
           return { skipped: true }
         }
-        const result = await callAgent(
-          hooks,
+        const result = await hooks.integrate!(
           '执行 integrate：将以下 worktree 合并到主工作目录。\n' + JSON.stringify([wt]),
-          { schema: INTEGRATE_SHAPE, label: 'integrate-' + task.id }
+          { schema: INTEGRATE_SHAPE, label: 'integrate-' + task.id, stepCtx: sc },
+          sc
         )
-        await hooks.cleanupWorktree!(wt)
+        await hooks.cleanupWorktree!(wt, sc)
         return { result }
       }
     })
@@ -539,7 +549,7 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
     deps: planOut.tasks.map((t) => `execute:${t.id}:integrate`),
     policy: { retryable: true, sideEffect: 'state' },
     input: { phase: '发布', taskIds },
-    run: async () => {
+    run: async (sc) => {
       await hooks.phase!('发布')
       const reportPath =
         '.nova/compose/reports/' + today() + '-' + slug(requirement.slice(0, 20)) + '-report.md'
@@ -549,9 +559,8 @@ export async function runBrFullDevV2(ctx: BrFullDevV2Context): Promise<unknown> 
         `# br-full-dev 报告\n\n需求：${requirement}\n\n` +
         `任务数：${planOut.tasks.length}\n` +
         `完成于：${new Date().toISOString()}\n`
-      // 直接写文件（hooks.write 也行）；作为 step 副作用已记录
       if (!existsSync(dirname(abs))) mkdirSync(dirname(abs), { recursive: true })
-      await hooks.write!(reportPath, body)
+      await hooks.write!(reportPath, body, sc)
       await hooks.updateState!({ artifacts: { report: reportPath } })
       return { reportPath }
     }

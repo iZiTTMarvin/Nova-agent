@@ -27,6 +27,13 @@ import { applyStatePatch } from './state'
 import { topoSort, type TopoTask } from './topo'
 import { extractJson } from './jsonExtract'
 import type { TaskScope } from './TaskScope'
+import {
+  effectIdFromKey,
+  injectFault,
+  isSideEffectCtx,
+  SideEffectBlockedError,
+  type SideEffectCtx
+} from './v2/sideEffectCtx'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是编排子代理，不要反问父 agent。'
 const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000
@@ -94,6 +101,23 @@ function assertScopeLive(ctx: HookContext): boolean {
 
 function isAborted(signal: AbortSignal): boolean {
   return signal.aborted
+}
+
+/** 从 HostFn 末尾参数提取显式传入的 step 上下文（v1 无此参则 undefined） */
+function coerceStepCtx(arg: unknown): SideEffectCtx | undefined {
+  return isSideEffectCtx(arg) ? arg : undefined
+}
+
+function toSideEffectCtx(o: AgentHookOpts['stepCtx']): SideEffectCtx | undefined {
+  if (!o || typeof o.idempotencyKey !== 'string') return undefined
+  return {
+    runId: o.runId,
+    stepId: o.stepId,
+    idempotencyKey: o.idempotencyKey,
+    inputHash: o.inputHash,
+    policy: o.policy as SideEffectCtx['policy'],
+    resumingInterrupted: o.resumingInterrupted
+  }
 }
 
 function buildToolContext(
@@ -367,11 +391,64 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
         .catch(() => null)
     }
 
-    // worktree 隔离：不写 journal（产物是目录，无法用结果缓存重建）
+    // worktree 隔离：不写 journal（产物是目录）；有 stepCtx 时写 WorktreeReceipt
     if (o.isolation === 'worktree') {
       return ctx.runSem
         .run(() =>
           ctx.globalSem.run(async () => {
+            const stepCtx = toSideEffectCtx(o.stepCtx)
+            // resume：已有 committed receipt 且目录仍在 → 复用，不重建
+            if (stepCtx) {
+              const { tryReuseWorktreeReceipt, commitWorktreeReceipt } = await import(
+                './v2/WorktreeReceipt'
+              )
+              const reused = tryReuseWorktreeReceipt({
+                workspaceRoot,
+                stepCtx
+              })
+              if (reused) {
+                ctx.ownedWorktrees.set(reused.directory, {
+                  info: {
+                    name: reused.directory.split(/[/\\]/).pop() ?? 'wt',
+                    branch: reused.branch,
+                    directory: reused.directory
+                  },
+                  baseSha: reused.baseSha
+                })
+                const value = await spawnAgent(promptStr, o, ctx, reused.directory)
+                const wt = {
+                  branch: reused.branch,
+                  directory: reused.directory,
+                  changed: true,
+                  baseSha: reused.baseSha,
+                  reused: true
+                }
+                if (value && typeof value === 'object' && !Array.isArray(value)) {
+                  return { ...(value as object), _worktree: wt }
+                }
+                return { _worktree: wt, result: value }
+              }
+
+              // 中断恢复：有 receipt 但目录已删 → retryable 可重建，否则 blocked
+              const { readWorktreeReceipt, worktreeEffectId } = await import('./v2/WorktreeReceipt')
+              const effectId = worktreeEffectId(stepCtx)
+              const prior = readWorktreeReceipt(workspaceRoot, runId, effectId)
+              if (stepCtx.resumingInterrupted && !prior) {
+                throw new SideEffectBlockedError(
+                  `worktree step ${stepCtx.stepId} 中断后无 receipt，禁止自动重跑`
+                )
+              }
+              if (prior && !existsSync(prior.directory)) {
+                if (!(stepCtx.policy?.retryable ?? true)) {
+                  throw new SideEffectBlockedError(
+                    `worktree 目录已删除且不可重试: ${prior.directory}`
+                  )
+                }
+              }
+
+              injectFault(stepCtx.stepId, 'before-execute')
+            }
+
             // info 在 create 成功后立刻持有，headSha 失败时也要 reclaim，避免泄漏
             let createdDir: string | undefined
             try {
@@ -388,6 +465,21 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
                 throw new Error('worktree-head-sha-failed')
               }
               ctx.ownedWorktrees.set(info.directory, { info, baseSha })
+
+              // 创建成功即写 committed receipt（目录已存在，可对账）
+              if (stepCtx) {
+                const { commitWorktreeReceipt } = await import('./v2/WorktreeReceipt')
+                injectFault(stepCtx.stepId, 'after-prepared')
+                commitWorktreeReceipt({
+                  workspaceRoot,
+                  stepCtx,
+                  directory: info.directory,
+                  branch: info.branch,
+                  baseSha
+                })
+                injectFault(stepCtx.stepId, 'after-receipt')
+              }
+
               const value = await spawnAgent(promptStr, o, ctx, info.directory)
               const succeeded = value !== null
               const pristine =
@@ -399,6 +491,10 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
                   () => undefined
                 )
                 ctx.ownedWorktrees.delete(info.directory)
+                if (stepCtx) {
+                  const { markWorktreeCleaned } = await import('./v2/WorktreeReceipt')
+                  markWorktreeCleaned(workspaceRoot, runId, { stepCtx })
+                }
                 createdDir = undefined
                 return succeeded ? value : null
               }
@@ -406,13 +502,15 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
               const wt = {
                 branch: info.branch,
                 directory: info.directory,
-                changed: true
+                changed: true,
+                baseSha
               }
               if (value && typeof value === 'object' && !Array.isArray(value)) {
                 return { ...(value as object), _worktree: wt }
               }
               return { _worktree: wt, result: value }
-            } catch {
+            } catch (err) {
+              if (err instanceof SideEffectBlockedError) throw err
               // create 成功但尚未登记 ownedWorktrees 时，兜底删除刚建的目录
               if (createdDir) {
                 await Worktree.remove({ workspaceRoot, directory: createdDir }).catch(
@@ -430,7 +528,10 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
             }
           })
         )
-        .catch(() => null)
+        .catch((err) => {
+          if (err instanceof SideEffectBlockedError) throw err
+          return null
+        })
     }
 
     // 共享工作区：journal 缓存 + 两层信号量
@@ -532,31 +633,54 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     return readFileSync(validated.path, 'utf-8')
   }
 
-  const write: HostFn = async (pathArg: unknown, content: unknown) => {
+  const write: HostFn = async (pathArg: unknown, content: unknown, stepCtxArg?: unknown) => {
     if (!assertScopeLive(ctx)) {
       throw new Error('TaskScope closed: cannot write')
     }
+    const stepCtx = coerceStepCtx(stepCtxArg)
     const validated = resolveAndValidatePath(workspaceRoot, String(pathArg ?? ''))
     if (!validated.ok) throw new Error(validated.error)
     const abs = validated.path
-    const isNew = !existsSync(abs)
-    const beforeBuf = isNew ? null : readFileSync(abs)
-    const beforeHash = beforeBuf ? createHash('sha256').update(beforeBuf).digest('hex') : null
     const text = String(content ?? '')
     const afterHash = createHash('sha256').update(text).digest('hex')
 
-    // 预写协议：backup → prepared intent → 改目标文件 → 校验 → committed
-    // receipt/backup 失败时禁止修改目标文件
-    const { buildFileEffectReceipt, recordFileEffect, commitFileEffect } = await import(
-      './v2/EffectReceipt'
-    )
-    const idempotencyKey =
-      typeof (ctx as { idempotencyKey?: string }).idempotencyKey === 'string'
-        ? (ctx as { idempotencyKey?: string }).idempotencyKey
-        : undefined
-    const effectId =
-      idempotencyKey?.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) ||
-      `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const {
+      buildFileEffectReceipt,
+      recordFileEffect,
+      commitFileEffect,
+      readFileEffect,
+      hashFileIfExists
+    } = await import('./v2/EffectReceipt')
+
+    // 稳定 effectId：有 stepCtx 用 idempotencyKey；v1 兼容回退随机
+    const effectId = stepCtx
+      ? effectIdFromKey(`${stepCtx.idempotencyKey}:write`)
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const idempotencyKey = stepCtx?.idempotencyKey
+
+    // resume：已 committed 且磁盘 hash 匹配 → 跳过实际写入
+    const existing = readFileEffect(workspaceRoot, runId, effectId)
+    if (existing?.status === 'committed' && existing.afterHash === afterHash) {
+      const current = hashFileIfExists(abs)
+      if (current === afterHash) {
+        return { skipped: true, effectId, reused: true }
+      }
+    }
+    // prepared 后崩溃：文件已是目标内容 → 仅补 commit
+    if (existing?.status === 'prepared' && existing.afterHash === afterHash) {
+      const current = hashFileIfExists(abs)
+      if (current === afterHash) {
+        commitFileEffect(workspaceRoot, runId, effectId, { afterHash })
+        return { skipped: true, effectId, committedPrepared: true }
+      }
+    }
+
+    // 中断恢复且无可用 receipt：fs 写可用相同 key 重做（effect 级幂等）；不 blocked
+    injectFault(stepCtx?.stepId, 'before-execute')
+
+    const isNew = !existsSync(abs)
+    const beforeBuf = isNew ? null : readFileSync(abs)
+    const beforeHash = beforeBuf ? createHash('sha256').update(beforeBuf).digest('hex') : null
 
     let beforeCheckpointRel: string | null = null
     if (!isNew && beforeBuf) {
@@ -564,7 +688,6 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       mkdirSync(backupDir, { recursive: true })
       beforeCheckpointRel = `effect-backups/${effectId}.bak`
       const backupAbs = join(backupDir, `${effectId}.bak`)
-      // 与 prepared receipt 同级持久性：atomic + fsync，避免崩溃后 receipt 声称有 backup 但文件缺失
       atomicWriteFileSync(backupAbs, beforeBuf)
     }
 
@@ -574,14 +697,15 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       absPath: abs,
       action: isNew ? 'create' : 'modify',
       beforeHash,
-      // 只存 run 目录内相对引用，禁止信任任意绝对路径
       beforeCheckpointRef: beforeCheckpointRel,
       afterHash,
       effectId,
       idempotencyKey,
+      stepId: stepCtx?.stepId,
       status: 'prepared'
     })
     recordFileEffect(workspaceRoot, prepared)
+    injectFault(stepCtx?.stepId, 'after-prepared')
 
     mkdirSync(dirname(abs), { recursive: true })
     if (deps.checkpointManager) {
@@ -594,11 +718,107 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       throw new Error('TaskScope closed: cannot write')
     }
     writeFileSync(abs, text, 'utf-8')
+    injectFault(stepCtx?.stepId, 'after-execute')
     const actualAfter = createHash('sha256').update(readFileSync(abs)).digest('hex')
     if (actualAfter !== afterHash) {
       throw new Error(`写后 hash 不一致: expected=${afterHash} actual=${actualAfter}`)
     }
     commitFileEffect(workspaceRoot, runId, effectId, { afterHash: actualAfter })
+    injectFault(stepCtx?.stepId, 'after-receipt')
+    return undefined
+  }
+
+  /** 删除文件：与 write 对称的 prepared→delete→committed；rollback 用 backup 恢复 */
+  const deleteFn: HostFn = async (pathArg: unknown, stepCtxArg?: unknown) => {
+    if (!assertScopeLive(ctx)) {
+      throw new Error('TaskScope closed: cannot delete')
+    }
+    const stepCtx = coerceStepCtx(stepCtxArg)
+    const validated = resolveAndValidatePath(workspaceRoot, String(pathArg ?? ''))
+    if (!validated.ok) throw new Error(validated.error)
+    const abs = validated.path
+
+    const {
+      buildFileEffectReceipt,
+      recordFileEffect,
+      readFileEffect,
+      hashFileIfExists
+    } = await import('./v2/EffectReceipt')
+
+    const effectId = stepCtx
+      ? effectIdFromKey(`${stepCtx.idempotencyKey}:delete`)
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    // 已删除且 receipt committed → 跳过
+    const existing = readFileEffect(workspaceRoot, runId, effectId)
+    if (existing?.status === 'committed' && existing.action === 'delete' && !existsSync(abs)) {
+      return { skipped: true, effectId, reused: true }
+    }
+
+    if (stepCtx?.resumingInterrupted && !existing) {
+      throw new SideEffectBlockedError(
+        `delete step ${stepCtx.stepId} 中断后无 receipt，禁止自动重跑`
+      )
+    }
+
+    if (!existsSync(abs)) {
+      // 目标已不存在：记一条 committed delete（beforeHash=null）
+      const prepared = buildFileEffectReceipt({
+        workspaceRoot,
+        runId,
+        absPath: abs,
+        action: 'delete',
+        beforeHash: null,
+        beforeCheckpointRef: null,
+        afterHash: null,
+        effectId,
+        idempotencyKey: stepCtx?.idempotencyKey,
+        stepId: stepCtx?.stepId,
+        status: 'committed'
+      })
+      recordFileEffect(workspaceRoot, prepared)
+      return { skipped: true, effectId, alreadyGone: true }
+    }
+
+    const beforeBuf = readFileSync(abs)
+    const beforeHash = createHash('sha256').update(beforeBuf).digest('hex')
+    const backupDir = join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'effect-backups')
+    mkdirSync(backupDir, { recursive: true })
+    const beforeCheckpointRel = `effect-backups/${effectId}.bak`
+    atomicWriteFileSync(join(backupDir, `${effectId}.bak`), beforeBuf)
+
+    const prepared = buildFileEffectReceipt({
+      workspaceRoot,
+      runId,
+      absPath: abs,
+      action: 'delete',
+      beforeHash,
+      beforeCheckpointRef: beforeCheckpointRel,
+      afterHash: null,
+      effectId,
+      idempotencyKey: stepCtx?.idempotencyKey,
+      stepId: stepCtx?.stepId,
+      status: 'prepared'
+    })
+    recordFileEffect(workspaceRoot, prepared)
+    injectFault(stepCtx?.stepId, 'after-prepared')
+
+    if (!assertScopeLive(ctx)) {
+      throw new Error('TaskScope closed: cannot delete')
+    }
+    const { unlinkSync } = await import('fs')
+    unlinkSync(abs)
+    if (hashFileIfExists(abs) !== null) {
+      throw new Error(`删除后文件仍存在: ${abs}`)
+    }
+    // delete 的 afterHash 为 null：直接写 committed receipt
+    recordFileEffect(workspaceRoot, {
+      ...prepared,
+      afterHash: null,
+      status: 'committed',
+      at: Date.now()
+    })
+    injectFault(stepCtx?.stepId, 'after-receipt')
     return undefined
   }
 
@@ -617,11 +837,61 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     return walkGlob(workspaceRoot, pat)
   }
 
-  const bash: HostFn = async (cmd: unknown) => {
+  const bash: HostFn = async (cmd: unknown, stepCtxArg?: unknown) => {
     if (!assertScopeLive(ctx) || isAborted(abortSignal)) {
       return { exitCode: -1, stdout: '', stderr: 'cancelled', passed: false }
     }
     const command = String(cmd ?? '')
+    const stepCtx = coerceStepCtx(stepCtxArg)
+
+    if (stepCtx) {
+      const {
+        tryReuseBashReceipt,
+        commitBashReceipt,
+        hashCommand,
+        bashEffectId,
+        readBashReceipt,
+        writeBashReceipt
+      } = await import('./v2/BashReceipt')
+
+      // 已有成功 receipt 且 commandHash 匹配 → 复用
+      const reused = tryReuseBashReceipt({ workspaceRoot, stepCtx, command })
+      if (reused) return reused
+
+      const commandHash = hashCommand(command)
+      const effectId = bashEffectId(stepCtx, commandHash)
+      const prior = readBashReceipt(workspaceRoot, runId, effectId)
+      const idempotent = stepCtx.policy?.idempotent === true
+
+      // 非幂等：中断恢复，或已有 prepared（说明上次可能已执行）→ blocked
+      if (!idempotent) {
+        if (prior?.status === 'prepared' || stepCtx.resumingInterrupted) {
+          throw new SideEffectBlockedError(
+            `非幂等 bash step ${stepCtx.stepId} 中断后无成功 receipt，禁止自动重跑`
+          )
+        }
+      }
+
+      // 幂等：prepared 可继续重试；非幂等首次：先写 prepared 再执行
+      if (!prior) {
+        writeBashReceipt(workspaceRoot, {
+          effectId,
+          runId: stepCtx.runId,
+          stepId: stepCtx.stepId,
+          idempotencyKey: stepCtx.idempotencyKey,
+          commandHash,
+          exitCode: -1,
+          stdoutDigest: '',
+          stdoutPreview: '',
+          status: 'prepared',
+          at: Date.now()
+        })
+        injectFault(stepCtx.stepId, 'after-prepared')
+      }
+
+      injectFault(stepCtx.stepId, 'before-execute')
+    }
+
     const mode: Mode = deps.mode ?? 'compose'
     const pm = new PermissionManager()
     pm.setPermissionPolicy('auto')
@@ -635,19 +905,32 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
         passed: false
       }
     }
-    // 编排 run 内固定 auto 语义直接执行；危险命令仍由 PermissionManager 拦截
     const toolCtx = buildToolContext(deps, abortSignal, undefined, ctx.assertExecutionCurrent)
     const result = await bashTool.execute({ command }, toolCtx)
     if (!assertScopeLive(ctx)) {
       return { exitCode: -1, stdout: '', stderr: 'cancelled', passed: false }
     }
     const exitCode = result.success ? 0 : 1
-    return {
+    const out = {
       exitCode,
       stdout: result.output ?? '',
       stderr: result.error ?? '',
       passed: result.success
     }
+
+    if (stepCtx && result.success) {
+      const { commitBashReceipt } = await import('./v2/BashReceipt')
+      injectFault(stepCtx.stepId, 'after-execute')
+      commitBashReceipt({
+        workspaceRoot,
+        stepCtx,
+        command,
+        exitCode,
+        stdout: out.stdout
+      })
+      injectFault(stepCtx.stepId, 'after-receipt')
+    }
+    return out
   }
 
   /**
@@ -734,7 +1017,8 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
   const loadState: HostFn = () => marshalOut(ctx.composeState)
 
   /** 清理已合并的 worktree（integrate 后调用；内部有界 EBUSY 退避） */
-  const cleanupWorktree: HostFn = async (wt: unknown) => {
+  const cleanupWorktree: HostFn = async (wt: unknown, stepCtxArg?: unknown) => {
+    const stepCtx = coerceStepCtx(stepCtxArg)
     let directory = ''
     if (typeof wt === 'string') {
       directory = wt
@@ -747,6 +1031,8 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     ctx.ownedWorktrees.delete(directory)
     try {
       await Worktree.remove({ workspaceRoot, directory })
+      const { markWorktreeCleaned } = await import('./v2/WorktreeReceipt')
+      markWorktreeCleaned(workspaceRoot, runId, stepCtx ? { stepCtx, directory } : { directory })
       return true
     } catch (err) {
       console.warn(
@@ -755,6 +1041,86 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       )
       return false
     }
+  }
+
+  /**
+   * integrate：合并 worktree 到主工作区（经 agent 执行实际 merge）。
+   * 签名：integrate(prompt, agentOpts?, stepCtx?) 或 integrate(wt, stepCtx?) 后内部组 prompt。
+   * 有 committed receipt 则跳过，避免 resume 重复合并。
+   */
+  const integrate: HostFn = async (
+    promptOrWt: unknown,
+    optsOrStepCtx?: unknown,
+    stepCtxArg?: unknown
+  ) => {
+    if (!assertScopeLive(ctx)) {
+      throw new Error('TaskScope closed: cannot integrate')
+    }
+
+    // 解析参数：末尾 stepCtx；中间可选 AgentHookOpts
+    let stepCtx = coerceStepCtx(stepCtxArg) ?? coerceStepCtx(optsOrStepCtx)
+    let agentOpts: AgentHookOpts = {}
+    let prompt: string
+    let worktreeDirectory = ''
+
+    if (typeof promptOrWt === 'string' && promptOrWt.includes('integrate')) {
+      prompt = promptOrWt
+      if (optsOrStepCtx && typeof optsOrStepCtx === 'object' && !isSideEffectCtx(optsOrStepCtx)) {
+        agentOpts = optsOrStepCtx as AgentHookOpts
+        if (!stepCtx) stepCtx = toSideEffectCtx(agentOpts.stepCtx)
+      }
+      // 从 prompt 里尽力提取 directory（brFullDev 会 JSON.stringify([wt])）
+      const m = prompt.match(/"directory"\s*:\s*"([^"]+)"/)
+      if (m) worktreeDirectory = m[1]!
+    } else if (promptOrWt && typeof promptOrWt === 'object') {
+      const wt = promptOrWt as { directory?: string; branch?: string }
+      worktreeDirectory = String(wt.directory ?? '')
+      prompt =
+        '执行 integrate：将以下 worktree 合并到主工作目录。\n' + JSON.stringify([wt])
+      if (optsOrStepCtx && typeof optsOrStepCtx === 'object' && !isSideEffectCtx(optsOrStepCtx)) {
+        agentOpts = optsOrStepCtx as AgentHookOpts
+      }
+    } else {
+      prompt = String(promptOrWt ?? '')
+      if (optsOrStepCtx && typeof optsOrStepCtx === 'object' && !isSideEffectCtx(optsOrStepCtx)) {
+        agentOpts = optsOrStepCtx as AgentHookOpts
+        if (!stepCtx) stepCtx = toSideEffectCtx(agentOpts.stepCtx)
+      }
+    }
+
+    if (stepCtx) {
+      const { tryReuseIntegrateReceipt, commitIntegrateReceipt } = await import(
+        './v2/IntegrateReceipt'
+      )
+      const reused = tryReuseIntegrateReceipt({ workspaceRoot, stepCtx })
+      if (reused) {
+        return { ok: true, skipped: true, reused: true, result: reused.result, receipt: reused }
+      }
+      if (stepCtx.resumingInterrupted) {
+        throw new SideEffectBlockedError(
+          `integrate step ${stepCtx.stepId} 中断后无 committed receipt，禁止自动重跑`
+        )
+      }
+      injectFault(stepCtx.stepId, 'before-execute')
+      // 把 stepCtx 带进 agent opts，供下游一致
+      agentOpts = { ...agentOpts, stepCtx }
+    }
+
+    // 实际合并仍由子 agent 执行（与 v1 一致）；此处只负责 receipt 边界
+    const result = await agent(prompt, agentOpts)
+
+    if (stepCtx && result !== null) {
+      const { commitIntegrateReceipt } = await import('./v2/IntegrateReceipt')
+      injectFault(stepCtx.stepId, 'after-execute')
+      commitIntegrateReceipt({
+        workspaceRoot,
+        stepCtx,
+        worktreeDirectory: worktreeDirectory || '(unknown)',
+        result
+      })
+      injectFault(stepCtx.stepId, 'after-receipt')
+    }
+    return result
   }
 
   /** Kahn 拓扑排序：返回可并行批次 */
@@ -769,6 +1135,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     log,
     read,
     write,
+    delete: deleteFn,
     exists,
     glob,
     bash,
@@ -776,6 +1143,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     updateState,
     loadState,
     cleanupWorktree,
+    integrate,
     topoSort: topoSortHook
   }
 }
