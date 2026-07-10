@@ -9,6 +9,12 @@ export interface StepPolicy {
   retryable?: boolean
   /** 副作用类型：影响 resume 是否安全重跑 */
   sideEffect?: 'none' | 'llm' | 'bash' | 'worktree' | 'integrate' | 'fs' | 'state'
+  /**
+   * bash 专用：命令是否幂等（默认 false）。
+   * 仅只读命令（rev-parse/status/log）可标 true；commit/push/install 永远 false。
+   * 非幂等 + 中断恢复且无成功 receipt → blocked，禁止自动重跑。
+   */
+  idempotent?: boolean
 }
 
 export type StepKind =
@@ -55,6 +61,13 @@ export interface StepRunContext {
   inputHash: string
   idempotencyKey: string
   signal: AbortSignal
+  /** 本 step 的策略（含 idempotent / sideEffect） */
+  policy: StepPolicy
+  /**
+   * 从上次 status=running 崩溃恢复进入本 step。
+   * 非幂等副作用在无成功 receipt 时必须 blocked。
+   */
+  resumingInterrupted: boolean
   /** 读取已 committed 依赖的输出 */
   getOutput: <T = unknown>(stepId: string) => T | undefined
 }

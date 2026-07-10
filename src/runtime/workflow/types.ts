@@ -33,6 +33,22 @@ export interface AgentHookOpts {
   model?: string
   /** 当前 phase 名，参与 journal hash；缺省取 runtime 当前 phase */
   phase?: string
+  /**
+   * v2：当前 step 上下文，显式传入供 worktree/integrate 写 receipt。
+   * 不得依赖全局 currentStep。
+   */
+  stepCtx?: {
+    runId: string
+    stepId: string
+    idempotencyKey: string
+    inputHash: string
+    policy?: {
+      retryable?: boolean
+      sideEffect?: string
+      idempotent?: boolean
+    }
+    resumingInterrupted?: boolean
+  }
 }
 
 /** runWorkflow 入参 */

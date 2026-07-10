@@ -340,6 +340,8 @@ export class StepEngine {
     }
 
     const policy: StepPolicy = def.policy ?? { retryable: true }
+    // 上次崩溃停在 running：非幂等副作用需靠 receipt / hook 判定，禁止盲目重放
+    const resumingInterrupted = !force && existing?.status === 'running'
     const at = nowIso()
     const running: StepRecord = {
       stepId: def.id,
@@ -349,7 +351,7 @@ export class StepEngine {
       status: 'running',
       policy,
       deps: def.deps,
-      startedAt: at
+      startedAt: existing?.startedAt ?? at
     }
     writeStepRecord(this.workspaceRoot, this.runId, running)
     appendV2Event(this.workspaceRoot, this.runId, {
@@ -365,6 +367,8 @@ export class StepEngine {
       inputHash,
       idempotencyKey,
       signal: this.scope.signal,
+      policy,
+      resumingInterrupted,
       getOutput: <T>(sid: string) => this.getOutput<T>(sid)
     }
 
@@ -380,6 +384,10 @@ export class StepEngine {
       if (!this.scope.isCurrent(this.scopeGen)) {
         throw new Error('TaskScope closed before step commit')
       }
+
+      // 测试故障注入：receipt 已写、step 尚未 committed
+      const { injectFault } = await import('./sideEffectCtx')
+      injectFault(def.id, 'before-step-commit')
 
       const finishedAt = nowIso()
       const committed: StepRecord = {

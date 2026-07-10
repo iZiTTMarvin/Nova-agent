@@ -221,6 +221,25 @@ export function listFileEffects(workspaceRoot: string, runId: string): FileEffec
   return listFileEffectsDetailed(workspaceRoot, runId).effects
 }
 
+/** 按 effectId 读取单条文件副作用凭证 */
+export function readFileEffect(
+  workspaceRoot: string,
+  runId: string,
+  effectId: string
+): FileEffectReceipt | null {
+  assertSafeRunId(runId)
+  const file = join(effectsDir(workspaceRoot, runId), `${effectId}.json`)
+  if (!existsSync(file)) return null
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as FileEffectReceipt
+    resolveUnderWorkspace(workspaceRoot, raw.path)
+    if (!raw.status) raw.status = 'committed'
+    return raw
+  } catch {
+    return null
+  }
+}
+
 function signPreviewToken(
   runId: string,
   effects: FileEffectReceipt[],
