@@ -15,8 +15,7 @@ describe('P0-6 TaskScope 真实收敛', () => {
     _resetTaskScopeIdForTests()
   })
 
-  // 阶段 0：it.fails 固定假收敛缺陷；阶段 4 修复 TaskScope 后改为 it
-  it.fails('abort 后内部 Promise 仍运行时，close 不得报告已全部收敛', async () => {
+  it('abort 后内部 Promise 仍运行时，close 不得报告已全部收敛', async () => {
     const scope = new TaskScope({ label: 'linger', graceMs: 80 })
     let innerFinished = false
 
@@ -48,7 +47,7 @@ describe('P0-6 TaskScope 真实收敛', () => {
     expect(innerFinished).toBe(true)
   })
 
-  it.fails(
+  it(
     'spawn 必须同时追踪 actualPromise；visible reject 不得从收敛集合删除 actual',
     async () => {
       const scope = new TaskScope({ label: 'actual', graceMs: 50 })
