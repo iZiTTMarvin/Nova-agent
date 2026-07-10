@@ -2,8 +2,8 @@
  * Renderer sequence 不得回退
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useRunStore } from '../../../../src/renderer/stores/useRunStore'
-import type { RunSnapshot } from '../../../../src/runtime/run/types'
+import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import type { RunSnapshot } from '../../../src/runtime/run/types'
 
 function snap(partial: Partial<RunSnapshot> & Pick<RunSnapshot, 'runId' | 'sessionId' | 'sequence' | 'status'>): RunSnapshot {
   return {
