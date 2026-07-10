@@ -145,14 +145,21 @@ export interface InteractionCommandAck {
   message?: string
 }
 
+/** 终态 hook outbox 状态：无 handler / 失败时保持 pending，不得假标 delivered */
+export type TerminalOutboxStatus = 'pending' | 'delivering' | 'delivered' | 'failed'
+
 /** 终态 hook 持久化 outbox 条目 */
 export interface TerminalOutboxEntry {
   key: string
   runId: string
   terminalTransitionId: string
   hookName: string
-  status: 'pending' | 'delivered'
+  status: TerminalOutboxStatus
   at: number
+  /** handler 失败时的错误摘要；可重试 */
+  lastError?: string
+  /** handler 去重用的稳定幂等键 */
+  idempotencyKey?: string
 }
 
 /** 权威 Run 快照 */
@@ -185,6 +192,12 @@ export interface RunSnapshot {
   commandAcks?: InteractionCommandAck[]
   /** 终态 hook durable outbox */
   terminalOutbox?: TerminalOutboxEntry[]
+  /**
+   * 当前执行 generation（权威 fencing）。
+   * 副作用入口必须校验 isExecutionCurrent(runId, generation)；
+   * grace 超时 / 强制中断后递增或清零，使旧 continuation 失效。
+   */
+  executionGeneration?: number
 }
 
 /** append-only 事件（落盘 events.jsonl） */

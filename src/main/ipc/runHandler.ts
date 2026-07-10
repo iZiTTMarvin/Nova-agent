@@ -35,18 +35,72 @@ export function registerRunHandler(): void {
     // 先持久化「正在取消」，再向真实执行发 abort 信号。
     coord.beginCancel(params.runId)
     coord.inbox.cancelAllForRun(params.runId)
-    const result = await registry.abort(params.runId, 'force_terminate')
+
+    let result: Awaited<ReturnType<typeof registry.abort>>
+    try {
+      result = await registry.abort(params.runId, 'force_terminate')
+    } catch (err) {
+      // abort 路径抛错也必须进入 interrupted，不能永久停在 cancelling
+      const reason = err instanceof Error ? err.message : String(err)
+      coord.invalidateExecutionGeneration(params.runId)
+      const snapshot = coord.commitTerminal({
+        runId: params.runId,
+        status: 'interrupted',
+        reason: `force_terminate_abort_error:${reason}`
+      })
+      if (getActiveRunId() === params.runId) {
+        setActiveRunId(null)
+      }
+      return { ok: !!snapshot, snapshot, lingering: true, abortError: reason }
+    }
+
+    if (result.abortError) {
+      // abort() 内部吞掉的异常：同样按 interrupted 处理
+      coord.invalidateExecutionGeneration(params.runId)
+      const snapshot = coord.commitTerminal({
+        runId: params.runId,
+        status: 'interrupted',
+        reason: `force_terminate_abort_error:${result.abortError}`
+      })
+      if (getActiveRunId() === params.runId) {
+        setActiveRunId(null)
+      }
+      // lingering handle 保留至 settled 自动注销；禁止此处 unregister
+      return {
+        ok: !!snapshot,
+        snapshot,
+        lingering: true,
+        abortError: result.abortError
+      }
+    }
+
+    if (result.settled) {
+      const snapshot = coord.commitTerminal({
+        runId: params.runId,
+        status: 'cancelled',
+        reason: 'force_terminate'
+      })
+      // 已 settled：按 generation 注销（若 settled 回调已清则 no-op）
+      if (result.generation != null) {
+        registry.unregister(params.runId, result.generation)
+      }
+      if (getActiveRunId() === params.runId) {
+        setActiveRunId(null)
+      }
+      return { ok: !!snapshot, snapshot, lingering: false }
+    }
+
+    // grace 超时：提交 interrupted + 失效 generation；**不得** unregister lingering handle
+    coord.invalidateExecutionGeneration(params.runId)
     const snapshot = coord.commitTerminal({
       runId: params.runId,
-      status: result.settled ? 'cancelled' : 'interrupted',
-      reason: result.settled ? 'force_terminate' : 'force_terminate_grace_expired'
+      status: 'interrupted',
+      reason: 'force_terminate_grace_expired'
     })
-    // 已收敛或已被标为 interrupted 后，不能再让旧句柄参与新的 run。
-    registry.unregister(params.runId)
     if (getActiveRunId() === params.runId) {
       setActiveRunId(null)
     }
-    return { ok: !!snapshot, snapshot, lingering: result.lingering }
+    return { ok: !!snapshot, snapshot, lingering: true }
   })
 
   handle(RUN_INTERRUPTED_ACTION, async (_event, params: {
@@ -75,7 +129,6 @@ export function registerRunHandler(): void {
         const { previewRollback, confirmRollback, listFileEffects } = await import(
           '../../runtime/workflow/v2/EffectReceipt'
         )
-        // workspaceId 在 agent run 中即工作区根路径
         const workspaceRoot = snap.workspaceId
         const effects = listFileEffects(workspaceRoot, params.runId)
         if (effects.length === 0) {
@@ -87,14 +140,16 @@ export function registerRunHandler(): void {
             snapshot: snap
           }
         }
+        // 本 IPC 仍为预览+确认合一的兼容路径；真正拆分见 rollback-preview/confirm 通道
         const preview = previewRollback(workspaceRoot, params.runId)
         const result = confirmRollback(workspaceRoot, params.runId)
+        const hasConflict = preview.conflicts.length > 0 || preview.missingBackup.length > 0
         return {
-          ok: result.ok,
+          ok: result.ok && !hasConflict,
           steps: committed,
-          message: result.ok
-            ? `已按 effect 凭证回滚：恢复 ${preview.willRestore.length}，删除 ${preview.willDelete.length}，冲突 ${preview.conflicts.length}`
-            : `回滚部分失败（缺备份 ${preview.missingBackup.length}）；冲突文件未覆盖`,
+          message: result.ok && !hasConflict
+            ? `已按 effect 凭证回滚：恢复 ${preview.willRestore.length}，删除 ${preview.willDelete.length}`
+            : `回滚未完全成功：冲突 ${preview.conflicts.length}，缺备份 ${preview.missingBackup.length}`,
           snapshot: snap,
           preview,
           results: result.results
@@ -109,7 +164,6 @@ export function registerRunHandler(): void {
       }
     }
 
-    // continue：从 interrupted 进入 resuming，供后续 SEND_MESSAGE / 用户「继续」衔接
     if (snap.status !== 'interrupted') {
       return {
         ok: false,
@@ -117,7 +171,7 @@ export function registerRunHandler(): void {
         snapshot: snap
       }
     }
-    // interrupted → resuming（不自动重放非幂等工具；用户发「继续」时新 turn 分析）
+    // interrupted → resuming：统一 commit 保证 sequence 单调，避免 Renderer 丢事件
     const next = coord.transition(params.runId, 'resuming', 'user_continue')
     return {
       ok: true,

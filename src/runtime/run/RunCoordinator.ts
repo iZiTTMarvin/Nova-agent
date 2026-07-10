@@ -534,16 +534,9 @@ export class RunCoordinator {
     if (!snap) return
     if (!snap.turnDraft) return
     snap.turnDraft = null
-    snap.updatedAt = Date.now()
-    // 终态后仍允许清草稿：绕过 requireMutable 的硬终态限制
+    // 终态后仍允许清草稿：绕过 requireMutable，但必须走统一 commit
     this.runs.set(runId, snap)
-    this.store.saveSnapshot(snap)
-    this.store.appendEvent({
-      sequence: ++snap.sequence,
-      runId,
-      type: 'turn_draft_cleared',
-      at: Date.now()
-    })
+    this.commit(snap, 'turn_draft_cleared', {})
   }
 
   /** 持久化 interaction command 回执（跨重启幂等） */
@@ -553,11 +546,13 @@ export class RunCoordinator {
     const list = snap.commandAcks ?? (snap.commandAcks = [])
     if (list.some(a => a.commandId === ack.commandId)) return
     list.push(ack)
-    // 限制体积：只保留最近 200 条
     if (list.length > 200) list.splice(0, list.length - 200)
-    snap.updatedAt = Date.now()
     this.runs.set(runId, snap)
-    this.store.saveSnapshot(snap)
+    this.commit(snap, 'command_ack', {
+      commandId: ack.commandId,
+      ok: ack.ok,
+      code: ack.code
+    })
   }
 
   /** 查找已持久化的 command 回执 */
@@ -586,17 +581,15 @@ export class RunCoordinator {
   reconcileOnStartup(): RunSnapshot[] {
     const interrupted: RunSnapshot[] = []
     for (const snap of this.store.listNonTerminalSnapshots()) {
-      // 载入内存
+      // 载入内存（listNonTerminal 已做事件尾部重放）
       this.runs.set(snap.runId, snap)
       this.indexSession(snap.sessionId, snap.runId)
 
       if (isTerminalRunStatus(snap.status)) continue
 
-      // 未提交的非幂等工具保持 prepared/executing，不自动重放
       const commits = snap.toolCommits ?? []
       for (const c of commits) {
         if ((c.phase === 'prepared' || c.phase === 'executing') && !c.idempotent) {
-          // 标记 failed，避免误以为可重放
           c.phase = 'failed'
           c.updatedAt = Date.now()
         }
@@ -606,40 +599,42 @@ export class RunCoordinator {
       snap.status = 'interrupted'
       snap.terminalReason = 'process_exit'
       snap.terminalTransitionId = transitionId
-      snap.updatedAt = Date.now()
-      // 取消挂起交互（进程已死，Promise 无法恢复；UI 仍可读 snapshot 展示历史）
+      snap.executionGeneration = 0
       for (const inter of snap.pendingInteractions) {
         if (inter.status === 'pending' || inter.status === 'submitting') {
           inter.status = 'cancelled'
           inter.version += 1
         }
       }
-      this.store.saveSnapshot(snap)
-      this.store.appendEvent({
-        sequence: ++snap.sequence,
-        runId: snap.runId,
-        type: 'reconcile_interrupted',
-        at: Date.now(),
-        payload: { reason: 'process_exit' }
-      })
+      this.runs.set(snap.runId, snap)
+      this.commit(snap, 'reconcile_interrupted', { reason: 'process_exit' })
       interrupted.push(cloneSnapshot(snap))
     }
+
+    // 扫描终态 run 的未完成 outbox，供 handler 注册后 drain
+    this.pendingOutboxOnStartup = this.collectPendingOutboxKeys()
     return interrupted
   }
 
-  // ── Terminal hooks（exactly-once） ────────────────────────
+  /** 启动时发现的 pending outbox keys，供 drainPendingOutbox 使用 */
+  private pendingOutboxOnStartup: string[] = []
 
-  onTerminalHook(hookName: TerminalHookName, handler: TerminalHookHandler): () => void {
-    let set = this.terminalHookHandlers.get(hookName)
-    if (!set) {
-      set = new Set()
-      this.terminalHookHandlers.set(hookName, set)
+  private collectPendingOutboxKeys(): string[] {
+    const keys: string[] = []
+    for (const runId of this.store.listRunIds()) {
+      const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      if (!snap?.terminalOutbox) continue
+      this.runs.set(runId, snap)
+      for (const e of snap.terminalOutbox) {
+        if (e.status === 'pending' || e.status === 'failed' || e.status === 'delivering') {
+          keys.push(e.key)
+        }
+      }
     }
-    set.add(handler)
-    return () => {
-      set!.delete(handler)
-    }
+    return keys
   }
+
+  // ── Terminal hooks（exactly-once） ────────────────────────
 
   private async fireTerminalHook(
     runId: string,
@@ -648,7 +643,6 @@ export class RunCoordinator {
     snapshot: RunSnapshot
   ): Promise<void> {
     const key = `${runId}|${terminalTransitionId}|${hookName}`
-    // 先查 durable outbox，再查进程内 Set（兼容同进程重复调用）
     const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
     const outbox = snap?.terminalOutbox ?? []
     const existing = outbox.find(e => e.key === key)
@@ -656,9 +650,8 @@ export class RunCoordinator {
       this.firedTerminalHooks.add(key)
       return
     }
-    this.firedTerminalHooks.add(key)
 
-    // 持久化 pending → 执行 → delivered（effectively-once）
+    // 持久化 pending（无 handler 时保持 pending，不得标 delivered）
     if (snap && !existing) {
       const entry: TerminalOutboxEntry = {
         key,
@@ -666,45 +659,117 @@ export class RunCoordinator {
         terminalTransitionId,
         hookName,
         status: 'pending',
-        at: Date.now()
+        at: Date.now(),
+        idempotencyKey: key
       }
       const list = snap.terminalOutbox ?? (snap.terminalOutbox = [])
       list.push(entry)
       this.runs.set(runId, snap)
-      this.store.saveSnapshot(snap)
+      this.commit(snap, 'terminal_outbox_pending', { key, hookName })
     }
 
     const handlers = this.terminalHookHandlers.get(hookName)
     if (!handlers || handlers.size === 0) {
-      this.markOutboxDelivered(runId, key)
+      // 无 handler：保持 pending，等注册后 drain
       return
     }
 
-    const ctx: TerminalHookContext = {
-      runId,
-      terminalTransitionId,
-      hookName,
-      snapshot: cloneSnapshot(snapshot)
-    }
-    for (const handler of handlers) {
-      try {
-        await handler(ctx)
-      } catch (err) {
-        console.error(`[RunCoordinator] terminal hook ${hookName} 失败:`, err)
-      }
-    }
-    this.markOutboxDelivered(runId, key)
+    await this.deliverOutboxEntry(runId, key, snapshot)
   }
 
-  private markOutboxDelivered(runId: string, key: string): void {
+  /**
+   * 投递单条 outbox：成功才 delivered；失败保留 pending/failed。
+   * 采用 at-least-once + handler 侧 idempotencyKey 去重，不宣称 exactly-once。
+   */
+  private async deliverOutboxEntry(
+    runId: string,
+    key: string,
+    snapshot: RunSnapshot
+  ): Promise<void> {
     const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
     if (!snap?.terminalOutbox) return
     const entry = snap.terminalOutbox.find(e => e.key === key)
     if (!entry || entry.status === 'delivered') return
-    entry.status = 'delivered'
+
+    const hookName = entry.hookName as TerminalHookName
+    const handlers = this.terminalHookHandlers.get(hookName)
+    if (!handlers || handlers.size === 0) return
+
+    entry.status = 'delivering'
     entry.at = Date.now()
     this.runs.set(runId, snap)
-    this.store.saveSnapshot(snap)
+    this.commit(snap, 'terminal_outbox_delivering', { key })
+
+    const ctx: TerminalHookContext = {
+      runId,
+      terminalTransitionId: entry.terminalTransitionId,
+      hookName,
+      snapshot: cloneSnapshot(snapshot)
+    }
+
+    const errors: string[] = []
+    for (const handler of handlers) {
+      try {
+        await handler(ctx)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        errors.push(msg)
+        console.error(`[RunCoordinator] terminal hook ${hookName} 失败:`, err)
+      }
+    }
+
+    if (errors.length > 0) {
+      entry.status = 'failed'
+      entry.lastError = errors.join('; ').slice(0, 500)
+      entry.at = Date.now()
+      this.runs.set(runId, snap)
+      this.commit(snap, 'terminal_outbox_failed', { key, error: entry.lastError })
+      return
+    }
+
+    entry.status = 'delivered'
+    entry.at = Date.now()
+    entry.lastError = undefined
+    this.firedTerminalHooks.add(key)
+    this.runs.set(runId, snap)
+    this.commit(snap, 'terminal_outbox_delivered', { key })
+  }
+
+  /**
+   * handler 注册后或启动后：重试所有 pending/failed outbox。
+   * 按 runId 绑定，避免全局 AgentLoop 串线。
+   */
+  async drainPendingOutbox(filterRunId?: string): Promise<number> {
+    let delivered = 0
+    for (const runId of this.store.listRunIds()) {
+      if (filterRunId && runId !== filterRunId) continue
+      const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      if (!snap?.terminalOutbox) continue
+      this.runs.set(runId, snap)
+      for (const entry of [...snap.terminalOutbox]) {
+        if (entry.status !== 'pending' && entry.status !== 'failed') continue
+        await this.deliverOutboxEntry(runId, entry.key, snap)
+        const after = (this.runs.get(runId) ?? snap).terminalOutbox?.find(e => e.key === entry.key)
+        if (after?.status === 'delivered') delivered += 1
+      }
+    }
+    return delivered
+  }
+
+  onTerminalHook(hookName: TerminalHookName, handler: TerminalHookHandler): () => void {
+    let set = this.terminalHookHandlers.get(hookName)
+    if (!set) {
+      set = new Set()
+      this.terminalHookHandlers.set(hookName, set)
+    }
+    set.add(handler)
+    // 新 handler 注册后尝试 drain pending（at-least-once）
+    void this.drainPendingOutbox().catch(err => {
+      console.error('[RunCoordinator] drainPendingOutbox 失败:', err)
+    })
+    return () => {
+      set!.delete(handler)
+    }
   }
 
   /** 供外部（AgentLoop 适配）查询某 hook 是否已对当前 terminal 触发过 */
@@ -740,20 +805,51 @@ export class RunCoordinator {
     eventType: string,
     payload?: Record<string, unknown>
   ): void {
+    // 唯一落盘入口：先递增 sequence，再 event→fsync→atomic snapshot→broadcast
     snapshot.sequence += 1
     snapshot.updatedAt = Date.now()
     this.runs.set(snapshot.runId, snapshot)
     this.indexSession(snapshot.sessionId, snapshot.runId)
-    this.store.saveSnapshot(snapshot)
-    const event: RunEventRecord = {
-      sequence: snapshot.sequence,
-      runId: snapshot.runId,
-      type: eventType,
-      at: Date.now(),
-      payload
-    }
-    this.store.appendEvent(event)
+    const event = this.store.commitTransaction(snapshot, eventType, payload)
     this.onSnapshot?.(cloneSnapshot(snapshot), event)
+  }
+
+  /**
+   * 绑定执行 generation（权威 fencing）。
+   * 副作用入口用 isExecutionCurrent 校验。
+   */
+  bindExecutionGeneration(runId: string, generation: number): RunSnapshot | null {
+    const snap = this.requireMutable(runId)
+    if (!snap) return null
+    snap.executionGeneration = generation
+    this.commit(snap, 'execution_generation', { executionGeneration: generation })
+    return cloneSnapshot(snap)
+  }
+
+  /**
+   * 使当前 executionGeneration 失效（grace 超时 / 强制中断）。
+   * 旧 continuation 不得再写文件或提交工具结果。
+   */
+  invalidateExecutionGeneration(runId: string): RunSnapshot | null {
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!snap) return null
+    const prev = snap.executionGeneration
+    // 清零表示无有效 generation；保留 prev 在事件里便于审计
+    snap.executionGeneration = 0
+    snap.updatedAt = Date.now()
+    this.runs.set(runId, snap)
+    this.commit(snap, 'execution_generation_invalidated', {
+      previousGeneration: prev ?? null
+    })
+    return cloneSnapshot(snap)
+  }
+
+  /** 统一 fencing 检查：run 存在且 generation 与权威 snapshot 一致且非 0 */
+  isExecutionCurrent(runId: string, generation: number): boolean {
+    if (!generation || generation <= 0) return false
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!snap) return false
+    return snap.executionGeneration === generation
   }
 
   private indexSession(sessionId: string, runId: string): void {

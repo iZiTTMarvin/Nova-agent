@@ -85,10 +85,11 @@ import {
 
 /**
  * 供 WorkspaceService 分叉 IPC 守卫：生成中禁止改 currentLeafId。
- * 权威来源：RunCoordinator 非终态 run（不再维护独立 agentTurnInProgress 标志）。
+ * 权威来源：RunCoordinator 非终态 run，或仍有未 settled 的执行句柄（含 interrupted 后 lingering）。
  */
 export function isAgentTurnInProgress(): boolean {
   try {
+    if (getRunExecutionRegistry().hasUnsettledHandle('agent')) return true
     return getRunCoordinator().listActiveRuns().length > 0
   } catch {
     return getActiveRunId() !== null
@@ -783,7 +784,8 @@ export function registerAgentHandler(
         sessionsDir: capturedSessionsDir,
         eventBus,
         getMainWindow,
-        runId: capturedRunId
+        runId: capturedRunId,
+        executionGeneration
       })
     })
 
@@ -794,6 +796,10 @@ export function registerAgentHandler(
     }
 
     // Execution：此后立即进入 try/catch/finally，run 的每个出口都由同一处收敛。
+    // 全局 AgentLoop：旧 handle 未 settled 时禁止开启新的共享 loop（含 interrupted lingering）
+    if (executionRegistry.hasUnsettledHandle('agent')) {
+      throw new Error('上一次 Agent 执行尚未完全退出，请稍候再发送（避免与旧 continuation 重叠）')
+    }
     const runSnap = runCoordinator.startRun({
       kind: session.mode === 'compose' ? 'compose' : 'agent',
       workspaceId: projectPath,
@@ -811,6 +817,7 @@ export function registerAgentHandler(
       abort: () => agentLoop?.cancel(),
       settled: executionSettled
     })
+    runCoordinator.bindExecutionGeneration(capturedRunId, executionGeneration)
     setActiveRunId(capturedRunId)
     runCoordinator.markRunning(capturedRunId)
 
@@ -1084,6 +1091,8 @@ export interface MessageContext {
   getMainWindow: () => BrowserWindow | null
   /** 当前权威 runId；用于工具边界写入 turnDraft */
   runId?: string
+  /** 当前执行 generation；副作用前后 fencing */
+  executionGeneration?: number
 }
 
 /**
@@ -1133,7 +1142,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           status: 'running'
         })
         // 工具参数就绪即落盘草稿，崩溃后可恢复「已准备未执行」边界
-        persistTurnDraft(ctx.runId, event.messageId, stream.blocks)
+        persistTurnDraft(ctx.runId, event.messageId, stream.blocks, false, ctx.executionGeneration)
       }
       break
     }
@@ -1151,7 +1160,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           } as typeof block
         }
         // 工具结果边界：turnDraft 是执行中唯一事实源（fsync via RunStore）
-        persistTurnDraft(ctx.runId, event.messageId, stream.blocks)
+        persistTurnDraft(ctx.runId, event.messageId, stream.blocks, false, ctx.executionGeneration)
       }
       // 异步调度：让 tool_result 当前的 EventBus 调用栈（含其他订阅者、IPC 转发）
       // 先全部跑完，避免 manifest 读盘阻塞下一个 thinking_delta 的处理。
@@ -1169,7 +1178,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           : stream.blocks
 
         // 所有权转移：先标记草稿 finalized，再写入 SessionStore，最后清除草稿
-        persistTurnDraft(ctx.runId, event.messageId, blocks, true)
+        persistTurnDraft(ctx.runId, event.messageId, blocks, true, ctx.executionGeneration)
         saveAssistantMessage(sessionId, event.messageId, blocks, event.interrupted)
         clearTurnDraftAfterFinalize(ctx.runId)
         triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
@@ -1367,23 +1376,32 @@ function saveAssistantMessage(
 /**
  * 工具边界：把当前 blocks 写入 RunSnapshot.turnDraft（fsync）。
  * 执行中唯一事实源；SessionStore 仅在 finalize 后接手。
+ * generation 失效后拒绝写入，防止 lingering continuation 覆盖。
  */
 function persistTurnDraft(
   runId: string | undefined,
   messageId: string,
   blocks: MessageBlock[],
-  finalized = false
+  finalized = false,
+  executionGeneration?: number
 ): void {
   if (!runId) return
-  try {
-    getRunCoordinator().upsertTurnDraft(runId, {
-      messageId,
-      blocks: blocks as unknown as Array<Record<string, unknown>>,
-      finalized
-    })
-  } catch (err) {
-    console.error('[persistTurnDraft] 写入失败:', err)
+  const coord = getRunCoordinator()
+  if (
+    executionGeneration != null &&
+    !coord.isExecutionCurrent(runId, executionGeneration)
+  ) {
+    console.warn(
+      `[persistTurnDraft] generation 已失效，拒绝写入 runId=${runId} gen=${executionGeneration}`
+    )
+    return
   }
+  // 落盘失败必须抛出，不得吞掉后继续宣称可恢复
+  coord.upsertTurnDraft(runId, {
+    messageId,
+    blocks: blocks as unknown as Array<Record<string, unknown>>,
+    finalized
+  })
 }
 
 /** SessionStore 写入成功后清除草稿，完成所有权转移 */
