@@ -146,7 +146,8 @@ describe('editTool 集成测试', () => {
       createContext({ abortSignal: controller.signal })
     )
     expect(result.success).toBe(false)
-    expect(result.error).toContain('aborted')
+    // 生产文案为中文「edit已取消」（assertSideEffectAllowed），不强制英文 aborted
+    expect(result.error).toContain('取消')
   })
 
   it('edits 为 JSON 字符串时自动解析', async () => {

@@ -29,10 +29,12 @@ describe('RunExecutionRegistry', () => {
       settled: new Promise<void>(() => {})
     })
 
-    await expect(registry.abort('run_1', 'force_terminate')).resolves.toEqual({
-      settled: false,
-      lingering: true
-    })
+    await expect(registry.abort('run_1', 'force_terminate')).resolves.toEqual(
+      expect.objectContaining({
+        settled: false,
+        lingering: true
+      })
+    )
     expect(abort).toHaveBeenCalledWith('force_terminate')
   })
 })

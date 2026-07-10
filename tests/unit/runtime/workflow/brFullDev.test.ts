@@ -15,7 +15,7 @@ import {
   getWorkflowStatus,
   _resetWorkflowRuntimeForTests
 } from '../../../../src/runtime/workflow/runtime'
-import { statePath, runJournalPath } from '../../../../src/runtime/workflow/paths'
+import { statePath, runJournalPath, runStatePath } from '../../../../src/runtime/workflow/paths'
 import { getBuiltinScript } from '../../../../src/runtime/workflow/builtin'
 import type { ComposeState, WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 import type { ToolResult } from '../../../../src/runtime/tools/types'
@@ -170,7 +170,97 @@ async function rmTmpDirSafe(dir: string): Promise<void> {
   }
 }
 
-describe('br-full-dev 阶段 D', () => {
+/** v2 happy path：探索→计划→单任务执行→ship（无 askUser） */
+function queueV2HappyPath(client: MockModelClient): void {
+  queueJson(client, { route: 'br-brainstorming', reason: '小功能' })
+  queueJson(client, {
+    title: 'todo-cli',
+    body: '# Todo CLI\n\n目标：实现一个 Todo CLI。\n',
+    route: 'br-brainstorming'
+  })
+  queueJson(client, { highCount: 0, highs: [], summary: 'ok' })
+  queueJson(client, {
+    title: 'todo-cli',
+    body: '# Plan\n\n- task-001\n',
+    tasks: [
+      {
+        id: 'task-001',
+        title: '实现 TodoStore',
+        size: 'S',
+        deps: [],
+        verify: '单元测试通过'
+      }
+    ]
+  })
+  // impl（worktree 可能失败返回 null，仍需 verify 响应）
+  queueJson(client, { summary: '实现完成', files: ['src/todo.ts'] })
+  queueJson(client, {
+    allPassed: true,
+    pass: 1,
+    fail: 0,
+    evidence: '1 passed'
+  })
+  // integrate（若有 wt.changed）
+  queueJson(client, { ok: true, summary: 'merged' })
+}
+
+describe('br-full-dev 默认 v2', () => {
+  let tmp: string
+
+  beforeEach(async () => {
+    tmp = mkdtempSync(join(tmpdir(), 'nova-br-v2-'))
+    await _resetWorkflowRuntimeForTests()
+  })
+
+  afterEach(async () => {
+    await _resetWorkflowRuntimeForTests()
+    await rmTmpDirSafe(tmp)
+  })
+
+  it('happy path：默认 v2，写出 specs/plans/reports', async () => {
+    const client = new MockModelClient()
+    queueV2HappyPath(client)
+    const deps = makeDeps(tmp, client)
+
+    const outcome = await runWorkflow({
+      script: 'br-full-dev',
+      args: { requirement: '实现一个 Todo CLI' },
+      deps,
+      runId: '2026-07-10-v2-happy'
+    })
+
+    expect(outcome.status).toBe('completed')
+    if (outcome.status !== 'completed') return
+    expect(outcome.result).toMatchObject({
+      ok: true,
+      engine: 'v2',
+      taskCount: 1
+    })
+
+    const state = JSON.parse(
+      readFileSync(runStatePath(tmp, '2026-07-10-v2-happy'), 'utf-8')
+    ) as ComposeState
+    expect(state.run.status).toBe('completed')
+    expect(state.artifacts?.spec).toMatch(/\.nova\/compose\/specs\/.*-design\.md$/)
+    expect(state.artifacts?.plan).toMatch(/\.nova\/compose\/plans\/.*-plan\.md$/)
+    expect(state.artifacts?.report).toMatch(/\.nova\/compose\/reports\/.*\.md$/)
+    expect(existsSync(join(tmp, state.artifacts!.spec!))).toBe(true)
+    expect(existsSync(join(tmp, state.artifacts!.plan!))).toBe(true)
+    expect(existsSync(join(tmp, state.artifacts!.report!))).toBe(true)
+  })
+
+  it('内置 br-full-dev 脚本已注册且 meta 含五阶段', () => {
+    const entry = getBuiltinScript('br-full-dev')
+    expect(entry).toBeTruthy()
+    expect(entry!.script).toContain('MAX_TDD_ATTEMPTS = 3')
+    expect(entry!.script).toContain('askUser')
+    expect(entry!.script).toContain('topoSort')
+    expect(entry!.script).toContain('runVerifyTdd')
+    expect(entry!.script).toMatch(/directory:\s*wtDir/)
+  })
+})
+
+describe('br-full-dev v1 兼容组', () => {
   let tmp: string
 
   beforeEach(async () => {
@@ -179,7 +269,6 @@ describe('br-full-dev 阶段 D', () => {
   })
 
   afterEach(async () => {
-    // 先等 scope/child 退出并清理 owned worktree，再删 tmp（修 Windows EBUSY flaky）
     await _resetWorkflowRuntimeForTests()
     await rmTmpDirSafe(tmp)
   })
@@ -189,7 +278,6 @@ describe('br-full-dev 阶段 D', () => {
     queueHappyPath(client)
     const deps = makeDeps(tmp, client, {
       askUserResolver: async (req) => {
-        // 验收失败后的可选停顿 + 阶段 5 发布确认
         if (req.question.includes('验收失败')) return '跳过并继续'
         return '暂不提交，继续微调'
       }
@@ -229,7 +317,6 @@ describe('br-full-dev 阶段 D', () => {
     queueVerifyFail3x(client)
     const deps = makeDeps(tmp, client, {
       askUserResolver: async (req) => {
-        // 验收失败后的可选停顿 + 阶段 5 发布确认
         if (req.question.includes('验收失败')) return '跳过并继续'
         return '暂不提交，继续微调'
       }
@@ -254,7 +341,6 @@ describe('br-full-dev 阶段 D', () => {
 
   it('askUser 真正阻塞，不自动推进', async () => {
     const client = new MockModelClient()
-    // 最小脚本：直接 askUser
     const script = `
 export const meta = {
   name: "ask-block",
@@ -288,7 +374,6 @@ return { answer };
       return o
     })
 
-    // 等事件发出
     await new Promise((r) => setTimeout(r, 50))
     expect(settled).toBe(false)
     expect(getWorkflowStatus('2026-07-04-ask')?.status).toBe('running')
@@ -306,7 +391,6 @@ return { answer };
 
   it('resume：journal 跳过已成功 agent；script_sha 不匹配需显式 migrate', async () => {
     const client = new MockModelClient()
-    // 第一次：简单脚本写 journal
     const scriptV1 = `
 export const meta = { name: "resume-test", description: "r", phases: [{ title: "探索" }] };
 phase("探索");
@@ -326,7 +410,6 @@ return { a, b };
     expect(o1.status).toBe('completed')
     expect(existsSync(runJournalPath(tmp, '2026-07-04-resume'))).toBe(true)
 
-    // resume 同脚本：不应再调模型（client 无新响应）
     const client2 = new MockModelClient()
     const deps2 = makeDeps(tmp, client2)
     const o2 = await runWorkflow({
@@ -341,7 +424,6 @@ return { a, b };
       expect(o2.result).toEqual({ a: 'A1', b: 'B1' })
     }
 
-    // 改脚本后 resume：默认拒绝；显式 migrate 才 freshJournal
     const scriptV2 = `
 export const meta = { name: "resume-test", description: "r", phases: [{ title: "探索" }] };
 phase("探索");
@@ -365,19 +447,7 @@ return { a };
     }
   })
 
-  it('内置 br-full-dev 脚本已注册且 meta 含五阶段', () => {
-    const entry = getBuiltinScript('br-full-dev')
-    expect(entry).toBeTruthy()
-    expect(entry!.script).toContain('MAX_TDD_ATTEMPTS = 3')
-    expect(entry!.script).toContain('askUser')
-    expect(entry!.script).toContain('topoSort')
-    // 多任务 worktree：verify/debug 必须复用 directory，禁止另开 isolation
-    expect(entry!.script).toContain('runVerifyTdd')
-    expect(entry!.script).toMatch(/directory:\s*wtDir/)
-  })
-
   it('放弃本次改动：不执行破坏性 Git 回滚，保留工作区改动', async () => {
-    // 需要真实 git 仓库（脚本仍会记录 baseline SHA，但不得 reset/clean）
     const git = (args: string[]) => {
       const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf-8', windowsHide: true })
       if (r.status !== 0) throw new Error(r.stderr || r.stdout || args.join(' '))
@@ -389,7 +459,6 @@ return { a };
     git(['add', '.'])
     git(['commit', '-m', 'init'])
 
-    // 模拟编排期间改动了已跟踪文件 + 未跟踪文件
     writeFileSync(join(tmp, 'README.md'), '# dirty-from-compose\n', 'utf-8')
     writeFileSync(join(tmp, 'untracked.txt'), 'should-be-kept\n', 'utf-8')
 
@@ -414,12 +483,10 @@ return { a };
         /已禁用|checkpoint|消息回退/
       )
     }
-    // 工作区改动必须保留（禁止 git reset / clean）
     expect(readFileSync(join(tmp, 'README.md'), 'utf-8').replace(/\r\n/g, '\n')).toBe(
       '# dirty-from-compose\n'
     )
     expect(existsSync(join(tmp, 'untracked.txt'))).toBe(true)
-    // .nova 编排产物应保留
     const state = JSON.parse(readFileSync(statePath(tmp), 'utf-8')) as ComposeState
     expect(state.artifacts?.report).toBeTruthy()
     expect(existsSync(join(tmp, state.artifacts!.report!))).toBe(true)
