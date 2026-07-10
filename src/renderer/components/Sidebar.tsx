@@ -11,6 +11,9 @@ import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon, E
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRunStore } from '../stores/useRunStore'
 
+/** 每个项目下默认展示的最新会话数（对齐 Cursor「显示更多」） */
+const SIDEBAR_SESSION_PREVIEW_COUNT = 5
+
 export const Sidebar: React.FC = () => {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
@@ -48,6 +51,8 @@ export const Sidebar: React.FC = () => {
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>(
     Object.keys(projectGroups).reduce((acc, p) => ({ ...acc, [p]: true }), {})
   )
+  /** 每个项目会话列表是否已点「显示更多」（与项目文件夹开合独立） */
+  const [expandedSessionLists, setExpandedSessionLists] = useState<Record<string, boolean>>({})
 
   const toggleProject = (p: string) => {
     setExpandedProjects(prev => ({ ...prev, [p]: !prev[p] }))
@@ -155,6 +160,17 @@ export const Sidebar: React.FC = () => {
         <div className="mt-1 space-y-1">
           {Object.entries(projectGroups).map(([projectPath, projectSessions]) => {
             const isExpanded = expandedProjects[projectPath] !== false
+            // 选中会话在预览区之外时强制展开，避免选中项被藏住
+            const selectedIndex = projectSessions.findIndex(s => s.id === currentSessionId)
+            const selectedBeyondPreview = selectedIndex >= SIDEBAR_SESSION_PREVIEW_COUNT
+            const userExpandedSessions = expandedSessionLists[projectPath] === true
+            const isSessionListExpanded = userExpandedSessions || selectedBeyondPreview
+            const visibleSessions =
+              isSessionListExpanded || projectSessions.length <= SIDEBAR_SESSION_PREVIEW_COUNT
+                ? projectSessions
+                : projectSessions.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
+            const showMoreToggle = projectSessions.length > SIDEBAR_SESSION_PREVIEW_COUNT
+
             return (
               <div key={projectPath} className="flex flex-col">
                 <div 
@@ -195,7 +211,7 @@ export const Sidebar: React.FC = () => {
                       className="overflow-hidden"
                     >
                       <div className="pl-6 pr-1 py-1 space-y-1 border-l border-border-cream ml-[11px]">
-                        {projectSessions.map(session => {
+                        {visibleSessions.map(session => {
                           const isActive = session.id === currentSessionId
                           const isEditing = editingId === session.id
                           const displayTitle = getDisplayTitle(session)
@@ -263,6 +279,22 @@ export const Sidebar: React.FC = () => {
                             </div>
                           )
                         })}
+                        {showMoreToggle && (
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // 收起只清用户态；选中项仍在预览区外时由 selectedBeyondPreview 继续强制展开
+                              setExpandedSessionLists(prev => ({
+                                ...prev,
+                                [projectPath]: !isSessionListExpanded
+                              }))
+                            }}
+                          >
+                            {isSessionListExpanded ? '收起' : '显示更多'}
+                          </button>
+                        )}
                       </div>
                     </motion.div>
                   )}
