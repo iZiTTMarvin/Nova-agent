@@ -202,7 +202,10 @@ describe('ModelTransport 故障注入（T1-1）', () => {
     const next = iter.next()
     setTimeout(() => controller.abort(), 20)
     const result = await next
-    expect(result.value.type).toBe('message_start')
+    // T2-5：成功路径先 yield request_fingerprint，再 message_start
+    expect(result.value.type).toBe('request_fingerprint')
+    const startEvent = await iter.next()
+    expect(startEvent.value.type).toBe('message_start')
     const cancelledEvent = await iter.next()
     expect(cancelledEvent.value.type).toBe('cancelled')
     expect(cancelled).toBe(true)

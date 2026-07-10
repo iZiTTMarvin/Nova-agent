@@ -36,6 +36,8 @@ type CacheBreakReason =
   | 'system_prompt_changed'
   | 'tool_schema_changed'
   | 'significant_cache_read_drop'
+  /** 网关不认识 prompt_cache_key，已精确剥离并重试（非缓存前缀破坏） */
+  | 'prompt_cache_key_unsupported'
 
 /** cache_read_tokens 下降超过此比例视为显著（5%） */
 const SIGNIFICANT_DROP_RATIO = 0.05
@@ -52,6 +54,8 @@ const MIN_CACHE_MISS_TOKENS = 500
  */
 export class CacheDiagnostics {
   private baseline: CacheBaseline | null = null
+  /** 最近一次最终请求体的结构指纹（不含明文） */
+  private lastRequestFingerprint: string | null = null
 
   /**
    * 记录当前请求的基线（在发送 API 请求前调用）
@@ -68,6 +72,19 @@ export class CacheDiagnostics {
       lastCacheReadTokens: prevLastRead,
       createdAt: Date.now()
     }
+  }
+
+  /**
+   * 记录最终 API body 的结构指纹（body 构建完成后调用）。
+   * 只存哈希，不存明文（约束 5）。
+   */
+  recordRequestFingerprint(fingerprint: string): void {
+    this.lastRequestFingerprint = fingerprint
+  }
+
+  /** 最近一次请求结构指纹；供观测/单测，不含明文 */
+  getLastRequestFingerprint(): string | null {
+    return this.lastRequestFingerprint
   }
 
   /**
@@ -163,13 +180,12 @@ function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 16)
 }
 
-/** 对工具定义列表计算排序后的 SHA-256 哈希 */
+/** 对工具定义列表计算 SHA-256 哈希（保留实际发送/注册顺序，不按名称排序） */
 function hashToolSchemas(tools: ToolDefinition[] | undefined): string {
   if (!tools || tools.length === 0) return 'no-tools'
-  // 按名称排序确保注册顺序变化不影响哈希
-  const sorted = [...tools]
-    .sort((a, b) => a.name.localeCompare(b.name))
+  // 不排序：注册顺序漂移必须能被检测；parameters 键序保持 JSON.stringify 原样敏感
+  const serialized = tools
     .map(t => `${t.name}:${t.description}:${JSON.stringify(t.parameters)}`)
     .join('|')
-  return hashContent(sorted)
+  return hashContent(serialized)
 }

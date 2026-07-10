@@ -10,10 +10,11 @@ import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
 import { buildReasoningParams } from './reasoningDialect'
 import { projectMessagesForVision } from './visionProjection'
-import { resolveCacheProfile, type CacheMarker } from './cacheProfile'
+import { resolveCacheProfile, type CacheMarker, type CacheProfile } from './cacheProfile'
 import type { CacheStrategy } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
+import { fingerprintFinalRequestBody } from './requestFingerprint'
 import {
   transportFetch,
   TransportBodyReader,
@@ -25,33 +26,45 @@ import {
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
-  /** 由 resolveCacheProfile 解析；仅 marker 本轮接线 */
-  private cacheMarker: CacheMarker = 'none'
+  /**
+   * 当前有效缓存档案（含 reasoningReplay / promptCacheKey / marker）。
+   * 在构造 / updateConfig / setCacheStrategy 时解析并缓存，请求路径不重算。
+   */
+  private cacheProfile: CacheProfile
 
   constructor(config: ModelClientConfig) {
     this.config = config
-    this.cacheMarker = this.resolveMarker(config)
+    this.cacheProfile = this.resolveProfile(config)
   }
 
   updateConfig(config: ModelClientConfig): void {
     this.config = config
-    this.cacheMarker = this.resolveMarker(config)
+    this.cacheProfile = this.resolveProfile(config)
   }
 
   /**
-   * 兼容旧 API：显式覆盖 marker。
-   * 'anthropic' → cache_control；'auto' → none。
+   * 兼容旧 API：显式覆盖 marker，并同步完整 profile。
+   * - 'anthropic' → anthropic 档案
+   * - 'auto' → 按 URL/modelId 自然归属（不是钉死 generic）；若自然归属带 cache_control 则压成 none
    */
   setCacheStrategy(strategy: CacheStrategy): void {
-    this.cacheMarker = strategy === 'anthropic' ? 'cache_control' : 'none'
+    this.cacheProfile = resolveCacheProfile(this.config.baseUrl, this.config.modelId, {
+      cacheProfile: this.config.cacheProfile,
+      cacheStrategy: strategy
+    })
   }
 
-  /** 按当前配置重算 marker（判定集中在 cacheProfile.ts） */
-  private resolveMarker(config: ModelClientConfig): CacheMarker {
+  /** 当前 marker（供 applyCacheMarkers）；与 cacheProfile 同步 */
+  private get cacheMarker(): CacheMarker {
+    return this.cacheProfile.marker
+  }
+
+  /** 按当前配置解析完整 CacheProfile（判定集中在 cacheProfile.ts） */
+  private resolveProfile(config: ModelClientConfig): CacheProfile {
     return resolveCacheProfile(config.baseUrl, config.modelId, {
       cacheProfile: config.cacheProfile,
       cacheStrategy: config.cacheStrategy
-    }).marker
+    })
   }
 
   async *chat(
@@ -112,10 +125,26 @@ export class OpenAICompatibleModelClient implements ModelClient {
       body.tools = applyToolCacheMarker(rawTools, this.cacheMarker)
     }
 
+    // 白名单：仅 kimi/openai（promptCacheKey==='session'）且 options 有 key 时注入
+    const canInjectPromptCacheKey =
+      this.cacheProfile.promptCacheKey === 'session' && !!options?.promptCacheKey
+    if (canInjectPromptCacheKey) {
+      body.prompt_cache_key = options!.promptCacheKey
+    }
+
+    // 最终 body 就绪后生成匿名结构指纹（降级重试若剥离 key 会在成功/失败出口再算）
+    const fingerprintEvent = (): ChatEvent => ({
+      type: 'request_fingerprint',
+      fingerprint: fingerprintFinalRequestBody(body)
+    })
+
     let response: Response
     let attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
-    try {
-      const result = await transportFetch({
+    const doFetch = async (): Promise<{
+      response: Response
+      attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
+    }> => {
+      return transportFetch({
         url,
         method: 'POST',
         headers: {
@@ -126,23 +155,68 @@ export class OpenAICompatibleModelClient implements ModelClient {
         userSignal: options?.abortSignal,
         timeouts: options?.transportTimeouts
       })
+    }
+
+    try {
+      const result = await doFetch()
       response = result.response
       attempt = result.attempt
     } catch (err) {
+      yield fingerprintEvent()
       yield transportErrorToChatEvent(err)
       return
     }
 
     if (!response.ok) {
       const text = await readErrorResponseBody(response, attempt, options?.transportTimeouts)
-      if (response.status === 400 && isContextOverflowError(400, text)) {
+      // 精确降级：仅 400 + 错误文案含 prompt_cache_key 时，剥离该字段重试一次
+      if (
+        canInjectPromptCacheKey &&
+        response.status === 400 &&
+        /prompt_cache_key/i.test(text)
+      ) {
+        yield {
+          type: 'prompt_cache_key_stripped',
+          detail: 'gateway rejected prompt_cache_key; retrying once without it'
+        }
+        delete body.prompt_cache_key
+        try {
+          const retry = await doFetch()
+          response = retry.response
+          attempt = retry.attempt
+        } catch (err) {
+          yield fingerprintEvent()
+          yield transportErrorToChatEvent(err)
+          return
+        }
+        if (!response.ok) {
+          const retryText = await readErrorResponseBody(
+            response,
+            attempt,
+            options?.transportTimeouts
+          )
+          yield fingerprintEvent()
+          if (response.status === 400 && isContextOverflowError(400, retryText)) {
+            yield { type: 'context_overflow', rawError: retryText }
+          } else {
+            yield { type: 'error', error: httpStatusToError(response.status, retryText) }
+          }
+          return
+        }
+        // 降级重试成功：继续走下方流式解析
+      } else if (response.status === 400 && isContextOverflowError(400, text)) {
+        yield fingerprintEvent()
         yield { type: 'context_overflow', rawError: text }
+        return
       } else {
+        yield fingerprintEvent()
         yield { type: 'error', error: httpStatusToError(response.status, text) }
+        return
       }
-      return
     }
 
+    // 成功路径：在流开始前上报最终 body 指纹
+    yield fingerprintEvent()
     yield { type: 'message_start' }
 
     // 流式 think 标签解析状态机（处理 content 中的 <think>...</think> 标签）
@@ -351,6 +425,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
    *
    * preserveInternal=true 时仅在本地缓存标记阶段保留 internal 元数据，
    * 之后会在真正发请求前统一剥离，不污染 API 字节流。
+   *
+   * reasoning_content 按 cacheProfile.reasoningReplay 白名单输出：
+   * - tool-call-history（deepseek）：仅含 tool_calls 的 assistant
+   * - all-history（kimi）：全部有 reasoningContent 的 assistant
+   * - none：绝不输出（即使 ChatMessage 上有值）
    */
   private toApiMessage(msg: ChatMessage, preserveInternal = false): Record<string, unknown> {
     const result: Record<string, unknown> = {
@@ -378,6 +457,21 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     if (msg.toolCallId) {
       result.tool_call_id = msg.toolCallId
+    }
+
+    // 仅 assistant 消息可带 reasoning_content；按 profile 白名单决定是否输出
+    if (msg.role === 'assistant' && msg.reasoningContent !== undefined) {
+      const replay = this.cacheProfile.reasoningReplay
+      if (replay === 'all-history') {
+        result.reasoning_content = msg.reasoningContent
+      } else if (
+        replay === 'tool-call-history' &&
+        msg.toolCalls &&
+        msg.toolCalls.length > 0
+      ) {
+        result.reasoning_content = msg.reasoningContent
+      }
+      // reasoningReplay === 'none'：剥离，不写字段
     }
 
     return result

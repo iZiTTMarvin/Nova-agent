@@ -30,6 +30,8 @@ export type TurnStreamResult =
       toolCalls: ChatToolCall[]
       finishReason: string
       sawUsage: boolean
+      /** 本子轮聚合的 reasoning；无 thinking_delta 时省略 */
+      reasoningContent?: string
     }
   | { kind: 'retry' }
   | { kind: 'cancelled' }

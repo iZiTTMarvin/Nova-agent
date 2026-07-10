@@ -151,6 +151,8 @@ export class StreamProcessor {
 
     let assistantContent = ''
     let rawContent = ''
+    /** 本子轮 thinking_delta 聚合缓冲；retry/fallback/cancel 时与正文同步清空 */
+    let reasoningContent = ''
     const toolCalls: ChatToolCall[] = []
     let finishReason = ''
     let roundSawUsage = false
@@ -236,6 +238,8 @@ export class StreamProcessor {
 
         switch (event.type) {
           case 'thinking_delta':
+            // 累积到运行时缓冲；仍透传 UI，不改 thinking block 行为
+            reasoningContent += event.delta
             this.emit({ type: 'thinking_delta', messageId, delta: event.delta })
             break
 
@@ -263,6 +267,25 @@ export class StreamProcessor {
             finishReason = 'tool_calls'
             toolCalls.push(event.toolCall)
             this.emit({ type: 'tool_call', messageId, toolCallId: event.toolCall.id, toolName: event.toolCall.name, args: JSON.parse(event.toolCall.arguments || '{}') })
+            break
+
+          case 'prompt_cache_key_stripped':
+            // 本 client 已精确剥离并重试；只发诊断，不触发 fallback / 工具重跑
+            this.emit({
+              type: 'cache_diagnostic',
+              messageId,
+              diagnostic: {
+                cacheBreakDetected: true,
+                reason: 'prompt_cache_key_unsupported',
+                suggestion:
+                  '当前网关不支持 prompt_cache_key。可将 cacheProfile 设为 generic，或改用官方 Kimi/OpenAI 端点。'
+              }
+            })
+            break
+
+          case 'request_fingerprint':
+            // 匿名结构指纹写入诊断层，不落明文、不发 UI 事件
+            this.cacheDiagnostics.recordRequestFingerprint(event.fingerprint)
             break
 
           case 'cancelled':
@@ -324,6 +347,7 @@ export class StreamProcessor {
               })
               assistantContent = ''
               rawContent = ''
+              reasoningContent = ''
               toolCalls.length = 0
               finishReason = ''
             }
@@ -408,6 +432,7 @@ export class StreamProcessor {
       this.emit({ type: 'attempt_failed', messageId, attemptId, error: errMsg })
       assistantContent = ''
       rawContent = ''
+      reasoningContent = ''
       toolCalls.length = 0
 
       const decision = this.attemptController.onError(errMsg)
@@ -471,7 +496,9 @@ export class StreamProcessor {
       assistantContent,
       toolCalls,
       finishReason,
-      sawUsage: roundSawUsage
+      sawUsage: roundSawUsage,
+      // 仅在有内容时携带，避免无 thinking 的子轮多出空字段
+      ...(reasoningContent ? { reasoningContent } : {})
     })
   }
 

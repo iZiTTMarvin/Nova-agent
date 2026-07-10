@@ -1,13 +1,14 @@
 /**
- * T0-1：多 provider 请求体契约快照（改造前基线）
+ * T0-1 / T2-3：多 provider 请求体契约快照
  *
  * 通过 mock fetch 捕获最终 JSON body，固化：
  * - cacheStrategy='anthropic' 时 cache_control 只在现有 marker 位置
- * - cacheStrategy='auto' 时绝不出现 cache_control / prompt_cache_key / reasoning_content
+ * - generic + cacheStrategy='auto' 时绝不出现 cache_control / prompt_cache_key / reasoning_content
+ * - deepseek/kimi profile 按 reasoningReplay 规则输出 reasoning_content（T2-3）
  * - tools 数组顺序与参数 JSON 键序在相同输入下逐字节稳定
  *
  * 覆盖：普通文本、多工具并行、图片投影、压缩内部请求、取消前半完成工具调用。
- * 禁止依赖真实 API key；不修改 src/。
+ * 禁止依赖真实 API key。
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
@@ -206,13 +207,14 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
   })
 
-  describe('cacheStrategy=auto：禁止出现缓存/reasoning 相关字段', () => {
-    async function assertAutoBodyClean(
+  describe('generic + cacheStrategy=auto：禁止出现缓存/reasoning 相关字段', () => {
+    async function assertGenericAutoBodyClean(
       messages: ChatMessage[],
       tools?: ToolDefinition[],
       options?: Parameters<OpenAICompatibleModelClient['chat']>[2]
     ): Promise<Record<string, unknown>> {
       interceptor = interceptFetch()
+      // BASE_CONFIG 为 example.com + test-model → generic；auto 下仍无非标准字段
       const client = new OpenAICompatibleModelClient({
         ...BASE_CONFIG,
         cacheStrategy: 'auto'
@@ -231,7 +233,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     }
 
     it('普通文本请求体干净', async () => {
-      const body = await assertAutoBodyClean([
+      const body = await assertGenericAutoBodyClean([
         { role: 'system', content: 'sys' },
         { role: 'user', content: 'hello' }
       ])
@@ -241,7 +243,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
 
     it('多工具并行请求体干净且 tools 顺序稳定', async () => {
-      const body = await assertAutoBodyClean(
+      const body = await assertGenericAutoBodyClean(
         [{ role: 'user', content: '用工具' }],
         STABLE_TOOLS
       )
@@ -254,7 +256,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
 
     it('图片投影后请求体干净（非视觉模型剥离 image_url）', async () => {
-      const body = await assertAutoBodyClean([
+      const body = await assertGenericAutoBodyClean([
         {
           role: 'user',
           content: [
@@ -270,7 +272,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
 
     it('压缩内部请求（includeInternalMessages）正文可进 API，但无缓存字段', async () => {
-      const body = await assertAutoBodyClean(
+      const body = await assertGenericAutoBodyClean(
         [
           { role: 'user', content: '真实历史问题' },
           { role: 'assistant', content: '历史回答' },
@@ -291,7 +293,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
 
     it('取消前半完成工具调用：未配对 tool_calls 被剥离，请求体仍干净', async () => {
-      const body = await assertAutoBodyClean([
+      const body = await assertGenericAutoBodyClean([
         { role: 'user', content: '列出目录' },
         {
           role: 'assistant',
@@ -304,6 +306,193 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
       expect(messages).toHaveLength(2)
       expect(messages[1].tool_calls).toBeUndefined()
       expect(messages[1].content).toBe('我来调用工具')
+    })
+
+    it('即使 ChatMessage 带 reasoningContent，generic 也不输出 reasoning_content', async () => {
+      const body = await assertGenericAutoBodyClean([
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: '',
+          reasoningContent: '不该泄漏的思考',
+          toolCalls: [{ id: 'tc1', name: 'ls', arguments: '{}' }]
+        },
+        { role: 'tool', content: 'ok', toolCallId: 'tc1' }
+      ])
+      const keys = new Set<string>()
+      collectKeysDeep(body, keys)
+      expect(keys.has('reasoning_content')).toBe(false)
+    })
+  })
+
+  describe('T2-3 reasoning_content 按 profile 白名单序列化', () => {
+    /** thinking → tool → final 的典型多子轮历史 */
+    const REASONING_HISTORY: ChatMessage[] = [
+      { role: 'user', content: '分析并修复' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: '先读 a.ts…',
+        toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+      },
+      { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+      {
+        role: 'assistant',
+        content: '已完成修复。',
+        reasoningContent: '终态思考不应给 deepseek'
+      }
+    ]
+
+    it('deepseek：含 tool_calls 的 assistant 输出 reasoning_content，无工具的不输出', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'test-key',
+        modelId: 'deepseek-chat',
+        cacheProfile: 'deepseek'
+      })
+      await drainChat(client, REASONING_HISTORY)
+
+      const messages = interceptor.body!.messages as Array<Record<string, unknown>>
+      const withTools = messages.find(m => Array.isArray(m.tool_calls))!
+      const finalText = messages.find(
+        m => m.role === 'assistant' && !m.tool_calls && m.content === '已完成修复。'
+      )!
+      expect(withTools.reasoning_content).toBe('先读 a.ts…')
+      expect(finalText.reasoning_content).toBeUndefined()
+      // system/user/tool 绝不带 reasoning_content
+      expect(messages.filter(m => m.role !== 'assistant').every(m => !('reasoning_content' in m))).toBe(
+        true
+      )
+    })
+
+    it('kimi：全部有 reasoningContent 的 assistant 均输出，字节不变', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://api.moonshot.cn/v1',
+        apiKey: 'test-key',
+        modelId: 'kimi-k2',
+        cacheProfile: 'kimi'
+      })
+      await drainChat(client, REASONING_HISTORY)
+
+      const messages = interceptor.body!.messages as Array<Record<string, unknown>>
+      const assistants = messages.filter(m => m.role === 'assistant')
+      expect(assistants[0].reasoning_content).toBe('先读 a.ts…')
+      expect(assistants[1].reasoning_content).toBe('终态思考不应给 deepseek')
+
+      // 二次序列化逐字节一致
+      interceptor.restore()
+      interceptor = interceptFetch()
+      await drainChat(client, REASONING_HISTORY)
+      const messages2 = interceptor.body!.messages as Array<Record<string, unknown>>
+      expect(JSON.stringify(messages2)).toBe(JSON.stringify(messages))
+    })
+
+    it('anthropic/glm/minimax/openai：即使有 reasoningContent 也绝不输出', async () => {
+      const profiles: Array<{ cacheProfile: 'anthropic' | 'glm' | 'minimax' | 'openai'; baseUrl: string; modelId: string }> = [
+        { cacheProfile: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', modelId: 'claude-3' },
+        { cacheProfile: 'glm', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelId: 'glm-4' },
+        { cacheProfile: 'minimax', baseUrl: 'https://api.minimax.chat/v1', modelId: 'MiniMax-Text' },
+        { cacheProfile: 'openai', baseUrl: 'https://api.openai.com/v1', modelId: 'gpt-4o' }
+      ]
+      for (const p of profiles) {
+        interceptor?.restore()
+        interceptor = interceptFetch()
+        const client = new OpenAICompatibleModelClient({
+          baseUrl: p.baseUrl,
+          apiKey: 'test-key',
+          modelId: p.modelId,
+          cacheProfile: p.cacheProfile
+        })
+        await drainChat(client, REASONING_HISTORY)
+        const keys = new Set<string>()
+        collectKeysDeep(interceptor.body!, keys)
+        expect(keys.has('reasoning_content'), `${p.cacheProfile} 不得输出 reasoning_content`).toBe(
+          false
+        )
+      }
+    })
+  })
+
+  describe('T2-4 prompt_cache_key 白名单注入', () => {
+    const SESSION_KEY = 'sess-route-key-abc'
+
+    it('kimi + 有 promptCacheKey → body 出现 prompt_cache_key', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://api.moonshot.cn/v1',
+        apiKey: 'test-key',
+        modelId: 'kimi-k2',
+        cacheProfile: 'kimi'
+      })
+      await drainChat(client, [{ role: 'user', content: 'hi' }], undefined, {
+        promptCacheKey: SESSION_KEY
+      })
+      expect(interceptor.body!.prompt_cache_key).toBe(SESSION_KEY)
+    })
+
+    it('openai + 有 promptCacheKey → body 出现 prompt_cache_key', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'test-key',
+        modelId: 'gpt-4o',
+        cacheProfile: 'openai'
+      })
+      await drainChat(client, [{ role: 'user', content: 'hi' }], undefined, {
+        promptCacheKey: SESSION_KEY
+      })
+      expect(interceptor.body!.prompt_cache_key).toBe(SESSION_KEY)
+    })
+
+    it('kimi/openai 但未传 promptCacheKey → 不出现', async () => {
+      for (const p of [
+        { cacheProfile: 'kimi' as const, baseUrl: 'https://api.moonshot.cn/v1', modelId: 'kimi-k2' },
+        { cacheProfile: 'openai' as const, baseUrl: 'https://api.openai.com/v1', modelId: 'gpt-4o' }
+      ]) {
+        interceptor?.restore()
+        interceptor = interceptFetch()
+        const client = new OpenAICompatibleModelClient({
+          baseUrl: p.baseUrl,
+          apiKey: 'test-key',
+          modelId: p.modelId,
+          cacheProfile: p.cacheProfile
+        })
+        await drainChat(client, [{ role: 'user', content: 'hi' }])
+        expect('prompt_cache_key' in interceptor.body!).toBe(false)
+      }
+    })
+
+    it('deepseek/glm/minimax/generic/anthropic → 绝不出现 prompt_cache_key', async () => {
+      const profiles: Array<{
+        cacheProfile: 'deepseek' | 'glm' | 'minimax' | 'generic' | 'anthropic'
+        baseUrl: string
+        modelId: string
+      }> = [
+        { cacheProfile: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', modelId: 'deepseek-chat' },
+        { cacheProfile: 'glm', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelId: 'glm-4' },
+        { cacheProfile: 'minimax', baseUrl: 'https://api.minimax.chat/v1', modelId: 'MiniMax-Text' },
+        { cacheProfile: 'generic', baseUrl: 'https://api.example.com/v1', modelId: 'test-model' },
+        { cacheProfile: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', modelId: 'claude-3' }
+      ]
+      for (const p of profiles) {
+        interceptor?.restore()
+        interceptor = interceptFetch()
+        const client = new OpenAICompatibleModelClient({
+          baseUrl: p.baseUrl,
+          apiKey: 'test-key',
+          modelId: p.modelId,
+          cacheProfile: p.cacheProfile
+        })
+        await drainChat(client, [{ role: 'user', content: 'hi' }], undefined, {
+          promptCacheKey: SESSION_KEY
+        })
+        expect(
+          'prompt_cache_key' in interceptor.body!,
+          `${p.cacheProfile} 不得写 prompt_cache_key`
+        ).toBe(false)
+      }
     })
   })
 

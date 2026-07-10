@@ -25,7 +25,7 @@ export interface ChatOptions {
   }
   /**
    * 会话级 prompt 缓存路由 key（来自 SessionData.cacheRoutingKey）。
-   * 本阶段只准备字段透传；OpenAICompatibleModelClient 暂不写入 body（T2-4 再按 profile 白名单注入）。
+   * 仅当 CacheProfile.promptCacheKey === 'session'（kimi/openai）时写入 body.prompt_cache_key。
    */
   promptCacheKey?: string
 }

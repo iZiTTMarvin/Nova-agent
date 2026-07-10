@@ -609,12 +609,28 @@ export function registerAgentHandler(
 
     // 从 session 历史恢复多轮对话上下文（快照优先 + 增量补齐，锚点失效则全量重建）。
     // 历史消息里的图片以 nova-image:// URL 持久化，模型不认识，恢复时需转回 base64。
-    restoreOrInjectHistory(
-      agentLoop,
-      session,
-      sessionStore.loadContextSnapshot(params.sessionId),
-      (url) => resolveToDataUrl(getImageStore(), url)
+    // deepseek/kimi 按 profile.reasoningReplay 拆子轮恢复 reasoning；其余 profile 走扁平路径。
+    const providerForCache =
+      modelPool instanceof ModelClientPool
+        ? modelPool.getActiveProvider()
+        : {
+            baseUrl: persistedConfig?.baseUrl ?? '',
+            modelId: persistedConfig?.modelId ?? '',
+            cacheProfile: persistedConfig?.cacheProfile,
+            cacheStrategy: persistedConfig?.cacheStrategy
+          }
+    const activeCacheProfile = resolveCacheProfile(
+      providerForCache.baseUrl,
+      providerForCache.modelId,
+      {
+        cacheProfile: providerForCache.cacheProfile,
+        cacheStrategy: providerForCache.cacheStrategy
+      }
     )
+    restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(params.sessionId), {
+      resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
+      reasoningReplay: activeCacheProfile.reasoningReplay
+    })
 
     toolRegistry.register(createTaskTool({
       modelClient,

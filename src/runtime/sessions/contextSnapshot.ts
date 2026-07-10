@@ -7,6 +7,7 @@
 import { AgentLoop } from '../agent/AgentLoop'
 import { buildConversationContext, resolveImageUrlsInMessages } from '../agent/context/contextBuilder'
 import type { CompactionMeta } from '../agent/types'
+import type { CacheProfile } from '../model/cacheProfile'
 import type { ChatMessage } from '../model/types'
 import type { SessionStore } from './SessionStore'
 import {
@@ -53,12 +54,19 @@ export function persistCompactionSnapshot(
   return true
 }
 
+/** restoreOrInjectHistory 的可选恢复参数 */
+export interface RestoreHistoryOptions {
+  resolveImageUrl?: (url: string) => string
+  /** 来自当前 active CacheProfile；决定是否按 blocks 拆子轮恢复 reasoning */
+  reasoningReplay?: CacheProfile['reasoningReplay']
+}
+
 /**
  * 快照优先恢复运行时上下文；无快照或锚点失效时全量 injectHistory。
  * @param agentLoop 已完成 setToolRegistry 的实例
  * @param session handler 入口加载的会话（新用户消息尚未 append）
  * @param snapshot loadContextSnapshot 的结果，可传 null
- * @param resolveImageUrl 可选的图片 URL 转换器：把持久化的 nova-image:// URL 转回 base64 data URL。
+ * @param resolveImageUrlOrOpts 可选的图片 URL 转换器，或含 reasoningReplay 的选项对象。
  *   历史消息与压缩快照里存的都是内部协议 URL，模型 API 不认识，必须转换后才能发给模型。
  *   不传则原样透传（单测路径）。
  */
@@ -66,8 +74,19 @@ export function restoreOrInjectHistory(
   agentLoop: AgentLoop,
   session: SessionData,
   snapshot: ContextSnapshot | null,
-  resolveImageUrl?: (url: string) => string
+  resolveImageUrlOrOpts?: ((url: string) => string) | RestoreHistoryOptions
 ): void {
+  const opts: RestoreHistoryOptions =
+    typeof resolveImageUrlOrOpts === 'function'
+      ? { resolveImageUrl: resolveImageUrlOrOpts }
+      : resolveImageUrlOrOpts ?? {}
+  const { resolveImageUrl, reasoningReplay } = opts
+
+  const buildOpts = {
+    ...(resolveImageUrl ? { resolveImageUrl } : {}),
+    ...(reasoningReplay ? { reasoningReplay } : {})
+  }
+
   const activeMessages = getSessionActiveMessages(session)
   const anchorIdx = snapshot
     ? activeMessages.findIndex(m => m.id === snapshot.lastMessageId)
@@ -75,14 +94,19 @@ export function restoreOrInjectHistory(
 
   if (snapshot && anchorIdx >= 0) {
     const delta = activeMessages.slice(anchorIdx + 1)
-    const deltaContext = buildConversationContext({ ...session, messages: delta }, session.mode, resolveImageUrl)
-    // 快照里的 recentMessages 持久化时同样存了 nova-image:// URL，需一并转换
+    const deltaContext = buildConversationContext(
+      { ...session, messages: delta },
+      session.mode,
+      buildOpts
+    )
+    // 快照里的 recentMessages 持久化时同样存了 nova-image:// URL，需一并转换；
+    // recent 中已有的 reasoningContent 原样保留，供继续工具链
     const recentResolved = resolveImageUrl
       ? resolveImageUrlsInMessages(snapshot.recentMessages, resolveImageUrl)
       : snapshot.recentMessages
     const recent = [...recentResolved, ...deltaContext]
     agentLoop.restoreCompactedContext(snapshot.summary, recent, snapshot.compactionLevel)
   } else {
-    agentLoop.injectHistory(buildConversationContext(session, session.mode, resolveImageUrl))
+    agentLoop.injectHistory(buildConversationContext(session, session.mode, buildOpts))
   }
 }

@@ -139,13 +139,14 @@ export function rebuildWithCompression(
 ): ChatMessage[] {
   const context: ChatMessage[] = []
 
-  // 摘要合并到 system 消息尾部，保持 system prompt 前缀不变以命中缓存
+  // 摘要合并到 system 消息尾部，保持 system prompt 前缀不变以命中缓存。
+  // summary 是纯文本，不含 reasoningContent 字段。
   context.push({
     role: 'system',
     content: `${frozenSystemPrompt}\n\n[对话历史摘要]\n${summary}`
   })
 
-  // 追加最近 N 条消息
+  // 追加最近 N 条消息（保留 reasoningContent，以便继续工具链 / 前缀匹配）
   context.push(...recentMessages)
 
   // 如果有被弹出的消息，追加入重建后的上下文尾部
@@ -154,6 +155,22 @@ export function rebuildWithCompression(
   }
 
   return context
+}
+
+/**
+ * 剥离 ChatMessage.reasoningContent，供压缩摘要请求使用。
+ * 摘要文本本身不应携带思考正文；recentMessages / snapshot 仍保留原始 reasoning。
+ * 无 reasoningContent 时返回原数组引用，避免无谓的对象复制。
+ */
+export function stripReasoningContent(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false
+  const next = messages.map(m => {
+    if (m.reasoningContent === undefined) return m
+    changed = true
+    const { reasoningContent: _stripped, ...rest } = m
+    return rest
+  })
+  return changed ? next : messages
 }
 
 /**

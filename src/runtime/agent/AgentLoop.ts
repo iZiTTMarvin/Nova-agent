@@ -16,7 +16,7 @@ import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
-import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
+import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, stripReasoningContent, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
 import { createProductionContextBudgetManager, type ContextBudgetManager } from './ContextBudgetManager'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
@@ -1073,8 +1073,9 @@ export class AgentLoop implements IdleCompactionTarget {
     // 构建压缩上下文：旧消息 + 压缩指令尾巴（追加到尾部，不改前缀）。
     // 尾巴拼装（连续 user 时的 assistant 桥接 + internal 压缩指令）与溢出压缩共用
     // buildCompactionRequestTail，避免两处分叉。
+    // 摘要请求剥离 reasoning：避免思考正文进入摘要模型输入；recent 重建时仍保留。
     const compactionContext: ChatMessage[] = [
-      ...this.context,
+      ...stripReasoningContent(this.context),
       ...buildCompactionRequestTail(this.context[this.context.length - 1]?.role, recentMessages.length)
     ]
 
@@ -1457,9 +1458,9 @@ export class AgentLoop implements IdleCompactionTarget {
       )
       this.context.push(...compactionMessages)
 
-      // 4. 调用模型获取摘要
+      // 4. 调用模型获取摘要（请求侧剥离 reasoning，不改 this.context 中的 recent 保留）
       let summary = ''
-      const stream = this.modelPool.chat(this.context, undefined, {
+      const stream = this.modelPool.chat(stripReasoningContent(this.context), undefined, {
         abortSignal: this.abortController?.signal,
         includeInternalMessages: true,
         ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})

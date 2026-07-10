@@ -55,6 +55,11 @@ export interface ChatMessage {
    * 与 internal 不同：internal 默认不发送；skipCacheMarker 始终发送，只是不参与 cache_control 标记。
    */
   skipCacheMarker?: boolean
+  /**
+   * 运行时字段：本子轮聚合的 reasoning / thinking 正文，供模型历史回传用。
+   * 不写入 renderer / UI blocks / 导出文件 / SessionMessage.content（约束 4）。
+   */
+  reasoningContent?: string
 }
 
 /** 模型返回的工具调用 */
@@ -138,3 +143,12 @@ export type ChatEvent =
   | { type: 'error'; error: string }
   | { type: 'context_overflow'; rawError: string }
   | { type: 'cancelled' }
+  /**
+   * 网关拒绝 prompt_cache_key 后，本 client 已剥离该字段并重试一次。
+   * StreamProcessor 转为 cache_diagnostic，不触发 fallback / 工具重跑。
+   */
+  | { type: 'prompt_cache_key_stripped'; detail: string }
+  /**
+   * 最终请求体结构指纹（匿名哈希）。StreamProcessor 写入 CacheDiagnostics，不落明文。
+   */
+  | { type: 'request_fingerprint'; fingerprint: string }

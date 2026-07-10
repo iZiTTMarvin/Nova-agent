@@ -6,15 +6,17 @@
  *
  * 设计约束（缓存 Harness）：
  * - system prompt 由 AgentLoop 构造时注入（frozenSystemPrompt），此处不再处理
- * - thinking 内容不进入模型上下文
- * - assistant 的 toolCalls 恢复为结构化 tool_calls，result 拆成独立 tool 消息
- * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL（base64 data URL）；
+ * - 默认路径：thinking 不进入模型上下文；assistant 的多次 toolCalls 压成单条
+ * - reasoningReplay !== 'none'（deepseek/kimi）时走 provider-aware 投影：
+ *   按 blocks 边界拆出正确的 assistant 子轮，并把 thinking 映射到 reasoningContent
+ * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL；
  *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
 import type { ChatMessage, ContentBlock } from '../../model/types'
-import type { SessionData } from '../../sessions/types'
+import type { CacheProfile } from '../../model/cacheProfile'
+import type { SessionData, SessionMessage, SessionToolCall } from '../../sessions/types'
 import { getSessionActiveMessages } from '../../sessions/tree'
-import type { Mode } from '../../../shared/session/types'
+import type { Mode, MessageBlock } from '../../../shared/session/types'
 import { stripLeakedToolMarkup } from '../../../shared/tool-call-text-fallback'
 
 /** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
@@ -83,73 +85,205 @@ function sanitizeAssistantContent(content: string | ContentBlock[]): string | Co
   return content
 }
 
+/** buildConversationContext 可选参数（与旧版 resolveImageUrl 第三参兼容） */
+export interface BuildConversationContextOptions {
+  resolveImageUrl?: (url: string) => string
+  /**
+   * 来自 CacheProfile.reasoningReplay。
+   * - 'none' / 缺省：走扁平恢复（与改造前一致）
+   * - 'tool-call-history' | 'all-history'：按 blocks 拆子轮并恢复 reasoningContent
+   */
+  reasoningReplay?: CacheProfile['reasoningReplay']
+}
+
+function normalizeBuildOptions(
+  resolveImageUrlOrOpts?: ((url: string) => string) | BuildConversationContextOptions
+): BuildConversationContextOptions {
+  if (typeof resolveImageUrlOrOpts === 'function') {
+    return { resolveImageUrl: resolveImageUrlOrOpts }
+  }
+  return resolveImageUrlOrOpts ?? {}
+}
+
+/**
+ * 默认扁平路径：单条 assistant（全部 toolCalls）+ 多条 tool 消息；丢弃 thinking。
+ * 保持与 T0-2 基线完全一致，供 generic/glm/minimax/anthropic/openai 使用。
+ */
+function projectAssistantFlattened(msg: SessionMessage): ChatMessage[] {
+  const out: ChatMessage[] = []
+  const assistantMsg: ChatMessage = {
+    role: 'assistant',
+    content: sanitizeAssistantContent(msg.content as string | ContentBlock[])
+  }
+
+  if (msg.toolCalls && msg.toolCalls.length > 0) {
+    assistantMsg.toolCalls = msg.toolCalls.map(tc => ({
+      id: tc.id,
+      name: tc.name,
+      arguments: tc.arguments
+    }))
+  }
+
+  out.push(assistantMsg)
+
+  if (msg.toolCalls) {
+    for (const tc of msg.toolCalls) {
+      if (tc.result === undefined) {
+        console.warn(
+          `[contextBuilder] assistant 消息 ${msg.id} 的 toolCall ${tc.id} (${tc.name}) 缺少 result，已跳过对应的 tool 消息。` +
+            ` 可能原因：持久化时未写入（旧版本 bug）/ 压缩回调未合并 result（参考 C1）。`
+        )
+        continue
+      }
+      out.push({
+        role: 'tool',
+        content: tc.result,
+        toolCallId: tc.id,
+        ...(tc.artifactId ? { artifactId: tc.artifactId } : {}),
+        ...(tc.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
+      })
+    }
+  }
+
+  return out
+}
+
+/**
+ * deepseek/kimi：按 blocks 边界重建「assistant → tool results」子轮序列。
+ *
+ * 边界规则：已收集 tool 后再遇到 thinking/text → 先 flush 上一子轮。
+ * 连续 tool 块视为同一子轮的并行调用。
+ *
+ * reasoning 策略：
+ * - tool-call-history（deepseek）：仅含 toolCalls 的 assistant 携带 reasoningContent
+ * - all-history（kimi）：凡有 thinking 的 assistant 均携带
+ */
+export function projectAssistantWithReasoningReplay(
+  msg: SessionMessage,
+  reasoningReplay: 'tool-call-history' | 'all-history'
+): ChatMessage[] {
+  const blocks = msg.blocks
+  if (!blocks || blocks.length === 0) {
+    return projectAssistantFlattened(msg)
+  }
+
+  const toolCallById = new Map((msg.toolCalls ?? []).map(tc => [tc.id, tc]))
+  const out: ChatMessage[] = []
+
+  let reasoning = ''
+  let text = ''
+  let pendingTools: Array<{
+    block: Extract<MessageBlock, { type: 'tool' }>
+    tc: SessionToolCall | undefined
+  }> = []
+
+  const attachReasoning = (assistant: ChatMessage, hasToolCalls: boolean): void => {
+    if (!reasoning) return
+    if (reasoningReplay === 'all-history' || hasToolCalls) {
+      assistant.reasoningContent = reasoning
+    }
+  }
+
+  const flushToolSubTurn = (): void => {
+    const assistant: ChatMessage = {
+      role: 'assistant',
+      content: sanitizeAssistantContent(text)
+    }
+    attachReasoning(assistant, true)
+    assistant.toolCalls = pendingTools.map(({ block, tc }) => ({
+      id: block.toolCallId,
+      name: block.toolName,
+      arguments: tc?.arguments ?? JSON.stringify(block.arguments ?? {})
+    }))
+    out.push(assistant)
+
+    for (const { block, tc } of pendingTools) {
+      const result = block.result ?? tc?.result
+      if (result === undefined) {
+        console.warn(
+          `[contextBuilder] assistant 消息 ${msg.id} 的 toolCall ${block.toolCallId} (${block.toolName}) 缺少 result，已跳过对应的 tool 消息。`
+        )
+        continue
+      }
+      out.push({
+        role: 'tool',
+        content: result,
+        toolCallId: block.toolCallId,
+        ...(tc?.artifactId ? { artifactId: tc.artifactId } : {}),
+        ...(tc?.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
+      })
+    }
+
+    reasoning = ''
+    text = ''
+    pendingTools = []
+  }
+
+  const flushFinalAssistant = (): void => {
+    if (!text && !reasoning) return
+    const assistant: ChatMessage = {
+      role: 'assistant',
+      content: sanitizeAssistantContent(text)
+    }
+    attachReasoning(assistant, false)
+    out.push(assistant)
+    reasoning = ''
+    text = ''
+  }
+
+  for (const block of blocks) {
+    if (block.type === 'thinking') {
+      if (pendingTools.length > 0) flushToolSubTurn()
+      reasoning += block.content
+    } else if (block.type === 'text') {
+      if (pendingTools.length > 0) flushToolSubTurn()
+      text += block.content
+    } else if (block.type === 'tool') {
+      pendingTools.push({ block, tc: toolCallById.get(block.toolCallId) })
+    }
+    // image 块不进入模型侧 assistant 投影
+  }
+
+  if (pendingTools.length > 0) flushToolSubTurn()
+  flushFinalAssistant()
+
+  // 极端兜底：blocks 无法产出任何消息时回退扁平路径
+  return out.length > 0 ? out : projectAssistantFlattened(msg)
+}
+
 /**
  * 从会话数据构建模型对话上下文（不含 system prompt）
  *
  * system prompt 由 agentHandler 通过 AgentLoop 构造时注入（frozenSystemPrompt），
  * 此处只恢复 user / assistant / tool 历史消息，保证前缀稳定。
  *
- * @param resolveImageUrl 可选的图片 URL 转换器：把持久化的内部协议 URL（nova-image://）
- *   转回模型可识别的 base64 data URL。未传入时 image_url 原样透传（单测路径）。
+ * @param resolveImageUrlOrOpts 可选：图片 URL 转换器，或含 resolveImageUrl / reasoningReplay 的选项对象。
+ *   传入函数时行为与改造前完全一致（扁平恢复）。
  */
 export function buildConversationContext(
   session: SessionData,
   _mode: Mode,
-  resolveImageUrl?: (url: string) => string
+  resolveImageUrlOrOpts?: ((url: string) => string) | BuildConversationContextOptions
 ): ChatMessage[] {
-  const context: ChatMessage[] = []
+  const opts = normalizeBuildOptions(resolveImageUrlOrOpts)
+  const { resolveImageUrl, reasoningReplay } = opts
+  const useReasoningReplay =
+    reasoningReplay === 'tool-call-history' || reasoningReplay === 'all-history'
 
+  const context: ChatMessage[] = []
   const activeMessages = getSessionActiveMessages(session)
 
   for (const msg of activeMessages) {
     // system 消息跳过：由 AgentLoop 构造时的 frozenSystemPrompt 提供
     if (msg.role === 'system') continue
 
-    // 注：session context 不经此路径恢复。合并方案下它只在 sendMessage 运行时
-    // 拼到 user content 前缀，不作为独立消息进 SessionStore。SessionMessage 类型
-    // 本身也不携带 internal 字段，故此处无须过滤。
-
-    // thinking 块不进入模型上下文：只恢复 content（纯正文）和 toolCalls
     if (msg.role === 'assistant') {
-      const assistantMsg: ChatMessage = {
-        role: 'assistant',
-        content: sanitizeAssistantContent(msg.content as string | ContentBlock[])
+      if (useReasoningReplay) {
+        // deepseek/kimi：按 blocks 拆子轮（generic 路径完全不进此分支）
+        context.push(...projectAssistantWithReasoningReplay(msg, reasoningReplay))
+      } else {
+        context.push(...projectAssistantFlattened(msg))
       }
-
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
-        assistantMsg.toolCalls = msg.toolCalls.map(tc => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments
-        }))
-      }
-
-      context.push(assistantMsg)
-
-      // 每个 toolCall 的 result 恢复为独立的 tool 消息
-      if (msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          if (tc.result === undefined) {
-            // S4 监测点：toolCall 缺失 result 是异常状态（正常路径 saveAssistantMessage
-            // 都会写入 result）。这会导致 OpenAI 协议报 400（tool_calls 缺对应 tool message）。
-            // 历史上 C1（压缩保留工具结果）的 bug 就表现为此处静默跳过——
-            // 加 warning 让类似问题能在日志里第一时间被发现，而不是 API 报错后回查。
-            console.warn(
-              `[contextBuilder] assistant 消息 ${msg.id} 的 toolCall ${tc.id} (${tc.name}) 缺少 result，已跳过对应的 tool 消息。` +
-              ` 可能原因：持久化时未写入（旧版本 bug）/ 压缩回调未合并 result（参考 C1）。`
-            )
-            continue
-          }
-          context.push({
-            role: 'tool',
-            content: tc.result,
-            toolCallId: tc.id,
-            ...(tc.artifactId ? { artifactId: tc.artifactId } : {}),
-            ...(tc.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
-          })
-        }
-      }
-
       continue
     }
 
@@ -164,7 +298,6 @@ export function buildConversationContext(
     }
 
     // user 消息：原样保留（content 可能是 string 或 ContentBlock[]）。
-    // 若含内部图片协议 URL（nova-image://），经 resolveImageUrl 转回 base64 data URL 供模型识别。
     const userContent = msg.content as string | ContentBlock[]
     context.push({
       role: msg.role,

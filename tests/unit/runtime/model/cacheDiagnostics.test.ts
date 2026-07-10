@@ -100,6 +100,41 @@ describe('CacheDiagnostics 缓存破坏检测', () => {
     expect(result.reason).toBe('tool_schema_changed')
   })
 
+  it('T2-5：工具注册顺序变化时检测到破坏（不再按名称排序掩盖）', () => {
+    const diag = new CacheDiagnostics()
+    diag.recordBaseline(SYSTEM_PROMPT, TOOLS)
+    diag.checkResponse(500, SYSTEM_PROMPT, TOOLS)
+
+    // 仅交换顺序，描述与参数不变
+    const reordered: ToolDefinition[] = [TOOLS[1], TOOLS[0]]
+    const result = diag.checkResponse(500, SYSTEM_PROMPT, reordered)
+    expect(result.cacheBreakDetected).toBe(true)
+    expect(result.reason).toBe('tool_schema_changed')
+  })
+
+  it('T2-5：parameters 键序变化仍敏感', () => {
+    const diag = new CacheDiagnostics()
+    const toolsA: ToolDefinition[] = [
+      {
+        name: 'read',
+        description: '读',
+        parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'number' } } }
+      }
+    ]
+    const toolsB: ToolDefinition[] = [
+      {
+        name: 'read',
+        description: '读',
+        parameters: { type: 'object', properties: { offset: { type: 'number' }, path: { type: 'string' } } }
+      }
+    ]
+    diag.recordBaseline(SYSTEM_PROMPT, toolsA)
+    diag.checkResponse(500, SYSTEM_PROMPT, toolsA)
+    const result = diag.checkResponse(500, SYSTEM_PROMPT, toolsB)
+    expect(result.cacheBreakDetected).toBe(true)
+    expect(result.reason).toBe('tool_schema_changed')
+  })
+
   it('cache_read_tokens 显著下降时检测到破坏', () => {
     const diag = new CacheDiagnostics()
     diag.recordBaseline(SYSTEM_PROMPT, TOOLS)
