@@ -19,7 +19,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import type { SessionSummary, SessionData, SessionMessage, SessionMessageAppend, ContextSnapshot, SessionTitleSource } from './types'
+import type { SessionSummary, SessionData, SessionMessage, SessionMessageAppend, AppendMessageResult, ContextSnapshot, SessionTitleSource } from './types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
@@ -304,8 +304,9 @@ export class SessionStore {
    * 兼容旧调用方：仍返回完整 SessionData（内部按需 loadActivePath）。
    */
   appendMessage(sessionId: string, message: SessionMessageAppend): SessionData | null {
-    const meta = this.appendMessageFast(sessionId, message)
-    if (!meta) return null
+    const result = this.appendMessageFast(sessionId, message)
+    if (!result.ok) return null
+    const meta = result.meta
     // 兼容旧调用方：返回含激活路径消息的完整视图
     const active = this.loadActivePath(sessionId)
     if (!active) {
@@ -321,28 +322,36 @@ export class SessionStore {
    * O(1) 热追加：写 jsonl 一行 + 更新小体积元数据 + 增量索引。
    * 不扫全图、不全量重读 messages.jsonl。
    *
-   * 返回不含 messages 正文的元数据视图（messageCount 已递增）。
+   * 返回明确结果：appended / already_exists / failed。
+   * messageId 唯一：重复 finalize 不得再追加 JSONL。
    */
   appendMessageFast(
     sessionId: string,
     message: SessionMessageAppend
-  ): Omit<SessionData, 'messages'> | null {
+  ): AppendMessageResult {
     let dir: string
     try {
       dir = this.resolveSessionDir(sessionId)
-    } catch {
-      return null
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'invalid sessionId'
+      }
     }
     const sessionFile = path.join(dir, SESSION_DATA_FILE)
-    if (!fs.existsSync(sessionFile)) return null
+    if (!fs.existsSync(sessionFile)) {
+      return { ok: false, status: 'failed', error: 'session not found' }
+    }
 
     try {
       const metadata = migrateSessionFile(this.sessionsDir, sessionId)
       const base = metadata ?? (migrateSessionData(JSON.parse(fs.readFileSync(sessionFile, 'utf8'))) as SessionData)
       return this.appendMessageFastToMetadata(base, sessionId, message)
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
       console.error(`[SessionStore] 追加消息到会话 ${sessionId} 失败:`, err)
-      return null
+      return { ok: false, status: 'failed', error: msg }
     }
   }
 
@@ -353,23 +362,18 @@ export class SessionStore {
     metadata: SessionData,
     sessionId: string,
     message: SessionMessageAppend
-  ): Omit<SessionData, 'messages'> {
+  ): AppendMessageResult {
     const dir = path.join(this.sessionsDir, sessionId)
     const appendStartedAt = Date.now()
 
-    // 新消息以 blocks 为事实源；落盘只写 blocks，不双写 content/toolCalls
     const normalizedAppend = serializeMessageForDisk({
       ...message,
       parentId: metadata.currentLeafId ?? null
     } as SessionMessage)
 
     const messageWithParent: SessionMessage = normalizedAppend
-
-    const line = JSON.stringify(messageWithParent) + '\n'
-    const lineBytes = Buffer.byteLength(line, 'utf8')
     const jsonlPath = path.join(dir, SESSION_MESSAGES_FILE)
 
-    // 确保索引与当前文件对齐（首次或损坏时重建；热路径尽量 O(1)）
     let fileSize = 0
     try {
       if (fs.existsSync(jsonlPath)) fileSize = fs.statSync(jsonlPath).size
@@ -378,12 +382,27 @@ export class SessionStore {
     }
     let index = loadMessageIndex(dir)
     if (!index || !isIndexFresh(index, fileSize)) {
-      // 索引过期：轻量重建（仅扫一次，后续追加走增量）
       const existing = readMessagesJsonl(dir)
       index = buildMessageIndex(existing, metadata.currentLeafId ?? null)
     }
 
-    fs.appendFileSync(jsonlPath, line, 'utf8')
+    // messageId 唯一性：已存在则幂等返回，不重复追加
+    if (index.entries[messageWithParent.id]) {
+      const { messages: _m, ...metaOnly } = metadata
+      return { ok: true, status: 'already_exists', meta: metaOnly }
+    }
+
+    const line = JSON.stringify(messageWithParent) + '\n'
+    const lineBytes = Buffer.byteLength(line, 'utf8')
+
+    // JSONL 追加 + fsync，再更新索引（索引失败不得吞掉）
+    const fd = fs.openSync(jsonlPath, 'a')
+    try {
+      fs.writeSync(fd, line, null, 'utf8')
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
 
     const previousActiveCount =
       typeof metadata.messageCount === 'number'
@@ -391,14 +410,9 @@ export class SessionStore {
         : index.activeCount
 
     index = appendActiveIndexEntry(index, messageWithParent, lineBytes)
-    // 与元数据对齐：活跃分支追加时 messageCount = previous + 1
     index.activeCount = previousActiveCount + 1
     index.currentLeafId = messageWithParent.id
-    try {
-      saveMessageIndex(dir, index)
-    } catch {
-      // 索引失败不阻断追加
-    }
+    saveMessageIndex(dir, index)
 
     metadata.currentLeafId = messageWithParent.id
     metadata.updatedAt = Date.now()
@@ -412,7 +426,7 @@ export class SessionStore {
 
     metricSessionAppend(sessionId, Date.now() - appendStartedAt, metadata.messageCount)
     const { messages: _m, ...metaOnly } = metadata
-    return metaOnly
+    return { ok: true, status: 'appended', meta: metaOnly }
   }
 
   /**

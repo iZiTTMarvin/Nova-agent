@@ -70,19 +70,22 @@ export class InteractionInbox {
 
   /**
    * 幂等回答：commandId + expectedVersion。
-   * Renderer 在 ACK 前只应置 submitting，不提前删 pending。
-   * 相同 commandId 重复到达时返回第一次完整 ACK，不再调用 resolver。
+   * 相同 commandId 重复到达时返回第一次完整 ACK（firstApplied=false），
+   * 调用方不得再执行 resolver / AgentLoop 副作用。
    */
   answer(cmd: InteractionAnswerCommand): InteractionAnswerResult {
     const cached = this.answeredCommands.get(cmd.commandId)
-    if (cached) return cached
+    if (cached) {
+      return { ...cached, firstApplied: false, duplicate: true }
+    }
 
     // 跨重启：从 snapshot.commandAcks 恢复
     const durable = this.coordinator.findCommandAck(cmd.commandId)
     if (durable) {
       const rebuilt = this.rebuildResultFromAck(durable, cmd.interactionId)
-      this.answeredCommands.set(cmd.commandId, rebuilt)
-      return rebuilt
+      const dup = { ...rebuilt, firstApplied: false as const, duplicate: true as const }
+      this.answeredCommands.set(cmd.commandId, dup)
+      return dup
     }
 
     const found = this.coordinator.findInteraction(cmd.interactionId)
@@ -90,7 +93,8 @@ export class InteractionInbox {
       return this.cacheAndPersist(cmd, {
         ok: false,
         code: 'not_found',
-        message: `交互 ${cmd.interactionId} 不存在`
+        message: `交互 ${cmd.interactionId} 不存在`,
+        firstApplied: true
       })
     }
 
@@ -99,7 +103,8 @@ export class InteractionInbox {
       return this.cacheAndPersist(cmd, {
         ok: false,
         code: 'not_found',
-        message: `run ${found.runId} 不存在`
+        message: `run ${found.runId} 不存在`,
+        firstApplied: true
       }, found.runId)
     }
 
@@ -108,7 +113,8 @@ export class InteractionInbox {
         ok: false,
         code: 'already_answered',
         message: `交互已处理（status=${found.status}）`,
-        snapshot: snap
+        snapshot: snap,
+        firstApplied: true
       }, found.runId)
     }
 
@@ -117,18 +123,18 @@ export class InteractionInbox {
         ok: false,
         code: 'run_ended',
         message: `run 已结束（status=${snap.status}）`,
-        snapshot: snap
+        snapshot: snap,
+        firstApplied: true
       }, found.runId)
     }
 
     if (found.version !== cmd.expectedVersion) {
-      // version mismatch 不缓存为成功，允许客户端用新 version 重试；
-      // 但同一 commandId 仍记一次，避免重复副作用。
       return this.cacheAndPersist(cmd, {
         ok: false,
         code: 'version_mismatch',
         message: `版本不匹配：期望 ${cmd.expectedVersion}，实际 ${found.version}`,
-        snapshot: snap
+        snapshot: snap,
+        firstApplied: true
       }, found.runId)
     }
 
@@ -149,18 +155,19 @@ export class InteractionInbox {
       return this.cacheAndPersist(cmd, {
         ok: false,
         code: 'not_found',
-        message: '更新交互失败'
+        message: '更新交互失败',
+        firstApplied: true
       }, found.runId)
     }
 
-    // 若无其他 pending，尝试回到 running
     this.coordinator.resumeFromWaitingIfClear(found.runId)
 
     const nextSnap = this.coordinator.getSnapshot(found.runId)!
     return this.cacheAndPersist(cmd, {
       ok: true,
       interaction: updated,
-      snapshot: nextSnap
+      snapshot: nextSnap,
+      firstApplied: true
     }, found.runId)
   }
 
@@ -215,7 +222,33 @@ export class InteractionInbox {
     const inter = this.coordinator.findInteraction(ack.interactionId || interactionId)
     const snap = inter ? this.coordinator.getSnapshot(inter.runId) : null
     if (ack.ok && inter && snap) {
-      return { ok: true, interaction: inter, snapshot: snap }
+      return {
+        ok: true,
+        interaction: inter,
+        snapshot: snap,
+        firstApplied: false,
+        duplicate: true
+      }
+    }
+    // 成功 ACK 但交互已从 snapshot 投影不到时：仍返回 ok，避免二次副作用
+    if (ack.ok && snap) {
+      return {
+        ok: true,
+        interaction: {
+          interactionId: ack.interactionId || interactionId,
+          runId: snap.runId,
+          sessionId: snap.sessionId,
+          messageId: snap.messageId,
+          type: 'askQuestion',
+          status: 'answered',
+          createdAt: ack.at,
+          payload: {},
+          version: 0
+        },
+        snapshot: snap,
+        firstApplied: false,
+        duplicate: true
+      }
     }
     const code =
       (ack.code as
@@ -229,7 +262,9 @@ export class InteractionInbox {
       ok: false,
       code,
       message: ack.message ?? '命令已处理（从持久化回执恢复）',
-      ...(snap ? { snapshot: snap } : {})
+      ...(snap ? { snapshot: snap } : {}),
+      firstApplied: false,
+      duplicate: true
     }
   }
 }

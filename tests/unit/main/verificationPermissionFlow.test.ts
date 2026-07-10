@@ -24,7 +24,11 @@ import type { AgentEvent } from '../../../src/runtime/agent/types'
 // mock sessionHandler 的 getSessionStore，避免真实磁盘 IO
 // 生产热路径已切到 appendMessageFast，mock 必须对齐真实接口（禁止生产加慢路径 fallback）
 const mockAppendMessage = vi.fn()
-const mockAppendMessageFast = vi.fn()
+const mockAppendMessageFast = vi.fn(() => ({
+  ok: true as const,
+  status: 'appended' as const,
+  meta: { id: 'sess_1', messageCount: 1 }
+}))
 const mockAppendMessagePatch = vi.fn()
 const mockStore = {
   appendMessage: mockAppendMessage,

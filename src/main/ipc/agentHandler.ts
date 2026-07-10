@@ -742,7 +742,10 @@ export function registerAgentHandler(
         blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
         timestamp: Date.now()
       }
-      sessionStore.appendMessageFast(params.sessionId, userMessage)
+      const userAppend = sessionStore.appendMessageFast(params.sessionId, userMessage)
+      if (!userAppend.ok) {
+        throw new Error(`用户消息持久化失败: ${userAppend.error}`)
+      }
 
       // 首条含文字的用户消息后自动生成标题，并刷新侧边栏列表
       if (!hadTextUserMsg) {
@@ -911,24 +914,74 @@ export function registerAgentHandler(
         outcome: granted ? 'answered' : 'dismissed',
         payload: { decision: params.decision }
       })
-      if (!result.ok) return result
+      // 失败或重复命令：直接返回 ACK，不得再调 AgentLoop
+      if (!result.ok || !result.firstApplied) return result
+    } else if (params.commandId && !found) {
+      // 无 interaction 时仍走 answer，以便返回持久化 duplicate ACK
+      const result = coord.inbox.answer({
+        interactionId,
+        commandId: params.commandId,
+        expectedVersion: params.expectedVersion ?? 1,
+        outcome: granted ? 'answered' : 'dismissed',
+        payload: { decision: params.decision }
+      })
+      if (!result.ok || !result.firstApplied) return result
     }
 
-    // 子代理权限（sub: 前缀）路由到子 AgentLoop，其余走父循环
-    if (defaultSubAgentPermissionBridge.resolve(params.requestId, granted)) return
+    // 仅 firstApplied 时执行副作用
+    if (defaultSubAgentPermissionBridge.resolve(params.requestId, granted)) {
+      return params.commandId && found
+        ? {
+            ok: true,
+            firstApplied: true,
+            interaction: coord.findInteraction(interactionId)!,
+            snapshot: coord.getSnapshot(found.runId)!
+          }
+        : undefined
+    }
     if (!agentLoop) return
     agentLoop.respondPermission(params.requestId, granted)
     if (params.commandId && found) {
       return {
         ok: true,
+        firstApplied: true,
         interaction: coord.findInteraction(interactionId)!,
         snapshot: coord.getSnapshot(found.runId)!
       }
     }
   })
 
-  handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: { requestId: string; granted: boolean }): Promise<void> => {
+  handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params: {
+    requestId: string
+    granted: boolean
+    commandId?: string
+    expectedVersion?: number
+    interactionId?: string
+  }): Promise<void | import('../../runtime/run').InteractionAnswerResult> => {
+    const interactionId = params.interactionId ?? params.requestId
+    const coord = getRunCoordinator()
+    const found = coord.findInteraction(interactionId)
+
+    if (params.commandId) {
+      const result = coord.inbox.answer({
+        interactionId,
+        commandId: params.commandId,
+        expectedVersion: params.expectedVersion ?? found?.version ?? 1,
+        outcome: params.granted ? 'answered' : 'dismissed',
+        payload: { granted: params.granted }
+      })
+      if (!result.ok || !result.firstApplied) return result
+    }
+
     clearVerificationPermissionRequest(params.requestId, params.granted)
+    if (params.commandId && found) {
+      return {
+        ok: true,
+        firstApplied: true,
+        interaction: coord.findInteraction(interactionId) ?? found,
+        snapshot: coord.getSnapshot(found.runId)!
+      }
+    }
   })
 
   handle(RESPOND_ASK_QUESTION, async (_event, params: {
@@ -943,37 +996,47 @@ export function registerAgentHandler(
     const found = coord.findInteraction(interactionId)
     const dismissed = !params.answers || params.answers.length === 0
 
-    if (params.commandId && found) {
+    if (params.commandId) {
       const result = coord.inbox.answer({
         interactionId,
         commandId: params.commandId,
-        expectedVersion: params.expectedVersion ?? found.version,
+        expectedVersion: params.expectedVersion ?? found?.version ?? 1,
         outcome: dismissed ? 'dismissed' : 'answered',
         payload: { answers: params.answers }
       })
-      if (!result.ok) return result
+      // 重复 command：返回第一次完整 ACK，不得再 resolve / 不得返回 not_found
+      if (!result.ok || !result.firstApplied) return result
     }
 
     const entry = pendingAskQuestions.get(params.requestId)
     if (!entry) {
+      // firstApplied 但内存 resolver 已不在：仍返回 inbox 成功 ACK（重启场景）
+      if (params.commandId && found) {
+        return {
+          ok: true,
+          firstApplied: true,
+          interaction: found,
+          snapshot: coord.getSnapshot(found.runId)!
+        }
+      }
       if (params.commandId) {
         return {
           ok: false,
           code: 'not_found',
-          message: `askQuestion ${params.requestId} 不存在`
+          message: `askQuestion ${params.requestId} 不存在`,
+          firstApplied: true
         }
       }
       return
     }
     pendingAskQuestions.delete(params.requestId)
-    // resolve 工具的 Promise，让 execute 继续往下走
     entry.resolve(params.answers)
-    // 通知 renderer 清除 pending 状态
     entry.eventBus.emit({ type: 'ask_question_resolved', requestId: params.requestId })
 
     if (params.commandId && found) {
       return {
         ok: true,
+        firstApplied: true,
         interaction: coord.findInteraction(interactionId) ?? found,
         snapshot: coord.getSnapshot(found.runId)!
       }
@@ -1177,10 +1240,23 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           ? dropPermissionDeniedResidualBlocks(stream.blocks)
           : stream.blocks
 
-        // 所有权转移：先标记草稿 finalized，再写入 SessionStore，最后清除草稿
-        persistTurnDraft(ctx.runId, event.messageId, blocks, true, ctx.executionGeneration)
-        saveAssistantMessage(sessionId, event.messageId, blocks, event.interrupted)
-        clearTurnDraftAfterFinalize(ctx.runId)
+        // 所有权转移协议：
+        // turnDraft(active) → SessionStore 幂等追加成功 → message_finalized → clear turnDraft
+        // 不得在 SessionStore 成功前标 finalized / clear
+        try {
+          finalizeAssistantTurn(sessionId, ctx.runId, event.messageId, blocks, event.interrupted, ctx.executionGeneration)
+        } catch (err) {
+          console.error('[message_end] finalize 失败，保留 turnDraft:', err)
+          if (ctx.runId) {
+            try {
+              getRunCoordinator().commitTerminal({
+                runId: ctx.runId,
+                status: 'interrupted',
+                reason: err instanceof Error ? err.message : 'finalize_failed'
+              })
+            } catch { /* ignore */ }
+          }
+        }
         triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
@@ -1356,7 +1432,7 @@ function saveAssistantMessage(
   messageId: string,
   blocks: MessageBlock[],
   interrupted?: boolean
-): void {
+): import('../../runtime/sessions/types').AppendMessageResult {
   const sessionStore = getSessionStore()
   const projected = projectAssistantFieldsFromBlocks(blocks)
   const assistantMessage: SessionMessageAppend = {
@@ -1367,10 +1443,40 @@ function saveAssistantMessage(
     blocks: projected.blocks.length > 0 ? projected.blocks : undefined,
     messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE,
     timestamp: Date.now(),
-    // 取消中断的消息也持久化 interrupted 标记，下次加载时 UI 仍能区分
     ...(interrupted ? { interrupted: true } : {})
   }
-  sessionStore.appendMessageFast(sessionId, assistantMessage)
+  return sessionStore.appendMessageFast(sessionId, assistantMessage)
+}
+
+/**
+ * 所有权转移：SessionStore 成功后才标 finalized 并清草稿。
+ * 失败时保留 draft，由调用方将 run 标为 interrupted。
+ */
+function finalizeAssistantTurn(
+  sessionId: string,
+  runId: string | undefined,
+  messageId: string,
+  blocks: MessageBlock[],
+  interrupted?: boolean,
+  executionGeneration?: number
+): void {
+  // 1) 确保草稿仍为 active（未 finalized）
+  if (runId) {
+    persistTurnDraft(runId, messageId, blocks, false, executionGeneration)
+  }
+
+  // 2) SessionStore 幂等追加
+  const appendResult = saveAssistantMessage(sessionId, messageId, blocks, interrupted)
+  if (!appendResult.ok) {
+    throw new Error(`SessionStore 追加失败: ${appendResult.error}`)
+  }
+
+  // 3) 写 message_finalized receipt（turnDraft.finalized=true）
+  if (runId) {
+    persistTurnDraft(runId, messageId, blocks, true, executionGeneration)
+    // 4) 清除草稿
+    getRunCoordinator().clearTurnDraft(runId)
+  }
 }
 
 /**
@@ -1435,7 +1541,10 @@ function saveErrorMessage(sessionId: string, messageId: string, error: string): 
     content: error,
     timestamp: Date.now()
   }
-  sessionStore.appendMessageFast(sessionId, errorMessage)
+  const result = sessionStore.appendMessageFast(sessionId, errorMessage)
+  if (!result.ok) {
+    throw new Error(`错误消息持久化失败: ${result.error}`)
+  }
 }
 
 /** 截断 recovering.snapshot，只向渲染端发送 UI 所需字段 */

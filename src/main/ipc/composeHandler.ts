@@ -236,26 +236,34 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     answer: string
     commandId?: string
   }) => {
-    try {
-      const coord = getRunCoordinator()
-      const inter = coord.inbox.find(params.requestId)
-      if (inter) {
-        const result = coord.inbox.answer({
-          interactionId: params.requestId,
-          commandId: params.commandId ?? `compose-ask-${params.requestId}-${Date.now()}`,
-          expectedVersion: inter.version,
-          outcome: 'answered',
-          payload: { answer: params.answer }
-        })
-        // 重复 command 仍继续 resolve（脚本侧只应成功一次）
-        if (!result.ok && result.code !== 'already_answered' && result.code !== 'duplicate_command') {
-          // inbox 拒绝时仍尝试解除脚本，避免永久卡住
-        }
+    const coord = getRunCoordinator()
+    const inter = coord.inbox.find(params.requestId)
+    if (!inter) {
+      // 无持久化 interaction：不得绕过 inbox 直接 resolve
+      return {
+        ok: false,
+        code: 'not_found',
+        message: `compose askUser ${params.requestId} 不在 run snapshot 中`
       }
-    } catch {
-      // RunCoordinator 不可用时降级为直接 resolve
     }
-    return { ok: resolveWorkflowAskUser(params.runId, params.requestId, params.answer) }
+    const result = coord.inbox.answer({
+      interactionId: params.requestId,
+      commandId: params.commandId ?? `compose-ask-${params.requestId}`,
+      expectedVersion: inter.version,
+      outcome: 'answered',
+      payload: { answer: params.answer }
+    })
+    // 失败或重复：返回 ACK，不得再 resolve 脚本
+    if (!result.ok || !result.firstApplied) {
+      return result
+    }
+    const resolved = resolveWorkflowAskUser(params.runId, params.requestId, params.answer)
+    return {
+      ok: resolved,
+      firstApplied: true,
+      interaction: result.interaction,
+      snapshot: result.snapshot
+    }
   })
 
   handle(COMPOSE_GET_STATE, async (_e, params: { workspaceRoot: string; runId?: string }) => {

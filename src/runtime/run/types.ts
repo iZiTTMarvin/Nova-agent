@@ -242,12 +242,21 @@ export interface InteractionAnswerCommand {
 
 /** 回答命令结果 */
 export type InteractionAnswerResult =
-  | { ok: true; interaction: PendingInteraction; snapshot: RunSnapshot }
+  | {
+      ok: true
+      interaction: PendingInteraction
+      snapshot: RunSnapshot
+      /** true=首次生效，可调用内存 resolver；false=重复命令 */
+      firstApplied: boolean
+      duplicate?: boolean
+    }
   | {
       ok: false
       code: 'already_answered' | 'run_ended' | 'not_found' | 'version_mismatch' | 'duplicate_command'
       message: string
       snapshot?: RunSnapshot
+      firstApplied: boolean
+      duplicate?: boolean
     }
 
 /** 允许的状态转换表 */

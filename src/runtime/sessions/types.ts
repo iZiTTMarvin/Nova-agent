@@ -137,6 +137,22 @@ export interface SessionMessage {
 /** 追加消息入参：parentId 由 SessionStore.appendMessage 根据 currentLeafId 自动写入 */
 export type SessionMessageAppend = Omit<SessionMessage, 'parentId'>
 
+/**
+ * appendMessageFast 明确结果：成功 / 已存在（幂等） / 失败。
+ * 调用方必须检查，不得忽略 null。
+ */
+export type AppendMessageResult =
+  | {
+      ok: true
+      status: 'appended' | 'already_exists'
+      meta: Omit<SessionData, 'messages'>
+    }
+  | {
+      ok: false
+      status: 'failed'
+      error: string
+    }
+
 /** 持久化的工具调用记录 */
 export interface SessionToolCall {
   id: string

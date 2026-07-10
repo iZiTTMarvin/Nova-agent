@@ -3,7 +3,8 @@ export type {
   SessionSummary,
   SessionData,
   SessionMessage,
-  SessionToolCall
+  SessionToolCall,
+  AppendMessageResult
 } from './types'
 export { SESSION_DATA_FILE } from './types'
 export {

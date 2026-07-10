@@ -34,9 +34,10 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
       content: 'hello',
       timestamp: 1
     })
-    expect(m1).not.toBeNull()
-    expect(m1!.messageCount).toBe(1)
-    expect(m1!.currentLeafId).toBe('msg_1')
+    expect(m1.ok).toBe(true)
+    if (!m1.ok) return
+    expect(m1.meta.messageCount).toBe(1)
+    expect(m1.meta.currentLeafId).toBe('msg_1')
 
     const m2 = store.appendMessageFast(session.id, {
       id: 'msg_2',
@@ -44,8 +45,10 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
       content: 'hi',
       timestamp: 2
     })
-    expect(m2!.messageCount).toBe(2)
-    expect(m2!.currentLeafId).toBe('msg_2')
+    expect(m2.ok).toBe(true)
+    if (!m2.ok) return
+    expect(m2.meta.messageCount).toBe(2)
+    expect(m2.meta.currentLeafId).toBe('msg_2')
 
     // 索引文件应存在且 activeCount 对齐
     const dir = path.join(tmpDir, 'sessions', session.id)
@@ -148,5 +151,30 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     })
     const indexPath = path.join(tmpDir, 'sessions', session.id, SESSION_MESSAGE_INDEX_FILE)
     expect(fs.existsSync(indexPath)).toBe(true)
+  })
+
+  it('同 messageId 重试返回 already_exists，不重复追加 JSONL', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    const first = store.appendMessageFast(session.id, {
+      id: 'dup_1',
+      role: 'assistant',
+      content: 'a',
+      timestamp: 1
+    })
+    expect(first.ok && first.status === 'appended').toBe(true)
+
+    const second = store.appendMessageFast(session.id, {
+      id: 'dup_1',
+      role: 'assistant',
+      content: 'b',
+      timestamp: 2
+    })
+    expect(second.ok && second.status === 'already_exists').toBe(true)
+
+    const dir = path.join(tmpDir, 'sessions', session.id)
+    const lines = fs.readFileSync(path.join(dir, SESSION_MESSAGES_FILE), 'utf8').trim().split('\n')
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0]).content === 'a' || JSON.parse(lines[0]).blocks).toBeTruthy()
   })
 })

@@ -16,7 +16,11 @@ vi.mock('../../../src/main/ipc/sessionHandler', () => ({
   getSessionStore: () => ({
     appendMessage: vi.fn(),
     // 与生产热路径对齐：accumulateStreamEvent 落盘走 appendMessageFast
-    appendMessageFast: vi.fn(),
+    appendMessageFast: vi.fn(() => ({
+      ok: true,
+      status: 'appended',
+      meta: { id: 'sess_1', messageCount: 1 }
+    })),
     save: vi.fn(),
     load: vi.fn(),
     getSessionsDir: () => '/tmp/test-sessions'
