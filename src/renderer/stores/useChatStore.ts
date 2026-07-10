@@ -22,6 +22,7 @@ import type {
   PermissionDecision
 } from '../../shared/session/types'
 import { SESSION_HISTORY_PAGE_SIZE } from '../../shared/session/messagePagination'
+import { appendTerminalErrorToBlocks } from '../../shared/session/terminalErrorBlocks'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { Tier1BranchContext } from '../../shared/workspace/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
@@ -1479,25 +1480,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // 禁止清空 blocks（否则用户看到「保护把正常回复弄没了」）。
         const prev = state.messages[idx]!
         const hasBlocks = !!(prev.blocks && prev.blocks.length > 0)
-        let nextBlocks = prev.blocks
-        if (hasBlocks) {
-          nextBlocks = prev.blocks!.map((b) => {
-            if (b.type === 'tool' && (b.status === 'running' || !b.status)) {
-              return { ...b, status: 'error' as const, result: error }
-            }
-            return b
-          })
-          const notice = `⚠️ ${error}`
-          const last = nextBlocks[nextBlocks.length - 1]
-          if (last && last.type === 'text') {
-            nextBlocks = [
-              ...nextBlocks.slice(0, -1),
-              { ...last, content: `${last.content}\n\n${notice}` }
-            ]
-          } else {
-            nextBlocks = [...nextBlocks, { type: 'text' as const, content: notice }]
-          }
-        }
+        const nextBlocks = hasBlocks
+          ? appendTerminalErrorToBlocks(prev.blocks!, error)
+          : prev.blocks
         const nextMessages = state.messages.slice()
         nextMessages[idx] = bumpRevision({
           ...prev,

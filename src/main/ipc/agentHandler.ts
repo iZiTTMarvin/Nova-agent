@@ -42,6 +42,7 @@ import { extractTextFromSerializableContent, generateSessionTitleFromText } from
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../runtime/sessions/messageProjection'
 import type { MessageBlock } from '../../shared/session/types'
+import { appendTerminalErrorToBlocks } from '../../shared/session/terminalErrorBlocks'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import { getWorkspaceService } from '../services/WorkspaceService'
 import {
@@ -1338,24 +1339,6 @@ function retainCommittedBlocksForRetry(blocks: MessageBlock[]): MessageBlock[] {
   }
   // 尚无完成的工具：整段都是本 attempt 临时输出，可清空
   return []
-}
-
-/** 将终态错误并入 blocks：标记未完成工具，并追加错误文本块 */
-function appendTerminalErrorToBlocks(blocks: MessageBlock[], error: string): MessageBlock[] {
-  const out: MessageBlock[] = blocks.map((b) => {
-    if (b.type === 'tool' && b.status === 'running') {
-      return { ...b, status: 'error' as const, result: error }
-    }
-    return b
-  })
-  const notice = `⚠️ ${error}`
-  const last = out[out.length - 1]
-  if (last && last.type === 'text') {
-    out[out.length - 1] = { ...last, content: `${last.content}\n\n${notice}` }
-  } else {
-    out.push({ type: 'text', content: notice })
-  }
-  return out
 }
 
 /**

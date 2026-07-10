@@ -25,3 +25,10 @@ export {
   isModeHiddenWriteTool,
   type ToolCapability
 } from './toolVisibility'
+
+export {
+  TERMINAL_ERROR_NOTICE_PREFIX,
+  formatTerminalErrorNotice,
+  appendTerminalErrorToBlocks,
+  type TerminalErrorBlockLike
+} from './terminalErrorBlocks'
