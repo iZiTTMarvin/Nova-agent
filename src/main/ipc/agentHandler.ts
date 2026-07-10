@@ -1274,22 +1274,88 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       break
     }
     case 'error': {
+      // 终态错误：必须保留本轮已成功产出（正文/工具），再附加错误说明后落盘。
+      // 禁止只存 error 字符串并丢掉 blocks（用户会感觉「保护把回复弄没了」）。
       const stream = activeStreams.get(event.messageId)
       if (stream) {
         activeStreams.delete(event.messageId)
+        let blocks = stream.cancelled
+          ? dropPermissionDeniedResidualBlocks(stream.blocks)
+          : [...stream.blocks]
+
+        // attempt_failed 可能已清空内存块；用 turnDraft（工具边界已 fsync）回补
+        if (blocks.length === 0 && ctx.runId) {
+          const draft = getRunCoordinator().getSnapshot(ctx.runId)?.turnDraft
+          if (draft?.blocks?.length) {
+            blocks = draft.blocks as unknown as MessageBlock[]
+          }
+        }
+
+        const finalBlocks = appendTerminalErrorToBlocks(blocks, event.error)
+        try {
+          finalizeAssistantTurn(
+            sessionId,
+            ctx.runId,
+            event.messageId,
+            finalBlocks,
+            true,
+            ctx.executionGeneration
+          )
+        } catch (err) {
+          console.error('[error] finalize 失败，回退仅存错误文案:', err)
+          saveErrorMessage(sessionId, event.messageId, event.error)
+        }
+      } else {
+        saveErrorMessage(sessionId, event.messageId, event.error)
       }
-      saveErrorMessage(sessionId, event.messageId, event.error)
       break
     }
     case 'attempt_failed': {
-      // 失败 attempt：清空累积器中的临时块，保留条目供下一次 attempt 继续写
+      // 失败 attempt：只丢掉本 attempt 末尾未完成输出，保留已完成的 tool 轮次
       const stream = activeStreams.get(event.messageId)
       if (stream) {
-        stream.blocks = []
+        stream.blocks = retainCommittedBlocksForRetry(stream.blocks)
       }
       break
     }
   }
+}
+
+/**
+ * 重试前保留已提交的工具轮次（含其前序 thinking/text）。
+ * 丢掉末尾 running 工具与其后的临时 text/thinking，避免与下一 attempt 重复。
+ */
+function retainCommittedBlocksForRetry(blocks: MessageBlock[]): MessageBlock[] {
+  let lastCommittedTool = -1
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i]
+    if (b.type === 'tool' && b.status !== 'running') {
+      lastCommittedTool = i
+    }
+  }
+  if (lastCommittedTool >= 0) {
+    return blocks.slice(0, lastCommittedTool + 1)
+  }
+  // 尚无完成的工具：整段都是本 attempt 临时输出，可清空
+  return []
+}
+
+/** 将终态错误并入 blocks：标记未完成工具，并追加错误文本块 */
+function appendTerminalErrorToBlocks(blocks: MessageBlock[], error: string): MessageBlock[] {
+  const out: MessageBlock[] = blocks.map((b) => {
+    if (b.type === 'tool' && b.status === 'running') {
+      return { ...b, status: 'error' as const, result: error }
+    }
+    return b
+  })
+  const notice = `⚠️ ${error}`
+  const last = out[out.length - 1]
+  if (last && last.type === 'text') {
+    out[out.length - 1] = { ...last, content: `${last.content}\n\n${notice}` }
+  } else {
+    out.push({ type: 'text', content: notice })
+  }
+  return out
 }
 
 /**

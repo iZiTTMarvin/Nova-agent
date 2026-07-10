@@ -1475,17 +1475,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       if (idx !== undefined && state.messages[idx]) {
-        // 消息已存在（handleMessageStart 已追加空气泡）：就地更新为错误卡片，
-        // 避免同一 messageId 在列表中出现两条，导致 React key 冲突与界面闪烁
+        // 消息已存在：保留已流式产出的 blocks/thinking/toolCalls，仅附加错误标记与文案。
+        // 禁止清空 blocks（否则用户看到「保护把正常回复弄没了」）。
+        const prev = state.messages[idx]!
+        const hasBlocks = !!(prev.blocks && prev.blocks.length > 0)
+        let nextBlocks = prev.blocks
+        if (hasBlocks) {
+          nextBlocks = prev.blocks!.map((b) => {
+            if (b.type === 'tool' && (b.status === 'running' || !b.status)) {
+              return { ...b, status: 'error' as const, result: error }
+            }
+            return b
+          })
+          const notice = `⚠️ ${error}`
+          const last = nextBlocks[nextBlocks.length - 1]
+          if (last && last.type === 'text') {
+            nextBlocks = [
+              ...nextBlocks.slice(0, -1),
+              { ...last, content: `${last.content}\n\n${notice}` }
+            ]
+          } else {
+            nextBlocks = [...nextBlocks, { type: 'text' as const, content: notice }]
+          }
+        }
         const nextMessages = state.messages.slice()
         nextMessages[idx] = bumpRevision({
-          ...state.messages[idx]!,
-          content: error,
+          ...prev,
+          // 无 blocks 时用错误文案；有 blocks 时保留原 content，由 blocks 渲染
+          content: hasBlocks ? prev.content || '' : error,
           isError: true,
-          // 清空流式中间态，避免空气泡残留
-          thinking: undefined,
-          blocks: undefined,
-          toolCalls: undefined
+          interrupted: true,
+          thinking: prev.thinking,
+          blocks: nextBlocks,
+          toolCalls: prev.toolCalls
         })
         return { messages: nextMessages, ...commonFields }
       }

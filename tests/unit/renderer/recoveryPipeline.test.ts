@@ -99,6 +99,26 @@ describe('useChatStore recovery / hookError handlers', () => {
     expect(messages[idx!]?.id).toBe('msg_dup')
   })
 
+  it('handleError 应保留已流式 blocks，并附加错误文案（不得清空回复）', async () => {
+    useChatStore.getState().handleMessageStart('msg_keep')
+    useChatStore.getState().handleTextDelta('msg_keep', '项目进展顺利。')
+    useChatStore.getState().handleToolCall('msg_keep', 'tc_keep', 'ls', { path: '.' })
+    useChatStore.getState().handleToolResult('msg_keep', 'tc_keep', 'ls', 'src/')
+
+    await useChatStore.getState().handleError('msg_keep', '已达全 run attempt 预算上限（6）')
+
+    const msg = useChatStore.getState().messages.find((m) => m.id === 'msg_keep')
+    expect(msg?.isError).toBe(true)
+    expect(msg?.blocks?.length).toBeGreaterThan(0)
+    const textJoined = (msg?.blocks ?? [])
+      .filter((b): b is { type: 'text'; content: string } => b.type === 'text')
+      .map((b) => b.content)
+      .join('\n')
+    expect(textJoined).toContain('项目进展顺利')
+    expect(textJoined).toContain('已达全 run attempt 预算上限')
+    expect(msg?.blocks?.some((b) => b.type === 'tool')).toBe(true)
+  })
+
   it('handleError 在无 handleMessageStart 的情况下应 fallback 追加（error 先于 message_start）', async () => {
     // 罕见情况：error 在 message_start 之前到达，此时列表里还没有这条消息
     await useChatStore.getState().handleError('msg_early_err', 'early error')

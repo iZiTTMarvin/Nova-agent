@@ -162,21 +162,79 @@ describe('agentHandler 真实入口测试', () => {
       }
     })
 
-    it('error 事件清理累积器并保存错误消息', () => {
+    it('error 事件应保留已有正文并附加错误后落盘（不得只存错误文案）', () => {
       const ctx = makeCtx()
 
       accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_3' }, ctx)
+      accumulateStreamEvent('sess_1', { type: 'text_delta', messageId: 'msg_3', delta: '已成功的回复' }, ctx)
       expect(activeStreams.has('msg_3')).toBe(true)
 
       accumulateStreamEvent('sess_1', { type: 'error', messageId: 'msg_3', error: 'API 超时' }, ctx)
       expect(activeStreams.has('msg_3')).toBe(false)
 
       const store = getSessionStore()
-      expect(store.appendMessageFast).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-        id: 'msg_3',
-        role: 'assistant',
-        content: 'API 超时'
-      }))
+      expect(store.appendMessageFast).toHaveBeenCalledWith(
+        'sess_1',
+        expect.objectContaining({
+          id: 'msg_3',
+          role: 'assistant',
+          interrupted: true,
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              content: expect.stringContaining('已成功的回复')
+            })
+          ])
+        })
+      )
+      const saved = (store.appendMessageFast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as {
+        blocks?: Array<{ type: string; content?: string }>
+        content?: string
+      }
+      const text = saved.blocks?.find((b) => b.type === 'text')?.content ?? saved.content ?? ''
+      expect(text).toContain('已成功的回复')
+      expect(text).toContain('API 超时')
+    })
+
+    it('attempt_failed 应保留已完成工具轮次，只清末尾临时输出', () => {
+      const ctx = makeCtx()
+      accumulateStreamEvent('sess_1', { type: 'message_start', messageId: 'msg_af' }, ctx)
+      accumulateStreamEvent(
+        'sess_1',
+        {
+          type: 'tool_call',
+          messageId: 'msg_af',
+          toolCallId: 'tc1',
+          toolName: 'ls',
+          args: { path: '.' }
+        },
+        ctx
+      )
+      accumulateStreamEvent(
+        'sess_1',
+        {
+          type: 'tool_result',
+          messageId: 'msg_af',
+          toolCallId: 'tc1',
+          toolName: 'ls',
+          result: 'ok'
+        },
+        ctx
+      )
+      accumulateStreamEvent('sess_1', { type: 'text_delta', messageId: 'msg_af', delta: '半截回复' }, ctx)
+
+      accumulateStreamEvent(
+        'sess_1',
+        { type: 'attempt_failed', messageId: 'msg_af', attemptId: 'a1', error: 'timeout' },
+        ctx
+      )
+
+      const stream = activeStreams.get('msg_af')
+      expect(stream).toBeTruthy()
+      expect(stream!.blocks.some((b) => b.type === 'tool')).toBe(true)
+      expect(stream!.blocks.some((b) => b.type === 'text' && (b as { content: string }).content.includes('半截'))).toBe(
+        false
+      )
     })
 
     /**
