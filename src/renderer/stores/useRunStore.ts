@@ -181,9 +181,13 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       const snapshotsByRunId = snap
         ? { ...get().snapshotsByRunId, [snap.runId]: snap }
         : get().snapshotsByRunId
-      const activeRunIdBySessionId = snap
-        ? { ...get().activeRunIdBySessionId, [sessionId]: snap.runId }
-        : get().activeRunIdBySessionId
+      const activeRunIdBySessionId = { ...get().activeRunIdBySessionId }
+      if (snap) {
+        activeRunIdBySessionId[sessionId] = snap.runId
+      } else {
+        // pull 返回 null：清理该 session 的陈旧 activeRunId
+        delete activeRunIdBySessionId[sessionId]
+      }
       const isSelected = get().selectedSessionId === sessionId
       set({
         snapshot: isSelected ? snap : get().snapshot,
@@ -236,7 +240,11 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   handleSnapshotEvent: (snapshot, event) => {
     const state = get()
     const lastSequence = state.lastSequenceByRunId[snapshot.runId] ?? 0
-    // 序号缺口：重拉
+    // 同 runId：迟到/重复旧事件直接忽略，禁止状态回退
+    if (event.sequence <= lastSequence) {
+      return
+    }
+    // 序号缺口：重拉权威 snapshot
     if (event.sequence > lastSequence + 1 && lastSequence > 0) {
       void get().pullSnapshot(snapshot.sessionId)
       return
@@ -247,17 +255,24 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       [snapshot.sessionId]: snapshot.runId
     }
     const isSelected = state.selectedSessionId === null || state.selectedSessionId === snapshot.sessionId
+    // interrupted 恢复/完成后清理 interruptedRunId
+    let interruptedRunId = state.interruptedRunId
+    if (snapshot.status === 'interrupted') {
+      interruptedRunId = snapshot.runId
+    } else if (interruptedRunId === snapshot.runId) {
+      interruptedRunId = null
+    }
     set({
       // 非当前会话事件只写自己的分桶，绝不篡改兼容 snapshot。
       snapshot: isSelected ? snapshot : state.snapshot,
-      lastSequence: isSelected ? Math.max(lastSequence, event.sequence) : state.lastSequence,
+      lastSequence: isSelected ? event.sequence : state.lastSequence,
       snapshotsByRunId: { ...state.snapshotsByRunId, [snapshot.runId]: snapshot },
       activeRunIdBySessionId,
       lastSequenceByRunId: {
         ...state.lastSequenceByRunId,
-        [snapshot.runId]: Math.max(lastSequence, event.sequence)
+        [snapshot.runId]: event.sequence
       },
-      interruptedRunId: snapshot.status === 'interrupted' ? snapshot.runId : get().interruptedRunId
+      interruptedRunId
     })
 
     void (async () => {

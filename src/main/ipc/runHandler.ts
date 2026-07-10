@@ -140,16 +140,16 @@ export function registerRunHandler(): void {
             snapshot: snap
           }
         }
-        // 本 IPC 仍为预览+确认合一的兼容路径；真正拆分见 rollback-preview/confirm 通道
         const preview = previewRollback(workspaceRoot, params.runId)
-        const result = confirmRollback(workspaceRoot, params.runId)
-        const hasConflict = preview.conflicts.length > 0 || preview.missingBackup.length > 0
+        const result = confirmRollback(workspaceRoot, params.runId, {
+          previewToken: preview.previewToken
+        })
         return {
-          ok: result.ok && !hasConflict,
+          ok: result.ok,
           steps: committed,
-          message: result.ok && !hasConflict
+          message: result.ok
             ? `已按 effect 凭证回滚：恢复 ${preview.willRestore.length}，删除 ${preview.willDelete.length}`
-            : `回滚未完全成功：冲突 ${preview.conflicts.length}，缺备份 ${preview.missingBackup.length}`,
+            : `回滚未完全成功：冲突 ${preview.conflicts.length}，缺备份 ${preview.missingBackup.length}，损坏 ${preview.corrupt.length}`,
           snapshot: snap,
           preview,
           results: result.results

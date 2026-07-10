@@ -530,6 +530,46 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     const isNew = !existsSync(abs)
     const beforeBuf = isNew ? null : readFileSync(abs)
     const beforeHash = beforeBuf ? createHash('sha256').update(beforeBuf).digest('hex') : null
+    const text = String(content ?? '')
+    const afterHash = createHash('sha256').update(text).digest('hex')
+
+    // 预写协议：backup → prepared intent → 改目标文件 → 校验 → committed
+    // receipt/backup 失败时禁止修改目标文件
+    const { buildFileEffectReceipt, recordFileEffect, commitFileEffect } = await import(
+      './v2/EffectReceipt'
+    )
+    const idempotencyKey =
+      typeof (ctx as { idempotencyKey?: string }).idempotencyKey === 'string'
+        ? (ctx as { idempotencyKey?: string }).idempotencyKey
+        : undefined
+    const effectId =
+      idempotencyKey?.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) ||
+      `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    let beforeCheckpointRel: string | null = null
+    if (!isNew && beforeBuf) {
+      const backupDir = join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'effect-backups')
+      mkdirSync(backupDir, { recursive: true })
+      beforeCheckpointRel = `effect-backups/${effectId}.bak`
+      const backupAbs = join(backupDir, `${effectId}.bak`)
+      writeFileSync(backupAbs, beforeBuf)
+    }
+
+    const prepared = buildFileEffectReceipt({
+      workspaceRoot,
+      runId,
+      absPath: abs,
+      action: isNew ? 'create' : 'modify',
+      beforeHash,
+      // 只存 run 目录内相对引用，禁止信任任意绝对路径
+      beforeCheckpointRef: beforeCheckpointRel,
+      afterHash,
+      effectId,
+      idempotencyKey,
+      status: 'prepared'
+    })
+    recordFileEffect(workspaceRoot, prepared)
+
     mkdirSync(dirname(abs), { recursive: true })
     if (deps.checkpointManager) {
       if (!deps.checkpointManager.getCurrentMessageId()) {
@@ -537,41 +577,15 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       }
       deps.checkpointManager.backupBeforeWrite(abs, isNew)
     }
-    // 写盘前再校验：deadline/cancel 后旧 continuation 无权落盘
     if (!assertScopeLive(ctx)) {
       throw new Error('TaskScope closed: cannot write')
     }
-    const text = String(content ?? '')
     writeFileSync(abs, text, 'utf-8')
-    const afterHash = createHash('sha256').update(text).digest('hex')
-
-    // FileEffectReceipt：改前内容写入 effect-backups，回滚不依赖 git
-    try {
-      const { buildFileEffectReceipt, recordFileEffect } = await import('./v2/EffectReceipt')
-      const effectId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      let beforeCheckpointRef: string | null = null
-      if (!isNew && beforeBuf) {
-        const backupDir = join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'effect-backups')
-        mkdirSync(backupDir, { recursive: true })
-        beforeCheckpointRef = join(backupDir, `${effectId}.bak`)
-        writeFileSync(beforeCheckpointRef, beforeBuf)
-      }
-      recordFileEffect(
-        workspaceRoot,
-        buildFileEffectReceipt({
-          workspaceRoot,
-          runId,
-          absPath: abs,
-          action: isNew ? 'create' : 'modify',
-          beforeHash,
-          beforeCheckpointRef,
-          afterHash,
-          effectId
-        })
-      )
-    } catch (err) {
-      console.warn('[hooks.write] effect receipt 写入失败:', err)
+    const actualAfter = createHash('sha256').update(readFileSync(abs)).digest('hex')
+    if (actualAfter !== afterHash) {
+      throw new Error(`写后 hash 不一致: expected=${afterHash} actual=${actualAfter}`)
     }
+    commitFileEffect(workspaceRoot, runId, effectId, { afterHash: actualAfter })
     return undefined
   }
 

@@ -1,13 +1,21 @@
 /**
  * 文件副作用凭证：安全回滚的唯一依据。
- * 回滚按 effect 逆序执行；用户后续改过的文件标 conflict，绝不覆盖。
+ *
+ * 写文件协议：
+ *   backup → prepared intent（fsync）→ 改目标文件 → 校验 afterHash → committed
+ * receipt/backup 失败时禁止修改目标文件。
+ *
+ * 回滚：按 effect 逆序；用户改过 → conflict，绝不覆盖。
+ * beforeCheckpointRef 只允许 run 目录内相对路径。
  */
-import { createHash } from 'crypto'
+import { createHash, createHmac } from 'crypto'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   unlinkSync,
   writeFileSync
 } from 'fs'
@@ -15,26 +23,36 @@ import { dirname, join, relative, resolve, sep } from 'path'
 import { atomicWriteFileSync } from '../../storage/atomicFile'
 
 export type FileEffectAction = 'create' | 'modify' | 'delete'
+export type FileEffectStatus = 'prepared' | 'committed'
+
+const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 export interface FileEffectReceipt {
   effectId: string
   runId: string
   stepId?: string
-  /** 稳定幂等键（来自 StepEngine） */
   idempotencyKey?: string
   /** 工作区内相对路径（正斜杠） */
   path: string
   action: FileEffectAction
-  /** 改动前内容 hash；新建为 null */
   beforeHash: string | null
-  /** 改动前备份绝对路径（可选） */
+  /**
+   * 改前备份：仅允许相对 run 目录的引用（如 effect-backups/xxx.bak）。
+   * 禁止信任 receipt 中的任意绝对路径。
+   */
   beforeCheckpointRef: string | null
-  /** 改动后内容 hash；删除为 null */
   afterHash: string | null
+  status: FileEffectStatus
   at: number
 }
 
-export type RollbackFileStatus = 'restored' | 'deleted' | 'conflict' | 'skipped' | 'missing_backup'
+export type RollbackFileStatus =
+  | 'restored'
+  | 'deleted'
+  | 'conflict'
+  | 'skipped'
+  | 'missing_backup'
+  | 'corrupt_receipt'
 
 export interface RollbackFileResult {
   path: string
@@ -47,10 +65,56 @@ export interface RollbackPreview {
   willDelete: string[]
   conflicts: string[]
   missingBackup: string[]
+  corrupt: string[]
+  /** 供 confirm 校验的 token，避免 TOCTOU */
+  previewToken: string
+}
+
+function assertSafeRunId(runId: string): void {
+  if (!SAFE_RUN_ID.test(runId) || runId.includes('..') || runId.includes('/') || runId.includes('\\')) {
+    throw new Error(`非法 runId: ${runId}`)
+  }
+}
+
+function runRoot(workspaceRoot: string, runId: string): string {
+  assertSafeRunId(runId)
+  return join(workspaceRoot, '.nova', 'compose', 'runs', runId)
 }
 
 function effectsDir(workspaceRoot: string, runId: string): string {
-  return join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'effects')
+  return join(runRoot(workspaceRoot, runId), 'effects')
+}
+
+/** 解析并校验路径仍在 workspaceRoot 下；拒绝 symlink/junction 越界 */
+export function resolveUnderWorkspace(workspaceRoot: string, relPath: string): string {
+  if (relPath.includes('\0') || relPath.startsWith('/') || /^[A-Za-z]:/.test(relPath)) {
+    throw new Error(`拒绝绝对/非法路径: ${relPath}`)
+  }
+  if (relPath.split(/[/\\]/).includes('..')) {
+    throw new Error(`路径逃逸: ${relPath}`)
+  }
+  const root = resolve(workspaceRoot)
+  const abs = resolve(root, relPath)
+  if (abs !== root && !abs.startsWith(root + sep)) {
+    throw new Error(`路径逃逸工作区: ${relPath}`)
+  }
+  // 若已存在，检查 realpath 不越界（symlink/junction）
+  if (existsSync(abs)) {
+    try {
+      const real = realpathSync(abs)
+      if (real !== root && !real.startsWith(root + sep)) {
+        throw new Error(`符号链接越界: ${relPath}`)
+      }
+      if (lstatSync(abs).isSymbolicLink()) {
+        // 允许指向工作区内的链接；越界已在 realpath 检查
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('越界')) throw err
+      // realpath 失败时保守拒绝
+      throw new Error(`无法解析路径: ${relPath}`)
+    }
+  }
+  return abs
 }
 
 function normalizeRel(workspaceRoot: string, absOrRel: string): string {
@@ -62,6 +126,25 @@ function normalizeRel(workspaceRoot: string, absOrRel: string): string {
   return relative(root, abs).split(sep).join('/')
 }
 
+/** 将 receipt 中的相对 backup 引用解析为绝对路径（必须在 run 目录内） */
+export function resolveBackupRef(
+  workspaceRoot: string,
+  runId: string,
+  ref: string | null
+): string | null {
+  if (!ref) return null
+  // 拒绝绝对路径与 .. 
+  if (ref.includes('..') || ref.startsWith('/') || /^[A-Za-z]:/.test(ref) || ref.includes('\0')) {
+    throw new Error(`非法 beforeCheckpointRef: ${ref}`)
+  }
+  const base = runRoot(workspaceRoot, runId)
+  const abs = resolve(base, ref)
+  if (abs !== base && !abs.startsWith(base + sep)) {
+    throw new Error(`backup 越界 run 目录: ${ref}`)
+  }
+  return abs
+}
+
 export function hashContent(buf: Buffer | string): string {
   return createHash('sha256').update(buf).digest('hex')
 }
@@ -71,77 +154,168 @@ export function hashFileIfExists(absPath: string): string | null {
   return hashContent(readFileSync(absPath))
 }
 
-/** 记录一条文件副作用凭证（原子写） */
+/** 记录一条文件副作用凭证（原子写）；可写 prepared 或 committed */
 export function recordFileEffect(
   workspaceRoot: string,
   receipt: FileEffectReceipt
 ): void {
+  assertSafeRunId(receipt.runId)
+  // 落盘前再校验 path
+  resolveUnderWorkspace(workspaceRoot, receipt.path)
   const dir = effectsDir(workspaceRoot, receipt.runId)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   const file = join(dir, `${receipt.effectId}.json`)
   atomicWriteFileSync(file, JSON.stringify(receipt, null, 2))
 }
 
-/** 列出某 run 的全部 effect（按 at 升序） */
-export function listFileEffects(workspaceRoot: string, runId: string): FileEffectReceipt[] {
+/** prepared → committed（写文件成功后调用） */
+export function commitFileEffect(
+  workspaceRoot: string,
+  runId: string,
+  effectId: string,
+  patch: { afterHash: string }
+): void {
+  const file = join(effectsDir(workspaceRoot, runId), `${effectId}.json`)
+  if (!existsSync(file)) {
+    throw new Error(`effect receipt 不存在: ${effectId}`)
+  }
+  const receipt = JSON.parse(readFileSync(file, 'utf-8')) as FileEffectReceipt
+  receipt.status = 'committed'
+  receipt.afterHash = patch.afterHash
+  receipt.at = Date.now()
+  atomicWriteFileSync(file, JSON.stringify(receipt, null, 2))
+}
+
+export interface ListEffectsResult {
+  effects: FileEffectReceipt[]
+  corruptIds: string[]
+}
+
+/** 列出某 run 的全部 effect；损坏条目记入 corruptIds，不得静默跳过 */
+export function listFileEffectsDetailed(
+  workspaceRoot: string,
+  runId: string
+): ListEffectsResult {
+  assertSafeRunId(runId)
   const dir = effectsDir(workspaceRoot, runId)
-  if (!existsSync(dir)) return []
+  if (!existsSync(dir)) return { effects: [], corruptIds: [] }
   const out: FileEffectReceipt[] = []
+  const corruptIds: string[] = []
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.json')) continue
     try {
-      out.push(JSON.parse(readFileSync(join(dir, name), 'utf-8')) as FileEffectReceipt)
+      const raw = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as FileEffectReceipt
+      // 重新校验 path
+      resolveUnderWorkspace(workspaceRoot, raw.path)
+      if (!raw.status) raw.status = 'committed' // 旧 receipt 兼容
+      out.push(raw)
     } catch {
-      /* 跳过损坏条目 */
+      corruptIds.push(name.replace(/\.json$/, ''))
     }
   }
   out.sort((a, b) => a.at - b.at)
-  return out
+  return { effects: out, corruptIds }
 }
 
-/** 按当前磁盘状态预览回滚结果（不改文件） */
+export function listFileEffects(workspaceRoot: string, runId: string): FileEffectReceipt[] {
+  return listFileEffectsDetailed(workspaceRoot, runId).effects
+}
+
+function signPreviewToken(
+  runId: string,
+  effects: FileEffectReceipt[],
+  fileHashes: Record<string, string | null>
+): string {
+  const payload = JSON.stringify({
+    runId,
+    effects: effects.map(e => ({
+      id: e.effectId,
+      path: e.path,
+      after: e.afterHash,
+      before: e.beforeHash,
+      status: e.status
+    })),
+    fileHashes
+  })
+  return createHmac('sha256', 'nova-rollback-preview').update(payload).digest('hex')
+}
+
+/**
+ * 按当前磁盘状态预览回滚（虚拟状态逆序模拟，支持同文件多次修改）。
+ */
 export function previewRollback(
   workspaceRoot: string,
   runId: string
 ): RollbackPreview {
-  const effects = listFileEffects(workspaceRoot, runId)
+  const { effects, corruptIds } = listFileEffectsDetailed(workspaceRoot, runId)
   const preview: RollbackPreview = {
     willRestore: [],
     willDelete: [],
     conflicts: [],
-    missingBackup: []
+    missingBackup: [],
+    corrupt: [...corruptIds],
+    previewToken: ''
   }
-  // 逆序模拟
+
+  // 虚拟文件状态：path → 当前模拟 hash（null=不存在）
+  const virtual = new Map<string, string | null>()
+  const fileHashes: Record<string, string | null> = {}
+  for (const e of effects) {
+    if (!virtual.has(e.path)) {
+      const abs = resolveUnderWorkspace(workspaceRoot, e.path)
+      const h = hashFileIfExists(abs)
+      virtual.set(e.path, h)
+      fileHashes[e.path] = h
+    }
+  }
+
   for (const e of [...effects].reverse()) {
-    const abs = resolve(workspaceRoot, e.path)
-    const current = hashFileIfExists(abs)
+    if (e.status === 'prepared') {
+      // prepared 未 committed：按崩溃恢复矩阵，不自动回滚目标
+      continue
+    }
+    const current = virtual.get(e.path) ?? null
     if (e.action === 'create') {
       if (current === null) {
-        preview.willDelete.push(e.path) // 已不存在，视为已删
+        // 已不存在
       } else if (e.afterHash && current === e.afterHash) {
         preview.willDelete.push(e.path)
+        virtual.set(e.path, null)
       } else {
         preview.conflicts.push(e.path)
       }
     } else if (e.action === 'modify') {
       if (e.afterHash && current === e.afterHash) {
-        if (e.beforeCheckpointRef && existsSync(e.beforeCheckpointRef)) {
-          preview.willRestore.push(e.path)
-        } else if (e.beforeHash === null) {
-          preview.willDelete.push(e.path)
-        } else {
+        try {
+          const bak = resolveBackupRef(workspaceRoot, runId, e.beforeCheckpointRef)
+          if (bak && existsSync(bak)) {
+            preview.willRestore.push(e.path)
+            virtual.set(e.path, e.beforeHash)
+          } else if (e.beforeHash === null) {
+            preview.willDelete.push(e.path)
+            virtual.set(e.path, null)
+          } else {
+            preview.missingBackup.push(e.path)
+          }
+        } catch {
           preview.missingBackup.push(e.path)
         }
       } else if (e.beforeHash && current === e.beforeHash) {
-        // 已是改前状态
+        // 已是改前
       } else {
         preview.conflicts.push(e.path)
       }
     } else if (e.action === 'delete') {
       if (current === null) {
-        if (e.beforeCheckpointRef && existsSync(e.beforeCheckpointRef)) {
-          preview.willRestore.push(e.path)
-        } else {
+        try {
+          const bak = resolveBackupRef(workspaceRoot, runId, e.beforeCheckpointRef)
+          if (bak && existsSync(bak)) {
+            preview.willRestore.push(e.path)
+            virtual.set(e.path, e.beforeHash)
+          } else {
+            preview.missingBackup.push(e.path)
+          }
+        } catch {
           preview.missingBackup.push(e.path)
         }
       } else {
@@ -149,26 +323,62 @@ export function previewRollback(
       }
     }
   }
+
+  preview.previewToken = signPreviewToken(runId, effects, fileHashes)
   return preview
+}
+
+export interface ConfirmRollbackOptions {
+  /** 必须与最近一次 preview 的 token 一致 */
+  previewToken?: string
 }
 
 /**
  * 按 effect 逆序安全回滚。
- * - 修改：仅当当前 hash === afterHash 才恢复
- * - 新建：仅当内容仍等于 afterHash 才删除
- * - 删除：仅当路径仍不存在才恢复
- * - 用户改过 → conflict，绝不覆盖
+ * conflict / missing_backup / corrupt → ok=false。
  */
 export function confirmRollback(
   workspaceRoot: string,
-  runId: string
+  runId: string,
+  options: ConfirmRollbackOptions = {}
 ): { ok: boolean; results: RollbackFileResult[]; preview: RollbackPreview } {
-  const effects = listFileEffects(workspaceRoot, runId)
-  const results: RollbackFileResult[] = []
   const preview = previewRollback(workspaceRoot, runId)
+  if (options.previewToken && options.previewToken !== preview.previewToken) {
+    return {
+      ok: false,
+      results: [
+        {
+          path: '*',
+          status: 'conflict',
+          reason: 'previewToken 不匹配（文件可能已变化，请重新 preview）'
+        }
+      ],
+      preview
+    }
+  }
+
+  const { effects, corruptIds } = listFileEffectsDetailed(workspaceRoot, runId)
+  const results: RollbackFileResult[] = []
+  for (const id of corruptIds) {
+    results.push({ path: id, status: 'corrupt_receipt', reason: 'receipt 损坏，拒绝静默跳过' })
+  }
 
   for (const e of [...effects].reverse()) {
-    const abs = resolve(workspaceRoot, e.path)
+    if (e.status === 'prepared') {
+      results.push({ path: e.path, status: 'skipped', reason: 'prepared 未提交，跳过回滚' })
+      continue
+    }
+    let abs: string
+    try {
+      abs = resolveUnderWorkspace(workspaceRoot, e.path)
+    } catch (err) {
+      results.push({
+        path: e.path,
+        status: 'corrupt_receipt',
+        reason: err instanceof Error ? err.message : 'path 校验失败'
+      })
+      continue
+    }
     const current = hashFileIfExists(abs)
 
     if (e.action === 'create') {
@@ -187,16 +397,25 @@ export function confirmRollback(
 
     if (e.action === 'modify') {
       if (e.afterHash && current === e.afterHash) {
-        if (e.beforeCheckpointRef && existsSync(e.beforeCheckpointRef)) {
-          const dir = dirname(abs)
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-          writeFileSync(abs, readFileSync(e.beforeCheckpointRef))
-          results.push({ path: e.path, status: 'restored' })
-        } else if (e.beforeHash === null) {
-          unlinkSync(abs)
-          results.push({ path: e.path, status: 'deleted' })
-        } else {
-          results.push({ path: e.path, status: 'missing_backup', reason: '缺少改前备份' })
+        try {
+          const bak = resolveBackupRef(workspaceRoot, runId, e.beforeCheckpointRef)
+          if (bak && existsSync(bak)) {
+            const dir = dirname(abs)
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+            writeFileSync(abs, readFileSync(bak))
+            results.push({ path: e.path, status: 'restored' })
+          } else if (e.beforeHash === null) {
+            unlinkSync(abs)
+            results.push({ path: e.path, status: 'deleted' })
+          } else {
+            results.push({ path: e.path, status: 'missing_backup', reason: '缺少改前备份' })
+          }
+        } catch (err) {
+          results.push({
+            path: e.path,
+            status: 'missing_backup',
+            reason: err instanceof Error ? err.message : 'backup 无效'
+          })
         }
       } else if (e.beforeHash && current === e.beforeHash) {
         results.push({ path: e.path, status: 'skipped', reason: '已是改前状态' })
@@ -208,13 +427,22 @@ export function confirmRollback(
 
     if (e.action === 'delete') {
       if (current === null) {
-        if (e.beforeCheckpointRef && existsSync(e.beforeCheckpointRef)) {
-          const dir = dirname(abs)
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-          writeFileSync(abs, readFileSync(e.beforeCheckpointRef))
-          results.push({ path: e.path, status: 'restored' })
-        } else {
-          results.push({ path: e.path, status: 'missing_backup', reason: '缺少删除前备份' })
+        try {
+          const bak = resolveBackupRef(workspaceRoot, runId, e.beforeCheckpointRef)
+          if (bak && existsSync(bak)) {
+            const dir = dirname(abs)
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+            writeFileSync(abs, readFileSync(bak))
+            results.push({ path: e.path, status: 'restored' })
+          } else {
+            results.push({ path: e.path, status: 'missing_backup', reason: '缺少删除前备份' })
+          }
+        } catch (err) {
+          results.push({
+            path: e.path,
+            status: 'missing_backup',
+            reason: err instanceof Error ? err.message : 'backup 无效'
+          })
         }
       } else {
         results.push({ path: e.path, status: 'conflict', reason: '路径已存在（用户可能已恢复）' })
@@ -222,11 +450,16 @@ export function confirmRollback(
     }
   }
 
-  const hasHardFail = results.some(r => r.status === 'missing_backup')
-  return { ok: !hasHardFail, results, preview }
+  const failed = results.some(
+    r =>
+      r.status === 'conflict' ||
+      r.status === 'missing_backup' ||
+      r.status === 'corrupt_receipt'
+  )
+  return { ok: !failed && preview.corrupt.length === 0, results, preview }
 }
 
-/** 便捷：为工作区文件写 modify/create receipt（调用方负责 before 备份） */
+/** 便捷：构造 receipt（默认 prepared） */
 export function buildFileEffectReceipt(params: {
   workspaceRoot: string
   runId: string
@@ -238,7 +471,9 @@ export function buildFileEffectReceipt(params: {
   beforeCheckpointRef: string | null
   afterHash: string | null
   effectId?: string
+  status?: FileEffectStatus
 }): FileEffectReceipt {
+  assertSafeRunId(params.runId)
   const rel = normalizeRel(params.workspaceRoot, params.absPath)
   return {
     effectId: params.effectId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -250,6 +485,7 @@ export function buildFileEffectReceipt(params: {
     beforeHash: params.beforeHash,
     beforeCheckpointRef: params.beforeCheckpointRef,
     afterHash: params.afterHash,
+    status: params.status ?? 'prepared',
     at: Date.now()
   }
 }
