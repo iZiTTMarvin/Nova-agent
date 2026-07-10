@@ -13,6 +13,14 @@ import { projectMessagesForVision } from './visionProjection'
 import type { CacheStrategy } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
+import {
+  transportFetch,
+  TransportBodyReader,
+  transportErrorToChatEvent,
+  httpStatusToError,
+  formatTransportError,
+  readErrorResponseBody
+} from './ModelTransport'
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
@@ -92,39 +100,39 @@ export class OpenAICompatibleModelClient implements ModelClient {
     }
 
     let response: Response
+    let attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
     try {
-      response = await fetch(url, {
+      const result = await transportFetch({
+        url,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.apiKey}`
         },
         body: JSON.stringify(body),
-        signal: options?.abortSignal
+        userSignal: options?.abortSignal,
+        timeouts: options?.transportTimeouts
       })
+      response = result.response
+      attempt = result.attempt
     } catch (err) {
-      // 区分用户取消和真正的网络错误
-      if ((err as Error).name === 'AbortError') {
-        yield { type: 'cancelled' }
-        return
-      }
-      yield { type: 'error', error: `请求失败: ${(err as Error).message}` }
+      yield transportErrorToChatEvent(err)
       return
     }
 
     if (!response.ok) {
-      const text = await response.text().catch(() => 'unknown')
+      const text = await readErrorResponseBody(response, attempt, options?.transportTimeouts)
       if (response.status === 400 && isContextOverflowError(400, text)) {
         yield { type: 'context_overflow', rawError: text }
       } else {
-        yield { type: 'error', error: `API 错误 ${response.status}: ${text}` }
+        yield { type: 'error', error: httpStatusToError(response.status, text) }
       }
       return
     }
 
     yield { type: 'message_start' }
 
-    // 流式 think 标签解析状态机（处理 content 中的 <think'>'...</think'>' 标签）
+    // 流式 think 标签解析状态机（处理 content 中的 <think>...</think> 标签）
     const thinkTagParser = new ThinkTagParser()
 
     // 累积 tool_calls，SSE 每个 chunk 可能只包含部分信息
@@ -135,23 +143,36 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     const bodyStream = response.body
     if (!bodyStream) {
-      yield { type: 'error', error: '响应体为空' }
+      yield { type: 'error', error: formatTransportError('http_fatal', '响应体为空') }
+      attempt.dispose()
       return
     }
 
-    const reader = bodyStream.getReader()
+    // TransportBodyReader：仅语义事件续期，SSE keepalive 不能掩盖模型卡死。
+    const bodyReader = new TransportBodyReader(bodyStream, {
+      userSignal: options?.abortSignal,
+      timeouts: options?.transportTimeouts,
+      attempt
+    })
     const decoder = new TextDecoder()
     let buffer = ''
 
     try {
       while (true) {
-        // 检查是否已取消
         if (options?.abortSignal?.aborted) {
           break
         }
 
-        const { done, value } = await reader.read()
-        if (done) break
+        let readResult: { done: boolean; value?: Uint8Array }
+        try {
+          readResult = await bodyReader.read()
+        } catch (err) {
+          yield transportErrorToChatEvent(err)
+          return
+        }
+        if (readResult.done) break
+        const value = readResult.value
+        if (!value) continue
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -160,21 +181,35 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
         for (const line of lines) {
           const trimmed = line.trim()
-          if (!trimmed || trimmed === 'data: [DONE]') continue
+          if (!trimmed) continue
+          if (trimmed === 'data: [DONE]') {
+            bodyReader.markSemanticEvent()
+            continue
+          }
           if (!trimmed.startsWith('data: ')) continue
 
           try {
             const chunk = JSON.parse(trimmed.slice(6))
+            const choice = chunk.choices?.[0]
+            const delta = choice?.delta
+            // 只允许模型可观察的实际进展续期；usage/role/ping 等元数据不算。
+            if (
+              chunk.error ||
+              choice?.finish_reason ||
+              delta?.content ||
+              delta?.reasoning_content ||
+              (Array.isArray(delta?.tool_calls) && delta.tool_calls.length > 0)
+            ) {
+              bodyReader.markSemanticEvent()
+            }
 
             // 末尾 usage chunk：无 choices 但有 usage 字段
             if (chunk.usage) {
               rawUsage = chunk.usage as Record<string, unknown>
             }
 
-            const choice = chunk.choices?.[0]
             if (!choice) continue
 
-            const delta = choice.delta
             finishReason = choice.finish_reason ?? finishReason
 
             // 思考/推理内容增量（DeepSeek、MiniMax 等模型通过此字段返回内部推理过程）
@@ -248,7 +283,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
         }
       }
     } finally {
-      reader.releaseLock()
+      bodyReader.release()
     }
 
     // 如果因为 abort 而退出流读取，发射取消事件而非正常结束

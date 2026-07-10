@@ -173,7 +173,8 @@ describe('OpenAICompatibleModelClient abort 支持', () => {
 
     expect(events).toHaveLength(1)
     expect(events[0].type).toBe('error')
-    expect((events[0] as { error: string }).error).toContain('请求失败')
+    // ModelTransport 规范化为分类错误前缀（network_reset / timeout_* 等）
+    expect((events[0] as { error: string }).error).toMatch(/network_reset|请求失败|网络/)
 
     globalThis.fetch = originalFetch
   })
