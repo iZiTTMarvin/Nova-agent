@@ -206,6 +206,10 @@ interface SealedCache {
   contentPrefix: string
   sealedEnd: number
   parts: string[]
+  /** 上一帧未闭合 fence 起点，供增量扫描只扫后缀 */
+  openFenceStart: number
+  /** 上一帧 content.length，供 findOpenFenceStartIncremental */
+  contentLength: number
 }
 
 export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({
@@ -224,13 +228,25 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   }), [isStreaming])
 
   // 跨 render 累积已封口块：只追加，不回退；content 前缀不匹配时重置
-  const sealedCacheRef = useRef<SealedCache>({ contentPrefix: '', sealedEnd: 0, parts: [] })
+  const sealedCacheRef = useRef<SealedCache>({
+    contentPrefix: '',
+    sealedEnd: 0,
+    parts: [],
+    openFenceStart: -1,
+    contentLength: 0
+  })
 
   if (!content) return null
 
   // 终态：整段一次解析 + 完整高亮；清空流式缓存
   if (!isStreaming) {
-    sealedCacheRef.current = { contentPrefix: '', sealedEnd: 0, parts: [] }
+    sealedCacheRef.current = {
+      contentPrefix: '',
+      sealedEnd: 0,
+      parts: [],
+      openFenceStart: -1,
+      contentLength: 0
+    }
     __markdownReparseChars += content.length
     return (
       <div className="markdown-body">
@@ -248,11 +264,24 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   const cache = sealedCacheRef.current
   if (cache.sealedEnd > 0 && !content.startsWith(cache.contentPrefix.slice(0, Math.min(cache.sealedEnd, cache.contentPrefix.length)))) {
     // 内容被替换（attempt 重试等）：整段重来
-    sealedCacheRef.current = { contentPrefix: '', sealedEnd: 0, parts: [] }
+    sealedCacheRef.current = {
+      contentPrefix: '',
+      sealedEnd: 0,
+      parts: [],
+      openFenceStart: -1,
+      contentLength: 0
+    }
   }
 
-  const prevEnd = sealedCacheRef.current.sealedEnd
-  const split = splitIncrementalMarkdown(content, false, prevEnd)
+  const prev = sealedCacheRef.current
+  const prevEnd = prev.sealedEnd
+  const split = splitIncrementalMarkdown(
+    content,
+    false,
+    prevEnd,
+    prev.contentLength,
+    prev.openFenceStart
+  )
 
   if (split.sealedEndOffset > prevEnd) {
     const newlySealed = content.slice(prevEnd, split.sealedEndOffset)
@@ -261,10 +290,21 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
     sealedCacheRef.current = {
       contentPrefix: content.slice(0, split.sealedEndOffset),
       sealedEnd: split.sealedEndOffset,
-      parts: [...sealedCacheRef.current.parts, ...newParts.filter(p => p.length > 0)]
+      parts: [...sealedCacheRef.current.parts, ...newParts.filter(p => p.length > 0)],
+      openFenceStart: split.openFenceStart,
+      contentLength: content.length
     }
-  } else if (sealedCacheRef.current.contentPrefix.length === 0 && split.sealedEndOffset === 0) {
-    sealedCacheRef.current.contentPrefix = content
+  } else {
+    // sealed 未前进：仍更新 fence / 长度，供下一帧增量扫
+    sealedCacheRef.current = {
+      ...sealedCacheRef.current,
+      openFenceStart: split.openFenceStart,
+      contentLength: content.length,
+      contentPrefix:
+        sealedCacheRef.current.contentPrefix.length === 0 && split.sealedEndOffset === 0
+          ? content
+          : sealedCacheRef.current.contentPrefix
+    }
   }
 
   const { parts: sealedParts } = sealedCacheRef.current

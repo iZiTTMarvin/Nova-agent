@@ -20,6 +20,8 @@ export interface IncrementalMarkdownSplit {
   activeTail: string
   /** sealed 部分在原文中的结束偏移（= sealedParts 拼接长度） */
   sealedEndOffset: number
+  /** 未闭合 fence 起点；无则 -1。供下一帧增量扫描复用 */
+  openFenceStart: number
 }
 
 const FENCE_LINE_RE = /^(```|~~~)([^\n`]*)?$/
@@ -35,14 +37,65 @@ export function findOpenFenceStartIncremental(
   prevOpenStart: number
 ): { openStart: number; scannedBytes: number } {
   if (!content) return { openStart: -1, scannedBytes: 0 }
-  // 内容回退：全量重扫
-  if (prevLength > content.length || !content.startsWith(content.slice(0, Math.min(prevLength, content.length)))) {
+
+  // 内容缩短：全量重扫
+  if (prevLength > content.length) {
     const openStart = findOpenFenceStart(content)
     return { openStart, scannedBytes: content.length }
   }
 
-  // 若此前有未闭合 fence，且该起点仍在内容内，只需从该行起看新增是否闭合
-  const scanFrom = prevOpenStart >= 0 ? prevOpenStart : Math.max(0, prevLength)
+  // 无新增：沿用上一帧结果
+  if (prevLength === content.length) {
+    return { openStart: prevOpenStart, scannedBytes: 0 }
+  }
+
+  // ── 已有未闭合 fence：只扫增量后缀，判断是否出现闭合标记 ──
+  if (prevOpenStart >= 0 && prevOpenStart < content.length) {
+    const openLineEnd = content.indexOf('\n', prevOpenStart)
+    const openLine = content.slice(
+      prevOpenStart,
+      openLineEnd < 0 ? content.length : openLineEnd
+    )
+    const openMatch = FENCE_LINE_RE.exec(openLine.trimEnd())
+    if (!openMatch) {
+      // 起点行已不是 fence：全量重扫
+      const openStart = findOpenFenceStart(content)
+      return { openStart, scannedBytes: content.length }
+    }
+    const openMarker = openMatch[1]!
+
+    // 从 prevLength 所在行首开始扫（避免跨帧半行漏检），但不早于 open 行之后
+    let scanFrom = prevLength
+    while (scanFrom > 0 && content[scanFrom - 1] !== '\n') scanFrom -= 1
+    const afterOpen = openLineEnd < 0 ? content.length : openLineEnd + 1
+    scanFrom = Math.max(scanFrom, afterOpen)
+
+    const suffix = content.slice(scanFrom)
+    let offset = scanFrom
+    const lines = suffix.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!
+      const match = FENCE_LINE_RE.exec(line.trimEnd())
+      if (match && match[1] === openMarker) {
+        // 闭合：再扫闭合点之后是否有新的未闭合 fence
+        const closeEnd = offset + line.length + (i < lines.length - 1 ? 1 : 0)
+        const rest = content.slice(closeEnd)
+        const rel = findOpenFenceStart(rest)
+        const openStart = rel < 0 ? -1 : closeEnd + rel
+        return {
+          openStart,
+          scannedBytes: content.length - scanFrom
+        }
+      }
+      offset += line.length + (i < lines.length - 1 ? 1 : 0)
+    }
+    // 仍未闭合
+    return { openStart: prevOpenStart, scannedBytes: content.length - scanFrom }
+  }
+
+  // ── 此前无未闭合 fence：只扫新增后缀找新的 open ──
+  let scanFrom = Math.max(0, prevLength)
+  while (scanFrom > 0 && content[scanFrom - 1] !== '\n') scanFrom -= 1
   const slice = content.slice(scanFrom)
   const relative = findOpenFenceStart(slice)
   const openStart = relative < 0 ? -1 : scanFrom + relative
@@ -118,7 +171,7 @@ export function splitIncrementalMarkdown(
   prevOpenFenceStart = -1
 ): IncrementalMarkdownSplit & { scannedBytes: number } {
   if (!content) {
-    return { sealedParts: [], activeTail: '', sealedEndOffset: 0, scannedBytes: 0 }
+    return { sealedParts: [], activeTail: '', sealedEndOffset: 0, openFenceStart: -1, scannedBytes: 0 }
   }
 
   if (isFinal) {
@@ -126,6 +179,7 @@ export function splitIncrementalMarkdown(
       sealedParts: content.length > 0 ? [content] : [],
       activeTail: '',
       sealedEndOffset: content.length,
+      openFenceStart: -1,
       scannedBytes: 0
     }
   }
@@ -172,6 +226,7 @@ export function splitIncrementalMarkdown(
     sealedParts,
     activeTail,
     sealedEndOffset: sealedEnd,
+    openFenceStart: openFence,
     scannedBytes: scannedBytes + boundaryScan
   }
 }

@@ -63,4 +63,29 @@ describe('incrementalMarkdown', () => {
     const s2 = splitIncrementalMarkdown(a + ' 继续', false, s1.sealedEndOffset)
     expect(s2.sealedEndOffset).toBeGreaterThanOrEqual(s1.sealedEndOffset)
   })
+
+  it('长未闭合 fence 流式时 scannedBytes 近似总输入（不平方）', () => {
+    const prefix = 'intro\n\n```ts\n'
+    let content = prefix
+    let sealedEnd = 0
+    let prevLen = 0
+    let openFence = -1
+    let totalScanned = 0
+
+    // 追加约 100k 代码行，始终不闭合 fence
+    while (content.length < 100_000) {
+      content += 'const line = 1\n'
+      const split = splitIncrementalMarkdown(content, false, sealedEnd, prevLen, openFence)
+      sealedEnd = split.sealedEndOffset
+      prevLen = content.length
+      openFence = split.openFenceStart
+      totalScanned += split.scannedBytes
+    }
+
+    expect(content.length).toBeGreaterThanOrEqual(100_000)
+    expect(openFence).toBeGreaterThanOrEqual(0)
+    // 有 prevOpenFenceStart 时每帧只扫增量后缀；累计应接近总输入而非 O(n²)
+    expect(totalScanned).toBeLessThan(content.length * 2.5)
+    expect(totalScanned).toBeGreaterThan(content.length * 0.5)
+  })
 })

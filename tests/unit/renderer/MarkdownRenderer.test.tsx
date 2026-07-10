@@ -9,7 +9,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import React from 'react'
 import { create } from 'react-test-renderer'
-import { MarkdownRenderer } from '../../../src/renderer/features/chat/MarkdownRenderer'
+import {
+  MarkdownRenderer,
+  __takeMarkdownReparseChars
+} from '../../../src/renderer/features/chat/MarkdownRenderer'
 
 const FENCE = '```typescript\nconst x: number = 1\nconst y: string = "hi"\n```'
 
@@ -97,5 +100,31 @@ describe('MarkdownRenderer isStreaming 传递（C2 修复）', () => {
     expect(nCount).toBeGreaterThan(0)
     streaming.unmount()
     nonStreaming.unmount()
+  })
+})
+
+describe('MarkdownRenderer 增量 reparseChars 探针', () => {
+  it('流式多空行块：reparseChars ≈ activeTail，不随全文线性增长', () => {
+    __takeMarkdownReparseChars()
+
+    let content = '第一段完整内容。\n\n'
+    const tree = create(<MarkdownRenderer content={content} isStreaming={true} />)
+    __takeMarkdownReparseChars()
+
+    const reparseSamples: number[] = []
+    for (let i = 0; i < 12; i++) {
+      content += `段落${i}的正文内容继续写下去。\n\n`
+      tree.update(<MarkdownRenderer content={content} isStreaming={true} />)
+      reparseSamples.push(__takeMarkdownReparseChars())
+    }
+
+    const late = reparseSamples.slice(-4)
+    const lateMax = Math.max(...late)
+    // 核心不变量：重解析量接近 activeTail，不随全文线性上升
+    expect(content.length).toBeGreaterThan(200)
+    expect(lateMax).toBeLessThan(content.length * 0.35)
+    expect(lateMax).toBeLessThan(120)
+
+    tree.unmount()
   })
 })
