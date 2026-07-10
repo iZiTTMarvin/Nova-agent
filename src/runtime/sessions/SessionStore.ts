@@ -38,6 +38,26 @@ import {
   attachBranchMeta
 } from './tree'
 import { atomicWriteFileSync } from '../storage/atomicFile'
+import { metricSessionAppend } from '../../shared/diagnostics/metrics'
+import {
+  appendActiveIndexEntry,
+  buildMessageIndex,
+  isIndexFresh,
+  loadMessageIndex,
+  saveMessageIndex,
+  type MessageIndexSnapshot
+} from './messageIndex'
+import {
+  appendMessagePatch as appendPatchEvent,
+  applyMessagePatches,
+  clearMessagePatches,
+  readMessagePatches,
+  type MessagePatchEvent
+} from './messagePatches'
+import {
+  normalizeMessageToBlocksSource,
+  serializeMessageForDisk
+} from './messageProjection'
 
 /** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
@@ -98,12 +118,19 @@ export class SessionStore {
    * - 只改元数据（mode/todos）应使用 saveMetadata，避免碰 messages.jsonl
    */
   save(session: SessionData): void {
-    const messages = ensureMessageParentChain(session.messages)
+    const messages = ensureMessageParentChain(session.messages).map(normalizeMessageToBlocksSource)
     const currentLeafId = resolveCurrentLeafId(messages, session.currentLeafId)
     const messageCount = computeMessageCount(messages, currentLeafId)
     const normalized: SessionData = { ...session, messages, currentLeafId, messageCount }
     this.saveMetadata(normalized)
-    writeMessagesJsonl(this.resolveSessionDir(session.id), messages)
+    const dir = this.resolveSessionDir(session.id)
+    writeMessagesJsonl(dir, messages)
+    clearMessagePatches(dir)
+    try {
+      saveMessageIndex(dir, buildMessageIndex(messages, currentLeafId))
+    } catch {
+      // 索引写失败不阻断 save
+    }
   }
 
   /**
@@ -162,17 +189,52 @@ export class SessionStore {
   }
 
   /**
-   * 从 session.json 元数据 + messages.jsonl 组装完整 SessionData。
+   * 从 session.json 元数据 + messages.jsonl + patches 组装完整 SessionData。
+   * 加载时按需把旧消息投影为 blocks 事实源（不强制写回磁盘）。
    */
   private loadFromMetadataAndJsonl(metadata: SessionData, sessionId: string): SessionData {
-    const rawMessages = readMessagesJsonl(this.resolveSessionDir(sessionId))
-    const messages = ensureMessageParentChain(rawMessages)
+    const sessionDir = this.resolveSessionDir(sessionId)
+    const rawMessages = readMessagesJsonl(sessionDir)
+    const patched = applyMessagePatches(rawMessages, readMessagePatches(sessionDir))
+    const messages = ensureMessageParentChain(patched).map(normalizeMessageToBlocksSource)
     const currentLeafId = resolveCurrentLeafId(messages, metadata.currentLeafId)
+    // 后台确保索引与 jsonl 对齐（损坏时重建）
+    this.ensureMessageIndex(sessionDir, messages, currentLeafId)
     return {
       ...metadata,
       messages,
       currentLeafId
     }
+  }
+
+  /**
+   * 确保大会话索引存在且与 jsonl 文件大小一致；过期则全量重建。
+   */
+  private ensureMessageIndex(
+    sessionDir: string,
+    messages: SessionMessage[],
+    currentLeafId: string | null
+  ): MessageIndexSnapshot {
+    const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
+    let fileSize = 0
+    try {
+      if (fs.existsSync(jsonlPath)) fileSize = fs.statSync(jsonlPath).size
+    } catch {
+      fileSize = 0
+    }
+
+    const existing = loadMessageIndex(sessionDir)
+    if (existing && isIndexFresh(existing, fileSize)) {
+      return existing
+    }
+
+    const rebuilt = buildMessageIndex(messages, currentLeafId)
+    try {
+      saveMessageIndex(sessionDir, rebuilt)
+    } catch {
+      // 索引写失败不阻断加载
+    }
+    return rebuilt
   }
 
   /**
@@ -238,13 +300,33 @@ export class SessionStore {
   /**
    * 追加消息到会话（自动保存）。
    *
-   * 实现为 messages.jsonl 追加一行 + 重写小体积 session.json 元数据，
-   * 避免每次追加都重写整个消息数组。
-   *
-   * 追加前会走 migrateSessionFile 确保旧版会话已完成物理迁移（v0…v3 → v4），
-   * 避免隐式依赖"load/list 先跑过"的假设。
+   * 热路径走 appendMessageFast：不扫全图，messageCount = previousActiveCount + 1。
+   * 兼容旧调用方：仍返回完整 SessionData（内部按需 loadActivePath）。
    */
   appendMessage(sessionId: string, message: SessionMessageAppend): SessionData | null {
+    const meta = this.appendMessageFast(sessionId, message)
+    if (!meta) return null
+    // 兼容旧调用方：返回含激活路径消息的完整视图
+    const active = this.loadActivePath(sessionId)
+    if (!active) {
+      return {
+        ...meta,
+        messages: []
+      }
+    }
+    return active
+  }
+
+  /**
+   * O(1) 热追加：写 jsonl 一行 + 更新小体积元数据 + 增量索引。
+   * 不扫全图、不全量重读 messages.jsonl。
+   *
+   * 返回不含 messages 正文的元数据视图（messageCount 已递增）。
+   */
+  appendMessageFast(
+    sessionId: string,
+    message: SessionMessageAppend
+  ): Omit<SessionData, 'messages'> | null {
     let dir: string
     try {
       dir = this.resolveSessionDir(sessionId)
@@ -255,19 +337,9 @@ export class SessionStore {
     if (!fs.existsSync(sessionFile)) return null
 
     try {
-      // 先走迁移：确保旧版内联 messages 已拆出到 messages.jsonl
       const metadata = migrateSessionFile(this.sessionsDir, sessionId)
-      if (!metadata) {
-        // 迁移函数返回 null 仅当文件不存在，这里已确认存在，兜底直接解析
-        const raw = fs.readFileSync(sessionFile, 'utf8')
-        return this.appendMessageToMetadata(
-          migrateSessionData(JSON.parse(raw)) as SessionData,
-          sessionId,
-          message
-        )
-      }
-
-      return this.appendMessageToMetadata(metadata, sessionId, message)
+      const base = metadata ?? (migrateSessionData(JSON.parse(fs.readFileSync(sessionFile, 'utf8'))) as SessionData)
+      return this.appendMessageFastToMetadata(base, sessionId, message)
     } catch (err) {
       console.error(`[SessionStore] 追加消息到会话 ${sessionId} 失败:`, err)
       return null
@@ -275,33 +347,171 @@ export class SessionStore {
   }
 
   /**
-   * 向已迁移会话追加一条消息：自动设 parentId、推进 currentLeafId。
+   * 活跃分支热追加实现：messageCount = previousActiveCount + 1。
    */
-  private appendMessageToMetadata(
+  private appendMessageFastToMetadata(
     metadata: SessionData,
     sessionId: string,
     message: SessionMessageAppend
-  ): SessionData {
+  ): Omit<SessionData, 'messages'> {
     const dir = path.join(this.sessionsDir, sessionId)
+    const appendStartedAt = Date.now()
 
-    const messageWithParent: SessionMessage = {
+    // 新消息以 blocks 为事实源；落盘只写 blocks，不双写 content/toolCalls
+    const normalizedAppend = serializeMessageForDisk({
       ...message,
       parentId: metadata.currentLeafId ?? null
+    } as SessionMessage)
+
+    const messageWithParent: SessionMessage = normalizedAppend
+
+    const line = JSON.stringify(messageWithParent) + '\n'
+    const lineBytes = Buffer.byteLength(line, 'utf8')
+    const jsonlPath = path.join(dir, SESSION_MESSAGES_FILE)
+
+    // 确保索引与当前文件对齐（首次或损坏时重建；热路径尽量 O(1)）
+    let fileSize = 0
+    try {
+      if (fs.existsSync(jsonlPath)) fileSize = fs.statSync(jsonlPath).size
+    } catch {
+      fileSize = 0
+    }
+    let index = loadMessageIndex(dir)
+    if (!index || !isIndexFresh(index, fileSize)) {
+      // 索引过期：轻量重建（仅扫一次，后续追加走增量）
+      const existing = readMessagesJsonl(dir)
+      index = buildMessageIndex(existing, metadata.currentLeafId ?? null)
     }
 
-    appendMessagesJsonl(dir, [messageWithParent])
+    fs.appendFileSync(jsonlPath, line, 'utf8')
+
+    const previousActiveCount =
+      typeof metadata.messageCount === 'number'
+        ? metadata.messageCount
+        : index.activeCount
+
+    index = appendActiveIndexEntry(index, messageWithParent, lineBytes)
+    // 与元数据对齐：活跃分支追加时 messageCount = previous + 1
+    index.activeCount = previousActiveCount + 1
+    index.currentLeafId = messageWithParent.id
+    try {
+      saveMessageIndex(dir, index)
+    } catch {
+      // 索引失败不阻断追加
+    }
 
     metadata.currentLeafId = messageWithParent.id
     metadata.updatedAt = Date.now()
-    const allMessages = readMessagesJsonl(dir)
-    metadata.messageCount = computeMessageCount(allMessages, metadata.currentLeafId)
+    metadata.messageCount = previousActiveCount + 1
+
     atomicWriteFileSync(
       path.join(dir, SESSION_DATA_FILE),
       JSON.stringify(this.toMetadata(metadata), null, 2),
       'utf8'
     )
 
-    return this.loadFromMetadataAndJsonl(metadata, sessionId)
+    metricSessionAppend(sessionId, Date.now() - appendStartedAt, metadata.messageCount)
+    const { messages: _m, ...metaOnly } = metadata
+    return metaOnly
+  }
+
+  /**
+   * 历史后补 verification 等字段：append-only patch，不重写所有消息。
+   */
+  appendMessagePatch(
+    sessionId: string,
+    messageId: string,
+    patch: MessagePatchEvent['patch']
+  ): boolean {
+    let dir: string
+    try {
+      dir = this.resolveSessionDir(sessionId)
+    } catch {
+      return false
+    }
+    if (!fs.existsSync(path.join(dir, SESSION_DATA_FILE))) return false
+
+    try {
+      appendPatchEvent(dir, {
+        type: 'message_patch',
+        messageId,
+        patch,
+        timestamp: Date.now()
+      })
+      // 触碰 updatedAt，不改 messageCount
+      const sessionFile = path.join(dir, SESSION_DATA_FILE)
+      const raw = JSON.parse(fs.readFileSync(sessionFile, 'utf8')) as SessionData
+      raw.updatedAt = Date.now()
+      atomicWriteFileSync(sessionFile, JSON.stringify(this.toMetadata({ ...raw, messages: [] }), null, 2), 'utf8')
+      return true
+    } catch (err) {
+      console.error(`[SessionStore] 追加 patch 失败 session=${sessionId}:`, err)
+      return false
+    }
+  }
+
+  /**
+   * 空闲合并：把 patches 叠进 messages.jsonl 并清空 patch 文件 + 重建索引。
+   * 供后台 compactor 调用；失败不抛。
+   */
+  compactMessagePatches(sessionId: string): boolean {
+    let dir: string
+    try {
+      dir = this.resolveSessionDir(sessionId)
+    } catch {
+      return false
+    }
+    const patches = readMessagePatches(dir)
+    if (patches.length === 0) return true
+
+    try {
+      const base = readMessagesJsonl(dir)
+      const merged = applyMessagePatches(base, patches)
+      writeMessagesJsonl(dir, merged)
+      clearMessagePatches(dir)
+      const meta = this.loadMetadataOnly(sessionId)
+      const leaf = meta?.currentLeafId ?? merged.at(-1)?.id ?? null
+      saveMessageIndex(dir, buildMessageIndex(merged, leaf))
+      return true
+    } catch (err) {
+      console.error(`[SessionStore] compact patches 失败 session=${sessionId}:`, err)
+      return false
+    }
+  }
+
+  /** 只读 session.json 元数据（不含 messages） */
+  private loadMetadataOnly(sessionId: string): SessionData | null {
+    try {
+      const filePath = path.join(this.resolveSessionDir(sessionId), SESSION_DATA_FILE)
+      if (!fs.existsSync(filePath)) return null
+      return migrateSessionData(JSON.parse(fs.readFileSync(filePath, 'utf8'))) as SessionData
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 加载当前激活路径上的消息（含 patch 叠加与 blocks 投影）。
+   */
+  loadActivePath(sessionId: string): SessionData | null {
+    const full = this.load(sessionId)
+    if (!full) return null
+    const active = computeActivePath(full.messages, full.currentLeafId)
+    return {
+      ...full,
+      messages: attachBranchMeta(active, full.messages),
+      messageCount: active.length
+    }
+  }
+
+  /**
+   * 按游标反向分页读取激活路径子集（别名：与 loadMessagesPage 同语义）。
+   */
+  loadSessionPage(
+    sessionId: string,
+    options: { beforeId?: string; limit: number }
+  ): { messages: SessionMessage[]; hasMore: boolean } | null {
+    return this.loadMessagesPage(sessionId, options)
   }
 
   /**
@@ -521,7 +731,10 @@ export class SessionStore {
         metadata = migrateSessionData(JSON.parse(content)) as SessionData
       }
 
-      const allMessages = readMessagesJsonl(sessionDir)
+      const allMessages = applyMessagePatches(
+        readMessagesJsonl(sessionDir),
+        readMessagePatches(sessionDir)
+      ).map(normalizeMessageToBlocksSource)
       const currentLeafId = resolveCurrentLeafId(allMessages, metadata.currentLeafId)
       const activePath = computeActivePath(allMessages, currentLeafId)
       const page = sliceMessagesPage(activePath, options)

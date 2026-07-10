@@ -668,7 +668,15 @@ describe('SessionStore', () => {
       const jsonl = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
       const lines = jsonl.trim().split('\n')
       expect(lines).toHaveLength(1)
-      expect(JSON.parse(lines[0]).content).toBe('hello')
+      const diskMsg = JSON.parse(lines[0])
+      // v8 落盘：content 可为空，正文在 blocks；加载投影后仍可读
+      expect(
+        diskMsg.content === 'hello' ||
+          (Array.isArray(diskMsg.blocks) &&
+            diskMsg.blocks.some((b: { type: string; content?: string }) => b.type === 'text' && b.content === 'hello'))
+      ).toBe(true)
+      const loaded = store.load(session.id)
+      expect(loaded!.messages[0].content).toBe('hello')
     })
 
     it('load 从 messages.jsonl 重组完整消息历史', () => {

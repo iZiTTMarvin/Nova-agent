@@ -741,7 +741,7 @@ export function registerAgentHandler(
         blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
         timestamp: Date.now()
       }
-      sessionStore.appendMessage(params.sessionId, userMessage)
+      sessionStore.appendMessageFast(params.sessionId, userMessage)
 
       // 首条含文字的用户消息后自动生成标题，并刷新侧边栏列表
       if (!hadTextUserMsg) {
@@ -1361,7 +1361,7 @@ function saveAssistantMessage(
     // 取消中断的消息也持久化 interrupted 标记，下次加载时 UI 仍能区分
     ...(interrupted ? { interrupted: true } : {})
   }
-  sessionStore.appendMessage(sessionId, assistantMessage)
+  sessionStore.appendMessageFast(sessionId, assistantMessage)
 }
 
 /**
@@ -1417,7 +1417,7 @@ function saveErrorMessage(sessionId: string, messageId: string, error: string): 
     content: error,
     timestamp: Date.now()
   }
-  sessionStore.appendMessage(sessionId, errorMessage)
+  sessionStore.appendMessageFast(sessionId, errorMessage)
 }
 
 /** 截断 recovering.snapshot，只向渲染端发送 UI 所需字段 */
