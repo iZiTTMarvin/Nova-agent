@@ -26,7 +26,8 @@ function eligibleScheduleState(
     estimatedTokens: Math.floor(threshold * IDLE_COMPACTION_MIN_THRESHOLD_RATIO) + 1,
     idleCompactionInProgress: false,
     disposed: false,
-    profile: { idlePolicy: 'provider-managed' },
+    // 默认可调度档案，便于测 token / disposed / inProgress 与 timer 路径
+    profile: { idlePolicy: 'anthropic-short-ttl' },
     ...overrides
   }
 }
@@ -120,13 +121,27 @@ describe('shouldScheduleIdleCompaction', () => {
     expect(shouldScheduleIdleCompaction(eligibleScheduleState({ disposed: true }))).toBe(false)
   })
 
-  it('profile 入口可传入但不影响本轮中性判断', () => {
+  it('provider-managed 跳过闲时调度（即使 token 足够）', () => {
+    expect(
+      shouldScheduleIdleCompaction(
+        eligibleScheduleState({ profile: { idlePolicy: 'provider-managed' } })
+      )
+    ).toBe(false)
+  })
+
+  it('unknown 与 profile 缺失均跳过闲时调度', () => {
+    expect(
+      shouldScheduleIdleCompaction(eligibleScheduleState({ profile: { idlePolicy: 'unknown' } }))
+    ).toBe(false)
+    expect(shouldScheduleIdleCompaction(eligibleScheduleState({ profile: null }))).toBe(false)
+  })
+
+  it('anthropic-short-ttl 在 token 足够时仍调度', () => {
     expect(
       shouldScheduleIdleCompaction(
         eligibleScheduleState({ profile: { idlePolicy: 'anthropic-short-ttl' } })
       )
     ).toBe(true)
-    expect(shouldScheduleIdleCompaction(eligibleScheduleState({ profile: null }))).toBe(true)
   })
 })
 

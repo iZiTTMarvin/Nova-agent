@@ -42,8 +42,7 @@ export const IDLE_COMPACTION_MIN_THRESHOLD_RATIO = 0.6
 
 /**
  * 空闲压缩资格预筛的输入状态。
- * profile / idlePolicy 入口已预留；本轮只做中性判断，不按档案差异化。
- * T3-2 按 idlePolicy 差异化调度。
+ * profile.idlePolicy 决定是否允许闲时调度（见 shouldScheduleIdleCompaction）。
  */
 export interface IdleCompactionScheduleState {
   /** 当前会话上下文（用于 token 估算；不要仅用消息条数做资格判断） */
@@ -58,7 +57,7 @@ export interface IdleCompactionScheduleState {
   disposed: boolean
   /**
    * 缓存档案或仅含 idlePolicy 的片段。
-   * 本轮内部不读此字段；T3-2 按 idlePolicy 差异化调度。
+   * null/undefined 按 unknown 处理（保守跳过闲时压缩）。
    */
   profile?: Pick<CacheProfile, 'idlePolicy'> | CacheProfile | null
 }
@@ -66,21 +65,26 @@ export interface IdleCompactionScheduleState {
 /**
  * 空闲压缩资格预筛：返回 false 时不得进入摘要模型请求。
  *
- * 中性判断（本轮）：
+ * 判断顺序：
  * - disposed / 已有进行中压缩 → 否
+ * - idlePolicy：
+ *   - provider-managed → 否（依赖服务端前缀缓存，不主动摘要打碎前缀）
+ *   - unknown / profile 缺失 → 否（缓存语义不明时保守跳过）
+ *   - anthropic-short-ttl → 继续 token 阈值判断（短 TTL 需闲时刷新）
  * - 距硬阈值太远（token < threshold * 60%）→ 否
  *
  * 注意：splitForCompaction 的 oldMessages=[] 是 runCompaction 内的后置空操作保护，
  * 不是本函数的前置预筛。不要只用消息数量判断资格。
- *
- * @param state 调度状态；profile 入口已预留供 T3-2 使用
+ * 硬阈值压缩、溢出恢复、用户显式压缩不经过本函数。
  */
 export function shouldScheduleIdleCompaction(state: IdleCompactionScheduleState): boolean {
-  // T3-2 按 idlePolicy 差异化调度；本轮故意不消费 profile，仅保留签名入口
-  void state.profile
-
   if (state.disposed) return false
   if (state.idleCompactionInProgress) return false
+
+  const idlePolicy = state.profile?.idlePolicy ?? 'unknown'
+  if (idlePolicy === 'provider-managed' || idlePolicy === 'unknown') {
+    return false
+  }
 
   const threshold = getCompactionThreshold(state.contextWindow)
   if (threshold <= 0) return false

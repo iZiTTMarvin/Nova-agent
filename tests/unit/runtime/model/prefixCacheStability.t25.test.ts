@@ -1,6 +1,9 @@
 /**
  * T2-5：前缀缓存稳定性黑盒 + 预期变化不误报
  *
+ * 本文件是「请求形状结构守卫」（mock fetch，验证连续请求的可复用前缀逐字节一致），
+ * 不是 DeepSeek 服务端 KV cache 的真实命中率指标；真实命中率观测见 deepseekLiveProbe.test.ts。
+ *
  * - 连续 N 轮相同 profile/工具时，可复用前缀（system + tools + 既有 messages）逐字节一致
  * - 动态 L2 不进 system 前缀
  * - 压缩 / L1 更新 / 模型切换等预期变化经 resetBaseline 后不误报
