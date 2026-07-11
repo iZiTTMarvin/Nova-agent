@@ -4,16 +4,18 @@
  * 设计原则：与 AgentLoop 生命周期解耦。打开已有会话、切换会话、LLM 调用后
  * 都需要显示上下文占用，但 AgentLoop 只在发送消息时创建，因此把计算逻辑
  * 抽成独立函数，供主进程任意时刻调用并 IPC 推送。
+ *
+ * messages 桶与模型实际 prompt 同口径：经 buildConversationContext 展开
+ * toolCalls.result → role:'tool'，再用 estimateChatMessageTokens（含 arguments）。
  */
-import { estimateTokens, estimateContextTokens } from '../tokenEstimator'
+import { estimateTokens, estimateChatMessageTokens } from '../tokenEstimator'
 import { SystemPromptBuilder } from '../promptBuilder/SystemPromptBuilder'
 import { getStableSystemPrompt } from '../promptBuilder/modePrompt'
 import { buildSkillContext } from '../promptBuilder/buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
 import { renderBaseRules } from '../promptRenderer'
-import { extractTextFromSerializableContent, type SessionData } from '../../sessions/types'
-import { getSessionActiveMessages } from '../../sessions/tree'
-import type { ChatMessage } from '../../model/types'
+import { buildConversationContext } from './contextBuilder'
+import type { SessionData } from '../../sessions/types'
 import type { SkillManifest } from '../../skills/types'
 import type { ContextBreakdown } from '../../../renderer/stores/useSettingsStore'
 
@@ -78,20 +80,12 @@ export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownRes
   const rawSystemTokens = estimateTokens(fullSystemPrompt)
   const systemPromptTokens = Math.max(0, rawSystemTokens - skillsTokens - toolsTokens)
 
-  // 把历史消息转成 ChatMessage 口径估算（含 toolCalls.arguments）
-  const historyMessages: ChatMessage[] = getSessionActiveMessages(session)
-    .filter(m => m.role !== 'system')
-    .map(m => ({
-      role: m.role,
-      content: extractTextFromSerializableContent(m.content),
-      toolCalls: m.toolCalls?.map(tc => ({
-        id: tc.id,
-        name: tc.name,
-        arguments: tc.arguments
-      }))
-    }))
-
-  const messagesTokens = estimateContextTokens(historyMessages)
+  // 与 injectHistory / 模型 prompt 同口径：展开 tool result，计入 arguments
+  const runtimeMessages = buildConversationContext(session, session.mode)
+  const messagesTokens = runtimeMessages.reduce(
+    (sum, m) => sum + estimateChatMessageTokens(m),
+    0
+  )
   const otherTokens = 0
 
   const totalEstimated = systemPromptTokens + skillsTokens + toolsTokens + messagesTokens + otherTokens

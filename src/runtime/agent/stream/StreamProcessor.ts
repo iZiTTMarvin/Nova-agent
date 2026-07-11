@@ -1,5 +1,5 @@
 /**
- * StreamProcessor — 模型/流边界（PRD §6.3）
+ * StreamProcessor — 模型/流边界
  *
  * 消费一次 modelPool.chat 的完整流，返回确定的 TurnStreamResult。
  * 内部封装：
@@ -14,14 +14,11 @@
  * model_switched / cache_diagnostic / context_breakdown）由内部经 deps.emit 发射，
  * 时机与 payload 与现状 §4.2 逐项一致。
  *
- * 关键约定（PRD §6.3）：
+ * 关键约定：
  * - 返回 retry  → 等价现状 shouldRetryChat=true; continue（调用方重跑本轮）
  * - 返回 error  → 等价现状流内 return 的终态（调用方 state=error 并结束，不启动 idleTimer）
  * - 返回 cancelled → 调用方应 cancelled=true 并走 finishMessageRound
- * - 返回 assistant → 调用方接管兜底解析之后的工具执行
- *
- * 本类由 AgentLoop（Facade）装配，Phase 2 从 sendMessage 内联逻辑抽离而来。
- * 控制流逐分支对标 §4.2 伪代码，任何 emit 时机/payload 改动都会被黄金测试捕获。
+ * - 返回 assistant → 调用方接管兜底解析之后的工具执行
  */
 import { randomUUID } from 'crypto'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
@@ -71,7 +68,7 @@ export class StreamProcessor {
   private emitContextBreakdown: (messageId: string, promptTokens: number) => void
   private runOverflowCompaction: (mode: 'standard' | 'aggressive') => Promise<boolean>
   private hookManager: HookManager
-  /** 统一 retry/fallback attempt 所有权（修复 P0-2） */
+  /** 统一 retry/fallback attempt 所有权 */
   private attemptController: AttemptController
   private syncToolDialect: StreamProcessorOptions['syncToolDialect']
   /** 会话路由 key，注入 ChatOptions（不写 API body） */
@@ -126,19 +123,12 @@ export class StreamProcessor {
   }): Promise<TurnStreamResult> {
     const { messageId, chatMessages, nativeTools, context, signal } = params
 
-    // 每次模型尝试分配唯一 attemptId（失败 attempt 与成功 attempt 隔离）
-    const begunId = this.attemptController.beginAttempt()
-    if (!begunId) {
-      return {
-        kind: 'error',
-        error: `已达全 run attempt 预算上限（${this.attemptController.getTotalAttempts()}）`
-      }
-    }
-    const attemptId = begunId
+    // 每次模型尝试分配唯一 attemptId；恢复预算只由模型错误路径消耗。
+    const attemptId = this.attemptController.beginAttempt()
     const attemptStartedAt = Date.now()
     let ttftRecorded = false
     metricAttemptStart(attemptId)
-    /** 统一收尾：记录 attempt.end，不改变返回值语义 */
+  
     const finish = <T extends TurnStreamResult>(result: T): T => {
       metricAttemptEnd(attemptId, Date.now() - attemptStartedAt, result.kind)
       return result
@@ -581,7 +571,6 @@ export class StreamProcessor {
 }
 
 /**
- * 重新导出兜底解析工具，供 AgentLoop 在拿到 assistant 结果后做
- * repairEmptyArgsFromContent（现状 L1235，留在 loop 因其需改写 assistantMsg.content）。
+ * 重新导出兜底解析工具，供 AgentLoop 在拿到 assistant 结果后做
  */
 export { repairEmptyArgsFromContent, stripTextToolCalls, estimateContextTokens }

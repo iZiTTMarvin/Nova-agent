@@ -793,6 +793,49 @@ describe('黄金测试 §9.14 maxToolRounds 上限', () => {
   })
 })
 
+describe('恢复预算与正常工具续轮隔离', () => {
+  it('成功工具续轮超过恢复预算仍可继续模型调用', async () => {
+    const client = new MockModelClient()
+    const toolRounds = 7
+
+    for (let i = 0; i < toolRounds; i++) {
+      const callId = `read_${i + 1}`
+      client.addResponse({
+        events: [
+          { type: 'message_start' },
+          { type: 'tool_call_start', toolCallId: callId, toolName: 'read', index: 0 },
+          { type: 'tool_call', toolCall: { id: callId, name: 'read', arguments: '{"path":"README.md"}' } },
+          { type: 'message_end', finishReason: 'tool_calls' }
+        ]
+      })
+    }
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '完成' },
+        usage(40),
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', () => ({ success: true, output: 'README 内容' }))
+    const { loop, eventBus } = createLoop({
+      modelId: 'gpt-4o',
+      client,
+      config: { maxToolRounds: toolRounds + 1 }
+    })
+    loop.setToolRegistry(registry)
+
+    const events = await runAndCollect(loop, eventBus, '连续读取文件')
+
+    expect(events.filter(e => e.type === 'error')).toHaveLength(0)
+    expect(events.filter(e => e.type === 'message_end')).toHaveLength(1)
+    expect(events.filter(e => e.type === 'text_delta').map(e => e.type === 'text_delta' ? e.delta : '').join('')).toContain('完成')
+    expect(client.getCalls()).toHaveLength(toolRounds + 1)
+  })
+})
+
 // ============================================================
 // 场景 15：skill fork / inject / system_notice / passthrough
 // 需要构造 SkillRegistry。为避免依赖完整 skill 子系统，这里验证 dispatch 的四条分支

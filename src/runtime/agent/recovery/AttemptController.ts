@@ -1,13 +1,9 @@
 /**
- * AttemptController — 统一 retry / fallback 的 attempt 所有权（长任务阶段 1）
- *
- * 根因修复（P0-2）：
- * 旧逻辑里 modelErrorAttempt 只在 shouldRetry=true 分支更新，耗尽时停在 2，
- * decideFallback 收到陈旧值 → 永不切 fallback。
- *
+ * AttemptController — 统一 retry / fallback 的 attempt 所有权
+ 
  * 本控制器：
- * - 明确定义 maxAttempts =「当前 provider 的总尝试次数」（含首次）
- * - 每次 attempt 开始时原子递增 providerAttempt
+ * - 明确定义 maxAttempts =「当前 provider 的恢复尝试次数」（含首次错误）
+ * - 每次模型流开始时分配唯一 attemptId；只有模型错误进入恢复链时才消耗预算
  * - 失败后按错误分类决定：再试 / 切 fallback / 上下文恢复 / 终止
  * - fallback 切换后为新 provider 建独立计数，保留全 run 总预算
  *
@@ -32,18 +28,18 @@ export type AttemptDecision =
 export interface AttemptControllerOptions {
   recovery: RecoveryStateMachine
   modelPool: ModelClientPool
-  /** 当前 provider 总尝试次数（含首次），默认 MAX_RETRY_ATTEMPTS */
+  /** 当前 provider 恢复尝试次数上限（含首次错误），默认 MAX_RETRY_ATTEMPTS */
   maxAttemptsPerProvider?: number
-  /** 全 run 总 attempt 预算（含所有 provider），默认 maxAttempts * (1 + fallbackCount) */
+  /** 全 run 恢复尝试总预算（含所有 provider），默认按 provider 数量计算 */
   maxTotalAttempts?: number
 }
 
 export class AttemptController {
   private readonly recovery: RecoveryStateMachine
   private readonly modelPool: ModelClientPool
-  /** 当前 provider 已开始的 attempt 次数（含进行中） */
+  /** 当前 provider 已进入恢复链的错误 attempt 次数 */
   private providerAttempt = 0
-  /** 全 run 已开始的 attempt 次数 */
+  /** 全 run 已进入恢复链的错误 attempt 次数 */
   private totalAttempts = 0
   private readonly maxAttemptsPerProvider: number
   private readonly maxTotalAttempts: number
@@ -54,23 +50,20 @@ export class AttemptController {
     this.recovery = opts.recovery
     this.modelPool = opts.modelPool
     this.maxAttemptsPerProvider = opts.maxAttemptsPerProvider ?? MAX_RETRY_ATTEMPTS
-    // 默认：每个 provider 各有 maxAttempts，另加溢出压缩重试余量（与 StreamProcessor 上限对齐），
-    // 避免 context_overflow 乒乓耗尽总预算后误报「预算上限」而非原始溢出错误。
     const fallbackCount = this.modelPool.getFallbackCount()
-    const overflowHeadroom = 3
     this.maxTotalAttempts =
       opts.maxTotalAttempts ??
-      this.maxAttemptsPerProvider * (1 + Math.max(0, fallbackCount)) + overflowHeadroom
+      this.maxAttemptsPerProvider * (1 + Math.max(0, fallbackCount))
   }
 
-  /** 新消息开始时重置（等价旧 resetRetryState 的 attempt 部分） */
+  /** 新消息开始时重置 */
   reset(): void {
     this.providerAttempt = 0
     this.totalAttempts = 0
     this.currentAttemptId = null
   }
 
-  /** 当前 provider 已完成/进行中的 attempt 数（供诊断） */
+  /** 当前 provider 恢复链已消耗的 attempt 数*/
   getProviderAttempt(): number {
     return this.providerAttempt
   }
@@ -84,15 +77,11 @@ export class AttemptController {
   }
 
   /**
-   * 每次模型调用开始前调用：原子递增计数并分配 attemptId。
-   * 若已超全 run 预算，返回 null（调用方应终止）。
+   * 每次模型调用开始前调用：分配唯一 attemptId。
+   *
+   * 正常工具续轮也是新的模型流，但不是错误恢复；因此不能在这里消耗恢复预算。
    */
-  beginAttempt(): string | null {
-    if (this.totalAttempts >= this.maxTotalAttempts) {
-      return null
-    }
-    this.providerAttempt += 1
-    this.totalAttempts += 1
+  beginAttempt(): string {
     this.currentAttemptId = `att_${randomUUID()}`
     return this.currentAttemptId
   }
@@ -106,10 +95,15 @@ export class AttemptController {
    * @param error 错误文本（可含 ModelTransport 分类前缀）
    */
   onError(error: string): AttemptDecision {
-    // classify 的 attempt 参数语义：已完成次数（从 0 起）。
-    // beginAttempt 已把 providerAttempt 增到「当前这次」，故传入 providerAttempt - 1。
-    const completedBeforeThis = Math.max(0, this.providerAttempt - 1)
+    // classify 的 attempt 参数语义：当前错误前已消耗的恢复次数（从 0 起）。
+    const completedBeforeThis = this.providerAttempt
     const errState = this.recovery.classify(error, completedBeforeThis)
+    this.providerAttempt += 1
+    this.totalAttempts += 1
+
+    if (this.totalAttempts > this.maxTotalAttempts) {
+      return { action: 'fail', error: `已达全 run attempt 预算上限（${this.totalAttempts}）` }
+    }
 
     if (errState.kind === 'recovering') {
       return { action: 'recover_context', state: errState }
@@ -128,7 +122,7 @@ export class AttemptController {
     }
 
     // 重试耗尽（或非 retrying）：用「已消耗次数」驱动 fallback。
-    // providerAttempt 在 beginAttempt 时已递增，故耗尽时 === maxAttemptsPerProvider。
+    // providerAttempt 在本次错误进入恢复链时已递增，故耗尽时 === maxAttemptsPerProvider。
     const fallbackDecision = decideFallback({
       currentError: error,
       retryAttempt: this.providerAttempt,
@@ -160,7 +154,7 @@ export class AttemptController {
 
   /** 构造 recovery_state 事件用的状态（与 onError 分类一致，供 emit） */
   classifyForEmit(error: string): RecoveryState {
-    const completedBeforeThis = Math.max(0, this.providerAttempt - 1)
+    const completedBeforeThis = this.providerAttempt
     return this.recovery.classify(error, completedBeforeThis)
   }
 }
