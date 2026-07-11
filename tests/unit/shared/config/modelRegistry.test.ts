@@ -1,12 +1,18 @@
 /**
- * modelRegistry / resolveSupportsVision — 精确注册表与优先级链
+ * modelRegistry / resolveSupportsVision / resolveContextWindow — 精确注册表与优先级链
  */
 import { describe, expect, it } from 'vitest'
 import {
   lookupModelCapability,
   MODEL_CAPABILITY_REGISTRY
 } from '../../../../src/shared/config/modelRegistry'
-import { resolveSupportsVision } from '../../../../src/shared/config/types'
+import {
+  resolveSupportsVision,
+  resolveContextWindow,
+  inferContextWindow,
+  DEFAULT_CONTEXT_WINDOW
+} from '../../../../src/shared/config/types'
+import { getCompactionThreshold } from '../../../../src/runtime/agent/compaction/compaction'
 
 describe('lookupModelCapability', () => {
   it('精确命中已收录模型', () => {
@@ -30,6 +36,14 @@ describe('lookupModelCapability', () => {
     for (const key of Object.keys(MODEL_CAPABILITY_REGISTRY)) {
       expect(key).toBe(key.toLowerCase())
     }
+  })
+
+  it('DeepSeek / MiniMax 收录 contextWindow 工程取值', () => {
+    expect(lookupModelCapability('deepseek-v4-flash')?.contextWindow).toBe(500_000)
+    expect(lookupModelCapability('deepseek-v4-pro')?.contextWindow).toBe(500_000)
+    expect(lookupModelCapability('deepseek-chat')?.contextWindow).toBe(500_000)
+    expect(lookupModelCapability('deepseek-reasoner')?.contextWindow).toBe(500_000)
+    expect(lookupModelCapability('minimax-m2.5')?.contextWindow).toBe(204_800)
   })
 })
 
@@ -64,5 +78,35 @@ describe('resolveSupportsVision', () => {
     expect(resolveSupportsVision('deepseek-vl')).toBe(true)
     // 完全未知 → false
     expect(resolveSupportsVision('totally-unknown-model-xyz')).toBe(false)
+  })
+})
+
+describe('resolveContextWindow', () => {
+  it('用户显式 contextWindow 覆盖注册表', () => {
+    expect(resolveContextWindow('deepseek-v4-flash', 128_000)).toBe(128_000)
+    expect(resolveContextWindow('deepseek-v4-flash', 1_000_000)).toBe(1_000_000)
+  })
+
+  it('无显式时命中注册表：deepseek-v4-flash 为 500_000 而非 64_000', () => {
+    expect(resolveContextWindow('deepseek-v4-flash')).toBe(500_000)
+    expect(resolveContextWindow('deepseek-v4-pro')).toBe(500_000)
+    expect(resolveContextWindow('deepseek-chat')).toBe(500_000)
+    expect(resolveContextWindow('deepseek-reasoner')).toBe(500_000)
+    expect(resolveContextWindow('minimax-m2.5')).toBe(204_800)
+  })
+
+  it('inferContextWindow 不再把 deepseek 推断为 64_000', () => {
+    // 未收录的 deepseek 变体走兜底 DEFAULT，而非旧的 64K
+    expect(inferContextWindow('deepseek-some-future-model')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('deepseek-some-future-model')).not.toBe(64_000)
+  })
+
+  it('未知模型回退 DEFAULT_CONTEXT_WINDOW', () => {
+    expect(resolveContextWindow('totally-unknown-model-xyz')).toBe(DEFAULT_CONTEXT_WINDOW)
+  })
+
+  it('DeepSeek 500K 时硬阈值为 400K（不改变 overflow 公式语义）', () => {
+    const window = resolveContextWindow('deepseek-v4-flash')
+    expect(getCompactionThreshold(window)).toBe(400_000)
   })
 })

@@ -12,7 +12,7 @@ import { join } from 'path'
 import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContextForMode, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
 import { runWorkflow } from '../../runtime/workflow'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow, resolveSupportsVision } from '../../shared/config/types'
+import { resolveContextWindow, resolveSupportsVision } from '../../shared/config/types'
 import { preferredToolDialect } from '../../runtime/model/dialect'
 import { resolveCacheProfile } from '../../runtime/model/cacheProfile'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
@@ -384,7 +384,10 @@ export function registerAgentHandler(
 
     // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
     const persistedConfig = loadModelConfig(app.getPath('userData'))
-    const contextWindow = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+    const contextWindow = resolveContextWindow(
+      persistedConfig?.modelId ?? '',
+      persistedConfig?.contextWindow
+    )
     const supportsVision = resolveSupportsVision(
       persistedConfig?.modelId ?? '',
       persistedConfig?.supportsVision

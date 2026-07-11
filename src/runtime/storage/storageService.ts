@@ -20,6 +20,7 @@ import {
   writeFileSync
 } from 'fs'
 import { join } from 'path'
+import { closeSessionIndex } from '../sessions/SessionIndexHost'
 import { tmpdir } from 'os'
 import type {
   StorageUsageReport,
@@ -225,6 +226,7 @@ export function pruneAllCheckpoints(appDataPath: string): StorageCleanupResult {
 
 /**
  * 彻底删除某个会话及其所有关联数据（历史、快照、artifacts）。
+ * 与 SessionStore.delete 相同：删目录前必须先释放 SessionIndex 连接。
  */
 export function deleteSessionCompletely(
   appDataPath: string,
@@ -238,6 +240,7 @@ export function deleteSessionCompletely(
   }
 
   const freedBytes = getPathBytes(sessionDir)
+  closeSessionIndex(sessionDir)
   rmSync(sessionDir, { recursive: true, force: true })
 
   return {

@@ -1,12 +1,35 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { IdleCompressionTimer } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
 import type { IdleCompactionTarget } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
-import type { ChatMessage } from '../../../../src/runtime/model/types'
+import {
+  shouldScheduleIdleCompaction,
+  getCompactionThreshold,
+  IDLE_COMPACTION_MIN_THRESHOLD_RATIO,
+  type IdleCompactionScheduleState
+} from '../../../../src/runtime/agent/compaction/compaction'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
+
+/** 默认「有资格」的调度状态，供 timer 单测走通压缩路径 */
+function eligibleScheduleState(
+  overrides?: Partial<IdleCompactionScheduleState>
+): IdleCompactionScheduleState {
+  const contextWindow = 200_000
+  const threshold = getCompactionThreshold(contextWindow)
+  return {
+    context: [{ role: 'system', content: 's' }],
+    contextWindow,
+    // 超过 60% 硬阈值，通过预筛
+    estimatedTokens: Math.floor(threshold * IDLE_COMPACTION_MIN_THRESHOLD_RATIO) + 1,
+    idleCompactionInProgress: false,
+    disposed: false,
+    profile: { idlePolicy: 'provider-managed' },
+    ...overrides
+  }
+}
 
 /**
  * 创建一个用于测试的 mock IdleCompactionTarget。
@@ -20,17 +43,26 @@ function createMockTarget(overrides?: Partial<IdleCompactionTarget>): {
 } {
   let compactionCalls = 0
   let resolveCompaction!: () => void
-  const compactionPromise = new Promise<void>((r) => { resolveCompaction = r })
+  const compactionPromise = new Promise<void>((r) => {
+    resolveCompaction = r
+  })
 
   const target: IdleCompactionTarget = {
     runIdleCompaction: async (_signal: AbortSignal) => {
       compactionCalls++
       resolveCompaction()
     },
+    getIdleCompactionScheduleState: () => eligibleScheduleState(),
     ...overrides
   }
 
-  return { target, get compactionCalls() { return compactionCalls }, compactionPromise }
+  return {
+    target,
+    get compactionCalls() {
+      return compactionCalls
+    },
+    compactionPromise
+  }
 }
 
 function createTestRegistry(): ToolRegistry {
@@ -53,6 +85,50 @@ function createTestRegistry(): ToolRegistry {
 async function flush(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve()
 }
+
+describe('shouldScheduleIdleCompaction', () => {
+  const contextWindow = 200_000
+  const threshold = getCompactionThreshold(contextWindow)
+
+  it('短会话（token 远低于硬阈值 60%）不调度', () => {
+    expect(
+      shouldScheduleIdleCompaction(
+        eligibleScheduleState({
+          estimatedTokens: Math.floor(threshold * IDLE_COMPACTION_MIN_THRESHOLD_RATIO) - 1
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('接近阈值的长会话仍调度', () => {
+    expect(
+      shouldScheduleIdleCompaction(
+        eligibleScheduleState({
+          estimatedTokens: Math.floor(threshold * 0.7)
+        })
+      )
+    ).toBe(true)
+  })
+
+  it('已有进行中的压缩不重复调度', () => {
+    expect(
+      shouldScheduleIdleCompaction(eligibleScheduleState({ idleCompactionInProgress: true }))
+    ).toBe(false)
+  })
+
+  it('disposed 不触发', () => {
+    expect(shouldScheduleIdleCompaction(eligibleScheduleState({ disposed: true }))).toBe(false)
+  })
+
+  it('profile 入口可传入但不影响本轮中性判断', () => {
+    expect(
+      shouldScheduleIdleCompaction(
+        eligibleScheduleState({ profile: { idlePolicy: 'anthropic-short-ttl' } })
+      )
+    ).toBe(true)
+    expect(shouldScheduleIdleCompaction(eligibleScheduleState({ profile: null }))).toBe(true)
+  })
+})
 
 describe('IdleCompressionTimer', () => {
   beforeEach(() => {
@@ -78,6 +154,24 @@ describe('IdleCompressionTimer', () => {
     expect(mock.compactionCalls).toBe(1)
   })
 
+  it('资格预筛失败时不进入摘要调用', async () => {
+    let compactionCalls = 0
+    const target: IdleCompactionTarget = {
+      runIdleCompaction: async () => {
+        compactionCalls++
+      },
+      getIdleCompactionScheduleState: () =>
+        eligibleScheduleState({
+          estimatedTokens: 100 // 远低于阈值
+        })
+    }
+    const timer = new IdleCompressionTimer(target)
+    timer.start()
+    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
+    await flush()
+    expect(compactionCalls).toBe(0)
+  })
+
   it('start() 后 cancel() 在 delay 内调用 → 压缩不被触发', async () => {
     const mock = createMockTarget()
     const timer = new IdleCompressionTimer(mock.target)
@@ -95,24 +189,21 @@ describe('IdleCompressionTimer', () => {
   it('压缩运行中 cancel() — timer 层静默吞异常，target 负责回滚', async () => {
     let aborted = false
     const target: IdleCompactionTarget = {
+      getIdleCompactionScheduleState: () => eligibleScheduleState(),
       runIdleCompaction: async (signal) => {
-        // 模拟 AgentLoop.runIdleCompaction 的行为：abort 时回滚 prevContext
-        const prevContext: ChatMessage[] = [
-          { role: 'system', content: 'system' },
-          { role: 'user', content: 'hello' }
-        ]
         try {
-          // 模拟 LLM 调用：监听 abort signal
           await new Promise<void>((_resolve, reject) => {
             const onAbort = () => {
               signal.removeEventListener('abort', onAbort)
               reject(new DOMException('aborted', 'AbortError'))
             }
-            if (signal.aborted) { onAbort(); return }
+            if (signal.aborted) {
+              onAbort()
+              return
+            }
             signal.addEventListener('abort', onAbort)
           })
         } finally {
-          // 回滚逻辑（在 target 内部完成）
           if (signal.aborted) aborted = true
         }
       }
@@ -129,14 +220,13 @@ describe('IdleCompressionTimer', () => {
     timer.cancel()
     await flush()
 
-    // timer 层：静默处理，不再 compressing
     expect(timer.isCompressing()).toBe(false)
-    // target 层：感知到了 abort 并执行了回滚
     expect(aborted).toBe(true)
   })
 
   it('压缩调用触发异常 → 静默失败不抛异常', async () => {
     const target: IdleCompactionTarget = {
+      getIdleCompactionScheduleState: () => eligibleScheduleState(),
       runIdleCompaction: async () => {
         throw new Error('context_overflow: prompt is too long')
       }
@@ -154,7 +244,10 @@ describe('IdleCompressionTimer', () => {
   it('多次 start-cancel-start 循环 → 计时器状态正确', async () => {
     let compactionCalls = 0
     let resolveCompaction!: () => void
-    const makePromise = () => new Promise<void>((r) => { resolveCompaction = r })
+    const makePromise = () =>
+      new Promise<void>((r) => {
+        resolveCompaction = r
+      })
 
     const mock = createMockTarget({
       runIdleCompaction: async () => {
@@ -287,12 +380,29 @@ describe('AgentLoop 空闲压缩集成', () => {
     expect(loop.getState()).toBe('idle')
   })
 
-  it('error 退出路径也启动空闲计时器', async () => {
+  it('dispose 后资格预筛阻断空闲压缩', async () => {
     const client = new MockModelClient()
     client.addResponse({
       events: [
-        { type: 'error', error: '模型调用失败' }
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '回复' },
+        { type: 'message_end', finishReason: 'stop' }
       ]
+    })
+
+    const { loop } = createLoop(client)
+    await loop.sendMessage('hello')
+
+    loop.dispose()
+    const state = loop.getIdleCompactionScheduleState()
+    expect(state.disposed).toBe(true)
+    expect(shouldScheduleIdleCompaction(state)).toBe(false)
+  })
+
+  it('error 退出路径也启动空闲计时器', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [{ type: 'error', error: '模型调用失败' }]
     })
 
     const { loop } = createLoop(client)
@@ -309,8 +419,6 @@ describe('AgentLoop 空闲压缩集成', () => {
   it('竞态：cancel 后 sendMessage 推入的用户消息不被回滚误删', async () => {
     const client = new MockModelClient()
 
-    // 模拟一个足够长的上下文来触发压缩
-    // 先发一条消息启动 idle timer
     client.addResponse({
       events: [
         { type: 'message_start' },
@@ -322,33 +430,17 @@ describe('AgentLoop 空闲压缩集成', () => {
     const { loop } = createLoop(client)
     await loop.sendMessage('第一条')
 
-    // 记录此时的 context 长度
     const contextBeforeCancel = loop.getContext().length
 
-    // 模拟 idle timer 触发后压缩被 abort 的场景：
-    // 通过直接调用 runIdleCompaction 并在执行中 abort 来测试
-    // 这是竞态场景的单元级测试
     const ac = new AbortController()
     const runPromise = loop.runIdleCompaction(ac.signal)
 
-    // 在压缩运行中 abort
     ac.abort()
 
-    // 模拟 sendMessage 并发 push 用户消息
-    // （实际 sendMessage 会先 cancel timer，这里直接操作 context 模拟）
-    const ctx = loop.getContext()
-    const userMsg: ChatMessage = { role: 'user', content: '竞态用户消息' }
-    // 注意：这里直接操作 context 不行（getContext 返回快照），但 runIdleCompaction 内部
-    // 的 prevContext 是在方法入口就保存的，abort 后会恢复到那个快照
-    // 关键验证：runIdleCompaction 的 finally 中 prevContext 恢复不会丢失原始 context
-
-    await runPromise.catch(() => {}) // 静默 AbortError
+    await runPromise.catch(() => {})
     await flush()
 
-    // abort 后 context 应该恢复到压缩前的状态（没有丢失消息）
     const contextAfterAbort = loop.getContext()
     expect(contextAfterAbort.length).toBe(contextBeforeCancel)
-    // 用户消息不在 context 里（因为我们是模拟的竞态，没有通过 sendMessage push）
-    // 但核心断言：context 长度没有异常增长或缩减
   })
 })

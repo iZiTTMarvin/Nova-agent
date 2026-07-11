@@ -171,6 +171,12 @@ class BetterSqliteAdapter implements MemoryDb {
   }
 
   close(): void {
+    try {
+      // WAL 下先 checkpoint，合并 -wal/-shm 并释放句柄；否则 Windows 上 unlink 目录会 EBUSY
+      this.db.pragma('wal_checkpoint(TRUNCATE)')
+    } catch {
+      /* 仍继续 close */
+    }
     this.db.close()
   }
 }

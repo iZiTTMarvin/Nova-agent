@@ -24,6 +24,8 @@ import { estimateContextTokens } from './tokenEstimator'
 import { executeToolBatch } from './execution/toolBatchExecutor'
 import { IdleCompressionTimer } from './compaction/IdleCompressionTimer'
 import type { IdleCompactionTarget } from './compaction/IdleCompressionTimer'
+import type { IdleCompactionScheduleState } from './compaction/compaction'
+import { resolveCacheProfile } from '../model/cacheProfile'
 import { HookManager } from './core/HookManager'
 import { RecoveryStateMachine } from './recovery/RecoveryStateMachine'
 import { SystemPromptBuilder } from './promptBuilder/SystemPromptBuilder'
@@ -221,6 +223,10 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 空闲压缩计时器（惰性创建） */
   private idleTimer: IdleCompressionTimer | null = null
+  /** 是否已有进行中的空闲压缩（供 shouldScheduleIdleCompaction 预筛） */
+  private idleCompactionInProgress = false
+  /** dispose 后阻断空闲压缩调度 */
+  private disposed = false
 
   /** Hook 编排层（与 EventBus 并行，负责干预） */
   private hookManager: HookManager
@@ -1186,6 +1192,9 @@ export class AgentLoop implements IdleCompactionTarget {
    * - agentHandler 创建新 AgentLoop 前 dispose 旧的
    */
   dispose(): void {
+    // 先置 disposed，阻断已排队的 idle timer 到期后进入摘要请求
+    this.disposed = true
+
     // 即使 state 不是 running 也要清理 idleTimer：sendMessage 完成后 state===idle，
     // cancel() 此时是空操作，idleTimer 仍在等待触发后台压缩
     this.idleTimer?.cancel()
@@ -1200,6 +1209,27 @@ export class AgentLoop implements IdleCompactionTarget {
     // 如果还在 running，也走 cancel 流程触发 onCancel hook
     if (this.state === 'running') {
       this.cancel()
+    }
+  }
+
+  /**
+   * 供 IdleCompressionTimer 到期时做资格预筛。
+   * profile 入口已预留（T3-2 按 idlePolicy 差异化）；本轮预筛只做中性判断。
+   */
+  getIdleCompactionScheduleState(): IdleCompactionScheduleState {
+    const provider = this.modelPool.getActiveProvider()
+    const profile = resolveCacheProfile(provider.baseUrl, provider.modelId, {
+      cacheProfile: provider.cacheProfile,
+      cacheStrategy: provider.cacheStrategy
+    })
+    return {
+      context: this.context,
+      contextWindow: this.config.contextWindow ?? 200_000,
+      estimatedTokens: this.lastEstimatedTokens > 0 ? this.lastEstimatedTokens : undefined,
+      idleCompactionInProgress: this.idleCompactionInProgress,
+      disposed: this.disposed,
+      // T3-2 按 idlePolicy 差异化调度；本轮 shouldScheduleIdleCompaction 不读此字段
+      profile
     }
   }
 
@@ -1597,6 +1627,8 @@ export class AgentLoop implements IdleCompactionTarget {
    * 不与主循环的 abortController 混用，避免 cancel 时误杀正常 LLM 调用。
    */
   async runIdleCompaction(abortSignal: AbortSignal): Promise<void> {
+    // 开始置位，finally 清零；与 timer 层 _compressing 互补，供资格预筛阻断重复调度
+    this.idleCompactionInProgress = true
     const prevAbortController = this.abortController
     const prevCancelled = this.cancelled
     const prevOverflowFlag = this.compressingForOverflow
@@ -1613,6 +1645,7 @@ export class AgentLoop implements IdleCompactionTarget {
       this.abortController = prevAbortController
       this.cancelled = prevCancelled
       this.compressingForOverflow = prevOverflowFlag
+      this.idleCompactionInProgress = false
     }
   }
 }

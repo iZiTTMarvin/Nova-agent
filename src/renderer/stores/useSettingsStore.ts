@@ -9,7 +9,7 @@ import {
   resolveActiveModelConfig,
   createEmptyRegistry
 } from '../../shared/config/llmRegistry'
-import { inferContextWindow } from '../../shared/config/types'
+import { resolveContextWindow } from '../../shared/config/types'
 import type { NormalizedUsage } from '../../runtime/model/types'
 import type { SessionUsageStats } from './types'
 
@@ -176,7 +176,7 @@ function deriveModelState(registry: LlmRegistry | null): {
   return {
     modelConfig,
     contextLimit:
-      modelConfig?.contextWindow ?? inferContextWindow(modelConfig?.modelId ?? '')
+      resolveContextWindow(modelConfig?.modelId ?? '', modelConfig?.contextWindow)
   }
 }
 

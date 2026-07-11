@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
-import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
+import { resetSessionIndexHostForTests, getSessionIndex, sessionIndexCacheSizeForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import type { Mode } from '../../../../src/shared/session'
 
 /** 创建临时目录用于测试 */
@@ -17,6 +17,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // 先关索引连接，再删临时目录，避免 Windows 上 messages-index.sqlite EBUSY
+  resetSessionIndexHostForTests()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
@@ -149,6 +151,26 @@ describe('SessionStore', () => {
       expect(fs.existsSync(sessionDir)).toBe(true)
       store.delete(session.id)
       expect(fs.existsSync(sessionDir)).toBe(false)
+    })
+
+    it('索引连接已打开时仍能删除（先 close 再 rm，避免 Windows EBUSY）', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, {
+        id: 'msg_1',
+        role: 'user',
+        content: 'hello',
+        timestamp: Date.now()
+      })
+
+      const sessionDir = path.join(tmpDir, 'sessions', session.id)
+      // 显式打开并缓存索引连接（模拟 list/load 后句柄仍占用）
+      getSessionIndex(sessionDir)
+      expect(sessionIndexCacheSizeForTests()).toBeGreaterThan(0)
+
+      expect(store.delete(session.id)).toBe(true)
+      expect(fs.existsSync(sessionDir)).toBe(false)
+      expect(sessionIndexCacheSizeForTests()).toBe(0)
     })
   })
 

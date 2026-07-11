@@ -24,7 +24,7 @@ import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow } from '../../shared/config/types'
+import { resolveContextWindow } from '../../shared/config/types'
 /** SessionDetail 转换（与 sessionHandler 同构，独立实现避免双向依赖） */
 function toSession(data: SessionData): Session {
   const activeMessages = getSessionActiveMessages(data)
@@ -47,7 +47,10 @@ function pushContextBreakdownForSession(session: SessionData, getMainWindow: () 
   const skills = skillService.getRegistry().listForContext()
 
   const persistedConfig = loadModelConfig(app.getPath('userData'))
-  const contextLimit = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+  const contextLimit = resolveContextWindow(
+    persistedConfig?.modelId ?? '',
+    persistedConfig?.contextWindow
+  )
 
   const { payload } = calculateContextBreakdown({
     session,

@@ -36,7 +36,7 @@ export interface ModelConfig {
    * 显式指定时优先于 cacheStrategy 与自动判定。
    */
   cacheProfile?: 'auto' | CacheProfileId
-  /** 模型最大上下文窗口（tokens），未设置时从 modelId 自动推断 */
+  /** 模型最大上下文窗口（tokens），未设置时按 resolveContextWindow 优先级链推断 */
   contextWindow?: number
   /** 是否支持图片输入。未设置时按优先级查注册表→字符串兜底→默认 false（见 resolveSupportsVision） */
   supportsVision?: boolean
@@ -70,9 +70,13 @@ export function inferCacheStrategy(baseUrl: string): CacheStrategy {
 }
 
 /** 默认上下文窗口上限 */
-const DEFAULT_CONTEXT_WINDOW = 200_000
+export const DEFAULT_CONTEXT_WINDOW = 200_000
 
-/** 基于常见模型 ID 自动推断上下文窗口上限 */
+/**
+ * 基于常见模型 ID 自动推断上下文窗口上限（字符串兜底，非精确注册表）。
+ * DeepSeek 系列不再硬编码 64K（已过时）；无显式/注册表配置时回退 DEFAULT_CONTEXT_WINDOW。
+ * 未知模型仍回退保守默认。
+ */
 export function inferContextWindow(modelId: string): number {
   const lower = modelId.toLowerCase()
   if (lower.includes('claude-3-opus')) return 200_000
@@ -81,8 +85,31 @@ export function inferContextWindow(modelId: string): number {
   if (lower.includes('gpt-4o')) return 128_000
   if (lower.includes('gpt-4-turbo')) return 128_000
   if (lower.includes('gpt-4')) return 128_000
-  if (lower.includes('deepseek')) return 64_000
   return DEFAULT_CONTEXT_WINDOW
+}
+
+/**
+ * 解析模型上下文窗口，统一优先级链：
+ *   1. 用户显式 ModelConfig.contextWindow / ModelEntry.contextWindow（非 undefined 即采纳）
+ *   2. 精确注册表 MODEL_CAPABILITY_REGISTRY.contextWindow
+ *   3. 字符串模糊兜底 inferContextWindow
+ *   4. DEFAULT_CONTEXT_WINDOW（inferContextWindow 内部已回退）
+ *
+ * 与缓存 profile 判定正交：profile 只看 baseUrl/modelId，不读本函数结果。
+ */
+export function resolveContextWindow(modelId: string, explicit?: number): number {
+  if (explicit !== undefined && Number.isFinite(explicit) && explicit > 0) {
+    return explicit
+  }
+  const entry = lookupModelCapability(modelId)
+  if (
+    entry?.contextWindow !== undefined &&
+    Number.isFinite(entry.contextWindow) &&
+    entry.contextWindow > 0
+  ) {
+    return entry.contextWindow
+  }
+  return inferContextWindow(modelId)
 }
 
 /**

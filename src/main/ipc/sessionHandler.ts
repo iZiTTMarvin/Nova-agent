@@ -36,7 +36,7 @@ import { getMainReadState } from './agentHandler'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { getSkillService } from '../services/SkillServiceHost'
 import { loadModelConfig } from '../../runtime/model/config'
-import { inferContextWindow } from '../../shared/config/types'
+import { resolveContextWindow } from '../../shared/config/types'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 /** SessionStore 单例，在注册时初始化 */
 let sessionStore: SessionStore
@@ -70,7 +70,10 @@ function pushContextBreakdownForSession(session: SessionData): void {
   const skills = skillService.getRegistry().listForContext()
 
   const persistedConfig = loadModelConfig(app.getPath('userData'))
-  const contextLimit = persistedConfig?.contextWindow ?? inferContextWindow(persistedConfig?.modelId ?? '')
+  const contextLimit = resolveContextWindow(
+    persistedConfig?.modelId ?? '',
+    persistedConfig?.contextWindow
+  )
 
   const { payload } = calculateContextBreakdown({
     session,

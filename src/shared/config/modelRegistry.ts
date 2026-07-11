@@ -1,15 +1,23 @@
 /**
  * 内置模型能力精确注册表（按 modelId 精确匹配，非模糊匹配）。
  *
- * 优先级链（见 resolveSupportsVision）：
- *   用户显式勾选(ModelConfig.supportsVision) > 本注册表精确匹配 > inferVisionSupport 字符串兜底 > 默认 false
+ * 优先级链：
+ *   supportsVision → resolveSupportsVision
+ *   contextWindow  → resolveContextWindow
+ *   用户显式配置 > 本注册表精确匹配 > 字符串兜底推断 > 保守默认
  *
- * 数据来源：Cherry Studio 注册表 + litellm 模型表（见每条注释）。
+ * 数据来源：Cherry Studio 注册表 + litellm 模型表 + 各厂商官方文档（见每条注释）。
  * 维护：新模型上线并确认能力后在此添加一条精确 modelId；拿不准的不收录。
  */
 export interface ModelCapabilityEntry {
   /** 是否支持图片输入。true=明确支持；false=明确不支持 */
   supportsVision?: boolean
+  /**
+   * 上下文窗口（tokens）。
+   * 可为官方规格，也可为 Nova 工程上限（须在注释标明）。
+   * 未设时走 resolveContextWindow → inferContextWindow 兜底。
+   */
+  contextWindow?: number
 }
 
 /** 精确 modelId → 能力。查找时统一 toLowerCase 全等匹配。 */
@@ -59,6 +67,7 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
 
   // ── 智谱 GLM ────────────────────────────────────────────
   // 纯文本主型号（纠偏：模糊兜底无法识别 glm-5.x）
+  // contextWindow：官方有 1M 变体（如 glm-5.2[1m]），默认 API 窗口未单独核实，留空走兜底（2026-07）
   'glm-5': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text
   'glm-5.1': { supportsVision: false }, // 来源: Cherry Studio（id: glm-5-1）inputModalities=text
   'glm-5-1': { supportsVision: false }, // 来源: Cherry Studio 连字符别名
@@ -89,13 +98,31 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'mimo-v2-flash': { supportsVision: false }, // 来源: Cherry Studio + litellm
 
   // ── DeepSeek ────────────────────────────────────────────
-  'deepseek-v4-flash': { supportsVision: false }, // 来源: Cherry Studio + litellm
-  'deepseek-v4-pro': { supportsVision: false }, // 来源: Cherry Studio + litellm
+  // 官方规格均为 1M（api-docs.deepseek.com/news/news260424，验证 2026-07）；
+  // Nova 配置 500K 以控制 KV cache 成本与延迟，Agent 场景绰绰有余——这是工程上限，不是模型规格。
+  'deepseek-v4-flash': {
+    supportsVision: false,
+    contextWindow: 500_000
+  }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）
+  'deepseek-v4-pro': {
+    supportsVision: false,
+    contextWindow: 500_000
+  }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）
+  // 旧名：官方已路由到 v4-flash；同样按 Nova 工程上限 500K
+  'deepseek-chat': {
+    supportsVision: false,
+    contextWindow: 500_000
+  }, // 官方 1M（同 V4）；Nova 500K（2026-07）
+  'deepseek-reasoner': {
+    supportsVision: false,
+    contextWindow: 500_000
+  }, // 官方 1M（同 V4）；Nova 500K（2026-07）
 
   // ── MiniMax（纠偏：模糊兜底把全部 minimax 判 true）──────
-  'minimax-m2.5': { supportsVision: false }, // 来源: Cherry（minimax-m2-5）+ litellm openrouter=false
-  'minimax-m2.5-highspeed': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text
-  'minimax-m3': { supportsVision: true }, // 来源: Cherry Studio + litellm
+  // 官方上下文窗口 204,800（platform.minimax.io 文本生成文档，验证 2026-07）
+  'minimax-m2.5': { supportsVision: false, contextWindow: 204_800 }, // 来源: Cherry + litellm；官方 204800（2026-07）
+  'minimax-m2.5-highspeed': { supportsVision: false, contextWindow: 204_800 }, // 来源: Cherry；官方 204800（2026-07）
+  'minimax-m3': { supportsVision: true }, // 来源: Cherry Studio + litellm；官方宣称 1M，未在本轮固化工程取值
 
   // ── Moonshot Kimi ───────────────────────────────────────
   'kimi-k2': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text

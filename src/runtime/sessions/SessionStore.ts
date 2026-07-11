@@ -56,7 +56,7 @@ import {
   normalizeMessageToBlocksSource,
   serializeMessageForDisk
 } from './messageProjection'
-import { ensureSessionIndexFresh } from './SessionIndexHost'
+import { ensureSessionIndexFresh, closeSessionIndex } from './SessionIndexHost'
 import type { SessionIndexEntryRow } from './SessionIndexDb'
 
 /** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
@@ -292,11 +292,17 @@ export class SessionStore {
     })
   }
 
-  /** 删除会话及其关联的 checkpoint 数据 */
+  /**
+   * 删除会话及其关联的 checkpoint 数据。
+   *
+   * 生命周期不变量：删目录前必须释放本会话的 SessionIndex 连接
+   * （better-sqlite3 + WAL 持有 messages-index.sqlite 句柄时，Windows 无法 unlink）。
+   */
   delete(sessionId: string): boolean {
     const sessionDir = this.resolveSessionDir(sessionId)
     if (!fs.existsSync(sessionDir)) return false
 
+    closeSessionIndex(sessionDir)
     fs.rmSync(sessionDir, { recursive: true, force: true })
     return true
   }

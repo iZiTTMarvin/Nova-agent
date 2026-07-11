@@ -114,12 +114,13 @@ function normalizeLeaf(leaf: string | null | undefined): string | null {
   return leaf
 }
 
-/** 关闭并移除某个会话的缓存连接 */
+/** 关闭并移除某个会话的缓存连接（删目录前的唯一正确入口） */
 export function closeSessionIndex(sessionDir: string): void {
   const key = cacheKey(sessionDir)
   const db = cache.get(key)
   if (!db) return
   try {
+    // close 内含 WAL checkpoint；释放后调用方才能安全 rmSync 会话目录
     db.close()
   } catch {
     /* ignore */

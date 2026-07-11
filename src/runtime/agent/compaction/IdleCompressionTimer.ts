@@ -1,12 +1,15 @@
 /**
  * 空闲时自动压缩计时器
  *
- * 当用户停止输入一段时间后（默认 266 秒），在后台自动压缩对话历史，预热 prompt cache。
- * 用户下一个消息到达时直接命中缓存，冷启动首次 token 延迟降低 50%+。
+ * 当用户停止输入一段时间后（默认 266 秒），在后台尝试压缩对话历史。
+ * 摘要请求复用压缩前前缀（尾部追加压缩指令）；重建后的
+ * [system + summary + recent] 要等下一次真实用户请求才会首次发送，
+ * 因此这里不是「预热压缩后上下文」。
  *
  * 参考 OpenClacky idle_compression_timer.rb，适配 nova-agent 的 AgentLoop 架构：
  * - 使用 Node.js 内置 setTimeout / clearTimeout，不引入额外依赖
  * - 独立 AbortController，不与主循环 cancel 混用
+ * - 到期先做 shouldScheduleIdleCompaction 资格预筛，通过才进入摘要请求
  * - 静默失败：空闲压缩是优化手段，失败不应打扰用户
  *
  * 回滚职责：timer 不做上下文回滚。
@@ -14,11 +17,17 @@
  * 中断/失败时 this.context 不变。AgentLoop.runIdleCompaction() 在 finally 中用
  * prevContext 快照恢复 abort 导致的部分修改，timer 层无需关心。
  */
+import {
+  shouldScheduleIdleCompaction,
+  type IdleCompactionScheduleState
+} from './compaction'
 
 /** AgentLoop 上需要暴露的接口，避免 IdleCompressionTimer 直接依赖 AgentLoop 类 */
 export interface IdleCompactionTarget {
   /** 执行压缩（内部调用 runCompaction），abort 时回滚上下文 */
   runIdleCompaction(abortSignal: AbortSignal): Promise<void>
+  /** 供 timer 到期时做资格预筛的状态快照 */
+  getIdleCompactionScheduleState(): IdleCompactionScheduleState
 }
 
 /**
@@ -67,8 +76,8 @@ export class IdleCompressionTimer {
 
     if (this.abortController) {
       this.abortController.abort()
-      this.abortController = null
     }
+    this.abortController = null
   }
 
   /** 是否正在执行压缩 */
@@ -78,11 +87,17 @@ export class IdleCompressionTimer {
 
   /**
    * 内部方法：触发空闲压缩。
-   * 回滚由 AgentLoop.runIdleCompaction 负责，timer 只管静默吞异常。
+   * 先资格预筛，通过才进入摘要请求；回滚由 AgentLoop.runIdleCompaction 负责。
    */
   private async runIdleCompaction(): Promise<void> {
     const ac = this.abortController
     if (!ac || ac.signal.aborted) return
+
+    // 资格预筛：短会话 / 已在压缩 / disposed 等不进入摘要模型请求
+    if (!shouldScheduleIdleCompaction(this.target.getIdleCompactionScheduleState())) {
+      this.abortController = null
+      return
+    }
 
     this._compressing = true
 

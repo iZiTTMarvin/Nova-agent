@@ -8,6 +8,7 @@
  * 4. 用 [system, 摘要, 最近 N 条] 重建历史
  */
 import type { ChatMessage } from '../../model/types'
+import type { CacheProfile } from '../../model/cacheProfile'
 import { estimateContextTokens } from '../tokenEstimator'
 
 /** 触发压缩的 token 阈值（默认 120K），当未提供 contextWindow 时作为 fallback */
@@ -32,6 +33,64 @@ export const SOFT_COMPACTION_TOOL_RATIO = 0.4
 export const SOFT_COMPACTION_TOTAL_RATIO = 0.6
 /** 软触发：距上次压缩至少经过的用户回合数 */
 export const SOFT_COMPACTION_COOLDOWN_TURNS = 5
+
+/**
+ * 空闲压缩资格：当前 token 估算须至少达到硬阈值的此比例，否则不调度摘要请求。
+ * 避免短但消息多的会话产生无意义的后台摘要调用。
+ */
+export const IDLE_COMPACTION_MIN_THRESHOLD_RATIO = 0.6
+
+/**
+ * 空闲压缩资格预筛的输入状态。
+ * profile / idlePolicy 入口已预留；本轮只做中性判断，不按档案差异化。
+ * T3-2 按 idlePolicy 差异化调度。
+ */
+export interface IdleCompactionScheduleState {
+  /** 当前会话上下文（用于 token 估算；不要仅用消息条数做资格判断） */
+  context: ChatMessage[]
+  /** 模型上下文窗口，用于 getCompactionThreshold */
+  contextWindow: number
+  /** 可选预估 token；缺省时对 context 现场估算 */
+  estimatedTokens?: number
+  /** 是否已有进行中的空闲压缩 */
+  idleCompactionInProgress: boolean
+  /** AgentLoop 已 dispose 时阻断调度 */
+  disposed: boolean
+  /**
+   * 缓存档案或仅含 idlePolicy 的片段。
+   * 本轮内部不读此字段；T3-2 按 idlePolicy 差异化调度。
+   */
+  profile?: Pick<CacheProfile, 'idlePolicy'> | CacheProfile | null
+}
+
+/**
+ * 空闲压缩资格预筛：返回 false 时不得进入摘要模型请求。
+ *
+ * 中性判断（本轮）：
+ * - disposed / 已有进行中压缩 → 否
+ * - 距硬阈值太远（token < threshold * 60%）→ 否
+ *
+ * 注意：splitForCompaction 的 oldMessages=[] 是 runCompaction 内的后置空操作保护，
+ * 不是本函数的前置预筛。不要只用消息数量判断资格。
+ *
+ * @param state 调度状态；profile 入口已预留供 T3-2 使用
+ */
+export function shouldScheduleIdleCompaction(state: IdleCompactionScheduleState): boolean {
+  // T3-2 按 idlePolicy 差异化调度；本轮故意不消费 profile，仅保留签名入口
+  void state.profile
+
+  if (state.disposed) return false
+  if (state.idleCompactionInProgress) return false
+
+  const threshold = getCompactionThreshold(state.contextWindow)
+  if (threshold <= 0) return false
+
+  const totalTokens = state.estimatedTokens ?? estimateContextTokens(state.context)
+  // 硬阈值距离：离 getCompactionThreshold 太远时不压缩
+  if (totalTokens < threshold * IDLE_COMPACTION_MIN_THRESHOLD_RATIO) return false
+
+  return true
+}
 
 /**
  * 估算上下文中 role:'tool' 消息的 token 数

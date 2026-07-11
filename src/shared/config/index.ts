@@ -29,7 +29,7 @@ export {
   resolveActiveModelAfterSave
 } from './llmRegistry'
 
-export { resolveSupportsVision } from './types'
+export { resolveSupportsVision, resolveContextWindow, inferContextWindow, DEFAULT_CONTEXT_WINDOW } from './types'
 export {
   lookupModelCapability,
   MODEL_CAPABILITY_REGISTRY,

@@ -67,6 +67,11 @@ export interface PresetProviderMeta {
     displayName?: string
     /** 显式视觉能力；未设时由 inferVisionSupport(modelId) 推断 */
     supportsVision?: boolean
+    /**
+     * 显式上下文窗口；未设时由 resolveContextWindow(modelId) 推断。
+     * DeepSeek 等可为 Nova 工程上限（非官方规格），见 modelRegistry 注释。
+     */
+    contextWindow?: number
   }>
 }
 
@@ -77,8 +82,13 @@ export const PRESET_PROVIDERS: Record<PresetProviderId, PresetProviderMeta> = {
     name: 'MiniMax',
     baseUrl: 'https://api.minimaxi.com/v1',
     defaultModels: [
-      { modelId: 'MiniMax-M2.5', displayName: 'MiniMax-M2.5' },
-      { modelId: 'MiniMax-M2.5-highspeed', displayName: 'MiniMax-M2.5-highspeed' }
+      // 官方 204,800（platform.minimax.io，验证 2026-07）
+      { modelId: 'MiniMax-M2.5', displayName: 'MiniMax-M2.5', contextWindow: 204_800 },
+      {
+        modelId: 'MiniMax-M2.5-highspeed',
+        displayName: 'MiniMax-M2.5-highspeed',
+        contextWindow: 204_800
+      }
     ]
   },
   glm: {
@@ -86,6 +96,7 @@ export const PRESET_PROVIDERS: Record<PresetProviderId, PresetProviderMeta> = {
     name: 'GLM',
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
     defaultModels: [
+      // 默认 API 窗口未单独核实（有 [1m] 变体），留空走兜底（2026-07）
       { modelId: 'glm-5.2', displayName: 'GLM-5.2' },
       { modelId: 'glm-5.1', displayName: 'GLM-5.1' }
     ]
@@ -95,9 +106,19 @@ export const PRESET_PROVIDERS: Record<PresetProviderId, PresetProviderMeta> = {
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModels: [
-      // DeepSeek 官方 Chat Completions 当前无视觉；显式 false，避免仅靠推断漂移
-      { modelId: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash', supportsVision: false },
-      { modelId: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro', supportsVision: false }
+      // 官方规格 1M；Nova 配置 500K 以控制 KV cache 成本与延迟，Agent 场景绰绰有余（2026-07）
+      {
+        modelId: 'deepseek-v4-flash',
+        displayName: 'deepseek-v4-flash',
+        supportsVision: false,
+        contextWindow: 500_000
+      },
+      {
+        modelId: 'deepseek-v4-pro',
+        displayName: 'deepseek-v4-pro',
+        supportsVision: false,
+        contextWindow: 500_000
+      }
     ]
   }
 }
@@ -130,7 +151,8 @@ export function createProviderFromPreset(
       id: generateLocalId('model'),
       modelId: m.modelId,
       displayName: m.displayName,
-      ...(m.supportsVision !== undefined ? { supportsVision: m.supportsVision } : {})
+      ...(m.supportsVision !== undefined ? { supportsVision: m.supportsVision } : {}),
+      ...(m.contextWindow !== undefined ? { contextWindow: m.contextWindow } : {})
     })),
     toolDialect: 'auto'
   }

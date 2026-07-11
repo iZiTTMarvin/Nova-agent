@@ -19,6 +19,7 @@ import { bindSkillServiceWindow, getSkillService } from './services/SkillService
 import { closeMemoryService } from './services/MemoryServiceHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
 import { getWorkspaceService } from './services/WorkspaceService'
+import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
 import { initMainLogger, mainLog } from './logger'
@@ -300,5 +301,7 @@ app.on('will-quit', (event) => {
     // WorkspaceService 未初始化时跳过
   }
   closeMemoryService()
+  // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
+  closeAllSessionIndexes()
   app.exit(0)
 })
