@@ -31,6 +31,17 @@ export interface VerificationResult {
   exitCode: number | null
   /** 执行耗时（毫秒） */
   durationMs: number
+  /** 子进程因执行超时被终止 */
+  timedOut?: boolean
+  /** 调用方取消信号导致终止 */
+  cancelled?: boolean
+}
+
+/** 验证进程的受控执行选项。 */
+export interface VerificationExecutionOptions {
+  abortSignal?: AbortSignal
+  /** 未提供时使用 runner 的默认超时。 */
+  timeoutMs?: number
 }
 
 /**

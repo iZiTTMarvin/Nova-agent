@@ -8,7 +8,7 @@
 export interface RunExecutionHandle {
   runId: string
   generation: number
-  kind: 'agent' | 'compose'
+  kind: 'agent' | 'compose' | 'xforge'
   abort(reason: string): void
   settled: Promise<void>
 }
@@ -75,7 +75,7 @@ export class RunExecutionRegistry {
   }
 
   /** 是否仍有未 settled 的 agent 句柄（全局 AgentLoop 重叠防护） */
-  hasUnsettledHandle(kind?: 'agent' | 'compose'): boolean {
+  hasUnsettledHandle(kind?: 'agent' | 'compose' | 'xforge'): boolean {
     for (const h of this.handles.values()) {
       if (kind && h.kind !== kind) continue
       return true

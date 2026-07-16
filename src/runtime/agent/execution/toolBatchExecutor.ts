@@ -5,7 +5,7 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { EventBus } from '../EventBus'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta } from '../../tools/types'
+import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta, FileEffectRecorder } from '../../tools/types'
 import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
@@ -56,6 +56,7 @@ export interface ToolBatchExecutionOptions {
   mode: Mode
   supportsVision: boolean
   checkpointManager: CheckpointManager | null
+  fileEffectRecorder?: FileEffectRecorder | null
   abortSignal: AbortSignal | undefined
   checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string, toolCallId?: string) => Promise<{ allowed: boolean; reason: string; aborted?: boolean }>
   checkBatchPermission?: (
@@ -122,6 +123,7 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     workingDir: options.workingDir,
     readState: options.readState,
     ...(options.checkpointManager ? { checkpointManager: options.checkpointManager } : {}),
+    ...(options.fileEffectRecorder ? { fileEffectRecorder: options.fileEffectRecorder } : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     supportsVision: options.supportsVision,
     ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),

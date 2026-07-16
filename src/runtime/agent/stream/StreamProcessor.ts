@@ -18,7 +18,9 @@
  * - 返回 retry  → 等价现状 shouldRetryChat=true; continue（调用方重跑本轮）
  * - 返回 error  → 等价现状流内 return 的终态（调用方 state=error 并结束，不启动 idleTimer）
  * - 返回 cancelled → 调用方应 cancelled=true 并走 finishMessageRound
- * - 返回 assistant → 调用方接管兜底解析之后的工具执行
+ * - 返回 assistant → 调用方接管兜底解析之后的工具执行
+
+
  */
 import { randomUUID } from 'crypto'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
@@ -571,6 +573,7 @@ export class StreamProcessor {
 }
 
 /**
- * 重新导出兜底解析工具，供 AgentLoop 在拿到 assistant 结果后做
+ * 重新导出兜底解析工具，供 AgentLoop 在拿到 assistant 结果后做
+
  */
 export { repairEmptyArgsFromContent, stripTextToolCalls, estimateContextTokens }

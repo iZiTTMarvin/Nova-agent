@@ -10,6 +10,7 @@ import {
 import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon, EditIcon } from './Icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRunStore } from '../stores/useRunStore'
+import { useAgentStore } from '../stores/useAgentStore'
 
 /** 每个项目下默认展示的最新会话数（对齐 Cursor「显示更多」） */
 const SIDEBAR_SESSION_PREVIEW_COUNT = 5
@@ -25,6 +26,7 @@ export const Sidebar: React.FC = () => {
   const selectProject = useSettingsStore(state => state.selectProject)
   const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
   const waitingSessions = useRunStore(state => state.waitingSessions)
+  const cancelExecution = useAgentStore(state => state.cancelExecution)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -248,12 +250,25 @@ export const Sidebar: React.FC = () => {
                                   </span>
                                 )}
                                 {showWaiting && (
-                                  <span
-                                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
-                                    title="等待你处理"
-                                  >
-                                    等待你处理
-                                  </span>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                                      title="等待你处理"
+                                    >
+                                      等待你处理
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
+                                      title="停止此 XForge 运行"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        void cancelExecution(waitingBadge?.runId)
+                                      }}
+                                    >
+                                      停止
+                                    </button>
+                                  </div>
                                 )}
                                 <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <button

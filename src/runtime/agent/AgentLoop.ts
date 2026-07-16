@@ -37,6 +37,7 @@ import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
+import type { FileEffectRecorder } from '../tools/types'
 
 import { invokeSkill, expandSkillBody } from '../skills/invokeSkill'
 import { routeComposeInput } from './composeRouter'
@@ -136,6 +137,7 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** checkpoint 管理器（可选） */
   private checkpointManager: CheckpointManager | null = null
+  private fileEffectRecorder: FileEffectRecorder | null = null
   /** 当前工具调用方言，由模型 ID 决定 */
   private get toolDialect(): ToolDialect {
     return this.ctx.dialect
@@ -146,6 +148,9 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 权限决策引擎（可选） */
   private permissionManager: PermissionManager | null = null
+  private toolAuthorizationPolicy:
+    | ((toolName: string, args: Record<string, unknown>) => { allowed: boolean; reason: string })
+    | null = null
 
   /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具） */
   private get sessionStore(): SessionStore | null {
@@ -314,6 +319,12 @@ export class AgentLoop implements IdleCompactionTarget {
         scriptName: string,
         args: string,
         opts?: { abortSignal?: AbortSignal }
+      ) => Promise<{ summary: string }>)
+    | null = null
+  private xforgeRunner:
+    | ((
+        request: string,
+        opts: { abortSignal?: AbortSignal; messageId: string; explicitFullDev: boolean }
       ) => Promise<{ summary: string }>)
     | null = null
 
@@ -568,6 +579,21 @@ export class AgentLoop implements IdleCompactionTarget {
     this.permissionManager = manager
   }
 
+  /** 注入写工具使用的持久化副作用协议。 */
+  setFileEffectRecorder(recorder: FileEffectRecorder | null): void {
+    this.fileEffectRecorder = recorder
+  }
+
+  /**
+   * 叠加在基础 PermissionManager 之前的运行时权限策略。
+   * 用于阶段工作流等更窄的能力边界；拒绝项不会再弹基础权限确认。
+   */
+  setToolAuthorizationPolicy(
+    policy: ((toolName: string, args: Record<string, unknown>) => { allowed: boolean; reason: string }) | null
+  ): void {
+    this.toolAuthorizationPolicy = policy
+  }
+
   /**
    * 设置会话上下文：把 SessionStore 与当前 sessionId 注入 AgentLoop，
    * 工具执行时由 toolBatchExecutor 透传到 ToolContext。
@@ -644,6 +670,18 @@ export class AgentLoop implements IdleCompactionTarget {
       | null
   ): void {
     this.workflowRunner = runner
+  }
+
+  /** 注入原生 XForge Stage Pipeline；自然语言与 /br-full-dev 共用此入口。 */
+  setXForgeRunner(
+    runner:
+      | ((
+          request: string,
+          opts: { abortSignal?: AbortSignal; messageId: string; explicitFullDev: boolean }
+        ) => Promise<{ summary: string }>)
+      | null
+  ): void {
+    this.xforgeRunner = runner
   }
 
   /**
@@ -765,7 +803,40 @@ export class AgentLoop implements IdleCompactionTarget {
         templateContext: { workspacePath: this.workingDir ?? undefined }
       })
 
-      // XForge 自动路由：compose + passthrough + 已注入 workflowRunner 时，用 LLM 改写 dispatch
+      const explicitFullDev =
+        dispatch.kind === 'workflow' && dispatch.scriptName === 'br-full-dev'
+      if (
+        this.mode === 'compose' &&
+        this.xforgeRunner &&
+        (dispatch.kind === 'passthrough' || explicitFullDev)
+      ) {
+        try {
+          const result = await this.xforgeRunner(
+            explicitFullDev && dispatch.kind === 'workflow' ? dispatch.args : content as string,
+            {
+              abortSignal: this.abortController?.signal,
+              messageId,
+              explicitFullDev
+            }
+          )
+          this.context.push({ role: 'assistant', content: result.summary })
+          this.eventBus.emit({ type: 'text_delta', messageId, delta: result.summary })
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+          this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+          this.state = 'error'
+          this.checkpointManager?.endMessage()
+          this.eventBus.emit({ type: 'message_end', messageId })
+          this.idleTimer?.cancel()
+          this.idleTimer = null
+          return
+        }
+        await this.finishMessageRound(messageId)
+        return
+      }
+
+      // 仅供未注入原生 XForge runner 的旧宿主恢复历史任务。
       if (
         this.mode === 'compose' &&
         dispatch.kind === 'passthrough' &&
@@ -778,11 +849,12 @@ export class AgentLoop implements IdleCompactionTarget {
           { abortSignal: this.abortController?.signal }
         )
         if (routeResult.route === 'full') {
+          // 历史宿主仍以 br-full-dev 进入旧工作流。
           dispatch = { kind: 'workflow', scriptName: 'br-full-dev', args: content as string }
         } else if (routeResult.route === 'plan' && this.skillRegistry) {
           const skill = this.skillRegistry.get('br-brainstorming')
           if (skill) {
-            // XForge 自动路由：注册 skill 目录，供后续只读工具读取 references
+            // 注册 skill 目录，供后续只读工具读取 references
             this.addSkillRoot(skill.directory)
             const assistantContent = expandSkillBody(skill, content as string, {
               workspacePath: this.workingDir ?? undefined,
@@ -918,6 +990,7 @@ export class AgentLoop implements IdleCompactionTarget {
         binDirs: this.binDirs,
         supportsVision: this.config.supportsVision ?? true,
         checkpointManager: this.checkpointManager,
+        fileEffectRecorder: this.fileEffectRecorder,
         abortSignal: this.abortController?.signal,
         checkPermission: createPermissionExtension(this),
         checkBatchPermission: (items, msgId) => this.checkBatchPermission(items, msgId),
@@ -1246,9 +1319,18 @@ export class AgentLoop implements IdleCompactionTarget {
       return results
     }
 
+    const remainingItems = items.filter(item => {
+      const decision = this.toolAuthorizationPolicy?.(item.toolName, item.args)
+      if (!decision || decision.allowed) return true
+      results.set(item.toolCallId, decision)
+      return false
+    })
+
+    if (remainingItems.length === 0) return results
+
     // 没有 PermissionManager 时，全部放行
     if (!this.permissionManager) {
-      for (const item of items) {
+      for (const item of remainingItems) {
         if (this.mode === 'plan' && WRITE_TOOLS[item.toolName]) {
           results.set(item.toolCallId, {
             allowed: false,
@@ -1264,7 +1346,7 @@ export class AgentLoop implements IdleCompactionTarget {
     // 逐个匹配本地规则 (持久化与模式规则)
     const askItems: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string }> = []
     
-    for (const item of items) {
+    for (const item of remainingItems) {
       const result = this.permissionManager.check({ toolName: item.toolName, args: item.args }, this.mode)
       if (result.decision === 'allow') {
         results.set(item.toolCallId, { allowed: true, reason: '' })
@@ -1359,6 +1441,9 @@ export class AgentLoop implements IdleCompactionTarget {
     messageId: string,
     toolCallId?: string
   ): Promise<{ allowed: boolean; reason: string; aborted?: boolean }> {
+    const overlay = this.toolAuthorizationPolicy?.(toolName, args)
+    if (overlay && !overlay.allowed) return overlay
+
     // 没有 PermissionManager 时退化为简单 plan 模式检查
     if (!this.permissionManager) {
       if (this.mode === 'plan' && WRITE_TOOLS[toolName]) {

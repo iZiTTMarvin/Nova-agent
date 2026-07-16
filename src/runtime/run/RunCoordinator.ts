@@ -11,6 +11,15 @@ import { randomUUID } from 'crypto'
 import { InteractionInbox } from './InteractionInbox'
 import { RunStore } from './RunStore'
 import {
+  applyXForgeStageTransition,
+  cloneXForgeRunState,
+  createInitialXForgeRunState,
+  isTerminalStage,
+  type ApplyXForgeTransitionOptions,
+  type StageTransitionResult,
+  type XForgeRunState
+} from '../workflow/xforge'
+import {
   isHardTerminalRunStatus,
   isTerminalRunStatus,
   RUN_STATUS_TRANSITIONS,
@@ -28,6 +37,31 @@ import {
   type ToolCommitPhase,
   type ToolCommitRecord
 } from './types'
+
+/** XForge 阶段原子提交结果 */
+export type CommitXForgeStageResult =
+  | { ok: true; snapshot: RunSnapshot; xforge: XForgeRunState }
+  | {
+      ok: false
+      code:
+        | 'not_found'
+        | 'run_ended'
+        | 'not_xforge'
+        | 'xforge_terminal'
+        | 'transition_rejected'
+        | 'from_mismatch'
+      message: string
+      snapshot?: RunSnapshot
+    }
+
+export type CommitXForgeStatePatchResult =
+  | { ok: true; snapshot: RunSnapshot; xforge: XForgeRunState }
+  | {
+      ok: false
+      code: 'not_found' | 'run_ended' | 'not_xforge' | 'xforge_terminal' | 'transition_rejected'
+      message: string
+      snapshot?: RunSnapshot
+    }
 
 export type RunSnapshotListener = (snapshot: RunSnapshot, event: RunEventRecord) => void
 
@@ -97,10 +131,245 @@ export class RunCoordinator {
       toolCommits: [],
       turnDraft: null,
       commandAcks: [],
-      terminalOutbox: []
+      terminalOutbox: [],
+      ...(params.kind === 'xforge'
+        ? {
+            xforge: cloneXForgeRunState(
+              params.xforge ?? createInitialXForgeRunState()
+            )
+          }
+        : {})
     }
-    this.commit(snapshot, 'run_started', { kind: params.kind })
+    this.commit(snapshot, 'run_started', {
+      kind: params.kind,
+      ...(snapshot.xforge ? { xforge: cloneXForgeRunState(snapshot.xforge) } : {})
+    })
     return cloneSnapshot(snapshot)
+  }
+
+  /**
+   * 启动 XForge Stage Run：kind=xforge，snapshot 带初始阶段状态。
+   * 本方法只落权威状态，不执行 Agent / workflow。
+   */
+  startXForgeRun(
+    params: Omit<StartRunParams, 'kind' | 'xforge'> & {
+      xforge?: XForgeRunState
+      reviewOnly?: boolean
+    }
+  ): RunSnapshot {
+    const initial =
+      params.xforge ??
+      createInitialXForgeRunState({
+        reviewOnly: params.reviewOnly
+      })
+    return this.startRun({
+      runId: params.runId,
+      kind: 'xforge',
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      messageId: params.messageId,
+      xforge: initial
+    })
+  }
+
+  /**
+   * 将 StageTransitionResult 原子写入 RunSnapshot.xforge（单次 commitTransaction）。
+   * 硬终态 run / XForge 终态阶段拒绝更新；失败 transition 不落盘。
+   */
+  commitXForgeStageTransition(
+    runId: string,
+    result: StageTransitionResult,
+    opts: ApplyXForgeTransitionOptions = {}
+  ): CommitXForgeStageResult {
+    const snap = this.requireMutable(runId)
+    if (!snap) {
+      const existing = this.getSnapshot(runId)
+      if (!existing) {
+        return { ok: false, code: 'not_found', message: `run 不存在: ${runId}` }
+      }
+      return {
+        ok: false,
+        code: 'run_ended',
+        message: `run 已终态，拒绝阶段更新（status=${existing.status}）`,
+        snapshot: cloneSnapshot(existing)
+      }
+    }
+
+    if (snap.kind !== 'xforge' || !snap.xforge) {
+      return {
+        ok: false,
+        code: 'not_xforge',
+        message: '仅 kind=xforge 的 run 可提交阶段转移',
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+
+    if (isTerminalStage(snap.xforge.currentStage)) {
+      return {
+        ok: false,
+        code: 'xforge_terminal',
+        message: `XForge 终态 ${snap.xforge.currentStage} 不可再更新`,
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+
+    const applied = applyXForgeStageTransition(snap.xforge, result, opts)
+    if (!applied.ok) {
+      return {
+        ok: false,
+        code: applied.code,
+        message: applied.reason,
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+
+    snap.xforge = applied.state
+    syncRunSnapshotWithXForgeStage(snap, applied.state)
+
+    const enteredTerminal = isTerminalStage(applied.state.currentStage)
+    const transitionId = enteredTerminal
+      ? (snap.terminalTransitionId ?? randomUUID())
+      : undefined
+    if (enteredTerminal && transitionId) {
+      snap.terminalTransitionId = transitionId
+    }
+
+    this.commit(snap, 'xforge_stage_commit', {
+      from: result.ok ? result.from : undefined,
+      to: result.ok ? result.to : undefined,
+      reason: result.ok ? result.reason : result.reason,
+      xforge: cloneXForgeRunState(applied.state),
+      status: snap.status,
+      progress: snap.progress,
+      ...(snap.terminalReason !== undefined
+        ? { terminalReason: snap.terminalReason }
+        : {}),
+      ...(transitionId ? { terminalTransitionId: transitionId } : {})
+    })
+
+    if (enteredTerminal && transitionId) {
+      const hookName = mapTerminalToHook(snap.status)
+      if (hookName) {
+        void this.fireTerminalHook(runId, transitionId, hookName, snap)
+      }
+    }
+
+    return {
+      ok: true,
+      snapshot: cloneSnapshot(snap),
+      xforge: cloneXForgeRunState(applied.state)
+    }
+  }
+
+  /**
+   * 原子更新 XForge 同阶段事实（任务尝试、写入边界、证据等）。
+   * 阶段转移仍必须走 commitXForgeStageTransition；本入口不改变 currentStage。
+   */
+  commitXForgeStatePatch(
+    runId: string,
+    opts: ApplyXForgeTransitionOptions,
+    reason = 'XForge 状态更新'
+  ): CommitXForgeStatePatchResult {
+    const snap = this.requireMutable(runId)
+    if (!snap) {
+      const existing = this.getSnapshot(runId)
+      if (!existing) {
+        return { ok: false, code: 'not_found', message: `run 不存在: ${runId}` }
+      }
+      return {
+        ok: false,
+        code: 'run_ended',
+        message: `run 已终态，拒绝 XForge 状态更新（status=${existing.status}）`,
+        snapshot: cloneSnapshot(existing)
+      }
+    }
+
+    if (snap.kind !== 'xforge' || !snap.xforge) {
+      return {
+        ok: false,
+        code: 'not_xforge',
+        message: '仅 kind=xforge 的 run 可更新 XForge 状态',
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+
+    if (isTerminalStage(snap.xforge.currentStage)) {
+      return {
+        ok: false,
+        code: 'xforge_terminal',
+        message: `XForge 终态 ${snap.xforge.currentStage} 不可再更新`,
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+
+    snap.xforge = patchXForgeRunState(snap.xforge, opts, reason)
+    syncRunSnapshotWithXForgeStage(snap, snap.xforge)
+    this.commit(snap, 'xforge_state_patch', {
+      reason,
+      xforge: cloneXForgeRunState(snap.xforge),
+      status: snap.status,
+      progress: snap.progress
+    })
+
+    return {
+      ok: true,
+      snapshot: cloneSnapshot(snap),
+      xforge: cloneXForgeRunState(snap.xforge)
+    }
+  }
+
+  /**
+   * 用用户的新输入恢复安全挂起的 XForge run。
+   * 恢复目标只读自持久化 resumeTarget，调用方不能任意指定或绕过门禁。
+   */
+  resumeXForgeRun(
+    runId: string,
+    userDecision?: string
+  ): CommitXForgeStatePatchResult {
+    const snap = this.requireMutable(runId)
+    if (!snap) {
+      return { ok: false, code: 'not_found', message: `run 不存在或已结束: ${runId}` }
+    }
+    if (snap.kind !== 'xforge' || !snap.xforge) {
+      return {
+        ok: false,
+        code: 'not_xforge',
+        message: '仅 kind=xforge 的 run 可恢复',
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+    const state = snap.xforge
+    if (state.currentStage !== 'waiting_user' || !state.resumeTarget) {
+      return {
+        ok: false,
+        code: 'transition_rejected',
+        message: `XForge 当前阶段 ${state.currentStage} 不可按 waiting_user 恢复`,
+        snapshot: cloneSnapshot(snap)
+      }
+    }
+    const next = cloneXForgeRunState(state)
+    next.currentStage = state.resumeTarget
+    next.suspendedStage = null
+    next.resumeTarget = null
+    next.waitingReason = null
+    next.lastTransitionReason = `用户输入后恢复到 ${next.currentStage}`
+    if (userDecision?.trim()) {
+      next.mainSession.userDecisions.push(userDecision.trim())
+    }
+    snap.xforge = next
+    snap.status = 'running'
+    snap.progress = { label: `XForge：${next.currentStage}` }
+    this.commit(snap, 'xforge_state_patch', {
+      reason: next.lastTransitionReason,
+      xforge: cloneXForgeRunState(next),
+      status: snap.status,
+      progress: snap.progress
+    })
+    return {
+      ok: true,
+      snapshot: cloneSnapshot(snap),
+      xforge: cloneXForgeRunState(next)
+    }
   }
 
   /** queued → running，并原子记录 turn_started */
@@ -862,6 +1131,40 @@ export class RunCoordinator {
   }
 }
 
+/**
+ * 将 XForge 阶段同步到 RunSnapshot.status / progress / terminal 字段。
+ * waiting_user：同步挂起语义；completed|failed|cancelled：同步硬终态并取消 pending 交互。
+ */
+function syncRunSnapshotWithXForgeStage(snap: RunSnapshot, xforge: XForgeRunState): void {
+  if (xforge.currentStage === 'waiting_user') {
+    if (snap.status === 'running' || snap.status === 'retrying') {
+      snap.status = 'waiting_user'
+    }
+    if (xforge.waitingReason) {
+      snap.progress = {
+        ...(snap.progress ?? {}),
+        label: xforge.waitingReason
+      }
+    }
+    return
+  }
+
+  if (
+    xforge.currentStage === 'completed' ||
+    xforge.currentStage === 'failed' ||
+    xforge.currentStage === 'cancelled'
+  ) {
+    snap.status = xforge.currentStage
+    snap.terminalReason = xforge.lastTransitionReason ?? snap.terminalReason
+    for (const inter of snap.pendingInteractions) {
+      if (inter.status === 'pending' || inter.status === 'submitting') {
+        inter.status = 'cancelled'
+        inter.version += 1
+      }
+    }
+  }
+}
+
 function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
   return {
     ...snap,
@@ -876,8 +1179,70 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
         }
       : snap.turnDraft,
     commandAcks: snap.commandAcks?.map(a => ({ ...a })),
-    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e }))
+    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e })),
+    xforge: snap.xforge ? cloneXForgeRunState(snap.xforge) : snap.xforge
   }
+}
+
+function patchXForgeRunState(
+  prev: XForgeRunState,
+  opts: ApplyXForgeTransitionOptions,
+  reason: string
+): XForgeRunState {
+  const next = cloneXForgeRunState(prev)
+  next.lastTransitionReason = reason
+  if (opts.completedStages !== undefined) next.completedStages = [...opts.completedStages]
+  if (opts.skippedStages !== undefined) next.skippedStages = [...opts.skippedStages]
+  if (opts.planVersion !== undefined) next.planVersion = opts.planVersion
+  if (opts.workspaceRevision !== undefined) next.workspaceRevision = opts.workspaceRevision
+  if (opts.hasValidatedPlan !== undefined) next.hasValidatedPlan = opts.hasValidatedPlan
+  if (opts.hasValidScopePass !== undefined) next.hasValidScopePass = opts.hasValidScopePass
+  if (opts.scopePass !== undefined) {
+    next.scopePass = opts.scopePass ? { ...opts.scopePass } : null
+  }
+  if (opts.reviewOnly !== undefined) next.reviewOnly = opts.reviewOnly
+  if (opts.artifact) next.stageArtifacts.push({ ...opts.artifact })
+  if (opts.evidenceRef) next.evidenceRefs.push({ ...opts.evidenceRef })
+  if (opts.tasks !== undefined) next.tasks = opts.tasks.map(t => ({
+    ...t,
+    acceptance: [...t.acceptance],
+    evidenceRefs: t.evidenceRefs.map(e => ({ ...e }))
+  }))
+  if (opts.validatedPlan !== undefined) {
+    next.validatedPlan = opts.validatedPlan ? structuredClone(opts.validatedPlan) : null
+  }
+  if (opts.mainSession !== undefined) {
+    next.mainSession = structuredClone(opts.mainSession)
+  }
+  if (opts.pendingScopeFindings !== undefined) {
+    next.pendingScopeFindings = opts.pendingScopeFindings.map(finding => ({ ...finding }))
+  }
+  if (opts.activeTaskId !== undefined) next.activeTaskId = opts.activeTaskId
+  if (opts.writeBoundary !== undefined) {
+    next.writeBoundary = opts.writeBoundary
+      ? { ...opts.writeBoundary, fingerprint: { ...opts.writeBoundary.fingerprint } }
+      : null
+  }
+  if (opts.testEvidence !== undefined) {
+    next.testEvidence = opts.testEvidence ? structuredClone(opts.testEvidence) : null
+  }
+  if (opts.reviewFindings !== undefined) {
+    next.reviewFindings = structuredClone(opts.reviewFindings)
+  }
+  if (opts.technicalDebt !== undefined) {
+    next.technicalDebt = structuredClone(opts.technicalDebt)
+  }
+  if (opts.reportFacts !== undefined) {
+    next.reportFacts = opts.reportFacts ? structuredClone(opts.reportFacts) : null
+  }
+  if (
+    next.scopePass &&
+    (next.scopePass.planVersion !== next.planVersion ||
+      next.scopePass.workspaceRevision !== next.workspaceRevision)
+  ) {
+    next.hasValidScopePass = false
+  }
+  return next
 }
 
 function mapTerminalToHook(status: RunStatus): TerminalHookName | null {

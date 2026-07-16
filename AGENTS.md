@@ -9,7 +9,7 @@
 ## 1. 项目本质
 
 - Electron 33 + React 18 + TypeScript 5 的**本地桌面 Agent**。
-- **差异化重心**：缓存感知上下文压缩、Compose 多 Agent 编排（journal 断点续跑）、会话树 + 文件 forward、SQLite 记忆层；工具链/权限等为基线能力。
+- **差异化重心**：缓存感知上下文压缩、XForge（BuildRail 阶段自适应顺序工作流；施工真源见 `docs/todo/XForge实施方案.md`）与 Compose 共享基础设施（journal 断点续跑等）、会话树 + 文件 forward、SQLite 记忆层；工具链/权限等为基线能力。
 - 核心循环（AgentLoop / Tools / ModelClient / Permissions / Checkpoints）放在 `src/runtime/`，刻意不依赖 Electron API，以便单测。
 - 渲染层只通过类型化 IPC 与主进程通信，不直接操作文件或模型。
 

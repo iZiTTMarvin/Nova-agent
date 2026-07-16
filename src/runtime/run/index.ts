@@ -11,7 +11,8 @@ export type {
   TerminalHookName,
   TerminalHookContext,
   TerminalHookHandler,
-  RunCoordinatorOptions
+  RunCoordinatorOptions,
+  CommitXForgeStageResult
 } from './RunCoordinator'
 export { InteractionInbox } from './InteractionInbox'
 export type { EnqueueInteractionParams } from './InteractionInbox'

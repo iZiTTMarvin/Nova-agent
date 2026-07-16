@@ -12,6 +12,19 @@ import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestio
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
 
+export interface FileEffectToken {
+  effectId: string
+}
+
+/** 写工具的持久化副作用协议；prepare 必须先于目标文件变更。 */
+export interface FileEffectRecorder {
+  prepareFileWrite: (
+    absolutePath: string,
+    action: 'create' | 'modify'
+  ) => FileEffectToken
+  commitFileWrite: (token: FileEffectToken, absolutePath: string) => void
+}
+
 /** 工具执行上下文，携带工作区边界和 checkpoint 信息 */
 export interface ToolContext {
   /** 工作区根目录的绝对路径，所有路径操作不得越界 */
@@ -27,6 +40,8 @@ export interface ToolContext {
   readState: ReadState
   /** checkpoint 管理器（写入类工具需要通过它做写前备份） */
   checkpointManager?: import('../checkpoints/CheckpointManager').CheckpointManager
+  /** 可选的文件副作用凭证记录器；XForge 写入时由 Runtime 注入。 */
+  fileEffectRecorder?: FileEffectRecorder
   /** 取消信号，用户点击取消时触发，bashTool 等长时间运行工具应监听此信号终止执行 */
   abortSignal?: AbortSignal
   /** 当前模型是否支持图片输入（vision），用于 readTool 决定是否发送图片 */

@@ -1,0 +1,173 @@
+/**
+ * XForge runtime 窄纵切出口：阶段类型、Resolver、Controller 纯函数。
+ */
+
+export type {
+  XForgeStage,
+  XForgeStartStage,
+  XForgeTerminalStage,
+  ScopePassRef,
+  StageResolverInput,
+  StageResolverResult,
+  StageControllerFacts,
+  StageControllerContext,
+  StageTransitionResult,
+  TransitionBudgetDelta,
+  TransitionRejectCode
+} from './types'
+
+export {
+  XFORGE_TERMINAL_STAGES,
+  SCOPE_CORRECTION_BUDGET,
+  DELIVERY_TEST_FIX_BUDGET,
+  REVIEW_REMEDIATION_BUDGET
+} from './types'
+
+export { resolveStartStage, clampStartStage } from './stageResolver'
+
+export {
+  isTerminalStage,
+  isLegalTransition,
+  clampImplementTarget,
+  transition,
+  nextAfterScopeCheck,
+  nextAfterTest,
+  nextAfterReview,
+  nextAfterFix
+} from './stageController'
+
+export type {
+  XForgeRunState,
+  XForgeStageArtifactRef,
+  XForgeEvidenceRef,
+  XForgeTaskState,
+  XForgeTaskStatus,
+  XForgeWorkspaceFingerprint,
+  XForgeWriteBoundary,
+  XForgeFileEffect,
+  XForgeControlledCommandEvidence,
+  XForgeTestEvidenceState,
+  XForgeReviewFindingState,
+  XForgeReportFactsState,
+  XForgeMainSessionState,
+  XForgeScopeFindingState,
+  CreateXForgeRunStateOptions,
+  ApplyXForgeTransitionOptions,
+  ApplyXForgeTransitionResult
+} from './runState'
+
+export {
+  createInitialXForgeRunState,
+  applyXForgeStageTransition,
+  cloneXForgeRunState
+} from './runState'
+
+export type {
+  XForgePlanTask,
+  XForgeValidatedPlan,
+  XForgePlanValidation
+} from './plan'
+
+export {
+  validateXForgePlan,
+  createTaskStatesFromPlan
+} from './plan'
+
+export type {
+  XForgeStageBinding,
+  XForgeStageMethod
+} from './stageBinding'
+
+export type {
+  XForgeStageMethodRegistry,
+  XForgeStageMethodResolution
+} from './stageMethodResolver'
+
+export { resolveXForgeStageMethod } from './stageMethodResolver'
+
+export {
+  XFORGE_STAGE_BINDINGS,
+  getXForgeStageBinding
+} from './stageBinding'
+
+export type {
+  XForgeExplorationMethod,
+  XForgeScopeFinding,
+  XForgeScopeCheckResult,
+  XForgeTaskFileEffect,
+  XForgeTaskAttemptResult,
+  XForgeMainAgentContext,
+  XForgeStageHost,
+  XForgeRunCommitter,
+  XForgeStageExecutorOptions
+} from './stageExecutor'
+
+export {
+  XForgeStageExecutor,
+  toControllerContext,
+  buildWriteBoundary,
+  buildMainAgentContext
+} from './stageExecutor'
+
+export type {
+  XForgeControlledTestCommand,
+  XForgeRuntimeCommandResult,
+  XForgeReviewInputSnapshot,
+  XForgeReviewWorkspaceSnapshot,
+  XForgeFixResult,
+  XForgeDeliveryHost,
+  XForgeDeliveryExecutorOptions
+} from './deliveryExecutor'
+
+export {
+  XForgeDeliveryExecutor,
+  buildReportFacts,
+  isForbiddenXForgeSideEffectCommand,
+  isSafeRuntimeTestCommand
+} from './deliveryExecutor'
+
+export type {
+  XForgePreDeliveryRunner,
+  XForgeDeliveryRunner
+} from './executionPipeline'
+
+export { XForgeExecutionPipeline } from './executionPipeline'
+export {
+  runXForgeLiveRuntime,
+  classifyXForgeRequest,
+  normalizeXForgeBrainstormPayload,
+  resolveXForgeTaskVerificationCommand,
+  resolveXForgeDeliveryCommands
+} from './liveRuntime'
+export type {
+  XForgeLiveRuntimeOptions,
+  XForgeLiveRuntimeResult
+} from './liveRuntime'
+export { XForgeFileEffectRecorder } from './effectRecorder'
+
+export type { XForgeDeliveryRuntimeOptions } from './deliveryRuntime'
+export {
+  captureXForgeWorkspaceFingerprint,
+  parseCommandArgv,
+  runXForgeControlledTestCommand,
+  resolveXForgeVerificationTimeout,
+  recordXForgeTestEvidence,
+  createXForgeReviewSnapshot,
+  writeXForgeRuntimeReport
+} from './deliveryRuntime'
+
+export {
+  getXForgeRunRoot,
+  getXForgeStageDir,
+  writeXForgeArtifact,
+  writeXForgeEvidence,
+  createWorkspaceFingerprint,
+  readArtifactText
+} from './stageArtifacts'
+
+export type { XForgeEffectInspection } from './writeSafety'
+export {
+  prepareXForgeWriteBoundary,
+  inspectXForgeTaskEffects,
+  validateXForgeCommittedEffects
+} from './writeSafety'

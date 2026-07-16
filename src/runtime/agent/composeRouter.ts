@@ -1,6 +1,9 @@
 /**
- * XForge 自动路由 — 轻量 LLM 意图分类
+ * XForge 兼容路由（现有运行路径）— 轻量 LLM 意图分类
+ *
  * 将 compose 模式下的自然语言输入分为 quick / plan / full 三档，never-throw。
+ * 这是当前仍在使用的旧入口实现；产品目标是 BuildRail 阶段自适应顺序工作流
+ * （见 docs/todo/XForge实施方案.md），不得把三档路由当作最终产品定义。
  */
 import type { ModelClient } from '../model/ModelClient'
 import type { ChatMessage } from '../model/types'

@@ -38,12 +38,12 @@ function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
 
 function buildComposeInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: XForge — 智能路由开发]',
-    '开发流程由编排脚本强制推进，你作为子 agent 执行脚本指派的阶段任务。',
-    '可以读取、修改和验证工作区；危险命令仍会被拦截。',
-    '发布前或连续失败时会通过 askUser 询问用户，不要擅自跳过阶段。',
-    '若是单点改动，完成后主动用 br-verify 验证相关测试是否通过；改动范围较大时先用 br-scope-check 评估影响面。',
-    '这些验证步骤是你的默认肌肉记忆，无需用户提醒。'
+    '[当前模式: XForge — BuildRail 阶段自适应顺序工作流]',
+    'XForge 是基于 BuildRail 开发生命周期的单主 Agent 自动工作流：根据用户自然语言与仓库事实选择安全起点，并自动向后推进（探索 → 计划 → Scope → 实现 → 测试 → 审查 → 汇报）。',
+    '质量门禁以 Runtime 受控命令结果、真实测试与隔离 Review 为准；模型自报通过不算过。',
+    '不自动执行 git commit、push 或 deploy；需要发布时须由用户确认。',
+    '自然语言需求与 /br-full-dev 统一进入原生 XForge 阶段执行器；历史脚本只用于恢复旧任务。',
+    '可以读取、修改和验证工作区；危险命令仍会被拦截。阻塞或连续失败时通过 askQuestion / askUser 询问用户，不要跳过强制门禁。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')

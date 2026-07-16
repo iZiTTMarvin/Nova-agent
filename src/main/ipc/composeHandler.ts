@@ -1,7 +1,7 @@
 /**
- * 编排模式 IPC：run / cancel / status / resume
- * 主要入口仍是 slash `/br-full-dev`（经 AgentLoop workflowRunner）；
- * 本 handler 供 UI 进度面板与显式 resume/cancel。
+ * 旧编排运行的 cancel / status / resume 宿主。
+ * 新的自然语言与 `/br-full-dev` 均由 AgentLoop 进入原生 XForge Stage Pipeline；
+ * 本 handler 不再允许创建第二条 br-full-dev 决策链，但保留历史 run 恢复能力。
  *
  * 依赖装配与 agentHandler 的 workflowRunner 同构，避免 COMPOSE_RUN 路径
  * 缺少 checkpoint / permissionBridge / contextWindow 等能力。
@@ -179,6 +179,9 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     workspaceRoot: string
     sessionId?: string
   }) => {
+    if (params.scriptName === 'br-full-dev') {
+      throw new Error('br-full-dev 已迁移到原生 XForge，请在 XForge 模式下直接发送需求')
+    }
     const eventBus = new EventBus()
     const unsub = wireComposeEvents(eventBus, getMainWindow)
     const coord = getRunCoordinator()

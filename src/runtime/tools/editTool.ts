@@ -774,9 +774,13 @@ export const editTool: ToolExecutor = {
           assertSideEffectAllowed(context, 'checkpoint backup')
           context.checkpointManager.backupBeforeWrite(absolutePath, false)
         }
+        const effectToken = context.fileEffectRecorder?.prepareFileWrite(absolutePath, 'modify')
 
         await safeWrite(ops, absolutePath, newContent, readResult)
         throwIfAborted()
+        if (effectToken) {
+          context.fileEffectRecorder!.commitFileWrite(effectToken, absolutePath)
+        }
 
         const newStat = await ops.stat(absolutePath)
         context.readState.set(absolutePath, {

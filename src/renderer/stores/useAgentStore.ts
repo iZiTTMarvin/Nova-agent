@@ -41,7 +41,7 @@ export interface AgentState {
    * - 超 grace 由 useRunStore 显示「部分任务未退出」+ 强制终止
    * - Renderer 不能独立宣布后台 run 已结束
    */
-  cancelExecution: () => Promise<void>
+  cancelExecution: (runId?: string) => Promise<void>
 
   /**
    * 兼容旧 clearCancelFallback：现由 run snapshot 终态驱动，保留空实现避免调用方报错。
@@ -93,16 +93,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   isSubmittingAskQuestion: false,
   mainTurnSessionId: null,
 
-  cancelExecution: async () => {
+  cancelExecution: async (targetRunId?: string) => {
     try {
       const { useRunStore } = await import('./useRunStore')
       const runState = useRunStore.getState()
       // 停止按钮只针对当前选中会话的活动 run，不能误取消后台其他会话。
-      const runId =
+      const runId = targetRunId ??
         (runState.selectedSessionId
           ? runState.activeRunIdBySessionId[runState.selectedSessionId]
-          : runState.snapshot?.runId) ??
-        get().mainTurnSessionId /* 仅作占位；真正 runId 由 IPC 返回 */
+          : runState.snapshot?.runId)
 
       // 本地立即进入 cancelling，不清 isGenerating（等 snapshot 终态）
       useRunStore.getState().beginLocalCancel(runId ?? 'unknown')
@@ -116,7 +115,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         isSubmittingAskQuestion: false
       })
 
-      const result = await window.api.invoke('cancel-execution')
+      const result = runId
+        ? await window.api.invoke('cancel-execution', { runId })
+        : await window.api.invoke('cancel-execution')
       if (result?.runId) {
         useRunStore.getState().beginLocalCancel(result.runId)
       }

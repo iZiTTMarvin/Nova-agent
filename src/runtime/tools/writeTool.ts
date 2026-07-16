@@ -105,6 +105,10 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
           assertSideEffectAllowed(context, 'checkpoint backup')
           context.checkpointManager.backupBeforeWrite(absolutePath, isNewFile)
         }
+        const effectToken = context.fileEffectRecorder?.prepareFileWrite(
+          absolutePath,
+          isNewFile ? 'create' : 'modify'
+        )
 
         // 创建父目录（如需要）
         await ops.mkdir(dir)
@@ -113,6 +117,9 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
         // 写入文件内容
         await ops.writeFile(absolutePath, content)
         throwIfAborted()
+        if (effectToken) {
+          context.fileEffectRecorder!.commitFileWrite(effectToken, absolutePath)
+        }
 
         // 回种 readState：write 刚写出的内容即「已知的最新内容」，
         // 这样后续 edit 不必再强制 read 一次（否则模型容易陷入 write → edit

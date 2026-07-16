@@ -10,9 +10,10 @@ hidden: true
 
 ## 硬性规则
 
-- 用 `bash` / `read` / `grep` 查看真实 diff 与代码，不要空审。
+- 只审查 Runtime 提供的只读 Review Input Snapshot；不得调用 `bash` / `read` / `grep` / 网络 / task / invoke_skill 或任何写入工具。
+- Snapshot 必须包含当前 diff/文件正文、计划、任务结果和新鲜测试证据；缺失的事实标记 `unverified`，不得自行补全。
 - 目标是持续变好，不是完美主义；小问题标 medium/low/nit。
-- **critical / high 必须可操作**：写清文件、摘要、建议。
+- **critical / high 必须可操作**：写清位置、事实依据、摘要和建议。
 
 ## 五轴
 
@@ -40,17 +41,18 @@ hidden: true
   "criticals": [
     {
       "severity": "critical",
-      "file": "src/auth.ts",
+      "location": "src/auth.ts:18",
       "summary": "密码明文写入日志",
+      "evidence": "Snapshot 中 logger.info 直接接收 password",
       "suggestion": "改为只记录用户 ID"
     }
   ],
   "issues": [
     {
       "severity": "high",
-      "file": "src/api.ts",
-      "line": 42,
+      "location": "src/api.ts:42",
       "summary": "未校验用户输入",
+      "evidence": "handler 直接把 req.body 传入数据库层",
       "suggestion": "增加 schema 校验"
     }
   ]

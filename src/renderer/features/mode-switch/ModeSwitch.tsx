@@ -36,7 +36,7 @@ export const ModeSwitch: React.FC = () => {
     {
       id: 'compose',
       name: 'XForge',
-      desc: '智能路由开发：输入需求，自动编排设计/实现/验证流程',
+      desc: '自然语言驱动 BuildRail 开发流程（自动选阶段并推进）',
       icon: <CodeIcon size={14} />
     }
   ]

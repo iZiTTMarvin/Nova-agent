@@ -11,6 +11,7 @@ import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATIO
 import { join } from 'path'
 import { AgentLoop, EventBus, renderToolInventory, buildStableSystemPrompt, normalizeFrozenSystemPrompt, buildSkillContextForMode, estimateTokens, discoverProjectRules, renderBaseRules, type AgentEvent, type RecoveryState } from '../../runtime/agent'
 import { runWorkflow } from '../../runtime/workflow'
+import { runXForgeLiveRuntime } from '../../runtime/workflow/xforge'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../shared/config/types'
 import { preferredToolDialect } from '../../runtime/model/dialect'
@@ -91,8 +92,13 @@ import {
  */
 export function isAgentTurnInProgress(): boolean {
   try {
-    if (getRunExecutionRegistry().hasUnsettledHandle('agent')) return true
-    return getRunCoordinator().listActiveRuns().length > 0
+    if (getRunExecutionRegistry().hasUnsettledHandle()) return true
+    return getRunCoordinator().listActiveRuns().some(run =>
+      run.status === 'running' ||
+      run.status === 'retrying' ||
+      run.status === 'resuming' ||
+      run.status === 'cancelling'
+    )
   } catch {
     return getActiveRunId() !== null
   }
@@ -101,7 +107,12 @@ export function isAgentTurnInProgress(): boolean {
 /** 供跨会话守卫：当前活跃轮次所属会话 id（无进行中轮次时为 null） */
 export function getActiveTurnSessionId(): string | null {
   try {
-    const active = getRunCoordinator().listActiveRuns()
+    const active = getRunCoordinator().listActiveRuns().filter(run =>
+      run.status === 'running' ||
+      run.status === 'retrying' ||
+      run.status === 'resuming' ||
+      run.status === 'cancelling'
+    )
     if (active.length === 0) return null
     // 优先当前 SEND_MESSAGE 绑定的 run
     const bound = getActiveRunId()
@@ -141,6 +152,7 @@ const VERIFICATION_PERMISSION_TIMEOUT_MS = 30_000
 const USE_UNIFIED_SKILL_DISPATCH = process.env.NOVA_USE_UNIFIED_SKILL_DISPATCH !== 'false'
 
 interface PendingVerificationPermissionEntry {
+  runId: string
   messageId: string
   resolve: (granted: boolean) => void
   timeoutHandle: NodeJS.Timeout
@@ -151,6 +163,7 @@ interface PendingVerificationPermissionEntry {
 export const pendingVerificationPermissions = new Map<string, PendingVerificationPermissionEntry>()
 
 interface PendingAskQuestionEntry {
+  runId: string
   resolve: (answers: AskQuestionAnswer[]) => void
   eventBus: EventBus
 }
@@ -199,9 +212,11 @@ function clearVerificationPermissionRequest(requestId: string, granted: boolean)
   })
 }
 
-function clearAllPendingVerificationPermissions(): void {
-  for (const requestId of [...pendingVerificationPermissions.keys()]) {
-    clearVerificationPermissionRequest(requestId, false)
+function clearPendingVerificationPermissions(runId?: string): void {
+  for (const [requestId, entry] of pendingVerificationPermissions) {
+    if (!runId || entry.runId === runId) {
+      clearVerificationPermissionRequest(requestId, false)
+    }
   }
 }
 
@@ -328,8 +343,15 @@ export function registerAgentHandler(
     images?: Array<{ fileName: string; data: string; mimeType: string }>
     regenerate?: boolean
   }): Promise<void> => {
-    // 守卫改读 RunCoordinator：有非终态 run 则拒发（UI 侧靠 run:snapshot 同步）
-    if (isAgentTurnInProgress()) {
+    const coordinatorAtEntry = getRunCoordinator()
+    const activeRuns = coordinatorAtEntry.listActiveRuns()
+    const resumableXForge = activeRuns.find(run =>
+      run.kind === 'xforge' &&
+      run.sessionId === params.sessionId &&
+      (run.status === 'waiting_user' || run.status === 'resuming') &&
+      !getRunExecutionRegistry().hasUnsettledHandle()
+    ) ?? null
+    if (isAgentTurnInProgress() && !resumableXForge) {
       const whereSession = getActiveTurnSessionId()
       const where = whereSession && whereSession !== params.sessionId
         ? '（在另一个会话中）'
@@ -373,6 +395,15 @@ export function registerAgentHandler(
     const projectPath = session.workspaceRoot
     const sessionsDir = sessionStore.getSessionsDir()
     const novaSettings = loadNovaSettings()
+
+    if (!resumableXForge && session.mode === 'compose') {
+      const existingXForge = activeRuns.find(run =>
+        run.kind === 'xforge' && run.workspaceId === projectPath
+      )
+      if (existingXForge) {
+        throw new Error('当前工作区已有未结束的 XForge 运行，请先继续或停止该运行。')
+      }
+    }
 
     // 在闭包中捕获本次调用的全部上下文，后续所有操作只读这些值
     const capturedSessionId = params.sessionId
@@ -582,9 +613,9 @@ export function registerAgentHandler(
     // 回调闭包捕获本次 eventBus，与 pendingVerificationPermissions 同隔离模式（每次 SEND_MESSAGE 都 new EventBus）。
     // 不设 timeout：用户必须显式回答 / dismiss / 新消息 / cancel 四条出口之一，不做自动兜底。
     // 同时写入 InteractionInbox（持久化归属），供 snapshot-first 恢复。
-    agentLoop.setAskQuestionHandler((requestId, questions) => {
+    const askQuestionHandler = (requestId: string, questions: AskQuestionItem[]) => {
       return new Promise<AskQuestionAnswer[]>((resolve) => {
-        pendingAskQuestions.set(requestId, { resolve, eventBus })
+        pendingAskQuestions.set(requestId, { runId: capturedRunId, resolve, eventBus })
         const messageId =
           [...activeStreams.keys()].at(-1) ??
           runCoordinator.getSnapshot(capturedRunId)?.messageId ??
@@ -608,7 +639,8 @@ export function registerAgentHandler(
           version: interaction.version
         })
       })
-    })
+    }
+    agentLoop.setAskQuestionHandler(askQuestionHandler)
 
     // 从 session 历史恢复多轮对话上下文（快照优先 + 增量补齐，锚点失效则全量重建）。
     // 历史消息里的图片以 nova-image:// URL 持久化，模型不认识，恢复时需转回 base64。
@@ -701,6 +733,33 @@ export function registerAgentHandler(
         return { summary: `编排已取消（runId=${outcome.runId}）` }
       }
       throw new Error(outcome.error || `编排失败（runId=${outcome.runId}）`)
+    })
+
+    agentLoop.setXForgeRunner(async (request, opts) => {
+      const persistedGoal = runCoordinator
+        .getSnapshot(capturedRunId)
+        ?.xforge?.mainSession.goal.trim()
+      const result = await runXForgeLiveRuntime({
+        runId: capturedRunId,
+        request: persistedGoal || request,
+        explicitFullDev: opts.explicitFullDev,
+        workspaceRoot: projectPath,
+        modelClient: modelPool,
+        parentEventBus: eventBus,
+        parentMessageId: opts.messageId,
+        toolRegistry,
+        skillRegistry,
+        checkpointManager,
+        committer: runCoordinator,
+        askQuestion: askQuestionHandler,
+        abortSignal: opts.abortSignal,
+        assertExecutionCurrent: () =>
+          runCoordinator.isExecutionCurrent(capturedRunId, executionGeneration),
+        contextWindow,
+        supportsVision,
+        readState: mainReadState
+      })
+      return { summary: result.summary }
     })
 
     const isRegenerate = params.regenerate === true
@@ -836,24 +895,44 @@ export function registerAgentHandler(
 
     // Execution：此后立即进入 try/catch/finally，run 的每个出口都由同一处收敛。
     // 全局 AgentLoop：旧 handle 未 settled 时禁止开启新的共享 loop（含 interrupted lingering）
-    if (executionRegistry.hasUnsettledHandle('agent')) {
+    if (executionRegistry.hasUnsettledHandle()) {
       throw new Error('上一次 Agent 执行尚未完全退出，请稍候再发送（避免与旧 continuation 重叠）')
     }
-    const runSnap = runCoordinator.startRun({
-      kind: session.mode === 'compose' ? 'compose' : 'agent',
-      workspaceId: projectPath,
-      sessionId: params.sessionId
-    })
+    let runSnap
+    if (resumableXForge) {
+      if (resumableXForge.status === 'waiting_user') {
+        const resumed = runCoordinator.resumeXForgeRun(resumableXForge.runId, params.content)
+        if (!resumed.ok) throw new Error(resumed.message)
+        runSnap = resumed.snapshot
+      } else {
+        runSnap = resumableXForge
+      }
+    } else if (session.mode === 'compose') {
+      runSnap = runCoordinator.startXForgeRun({
+        workspaceId: projectPath,
+        sessionId: params.sessionId
+      })
+    } else {
+      runSnap = runCoordinator.startRun({
+        kind: 'agent',
+        workspaceId: projectPath,
+        sessionId: params.sessionId
+      })
+    }
     capturedRunId = runSnap.runId
     executionGeneration = Date.now()
+    const loopForRun = agentLoop
+    if (!loopForRun) {
+      throw new Error('AgentLoop 未初始化')
+    }
     const executionSettled = new Promise<void>(resolve => {
       resolveExecutionSettled = resolve
     })
     executionRegistry.register({
       runId: capturedRunId,
       generation: executionGeneration,
-      kind: session.mode === 'compose' ? 'compose' : 'agent',
-      abort: () => agentLoop?.cancel(),
+      kind: runSnap.kind,
+      abort: () => loopForRun.cancel(),
       settled: executionSettled
     })
     runCoordinator.bindExecutionGeneration(capturedRunId, executionGeneration)
@@ -862,9 +941,11 @@ export function registerAgentHandler(
       runCoordinator.isExecutionCurrent(capturedRunId, executionGeneration)
     )
     // onCancel 按 runId 精确解析 loop（多并发时不打到错误实例）
-    agentLoopsByRunId.set(capturedRunId, agentLoop)
+    agentLoopsByRunId.set(capturedRunId, loopForRun)
     setActiveRunId(capturedRunId)
-    runCoordinator.markRunning(capturedRunId)
+    if (runCoordinator.getSnapshot(capturedRunId)?.status !== 'running') {
+      runCoordinator.markRunning(capturedRunId)
+    }
 
     let turnFailed = false
     try {
@@ -879,6 +960,16 @@ export function registerAgentHandler(
       turnFailed = true
       const reason = err instanceof Error ? err.message : String(err)
       try {
+        const failedSnap = getRunCoordinator().getSnapshot(capturedRunId)
+        if (failedSnap?.kind === 'xforge' && failedSnap.xforge &&
+            !['completed', 'failed', 'cancelled'].includes(failedSnap.xforge.currentStage)) {
+          getRunCoordinator().commitXForgeStageTransition(capturedRunId, {
+            ok: true,
+            from: failedSnap.xforge.currentStage,
+            to: 'failed',
+            reason
+          })
+        }
         getRunCoordinator().commitTerminal({
           runId: capturedRunId,
           status: 'failed',
@@ -890,13 +981,24 @@ export function registerAgentHandler(
       // 若尚未终态（正常完成或取消路径已 commit），补 completed
       const coord = getRunCoordinator()
       const snap = coord.getSnapshot(capturedRunId)
-      if (snap && !['completed', 'failed', 'cancelled', 'interrupted'].includes(snap.status)) {
+      if (snap && !['completed', 'failed', 'cancelled', 'interrupted', 'waiting_user'].includes(snap.status)) {
         if (!turnFailed) {
           const cancelled = snap.status === 'cancelling'
-          coord.commitTerminal({
-            runId: capturedRunId,
-            status: cancelled ? 'cancelled' : 'completed'
-          })
+          if (snap.kind === 'xforge' && snap.xforge) {
+            coord.commitXForgeStageTransition(capturedRunId, {
+              ok: true,
+              from: snap.xforge.currentStage,
+              to: cancelled ? 'cancelled' : 'failed',
+              reason: cancelled
+                ? '用户取消 XForge 执行'
+                : 'XForge Pipeline 未进入 waiting_user 或终态即退出'
+            })
+          } else {
+            coord.commitTerminal({
+              runId: capturedRunId,
+              status: cancelled ? 'cancelled' : 'completed'
+            })
+          }
         }
       }
       resolveExecutionSettled()
@@ -906,32 +1008,44 @@ export function registerAgentHandler(
     }
   })
 
-  handle(CANCEL_EXECUTION, async (): Promise<{ runId: string | null; status: string }> => {
-    const runId = getActiveRunId()
+  handle(CANCEL_EXECUTION, async (_event, params: { runId?: string } = {}): Promise<{ runId: string | null; status: string }> => {
+    const runId = params.runId ?? getActiveRunId()
     const coord = getRunCoordinator()
-    if (runId) {
+    const beforeCancel = runId ? coord.getSnapshot(runId) : null
+    const hasExecutionHandle = runId ? getRunExecutionRegistry().get(runId) !== null : false
+    if (runId && beforeCancel) {
       coord.beginCancel(runId)
       coord.inbox.cancelAllForRun(runId)
-      // abort 会等待执行收敛；终态仍由 SEND_MESSAGE 的 finally 统一提交。
-      await getRunExecutionRegistry().abort(runId, 'cancel_execution')
+
+      if (hasExecutionHandle) {
+        // abort 会等待执行收敛；终态仍由 SEND_MESSAGE 的 finally 统一提交。
+        await getRunExecutionRegistry().abort(runId, 'cancel_execution')
+        defaultSubAgentPermissionBridge.cancelAll()
+        defaultSubAgentPermissionBridge.clear()
+        markActiveStreamsCancelled()
+      } else if (beforeCancel.kind === 'xforge' && beforeCancel.xforge) {
+        // parked XForge 没有执行句柄，必须在此原子落终态，不能遗留 cancelling。
+        coord.commitXForgeStageTransition(runId, {
+          ok: true,
+          from: beforeCancel.xforge.currentStage,
+          to: 'cancelled',
+          reason: '用户取消已暂停的 XForge 运行'
+        })
+      } else {
+        coord.commitTerminal({ runId, status: 'cancelled', reason: '用户取消未执行的运行' })
+      }
+
+      clearPendingVerificationPermissions(runId)
+      // 清理挂起的 askQuestion：空 answers 让工具走 dismissed 路径，UI 面板随之关闭。
+      for (const [requestId, entry] of pendingAskQuestions) {
+        if (entry.runId !== runId) continue
+        pendingAskQuestions.delete(requestId)
+        entry.resolve([])
+        entry.eventBus.emit({ type: 'ask_question_resolved', requestId })
+      }
     }
 
-    // 先停父 agent，再联动停所有活跃子代理。
-    // 顺序：父先 cancel 可避免父在子停止后又派新的工具调用；子 cancel 后父的
-    // await subLoop.sendMessage(task) 才会在最近的 abort 检查点返回。
-    agentLoop?.cancel()
-    defaultSubAgentPermissionBridge.cancelAll()
-    defaultSubAgentPermissionBridge.clear()
-    markActiveStreamsCancelled()
-    clearAllPendingVerificationPermissions()
-    // 清理挂起的 askQuestion：空 answers 让工具走 dismissed 路径，UI 面板随之关闭
-    for (const [requestId, entry] of pendingAskQuestions) {
-      pendingAskQuestions.delete(requestId)
-      entry.resolve([])
-      entry.eventBus.emit({ type: 'ask_question_resolved', requestId })
-    }
-
-    // 终态由 sendMessage finally / commitTerminal 确认；此处只返回 cancelling
+    // 有执行句柄时终态由 sendMessage finally 确认；parked XForge 已在上方同步终止。
     const snap = runId ? coord.getSnapshot(runId) : null
     return { runId, status: snap?.status ?? 'idle' }
   })
@@ -1476,6 +1590,7 @@ export function triggerVerificationIfNeeded(
             }, VERIFICATION_PERMISSION_TIMEOUT_MS)
 
             pendingVerificationPermissions.set(requestId, {
+              runId: ctx.runId ?? '',
               messageId,
               resolve,
               timeoutHandle,

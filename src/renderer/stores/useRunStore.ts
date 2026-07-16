@@ -228,6 +228,8 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         // 同步 chat isGenerating
         useChatStore.getState().markRunningAsCancelled()
         useAgentStore.getState().handleTurnState(false, null)
+      } else if (snap?.status === 'waiting_user') {
+        useAgentStore.getState().handleTurnState(false, null)
       } else if (snap && !isTerminalStatus(snap.status)) {
         // 非终态：同步 turn 归属
         useAgentStore.getState().handleTurnState(true, snap.sessionId)
@@ -295,6 +297,8 @@ export const useRunStore = create<RunViewState>((set, get) => ({
           forceTerminateRunId: null
         })
         useChatStore.getState().markRunningAsCancelled()
+        useAgentStore.getState().handleTurnState(false, null)
+      } else if (snapshot.status === 'waiting_user') {
         useAgentStore.getState().handleTurnState(false, null)
       } else if (!isTerminalStatus(snapshot.status)) {
         useAgentStore.getState().handleTurnState(true, snapshot.sessionId)

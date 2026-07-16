@@ -5,6 +5,8 @@
 import React, { useState } from 'react'
 import { useComposeStore } from './useComposeStore'
 import { useAgentStore } from '../../stores/useAgentStore'
+import { useRunStore } from '../../stores/useRunStore'
+import type { RunSnapshot } from '../../../runtime/run/types'
 import type { ComposeTaskView } from './types'
 import './ComposeProgressPanel.css'
 
@@ -12,6 +14,7 @@ const STATUS_ICON: Record<string, string> = {
   pending: '⏳',
   in_progress: '🔄',
   done: '✅',
+  unverified: '⚠️',
   skipped: '⏭️',
   failed: '❌'
 }
@@ -20,6 +23,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending: '待开始',
   in_progress: '进行中',
   done: '完成',
+  unverified: '未定向验证',
   skipped: '跳过',
   failed: '失败',
   running: '进行中',
@@ -150,6 +154,7 @@ const TaskRow: React.FC<{
 }
 
 export const ComposeProgressPanel: React.FC = () => {
+  const xforgeSnapshot = useRunStore((s) => s.snapshot)
   const state = useComposeStore((s) => s.state)
   const runId = useComposeStore((s) => s.runId)
   const viewStatus = useComposeStore((s) => s.viewStatus)
@@ -167,6 +172,10 @@ export const ComposeProgressPanel: React.FC = () => {
   const [showPreview, setShowPreview] = useState(false)
   const [rerunStepId, setRerunStepId] = useState('')
   const [actionMsg, setActionMsg] = useState<string | null>(null)
+
+  if (xforgeSnapshot?.kind === 'xforge' && xforgeSnapshot.xforge) {
+    return <XForgeProgressView snapshot={xforgeSnapshot} onCancel={cancelExecution} />
+  }
 
   if (!state) return null
 
@@ -542,5 +551,80 @@ export const ComposeProgressPanel: React.FC = () => {
         )}
       </div>
     </div>
+  )
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  resolve: '识别起点',
+  brainstorm: '需求探索',
+  plan: '实施计划',
+  scope_check: 'Scope Check',
+  implement: '实施',
+  test: 'Test Gate',
+  review: '隔离 Review',
+  fix: '根因修复',
+  report: '最终报告',
+  waiting_user: '等待用户',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消'
+}
+
+const XForgeProgressView: React.FC<{
+  snapshot: RunSnapshot
+  onCancel: (runId?: string) => Promise<void>
+}> = ({ snapshot, onCancel }) => {
+  const state = snapshot.xforge!
+  const testVerdict = state.testEvidence
+    ? state.testEvidence.passed ? '通过' : '失败'
+    : '未运行'
+  const blocking = state.reviewFindings.filter(
+    finding => finding.severity === 'critical' || finding.severity === 'high'
+  ).length
+  return (
+    <section className="compose-panel" aria-label="XForge 运行进度">
+      <header className="compose-panel__header">
+        <div>
+          <strong>XForge · {STAGE_LABELS[state.currentStage] ?? state.currentStage}</strong>
+          <div className="compose-panel__mono">runId: {snapshot.runId}</div>
+        </div>
+        {!['completed', 'failed', 'cancelled'].includes(state.currentStage) && (
+          <button className="compose-panel__btn" onClick={() => void onCancel(snapshot.runId)}>停止</button>
+        )}
+      </header>
+      <div className="compose-panel__meta">
+        <span>已完成：{state.completedStages.map(stage => STAGE_LABELS[stage] ?? stage).join('、') || '—'}</span>
+        <span>已跳过：{state.skippedStages.map(stage => STAGE_LABELS[stage] ?? stage).join('、') || '—'}</span>
+        <span>Test Gate：{testVerdict}</span>
+        <span>Blocking：{blocking}</span>
+      </div>
+      <div className="compose-panel__meta">
+        <span>Scope 修正 {state.scopeCorrectionUsed}/2</span>
+        <span>Test-Fix {state.deliveryTestFixUsed}/3</span>
+        <span>Review-Fix {state.reviewRemediationUsed}/2</span>
+        {state.reviewOnly && <span>Review Only</span>}
+      </div>
+      {state.currentStage === 'waiting_user' && (
+        <div className="compose-panel__failure" role="status">
+          <strong>安全暂停</strong>
+          <div>{state.waitingReason ?? '需要你的输入'}</div>
+          <div>回复消息后从 {STAGE_LABELS[state.resumeTarget ?? ''] ?? state.resumeTarget ?? '当前阶段'} 继续。</div>
+        </div>
+      )}
+      {state.tasks.length > 0 && (
+        <table className="compose-panel__table">
+          <thead><tr><th>任务</th><th>状态</th><th>尝试</th></tr></thead>
+          <tbody>
+            {state.tasks.map(task => (
+              <tr key={task.id} className={`compose-panel__row compose-panel__row--${task.status}`}>
+                <td className="compose-panel__td-task"><span className="compose-panel__task-id">{task.id}</span> {task.title}</td>
+                <td>{statusIcon(task.status)} {statusLabel(task.status)}</td>
+                <td>{task.attempts}/3{task.failureReason ? ` · ${task.failureReason}` : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }

@@ -287,6 +287,35 @@ function reduceEventPayload(
         status: 'interrupted',
         terminalReason: typeof p.reason === 'string' ? p.reason : 'process_exit'
       }
+    case 'run_started': {
+      if (p.xforge && typeof p.xforge === 'object') {
+        return { xforge: p.xforge as RunSnapshot['xforge'] }
+      }
+      return {}
+    }
+    case 'xforge_stage_commit':
+    case 'xforge_state_patch': {
+      // 重放须恢复与 commit 时一致的 xforge + RunStatus/progress/terminal 语义
+      const patch: Partial<RunSnapshot> = {}
+      if (p.xforge && typeof p.xforge === 'object') {
+        patch.xforge = p.xforge as RunSnapshot['xforge']
+      }
+      if (typeof p.status === 'string') {
+        patch.status = p.status as RunSnapshot['status']
+      }
+      if (p.progress === null) {
+        patch.progress = null
+      } else if (p.progress && typeof p.progress === 'object') {
+        patch.progress = p.progress as RunSnapshot['progress']
+      }
+      if (typeof p.terminalReason === 'string') {
+        patch.terminalReason = p.terminalReason
+      }
+      if (typeof p.terminalTransitionId === 'string') {
+        patch.terminalTransitionId = p.terminalTransitionId
+      }
+      return patch
+    }
     default:
       return {}
   }

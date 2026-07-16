@@ -4,8 +4,12 @@
  * 权威运行快照：主进程是唯一事实源；Renderer 只消费 snapshot + 带 sequence 的事件。
  */
 
-/** Run 种类 */
-export type RunKind = 'agent' | 'compose'
+import type { XForgeRunState } from '../workflow/xforge/runState'
+
+/** Run 种类（xforge = Stage Run；与 compose 脚本编排 run 分轨） */
+export type RunKind = 'agent' | 'compose' | 'xforge'
+
+export type { XForgeRunState }
 
 /**
  * Run 状态机（允许的主要转换）：
@@ -198,6 +202,11 @@ export interface RunSnapshot {
    * grace 超时 / 强制中断后递增或清零，使旧 continuation 失效。
    */
   executionGeneration?: number
+  /**
+   * XForge Stage Run 权威状态切片。
+   * 仅 kind==='xforge' 时写入；agent/compose run 不得依赖本字段。
+   */
+  xforge?: XForgeRunState
 }
 
 /** append-only 事件（落盘 events.jsonl） */
@@ -216,6 +225,8 @@ export interface StartRunParams {
   workspaceId: string
   sessionId: string
   messageId?: string
+  /** kind==='xforge' 时的初始阶段状态；缺省由 createInitialXForgeRunState 生成 */
+  xforge?: XForgeRunState
 }
 
 /** 终态提交参数 */
