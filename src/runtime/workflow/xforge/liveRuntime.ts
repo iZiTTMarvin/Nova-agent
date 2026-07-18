@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import { resolve, sep } from 'path'
 import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
-import { getToolCapability } from '../../../shared/session/toolVisibility'
 import type { ModelClient } from '../../model/ModelClient'
 import type { ModelClientPool } from '../../model/ModelClientPool'
 import type { ChatMessage } from '../../model/types'
@@ -46,8 +45,11 @@ import {
 } from './stageArtifacts'
 import { inspectXForgeTaskEffects, prepareXForgeWriteBoundary } from './writeSafety'
 import {
+  authorizeXForgeToolCall,
+  getXForgeEffectiveToolDefinitions,
+  getXForgeMainAgentModeInstruction,
   isSafeRuntimeTestCommand
-} from './deliveryExecutor'
+} from './policy'
 import type {
   XForgeMainSessionState,
   XForgeReviewFindingState,
@@ -667,7 +669,7 @@ class XForgeMainAgentSession {
     this.unsubscribe = this.bus.on(event => this.handleEvent(event))
     this.loop = new AgentLoop(options.modelClient, this.bus, {
       systemPrompt: [
-        '你是 XForge 的单一主 Agent。阶段用于组织工作，Runtime 会按阶段收紧工具能力。',
+        '你是 XForge 的单一主 Agent。阶段用于组织工作，Runtime 会按当前策略暴露和授权工具能力。',
         '只处理当前阶段；不得 commit、push、deploy 或 publish；不得把模型自报当作测试结果。',
         '阶段交互与产物持久化由 Runtime 负责。方法正文里的提问、写文件和返回格式说明只作领域参考，若与当前 Runtime 指令冲突，以 Runtime 指令为准。',
         '需要输出 JSON 时只输出一个 JSON 对象，不要使用 Markdown 围栏。'
@@ -682,30 +684,33 @@ class XForgeMainAgentSession {
     permission.setPermissionPolicy('auto')
     permission.setCurrentProjectPath(options.workspaceRoot)
     this.loop.setPermissionManager(permission)
-    this.loop.setMode('plan')
+    this.loop.setMode('compose')
     this.loop.setWorkingDir(options.workspaceRoot)
     this.loop.setToolRegistry(options.toolRegistry)
+    this.loop.setEffectiveToolDefinitionsProvider(() =>
+      getXForgeEffectiveToolDefinitions({
+        stage: options.getStage(),
+        toolDefinitions: options.toolRegistry.getToolDefinitions()
+      })
+    )
+    this.loop.setModeInstructionProvider(() =>
+      getXForgeMainAgentModeInstruction(options.getStage())
+    )
     this.loop.setCheckpointManager(options.checkpointManager)
     this.loop.setReadState(options.readState ?? createReadState())
     this.loop.setAskQuestionHandler(options.askQuestion)
     this.loop.setFileEffectRecorder(options.effectRecorder)
-    this.loop.setToolAuthorizationPolicy((toolName) => {
+    this.loop.setToolAuthorizationPolicy((toolName, args) => {
       const stage = options.getStage()
-      const capability = getToolCapability(toolName)
-      const isWritableStage = stage === 'implement' || stage === 'fix'
-      if (toolName === 'askQuestion') {
-        return { allowed: false, reason: 'XForge 用户交互只能由 Runtime 的阶段控制器发起' }
-      }
-      if (!isWritableStage && capability !== 'readonly') {
-        return { allowed: false, reason: `XForge ${stage} 阶段只允许只读工具` }
-      }
-      if (isWritableStage && capability !== 'readonly' && capability !== 'write') {
-        return {
-          allowed: false,
-          reason: 'XForge 实施与修复只允许读写文件；测试、构建和脚本执行由受控 Runtime 阶段负责'
-        }
-      }
-      return { allowed: true, reason: '' }
+      const xforge = options.committer.getSnapshot(options.runId)?.xforge ?? null
+      const decision = authorizeXForgeToolCall({
+        stage,
+        workspaceRoot: options.workspaceRoot,
+        validatedPlan: xforge?.validatedPlan ?? null,
+        toolName,
+        args
+      })
+      return { allowed: decision.allowed, reason: decision.reason }
     })
     if (options.assertExecutionCurrent) {
       this.loop.setExecutionFence(options.assertExecutionCurrent)
@@ -717,8 +722,6 @@ class XForgeMainAgentSession {
   async run(prompt: string): Promise<string> {
     throwIfAborted(this.options.abortSignal)
     this.output = ''
-    const stage = this.options.getStage()
-    this.loop.setMode(stage === 'implement' || stage === 'fix' ? 'compose' : 'plan')
     await this.loop.sendMessage(prompt)
     throwIfAborted(this.options.abortSignal)
     if (this.loop.getState() === 'error' || this.loop.getState() === 'cancelled') {

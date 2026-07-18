@@ -1,5 +1,4 @@
 import type { SkillManifest } from '../../skills/types'
-import { assessCommandRisk } from '../../permissions/rules'
 import {
   nextAfterFix,
   nextAfterReview,
@@ -13,6 +12,11 @@ import {
 } from './stageMethodResolver'
 import { buildWriteBoundary, toControllerContext, type XForgeRunCommitter } from './stageExecutor'
 import { validateXForgeCommittedEffects } from './writeSafety'
+import { authorizeXForgeVerificationCommand } from './policy'
+export {
+  isForbiddenXForgeSideEffectCommand,
+  isSafeRuntimeTestCommand
+} from './policy'
 import type {
   ApplyXForgeTransitionOptions,
   XForgeControlledCommandEvidence,
@@ -214,7 +218,7 @@ export class XForgeDeliveryExecutor {
       this.wait('test', 'Test Gate 缺少至少一项针对改动行为的必需验证命令')
       return
     }
-    const unsafeCommand = commands.find(command => !isSafeRuntimeTestCommand(command.command))
+    const unsafeCommand = commands.find(command => !authorizeXForgeVerificationCommand(command.command).allowed)
     if (unsafeCommand) {
       this.wait('test', `Test Gate 拒绝非验证或高风险命令: ${unsafeCommand.command}`)
       return
@@ -530,35 +534,6 @@ function deepFreeze<T>(value: T): Readonly<T> {
     deepFreeze(child)
   }
   return Object.freeze(value)
-}
-
-const FORBIDDEN_XFORGE_SIDE_EFFECT_COMMAND =
-  /(?:\bgit\b[^\r\n;&|]*\b(?:commit|push|reset|clean)\b|\b(?:npm|pnpm|yarn)\b[^\r\n;&|]*\b(?:publish|deploy)\b|\b(?:vercel|netlify|fly)\b[^\r\n;&|]*\bdeploy\b|\bkubectl\b[^\r\n;&|]*\b(?:apply|delete)\b|\bdocker\b[^\r\n;&|]*\bpush\b|\bgh\b[^\r\n;&|]*\brelease\s+create\b)/i
-
-/** XForge 在所有阶段都禁止提交、发布、部署和破坏 Git 工作区的命令。 */
-export function isForbiddenXForgeSideEffectCommand(command: string): boolean {
-  return FORBIDDEN_XFORGE_SIDE_EFFECT_COMMAND.test(command.trim())
-}
-
-const VALIDATION_COMMAND_PATTERNS: readonly RegExp[] = [
-  /^(?:npm|pnpm|yarn)(?:\.cmd)?\s+(?:test(?:\s+--.*)?|run\s+(?:test|typecheck|lint|build|validate)(?::[\w.-]+)?(?:\s+--.*)?)$/i,
-  /^npx(?:\.cmd)?\s+(?:vitest|tsc|eslint|playwright)\b[^;&|<>`]*$/i,
-  /^(?:python(?:\.exe)?\s+-m\s+)?(?:pytest|unittest)\b[^;&|<>`]*$/i,
-  /^node(?:\.exe)?\s+--test\b[^;&|<>`]*$/i,
-  /^cargo\s+(?:test|check|clippy)\b[^;&|<>`]*$/i,
-  /^go\s+test\b[^;&|<>`]*$/i,
-  /^dotnet\s+(?:test|build)\b[^;&|<>`]*$/i,
-  /^(?:mvn|mvnw|\.\/mvnw)\s+(?:test|verify)\b[^;&|<>`]*$/i,
-  /^(?:gradle|gradlew|\.\/gradlew)\s+(?:test|check|build)\b[^;&|<>`]*$/i,
-  /^(?:make|cmake\s+--build\s+\S+\s+--target)\s+(?:test|check)\b[^;&|<>`]*$/i
-]
-
-export function isSafeRuntimeTestCommand(command: string): boolean {
-  const trimmed = command.trim()
-  if (!trimmed || isForbiddenXForgeSideEffectCommand(trimmed)) return false
-  if (/[;&|<>`\r\n]/.test(trimmed)) return false
-  return VALIDATION_COMMAND_PATTERNS.some(pattern => pattern.test(trimmed)) &&
-    !assessCommandRisk(trimmed).isDangerous
 }
 
 export function buildReportFacts(

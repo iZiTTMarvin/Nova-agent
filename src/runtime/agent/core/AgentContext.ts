@@ -10,7 +10,7 @@
  *
  * 字段命名与 AgentLoop 既有字段一一对应，迁移时通过访问器桥接（PRD §8 Phase 1）。
  */
-import type { ChatMessage } from '../../model/types'
+import type { ChatMessage, ToolDefinition } from '../../model/types'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
 import type { ToolDialect } from '../../model/dialect'
 import type { Mode } from '../../../shared/session/types'
@@ -26,6 +26,8 @@ export interface AgentContext {
   systemPrompt: string
   /** 工具注册表（可空） */
   toolRegistry: ToolRegistry | null
+  /** 可选的运行时有效工具定义来源；未设置时使用 toolRegistry 全量定义 */
+  effectiveToolDefinitions: (() => ToolDefinition[]) | null
   /** 当前工具方言 */
   dialect: ToolDialect
   /** 运行模式 */
@@ -63,6 +65,7 @@ export function createAgentContext(initial: {
     messages: [],
     systemPrompt: '',
     toolRegistry: null,
+    effectiveToolDefinitions: null,
     dialect: 'xml',
     mode: 'default',
     workingDir: null,
@@ -77,4 +80,8 @@ export function createAgentContext(initial: {
     skillsTokenBudget: 0,
     ...initial
   }
+}
+
+export function getEffectiveToolDefinitions(context: AgentContext): ToolDefinition[] {
+  return context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
 }

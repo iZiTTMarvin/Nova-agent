@@ -34,6 +34,7 @@ import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { HookManager } from '../core/HookManager'
+import { getEffectiveToolDefinitions } from '../core/AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
 import type { StreamProcessorDeps, StreamRunParams, TurnStreamResult } from './streamTypes'
@@ -396,7 +397,7 @@ export class StreamProcessor {
               const diag = this.cacheDiagnostics.checkResponse(
                 event.usage.cachedTokens,
                 extractTextFromContent(context.messages.find(m => m.role === 'system')?.content ?? ''),
-                context.toolRegistry?.getToolDefinitions()
+                getEffectiveToolDefinitions(context)
               )
               if (diag.cacheBreakDetected) {
                 this.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })

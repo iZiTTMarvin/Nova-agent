@@ -121,9 +121,7 @@ export type {
 
 export {
   XForgeDeliveryExecutor,
-  buildReportFacts,
-  isForbiddenXForgeSideEffectCommand,
-  isSafeRuntimeTestCommand
+  buildReportFacts
 } from './deliveryExecutor'
 
 export type {
@@ -164,6 +162,24 @@ export {
   createWorkspaceFingerprint,
   readArtifactText
 } from './stageArtifacts'
+
+export type {
+  XForgeToolEffect,
+  XForgeToolExposureContext,
+  XForgeToolAuthorizationContext,
+  XForgeToolAuthorizationDecision,
+  XForgeVerificationPolicyDecision
+} from './policy'
+export {
+  getXForgeEffectiveToolDefinitions,
+  authorizeXForgeToolCall,
+  authorizeXForgeVerificationCommand,
+  getXForgeToolEffect,
+  getVisibleXForgeMainAgentTools,
+  getXForgeMainAgentModeInstruction,
+  isForbiddenXForgeSideEffectCommand,
+  isSafeRuntimeTestCommand
+} from './policy'
 
 export type { XForgeEffectInspection } from './writeSafety'
 export {

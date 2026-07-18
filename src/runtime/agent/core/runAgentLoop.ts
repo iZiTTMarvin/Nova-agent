@@ -24,6 +24,7 @@ import type { ToolDefinition } from '../../model/types'
 import { estimateContextTokens } from '../tokenEstimator'
 import { toToolContent, type ToolBatchExecutionResult } from '../execution/toolBatchExecutor'
 import type { HookManager } from './HookManager'
+import { getEffectiveToolDefinitions } from './AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig } from './loopTypes'
@@ -134,7 +135,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       context.lastEstimatedTokens = estimateContextTokens(context.messages)
 
       // ── 工具定义 + 缓存诊断基线（对标现状 L733-741）──
-      const tools = context.toolRegistry?.getToolDefinitions()
+      const tools = getEffectiveToolDefinitions(context)
       const systemPrompt = extractTextFromContent(
         context.messages.find(m => m.role === 'system')?.content ?? ''
       )

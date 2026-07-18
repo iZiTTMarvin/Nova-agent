@@ -9,7 +9,7 @@ import {
   writeXForgeArtifact,
   writeXForgeEvidence
 } from './stageArtifacts'
-import { isSafeRuntimeTestCommand } from './deliveryExecutor'
+import { authorizeXForgeVerificationCommand } from './policy'
 import type {
   XForgeControlledTestCommand,
   XForgeRuntimeCommandResult,
@@ -44,11 +44,12 @@ export async function runXForgeControlledTestCommand(
   options: XForgeDeliveryRuntimeOptions,
   command: XForgeControlledTestCommand
 ): Promise<XForgeRuntimeCommandResult> {
-  if (!isSafeRuntimeTestCommand(command.command)) {
+  const verificationDecision = authorizeXForgeVerificationCommand(command.command)
+  if (!verificationDecision.allowed) {
     return {
       exitCode: null,
       timedOut: false,
-      blockedReason: `拒绝非验证或高风险命令: ${command.command}`,
+      blockedReason: verificationDecision.reason,
       evidenceRef: { kind: 'runtime-command', note: 'blocked-before-execution', unverified: true }
     }
   }

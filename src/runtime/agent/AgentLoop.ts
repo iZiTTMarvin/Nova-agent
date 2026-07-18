@@ -5,7 +5,7 @@
  */
 import type { ModelClient } from '../model/ModelClient'
 import { ModelClientPool } from '../model/ModelClientPool'
-import type { ChatMessage, ChatToolCall, ContentBlock } from '../model/types'
+import type { ChatMessage, ChatToolCall, ContentBlock, ToolDefinition } from '../model/types'
 import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
@@ -41,7 +41,7 @@ import type { FileEffectRecorder } from '../tools/types'
 
 import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
-import { createAgentContext, type AgentContext } from './core/AgentContext'
+import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
 import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { createCompactionExtension } from './extensions/compactionExtension'
@@ -326,6 +326,7 @@ export class AgentLoop implements IdleCompactionTarget {
         opts: { abortSignal?: AbortSignal; messageId: string; explicitFullDev: boolean }
       ) => Promise<{ summary: string }>)
     | null = null
+  private modeInstructionProvider: (() => string) | null = null
 
   /**
    * 执行 generation fencing：副作用前校验（由 agentHandler 注入）。
@@ -454,7 +455,7 @@ export class AgentLoop implements IdleCompactionTarget {
         updatedAt: Date.now()
       },
       skills: this.skillsTokenBudget,
-      toolDefinitions: this.toolRegistry?.getToolDefinitions() ?? [],
+      toolDefinitions: getEffectiveToolDefinitions(this.ctx),
       contextLimit: this.config.contextWindow ?? 200_000
     })
     this.eventBus.emit({
@@ -527,7 +528,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.lastEstimatedTokens = estimateContextTokens(this.context)
     this.cacheDiagnostics.resetBaseline(
       extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
-      this.toolRegistry?.getToolDefinitions()
+      getEffectiveToolDefinitions(this.ctx)
     )
     this.emitContextBreakdown('', 0)
   }
@@ -535,6 +536,15 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 设置工具注册表 */
   setToolRegistry(registry: ToolRegistry): void {
     this.toolRegistry = registry
+  }
+
+  /** 设置本轮实际暴露给模型、缓存诊断和上下文拆分的工具定义来源。 */
+  setEffectiveToolDefinitionsProvider(provider: (() => ToolDefinition[]) | null): void {
+    this.ctx.effectiveToolDefinitions = provider
+  }
+
+  setModeInstructionProvider(provider: (() => string) | null): void {
+    this.modeInstructionProvider = provider
   }
 
   /** 设置工作区路径（工具执行时的边界目录） */
@@ -771,7 +781,7 @@ export class AgentLoop implements IdleCompactionTarget {
 
     this.eventBus.emit({ type: 'message_start', messageId })
 
-    const modeInstruction = getModeInstruction(this.mode)
+    const modeInstruction = this.modeInstructionProvider?.() ?? getModeInstruction(this.mode)
     let userText = typeof content === 'string'
       ? content
       : extractTextFromContent(content)
@@ -1088,7 +1098,7 @@ export class AgentLoop implements IdleCompactionTarget {
     // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
     this.cacheDiagnostics.resetBaseline(
       extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
-      this.toolRegistry?.getToolDefinitions()
+      getEffectiveToolDefinitions(this.ctx)
     )
   }
 

@@ -12,6 +12,7 @@ import { SkillRegistry } from '../../../../../src/runtime/skills/SkillRegistry'
 import { ToolRegistry } from '../../../../../src/runtime/tools/ToolRegistry'
 import { bashTool } from '../../../../../src/runtime/tools/bashTool'
 import { createReadState } from '../../../../../src/runtime/tools/editTool'
+import type { ToolExecutor } from '../../../../../src/runtime/tools/types'
 import { writeTool } from '../../../../../src/runtime/tools/writeTool'
 import {
   classifyXForgeRequest,
@@ -21,6 +22,7 @@ import {
   runXForgeLiveRuntime
 } from '../../../../../src/runtime/workflow/xforge/liveRuntime'
 import { createInitialXForgeRunState } from '../../../../../src/runtime/workflow/xforge/runState'
+import { createTaskStatesFromPlan } from '../../../../../src/runtime/workflow/xforge/plan'
 
 const roots: string[] = []
 
@@ -64,6 +66,18 @@ function semantic(overrides: Partial<{
   })
 }
 
+function noopTool(name: string): ToolExecutor {
+  return {
+    name,
+    description: `${name} tool`,
+    parameters: { type: 'object', properties: {}, additionalProperties: true },
+    executionMode: 'sequential',
+    async execute() {
+      return { success: true, output: `${name} ok` }
+    }
+  }
+}
+
 describe('XForge live Runtime', () => {
   it('自然语言与显式约束解析到安全起点', () => {
     expect(classifyXForgeRequest('实现一个登录页面').modelSemanticHint).toBeUndefined()
@@ -100,6 +114,95 @@ describe('XForge live Runtime', () => {
       mainSession: fallback,
       designNotes: []
     })
+  })
+
+  it('implement 主 Agent 使用 compose mode 但只暴露读写工具 schema', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-xforge-effective-tools-'))
+    roots.push(root)
+    mkdirSync(join(root, '.nova'), { recursive: true })
+
+    const plan = {
+      version: 1,
+      goal: '收敛权限契约',
+      constraints: ['不自动 commit'],
+      nonGoals: ['不运行发布动作'],
+      repositoryFacts: ['存在 TypeScript 工具链'],
+      changeScope: ['src/runtime/workflow/xforge/policy.ts'],
+      tasks: [{ id: 'T1', title: '实现 policy', acceptance: ['policy 单测通过'] }],
+      acceptanceMap: { T1: ['policy 单测通过'] },
+      verificationChecklist: [],
+      risks: ['工具 schema 不能与授权口径分裂']
+    }
+
+    const observed: Array<{ userText: string; toolNames: string[] }> = []
+    const client: ModelClient = {
+      async *chat(messages: unknown, tools?: Array<{ name: string }>): AsyncIterable<ChatEvent> {
+        const chatMessages = messages as Array<{ role: string; content: string }>
+        const lastUser = [...chatMessages].reverse().find(message => message.role === 'user')
+        observed.push({
+          userText: String(lastUser?.content ?? ''),
+          toolNames: tools?.map(tool => tool.name) ?? []
+        })
+        yield { type: 'text_delta', delta: '无需写入。' }
+        yield { type: 'message_end', finishReason: 'stop' }
+      },
+      updateConfig() {}
+    }
+
+    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
+    roots.push(runsRoot)
+    const coordinator = createRunCoordinator(runsRoot)
+    const initial = {
+      ...createInitialXForgeRunState({
+        currentStage: 'implement',
+        hasValidatedPlan: true,
+        hasValidScopePass: true,
+        planVersion: 1,
+        scopePass: { planVersion: 1, workspaceRevision: 0 }
+      }),
+      validatedPlan: plan,
+      tasks: createTaskStatesFromPlan(plan)
+    }
+    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-effective-tools', xforge: initial })
+    coordinator.markRunning(run.runId)
+    const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
+    roots.push(checkpointRoot)
+    const checkpointManager = new CheckpointManager({
+      checkpointDir: checkpointRoot,
+      sessionId: 'session-effective-tools',
+      workspaceRoot: root
+    })
+    const toolRegistry = new ToolRegistry()
+    for (const name of ['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'task', 'invoke_skill', 'askQuestion', 'unknown']) {
+      toolRegistry.register(noopTool(name))
+    }
+
+    await runXForgeLiveRuntime({
+      runId: run.runId,
+      request: '实现 policy',
+      workspaceRoot: root,
+      modelClient: client,
+      parentEventBus: new EventBus(),
+      parentMessageId: 'message-effective-tools',
+      toolRegistry,
+      skillRegistry: SkillRegistry.load({
+        builtinDir: resolve('.nova/skills'),
+        globalDir: join(root, '.global-skills'),
+        workspaceRoot: root
+      }),
+      checkpointManager,
+      committer: coordinator,
+      askQuestion: vi.fn(async () => []),
+      readState: createReadState()
+    })
+
+    const implementCall = observed.find(call => call.userText.includes('当前阶段：实施任务 T1'))
+    expect(implementCall?.userText).toContain('[当前模式: XForge')
+    expect(implementCall?.userText).toContain('主 Agent 永远不能执行 bash、task、invoke_skill 或 askQuestion')
+    expect(implementCall?.userText).toContain('测试、验证、用户提问和阶段推进由 Runtime 控制')
+    expect(implementCall?.userText).not.toContain('可以读取、修改和验证工作区')
+    expect(implementCall?.userText).not.toContain('askQuestion / askUser')
+    expect(implementCall?.toolNames).toEqual(['ls', 'read', 'grep', 'find', 'edit', 'write'])
   })
 
   it('brainstorm 拒绝写入工具，由 Runtime 持久化结构化产物且不污染父正文', async () => {
