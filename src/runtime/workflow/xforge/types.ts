@@ -66,6 +66,8 @@ export interface StageResolverInput {
   hasDesignOnlyDoc?: boolean
   /** 模糊新需求且无既有计划信号 */
   isVagueNewRequirement?: boolean
+  /** 明确不是开发交付、审查或验证请求；XForge 应给出引导并停止 */
+  isNonDevRequest?: boolean
   /** 当前是否存在 Validated Plan */
   hasValidatedPlan?: boolean
   /** 当前 Plan Version（有 Validated Plan 时提供） */
@@ -96,6 +98,8 @@ export interface StageResolverResult {
   /** 因自适应跳过的前置业务阶段 */
   skippedStages: XForgeStartStage[]
   reason: string
+  /** resolve 阶段可直接完成时返回给用户的摘要 */
+  terminalSummary?: string
   /** Bug 修复计划路径（不跳过 Scope） */
   repairPath?: boolean
 }

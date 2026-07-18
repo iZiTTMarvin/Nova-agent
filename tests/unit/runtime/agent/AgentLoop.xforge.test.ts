@@ -53,4 +53,35 @@ describe('AgentLoop native XForge dispatch', () => {
     )
     loop.dispose()
   })
+
+  it('显式旧 workflow skill 仍可进入 workflowRunner，不依赖自然语言三档路由', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-agent-legacy-workflow-'))
+    roots.push(root)
+    const skills = join(root, 'skills')
+    const skillDir = join(skills, 'legacy-flow')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(join(skillDir, 'SKILL.md'), [
+      '---',
+      'name: legacy-flow',
+      'description: legacy workflow',
+      'user-invocable: true',
+      'workflow: legacy-flow',
+      '---',
+      'Run legacy workflow.'
+    ].join('\n'))
+    const loop = new AgentLoop(neverCalledModel(), new EventBus())
+    loop.setMode('compose')
+    loop.setSkillRegistry(SkillRegistry.load({ globalDir: skills }))
+    const runner = vi.fn(async () => ({ summary: 'legacy completed' }))
+    loop.setWorkflowRunner(runner)
+
+    await loop.sendMessage('/legacy-flow 继续旧编排')
+
+    expect(runner).toHaveBeenCalledWith(
+      'legacy-flow',
+      '继续旧编排',
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+    )
+    loop.dispose()
+  })
 })

@@ -14,6 +14,7 @@ describe('resolveStartStage', () => {
     const result = resolveStartStage(
       base({
         reviewOnly: true,
+        isNonDevRequest: true,
         codeReadyForTest: true,
         hasValidatedPlan: true,
         requestedStartStage: 'implement',
@@ -23,6 +24,21 @@ describe('resolveStartStage', () => {
     expect(result.startStage).toBe('review')
     expect(result.reviewOnly).toBe(true)
     expect(result.reason).toMatch(/Review Only/)
+  })
+
+  it('非开发输入在 resolve 阶段直接完成，不进入流水线', () => {
+    const result = resolveStartStage(base({ isNonDevRequest: true }))
+    expect(result.startStage).toBe('brainstorm')
+    expect(result.reviewOnly).toBe(false)
+    expect(result.skippedStages).toEqual([
+      'brainstorm',
+      'plan',
+      'scope_check',
+      'implement',
+      'test',
+      'review'
+    ])
+    expect(result.terminalSummary).toContain('默认模式')
   })
 
   it('代码已改好并请求测试/检查 → test', () => {

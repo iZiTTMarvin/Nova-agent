@@ -38,6 +38,7 @@ describe('isLegalTransition / 合法转换表', () => {
     ['resolve', 'implement'],
     ['resolve', 'test'],
     ['resolve', 'review'],
+    ['resolve', 'completed'],
     ['brainstorm', 'plan'],
     ['plan', 'scope_check'],
     ['scope_check', 'plan'],
@@ -128,6 +129,12 @@ describe('transition', () => {
     const result = transition(ctx('resolve'), 'implement')
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.to).toBe('implement')
+  })
+
+  it('resolve 可直接完成非开发输入', () => {
+    const result = transition(ctx('resolve'), 'completed')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.to).toBe('completed')
   })
 
   it('scope_check 上泛用 transition 无 Scope Pass 时不能直接进入 implement', () => {

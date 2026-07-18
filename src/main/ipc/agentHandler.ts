@@ -345,12 +345,22 @@ export function registerAgentHandler(
   }): Promise<void> => {
     const coordinatorAtEntry = getRunCoordinator()
     const activeRuns = coordinatorAtEntry.listActiveRuns()
-    const resumableXForge = activeRuns.find(run =>
+    const unsettledHandle = getRunExecutionRegistry().hasUnsettledHandle()
+    const activeResumableXForge = activeRuns.find(run =>
       run.kind === 'xforge' &&
       run.sessionId === params.sessionId &&
       (run.status === 'waiting_user' || run.status === 'resuming') &&
-      !getRunExecutionRegistry().hasUnsettledHandle()
+      !unsettledHandle
     ) ?? null
+    const sessionRunSnapshot = coordinatorAtEntry.getSnapshotForSession(params.sessionId)
+    const interruptedResumableXForge =
+      !activeResumableXForge &&
+      sessionRunSnapshot?.kind === 'xforge' &&
+      sessionRunSnapshot.status === 'interrupted' &&
+      !unsettledHandle
+        ? sessionRunSnapshot
+        : null
+    const resumableXForge = activeResumableXForge ?? interruptedResumableXForge
     if (isAgentTurnInProgress() && !resumableXForge) {
       const whereSession = getActiveTurnSessionId()
       const where = whereSession && whereSession !== params.sessionId
@@ -900,10 +910,23 @@ export function registerAgentHandler(
     }
     let runSnap
     if (resumableXForge) {
-      if (resumableXForge.status === 'waiting_user') {
+      if (
+        resumableXForge.status === 'waiting_user' ||
+        (resumableXForge.status === 'interrupted' &&
+          resumableXForge.xforge?.currentStage === 'waiting_user')
+      ) {
         const resumed = runCoordinator.resumeXForgeRun(resumableXForge.runId, params.content)
         if (!resumed.ok) throw new Error(resumed.message)
         runSnap = resumed.snapshot
+      } else if (resumableXForge.status === 'interrupted') {
+        const resumed = runCoordinator.transition(
+          resumableXForge.runId,
+          'resuming',
+          'resumed_from_interrupted',
+          { status: resumableXForge.status }
+        )
+        if (!resumed) throw new Error('XForge 中断运行恢复失败')
+        runSnap = resumed
       } else {
         runSnap = resumableXForge
       }

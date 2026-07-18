@@ -2,8 +2,10 @@ import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import { resolve, sep } from 'path'
 import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
+import { getToolCapability } from '../../../shared/session/toolVisibility'
 import type { ModelClient } from '../../model/ModelClient'
 import type { ModelClientPool } from '../../model/ModelClientPool'
+import type { ChatMessage } from '../../model/types'
 import { AgentLoop } from '../../agent/AgentLoop'
 import { EventBus } from '../../agent/EventBus'
 import type { AgentEvent } from '../../agent/types'
@@ -44,7 +46,6 @@ import {
 } from './stageArtifacts'
 import { inspectXForgeTaskEffects, prepareXForgeWriteBoundary } from './writeSafety'
 import {
-  isForbiddenXForgeSideEffectCommand,
   isSafeRuntimeTestCommand
 } from './deliveryExecutor'
 import type {
@@ -89,7 +90,7 @@ export interface XForgeLiveRuntimeResult {
 interface BrainstormPayload {
   needsMoreClarification: boolean
   mainSession: XForgeMainSessionState
-  artifactMarkdown: string
+  designNotes: string[]
 }
 
 interface ExplorationQuestionsPayload {
@@ -98,17 +99,23 @@ interface ExplorationQuestionsPayload {
 
 interface PlanPayload {
   plan: XForgeValidatedPlan
-  artifactMarkdown: string
 }
 
 interface ScopePayload {
   findings: XForgeScopeFindingState[]
-  artifactMarkdown: string
 }
 
 interface FixPayload {
   expandsScope: boolean
-  artifactMarkdown: string
+}
+
+interface ResolverSemanticPayload {
+  reviewOnly: boolean
+  codeReadyForTest: boolean
+  isBugfix: boolean
+  isVagueNewRequirement: boolean
+  isNonDevRequest: boolean
+  modelSemanticHint: 'brainstorm' | 'plan'
 }
 
 /** 产品入口使用的真实 XForge 执行宿主。 */
@@ -160,7 +167,7 @@ export async function runXForgeLiveRuntime(
         '需求探索',
         options.request,
         { method, round, answers, context },
-        '判断现有信息是否足够形成可靠的探索产物。若仍缺少关键约束，返回 needsMoreClarification=true，并只给出当前已知 mainSession 与简短说明；不得伪造设计结论。若信息充足，返回 needsMoreClarification=false 和完整设计产物。返回 JSON：{"needsMoreClarification":false,"mainSession":{"goal":"...","constraints":["..."],"nonGoals":["..."],"userDecisions":["..."]},"artifactMarkdown":"..."}'
+        '判断现有信息是否足够形成可靠的探索结论。若仍缺少关键约束，返回 needsMoreClarification=true，不得伪造设计结论。只返回紧凑 JSON：{"needsMoreClarification":false,"mainSession":{"goal":"...","constraints":["..."],"nonGoals":["..."],"userDecisions":["..."]},"designNotes":["..."]}。designNotes 只记录不与 mainSession 重复的关键设计判断，不要返回 Markdown。'
       ), value => normalizeXForgeBrainstormPayload(value, context.mainSession))
       return {
         needsMoreClarification: payload.needsMoreClarification,
@@ -173,7 +180,7 @@ export async function runXForgeLiveRuntime(
                 stage: 'brainstorm',
                 kind: 'idea',
                 name: method,
-                content: payload.artifactMarkdown
+                content: renderBrainstormArtifact(payload)
               })
             }
           : {})
@@ -185,7 +192,7 @@ export async function runXForgeLiveRuntime(
         '生成可执行实施计划',
         options.request,
         { previousPlan, missing, scopeFindings, nextPlanVersion, context },
-        '返回 JSON：{"plan":{"version":1,"goal":"...","constraints":["..."],"nonGoals":["..."],"repositoryFacts":["..."],"changeScope":["..."],"tasks":[{"id":"T1","title":"...","acceptance":["..."]}],"acceptanceMap":{"T1":["..."]},"verificationChecklist":["`npm ...`"],"risks":["..."]},"artifactMarkdown":"..."}。任务必须可直接实施；verificationChecklist 只能列出计划已明确的安全验证命令，未知时返回空数组，不能猜测仓库全量命令。'
+        '只返回紧凑 JSON：{"plan":{"version":1,"goal":"...","constraints":["..."],"nonGoals":["..."],"repositoryFacts":["..."],"changeScope":["..."],"tasks":[{"id":"T1","title":"...","acceptance":["..."]}],"acceptanceMap":{"T1":["..."]},"verificationChecklist":["`npm ...`"],"risks":["..."]}}。不要返回 Markdown 或重复描述计划。任务必须可直接实施；生成计划前用只读工具确认仓库真实存在的安全验证命令，例如 package.json scripts 或 CI 配置；把确认过的命令原样写入 verificationChecklist。确认不了就返回空数组，不得编造或执行验证命令。'
       ), isPlanPayload)
       payload.plan.version = nextPlanVersion
       return {
@@ -196,7 +203,7 @@ export async function runXForgeLiveRuntime(
           stage: 'plan',
           kind: 'plans',
           name: `plan-v${nextPlanVersion}`,
-          content: payload.artifactMarkdown
+          content: renderPlanArtifact(payload.plan)
         })
       }
     },
@@ -206,22 +213,23 @@ export async function runXForgeLiveRuntime(
         '对抗式 Scope Check',
         options.request,
         { plan, context },
-        '返回 JSON：{"findings":[{"severity":"critical|high|medium|low","location":"...","summary":"...","evidence":"...","suggestion":"..."}],"artifactMarkdown":"..."}。没有问题时 findings 必须是空数组。'
+        '只返回紧凑 JSON：{"findings":[{"severity":"critical|high|medium|low","location":"...","summary":"...","evidence":"...","suggestion":"..."}]}。不要返回 Markdown；没有问题时 findings 必须是空数组。'
       ), isScopePayload)
+      const artifactMarkdown = renderScopeArtifact(payload.findings)
       const artifact = writeXForgeArtifact({
         workspaceRoot: options.workspaceRoot,
         runId: options.runId,
         stage: 'scope_check',
         kind: 'evidence',
         name: 'scope-check',
-        content: payload.artifactMarkdown
+        content: artifactMarkdown
       })
       const evidenceRef = writeXForgeEvidence({
         workspaceRoot: options.workspaceRoot,
         runId: options.runId,
         kind: 'scope-check',
         name: `scope-${Date.now()}`,
-        content: payload.artifactMarkdown
+        content: artifactMarkdown
       })
       return { findings: payload.findings, artifact, evidenceRef }
     },
@@ -352,7 +360,7 @@ export async function runXForgeLiveRuntime(
         '根因修复',
         options.request,
         { failedTest, blockingFindings, state: buildMainAgentContext(state) },
-        '先定位根因，再使用工具完成最小且完整的修复。不要运行验证命令。返回 JSON：{"expandsScope":false,"artifactMarkdown":"..."}。若修复超出当前计划 changeScope，expandsScope 必须为 true。'
+        '先定位根因，再使用工具完成最小且完整的修复。不要运行验证命令。只返回 JSON：{"expandsScope":false}。不要返回 Markdown；若修复超出当前计划 changeScope，expandsScope 必须为 true。'
       ), isFixPayload)
       const inspection = inspectXForgeTaskEffects({
         workspaceRoot: options.workspaceRoot,
@@ -380,7 +388,12 @@ export async function runXForgeLiveRuntime(
           stage: 'fix',
           kind: 'evidence',
           name: activeStepId,
-          content: payload.artifactMarkdown
+          content: renderFixArtifact({
+            expandsScope: payload.expandsScope,
+            failedTest,
+            blockingFindings,
+            fileEffects
+          })
         })
       }
     },
@@ -416,7 +429,7 @@ export async function runXForgeLiveRuntime(
       stage: 'plan',
       kind: 'plans',
       name: `imported-plan-v${importedPlan.plan.version}`,
-      content: importedPlan.artifactMarkdown
+      content: renderPlanArtifact(importedPlan.plan)
     })
     const patched = options.committer.commitXForgeStatePatch(options.runId, {
       hasValidatedPlan: true,
@@ -439,7 +452,9 @@ export async function runXForgeLiveRuntime(
   const current = options.committer.getSnapshot(options.runId)?.xforge
   if (!current) throw new Error(`XForge run 不存在: ${options.runId}`)
   const resolverInput = {
-    ...classifyXForgeRequest(options.request, options.explicitFullDev === true),
+    ...(current.currentStage === 'resolve'
+      ? await resolveXForgeRequestSignals(options)
+      : classifyXForgeRequest(options.request, options.explicitFullDev === true)),
     ...(importedPlan
       ? {
           hasValidatedPlan: true,
@@ -453,14 +468,25 @@ export async function runXForgeLiveRuntime(
     ? resolveStartStage(resolverInput)
     : null
   if (resolver) {
-    const patched = options.committer.commitXForgeStatePatch(options.runId, {
+    const resolverPatch = {
       reviewOnly: resolver.reviewOnly,
       skippedStages: resolver.skippedStages,
       mainSession: {
         ...current.mainSession,
         goal: current.mainSession.goal || stripFullDevCommand(options.request)
       }
-    }, resolver.reason)
+    }
+    if (resolver.terminalSummary) {
+      const completed = options.committer.commitXForgeStageTransition(options.runId, {
+        ok: true,
+        from: current.currentStage,
+        to: 'completed',
+        reason: resolver.reason
+      }, resolverPatch)
+      if (!completed.ok) throw new Error(completed.message)
+      return { state: completed.xforge, summary: resolver.terminalSummary }
+    }
+    const patched = options.committer.commitXForgeStatePatch(options.runId, resolverPatch, resolver.reason)
     if (!patched.ok) throw new Error(patched.message)
   }
 
@@ -499,6 +525,89 @@ export async function runXForgeLiveRuntime(
   }
 }
 
+async function resolveXForgeRequestSignals(
+  options: Pick<XForgeLiveRuntimeOptions, 'request' | 'explicitFullDev' | 'modelClient' | 'abortSignal'>
+): Promise<StageResolverInput> {
+  const deterministic = classifyXForgeRequest(options.request, options.explicitFullDev === true)
+  if (options.explicitFullDev) return deterministic
+
+  try {
+    const semantic = await classifyXForgeRequestSemantically(
+      stripFullDevCommand(options.request),
+      options.modelClient,
+      options.abortSignal
+    )
+    return mergeResolverSignals(deterministic, semantic)
+  } catch {
+    return {
+      ...deterministic,
+      modelSemanticHint: 'failed'
+    }
+  }
+}
+
+function mergeResolverSignals(
+  deterministic: StageResolverInput,
+  semantic: ResolverSemanticPayload
+): StageResolverInput {
+  const reviewOnly = deterministic.reviewOnly === true || semantic.reviewOnly
+  const codeReadyForTest = deterministic.codeReadyForTest === true || semantic.codeReadyForTest
+  const isBugfix = (deterministic.isBugfix === true || semantic.isBugfix) && !codeReadyForTest
+  const devSignal =
+    reviewOnly ||
+    codeReadyForTest ||
+    isBugfix ||
+    deterministic.hasDesignOnlyDoc === true ||
+    deterministic.requestedStartStage !== undefined
+
+  return {
+    ...deterministic,
+    reviewOnly,
+    codeReadyForTest,
+    isBugfix,
+    isVagueNewRequirement:
+      deterministic.isVagueNewRequirement === true || semantic.isVagueNewRequirement,
+    isNonDevRequest: semantic.isNonDevRequest && !devSignal,
+    modelSemanticHint: semantic.modelSemanticHint
+  }
+}
+
+async function classifyXForgeRequestSemantically(
+  input: string,
+  modelClient: ModelClient | ModelClientPool,
+  abortSignal?: AbortSignal
+): Promise<ResolverSemanticPayload> {
+  const messages: ChatMessage[] = [
+    {
+      role: 'system',
+      content: [
+        '你是 XForge 的入口语义分类器。你没有工具，不要请求工具，不要解释。',
+        'XForge 只面向代码开发、修复、测试、审查和可执行工程计划。',
+        '只返回一个 JSON 对象：{"reviewOnly":boolean,"codeReadyForTest":boolean,"isBugfix":boolean,"isVagueNewRequirement":boolean,"isNonDevRequest":boolean,"modelSemanticHint":"brainstorm|plan"}。',
+        'reviewOnly 表示用户要求只看、只审查、解释问题或明确不要动/不要改代码。',
+        'isNonDevRequest 只用于普通问答、概念解释或闲聊；代码审查、调试、架构审查和测试请求都不是 non-dev。',
+        'modelSemanticHint：需求模糊、目标未定、需要先探索时为 brainstorm；可直接形成工程计划时为 plan。'
+      ].join('\n')
+    },
+    {
+      role: 'user',
+      content: `用户输入：\n${input}`
+    }
+  ]
+  let output = ''
+  for await (const event of modelClient.chat(messages, undefined, { abortSignal })) {
+    if (event.type === 'text_delta') output += event.delta
+    if (event.type === 'error') throw new Error(event.error)
+    if (event.type === 'context_overflow') throw new Error(event.rawError)
+    if (event.type === 'cancelled') throw new Error('resolver semantic classification cancelled')
+  }
+  const parsed = parseJsonObject(output)
+  if (!isResolverSemanticPayload(parsed)) {
+    throw new Error('resolver semantic classification returned invalid JSON')
+  }
+  return parsed
+}
+
 async function importReferencedValidatedPlan(
   options: XForgeLiveRuntimeOptions,
   session: XForgeMainAgentSession
@@ -520,7 +629,7 @@ async function importReferencedValidatedPlan(
 
   const payload = await session.runJson<PlanPayload>([
     '把用户引用的实施计划规范化为 XForge Validated Plan。只能抽取文档已经明确写出的事实，不得补写或猜测缺失内容。',
-    '只返回 JSON：{"plan":{"version":1,"goal":"...","constraints":["..."],"nonGoals":["..."],"repositoryFacts":["..."],"changeScope":["..."],"tasks":[{"id":"T1","title":"...","acceptance":["..."]}],"acceptanceMap":{"T1":["..."]},"verificationChecklist":["`npm ...`"],"risks":["..."]},"artifactMarkdown":"..."}。verificationChecklist 只能保留文档明确给出的安全命令；没有命令时返回空数组。',
+    '只返回紧凑 JSON：{"plan":{"version":1,"goal":"...","constraints":["..."],"nonGoals":["..."],"repositoryFacts":["..."],"changeScope":["..."],"tasks":[{"id":"T1","title":"...","acceptance":["..."]}],"acceptanceMap":{"T1":["..."]},"verificationChecklist":["`npm ...`"],"risks":["..."]}}。不要返回 Markdown；verificationChecklist 只能保留文档明确给出的安全命令，没有命令时返回空数组。',
     `引用路径：${referencedPath}`,
     markdown
   ].join('\n\n'), isPlanPayload)
@@ -558,7 +667,7 @@ class XForgeMainAgentSession {
     this.unsubscribe = this.bus.on(event => this.handleEvent(event))
     this.loop = new AgentLoop(options.modelClient, this.bus, {
       systemPrompt: [
-        '你是 XForge 的单一主 Agent。阶段用于组织工作和质量门禁，不改变基础工具权限。',
+        '你是 XForge 的单一主 Agent。阶段用于组织工作，Runtime 会按阶段收紧工具能力。',
         '只处理当前阶段；不得 commit、push、deploy 或 publish；不得把模型自报当作测试结果。',
         '阶段交互与产物持久化由 Runtime 负责。方法正文里的提问、写文件和返回格式说明只作领域参考，若与当前 Runtime 指令冲突，以 Runtime 指令为准。',
         '需要输出 JSON 时只输出一个 JSON 对象，不要使用 Markdown 围栏。'
@@ -567,27 +676,36 @@ class XForgeMainAgentSession {
       contextWindow: options.contextWindow,
       supportsVision: options.supportsVision ?? true,
       toolExecution: 'sequential',
-      useUnifiedSkillDispatch: false,
-      composeAutoRoute: false
+      useUnifiedSkillDispatch: false
     })
     const permission = new PermissionManager()
     permission.setPermissionPolicy('auto')
     permission.setCurrentProjectPath(options.workspaceRoot)
     this.loop.setPermissionManager(permission)
-    this.loop.setMode('compose')
+    this.loop.setMode('plan')
     this.loop.setWorkingDir(options.workspaceRoot)
     this.loop.setToolRegistry(options.toolRegistry)
     this.loop.setCheckpointManager(options.checkpointManager)
     this.loop.setReadState(options.readState ?? createReadState())
     this.loop.setAskQuestionHandler(options.askQuestion)
     this.loop.setFileEffectRecorder(options.effectRecorder)
-    this.loop.setToolAuthorizationPolicy((toolName, args) => {
-      const command = toolName === 'bash' && typeof args.command === 'string'
-        ? args.command
-        : ''
-      return command && isForbiddenXForgeSideEffectCommand(command)
-        ? { allowed: false, reason: 'XForge 不执行 commit、push、reset、clean、deploy 或 publish' }
-        : { allowed: true, reason: '' }
+    this.loop.setToolAuthorizationPolicy((toolName) => {
+      const stage = options.getStage()
+      const capability = getToolCapability(toolName)
+      const isWritableStage = stage === 'implement' || stage === 'fix'
+      if (toolName === 'askQuestion') {
+        return { allowed: false, reason: 'XForge 用户交互只能由 Runtime 的阶段控制器发起' }
+      }
+      if (!isWritableStage && capability !== 'readonly') {
+        return { allowed: false, reason: `XForge ${stage} 阶段只允许只读工具` }
+      }
+      if (isWritableStage && capability !== 'readonly' && capability !== 'write') {
+        return {
+          allowed: false,
+          reason: 'XForge 实施与修复只允许读写文件；测试、构建和脚本执行由受控 Runtime 阶段负责'
+        }
+      }
+      return { allowed: true, reason: '' }
     })
     if (options.assertExecutionCurrent) {
       this.loop.setExecutionFence(options.assertExecutionCurrent)
@@ -599,6 +717,8 @@ class XForgeMainAgentSession {
   async run(prompt: string): Promise<string> {
     throwIfAborted(this.options.abortSignal)
     this.output = ''
+    const stage = this.options.getStage()
+    this.loop.setMode(stage === 'implement' || stage === 'fix' ? 'compose' : 'plan')
     await this.loop.sendMessage(prompt)
     throwIfAborted(this.options.abortSignal)
     if (this.loop.getState() === 'error' || this.loop.getState() === 'cancelled') {
@@ -614,20 +734,25 @@ class XForgeMainAgentSession {
   }
 
   async runJsonDecoded<T>(prompt: string, decode: (value: unknown) => T | null): Promise<T> {
-    let last = ''
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      last = await this.run(attempt === 1
-        ? prompt
-        : [
-            '上一轮工作已经完成，但返回格式无法通过结构校验。',
-            '不要重新分析、提问、调用工具或写文件；只把上一轮结果转换成最后一条 Runtime 指令要求的单个合法 JSON 对象。',
-            'JSON 字符串中的换行和引号必须正确转义。'
-          ].join('\n'))
-      const parsed = parseJsonObject(last)
-      const decoded = decode(parsed)
-      if (decoded !== null) return decoded
-    }
-    throw new Error(`XForge ${this.options.getStage()} 阶段返回的结构化结果无效: ${last.slice(0, 240)}`)
+    const first = await this.run(prompt)
+    const decodedFirst = decode(parseJsonObject(first))
+    if (decodedFirst !== null) return decodedFirst
+
+    const repaired = await repairStructuredOutput({
+      modelClient: this.options.modelClient,
+      abortSignal: this.options.abortSignal,
+      prompt,
+      invalidOutput: first
+    })
+    const decodedRepair = decode(parseJsonObject(repaired.output))
+    if (decodedRepair !== null) return decodedRepair
+
+    const reason = repaired.finishReason === 'length'
+      ? '结构化输出被模型长度上限截断'
+      : '结构化结果无法通过 JSON 与字段校验'
+    throw new Error(
+      `XForge ${this.options.getStage()} 阶段${reason}: ${repaired.output.slice(0, 240)}`
+    )
   }
 
   dispose(): void {
@@ -670,6 +795,43 @@ class XForgeMainAgentSession {
   }
 }
 
+async function repairStructuredOutput(params: {
+  modelClient: ModelClient | ModelClientPool
+  abortSignal?: AbortSignal
+  prompt: string
+  invalidOutput: string
+}): Promise<{ output: string; finishReason: string }> {
+  const messages: ChatMessage[] = [
+    {
+      role: 'system',
+      content: [
+        '你是 XForge 的结构化结果修复器。你没有工具，不要分析过程。',
+        '根据原始任务和不合格输出，重新生成原始任务要求的单个紧凑 JSON 对象。',
+        '不要使用 Markdown 围栏，不要返回原始任务未要求的说明或 Markdown 字段。'
+      ].join('\n')
+    },
+    { role: 'user', content: params.prompt },
+    { role: 'assistant', content: params.invalidOutput.slice(0, 16_000) },
+    {
+      role: 'user',
+      content: '上面的输出无法通过结构校验。现在只返回修正后的一个合法 JSON 对象。'
+    }
+  ]
+  let output = ''
+  let finishReason = ''
+  for await (const event of params.modelClient.chat(messages, undefined, {
+    abortSignal: params.abortSignal
+  })) {
+    if (event.type === 'text_delta') output += event.delta
+    if (event.type === 'message_end') finishReason = event.finishReason
+    if (event.type === 'error') throw new Error(event.error)
+    if (event.type === 'context_overflow') throw new Error(event.rawError)
+    if (event.type === 'cancelled') throw new Error('XForge 结构化结果修复已取消')
+  }
+  if (!output.trim()) throw new Error('XForge 结构化结果修复返回空结果')
+  return { output: output.trim(), finishReason }
+}
+
 async function runIsolatedReview(
   options: XForgeLiveRuntimeOptions,
   input: Readonly<XForgeReviewInputSnapshot>,
@@ -689,22 +851,35 @@ async function runIsolatedReview(
     ].join('\n\n'),
     maxToolRounds: 1,
     contextWindow: options.contextWindow,
-    useUnifiedSkillDispatch: false,
-    composeAutoRoute: false
+    useUnifiedSkillDispatch: false
   })
   loop.setMode('plan')
   const onAbort = () => loop.cancel()
   options.abortSignal?.addEventListener('abort', onAbort)
   try {
-    await loop.sendMessage([
+    const reviewPrompt = [
       '请审查下面的 XForge Review Input Snapshot。',
       '只返回 JSON：{"findings":[{"severity":"critical|high|medium|low|nit","location":"file:line","summary":"...","evidence":"...","suggestion":"...","unverified":false}]}。没有问题时 findings 为空数组。',
       JSON.stringify(input)
-    ].join('\n\n'))
+    ].join('\n\n')
+    await loop.sendMessage(reviewPrompt)
     throwIfAborted(options.abortSignal)
-    const parsed = parseJsonObject(output) as { findings?: unknown } | null
-    const findings = parsed && isReviewFindings(parsed.findings) ? parsed.findings : null
-    if (!findings) throw new Error('隔离 Review 子代理返回了无效 findings')
+    let parsed = parseJsonObject(output) as { findings?: unknown } | null
+    let findings = parsed && isReviewFindings(parsed.findings) ? parsed.findings : null
+    if (!findings) {
+      const repaired = await repairStructuredOutput({
+        modelClient: options.modelClient,
+        abortSignal: options.abortSignal,
+        prompt: reviewPrompt,
+        invalidOutput: output
+      })
+      parsed = parseJsonObject(repaired.output) as { findings?: unknown } | null
+      findings = parsed && isReviewFindings(parsed.findings) ? parsed.findings : null
+      if (!findings) {
+        const reason = repaired.finishReason === 'length' ? '输出被长度上限截断' : '字段校验失败'
+        throw new Error(`隔离 Review 子代理返回了无效 findings：${reason}`)
+      }
+    }
     const markdown = renderReviewFindings(findings)
     return {
       findings,
@@ -737,9 +912,10 @@ export function classifyXForgeRequest(
 ): StageResolverInput {
   const text = stripFullDevCommand(input)
   if (explicitFullDev) return { isVagueNewRequirement: true, requestedStartStage: 'brainstorm' }
-  const reviewOnly = /(只|仅).{0,8}(审查|review)|不要改(代码|文件)|禁止修改/i.test(text)
+  const reviewOnly =
+    /(只|仅).{0,8}(审查|review|检查|看看)|不要(改|动|修改)(代码|文件)?|禁止修改|别(改|动)(代码|文件)?/i.test(text)
   const codeReadyForTest = /(已经|已).{0,10}(改好|完成|实现).{0,12}(测试|检查|验证)|从测试开始/i.test(text)
-  const isBugfix = /(修复|bug|报错|故障|崩溃|异常)/i.test(text) && !codeReadyForTest
+  const isBugfix = /(修复|bug|报错|故障|崩溃|异常|卡顿|很卡|加载慢|加载.*卡|性能问题)/i.test(text) && !codeReadyForTest
   const hasDesignOnlyDoc = /(?:\.md\b|设计文档|方案文档|需求文档)/i.test(text)
   const requestedStartStage = parseRequestedStage(text)
   const vague = /(还没想清楚|不确定|想做|我想|我打算|帮我想|探索一下|需求模糊|你觉得|有什么建议|怎么看)/i.test(text)
@@ -749,8 +925,7 @@ export function classifyXForgeRequest(
     isBugfix,
     hasDesignOnlyDoc,
     isVagueNewRequirement: vague,
-    ...(requestedStartStage ? { requestedStartStage } : {}),
-    modelSemanticHint: vague ? 'brainstorm' : 'plan'
+    ...(requestedStartStage ? { requestedStartStage } : {})
   }
 }
 
@@ -857,6 +1032,16 @@ function parseJsonObject(text: string): unknown {
   }
 }
 
+function isResolverSemanticPayload(value: unknown): value is ResolverSemanticPayload {
+  return isRecord(value) &&
+    typeof value.reviewOnly === 'boolean' &&
+    typeof value.codeReadyForTest === 'boolean' &&
+    typeof value.isBugfix === 'boolean' &&
+    typeof value.isVagueNewRequirement === 'boolean' &&
+    typeof value.isNonDevRequest === 'boolean' &&
+    (value.modelSemanticHint === 'brainstorm' || value.modelSemanticHint === 'plan')
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -871,19 +1056,19 @@ export function normalizeXForgeBrainstormPayload(
 ): BrainstormPayload | null {
   if (!isRecord(value)) return null
   const legacyBody = typeof value.body === 'string' ? value.body : null
-  const artifactMarkdown = typeof value.artifactMarkdown === 'string'
-    ? value.artifactMarkdown
-    : legacyBody ?? ''
   const needsMoreClarification = typeof value.needsMoreClarification === 'boolean'
     ? value.needsMoreClarification
     : legacyBody !== null
       ? false
       : null
-  if (needsMoreClarification === null || (!needsMoreClarification && !artifactMarkdown.trim())) {
-    return null
-  }
+  if (needsMoreClarification === null) return null
 
   const suppliedSession = parseMainSession(value.mainSession) ?? fallbackSession
+  const designNotes = isStringArray(value.designNotes)
+    ? value.designNotes
+    : legacyBody?.trim()
+      ? [legacyBody.trim()]
+      : []
 
   return {
     needsMoreClarification,
@@ -893,7 +1078,7 @@ export function normalizeXForgeBrainstormPayload(
       nonGoals: [...suppliedSession.nonGoals],
       userDecisions: [...suppliedSession.userDecisions]
     },
-    artifactMarkdown
+    designNotes
   }
 }
 
@@ -923,12 +1108,12 @@ function isExplorationQuestionsPayload(value: unknown): value is ExplorationQues
 }
 
 function isPlanPayload(value: unknown): value is PlanPayload {
-  return isRecord(value) && isRecord(value.plan) && typeof value.artifactMarkdown === 'string'
+  return isRecord(value) && isRecord(value.plan)
 }
 
 function isScopePayload(value: unknown): value is ScopePayload {
   return isRecord(value) && Array.isArray(value.findings) &&
-    value.findings.every(isScopeFinding) && typeof value.artifactMarkdown === 'string'
+    value.findings.every(isScopeFinding)
 }
 
 function isScopeFinding(value: unknown): value is XForgeScopeFindingState {
@@ -938,8 +1123,7 @@ function isScopeFinding(value: unknown): value is XForgeScopeFindingState {
 }
 
 function isFixPayload(value: unknown): value is FixPayload {
-  return isRecord(value) && typeof value.expandsScope === 'boolean' &&
-    typeof value.artifactMarkdown === 'string'
+  return isRecord(value) && typeof value.expandsScope === 'boolean'
 }
 
 function isReviewFindings(value: unknown): value is XForgeReviewFindingState[] {
@@ -948,6 +1132,137 @@ function isReviewFindings(value: unknown): value is XForgeReviewFindingState[] {
     typeof finding.location === 'string' && typeof finding.summary === 'string' &&
     typeof finding.evidence === 'string'
   )
+}
+
+function renderBrainstormArtifact(payload: BrainstormPayload): string {
+  const { mainSession } = payload
+  return [
+    '# XForge Exploration',
+    '',
+    '## Goal',
+    '',
+    mainSession.goal || '未明确',
+    '',
+    '## Constraints',
+    '',
+    ...renderMarkdownList(mainSession.constraints),
+    '',
+    '## Non-goals',
+    '',
+    ...renderMarkdownList(mainSession.nonGoals),
+    '',
+    '## User decisions',
+    '',
+    ...renderMarkdownList(mainSession.userDecisions),
+    '',
+    '## Design notes',
+    '',
+    ...renderMarkdownList(payload.designNotes)
+  ].join('\n')
+}
+
+function renderPlanArtifact(plan: XForgeValidatedPlan): string {
+  const validation = validateXForgePlan(plan)
+  if (!validation.valid) {
+    return [
+      '# XForge Implementation Plan',
+      '',
+      `Validated Plan 缺少必需字段: ${validation.missing.join(', ')}`
+    ].join('\n')
+  }
+  return [
+    '# XForge Implementation Plan',
+    '',
+    '## Goal',
+    '',
+    plan.goal,
+    '',
+    '## Constraints',
+    '',
+    ...renderMarkdownList(plan.constraints),
+    '',
+    '## Non-goals',
+    '',
+    ...renderMarkdownList(plan.nonGoals),
+    '',
+    '## Repository facts',
+    '',
+    ...renderMarkdownList(plan.repositoryFacts),
+    '',
+    '## Change scope',
+    '',
+    ...renderMarkdownList(plan.changeScope),
+    '',
+    '## Tasks',
+    '',
+    ...plan.tasks.flatMap(task => [
+      `### ${task.id}: ${task.title}`,
+      '',
+      ...renderMarkdownList(task.acceptance),
+      ''
+    ]),
+    '## Verification',
+    '',
+    ...renderMarkdownList(plan.verificationChecklist),
+    '',
+    '## Risks',
+    '',
+    ...renderMarkdownList(plan.risks)
+  ].join('\n')
+}
+
+function renderScopeArtifact(findings: XForgeScopeFindingState[]): string {
+  return [
+    '# XForge Scope Check',
+    '',
+    ...(findings.length === 0
+      ? ['PASS']
+      : findings.flatMap(finding => [
+          `## [${finding.severity}] ${finding.location}`,
+          '',
+          finding.summary,
+          '',
+          `Evidence: ${finding.evidence}`,
+          '',
+          `Suggestion: ${finding.suggestion}`,
+          ''
+        ]))
+  ].join('\n')
+}
+
+function renderFixArtifact(params: {
+  expandsScope: boolean
+  failedTest: XForgeRunState['testEvidence']
+  blockingFindings: XForgeReviewFindingState[]
+  fileEffects: Array<{ path: string; status?: string }>
+}): string {
+  const failedCommands = params.failedTest?.commands
+    .filter(command => command.required && (command.exitCode !== 0 || command.timedOut || command.blockedReason))
+    .map(command => `${command.command}: ${command.blockedReason ?? (command.timedOut ? 'timeout' : `exitCode=${command.exitCode}`)}`) ?? []
+  return [
+    '# XForge Fix Evidence',
+    '',
+    `Expands scope: ${params.expandsScope ? 'yes' : 'no'}`,
+    '',
+    '## Failed verification',
+    '',
+    ...renderMarkdownList(failedCommands),
+    '',
+    '## Blocking findings',
+    '',
+    ...renderMarkdownList(params.blockingFindings.map(finding =>
+      `[${finding.severity}] ${finding.location}: ${finding.summary}`
+    )),
+    '',
+    '## Recorded file effects',
+    '',
+    ...renderMarkdownList(params.fileEffects.map(effect => `${effect.status ?? 'unknown'}: ${effect.path}`))
+  ].join('\n')
+}
+
+function renderMarkdownList(items: string[]): string[] {
+  if (items.length === 0) return ['- None']
+  return items.map(item => `- ${item.replace(/\r?\n/g, '\n  ')}`)
 }
 
 function renderTaskSummary(tasks: XForgeTaskState[]): string {
@@ -966,13 +1281,51 @@ function renderReviewFindings(findings: XForgeReviewFindingState[]): string {
 function renderLiveSummary(state: XForgeRunState): string {
   if (state.currentStage === 'completed') {
     const facts = state.reportFacts
+    const reportPath = state.stageArtifacts.find(item => item.stage === 'report')?.path
+    if (!facts) {
+      return [
+        'XForge 已完成。',
+        '未执行 commit、push、deploy 或 publish。',
+        reportPath ? `报告：${reportPath}` : ''
+      ].filter(Boolean).join('\n')
+    }
+    const commandLines = facts.testCommands.length > 0
+      ? facts.testCommands.map(command => {
+          const status = command.blockedReason
+            ? `阻塞：${command.blockedReason}`
+            : command.timedOut
+              ? '超时'
+              : command.exitCode === null
+                ? '未执行'
+                : `exitCode=${command.exitCode}`
+          return `- \`${command.command}\`：${status}${command.required ? '（必需）' : ''}`
+        })
+      : ['- 未记录可执行验证命令']
+    const taskLines = [
+      `- 已验证完成：${facts.completedTasks.join('、') || '无'}`,
+      `- 未定向验证：${facts.unverifiedTasks.join('、') || '无'}`,
+      `- 跳过：${facts.skippedTasks.map(task => `${task.id}（${task.reason}）`).join('、') || '无'}`
+    ]
+    const debtLines = facts.technicalDebt.length > 0
+      ? facts.technicalDebt.map(finding => `- [${finding.severity}] ${finding.location}: ${finding.summary}`)
+      : ['- 无']
     return [
       'XForge 已完成实施、真实验证与隔离审查。',
-      facts ? `测试门禁：${facts.testPassed ? '通过' : '未通过'}；已验证完成 ${facts.completedTasks.length} 个；未定向验证 ${facts.unverifiedTasks.length} 个；跳过 ${facts.skippedTasks.length} 个。` : '',
-      '未执行 commit、push、deploy 或 publish。',
-      state.stageArtifacts.find(item => item.stage === 'report')?.path
-        ? `报告：${state.stageArtifacts.find(item => item.stage === 'report')!.path}`
-        : ''
+      '',
+      `测试门禁：${facts.testPassed ? '通过' : '未通过'}`,
+      ...commandLines,
+      '',
+      '任务结果：',
+      ...taskLines,
+      '',
+      '隔离 Review：',
+      `- Blocking Findings：${facts.blockingFindings.length}`,
+      '技术债：',
+      ...debtLines,
+      '',
+      `预算消耗：Scope ${facts.budgets.scopeCorrectionUsed}/2；Test-Fix ${facts.budgets.deliveryTestFixUsed}/3；Review-Fix ${facts.budgets.reviewRemediationUsed}/2。`,
+      `未执行：${facts.notExecuted.join('、')}。`,
+      reportPath ? `报告：${reportPath}` : ''
     ].filter(Boolean).join('\n')
   }
   if (state.currentStage === 'waiting_user') {

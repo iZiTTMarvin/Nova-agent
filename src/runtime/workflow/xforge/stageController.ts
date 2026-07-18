@@ -20,7 +20,7 @@ import {
  * 业务阶段合法后继（不含任意非终态 → waiting_user|failed|cancelled，见 isLegalTransition）。
  */
 const BUSINESS_TRANSITIONS: Readonly<Partial<Record<XForgeStage, readonly XForgeStage[]>>> = {
-  resolve: ['brainstorm', 'plan', 'scope_check', 'implement', 'test', 'review'],
+  resolve: ['brainstorm', 'plan', 'scope_check', 'implement', 'test', 'review', 'completed'],
   brainstorm: ['plan'],
   plan: ['scope_check'],
   scope_check: ['plan', 'implement', 'waiting_user'],

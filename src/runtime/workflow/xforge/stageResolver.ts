@@ -70,6 +70,10 @@ function skippedBefore(start: XForgeStartStage): XForgeStartStage[] {
   return START_ORDER.slice(0, idx)
 }
 
+function skippedAll(): XForgeStartStage[] {
+  return [...START_ORDER]
+}
+
 interface Candidate {
   stage: XForgeStartStage
   reason: string
@@ -172,6 +176,17 @@ export function resolveStartStage(input: StageResolverInput): StageResolverResul
       reviewOnly: true,
       skippedStages: skippedBefore('review'),
       reason: 'Review Only 约束优先：只审查且禁止修改'
+    }
+  }
+
+  if (input.isNonDevRequest) {
+    return {
+      startStage: 'brainstorm',
+      reviewOnly: false,
+      skippedStages: skippedAll(),
+      reason: '输入不是 XForge 开发交付请求，resolve 阶段直接完成',
+      terminalSummary:
+        'XForge 面向开发任务的完整流程。这个问题更适合在默认模式下直接问我；如果你想把它变成开发需求，请说明目标、约束和希望改动的范围。'
     }
   }
 

@@ -58,6 +58,38 @@ describe('RunCoordinator XForge 状态契约', () => {
     expect(resumed.xforge.mainSession.userDecisions).toContain('缩小变更范围')
   })
 
+  it('interrupted XForge 可进入 resuming 并保持当前业务阶段继续', () => {
+    const snap = coord.startXForgeRun({
+      workspaceId: '/ws',
+      sessionId: 'session-interrupted',
+      xforge: createInitialXForgeRunState({ currentStage: 'test' })
+    })
+    coord.markRunning(snap.runId)
+
+    const interrupted = coord.commitTerminal({
+      runId: snap.runId,
+      status: 'interrupted',
+      reason: 'process_exit'
+    })
+    expect(interrupted.status).toBe('interrupted')
+    expect(interrupted.xforge?.currentStage).toBe('test')
+
+    const resuming = coord.transition(
+      snap.runId,
+      'resuming',
+      'resumed_from_interrupted',
+      { reason: 'user_continue' }
+    )
+    expect(resuming?.status).toBe('resuming')
+    expect(resuming?.xforge?.currentStage).toBe('test')
+
+    const running = coord.markRunning(snap.runId, 'message-resume')
+    expect(running?.status).toBe('running')
+    expect(running?.messageId).toBe('message-resume')
+    expect(running?.xforge?.currentStage).toBe('test')
+    expect(store.loadSnapshot(snap.runId)?.xforge?.currentStage).toBe('test')
+  })
+
   it('startXForgeRun 后 snapshot 含初始 stage state', () => {
     const snap = coord.startXForgeRun({
       workspaceId: '/ws',

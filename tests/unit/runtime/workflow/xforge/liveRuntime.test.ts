@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,7 +10,7 @@ import type { ChatEvent } from '../../../../../src/runtime/model/types'
 import { createRunCoordinator } from '../../../../../src/runtime/run/RunCoordinator'
 import { SkillRegistry } from '../../../../../src/runtime/skills/SkillRegistry'
 import { ToolRegistry } from '../../../../../src/runtime/tools/ToolRegistry'
-import { askQuestionTool } from '../../../../../src/runtime/tools/askQuestionTool'
+import { bashTool } from '../../../../../src/runtime/tools/bashTool'
 import { createReadState } from '../../../../../src/runtime/tools/editTool'
 import { writeTool } from '../../../../../src/runtime/tools/writeTool'
 import {
@@ -45,13 +45,34 @@ function scriptedClient(outputs: Array<string | ChatEvent[]>): ModelClient {
   }
 }
 
+function semantic(overrides: Partial<{
+  reviewOnly: boolean
+  codeReadyForTest: boolean
+  isBugfix: boolean
+  isVagueNewRequirement: boolean
+  isNonDevRequest: boolean
+  modelSemanticHint: 'brainstorm' | 'plan'
+}> = {}): string {
+  return JSON.stringify({
+    reviewOnly: false,
+    codeReadyForTest: false,
+    isBugfix: false,
+    isVagueNewRequirement: false,
+    isNonDevRequest: false,
+    modelSemanticHint: 'plan',
+    ...overrides
+  })
+}
+
 describe('XForge live Runtime', () => {
   it('自然语言与显式约束解析到安全起点', () => {
-    expect(classifyXForgeRequest('实现一个登录页面').modelSemanticHint).toBe('plan')
-    expect(classifyXForgeRequest('我想加浏览器能力，还没想清楚').modelSemanticHint).toBe('brainstorm')
-    expect(classifyXForgeRequest('我打算优化我的项目，你觉得呢').modelSemanticHint).toBe('brainstorm')
+    expect(classifyXForgeRequest('实现一个登录页面').modelSemanticHint).toBeUndefined()
+    expect(classifyXForgeRequest('我想加浏览器能力，还没想清楚').isVagueNewRequirement).toBe(true)
+    expect(classifyXForgeRequest('我打算优化我的项目，你觉得呢').isVagueNewRequirement).toBe(true)
     expect(classifyXForgeRequest('代码已经改好，只帮我测试').codeReadyForTest).toBe(true)
     expect(classifyXForgeRequest('只审查，不要改代码').reviewOnly).toBe(true)
+    expect(classifyXForgeRequest('不要动代码，帮我看看哪里有问题').reviewOnly).toBe(true)
+    expect(classifyXForgeRequest('这个页面加载好卡').isBugfix).toBe(true)
     expect(classifyXForgeRequest('/br-full-dev 实现登录', true).requestedStartStage).toBe('brainstorm')
   })
 
@@ -69,7 +90,7 @@ describe('XForge live Runtime', () => {
     }, fallback)).toEqual({
       needsMoreClarification: false,
       mainSession: fallback,
-      artifactMarkdown: '# 中文阅读排版方案'
+      designNotes: ['# 中文阅读排版方案']
     })
     expect(normalizeXForgeBrainstormPayload({
       needsMoreClarification: true,
@@ -77,11 +98,11 @@ describe('XForge live Runtime', () => {
     }, fallback)).toEqual({
       needsMoreClarification: true,
       mainSession: fallback,
-      artifactMarkdown: ''
+      designNotes: []
     })
   })
 
-  it('brainstorm 不按阶段拒绝基础工具，方法 body 契约可由 Runtime 正常接管', async () => {
+  it('brainstorm 拒绝写入工具，由 Runtime 持久化结构化产物且不污染父正文', async () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-xforge-brainstorm-'))
     roots.push(root)
     mkdirSync(join(root, '.nova'), { recursive: true })
@@ -98,10 +119,10 @@ describe('XForge live Runtime', () => {
         acceptanceMap: { T1: ['中文长文留白清晰'] },
         verificationChecklist: [],
         risks: ['视觉验收需要人工确认']
-      },
-      artifactMarkdown: '# 实施计划'
+      }
     }
     const client = scriptedClient([
+      semantic({ isVagueNewRequirement: true, modelSemanticHint: 'brainstorm' }),
       JSON.stringify({
         questions: [{
           question: '更关注哪类阅读体验？',
@@ -131,7 +152,7 @@ describe('XForge live Runtime', () => {
         route: 'br-brainstorming'
       }),
       JSON.stringify(plan),
-      JSON.stringify({ findings: [], artifactMarkdown: '# Scope\n\nPASS' }),
+      JSON.stringify({ findings: [] }),
       '已按任务完成实现。'
     ])
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
@@ -149,12 +170,15 @@ describe('XForge live Runtime', () => {
     const toolRegistry = new ToolRegistry()
     toolRegistry.register(writeTool)
 
+    const parentEventBus = new EventBus()
+    const parentEvents: Array<{ type: string }> = []
+    parentEventBus.on(event => parentEvents.push(event))
     const result = await runXForgeLiveRuntime({
       runId: run.runId,
       request: '我想优化博客阅读体验',
       workspaceRoot: root,
       modelClient: client,
-      parentEventBus: new EventBus(),
+      parentEventBus,
       parentMessageId: 'message-brainstorm',
       toolRegistry,
       skillRegistry: SkillRegistry.load({
@@ -168,13 +192,103 @@ describe('XForge live Runtime', () => {
       readState: createReadState()
     })
 
-    expect(readFileSync(join(root, '.buildrail/idea/typography.md'), 'utf8')).toBe('# 中文阅读排版方案')
+    expect(existsSync(join(root, '.buildrail/idea/typography.md'))).toBe(false)
     expect(result.state.stageArtifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({ stage: 'brainstorm' })
     ]))
+    const brainstormArtifact = result.state.stageArtifacts.find(item => item.stage === 'brainstorm')
+    expect(readFileSync(join(root, brainstormArtifact!.path), 'utf8')).toContain('# XForge Exploration')
+    expect(parentEvents.some(event => event.type === 'text_delta')).toBe(false)
     expect(result.state.mainSession.userDecisions).toEqual(['中文长文'])
     expect(result.state.currentStage).toBe('waiting_user')
     expect(result.state.waitingReason).toContain('Test Gate 缺少')
+  })
+
+  it('plan 拒绝 bash 副作用，并在新鲜无工具上下文修复截断 JSON', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-xforge-plan-repair-'))
+    roots.push(root)
+    mkdirSync(join(root, '.nova'), { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      scripts: { build: 'node build.js' }
+    }))
+    const plan = {
+      plan: {
+        version: 1,
+        goal: '优化静态博客',
+        constraints: ['保持纯静态'],
+        nonGoals: ['不引入后端'],
+        repositoryFacts: ['package.json 提供 build script'],
+        changeScope: ['build.js'],
+        tasks: [{ id: 'T1', title: '实现静态增强', acceptance: ['构建逻辑保持纯静态'] }],
+        acceptanceMap: { T1: ['构建逻辑保持纯静态'] },
+        verificationChecklist: [],
+        risks: ['缺少自动测试']
+      }
+    }
+    const client = scriptedClient([
+      semantic(),
+      [
+        { type: 'message_start' },
+        { type: 'tool_call_start', toolCallId: 'plan-bash', toolName: 'bash', index: 0 },
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'plan-bash',
+            name: 'bash',
+            arguments: JSON.stringify({
+              command: 'Set-Content -LiteralPath forbidden.txt -Value touched'
+            })
+          }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ],
+      '```json\n{"plan":{"version":1',
+      JSON.stringify(plan),
+      JSON.stringify({ findings: [] }),
+      '任务无需写入。'
+    ])
+    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
+    roots.push(runsRoot)
+    const coordinator = createRunCoordinator(runsRoot)
+    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-plan-repair' })
+    coordinator.markRunning(run.runId)
+    const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
+    roots.push(checkpointRoot)
+    const toolRegistry = new ToolRegistry()
+    toolRegistry.register(bashTool)
+    const parentEventBus = new EventBus()
+    const parentEvents: Array<{ type: string }> = []
+    parentEventBus.on(event => parentEvents.push(event))
+
+    const result = await runXForgeLiveRuntime({
+      runId: run.runId,
+      request: '优化这个静态博客的功能',
+      workspaceRoot: root,
+      modelClient: client,
+      parentEventBus,
+      parentMessageId: 'message-plan-repair',
+      toolRegistry,
+      skillRegistry: SkillRegistry.load({
+        builtinDir: resolve('.nova/skills'),
+        globalDir: join(root, '.global-skills'),
+        workspaceRoot: root
+      }),
+      checkpointManager: new CheckpointManager({
+        checkpointDir: checkpointRoot,
+        sessionId: 'session-plan-repair',
+        workspaceRoot: root
+      }),
+      committer: coordinator,
+      askQuestion: vi.fn(async () => []),
+      readState: createReadState()
+    })
+
+    expect(existsSync(join(root, 'forbidden.txt'))).toBe(false)
+    expect(result.state.currentStage).toBe('waiting_user')
+    expect(result.state.validatedPlan?.goal).toBe('优化静态博客')
+    const planArtifact = result.state.stageArtifacts.find(item => item.stage === 'plan')
+    expect(readFileSync(join(root, planArtifact!.path), 'utf8')).toContain('# XForge Implementation Plan')
+    expect(parentEvents.some(event => event.type === 'text_delta')).toBe(false)
   })
 
   it('结构化结果最终无效时保留真实失败原因，不改写成 Pipeline 泛化错误', async () => {
@@ -182,6 +296,7 @@ describe('XForge live Runtime', () => {
     roots.push(root)
     mkdirSync(join(root, '.nova'), { recursive: true })
     const client = scriptedClient([
+      semantic({ isVagueNewRequirement: true, modelSemanticHint: 'brainstorm' }),
       JSON.stringify({
         questions: [{ question: '优化重点是什么？', options: [{ label: '阅读体验' }] }]
       }),
@@ -217,12 +332,101 @@ describe('XForge live Runtime', () => {
       committer: coordinator,
       askQuestion: vi.fn(async () => [{ selectedLabels: ['阅读体验'] }]),
       readState: createReadState()
-    })).rejects.toThrow('结构化结果无效')
+    })).rejects.toThrow('结构化结果无法通过 JSON 与字段校验')
 
     const snapshot = coordinator.getSnapshot(run.runId)
     expect(snapshot?.xforge?.currentStage).toBe('failed')
-    expect(snapshot?.xforge?.lastTransitionReason).toContain('结构化结果无效')
+    expect(snapshot?.xforge?.lastTransitionReason).toContain('结构化结果无法通过 JSON 与字段校验')
     expect(snapshot?.xforge?.lastTransitionReason).not.toContain('Pipeline 未进入')
+  })
+
+  it('非开发输入在 resolve 阶段完成，不进入计划或实施流水线', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-xforge-nondev-'))
+    roots.push(root)
+    mkdirSync(join(root, '.nova'), { recursive: true })
+    const client = scriptedClient([
+      semantic({ isNonDevRequest: true, modelSemanticHint: 'brainstorm' })
+    ])
+    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
+    roots.push(runsRoot)
+    const coordinator = createRunCoordinator(runsRoot)
+    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-nondev' })
+    coordinator.markRunning(run.runId)
+    const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
+    roots.push(checkpointRoot)
+
+    const result = await runXForgeLiveRuntime({
+      runId: run.runId,
+      request: '你觉得现在的架构怎么样？',
+      workspaceRoot: root,
+      modelClient: client,
+      parentEventBus: new EventBus(),
+      parentMessageId: 'message-nondev',
+      toolRegistry: new ToolRegistry(),
+      skillRegistry: SkillRegistry.load({
+        builtinDir: resolve('.nova/skills'),
+        globalDir: join(root, '.global-skills'),
+        workspaceRoot: root
+      }),
+      checkpointManager: new CheckpointManager({
+        checkpointDir: checkpointRoot,
+        sessionId: 'session-nondev',
+        workspaceRoot: root
+      }),
+      committer: coordinator,
+      askQuestion: vi.fn(async () => []),
+      readState: createReadState()
+    })
+
+    expect(result.state.currentStage).toBe('completed')
+    expect(result.state.stageArtifacts).toEqual([])
+    expect(result.summary).toContain('默认模式')
+  })
+
+  it('语义分类无效时保守进入 brainstorm，不进入可写实现路径', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-xforge-resolver-fallback-'))
+    roots.push(root)
+    mkdirSync(join(root, '.nova'), { recursive: true })
+    const client = scriptedClient([
+      '不是 JSON',
+      JSON.stringify({
+        questions: [{ question: '目标页面是什么？', options: [{ label: '登录页' }] }]
+      })
+    ])
+    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
+    roots.push(runsRoot)
+    const coordinator = createRunCoordinator(runsRoot)
+    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-fallback' })
+    coordinator.markRunning(run.runId)
+    const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
+    roots.push(checkpointRoot)
+
+    const result = await runXForgeLiveRuntime({
+      runId: run.runId,
+      request: '实现一个登录页面',
+      workspaceRoot: root,
+      modelClient: client,
+      parentEventBus: new EventBus(),
+      parentMessageId: 'message-fallback',
+      toolRegistry: new ToolRegistry(),
+      skillRegistry: SkillRegistry.load({
+        builtinDir: resolve('.nova/skills'),
+        globalDir: join(root, '.global-skills'),
+        workspaceRoot: root
+      }),
+      checkpointManager: new CheckpointManager({
+        checkpointDir: checkpointRoot,
+        sessionId: 'session-fallback',
+        workspaceRoot: root
+      }),
+      committer: coordinator,
+      askQuestion: vi.fn(async () => []),
+      readState: createReadState()
+    })
+
+    expect(result.state.currentStage).toBe('waiting_user')
+    expect(result.state.suspendedStage).toBe('brainstorm')
+    expect(result.state.tasks).toEqual([])
   })
 
   it('任务级验证不回退到交付级清单，交付门禁只使用计划显式命令', () => {
@@ -292,31 +496,14 @@ describe('XForge live Runtime', () => {
         acceptanceMap: { T1: ['`node --test smoke.test.mjs`'] },
         verificationChecklist: ['`node --test smoke.test.mjs`'],
         risks: ['验证环境可能缺少 Node']
-      },
-      artifactMarkdown: '# Plan\n\nRun the smoke test.'
+      }
     }
     const client = scriptedClient([
-      [
-        { type: 'message_start' },
-        { type: 'tool_call_start', toolCallId: 'ask-plan', toolName: 'askQuestion', index: 0 },
-        {
-          type: 'tool_call',
-          toolCall: {
-            id: 'ask-plan',
-            name: 'askQuestion',
-            arguments: JSON.stringify({
-              questions: [{
-                question: '是否保持纯静态？',
-                options: [{ label: '保持纯静态' }]
-              }]
-            })
-          }
-        },
-        { type: 'message_end', finishReason: 'tool_calls' }
-      ],
       JSON.stringify(plan),
-      JSON.stringify({ findings: [], artifactMarkdown: '# Scope\n\nPASS' }),
+      semantic(),
+      JSON.stringify({ findings: [] }),
       '任务无需额外修改，现有 smoke 已满足计划。',
+      'review findings 不是 JSON',
       JSON.stringify({ findings: [] })
     ])
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
@@ -333,7 +520,6 @@ describe('XForge live Runtime', () => {
     })
 
     const toolRegistry = new ToolRegistry()
-    toolRegistry.register(askQuestionTool)
     const askQuestion = vi.fn(async () => [{ selectedLabels: ['保持纯静态'] }])
     const result = await runXForgeLiveRuntime({
       runId: run.runId,
@@ -363,9 +549,9 @@ describe('XForge live Runtime', () => {
     ])
     expect(result.state.testEvidence?.passed).toBe(true)
     expect(result.state.reviewFindings).toEqual([])
-    expect(askQuestion).toHaveBeenCalledTimes(2)
+    expect(askQuestion).toHaveBeenCalledTimes(1)
     expect(result.state.reportFacts?.shipRequested).toBe(false)
     expect(result.state.reportFacts?.notExecuted).toEqual(['commit', 'push', 'deploy', 'publish'])
-    expect(result.summary).toContain('未执行 commit、push、deploy 或 publish')
+    expect(result.summary).toContain('未执行：commit、push、deploy、publish')
   })
 })

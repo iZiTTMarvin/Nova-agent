@@ -174,7 +174,14 @@ export const ComposeProgressPanel: React.FC = () => {
   const [actionMsg, setActionMsg] = useState<string | null>(null)
 
   if (xforgeSnapshot?.kind === 'xforge' && xforgeSnapshot.xforge) {
-    return <XForgeProgressView snapshot={xforgeSnapshot} onCancel={cancelExecution} />
+    return (
+      <XForgeProgressView
+        snapshot={xforgeSnapshot}
+        collapsed={collapsed}
+        onToggleCollapsed={() => setCollapsed(v => !v)}
+        onCancel={cancelExecution}
+      />
+    )
   }
 
   if (!state) return null
@@ -570,61 +577,147 @@ const STAGE_LABELS: Record<string, string> = {
   cancelled: '已取消'
 }
 
+const XFORGE_STEPS = [
+  'brainstorm',
+  'plan',
+  'scope_check',
+  'implement',
+  'test',
+  'review',
+  'report'
+] as const
+
 const XForgeProgressView: React.FC<{
   snapshot: RunSnapshot
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onCancel: (runId?: string) => Promise<void>
-}> = ({ snapshot, onCancel }) => {
+}> = ({ snapshot, collapsed, onToggleCollapsed, onCancel }) => {
   const state = snapshot.xforge!
+  const displayStatus = snapshot.status === 'interrupted' ? 'interrupted' : snapshot.status
+  const isActive =
+    displayStatus === 'running' ||
+    displayStatus === 'resuming' ||
+    displayStatus === 'waiting_user'
+  const isTerminal =
+    displayStatus === 'completed' ||
+    displayStatus === 'failed' ||
+    displayStatus === 'cancelled' ||
+    displayStatus === 'interrupted'
   const testVerdict = state.testEvidence
     ? state.testEvidence.passed ? '通过' : '失败'
     : '未运行'
   const blocking = state.reviewFindings.filter(
     finding => finding.severity === 'critical' || finding.severity === 'high'
   ).length
+  const unverifiedCount =
+    state.tasks.filter(task => task.status === 'unverified').length +
+    state.evidenceRefs.filter(ref => ref.unverified).length +
+    state.reviewFindings.filter(finding => finding.unverified).length +
+    state.technicalDebt.filter(finding => finding.unverified).length
+  const waitingLooksLikeDrift = Boolean(
+    state.currentStage === 'waiting_user' &&
+    state.waitingReason &&
+    /(drift|fingerprint|证据.*失效|工作区发生变化|Workspace)/i.test(state.waitingReason)
+  )
+  const completedSteps = XFORGE_STEPS.filter(stage =>
+    state.completedStages.includes(stage) || state.currentStage === 'completed'
+  ).length
   return (
-    <section className="compose-panel" aria-label="XForge 运行进度">
-      <header className="compose-panel__header">
-        <div>
-          <strong>XForge · {STAGE_LABELS[state.currentStage] ?? state.currentStage}</strong>
-          <div className="compose-panel__mono">runId: {snapshot.runId}</div>
+    <div className="compose-dock">
+      <section
+        className={`compose-panel${isActive ? ' compose-panel--active' : ''}`}
+        data-expanded={!collapsed}
+        aria-label="XForge 运行进度"
+      >
+        <div className="compose-panel__header-row">
+          <button
+            type="button"
+            className="compose-panel__header"
+            onClick={onToggleCollapsed}
+            aria-expanded={!collapsed}
+          >
+            <span className="compose-panel__caret" data-collapsed={collapsed} aria-hidden="true">
+              ▾
+            </span>
+            <span className="compose-panel__badge" data-status={displayStatus}>
+              {STATUS_LABEL[displayStatus] ?? displayStatus}
+            </span>
+            <strong>XForge</strong>
+            <span className="compose-panel__phase-inline" title={STAGE_LABELS[state.currentStage] ?? state.currentStage}>
+              {STAGE_LABELS[state.currentStage] ?? state.currentStage}
+            </span>
+            <span className="compose-panel__progress" aria-label="XForge 阶段进度">
+              {completedSteps}/{XFORGE_STEPS.length}
+            </span>
+          </button>
+          {!isTerminal && (
+            <button
+              className="compose-panel__action compose-panel__action--stop"
+              onClick={() => void onCancel(snapshot.runId)}
+              type="button"
+            >
+              停止
+            </button>
+          )}
         </div>
-        {!['completed', 'failed', 'cancelled'].includes(state.currentStage) && (
-          <button className="compose-panel__btn" onClick={() => void onCancel(snapshot.runId)}>停止</button>
+        {!collapsed && (
+          <div className="compose-panel__body">
+            <div className="compose-panel__meta">
+              <span><span className="compose-panel__meta-label">runId</span><span className="compose-panel__mono">{snapshot.runId}</span></span>
+              <span>已完成：{state.completedStages.map(stage => STAGE_LABELS[stage] ?? stage).join('、') || '—'}</span>
+              <span>已跳过：{state.skippedStages.map(stage => STAGE_LABELS[stage] ?? stage).join('、') || '—'}</span>
+              <span>Test Gate：{testVerdict}</span>
+              <span>Blocking：{blocking}</span>
+            </div>
+            <ol className="compose-panel__stepper" aria-label="XForge 阶段时间线">
+              {XFORGE_STEPS.map(stage => {
+                const status = state.skippedStages.includes(stage)
+                  ? 'skipped'
+                  : state.completedStages.includes(stage) || state.currentStage === 'completed'
+                    ? 'done'
+                    : state.currentStage === stage
+                      ? 'current'
+                      : 'pending'
+                return (
+                  <li key={stage} className="compose-panel__step" data-status={status}>
+                    <span className="compose-panel__step-dot" aria-hidden="true" />
+                    <span>{STAGE_LABELS[stage]}</span>
+                  </li>
+                )
+              })}
+            </ol>
+            <div className="compose-panel__meta">
+              <span>Scope 修正 {state.scopeCorrectionUsed}/2</span>
+              <span>Test-Fix {state.deliveryTestFixUsed}/3</span>
+              <span>Review-Fix {state.reviewRemediationUsed}/2</span>
+              {state.reviewOnly && <span>Review Only</span>}
+              {unverifiedCount > 0 && <span>未验证证据 {unverifiedCount}</span>}
+            </div>
+            {state.currentStage === 'waiting_user' && (
+              <div className="compose-panel__failure" role="status" data-kind={waitingLooksLikeDrift ? 'drift' : 'waiting'}>
+                <strong>{waitingLooksLikeDrift ? '安全阻塞' : '安全暂停'}</strong>
+                <div>{state.waitingReason ?? '需要你的输入'}</div>
+                <div>回复消息后从 {STAGE_LABELS[state.resumeTarget ?? ''] ?? state.resumeTarget ?? '当前阶段'} 继续。</div>
+              </div>
+            )}
+            {state.tasks.length > 0 && (
+              <table className="compose-panel__table">
+                <thead><tr><th>任务</th><th>状态</th><th>尝试</th></tr></thead>
+                <tbody>
+                  {state.tasks.map(task => (
+                    <tr key={task.id} className={`compose-panel__row compose-panel__row--${task.status}`}>
+                      <td className="compose-panel__td-task"><span className="compose-panel__task-id">{task.id}</span> <span className="compose-panel__task-title">{task.title}</span></td>
+                      <td>{statusIcon(task.status)} {statusLabel(task.status)}</td>
+                      <td>{task.attempts}/3{task.failureReason ? ` · ${task.failureReason}` : ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         )}
-      </header>
-      <div className="compose-panel__meta">
-        <span>已完成：{state.completedStages.map(stage => STAGE_LABELS[stage] ?? stage).join('、') || '—'}</span>
-        <span>已跳过：{state.skippedStages.map(stage => STAGE_LABELS[stage] ?? stage).join('、') || '—'}</span>
-        <span>Test Gate：{testVerdict}</span>
-        <span>Blocking：{blocking}</span>
-      </div>
-      <div className="compose-panel__meta">
-        <span>Scope 修正 {state.scopeCorrectionUsed}/2</span>
-        <span>Test-Fix {state.deliveryTestFixUsed}/3</span>
-        <span>Review-Fix {state.reviewRemediationUsed}/2</span>
-        {state.reviewOnly && <span>Review Only</span>}
-      </div>
-      {state.currentStage === 'waiting_user' && (
-        <div className="compose-panel__failure" role="status">
-          <strong>安全暂停</strong>
-          <div>{state.waitingReason ?? '需要你的输入'}</div>
-          <div>回复消息后从 {STAGE_LABELS[state.resumeTarget ?? ''] ?? state.resumeTarget ?? '当前阶段'} 继续。</div>
-        </div>
-      )}
-      {state.tasks.length > 0 && (
-        <table className="compose-panel__table">
-          <thead><tr><th>任务</th><th>状态</th><th>尝试</th></tr></thead>
-          <tbody>
-            {state.tasks.map(task => (
-              <tr key={task.id} className={`compose-panel__row compose-panel__row--${task.status}`}>
-                <td className="compose-panel__td-task"><span className="compose-panel__task-id">{task.id}</span> {task.title}</td>
-                <td>{statusIcon(task.status)} {statusLabel(task.status)}</td>
-                <td>{task.attempts}/3{task.failureReason ? ` · ${task.failureReason}` : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
+      </section>
+    </div>
   )
 }

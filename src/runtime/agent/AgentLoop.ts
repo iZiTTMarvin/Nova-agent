@@ -39,8 +39,7 @@ import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { FileEffectRecorder } from '../tools/types'
 
-import { invokeSkill, expandSkillBody } from '../skills/invokeSkill'
-import { routeComposeInput } from './composeRouter'
+import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
@@ -383,7 +382,6 @@ export class AgentLoop implements IdleCompactionTarget {
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
       useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false,
-      composeAutoRoute: config?.composeAutoRoute !== false,
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
       promptCacheKey: config?.promptCacheKey
@@ -834,42 +832,6 @@ export class AgentLoop implements IdleCompactionTarget {
         }
         await this.finishMessageRound(messageId)
         return
-      }
-
-      // 仅供未注入原生 XForge runner 的旧宿主恢复历史任务。
-      if (
-        this.mode === 'compose' &&
-        dispatch.kind === 'passthrough' &&
-        this.workflowRunner &&
-        this.config.composeAutoRoute !== false
-      ) {
-        const routeResult = await routeComposeInput(
-          content as string,
-          this.modelPool,
-          { abortSignal: this.abortController?.signal }
-        )
-        if (routeResult.route === 'full') {
-          // 历史宿主仍以 br-full-dev 进入旧工作流。
-          dispatch = { kind: 'workflow', scriptName: 'br-full-dev', args: content as string }
-        } else if (routeResult.route === 'plan' && this.skillRegistry) {
-          const skill = this.skillRegistry.get('br-brainstorming')
-          if (skill) {
-            // 注册 skill 目录，供后续只读工具读取 references
-            this.addSkillRoot(skill.directory)
-            const assistantContent = expandSkillBody(skill, content as string, {
-              workspacePath: this.workingDir ?? undefined,
-              skillDirectory: skill.directory
-            })
-            dispatch = {
-              kind: 'inject',
-              assistantContent,
-              userContent: `请按上述设计指引产出方案文档。需求：${content}`,
-              skillDirectory: skill.directory
-            }
-          }
-          // skill 不存在则保持 passthrough（降级）
-        }
-        // route === 'quick' 保持 passthrough 不变
       }
 
       if (dispatch.kind === 'workflow' && this.workflowRunner) {
