@@ -4,7 +4,7 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
-
+.devin
 # electron-builder 打包产物（NSIS 安装包 NovaAgent-Setup-*.exe、win-unpacked、Spike 冒烟 exe 等）
 # 本地重建：npm run dist  或  npm run pack:spike
 release/
