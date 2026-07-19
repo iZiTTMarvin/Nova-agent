@@ -98,9 +98,10 @@ export type {
   XForgeTaskAttemptResult,
   XForgeMainAgentContext,
   XForgeStageHost,
-  XForgeRunCommitter,
   XForgeStageExecutorOptions
 } from './stageExecutor'
+
+export type { XForgeRunCommitter } from './runState'
 
 export {
   XForgeStageExecutor,
@@ -113,7 +114,6 @@ export type {
   XForgeControlledTestCommand,
   XForgeRuntimeCommandResult,
   XForgeReviewInputSnapshot,
-  XForgeReviewWorkspaceSnapshot,
   XForgeFixResult,
   XForgeDeliveryHost,
   XForgeDeliveryExecutorOptions
@@ -153,6 +153,28 @@ export {
   createXForgeReviewSnapshot,
   writeXForgeRuntimeReport
 } from './deliveryRuntime'
+
+export type {
+  XForgeWorkspaceBaselineV1,
+  XForgeWorkspaceBaselineEntry,
+  XForgeReviewTarget
+} from './workspaceBaseline'
+export {
+  captureXForgeWorkspaceBaseline,
+  resolveXForgeReviewTarget,
+  listDirtyWorkspaceEntries
+} from './workspaceBaseline'
+
+export {
+  isPathAllowedByChangeScope,
+  normalizeWorkspaceRelativePath
+} from './changeScope'
+
+export { buildXForgeReviewSnapshot } from './reviewSnapshot'
+export type {
+  XForgeReviewSnapshotFile,
+  XForgeReviewWorkspaceSnapshot
+} from './reviewSnapshot'
 
 export {
   getXForgeRunRoot,

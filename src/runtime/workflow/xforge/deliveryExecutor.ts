@@ -10,9 +10,10 @@ import {
   type XForgeStageMethodRegistry,
   type XForgeStageMethodResolution
 } from './stageMethodResolver'
-import { buildWriteBoundary, toControllerContext, type XForgeRunCommitter } from './stageExecutor'
+import { buildWriteBoundary, toControllerContext } from './stageExecutor'
 import { validateXForgeCommittedEffects } from './writeSafety'
 import { authorizeXForgeVerificationCommand } from './policy'
+import type { XForgeReviewWorkspaceSnapshot } from './reviewSnapshot'
 export {
   isForbiddenXForgeSideEffectCommand,
   isSafeRuntimeTestCommand
@@ -25,6 +26,7 @@ import type {
   XForgeReportFactsState,
   XForgeReviewFindingState,
   XForgeRunState,
+  XForgeRunCommitter,
   XForgeStageArtifactRef,
   XForgeTestEvidenceState,
   XForgeWorkspaceFingerprint,
@@ -55,13 +57,6 @@ export interface XForgeReviewInputSnapshot {
   testEvidence: XForgeTestEvidenceState | null
   reviewOnly: boolean
   workspace: XForgeReviewWorkspaceSnapshot
-}
-
-export interface XForgeReviewWorkspaceSnapshot {
-  changedFiles: string[]
-  files: Array<{ path: string; content: string; binary?: boolean }>
-  diff: string
-  evidenceRef: XForgeEvidenceRef
 }
 
 export interface XForgeFixResult {
@@ -102,6 +97,7 @@ export interface XForgeDeliveryHost {
     runId: string
     workspaceRevision: number
     fingerprint: XForgeWorkspaceFingerprint
+    state: XForgeRunState
   }) => Promise<{
     snapshot?: XForgeReviewWorkspaceSnapshot
     blockedReason?: string
@@ -282,7 +278,8 @@ export class XForgeDeliveryExecutor {
     const workspaceResult = await this.host.createReviewSnapshot({
       runId: this.runId,
       workspaceRevision: state.workspaceRevision,
-      fingerprint: currentFingerprint
+      fingerprint: currentFingerprint,
+      state: structuredClone(state)
     })
     if (workspaceResult.blockedReason || !workspaceResult.snapshot) {
       this.wait('review', `Review Input Snapshot 无法生成: ${workspaceResult.blockedReason ?? '缺少快照'}`)

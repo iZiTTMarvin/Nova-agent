@@ -9,6 +9,7 @@ import {
   commitFileEffect,
   hashContent,
   hashFileIfExists,
+  nextFileEffectSequence,
   recordFileEffect
 } from '../v2/EffectReceipt'
 
@@ -17,11 +18,15 @@ import {
  * prepared receipt 与改前备份先落盘，目标文件成功写入后再提交 afterHash。
  */
 export class XForgeFileEffectRecorder implements FileEffectRecorder {
+  private nextSequence: number
+
   constructor(
     private readonly workspaceRoot: string,
     private readonly runId: string,
     private readonly getStepId: () => string
-  ) {}
+  ) {
+    this.nextSequence = nextFileEffectSequence(workspaceRoot, runId)
+  }
 
   prepareFileWrite(
     absolutePath: string,
@@ -49,6 +54,7 @@ export class XForgeFileEffectRecorder implements FileEffectRecorder {
         beforeCheckpointRef,
         afterHash: null,
         effectId,
+        sequence: this.nextSequence++,
         status: 'prepared'
       })
     )

@@ -19,8 +19,14 @@ import {
   unlinkSync,
   writeFileSync
 } from 'fs'
+import { readFile as readFileAsync, readdir as readdirAsync } from 'fs/promises'
 import { dirname, join, relative, resolve, sep } from 'path'
 import { atomicWriteFileSync } from '../../storage/atomicFile'
+import {
+  assertSafeRelativePath,
+  canonicalizeRoot,
+  resolveExistingPathUnderRoot
+} from '../pathSafety'
 
 export type FileEffectAction = 'create' | 'modify' | 'delete'
 export type FileEffectStatus = 'prepared' | 'committed'
@@ -43,6 +49,8 @@ export interface FileEffectReceipt {
   beforeCheckpointRef: string | null
   afterHash: string | null
   status: FileEffectStatus
+  /** 同一 run 内严格递增的副作用序号；新 receipt 必填，旧数据可能缺失。 */
+  sequence?: number
   at: number
 }
 
@@ -182,7 +190,6 @@ export function commitFileEffect(
   const receipt = JSON.parse(readFileSync(file, 'utf-8')) as FileEffectReceipt
   receipt.status = 'committed'
   receipt.afterHash = patch.afterHash
-  receipt.at = Date.now()
   atomicWriteFileSync(file, JSON.stringify(receipt, null, 2))
 }
 
@@ -213,7 +220,7 @@ export function listFileEffectsDetailed(
       corruptIds.push(name.replace(/\.json$/, ''))
     }
   }
-  out.sort((a, b) => a.at - b.at)
+  out.sort(compareFileEffects)
   return { effects: out, corruptIds }
 }
 
@@ -491,6 +498,7 @@ export function buildFileEffectReceipt(params: {
   afterHash: string | null
   effectId?: string
   status?: FileEffectStatus
+  sequence?: number
 }): FileEffectReceipt {
   assertSafeRunId(params.runId)
   const rel = normalizeRel(params.workspaceRoot, params.absPath)
@@ -505,6 +513,67 @@ export function buildFileEffectReceipt(params: {
     beforeCheckpointRef: params.beforeCheckpointRef,
     afterHash: params.afterHash,
     status: params.status ?? 'prepared',
+    ...(params.sequence !== undefined ? { sequence: params.sequence } : {}),
     at: Date.now()
   }
+}
+
+/** Review/Test Gate 使用的异步读取版本，避免在 Electron 主进程阻塞事件循环。 */
+export async function listFileEffectsDetailedAsync(
+  workspaceRoot: string,
+  runId: string
+): Promise<ListEffectsResult> {
+  assertSafeRunId(runId)
+  const root = await canonicalizeRoot(workspaceRoot)
+  const dir = effectsDir(root, runId)
+  let names: string[]
+  try {
+    names = await readdirAsync(dir)
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return { effects: [], corruptIds: [] }
+    }
+    throw error
+  }
+
+  const effects: FileEffectReceipt[] = []
+  const corruptIds: string[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      const raw = JSON.parse(await readFileAsync(join(dir, name), 'utf8')) as FileEffectReceipt
+      const path = assertSafeRelativePath(raw.path)
+      await resolveExistingPathUnderRoot(root, path)
+      if (!raw.status) raw.status = 'committed'
+      effects.push(raw)
+    } catch {
+      corruptIds.push(name.replace(/\.json$/, ''))
+    }
+  }
+  effects.sort(compareFileEffects)
+  return { effects, corruptIds }
+}
+
+export function compareFileEffects(a: FileEffectReceipt, b: FileEffectReceipt): number {
+  if (a.sequence !== undefined || b.sequence !== undefined) {
+    if (a.sequence === undefined) return -1
+    if (b.sequence === undefined) return 1
+    if (a.sequence !== b.sequence) return a.sequence - b.sequence
+  }
+  if (a.at !== b.at) return a.at - b.at
+  return a.effectId.localeCompare(b.effectId)
+}
+
+export function nextFileEffectSequence(workspaceRoot: string, runId: string): number {
+  const { effects, corruptIds } = listFileEffectsDetailed(workspaceRoot, runId)
+  if (corruptIds.length > 0) {
+    throw new Error(`存在损坏的 EffectReceipt，无法分配 sequence: ${corruptIds.join(', ')}`)
+  }
+  const sequences = effects
+    .map(effect => effect.sequence)
+    .filter((value): value is number => value !== undefined)
+  if (new Set(sequences).size !== sequences.length) {
+    throw new Error('EffectReceipt sequence 重复，拒绝继续记录副作用')
+  }
+  return sequences.reduce((max, sequence) => Math.max(max, sequence), 0) + 1
 }

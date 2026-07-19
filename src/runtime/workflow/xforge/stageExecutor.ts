@@ -9,7 +9,8 @@ import type {
   XForgeMainSessionState,
   XForgeScopeFindingState,
   XForgeFileEffect,
-  ApplyXForgeTransitionOptions
+  ApplyXForgeTransitionOptions,
+  XForgeRunCommitter
 } from './runState'
 import { validateXForgeCommittedEffects } from './writeSafety'
 import {
@@ -133,20 +134,6 @@ export interface XForgeStageHost {
     writeBoundary: XForgeWriteBoundary
     context: XForgeMainAgentContext
   }) => Promise<{ artifact: NonNullable<ApplyXForgeTransitionOptions['artifact']> }>
-}
-
-export interface XForgeRunCommitter {
-  getSnapshot(runId: string): { xforge?: XForgeRunState | null } | null
-  commitXForgeStageTransition(
-    runId: string,
-    result: StageTransitionResult,
-    opts?: ApplyXForgeTransitionOptions
-  ): { ok: true; xforge: XForgeRunState } | { ok: false; message: string }
-  commitXForgeStatePatch(
-    runId: string,
-    opts: ApplyXForgeTransitionOptions,
-    reason?: string
-  ): { ok: true; xforge: XForgeRunState } | { ok: false; message: string }
 }
 
 export interface XForgeStageExecutorOptions {

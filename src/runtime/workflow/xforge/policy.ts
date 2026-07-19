@@ -3,6 +3,10 @@ import type { ToolDefinition } from '../../model/types'
 import { assessCommandRisk } from '../../permissions/rules'
 import { resolveAndValidatePath } from '../../tools/ToolRegistry'
 import { resolveToolArg } from '../../tools/toolArgResolver'
+import {
+  isPathAllowedByChangeScope,
+  normalizeWorkspaceRelativePath
+} from './changeScope'
 import type { XForgeValidatedPlan } from './plan'
 import type { XForgeStage } from './types'
 
@@ -164,32 +168,13 @@ function validateWriteTargetInChangeScope(context: XForgeToolAuthorizationContex
   const resolved = resolveAndValidatePath(context.workspaceRoot, inputPath)
   if (!resolved.ok) return resolved.error
 
-  const relativePath = normalizeRelativePath(relative(context.workspaceRoot, resolved.path))
+  const relativePath = normalizeWorkspaceRelativePath(
+    relative(context.workspaceRoot, resolved.path)
+  )
   if (!isPathAllowedByChangeScope(relativePath, context.validatedPlan.changeScope)) {
     return `XForge 写入越过 changeScope: ${relativePath}`
   }
   return null
-}
-
-function isPathAllowedByChangeScope(relativePath: string, changeScope: string[]): boolean {
-  return changeScope.some(scope => {
-    const normalized = normalizeScope(scope)
-    if (!normalized) return false
-    if (normalized === '.' || normalized === '*' || normalized === '**/*') return true
-    if (normalized.endsWith('/**')) {
-      const prefix = normalized.slice(0, -3)
-      return relativePath === prefix || relativePath.startsWith(`${prefix}/`)
-    }
-    return relativePath === normalized || relativePath.startsWith(`${normalized}/`)
-  })
-}
-
-function normalizeRelativePath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/^\.\//, '')
-}
-
-function normalizeScope(scope: string): string {
-  return normalizeRelativePath(scope.trim()).replace(/\/+$/, '')
 }
 
 function allow(effect: XForgeToolEffect): XForgeToolAuthorizationDecision {

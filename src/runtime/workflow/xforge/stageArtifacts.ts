@@ -10,7 +10,7 @@ import {
   statSync
 } from 'fs'
 import { dirname, join, relative, resolve, sep } from 'path'
-import { atomicWriteFileSync } from '../../storage/atomicFile'
+import { atomicWriteFile, atomicWriteFileSync } from '../../storage/atomicFile'
 import type { XForgeEvidenceRef, XForgeStageArtifactRef, XForgeWorkspaceFingerprint } from './runState'
 import type { XForgeStage } from './types'
 
@@ -74,6 +74,24 @@ export function writeXForgeEvidence(params: {
   mkdirSync(dir, { recursive: true })
   const absPath = join(dir, `${safeName(params.name)}.md`)
   atomicWriteFileSync(absPath, params.content)
+  return {
+    kind: params.kind,
+    path: relative(params.workspaceRoot, absPath).replace(/\\/g, '/'),
+    ...(params.unverified ? { unverified: true } : {})
+  }
+}
+
+export async function writeXForgeEvidenceAsync(params: {
+  workspaceRoot: string
+  runId: string
+  kind: string
+  name: string
+  content: string
+  unverified?: boolean
+}): Promise<XForgeEvidenceRef> {
+  const dir = getXForgeStageDir(params.workspaceRoot, params.runId, 'evidence')
+  const absPath = join(dir, `${safeName(params.name)}.md`)
+  await atomicWriteFile(absPath, params.content)
   return {
     kind: params.kind,
     path: relative(params.workspaceRoot, absPath).replace(/\\/g, '/'),

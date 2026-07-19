@@ -35,6 +35,29 @@ export function atomicWriteFileSync(
   fs.renameSync(tmpPath, filePath)
 }
 
+/** 主进程热路径使用的异步原子写入，协议与同步版本一致。 */
+export async function atomicWriteFile(
+  filePath: string,
+  content: string | Buffer,
+  encoding: BufferEncoding = 'utf8'
+): Promise<void> {
+  const dir = path.dirname(filePath)
+  await fs.promises.mkdir(dir, { recursive: true })
+  const tmpPath = `${filePath}${TMP_SUFFIX}`
+  const handle = await fs.promises.open(tmpPath, 'w')
+  try {
+    if (typeof content === 'string') {
+      await handle.writeFile(content, { encoding })
+    } else {
+      await handle.writeFile(content)
+    }
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await fs.promises.rename(tmpPath, filePath)
+}
+
 /**
  * 启动时清理遗留的 .tmp 文件（上次崩溃可能留下）。
  * 仅扫描已知落盘根目录下的直接子树，避免全 userData 深度遍历。

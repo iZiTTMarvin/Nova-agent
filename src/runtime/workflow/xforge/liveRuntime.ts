@@ -28,6 +28,10 @@ import {
   runXForgeControlledTestCommand,
   writeXForgeRuntimeReport
 } from './deliveryRuntime'
+import {
+  captureXForgeWorkspaceBaseline,
+  resolveXForgeReviewTarget
+} from './workspaceBaseline'
 import { XForgeExecutionPipeline } from './executionPipeline'
 import { XForgeFileEffectRecorder } from './effectRecorder'
 import { resolveStartStage } from './stageResolver'
@@ -35,7 +39,6 @@ import {
   XForgeStageExecutor,
   buildMainAgentContext,
   type XForgeExplorationMethod,
-  type XForgeRunCommitter,
   type XForgeStageHost
 } from './stageExecutor'
 import {
@@ -54,6 +57,7 @@ import type {
   XForgeMainSessionState,
   XForgeReviewFindingState,
   XForgeRunState,
+  XForgeRunCommitter,
   XForgeScopeFindingState,
   XForgeTaskState
 } from './runState'
@@ -82,6 +86,8 @@ export interface XForgeLiveRuntimeOptions {
   contextWindow?: number
   supportsVision?: boolean
   readState?: ReadState
+  /** 仅新建且尚未发生业务写入的 run 可以初始化 baseline。 */
+  initializeWorkspaceBaseline: boolean
 }
 
 export interface XForgeLiveRuntimeResult {
@@ -138,6 +144,24 @@ export async function runXForgeLiveRuntime(
     getStage: () => activeStage,
     effectRecorder
   })
+
+  // 任何业务写入前冻结 baseline；已存在则不可覆盖（commit 侧也会拒绝覆盖）。
+  {
+    const boot = options.committer.getSnapshot(options.runId)?.xforge
+    if (!boot) throw new Error(`XForge run 不存在: ${options.runId}`)
+    if (!boot.workspaceBaseline) {
+      if (!options.initializeWorkspaceBaseline) {
+        throw new Error('恢复的 XForge run 缺少 Workspace Baseline，拒绝从当前工作区重新捕获；请重新开始该 run')
+      }
+      const baseline = await captureXForgeWorkspaceBaseline(options.workspaceRoot)
+      const patched = options.committer.commitXForgeStatePatch(
+        options.runId,
+        { workspaceBaseline: baseline },
+        '冻结 XForge Workspace Baseline'
+      )
+      if (!patched.ok) throw new Error(patched.message)
+    }
+  }
 
   const hostBase = {
     activateStage: async (params: { stage: XForgeStage; skill?: { body: string } }) => {
@@ -345,8 +369,14 @@ export async function runXForgeLiveRuntime(
         { workspaceRoot: options.workspaceRoot, runId: options.runId },
         evidence
       ),
-    createReviewSnapshot: async () =>
-      createXForgeReviewSnapshot({ workspaceRoot: options.workspaceRoot, runId: options.runId }),
+    createReviewSnapshot: async ({ state }) =>
+      createXForgeReviewSnapshot({
+        workspaceRoot: options.workspaceRoot,
+        runId: options.runId,
+        baseline: state.workspaceBaseline,
+        reviewTarget: state.reviewTarget,
+        changeScope: state.validatedPlan?.changeScope ?? null
+      }),
     runReviewSubagent: async ({ input }) => {
       const reviewSkill = options.skillRegistry.get('br-review')
       if (!reviewSkill || reviewSkill.invalid || !reviewSkill.enabled || !reviewSkill.body.trim()) {
@@ -473,6 +503,10 @@ export async function runXForgeLiveRuntime(
     const resolverPatch = {
       reviewOnly: resolver.reviewOnly,
       skippedStages: resolver.skippedStages,
+      reviewTarget: resolveXForgeReviewTarget({
+        reviewOnly: resolver.reviewOnly,
+        codeReadyForTest: resolverInput.codeReadyForTest === true
+      }),
       mainSession: {
         ...current.mainSession,
         goal: current.mainSession.goal || stripFullDevCommand(options.request)

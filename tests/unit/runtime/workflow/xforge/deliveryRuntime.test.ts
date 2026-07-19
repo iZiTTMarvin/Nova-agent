@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
 import {
+  captureXForgeWorkspaceBaseline,
   captureXForgeWorkspaceFingerprint,
   createXForgeReviewSnapshot,
   parseCommandArgv,
@@ -14,6 +15,11 @@ import {
   type XForgeReportFactsState,
   type XForgeTestEvidenceState
 } from '../../../../../src/runtime/workflow/xforge'
+import {
+  buildFileEffectReceipt,
+  hashContent,
+  recordFileEffect
+} from '../../../../../src/runtime/workflow/v2/EffectReceipt'
 
 describe('XForge delivery Runtime adapters', () => {
   let workspaceRoot: string
@@ -114,36 +120,73 @@ describe('XForge delivery Runtime adapters', () => {
       .toContain('Not executed: commit, push, deploy, publish')
   })
 
-  it('Review Snapshot 同时包含 tracked diff 与 untracked 文件正文', () => {
+  it('Review Snapshot 在 run_effects 下只包含 receipt 文件，且需要 baseline', async () => {
     git('init', '-q')
     git('config', 'user.email', 'test@example.com')
     git('config', 'user.name', 'Test')
     fs.writeFileSync(path.join(workspaceRoot, 'tracked.ts'), 'export const value = 1\n', 'utf8')
     git('add', 'tracked.ts', 'package.json')
     git('commit', '-qm', 'baseline')
-    fs.writeFileSync(path.join(workspaceRoot, 'tracked.ts'), 'export const value = 2\n', 'utf8')
-    fs.writeFileSync(path.join(workspaceRoot, 'untracked.ts'), 'export const added = true\n', 'utf8')
+    fs.writeFileSync(path.join(workspaceRoot, 'user-only.ts'), 'user\n', 'utf8')
 
-    const result = createXForgeReviewSnapshot({ workspaceRoot, runId: 'run-review' })
+    const baseline = await captureXForgeWorkspaceBaseline(workspaceRoot)
+    const abs = path.join(workspaceRoot, 'owned.ts')
+    fs.writeFileSync(abs, 'owned\n', 'utf8')
+    recordFileEffect(workspaceRoot, buildFileEffectReceipt({
+      workspaceRoot,
+      runId: 'run-review',
+      absPath: abs,
+      action: 'create',
+      beforeHash: null,
+      beforeCheckpointRef: null,
+      afterHash: hashContent('owned\n'),
+      effectId: 'effect-owned',
+      status: 'committed'
+    }))
+
+    const result = await createXForgeReviewSnapshot({
+      workspaceRoot,
+      runId: 'run-review',
+      baseline,
+      reviewTarget: { kind: 'run_effects' },
+      changeScope: ['owned.ts']
+    })
 
     expect(result.blockedReason).toBeUndefined()
-    expect(result.snapshot?.changedFiles).toEqual(['tracked.ts', 'untracked.ts'])
-    expect(result.snapshot?.diff).toContain('value = 2')
-    expect(result.snapshot?.files).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'tracked.ts', content: expect.stringContaining('value = 2') }),
-      expect.objectContaining({ path: 'untracked.ts', content: expect.stringContaining('added = true') })
-    ]))
-  })
+    expect(result.snapshot?.changedFiles).toEqual(['owned.ts'])
+    expect(result.snapshot?.changedFiles).not.toContain('user-only.ts')
+    expect(result.snapshot?.targetKind).toBe('run_effects')
+  }, 15_000)
 
-  it('Review Snapshot 遇到敏感文件时安全阻塞且不读取正文', () => {
+  it('Review Snapshot 遇到敏感文件时安全阻塞且不读取正文', async () => {
     git('init', '-q')
     git('config', 'user.email', 'test@example.com')
     git('config', 'user.name', 'Test')
     git('add', 'package.json')
     git('commit', '-qm', 'baseline')
-    fs.writeFileSync(path.join(workspaceRoot, '.env'), 'SECRET=do-not-read', 'utf8')
 
-    const result = createXForgeReviewSnapshot({ workspaceRoot, runId: 'run-review' })
+    const baseline = await captureXForgeWorkspaceBaseline(workspaceRoot)
+    const abs = path.join(workspaceRoot, '.env')
+    fs.writeFileSync(abs, 'SECRET=do-not-read', 'utf8')
+    recordFileEffect(workspaceRoot, buildFileEffectReceipt({
+      workspaceRoot,
+      runId: 'run-review',
+      absPath: abs,
+      action: 'create',
+      beforeHash: null,
+      beforeCheckpointRef: null,
+      afterHash: hashContent('SECRET=do-not-read'),
+      effectId: 'effect-env',
+      status: 'committed'
+    }))
+
+    const result = await createXForgeReviewSnapshot({
+      workspaceRoot,
+      runId: 'run-review',
+      baseline,
+      reviewTarget: { kind: 'run_effects' },
+      changeScope: ['*']
+    })
 
     expect(result.snapshot).toBeUndefined()
     expect(result.blockedReason).toMatch(/敏感文件/)
