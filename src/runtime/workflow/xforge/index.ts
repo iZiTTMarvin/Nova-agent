@@ -137,16 +137,18 @@ export type {
 
 export { XForgeExecutionPipeline } from './executionPipeline'
 export {
-  runXForgeLiveRuntime,
-  classifyXForgeRequest,
-  normalizeXForgeBrainstormPayload,
-  resolveXForgeTaskVerificationCommand,
-  resolveXForgeDeliveryCommands
+  runXForgeLiveRuntime
 } from './liveRuntime'
 export type {
   XForgeLiveRuntimeOptions,
   XForgeLiveRuntimeResult
 } from './liveRuntime'
+export { classifyXForgeRequest } from './requestResolution'
+export { normalizeXForgeBrainstormPayload } from './liveStageHost'
+export {
+  resolveXForgeTaskVerificationCommand,
+  resolveXForgeDeliveryCommands
+} from './liveDeliveryHost'
 export { XForgeFileEffectRecorder } from './effectRecorder'
 
 export type { XForgeDeliveryRuntimeOptions } from './deliveryRuntime'

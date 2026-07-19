@@ -17,12 +17,15 @@ import { createReadState } from '../../../../../src/runtime/tools/editTool'
 import type { ToolExecutor } from '../../../../../src/runtime/tools/types'
 import { writeTool } from '../../../../../src/runtime/tools/writeTool'
 import {
-  classifyXForgeRequest,
-  normalizeXForgeBrainstormPayload,
-  resolveXForgeDeliveryCommands,
-  resolveXForgeTaskVerificationCommand,
   runXForgeLiveRuntime
 } from '../../../../../src/runtime/workflow/xforge/liveRuntime'
+import { XForgeMainAgentSession } from '../../../../../src/runtime/workflow/xforge/mainAgentSession'
+import {
+  resolveXForgeDeliveryCommands,
+  resolveXForgeTaskVerificationCommand
+} from '../../../../../src/runtime/workflow/xforge/liveDeliveryHost'
+import { normalizeXForgeBrainstormPayload } from '../../../../../src/runtime/workflow/xforge/liveStageHost'
+import { classifyXForgeRequest } from '../../../../../src/runtime/workflow/xforge/requestResolution'
 import { createInitialXForgeRunState } from '../../../../../src/runtime/workflow/xforge/runState'
 import { createTaskStatesFromPlan } from '../../../../../src/runtime/workflow/xforge/plan'
 
@@ -469,6 +472,7 @@ describe('XForge live Runtime', () => {
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
 
+    const disposeSpy = vi.spyOn(XForgeMainAgentSession.prototype, 'dispose')
     const result = await runXForgeLiveRuntime({
       runId: run.runId,
       request: '你觉得现在的架构怎么样？',
@@ -496,6 +500,50 @@ describe('XForge live Runtime', () => {
     expect(result.state.currentStage).toBe('completed')
     expect(result.state.stageArtifacts).toEqual([])
     expect(result.summary).toContain('默认模式')
+    expect(disposeSpy).toHaveBeenCalled()
+    disposeSpy.mockRestore()
+  })
+
+  it('baseline 初始化失败时仍会 dispose session', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-xforge-baseline-fail-'))
+    roots.push(root)
+    mkdirSync(join(root, '.nova'), { recursive: true })
+    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
+    roots.push(runsRoot)
+    const coordinator = createRunCoordinator(runsRoot)
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-baseline-fail' })
+    coordinator.markRunning(run.runId)
+    const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
+    roots.push(checkpointRoot)
+    const disposeSpy = vi.spyOn(XForgeMainAgentSession.prototype, 'dispose')
+
+    await expect(runXForgeLiveRuntime({
+      runId: run.runId,
+      request: '继续旧任务',
+      workspaceRoot: root,
+      modelClient: scriptedClient([]),
+      parentEventBus: new EventBus(),
+      parentMessageId: 'message-baseline-fail',
+      toolRegistry: new ToolRegistry(),
+      skillRegistry: SkillRegistry.load({
+        builtinDir: resolve('.nova/skills'),
+        globalDir: join(root, '.global-skills'),
+        workspaceRoot: root
+      }),
+      checkpointManager: new CheckpointManager({
+        checkpointDir: checkpointRoot,
+        sessionId: 'session-baseline-fail',
+        workspaceRoot: root
+      }),
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: false,
+      askQuestion: vi.fn(async () => []),
+      readState: createReadState()
+    })).rejects.toThrow('缺少 Workspace Baseline')
+
+    expect(disposeSpy).toHaveBeenCalled()
+    disposeSpy.mockRestore()
   })
 
   it('恢复旧 run 缺少 baseline 时 fail closed，不能把写后工作区重新冻结为起点', async () => {
