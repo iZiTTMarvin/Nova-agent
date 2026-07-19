@@ -94,7 +94,6 @@ export function projectInteractionsToAgentStore(
 
   const perm = pending.find(i => i.type === 'permission')
   const ask = pending.find(i => i.type === 'askQuestion')
-  const ver = pending.find(i => i.type === 'verification')
 
   const agent = useAgentStore.getState()
 
@@ -134,15 +133,7 @@ export function projectInteractionsToAgentStore(
     useAgentStore.setState({ pendingAskQuestion: null })
   }
 
-  if (ver) {
-    const v = ver.payload
-    agent.handleVerificationPermissionRequest({
-      requestId: String(v.requestId ?? ver.interactionId),
-      command: String(v.command ?? '')
-    })
-  } else if (agent.pendingVerificationRequest) {
-    useAgentStore.setState({ pendingVerificationRequest: null })
-  }
+  // 验证权限使用进程内 waiter（带超时），不写入 InteractionInbox，故不从 snapshot 投影。
 }
 
 function isTerminalStatus(status: RunStatus): boolean {

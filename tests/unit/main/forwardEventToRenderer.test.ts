@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import type { AgentEvent } from '../../../src/runtime/agent/types'
 
 // 避免 agentHandler → sessionHandler → main/index 的副作用链（app.whenReady）
-vi.mock('../../../src/main/ipc/sessionHandler', () => ({
+vi.mock('../../../src/main/services/SessionStoreHost', () => ({
   getSessionStore: () => ({
     appendMessage: vi.fn(),
     appendMessageFast: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('../../../src/main/index', () => ({
   setCurrentMode: vi.fn()
 }))
 
-import { forwardEventToRenderer } from '../../../src/main/ipc/agentHandler'
+import { forwardEventToRenderer } from '../../../src/main/agent/events'
 
 /** 构造可 spy 的 BrowserWindow mock */
 function makeMainWindow() {

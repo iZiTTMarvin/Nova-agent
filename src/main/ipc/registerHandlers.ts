@@ -31,7 +31,7 @@ import {
   extractOnSessionLeave,
   isMemoryExtractEnabled
 } from '../services/MemoryExtractHost'
-import { getSessionStore } from './sessionHandler'
+import { getSessionStore } from '../services/SessionStoreHost'
 import { getMainWindow } from '../index'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 

@@ -1474,6 +1474,11 @@ export class AgentLoop implements IdleCompactionTarget {
     })
   }
 
+  /** 当前 loop 是否拥有指定权限请求的 resolver。 */
+  hasPendingPermission(requestId: string): boolean {
+    return this.pendingPermissions.has(requestId)
+  }
+
   /**
    * 回应权限请求（由 IPC handler 调用）
    * @param requestId 权限请求 ID

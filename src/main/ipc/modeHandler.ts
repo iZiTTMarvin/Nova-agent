@@ -2,7 +2,7 @@ import { handle } from './secureIpc'
 import { SET_MODE } from '../../shared/ipc/channels'
 import type { Mode } from '../../shared/session'
 import { setCurrentMode } from '../index'
-import { getSessionStore } from './sessionHandler'
+import { getSessionStore } from '../services/SessionStoreHost'
 
 /**
  * 注册运行模式切换的 IPC 处理器

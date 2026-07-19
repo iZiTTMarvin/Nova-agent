@@ -36,9 +36,23 @@ export const FORBIDDEN_LAYER_EDGES: Readonly<Record<SrcLayer, readonly SrcLayer[
 }
 
 export const RULE_RUNTIME_RUN_WORKFLOW = 'runtime-run-cannot-import-workflow'
+export const RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC = 'main-services-cannot-import-ipc'
+export const RULE_MAIN_AGENT_CANNOT_IMPORT_IPC = 'main-agent-cannot-import-ipc'
 
 export function layerCannotImportRule(from: SrcLayer, to: SrcLayer): string {
   return `${from}-cannot-import-${to}`
+}
+
+export function isMainServicesPath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/main/services/')
+}
+
+export function isMainAgentPath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/main/agent/')
+}
+
+export function isMainIpcPath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/main/ipc/')
 }
 
 /** 统一为仓库相对 POSIX 路径，保证 Windows / CI 结果一致 */
@@ -66,7 +80,7 @@ export function violationKey(edge: Pick<BoundaryViolation, 'from' | 'to' | 'rule
 
 /**
  * 根据已解析的 from/to 文件边计算命中的规则（可能为空）。
- * 同层边仅检查 runtime/run → runtime/workflow 特化规则。
+ * 同层边检查 runtime/run → runtime/workflow、main/services → main/ipc、main/agent → main/ipc。
  */
 export function rulesForResolvedEdge(fromFile: string, toFile: string): string[] {
   const from = toRepoPosixPath(fromFile)
@@ -81,6 +95,12 @@ export function rulesForResolvedEdge(fromFile: string, toFile: string): string[]
   }
   if (isRuntimeRunPath(from) && isRuntimeWorkflowPath(to)) {
     rules.push(RULE_RUNTIME_RUN_WORKFLOW)
+  }
+  if (isMainServicesPath(from) && isMainIpcPath(to)) {
+    rules.push(RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC)
+  }
+  if (isMainAgentPath(from) && isMainIpcPath(to)) {
+    rules.push(RULE_MAIN_AGENT_CANNOT_IMPORT_IPC)
   }
   return rules
 }

@@ -671,10 +671,13 @@ describe('AgentLoop', () => {
     loop.setPermissionManager(new PermissionManager())
 
     const events: unknown[] = []
+    let permissionRequestId = ''
     eventBus.on((event) => {
       events.push(event)
       if ((event as any).type === 'permission_request') {
-        loop.respondPermission((event as any).requestId, true)
+        permissionRequestId = (event as any).requestId
+        expect(loop.hasPendingPermission(permissionRequestId)).toBe(true)
+        loop.respondPermission(permissionRequestId, true)
       }
     })
 
@@ -682,6 +685,7 @@ describe('AgentLoop', () => {
 
     const permissionEvents = events.filter((e: any) => e.type === 'permission_request')
     expect(permissionEvents).toHaveLength(1)
+    expect(loop.hasPendingPermission(permissionRequestId)).toBe(false)
 
     const toolResultEvents = events.filter((e: any) => e.type === 'tool_result')
     expect(toolResultEvents).toHaveLength(1)

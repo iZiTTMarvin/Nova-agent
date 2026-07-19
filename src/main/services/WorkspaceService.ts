@@ -1,7 +1,7 @@
 /**
  * WorkspaceService — 应用级"当前状态"单一事实源
  *
- * 与 PRD §5.1 对齐。主进程持有唯一的 WorkspaceState（当前会话 ID、项目路径、模式），
+ * 主进程持有唯一的 WorkspaceState（当前会话 ID、项目路径、模式），
  * 所有会话/项目/模式/回滚操作都由本服务统一处理，完成后通过广播通知 renderer。
  *
  * 设计原则：
@@ -19,7 +19,7 @@ import type { Mode, Session, SessionDetail } from '../../shared/session'
 import type { WorkspaceState, Tier1BranchContext } from '../../shared/workspace/types'
 import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests } from '../../runtime/checkpoints/restore'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
-import { getMainReadState, isAgentTurnInProgress, getActiveTurnSessionId } from '../ipc/agentHandler'
+import { getMainReadState, isAgentTurnInProgress, getActiveTurnSessionId } from '../agent/state'
 import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
 import { calculateContextBreakdown } from '../../runtime/agent'

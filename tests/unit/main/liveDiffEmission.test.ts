@@ -4,7 +4,7 @@ import {
   accumulateStreamEvent,
   activeStreams,
   type MessageContext
-} from '../../../src/main/ipc/agentHandler'
+} from '../../../src/main/agent/events'
 import type { AgentEvent } from '../../../src/runtime/agent/types'
 
 /**
@@ -12,7 +12,7 @@ import type { AgentEvent } from '../../../src/runtime/agent/types'
  * 且不再调用 buildMessageDiffState 计算 LCS（否则会阻塞事件循环）。
  */
 
-vi.mock('../../../src/main/ipc/sessionHandler', () => ({
+vi.mock('../../../src/main/services/SessionStoreHost', () => ({
   getSessionStore: () => ({
     appendMessage: vi.fn(),
     // 与生产热路径对齐：accumulateStreamEvent 落盘走 appendMessageFast
@@ -55,6 +55,7 @@ vi.mock('../../../src/runtime/checkpoints/diffState', () => ({
 function makeCtx(eventBus: EventBus): MessageContext {
   return {
     mode: 'default',
+    permissionPolicy: 'ask',
     workspaceRoot: '/tmp/project',
     sessionsDir: '/tmp/test-sessions',
     eventBus,

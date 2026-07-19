@@ -7,7 +7,7 @@ import {
   activeStreams,
   pendingVerificationPermissions,
   type MessageContext
-} from '../../../src/main/ipc/agentHandler'
+} from '../../../src/main/agent/events'
 import type { AgentEvent } from '../../../src/runtime/agent/types'
 
 /**
@@ -38,7 +38,7 @@ const mockStore = {
   load: vi.fn(),
   getSessionsDir: () => '/tmp/test-sessions'
 }
-vi.mock('../../../src/main/ipc/sessionHandler', () => ({
+vi.mock('../../../src/main/services/SessionStoreHost', () => ({
   getSessionStore: () => mockStore
 }))
 
@@ -73,12 +73,13 @@ vi.mock('../../../src/runtime/verification/format', () => ({
     result.success ? `✓ 验证通过 — ${result.command}` : `✗ 验证失败 — ${result.command}`
 }))
 
-import { getSessionStore } from '../../../src/main/ipc/sessionHandler'
+import { getSessionStore } from '../../../src/main/services/SessionStoreHost'
 import { runVerification } from '../../../src/runtime/verification/service'
 
 function makeCtx(overrides?: Partial<MessageContext>): MessageContext {
   return {
     mode: 'default',
+    permissionPolicy: 'ask',
     workspaceRoot: '/tmp/project',
     sessionsDir: '/tmp/test-sessions',
     eventBus: new EventBus(),

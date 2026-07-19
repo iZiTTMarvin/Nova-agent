@@ -265,7 +265,7 @@ export type InteractionAnswerResult =
     }
   | {
       ok: false
-      code: 'already_answered' | 'run_ended' | 'not_found' | 'version_mismatch' | 'duplicate_command'
+      code: 'already_answered' | 'run_ended' | 'not_found' | 'version_mismatch' | 'duplicate_command' | 'identity_mismatch'
       message: string
       snapshot?: RunSnapshot
       firstApplied: boolean

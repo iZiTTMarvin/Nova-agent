@@ -50,7 +50,7 @@ import { defaultSubAgentPermissionBridge } from '../../runtime/tools/subAgentBri
 import { CheckpointManager } from '../../runtime/checkpoints/CheckpointManager'
 import { getSessionActiveMessages } from '../../runtime/sessions/tree'
 import { getSkillService } from '../services/SkillServiceHost'
-import { getSessionStore } from './sessionHandler'
+import { getSessionStore } from '../services/SessionStoreHost'
 import { getRunCoordinator, getRunExecutionRegistry, setActiveRunId } from '../services/RunCoordinatorHost'
 import { runComposeWithLifecycle } from './composeRunLifecycle'
 

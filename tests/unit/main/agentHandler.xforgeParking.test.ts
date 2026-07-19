@@ -56,11 +56,11 @@ vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   setActiveRunId: vi.fn()
 }))
 
+import { registerAgentHandler } from '../../../src/main/ipc/agentHandler'
 import {
   getActiveTurnSessionId,
-  isAgentTurnInProgress,
-  registerAgentHandler
-} from '../../../src/main/ipc/agentHandler'
+  isAgentTurnInProgress
+} from '../../../src/main/agent/state'
 
 describe('agentHandler XForge parked run 边界', () => {
   beforeEach(() => {

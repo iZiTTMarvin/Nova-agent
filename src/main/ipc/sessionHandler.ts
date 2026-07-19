@@ -19,7 +19,7 @@ import {
   ACCEPT_ALL_FILES,
   REJECT_ALL_FILES
 } from '../../shared/ipc/channels'
-import { SessionStore } from '../../runtime/sessions/SessionStore'
+import { initSessionStoreHost, getSessionStore } from '../services/SessionStoreHost'
 import { rejectFile } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
@@ -32,14 +32,12 @@ import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
-import { getMainReadState } from './agentHandler'
+import { getMainReadState } from '../agent/state'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { getSkillService } from '../services/SkillServiceHost'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
-/** SessionStore 单例，在注册时初始化 */
-let sessionStore: SessionStore
 
 /** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果与分支元信息 */
 function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
@@ -119,7 +117,7 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
 
 export function registerSessionHandler(): void {
   const appDataPath = app.getPath('userData')
-  sessionStore = new SessionStore(appDataPath)
+  const sessionStore = initSessionStoreHost(appDataPath)
 
   // 加载会话列表
   handle(LOAD_SESSIONS, async () => {
@@ -266,9 +264,4 @@ export function registerSessionHandler(): void {
       writeManifest(checkpointRoot, manifest)
     }
   })
-}
-
-/** 获取 SessionStore 实例（供 agentHandler 等模块使用） */
-export function getSessionStore(): SessionStore {
-  return sessionStore
 }

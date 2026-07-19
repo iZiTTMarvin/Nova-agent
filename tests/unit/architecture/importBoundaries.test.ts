@@ -9,6 +9,8 @@ import {
   layerOf,
   reconcileBoundaryDebts,
   RULE_RUNTIME_RUN_WORKFLOW,
+  RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC,
+  RULE_MAIN_AGENT_CANNOT_IMPORT_IPC,
   toRepoPosixPath,
   type AllowedBoundaryDebt,
   type BoundaryViolation
@@ -206,6 +208,35 @@ describe('import boundary layer rules (fixtures)', () => {
       exists
     })
     expectOnlyRule(result.violations, RULE_RUNTIME_RUN_WORKFLOW)
+  })
+
+  it('main/services 不能依赖 main/ipc', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/main/services/WorkspaceService.ts',
+      sourceText: `import { x } from '../ipc/agentHandler'`,
+      exists: virtualExists(new Set([
+        'src/main/services/WorkspaceService.ts',
+        'src/main/ipc/agentHandler.ts',
+        'src/runtime/target.ts',
+        'src/shared/ok.ts',
+        'src/renderer/ui.ts',
+        'src/runtime/run/core.ts',
+        'src/runtime/workflow/x.ts'
+      ]))
+    })
+    expectOnlyRule(result.violations, RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC)
+  })
+
+  it('main/agent 不能依赖 main/ipc', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/main/agent/turn/AgentTurnService.ts',
+      sourceText: `import { x } from '../../ipc/sessionHandler'`,
+      exists: virtualExists(new Set([
+        'src/main/agent/turn/AgentTurnService.ts',
+        'src/main/ipc/sessionHandler.ts'
+      ]))
+    })
+    expectOnlyRule(result.violations, RULE_MAIN_AGENT_CANNOT_IMPORT_IPC)
   })
 
   it('别名路径与 Windows 风格 from 路径得到同一规则结果', () => {

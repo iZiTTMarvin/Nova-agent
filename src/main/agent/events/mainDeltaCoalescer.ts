@@ -9,8 +9,6 @@ import type { BrowserWindow } from 'electron'
 
 const COALESCE_MS = 16
 
-type DeltaKind = 'thinking' | 'text'
-
 interface MessageDeltaBucket {
   thinking: string
   text: string

@@ -18,7 +18,7 @@ vi.mock('../../../src/runtime/agent', () => ({
   calculateContextBreakdown: () => ({ payload: {} })
 }))
 
-vi.mock('../../../src/main/ipc/agentHandler', () => ({
+vi.mock('../../../src/main/agent/state', () => ({
   getMainReadState: () => ({ clear: vi.fn() }),
   isAgentTurnInProgress: vi.fn(() => false),
   getActiveTurnSessionId: vi.fn(() => null)

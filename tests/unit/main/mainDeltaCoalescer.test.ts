@@ -4,7 +4,7 @@ import {
   pushMainThinkingDelta,
   flushMainDeltaCoalescer,
   resetMainDeltaCoalescerForTests
-} from '../../../src/main/ipc/mainDeltaCoalescer'
+} from '../../../src/main/agent/events/mainDeltaCoalescer'
 
 function makeWindow() {
   const send = vi.fn()

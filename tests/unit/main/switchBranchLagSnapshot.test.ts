@@ -8,7 +8,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 import { WorkspaceService } from '../../../src/main/services/WorkspaceService'
-import { isAgentTurnInProgress } from '../../../src/main/ipc/agentHandler'
+import { isAgentTurnInProgress } from '../../../src/main/agent/state'
 import {
   installMainLoopLagMonitor,
   getMainLoopLagApi,
@@ -30,7 +30,7 @@ vi.mock('../../../src/runtime/agent', () => ({
   calculateContextBreakdown: () => ({ payload: {} })
 }))
 
-vi.mock('../../../src/main/ipc/agentHandler', () => ({
+vi.mock('../../../src/main/agent/state', () => ({
   getMainReadState: () => ({ clear: vi.fn() }),
   isAgentTurnInProgress: vi.fn(() => false)
 }))

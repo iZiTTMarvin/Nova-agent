@@ -72,6 +72,11 @@ export class SubAgentPermissionBridge {
     return bridgedId
   }
 
+  /** 是否仍持有指定桥接权限请求的子循环 resolver。 */
+  hasBinding(bridgedRequestId: string): boolean {
+    return this.bindings.has(bridgedRequestId)
+  }
+
   /**
    * 尝试将用户决策路由到子 AgentLoop（仅处理 sub: 前缀的 requestId）
    * @returns true 表示已交给子循环处理
