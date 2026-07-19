@@ -1,3 +1,4 @@
+import { XForgeRunService } from '../../../../../src/runtime/workflow/xforge/XForgeRunService'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -12,6 +13,7 @@ import {
   type XForgeValidatedPlan
 } from '../../../../../src/runtime/workflow/xforge'
 import type { SkillManifest } from '../../../../../src/runtime/skills/types'
+import { bindXForgeTestExecution } from './testExecution'
 
 function validPlan(version: number): XForgeValidatedPlan {
   return {
@@ -98,11 +100,15 @@ describe('XForgeStageExecutor M2', () => {
   let tmpDir: string
   let store: RunStore
   let coord: RunCoordinator
+  let service: XForgeRunService
+
+  const execution = (runId: string) => bindXForgeTestExecution(service, coord, runId)
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-xforge-exec-'))
     store = new RunStore({ runsRoot: tmpDir })
     coord = new RunCoordinator({ store })
+    service = new XForgeRunService(coord)
   })
 
   afterEach(() => {
@@ -110,7 +116,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('brainstorm 阶段必须先 askQuestion；无回答则停在 waiting_user', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({ currentStage: 'brainstorm' })
@@ -125,7 +131,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -138,7 +144,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('探索问题由宿主逐轮生成；选择暂存会保留决策并安全暂停', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({ currentStage: 'brainstorm' })
@@ -158,7 +164,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -177,7 +183,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('探索最多允许三轮，后续轮次携带已收集决策而不是重复固定问题', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({ currentStage: 'brainstorm' })
@@ -204,7 +210,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -222,7 +228,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('Scope 两轮修正后仍有 HIGH 会进入 waiting_user，禁止 tradeoff 硬闯', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1'
     })
@@ -252,7 +258,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry,
       startStage: 'brainstorm'
@@ -281,7 +287,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('implement 任务连续三次失败后标记 skipped，并推进到 test 边界', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -293,7 +299,7 @@ describe('XForgeStageExecutor M2', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(
+    execution(snap.runId).commitXForgeStatePatch(
       snap.runId,
       { tasks: createInitialTasks() },
       'seed tasks'
@@ -308,7 +314,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -327,7 +333,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('多任务中没有定向命令的行为验收标为 unverified，不使用交付级命令兜底', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -339,7 +345,7 @@ describe('XForgeStageExecutor M2', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(snap.runId, {
+    execution(snap.runId).commitXForgeStatePatch(snap.runId, {
       tasks: [
         ...createInitialTasks(),
         {
@@ -366,7 +372,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -383,7 +389,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('任务验证因环境或凭据阻塞时立即 waiting_user，不消耗重试伪装为 skipped', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -395,7 +401,7 @@ describe('XForgeStageExecutor M2', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(snap.runId, { tasks: createInitialTasks() })
+    execution(snap.runId).commitXForgeStatePatch(snap.runId, { tasks: createInitialTasks() })
     const host = baseHost({
       runImplementTask: vi.fn(async () => ({
         verification: {
@@ -411,7 +417,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -428,7 +434,7 @@ describe('XForgeStageExecutor M2', () => {
 
   it('从持久化 Validated Plan 恢复后可继续 scope，不依赖执行器内存', async () => {
     const plan = validPlan(4)
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -439,7 +445,7 @@ describe('XForgeStageExecutor M2', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(snap.runId, {
+    execution(snap.runId).commitXForgeStatePatch(snap.runId, {
       validatedPlan: plan,
       tasks: createInitialTasks()
     })
@@ -447,7 +453,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -458,7 +464,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('Plan Version 由权威状态单调分配，不信任方法返回版本', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -478,7 +484,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -489,7 +495,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('prepared EffectReceipt 视为 Pending Side Effect 并停止自动推进', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -501,7 +507,7 @@ describe('XForgeStageExecutor M2', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(snap.runId, { tasks: createInitialTasks() })
+    execution(snap.runId).commitXForgeStatePatch(snap.runId, { tasks: createInitialTasks() })
     const host = baseHost({
       runImplementTask: vi.fn(async () => ({
         verification: { outcome: 'passed', command: 'targeted-test', exitCode: 0, timedOut: false },
@@ -512,7 +518,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -523,7 +529,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('持久化 committed EffectReceipt 后递增 Workspace Revision 并刷新写入边界', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -535,7 +541,7 @@ describe('XForgeStageExecutor M2', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(snap.runId, { tasks: createInitialTasks() })
+    execution(snap.runId).commitXForgeStatePatch(snap.runId, { tasks: createInitialTasks() })
     const afterFingerprint = { revision: 4, digest: 'after', capturedAt: Date.now() }
     const host = baseHost({
       runImplementTask: vi.fn(async () => ({
@@ -548,7 +554,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry
     }).runPreDeliveryStages()
@@ -560,7 +566,7 @@ describe('XForgeStageExecutor M2', () => {
   })
 
   it('阶段方法缺失时进入 waiting_user，且不运行该阶段 Agent', async () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({ currentStage: 'plan' })
@@ -570,7 +576,7 @@ describe('XForgeStageExecutor M2', () => {
 
     const result = await new XForgeStageExecutor({
       runId: snap.runId,
-      committer: coord,
+      committer: execution(snap.runId),
       host,
       methodRegistry: { get: () => undefined }
     }).runPreDeliveryStages()

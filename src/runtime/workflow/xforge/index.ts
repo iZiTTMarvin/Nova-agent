@@ -78,6 +78,12 @@ export type {
   XForgeStageMethod
 } from './stageBinding'
 
+export { XForgeRunService, projectRunFromXForge } from './XForgeRunService'
+export type {
+  CommitXForgeStageResult,
+  CommitXForgeStatePatchResult
+} from './XForgeRunService'
+
 export type {
   XForgeStageMethodRegistry,
   XForgeStageMethodResolution

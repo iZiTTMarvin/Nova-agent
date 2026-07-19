@@ -8,12 +8,13 @@ import { join } from 'path'
 import {
   createRunCoordinator,
   RunExecutionRegistry,
-  type RunCoordinator,
-  type RunEventRecord,
-  type RunSnapshot
+  type RunCoordinator
 } from '../../runtime/run'
+import type { RunEventRecord, RunSnapshot } from '../../shared/run/types'
+import { XForgeRunService } from '../../runtime/workflow/xforge/XForgeRunService'
 
 let coordinator: RunCoordinator | null = null
+let xforgeRunService: XForgeRunService | null = null
 let executionRegistry: RunExecutionRegistry | null = null
 let getMainWindowRef: (() => BrowserWindow | null) | null = null
 
@@ -52,6 +53,7 @@ export function initRunCoordinatorHost(
   if (!coordinator) {
     const runsRoot = join(app.getPath('userData'), 'runs')
     coordinator = createRunCoordinator(runsRoot, broadcastSnapshot)
+    xforgeRunService = new XForgeRunService(coordinator)
     const interrupted = coordinator.reconcileOnStartup()
     if (interrupted.length > 0) {
       console.info(
@@ -69,6 +71,13 @@ export function getRunCoordinator(): RunCoordinator {
   return coordinator
 }
 
+export function getXForgeRunService(): XForgeRunService {
+  if (!xforgeRunService) {
+    xforgeRunService = new XForgeRunService(getRunCoordinator())
+  }
+  return xforgeRunService
+}
+
 /** 进程内执行句柄单例：连接 IPC 取消命令与真实执行。 */
 export function getRunExecutionRegistry(): RunExecutionRegistry {
   if (!executionRegistry) {
@@ -80,6 +89,7 @@ export function getRunExecutionRegistry(): RunExecutionRegistry {
 /** 测试用：重置单例 */
 export function resetRunCoordinatorHostForTests(): void {
   coordinator = null
+  xforgeRunService = null
   executionRegistry = null
   activeRunId = null
   getMainWindowRef = null

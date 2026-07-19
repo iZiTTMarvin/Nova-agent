@@ -1,3 +1,5 @@
+import { XForgeRunService } from '../../../../../src/runtime/workflow/xforge/XForgeRunService'
+import { bindXForgeTestExecution } from './testExecution'
 import { execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -152,6 +154,7 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
+    const service = new XForgeRunService(coordinator)
     const initial = {
       ...createInitialXForgeRunState({
         currentStage: 'implement',
@@ -163,7 +166,7 @@ describe('XForge live Runtime', () => {
       validatedPlan: plan,
       tasks: createTaskStatesFromPlan(plan)
     }
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-effective-tools', xforge: initial })
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-effective-tools', xforge: initial })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -191,7 +194,8 @@ describe('XForge live Runtime', () => {
         workspaceRoot: root
       }),
       checkpointManager,
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion: vi.fn(async () => []),
       readState: createReadState()
     })
@@ -261,7 +265,8 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-brainstorm' })
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-brainstorm' })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -290,7 +295,8 @@ describe('XForge live Runtime', () => {
         workspaceRoot: root
       }),
       checkpointManager,
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion: vi.fn(async () => [{ selectedLabels: ['中文长文'] }]),
       readState: createReadState()
     })
@@ -353,7 +359,8 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-plan-repair' })
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-plan-repair' })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -381,7 +388,8 @@ describe('XForge live Runtime', () => {
         sessionId: 'session-plan-repair',
         workspaceRoot: root
       }),
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion: vi.fn(async () => []),
       readState: createReadState()
     })
@@ -409,7 +417,8 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-invalid' })
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-invalid' })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -432,7 +441,8 @@ describe('XForge live Runtime', () => {
         sessionId: 'session-invalid',
         workspaceRoot: root
       }),
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion: vi.fn(async () => [{ selectedLabels: ['阅读体验'] }]),
       readState: createReadState()
     })).rejects.toThrow('结构化结果无法通过 JSON 与字段校验')
@@ -453,7 +463,8 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-nondev' })
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-nondev' })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -476,7 +487,8 @@ describe('XForge live Runtime', () => {
         sessionId: 'session-nondev',
         workspaceRoot: root
       }),
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion: vi.fn(async () => []),
       readState: createReadState()
     })
@@ -484,6 +496,48 @@ describe('XForge live Runtime', () => {
     expect(result.state.currentStage).toBe('completed')
     expect(result.state.stageArtifacts).toEqual([])
     expect(result.summary).toContain('默认模式')
+  })
+
+  it('恢复旧 run 缺少 baseline 时 fail closed，不能把写后工作区重新冻结为起点', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-xforge-legacy-baseline-'))
+    roots.push(root)
+    mkdirSync(join(root, '.nova'), { recursive: true })
+    writeFileSync(join(root, 'already-written.ts'), 'xforge wrote this earlier\n', 'utf8')
+    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
+    roots.push(runsRoot)
+    const coordinator = createRunCoordinator(runsRoot)
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-legacy' })
+    coordinator.markRunning(run.runId)
+    const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
+    roots.push(checkpointRoot)
+
+    await expect(runXForgeLiveRuntime({
+      runId: run.runId,
+      request: '继续旧任务',
+      workspaceRoot: root,
+      modelClient: scriptedClient([]),
+      parentEventBus: new EventBus(),
+      parentMessageId: 'message-legacy',
+      toolRegistry: new ToolRegistry(),
+      skillRegistry: SkillRegistry.load({
+        builtinDir: resolve('.nova/skills'),
+        globalDir: join(root, '.global-skills'),
+        workspaceRoot: root
+      }),
+      checkpointManager: new CheckpointManager({
+        checkpointDir: checkpointRoot,
+        sessionId: 'session-legacy',
+        workspaceRoot: root
+      }),
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: false,
+      askQuestion: vi.fn(async () => []),
+      readState: createReadState()
+    })).rejects.toThrow(/缺少 Workspace Baseline/)
+
+    expect(coordinator.getSnapshot(run.runId)?.xforge?.workspaceBaseline).toBeNull()
+    expect(readFileSync(join(root, 'already-written.ts'), 'utf8')).toContain('earlier')
   })
 
   it('语义分类无效时保守进入 brainstorm，不进入可写实现路径', async () => {
@@ -499,7 +553,8 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-fallback' })
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-fallback' })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -522,7 +577,8 @@ describe('XForge live Runtime', () => {
         sessionId: 'session-fallback',
         workspaceRoot: root
       }),
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion: vi.fn(async () => []),
       readState: createReadState()
     })
@@ -612,7 +668,8 @@ describe('XForge live Runtime', () => {
     const runsRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-runs-'))
     roots.push(runsRoot)
     const coordinator = createRunCoordinator(runsRoot)
-    const run = coordinator.startXForgeRun({ workspaceId: root, sessionId: 'session-live' })
+    const service = new XForgeRunService(coordinator)
+    const run = service.startXForgeRun({ workspaceId: root, sessionId: 'session-live' })
     coordinator.markRunning(run.runId)
     const checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-xforge-checkpoints-'))
     roots.push(checkpointRoot)
@@ -638,7 +695,8 @@ describe('XForge live Runtime', () => {
         workspaceRoot: root
       }),
       checkpointManager,
-      committer: coordinator,
+      committer: bindXForgeTestExecution(service, coordinator, run.runId),
+      initializeWorkspaceBaseline: true,
       askQuestion,
       readState: createReadState()
     })
@@ -656,5 +714,5 @@ describe('XForge live Runtime', () => {
     expect(result.state.reportFacts?.shipRequested).toBe(false)
     expect(result.state.reportFacts?.notExecuted).toEqual(['commit', 'push', 'deploy', 'publish'])
     expect(result.summary).toContain('未执行：commit、push、deploy、publish')
-  })
+  }, 15_000)
 })

@@ -81,6 +81,7 @@ import {
 } from '../services/MemoryServiceHost'
 import {
   getRunCoordinator,
+  getXForgeRunService,
   getRunExecutionRegistry,
   getActiveRunId,
   setActiveRunId
@@ -580,6 +581,7 @@ export function registerAgentHandler(
     // 仅提前取得协调器；所有会抛错的装配和输入准备完成后才创建 run。
     // AgentLoop 按 runId 注册（见 startRun 之后），供 onCancel 精确查找。
     const runCoordinator = getRunCoordinator()
+    const xforgeService = getXForgeRunService()
     let capturedRunId = ''
     let executionGeneration = 0
     let resolveExecutionSettled!: () => void
@@ -760,14 +762,15 @@ export function registerAgentHandler(
         toolRegistry,
         skillRegistry,
         checkpointManager,
-        committer: runCoordinator,
+        committer: xforgeService.createExecutionCommitter(executionGeneration),
         askQuestion: askQuestionHandler,
         abortSignal: opts.abortSignal,
         assertExecutionCurrent: () =>
           runCoordinator.isExecutionCurrent(capturedRunId, executionGeneration),
         contextWindow,
         supportsVision,
-        readState: mainReadState
+        readState: mainReadState,
+        initializeWorkspaceBaseline: !resumableXForge
       })
       return { summary: result.summary }
     })
@@ -915,7 +918,7 @@ export function registerAgentHandler(
         (resumableXForge.status === 'interrupted' &&
           resumableXForge.xforge?.currentStage === 'waiting_user')
       ) {
-        const resumed = runCoordinator.resumeXForgeRun(resumableXForge.runId, params.content)
+        const resumed = xforgeService.resumeXForgeRun(resumableXForge.runId, params.content)
         if (!resumed.ok) throw new Error(resumed.message)
         runSnap = resumed.snapshot
       } else if (resumableXForge.status === 'interrupted') {
@@ -931,7 +934,7 @@ export function registerAgentHandler(
         runSnap = resumableXForge
       }
     } else if (session.mode === 'compose') {
-      runSnap = runCoordinator.startXForgeRun({
+      runSnap = xforgeService.startXForgeRun({
         workspaceId: projectPath,
         sessionId: params.sessionId
       })
@@ -984,14 +987,19 @@ export function registerAgentHandler(
       const reason = err instanceof Error ? err.message : String(err)
       try {
         const failedSnap = getRunCoordinator().getSnapshot(capturedRunId)
-        if (failedSnap?.kind === 'xforge' && failedSnap.xforge &&
-            !['completed', 'failed', 'cancelled'].includes(failedSnap.xforge.currentStage)) {
-          getRunCoordinator().commitXForgeStageTransition(capturedRunId, {
-            ok: true,
-            from: failedSnap.xforge.currentStage,
-            to: 'failed',
-            reason
-          })
+        if (
+          failedSnap?.kind === 'xforge' &&
+          failedSnap.xforge &&
+          !['completed', 'failed', 'cancelled'].includes(failedSnap.xforge.currentStage)
+        ) {
+          getXForgeRunService()
+            .createExecutionCommitter(executionGeneration)
+            .commitXForgeStageTransition(capturedRunId, {
+              ok: true,
+              from: failedSnap.xforge.currentStage,
+              to: 'failed',
+              reason
+            })
         }
         getRunCoordinator().commitTerminal({
           runId: capturedRunId,
@@ -1004,18 +1012,23 @@ export function registerAgentHandler(
       // 若尚未终态（正常完成或取消路径已 commit），补 completed
       const coord = getRunCoordinator()
       const snap = coord.getSnapshot(capturedRunId)
-      if (snap && !['completed', 'failed', 'cancelled', 'interrupted', 'waiting_user'].includes(snap.status)) {
+      if (
+        snap &&
+        !['completed', 'failed', 'cancelled', 'interrupted', 'waiting_user'].includes(snap.status)
+      ) {
         if (!turnFailed) {
           const cancelled = snap.status === 'cancelling'
           if (snap.kind === 'xforge' && snap.xforge) {
-            coord.commitXForgeStageTransition(capturedRunId, {
-              ok: true,
-              from: snap.xforge.currentStage,
-              to: cancelled ? 'cancelled' : 'failed',
-              reason: cancelled
-                ? '用户取消 XForge 执行'
-                : 'XForge Pipeline 未进入 waiting_user 或终态即退出'
-            })
+            getXForgeRunService()
+              .createExecutionCommitter(executionGeneration)
+              .commitXForgeStageTransition(capturedRunId, {
+                ok: true,
+                from: snap.xforge.currentStage,
+                to: cancelled ? 'cancelled' : 'failed',
+                reason: cancelled
+                  ? '用户取消 XForge 执行'
+                  : 'XForge Pipeline 未进入 waiting_user 或终态即退出'
+              })
           } else {
             coord.commitTerminal({
               runId: capturedRunId,
@@ -1048,12 +1061,10 @@ export function registerAgentHandler(
         markActiveStreamsCancelled()
       } else if (beforeCancel.kind === 'xforge' && beforeCancel.xforge) {
         // parked XForge 没有执行句柄，必须在此原子落终态，不能遗留 cancelling。
-        coord.commitXForgeStageTransition(runId, {
-          ok: true,
-          from: beforeCancel.xforge.currentStage,
-          to: 'cancelled',
-          reason: '用户取消已暂停的 XForge 运行'
-        })
+        getXForgeRunService().cancelParkedXForgeRun(
+          runId,
+          '用户取消已暂停的 XForge 运行'
+        )
       } else {
         coord.commitTerminal({ runId, status: 'cancelled', reason: '用户取消未执行的运行' })
       }
@@ -1079,7 +1090,7 @@ export function registerAgentHandler(
     commandId?: string
     expectedVersion?: number
     interactionId?: string
-  }): Promise<void | import('../../runtime/run').InteractionAnswerResult> => {
+  }): Promise<void | import('../../shared/run/types').InteractionAnswerResult> => {
     const granted = params.decision === 'allow'
     const interactionId = params.interactionId ?? params.requestId
     const coord = getRunCoordinator()
@@ -1137,7 +1148,7 @@ export function registerAgentHandler(
     commandId?: string
     expectedVersion?: number
     interactionId?: string
-  }): Promise<void | import('../../runtime/run').InteractionAnswerResult> => {
+  }): Promise<void | import('../../shared/run/types').InteractionAnswerResult> => {
     const interactionId = params.interactionId ?? params.requestId
     const coord = getRunCoordinator()
     const found = coord.findInteraction(interactionId)
@@ -1170,7 +1181,7 @@ export function registerAgentHandler(
     commandId?: string
     expectedVersion?: number
     interactionId?: string
-  }): Promise<void | import('../../runtime/run').InteractionAnswerResult> => {
+  }): Promise<void | import('../../shared/run/types').InteractionAnswerResult> => {
     const interactionId = params.interactionId ?? params.requestId
     const coord = getRunCoordinator()
     const found = coord.findInteraction(interactionId)

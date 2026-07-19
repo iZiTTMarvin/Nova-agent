@@ -1,3 +1,4 @@
+import { XForgeRunService } from '../../../../../src/runtime/workflow/xforge/XForgeRunService'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -15,6 +16,7 @@ import {
   type XForgeValidatedPlan
 } from '../../../../../src/runtime/workflow/xforge'
 import type { SkillManifest } from '../../../../../src/runtime/skills/types'
+import { bindXForgeTestExecution } from './testExecution'
 
 function validPlan(): XForgeValidatedPlan {
   return {
@@ -73,7 +75,8 @@ function baseHost(overrides: Partial<XForgeDeliveryHost> = {}): XForgeDeliveryHo
         changedFiles: ['src/example.ts'],
         files: [{ path: 'src/example.ts', content: 'export const value = 1' }],
         diff: '+export const value = 1',
-        evidenceRef: { kind: 'review-input', note: 'runtime snapshot' }
+        evidenceRef: { kind: 'review-input', note: 'runtime snapshot' },
+        targetKind: 'run_effects' as const
       }
     })),
     runReviewSubagent: vi.fn(async () => ({
@@ -134,11 +137,15 @@ describe('XForgeDeliveryExecutor', () => {
   let tmpDir: string
   let store: RunStore
   let coord: RunCoordinator
+  let service: XForgeRunService
+
+  const execution = (runId: string) => bindXForgeTestExecution(service, coord, runId)
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-xforge-delivery-'))
     store = new RunStore({ runsRoot: tmpDir })
     coord = new RunCoordinator({ store })
+    service = new XForgeRunService(coord)
   })
 
   afterEach(() => {
@@ -254,7 +261,7 @@ describe('XForgeDeliveryExecutor', () => {
 
   it('Review 前测试证据与当前 Fingerprint 不一致时回到安全等待', async () => {
     const runId = startAt('review')
-    coord.commitXForgeStatePatch(runId, {
+    execution(runId).commitXForgeStatePatch(runId, {
       testEvidence: {
         workspaceRevision: 1,
         fingerprint: { revision: 1, digest: 'stale', capturedAt: Date.now() },
@@ -469,7 +476,7 @@ describe('XForgeDeliveryExecutor', () => {
   })
 
   function startAt(stage: 'test' | 'review' | 'fix', reviewOnly = false): string {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: tmpDir,
       sessionId: 's1',
       xforge: createInitialXForgeRunState({
@@ -482,7 +489,7 @@ describe('XForgeDeliveryExecutor', () => {
       })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStatePatch(snap.runId, {
+    execution(snap.runId).commitXForgeStatePatch(snap.runId, {
       validatedPlan: validPlan(),
       tasks: [{
         id: 'task-1',
@@ -499,7 +506,7 @@ describe('XForgeDeliveryExecutor', () => {
   async function run(runId: string, host: XForgeDeliveryHost) {
     return new XForgeDeliveryExecutor({
       runId,
-      committer: coord,
+      committer: execution(runId),
       host,
       methodRegistry
     }).runDeliveryStages()

@@ -47,6 +47,15 @@ describe('RunCoordinator', () => {
     expect(coord.getSnapshotForSession('s1')?.runId).toBe(snap.runId)
   })
 
+  it('拒绝绕过 feature service 创建缺少状态切片的 XForge run', () => {
+    const invalid = {
+      kind: 'xforge',
+      workspaceId: '/ws',
+      sessionId: 's1'
+    } as unknown as Parameters<RunCoordinator['startRun']>[0]
+    expect(() => coord.startRun(invalid)).toThrow(/XForgeRunService/)
+  })
+
   it('terminal 只能提交一次', () => {
     const snap = coord.startRun({
       kind: 'agent',

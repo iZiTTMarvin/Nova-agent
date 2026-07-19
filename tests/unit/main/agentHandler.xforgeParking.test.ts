@@ -9,7 +9,10 @@ const coordinator = vi.hoisted(() => ({
   getSnapshot: vi.fn((runId: string) => snapshots.get(runId) ?? null),
   beginCancel: vi.fn(),
   commitTerminal: vi.fn(),
-  commitXForgeStageTransition: vi.fn((runId: string) => {
+  inbox: { cancelAllForRun: vi.fn() }
+}))
+const xforgeService = vi.hoisted(() => ({
+  cancelParkedXForgeRun: vi.fn((runId: string) => {
     const current = snapshots.get(runId)
     if (current) {
       snapshots.set(runId, {
@@ -19,8 +22,7 @@ const coordinator = vi.hoisted(() => ({
       })
     }
     return { ok: true, xforge: snapshots.get(runId)?.xforge }
-  }),
-  inbox: { cancelAllForRun: vi.fn() }
+  })
 }))
 const executionRegistry = vi.hoisted(() => ({
   hasUnsettledHandle: vi.fn(() => false),
@@ -48,6 +50,7 @@ vi.mock('../../../src/main/ipc/secureIpc', () => ({
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
+  getXForgeRunService: () => xforgeService,
   getRunExecutionRegistry: () => executionRegistry,
   getActiveRunId: () => null,
   setActiveRunId: vi.fn()
@@ -67,7 +70,7 @@ describe('agentHandler XForge parked run 边界', () => {
     coordinator.getSnapshot.mockClear()
     coordinator.beginCancel.mockClear()
     coordinator.commitTerminal.mockClear()
-    coordinator.commitXForgeStageTransition.mockClear()
+    xforgeService.cancelParkedXForgeRun.mockClear()
     coordinator.inbox.cancelAllForRun.mockClear()
     executionRegistry.hasUnsettledHandle.mockReset().mockReturnValue(false)
     executionRegistry.get.mockReset().mockReturnValue(null)
@@ -114,9 +117,10 @@ describe('agentHandler XForge parked run 边界', () => {
 
     expect(coordinator.beginCancel).toHaveBeenCalledWith('parked')
     expect(coordinator.inbox.cancelAllForRun).toHaveBeenCalledWith('parked')
-    expect(coordinator.commitXForgeStageTransition).toHaveBeenCalledWith('parked', expect.objectContaining({
-      from: 'waiting_user', to: 'cancelled'
-    }))
+    expect(xforgeService.cancelParkedXForgeRun).toHaveBeenCalledWith(
+      'parked',
+      '用户取消已暂停的 XForge 运行'
+    )
     expect(executionRegistry.abort).not.toHaveBeenCalled()
     expect(snapshots.get('other-running').status).toBe('running')
     expect(result).toEqual({ runId: 'parked', status: 'cancelled' })

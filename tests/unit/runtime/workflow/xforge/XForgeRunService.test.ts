@@ -1,29 +1,35 @@
 /**
- * RunCoordinator × XForge Stage Run 状态契约
+ * XForgeRunService 状态契约
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { RunStore } from '../../../../src/runtime/run/RunStore'
-import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
+import { RunStore } from '../../../../../src/runtime/run/RunStore'
+import { RunCoordinator } from '../../../../../src/runtime/run/RunCoordinator'
 import {
   SCOPE_CORRECTION_BUDGET,
+  XForgeRunService,
   applyXForgeStageTransition,
   createInitialXForgeRunState,
   nextAfterScopeCheck,
   transition
-} from '../../../../src/runtime/workflow/xforge'
+} from '../../../../../src/runtime/workflow/xforge'
+import { bindXForgeTestExecution } from './testExecution'
 
-describe('RunCoordinator XForge 状态契约', () => {
+describe('XForgeRunService 状态契约', () => {
   let tmpDir: string
   let store: RunStore
   let coord: RunCoordinator
+  let service: XForgeRunService
+
+  const execution = (runId: string) => bindXForgeTestExecution(service, coord, runId)
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-xforge-run-'))
     store = new RunStore({ runsRoot: tmpDir })
     coord = new RunCoordinator({ store })
+    service = new XForgeRunService(coord)
   })
 
   afterEach(() => {
@@ -35,20 +41,20 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('waiting_user 只能从持久化 resumeTarget 恢复并记录用户决策', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 'session-resume',
       xforge: createInitialXForgeRunState({ currentStage: 'scope_check' })
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStageTransition(snap.runId, {
+    execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'scope_check',
       to: 'waiting_user',
       reason: '需要用户决策'
     }, { resumeTarget: 'plan' })
 
-    const resumed = coord.resumeXForgeRun(snap.runId, '缩小变更范围')
+    const resumed = service.resumeXForgeRun(snap.runId, '缩小变更范围')
 
     expect(resumed.ok).toBe(true)
     if (!resumed.ok) return
@@ -59,7 +65,7 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('interrupted XForge 可进入 resuming 并保持当前业务阶段继续', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 'session-interrupted',
       xforge: createInitialXForgeRunState({ currentStage: 'test' })
@@ -91,7 +97,7 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('startXForgeRun 后 snapshot 含初始 stage state', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf',
       reviewOnly: false
@@ -120,8 +126,47 @@ describe('RunCoordinator XForge 状态契约', () => {
     expect(disk?.xforge?.currentStage).toBe('resolve')
   })
 
+  it('通用 feature 端口拒绝绕过 RunStatus 状态机', () => {
+    const snap = service.startXForgeRun({
+      workspaceId: '/ws',
+      sessionId: 'status-gate'
+    })
+    const committed = coord.commitFeatureUpdate({
+      runId: snap.runId,
+      feature: { kind: 'xforge', state: snap.xforge! },
+      authority: { kind: 'host', expectedSequence: snap.sequence },
+      eventType: 'xforge_state_patch',
+      projection: { status: 'completed', progress: null }
+    })
+
+    expect(committed.ok).toBe(false)
+    if (!committed.ok) expect(committed.code).toBe('transition_rejected')
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('queued')
+  })
+
+  it('generation 失效后拒绝 lingering continuation 提交 XForge 状态', () => {
+    const snap = service.startXForgeRun({
+      workspaceId: '/ws',
+      sessionId: 'stale-execution'
+    })
+    coord.markRunning(snap.runId)
+    const committer = execution(snap.runId)
+    coord.invalidateExecutionGeneration(snap.runId)
+
+    const committed = committer.commitXForgeStageTransition(snap.runId, {
+      ok: true,
+      from: 'resolve',
+      to: 'plan',
+      reason: '过期 continuation'
+    })
+
+    expect(committed.ok).toBe(false)
+    if (!committed.ok) expect(committed.message).toMatch(/generation 已失效/)
+    expect(coord.getSnapshot(snap.runId)?.xforge?.currentStage).toBe('resolve')
+  })
+
   it('stage transition 原子更新 currentStage 与预算计数', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf'
     })
@@ -141,7 +186,7 @@ describe('RunCoordinator XForge 状态契约', () => {
     )
     expect(toScope.ok).toBe(true)
 
-    const r1 = coord.commitXForgeStageTransition(snap.runId, toScope, {
+    const r1 = execution(snap.runId).commitXForgeStageTransition(snap.runId, toScope, {
       hasValidatedPlan: true,
       planVersion: 1,
       workspaceRevision: 3
@@ -165,7 +210,7 @@ describe('RunCoordinator XForge 状态契约', () => {
       },
       true
     )
-    const r2 = coord.commitXForgeStageTransition(snap.runId, afterHigh)
+    const r2 = execution(snap.runId).commitXForgeStageTransition(snap.runId, afterHigh)
     expect(r2.ok).toBe(true)
     if (!r2.ok) return
     expect(r2.xforge.currentStage).toBe('plan')
@@ -178,13 +223,13 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('waiting_user 保存 suspendedStage / resumeTarget / reason', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf'
     })
     coord.markRunning(snap.runId, 'm1')
 
-    coord.commitXForgeStageTransition(
+    execution(snap.runId).commitXForgeStageTransition(
       snap.runId,
       transition(
         {
@@ -215,7 +260,7 @@ describe('RunCoordinator XForge 状态契约', () => {
     )
     expect(wait.ok).toBe(true)
 
-    const aligned = coord.commitXForgeStageTransition(snap.runId, wait)
+    const aligned = execution(snap.runId).commitXForgeStageTransition(snap.runId, wait)
     expect(aligned.ok).toBe(true)
     if (!aligned.ok) return
     expect(aligned.xforge.currentStage).toBe('waiting_user')
@@ -231,13 +276,13 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('result.from 与 currentStage 不一致时拒绝', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf'
     })
     coord.markRunning(snap.runId)
 
-    const mismatched = coord.commitXForgeStageTransition(snap.runId, {
+    const mismatched = execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'review',
       to: 'report',
@@ -258,13 +303,13 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('XForge 终态阶段同步 RunSnapshot.status，并拒绝后续更新', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf'
     })
     coord.markRunning(snap.runId)
 
-    const toReport = coord.commitXForgeStageTransition(snap.runId, {
+    const toReport = execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'resolve',
       to: 'report',
@@ -273,7 +318,7 @@ describe('RunCoordinator XForge 状态契约', () => {
     expect(toReport.ok).toBe(true)
     if (toReport.ok) expect(toReport.snapshot.status).toBe('running')
 
-    const done = coord.commitXForgeStageTransition(snap.runId, {
+    const done = execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'report',
       to: 'completed',
@@ -287,7 +332,7 @@ describe('RunCoordinator XForge 状态契约', () => {
     expect(done.snapshot.terminalTransitionId).toBeTruthy()
     expect(coord.listActiveRuns().some(r => r.runId === snap.runId)).toBe(false)
 
-    const rejected = coord.commitXForgeStageTransition(snap.runId, {
+    const rejected = execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'completed',
       to: 'plan',
@@ -300,14 +345,14 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('run 硬终态后拒绝后续 stage 更新', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf'
     })
     coord.markRunning(snap.runId)
     coord.commitTerminal({ runId: snap.runId, status: 'cancelled', reason: 'user' })
 
-    const rejected = coord.commitXForgeStageTransition(snap.runId, {
+    const rejected = execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'resolve',
       to: 'brainstorm',
@@ -318,13 +363,13 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('磁盘恢复后仍可读 xforge 状态', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf',
       reviewOnly: true
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStageTransition(snap.runId, {
+    execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'resolve',
       to: 'review',
@@ -356,7 +401,7 @@ describe('RunCoordinator XForge 状态契约', () => {
     expect(compose.kind).toBe('compose')
     expect(compose.xforge).toBeUndefined()
 
-    const xfReject = coord.commitXForgeStageTransition(agent.runId, {
+    const xfReject = execution(agent.runId).commitXForgeStageTransition(agent.runId, {
       ok: true,
       from: 'resolve',
       to: 'plan',
@@ -369,13 +414,13 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('xforge_stage_commit 事件重放恢复 waiting_user 的 status/progress/xforge', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf',
       runId: 'xf_replay_wait'
     })
     coord.markRunning(snap.runId, 'm1')
-    coord.commitXForgeStageTransition(
+    execution(snap.runId).commitXForgeStageTransition(
       snap.runId,
       transition(
         {
@@ -403,7 +448,7 @@ describe('RunCoordinator XForge 状态契约', () => {
       },
       true
     )
-    const committed = coord.commitXForgeStageTransition(snap.runId, wait)
+    const committed = execution(snap.runId).commitXForgeStageTransition(snap.runId, wait)
     expect(committed.ok).toBe(true)
     if (!committed.ok) return
 
@@ -441,14 +486,14 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('xforge_state_patch 事件重放恢复同阶段任务状态', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf',
       runId: 'xf_replay_patch',
       xforge: createInitialXForgeRunState({ currentStage: 'implement' })
     })
     coord.markRunning(snap.runId)
-    const patched = coord.commitXForgeStatePatch(
+    const patched = execution(snap.runId).commitXForgeStatePatch(
       snap.runId,
       {
         tasks: [
@@ -495,14 +540,14 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('xforge_state_patch 事件重放恢复 M3 测试证据与技术债', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf',
       runId: 'xf_replay_delivery',
       xforge: createInitialXForgeRunState({ currentStage: 'review', workspaceRevision: 2 })
     })
     coord.markRunning(snap.runId)
-    const patched = coord.commitXForgeStatePatch(snap.runId, {
+    const patched = execution(snap.runId).commitXForgeStatePatch(snap.runId, {
       testEvidence: {
         workspaceRevision: 2,
         fingerprint: { revision: 2, digest: 'fp-2', capturedAt: 1 },
@@ -544,19 +589,19 @@ describe('RunCoordinator XForge 状态契约', () => {
   })
 
   it('xforge_stage_commit 事件重放恢复 completed 终态语义', () => {
-    const snap = coord.startXForgeRun({
+    const snap = service.startXForgeRun({
       workspaceId: '/ws',
       sessionId: 's-xf',
       runId: 'xf_replay_done'
     })
     coord.markRunning(snap.runId)
-    coord.commitXForgeStageTransition(snap.runId, {
+    execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'resolve',
       to: 'report',
       reason: '到 report'
     })
-    const done = coord.commitXForgeStageTransition(snap.runId, {
+    const done = execution(snap.runId).commitXForgeStageTransition(snap.runId, {
       ok: true,
       from: 'report',
       to: 'completed',
