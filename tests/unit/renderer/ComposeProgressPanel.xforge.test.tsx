@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ComposeProgressPanel } from '../../../src/renderer/features/compose/ComposeProgressPanel'
 import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
-import type { RunSnapshot } from '../../../src/runtime/run/types'
+import type { RunSnapshot } from '../../../src/shared/run/types'
 import { createInitialXForgeRunState } from '../../../src/runtime/workflow/xforge/runState'
 
 const mockInvoke = vi.fn()

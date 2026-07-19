@@ -6,7 +6,7 @@ import React, { useState } from 'react'
 import { useComposeStore } from './useComposeStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useRunStore } from '../../stores/useRunStore'
-import type { RunSnapshot } from '../../../runtime/run/types'
+import type { RunSnapshot } from '../../../shared/run/types'
 import type { ComposeTaskView } from './types'
 import './ComposeProgressPanel.css'
 

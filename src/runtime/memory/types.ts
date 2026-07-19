@@ -14,13 +14,11 @@ export interface ReconcilePlan {
   removed: string[]
 }
 
-/** reconcile 执行统计 */
-export interface ReconcileStats {
-  added: number
-  updated: number
-  removed: number
-  skipped: number
-}
+export type {
+  MemoryScopeFileEntry,
+  MemoryScopeStats,
+  ReconcileStats
+} from '../../shared/memory/types'
 
 /** FTS 检索命中（score 为 -bm25，越大越相关） */
 export interface MemorySearchHit {
@@ -34,22 +32,6 @@ export interface MemorySearchHit {
 export interface MemorySearchOptions {
   limit?: number
   scoreFloor?: number
-}
-
-/** scope 目录下单个 .md 文件元信息（不含正文） */
-export interface MemoryScopeFileEntry {
-  relPath: string
-  size: number
-  mtimeMs: number
-}
-
-/** scope 记忆统计（磁盘 + 索引） */
-export interface MemoryScopeStats {
-  scopeId: string
-  scopeDir: string
-  fileCount: number
-  indexCount: number
-  diskBytes: number
 }
 
 /** FtsQueryBuilder 分派路径 */

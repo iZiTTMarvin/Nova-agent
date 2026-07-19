@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'path'
 import { handle } from './secureIpc'
 import { SUBAGENTS_LIST, SUBAGENTS_SAVE, SUBAGENTS_DELETE } from '../../shared/ipc/channels'
-import { BUILTIN_SUBAGENTS, type SubAgentSpec } from '../../runtime/agent'
+import { BUILTIN_SUBAGENTS } from '../../runtime/agent'
+import type { SubAgentSpec } from '../../shared/settings/types'
 import { getNovaHomeDir } from '../../runtime/settings/novaSettings'
 import type {
   SubagentListItem,

@@ -27,7 +27,7 @@ import type {
 } from '../../shared/session/types'
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
-import type { NormalizedUsage } from '../../runtime/model/types'
+import type { NormalizedUsage } from '../../shared/model/types'
 import type { ImageAttachment } from '../lib/image-attachments'
 
 /** 与旧 useAppStore 形状完全一致的合并 state，供 getState / 测试使用 */

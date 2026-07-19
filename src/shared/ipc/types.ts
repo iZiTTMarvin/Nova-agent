@@ -5,9 +5,9 @@
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig, LlmRegistry } from '../config'
 import type { DiffEntry, DiffReviewStatus, MessageDiffsState } from '../diff'
-import type { NormalizedUsage } from '../../runtime/model/types'
-import type { HookEvent } from '../../runtime/agent/types'
-import type { ToolTruncationMeta } from '../../runtime/tools/types'
+import type { NormalizedUsage } from '../model/types'
+import type { HookEvent } from '../agent/types'
+import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
 import type {
   SkillSummary,
@@ -48,7 +48,7 @@ import type {
   RunSnapshot,
   InteractionAnswerResult,
   ToolCommitRecord
-} from '../../runtime/run/types'
+} from '../run/types'
 import type {
   MemoryScopeFileEntry,
   MemoryScopeStats,

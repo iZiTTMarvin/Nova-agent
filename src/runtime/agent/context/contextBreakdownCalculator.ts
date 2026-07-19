@@ -17,7 +17,7 @@ import { renderBaseRules } from '../promptRenderer'
 import { buildConversationContext } from './contextBuilder'
 import type { SessionData } from '../../sessions/types'
 import type { SkillManifest } from '../../skills/types'
-import type { ContextBreakdown } from '../../../renderer/stores/useSettingsStore'
+import type { ContextBreakdown } from '../../../shared/agent/contextBreakdown'
 
 /** 从冻结 system prompt 中提取 SystemPromptBuilder 某层正文 */
 function extractPromptLayer(frozenPrompt: string, layerTitle: string): string {

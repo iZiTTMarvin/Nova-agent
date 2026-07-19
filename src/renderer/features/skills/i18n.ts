@@ -1,7 +1,7 @@
 /**
  * Skill 相关 UI 文案（中文为主）
  */
-import type { SkillSource } from '../../../runtime/skills/types'
+import type { SkillSource } from '../../../shared/skills/types'
 
 /** 技能来源 badge 文案 */
 export function skillSourceLabel(source: SkillSource): string {

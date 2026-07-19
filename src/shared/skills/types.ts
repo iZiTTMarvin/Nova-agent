@@ -1,7 +1,15 @@
 /**
  * Skill IPC 与渲染端共享类型（不含 body 全量，列表接口使用 preview）
  */
-import type { SkillSource } from '../../runtime/skills/types'
+
+/** 技能来源（MVP 三源 + 预留枚举） */
+export type SkillSource =
+  | 'builtin'
+  | 'global'
+  | 'project'
+  | 'third_party_claude'
+  | 'virtual'
+  | 'mcp'
 
 /** 渲染端 / IPC 安全的技能摘要 */
 export interface SkillSummary {

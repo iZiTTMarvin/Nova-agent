@@ -5,20 +5,12 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join, relative, resolve, normalize, isAbsolute } from 'path'
 import { getNovaHomeDir } from '../../settings/novaSettings'
+import type { RuleFileEntry, RuleScope } from '../../../shared/settings/types'
+
+export type { RuleFileEntry, RuleScope }
 
 /** 工作区根目录下的经典规则文件名 */
 const WORKSPACE_RULE_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules'] as const
-
-export type RuleScope = 'workspace' | 'global'
-
-/** 规则文件条目（IPC 安全） */
-export interface RuleFileEntry {
-  id: string
-  relativePath: string
-  absolutePath: string
-  scope: RuleScope
-  editable: boolean
-}
 
 /**
  * 校验绝对路径是否在指定根目录内（防路径穿越）。

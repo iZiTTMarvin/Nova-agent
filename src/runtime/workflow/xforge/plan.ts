@@ -1,28 +1,11 @@
-import type { XForgeTaskState } from './runState'
+import type {
+  XForgePlanTask,
+  XForgeValidatedPlan,
+  XForgePlanValidation,
+  XForgeTaskState
+} from '../../../shared/xforge/types'
 
-export interface XForgePlanTask {
-  id: string
-  title: string
-  acceptance: string[]
-}
-
-export interface XForgeValidatedPlan {
-  version: number
-  goal: string
-  constraints: string[]
-  nonGoals: string[]
-  repositoryFacts: string[]
-  changeScope: string[]
-  tasks: XForgePlanTask[]
-  acceptanceMap: Record<string, string[]>
-  verificationChecklist: string[]
-  risks: string[]
-}
-
-export interface XForgePlanValidation {
-  valid: boolean
-  missing: string[]
-}
+export type { XForgePlanTask, XForgeValidatedPlan, XForgePlanValidation }
 
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0

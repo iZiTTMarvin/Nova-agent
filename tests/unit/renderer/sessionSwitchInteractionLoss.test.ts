@@ -20,7 +20,7 @@ import {
 } from '../../../src/renderer/stores/workspaceDispatcher'
 import type { WorkspaceState } from '../../../src/shared/workspace/types'
 import type { PendingPermissionRequest } from '../../../src/renderer/stores/types'
-import type { RunSnapshot } from '../../../src/runtime/run/types'
+import type { RunSnapshot } from '../../../src/shared/run/types'
 
 const sessionASnapshot: RunSnapshot = {
   runId: 'run-A',

@@ -3,8 +3,11 @@
  * 对齐 OpenAI Chat Completions API 的请求/响应结构
  */
 
-import type { ToolTruncationMeta } from '../tools/types'
+import type { ToolTruncationMeta } from '../../shared/tools/types'
+import type { NormalizedUsage } from '../../shared/model/types'
 import type { CacheStrategy, CacheProfileId } from '../../shared/config/types'
+
+export type { NormalizedUsage }
 
 // ── 消息格式 ──────────────────────────────────────────────
 
@@ -106,26 +109,6 @@ export interface ModelClientConfig {
    * 用于 API 层视觉投影（剥离 / provider 适配），与 UI 门控共用同一语义。
    */
   supportsVision?: boolean
-}
-
-// ── Token 用量 ────────────────────────────────────────────
-
-/**
- * 归一化后的 token 用量统计
- * 统一 OpenAI / DeepSeek / Anthropic 三种 provider 的缓存字段差异
- */
-export interface NormalizedUsage {
-  promptTokens: number
-  completionTokens: number
-  /** 从缓存读取的 token 数（命中缓存的部分） */
-  cachedTokens: number
-  /** 写入缓存的 token 数（创建缓存的部分，仅 Anthropic 类 provider 有值） */
-  cacheWriteTokens: number
-  /**
-   * 缓存未命中 token 数（DeepSeek 等返回 prompt_cache_miss_tokens 时有值）。
-   * 必须 optional：多数 provider 不返回该字段，不能破坏现存对象字面量。
-   */
-  cacheMissTokens?: number
 }
 
 // ── 流式事件 ─────────────────────────────────────────────

@@ -1,11 +1,31 @@
 /**
  * 设置相关 IPC 共享类型
  */
-import type { RuleFileEntry, RuleScope } from '../../runtime/agent/context/rulesDiscovery'
-import type { SubAgentSpec } from '../../runtime/agent/core/SubAgentConfig'
 import type { Mode, PermissionPolicy } from '../session/types'
 
 export type { PermissionPolicy }
+
+export type RuleScope = 'workspace' | 'global'
+
+/** 规则文件条目（IPC 安全） */
+export interface RuleFileEntry {
+  id: string
+  relativePath: string
+  absolutePath: string
+  scope: RuleScope
+  editable: boolean
+}
+
+/** 子代理规格 */
+export interface SubAgentSpec {
+  name: string
+  description: string
+  allowedTools: string[]
+  prompt: string
+  model?: { providerID: string; modelID: string }
+  maxToolRounds?: number
+  contextWindow?: number
+}
 
 /**
  * 应用级用户偏好（持久化到 ~/.nova/settings.json）
@@ -91,8 +111,6 @@ export interface RulesCreateParams {
   /** 初始正文 */
   content?: string
 }
-
-export type { RuleFileEntry, SubAgentSpec }
 
 export interface SubagentsListParams {
   workspaceRoot?: string | null

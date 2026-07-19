@@ -2,16 +2,10 @@
  * Skill 系统核心类型定义
  * 对齐 docs/skill-system-design.md §5.1（MVP 不含 brand / encrypted）
  */
-import type { HookEvent } from '../agent/types'
+import type { HookEvent } from '../../shared/agent/types'
+import type { SkillSource } from '../../shared/skills/types'
 
-/** 技能来源（MVP 三源 + 预留枚举） */
-export type SkillSource =
-  | 'builtin'
-  | 'global'
-  | 'project'
-  | 'third_party_claude'
-  | 'virtual'
-  | 'mcp'
+export type { SkillSource }
 
 /** 扫描/解析错误 */
 export interface LoadError {

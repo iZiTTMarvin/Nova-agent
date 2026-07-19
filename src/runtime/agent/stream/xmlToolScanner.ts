@@ -74,13 +74,9 @@ export interface ScannedToolCall {
 
 // ==================== 常量与工具函数 ====================
 
-/** MiniMax 等模型会在 XML 调用外层插入的占位符 token（含 <minimax:tool_call> 命名空间变体） */
-const MINIMAX_ARTIFACTS = /\]?<\/?minimax(?::[a-zA-Z_]+)?>\[?/g
+import { stripMinimaxArtifacts } from '../../../shared/stream/stripMinimaxArtifacts'
 
-/** 清理文本中的 MiniMax 占位符，避免它们破坏 XML 解析。 */
-export function stripMinimaxArtifacts(text: string): string {
-  return text.replace(MINIMAX_ARTIFACTS, '')
-}
+export { stripMinimaxArtifacts }
 
 /** 已知标签前缀（用于判断尾部是否为未闭合标签） */
 const KNOWN_TAG_PREFIXES = ['<invoke', '</invoke', '<parameter', '</parameter']

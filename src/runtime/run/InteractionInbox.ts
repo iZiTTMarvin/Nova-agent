@@ -17,7 +17,7 @@ import type {
   InteractionType,
   PendingInteraction,
   RunSnapshot
-} from './types'
+} from '../../shared/run/types'
 
 export interface EnqueueInteractionParams {
   runId: string

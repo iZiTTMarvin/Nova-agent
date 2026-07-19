@@ -6,161 +6,53 @@
 
 import { isTerminalStage } from './stageController'
 import type {
-  ScopePassRef,
+  ApplyXForgeTransitionOptions,
+  ApplyXForgeTransitionResult,
+  CreateXForgeRunStateOptions,
   StageTransitionResult,
-  XForgeStage
-} from './types'
-import type { XForgeValidatedPlan } from './plan'
+  XForgeMainSessionState,
+  XForgeReportFactsState,
+  XForgeReviewFindingState,
+  XForgeRunState,
+  XForgeTaskState,
+  XForgeTestEvidenceState,
+  XForgeValidatedPlan,
+  XForgeWriteBoundary
+} from '../../../shared/xforge/types'
+import { cloneReviewTarget, cloneWorkspaceBaseline } from './workspaceBaseline'
 
-/** 阶段产物引用占位（路径/摘要；完整正文落盘在 compose 产物目录） */
-export interface XForgeStageArtifactRef {
-  stage: XForgeStage
-  artifactId: string
-  path?: string
-  summary?: string
-}
+export type {
+  XForgeRunState,
+  XForgeStageArtifactRef,
+  XForgeEvidenceRef,
+  XForgeTaskState,
+  XForgeTaskStatus,
+  XForgeWorkspaceFingerprint,
+  XForgeWriteBoundary,
+  XForgeFileEffect,
+  XForgeControlledCommandEvidence,
+  XForgeTestEvidenceState,
+  XForgeReviewFindingState,
+  XForgeReportFactsState,
+  XForgeMainSessionState,
+  XForgeScopeFindingState,
+  CreateXForgeRunStateOptions,
+  ApplyXForgeTransitionOptions,
+  ApplyXForgeTransitionResult
+} from '../../../shared/xforge/types'
 
-/** 证据引用占位 */
-export interface XForgeEvidenceRef {
-  kind: string
-  path?: string
-  note?: string
-  unverified?: boolean
-}
-
-export type XForgeTaskStatus = 'pending' | 'in_progress' | 'done' | 'unverified' | 'skipped' | 'failed'
-
-export interface XForgeTaskState {
-  id: string
-  title: string
-  status: XForgeTaskStatus
-  acceptance: string[]
-  attempts: number
-  evidenceRefs: XForgeEvidenceRef[]
-  failureReason?: string
-}
-
-export interface XForgeMainSessionState {
-  goal: string
-  constraints: string[]
-  nonGoals: string[]
-  userDecisions: string[]
-}
-
-export interface XForgeScopeFindingState {
-  severity: 'critical' | 'high' | 'medium' | 'low'
-  location: string
-  summary: string
-  evidence: string
-  suggestion: string
-  unverified?: boolean
-}
-
-export interface XForgeWorkspaceFingerprint {
-  revision: number
-  digest: string
-  capturedAt: number
-}
-
-export interface XForgeWriteBoundary {
-  checkpointRef: string
-  fingerprint: XForgeWorkspaceFingerprint
-  preparedAt: number
-}
-
-export interface XForgeFileEffect {
-  path: string
-  receiptId?: string
-  status?: 'committed' | 'prepared'
-}
-
-export interface XForgeControlledCommandEvidence {
-  command: string
-  required: boolean
-  exitCode: number | null
-  timedOut: boolean
-  blockedReason?: string
-  evidenceRef: XForgeEvidenceRef
-}
-
-export interface XForgeTestEvidenceState {
-  workspaceRevision: number
-  fingerprint: XForgeWorkspaceFingerprint
-  commands: XForgeControlledCommandEvidence[]
-  passed: boolean
-  capturedAt: number
-}
-
-export interface XForgeReviewFindingState {
-  severity: 'critical' | 'high' | 'medium' | 'low' | 'nit'
-  location: string
-  summary: string
-  evidence: string
-  suggestion?: string
-  unverified?: boolean
-}
-
-export interface XForgeReportFactsState {
-  runId: string
-  finalWorkspaceRevision: number
-  testPassed: boolean
-  testCommands: XForgeControlledCommandEvidence[]
-  completedTasks: string[]
-  unverifiedTasks: string[]
-  skippedTasks: Array<{ id: string; reason: string }>
-  blockingFindings: XForgeReviewFindingState[]
-  technicalDebt: XForgeReviewFindingState[]
-  budgets: {
-    scopeCorrectionUsed: number
-    deliveryTestFixUsed: number
-    reviewRemediationUsed: number
-  }
-  shipRequested: boolean
-  notExecuted: Array<'commit' | 'push' | 'deploy' | 'publish'>
-}
-
-/** RunSnapshot.xforge 权威字段 */
-export interface XForgeRunState {
-  currentStage: XForgeStage
-  completedStages: XForgeStage[]
-  skippedStages: XForgeStage[]
-  reviewOnly: boolean
-  planVersion: number | null
-  validatedPlan: XForgeValidatedPlan | null
-  workspaceRevision: number
-  hasValidatedPlan: boolean
-  hasValidScopePass: boolean
-  scopePass: ScopePassRef | null
-  scopeCorrectionUsed: number
-  deliveryTestFixUsed: number
-  reviewRemediationUsed: number
-  suspendedStage: XForgeStage | null
-  resumeTarget: XForgeStage | null
-  waitingReason: string | null
-  stageArtifacts: XForgeStageArtifactRef[]
-  evidenceRefs: XForgeEvidenceRef[]
-  tasks: XForgeTaskState[]
-  mainSession: XForgeMainSessionState
-  pendingScopeFindings: XForgeScopeFindingState[]
-  activeTaskId: string | null
-  writeBoundary: XForgeWriteBoundary | null
-  testEvidence: XForgeTestEvidenceState | null
-  reviewFindings: XForgeReviewFindingState[]
-  technicalDebt: XForgeReviewFindingState[]
-  reportFacts: XForgeReportFactsState | null
-  lastTransitionReason?: string
-}
-
-export interface CreateXForgeRunStateOptions {
-  reviewOnly?: boolean
-  /** 默认 resolve */
-  currentStage?: XForgeStage
-  planVersion?: number | null
-  workspaceRevision?: number
-  hasValidatedPlan?: boolean
-  hasValidScopePass?: boolean
-  scopePass?: ScopePassRef | null
-  mainSession?: Partial<XForgeMainSessionState>
+export interface XForgeRunCommitter {
+  getSnapshot(runId: string): { xforge?: XForgeRunState | null } | null
+  commitXForgeStageTransition(
+    runId: string,
+    result: StageTransitionResult,
+    opts?: ApplyXForgeTransitionOptions
+  ): { ok: true; xforge: XForgeRunState } | { ok: false; message: string }
+  commitXForgeStatePatch(
+    runId: string,
+    opts: ApplyXForgeTransitionOptions,
+    reason?: string
+  ): { ok: true; xforge: XForgeRunState } | { ok: false; message: string }
 }
 
 export function createInitialXForgeRunState(
@@ -208,42 +100,11 @@ export function createInitialXForgeRunState(
     testEvidence: null,
     reviewFindings: [],
     technicalDebt: [],
-    reportFacts: null
+    reportFacts: null,
+    workspaceBaseline: null,
+    reviewTarget: null
   }
 }
-
-export interface ApplyXForgeTransitionOptions {
-  completedStages?: XForgeStage[]
-  skippedStages?: XForgeStage[]
-  planVersion?: number | null
-  workspaceRevision?: number
-  hasValidatedPlan?: boolean
-  hasValidScopePass?: boolean
-  scopePass?: ScopePassRef | null
-  reviewOnly?: boolean
-  /** waiting_user 时的恢复目标；缺省为转入前阶段 */
-  resumeTarget?: XForgeStage | null
-  artifact?: XForgeStageArtifactRef
-  evidenceRef?: XForgeEvidenceRef
-  tasks?: XForgeTaskState[]
-  validatedPlan?: XForgeValidatedPlan | null
-  mainSession?: XForgeMainSessionState
-  pendingScopeFindings?: XForgeScopeFindingState[]
-  activeTaskId?: string | null
-  writeBoundary?: XForgeWriteBoundary | null
-  testEvidence?: XForgeTestEvidenceState | null
-  reviewFindings?: XForgeReviewFindingState[]
-  technicalDebt?: XForgeReviewFindingState[]
-  reportFacts?: XForgeReportFactsState | null
-}
-
-export type ApplyXForgeTransitionResult =
-  | { ok: true; state: XForgeRunState }
-  | {
-      ok: false
-      code: 'xforge_terminal' | 'transition_rejected' | 'from_mismatch'
-      reason: string
-    }
 
 /**
  * 将成功的 StageTransitionResult 叠到 XForgeRunState（纯函数，不落盘）。
@@ -279,39 +140,16 @@ export function applyXForgeStageTransition(
     }
   }
 
-  const next: XForgeRunState = {
-    ...prev,
-    currentStage: result.to,
-    completedStages: [...(prev.completedStages ?? [])],
-    skippedStages: [...(prev.skippedStages ?? [])],
-    lastTransitionReason: result.reason,
-    scopeCorrectionUsed:
-      prev.scopeCorrectionUsed + (result.budgetDelta?.scopeCorrection ?? 0),
-    deliveryTestFixUsed:
-      prev.deliveryTestFixUsed + (result.budgetDelta?.deliveryTestFix ?? 0),
-    reviewRemediationUsed:
-      prev.reviewRemediationUsed + (result.budgetDelta?.reviewRemediation ?? 0),
-    stageArtifacts: [...prev.stageArtifacts],
-    evidenceRefs: [...prev.evidenceRefs],
-    tasks: prev.tasks.map(cloneTaskState),
-    validatedPlan: prev.validatedPlan ? cloneValidatedPlan(prev.validatedPlan) : null,
-    mainSession: cloneMainSession(prev.mainSession ?? {
-      goal: '',
-      constraints: [],
-      nonGoals: [],
-      userDecisions: []
-    }),
-    pendingScopeFindings: (prev.pendingScopeFindings ?? []).map(finding => ({ ...finding })),
-    activeTaskId: prev.activeTaskId,
-    writeBoundary: prev.writeBoundary ? cloneWriteBoundary(prev.writeBoundary) : null,
-    testEvidence: prev.testEvidence ? cloneTestEvidence(prev.testEvidence) : null,
-    reviewFindings: (prev.reviewFindings ?? []).map(cloneReviewFinding),
-    technicalDebt: (prev.technicalDebt ?? []).map(cloneReviewFinding),
-    reportFacts: prev.reportFacts ? cloneReportFacts(prev.reportFacts) : null,
-    scopePass: prev.scopePass ? { ...prev.scopePass } : null
-  }
+  const next = cloneXForgeRunState(prev)
+  next.currentStage = result.to
+  next.lastTransitionReason = result.reason
+  next.scopeCorrectionUsed =
+    prev.scopeCorrectionUsed + (result.budgetDelta?.scopeCorrection ?? 0)
+  next.deliveryTestFixUsed =
+    prev.deliveryTestFixUsed + (result.budgetDelta?.deliveryTestFix ?? 0)
+  next.reviewRemediationUsed =
+    prev.reviewRemediationUsed + (result.budgetDelta?.reviewRemediation ?? 0)
 
-  if (opts.planVersion !== undefined) next.planVersion = opts.planVersion
   if (
     result.from !== 'waiting_user' &&
     result.to !== 'waiting_user' &&
@@ -321,6 +159,53 @@ export function applyXForgeStageTransition(
   ) {
     next.completedStages.push(result.from)
   }
+
+  applyXForgePatchOptions(next, opts)
+
+  if (result.to === 'waiting_user') {
+    next.suspendedStage = result.from
+    next.resumeTarget =
+      opts.resumeTarget !== undefined ? opts.resumeTarget : result.from
+    next.waitingReason = result.reason
+  } else {
+    next.suspendedStage = null
+    next.resumeTarget = null
+    next.waitingReason = null
+  }
+
+  if (
+    result.from === 'scope_check' &&
+    result.to === 'implement' &&
+    next.hasValidatedPlan &&
+    next.planVersion !== null
+  ) {
+    next.hasValidScopePass = true
+    next.scopePass = {
+      planVersion: next.planVersion,
+      workspaceRevision: next.workspaceRevision
+    }
+  }
+
+  return { ok: true, state: next }
+}
+
+/** 同阶段事实更新的唯一纯函数；不改变 currentStage 和 waiting/resume 语义。 */
+export function applyXForgeStatePatch(
+  prev: XForgeRunState,
+  opts: ApplyXForgeTransitionOptions,
+  reason: string
+): XForgeRunState {
+  const next = cloneXForgeRunState(prev)
+  next.lastTransitionReason = reason
+  applyXForgePatchOptions(next, opts)
+  return next
+}
+
+function applyXForgePatchOptions(
+  next: XForgeRunState,
+  opts: ApplyXForgeTransitionOptions
+): void {
+  if (opts.planVersion !== undefined) next.planVersion = opts.planVersion
   if (opts.completedStages !== undefined) next.completedStages = [...opts.completedStages]
   if (opts.skippedStages !== undefined) next.skippedStages = [...opts.skippedStages]
   if (opts.workspaceRevision !== undefined) next.workspaceRevision = opts.workspaceRevision
@@ -331,15 +216,9 @@ export function applyXForgeStageTransition(
   }
   if (opts.reviewOnly !== undefined) next.reviewOnly = opts.reviewOnly
 
-  if (opts.artifact) {
-    next.stageArtifacts.push({ ...opts.artifact })
-  }
-  if (opts.evidenceRef) {
-    next.evidenceRefs.push({ ...opts.evidenceRef })
-  }
-  if (opts.tasks !== undefined) {
-    next.tasks = opts.tasks.map(cloneTaskState)
-  }
+  if (opts.artifact) next.stageArtifacts.push({ ...opts.artifact })
+  if (opts.evidenceRef) next.evidenceRefs.push({ ...opts.evidenceRef })
+  if (opts.tasks !== undefined) next.tasks = opts.tasks.map(cloneTaskState)
   if (opts.validatedPlan !== undefined) {
     next.validatedPlan = opts.validatedPlan ? cloneValidatedPlan(opts.validatedPlan) : null
   }
@@ -363,6 +242,12 @@ export function applyXForgeStageTransition(
   if (opts.reportFacts !== undefined) {
     next.reportFacts = opts.reportFacts ? cloneReportFacts(opts.reportFacts) : null
   }
+  if (opts.workspaceBaseline !== undefined && next.workspaceBaseline === null && opts.workspaceBaseline) {
+    next.workspaceBaseline = cloneWorkspaceBaseline(opts.workspaceBaseline)
+  }
+  if (opts.reviewTarget !== undefined && next.reviewTarget === null && opts.reviewTarget) {
+    next.reviewTarget = cloneReviewTarget(opts.reviewTarget)
+  }
 
   if (
     next.scopePass &&
@@ -371,33 +256,6 @@ export function applyXForgeStageTransition(
   ) {
     next.hasValidScopePass = false
   }
-
-  if (result.to === 'waiting_user') {
-    next.suspendedStage = result.from
-    next.resumeTarget =
-      opts.resumeTarget !== undefined ? opts.resumeTarget : result.from
-    next.waitingReason = result.reason
-  } else {
-    next.suspendedStage = null
-    next.resumeTarget = null
-    next.waitingReason = null
-  }
-
-  // Scope Gate 刚通过进入 implement：事实层同步签发 Pass
-  if (
-    result.from === 'scope_check' &&
-    result.to === 'implement' &&
-    next.hasValidatedPlan &&
-    next.planVersion !== null
-  ) {
-    next.hasValidScopePass = true
-    next.scopePass = {
-      planVersion: next.planVersion,
-      workspaceRevision: next.workspaceRevision
-    }
-  }
-
-  return { ok: true, state: next }
 }
 
 export function cloneXForgeRunState(state: XForgeRunState): XForgeRunState {
@@ -423,7 +281,11 @@ export function cloneXForgeRunState(state: XForgeRunState): XForgeRunState {
     testEvidence: state.testEvidence ? cloneTestEvidence(state.testEvidence) : null,
     reviewFindings: (state.reviewFindings ?? []).map(cloneReviewFinding),
     technicalDebt: (state.technicalDebt ?? []).map(cloneReviewFinding),
-    reportFacts: state.reportFacts ? cloneReportFacts(state.reportFacts) : null
+    reportFacts: state.reportFacts ? cloneReportFacts(state.reportFacts) : null,
+    workspaceBaseline: state.workspaceBaseline
+      ? cloneWorkspaceBaseline(state.workspaceBaseline)
+      : null,
+    reviewTarget: state.reviewTarget ? cloneReviewTarget(state.reviewTarget) : null
   }
 }
 

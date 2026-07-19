@@ -10,7 +10,7 @@ import {
   createEmptyRegistry
 } from '../../shared/config/llmRegistry'
 import { resolveContextWindow } from '../../shared/config/types'
-import type { NormalizedUsage } from '../../runtime/model/types'
+import type { NormalizedUsage } from '../../shared/model/types'
 import type { SessionUsageStats } from './types'
 
 export interface SettingsState {
@@ -147,21 +147,9 @@ function aggregateUsageBuckets(buckets: Record<string, SessionUsageStats>): Sess
   return next
 }
 
-export interface ContextBreakdown {
-  sessionId: string
-  messageId: string
-  breakdown: {
-    systemPrompt: number
-    skills: number
-    tools: number
-    messages: number
-    other: number
-  }
-  totalEstimated: number
-  promptTokensActual: number
-  capturedAt: number
-  contextLimit?: number
-}
+import type { ContextBreakdown } from '../../shared/agent/contextBreakdown'
+
+export type { ContextBreakdown }
 
 const LLM_SETTINGS_NAV_KEY = 'nova-settings-nav'
 

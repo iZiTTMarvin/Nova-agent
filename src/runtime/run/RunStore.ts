@@ -14,7 +14,7 @@ import {
   isTerminalRunStatus,
   type RunEventRecord,
   type RunSnapshot
-} from './types'
+} from '../../shared/run/types'
 
 export interface RunStoreOptions {
   /** 运行快照根目录，通常为 userData/runs */

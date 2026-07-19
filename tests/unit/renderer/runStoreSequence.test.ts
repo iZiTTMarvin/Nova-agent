@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
-import type { RunSnapshot } from '../../../src/runtime/run/types'
+import type { RunSnapshot } from '../../../src/shared/run/types'
 
 function snap(partial: Partial<RunSnapshot> & Pick<RunSnapshot, 'runId' | 'sessionId' | 'sequence' | 'status'>): RunSnapshot {
   return {

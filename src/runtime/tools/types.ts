@@ -8,6 +8,9 @@ import type { SessionStore } from '../sessions/SessionStore'
 import type { EventBus } from '../agent/EventBus'
 import type { ReadState } from './editTool'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
+import type { ToolTruncationMeta } from '../../shared/tools/types'
+
+export type { ToolTruncationMeta }
 
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
@@ -118,14 +121,6 @@ export interface ImageContent {
   data: string
   /** 图片 MIME 类型（image/jpeg、image/png、image/gif、image/webp） */
   mimeType: string
-}
-
-/** 大输出截断元数据（工具 / 事件 / 持久化共用） */
-export interface ToolTruncationMeta {
-  totalBytes: number
-  totalLines: number
-  shownLines?: number
-  truncated: boolean
 }
 
 /** 工具执行结果 */

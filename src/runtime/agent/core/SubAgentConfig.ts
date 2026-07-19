@@ -4,17 +4,9 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import type { SubAgentSpec } from '../../../shared/settings/types'
 
-/** 子代理规格 */
-export interface SubAgentSpec {
-  name: string
-  description: string
-  allowedTools: string[]
-  prompt: string
-  model?: { providerID: string; modelID: string }
-  maxToolRounds?: number
-  contextWindow?: number
-}
+export type { SubAgentSpec }
 
 /** 内置 explore / code 子代理 */
 export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [

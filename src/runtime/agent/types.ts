@@ -3,24 +3,15 @@
  * EventBus 的结构化事件定义，对应 IPC 推送给 renderer 的事件
  */
 import type { DiffReviewStatus } from '../../shared/diff/types'
-import type { NormalizedUsage } from '../model/types'
+import type { NormalizedUsage } from '../../shared/model/types'
 import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
 import type { RecoveryState } from './recovery/RecoveryStateMachine'
-import type { ToolTruncationMeta } from '../tools/types'
+import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { AskQuestionItem } from '../../shared/askQuestion/types'
+import type { HookEvent } from '../../shared/agent/types'
 
-/** Hook 系统 9 个固定事件（供 renderer / 扩展监听） */
-export type HookEvent =
-  | 'onMessageStart'
-  | 'beforeAgentStart'
-  | 'preChat'
-  | 'context'
-  | 'preToolUse'
-  | 'postToolUse'
-  | 'postMessage'
-  | 'onError'
-  | 'onCancel'
+export type { HookEvent }
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =

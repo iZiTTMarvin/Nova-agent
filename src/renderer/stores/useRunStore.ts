@@ -7,7 +7,7 @@
  * - 当前会话只渲染自己的 interaction；其他会话用 waitingSessions 徽标
  */
 import { create } from 'zustand'
-import type { RunSnapshot, PendingInteraction, RunStatus } from '../../runtime/run/types'
+import type { RunSnapshot, PendingInteraction, RunStatus } from '../../shared/run/types'
 import type { AskQuestionRequest } from '../../shared/askQuestion/types'
 import type { PendingPermissionRequest } from './types'
 import { useAgentStore } from './useAgentStore'

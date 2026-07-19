@@ -21,7 +21,7 @@ import type {
   MemoryReadFileParams,
   MemoryWriteFileParams
 } from '../../shared/memory/types'
-import type { ReconcileStats } from '../../runtime/memory/types'
+import type { ReconcileStats } from '../../shared/memory/types'
 
 /** 从当前工作区解析 scopeId；未打开项目时抛错 */
 function requireScopeId(): string {
