@@ -24,7 +24,6 @@
  */
 import { randomUUID } from 'crypto'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
-import { extractTextFromContent } from '../../model/types'
 import { resolveCacheProfile } from '../../model/cacheProfile'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
@@ -34,7 +33,6 @@ import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { HookManager } from '../core/HookManager'
-import { getEffectiveToolDefinitions } from '../core/AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
 import type { StreamProcessorDeps, StreamRunParams, TurnStreamResult } from './streamTypes'
@@ -276,9 +274,14 @@ export class StreamProcessor {
             })
             break
 
-          case 'request_fingerprint':
-            // 匿名结构指纹写入诊断层，不落明文、不发 UI 事件
-            this.cacheDiagnostics.recordRequestFingerprint(event.fingerprint)
+          case 'wire_snapshot':
+            {
+              // 语义快照写入诊断层并做 first-diff 比较
+              const snapshotDiag = this.cacheDiagnostics.recordWireSnapshot(event.snapshot)
+              if (snapshotDiag.cacheBreakDetected) {
+                this.emit({ type: 'cache_diagnostic', messageId, diagnostic: snapshotDiag })
+              }
+            }
             break
 
           case 'cancelled':
@@ -359,6 +362,7 @@ export class StreamProcessor {
               case 'fallback': {
                 // 按新 active provider 重算 dialect + cache 侧已由各 client 自带 profile
                 this.syncToolDialect?.(context)
+                this.cacheDiagnostics.bumpEpoch('model_switch')
                 this.emit({
                   type: 'model_switched',
                   messageId,
@@ -394,11 +398,7 @@ export class StreamProcessor {
                 usage: event.usage,
                 cacheProfileId: profile.id
               })
-              const diag = this.cacheDiagnostics.checkResponse(
-                event.usage.cachedTokens,
-                extractTextFromContent(context.messages.find(m => m.role === 'system')?.content ?? ''),
-                getEffectiveToolDefinitions(context)
-              )
+              const diag = this.cacheDiagnostics.checkCacheReadDrop(event.usage.cachedTokens)
               if (diag.cacheBreakDetected) {
                 this.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
               }
@@ -442,6 +442,7 @@ export class StreamProcessor {
         }
         case 'fallback': {
           this.syncToolDialect?.(context)
+          this.cacheDiagnostics.bumpEpoch('model_switch')
           this.emit({
             type: 'model_switched',
             messageId,

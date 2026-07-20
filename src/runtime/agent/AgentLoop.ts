@@ -16,8 +16,8 @@ import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
-import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, stripReasoningContent, MIN_RECENT_MESSAGES, rollbackBefore } from './compaction/compaction'
-import { createProductionContextBudgetManager, type ContextBudgetManager } from './ContextBudgetManager'
+import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, stripReasoningContent, MIN_RECENT_MESSAGES } from './compaction/compaction'
+import { createProductionContextBudgetManager, compactAtBoundary, ContextBudgetExceededError, type ContextBudgetManager } from './ContextBudgetManager'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { estimateContextTokens } from './tokenEstimator'
@@ -526,10 +526,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.compactionLevel = compactionLevel
     this.userTurnsSinceCompaction = 0
     this.lastEstimatedTokens = estimateContextTokens(this.context)
-    this.cacheDiagnostics.resetBaseline(
-      extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
-      getEffectiveToolDefinitions(this.ctx)
-    )
+    this.cacheDiagnostics.bumpEpoch('compaction')
     this.emitContextBreakdown('', 0)
   }
 
@@ -541,6 +538,26 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 设置本轮实际暴露给模型、缓存诊断和上下文拆分的工具定义来源。 */
   setEffectiveToolDefinitionsProvider(provider: (() => ToolDefinition[]) | null): void {
     this.ctx.effectiveToolDefinitions = provider
+  }
+
+  /** 外部触发 epoch 切换（如 XForge 阶段切换导致工具集变化） */
+  bumpCacheEpoch(reason: import('../model/cacheDiagnostics').EpochReason): void {
+    this.cacheDiagnostics.bumpEpoch(reason)
+  }
+
+  /** 导出缓存诊断状态（供跨回合持久化） */
+  getDiagnosticPersistState(): import('../model/cacheDiagnostics').DiagnosticPersistState {
+    return this.cacheDiagnostics.getPersistState()
+  }
+
+  /** 从持久化状态恢复缓存诊断（loop 重建后调用） */
+  restoreDiagnosticPersistState(state: import('../model/cacheDiagnostics').DiagnosticPersistState): void {
+    this.cacheDiagnostics.restoreFromState(state)
+  }
+
+  /** 设置诊断状态持久化回调（每次快照更新后触发） */
+  setDiagnosticPersistCallback(cb: ((state: import('../model/cacheDiagnostics').DiagnosticPersistState) => void) | null): void {
+    this.cacheDiagnostics.setPersistCallback(cb)
   }
 
   setModeInstructionProvider(provider: (() => string) | null): void {
@@ -991,7 +1008,8 @@ export class AgentLoop implements IdleCompactionTarget {
       supportsVision: this.config.supportsVision ?? true,
       shouldStopAfterTurn: (args) => this.stopPolicy.shouldStopAfterTurn(args),
       onCompaction: (context, meta) => this.config.onCompaction?.(context, meta),
-      applyContextBudget: (messages) => this.contextBudgetManager.apply(messages)
+      enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
+      runOverflowCompaction: (mode) => this.runOverflowCompaction(mode)
     }
 
     const endResult: LoopEndResult = await runAgentLoop({
@@ -1013,7 +1031,6 @@ export class AgentLoop implements IdleCompactionTarget {
         runCompaction: () => this.runCompaction()
       }),
       isCompressingForOverflow: () => this.compressingForOverflow,
-      recordBaseline: (sysPrompt, tools) => this.cacheDiagnostics.recordBaseline(sysPrompt, tools),
       sleep: (ms: number) => this.sleep(ms),
       onTerminalError: (error) => {
         // 终态错误：emit error + state=error + 取消 idleTimer，不经 finishMessageRound 直接 return。
@@ -1088,18 +1105,17 @@ export class AgentLoop implements IdleCompactionTarget {
     recentMessages: ChatMessage[],
     pulledBackMessages?: ChatMessage[]
   ): void {
-    // compaction 与 aging 共用 ContextBudgetManager，避免两套规则互覆盖
     const rebuilt = rebuildWithCompression(systemPrompt, summary, recentMessages, pulledBackMessages)
-    this.context = this.contextBudgetManager.apply(rebuilt)
+    // 压缩重建后仅校验预算，不做改写（治理已在 compactAtBoundary 完成）
+    const budget = this.contextBudgetManager.enforceInline(rebuilt)
+    if (budget.status === 'requires_compaction') {
+      throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
+    }
+    this.context = rebuilt
     this.compactionLevel++
     this.userTurnsSinceCompaction = 0
-    // 重置 token 估算，防止下轮立即重新触发压缩
     this.lastEstimatedTokens = estimateContextTokens(this.context)
-    // 缓存诊断：压缩后上下文完全改变，重置基线避免误报
-    this.cacheDiagnostics.resetBaseline(
-      extractTextFromContent(this.context.find(m => m.role === 'system')?.content ?? ''),
-      getEffectiveToolDefinitions(this.ctx)
-    )
+    this.cacheDiagnostics.bumpEpoch('compaction')
   }
 
   /**
@@ -1121,16 +1137,16 @@ export class AgentLoop implements IdleCompactionTarget {
     const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
     if (oldMessages.length === 0) return
 
-    // 构建压缩上下文：旧消息 + 压缩指令尾巴（追加到尾部，不改前缀）。
-    // 尾巴拼装（连续 user 时的 assistant 桥接 + internal 压缩指令）与溢出压缩共用
-    // buildCompactionRequestTail，避免两处分叉。
-    // 摘要请求剥离 reasoning：避免思考正文进入摘要模型输入；recent 重建时仍保留。
+    // 边界治理：只治理旧段，recentMessages 绝不触碰
+    const { messages: governedOld } = compactAtBoundary(oldMessages)
+
+    // 摘要请求：system + 治理后旧段 + 尾部压缩指令（不改 this.context 前缀）
     const compactionContext: ChatMessage[] = [
-      ...stripReasoningContent(this.context),
-      ...buildCompactionRequestTail(this.context[this.context.length - 1]?.role, recentMessages.length)
+      ...(systemMsg ? [systemMsg] : []),
+      ...stripReasoningContent(governedOld),
+      ...buildCompactionRequestTail(governedOld[governedOld.length - 1]?.role, recentMessages.length)
     ]
 
-    // 调用模型生成摘要（非流式收集）
     let summary = ''
     try {
       const stream = this.modelPool.chat(compactionContext, undefined, {
@@ -1145,7 +1161,6 @@ export class AgentLoop implements IdleCompactionTarget {
         }
       }
     } catch {
-      // 压缩失败不影响主流程，跳过本次压缩
       return
     }
 
@@ -1508,13 +1523,9 @@ export class AgentLoop implements IdleCompactionTarget {
       : 1
 
     this.compressingForOverflow = true
-    let compressionPointIndex = -1
     const pulledBackMessages: ChatMessage[] = []
 
-    const rollbackAndRestore = () => {
-      if (compressionPointIndex >= 0) {
-        this.context = rollbackBefore(this.context, compressionPointIndex)
-      }
+    const restorePulledBack = () => {
       pulledBackMessages.forEach(m => this.context.push(m))
     }
 
@@ -1525,66 +1536,63 @@ export class AgentLoop implements IdleCompactionTarget {
         if (popped.role !== 'system') {
           pulledBackMessages.unshift(popped)
         } else {
-          this.context.push(popped) // 不弹 system，放回
+          this.context.push(popped)
           break
         }
       }
 
-      // 2. 强制触发压缩
+      // 2. 切分 + 边界治理
       const systemMsg = this.context.find(m => m.role === 'system')
       const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
       const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
 
       if (oldMessages.length === 0) {
-        // oldMessages 为空早退时，将刚才弹出的 pulledBackMessages 推回，避免消息丢失
-        pulledBackMessages.forEach(m => this.context.push(m))
+        restorePulledBack()
         return false
       }
 
-      // 3. 构建压缩指令尾巴并追加到 this.context。compressionPointIndex 记录追加起点，
-      //    供失败时 rollbackBefore 精确回滚。尾巴拼装与主动阈值压缩共用 buildCompactionRequestTail。
-      compressionPointIndex = this.context.length
-      const compactionMessages = buildCompactionRequestTail(
-        this.context[this.context.length - 1]?.role,
-        recentMessages.length
-      )
-      this.context.push(...compactionMessages)
+      const { messages: governedOld } = compactAtBoundary(oldMessages)
 
-      // 4. 调用模型获取摘要（请求侧剥离 reasoning，不改 this.context 中的 recent 保留）
+      // 3. 构造摘要请求（独立数组，不 mutate this.context）
+      const compactionContext: ChatMessage[] = [
+        ...(systemMsg ? [systemMsg] : []),
+        ...stripReasoningContent(governedOld),
+        ...buildCompactionRequestTail(governedOld[governedOld.length - 1]?.role, recentMessages.length)
+      ]
+
+      // 4. 调用模型获取摘要
       let summary = ''
-      const stream = this.modelPool.chat(stripReasoningContent(this.context), undefined, {
+      const stream = this.modelPool.chat(compactionContext, undefined, {
         abortSignal: this.abortController?.signal,
         includeInternalMessages: true,
         ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
       })
       for await (const event of stream) {
         if (this.cancelled) {
-          rollbackAndRestore()
+          restorePulledBack()
           return false
         }
         if (event.type === 'text_delta') {
           summary += event.delta
         }
         if (event.type === 'context_overflow') {
-          // 压缩调用本身也溢出了，回滚后返回 false 让上层升级到 aggressive
-          rollbackAndRestore()
+          restorePulledBack()
           return false
         }
         if (event.type === 'error') {
-          rollbackAndRestore()
+          restorePulledBack()
           return false
         }
       }
 
       if (!summary.trim()) {
-        rollbackAndRestore()
+        restorePulledBack()
         return false
       }
 
-      // 5. 成功：重建上下文（追加 pulledBack）+ 压缩后簿记，与主动阈值压缩共用 applyCompactionResult。
+      // 5. 重建上下文 + 压缩后簿记
       this.applyCompactionResult(systemPrompt, summary.trim(), recentMessages, pulledBackMessages)
 
-      // 通知外部持久化
       this.config.onCompaction?.(this.context, {
         summary: summary.trim(),
         compactionLevel: this.compactionLevel,
@@ -1593,7 +1601,7 @@ export class AgentLoop implements IdleCompactionTarget {
 
       return true
     } catch {
-      rollbackAndRestore()
+      restorePulledBack()
       return false
     } finally {
       this.compressingForOverflow = false

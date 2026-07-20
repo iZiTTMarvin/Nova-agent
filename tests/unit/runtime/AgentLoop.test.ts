@@ -1585,7 +1585,7 @@ describe('AgentLoop', () => {
     startSpy.mockRestore()
   })
 
-  it('sendMessage 后对旧工具组 aging 并降低 token 估算，工具组配对不破坏', async () => {
+  it('sendMessage 轮内不改写历史消息（append-only 契约），工具组配对不破坏', async () => {
     const client = new MockModelClient()
     client.addResponse({
       events: [
@@ -1625,12 +1625,14 @@ describe('AgentLoop', () => {
       .filter(m => m.role === 'tool')
       .reduce((sum, m) => sum + Buffer.byteLength(extractTextFromContent(m.content), 'utf8'), 0)
 
-    expect(toolBytesAfter).toBeLessThan(toolBytesBefore)
+    // 轮内不改写：工具消息字节不变（aging 只在压缩边界执行）
+    expect(toolBytesAfter).toBe(toolBytesBefore)
 
+    // 无 aging 占位出现
     const agedTools = ctx.filter(
       m => m.role === 'tool' && extractTextFromContent(m.content).includes('[aged tool result]')
     )
-    expect(agedTools.length).toBeGreaterThan(0)
+    expect(agedTools.length).toBe(0)
 
     // 配对完整：每个 assistant(toolCalls) 后仍有 tool 消息
     const nonSystem = ctx.filter(m => m.role !== 'system')

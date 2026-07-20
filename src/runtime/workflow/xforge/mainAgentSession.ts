@@ -46,6 +46,8 @@ export class XForgeMainAgentSession {
   private currentInternalMessageId = ''
   private readonly unsubscribe: () => void
   private readonly onAbort: () => void
+  /** 上一次 run 时的阶段，用于检测阶段切换并切换缓存 epoch */
+  private lastStage: XForgeStage | null = null
 
   constructor(private readonly options: XForgeMainAgentSessionOptions) {
     this.unsubscribe = this.bus.on(event => this.handleEvent(event))
@@ -103,6 +105,11 @@ export class XForgeMainAgentSession {
 
   async run(prompt: string): Promise<string> {
     throwIfAborted(this.options.abortSignal)
+    const currentStage = this.options.getStage()
+    if (this.lastStage !== null && this.lastStage !== currentStage) {
+      this.loop.bumpCacheEpoch('toolset_change')
+    }
+    this.lastStage = currentStage
     this.output = ''
     await this.loop.sendMessage(prompt)
     throwIfAborted(this.options.abortSignal)

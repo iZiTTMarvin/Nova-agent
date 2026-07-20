@@ -132,6 +132,6 @@ export type ChatEvent =
    */
   | { type: 'prompt_cache_key_stripped'; detail: string }
   /**
-   * 最终请求体结构指纹（匿名哈希）。StreamProcessor 写入 CacheDiagnostics，不落明文。
+   * 最终请求体语义快照（仅哈希，无明文）。StreamProcessor 写入 CacheDiagnostics。
    */
-  | { type: 'request_fingerprint'; fingerprint: string }
+  | { type: 'wire_snapshot'; snapshot: import('./requestFingerprint').WireSnapshot }

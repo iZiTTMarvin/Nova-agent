@@ -54,6 +54,7 @@ import { getWorkspaceService } from '../../services/WorkspaceService'
 import { activeStreams } from '../events'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
+import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 
 /** 统一 skill 调度开关（默认开启；测试可经环境变量关闭） */
 export const USE_UNIFIED_SKILL_DISPATCH = process.env.NOVA_USE_UNIFIED_SKILL_DISPATCH !== 'false'
@@ -371,6 +372,15 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), {
     resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
     reasoningReplay: activeCacheProfile.reasoningReplay
+  })
+
+  // 跨回合诊断快照：读回上一轮状态并绑定持久化回调
+  const prevDiagState = loadDiagnosticState(sessionsDir, sessionId)
+  if (prevDiagState) {
+    agentLoop.restoreDiagnosticPersistState(prevDiagState)
+  }
+  agentLoop.setDiagnosticPersistCallback((state) => {
+    saveDiagnosticState(sessionsDir, sessionId, state)
   })
 
   const checkpointManager = new CheckpointManager({

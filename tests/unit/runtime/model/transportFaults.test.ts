@@ -202,8 +202,8 @@ describe('ModelTransport 故障注入（T1-1）', () => {
     const next = iter.next()
     setTimeout(() => controller.abort(), 20)
     const result = await next
-    // T2-5：成功路径先 yield request_fingerprint，再 message_start
-    expect(result.value.type).toBe('request_fingerprint')
+    // T2-5：成功路径先 yield wire_snapshot，再 message_start
+    expect(result.value.type).toBe('wire_snapshot')
     const startEvent = await iter.next()
     expect(startEvent.value.type).toBe('message_start')
     const cancelledEvent = await iter.next()

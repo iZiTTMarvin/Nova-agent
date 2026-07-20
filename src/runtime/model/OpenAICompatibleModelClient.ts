@@ -14,7 +14,7 @@ import { resolveCacheProfile, type CacheMarker, type CacheProfile } from './cach
 import type { CacheStrategy } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
-import { fingerprintFinalRequestBody } from './requestFingerprint'
+import { computeWireSnapshot } from './requestFingerprint'
 import {
   transportFetch,
   TransportBodyReader,
@@ -132,10 +132,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
       body.prompt_cache_key = options!.promptCacheKey
     }
 
-    // 最终 body 就绪后生成匿名结构指纹（降级重试若剥离 key 会在成功/失败出口再算）
-    const fingerprintEvent = (): ChatEvent => ({
-      type: 'request_fingerprint',
-      fingerprint: fingerprintFinalRequestBody(body)
+    // 最终 body 就绪后计算语义快照（降级重试若剥离 key 会在成功/失败出口再算）
+    const snapshotEvent = (): ChatEvent => ({
+      type: 'wire_snapshot',
+      snapshot: computeWireSnapshot(body, this.cacheProfile)
     })
 
     let response: Response
@@ -162,7 +162,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       response = result.response
       attempt = result.attempt
     } catch (err) {
-      yield fingerprintEvent()
+      yield snapshotEvent()
       yield transportErrorToChatEvent(err)
       return
     }
@@ -185,7 +185,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
           response = retry.response
           attempt = retry.attempt
         } catch (err) {
-          yield fingerprintEvent()
+          yield snapshotEvent()
           yield transportErrorToChatEvent(err)
           return
         }
@@ -195,7 +195,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
             attempt,
             options?.transportTimeouts
           )
-          yield fingerprintEvent()
+          yield snapshotEvent()
           if (response.status === 400 && isContextOverflowError(400, retryText)) {
             yield { type: 'context_overflow', rawError: retryText }
           } else {
@@ -205,18 +205,18 @@ export class OpenAICompatibleModelClient implements ModelClient {
         }
         // 降级重试成功：继续走下方流式解析
       } else if (response.status === 400 && isContextOverflowError(400, text)) {
-        yield fingerprintEvent()
+        yield snapshotEvent()
         yield { type: 'context_overflow', rawError: text }
         return
       } else {
-        yield fingerprintEvent()
+        yield snapshotEvent()
         yield { type: 'error', error: httpStatusToError(response.status, text) }
         return
       }
     }
 
     // 成功路径：在流开始前上报最终 body 指纹
-    yield fingerprintEvent()
+    yield snapshotEvent()
     yield { type: 'message_start' }
 
     // 流式 think 标签解析状态机（处理 content 中的 <think>...</think> 标签）

@@ -107,11 +107,19 @@ describe('toolResultAging', () => {
   it(`user 回合数 > ${AGING_USER_TURN_THRESHOLD} 且位于保护区外时老化`, () => {
     const context = buildToolGroupContext(35, AGING_GROUP_BYTES_THRESHOLD + 100)
     const aged = ageToolResults(context)
-    // turn 9：起始前有 9 个 user，且 groupStart 落在 splitIndex 之前
+    // turn 0：组年龄 = 35 - 0 = 35 > 8，且落在保护区外 → 应老化
+    const tool0 = aged.filter(m => m.role === 'tool')[0]
+    expect(extractTextFromContent(tool0.content)).toContain('[aged tool result]')
+    // turn 9：组年龄 = 35 - 9 = 26 > 8 → 应老化
     const tool9 = aged.filter(m => m.role === 'tool')[9]
     expect(extractTextFromContent(tool9.content)).toContain('[aged tool result]')
-    // turn 0：起始前仅 1 个 user，不应老化
-    const tool0 = aged.filter(m => m.role === 'tool')[0]
-    expect(extractTextFromContent(tool0.content)).not.toContain('[aged tool result]')
+  })
+
+  it('新组（诞生后不足 8 轮）不老化', () => {
+    // 35 轮中，turn 30 的组年龄 = 35 - 30 = 5 < 8，不应老化
+    const context = buildToolGroupContext(35, AGING_GROUP_BYTES_THRESHOLD + 100)
+    const aged = ageToolResults(context)
+    const tool30 = aged.filter(m => m.role === 'tool')[30]
+    expect(extractTextFromContent(tool30.content)).not.toContain('[aged tool result]')
   })
 })

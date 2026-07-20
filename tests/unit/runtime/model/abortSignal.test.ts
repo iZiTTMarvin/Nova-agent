@@ -171,8 +171,8 @@ describe('OpenAICompatibleModelClient abort 支持', () => {
       events.push(event)
     }
 
-    // T2-5：最终 body 指纹在 error 之前上报
-    expect(events.some(e => e.type === 'request_fingerprint')).toBe(true)
+    // T2-5：最终 body 语义快照在 error 之前上报
+    expect(events.some(e => e.type === 'wire_snapshot')).toBe(true)
     const errorEvents = events.filter(e => e.type === 'error')
     expect(errorEvents).toHaveLength(1)
     // ModelTransport 规范化为分类错误前缀（network_reset / timeout_* 等）

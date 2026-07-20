@@ -9,6 +9,7 @@
  */
 import type { ChatMessage } from '../../model/types'
 import type { AgentContext } from './AgentContext'
+import type { InlineBudgetResult } from '../ContextBudgetManager'
 
 /** 压缩元数据（与 types.ts CompactionMeta 对齐，供 onCompaction 回调） */
 export interface CompactionMeta {
@@ -116,10 +117,16 @@ export interface AgentLoopConfig {
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
 
   /**
-   * 工具批次后应用上下文硬预算。
-   * 超限必须抛错，禁止继续请求模型。
+   * 轮内预算校验（只估算，不改写）。
+   * 返回结构化结果，超预算时由 runAgentLoop 控制流决定恢复策略。
    */
-  applyContextBudget?: (messages: ChatMessage[]) => ChatMessage[]
+  enforceInlineBudget?: (messages: ChatMessage[]) => InlineBudgetResult
+
+  /**
+   * 溢出压缩回调（由 Facade 提供，复用 runOverflowCompaction 逻辑）。
+   * 返回 true 表示压缩成功，应回到循环顶重新校验。
+   */
+  runOverflowCompaction?: (mode: 'standard' | 'aggressive') => Promise<boolean>
 
   // —— future 接口位，本期不实现 ——
   getSteeringMessages?: () => Promise<ChatMessage[]>

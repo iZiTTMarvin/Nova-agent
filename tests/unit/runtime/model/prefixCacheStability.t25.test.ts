@@ -6,12 +6,12 @@
  *
  * - 连续 N 轮相同 profile/工具时，可复用前缀（system + tools + 既有 messages）逐字节一致
  * - 动态 L2 不进 system 前缀
- * - 压缩 / L1 更新 / 模型切换等预期变化经 resetBaseline 后不误报
+ * - 压缩 / 模型切换等预期变化经 bumpEpoch 后不误报
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
-import { fingerprintFinalRequestBody } from '../../../../src/runtime/model/requestFingerprint'
+import { computeWireSnapshot, type WireSnapshot } from '../../../../src/runtime/model/requestFingerprint'
 import type { ChatMessage, ToolDefinition } from '../../../../src/runtime/model/types'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
@@ -78,18 +78,17 @@ async function drain(
   messages: ChatMessage[],
   tools?: ToolDefinition[],
   options?: Parameters<OpenAICompatibleModelClient['chat']>[2]
-): Promise<string | undefined> {
-  let fp: string | undefined
+): Promise<WireSnapshot | undefined> {
+  let snapshot: WireSnapshot | undefined
   for await (const ev of client.chat(messages, tools, options)) {
-    if (ev.type === 'request_fingerprint') fp = ev.fingerprint
+    if (ev.type === 'wire_snapshot') snapshot = ev.snapshot
   }
-  return fp
+  return snapshot
 }
 
 /** 可复用前缀：system + 除最后一条 user 外的历史 + tools 段 */
 function reusablePrefixJson(body: Record<string, unknown>): string {
   const messages = body.messages as Array<Record<string, unknown>>
-  // 去掉最后一条（本轮新 user），保留可复用前缀
   const prefixMessages = messages.slice(0, -1)
   return JSON.stringify({
     messages: prefixMessages,
@@ -115,18 +114,18 @@ describe('T2-5 前缀稳定性黑盒', () => {
     })
 
     const history: ChatMessage[] = [{ role: 'system', content: '稳定 system 前缀' }]
-    const fps: string[] = []
+    const snapshots: WireSnapshot[] = []
 
     for (let i = 0; i < 3; i++) {
       history.push({ role: 'user', content: `第 ${i + 1} 轮问题` })
-      const fp = await drain(client, [...history], STABLE_TOOLS)
-      expect(fp).toMatch(/^[a-f0-9]{16}$/)
-      fps.push(fp!)
+      const snapshot = await drain(client, [...history], STABLE_TOOLS)
+      expect(snapshot).toBeDefined()
+      expect(snapshot!.exactBodyHash).toMatch(/^[a-f0-9]{16}$/)
+      snapshots.push(snapshot!)
       history.push({ role: 'assistant', content: `第 ${i + 1} 轮回答` })
     }
 
     expect(interceptor.bodies).toHaveLength(3)
-    // 第 2、3 轮的可复用前缀应包含第 1 轮的完整前缀（system + tools 不变）
     const prefix1 = reusablePrefixJson(interceptor.bodies[0])
     const prefix2 = reusablePrefixJson(interceptor.bodies[1])
     const prefix3 = reusablePrefixJson(interceptor.bodies[2])
@@ -152,9 +151,9 @@ describe('T2-5 前缀稳定性黑盒', () => {
       JSON.stringify(msgs2.slice(0, -1))
     )
 
-    // 指纹随历史增长而变化（内容长度变了），但不得含明文
-    expect(fps[0]).not.toBe(fps[1])
-    expect(fps.join('')).not.toContain('稳定 system')
+    // 快照随历史增长而变化（消息数增加），但不得含明文
+    expect(snapshots[0].exactBodyHash).not.toBe(snapshots[1].exactBodyHash)
+    expect(snapshots.map(s => s.exactBodyHash).join('')).not.toContain('稳定 system')
     expect(prefix1).toContain('稳定 system')
     expect(prefix2.length).toBeGreaterThan(prefix1.length)
     expect(prefix3.length).toBeGreaterThan(prefix2.length)
@@ -197,39 +196,51 @@ describe('T2-5 前缀稳定性黑盒', () => {
     }
   })
 
-  it('预期变化不误报：压缩 resetBaseline / L1 更新后重建基线 / 模型切换', () => {
+  it('预期变化不误报：压缩 bumpEpoch / 模型切换后首轮不告警', () => {
     const diag = new CacheDiagnostics()
-    const tools = STABLE_TOOLS
 
-    // 稳定轮
-    diag.recordBaseline('sys-v1', tools)
-    expect(diag.checkResponse(8000, 'sys-v1', tools).cacheBreakDetected).toBe(false)
+    const snapshot1: WireSnapshot = {
+      model: 'm',
+      toolsHash: 'th1',
+      semanticMessageHashes: ['h1', 'h2', 'h3'],
+      exactBodyHash: 'e1'
+    }
+    const snapshot2: WireSnapshot = {
+      model: 'm',
+      toolsHash: 'th1',
+      semanticMessageHashes: ['h1', 'h2', 'h3', 'h4'],
+      exactBodyHash: 'e2'
+    }
 
-    // 压缩：resetBaseline 后用新 system（含摘要）不误报
-    const afterCompact = 'sys-v1\n\n[对话历史摘要]\n旧对话摘要'
-    diag.resetBaseline(afterCompact, tools)
-    expect(diag.checkResponse(500, afterCompact, tools).cacheBreakDetected).toBe(false)
+    // 稳定轮：纯追加不告警
+    diag.recordWireSnapshot(snapshot1)
+    const r2 = diag.recordWireSnapshot(snapshot2)
+    expect(r2.cacheBreakDetected).toBe(false)
 
-    // L1 / 项目规则明确更新：先 recordBaseline 新值，再 check 同值 → 不误报
-    const withL1 = afterCompact + '\n=== Project Memory ===\n新规则'
-    diag.recordBaseline(withL1, tools)
-    expect(diag.checkResponse(600, withL1, tools).cacheBreakDetected).toBe(false)
+    // 压缩：bumpEpoch 后首轮不告警
+    diag.bumpEpoch('compaction')
+    const afterCompact: WireSnapshot = {
+      model: 'm',
+      toolsHash: 'th1',
+      semanticMessageHashes: ['new1', 'new2'],
+      exactBodyHash: 'e3'
+    }
+    const r3 = diag.recordWireSnapshot(afterCompact)
+    expect(r3.cacheBreakDetected).toBe(false)
 
-    // 模型切换：新工具集作为新基线，同基线不误报
-    const toolsAfterSwitch: ToolDefinition[] = [
-      ...tools,
-      { name: 'bash', description: 'shell', parameters: { type: 'object' } }
-    ]
-    diag.resetBaseline(withL1, toolsAfterSwitch)
-    expect(diag.checkResponse(400, withL1, toolsAfterSwitch).cacheBreakDetected).toBe(false)
-
-    // 跨日 session context 在 user 侧：system 不变 → 不误报
-    diag.recordBaseline(withL1, toolsAfterSwitch)
-    diag.checkResponse(1000, withL1, toolsAfterSwitch)
-    expect(diag.checkResponse(1100, withL1, toolsAfterSwitch).cacheBreakDetected).toBe(false)
+    // 模型切换：bumpEpoch 后首轮不告警
+    diag.bumpEpoch('model_switch')
+    const afterSwitch: WireSnapshot = {
+      model: 'm2',
+      toolsHash: 'th2',
+      semanticMessageHashes: ['x1'],
+      exactBodyHash: 'e4'
+    }
+    const r4 = diag.recordWireSnapshot(afterSwitch)
+    expect(r4.cacheBreakDetected).toBe(false)
   })
 
-  it('requestFingerprint 接线：最终 body 指纹可被 CacheDiagnostics 记录且无明文', async () => {
+  it('wireSnapshot 接线：最终 body 快照可被 CacheDiagnostics 记录且无明文', async () => {
     interceptor = interceptFetchBodies()
     const client = new OpenAICompatibleModelClient({
       baseUrl: 'https://api.example.com/v1',
@@ -243,19 +254,21 @@ describe('T2-5 前缀稳定性黑盒', () => {
       { role: 'user', content: 'hello' }
     ]
 
-    let yieldedFp: string | undefined
+    let yieldedSnapshot: WireSnapshot | undefined
     for await (const ev of client.chat(messages, STABLE_TOOLS)) {
-      if (ev.type === 'request_fingerprint') {
-        yieldedFp = ev.fingerprint
-        diag.recordRequestFingerprint(ev.fingerprint)
+      if (ev.type === 'wire_snapshot') {
+        yieldedSnapshot = ev.snapshot
+        diag.recordWireSnapshot(ev.snapshot)
       }
     }
 
-    expect(yieldedFp).toMatch(/^[a-f0-9]{16}$/)
-    expect(diag.getLastRequestFingerprint()).toBe(yieldedFp)
-    expect(yieldedFp).not.toContain('秘密')
-    expect(yieldedFp).not.toContain('sk-')
+    expect(yieldedSnapshot).toBeDefined()
+    expect(yieldedSnapshot!.exactBodyHash).toMatch(/^[a-f0-9]{16}$/)
+    expect(diag.getLastWireSnapshot()).toBe(yieldedSnapshot)
+    expect(yieldedSnapshot!.exactBodyHash).not.toContain('秘密')
+    expect(yieldedSnapshot!.exactBodyHash).not.toContain('sk-')
     // 与直接对 body 计算一致
-    expect(fingerprintFinalRequestBody(interceptor.bodies[0])).toBe(yieldedFp)
+    const directSnapshot = computeWireSnapshot(interceptor.bodies[0], 'generic')
+    expect(directSnapshot.exactBodyHash).toBe(yieldedSnapshot!.exactBodyHash)
   })
 })

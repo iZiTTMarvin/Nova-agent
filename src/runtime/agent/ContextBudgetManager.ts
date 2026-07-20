@@ -32,6 +32,26 @@ export type BudgetProvenance =
   | 'artifact_ref'
   | 'superseded_removed'
   | 'budget_hard_trim'
+  | 'content_hash_dedup'
+
+/** 轮内预算校验结果（只估算，不改写） */
+export type InlineBudgetResult =
+  | { status: 'within_budget'; estimatedTokens: number; serializedBytes: number }
+  | { status: 'requires_compaction'; estimatedTokens: number; serializedBytes: number }
+
+/** 超预算终态错误：压缩恢复链耗尽后抛出，供控制流精确区分 */
+export class ContextBudgetExceededError extends Error {
+  constructor(
+    readonly estimatedTokens: number,
+    readonly serializedBytes: number,
+    readonly attemptedCompaction: boolean
+  ) {
+    super(
+      `ContextBudgetExceeded: estimatedTokens=${estimatedTokens} serializedBytes=${serializedBytes} attemptedCompaction=${attemptedCompaction}`
+    )
+    this.name = 'ContextBudgetExceededError'
+  }
+}
 
 export interface ContextBudgetOptions {
   minRecentMessages?: number
@@ -337,6 +357,114 @@ export class ContextBudgetManager {
   applyWithProvenance(context: ChatMessage[]): ContextBudgetResult {
     return applyContextBudget(context, this.options)
   }
+
+  /**
+   * 轮内入口：只估算与硬预算校验，不产出任何改写。
+   * 超预算时返回 requires_compaction，由调用方决定恢复策略。
+   */
+  enforceInline(messages: ChatMessage[]): InlineBudgetResult {
+    const { tokens, bytes } = estimateContextSize(messages)
+    const maxTokens = this.options.maxEstimatedTokens
+    const maxBytes = this.options.maxSerializedBytes
+    const reserved = this.options.reservedOutputTokens ?? 0
+    const tokenBudget = maxTokens != null ? Math.max(0, maxTokens - reserved) : undefined
+
+    const exceeded =
+      (tokenBudget != null && tokens > tokenBudget) || (maxBytes != null && bytes > maxBytes)
+
+    return exceeded
+      ? { status: 'requires_compaction', estimatedTokens: tokens, serializedBytes: bytes }
+      : { status: 'within_budget', estimatedTokens: tokens, serializedBytes: bytes }
+  }
+}
+
+/**
+ * 边界治理入口：仅在正式压缩流程内调用，入参是 splitForCompaction 切分后的旧段。
+ * v1 只做两类改写：artifact_ref（>16KB 且带 artifactId）+ 内容哈希精确去重。
+ * 不做路径型 supersede、不做 aging、不做 hardTrim。
+ */
+export function compactAtBoundary(
+  oldMessages: ChatMessage[],
+  options: ContextBudgetOptions = {}
+): { messages: ChatMessage[]; provenance: Record<string, BudgetProvenance> } {
+  const artifactThreshold = options.artifactBytesThreshold ?? BUDGET_ARTIFACT_BYTES
+  const provenance: Record<string, BudgetProvenance> = {}
+  const result = oldMessages.slice()
+
+  const nsIdx: number[] = []
+  const ns: ChatMessage[] = []
+  for (let i = 0; i < result.length; i++) {
+    if (result[i].role !== 'system') {
+      nsIdx.push(i)
+      ns.push(result[i])
+    }
+  }
+
+  // 1) artifact_ref：原始输出 > 16KB 且带 artifactId
+  for (let i = 0; i < ns.length; i++) {
+    const msg = ns[i]
+    if (msg.role !== 'tool' || !msg.toolCallId || !msg.artifactId) continue
+
+    const text = extractTextFromContent(msg.content)
+    const bytes = Buffer.byteLength(text, 'utf8')
+    if (bytes > artifactThreshold) {
+      const toolName = findToolName(ns, msg.toolCallId) ?? 'unknown'
+      const head = text.split('\n')[0]?.slice(0, 200) ?? ''
+      result[nsIdx[i]!] = {
+        ...msg,
+        content: `[artifact ref] ${toolName}(artifact://${msg.artifactId}): ${head}`
+      }
+      provenance[msg.toolCallId] = 'artifact_ref'
+    }
+  }
+
+  // 2) 内容哈希精确去重：同路径 + 同内容 hash 时，较旧者换占位符
+  const contentHashByPathKey = new Map<string, { hash: string; toolCallId: string }>()
+  for (let i = ns.length - 1; i >= 0; i--) {
+    const msg = result[nsIdx[i]!]
+    if (msg.role !== 'tool' || !msg.toolCallId) continue
+    const key = pathScopeKey(ns, msg.toolCallId)
+    if (!key) continue
+
+    const text = extractTextFromContent(msg.content)
+    if (text.startsWith('[artifact ref]') || text.startsWith('[content hash dedup]')) continue
+
+    const hash = simpleContentHash(text)
+    if (!contentHashByPathKey.has(key)) {
+      contentHashByPathKey.set(key, { hash, toolCallId: msg.toolCallId })
+    } else {
+      const latest = contentHashByPathKey.get(key)!
+      if (latest.hash === hash && latest.toolCallId !== msg.toolCallId) {
+        const toolName = findToolName(ns, msg.toolCallId) ?? 'unknown'
+        result[nsIdx[i]!] = {
+          ...msg,
+          content: `[content hash dedup] ${toolName}: (identical to later ${key})`
+        }
+        provenance[msg.toolCallId] = 'content_hash_dedup'
+      }
+    }
+  }
+
+  for (const msg of result) {
+    if (msg.role === 'tool' && msg.toolCallId && !provenance[msg.toolCallId]) {
+      provenance[msg.toolCallId] = 'full'
+    }
+  }
+
+  assertToolPairing(result)
+  return { messages: result, provenance }
+}
+
+/** 轻量内容哈希（djb2 变体，用于精确去重判定） */
+function simpleContentHash(text: string): string {
+  let h1 = 5381
+  let h2 = 52711
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    h1 = ((h1 << 5) + h1 + c) | 0
+    h2 = ((h2 << 5) + h2 + c) | 0
+  }
+  return `${(h1 >>> 0).toString(36)}_${(h2 >>> 0).toString(36)}_${text.length}`
 }
 
 /** 无硬上限的默认实例（仅测试/兼容）；生产路径必须用 createProductionContextBudgetManager */

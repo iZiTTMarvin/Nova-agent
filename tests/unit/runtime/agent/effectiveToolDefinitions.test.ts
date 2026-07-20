@@ -25,7 +25,7 @@ describe('AgentLoop effective tool definitions', () => {
 
     async function run(filterTools: boolean): Promise<{
       modelTools: string[]
-      fingerprint: string | null
+      toolsHash: string | null
       toolsTokens: number
       cacheDiagnostics: unknown[]
     }> {
@@ -38,7 +38,15 @@ describe('AgentLoop effective tool definitions', () => {
         config: { modelId: 'gpt-4o', baseUrl: '' },
         async *chat(_messages: unknown, tools?: ToolDefinition[]): AsyncIterable<ChatEvent> {
           modelTools = tools
-          yield { type: 'request_fingerprint', fingerprint: `fp-${tools?.map(tool => tool.name).join('-') ?? 'none'}` }
+          yield {
+            type: 'wire_snapshot',
+            snapshot: {
+              model: 'gpt-4o',
+              toolsHash: `th-${tools?.map(tool => tool.name).join('-') ?? 'none'}`,
+              semanticMessageHashes: [],
+              exactBodyHash: 'exact'
+            }
+          }
           yield {
             type: 'usage',
             usage: {
@@ -66,11 +74,12 @@ describe('AgentLoop effective tool definitions', () => {
       const breakdown = events.find(event => event.type === 'context_breakdown')
       const cacheDiagnostics = events.filter(event => event.type === 'cache_diagnostic')
       const cache = (loop as unknown as {
-        cacheDiagnostics: { getLastRequestFingerprint(): string | null }
+        cacheDiagnostics: { getLastWireSnapshot(): { toolsHash: string } | null }
       }).cacheDiagnostics
+      const snapshot = cache.getLastWireSnapshot()
       const result = {
         modelTools: modelTools?.map(tool => tool.name) ?? [],
-        fingerprint: cache.getLastRequestFingerprint(),
+        toolsHash: snapshot?.toolsHash ?? null,
         toolsTokens: breakdown?.breakdown.tools ?? 0,
         cacheDiagnostics
       }
@@ -82,12 +91,12 @@ describe('AgentLoop effective tool definitions', () => {
     const unfiltered = await run(false)
 
     expect(filtered.modelTools).toEqual(['read'])
-    expect(filtered.fingerprint).toBe('fp-read')
+    expect(filtered.toolsHash).toBe('th-read')
     expect(filtered.toolsTokens).toBeGreaterThan(0)
     expect(filtered.toolsTokens).toBeLessThan(unfiltered.toolsTokens)
     expect(filtered.cacheDiagnostics).toEqual([])
 
     expect(unfiltered.modelTools).toEqual(['read', 'bash'])
-    expect(unfiltered.fingerprint).toBe('fp-read-bash')
+    expect(unfiltered.toolsHash).toBe('th-read-bash')
   })
 })

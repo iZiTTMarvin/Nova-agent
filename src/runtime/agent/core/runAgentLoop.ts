@@ -19,8 +19,6 @@
  * 「if(this.cancelled) break → finishMessageRound」等价（break 后 cancelled 仍为 true）。
  */
 import type { ChatMessage } from '../../model/types'
-import { extractTextFromContent } from '../../model/types'
-import type { ToolDefinition } from '../../model/types'
 import { estimateContextTokens } from '../tokenEstimator'
 import { toToolContent, type ToolBatchExecutionResult } from '../execution/toolBatchExecutor'
 import type { HookManager } from './HookManager'
@@ -32,6 +30,7 @@ import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
+import { ContextBudgetExceededError } from '../ContextBudgetManager'
 
 /** 将 toolCall.arguments 字符串解析为对象，供空参护栏统计 */
 function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown> {
@@ -73,8 +72,6 @@ export interface RunAgentLoopParams {
   runCompactionIfThreshold: () => Promise<void>
   /** 读取溢出压缩守卫态（compressingForOverflow） */
   isCompressingForOverflow: () => boolean
-  /** 缓存诊断基线记录（stream 前，对标现状 recordBaseline） */
-  recordBaseline: (systemPrompt: string, tools: ToolDefinition[] | undefined) => void
   /** 指数退避 sleep（透传给 StreamProcessor） */
   sleep: (ms: number) => Promise<void>
   /**
@@ -128,18 +125,23 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         await p.runCompactionIfThreshold()
       }
 
-      // 压缩后再套硬预算：仍超限则抛错，阻断模型请求（禁止带着超限上下文发 API）
-      if (config.applyContextBudget) {
-        context.messages = config.applyContextBudget(context.messages)
+      // 轮内预算校验：只估算不改写，超预算走压缩恢复链
+      if (config.enforceInlineBudget) {
+        const budget = config.enforceInlineBudget(context.messages)
+        if (budget.status === 'requires_compaction') {
+          const ok = config.runOverflowCompaction
+            && (await config.runOverflowCompaction('standard')
+              || await config.runOverflowCompaction('aggressive'))
+          if (!ok) {
+            throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
+          }
+          continue
+        }
       }
       context.lastEstimatedTokens = estimateContextTokens(context.messages)
 
-      // ── 工具定义 + 缓存诊断基线（对标现状 L733-741）──
+      // ── 工具定义（对标现状 L733-741）──
       const tools = getEffectiveToolDefinitions(context)
-      const systemPrompt = extractTextFromContent(
-        context.messages.find(m => m.role === 'system')?.content ?? ''
-      )
-      p.recordBaseline(systemPrompt, tools)
 
       // ── context / preChat hook（每轮，可改 messages；对标现状 L743-755）──
       const contextHook = await hookManager.trigger({
@@ -239,9 +241,18 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
           })
         }
-        // 每个工具批次后跑统一预算器（生产硬上限；超限抛错）
-        if (config.applyContextBudget) {
-          context.messages = config.applyContextBudget(context.messages)
+        // 工具批次后轮内预算校验：超预算走压缩恢复链
+        if (config.enforceInlineBudget) {
+          const budget = config.enforceInlineBudget(context.messages)
+          if (budget.status === 'requires_compaction') {
+            const ok = config.runOverflowCompaction
+              && (await config.runOverflowCompaction('standard')
+                || await config.runOverflowCompaction('aggressive'))
+            if (!ok) {
+              throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
+            }
+            continue
+          }
         }
         context.lastEstimatedTokens = estimateContextTokens(context.messages)
       }

@@ -15,7 +15,7 @@ import type { ChatOptions } from '../../../../src/runtime/model/ModelClient'
 import type { ChatEvent, ChatMessage, ToolDefinition } from '../../../../src/runtime/model/types'
 import type { ModelClient } from '../../../../src/runtime/model/ModelClient'
 import type { ModelConfig } from '../../../../src/shared/config'
-import { fingerprintFinalRequestBody } from '../../../../src/runtime/model/requestFingerprint'
+import { computeWireSnapshot } from '../../../../src/runtime/model/requestFingerprint'
 
 let tmpDir: string
 
@@ -157,8 +157,8 @@ describe('ChatOptions.promptCacheKey 透传', () => {
   })
 })
 
-describe('fingerprintFinalRequestBody', () => {
-  it('相同结构指纹稳定；不含明文', () => {
+describe('computeWireSnapshot', () => {
+  it('相同结构快照稳定；不含明文', () => {
     const body = {
       model: 'm',
       messages: [
@@ -167,11 +167,13 @@ describe('fingerprintFinalRequestBody', () => {
       ],
       tools: [{ type: 'function', function: { name: 'ls', parameters: {} } }]
     }
-    const a = fingerprintFinalRequestBody(body)
-    const b = fingerprintFinalRequestBody(body)
-    expect(a).toBe(b)
-    expect(a).toMatch(/^[a-f0-9]{16}$/)
-    expect(a).not.toContain('SECRET')
-    expect(a).not.toContain('hello')
+    const a = computeWireSnapshot(body, 'generic')
+    const b = computeWireSnapshot(body, 'generic')
+    expect(a.exactBodyHash).toBe(b.exactBodyHash)
+    expect(a.exactBodyHash).toMatch(/^[a-f0-9]{16}$/)
+    expect(a.exactBodyHash).not.toContain('SECRET')
+    expect(a.exactBodyHash).not.toContain('hello')
+    expect(a.semanticMessageHashes).toHaveLength(2)
+    expect(a.toolsHash).toMatch(/^[a-f0-9]{16}$/)
   })
 })

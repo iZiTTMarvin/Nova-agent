@@ -2,14 +2,15 @@
  * toolResultAging — 旧工具结果单行占位老化
  *
  * 将 assistant(toolCalls) + tool 消息划分为工具组；仅处理 MIN_RECENT_MESSAGES
- * 保护区之外的组。组年龄 = 组起始前 user 消息数；年龄 > 8 且（组内字节 > 8KB
- * 或任一带 artifactId）时，将该组 tool 消息替换为单行占位，保留 toolCallId 配对。
+ * 保护区之外的组。组年龄 = 总 user 回合数 - 组起始前 user 消息数（即组诞生后
+ * 经过了多少个用户回合）；年龄 > 8 且（组内字节 > 8KB 或任一带 artifactId）时，
+ * 将该组 tool 消息替换为单行占位，保留 toolCallId 配对。
  */
 import type { ChatMessage, ContentBlock } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import { MIN_RECENT_MESSAGES, alignToToolGroupBoundary } from './compaction'
 
-/** 组年龄阈值：起始位置之前超过该 user 回合数才老化 */
+/** 组年龄阈值：组诞生后经过的用户回合数超过此值才老化 */
 export const AGING_USER_TURN_THRESHOLD = 8
 /** 组内 tool 文本字节阈值（8KB） */
 export const AGING_GROUP_BYTES_THRESHOLD = 8 * 1024
@@ -87,12 +88,14 @@ export function ageToolResults(context: ChatMessage[]): ChatMessage[] {
       // 仅处理起始位置在保护区之前的工具组
       if (groupStart < splitIndex && toolIndices.length > 0) {
         const userTurnsBefore = userTurnPrefix[groupStart]
+        const totalUserTurns = userTurnPrefix[nonSystem.length]
+        const groupAge = totalUserTurns - userTurnsBefore
         const toolMessages = toolIndices.map(idx => nonSystem[idx])
         const groupBytes = sumToolGroupBytes(toolMessages)
         const hasArtifact = toolMessages.some(m => m.artifactId)
 
         if (
-          userTurnsBefore > AGING_USER_TURN_THRESHOLD &&
+          groupAge > AGING_USER_TURN_THRESHOLD &&
           (groupBytes > AGING_GROUP_BYTES_THRESHOLD || hasArtifact)
         ) {
           for (const toolIdx of toolIndices) {
