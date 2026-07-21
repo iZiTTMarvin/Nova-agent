@@ -181,7 +181,7 @@ describe('T2-2 会话持久化：deepseek reasoning 恢复', () => {
     expect(nonSystemContext(loop)).toEqual(DEEPSEEK_RECOVERY)
   })
 
-  it('对照：无 reasoningReplay 时仍扁平（不回归 T0-2）', () => {
+  it('对照：无 reasoningReplay 时仍拆子轮，但不附着 reasoning', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
@@ -189,7 +189,7 @@ describe('T2-2 会话持久化：deepseek reasoning 恢复', () => {
     const loop = newLoop()
     restoreOrInjectHistory(loop, store.load(session.id)!, null)
     const recovered = nonSystemContext(loop)
-    expect(recovered.filter(m => m.role === 'assistant')).toHaveLength(1)
+    expect(recovered.filter(m => m.role === 'assistant')).toHaveLength(3)
     expect(JSON.stringify(recovered)).not.toContain('先读 a.ts')
   })
 })

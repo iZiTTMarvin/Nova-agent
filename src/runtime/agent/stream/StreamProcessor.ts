@@ -25,6 +25,7 @@
 import { randomUUID } from 'crypto'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
 import { resolveCacheProfile } from '../../model/cacheProfile'
+import { recordMetric } from '../../../shared/diagnostics/metrics'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 import { repairEmptyArgsFromContent } from './nativeArgsRepair'
@@ -305,9 +306,32 @@ export class StreamProcessor {
 
           case 'wire_snapshot':
             {
-              // 语义快照写入诊断层并做 first-diff 比较
-              const snapshotDiag = this.cacheDiagnostics.recordWireSnapshot(event.snapshot)
-              if (snapshotDiag.cacheBreakDetected) {
+              // 语义快照写入诊断层并做分段 first-diff 比较
+              const snapshotDiag = this.cacheDiagnostics.recordWireSnapshot(event.snapshot, {
+                expectedMiss: event.expectedMiss === true
+              })
+              recordMetric(
+                'cache.first_diff',
+                {
+                  firstDiffIndex: snapshotDiag.firstDiffIndex ?? -1,
+                  expectedReuseTokens: snapshotDiag.expectedReuseTokens ?? 0,
+                  invalidatedTokens: snapshotDiag.prefixDiff?.estimatedInvalidatedTokens ?? 0,
+                  break: snapshotDiag.cacheBreakDetected ? 1 : 0
+                },
+                {
+                  id: messageId,
+                  tags: {
+                    part: snapshotDiag.firstDiffPart ?? 'none',
+                    expectedMiss: event.expectedMiss ? '1' : '0'
+                  }
+                }
+              )
+              // 预期 miss 也推送诊断（UI 可区分）；非 break 仅在有 firstDiff 信息时推送
+              if (
+                snapshotDiag.cacheBreakDetected ||
+                event.expectedMiss ||
+                snapshotDiag.prefixDiff?.firstDiffPart
+              ) {
                 this.emit({ type: 'cache_diagnostic', messageId, diagnostic: snapshotDiag })
               }
             }
@@ -427,9 +451,22 @@ export class StreamProcessor {
                 usage: event.usage,
                 cacheProfileId: profile.id
               })
-              const diag = this.cacheDiagnostics.checkCacheReadDrop(event.usage.cachedTokens)
-              if (diag.cacheBreakDetected) {
-                this.emit({ type: 'cache_diagnostic', messageId, diagnostic: diag })
+              const dropDiag = this.cacheDiagnostics.checkCacheReadDrop(event.usage.cachedTokens)
+              if (dropDiag.cacheBreakDetected) {
+                this.emit({ type: 'cache_diagnostic', messageId, diagnostic: dropDiag })
+              }
+              const reuseDiag = this.cacheDiagnostics.correlateUsage(event.usage.cacheReadTokens)
+              recordMetric(
+                'cache.reuse_vs_actual',
+                {
+                  expectedReuseTokens: reuseDiag.expectedReuseTokens ?? 0,
+                  actualCacheReadTokens: event.usage.cacheReadTokens,
+                  mismatch: reuseDiag.cacheBreakDetected ? 1 : 0
+                },
+                { id: messageId }
+              )
+              if (reuseDiag.cacheBreakDetected) {
+                this.emit({ type: 'cache_diagnostic', messageId, diagnostic: reuseDiag })
               }
             }
             this.emitContextBreakdown(messageId, event.usage.promptTokens)

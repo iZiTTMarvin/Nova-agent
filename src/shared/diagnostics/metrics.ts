@@ -30,6 +30,8 @@ export type MetricCategory =
   | 'readState.set'
   | 'readState.evict'
   | 'readState.stats'
+  | 'cache.first_diff'
+  | 'cache.reuse_vs_actual'
 
 export interface MetricEvent {
   /** 事件类别 */

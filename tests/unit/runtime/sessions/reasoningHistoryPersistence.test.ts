@@ -44,18 +44,21 @@ const TURN_BLOCKS: MessageBlock[] = [
   { type: 'text', content: '已完成两处修复。' }
 ]
 
-const FLATTENED_RECOVERY: ChatMessage[] = [
+const SPLIT_NO_REASONING: ChatMessage[] = [
   { role: 'user', content: '分析并修复两个问题' },
   {
     role: 'assistant',
-    content: '已完成两处修复。',
-    toolCalls: [
-      { id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' },
-      { id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }
-    ]
+    content: '',
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
   },
   { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' }
+  {
+    role: 'assistant',
+    content: '',
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+  },
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
+  { role: 'assistant', content: '已完成两处修复。' }
 ]
 
 function appendThinkingToolTurn(store: SessionStore, sessionId: string): void {
@@ -89,12 +92,12 @@ function appendThinkingToolTurn(store: SessionStore, sessionId: string): void {
   })
 }
 
-function assertFlattenedLoss(recovered: ChatMessage[]): void {
+function assertSplitNoReasoning(recovered: ChatMessage[]): void {
   const serialized = JSON.stringify(recovered)
   expect(serialized).not.toContain('先读 a.ts 确认问题根因')
   expect(serialized).not.toContain('再改 b.ts 对齐接口')
-  expect(recovered.filter(m => m.role === 'assistant')).toHaveLength(1)
-  expect(recovered).toEqual(FLATTENED_RECOVERY)
+  expect(recovered.filter(m => m.role === 'assistant')).toHaveLength(3)
+  expect(recovered).toEqual(SPLIT_NO_REASONING)
 }
 
 function newLoop(): AgentLoop {
@@ -105,7 +108,7 @@ function nonSystemContext(loop: AgentLoop): ChatMessage[] {
   return loop.getContext().filter(m => m.role !== 'system')
 }
 
-describe('T0-2 会话持久化：reasoning 丢失基线', () => {
+describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着）', () => {
   let tmpDir: string
 
   beforeEach(() => {
@@ -132,7 +135,7 @@ describe('T0-2 会话持久化：reasoning 丢失基线', () => {
     expect(assistant.toolCalls?.map(t => t.id)).toEqual(['tc_a', 'tc_b'])
   })
 
-  it('应用重启：新 SessionStore + 新 AgentLoop 恢复为扁平上下文', () => {
+  it('应用重启：新 SessionStore + 新 AgentLoop 恢复为拆子轮上下文', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
@@ -140,16 +143,16 @@ describe('T0-2 会话持久化：reasoning 丢失基线', () => {
     const store2 = new SessionStore(tmpDir)
     const loop = newLoop()
     restoreOrInjectHistory(loop, store2.load(session.id)!, null)
-    assertFlattenedLoss(nonSystemContext(loop))
+    assertSplitNoReasoning(nonSystemContext(loop))
   })
 
-  it('context snapshot 命中后仍无 reasoning 子轮', () => {
+  it('context snapshot 命中后仍无 reasoning 正文泄漏', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
 
     const loaded = store.load(session.id)!
-    const snapshot = buildSnapshotFromCompaction(loaded, FLATTENED_RECOVERY, {
+    const snapshot = buildSnapshotFromCompaction(loaded, SPLIT_NO_REASONING, {
       summary: '已完成 a/b 修复',
       compactionLevel: 1,
       trigger: 'threshold'
@@ -176,13 +179,13 @@ describe('T0-2 会话持久化：reasoning 丢失基线', () => {
     expect(JSON.stringify(nonSystemContext(loop))).not.toContain('先读 a.ts')
   })
 
-  it('snapshot 锚点失效回退全量 inject，仍扁平', () => {
+  it('snapshot 锚点失效回退全量 inject，仍拆子轮', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
 
     const loaded = store.load(session.id)!
-    const snapshot = buildSnapshotFromCompaction(loaded, FLATTENED_RECOVERY, {
+    const snapshot = buildSnapshotFromCompaction(loaded, SPLIT_NO_REASONING, {
       summary: '旧摘要',
       compactionLevel: 1,
       trigger: 'threshold'
@@ -201,10 +204,10 @@ describe('T0-2 会话持久化：reasoning 丢失基线', () => {
       loop.getContext().find(m => m.role === 'system')!.content
     )
     expect(systemText).not.toContain('旧摘要')
-    assertFlattenedLoss(nonSystemContext(loop))
+    assertSplitNoReasoning(nonSystemContext(loop))
   })
 
-  it('分支切换：主分支扁平恢复；旁路分支不含主分支 tool 历史', () => {
+  it('分支切换：主分支拆子轮恢复；旁路分支不含主分支 tool 历史', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
@@ -226,7 +229,7 @@ describe('T0-2 会话持久化：reasoning 丢失基线', () => {
     ])
     const loopMain = newLoop()
     restoreOrInjectHistory(loopMain, store.load(session.id)!, null)
-    assertFlattenedLoss(nonSystemContext(loopMain))
+    assertSplitNoReasoning(nonSystemContext(loopMain))
 
     store.setCurrentLeaf(session.id, 'a1_alt')
     const loopAlt = newLoop()

@@ -43,16 +43,23 @@ describe('AgentLoop effective tool definitions', () => {
             snapshot: {
               model: 'gpt-4o',
               toolsHash: `th-${tools?.map(tool => tool.name).join('-') ?? 'none'}`,
-              semanticMessageHashes: [],
-              exactBodyHash: 'exact'
+              toolsBytes: 0,
+              messages: [],
+              exactBodyHash: 'exact',
+              bodyBytes: 0
             }
           }
           yield {
             type: 'usage',
             usage: {
+              uncachedInputTokens: 0,
+              cacheReadTokens: 100,
+              cacheWriteTokens: 0,
+              outputTokens: 1,
+              rawUsage: {},
+              usageDialect: 'openai' as const,
               promptTokens: 100,
               completionTokens: 1,
-              totalTokens: 101,
               cachedTokens: 100
             }
           }

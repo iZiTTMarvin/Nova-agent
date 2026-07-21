@@ -28,6 +28,11 @@ export interface ChatOptions {
    * 仅当 CacheProfile.promptCacheKey === 'session'（kimi/openai）时写入 body.prompt_cache_key。
    */
   promptCacheKey?: string
+  /**
+   * 压缩摘要等受控请求：最终 body 与正常对话前缀必然不同，
+   * wire_snapshot 诊断应标记为预期 miss，避免污染命中率解读。
+   */
+  expectedCacheMiss?: boolean
 }
 
 export interface ModelClient {

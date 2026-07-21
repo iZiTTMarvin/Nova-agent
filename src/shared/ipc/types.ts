@@ -657,6 +657,33 @@ export interface IpcEvents {
     /** 实际产出 usage 的 provider 档案 id（fallback 后归属新 provider） */
     cacheProfileId: string
   }
+  'agent:cache-diagnostic': {
+    messageId: string
+    diagnostic: {
+      cacheBreakDetected: boolean
+      reason?: string
+      suggestion?: string
+      tokenDelta?: number
+      firstDiffIndex?: number | null
+      firstDiffPart?: string | null
+      epochId?: string
+      expectedReuseTokens?: number
+      actualCacheReadTokens?: number
+      prefixDiff?: {
+        epochId: string
+        firstDiffIndex: number | null
+        firstDiffPart: string | null
+        previousMessageCount: number
+        currentMessageCount: number
+        commonPrefixBytes: number
+        invalidatedSuffixBytes: number
+        estimatedInvalidatedTokens: number
+        expectedReuseTokens: number
+        expectedMiss: boolean
+        actualCacheReadTokens?: number
+      }
+    }
+  }
   'agent:context-breakdown': {
     sessionId: string
     messageId: string

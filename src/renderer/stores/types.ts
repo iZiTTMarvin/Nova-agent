@@ -100,20 +100,29 @@ export type SessionMessagePayload = Message & { _toolCallResults?: Record<string
 
 /** 会话级 token 用量聚合统计 */
 export interface SessionUsageStats {
-  totalPromptTokens: number
-  totalCompletionTokens: number
-  totalCachedTokens: number
+  totalUncachedInputTokens: number
+  totalCacheReadTokens: number
   totalCacheWriteTokens: number
+  totalOutputTokens: number
+  /**
+   * 兼容别名：= totalUncachedInputTokens + totalCacheReadTokens
+   */
+  totalPromptTokens: number
+  /** 兼容别名：= totalOutputTokens */
+  totalCompletionTokens: number
+  /** 兼容别名：= totalCacheReadTokens */
+  totalCachedTokens: number
   /**
    * 缓存未命中累计（仅当某轮 usage 确有 cacheMissTokens 时累计）。
    * optional：无 miss 报告的会话不出现该字段，UI 不得显示为 0。
    */
   totalCacheMissTokens?: number
   /**
-   * 缓存命中率口径：
-   * - 本轮确有 cacheMissTokens 时：hit / (hit + miss)（DeepSeek）
-   * - 否则：totalCachedTokens / (totalPromptTokens + totalCacheWriteTokens)
-   *   （Anthropic 须把 cache_creation 纳入分母）
+   * 会话累计命中率：cacheRead / (uncached + cacheRead + cacheWrite)
    */
   hitRate: number
+  /** 最近一轮命中率（同上公式，单轮四元组） */
+  lastRoundHitRate: number
+  /** 估算节省的输入 tokens（累计 cacheRead） */
+  estimatedSavedInputTokens: number
 }

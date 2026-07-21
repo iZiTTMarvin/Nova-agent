@@ -19,10 +19,12 @@ function ProfileUsageRows({ stats }: { stats: SessionUsageStats }): React.ReactE
   const totalUsage =
     stats.totalPromptTokens + stats.totalCompletionTokens + stats.totalCacheWriteTokens
   const rows = [
+    { label: '本轮命中率', value: `${(stats.lastRoundHitRate * 100).toFixed(1)}%` },
+    { label: '会话命中率', value: `${(stats.hitRate * 100).toFixed(1)}%` },
+    { label: '估算节省输入', value: formatTokenCount(stats.estimatedSavedInputTokens) },
     { label: '输入', value: formatTokenCount(stats.totalPromptTokens) },
     { label: '输出', value: formatTokenCount(stats.totalCompletionTokens) },
     { label: '缓存命中', value: formatTokenCount(stats.totalCachedTokens) },
-    // miss 仅在 provider 确有报告时展示，不得把 undefined 显示成 0
     ...(stats.totalCacheMissTokens !== undefined
       ? [{ label: '缓存未命中', value: formatTokenCount(stats.totalCacheMissTokens) }]
       : []),
@@ -52,6 +54,7 @@ function ProfileUsageRows({ stats }: { stats: SessionUsageStats }): React.ReactE
 export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) => {
   const sessionUsage = useSettingsStore(state => state.sessionUsage)
   const sessionUsageByProfile = useSettingsStore(state => state.sessionUsageByProfile)
+  const lastCacheDiagnostic = useSettingsStore(state => state.lastCacheDiagnostic)
 
   const profileEntries = Object.entries(sessionUsageByProfile)
   const hasData = Boolean(sessionUsage && sessionUsage.totalPromptTokens > 0)
@@ -67,6 +70,9 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
           <p className="context-usage__hint">
             provider 尚未返回 usage；不会把未知显示为 0 命中或未命中。
           </p>
+          {lastCacheDiagnostic?.suggestion && (
+            <p className="context-usage__hint">{formatDiagnosticLine(lastCacheDiagnostic)}</p>
+          )}
         </section>
       )
     }
@@ -74,9 +80,13 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
   }
 
   const hitPercent = (sessionUsage!.hitRate * 100).toFixed(1)
-  const totalInput = sessionUsage!.totalPromptTokens + sessionUsage!.totalCacheWriteTokens || 1
-  const readRatio = sessionUsage!.totalCachedTokens / totalInput
-  const writeRatio = sessionUsage!.totalCacheWriteTokens / totalInput
+  const roundHitPercent = (sessionUsage!.lastRoundHitRate * 100).toFixed(1)
+  const denom =
+    sessionUsage!.totalUncachedInputTokens +
+      sessionUsage!.totalCacheReadTokens +
+      sessionUsage!.totalCacheWriteTokens || 1
+  const readRatio = sessionUsage!.totalCacheReadTokens / denom
+  const writeRatio = sessionUsage!.totalCacheWriteTokens / denom
   const totalUsage =
     sessionUsage!.totalPromptTokens +
     sessionUsage!.totalCompletionTokens +
@@ -87,7 +97,9 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
       <section className="context-usage">
         <div className="context-usage__header">
           <span className="context-usage__title">本会话用量</span>
-          <span className="context-usage__summary">命中率 {hitPercent}%</span>
+          <span className="context-usage__summary">
+            本轮 {roundHitPercent}% · 累计 {hitPercent}%
+          </span>
         </div>
 
         <div className="context-usage__bar" aria-hidden="true">
@@ -104,21 +116,24 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
         </div>
 
         {profileEntries.length <= 1 ? (
-          // 单桶：保持原有扁平明细（兼容 ContextIndicator 断言）
           <ProfileUsageRows stats={sessionUsage!} />
         ) : (
-          // 多桶：按 profile 分开展示，避免 fallback 后指标混在一起
           profileEntries.map(([profileId, stats]) => (
             <div key={profileId} className="context-usage__profile">
               <div className="context-usage__profile-header">
                 <span className="context-usage__profile-id">{profileId}</span>
                 <span className="context-usage__profile-hit">
-                  命中率 {(stats.hitRate * 100).toFixed(1)}%
+                  本轮 {(stats.lastRoundHitRate * 100).toFixed(1)}% · 累计{' '}
+                  {(stats.hitRate * 100).toFixed(1)}%
                 </span>
               </div>
               <ProfileUsageRows stats={stats} />
             </div>
           ))
+        )}
+
+        {lastCacheDiagnostic && (
+          <p className="context-usage__hint">{formatDiagnosticLine(lastCacheDiagnostic)}</p>
         )}
       </section>
     )
@@ -131,6 +146,9 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
     <div
       className="usage-stats"
       title={[
+        `本轮命中率: ${roundHitPercent}%`,
+        `会话命中率: ${hitPercent}%`,
+        `估算节省输入: ${sessionUsage!.estimatedSavedInputTokens.toLocaleString()} tokens`,
         `输入: ${sessionUsage!.totalPromptTokens.toLocaleString()} tokens`,
         `输出: ${sessionUsage!.totalCompletionTokens.toLocaleString()} tokens`,
         `缓存命中(read): ${sessionUsage!.totalCachedTokens.toLocaleString()} tokens`,
@@ -160,4 +178,25 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
       )}
     </div>
   )
+}
+
+function formatDiagnosticLine(d: {
+  suggestion?: string
+  firstDiffIndex?: number | null
+  firstDiffPart?: string | null
+  estimatedInvalidatedTokens?: number
+  expectedMiss?: boolean
+}): string {
+  if (d.expectedMiss) {
+    return '本轮为预期缓存 miss（如压缩摘要请求）。'
+  }
+  if (d.suggestion) return d.suggestion
+  if (d.firstDiffIndex != null && d.firstDiffPart) {
+    const invalidated =
+      d.estimatedInvalidatedTokens != null
+        ? `，约作废 ${d.estimatedInvalidatedTokens} tokens`
+        : ''
+    return `前缀差分：messages[${d.firstDiffIndex}].${d.firstDiffPart}${invalidated}`
+  }
+  return '缓存诊断已更新。'
 }

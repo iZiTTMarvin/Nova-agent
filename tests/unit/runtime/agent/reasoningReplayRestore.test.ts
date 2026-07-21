@@ -1,9 +1,8 @@
 /**
- * T2-2：deepseek/kimi provider-aware 历史恢复投影
+ * reasoning 回放恢复投影
  *
- * - deepseek/kimi：按 blocks 拆出正确多子轮 + reasoningContent
- * - generic/glm/minimax：保持 T0-2 扁平断言不变
- * - 不改 session schema / UI blocks / messageProjection
+ * - 有 blocks：一律按子轮拆分；reasoning 附着受 replay 白名单 + 来源门控
+ * - 无 blocks：回退扁平路径
  */
 import { describe, expect, it } from 'vitest'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
@@ -63,6 +62,24 @@ const DEEPSEEK_RECOVERY: ChatMessage[] = [
 
 /** kimi：全部历史 reasoning；本例终态无 thinking，与 deepseek 序列同形 */
 const KIMI_RECOVERY: ChatMessage[] = DEEPSEEK_RECOVERY
+
+/** 有 blocks 但 reasoningReplay=none：拆子轮、不附着 reasoning */
+const SPLIT_NO_REASONING: ChatMessage[] = [
+  { role: 'user', content: '分析并修复两个问题' },
+  {
+    role: 'assistant',
+    content: '',
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+  },
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+  {
+    role: 'assistant',
+    content: '',
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+  },
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
+  { role: 'assistant', content: '已完成两处修复。' }
+]
 
 const FLATTENED_RECOVERY: ChatMessage[] = [
   { role: 'user', content: '分析并修复两个问题' },
@@ -161,7 +178,7 @@ describe('T2-2 deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     ])
   })
 
-  it('对照：reasoningReplay=none/缺省仍走扁平路径', () => {
+  it('有 blocks 时 reasoningReplay=none/缺省仍拆子轮，但不附着 reasoning', () => {
     const session = makeSession(thinkingToolTurnMessages())
     for (const replay of ['none', undefined] as const) {
       const recovered = buildConversationContext(
@@ -169,9 +186,40 @@ describe('T2-2 deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
         'default',
         replay ? { reasoningReplay: replay } : undefined
       )
-      expect(recovered).toEqual(FLATTENED_RECOVERY)
+      expect(recovered).toEqual(SPLIT_NO_REASONING)
       expect(JSON.stringify(recovered)).not.toContain('先读 a.ts')
     }
+  })
+
+  it('无 blocks 的旧会话仍走扁平路径', () => {
+    const session = makeSession([
+      { id: 'u1', role: 'user', parentId: null, content: '分析并修复两个问题', timestamp: 1 },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parentId: 'u1',
+        content: '已完成两处修复。',
+        toolCalls: [
+          {
+            id: 'tc_a',
+            name: 'read',
+            arguments: '{"path":"a.ts"}',
+            result: 'content of a.ts'
+          },
+          {
+            id: 'tc_b',
+            name: 'edit',
+            arguments: '{"path":"b.ts","old":"x","new":"y"}',
+            result: 'edited b.ts'
+          }
+        ],
+        timestamp: 2
+      }
+    ])
+    const recovered = buildConversationContext(session, 'default', {
+      reasoningReplay: 'none'
+    })
+    expect(recovered).toEqual(FLATTENED_RECOVERY)
   })
 
   it('glm all-history：与 kimi 同形恢复多子轮 + reasoning', () => {

@@ -1152,12 +1152,17 @@ export class AgentLoop implements IdleCompactionTarget {
       const stream = this.modelPool.chat(compactionContext, undefined, {
         abortSignal: this.abortController?.signal,
         includeInternalMessages: true,
+        expectedCacheMiss: true,
         ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
       })
       for await (const event of stream) {
         if (this.cancelled) return
         if (event.type === 'text_delta') {
           summary += event.delta
+        }
+        // 压缩请求不经 StreamProcessor；自行写入诊断并标 expectedMiss
+        if (event.type === 'wire_snapshot') {
+          this.cacheDiagnostics.recordWireSnapshot(event.snapshot, { expectedMiss: true })
         }
       }
     } catch {
@@ -1565,6 +1570,7 @@ export class AgentLoop implements IdleCompactionTarget {
       const stream = this.modelPool.chat(compactionContext, undefined, {
         abortSignal: this.abortController?.signal,
         includeInternalMessages: true,
+        expectedCacheMiss: true,
         ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
       })
       for await (const event of stream) {
@@ -1574,6 +1580,9 @@ export class AgentLoop implements IdleCompactionTarget {
         }
         if (event.type === 'text_delta') {
           summary += event.delta
+        }
+        if (event.type === 'wire_snapshot') {
+          this.cacheDiagnostics.recordWireSnapshot(event.snapshot, { expectedMiss: true })
         }
         if (event.type === 'context_overflow') {
           restorePulledBack()

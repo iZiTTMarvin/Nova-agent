@@ -150,7 +150,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 最终 body 就绪后计算语义快照（降级重试若剥离 key 会在成功/失败出口再算）
     const snapshotEvent = (): ChatEvent => ({
       type: 'wire_snapshot',
-      snapshot: computeWireSnapshot(body, this.cacheProfile)
+      snapshot: computeWireSnapshot(body, this.cacheProfile),
+      ...(options?.expectedCacheMiss ? { expectedMiss: true } : {})
     })
 
     let response: Response

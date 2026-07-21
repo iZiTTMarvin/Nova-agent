@@ -199,17 +199,31 @@ describe('T2-5 前缀稳定性黑盒', () => {
   it('预期变化不误报：压缩 bumpEpoch / 模型切换后首轮不告警', () => {
     const diag = new CacheDiagnostics()
 
+    const msg = (key: string) => ({
+      whole: key,
+      role: '',
+      content: '',
+      reasoningContent: '',
+      toolCalls: '',
+      toolResult: '',
+      bytes: 10
+    })
+
     const snapshot1: WireSnapshot = {
       model: 'm',
       toolsHash: 'th1',
-      semanticMessageHashes: ['h1', 'h2', 'h3'],
-      exactBodyHash: 'e1'
+      toolsBytes: 0,
+      messages: [msg('h1'), msg('h2'), msg('h3')],
+      exactBodyHash: 'e1',
+      bodyBytes: 30
     }
     const snapshot2: WireSnapshot = {
       model: 'm',
       toolsHash: 'th1',
-      semanticMessageHashes: ['h1', 'h2', 'h3', 'h4'],
-      exactBodyHash: 'e2'
+      toolsBytes: 0,
+      messages: [msg('h1'), msg('h2'), msg('h3'), msg('h4')],
+      exactBodyHash: 'e2',
+      bodyBytes: 40
     }
 
     // 稳定轮：纯追加不告警
@@ -222,8 +236,10 @@ describe('T2-5 前缀稳定性黑盒', () => {
     const afterCompact: WireSnapshot = {
       model: 'm',
       toolsHash: 'th1',
-      semanticMessageHashes: ['new1', 'new2'],
-      exactBodyHash: 'e3'
+      toolsBytes: 0,
+      messages: [msg('new1'), msg('new2')],
+      exactBodyHash: 'e3',
+      bodyBytes: 20
     }
     const r3 = diag.recordWireSnapshot(afterCompact)
     expect(r3.cacheBreakDetected).toBe(false)
@@ -233,8 +249,10 @@ describe('T2-5 前缀稳定性黑盒', () => {
     const afterSwitch: WireSnapshot = {
       model: 'm2',
       toolsHash: 'th2',
-      semanticMessageHashes: ['x1'],
-      exactBodyHash: 'e4'
+      toolsBytes: 0,
+      messages: [msg('x1')],
+      exactBodyHash: 'e4',
+      bodyBytes: 10
     }
     const r4 = diag.recordWireSnapshot(afterSwitch)
     expect(r4.cacheBreakDetected).toBe(false)

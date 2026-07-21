@@ -11,6 +11,7 @@ import {
 } from '../../shared/config/llmRegistry'
 import { resolveContextWindow } from '../../shared/config/types'
 import type { NormalizedUsage } from '../../shared/model/types'
+import { computeCacheHitRate } from '../../shared/model/types'
 import type { SessionUsageStats } from './types'
 
 export interface SettingsState {
@@ -31,6 +32,8 @@ export interface SettingsState {
   /** 按 cacheProfileId 分桶的会话用量；fallback 后进新桶 */
   sessionUsageByProfile: Record<string, SessionUsageStats>
   contextBreakdown: ContextBreakdown | null
+  /** 最近一次缓存诊断摘要（ContextIndicator hover 展示） */
+  lastCacheDiagnostic: CacheDiagnosticUi | null
   composerPrefill: string | null
 
   // ── Actions ──
@@ -56,47 +59,85 @@ export interface SettingsState {
   handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => void
   resetSessionUsage: () => void
   setContextBreakdown: (payload: ContextBreakdown) => void
+  setCacheDiagnostic: (diagnostic: CacheDiagnosticUi | null) => void
   syncFromWorkspace: (project: string | null, mode: Mode) => void
   requestComposerPrefill: (text: string) => void
   clearComposerPrefill: () => void
 }
 
+/** UI 消费的缓存诊断摘要（不含哈希明文） */
+export interface CacheDiagnosticUi {
+  messageId: string
+  cacheBreakDetected: boolean
+  reason?: string
+  suggestion?: string
+  firstDiffIndex?: number | null
+  firstDiffPart?: string | null
+  estimatedInvalidatedTokens?: number
+  expectedReuseTokens?: number
+  actualCacheReadTokens?: number
+  expectedMiss?: boolean
+}
+
 const EMPTY_USAGE: SessionUsageStats = {
+  totalUncachedInputTokens: 0,
+  totalCacheReadTokens: 0,
+  totalCacheWriteTokens: 0,
+  totalOutputTokens: 0,
   totalPromptTokens: 0,
   totalCompletionTokens: 0,
   totalCachedTokens: 0,
-  totalCacheWriteTokens: 0,
-  hitRate: 0
+  hitRate: 0,
+  lastRoundHitRate: 0,
+  estimatedSavedInputTokens: 0
 }
 
 /** 无 profileId 时的兜底桶名（旧测试 / 未接线路径） */
 const UNKNOWN_PROFILE_BUCKET = 'unknown'
 
-/** 把单轮 usage 累加进已有 SessionUsageStats */
+/** 把单轮 usage 累加进已有 SessionUsageStats（单一命中率公式） */
 function accumulateUsage(prev: SessionUsageStats, usage: NormalizedUsage): SessionUsageStats {
-  const totalPrompt = prev.totalPromptTokens + usage.promptTokens
-  const totalCached = prev.totalCachedTokens + usage.cachedTokens
-  const totalCacheWrite = prev.totalCacheWriteTokens + (usage.cacheWriteTokens ?? 0)
+  const cacheRead = usage.cacheReadTokens ?? usage.cachedTokens ?? 0
+  const cacheWrite = usage.cacheWriteTokens ?? 0
+  const output = usage.outputTokens ?? usage.completionTokens ?? 0
+  const uncached =
+    usage.uncachedInputTokens ??
+    (usage.cacheMissTokens !== undefined
+      ? usage.cacheMissTokens
+      : Math.max(0, (usage.promptTokens ?? 0) - cacheRead))
+
+  const totalUncached = prev.totalUncachedInputTokens + uncached
+  const totalCacheRead = prev.totalCacheReadTokens + cacheRead
+  const totalCacheWrite = prev.totalCacheWriteTokens + cacheWrite
+  const totalOutput = prev.totalOutputTokens + output
+
+  const lastRoundHitRate = computeCacheHitRate({
+    uncachedInputTokens: uncached,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite
+  })
+  const hitRate = computeCacheHitRate({
+    uncachedInputTokens: totalUncached,
+    cacheReadTokens: totalCacheRead,
+    cacheWriteTokens: totalCacheWrite
+  })
+
   const hasMissThisRound = usage.cacheMissTokens !== undefined
   const totalMiss = hasMissThisRound
     ? (prev.totalCacheMissTokens ?? 0) + usage.cacheMissTokens!
     : prev.totalCacheMissTokens
 
-  let hitRate: number
-  if (hasMissThisRound) {
-    const denom = totalCached + (totalMiss ?? 0)
-    hitRate = denom > 0 ? totalCached / denom : 0
-  } else {
-    const totalInput = totalPrompt + totalCacheWrite
-    hitRate = totalInput > 0 ? totalCached / totalInput : 0
-  }
-
   const next: SessionUsageStats = {
-    totalPromptTokens: totalPrompt,
-    totalCompletionTokens: prev.totalCompletionTokens + usage.completionTokens,
-    totalCachedTokens: totalCached,
+    totalUncachedInputTokens: totalUncached,
+    totalCacheReadTokens: totalCacheRead,
     totalCacheWriteTokens: totalCacheWrite,
-    hitRate
+    totalOutputTokens: totalOutput,
+    totalPromptTokens: totalUncached + totalCacheRead,
+    totalCompletionTokens: totalOutput,
+    totalCachedTokens: totalCacheRead,
+    hitRate,
+    lastRoundHitRate,
+    estimatedSavedInputTokens: totalCacheRead
   }
   if (totalMiss !== undefined) {
     next.totalCacheMissTokens = totalMiss
@@ -109,37 +150,39 @@ function aggregateUsageBuckets(buckets: Record<string, SessionUsageStats>): Sess
   const values = Object.values(buckets)
   if (values.length === 0) return null
 
-  let totalPrompt = 0
-  let totalCompletion = 0
-  let totalCached = 0
+  let totalUncached = 0
+  let totalCacheRead = 0
   let totalCacheWrite = 0
+  let totalOutput = 0
   let totalMiss: number | undefined
+  let lastRoundHitRate = 0
 
   for (const b of values) {
-    totalPrompt += b.totalPromptTokens
-    totalCompletion += b.totalCompletionTokens
-    totalCached += b.totalCachedTokens
+    totalUncached += b.totalUncachedInputTokens
+    totalCacheRead += b.totalCacheReadTokens
     totalCacheWrite += b.totalCacheWriteTokens
+    totalOutput += b.totalOutputTokens
+    lastRoundHitRate = b.lastRoundHitRate
     if (b.totalCacheMissTokens !== undefined) {
       totalMiss = (totalMiss ?? 0) + b.totalCacheMissTokens
     }
   }
 
-  let hitRate: number
-  if (totalMiss !== undefined) {
-    const denom = totalCached + totalMiss
-    hitRate = denom > 0 ? totalCached / denom : 0
-  } else {
-    const totalInput = totalPrompt + totalCacheWrite
-    hitRate = totalInput > 0 ? totalCached / totalInput : 0
-  }
-
   const next: SessionUsageStats = {
-    totalPromptTokens: totalPrompt,
-    totalCompletionTokens: totalCompletion,
-    totalCachedTokens: totalCached,
+    totalUncachedInputTokens: totalUncached,
+    totalCacheReadTokens: totalCacheRead,
     totalCacheWriteTokens: totalCacheWrite,
-    hitRate
+    totalOutputTokens: totalOutput,
+    totalPromptTokens: totalUncached + totalCacheRead,
+    totalCompletionTokens: totalOutput,
+    totalCachedTokens: totalCacheRead,
+    hitRate: computeCacheHitRate({
+      uncachedInputTokens: totalUncached,
+      cacheReadTokens: totalCacheRead,
+      cacheWriteTokens: totalCacheWrite
+    }),
+    lastRoundHitRate,
+    estimatedSavedInputTokens: totalCacheRead
   }
   if (totalMiss !== undefined) {
     next.totalCacheMissTokens = totalMiss
@@ -178,6 +221,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sessionUsage: null,
   sessionUsageByProfile: {},
   contextBreakdown: null,
+  lastCacheDiagnostic: null,
   composerPrefill: null,
 
   loadLlmRegistry: async () => {
@@ -286,11 +330,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   resetSessionUsage: () => {
-    set({ sessionUsage: null, sessionUsageByProfile: {} })
+    set({ sessionUsage: null, sessionUsageByProfile: {}, lastCacheDiagnostic: null })
   },
 
   setContextBreakdown: (payload) => {
     set({ contextBreakdown: payload })
+  },
+
+  setCacheDiagnostic: (diagnostic) => {
+    set({ lastCacheDiagnostic: diagnostic })
   },
 
   syncFromWorkspace: (project: string | null, mode: Mode) => {
@@ -324,6 +372,7 @@ export function resetSettingsStoreForTests(): void {
     sessionUsage: null,
     sessionUsageByProfile: {},
     contextBreakdown: null,
+    lastCacheDiagnostic: null,
     composerPrefill: null
   })
 }

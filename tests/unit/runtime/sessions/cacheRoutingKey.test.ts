@@ -173,7 +173,7 @@ describe('computeWireSnapshot', () => {
     expect(a.exactBodyHash).toMatch(/^[a-f0-9]{16}$/)
     expect(a.exactBodyHash).not.toContain('SECRET')
     expect(a.exactBodyHash).not.toContain('hello')
-    expect(a.semanticMessageHashes).toHaveLength(2)
+    expect(a.messages).toHaveLength(2)
     expect(a.toolsHash).toMatch(/^[a-f0-9]{16}$/)
   })
 })

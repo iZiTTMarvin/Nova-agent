@@ -1,43 +1,84 @@
 /**
  * Token 用量归一化
  * 统一 OpenAI / DeepSeek / Kimi / Anthropic 等 provider 的 usage 字段差异，
- * 输出标准化的 NormalizedUsage 结构
+ * 输出标准化四元组 + 兼容别名。
  */
-import type { NormalizedUsage } from './types'
+import type { NormalizedUsage, UsageDialect } from './types'
 
 /**
  * 从原始 SSE chunk 的 usage 对象中提取归一化的 token 用量。
  *
- * 缓存命中字段解析优先级：
- * 1. 标准嵌套：prompt_tokens_details.cached_tokens（OpenAI）
- * 2. provider 顶层兼容：DeepSeek prompt_cache_hit_tokens / Kimi cached_tokens / Anthropic cache_read_input_tokens
- * 3. 回退 0
+ * 四元组派生：
+ * - OpenAI / GLM / Kimi：uncached = prompt_tokens - cached_tokens
+ * - DeepSeek：有 prompt_cache_miss_tokens 时优先作 uncached
+ * - Anthropic 原生：兼容 input_tokens / output_tokens；uncached = input_tokens
  *
  * 拿不到的字段一律回退为 0（cacheMissTokens 无则 undefined），不抛错。
  */
 export function normalizeUsage(raw: Record<string, unknown> | undefined | null): NormalizedUsage | null {
   if (!raw) return null
 
-  const promptTokens = toNumber(raw.prompt_tokens)
-  const completionTokens = toNumber(raw.completion_tokens)
-
-  if (promptTokens === 0 && completionTokens === 0) return null
-
-  const cachedTokens = extractCachedTokens(raw)
+  const dialect = detectUsageDialect(raw)
+  const cacheReadTokens = extractCachedTokens(raw)
   const cacheWriteTokens = extractCacheWriteTokens(raw)
   const cacheMissTokens = extractCacheMissTokens(raw)
 
-  const result: NormalizedUsage = {
-    promptTokens,
-    completionTokens,
-    cachedTokens,
-    cacheWriteTokens
+  let uncachedInputTokens: number
+  let outputTokens: number
+  let promptTokensAlias: number
+
+  if (dialect === 'anthropic') {
+    // Anthropic：input_tokens 不含 cache_read；output_tokens 为输出
+    const inputTokens = toNumber(raw.input_tokens)
+    outputTokens = toNumber(raw.output_tokens)
+    uncachedInputTokens = inputTokens
+    promptTokensAlias = inputTokens + cacheReadTokens
+    if (promptTokensAlias === 0 && outputTokens === 0 && cacheWriteTokens === 0) {
+      return null
+    }
+  } else {
+    const promptTokens = toNumber(raw.prompt_tokens)
+    outputTokens = toNumber(raw.completion_tokens)
+    if (promptTokens === 0 && outputTokens === 0) return null
+
+    if (cacheMissTokens !== undefined) {
+      uncachedInputTokens = cacheMissTokens
+    } else {
+      uncachedInputTokens = Math.max(0, promptTokens - cacheReadTokens)
+    }
+    promptTokensAlias = promptTokens
   }
-  // 仅在 provider 确有 miss 字段时带上，避免把「未报告」伪装成 0
+
+  const result: NormalizedUsage = {
+    uncachedInputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    outputTokens,
+    rawUsage: { ...raw },
+    usageDialect: dialect,
+    promptTokens: promptTokensAlias,
+    completionTokens: outputTokens,
+    cachedTokens: cacheReadTokens
+  }
   if (cacheMissTokens !== undefined) {
     result.cacheMissTokens = cacheMissTokens
   }
   return result
+}
+
+function detectUsageDialect(raw: Record<string, unknown>): UsageDialect {
+  // 纯 Anthropic 原生：有 input_tokens、无 prompt_tokens
+  if ('input_tokens' in raw && !('prompt_tokens' in raw)) {
+    return 'anthropic'
+  }
+  if ('prompt_cache_hit_tokens' in raw || 'prompt_cache_miss_tokens' in raw) {
+    return 'deepseek'
+  }
+  if ('prompt_tokens' in raw || 'completion_tokens' in raw) {
+    return 'openai'
+  }
+  if ('input_tokens' in raw) return 'anthropic'
+  return 'unknown'
 }
 
 /**
@@ -45,18 +86,15 @@ export function normalizeUsage(raw: Record<string, unknown> | undefined | null):
  * 嵌套字段一旦存在（含 0）即优先，不再回退到顶层兼容字段。
  */
 function extractCachedTokens(raw: Record<string, unknown>): number {
-  // 1. OpenAI 标准嵌套路径 —— 字段存在即优先（含 0）
   const details = raw.prompt_tokens_details as Record<string, unknown> | undefined
   if (details && 'cached_tokens' in details) {
     return toNumber(details.cached_tokens)
   }
 
-  // 2. provider 顶层兼容字段（按常见冲突顺序：DeepSeek → Kimi → Anthropic）
   if ('prompt_cache_hit_tokens' in raw) {
     return toNumber(raw.prompt_cache_hit_tokens)
   }
   if ('cached_tokens' in raw) {
-    // Kimi 顶层 cached_tokens：仅作嵌套缺失时的回退
     return toNumber(raw.cached_tokens)
   }
   if ('cache_read_input_tokens' in raw) {
@@ -97,3 +135,5 @@ function toNumber(val: unknown): number {
   }
   return 0
 }
+
+export { computeCacheHitRate } from '../../shared/model/types'

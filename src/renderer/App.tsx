@@ -218,6 +218,22 @@ function App(): JSX.Element {
       handleUsage(data.usage, data.cacheProfileId)
     }))
 
+    // 监听：缓存前缀诊断（展示在 ContextIndicator hover）
+    const unsubCacheDiagnostic = window.api.on('agent:cache-diagnostic', gateAgentEvent('cache-diagnostic', (data) => {
+      useSettingsStore.getState().setCacheDiagnostic({
+        messageId: data.messageId,
+        cacheBreakDetected: data.diagnostic.cacheBreakDetected,
+        reason: data.diagnostic.reason,
+        suggestion: data.diagnostic.suggestion,
+        firstDiffIndex: data.diagnostic.firstDiffIndex,
+        firstDiffPart: data.diagnostic.firstDiffPart ?? undefined,
+        estimatedInvalidatedTokens: data.diagnostic.prefixDiff?.estimatedInvalidatedTokens,
+        expectedReuseTokens: data.diagnostic.expectedReuseTokens,
+        actualCacheReadTokens: data.diagnostic.actualCacheReadTokens,
+        expectedMiss: data.diagnostic.prefixDiff?.expectedMiss
+      })
+    }))
+
     const unsubContextBreakdown = window.api.on('agent:context-breakdown', (data) => {
       // 不能在 effect 建立时捕获 currentSessionId；会话切换/首次打开历史会话后，
       // 旧闭包会一直拿到陈旧值，导致主进程刚推送的 breakdown 被误丢弃。
@@ -309,6 +325,7 @@ function App(): JSX.Element {
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()
+      unsubCacheDiagnostic()
       unsubContextBreakdown()
       unsubHookError()
       unsubRecoveryHint()

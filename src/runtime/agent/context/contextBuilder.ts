@@ -6,10 +6,8 @@
  *
  * 设计约束（缓存 Harness）：
  * - system prompt 由 AgentLoop 构造时注入（frozenSystemPrompt），此处不再处理
- * - 默认路径：thinking 不进入模型上下文；assistant 的多次 toolCalls 压成单条
- * - reasoningReplay !== 'none'（deepseek/kimi/glm）时走 provider-aware 投影：
- *   按 blocks 边界拆出正确的 assistant 子轮，并把 thinking 映射到 reasoningContent
- *   （仅回传与当前档案同源的 thinking）
+ * - 有 blocks 时一律按子轮边界拆分（与运行时路径对齐）；无 blocks 的旧会话回退扁平路径
+ * - reasoning 附着受 reasoningReplay 白名单 + 来源兼容性门控（跨 provider thinking 不回传）
  * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL；
  *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
@@ -168,7 +166,7 @@ function projectAssistantFlattened(msg: SessionMessage): ChatMessage[] {
  */
 export function projectAssistantWithReasoningReplay(
   msg: SessionMessage,
-  reasoningReplay: 'tool-call-history' | 'all-history',
+  reasoningReplay: 'none' | 'tool-call-history' | 'all-history',
   currentProviderId?: string
 ): ChatMessage[] {
   const blocks = msg.blocks
@@ -188,7 +186,8 @@ export function projectAssistantWithReasoningReplay(
   }> = []
 
   const attachReasoning = (assistant: ChatMessage, hasToolCalls: boolean): void => {
-    if (!reasoning) return
+    // reasoningReplay === 'none'：仍拆子轮，但不附着 reasoning
+    if (!reasoning || reasoningReplay === 'none') return
     if (reasoningReplay === 'all-history' || hasToolCalls) {
       assistant.reasoningContent = reasoning
       if (reasoningProviderId) assistant.reasoningProviderId = reasoningProviderId
@@ -290,8 +289,10 @@ export function buildConversationContext(
 ): ChatMessage[] {
   const opts = normalizeBuildOptions(resolveImageUrlOrOpts)
   const { resolveImageUrl, reasoningReplay, currentProviderId } = opts
-  const useReasoningReplay =
+  const replayMode: 'none' | 'tool-call-history' | 'all-history' =
     reasoningReplay === 'tool-call-history' || reasoningReplay === 'all-history'
+      ? reasoningReplay
+      : 'none'
 
   const context: ChatMessage[] = []
   const activeMessages = getSessionActiveMessages(session)
@@ -301,9 +302,10 @@ export function buildConversationContext(
     if (msg.role === 'system') continue
 
     if (msg.role === 'assistant') {
-      if (useReasoningReplay) {
+      // 有 blocks 时一律按子轮拆分（与运行时路径对齐）；reasoning 附着仍受 replay + 来源门控
+      if (msg.blocks && msg.blocks.length > 0) {
         context.push(
-          ...projectAssistantWithReasoningReplay(msg, reasoningReplay, currentProviderId)
+          ...projectAssistantWithReasoningReplay(msg, replayMode, currentProviderId)
         )
       } else {
         context.push(...projectAssistantFlattened(msg))

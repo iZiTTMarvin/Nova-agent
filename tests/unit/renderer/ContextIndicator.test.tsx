@@ -8,11 +8,16 @@ vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
 function setContextState(overrides?: Partial<{
   sessionUsage: {
+    totalUncachedInputTokens: number
+    totalCacheReadTokens: number
+    totalCacheWriteTokens: number
+    totalOutputTokens: number
     totalPromptTokens: number
     totalCompletionTokens: number
     totalCachedTokens: number
-    totalCacheWriteTokens: number
     hitRate: number
+    lastRoundHitRate: number
+    estimatedSavedInputTokens: number
   } | null
 }>) {
   useAppStore.setState({
@@ -33,11 +38,16 @@ function setContextState(overrides?: Partial<{
       contextLimit: 200_000
     },
     sessionUsage: {
+      totalUncachedInputTokens: 610,
+      totalCacheReadTokens: 390,
+      totalCacheWriteTokens: 80,
+      totalOutputTokens: 120,
       totalPromptTokens: 1000,
       totalCompletionTokens: 120,
       totalCachedTokens: 390,
-      totalCacheWriteTokens: 80,
-      hitRate: 0.39
+      hitRate: 0.39,
+      lastRoundHitRate: 0.39,
+      estimatedSavedInputTokens: 390
     },
     ...overrides
   })
@@ -76,7 +86,16 @@ describe('ContextIndicator', () => {
     const labels = renderer!.root
       .findAllByProps({ className: 'context-usage__label' })
       .map(node => node.children.join(''))
-    expect(labels).toEqual(['输入', '输出', '缓存命中', '缓存写入', '总消耗'])
+    expect(labels).toEqual([
+      '本轮命中率',
+      '会话命中率',
+      '估算节省输入',
+      '输入',
+      '输出',
+      '缓存命中',
+      '缓存写入',
+      '总消耗'
+    ])
 
     act(() => {
       renderer?.unmount()

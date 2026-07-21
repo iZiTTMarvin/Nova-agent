@@ -7,7 +7,8 @@ import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { NormalizedUsage } from '../../shared/model/types'
 import type { CacheStrategy, CacheProfileId } from '../../shared/config/types'
 
-export type { NormalizedUsage }
+export type { NormalizedUsage, UsageDialect } from '../../shared/model/types'
+export { computeCacheHitRate } from '../../shared/model/types'
 
 // ── 消息格式 ──────────────────────────────────────────────
 
@@ -148,5 +149,10 @@ export type ChatEvent =
     }
   /**
    * 最终请求体语义快照（仅哈希，无明文）。StreamProcessor 写入 CacheDiagnostics。
+   * expectedMiss：压缩摘要等已知必然 miss 的请求。
    */
-  | { type: 'wire_snapshot'; snapshot: import('./requestFingerprint').WireSnapshot }
+  | {
+      type: 'wire_snapshot'
+      snapshot: import('./requestFingerprint').WireSnapshot
+      expectedMiss?: boolean
+    }
