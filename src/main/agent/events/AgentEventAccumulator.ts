@@ -81,7 +81,11 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         if (last && last.type === 'thinking') {
           last.content += event.delta
         } else {
-          stream.blocks.push({ type: 'thinking', content: event.delta })
+          stream.blocks.push({
+            type: 'thinking',
+            content: event.delta,
+            ...(event.providerId ? { providerId: event.providerId } : {})
+          })
         }
       }
       break

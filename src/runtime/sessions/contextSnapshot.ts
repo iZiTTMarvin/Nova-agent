@@ -59,6 +59,8 @@ export interface RestoreHistoryOptions {
   resolveImageUrl?: (url: string) => string
   /** 来自当前 active CacheProfile；决定是否按 blocks 拆子轮恢复 reasoning */
   reasoningReplay?: CacheProfile['reasoningReplay']
+  /** 当前档案 ID；跨档案 reasoning 门控 */
+  currentProviderId?: string
 }
 
 /**
@@ -80,11 +82,12 @@ export function restoreOrInjectHistory(
     typeof resolveImageUrlOrOpts === 'function'
       ? { resolveImageUrl: resolveImageUrlOrOpts }
       : resolveImageUrlOrOpts ?? {}
-  const { resolveImageUrl, reasoningReplay } = opts
+  const { resolveImageUrl, reasoningReplay, currentProviderId } = opts
 
   const buildOpts = {
     ...(resolveImageUrl ? { resolveImageUrl } : {}),
-    ...(reasoningReplay ? { reasoningReplay } : {})
+    ...(reasoningReplay ? { reasoningReplay } : {}),
+    ...(currentProviderId ? { currentProviderId } : {})
   }
 
   const activeMessages = getSessionActiveMessages(session)

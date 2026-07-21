@@ -30,6 +30,11 @@ export interface ToolCall {
 export interface ThinkingBlock {
   type: 'thinking'
   content: string
+  /**
+   * 产生该 thinking 的缓存档案 ID（如 glm / kimi / deepseek）。
+   * 用于跨模型回放门控；旧数据缺省时视为与当前档案兼容。
+   */
+  providerId?: string
 }
 
 /** 正文块 */

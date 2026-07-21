@@ -389,10 +389,13 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
       expect(JSON.stringify(messages2)).toBe(JSON.stringify(messages))
     })
 
-    it('anthropic/glm/minimax/openai：即使有 reasoningContent 也绝不输出', async () => {
-      const profiles: Array<{ cacheProfile: 'anthropic' | 'glm' | 'minimax' | 'openai'; baseUrl: string; modelId: string }> = [
+    it('anthropic/minimax/openai：即使有 reasoningContent 也绝不输出', async () => {
+      const profiles: Array<{
+        cacheProfile: 'anthropic' | 'minimax' | 'openai'
+        baseUrl: string
+        modelId: string
+      }> = [
         { cacheProfile: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', modelId: 'claude-3' },
-        { cacheProfile: 'glm', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelId: 'glm-4' },
         { cacheProfile: 'minimax', baseUrl: 'https://api.minimax.chat/v1', modelId: 'MiniMax-Text' },
         { cacheProfile: 'openai', baseUrl: 'https://api.openai.com/v1', modelId: 'gpt-4o' }
       ]
@@ -412,6 +415,43 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
           false
         )
       }
+    })
+
+    it('glm：all-history 输出全部 reasoning_content', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        apiKey: 'test-key',
+        modelId: 'glm-4',
+        cacheProfile: 'glm'
+      })
+      await drainChat(client, REASONING_HISTORY)
+      const messages = interceptor.body!.messages as Array<Record<string, unknown>>
+      const assistants = messages.filter(m => m.role === 'assistant')
+      expect(assistants[0].reasoning_content).toBe('先读 a.ts…')
+      expect(assistants[1].reasoning_content).toBe('终态思考不应给 deepseek')
+    })
+
+    it('跨档案 reasoningProviderId 不兼容时不输出 reasoning_content', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        apiKey: 'test-key',
+        modelId: 'glm-4',
+        cacheProfile: 'glm'
+      })
+      await drainChat(client, [
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: 'a',
+          reasoningContent: 'kimi 的思考',
+          reasoningProviderId: 'kimi'
+        }
+      ])
+      const messages = interceptor.body!.messages as Array<Record<string, unknown>>
+      const assistant = messages.find(m => m.role === 'assistant')!
+      expect(assistant.reasoning_content).toBeUndefined()
     })
   })
 

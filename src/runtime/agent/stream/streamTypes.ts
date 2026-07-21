@@ -32,6 +32,8 @@ export type TurnStreamResult =
       sawUsage: boolean
       /** 本子轮聚合的 reasoning；无 thinking_delta 时省略 */
       reasoningContent?: string
+      /** 产生 reasoningContent 的缓存档案 ID */
+      reasoningProviderId?: string
     }
   | { kind: 'retry' }
   | { kind: 'cancelled' }

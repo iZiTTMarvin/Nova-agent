@@ -229,9 +229,14 @@ export class StreamProcessor {
 
         switch (event.type) {
           case 'thinking_delta':
-            // 累积到运行时缓冲；仍透传 UI，不改 thinking block 行为
+            // 累积到运行时缓冲；透传 UI，并附带当前档案 ID 供落盘来源隔离
             reasoningContent += event.delta
-            this.emit({ type: 'thinking_delta', messageId, delta: event.delta })
+            this.emit({
+              type: 'thinking_delta',
+              messageId,
+              delta: event.delta,
+              providerId: this.resolveActiveProfileId()
+            })
             break
 
           case 'text_delta':
@@ -261,7 +266,7 @@ export class StreamProcessor {
             break
 
           case 'prompt_cache_key_stripped':
-            // 本 client 已精确剥离并重试；只发诊断，不触发 fallback / 工具重跑
+            // 兼容旧事件：只发诊断；epoch 换代由 capability_downgrade 负责
             this.emit({
               type: 'cache_diagnostic',
               messageId,
@@ -270,6 +275,30 @@ export class StreamProcessor {
                 reason: 'prompt_cache_key_unsupported',
                 suggestion:
                   '当前网关不支持 prompt_cache_key。可将 cacheProfile 设为 generic，或改用官方 Kimi/OpenAI 端点。'
+              }
+            })
+            break
+
+          case 'capability_downgrade':
+            // 会话级能力降级：请求参数形态变化，缓存前缀换代
+            this.cacheDiagnostics.bumpEpoch('provider_capability_downgrade')
+            this.emit({
+              type: 'cache_diagnostic',
+              messageId,
+              diagnostic: {
+                cacheBreakDetected: true,
+                reason:
+                  event.capability === 'prompt_cache_key'
+                    ? 'prompt_cache_key_unsupported'
+                    : event.capability === 'reasoning_content'
+                      ? 'reasoning_content_unsupported'
+                      : 'clear_thinking_unsupported',
+                suggestion:
+                  event.capability === 'prompt_cache_key'
+                    ? '当前网关不支持 prompt_cache_key。可将 cacheProfile 设为 generic，或改用官方 Kimi/OpenAI 端点。'
+                    : event.capability === 'reasoning_content'
+                      ? '当前网关不支持 reasoning_content 回传；本会话后续请求将跳过该字段。'
+                      : '当前网关不支持 clear_thinking；本会话后续请求将跳过该字段。'
               }
             })
             break
@@ -492,8 +521,22 @@ export class StreamProcessor {
       finishReason,
       sawUsage: roundSawUsage,
       // 仅在有内容时携带，避免无 thinking 的子轮多出空字段
-      ...(reasoningContent ? { reasoningContent } : {})
+      ...(reasoningContent
+        ? {
+            reasoningContent,
+            reasoningProviderId: this.resolveActiveProfileId()
+          }
+        : {})
     })
+  }
+
+  /** 当前 active provider 解析出的缓存档案 ID */
+  private resolveActiveProfileId(): string {
+    const provider = this.modelPool.getActiveProvider()
+    return resolveCacheProfile(provider.baseUrl, provider.modelId, {
+      cacheProfile: provider.cacheProfile,
+      cacheStrategy: provider.cacheStrategy
+    }).id
   }
 
   /**

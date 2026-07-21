@@ -63,6 +63,11 @@ export interface ChatMessage {
    * 不写入 renderer / UI blocks / 导出文件 / SessionMessage.content（约束 4）。
    */
   reasoningContent?: string
+  /**
+   * 产生 reasoningContent 的缓存档案 ID；与 ThinkingBlock.providerId 对齐。
+   * 跨档案回放时由序列化门控剥离；缺省视为与当前档案兼容。
+   */
+  reasoningProviderId?: string
 }
 
 /** 模型返回的工具调用 */
@@ -100,7 +105,7 @@ export interface ModelClientConfig {
    */
   cacheProfile?: 'auto' | CacheProfileId
   /**
-   * 思考强度覆盖。缺省或 'auto' 时不发送该参数（零行为变化）；
+   * 思考强度覆盖。缺省或 'auto'：非 GLM 不发送；GLM 仍注入保留式思考。
    * 'low'/'medium'/'high' 按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
    */
   reasoningEffort?: 'auto' | 'low' | 'medium' | 'high'
@@ -129,8 +134,18 @@ export type ChatEvent =
   /**
    * 网关拒绝 prompt_cache_key 后，本 client 已剥离该字段并重试一次。
    * StreamProcessor 转为 cache_diagnostic，不触发 fallback / 工具重跑。
+   * @deprecated 新路径统一走 capability_downgrade；保留以兼容旧测试/诊断。
    */
   | { type: 'prompt_cache_key_stripped'; detail: string }
+  /**
+   * 网关拒绝某请求参数后，本 client 已记录会话级禁用并剥离重试。
+   * StreamProcessor 调用 bumpEpoch('provider_capability_downgrade')。
+   */
+  | {
+      type: 'capability_downgrade'
+      capability: 'prompt_cache_key' | 'reasoning_content' | 'clear_thinking'
+      detail: string
+    }
   /**
    * 最终请求体语义快照（仅哈希，无明文）。StreamProcessor 写入 CacheDiagnostics。
    */

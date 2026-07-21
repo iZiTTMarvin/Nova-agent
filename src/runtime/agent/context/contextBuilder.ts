@@ -7,13 +7,15 @@
  * 设计约束（缓存 Harness）：
  * - system prompt 由 AgentLoop 构造时注入（frozenSystemPrompt），此处不再处理
  * - 默认路径：thinking 不进入模型上下文；assistant 的多次 toolCalls 压成单条
- * - reasoningReplay !== 'none'（deepseek/kimi）时走 provider-aware 投影：
+ * - reasoningReplay !== 'none'（deepseek/kimi/glm）时走 provider-aware 投影：
  *   按 blocks 边界拆出正确的 assistant 子轮，并把 thinking 映射到 reasoningContent
+ *   （仅回传与当前档案同源的 thinking）
  * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL；
  *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
 import type { ChatMessage, ContentBlock } from '../../model/types'
 import type { CacheProfile } from '../../model/cacheProfile'
+import { isReasoningSourceCompatible } from '../../model/reasoningSource'
 import type { SessionData, SessionMessage, SessionToolCall } from '../../sessions/types'
 import { getSessionActiveMessages } from '../../sessions/tree'
 import type { Mode, MessageBlock } from '../../../shared/session/types'
@@ -94,6 +96,11 @@ export interface BuildConversationContextOptions {
    * - 'tool-call-history' | 'all-history'：按 blocks 拆子轮并恢复 reasoningContent
    */
   reasoningReplay?: CacheProfile['reasoningReplay']
+  /**
+   * 当前活跃档案 ID；用于过滤跨档案 reasoning。
+   * 缺省时不做来源门控（仅按 reasoningReplay 档位）。
+   */
+  currentProviderId?: string
 }
 
 function normalizeBuildOptions(
@@ -107,7 +114,7 @@ function normalizeBuildOptions(
 
 /**
  * 默认扁平路径：单条 assistant（全部 toolCalls）+ 多条 tool 消息；丢弃 thinking。
- * 保持与 T0-2 基线完全一致，供 generic/glm/minimax/anthropic/openai 使用。
+ * 供 reasoningReplay === 'none' 的档案使用。
  */
 function projectAssistantFlattened(msg: SessionMessage): ChatMessage[] {
   const out: ChatMessage[] = []
@@ -149,18 +156,20 @@ function projectAssistantFlattened(msg: SessionMessage): ChatMessage[] {
 }
 
 /**
- * deepseek/kimi：按 blocks 边界重建「assistant → tool results」子轮序列。
+ * reasoningReplay ≠ none：按 blocks 边界重建「assistant → tool results」子轮序列。
  *
  * 边界规则：已收集 tool 后再遇到 thinking/text → 先 flush 上一子轮。
  * 连续 tool 块视为同一子轮的并行调用。
  *
  * reasoning 策略：
  * - tool-call-history（deepseek）：仅含 toolCalls 的 assistant 携带 reasoningContent
- * - all-history（kimi）：凡有 thinking 的 assistant 均携带
+ * - all-history（kimi / glm）：凡有 thinking 的 assistant 均携带
+ * - 来源门控：仅累加与 currentProviderId 兼容的 thinking（无 providerId 旧块视为兼容）
  */
 export function projectAssistantWithReasoningReplay(
   msg: SessionMessage,
-  reasoningReplay: 'tool-call-history' | 'all-history'
+  reasoningReplay: 'tool-call-history' | 'all-history',
+  currentProviderId?: string
 ): ChatMessage[] {
   const blocks = msg.blocks
   if (!blocks || blocks.length === 0) {
@@ -171,6 +180,7 @@ export function projectAssistantWithReasoningReplay(
   const out: ChatMessage[] = []
 
   let reasoning = ''
+  let reasoningProviderId: string | undefined
   let text = ''
   let pendingTools: Array<{
     block: Extract<MessageBlock, { type: 'tool' }>
@@ -181,6 +191,7 @@ export function projectAssistantWithReasoningReplay(
     if (!reasoning) return
     if (reasoningReplay === 'all-history' || hasToolCalls) {
       assistant.reasoningContent = reasoning
+      if (reasoningProviderId) assistant.reasoningProviderId = reasoningProviderId
     }
   }
 
@@ -215,6 +226,7 @@ export function projectAssistantWithReasoningReplay(
     }
 
     reasoning = ''
+    reasoningProviderId = undefined
     text = ''
     pendingTools = []
   }
@@ -228,13 +240,24 @@ export function projectAssistantWithReasoningReplay(
     attachReasoning(assistant, false)
     out.push(assistant)
     reasoning = ''
+    reasoningProviderId = undefined
     text = ''
   }
 
   for (const block of blocks) {
     if (block.type === 'thinking') {
       if (pendingTools.length > 0) flushToolSubTurn()
+      // 跨档案 thinking 保留在存档，但不进入模型回传
+      if (
+        currentProviderId &&
+        !isReasoningSourceCompatible(block.providerId, currentProviderId)
+      ) {
+        continue
+      }
       reasoning += block.content
+      if (block.providerId && !reasoningProviderId) {
+        reasoningProviderId = block.providerId
+      }
     } else if (block.type === 'text') {
       if (pendingTools.length > 0) flushToolSubTurn()
       text += block.content
@@ -266,7 +289,7 @@ export function buildConversationContext(
   resolveImageUrlOrOpts?: ((url: string) => string) | BuildConversationContextOptions
 ): ChatMessage[] {
   const opts = normalizeBuildOptions(resolveImageUrlOrOpts)
-  const { resolveImageUrl, reasoningReplay } = opts
+  const { resolveImageUrl, reasoningReplay, currentProviderId } = opts
   const useReasoningReplay =
     reasoningReplay === 'tool-call-history' || reasoningReplay === 'all-history'
 
@@ -279,8 +302,9 @@ export function buildConversationContext(
 
     if (msg.role === 'assistant') {
       if (useReasoningReplay) {
-        // deepseek/kimi：按 blocks 拆子轮（generic 路径完全不进此分支）
-        context.push(...projectAssistantWithReasoningReplay(msg, reasoningReplay))
+        context.push(
+          ...projectAssistantWithReasoningReplay(msg, reasoningReplay, currentProviderId)
+        )
       } else {
         context.push(...projectAssistantFlattened(msg))
       }

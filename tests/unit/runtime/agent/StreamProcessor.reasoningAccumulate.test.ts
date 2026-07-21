@@ -101,11 +101,69 @@ describe('T2-1 StreamProcessor：reasoningContent 累积', () => {
     expect(result.kind).toBe('assistant')
     if (result.kind !== 'assistant') return
     expect(result.reasoningContent).toBe('先读文件…再决定调用')
+    expect(result.reasoningProviderId).toBe('generic')
     expect(result.toolCalls).toHaveLength(1)
     expect(result.toolCalls[0].name).toBe('read')
-    // UI 仍收到 thinking_delta，行为不变
+    // UI 仍收到 thinking_delta，并附带当前档案 ID
     const thinkingEvents = emitted.filter(e => e.type === 'thinking_delta')
     expect(thinkingEvents).toHaveLength(2)
+    expect(thinkingEvents.every(e => e.type === 'thinking_delta' && e.providerId === 'generic')).toBe(
+      true
+    )
+  })
+
+  it('capability_downgrade：bumpEpoch 一次并产出诊断', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        {
+          type: 'capability_downgrade',
+          capability: 'prompt_cache_key',
+          detail: 'Unknown parameter: prompt_cache_key'
+        },
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const emitted: AgentEvent[] = []
+    const stubConfig: ModelConfig = {
+      baseUrl: 'http://test',
+      apiKey: 'test',
+      modelId: 'test-model'
+    }
+    const cacheDiagnostics = new CacheDiagnostics()
+    const epochBefore = cacheDiagnostics.getPersistState().epochId
+    const modelPool = new ModelClientPool({ primary: client, primaryConfig: stubConfig })
+    const processor = new StreamProcessor({
+      modelPool,
+      recovery: new RecoveryStateMachine(),
+      cacheDiagnostics,
+      emit: e => {
+        emitted.push(e)
+      },
+      emitContextBreakdown: () => {},
+      runOverflowCompaction: async () => false,
+      hookManager: new HookManager()
+    })
+    await processor.run({
+      messageId: 'msg_cap',
+      chatMessages: [{ role: 'user', content: 'hi' }] as ChatMessage[],
+      nativeTools: undefined,
+      context: createNativeContext(),
+      signal: undefined,
+      isCancelled: () => false,
+      sleep: () => Promise.resolve()
+    })
+
+    expect(cacheDiagnostics.getPersistState().epochId).not.toBe(epochBefore)
+    expect(cacheDiagnostics.getPersistState().epochReason).toBe('provider_capability_downgrade')
+    expect(
+      emitted.some(
+        e =>
+          e.type === 'cache_diagnostic' &&
+          e.diagnostic.reason === 'prompt_cache_key_unsupported'
+      )
+    ).toBe(true)
   })
 
   it('并行工具轮：同一子轮内多个 tool_call 共享一份聚合 reasoning', async () => {

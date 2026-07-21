@@ -161,7 +161,7 @@ describe('T2-2 deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     ])
   })
 
-  it('对照：generic/glm/minimax 仍走扁平路径（T0-2 断言不变）', () => {
+  it('对照：reasoningReplay=none/缺省仍走扁平路径', () => {
     const session = makeSession(thinkingToolTurnMessages())
     for (const replay of ['none', undefined] as const) {
       const recovered = buildConversationContext(
@@ -172,6 +172,98 @@ describe('T2-2 deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
       expect(recovered).toEqual(FLATTENED_RECOVERY)
       expect(JSON.stringify(recovered)).not.toContain('先读 a.ts')
     }
+  })
+
+  it('glm all-history：与 kimi 同形恢复多子轮 + reasoning', () => {
+    const session = makeSession(thinkingToolTurnMessages())
+    const recovered = buildConversationContext(session, 'default', {
+      reasoningReplay: 'all-history',
+      currentProviderId: 'glm'
+    })
+    // 无 providerId 的旧块视为兼容，应完整回放
+    expect(recovered).toEqual(KIMI_RECOVERY)
+  })
+
+  it('跨档案门控：kimi 来源的 thinking 不进入 glm 回放，存档 blocks 仍保留', () => {
+    const blocks: MessageBlock[] = [
+      { type: 'thinking', content: 'kimi 的思考', providerId: 'kimi' },
+      {
+        type: 'tool',
+        toolCallId: 'tc_1',
+        toolName: 'read',
+        arguments: { path: 'a.ts' },
+        status: 'success',
+        result: 'ok'
+      },
+      { type: 'thinking', content: 'glm 自己的思考', providerId: 'glm' },
+      { type: 'text', content: '结论' }
+    ]
+    const session = makeSession([
+      {
+        id: 'u1',
+        role: 'user',
+        parentId: null,
+        content: '问',
+        timestamp: 1
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parentId: 'u1',
+        content: '结论',
+        blocks,
+        toolCalls: [
+          {
+            id: 'tc_1',
+            name: 'read',
+            arguments: '{"path":"a.ts"}',
+            result: 'ok'
+          }
+        ],
+        timestamp: 2
+      }
+    ])
+
+    const recovered = buildConversationContext(session, 'default', {
+      reasoningReplay: 'all-history',
+      currentProviderId: 'glm'
+    })
+
+    const assistants = recovered.filter(m => m.role === 'assistant')
+    expect(assistants[0].reasoningContent).toBeUndefined()
+    expect(assistants[1].reasoningContent).toBe('glm 自己的思考')
+    expect(assistants[1].reasoningProviderId).toBe('glm')
+
+    // 存档未被删除
+    const stored = session.messages.find(m => m.id === 'a1')!
+    expect(stored.blocks?.filter(b => b.type === 'thinking')).toHaveLength(2)
+  })
+
+  it('Kimi→DeepSeek：跨档案 reasoning 不再无条件回放', () => {
+    const projected = projectAssistantWithReasoningReplay(
+      {
+        id: 'a1',
+        role: 'assistant',
+        parentId: null,
+        content: '',
+        blocks: [
+          { type: 'thinking', content: 'kimi 思考', providerId: 'kimi' },
+          {
+            type: 'tool',
+            toolCallId: 'tc',
+            toolName: 'bash',
+            arguments: {},
+            status: 'success',
+            result: 'done'
+          }
+        ],
+        toolCalls: [{ id: 'tc', name: 'bash', arguments: '{}', result: 'done' }],
+        timestamp: 1
+      },
+      'tool-call-history',
+      'deepseek'
+    )
+    expect(projected[0].reasoningContent).toBeUndefined()
   })
 
   it('AgentLoop + restoreOrInjectHistory(deepseek) 与 buildConversationContext 一致', () => {

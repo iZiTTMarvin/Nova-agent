@@ -28,6 +28,8 @@ type CacheBreakReason =
   | 'prefix_diff_detected'
   | 'significant_cache_read_drop'
   | 'prompt_cache_key_unsupported'
+  | 'reasoning_content_unsupported'
+  | 'clear_thinking_unsupported'
 
 /** epoch 切换原因 */
 export type EpochReason =

@@ -65,7 +65,7 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     id: 'glm',
     marker: 'none',
     promptCacheKey: 'never',
-    reasoningReplay: 'none',
+    reasoningReplay: 'all-history',
     idlePolicy: 'provider-managed'
   },
   minimax: {
@@ -99,6 +99,7 @@ const OFFICIAL_HOST_PROFILES: Array<{ host: string; id: CacheProfileId }> = [
   { host: 'moonshot.cn', id: 'kimi' },
   { host: 'moonshot.ai', id: 'kimi' },
   { host: 'bigmodel.cn', id: 'glm' },
+  { host: 'z.ai', id: 'glm' },
   { host: 'minimax.chat', id: 'minimax' },
   { host: 'minimax.io', id: 'minimax' },
   { host: 'openai.com', id: 'openai' }

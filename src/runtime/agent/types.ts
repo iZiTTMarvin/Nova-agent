@@ -16,7 +16,7 @@ export type { HookEvent }
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
   | { type: 'message_start'; messageId: string }
-  | { type: 'thinking_delta'; messageId: string; delta: string }
+  | { type: 'thinking_delta'; messageId: string; delta: string; providerId?: string }
   | { type: 'text_delta'; messageId: string; delta: string }
   | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string }
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string }

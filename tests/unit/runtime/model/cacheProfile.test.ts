@@ -95,8 +95,15 @@ describe('resolveCacheProfile', () => {
       expect(resolveCacheProfile('https://api.moonshot.ai/v1', 'x').id).toBe('kimi')
     })
 
-    it('bigmodel.cn → glm', () => {
+    it('bigmodel.cn / z.ai → glm', () => {
       expect(resolveCacheProfile('https://open.bigmodel.cn/api/paas/v4', 'x').id).toBe('glm')
+      expect(resolveCacheProfile('https://api.z.ai/api/paas/v4', 'x').id).toBe('glm')
+    })
+
+    it('z.ai + 无 glm token 的 modelId → glm', () => {
+      const p = resolveCacheProfile('https://api.z.ai/api/coding/paas/v4', 'coding-plan')
+      expect(p.id).toBe('glm')
+      expect(p.reasoningReplay).toBe('all-history')
     })
 
     it('minimax 域名 → minimax', () => {
@@ -210,6 +217,10 @@ describe('resolveCacheProfile', () => {
           expect(p.marker).toBe('none')
         }
       }
+    })
+
+    it('glm 档案 reasoningReplay 为 all-history', () => {
+      expect(getCacheProfileCatalog().glm.reasoningReplay).toBe('all-history')
     })
   })
 })

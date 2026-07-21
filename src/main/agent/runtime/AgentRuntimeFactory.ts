@@ -371,7 +371,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   )
   restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), {
     resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
-    reasoningReplay: activeCacheProfile.reasoningReplay
+    reasoningReplay: activeCacheProfile.reasoningReplay,
+    currentProviderId: activeCacheProfile.id
   })
 
   // 跨回合诊断快照：读回上一轮状态并绑定持久化回调

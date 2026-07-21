@@ -3,12 +3,13 @@
  * 通过 fetch 调用兼容 OpenAI Chat Completions API 的模型服务
  * 支持 SSE 流式响应，纯 Node.js 实现，不依赖 Electron
  */
-import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, ChatToolCall } from './types'
+import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from './types'
 import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
 import { buildReasoningParams } from './reasoningDialect'
+import { isReasoningSourceCompatible } from './reasoningSource'
 import { projectMessagesForVision } from './visionProjection'
 import { resolveCacheProfile, type CacheMarker, type CacheProfile } from './cacheProfile'
 import type { CacheStrategy } from '../../shared/config/types'
@@ -24,6 +25,9 @@ import {
   readErrorResponseBody
 } from './ModelTransport'
 
+/** 会话级可禁用的请求能力（内存态，loop 重建后重新探测） */
+type DowngradeCapability = 'prompt_cache_key' | 'reasoning_content' | 'clear_thinking'
+
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
   /**
@@ -31,6 +35,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
    * 在构造 / updateConfig / setCacheStrategy 时解析并缓存，请求路径不重算。
    */
   private cacheProfile: CacheProfile
+  /** 网关不兼容后禁用的能力；仅内存态，不跨进程持久化 */
+  private disabledCapabilities = new Set<DowngradeCapability>()
 
   constructor(config: ModelClientConfig) {
     this.config = config
@@ -65,6 +71,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
       cacheProfile: config.cacheProfile,
       cacheStrategy: config.cacheStrategy
     })
+  }
+
+  /** 测试/诊断：当前已禁用的能力集合 */
+  getDisabledCapabilities(): ReadonlySet<DowngradeCapability> {
+    return this.disabledCapabilities
   }
 
   async *chat(
@@ -105,12 +116,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
       stream_options: { include_usage: true }
     }
 
-    // 思考强度（按 provider 方言注入；'auto'/缺省时 buildReasoningParams 返回 null，零行为变化）
-    const reasoningParams = this.config.reasoningEffort
-      ? buildReasoningParams(this.config.modelId, this.config.baseUrl, this.config.reasoningEffort)
-      : null
+    // 思考参数：GLM 在 auto 时也注入保留式思考；能力降级后再剥离 clear_thinking
+    const reasoningParams = buildReasoningParams(
+      this.config.modelId,
+      this.config.baseUrl,
+      this.config.reasoningEffort ?? 'auto'
+    )
     if (reasoningParams) {
-      Object.assign(body, reasoningParams)
+      Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams))
     }
 
     if (tools && tools.length > 0) {
@@ -125,9 +138,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
       body.tools = applyToolCacheMarker(rawTools, this.cacheMarker)
     }
 
-    // 白名单：仅 kimi/openai（promptCacheKey==='session'）且 options 有 key 时注入
+    // 白名单：仅 kimi/openai（promptCacheKey==='session'）且 options 有 key、且未禁用时注入
     const canInjectPromptCacheKey =
-      this.cacheProfile.promptCacheKey === 'session' && !!options?.promptCacheKey
+      this.cacheProfile.promptCacheKey === 'session' &&
+      !!options?.promptCacheKey &&
+      !this.disabledCapabilities.has('prompt_cache_key')
     if (canInjectPromptCacheKey) {
       body.prompt_cache_key = options!.promptCacheKey
     }
@@ -169,17 +184,17 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     if (!response.ok) {
       const text = await readErrorResponseBody(response, attempt, options?.transportTimeouts)
-      // 精确降级：仅 400 + 错误文案含 prompt_cache_key 时，剥离该字段重试一次
-      if (
-        canInjectPromptCacheKey &&
-        response.status === 400 &&
-        /prompt_cache_key/i.test(text)
-      ) {
+      const downgradeCap =
+        response.status === 400 ? detectDowngradeCapability(text, body) : null
+
+      if (downgradeCap && !this.disabledCapabilities.has(downgradeCap)) {
+        this.disabledCapabilities.add(downgradeCap)
         yield {
-          type: 'prompt_cache_key_stripped',
-          detail: 'gateway rejected prompt_cache_key; retrying once without it'
+          type: 'capability_downgrade',
+          capability: downgradeCap,
+          detail: text
         }
-        delete body.prompt_cache_key
+        applyCapabilityStripToBody(body, downgradeCap)
         try {
           const retry = await doFetch()
           response = retry.response
@@ -426,10 +441,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
    * preserveInternal=true 时仅在本地缓存标记阶段保留 internal 元数据，
    * 之后会在真正发请求前统一剥离，不污染 API 字节流。
    *
-   * reasoning_content 按 cacheProfile.reasoningReplay 白名单输出：
+   * reasoning_content 按 cacheProfile.reasoningReplay 白名单输出，并做来源门控：
    * - tool-call-history（deepseek）：仅含 tool_calls 的 assistant
-   * - all-history（kimi）：全部有 reasoningContent 的 assistant
+   * - all-history（kimi / glm）：全部有 reasoningContent 的 assistant
    * - none：绝不输出（即使 ChatMessage 上有值）
+   * - 跨档案 / 已禁用 reasoning_content：不输出
    */
   private toApiMessage(msg: ChatMessage, preserveInternal = false): Record<string, unknown> {
     const result: Record<string, unknown> = {
@@ -459,8 +475,13 @@ export class OpenAICompatibleModelClient implements ModelClient {
       result.tool_call_id = msg.toolCallId
     }
 
-    // 仅 assistant 消息可带 reasoning_content；按 profile 白名单决定是否输出
-    if (msg.role === 'assistant' && msg.reasoningContent !== undefined) {
+    // 仅 assistant 消息可带 reasoning_content；按 profile 白名单 + 来源门控决定是否输出
+    if (
+      msg.role === 'assistant' &&
+      msg.reasoningContent !== undefined &&
+      !this.disabledCapabilities.has('reasoning_content') &&
+      isReasoningSourceCompatible(msg.reasoningProviderId, this.cacheProfile.id)
+    ) {
       const replay = this.cacheProfile.reasoningReplay
       if (replay === 'all-history') {
         result.reasoning_content = msg.reasoningContent
@@ -484,5 +505,82 @@ export class OpenAICompatibleModelClient implements ModelClient {
       return msg
     }
     return rest
+  }
+
+  /** 按会话级禁用标志过滤 thinking 注入参数 */
+  private applyThinkingCapabilityFilter(
+    params: Record<string, unknown>
+  ): Record<string, unknown> {
+    if (!this.disabledCapabilities.has('clear_thinking')) return params
+    const thinking = params.thinking
+    if (!thinking || typeof thinking !== 'object') return params
+    const { clear_thinking: _c, ...restThinking } = thinking as Record<string, unknown>
+    return { ...params, thinking: restThinking }
+  }
+}
+
+/** 从 400 错误文案识别应禁用的能力（仅当请求体确实携带对应字段时） */
+function detectDowngradeCapability(
+  errorText: string,
+  body: Record<string, unknown>
+): DowngradeCapability | null {
+  if (/prompt_cache_key/i.test(errorText) && 'prompt_cache_key' in body) {
+    return 'prompt_cache_key'
+  }
+  if (/clear_thinking/i.test(errorText) && bodyHasClearThinking(body)) {
+    return 'clear_thinking'
+  }
+  if (/reasoning_content/i.test(errorText) && bodyHasReasoningContent(body)) {
+    return 'reasoning_content'
+  }
+  return null
+}
+
+function bodyHasClearThinking(body: Record<string, unknown>): boolean {
+  const thinking = body.thinking
+  return (
+    !!thinking &&
+    typeof thinking === 'object' &&
+    'clear_thinking' in (thinking as Record<string, unknown>)
+  )
+}
+
+function bodyHasReasoningContent(body: Record<string, unknown>): boolean {
+  const messages = body.messages
+  if (!Array.isArray(messages)) return false
+  return messages.some(
+    m =>
+      m &&
+      typeof m === 'object' &&
+      'reasoning_content' in (m as Record<string, unknown>)
+  )
+}
+
+/** 按能力类型就地剥离 body 中对应字段，供同请求重试 */
+function applyCapabilityStripToBody(
+  body: Record<string, unknown>,
+  capability: DowngradeCapability
+): void {
+  if (capability === 'prompt_cache_key') {
+    delete body.prompt_cache_key
+    return
+  }
+  if (capability === 'clear_thinking') {
+    const thinking = body.thinking
+    if (thinking && typeof thinking === 'object') {
+      const next = { ...(thinking as Record<string, unknown>) }
+      delete next.clear_thinking
+      body.thinking = next
+    }
+    return
+  }
+  if (capability === 'reasoning_content') {
+    const messages = body.messages
+    if (!Array.isArray(messages)) return
+    body.messages = messages.map(m => {
+      if (!m || typeof m !== 'object') return m
+      const { reasoning_content: _r, ...rest } = m as Record<string, unknown>
+      return rest
+    })
   }
 }

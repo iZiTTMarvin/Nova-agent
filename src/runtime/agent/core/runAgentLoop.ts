@@ -195,12 +195,16 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       }
 
       // ── assistant 续接（对标现状 L797-829）──
-      const { assistantContent, toolCalls, sawUsage, reasoningContent } = turnResult
+      const { assistantContent, toolCalls, sawUsage, reasoningContent, reasoningProviderId } =
+        turnResult
 
       const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent }
       if (toolCalls.length > 0) assistantMsg.toolCalls = toolCalls
       // 运行时字段：供后续模型历史回传；不进 UI / SessionMessage.content
-      if (reasoningContent) assistantMsg.reasoningContent = reasoningContent
+      if (reasoningContent) {
+        assistantMsg.reasoningContent = reasoningContent
+        if (reasoningProviderId) assistantMsg.reasoningProviderId = reasoningProviderId
+      }
       context.messages.push(assistantMsg)
 
       context.lastEstimatedTokens = estimateContextTokens(context.messages)
