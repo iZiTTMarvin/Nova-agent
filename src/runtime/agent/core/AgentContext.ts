@@ -36,6 +36,13 @@ export interface AgentContext {
   workingDir: string | null
   shellPath: string | undefined
   binDirs: string[]
+  /**
+   * 当前 runId（写者租约 / 子代理权限按 run 归属时使用）。
+   * 由 AgentTurnService 在 startRun 后注入；装配期可能为空字符串。
+   */
+  runId: string | null
+  /** 工作区根，与 workingDir 同义；专门给写者租约按工作区分桶用。 */
+  workspaceRoot: string | null
   /** 会话信息 */
   sessionStore: SessionStore | null
   sessionId: string | null
@@ -71,6 +78,8 @@ export function createAgentContext(initial: {
     workingDir: null,
     shellPath: undefined,
     binDirs: [],
+    runId: null,
+    workspaceRoot: null,
     sessionStore: null,
     sessionId: null,
     artifactStore: null,

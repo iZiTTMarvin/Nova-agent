@@ -301,7 +301,7 @@ describe('editTool 集成测试', () => {
     expect(content).toBe('AAA\nBBB\nccc\n')
   })
 
-  it('外部修改后编辑被拒绝', async () => {
+  it('外部修改后编辑被拒绝（结构化 WORKSPACE_CONFLICT 结果）', async () => {
     writeFileSync(join(TMP, 'external.ts'), 'original\n')
     await readTool.execute({ path: 'external.ts' }, createContext())
 
@@ -315,6 +315,8 @@ describe('editTool 集成测试', () => {
     )
     expect(result.success).toBe(false)
     expect(result.error).toContain('modified externally')
+    // P2.3：外部修改升级为结构化冲突结果，output 带 WORKSPACE_CONFLICT 前缀供 agent 重规划
+    expect(result.output.startsWith('WORKSPACE_CONFLICT')).toBe(true)
   })
 
   it('mtime 变化但内容未变时允许编辑（云同步假阳性）', async () => {

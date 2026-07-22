@@ -33,6 +33,13 @@ export interface ToolContext {
   /** 工作区根目录的绝对路径，所有路径操作不得越界 */
   workingDir: string
   /**
+   * 工作区根（与 workingDir 同义；专门用于写者租约按工作区分桶）。
+   * 写工具用它向 writer lease 登记；只读工具不消费。
+   */
+  workspaceRoot?: string
+  /** 当前 runId；写者租约按 run 归属，子代理权限按 run 路由都依赖它。 */
+  runId?: string
+  /**
    * 文件读取状态（read state）：记录"模型已 read 过哪些文件以及当时的内容/mtime"。
    * edit / write 工具的"先读后改"校验依赖此状态。
    *

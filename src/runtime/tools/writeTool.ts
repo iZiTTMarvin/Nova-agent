@@ -12,6 +12,7 @@ import { withFileMutationQueue } from './file-mutation-queue'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { assertSideEffectAllowed } from './types'
 import { resolveToolArg } from './toolArgResolver'
+import { acquireWriterLeaseOrConflict } from '../workspace'
 
 /**
  * Pluggable operations for the write tool.
@@ -87,6 +88,13 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
       return withFileMutationQueue(absolutePath, async () => {
         // 副作用入口：abort + generation fencing（假终止后禁止写盘）
         assertSideEffectAllowed(context, 'write')
+
+        // 写者租约：同一工作区同时最多一个 run 写入。拿不到返回结构化冲突，让 agent 重规划。
+        const conflict = await acquireWriterLeaseOrConflict({
+          runId: context.runId,
+          workspaceRoot: context.workspaceRoot ?? context.workingDir
+        })
+        if (conflict) return conflict
 
         // 推迟拒绝：不在 abort 事件监听器中拒绝，避免在文件系统操作
         // 仍在进行时释放变更队列。在每个 await 后检查 signal.aborted

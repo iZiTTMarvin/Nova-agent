@@ -33,6 +33,15 @@ export interface ChatOptions {
    * wire_snapshot 诊断应标记为预期 miss，避免污染命中率解读。
    */
   expectedCacheMiss?: boolean
+  /**
+   * 本轮已禁用的请求能力集合（按 turn 隔离）。
+   *
+   * 并发模型下不同 turn 共享同一个底层 client 实例，但各自的能力降级状态必须隔离：
+   * turn A 触发的降级（如网关拒绝 prompt_cache_key）不应污染 turn B 的请求体。
+   * 由 ModelClientPool 为每个 turn 持有一份 Set 并在此透传；
+   * 未提供时回退到 client 实例态（单 turn / 测试场景）。
+   */
+  capabilityDisabled?: Set<string>
 }
 
 export interface ModelClient {

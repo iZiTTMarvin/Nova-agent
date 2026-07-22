@@ -571,6 +571,16 @@ export class AgentLoop implements IdleCompactionTarget {
     // 发现旧锚点的 Working directory ≠ 新 dir，自动触发重新拼接。
   }
 
+  /** 绑定当前 runId；写者租约 / 子代理权限按 run 归属时由工具读取。 */
+  setRunRef(runId: string): void {
+    this.ctx.runId = runId
+  }
+
+  /** 绑定工作区根（与 workingDir 同义，专门给写者租约按工作区分桶）。 */
+  setWorkspaceRoot(root: string): void {
+    this.ctx.workspaceRoot = root
+  }
+
   /**
    * 设置 bash 工具的执行环境（可选）。
    *
@@ -972,9 +982,11 @@ export class AgentLoop implements IdleCompactionTarget {
       executeToolBatch({
         toolCalls,
         messageId: mid,
-        toolRegistry: this.toolRegistry,
-        workingDir: this.workingDir ?? process.cwd(),
-        mode: this.mode,
+      toolRegistry: this.toolRegistry,
+      workingDir: this.workingDir ?? process.cwd(),
+      runId: this.ctx.runId ?? undefined,
+      workspaceRoot: this.ctx.workspaceRoot ?? undefined,
+      mode: this.mode,
         shellPath: this.shellPath,
         binDirs: this.binDirs,
         supportsVision: this.config.supportsVision ?? true,

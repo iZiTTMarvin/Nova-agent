@@ -53,6 +53,10 @@ export interface ToolBatchExecutionOptions {
   messageId: string
   toolRegistry: ToolRegistry | null
   workingDir: string
+  /** 当前 runId，透传给 ToolContext 供写者租约 / 子代理权限按 run 归属 */
+  runId?: string
+  /** 工作区根，透传给 ToolContext 供写者租约按工作区分桶 */
+  workspaceRoot?: string
   mode: Mode
   supportsVision: boolean
   checkpointManager: CheckpointManager | null
@@ -121,6 +125,8 @@ function parseArgs(argsStr: string): Record<string, unknown> {
 function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
   return {
     workingDir: options.workingDir,
+    ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+    ...(options.runId ? { runId: options.runId } : {}),
     readState: options.readState,
     ...(options.checkpointManager ? { checkpointManager: options.checkpointManager } : {}),
     ...(options.fileEffectRecorder ? { fileEffectRecorder: options.fileEffectRecorder } : {}),

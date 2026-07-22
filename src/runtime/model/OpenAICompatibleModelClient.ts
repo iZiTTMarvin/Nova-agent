@@ -87,6 +87,13 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 只需拼接路径后缀 /chat/completions
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
+    // 本轮禁用能力集合：优先用调用方按 turn 透传的（并发隔离），
+    // 回退到 client 实例态（网关级永久降级，单 turn / 测试场景）。
+    // 降级写入同时写两份：透传集合归该 turn 所有，实例态保留网关永久语义。
+    const requestDisabled: Set<DowngradeCapability> = options?.capabilityDisabled
+      ? new Set(options.capabilityDisabled as Iterable<DowngradeCapability>)
+      : new Set(this.disabledCapabilities)
+
     // 默认过滤 internal 消息，避免把运行时临时提示暴露给普通对话；
     // 只有像 compaction 这样的受控内部调用，才会显式放行 internal 正文。
     const selectedMessages = options?.includeInternalMessages
@@ -105,7 +112,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       modelId: this.config.modelId,
       baseUrl: this.config.baseUrl
     })
-    const apiMessages = projectedMessages.map(m => this.toApiMessage(m, true))
+    const apiMessages = projectedMessages.map(m => this.toApiMessage(m, requestDisabled, true))
     const markedMessages = applyCacheMarkers(apiMessages, this.cacheMarker)
       .map(msg => this.stripInternalMarker(msg))
 
@@ -123,7 +130,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       this.config.reasoningEffort ?? 'auto'
     )
     if (reasoningParams) {
-      Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams))
+      Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams, requestDisabled))
     }
 
     if (tools && tools.length > 0) {
@@ -142,7 +149,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const canInjectPromptCacheKey =
       this.cacheProfile.promptCacheKey === 'session' &&
       !!options?.promptCacheKey &&
-      !this.disabledCapabilities.has('prompt_cache_key')
+      !requestDisabled.has('prompt_cache_key')
     if (canInjectPromptCacheKey) {
       body.prompt_cache_key = options!.promptCacheKey
     }
@@ -188,8 +195,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
       const downgradeCap =
         response.status === 400 ? detectDowngradeCapability(text, body) : null
 
-      if (downgradeCap && !this.disabledCapabilities.has(downgradeCap)) {
-        this.disabledCapabilities.add(downgradeCap)
+      if (downgradeCap && !requestDisabled.has(downgradeCap)) {
+        // 写入本轮请求集合（归该 turn 所有，并发隔离）。
+        // 实例态只在「调用方未提供 per-request 集合」时才写，
+        // 否则会把本 turn 的降级泄漏到共享同一 client 的其它 turn。
+        requestDisabled.add(downgradeCap)
+        if (!options?.capabilityDisabled) {
+          this.disabledCapabilities.add(downgradeCap)
+        }
         yield {
           type: 'capability_downgrade',
           capability: downgradeCap,
@@ -448,7 +461,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
    * - none：绝不输出（即使 ChatMessage 上有值）
    * - 跨档案 / 已禁用 reasoning_content：不输出
    */
-  private toApiMessage(msg: ChatMessage, preserveInternal = false): Record<string, unknown> {
+  private toApiMessage(
+    msg: ChatMessage,
+    disabled: Set<DowngradeCapability>,
+    preserveInternal = false
+  ): Record<string, unknown> {
     const result: Record<string, unknown> = {
       role: msg.role,
       content: msg.content
@@ -480,7 +497,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (
       msg.role === 'assistant' &&
       msg.reasoningContent !== undefined &&
-      !this.disabledCapabilities.has('reasoning_content') &&
+      !disabled.has('reasoning_content') &&
       isReasoningSourceCompatible(msg.reasoningProviderId, this.cacheProfile.id)
     ) {
       const replay = this.cacheProfile.reasoningReplay
@@ -508,11 +525,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
     return rest
   }
 
-  /** 按会话级禁用标志过滤 thinking 注入参数 */
+  /** 按本轮禁用标志过滤 thinking 注入参数 */
   private applyThinkingCapabilityFilter(
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    disabled: Set<DowngradeCapability>
   ): Record<string, unknown> {
-    if (!this.disabledCapabilities.has('clear_thinking')) return params
+    if (!disabled.has('clear_thinking')) return params
     const thinking = params.thinking
     if (!thinking || typeof thinking !== 'object') return params
     const { clear_thinking: _c, ...restThinking } = thinking as Record<string, unknown>

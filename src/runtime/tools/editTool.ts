@@ -14,6 +14,7 @@ import { assertSideEffectAllowed } from './types'
 import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
 import { lineDiff, renderLineDiff, computeFirstChangedLine, generateUnifiedPatch, extractSnippet } from './editDiff'
+import { acquireWriterLeaseOrConflict, WORKSPACE_CONFLICT_PREFIX } from '../workspace'
 
 // ── EditOperations ────────────────────────────────────────────────────────────
 
@@ -593,8 +594,11 @@ async function safetyGate(
 
   if (stat.mtimeMs > lastRead.timestamp) {
     if (currentNormalizedContent !== lastRead.content) {
+      // 文件在 read 之后被外部修改：不再以硬错误中断 turn，
+      // 而是抛出带冲突前缀的错误，由 editTool 捕获后转为结构化 WORKSPACE_CONFLICT 结果，
+      // 让 agent 重新读取并重新规划（保持「禁止盲目覆盖」的安全语义）。
       throw new Error(
-        `File "${path}" was modified externally after your last read. Read it again before editing.`
+        `${WORKSPACE_CONFLICT_PREFIX}: File "${path}" was modified externally after your last read. Read it again before editing.`
       )
     }
   }
@@ -755,6 +759,14 @@ export const editTool: ToolExecutor = {
         assertSideEffectAllowed(context, 'edit')
         throwIfAborted()
 
+        // 写者租约：同一工作区同时最多一个 run 写入。拿不到返回结构化冲突，让 agent 重规划。
+        const conflict = await acquireWriterLeaseOrConflict({
+          runId: context.runId,
+          workspaceRoot: context.workspaceRoot ?? context.workingDir
+        })
+        if (conflict) return conflict
+        throwIfAborted()
+
         await ops.access(absolutePath)
         throwIfAborted()
 
@@ -814,6 +826,12 @@ export const editTool: ToolExecutor = {
       })
     } catch (err) {
       const msg = (err as Error).message
+      // safetyGate 抛出的「外部修改」冲突带 WORKSPACE_CONFLICT 前缀：
+      // 转为结构化冲突结果（output 也带前缀），让 agent 据此重新读取并重新规划，
+      // 而不是当作普通失败硬终止 turn。
+      if (msg.startsWith(WORKSPACE_CONFLICT_PREFIX)) {
+        return { success: false, output: msg, error: msg }
+      }
       return { success: false, output: '', error: msg }
     }
   }

@@ -56,6 +56,14 @@ export class ModelClientPool implements ModelClient {
   private readonly slots: ProviderSlot[] = []
   /** 当前 active 的 slot 索引 */
   private activeIndex = 0
+  /**
+   * 本轮（pool 生命周期）已禁用的能力集合。
+   *
+   * pool 每个 turn 新建一次，故该集合天然按 turn 隔离：并发 turn 各自的 pool 互不影响。
+   * 通过 ChatOptions.capabilityDisabled 透传给底层 client，使其请求体计算读取该集合，
+   * 而非共享的 client 实例态。
+   */
+  private readonly disabledCapabilities = new Set<string>()
 
   constructor(opts: ModelClientPoolOptions) {
     this.slots.push({ config: opts.primaryConfig, client: opts.primary, isPrimary: true })
@@ -66,9 +74,13 @@ export class ModelClientPool implements ModelClient {
     }
   }
 
-  /** 实现 ModelClient.chat：委托给当前 active client */
+  /** 实现 ModelClient.chat：委托给当前 active client，透传本轮禁用能力集合 */
   chat(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): AsyncIterable<ChatEvent> {
-    return this.slots[this.activeIndex].client.chat(messages, tools, options)
+    const merged: ChatOptions = {
+      ...(options ?? {}),
+      capabilityDisabled: this.disabledCapabilities
+    }
+    return this.slots[this.activeIndex].client.chat(messages, tools, merged)
   }
 
   /** 实现 ModelClient.updateConfig：只更新主模型配置（fallback 配置在创建时固定） */

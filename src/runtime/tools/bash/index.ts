@@ -22,6 +22,8 @@ import { renderBashDescription } from './prompt'
 import { OutputSink } from '../OutputSink'
 import type { BashOperations, BashToolParams } from './types'
 import { resolveToolArg } from '../toolArgResolver'
+import { isDestructiveBashCommand } from './classifyCommand'
+import { acquireWriterLeaseOrConflict } from '../../workspace'
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -112,6 +114,16 @@ export const bashTool: ToolExecutor = {
 
     const shellConfig = getShellConfig(context.shellPath)
     const env = getShellEnv(context.binDirs ?? [])
+
+    // 破坏性命令（写文件 / 删文件 / 改 git 等）需获取写者租约，
+    // 避免并发 run 同时改同一工作区；纯读命令不获取，保持并发友好。
+    if (isDestructiveBashCommand(command)) {
+      const conflict = await acquireWriterLeaseOrConflict({
+        runId: context.runId,
+        workspaceRoot: context.workspaceRoot ?? context.workingDir
+      })
+      if (conflict) return conflict
+    }
 
     // 拍快照（如果存在 checkpointManager）
     const beforeSnapshot = context.checkpointManager
