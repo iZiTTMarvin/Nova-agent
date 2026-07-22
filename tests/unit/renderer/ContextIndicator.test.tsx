@@ -68,7 +68,7 @@ describe('ContextIndicator', () => {
     vi.useRealTimers()
   })
 
-  it('hover 后在弹层内展示本会话用量明细', () => {
+  it('hover 后在弹层内展示平均缓存命中率', () => {
     let renderer: TestRenderer.ReactTestRenderer | null = null
     act(() => {
       renderer = TestRenderer.create(React.createElement(ContextIndicator))
@@ -80,22 +80,13 @@ describe('ContextIndicator', () => {
       vi.advanceTimersByTime(100)
     })
 
-    expect(renderer!.root.findByProps({ className: 'context-usage__title' }).children).toEqual(['本会话用量'])
-    expect(renderer!.root.findByProps({ className: 'context-usage__summary' }).children.join('')).toContain('39.0%')
-
-    const labels = renderer!.root
-      .findAllByProps({ className: 'context-usage__label' })
-      .map(node => node.children.join(''))
-    expect(labels).toEqual([
-      '本轮命中率',
-      '会话命中率',
-      '估算节省输入',
-      '输入',
-      '输出',
-      '缓存命中',
-      '缓存写入',
-      '总消耗'
+    expect(renderer!.root.findByProps({ className: 'context-usage__title' }).children).toEqual([
+      '平均缓存命中率'
     ])
+    expect(renderer!.root.findByProps({ className: 'context-usage__summary' }).children.join('')).toContain(
+      '39.0%'
+    )
+    expect(renderer!.root.findAllByProps({ className: 'context-usage__label' })).toHaveLength(0)
 
     act(() => {
       renderer?.unmount()
