@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useChatStore } from '../stores/useChatStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import type { Session } from '../../shared/session/types'
@@ -26,7 +26,23 @@ export const Sidebar: React.FC = () => {
   const selectProject = useSettingsStore(state => state.selectProject)
   const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
   const waitingSessions = useRunStore(state => state.waitingSessions)
+  const snapshotsByRunId = useRunStore(state => state.snapshotsByRunId)
   const cancelExecution = useAgentStore(state => state.cancelExecution)
+
+  /**
+   * 后台运行中会话徽标：从 snapshotsByRunId 派生，取所有 status==='running' 的非终态 run，
+   * 按 sessionId 聚合（每个会话只显示一个运行中徽标）。
+   * 焦点会话自身的运行态由 ChatPanel 的停止按钮表达，不在此徽标范围。
+   */
+  const runningSessions = useMemo(() => {
+    const map = new Map<string, { sessionId: string; runId: string }>()
+    for (const snap of Object.values(snapshotsByRunId)) {
+      if (snap.status === 'running' && snap.sessionId !== currentSessionId) {
+        map.set(snap.sessionId, { sessionId: snap.sessionId, runId: snap.runId })
+      }
+    }
+    return [...map.values()]
+  }, [snapshotsByRunId, currentSessionId])
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -219,6 +235,8 @@ export const Sidebar: React.FC = () => {
                           const displayTitle = getDisplayTitle(session)
                           const waitingBadge = waitingSessions.find(w => w.sessionId === session.id)
                           const showWaiting = !!waitingBadge && !isActive
+                          const runningBadge = runningSessions.find(r => r.sessionId === session.id)
+                          const showRunning = !!runningBadge && !isActive
 
                           return (
                             <div 
@@ -264,6 +282,28 @@ export const Sidebar: React.FC = () => {
                                       onClick={(event) => {
                                         event.stopPropagation()
                                         void cancelExecution(waitingBadge?.runId)
+                                      }}
+                                    >
+                                      停止
+                                    </button>
+                                  </div>
+                                )}
+                                {showRunning && (
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1"
+                                      title="后台运行中"
+                                    >
+                                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                                      运行中
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
+                                      title="停止此会话的后台运行"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        void cancelExecution(runningBadge?.runId)
                                       }}
                                     >
                                       停止

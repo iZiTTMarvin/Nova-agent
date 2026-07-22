@@ -51,22 +51,22 @@ export function forwardEventToRenderer(
 
   switch (event.type) {
     case 'message_start':
-      webContents.send('agent:message-start', { messageId: event.messageId })
+      webContents.send('agent:message-start', { messageId: event.messageId, sessionId: event.sessionId })
       break
     case 'thinking_delta':
-      pushMainThinkingDelta(mainWindow, event.messageId, event.delta)
+      pushMainThinkingDelta(mainWindow, event.messageId, event.delta, event.sessionId)
       break
     case 'text_delta':
-      pushMainTextDelta(mainWindow, event.messageId, event.delta)
+      pushMainTextDelta(mainWindow, event.messageId, event.delta, event.sessionId)
       break
     case 'tool_call_start':
-      webContents.send('agent:tool-call-start', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName })
+      webContents.send('agent:tool-call-start', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, sessionId: event.sessionId })
       break
     case 'tool_call_delta':
-      webContents.send('agent:tool-call-delta', { messageId: event.messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta })
+      webContents.send('agent:tool-call-delta', { messageId: event.messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta, sessionId: event.sessionId })
       break
     case 'tool_call':
-      webContents.send('agent:tool-call', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args })
+      webContents.send('agent:tool-call', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args, sessionId: event.sessionId })
       break
     case 'tool_result':
       webContents.send('agent:tool-result', {
@@ -74,6 +74,7 @@ export function forwardEventToRenderer(
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         result: event.result,
+        sessionId: event.sessionId,
         ...(event.artifactId ? { artifactId: event.artifactId } : {}),
         ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
       })
@@ -87,7 +88,8 @@ export function forwardEventToRenderer(
         riskLevel: event.riskLevel,
         reason: event.reason,
         commands: event.commands,
-        toolCallIds: event.toolCallIds
+        toolCallIds: event.toolCallIds,
+        sessionId: event.sessionId
       })
       break
     case 'diff_update':
@@ -95,23 +97,26 @@ export function forwardEventToRenderer(
         messageId: event.messageId,
         phase: event.phase,
         diffs: event.diffs,
-        reviews: event.reviews
+        reviews: event.reviews,
+        sessionId: event.sessionId
       })
       break
     case 'verification_result':
-      webContents.send('agent:verification-result', { messageId: event.messageId, result: event.result })
+      webContents.send('agent:verification-result', { messageId: event.messageId, result: event.result, sessionId: event.sessionId })
       break
     case 'verification_permission_request':
       webContents.send('agent:verification-permission-request', {
         messageId: event.messageId,
         requestId: event.requestId,
-        command: event.command
+        command: event.command,
+        sessionId: event.sessionId
       })
       break
     case 'verification_permission_cleared':
       webContents.send('agent:verification-permission-cleared', {
         messageId: event.messageId,
-        requestId: event.requestId
+        requestId: event.requestId,
+        sessionId: event.sessionId
       })
       break
     case 'todos_updated':
@@ -141,7 +146,8 @@ export function forwardEventToRenderer(
       webContents.send('agent:usage', {
         messageId: event.messageId,
         usage: event.usage,
-        cacheProfileId: event.cacheProfileId
+        cacheProfileId: event.cacheProfileId,
+        sessionId: event.sessionId
       })
       break
     case 'context_breakdown':
@@ -155,29 +161,32 @@ export function forwardEventToRenderer(
       })
       break
     case 'cache_diagnostic':
-      webContents.send('agent:cache-diagnostic', { messageId: event.messageId, diagnostic: event.diagnostic })
+      webContents.send('agent:cache-diagnostic', { messageId: event.messageId, diagnostic: event.diagnostic, sessionId: event.sessionId })
       break
     case 'error':
-      webContents.send('agent:error', { messageId: event.messageId, error: event.error })
+      webContents.send('agent:error', { messageId: event.messageId, error: event.error, sessionId: event.sessionId })
       break
     case 'hook_error':
       webContents.send('agent:hook-error', {
         messageId: event.messageId,
         hookEvent: event.hookEvent,
-        error: event.error
+        error: event.error,
+        sessionId: event.sessionId
       })
       break
     case 'recovery_hint':
       webContents.send('agent:recovery-hint', {
         messageId: event.messageId,
         hint: event.hint,
-        attempt: event.attempt
+        attempt: event.attempt,
+        sessionId: event.sessionId
       })
       break
     case 'recovery_state':
       webContents.send('agent:recovery-state', {
         messageId: event.messageId,
-        state: toRendererRecoveryState(event.state)
+        state: toRendererRecoveryState(event.state),
+        sessionId: event.sessionId
       })
       break
     case 'model_switched':
@@ -185,19 +194,22 @@ export function forwardEventToRenderer(
         messageId: event.messageId,
         modelId: event.modelId,
         fallbackIndex: event.fallbackIndex,
-        reason: event.reason
+        reason: event.reason,
+        sessionId: event.sessionId
       })
       break
     case 'attempt_failed':
       webContents.send('agent:attempt-failed', {
         messageId: event.messageId,
         attemptId: event.attemptId,
-        error: event.error
+        error: event.error,
+        sessionId: event.sessionId
       })
       break
     case 'message_end':
       webContents.send('agent:message-end', {
         messageId: event.messageId,
+        sessionId: event.sessionId,
         ...(event.interrupted ? { interrupted: true } : {})
       })
       break

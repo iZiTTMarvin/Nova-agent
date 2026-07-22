@@ -131,7 +131,6 @@ export const ChatPanel: React.FC = () => {
   const interruptedAction = useRunStore(state => state.interruptedAction)
   const clearInterrupted = useRunStore(state => state.clearInterrupted)
   const interruptedSteps = useRunStore(state => state.interruptedSteps)
-  const mainTurnSessionId = useAgentStore(state => state.mainTurnSessionId)
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
   const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
@@ -149,14 +148,6 @@ export const ChatPanel: React.FC = () => {
     !!pendingVerificationRequest ||
     (!!pendingComposeAskUser && composeBelongsToCurrent)
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
-
-  // 跨会话运行提示：他会话在跑，或本会话失忆（切走再切回 isGenerating 未恢复）
-  const showCrossSessionTurnBanner =
-    !!mainTurnSessionId &&
-    !!currentSessionId &&
-    (mainTurnSessionId !== currentSessionId || !isGenerating)
-  const crossSessionTurnIsOther =
-    !!mainTurnSessionId && mainTurnSessionId !== currentSessionId
 
   // 新轮发起（isGenerating false→true）时清 turnTouched，避免 dock 秒弹上一轮残留 todo
   const prevGeneratingRef = useRef(isGenerating)
@@ -436,11 +427,9 @@ export const ChatPanel: React.FC = () => {
 
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
+    // 并发模型：仅拦截「当前会话」仍在跑的情况（isGenerating 已按 runStatus 派生）。
+    // 其它会话在后台跑不再拦截本会话发送。
     if (isGenerating || sendInFlight) return
-    // 另一会话仍有主进程轮次：友好拦截，避免裸 IPC 错误
-    if (mainTurnSessionId && currentSessionId && mainTurnSessionId !== currentSessionId) {
-      return
-    }
     if (!modelConfig) {
       alert("请先在设置中配置 LLM 服务商与模型！")
       useSettingsStore.getState().openLlmSettings()
@@ -793,24 +782,6 @@ export const ChatPanel: React.FC = () => {
                 />
               </svg>
             </button>
-          )}
-
-          {/* 跨会话 / 失忆轮次提示：提供停止入口，避免裸 IPC 拒发 */}
-          {showCrossSessionTurnBanner && (
-            <div className="chat-cross-turn-notice" role="status">
-              <span className="chat-cross-turn-notice__text">
-                {crossSessionTurnIsOther
-                  ? '另一个会话正在运行任务'
-                  : '当前会话仍有任务在后台运行'}
-              </span>
-              <button
-                type="button"
-                className="chat-cross-turn-notice__stop"
-                onClick={() => void cancelExecution()}
-              >
-                {cancelling ? '正在停止' : '停止'}
-              </button>
-            </div>
           )}
 
           {/* 取消 grace 超时：部分任务未退出 + 强制终止 */}

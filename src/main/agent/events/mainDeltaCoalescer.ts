@@ -12,16 +12,18 @@ const COALESCE_MS = 16
 interface MessageDeltaBucket {
   thinking: string
   text: string
+  /** 该消息归属的会话 id（随首条 delta 记录，flush 时透出，供 renderer 区分焦点/后台会话） */
+  sessionId?: string
 }
 
 let buckets = new Map<string, MessageDeltaBucket>()
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let pendingWindow: BrowserWindow | null = null
 
-function getBucket(messageId: string): MessageDeltaBucket {
+function getBucket(messageId: string, sessionId?: string): MessageDeltaBucket {
   let bucket = buckets.get(messageId)
   if (!bucket) {
-    bucket = { thinking: '', text: '' }
+    bucket = { thinking: '', text: '', sessionId }
     buckets.set(messageId, bucket)
   }
   return bucket
@@ -42,10 +44,10 @@ function sendCoalescedDeltas(win: BrowserWindow): void {
   const { webContents } = win
   for (const [messageId, bucket] of buckets) {
     if (bucket.thinking) {
-      webContents.send('agent:thinking-delta', { messageId, delta: bucket.thinking })
+      webContents.send('agent:thinking-delta', { messageId, delta: bucket.thinking, sessionId: bucket.sessionId })
     }
     if (bucket.text) {
-      webContents.send('agent:text-delta', { messageId, delta: bucket.text })
+      webContents.send('agent:text-delta', { messageId, delta: bucket.text, sessionId: bucket.sessionId })
     }
   }
   buckets.clear()
@@ -82,20 +84,22 @@ export function flushMainDeltaCoalescer(win: BrowserWindow | null): void {
 export function pushMainThinkingDelta(
   win: BrowserWindow | null,
   messageId: string,
-  delta: string
+  delta: string,
+  sessionId?: string
 ): void {
   if (!delta || !canSendToWindow(win)) return
-  getBucket(messageId).thinking += delta
+  getBucket(messageId, sessionId).thinking += delta
   scheduleFlush(win)
 }
 
 export function pushMainTextDelta(
   win: BrowserWindow | null,
   messageId: string,
-  delta: string
+  delta: string,
+  sessionId?: string
 ): void {
   if (!delta || !canSendToWindow(win)) return
-  getBucket(messageId).text += delta
+  getBucket(messageId, sessionId).text += delta
   scheduleFlush(win)
 }
 

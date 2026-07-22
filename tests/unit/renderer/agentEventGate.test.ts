@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { shouldHandleAgentEvent } from '../../../src/renderer/lib/agentEventGate'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { shouldHandleAgentEvent, gateAgentEvent } from '../../../src/renderer/lib/agentEventGate'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 
 describe('agentEventGate', () => {
@@ -38,5 +38,25 @@ describe('agentEventGate', () => {
     expect(useChatStore.getState().isGenerating).toBe(false)
     // 排队消息不被 drain
     expect(useChatStore.getState().pendingUserMessages).toHaveLength(1)
+  })
+
+  it('事件自带 sessionId 等于当前会话 → 处理', () => {
+    useChatStore.setState({ currentSessionId: 'focus', activeAgentSessionId: null })
+    expect(shouldHandleAgentEvent('text-delta', 'focus')).toBe(true)
+  })
+
+  it('事件自带 sessionId 不等于当前会话 → 不处理（后台会话不进当前视图）', () => {
+    useChatStore.setState({ currentSessionId: 'focus', activeAgentSessionId: null })
+    expect(shouldHandleAgentEvent('text-delta', 'other')).toBe(false)
+  })
+
+  it('gateAgentEvent 按 payload.sessionId 路由', () => {
+    useChatStore.setState({ currentSessionId: 'focus', activeAgentSessionId: null })
+    const handler = vi.fn()
+    const gated = gateAgentEvent('text-delta', handler)
+    gated({ sessionId: 'other', delta: 'x' })
+    expect(handler).not.toHaveBeenCalled()
+    gated({ sessionId: 'focus', delta: 'y' })
+    expect(handler).toHaveBeenCalledTimes(1)
   })
 })

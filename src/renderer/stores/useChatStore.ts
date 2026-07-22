@@ -21,6 +21,7 @@ import type {
   Mode,
   PermissionDecision
 } from '../../shared/session/types'
+import type { RunStatus } from '../../shared/run/types'
 import { SESSION_HISTORY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { appendTerminalErrorToBlocks } from '../../shared/session/terminalErrorBlocks'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
@@ -32,6 +33,7 @@ import { stripTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { stripMinimaxArtifacts } from '../../shared/stream/stripMinimaxArtifacts'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
+import { useRunStore } from './useRunStore'
 import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 import type {
   ExtendedMessage,
@@ -42,6 +44,16 @@ import type {
   RendererToolBlock,
   SessionMessagePayload
 } from './types'
+
+/** run 是否处于终态（切会话派生 isGenerating 时使用，与 useRunStore 口径一致） */
+function isTerminalRunStatusLocal(status: RunStatus): boolean {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'interrupted'
+  )
+}
 
 // ── 内部辅助函数（与 useAppStore 旧实现行为完全一致） ─────────────────
 
@@ -1814,10 +1826,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       tier1BranchContext: sessionChanged ? null : next.tier1BranchContext
     }
 
-    // 会话切换：重置生成态与排队队列，避免旧会话 message_end drain 到新会话
+    // 会话切换：重置生成态与排队队列，避免旧会话 message_end drain 到新会话。
+    // 注意：并发模型下后台会话可能仍在跑，切走/切回不能粗暴清掉它的运行态。
+    // isGenerating 改为按目标会话的 run 状态派生：目标会话有非终态 run 则视为仍在生成。
     if (sessionChanged) {
-      patch.isGenerating = false
-      patch.currentGeneratingMessageId = null
+      const targetRunId = next.currentSessionId
+        ? useRunStore.getState().activeRunIdBySessionId[next.currentSessionId]
+        : undefined
+      const targetSnap = targetRunId
+        ? useRunStore.getState().snapshotsByRunId[targetRunId]
+        : null
+      const targetRunning = !!targetSnap && !isTerminalRunStatusLocal(targetSnap.status)
+      patch.isGenerating = targetRunning
+      // 切到正在跑的后台会话时恢复其生成消息 id；否则清空
+      patch.currentGeneratingMessageId = targetRunning ? targetSnap?.messageId ?? null : null
       patch.sendInFlight = false
       patch.pendingUserMessages = []
       patch.branchForkInProgress = false

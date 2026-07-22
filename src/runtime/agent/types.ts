@@ -15,17 +15,18 @@ export type { HookEvent }
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
-  | { type: 'message_start'; messageId: string }
-  | { type: 'thinking_delta'; messageId: string; delta: string; providerId?: string }
-  | { type: 'text_delta'; messageId: string; delta: string }
-  | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string }
-  | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string }
-  | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; artifactId?: string; truncationMeta?: ToolTruncationMeta }
-  | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[] }
+  | { type: 'message_start'; messageId: string; sessionId?: string }
+  | { type: 'thinking_delta'; messageId: string; delta: string; providerId?: string; sessionId?: string }
+  | { type: 'text_delta'; messageId: string; delta: string; sessionId?: string }
+  | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string; sessionId?: string }
+  | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string; sessionId?: string }
+  | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown>; sessionId?: string }
+  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string }
+  | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string }
   | {
       type: 'diff_update'
       messageId: string
+      sessionId?: string
       /**
        * live：工具执行完后实时发出的占位信号，只携带文件列表和状态，不含 hunks；
        *       前端用于点亮 loading skeleton，不应渲染 +X -Y 统计。
@@ -36,10 +37,10 @@ export type AgentEvent =
       diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }>
       reviews: Record<string, DiffReviewStatus>
     }
-  | { type: 'verification_permission_request'; messageId: string; requestId: string; command: string }
-  | { type: 'verification_permission_cleared'; messageId: string; requestId: string }
-  | { type: 'verification_result'; messageId: string; result: string }
-  | { type: 'usage'; messageId: string; usage: NormalizedUsage; cacheProfileId: string }
+  | { type: 'verification_permission_request'; messageId: string; requestId: string; command: string; sessionId?: string }
+  | { type: 'verification_permission_cleared'; messageId: string; requestId: string; sessionId?: string }
+  | { type: 'verification_result'; messageId: string; result: string; sessionId?: string }
+  | { type: 'usage'; messageId: string; usage: NormalizedUsage; cacheProfileId: string; sessionId?: string }
   | {
       type: 'context_breakdown'
       sessionId: string
@@ -58,20 +59,21 @@ export type AgentEvent =
       /** 计算时使用的上下文窗口上限(覆盖 store 默认值,例如加载会话时直接计算) */
       contextLimit?: number
     }
-  | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult }
-  | { type: 'error'; messageId: string; error: string }
-  | { type: 'hook_error'; messageId: string; hookEvent: HookEvent; error: string }
-  | { type: 'recovery_hint'; messageId: string; hint: string; attempt: number }
-  | { type: 'recovery_state'; messageId: string; state: RecoveryState }
-  | { type: 'model_switched'; messageId: string; modelId: string; fallbackIndex: number; reason: string }
+  | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult; sessionId?: string }
+  | { type: 'error'; messageId: string; error: string; sessionId?: string }
+  | { type: 'hook_error'; messageId: string; hookEvent: HookEvent; error: string; sessionId?: string }
+  | { type: 'recovery_hint'; messageId: string; hint: string; attempt: number; sessionId?: string }
+  | { type: 'recovery_state'; messageId: string; state: RecoveryState; sessionId?: string }
+  | { type: 'model_switched'; messageId: string; modelId: string; fallbackIndex: number; reason: string; sessionId?: string }
   /**
    * 某次模型 attempt 失败（将重试或切 fallback）。
    * Renderer / activeStreams 应丢弃该 attempt 的临时流式块，避免与下一次 attempt 文本重复。
    */
-  | { type: 'attempt_failed'; messageId: string; attemptId: string; error: string }
+  | { type: 'attempt_failed'; messageId: string; attemptId: string; error: string; sessionId?: string }
   | {
       type: 'message_end'
       messageId: string
+      sessionId?: string
       /**
        * Phase 3：true 表示本轮 message-end 是由 cancel 触发的（用户主动中断），
        * renderer 据此把消息标记为 interrupted 状态，避免后续操作误判。
