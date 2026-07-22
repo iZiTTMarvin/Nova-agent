@@ -20,6 +20,7 @@ import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { MemoryService } from '../../../runtime/memory/MemoryService'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
+import type { SubAgentPermissionBridge } from '../../../runtime/tools/subAgentBridge'
 
 export interface BuiltinToolRegistrationDeps {
   modelClient: ModelClient
@@ -32,6 +33,11 @@ export interface BuiltinToolRegistrationDeps {
   getAgentLoop: () => AgentLoop | null
   getMemoryService: () => MemoryService | null
   loadSettings: () => NovaSettings
+  /**
+   * 惰性获取本 run 的子代理权限桥接（按当前 runId 解析）。
+   * 装配时 runId 可能尚未分配，故延迟到执行期读取。
+   */
+  getPermissionBridge?: () => SubAgentPermissionBridge
 }
 
 /**
@@ -80,7 +86,8 @@ export function registerBuiltinTools(
       parentEventBus: deps.eventBus,
       contextWindow: deps.contextWindow,
       supportsVision: deps.supportsVision,
-      resolveTool: (name) => toolRegistry.getTool(name)
+      resolveTool: (name) => toolRegistry.getTool(name),
+      ...(deps.getPermissionBridge ? { getPermissionBridge: deps.getPermissionBridge } : {})
     })
   )
 }

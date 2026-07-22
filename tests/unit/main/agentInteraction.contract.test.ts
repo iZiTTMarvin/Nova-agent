@@ -20,6 +20,7 @@ const executionRegistry = vi.hoisted(() => ({
 }))
 
 const loopLookup = vi.hoisted(() => ({
+  // 并发改造后不再有全局 loop 兜底；保留字段仅避免老用例引用报错，不再被模块使用
   current: vi.fn(),
   byRun: vi.fn()
 }))
@@ -29,6 +30,15 @@ const subAgentBridge = vi.hoisted(() => ({
   resolve: vi.fn(() => false),
   cancelAll: vi.fn(),
   clear: vi.fn()
+}))
+
+const subAgentBridgeRegistry = vi.hoisted(() => ({
+  hasBinding: vi.fn(() => false),
+  resolve: vi.fn(() => false),
+  cancelAllForRun: vi.fn(),
+  clearAllForRun: vi.fn(),
+  release: vi.fn(),
+  getOrCreate: vi.fn(() => subAgentBridge)
 }))
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
@@ -45,12 +55,12 @@ vi.mock('../../../src/main/agent/events', () => ({
 }))
 
 vi.mock('../../../src/main/agent/turn', () => ({
-  getCurrentAgentLoop: loopLookup.current,
   getAgentLoopForRun: loopLookup.byRun
 }))
 
 vi.mock('../../../src/runtime/tools/subAgentBridge', () => ({
-  defaultSubAgentPermissionBridge: subAgentBridge
+  defaultSubAgentPermissionBridge: subAgentBridge,
+  subAgentBridgeRegistry
 }))
 
 import {
@@ -74,6 +84,8 @@ describe('AgentInteractionController 契约', () => {
     loopLookup.byRun.mockReturnValue(undefined)
     subAgentBridge.hasBinding.mockReturnValue(false)
     subAgentBridge.resolve.mockReturnValue(false)
+    subAgentBridgeRegistry.hasBinding.mockReturnValue(false)
+    subAgentBridgeRegistry.resolve.mockReturnValue(false)
     pendingAskQuestions.clear()
   })
 
@@ -364,8 +376,8 @@ describe('AgentInteractionController 契约', () => {
     executionRegistry.isCurrent.mockReturnValue(true)
     const parentLoop = { respondPermission: vi.fn(), hasPendingPermission: vi.fn(() => false) }
     loopLookup.byRun.mockReturnValue(parentLoop)
-    subAgentBridge.hasBinding.mockReturnValue(true)
-    subAgentBridge.resolve.mockReturnValue(true)
+    subAgentBridgeRegistry.hasBinding.mockReturnValue(true)
+    subAgentBridgeRegistry.resolve.mockReturnValue(true)
 
     const result = await respondPermission({
       requestId: 'sub:raw_1',
@@ -376,7 +388,7 @@ describe('AgentInteractionController 契约', () => {
     })
 
     expect(result).toEqual(durable)
-    expect(subAgentBridge.resolve).toHaveBeenCalledWith('sub:raw_1', true)
+    expect(subAgentBridgeRegistry.resolve).toHaveBeenCalledWith('sub:raw_1', true)
     expect(parentLoop.respondPermission).not.toHaveBeenCalled()
   })
 

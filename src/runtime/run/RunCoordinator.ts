@@ -314,6 +314,33 @@ export class RunCoordinator {
       .map(cloneSnapshot)
   }
 
+  /**
+   * 指定会话是否存在「占用 turn」的非终态 run。
+   *
+   * 占用 turn 的状态：模型正在推理 / 重试 / 恢复 / 取消中 / 等待用户输入。
+   * 只要该会话下存在任意一个这样的 run，就认为该会话的 turn 尚未结束，
+   * 入口锁据此拒绝同会话的新 turn（让新消息进 steering queue）。
+   * waiting_user 也算占用：用户尚未回应，该会话仍处于一轮未闭合状态。
+   */
+  hasActiveRunForSession(sessionId: string): boolean {
+    const runIds = this.sessionIndex.get(sessionId)
+    if (!runIds) return false
+    for (const runId of runIds) {
+      const snap = this.runs.get(runId)
+      if (!snap) continue
+      if (
+        snap.status === 'running' ||
+        snap.status === 'retrying' ||
+        snap.status === 'resuming' ||
+        snap.status === 'cancelling' ||
+        snap.status === 'waiting_user'
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
   // ── 状态转换 ─────────────────────────────────────────────
 
   transition(

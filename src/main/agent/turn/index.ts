@@ -1,6 +1,5 @@
 export {
   sendAgentMessage,
-  getCurrentAgentLoop,
   getAgentLoopForRun,
   ensureTerminalHooksRegistered,
   type SendAgentMessageParams,

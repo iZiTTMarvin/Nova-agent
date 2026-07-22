@@ -19,7 +19,12 @@ import type { Mode, Session, SessionDetail } from '../../shared/session'
 import type { WorkspaceState, Tier1BranchContext } from '../../shared/workspace/types'
 import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests } from '../../runtime/checkpoints/restore'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
-import { getMainReadState, isAgentTurnInProgress, getActiveTurnSessionId } from '../agent/state'
+import {
+  clearReadStateForSession,
+  deleteReadStateForSession,
+  isAgentTurnInProgress,
+  getActiveTurnSessionId
+} from '../agent/state'
 import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
 import { calculateContextBreakdown } from '../../runtime/agent'
@@ -216,7 +221,7 @@ export class WorkspaceService {
 
     // 创建新会话
     const data = store.create(selectedPath, this.state.currentMode)
-    getMainReadState().clear()
+    clearReadStateForSession(data.id)
 
     this.state = {
       currentSessionId: data.id,
@@ -235,7 +240,7 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     this.maybeLeaveCurrentSession(store)
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode)
-    getMainReadState().clear()
+    clearReadStateForSession(data.id)
     setCurrentProjectPath(params.workspaceRoot)
     this.notifyWorkspaceRootChanged(params.workspaceRoot)
     setCurrentMode(data.mode)
@@ -270,6 +275,8 @@ export class WorkspaceService {
     }
 
     store.delete(sessionId)
+    // 彻底回收被删会话的 readState，释放内存
+    deleteReadStateForSession(sessionId)
 
     const remaining = store.list()
     const deletingCurrent = this.state.currentSessionId === sessionId
@@ -280,7 +287,8 @@ export class WorkspaceService {
         const next = remaining[0]
         const detail = store.load(next.id)
         if (detail) {
-          getMainReadState().clear()
+          // 切到新会话只清目标会话的 readState，不影响并发中的其它会话
+          clearReadStateForSession(detail.id)
           setCurrentProjectPath(detail.workspaceRoot)
           setCurrentMode(detail.mode)
           this.notifyWorkspaceRootChanged(detail.workspaceRoot)
@@ -295,7 +303,6 @@ export class WorkspaceService {
           this.state = { ...this.state, availableSessions: remaining }
         }
       } else {
-        getMainReadState().clear()
         setCurrentProjectPath(null)
         this.state = {
           currentSessionId: null,
@@ -349,7 +356,8 @@ export class WorkspaceService {
       throw new Error(`会话 ${sessionId} 不存在`)
     }
 
-    getMainReadState().clear()
+    // 切换会话只清目标会话的 readState，不影响并发中的其它会话
+    clearReadStateForSession(sessionId)
     setCurrentProjectPath(detail.workspaceRoot)
     setCurrentMode(detail.mode)
     this.notifyWorkspaceRootChanged(detail.workspaceRoot)
@@ -459,7 +467,7 @@ export class WorkspaceService {
 
     store.setCurrentLeaf(sessionId, userParentId)
     store.clearContextSnapshot(sessionId)
-    getMainReadState().clear()
+    clearReadStateForSession(sessionId)
 
     this.state = {
       ...this.state,
@@ -546,7 +554,7 @@ export class WorkspaceService {
 
     store.setCurrentLeaf(sessionId, targetLeaf)
     store.clearContextSnapshot(sessionId)
-    getMainReadState().clear()
+    clearReadStateForSession(sessionId)
 
     this.state = {
       ...this.state,
@@ -623,7 +631,7 @@ export class WorkspaceService {
     // 3. 倒回 currentLeafId 到分叉点（目标用户消息的父；首条消息时为 null）
     store.setCurrentLeaf(sessionId, target.parentId)
     store.clearContextSnapshot(sessionId)
-    getMainReadState().clear()
+    clearReadStateForSession(sessionId)
 
     this.state = {
       ...this.state,

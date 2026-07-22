@@ -114,6 +114,77 @@ export class SubAgentPermissionBridge {
 /** 默认单例（agentHandler / 未注入自定义 bridge 的 task 工具使用） */
 export const defaultSubAgentPermissionBridge = new SubAgentPermissionBridge()
 
+/**
+ * 按 run 隔离的子代理权限桥接登记表。
+ *
+ * 并发模型下每个 turn（run）持有一份独立的 SubAgentPermissionBridge，互不串扰：
+ * 一个 run 的子代理权限请求不会被另一个 run 的 resolve 误消费，
+ * 取消某个 run 时只终止该 run 名下的子代理循环。
+ *
+ * 对外暴露的 hasBinding / resolve 在全部 run 的 bridge 上扫描，
+ * 让上层（AgentInteractionController）无需关心 requestId 归属哪个 run 即可路由。
+ */
+class SubAgentBridgeRegistry {
+  private readonly byRun = new Map<string, SubAgentPermissionBridge>()
+
+  /** 取（必要时创建）指定 run 的桥接器。装配 turn 时调用。 */
+  getOrCreate(runId: string): SubAgentPermissionBridge {
+    let bridge = this.byRun.get(runId)
+    if (!bridge) {
+      bridge = new SubAgentPermissionBridge()
+      this.byRun.set(runId, bridge)
+    }
+    return bridge
+  }
+
+  /** 取指定 run 的桥接器（不创建）；不存在返回 undefined。 */
+  get(runId: string): SubAgentPermissionBridge | undefined {
+    return this.byRun.get(runId)
+  }
+
+  /** 释放指定 run 的桥接器（turn 终态后调用，回收内存）。 */
+  release(runId: string): void {
+    this.byRun.delete(runId)
+  }
+
+  /** 联动终止指定 run 名下的全部子 AgentLoop（取消该 run 时调用）。 */
+  cancelAllForRun(runId: string): void {
+    this.byRun.get(runId)?.cancelAll()
+  }
+
+  /** 清空指定 run 名下的权限绑定（不清 activeLoops，与 bridge 语义一致）。 */
+  clearAllForRun(runId: string): void {
+    this.byRun.get(runId)?.clear()
+  }
+
+  /** 跨全部 run 扫描：是否仍持有指定桥接权限请求的子循环 resolver。 */
+  hasBinding(bridgedRequestId: string): boolean {
+    for (const bridge of this.byRun.values()) {
+      if (bridge.hasBinding(bridgedRequestId)) return true
+    }
+    return false
+  }
+
+  /**
+   * 跨全部 run 路由：把用户决策交给持有该 requestId 的子 AgentLoop。
+   * @returns true 表示已被某个子循环处理
+   */
+  resolve(bridgedRequestId: string, granted: boolean): boolean {
+    for (const bridge of this.byRun.values()) {
+      if (bridge.resolve(bridgedRequestId, granted)) return true
+    }
+    return false
+  }
+
+  /** 测试用：重置全部登记。 */
+  resetForTests(): void {
+    this.byRun.clear()
+  }
+}
+
+/** 进程内单例登记表。 */
+export const subAgentBridgeRegistry = new SubAgentBridgeRegistry()
+
 /** @deprecated 请优先使用 SubAgentPermissionBridge 实例；保留以兼容测试导入 */
 export function bindSubAgentPermission(requestId: string, loop: AgentLoop): string {
   return defaultSubAgentPermissionBridge.bind(requestId, loop)

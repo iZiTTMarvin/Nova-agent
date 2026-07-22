@@ -74,6 +74,15 @@ export class RunExecutionRegistry {
     return this.handles.get(runId) ?? null
   }
 
+  /**
+   * 当前仍持有执行句柄的 runId 列表（即进程内有真实可取消执行的 run）。
+   * 供入口锁结合 RunCoordinator 的 sessionId 做按会话的「未 settled」判断：
+   * 句柄存在意味着执行尚未收敛，即便 durable snapshot 已短暂进入终态也不应放行新 turn。
+   */
+  listActiveRunIds(): string[] {
+    return [...this.handles.keys()]
+  }
+
   /** 是否仍有未 settled 的 agent 句柄（全局 AgentLoop 重叠防护） */
   hasUnsettledHandle(kind?: 'agent' | 'compose' | 'xforge'): boolean {
     for (const h of this.handles.values()) {

@@ -1,7 +1,7 @@
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import type { PermissionDecision } from '../../../shared/session/types'
 import type { InteractionAnswerResult, PendingInteraction } from '../../../shared/run/types'
-import { defaultSubAgentPermissionBridge } from '../../../runtime/tools/subAgentBridge'
+import { subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import {
   getRunCoordinator,
   getXForgeRunService,
@@ -13,7 +13,7 @@ import {
   clearVerificationPermissionRequest,
   markActiveStreamsCancelled
 } from '../events'
-import { getAgentLoopForRun, getCurrentAgentLoop } from '../turn'
+import { getAgentLoopForRun } from '../turn'
 import {
   pendingAskQuestions,
   dismissPendingAskQuestionsForRun
@@ -92,8 +92,9 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
     if (hasExecutionHandle) {
       // abort 会等待执行收敛；终态仍由 SEND_MESSAGE 的 finally 统一提交。
       await getRunExecutionRegistry().abort(runId, 'cancel_execution')
-      defaultSubAgentPermissionBridge.cancelAll()
-      defaultSubAgentPermissionBridge.clear()
+      // 只终止该 run 名下的子代理，不影响并发中的其它 run
+      subAgentBridgeRegistry.cancelAllForRun(runId)
+      subAgentBridgeRegistry.clearAllForRun(runId)
       markActiveStreamsCancelled(runId)
     } else if (beforeCancel.kind === 'xforge' && beforeCancel.xforge) {
       // parked XForge 没有执行句柄，必须在此原子落终态，不能遗留 cancelling。
@@ -150,7 +151,7 @@ export async function respondPermission(params: {
     }
     const hasResolver =
       loopForRun.hasPendingPermission(params.requestId) ||
-      defaultSubAgentPermissionBridge.hasBinding(params.requestId)
+      subAgentBridgeRegistry.hasBinding(params.requestId)
     if (!hasResolver) {
       return identityMismatchResult(`权限请求 ${params.requestId} 没有对应的 resolver`, found)
     }
@@ -181,13 +182,13 @@ export async function respondPermission(params: {
     if (!result.ok || !result.firstApplied) return result
   }
 
-  // 仅 firstApplied 时执行副作用：按 run 定位 loop，避免错唤醒
-  if (defaultSubAgentPermissionBridge.resolve(params.requestId, granted)) {
+  // 仅 firstApplied 时执行副作用：子代理权限经 registry 跨 run 路由，主 agent 按 run 定位 loop
+  if (subAgentBridgeRegistry.resolve(params.requestId, granted)) {
     return durableResult
   }
-  const agentLoop = found ? loopForRun : getCurrentAgentLoop()
-  if (!agentLoop) return
-  agentLoop.respondPermission(params.requestId, granted)
+  // 并发模型下不再有全局 loop 兜底；权限响应必须命中具体 run 的 AgentLoop
+  if (!loopForRun) return
+  loopForRun.respondPermission(params.requestId, granted)
   return durableResult
 }
 

@@ -25,6 +25,12 @@ export interface TaskToolDeps {
   supportsVision?: boolean
   /** 子代理权限桥接（默认单例，可注入独立实例以隔离多 session） */
   permissionBridge?: SubAgentPermissionBridge
+  /**
+   * 惰性获取子代理权限桥接（按当前 run 解析）。
+   * 装配时 runId 可能尚未分配，故延迟到执行期读取。
+   * 提供时优先于 permissionBridge。
+   */
+  getPermissionBridge?: () => SubAgentPermissionBridge
 }
 
 /** 子代理类型 → 权限模式（explore 强制只读） */
@@ -80,7 +86,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
       // 2. 隔离 EventBus + PermissionManager
       const subBus = new EventBus()
       const subPermission = new PermissionManager()
-      const permissionBridge = deps.permissionBridge ?? defaultSubAgentPermissionBridge
+      const permissionBridge = deps.getPermissionBridge?.() ?? deps.permissionBridge ?? defaultSubAgentPermissionBridge
       let summary = ''
       let subMessageId = ''
 

@@ -1,5 +1,9 @@
 export {
-  getMainReadState,
+  getReadStateForSession,
+  clearReadStateForSession,
+  deleteReadStateForSession,
   isAgentTurnInProgress,
-  getActiveTurnSessionId
+  isSessionTurnInProgress,
+  getActiveTurnSessionId,
+  resetReadStateHostForTests
 } from './AgentExecutionStateHost'

@@ -24,7 +24,7 @@ import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
 import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
-import { defaultSubAgentPermissionBridge } from '../../../runtime/tools/subAgentBridge'
+import { defaultSubAgentPermissionBridge, subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
@@ -143,7 +143,6 @@ export interface PrepareAgentRuntimeInput {
   modelClient: ModelClient
   getImageStore: () => ImageStore
   readState: ReadState
-  previousAgentLoop: AgentLoop | null
   pendingAskQuestions: Map<string, PendingAskQuestionEntry>
   runCoordinator: RunCoordinator
   xforgeService: XForgeRunService
@@ -163,7 +162,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     modelClient,
     getImageStore,
     readState,
-    previousAgentLoop,
     pendingAskQuestions,
     runCoordinator,
     xforgeService,
@@ -240,7 +238,12 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
     getAgentLoop: () => loop,
     getMemoryService,
-    loadSettings: loadNovaSettings
+    loadSettings: loadNovaSettings,
+    // 按 run 隔离的子代理权限桥接：装配时 runId 可能尚未分配，延迟到执行期按 runRefs.runId 解析
+    getPermissionBridge: () =>
+      runRefs.runId
+        ? subAgentBridgeRegistry.getOrCreate(runRefs.runId)
+        : defaultSubAgentPermissionBridge
   })
 
   const modelPool = buildModelPoolWithFallbacks(modelClient)
@@ -264,10 +267,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const frozenPrompt = buildStableSystemPrompt({
     workingDir: projectPath
   })
-
-  if (previousAgentLoop) {
-    previousAgentLoop.dispose()
-  }
 
   const agentLoop = new AgentLoop(modelPool, eventBus, {
     systemPromptLayers: {
@@ -294,6 +293,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   loop = agentLoop
 
   agentLoop.setWorkingDir(projectPath)
+  // 工作区根供写者租约按工作区分桶；runId 在 startRun 后由 AgentTurnService 注入
+  agentLoop.setWorkspaceRoot(projectPath)
   agentLoop.setToolRegistry(toolRegistry)
   agentLoop.setBashEnvironment({
     binDirs: [join(projectPath, 'node_modules', '.bin')]
@@ -417,7 +418,10 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
         resolveTool: (name) => toolRegistry.getTool(name),
         resolveSkill: (name) => skillRegistry.get(name),
         workspaceRoot: projectPath,
-        permissionBridge: defaultSubAgentPermissionBridge,
+        // 按 run 隔离的子代理桥接（运行期 runRefs.runId 已分配）
+        permissionBridge: runRefs.runId
+          ? subAgentBridgeRegistry.getOrCreate(runRefs.runId)
+          : defaultSubAgentPermissionBridge,
         checkpointManager,
         contextWindow,
         supportsVision,

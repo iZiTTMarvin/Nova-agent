@@ -3,6 +3,8 @@
  */
 import { BrowserWindow, app } from 'electron'
 import { AgentLoop, type AgentEvent } from '../../../runtime/agent'
+import { subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
+import { writerLeaseRegistry } from '../../../runtime/workspace'
 import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveSupportsVision } from '../../../shared/config/types'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
@@ -26,9 +28,8 @@ import {
   setActiveRunId
 } from '../../services/RunCoordinatorHost'
 import {
-  getMainReadState,
-  isAgentTurnInProgress,
-  getActiveTurnSessionId
+  getReadStateForSession,
+  isSessionTurnInProgress
 } from '../state'
 import {
   accumulateStreamEvent,
@@ -44,20 +45,21 @@ import {
   dismissAllPendingAskQuestions
 } from '../interaction/askQuestionWaiters'
 import { interruptStartedRunAfterFailure } from './turnLifecycle'
-
-/** 当前全局 AgentLoop（单活动 turn） */
-let agentLoop: AgentLoop | null = null
+import {
+  enqueueSteeringMessage,
+  dequeueSteeringMessage,
+  type SteeringMessage
+} from './SteeringQueue'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
  * 多并发 run 时按 snapshot.runId 精确查找，避免打到「最新一个」错误 loop。
+ *
+ * 每个 turn 装配独立的 AgentLoop（per-run 隔离），turn 终态后在 finally 里注销。
+ * 不再保留全局单例 loop：并发 turn 各自独立，互不覆盖。
  */
 const agentLoopsByRunId = new Map<string, AgentLoop>()
 let terminalHooksRegistered = false
-
-export function getCurrentAgentLoop(): AgentLoop | null {
-  return agentLoop
-}
 
 export function getAgentLoopForRun(runId: string): AgentLoop | undefined {
   return agentLoopsByRunId.get(runId)
@@ -124,12 +126,12 @@ export async function sendAgentMessage(
       ? sessionRunSnapshot
       : null
   const resumableXForge = activeResumableXForge ?? interruptedResumableXForge
-  if (isAgentTurnInProgress() && !resumableXForge) {
-    const whereSession = getActiveTurnSessionId()
-    const where = whereSession && whereSession !== params.sessionId
-      ? '（在另一个会话中）'
-      : ''
-    throw new Error(`Agent 正在运行${where}，请先点击停止按钮结束当前任务后再发送`)
+  // 并发模型：不同会话可同时跑，同一会话同时最多一个 turn。
+  // 该会话已有占用 turn 的 run 时，把消息推入 steering queue 等当前 turn 结束后处理，
+  // 而不是直接拒绝；其它会话不受影响。
+  if (!resumableXForge && isSessionTurnInProgress(params.sessionId)) {
+    enqueueSteeringMessage(params.sessionId, params)
+    return
   }
 
   // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 所有挂起的 askQuestion 请求，
@@ -212,15 +214,16 @@ export async function sendAgentMessage(
     novaSettings,
     modelClient,
     getImageStore,
-    readState: getMainReadState(),
-    previousAgentLoop: agentLoop,
+    // readState 按会话隔离：同会话跨 turn 复用，不同会话互不污染
+    readState: getReadStateForSession(params.sessionId),
     pendingAskQuestions,
     runCoordinator,
     xforgeService,
     resumableXForge: !!resumableXForge,
     promptCacheKey
   })
-  agentLoop = prepared.agentLoop
+  // 本 turn 专属 AgentLoop（局部变量，不污染模块级状态，并发 turn 各自独立）
+  const loopForRun = prepared.agentLoop
   const { eventBus, modelPool, runRefs, frozenPrompt } = prepared
   if (session.frozenSystemPrompt !== frozenPrompt) {
     session.frozenSystemPrompt = frozenPrompt
@@ -339,6 +342,9 @@ export async function sendAgentMessage(
       getRunCoordinator().touchHeartbeat(runRefs.runId)
     } catch { /* ignore */ }
     stallMark(event.type)
+    // 给每个事件打上归属会话标记，供 renderer 区分焦点 / 后台会话，避免串台。
+    // 事件是 emit-and-forget 的瞬态对象，原地写入 sessionId 安全且零拷贝。
+    stampSessionId(event, capturedSessionId)
     forwardEventToRenderer(getMainWindow(), event)
     accumulateStreamEvent(capturedSessionId, event, {
       mode: capturedMode,
@@ -359,10 +365,8 @@ export async function sendAgentMessage(
   }
 
   // Execution：startRun 起的全部出口必须汇入同一 cleanup（registry / loop 索引 / activeRunId / streams）。
-  // 全局 AgentLoop：旧 handle 未 settled 时禁止开启新的共享 loop（含 interrupted lingering）
-  if (executionRegistry.hasUnsettledHandle()) {
-    throw new Error('上一次 Agent 执行尚未完全退出，请稍候再发送（避免与旧 continuation 重叠）')
-  }
+  // 同会话的「未 settled 执行」已在入口锁 isSessionTurnInProgress 中拦截（进入 steering queue）；
+  // 不同会话允许并发持有各自执行句柄，此处不再做全局互斥。
 
   let resolveExecutionSettled = (): void => {}
   let executionRegistered = false
@@ -407,10 +411,12 @@ export async function sendAgentMessage(
     startedRunId = runSnap.runId
     runRefs.runId = runSnap.runId
     runRefs.executionGeneration = Date.now()
-    const loopForRun = agentLoop
-    if (!loopForRun) {
-      throw new Error('AgentLoop 未初始化')
-    }
+    // 把 runId 注入 AgentLoop，供写者租约 / 子代理权限按 run 归属
+    loopForRun.setRunRef(runRefs.runId)
+    // 副作用入口 fencing：write/edit/checkpoint 经 ToolContext 校验 generation
+    loopForRun.setExecutionFence(() =>
+      runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration)
+    )
     const executionSettled = new Promise<void>(resolve => {
       resolveExecutionSettled = resolve
     })
@@ -423,10 +429,6 @@ export async function sendAgentMessage(
     })
     executionRegistered = true
     runCoordinator.bindExecutionGeneration(runRefs.runId, runRefs.executionGeneration)
-    // 副作用入口 fencing：write/edit/checkpoint 经 ToolContext 校验 generation
-    agentLoop.setExecutionFence(() =>
-      runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration)
-    )
     // onCancel 按 runId 精确解析 loop（进程内索引，非 durable 真源；finally 必须清理）
     agentLoopsByRunId.set(runRefs.runId, loopForRun)
     setActiveRunId(runRefs.runId)
@@ -435,7 +437,7 @@ export async function sendAgentMessage(
     }
 
     try {
-      await agentLoop.sendMessage(sendContent)
+      await loopForRun.sendMessage(sendContent)
       onUserTurnCompleteForExtract(
         params.sessionId,
         projectPath,
@@ -511,15 +513,57 @@ export async function sendAgentMessage(
     }
     throw err
   } finally {
-    // 统一进程内清理：settled → unregister → loop 索引 → activeRun → streams
+    // 统一进程内清理：settled → unregister → loop 索引 → activeRun → streams → bridge
     resolveExecutionSettled()
     if (executionRegistered && runRefs.runId) {
       executionRegistry.unregister(runRefs.runId, runRefs.executionGeneration)
       agentLoopsByRunId.delete(runRefs.runId)
       disposeTurnStreams(runRefs.runId, runRefs.executionGeneration)
+      // 释放本 run 的子代理桥接，回收内存（并发 ron 互不影响）
+      subAgentBridgeRegistry.release(runRefs.runId)
+      // 释放本 run 持有的写者租约，唤醒等待同一工作区的其它 run
+      writerLeaseRegistry.release(runRefs.runId)
       setActiveRunId(null)
     }
+    // 本 turn 的 AgentLoop 生命周期结束，释放其持有的定时器 / 监听等资源
+    loopForRun.dispose()
+    // 同会话排队消息：当前 turn 终态后，取出队首发起新 turn（递归，FIFO）
+    drainSteeringQueue(params.sessionId, deps)
   }
+}
+
+/**
+ * 取出该会话 steering queue 的队首消息并发起新 turn。
+ *
+ * 只在当前 turn 真正结束（finally 执行）后调用，保证同会话串行。
+ * 队列为空时直接返回；取出后递归进入 sendAgentMessage，下一轮结束时会再次 drain。
+ */
+function drainSteeringQueue(sessionId: string, deps: SendAgentMessageDeps): void {
+  const next = dequeueSteeringMessage(sessionId)
+  if (!next) return
+  // 不 await：drain 在 finally 中同步执行，新 turn 异步跑，避免阻塞当前调用栈
+  void sendAgentMessage(fromSteeringMessage(next), deps)
+}
+
+/** 把 steering 队列项还原为 sendAgentMessage 入参（结构一致，仅做类型收窄）。 */
+function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageParams {
+  return {
+    sessionId: msg.sessionId,
+    content: msg.content,
+    ...(msg.userMessageId !== undefined ? { userMessageId: msg.userMessageId } : {}),
+    ...(msg.images !== undefined ? { images: msg.images } : {}),
+    ...(msg.regenerate !== undefined ? { regenerate: msg.regenerate } : {})
+  }
+}
+
+/**
+ * 给事件打上归属会话 id。
+ *
+ * 多数事件变体已声明可选 sessionId 字段；这里统一原地写入，避免每个 emit 点重复传参。
+ * 事件是瞬态对象，写完后只在本次回调链路消费，不会跨会话重放，原地写安全。
+ */
+function stampSessionId(event: AgentEvent, sessionId: string): void {
+  ;(event as { sessionId?: string }).sessionId = sessionId
 }
 
 /**

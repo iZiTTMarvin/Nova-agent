@@ -19,7 +19,8 @@ vi.mock('../../../src/runtime/agent', () => ({
 }))
 
 vi.mock('../../../src/main/agent/state', () => ({
-  getMainReadState: () => ({ clear: vi.fn() }),
+  clearReadStateForSession: vi.fn(),
+  deleteReadStateForSession: vi.fn(),
   isAgentTurnInProgress: vi.fn(() => false),
   getActiveTurnSessionId: vi.fn(() => null)
 }))
