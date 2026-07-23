@@ -17,7 +17,7 @@ export async function listSlashCommands(): Promise<SlashCandidate[]> {
 
 export function skillsToCandidates(skills: SkillSummary[]): SlashCandidate[] {
   return skills
-    .filter(s => s.userInvocable && !s.invalid)
+    .filter(s => s.userInvocable && !s.invalid && !s.hidden)
     .map(s => ({
       name: s.name,
       description: s.descriptionZh || s.description,

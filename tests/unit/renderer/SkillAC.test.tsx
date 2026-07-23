@@ -25,7 +25,8 @@ const FRONTEND_SKILL: SkillSummary = {
   enabled: true,
   invalid: false,
   warnings: [],
-  bodyPreview: ''
+  bodyPreview: '',
+  hasSupportingFiles: false
 }
 
 /** 构造最小可用的 KeyboardEvent，仅 onKeyDown 用到 key 与 preventDefault */

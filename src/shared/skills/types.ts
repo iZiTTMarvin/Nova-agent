@@ -29,6 +29,8 @@ export interface SkillSummary {
   argumentHint?: string
   hasSupportingFiles: boolean
   forkAgent?: boolean
+  /** 编排内部技能，不出现在用户 `/` 补全中 */
+  hidden?: boolean
 }
 
 export type SkillCreateLocation = 'global' | 'project'

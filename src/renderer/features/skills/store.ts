@@ -21,7 +21,8 @@ export const useSkillsStore = create<SkillsStoreState>((set) => ({
     try {
       const list = await window.nova.skill.list()
       set({ skills: list, loading: false })
-    } catch {
+    } catch (err) {
+      console.error('[SkillsStore] 技能列表加载失败:', err)
       set({ loading: false })
     }
   },
@@ -31,5 +32,5 @@ export const useSkillsStore = create<SkillsStoreState>((set) => ({
 
 /** 过滤用户可 slash 调用的技能 */
 export function toUserInvocableSkills(skills: SkillSummary[]): SkillSummary[] {
-  return skills.filter(s => s.userInvocable && !s.invalid)
+  return skills.filter(s => s.userInvocable && !s.invalid && !s.hidden)
 }

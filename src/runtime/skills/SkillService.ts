@@ -57,7 +57,8 @@ export function toSkillSummary(skill: SkillManifest): SkillSummary {
     bodyPreview: skill.body.slice(0, BODY_PREVIEW_LEN),
     argumentHint: skill.argumentHint,
     hasSupportingFiles: skill.hasSupportingFiles,
-    forkAgent: skill.forkAgent
+    forkAgent: skill.forkAgent,
+    hidden: skill.hidden ?? false
   }
 }
 
