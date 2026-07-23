@@ -1,8 +1,5 @@
-/**
- * 将 assets/brand 下的品牌 PNG 同步到 build/icon.png，供 electron-builder 与窗口图标使用。
- * 优先 512px，其次 1024px / 256px。
- */
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
+/** 将 active 品牌 PNG 同步到构建目录和 renderer，供窗口、任务栏与界面 Logo 使用。 */
+import { copyFileSync, existsSync, mkdirSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -11,27 +8,18 @@ const brandDir = join(root, 'assets', 'brand')
 const buildDir = join(root, 'build')
 const rendererIcon = join(root, 'src', 'renderer', 'assets', 'app-icon.png')
 const outFile = join(buildDir, 'icon.png')
+const activeBrandFile = 'nova-agent-icon-v6-nova-mark-512.png'
 
-/** 按优先级挑选最合适的源 PNG */
 function pickBrandPng() {
   if (!existsSync(brandDir)) {
     throw new Error(`品牌目录不存在: ${brandDir}`)
   }
 
-  const pngFiles = readdirSync(brandDir).filter((name) => name.toLowerCase().endsWith('.png'))
-  if (pngFiles.length === 0) {
-    throw new Error(`未在 ${brandDir} 找到 PNG 图标`)
+  const activePath = join(brandDir, activeBrandFile)
+  if (!existsSync(activePath)) {
+    throw new Error(`缺少 active 品牌图标: ${activePath}`)
   }
-
-  const priority = (name) => {
-    if (name.includes('-512.')) return 0
-    if (name.includes('-1024.')) return 1
-    if (name.includes('-256.')) return 2
-    return 3
-  }
-
-  pngFiles.sort((a, b) => priority(a) - priority(b) || a.localeCompare(b))
-  return join(brandDir, pngFiles[0])
+  return activePath
 }
 
 const src = pickBrandPng()

@@ -33,6 +33,7 @@ async function main() {
   const brandPng = join(root, 'assets', 'brand')
   if (!existsSync(brandPng)) fail('assets/brand 不存在')
 
+  const activeBrandFile = join(brandPng, 'nova-agent-icon-v6-nova-mark-512.png')
   const buildIcon = join(root, 'build', 'icon.png')
   const rendererIcon = join(root, 'src', 'renderer', 'assets', 'app-icon.png')
   const setupExe = join(root, 'release', `NovaAgent-Setup-${version}.exe`)
@@ -40,7 +41,7 @@ async function main() {
   const packedIcon = join(root, 'release', 'win-unpacked', 'resources', 'icon.png')
   const rendererOut = join(root, 'out', 'renderer', 'assets')
 
-  for (const p of [buildIcon, rendererIcon]) {
+  for (const p of [activeBrandFile, buildIcon, rendererIcon]) {
     if (!existsSync(p)) fail(`缺少图标文件: ${p}`)
   }
 
@@ -48,7 +49,11 @@ async function main() {
   if (brandFiles.length === 0) fail('assets/brand 下无 PNG')
 
   const buildHash = await sha256File(buildIcon)
+  const activeBrandHash = await sha256File(activeBrandFile)
   const rendererHash = await sha256File(rendererIcon)
+  if (buildHash !== activeBrandHash) {
+    fail('build/icon.png 与 active 品牌源图不一致，请重新 npm run sync:icon')
+  }
   if (buildHash !== rendererHash) {
     fail('build/icon.png 与 renderer/app-icon.png 不一致，请重新 npm run sync:icon')
   }

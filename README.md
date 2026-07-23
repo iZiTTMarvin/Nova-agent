@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/nova-agent-icon-v3-event-horizon-512.png" width="120" alt="Nova Agent logo">
+  <img src="assets/brand/nova-agent-icon-v6-nova-mark-512.png" width="120" alt="Nova Agent logo">
 </p>
 
 <h1 align="center">Nova Agent</h1>
