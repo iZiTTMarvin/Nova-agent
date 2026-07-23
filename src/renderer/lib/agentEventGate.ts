@@ -11,9 +11,6 @@
  */
 import { useChatStore } from '../stores/useChatStore'
 
-/** 终态事件：即使被过滤也要清理 activeAgentSessionId */
-const TERMINAL_KINDS = new Set(['message-end', 'error'])
-
 /**
  * 判断当前是否应处理 Agent 事件。
  *
@@ -21,7 +18,7 @@ const TERMINAL_KINDS = new Set(['message-end', 'error'])
  * @param eventSessionId 事件携带的归属会话 id（无则回退 activeAgentSessionId 兜底）
  */
 export function shouldHandleAgentEvent(
-  kind: string,
+  _kind: string,
   eventSessionId?: string
 ): boolean {
   const { currentSessionId, activeAgentSessionId } = useChatStore.getState()
@@ -30,18 +27,6 @@ export function shouldHandleAgentEvent(
   const belongsToCurrent = eventSessionId
     ? eventSessionId === currentSessionId
     : !activeAgentSessionId || activeAgentSessionId === currentSessionId
-
-  if (TERMINAL_KINDS.has(kind) && activeAgentSessionId) {
-    // 终态到达时若已切走，清理归属标记（不 drain 排队消息）
-    if (activeAgentSessionId !== currentSessionId) {
-      useChatStore.setState({
-        activeAgentSessionId: null,
-        isGenerating: false,
-        currentGeneratingMessageId: null
-      })
-      return false
-    }
-  }
 
   if (!activeAgentSessionId && !eventSessionId) return true
   return belongsToCurrent

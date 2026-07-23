@@ -33,6 +33,11 @@ import { stripTextToolCalls } from '../../shared/tool-call-text-fallback'
 import { stripMinimaxArtifacts } from '../../shared/stream/stripMinimaxArtifacts'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
+import {
+  createAssistantMessage,
+  mergeFocusedSessionMessages,
+  restoreTurnDraftMessage
+} from '../lib/focusedSessionRecovery'
 import { useRunStore } from './useRunStore'
 import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 import type {
@@ -226,6 +231,29 @@ function buildMessageIndex(messages: ExtendedMessage[]): Record<string, number> 
     index[messages[i].id] = i
   }
   return index
+}
+
+let focusedSessionHydrationEpoch = 0
+
+async function reconcileFocusedSessionFromStore(sessionId: string): Promise<void> {
+  const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
+  if (useChatStore.getState().currentSessionId !== sessionId) return
+
+  const restored = restoreSessionMessages(detail.messages)
+  useChatStore.setState(state => {
+    if (state.currentSessionId !== sessionId) return state
+    const messages = mergeFocusedSessionMessages(
+      restored,
+      state.messages,
+      state.currentGeneratingMessageId,
+      null
+    )
+    return {
+      messages,
+      messageIndexById: buildMessageIndex(messages),
+      sessions: upsertSessionSummary(state.sessions, detail)
+    }
+  })
 }
 
 // ── Store 接口与实现 ──────────────────────────────────────
@@ -1091,22 +1119,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
 
-    // 收到 Assistant 消息开始，向消息队列追加一个空的 assistant 卡片
-    const now = Date.now()
-    const assistantMsg: ExtendedMessage = {
-      id: messageId,
-      sessionId: activeSessionId,
-      role: 'assistant',
-      content: '',
-      toolCalls: [],
-      timestamp: now,
-      thinking: '',
-      blocks: [],
-      _revision: 0,
-      turnStartedAt: now
-    }
-
     set(state => {
+      const existingIndex = state.messageIndexById[messageId]
+      if (existingIndex !== undefined) {
+        return {
+          currentGeneratingMessageId: messageId,
+          sendInFlight: false
+        }
+      }
+
+      // message_start 可能晚于切会话恢复出来的草稿；按 id 幂等创建消息壳。
+      const assistantMsg = createAssistantMessage(activeSessionId, messageId)
       const nextMessages = [...state.messages, assistantMsg]
       return {
         messages: nextMessages,
@@ -1450,6 +1473,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
 
+    // 后台启动的回复可能缺少早期流式片段；终态始终回到 SessionStore
+    // 做按 id 对账。已持久化消息优先，下一轮刚产生的实时消息仍会被保留。
+    const sessionIdAtEnd = get().currentSessionId
+    if (sessionIdAtEnd) {
+      try {
+        await reconcileFocusedSessionFromStore(sessionIdAtEnd)
+      } catch (err) {
+        console.error('[useChatStore] message_end 终态消息对账失败:', err)
+      }
+    }
+
     // 更新当前会话的消息数属性，并自动加载 diff
     const { currentSessionId, sessions, messages } = get()
     if (currentSessionId) {
@@ -1527,6 +1561,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...commonFields
       }
     })
+
+    if (currentSessionId) {
+      try {
+        await reconcileFocusedSessionFromStore(currentSessionId)
+      } catch (reloadError) {
+        console.error('[useChatStore] error 终态消息对账失败:', reloadError)
+      }
+    }
 
     if (get().pendingBranchMetaReload) {
       await get().finishBranchMetaRefresh()
@@ -1656,10 +1698,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (deltas.length === 0) return
 
     set(state => {
+      let nextMessages = state.messages
+      let nextMessageIndex = state.messageIndexById
+      let addedMissingMessage = false
+
+      // 切回运行中会话可能已经错过 message_start。任何有效 delta 都必须有落点，
+      // 因此按 messageId 幂等补建 assistant 消息壳，再继续走原有批量更新路径。
+      for (const delta of deltas) {
+        if (nextMessageIndex[delta.messageId] !== undefined) continue
+        if (
+          !state.isGenerating ||
+          state.currentGeneratingMessageId !== delta.messageId
+        ) {
+          continue
+        }
+        if (!addedMissingMessage) {
+          nextMessages = state.messages.slice()
+          nextMessageIndex = { ...state.messageIndexById }
+          addedMissingMessage = true
+        }
+        const assistant = createAssistantMessage(
+          state.currentSessionId ?? 'session_default',
+          delta.messageId
+        )
+        nextMessageIndex[delta.messageId] = nextMessages.length
+        nextMessages.push(assistant)
+      }
+
       // 第一步：按 messageId 聚合 delta，保留组内到达顺序
       const byMessageId = new Map<string, StreamDelta[]>()
       for (const delta of deltas) {
-        if (state.messageIndexById[delta.messageId] === undefined) continue
+        if (nextMessageIndex[delta.messageId] === undefined) continue
         let arr = byMessageId.get(delta.messageId)
         if (!arr) {
           arr = []
@@ -1669,13 +1738,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // 第二步：拷贝 messages 一次（顶层），对每条消息只在其 blocks 层级再拷贝
-      const nextMessages = state.messages.slice()
+      if (!addedMissingMessage) {
+        nextMessages = state.messages.slice()
+      }
       const nextStreaming: Record<string, string> = { ...state.streamingToolArgs }
       let messagesChanged = false
       let streamingChanged = false
 
       for (const [messageId, messageDeltas] of byMessageId) {
-        const idx = state.messageIndexById[messageId]
+        const idx = nextMessageIndex[messageId]
         if (idx === undefined) continue
         const msg = nextMessages[idx]
         if (!msg) continue
@@ -1792,12 +1863,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (messagesChanged) {
         const trimmed = applyMessageWindowTrim(
           nextMessages,
-          state.messageIndexById,
+          nextMessageIndex,
           state.suspendHeadTrim
         )
         finalResult = {
           messages: trimmed.messages,
-          ...(trimmed.messages !== nextMessages ? { messageIndexById: trimmed.index } : {}),
+          ...(addedMissingMessage || trimmed.messages !== nextMessages
+            ? { messageIndexById: trimmed.index }
+            : {}),
           ...paginationPatchAfterHeadTrim(trimmed),
           ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
         }
@@ -1826,20 +1899,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       tier1BranchContext: sessionChanged ? null : next.tier1BranchContext
     }
 
-    // 会话切换：重置生成态与排队队列，避免旧会话 message_end drain 到新会话。
-    // 注意：并发模型下后台会话可能仍在跑，切走/切回不能粗暴清掉它的运行态。
-    // isGenerating 改为按目标会话的 run 状态派生：目标会话有非终态 run 则视为仍在生成。
+    // 会话切换先清掉旧会话的瞬态投影。目标会话的运行态与草稿由下方
+    // snapshot-first 恢复，禁止从可能陈旧的 renderer 缓存同步猜测。
     if (sessionChanged) {
-      const targetRunId = next.currentSessionId
-        ? useRunStore.getState().activeRunIdBySessionId[next.currentSessionId]
-        : undefined
-      const targetSnap = targetRunId
-        ? useRunStore.getState().snapshotsByRunId[targetRunId]
-        : null
-      const targetRunning = !!targetSnap && !isTerminalRunStatusLocal(targetSnap.status)
-      patch.isGenerating = targetRunning
-      // 切到正在跑的后台会话时恢复其生成消息 id；否则清空
-      patch.currentGeneratingMessageId = targetRunning ? targetSnap?.messageId ?? null : null
+      patch.messages = []
+      patch.messageIndexById = {}
+      patch.isGenerating = false
+      patch.currentGeneratingMessageId = null
+      patch.activeAgentSessionId = null
       patch.sendInFlight = false
       patch.pendingUserMessages = []
       patch.branchForkInProgress = false
@@ -1860,21 +1927,93 @@ export const useChatStore = create<ChatState>((set, get) => ({
         suspendHeadTrim: false
       })
 
-      if (next.currentSessionId) {
-        // 异步加载该会话首屏尾部消息（主进程只返回最近 N 条 + hasMore 标记）
+      const targetSessionId = next.currentSessionId
+      const hydrationEpoch = ++focusedSessionHydrationEpoch
+
+      if (targetSessionId) {
         void (async () => {
           try {
-            const detail: SessionDetail = await window.api.invoke('load-session', { sessionId: next.currentSessionId! })
-            // 二次校验：加载期间用户可能又切了会话，只有 still current 时才 set
-            if (get().currentSessionId !== next.currentSessionId) return
+            // 保持既有 load-session 调用语义，同时并发拉取切入会话的权威 run。
+            // 应用时先消费 snapshot，再把历史与当前 run 消息合并，避免撕裂覆盖。
+            const detailPromise = window.api.invoke('load-session', {
+              sessionId: targetSessionId
+            }) as Promise<SessionDetail>
+            if (sessionChanged) {
+              await useRunStore.getState().pullSnapshot(targetSessionId)
+            }
+            if (
+              hydrationEpoch !== focusedSessionHydrationEpoch ||
+              get().currentSessionId !== targetSessionId
+            ) {
+              return
+            }
+
+            const targetRunId = useRunStore.getState().activeRunIdBySessionId[targetSessionId]
+            const snapshot = sessionChanged && targetRunId
+              ? useRunStore.getState().snapshotsByRunId[targetRunId] ?? null
+              : null
+            const targetRunning = sessionChanged
+              ? !!snapshot && !isTerminalRunStatusLocal(snapshot.status)
+              : get().isGenerating
+            const draft = targetRunning && snapshot
+              ? restoreTurnDraftMessage(targetSessionId, snapshot)
+              : null
+
+            if (sessionChanged) {
+              set(state => {
+                if (
+                  hydrationEpoch !== focusedSessionHydrationEpoch ||
+                  state.currentSessionId !== targetSessionId
+                ) {
+                  return state
+                }
+                const messages = mergeFocusedSessionMessages(
+                  [],
+                  state.messages,
+                  targetRunning ? snapshot?.messageId ?? null : null,
+                  draft
+                )
+                return {
+                  messages,
+                  messageIndexById: buildMessageIndex(messages),
+                  isGenerating: targetRunning,
+                  currentGeneratingMessageId: targetRunning ? snapshot?.messageId ?? null : null,
+                  activeAgentSessionId: targetRunning ? targetSessionId : null
+                }
+              })
+            }
+
+            const detail = await detailPromise
+            if (
+              hydrationEpoch !== focusedSessionHydrationEpoch ||
+              get().currentSessionId !== targetSessionId
+            ) {
+              return
+            }
             const restored = restoreSessionMessages(detail.messages)
-            set({
-              messages: restored,
-              messageIndexById: buildMessageIndex(restored),
-              hasMoreMessagesAbove: detail.hasMoreMessagesAbove ?? false,
-              oldestLoadedMessageId: restored[0]?.id ?? null,
-              isLoadingOlderMessages: false,
-              suspendHeadTrim: false
+            set(state => {
+              if (
+                hydrationEpoch !== focusedSessionHydrationEpoch ||
+                state.currentSessionId !== targetSessionId
+              ) {
+                return state
+              }
+              const messages = mergeFocusedSessionMessages(
+                restored,
+                state.messages,
+                sessionChanged
+                  ? targetRunning ? snapshot?.messageId ?? null : null
+                  : state.currentGeneratingMessageId,
+                draft
+              )
+              return {
+                messages,
+                messageIndexById: buildMessageIndex(messages),
+                hasMoreMessagesAbove: detail.hasMoreMessagesAbove ?? false,
+                oldestLoadedMessageId: messages[0]?.id ?? null,
+                isLoadingOlderMessages: false,
+                suspendHeadTrim: false
+              }
             })
           } catch (err) {
             console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)
@@ -1893,6 +2032,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
  * 不导出给生产代码使用，保留为内部测试辅助。
  */
 export function resetChatStoreForTests(): void {
+  focusedSessionHydrationEpoch++
   useChatStore.setState({
     sessions: [],
     currentSessionId: null,

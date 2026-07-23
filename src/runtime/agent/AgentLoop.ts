@@ -432,28 +432,19 @@ export class AgentLoop implements IdleCompactionTarget {
    * 复用 contextBreakdownCalculator，保证 AgentLoop 内外口径一致。
    */
   private emitContextBreakdown(messageId: string, promptTokensActual: number): void {
-    // this.context 是 AgentLoop 运行时的扁平线性数组(不分叉)，这里补齐一条
-    // 首尾相连的 id/parentId 链，并把 currentLeafId 指向最后一条消息。
-    // 注意：getSessionActiveMessages 把 currentLeafId=null 解释为"会话已回退到
-    // 起点，激活路径为空"（真实会话树语义），若直接传 null 会导致 computeActivePath
-    // 恒返回空数组——messages 分项估算恒为 0，表现为上下文用量面板卡死不动。
-    const sessionMessages = this.context
-      .filter(m => m.role !== 'system')
-      .map((m, i) => this.toSessionMessageForBreakdown(m, i))
-    const leafId = sessionMessages.length > 0 ? sessionMessages[sessionMessages.length - 1]!.id : null
-
     const result = calculateContextBreakdown({
       session: {
         id: this.sessionId ?? '',
         workspaceRoot: this.workingDir ?? '',
         mode: this.mode ?? 'default',
-        messages: sessionMessages,
-        currentLeafId: leafId,
+        messages: [],
+        currentLeafId: null,
         frozenSystemPrompt: this.frozenSystemPrompt,
         schemaVersion: 2,
         createdAt: Date.now(),
         updatedAt: Date.now()
       },
+      runtimeMessages: this.context.filter(m => m.role !== 'system'),
       skills: this.skillsTokenBudget,
       toolDefinitions: getEffectiveToolDefinitions(this.ctx),
       contextLimit: this.config.contextWindow ?? 200_000
@@ -464,26 +455,6 @@ export class AgentLoop implements IdleCompactionTarget {
       messageId,
       promptTokensActual
     })
-  }
-
-  /** 把运行时的 ChatMessage 转成 SessionMessage 口径(仅用于 token 估算) */
-  private toSessionMessageForBreakdown(
-    m: ChatMessage,
-    index: number
-  ): import('../sessions/types').SessionMessage {
-    return {
-      id: `ctx-${index}`,
-      parentId: index === 0 ? null : `ctx-${index - 1}`,
-      role: m.role,
-      content: typeof m.content === 'string' ? m.content : extractTextFromContent(m.content),
-      toolCalls: m.toolCalls?.map(tc => ({
-        id: tc.id,
-        name: tc.name,
-        arguments: tc.arguments
-      })),
-      toolCallId: m.toolCallId,
-      timestamp: Date.now()
-    }
   }
 
   /** 注入自定义 HookManager（测试 / 扩展用） */

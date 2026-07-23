@@ -26,7 +26,7 @@ describe('agentEventGate', () => {
     expect(shouldHandleAgentEvent('text-delta')).toBe(false)
   })
 
-  it('旧会话 message-end 被过滤并清理归属标记', () => {
+  it('旧会话 message-end 被过滤且不修改当前投影', () => {
     useChatStore.setState({
       currentSessionId: 's2',
       activeAgentSessionId: 's1',
@@ -34,8 +34,8 @@ describe('agentEventGate', () => {
       pendingUserMessages: [{ text: 'queued', images: [] }]
     })
     expect(shouldHandleAgentEvent('message-end')).toBe(false)
-    expect(useChatStore.getState().activeAgentSessionId).toBeNull()
-    expect(useChatStore.getState().isGenerating).toBe(false)
+    expect(useChatStore.getState().activeAgentSessionId).toBe('s1')
+    expect(useChatStore.getState().isGenerating).toBe(true)
     // 排队消息不被 drain
     expect(useChatStore.getState().pendingUserMessages).toHaveLength(1)
   })
@@ -48,6 +48,22 @@ describe('agentEventGate', () => {
   it('事件自带 sessionId 不等于当前会话 → 不处理（后台会话不进当前视图）', () => {
     useChatStore.setState({ currentSessionId: 'focus', activeAgentSessionId: null })
     expect(shouldHandleAgentEvent('text-delta', 'other')).toBe(false)
+  })
+
+  it('后台会话终态不能清掉当前会话的生成态', () => {
+    useChatStore.setState({
+      currentSessionId: 'focus',
+      activeAgentSessionId: 'other',
+      isGenerating: true,
+      currentGeneratingMessageId: 'focus-message'
+    })
+
+    expect(shouldHandleAgentEvent('message-end', 'other')).toBe(false)
+    expect(useChatStore.getState()).toMatchObject({
+      activeAgentSessionId: 'other',
+      isGenerating: true,
+      currentGeneratingMessageId: 'focus-message'
+    })
   })
 
   it('gateAgentEvent 按 payload.sessionId 路由', () => {

@@ -17,6 +17,7 @@ import { renderBaseRules } from '../promptRenderer'
 import { buildConversationContext } from './contextBuilder'
 import type { SessionData } from '../../sessions/types'
 import type { SkillManifest } from '../../skills/types'
+import type { ChatMessage } from '../../model/types'
 import type { ContextBreakdown } from '../../../shared/agent/contextBreakdown'
 
 /** 从冻结 system prompt 中提取 SystemPromptBuilder 某层正文 */
@@ -42,6 +43,11 @@ export interface BreakdownInputs {
   toolDefinitions: unknown[]
   /** 模型上下文窗口上限，用于计算百分比 */
   contextLimit: number
+  /**
+   * AgentLoop 已持有的模型输入消息。传入时直接按运行时形态统计，
+   * 避免为了复用 SessionData 路径而丢失独立的 tool result 消息。
+   */
+  runtimeMessages?: ChatMessage[]
 }
 
 export interface BreakdownResult {
@@ -81,7 +87,7 @@ export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownRes
   const systemPromptTokens = Math.max(0, rawSystemTokens - skillsTokens - toolsTokens)
 
   // 与 injectHistory / 模型 prompt 同口径：展开 tool result，计入 arguments
-  const runtimeMessages = buildConversationContext(session, session.mode)
+  const runtimeMessages = inputs.runtimeMessages ?? buildConversationContext(session, session.mode)
   const messagesTokens = runtimeMessages.reduce(
     (sum, m) => sum + estimateChatMessageTokens(m),
     0

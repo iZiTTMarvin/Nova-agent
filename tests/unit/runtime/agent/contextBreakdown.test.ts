@@ -5,6 +5,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
+import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { calculateContextBreakdown } from '../../../../src/runtime/agent/context/contextBreakdownCalculator'
 import { buildConversationContext } from '../../../../src/runtime/agent/context/contextBuilder'
 import {
@@ -273,5 +274,50 @@ describe('calculateContextBreakdown（SessionData 口径）', () => {
     // 旧口径只剩 user+assistant 正文（数百 token 量级）；新口径含 40K 字符工具结果
     expect(legacy).toBeLessThan(1_000)
     expect(payload.breakdown.messages).toBeGreaterThan(legacy * 10)
+  })
+})
+
+describe('calculateContextBreakdown（AgentLoop 运行时口径）', () => {
+  it('直接统计独立 tool result，不经过 SessionMessage 有损投影', () => {
+    const runtimeMessages: ChatMessage[] = [
+      { role: 'user', content: '读取文件' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'tc-read', name: 'read', arguments: '{"path":"a.ts"}' }]
+      },
+      {
+        role: 'tool',
+        content: '文件内容',
+        toolCallId: 'tc-read',
+        name: 'read'
+      }
+    ]
+    const session: SessionData = {
+      schemaVersion: 8,
+      id: 'sess_runtime_breakdown',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      frozenSystemPrompt: '你是助手。',
+      messages: []
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const { payload } = calculateContextBreakdown({
+      session,
+      runtimeMessages,
+      skills: 0,
+      toolDefinitions: [],
+      contextLimit: 200_000
+    })
+
+    expect(payload.breakdown.messages).toBe(
+      runtimeMessages.reduce((sum, message) => sum + estimateChatMessageTokens(message), 0)
+    )
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 })
