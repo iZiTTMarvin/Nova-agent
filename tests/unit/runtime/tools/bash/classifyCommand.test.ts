@@ -52,4 +52,45 @@ describe('isDestructiveBashCommand', () => {
     expect(isDestructiveBashCommand('ls -la | grep foo')).toBe(false)
     expect(isDestructiveBashCommand('git status && git log')).toBe(false)
   })
+
+  it('PowerShell 写 cmdlet 判为破坏性（Windows 平台覆盖）', () => {
+    expect(isDestructiveBashCommand('Set-Content -Path out.txt -Value "x"')).toBe(true)
+    expect(isDestructiveBashCommand('Add-Content log.txt "line"')).toBe(true)
+    expect(isDestructiveBashCommand('Out-File -FilePath r.txt "data"')).toBe(true)
+    expect(isDestructiveBashCommand('Remove-Item -Recurse dist')).toBe(true)
+    expect(isDestructiveBashCommand('New-Item -ItemType File x.txt')).toBe(true)
+    expect(isDestructiveBashCommand('Move-Item a.txt b.txt')).toBe(true)
+    expect(isDestructiveBashCommand('Copy-Item src dst')).toBe(true)
+  })
+
+  it('Windows CMD 别名判为破坏性', () => {
+    expect(isDestructiveBashCommand('del /q temp.txt')).toBe(true)
+    expect(isDestructiveBashCommand('copy a.txt b.txt')).toBe(true)
+    expect(isDestructiveBashCommand('move a.txt b.txt')).toBe(true)
+    expect(isDestructiveBashCommand('md newdir')).toBe(true)
+    expect(isDestructiveBashCommand('rd /s /q temp')).toBe(true)
+    expect(isDestructiveBashCommand('ren old.txt new.txt')).toBe(true)
+  })
+
+  it('sed -i 原地改写判为破坏性；非 -i 输出到 stdout 不破坏', () => {
+    expect(isDestructiveBashCommand('sed -i "s/a/b/g" file.txt')).toBe(true)
+    expect(isDestructiveBashCommand('sed --in-place "s/a/b/" f')).toBe(true)
+    expect(isDestructiveBashCommand('sed "s/a/b/g" file.txt')).toBe(false)
+  })
+
+  it('node / npx / make 可能跑构建改文件，判为破坏性', () => {
+    expect(isDestructiveBashCommand('node build.js')).toBe(true)
+    expect(isDestructiveBashCommand('npx tsc')).toBe(true)
+    expect(isDestructiveBashCommand('make build')).toBe(true)
+  })
+
+  it('git branch -D / tag 判为破坏性', () => {
+    expect(isDestructiveBashCommand('git branch -D feature')).toBe(true)
+    expect(isDestructiveBashCommand('git tag v1.0')).toBe(true)
+  })
+
+  it('PowerShell 纯读 cmdlet 不判为破坏性', () => {
+    expect(isDestructiveBashCommand('Get-Content README.md')).toBe(false)
+    expect(isDestructiveBashCommand('dir')).toBe(false)
+  })
 })

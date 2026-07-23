@@ -30,25 +30,33 @@ export function workspaceConflictResult(reason: 'lease_timeout' | 'externally_mo
 }
 
 /**
- * 尝试为本 run 在工作区获取写者租约；拿不到时返回冲突 ToolResult，拿到返回 null。
+ * 尝试为本 run 在工作区获取写者租约；拿到返回 null，拿不到返回冲突 ToolResult。
  *
  * 调用方（edit / write / 破坏性 bash）在执行实际写操作前调用：
  * 返回 null 表示可以继续写；返回 ToolResult 表示应直接把该结果交回 agent，跳过写操作。
  *
- * 缺少 runId / workspaceRoot（子代理 / 旧路径未注入）时直接放行，保持向后兼容。
+ * - 缺少 runId / workspaceRoot（极少数未注入的旧测试路径）时直接放行，
+ *   不影响主 agent 与子代理（均已继承父 runId）。
+ * - run 被取消（abortSignal 触发）时返回 null：取消应让 agent 自然退出当前 turn，
+ *   而不是给 agent 喂一个 WORKSPACE_CONFLICT 让它继续重规划。
+ * - 等待超时返回 WORKSPACE_CONFLICT，让 agent 重新读取并重新规划。
  */
 export async function acquireWriterLeaseOrConflict(params: {
   runId?: string
   workspaceRoot?: string
   timeoutMs?: number
+  abortSignal?: AbortSignal
 }): Promise<ToolResult | null> {
-  const { runId, workspaceRoot, timeoutMs } = params
+  const { runId, workspaceRoot, timeoutMs, abortSignal } = params
   if (!runId || !workspaceRoot) return null
   const result: AcquireResult = await writerLeaseRegistry.acquire(
     workspaceRoot,
     runId,
-    timeoutMs
+    timeoutMs,
+    abortSignal
   )
   if (result.ok) return null
+  // 取消：让 agent 退出，不喂冲突结果
+  if (result.reason === 'aborted') return null
   return workspaceConflictResult('lease_timeout')
 }

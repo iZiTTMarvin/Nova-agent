@@ -225,6 +225,10 @@ async function spawnAgent(
   const toolCtx = buildToolContext(deps, abortSignal, agentCwd, ctx.assertExecutionCurrent)
   // 子 agent 文件操作全部落在 agentCwd（worktree 隔离时为独立目录）
   subLoop.setWorkingDir(agentCwd)
+  // 子代理属父 run：继承 runId / workspaceRoot，使写者租约按父 run 归属工作区，
+  // 与父 agent 共享同一份租约（幂等），不绕过单写者约束。
+  subLoop.setRunRef(ctx.runId)
+  subLoop.setWorkspaceRoot(deps.workspaceRoot)
   subLoop.setToolRegistry(subRegistry)
   // 子 agent：compose / auto 语义（危险命令仍拦）
   subPermission.setPermissionPolicy('auto')

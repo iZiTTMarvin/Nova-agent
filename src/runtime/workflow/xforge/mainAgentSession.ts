@@ -70,6 +70,10 @@ export class XForgeMainAgentSession {
     this.loop.setPermissionManager(permission)
     this.loop.setMode('compose')
     this.loop.setWorkingDir(options.workspaceRoot)
+    // XForge 主 Agent 属本 run：继承 runId / workspaceRoot，使写者租约按本 run 归属工作区，
+    // 与同工作区的并发 default 会话互斥写入。
+    this.loop.setRunRef(options.runId)
+    this.loop.setWorkspaceRoot(options.workspaceRoot)
     this.loop.setToolRegistry(options.toolRegistry)
     this.loop.setEffectiveToolDefinitionsProvider(() =>
       getXForgeEffectiveToolDefinitions({

@@ -1,6 +1,6 @@
 export {
   pendingAskQuestions,
-  dismissAllPendingAskQuestions,
+  dismissPendingAskQuestionsForSession,
   dismissPendingAskQuestionsForRun
 } from './askQuestionWaiters'
 export {

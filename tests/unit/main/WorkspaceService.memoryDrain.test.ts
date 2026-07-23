@@ -22,7 +22,7 @@ vi.mock('../../../src/main/agent/state', () => ({
   clearReadStateForSession: vi.fn(),
   deleteReadStateForSession: vi.fn(),
   isAgentTurnInProgress: vi.fn(() => false),
-  getActiveTurnSessionId: vi.fn(() => null)
+  isSessionTurnInProgress: vi.fn(() => false)
 }))
 
 vi.mock('../../../src/main/index', () => ({

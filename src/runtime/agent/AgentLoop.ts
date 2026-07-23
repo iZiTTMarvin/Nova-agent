@@ -1265,8 +1265,8 @@ export class AgentLoop implements IdleCompactionTarget {
    * 且 subLoop 对象图无法被 GC）。
    *
    * 调用场景：
-   * - taskTool / runSkillFork 的子 agent 执行完后释放
-   * - agentHandler 创建新 AgentLoop 前 dispose 旧的
+   * - 子 agent（taskTool / runSkillFork / workflow）执行完后释放
+   * - 主 turn 的 loop 在 idle 托管期结束后释放（下一 turn 装配 / 会话取消 / 会话删除）
    */
   dispose(): void {
     // 先置 disposed，阻断已排队的 idle timer 到期后进入摘要请求

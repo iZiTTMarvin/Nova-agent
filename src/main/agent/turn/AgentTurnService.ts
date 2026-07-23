@@ -42,7 +42,7 @@ import {
 } from '../runtime'
 import {
   pendingAskQuestions,
-  dismissAllPendingAskQuestions
+  dismissPendingAskQuestionsForSession
 } from '../interaction/askQuestionWaiters'
 import { interruptStartedRunAfterFailure } from './turnLifecycle'
 import {
@@ -55,11 +55,36 @@ import {
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
  * 多并发 run 时按 snapshot.runId 精确查找，避免打到「最新一个」错误 loop。
  *
- * 每个 turn 装配独立的 AgentLoop（per-run 隔离），turn 终态后在 finally 里注销。
+ * 每个 turn 装配独立的 AgentLoop（per-run 隔离），turn 终态后从该索引移出，转入 idle 托管。
  * 不再保留全局单例 loop：并发 turn 各自独立，互不覆盖。
  */
 const agentLoopsByRunId = new Map<string, AgentLoop>()
+
+/**
+ * 按会话托管的 idle 期 AgentLoop。
+ *
+ * turn 结束后 AgentLoop 不立即销毁：它会启动 idle 压缩计时器（266s），在用户空闲期间
+ * 自动压缩对话历史以维持缓存前缀稳定。该托管表让 loop 在「执行期索引」之外继续存活，
+ * 直到 idle 压缩窗口结束（下一 turn 装配 / 会话取消 / 会话删除）才真正释放。
+ *
+ * 每个会话同时最多托管一个 idle loop：新 turn 装配时旧 loop 立即 dispose（接替语义），
+ * 与旧「全局单例靠下一 turn 覆盖」的行为一致，但精确到会话维度。
+ */
+const idleLoopsBySession = new Map<string, AgentLoop>()
 let terminalHooksRegistered = false
+
+/**
+ * 把一个会话的 idle 期 loop 销毁（若存在）。
+ *
+ * 调用时机：会话被删除 / 被取消 / 不再需要 idle 压缩窗口。
+ * 内部幂等：无可托管 loop 时直接返回。
+ */
+export function disposeIdleLoopForSession(sessionId: string): void {
+  const loop = idleLoopsBySession.get(sessionId)
+  if (!loop) return
+  idleLoopsBySession.delete(sessionId)
+  loop.dispose()
+}
 
 export function getAgentLoopForRun(runId: string): AgentLoop | undefined {
   return agentLoopsByRunId.get(runId)
@@ -134,9 +159,10 @@ export async function sendAgentMessage(
     return
   }
 
-  // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 所有挂起的 askQuestion 请求，
+  // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 本会话挂起的 askQuestion 请求，
   // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
-  dismissAllPendingAskQuestions()
+  // 按会话过滤：并发下其它会话正在等待的提问不受影响。
+  dismissPendingAskQuestionsForSession(params.sessionId)
 
   const modelClient = getModelClient()
   if (!modelClient) {
@@ -198,6 +224,16 @@ export async function sendAgentMessage(
   const runCoordinator = getRunCoordinator()
   const xforgeService = getXForgeRunService()
   const executionRegistry = getRunExecutionRegistry()
+
+  // 关键段复查（TOCTOU 防御）：入口锁在 isSessionTurnInProgress 检查后到这里隔着
+  // prepareAgentRuntime / appendMessageFast 等多个 await，drain 出队的 turn 和用户新消息
+  // 可能同时通过入口检查。在装配 / 持久化 / startRun 前再查一次：若该 session 期间已被
+  // 另一个 turn 占用，把消息推回 steering queue 直接返回，绝不产生同会话双 run。
+  // 此处位于 try/finally 之前，return 不会触发任何清理副作用。
+  if (!resumableXForge && isSessionTurnInProgress(params.sessionId)) {
+    enqueueSteeringMessage(params.sessionId, params)
+    return
+  }
 
   // session 持久化副作用留在 TurnService：factory 只装配，不写 session
   const promptCacheKey = sessionStore.ensureCacheRoutingKey(params.sessionId) ?? undefined
@@ -519,17 +555,33 @@ export async function sendAgentMessage(
       executionRegistry.unregister(runRefs.runId, runRefs.executionGeneration)
       agentLoopsByRunId.delete(runRefs.runId)
       disposeTurnStreams(runRefs.runId, runRefs.executionGeneration)
-      // 释放本 run 的子代理桥接，回收内存（并发 ron 互不影响）
+      // 释放本 run 的子代理桥接，回收内存（并发 run 互不影响）
       subAgentBridgeRegistry.release(runRefs.runId)
       // 释放本 run 持有的写者租约，唤醒等待同一工作区的其它 run
       writerLeaseRegistry.release(runRefs.runId)
       setActiveRunId(null)
     }
-    // 本 turn 的 AgentLoop 生命周期结束，释放其持有的定时器 / 监听等资源
-    loopForRun.dispose()
+    // 主 loop 进入 idle 托管：turn 结束后保留存活以驱动空闲压缩计时器。
+    // 同会话若已有上一轮残留的 idle loop，先 dispose 接替（执行期索引此时已无重叠）。
+    retireIdleLoopForSession(params.sessionId)
+    idleLoopsBySession.set(params.sessionId, loopForRun)
     // 同会话排队消息：当前 turn 终态后，取出队首发起新 turn（递归，FIFO）
     drainSteeringQueue(params.sessionId, deps)
   }
+}
+
+/**
+ * 销毁该会话当前托管的 idle loop（若有）。
+ *
+ * 与 disposeIdleLoopForSession（供外部取消/删除调用）共享实现，区别在于语义：
+ * - retire：新 turn 接替旧 loop（同会话天然串行，旧的不再有用）
+ * - dispose：会话层面主动终止，idle 压缩窗口不再需要
+ */
+function retireIdleLoopForSession(sessionId: string): void {
+  const loop = idleLoopsBySession.get(sessionId)
+  if (!loop) return
+  idleLoopsBySession.delete(sessionId)
+  loop.dispose()
 }
 
 /**
@@ -541,8 +593,10 @@ export async function sendAgentMessage(
 function drainSteeringQueue(sessionId: string, deps: SendAgentMessageDeps): void {
   const next = dequeueSteeringMessage(sessionId)
   if (!next) return
-  // 不 await：drain 在 finally 中同步执行，新 turn 异步跑，避免阻塞当前调用栈
-  void sendAgentMessage(fromSteeringMessage(next), deps)
+  // 新 turn 在 finally 中执行；异常交给 sendAgentMessage 自身上层处理，不再吞掉
+  void sendAgentMessage(fromSteeringMessage(next), deps).catch((err) => {
+    console.error(`[AgentTurnService] steering queue 排队消息执行失败 session=${sessionId}:`, err)
+  })
 }
 
 /** 把 steering 队列项还原为 sendAgentMessage 入参（结构一致，仅做类型收窄）。 */
@@ -625,6 +679,16 @@ function projectAgentEventToRun(
           toolCallIds: event.toolCallIds
         }
       })
+      // 权限等待会让 run 进入 waiting_user，期间不写入；释放写者租约让其它会话能继续写。
+      // 用户授权后 turn 恢复，下次写操作会惰性重新获取租约（幂等）。
+      writerLeaseRegistry.release(runId)
+      break
+    }
+    case 'ask_question_request': {
+      // askQuestion 入队已在 askQuestionHandler 完成（让 run 进入 waiting_user）。
+      // 这里只负责释放写者租约：提问等待期间不写入，让其它会话能继续写。
+      // 用户回答后 turn 恢复，下次写操作惰性重新获取租约（幂等）。
+      writerLeaseRegistry.release(runId)
       break
     }
     // verification_permission_request：message_end 后的异步验证 + 超时 waiter，

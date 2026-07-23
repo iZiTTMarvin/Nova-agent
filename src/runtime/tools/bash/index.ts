@@ -117,10 +117,12 @@ export const bashTool: ToolExecutor = {
 
     // 破坏性命令（写文件 / 删文件 / 改 git 等）需获取写者租约，
     // 避免并发 run 同时改同一工作区；纯读命令不获取，保持并发友好。
+    // 透传 abortSignal：run 取消时立即出队，避免持租者释放后把租约授予已死掉的 run。
     if (isDestructiveBashCommand(command)) {
       const conflict = await acquireWriterLeaseOrConflict({
         runId: context.runId,
-        workspaceRoot: context.workspaceRoot ?? context.workingDir
+        workspaceRoot: context.workspaceRoot ?? context.workingDir,
+        abortSignal: context.abortSignal
       })
       if (conflict) return conflict
     }

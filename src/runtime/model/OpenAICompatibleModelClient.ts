@@ -87,12 +87,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 只需拼接路径后缀 /chat/completions
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
-    // 本轮禁用能力集合：优先用调用方按 turn 透传的（并发隔离），
-    // 回退到 client 实例态（网关级永久降级，单 turn / 测试场景）。
-    // 降级写入同时写两份：透传集合归该 turn 所有，实例态保留网关永久语义。
-    const requestDisabled: Set<DowngradeCapability> = options?.capabilityDisabled
-      ? new Set(options.capabilityDisabled as Iterable<DowngradeCapability>)
-      : new Set(this.disabledCapabilities)
+    // 网关级禁用能力（直接读实例态）：同一网关对所有请求行为一致，
+    // 并发 turn 共享同一底层 client 时共享同一份降级记忆是正确语义。
+    const requestDisabled = this.disabledCapabilities
 
     // 默认过滤 internal 消息，避免把运行时临时提示暴露给普通对话；
     // 只有像 compaction 这样的受控内部调用，才会显式放行 internal 正文。
@@ -196,13 +193,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
         response.status === 400 ? detectDowngradeCapability(text, body) : null
 
       if (downgradeCap && !requestDisabled.has(downgradeCap)) {
-        // 写入本轮请求集合（归该 turn 所有，并发隔离）。
-        // 实例态只在「调用方未提供 per-request 集合」时才写，
-        // 否则会把本 turn 的降级泄漏到共享同一 client 的其它 turn。
+        // 记录到网关级记忆：后续所有请求不再发送该参数，避免重复 400。
+        // 同一底层 client 的并发 turn 共享此记忆（同一网关行为一致）。
         requestDisabled.add(downgradeCap)
-        if (!options?.capabilityDisabled) {
-          this.disabledCapabilities.add(downgradeCap)
-        }
         yield {
           type: 'capability_downgrade',
           capability: downgradeCap,

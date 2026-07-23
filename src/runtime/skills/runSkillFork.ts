@@ -104,6 +104,10 @@ export async function runSkillFork(
   })
 
   subLoop.setWorkingDir(ctx.workingDir)
+  // 子代理属父 run：继承父 runId / workspaceRoot，使写者租约按父 run 归属工作区，
+  // 与父 agent 共享同一份租约（幂等），不绕过单写者约束。
+  if (ctx.runId) subLoop.setRunRef(ctx.runId)
+  if (ctx.workspaceRoot) subLoop.setWorkspaceRoot(ctx.workspaceRoot)
   subLoop.setToolRegistry(subRegistry)
   subLoop.setPermissionManager(subPermission)
   subLoop.setMode('default' as Mode)

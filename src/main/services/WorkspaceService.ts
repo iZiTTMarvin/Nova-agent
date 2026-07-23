@@ -23,10 +23,12 @@ import {
   clearReadStateForSession,
   deleteReadStateForSession,
   isAgentTurnInProgress,
-  getActiveTurnSessionId
+  isSessionTurnInProgress
 } from '../agent/state'
 import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
+import { disposeIdleLoopForSession } from '../agent/turn'
+import { clearSteeringQueue } from '../agent/turn/SteeringQueue'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
@@ -221,7 +223,6 @@ export class WorkspaceService {
 
     // 创建新会话
     const data = store.create(selectedPath, this.state.currentMode)
-    clearReadStateForSession(data.id)
 
     this.state = {
       currentSessionId: data.id,
@@ -240,7 +241,6 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     this.maybeLeaveCurrentSession(store)
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode)
-    clearReadStateForSession(data.id)
     setCurrentProjectPath(params.workspaceRoot)
     this.notifyWorkspaceRootChanged(params.workspaceRoot)
     setCurrentMode(data.mode)
@@ -263,7 +263,9 @@ export class WorkspaceService {
   deleteSession(sessionId: string): WorkspaceState {
     // 该会话有进行中的 Agent 轮次（含编排 run）时禁止删除：
     // 否则 run 变成无主孤儿，持续占用 RunCoordinator 非终态并向已删除会话写数据。
-    if (getActiveTurnSessionId() === sessionId) {
+    // 并发模型下必须按会话精确判断：全局 getActiveTurnSessionId 只返回单个会话，
+    // 无法拦截「另一个会话在跑」时删除非当前会话的情况。
+    if (isSessionTurnInProgress(sessionId)) {
       throw new Error('该会话的 Agent 正在运行，请先停止再删除')
     }
     this.clearTier1BranchContext()
@@ -275,8 +277,10 @@ export class WorkspaceService {
     }
 
     store.delete(sessionId)
-    // 彻底回收被删会话的 readState，释放内存
+    // 彻底回收被删会话的运行期资源：readState、idle 压缩 loop、排队消息
     deleteReadStateForSession(sessionId)
+    disposeIdleLoopForSession(sessionId)
+    clearSteeringQueue(sessionId)
 
     const remaining = store.list()
     const deletingCurrent = this.state.currentSessionId === sessionId
@@ -287,8 +291,8 @@ export class WorkspaceService {
         const next = remaining[0]
         const detail = store.load(next.id)
         if (detail) {
-          // 切到新会话只清目标会话的 readState，不影响并发中的其它会话
-          clearReadStateForSession(detail.id)
+          // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
+          // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
           setCurrentProjectPath(detail.workspaceRoot)
           setCurrentMode(detail.mode)
           this.notifyWorkspaceRootChanged(detail.workspaceRoot)
@@ -356,8 +360,8 @@ export class WorkspaceService {
       throw new Error(`会话 ${sessionId} 不存在`)
     }
 
-    // 切换会话只清目标会话的 readState，不影响并发中的其它会话
-    clearReadStateForSession(sessionId)
+    // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
+    // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
     setCurrentProjectPath(detail.workspaceRoot)
     setCurrentMode(detail.mode)
     this.notifyWorkspaceRootChanged(detail.workspaceRoot)

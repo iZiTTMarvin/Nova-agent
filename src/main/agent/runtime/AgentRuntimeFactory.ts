@@ -67,6 +67,8 @@ export interface AgentRuntimeRunRefs {
 }
 
 export interface PendingAskQuestionEntry {
+  /** 归属会话：并发下 dismiss 必须按会话过滤，避免误杀其它会话的提问 */
+  sessionId: string
   runId: string
   resolve: (answers: AskQuestionAnswer[]) => void
   eventBus: EventBus
@@ -323,6 +325,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   ): Promise<AskQuestionAnswer[]> => {
     return new Promise<AskQuestionAnswer[]>((resolve) => {
       pendingAskQuestions.set(requestId, {
+        sessionId,
         runId: runRefs.runId,
         resolve,
         eventBus

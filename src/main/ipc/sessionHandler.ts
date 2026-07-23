@@ -32,7 +32,6 @@ import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
-import { clearReadStateForSession } from '../agent/state'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { getSkillService } from '../services/SkillServiceHost'
 import { loadModelConfig } from '../../runtime/model/config'
@@ -132,8 +131,8 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
-    // 切换会话时清除先读后改状态，防止跨会话污染（仅清该会话，不影响并发中的其它会话）
-    clearReadStateForSession(params.sessionId)
+    // readState 已按会话隔离，加载时不清理：切到正在后台跑的会话若清空 readState，
+    // 会让该 turn 后续 edit 全部撞「File has not been read yet」。跨会话污染由隔离本身防止。
     // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
     setCurrentProjectPath(data.workspaceRoot)
     setCurrentMode(data.mode)
@@ -169,8 +168,7 @@ export function registerSessionHandler(): void {
   // 创建新会话
   handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
     const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
-    // 新建会话时清除先读后改状态，防止跨会话污染（按会话隔离，只清该新会话）
-    clearReadStateForSession(data.id)
+    // 新会话尚无 readState，无需清理；readState 在首次 getReadStateForSession 时懒创建
     // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
     setCurrentProjectPath(params.workspaceRoot)
     setCurrentMode(data.mode)

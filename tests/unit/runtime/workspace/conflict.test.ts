@@ -49,4 +49,37 @@ describe('workspace conflict helpers', () => {
     expect(r).not.toBeNull()
     if (r) expect(isWorkspaceConflictResult(r)).toBe(true)
   })
+
+  it('子代理注入 runId 后进入 lease 路径，不再走放行分支', async () => {
+    // 验证问题6修复：子代理 ctx 带 runId 时，lease 生效而非无条件放行。
+    // 父 run 已持租时，子代理（同 runId）幂等拿到；另一 run 才会冲突。
+    await writerLeaseRegistry.acquire('/ws', 'parentRun')
+    // 同 runId（子代理继承父）幂等
+    const same = await acquireWriterLeaseOrConflict({
+      runId: 'parentRun',
+      workspaceRoot: '/ws'
+    })
+    expect(same).toBeNull()
+    // 不同 runId 冲突
+    const other = await acquireWriterLeaseOrConflict({
+      runId: 'otherRun',
+      workspaceRoot: '/ws',
+      timeoutMs: 30
+    })
+    expect(other).not.toBeNull()
+    if (other) expect(isWorkspaceConflictResult(other)).toBe(true)
+  })
+
+  it('abortSignal 触发时返回 null（让 agent 自然退出，不喂冲突）', async () => {
+    await writerLeaseRegistry.acquire('/ws', 'runA')
+    const ac = new AbortController()
+    const p = acquireWriterLeaseOrConflict({
+      runId: 'runB',
+      workspaceRoot: '/ws',
+      abortSignal: ac.signal
+    })
+    ac.abort()
+    const r = await p
+    expect(r).toBeNull()
+  })
 })

@@ -13,11 +13,12 @@ import {
   clearVerificationPermissionRequest,
   markActiveStreamsCancelled
 } from '../events'
-import { getAgentLoopForRun } from '../turn'
+import { getAgentLoopForRun, disposeIdleLoopForSession } from '../turn'
 import {
   pendingAskQuestions,
   dismissPendingAskQuestionsForRun
 } from './askQuestionWaiters'
+import { clearSteeringQueue } from '../turn/SteeringQueue'
 
 /** 校验 IPC 请求指向的 durable interaction，返回不匹配原因。 */
 function interactionIdentityError(
@@ -108,6 +109,14 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
 
     clearPendingVerificationPermissions(runId)
     dismissPendingAskQuestionsForRun(runId)
+
+    // 会话层面的清理：取消后 idle 压缩窗口不再需要，排队消息也不再处理。
+    // 两者都按 sessionId 精确清理，不影响并发中的其它会话。
+    const sessionId = beforeCancel.sessionId
+    if (sessionId) {
+      disposeIdleLoopForSession(sessionId)
+      clearSteeringQueue(sessionId)
+    }
   }
 
   // 有执行句柄时终态由 sendMessage finally 确认；parked XForge 已在上方同步终止。

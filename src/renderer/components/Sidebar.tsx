@@ -30,14 +30,15 @@ export const Sidebar: React.FC = () => {
   const cancelExecution = useAgentStore(state => state.cancelExecution)
 
   /**
-   * 后台运行中会话徽标：从 snapshotsByRunId 派生，取所有 status==='running' 的非终态 run，
+   * 后台运行中会话徽标：从 snapshotsByRunId 派生，取所有非终态活跃 run，
    * 按 sessionId 聚合（每个会话只显示一个运行中徽标）。
    * 焦点会话自身的运行态由 ChatPanel 的停止按钮表达，不在此徽标范围。
    */
   const runningSessions = useMemo(() => {
+    const activeStatuses = new Set(['running', 'retrying', 'resuming', 'cancelling'])
     const map = new Map<string, { sessionId: string; runId: string }>()
     for (const snap of Object.values(snapshotsByRunId)) {
-      if (snap.status === 'running' && snap.sessionId !== currentSessionId) {
+      if (activeStatuses.has(snap.status) && snap.sessionId !== currentSessionId) {
         map.set(snap.sessionId, { sessionId: snap.sessionId, runId: snap.runId })
       }
     }
