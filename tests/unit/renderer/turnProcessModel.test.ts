@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildProcessTimeline,
   buildTurnRenderModel,
-  countHunkLineChanges
+  countHunkLineChanges,
+  normalizeThinkingForDisplay
 } from '../../../src/renderer/features/chat/turnProcessModel'
 import { computeFileDiff } from '../../../src/shared/diff/compute'
 import type { RendererMessageBlock, RendererToolBlock } from '../../../src/renderer/stores/types'
@@ -254,6 +255,108 @@ describe('buildTurnRenderModel', () => {
     expect(model.hasProcess).toBe(true)
     expect(model.answerUnits).toHaveLength(0)
     expect(model.summary.commandCount).toBe(1)
+  })
+
+  it('思考摘要复用展示规范化，不泄露 Markdown 标记', () => {
+    const blocks: RendererMessageBlock[] = [
+      {
+        type: 'thinking',
+        content:
+          '**Planning initial repository inspection****Drafting detailed implementation plan**'
+      },
+      toolBlock('1', 'read', { path: 'a.ts' })
+    ]
+
+    const model = buildTurnRenderModel({
+      blocks,
+      toolCalls: [],
+      mode: 'default',
+      phase: 'completed'
+    })
+
+    expect(model.summary.thoughtPreview).toBe(
+      'Planning initial repository inspection Drafting detailed implementation plan'
+    )
+  })
+})
+
+describe('normalizeThinkingForDisplay', () => {
+  it('普通中文、列表和代码内容保持原意', () => {
+    const input = '先检查调用链。\n\n- 读取入口\n- 验证测试\n\n`npm test`'
+    expect(normalizeThinkingForDisplay(input)).toBe(input)
+  })
+
+  it('只拆分文本内部紧邻的加粗摘要，不改 Markdown 分隔线', () => {
+    expect(normalizeThinkingForDisplay('**分析 A****分析 B**')).toBe(
+      '**分析 A**\n\n**分析 B**'
+    )
+    expect(normalizeThinkingForDisplay('password****hidden')).toBe(
+      'password****hidden'
+    )
+    expect(normalizeThinkingForDisplay('第一段\n\n****\n\n第二段')).toBe(
+      '第一段\n\n****\n\n第二段'
+    )
+  })
+
+  it('围栏代码与行内代码中的连续星号保持不变', () => {
+    const input = [
+      '`value****next`',
+      '',
+      '```text',
+      'value****next',
+      '```still-code',
+      '**code A****code B**',
+      '```',
+      '',
+      '`multi-line code starts',
+      '**code C****code D**',
+      'ends here`',
+      '',
+      '**摘要 A****摘要 B**'
+    ].join('\n')
+    const expected = [
+      '`value****next`',
+      '',
+      '```text',
+      'value****next',
+      '```still-code',
+      '**code A****code B**',
+      '```',
+      '',
+      '`multi-line code starts',
+      '**code C****code D**',
+      'ends here`',
+      '',
+      '**摘要 A**',
+      '',
+      '**摘要 B**'
+    ].join('\n')
+
+    expect(normalizeThinkingForDisplay(input)).toBe(expected)
+  })
+
+  it('过程摘要跳过可变长度和波浪号围栏代码', () => {
+    const blocks: RendererMessageBlock[] = [
+      {
+        type: 'thinking',
+        content: [
+          '~~~~text',
+          '**code A****code B**',
+          '~~~~',
+          '**真实摘要 A****真实摘要 B**'
+        ].join('\n')
+      },
+      toolBlock('1', 'read', { path: 'a.ts' })
+    ]
+
+    const model = buildTurnRenderModel({
+      blocks,
+      toolCalls: [],
+      mode: 'default',
+      phase: 'completed'
+    })
+
+    expect(model.summary.thoughtPreview).toBe('真实摘要 A 真实摘要 B')
   })
 })
 

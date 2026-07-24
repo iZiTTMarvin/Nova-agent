@@ -156,11 +156,157 @@ function findLastVisibleToolIndex(blocks: RendererMessageBlock[], mode: Mode): n
   return -1
 }
 
+interface MarkdownFence {
+  marker: '`' | '~'
+  length: number
+}
+
+function transitionMarkdownFence(
+  line: string,
+  current: MarkdownFence | null
+): { fence: MarkdownFence | null; delimiter: boolean } {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+  if (!match) return { fence: current, delimiter: false }
+
+  const marker = match[1][0] as '`' | '~'
+  const length = match[1].length
+  const suffix = match[2]
+
+  if (current) {
+    const closes =
+      marker === current.marker &&
+      length >= current.length &&
+      /^[\t ]*$/.test(suffix)
+    return closes
+      ? { fence: null, delimiter: true }
+      : { fence: current, delimiter: false }
+  }
+
+  // CommonMark 不允许反引号围栏的 info string 再包含反引号。
+  if (marker === '`' && suffix.includes('`')) {
+    return { fence: null, delimiter: false }
+  }
+  return { fence: { marker, length }, delimiter: true }
+}
+
+/**
+ * 将 provider reasoning 转成可交给 MarkdownRenderer 的展示文本。
+ *
+ * reasoning 原文仍由 runtime/session 完整保存；这里只修复展示协议。部分模型会把多个
+ * 加粗摘要项无空白相邻输出为 `**A****B**`，CommonMark 会将中间星号视为普通字符。
+ * 仅在普通 Markdown 文本中识别该边界；围栏代码和行内代码保持字节不变。
+ */
+export function normalizeThinkingForDisplay(thinking: string): string {
+  if (!thinking.includes('****')) return thinking
+
+  let fence: MarkdownFence | null = null
+  let inlineCodeTicks = 0
+
+  return thinking
+    .split(/(\r?\n)/)
+    .map(part => {
+      if (part === '\n' || part === '\r\n') return part
+
+      const transition = transitionMarkdownFence(part, fence)
+      if (transition.delimiter) {
+        fence = transition.fence
+        inlineCodeTicks = 0
+        return part
+      }
+      if (fence !== null) return part
+
+      let result = ''
+      let strongOpen = false
+      for (let i = 0; i < part.length;) {
+        if (part[i] === '`') {
+          let runLength = 1
+          while (part[i + runLength] === '`') runLength += 1
+          if (inlineCodeTicks === 0) inlineCodeTicks = runLength
+          else if (inlineCodeTicks === runLength) inlineCodeTicks = 0
+          result += part.slice(i, i + runLength)
+          i += runLength
+          continue
+        }
+
+        if (
+          inlineCodeTicks === 0 &&
+          strongOpen &&
+          part.startsWith('****', i) &&
+          i > 0 &&
+          i + 4 < part.length &&
+          !/\s/.test(part[i - 1]) &&
+          !/\s/.test(part[i + 4])
+        ) {
+          result += '**\n\n**'
+          i += 4
+          continue
+        }
+
+        if (
+          inlineCodeTicks === 0 &&
+          part.startsWith('**', i) &&
+          part[i - 1] !== '*' &&
+          part[i + 2] !== '*'
+        ) {
+          const previous = part[i - 1]
+          const next = part[i + 2]
+          if (!strongOpen && next !== undefined && !/\s/.test(next)) {
+            strongOpen = true
+          } else if (
+            strongOpen &&
+            previous !== undefined &&
+            !/\s/.test(previous)
+          ) {
+            strongOpen = false
+          }
+          result += '**'
+          i += 2
+          continue
+        }
+
+        result += part[i]
+        i += 1
+      }
+      return result
+    })
+    .join('')
+}
+
+function removeFencedCodeForPreview(thinking: string): string {
+  let fence: MarkdownFence | null = null
+  return thinking
+    .split(/\r?\n/)
+    .map(line => {
+      const transition = transitionMarkdownFence(line, fence)
+      if (transition.delimiter) {
+        fence = transition.fence
+        return ''
+      }
+      return fence === null ? line : ''
+    })
+    .join('\n')
+}
+
+function thinkingPreviewText(thinking: string): string {
+  return removeFencedCodeForPreview(normalizeThinkingForDisplay(thinking))
+    .replace(/(`+)([\s\S]*?)\1/g, '$2')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*[-+*>]\s+/gm, '')
+    .replace(/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/gm, '')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    .replace(/(^|[\s([{])([*_])(?=\S)([^*_\n]*?\S)\2(?=$|[\s)\]},.!?:;])/g, '$1$3')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function buildThoughtPreview(processBlocks: RendererMessageBlock[]): string | undefined {
   for (const block of processBlocks) {
     if (block.type === 'thinking') {
-      const trimmed = block.content.trim()
-      if (trimmed) return trimmed.slice(0, 120)
+      const preview = thinkingPreviewText(block.content)
+      if (preview) return preview.slice(0, 120)
     }
   }
 

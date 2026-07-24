@@ -3,8 +3,10 @@
  *
  * 无边框卡片壳；进行中默认展开，结束后自动收起（用户手动点过则尊重其选择）。
  */
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { ChevronIcon } from '../../components/Icons'
+import { MarkdownRenderer } from './MarkdownRenderer'
+import { normalizeThinkingForDisplay } from './turnProcessModel'
 import './ThinkingBlock.css'
 
 interface ThinkingBlockProps {
@@ -26,6 +28,10 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
   const startTimeRef = useRef<number | null>(null)
   const userToggledRef = useRef(false)
   const prevActiveRef = useRef(active)
+  const displayThinking = useMemo(
+    () => normalizeThinkingForDisplay(thinking),
+    [thinking]
+  )
 
   // 计时：进行中每 100ms 刷新；结束时补算最终耗时
   useEffect(() => {
@@ -91,9 +97,9 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
       </summary>
       {isOpen && (
         <div className="thinking-block__content">
-          <pre className="thinking-block__pre">
-            <code>{thinking}</code>
-          </pre>
+          <div className="thinking-block__markdown">
+            <MarkdownRenderer content={displayThinking} isStreaming={active} />
+          </div>
         </div>
       )}
     </details>

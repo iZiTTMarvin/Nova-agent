@@ -60,6 +60,11 @@ describe('聊天体验回归', () => {
     })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.stubGlobal('document', {
+      visibilityState: 'visible',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    })
     global.window = {
       ...global.window,
       api: {
@@ -141,6 +146,31 @@ describe('聊天体验回归', () => {
     expect(renderer!.root.findByType('details').props.open).toBe(false)
     const title = renderer!.root.findByProps({ className: 'thinking-block__title' })
     expect(String(title.children.join(''))).toMatch(/^Thought/)
+
+    act(() => {
+      renderer?.unmount()
+    })
+  })
+
+  it('思考块将连续 Markdown 摘要渲染为独立标题，不暴露星号', () => {
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(ThinkingBlock, {
+          thinking:
+            '**Planning initial repository inspection****Drafting detailed implementation plan**',
+          active: true
+        })
+      )
+    })
+
+    const headings = renderer!.root.findAllByType('strong')
+    expect(headings).toHaveLength(2)
+    expect(headings.map(node => node.children.join(''))).toEqual([
+      'Planning initial repository inspection',
+      'Drafting detailed implementation plan'
+    ])
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('****')
 
     act(() => {
       renderer?.unmount()
