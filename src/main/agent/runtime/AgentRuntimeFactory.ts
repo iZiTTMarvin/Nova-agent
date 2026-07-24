@@ -7,7 +7,7 @@ import { join } from 'path'
 import {
   AgentLoop,
   EventBus,
-  renderToolInventory,
+  renderModeToolInventory,
   buildStableSystemPrompt,
   buildSkillContextForMode,
   estimateTokens,
@@ -55,6 +55,7 @@ import { activeStreams } from '../events'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
+import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 
 /** 统一 skill 调度开关（默认开启；测试可经环境变量关闭） */
 export const USE_UNIFIED_SKILL_DISPATCH = process.env.NOVA_USE_UNIFIED_SKILL_DISPATCH !== 'false'
@@ -262,9 +263,11 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     activeProvider.baseUrl,
     persistedConfig?.toolDialect ?? activeProvider.toolDialect
   )
-  const toolSummary = renderToolInventory(toolRegistry.getToolDefinitions(), {
-    dialect: toolDialect
-  })
+  const toolSummary = renderModeToolInventory(
+    session.mode,
+    toolRegistry.getToolDefinitions(),
+    { dialect: toolDialect }
+  )
 
   const frozenPrompt = buildStableSystemPrompt({
     workingDir: projectPath
@@ -316,6 +319,31 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     supportsVision
   })
   agentLoop.setSessionContext(sessionStore, sessionId)
+  agentLoop.setActivePlanPath(session.activePlan?.path)
+  agentLoop.setSwitchModeHandler(async (targetMode, _reason) => {
+    const currentSession = sessionStore.load(sessionId)
+    if (!currentSession) {
+      throw new Error('当前会话不存在')
+    }
+    if (currentSession.mode === 'compose') {
+      throw new Error('XForge 模式由独立运行生命周期管理，不能通过 switch_mode 切换')
+    }
+    if (currentSession.mode === 'plan' && targetMode === 'default') {
+      const activePath = currentSession.activePlan?.path
+      const hasReadableActivePlan = isReadablePlanInWorkspace(projectPath, activePath)
+      if (!hasReadableActivePlan) {
+        throw new Error('进入 default 前必须先用 save_plan 保存可读取的 active plan')
+      }
+    }
+    if (currentSession.mode === targetMode) {
+      return { previousMode: currentSession.mode, currentMode: targetMode }
+    }
+
+    const previousMode = currentSession.mode
+    getWorkspaceService().setMode({ mode: targetMode, sessionId, source: 'agent' })
+    agentLoop.setMode(targetMode)
+    return { previousMode, currentMode: targetMode }
+  })
   agentLoop.setArtifactStore(artifactStore)
   agentLoop.setReadState(readState)
 
@@ -402,7 +430,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
 
   agentLoop.setWorkflowRunner(async (scriptName, args, opts) => {
     if (session.mode !== 'compose') {
-      getWorkspaceService().setMode({ mode: 'compose', sessionId })
+      getWorkspaceService().setMode({ mode: 'compose', sessionId, source: 'workflow' })
       agentLoop.setMode('compose')
     }
     permissionManager.setPermissionPolicy('auto')

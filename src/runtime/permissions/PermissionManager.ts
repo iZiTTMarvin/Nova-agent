@@ -18,6 +18,14 @@ import { isCommandFullyWhitelisted } from './commandSegments'
 import { matchPermission, type MatchInput } from './PermissionMatcher'
 import type { PermissionRule } from './PermissionRule'
 
+/** 进入只读 Plan 或保持当前模式不会扩大副作用权限，可以由 Agent 自动完成。 */
+export function isSafeAutomaticModeTransition(
+  currentMode: Mode,
+  targetMode: unknown
+): boolean {
+  return targetMode === currentMode || (currentMode === 'default' && targetMode === 'plan')
+}
+
 /** 会话级临时内存白名单：Map<sessionId, Set<commandPrefix>> */
 const sessionWhitelists = new Map<string, Set<string>>()
 
@@ -82,6 +90,21 @@ export class PermissionManager {
    */
   check(query: PermissionQuery, mode: Mode): PermissionResult {
     const { toolName, args } = query
+
+    if (toolName === 'switch_mode') {
+      if (isSafeAutomaticModeTransition(mode, args.mode)) {
+        return {
+          decision: 'allow',
+          riskLevel: 'low',
+          reason: '进入只读 Plan 模式不会扩大副作用权限'
+        }
+      }
+      return {
+        decision: 'ask',
+        riskLevel: 'low',
+        reason: '退出 Plan 将恢复写入能力，需要用户确认'
+      }
+    }
 
     if (toolName === 'bash') {
       const command = typeof args.command === 'string' ? args.command.trim() : ''

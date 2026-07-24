@@ -9,11 +9,19 @@ import type { EventBus } from '../agent/EventBus'
 import type { ReadState } from './editTool'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { ToolTruncationMeta } from '../../shared/tools/types'
+import type { Mode } from '../../shared/session/types'
 
 export type { ToolTruncationMeta }
 
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
+
+/** 工具触发的 Runtime 控制信号，不依赖本地化后的输出文本做控制流判断。 */
+export type ToolControlSignal = {
+  type: 'mode_transition'
+  previousMode: Mode
+  currentMode: Mode
+}
 
 export interface FileEffectToken {
   effectId: string
@@ -101,6 +109,14 @@ export interface ToolContext {
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
   /**
+   * 普通模式切换由宿主完成：同步 WorkspaceService、会话元数据与当前 AgentLoop。
+   * 进入只读 Plan 可自动完成；退出 Plan 的用户确认由 PermissionManager 在执行前处理。
+   */
+  switchMode?: (
+    targetMode: Extract<Mode, 'plan' | 'default'>,
+    reason: string
+  ) => Promise<{ previousMode: Mode; currentMode: Mode }>
+  /**
    * 额外允许读取的根目录（绝对路径），当前唯一来源是「本会话已触发的 skill 目录」。
    * 只对只读工具（read/ls/grep/find）生效；edit/write 不消费此字段。
    */
@@ -151,6 +167,8 @@ export interface ToolResult {
   artifactId?: string
   /** 截断元数据：总行数/字节数、展示行数等，供 UI 与持久化使用 */
   truncationMeta?: ToolTruncationMeta
+  /** 成功执行后交给 AgentLoop 的结构化控制信号。 */
+  control?: ToolControlSignal
 }
 
 /** 工具执行器接口，所有工具必须实现 */

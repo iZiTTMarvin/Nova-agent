@@ -9,16 +9,22 @@ import type { Mode } from '../../../shared/session/types'
 /** 当前工具调用方言，决定模式指令是否要重复格式提醒 */
 export interface ModeInstructionOptions {
   dialect?: 'native' | 'xml'
+  activePlanPath?: string
 }
 
 function buildPlanInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: plan — 只读规划]',
-    '你只能使用 ls、read、grep、find 工具读取和分析项目。',
-    '不能编辑文件、不能写入、不能执行 bash。',
-    '输出应为分析、计划、风险说明和需要确认的问题。',
-    '如果用户要求直接实现，请说明需要切换到默认模式或编排模式。'
+    '[当前模式: plan — 仓库分析与实施计划]',
+    '先读取真实代码、测试、配置和项目规范，再形成计划；关键产品或架构歧义可用 askQuestion 澄清。',
+    '禁止修改业务文件、禁止执行 shell。唯一允许的文件副作用是调用 save_plan，把完整 Markdown 计划写入当前项目的 .nova/plans/。',
+    '计划必须覆盖目标、范围与非目标、当前调用链证据、职责与数据流、分阶段改动、保护的已有行为、失败模式、验证、回退和待决事项。',
+    '完成前必须调用 save_plan；不要只在聊天正文里留下不可恢复的计划。',
+    'save_plan 成功后，完整计划会显示在计划审阅卡中。请明确邀请用户选择「开始实施」或「继续完善」，不要假定用户已经批准。',
+    '用户通过审阅卡或文字明确批准计划后，可调用 switch_mode 请求切换到 default；切换必须经过用户确认，不能进入 XForge。'
   ]
+  if (opts?.activePlanPath) {
+    lines.push(`当前会话已有 active plan: ${opts.activePlanPath}。修订同一计划时沿用原标题，避免生成重复文件。`)
+  }
   if (opts?.dialect === 'xml') {
     lines.push('请继续用 system prompt 中指定的 XML \u003cinvoke\u003e 格式调用这些工具。')
   }
@@ -28,8 +34,16 @@ function buildPlanInstruction(opts?: ModeInstructionOptions): string {
 function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
     '[当前模式: default — 默认模式]',
-    '你可以读取、修改和验证工作区；工具批准策略由用户设置决定（执行前确认或自动执行）。'
+    '你可以读取、修改和验证工作区；工具批准策略由用户设置决定（执行前确认或自动执行）。',
+    '当用户明确要求先规划，或任务涉及多个模块、关键架构取舍、较高回归风险、需求仍需澄清时，先调用 switch_mode 进入 plan，并在当前任务中继续分析和保存计划；不要只口头声称已切换。',
+    '进入 plan 是收窄为只读能力，不需要额外征求用户确认。简单、明确、低风险的局部任务应直接完成，不要滥用计划模式。'
   ]
+  if (opts?.activePlanPath) {
+    lines.push(
+      `当前会话的 active plan 是 ${opts.activePlanPath}。` +
+      '当用户要求继续或实施该计划时，先读取它并结合当前仓库复核，再按计划推进；若请求与该计划无关，不要擅自套用。'
+    )
+  }
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
   }

@@ -16,7 +16,12 @@ import type { SessionData } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, Session, SessionDetail } from '../../shared/session'
-import type { WorkspaceState, Tier1BranchContext } from '../../shared/workspace/types'
+import type {
+  ActivePlanDocument,
+  ReadActivePlanParams,
+  WorkspaceState,
+  Tier1BranchContext
+} from '../../shared/workspace/types'
 import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests } from '../../runtime/checkpoints/restore'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
 import {
@@ -32,6 +37,7 @@ import { clearSteeringQueue } from '../agent/turn/SteeringQueue'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
+import { readPlanDocumentInWorkspace } from '../../runtime/plans'
 /** SessionDetail 转换（与 sessionHandler 同构，独立实现避免双向依赖） */
 function toSession(data: SessionData): Session {
   const activeMessages = getSessionActiveMessages(data)
@@ -185,12 +191,19 @@ export class WorkspaceService {
   initOnStartup(): void {
     const store = this.deps.getSessionStore()
     const sessions = store.list()
+    const selected = sessions[0] ?? null
     this.state = {
-      currentSessionId: null,
-      currentProjectPath: null,
-      currentMode: 'default',
+      currentSessionId: selected?.id ?? null,
+      currentProjectPath: selected?.workspaceRoot ?? null,
+      currentMode: selected?.mode ?? 'default',
       availableSessions: sessions
     }
+    setCurrentProjectPath(selected?.workspaceRoot ?? null)
+    setCurrentMode(selected?.mode ?? 'default')
+    if (selected) {
+      reloadSkillsForWorkspace(selected.workspaceRoot)
+    }
+    this.notifyWorkspaceRootChanged(selected?.workspaceRoot ?? null)
   }
 
   /**
@@ -377,11 +390,23 @@ export class WorkspaceService {
     return this.getState()
   }
   /** 切换运行模式（并持久化到目标会话） */
-  setMode(params: { mode: Mode; sessionId?: string }): WorkspaceState {
+  setMode(params: {
+    mode: Mode
+    sessionId?: string
+    source?: 'user' | 'agent' | 'workflow'
+  }): WorkspaceState {
     const store = this.deps.getSessionStore()
     const sessionId = params.sessionId ?? this.state.currentSessionId
+    const source = params.source ?? 'user'
 
     if (sessionId) {
+      const session = store.load(sessionId)
+      if (!session) {
+        throw new Error(`会话不存在: ${sessionId}`)
+      }
+      if (source === 'user' && isSessionTurnInProgress(sessionId)) {
+        throw new Error('当前会话仍在运行，不能切换模式。请先等待完成或停止当前任务。')
+      }
       store.updateMode(sessionId, params.mode)
       // 同步 availableSessions 里的 mode 字段
       this.state.availableSessions = store.list()
@@ -403,6 +428,25 @@ export class WorkspaceService {
       pushContextBreakdownForSession(session, this.deps.getMainWindow)
     }
     return this.getState()
+  }
+
+  /**
+   * 返回指定会话当前登记的 active plan。
+   * 调用方不能提供路径；文件必须继续满足 `.nova/plans/*.md` 的真实普通文件边界。
+   */
+  readActivePlan(params: ReadActivePlanParams = {}): ActivePlanDocument | null {
+    const sessionId = params.sessionId ?? this.state.currentSessionId
+    if (!sessionId) return null
+
+    const session = this.deps.getSessionStore().load(sessionId)
+    const activePlan = session?.activePlan
+    if (!session || !activePlan) return null
+    if (params.expectedPath && activePlan.path !== params.expectedPath) return null
+    if (params.expectedTitle && activePlan.title !== params.expectedTitle) return null
+
+    const content = readPlanDocumentInWorkspace(session.workspaceRoot, activePlan.path)
+    if (content === null) return null
+    return { ...activePlan, content }
   }
 
   /**

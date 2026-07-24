@@ -81,6 +81,8 @@ export const WORKSPACE_RENAME_SESSION = 'workspace:rename-session' as const
 export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
 /** 切换运行模式 */
 export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
+/** 读取当前会话 active plan 的完整 Markdown，用于计划审阅卡 */
+export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 /** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */
 export const WORKSPACE_REGENERATE = 'workspace:regenerate' as const
 /** 切换兄弟分支（LCA 文件 undo + setCurrentLeaf） */

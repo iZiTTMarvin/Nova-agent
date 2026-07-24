@@ -18,6 +18,7 @@ import { renderToolBlock } from './renderToolBlock'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
+import { PlanReviewCard } from './PlanReviewCard'
 import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock, MessageDiffCache } from '../../stores/types'
@@ -295,6 +296,16 @@ function MessageItemInner({
     ]
   )
 
+  const savedPlanBlock = useMemo(
+    () =>
+      isAssistant
+        ? [...(msg.blocks ?? [])].reverse().find(
+            block => block.type === 'tool' && block.toolName === 'save_plan'
+          )
+        : undefined,
+    [isAssistant, msg.blocks]
+  )
+
   const unitRenderCtx = {
     msg,
     isTurnActiveForThisMsg,
@@ -407,6 +418,16 @@ function MessageItemInner({
                 {renderMessageUnit(unit, unitRenderCtx)}
               </React.Fragment>
             ))}
+            {savedPlanBlock?.type === 'tool' && currentSessionId && (
+              <PlanReviewCard
+                sessionId={currentSessionId}
+                currentMode={currentMode}
+                status={savedPlanBlock.status}
+                args={savedPlanBlock.arguments}
+                result={savedPlanBlock.result}
+                turnActive={isTurnActiveForThisMsg}
+              />
+            )}
           </>
         ) : hasBlocks ? (
           /* 非 assistant 的 blocks 路径（用户消息等） */

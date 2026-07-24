@@ -66,3 +66,21 @@ export interface SetModeParams {
   /** 若提供则同时持久化到指定会话；否则用当前会话 */
   sessionId?: string
 }
+
+/** 当前会话 active plan 的完整审阅文档。 */
+export interface ActivePlanDocument {
+  /** 相对于工作区根目录的 `.nova/plans/*.md` 路径 */
+  path: string
+  title: string
+  updatedAt: number
+  content: string
+}
+
+/** 只读取指定会话当前登记的 active plan，不接受任意文件路径。 */
+export interface ReadActivePlanParams {
+  sessionId?: string
+  /** 防止历史 save_plan 卡片误读后来切成另一文件路径的新计划 */
+  expectedPath?: string
+  /** 防止历史 save_plan 卡片误读后来替换的另一份计划 */
+  expectedTitle?: string
+}

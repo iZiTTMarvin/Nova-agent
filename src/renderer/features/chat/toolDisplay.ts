@@ -33,6 +33,10 @@ export function getToolDisplayName(toolName: string): string {
       return '检索记忆 (memory_search)'
     case 'askQuestion':
       return '询问用户 (askQuestion)'
+    case 'save_plan':
+      return '保存实施计划 (save_plan)'
+    case 'switch_mode':
+      return '切换运行模式 (switch_mode)'
     default:
       return `运行自动化工具 (${toolName})`
   }
@@ -147,6 +151,15 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
         return display ? `提问：${display}（共 ${questions.length} 题）` : `向用户提问（${questions.length} 题）`
       }
       return display ? `提问：${display}` : '向用户提问'
+    }
+    case 'save_plan': {
+      const title = typeof args.title === 'string' ? args.title : ''
+      const lines = countLines(args.content)
+      return title ? `正在保存计划「${title}」（${lines} 行）` : '正在保存实施计划'
+    }
+    case 'switch_mode': {
+      const mode = typeof args.mode === 'string' ? args.mode : ''
+      return mode ? `请求切换到 ${mode} 模式` : '请求切换运行模式'
     }
     default:
       return ''

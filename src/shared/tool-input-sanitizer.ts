@@ -121,7 +121,7 @@ export function sanitizeToolInput(
 ): Record<string, unknown> {
   if (!input || typeof input !== 'object') return input
 
-  if (toolName === 'write') {
+  if (toolName === 'write' || toolName === 'save_plan') {
     const content = input.content
     if (typeof content === 'string' && content.length > WRITE_TOOL_INLINE_LIMIT) {
       return {

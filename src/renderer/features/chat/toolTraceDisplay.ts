@@ -46,6 +46,10 @@ export function getToolTraceAction(toolName: string): string {
       return 'Todos'
     case 'askQuestion':
       return 'Asked'
+    case 'save_plan':
+      return 'Planned'
+    case 'switch_mode':
+      return 'Mode'
     default:
       return toolName
   }
@@ -120,6 +124,17 @@ export function getToolTraceTarget(toolName: string, args: Record<string, unknow
       if (skill) return truncateTarget(skill)
       return task ? truncateTarget(task) : 'skill'
     }
+    case 'save_plan': {
+      const title = typeof args.title === 'string' ? args.title : ''
+      const lines = countLines(args.content)
+      return title
+        ? truncateTarget(lines > 0 ? `${title} +${lines}` : title)
+        : 'implementation plan'
+    }
+    case 'switch_mode': {
+      const mode = typeof args.mode === 'string' ? args.mode : ''
+      return mode ? truncateTarget(mode) : 'mode'
+    }
     default: {
       // 兜底：尝试常见 path / command 字段
       const path = (args.path as string) || (args.filePath as string) || ''
@@ -133,7 +148,7 @@ export function getToolTraceTarget(toolName: string, args: Record<string, unknow
 
 /** write/edit 预览文本（L4 按需挂载时用） */
 export function getFileToolPreviewText(toolName: string, args: Record<string, unknown>): string {
-  if (toolName === 'write') {
+  if (toolName === 'write' || toolName === 'save_plan') {
     return extractPreviewText(args.content)
   }
   if (toolName === 'edit') {

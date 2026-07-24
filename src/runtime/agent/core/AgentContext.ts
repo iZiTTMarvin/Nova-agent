@@ -17,6 +17,7 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
+import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
 
 /** 标准化状态容器：在循环与各扩展间流转的纯状态 */
 export interface AgentContext {
@@ -92,5 +93,7 @@ export function createAgentContext(initial: {
 }
 
 export function getEffectiveToolDefinitions(context: AgentContext): ToolDefinition[] {
-  return context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
+  const definitions =
+    context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
+  return getModeVisibleTools(context.mode, definitions)
 }

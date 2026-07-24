@@ -116,4 +116,46 @@ describe('StopPolicyExtension — 连续空参护栏', () => {
     const again = await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 1 }))
     expect(again).toBeUndefined()
   })
+
+  it('成功进入 default 后不结束任务，由 AgentLoop 按新模式继续', async () => {
+    const result = await policy.shouldStopAfterTurn(makeArgs({
+      toolCallsThisRound: [{ name: 'switch_mode', args: { mode: 'default' } }],
+      outcomes: [{
+        toolCall: { id: 'switch-1', name: 'switch_mode' },
+        args: { mode: 'default' },
+        resultText: 'ok',
+        failed: false
+      }]
+    }))
+
+    expect(result).toBeUndefined()
+  })
+
+  it('成功进入 plan 后不结束任务，由 AgentLoop 按新模式继续', async () => {
+    const result = await policy.shouldStopAfterTurn(makeArgs({
+      toolCallsThisRound: [{ name: 'switch_mode', args: { mode: 'plan' } }],
+      outcomes: [{
+        toolCall: { id: 'switch-2', name: 'switch_mode' },
+        args: { mode: 'plan' },
+        resultText: 'ok',
+        failed: false
+      }]
+    }))
+
+    expect(result).toBeUndefined()
+  })
+
+  it('switch_mode 同模式 no-op 不应被当作真实模式切换屏障', async () => {
+    const result = await policy.shouldStopAfterTurn(makeArgs({
+      toolCallsThisRound: [{ name: 'switch_mode', args: { mode: 'default' } }],
+      outcomes: [{
+        toolCall: { id: 'switch-noop', name: 'switch_mode' },
+        args: { mode: 'default' },
+        resultText: '当前已经是 default 模式。',
+        failed: false
+      }]
+    }))
+
+    expect(result).toBeUndefined()
+  })
 })

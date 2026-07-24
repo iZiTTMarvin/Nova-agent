@@ -9,6 +9,8 @@
  */
 
 import type { ToolDefinition } from '../../model/types'
+import type { Mode } from '../../../shared/session/types'
+import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
 
 export interface RenderOptions {
   /** 当前工具调用方言 */
@@ -138,6 +140,15 @@ export function renderToolInventory(tools: ToolDefinition[], options: RenderOpti
   return options.dialect === 'native'
     ? renderNativeInventory(tools)
     : renderXmlInventory(tools)
+}
+
+/** 按运行模式收窄后渲染工具目录，确保 XML prompt 与 native schema 使用同一可见性口径。 */
+export function renderModeToolInventory(
+  mode: Mode,
+  tools: ToolDefinition[],
+  options: RenderOptions
+): string {
+  return renderToolInventory(getModeVisibleTools(mode, tools), options)
 }
 
 /**

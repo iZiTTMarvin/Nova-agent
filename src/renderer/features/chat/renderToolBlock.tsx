@@ -22,6 +22,11 @@ export function renderToolBlock(
     return null
   }
 
+  // save_plan 由 MessageItem 顶层的计划审阅卡展示，避免被折叠在通用过程树里重复出现。
+  if (block.toolName === 'save_plan') {
+    return null
+  }
+
   if (block.toolName === 'askQuestion') {
     return (
       <AskQuestionToolCard

@@ -31,7 +31,9 @@ import type {
   WorkspaceState,
   SelectProjectParams,
   CreateSessionParams,
-  SetModeParams
+  SetModeParams,
+  ActivePlanDocument,
+  ReadActivePlanParams
 } from '../workspace/types'
 import type {
   StorageUsageReport,
@@ -367,6 +369,10 @@ export interface IpcCommands {
   'workspace:set-mode': {
     params: SetModeParams
     result: WorkspaceState
+  }
+  'workspace:read-active-plan': {
+    params: ReadActivePlanParams
+    result: ActivePlanDocument | null
   }
   'workspace:regenerate': {
     params: { sessionId: string; messageId: string }

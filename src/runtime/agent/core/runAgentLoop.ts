@@ -266,6 +266,21 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         return { ended: 'normal', cancelled: true }
       }
 
+      const modeTransition = batchResult.outcomes.find(
+        outcome => outcome.control?.type === 'mode_transition'
+      )?.control
+      if (modeTransition?.type === 'mode_transition' && config.getModeTransitionInstruction) {
+        const instruction = config.getModeTransitionInstruction(modeTransition).trim()
+        if (instruction) {
+          context.messages.push({ role: 'user', content: instruction })
+          context.lastEstimatedTokens = estimateContextTokens(context.messages)
+        }
+        // 模式切换是控制面动作，不消耗任务工具轮数；即使发生在上限边界，
+        // 也必须保证新模式至少获得一次模型调用来继续当前任务。
+        toolRound = Math.max(0, toolRound - 1)
+        continue
+      }
+
       // ── 停止策略（stopPolicyExtension.shouldStopAfterTurn，batch 后整批判定；对标现状 L876-900）──
       // 熔断计数 + maxRounds 提示：保持"batch 之后、整批、按源顺序"语义（并发安全）。
       // 提示文案由 extension 经 emit 下发，时机在 break 之前（与现状一致）。

@@ -8,8 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   SendIcon,
   StopIcon,
-  NovaLogo,
-  ImageIcon
+  NovaLogo
 } from '../../components/Icons'
 import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
@@ -952,26 +951,12 @@ export const ChatPanel: React.FC = () => {
               />
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
                 <div className="flex items-center gap-2">
-                  <button
-                    className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors text-sm font-medium"
-                    onClick={handleSlashButton}
-                    title="插入 / 命令"
-                    type="button"
-                  >
-                    /
-                  </button>
-                  {supportsVision && (
-                    <button
-                      className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-50 text-gray-500 hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442] transition-colors"
-                      onClick={() => fileInputRef.current?.click()}
-                      title="上传图片"
-                      type="button"
-                    >
-                      <ImageIcon size={16} />
-                    </button>
-                  )}
+                  <ModeSwitch
+                    supportsVision={supportsVision}
+                    onSelectImage={() => fileInputRef.current?.click()}
+                    onSelectSkills={handleSlashButton}
+                  />
                   <ModelSelector />
-                  <ModeSwitch />
                   <ContextIndicator />
                 </div>
                 <div>

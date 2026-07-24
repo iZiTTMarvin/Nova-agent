@@ -10,6 +10,7 @@
 import type { ChatMessage } from '../../model/types'
 import type { AgentContext } from './AgentContext'
 import type { InlineBudgetResult } from '../ContextBudgetManager'
+import type { ToolControlSignal } from '../../tools/types'
 
 /** 压缩元数据（与 types.ts CompactionMeta 对齐，供 onCompaction 回调） */
 export interface CompactionMeta {
@@ -112,6 +113,12 @@ export interface AgentLoopConfig {
    * 注意：停止提示文案（text_delta）由该回调通过 emit 发射，保持现状口径。
    */
   shouldStopAfterTurn?: (args: ShouldStopArgs) => Promise<StopDecision | void>
+
+  /**
+   * 模式切换成功后生成最新模式约束。循环会把它作为内部 user 控制消息追加到
+   * 工具结果之后，再在同一任务中继续调用模型。
+   */
+  getModeTransitionInstruction?: (transition: ToolControlSignal) => string
 
   /** 持久化压缩态回调（透传现状 config.onCompaction） */
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void

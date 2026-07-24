@@ -39,6 +39,16 @@ describe('sanitizeToolInput', () => {
     expect(summary.content_hash).toBeTruthy()
   })
 
+  it('save_plan 的大 content 使用与 write 相同的摘要边界', () => {
+    const bigContent = 'p'.repeat(WRITE_TOOL_INLINE_LIMIT + 100)
+    const result = sanitizeToolInput('save_plan', {
+      title: '大计划',
+      content: bigContent
+    })
+    expect(result.title).toBe('大计划')
+    expect(isContentSummary(result.content)).toBe(true)
+  })
+
   it('刚好等于阈值不截断', () => {
     const exactContent = 'x'.repeat(WRITE_TOOL_INLINE_LIMIT)
     const input = { path: '/foo.ts', content: exactContent }

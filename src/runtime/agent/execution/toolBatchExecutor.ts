@@ -5,7 +5,7 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { EventBus } from '../EventBus'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta, FileEffectRecorder } from '../../tools/types'
+import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta, FileEffectRecorder, ToolControlSignal } from '../../tools/types'
 import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
@@ -22,6 +22,7 @@ export interface ToolExecutionOutcome {
   /** 大输出 artifact 指针（与 ToolResult.artifactId 对齐） */
   artifactId?: string
   truncationMeta?: ToolTruncationMeta
+  control?: ToolControlSignal
   skippedByAbort?: boolean
   /**
    * 工具是否以失败告终（执行异常 / success=false / 权限拒绝 / 未注册）。
@@ -96,6 +97,8 @@ export interface ToolBatchExecutionOptions {
    * 仅主 AgentLoop 注入；子 agent（task / skill fork）不注入，工具走降级跳过。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /** Plan/Default 模式切换宿主回调；权限确认在工具执行前完成。 */
+  switchMode?: ToolContext['switchMode']
   /**
    * 额外允许读取的根目录（绝对路径）。
    * 来源：AgentLoop.skillRoots（本会话已触发的 skill 目录）。
@@ -139,6 +142,7 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {}),
     ...(options.artifactStore ? { artifactStore: options.artifactStore } : {}),
     ...(options.askQuestion ? { askQuestion: options.askQuestion } : {}),
+    ...(options.switchMode ? { switchMode: options.switchMode } : {}),
     ...(options.extraAllowedRoots && options.extraAllowedRoots.length > 0
       ? { extraAllowedRoots: options.extraAllowedRoots }
       : {}),
@@ -166,6 +170,19 @@ function createSkippedOutcome(index: number, toolCall: ChatToolCall, args: Recor
     resultText: '',
     skippedByAbort: true
   }
+}
+
+function isSuccessfulModeSwitch(outcome: ToolExecutionOutcome): boolean {
+  return outcome.control?.type === 'mode_transition' && !outcome.skippedByAbort
+}
+
+function createModeSwitchBarrierOutcome(item: PreparedToolCall): ToolExecutionOutcome {
+  return createErrorOutcome(
+    item.index,
+    item.toolCall,
+    item.args,
+    '模式已切换，当前批次的后续工具未执行。Agent 将在当前任务的下一次模型调用中按新模式重新发起。'
+  )
 }
 
 function isConcurrencySafe(tool: ToolExecutor, args: Record<string, unknown>, context: ToolContext): boolean {
@@ -237,6 +254,7 @@ async function executePreparedToolCall(
   let resultImages: ImageContent[] | undefined
   let artifactId: string | undefined
   let truncationMeta: ToolTruncationMeta | undefined
+  let control: ToolControlSignal | undefined
   let failed = false
 
   try {
@@ -261,6 +279,7 @@ async function executePreparedToolCall(
       resultImages = toolResult.images
       artifactId = toolResult.artifactId
       truncationMeta = toolResult.truncationMeta
+      control = toolResult.control
     } else {
       // 工具执行失败：仍保留工具已产出的 output（如超时前的部分日志、错误堆栈）。
       // 历史问题：失败分支只回传 error 文案、把 output 整个丢弃，导致模型拿不到任何
@@ -312,6 +331,7 @@ async function executePreparedToolCall(
       resultImages,
       artifactId,
       truncationMeta,
+      ...(!failed && control ? { control } : {}),
       failed
     },
     emitted: true
@@ -605,7 +625,8 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
   const executionOutcomes: ToolExecutionOutcome[] = []
   let aborted = Boolean(options.abortSignal?.aborted)
 
-  for (const batch of batches) {
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batch = batches[batchIndex]
     if (options.abortSignal?.aborted) {
       aborted = true
       for (const item of batch.items) {
@@ -619,6 +640,22 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
       : await runSequentialBatch(batch.items, options)
 
     executionOutcomes.push(...batchOutcomes)
+    if (batchOutcomes.some(isSuccessfulModeSwitch)) {
+      for (const remainingBatch of batches.slice(batchIndex + 1)) {
+        for (const item of remainingBatch.items) {
+          const outcome = createModeSwitchBarrierOutcome(item)
+          executionOutcomes.push(outcome)
+          options.emit({
+            type: 'tool_result',
+            messageId: options.messageId,
+            toolCallId: item.toolCall.id,
+            toolName: item.toolCall.name,
+            result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true)
+          })
+        }
+      }
+      break
+    }
     if (options.abortSignal?.aborted || batchOutcomes.some(outcome => outcome.skippedByAbort)) {
       aborted = true
     }

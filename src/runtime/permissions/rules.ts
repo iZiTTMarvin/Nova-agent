@@ -110,9 +110,14 @@ export function getBaseDecision(
   const capability = getToolCapability(toolName)
   const category = capability === 'unknown' ? 'bash' : capability
 
-  // plan 模式：只读工具 allow，其余全部 deny（设置里的 auto 也不能写/bash）
+  // 模式切换始终要求确认，不能被 default auto / compose 的自动语义放行。
+  if (category === 'mode-transition') {
+    return 'ask'
+  }
+
+  // plan 模式：只读与受限计划产物 allow，其余全部 deny。
   if (mode === 'plan') {
-    return category === 'readonly' ? 'allow' : 'deny'
+    return category === 'readonly' || category === 'plan-artifact' ? 'allow' : 'deny'
   }
 
   // compose / default+auto：所有工具默认 allow（bash 危险命令在 PermissionManager 层处理）
@@ -132,6 +137,8 @@ export function getRiskDescription(toolName: string, riskLevel: RiskLevel): stri
   const category = capability === 'unknown' ? 'bash' : capability
 
   if (category === 'readonly') return '只读操作'
+  if (category === 'plan-artifact') return '写入工作区计划文档'
+  if (category === 'mode-transition') return '切换运行模式'
   if (category === 'write') return riskLevel === 'high' ? '高风险写入' : '写入操作'
   return riskLevel === 'high' ? '高风险命令' : 'Shell 命令'
 }

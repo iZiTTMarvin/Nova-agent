@@ -1350,7 +1350,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
     // T02：在 tool_result 写 store 前对输出做截断，防止大输出撑爆 heap
     const sanitizedResult = sanitizeToolOutput(_toolName, result, isError)
-
     set(state => {
       const idx = state.messageIndexById[messageId]
       if (idx === undefined) return state

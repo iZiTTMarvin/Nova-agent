@@ -10,7 +10,10 @@ import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
-import type { PermissionManager } from '../permissions/PermissionManager'
+import {
+  isSafeAutomaticModeTransition,
+  type PermissionManager
+} from '../permissions/PermissionManager'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
@@ -37,7 +40,8 @@ import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
-import type { FileEffectRecorder } from '../tools/types'
+import type { FileEffectRecorder, ToolContext } from '../tools/types'
+import { isReadablePlanInWorkspace } from '../plans'
 
 import { invokeSkill } from '../skills/invokeSkill'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
@@ -341,6 +345,10 @@ export class AgentLoop implements IdleCompactionTarget {
    * 不调用时 askQuestion 工具降级为 no-op，主要用于子 agent / 测试场景。
    */
   private askQuestionHandler?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /** 经 PermissionManager 批准后，由宿主同步会话、WorkspaceService 与当前循环。 */
+  private switchModeHandler?: ToolContext['switchMode']
+  /** 本轮构造时捕获的 active plan；计划正文仍以工作区文件为真源。 */
+  private activePlanPath?: string
 
   /**
    * 文件读取状态：记录"已 read 过哪些文件"，edit/write 工具的"先读后改"校验依赖此。
@@ -708,6 +716,26 @@ export class AgentLoop implements IdleCompactionTarget {
     this.askQuestionHandler = handler
   }
 
+  setSwitchModeHandler(handler: NonNullable<ToolContext['switchMode']>): void {
+    this.switchModeHandler = handler
+  }
+
+  setActivePlanPath(path: string | undefined): void {
+    this.activePlanPath = path
+  }
+
+  private getCurrentModeInstruction(): string {
+    const hasReadableActivePlan =
+      !!this.workingDir &&
+      isReadablePlanInWorkspace(this.workingDir, this.activePlanPath)
+    return (
+      this.modeInstructionProvider?.() ??
+      getModeInstruction(this.mode, {
+        ...(hasReadableActivePlan ? { activePlanPath: this.activePlanPath } : {})
+      })
+    )
+  }
+
   /**
    * 注入执行 generation fencing（由 agentHandler 在 bindExecutionGeneration 后调用）。
    * 不注入时工具/checkpoint 仅依赖 abortSignal（单测 / 子 agent 场景）。
@@ -779,7 +807,7 @@ export class AgentLoop implements IdleCompactionTarget {
 
     this.eventBus.emit({ type: 'message_start', messageId })
 
-    const modeInstruction = this.modeInstructionProvider?.() ?? getModeInstruction(this.mode)
+    const modeInstruction = this.getCurrentModeInstruction()
     let userText = typeof content === 'string'
       ? content
       : extractTextFromContent(content)
@@ -977,6 +1005,7 @@ export class AgentLoop implements IdleCompactionTarget {
         readState: this.readState,
         artifactStore: this.artifactStore,
         askQuestion: this.askQuestionHandler,
+        switchMode: this.switchModeHandler,
         // 本会话已触发的 skill 目录 → 只读工具的额外允许根
         extraAllowedRoots: [...this.skillRoots],
         ...(this.assertExecutionCurrent
@@ -990,6 +1019,7 @@ export class AgentLoop implements IdleCompactionTarget {
       maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
       supportsVision: this.config.supportsVision ?? true,
       shouldStopAfterTurn: (args) => this.stopPolicy.shouldStopAfterTurn(args),
+      getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
       onCompaction: (context, meta) => this.config.onCompaction?.(context, meta),
       enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
       runOverflowCompaction: (mode) => this.runOverflowCompaction(mode)
@@ -1306,7 +1336,15 @@ export class AgentLoop implements IdleCompactionTarget {
     // 没有 PermissionManager 时，全部放行
     if (!this.permissionManager) {
       for (const item of remainingItems) {
-        if (this.mode === 'plan' && WRITE_TOOLS[item.toolName]) {
+        if (
+          item.toolName === 'switch_mode' &&
+          !isSafeAutomaticModeTransition(this.mode, item.args.mode)
+        ) {
+          results.set(item.toolCallId, {
+            allowed: false,
+            reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
+          })
+        } else if (this.mode === 'plan' && WRITE_TOOLS[item.toolName]) {
           results.set(item.toolCallId, {
             allowed: false,
             reason: `当前为 plan 模式，"${item.toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
@@ -1421,6 +1459,15 @@ export class AgentLoop implements IdleCompactionTarget {
 
     // 没有 PermissionManager 时退化为简单 plan 模式检查
     if (!this.permissionManager) {
+      if (
+        toolName === 'switch_mode' &&
+        !isSafeAutomaticModeTransition(this.mode, args.mode)
+      ) {
+        return {
+          allowed: false,
+          reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
+        }
+      }
       if (this.mode === 'plan' && WRITE_TOOLS[toolName]) {
         return {
           allowed: false,

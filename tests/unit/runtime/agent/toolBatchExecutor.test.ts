@@ -161,6 +161,122 @@ describe('executeToolBatch', () => {
     expect(maxActive).toBe(1)
   })
 
+  it('switch_mode 成功后把同批后续工具拦在模式切换边界外', async () => {
+    const registry = new ToolRegistry()
+    const executed: string[] = []
+    const emittedResults: Array<{ toolCallId: string; result: string }> = []
+
+    registry.register({
+      name: 'switch_mode',
+      description: 'switch',
+      executionMode: 'sequential',
+      isConcurrencySafe: () => false,
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        executed.push('switch_mode')
+        return {
+          success: true,
+          output: 'switched',
+          control: {
+            type: 'mode_transition' as const,
+            previousMode: 'default' as const,
+            currentMode: 'plan' as const
+          }
+        }
+      }
+    })
+    registerTool(registry, 'write', async () => {
+      executed.push('write')
+      return { success: true, output: 'written' }
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [
+        {
+          id: 'tc_switch',
+          name: 'switch_mode',
+          arguments: '{"mode":"plan","reason":"先规划"}'
+        },
+        {
+          id: 'tc_write',
+          name: 'write',
+          arguments: '{"path":"should-not-run.ts","content":"blocked"}'
+        }
+      ],
+      messageId: 'msg_mode_barrier',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        if (event.type === 'tool_result') {
+          emittedResults.push({ toolCallId: event.toolCallId, result: event.result })
+        }
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(executed).toEqual(['switch_mode'])
+    expect(result.aborted).toBe(false)
+    expect(result.outcomes.find(outcome => outcome.toolCall.id === 'tc_write')?.failed).toBe(true)
+    expect(emittedResults.find(event => event.toolCallId === 'tc_write')?.result)
+      .toContain('模式已切换')
+  })
+
+  it('switch_mode 同模式成功不产生控制信号，也不阻断同批后续工具', async () => {
+    const registry = new ToolRegistry()
+    const executed: string[] = []
+    registry.register({
+      name: 'switch_mode',
+      description: 'switch',
+      executionMode: 'sequential',
+      isConcurrencySafe: () => false,
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        executed.push('switch_mode')
+        return { success: true, output: '当前已经是 default 模式。' }
+      }
+    })
+    registerTool(registry, 'write', async () => {
+      executed.push('write')
+      return { success: true, output: 'written' }
+    })
+
+    await executeToolBatch({
+      toolCalls: [
+        {
+          id: 'tc_switch_noop',
+          name: 'switch_mode',
+          arguments: '{"mode":"default","reason":"保持模式"}'
+        },
+        {
+          id: 'tc_write_after_noop',
+          name: 'write',
+          arguments: '{"path":"allowed.ts","content":"ok"}'
+        }
+      ],
+      messageId: 'msg_mode_noop',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'sequential'
+    })
+
+    expect(executed).toEqual(['switch_mode', 'write'])
+  })
+
   it('连续批次会保持 read+grep 并发、edit 独占、ls+find 并发的边界', async () => {
     const registry = new ToolRegistry()
     const releaseRead = deferred<void>()

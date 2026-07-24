@@ -128,6 +128,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 切换模式失败:', err)
+      throw err
     }
   },
 

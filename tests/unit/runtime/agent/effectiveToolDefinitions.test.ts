@@ -106,4 +106,32 @@ describe('AgentLoop effective tool definitions', () => {
     expect(unfiltered.modelTools).toEqual(['read', 'bash'])
     expect(unfiltered.toolsHash).toBe('th-read-bash')
   })
+
+  it('Plan 最终 schema 只暴露只读、计划产物和模式切换工具', async () => {
+    const registry = new ToolRegistry()
+    for (const name of ['read', 'edit', 'write', 'bash', 'task', 'save_plan', 'switch_mode']) {
+      registry.register(tool(name))
+    }
+
+    let modelTools: string[] = []
+    const client = {
+      config: { modelId: 'gpt-4o', baseUrl: '' },
+      async *chat(_messages: unknown, tools?: ToolDefinition[]): AsyncIterable<ChatEvent> {
+        modelTools = tools?.map(definition => definition.name) ?? []
+        yield { type: 'message_end', finishReason: 'stop' }
+      },
+      updateConfig() {}
+    }
+    const loop = new AgentLoop(client as any, new EventBus(), {
+      systemPrompt: 'system',
+      toolDialectOverride: 'native'
+    })
+    loop.setToolRegistry(registry)
+    loop.setMode('plan')
+
+    await loop.sendMessage('plan this')
+
+    expect(modelTools).toEqual(['read', 'save_plan', 'switch_mode'])
+    loop.dispose()
+  })
 })

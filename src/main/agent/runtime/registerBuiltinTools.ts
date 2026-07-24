@@ -15,6 +15,8 @@ import { todoWriteTool } from '../../../runtime/tools/todoWriteTool'
 import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/taskTool'
+import { savePlanTool } from '../../../runtime/tools/savePlan'
+import { switchModeTool } from '../../../runtime/tools/switchMode'
 import type { AgentLoop, EventBus } from '../../../runtime/agent'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -66,6 +68,8 @@ export function registerBuiltinTools(
   toolRegistry.register(bashTool)
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
+  toolRegistry.register(savePlanTool)
+  toolRegistry.register(switchModeTool)
   toolRegistry.register(
     createInvokeSkillTool({
       modelClient: deps.modelClient,

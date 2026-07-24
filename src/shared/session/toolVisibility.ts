@@ -1,7 +1,14 @@
 import type { Mode } from './types'
 
 /** 工具能力分类：驱动可见性和权限规则共用同一套基础语义 */
-export type ToolCapability = 'readonly' | 'write' | 'bash' | 'orchestration' | 'unknown'
+export type ToolCapability =
+  | 'readonly'
+  | 'write'
+  | 'bash'
+  | 'plan-artifact'
+  | 'mode-transition'
+  | 'orchestration'
+  | 'unknown'
 
 /** 根据工具名归类，避免 UI、模型可见性和权限规则各写一套判断 */
 export function getToolCapability(toolName: string): ToolCapability {
@@ -29,6 +36,13 @@ export function getToolCapability(toolName: string): ToolCapability {
       // （在 plan 阶段向用户澄清偏好/方案选择正是其典型用途）。
       // 若不分类，会落到 default 分支 'unknown'，被权限层当作 bash 处理而要求确认（已知 bug）。
       return 'readonly'
+    case 'save_plan':
+      // Plan 唯一允许的文件副作用。工具自身固定工作区内 `.nova/plans/`，
+      // 不接收任意路径，并继续走 checkpoint / writer lease / generation fencing。
+      return 'plan-artifact'
+    case 'switch_mode':
+      // 进入只读 Plan 可自动完成；退出 Plan 恢复写能力时由 PermissionManager 强制询问。
+      return 'mode-transition'
     case 'task':
     case 'invoke_skill':
       // 编排类工具：本身没有文件系统/shell 副作用，只负责派遣子代理 / 调用技能。
@@ -43,11 +57,26 @@ export function getToolCapability(toolName: string): ToolCapability {
 
 /** 当前模式下模型/UI 是否应该看见该工具 */
 export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
-  if (mode !== 'plan') {
-    return true
+  const capability = getToolCapability(toolName)
+  if (mode === 'plan') {
+    return (
+      capability === 'readonly' ||
+      capability === 'plan-artifact' ||
+      capability === 'mode-transition'
+    )
   }
+  if (mode === 'compose' && capability === 'mode-transition') {
+    return false
+  }
+  return true
+}
 
-  return getToolCapability(toolName) === 'readonly'
+/** 使用与权限层相同的能力分类收窄模型可见工具，供 native schema 与 XML 工具目录共用。 */
+export function getModeVisibleTools<T extends { name: string }>(
+  mode: Mode,
+  tools: readonly T[]
+): T[] {
+  return tools.filter(tool => isToolVisibleInMode(mode, tool.name))
 }
 
 /** 是否属于 plan 模式下应完全隐藏的写入类工具 */

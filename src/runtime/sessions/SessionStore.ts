@@ -58,6 +58,8 @@ import {
 } from './messageProjection'
 import { ensureSessionIndexFresh, closeSessionIndex } from './SessionIndexHost'
 import type { SessionIndexEntryRow } from './SessionIndexDb'
+import type { ActivePlanRef } from '../plans'
+import { isPlanRelativePath } from '../plans'
 
 /** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
@@ -638,6 +640,21 @@ export class SessionStore {
     if (!session) return null
 
     session.mode = mode
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /** 更新当前会话的 active plan 引用；计划正文不进入会话存储。 */
+  updateActivePlan(sessionId: string, plan: ActivePlanRef): SessionData | null {
+    if (!isPlanRelativePath(plan.path)) {
+      throw new Error(`无效的计划路径: ${plan.path}`)
+    }
+
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    session.activePlan = { ...plan }
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return session

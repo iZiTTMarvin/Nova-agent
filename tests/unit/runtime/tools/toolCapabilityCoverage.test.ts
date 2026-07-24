@@ -53,7 +53,15 @@ describe('工具能力分类 / 显示名全覆盖守卫', () => {
 
   it('注册清单非空且包含已知关键工具（自检：防止注册函数静默失效）', () => {
     expect(toolNames.length).toBeGreaterThanOrEqual(12)
-    for (const expected of ['bash', 'askQuestion', 'task', 'invoke_skill', 'todo_write']) {
+    for (const expected of [
+      'bash',
+      'askQuestion',
+      'task',
+      'invoke_skill',
+      'todo_write',
+      'save_plan',
+      'switch_mode'
+    ]) {
       expect(toolNames, `注册清单应包含 ${expected}`).toContain(expected)
     }
   })

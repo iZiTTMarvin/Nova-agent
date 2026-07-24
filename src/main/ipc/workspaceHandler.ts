@@ -14,6 +14,7 @@ import {
   WORKSPACE_RENAME_SESSION,
   WORKSPACE_SELECT_SESSION,
   WORKSPACE_SET_MODE,
+  WORKSPACE_READ_ACTIVE_PLAN,
   WORKSPACE_REGENERATE,
   WORKSPACE_SWITCH_BRANCH,
   WORKSPACE_BUMP_MESSAGES_REVISION,
@@ -60,7 +61,15 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
   })
 
   handle(WORKSPACE_SET_MODE, async (_event, params: { mode: import('../../shared/session').Mode; sessionId?: string }) => {
-    return service.setMode(params)
+    return service.setMode({
+      mode: params.mode,
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      source: 'user'
+    })
+  })
+
+  handle(WORKSPACE_READ_ACTIVE_PLAN, async (_event, params: import('../../shared/workspace/types').ReadActivePlanParams) => {
+    return service.readActivePlan(params)
   })
 
   handle(WORKSPACE_REGENERATE, async (_event, params: { sessionId: string; messageId: string }) => {

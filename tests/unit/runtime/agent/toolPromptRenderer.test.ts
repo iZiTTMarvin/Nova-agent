@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { renderToolInventory, renderWorkingDirectoryHint } from '../../../../src/runtime/agent/promptBuilder/toolPromptRenderer'
+import {
+  renderModeToolInventory,
+  renderToolInventory,
+  renderWorkingDirectoryHint
+} from '../../../../src/runtime/agent/promptBuilder/toolPromptRenderer'
 import type { ToolDefinition } from '../../../../src/runtime/model/types'
 
 const sampleTools: ToolDefinition[] = [
@@ -37,6 +41,26 @@ describe('toolPromptRenderer', () => {
     expect(out).toContain('<invoke name="ls">')
     expect(out).toContain('<parameter name="path">src/example.ts</parameter>')
     expect(out).toContain('`name` 必须是下面列出的工具名之一')
+  })
+
+  it('Plan 的 XML 工具目录不暴露写入、命令或子代理工具', () => {
+    const tools = [
+      ...sampleTools,
+      ...['write', 'edit', 'bash', 'task', 'save_plan', 'switch_mode'].map(name => ({
+        name,
+        description: `${name} tool`,
+        parameters: { type: 'object', properties: {} }
+      }))
+    ]
+    const out = renderModeToolInventory('plan', tools, { dialect: 'xml' })
+
+    expect(out).toContain('<invoke name="read">')
+    expect(out).toContain('<invoke name="save_plan">')
+    expect(out).toContain('<invoke name="switch_mode">')
+    expect(out).not.toContain('<invoke name="write">')
+    expect(out).not.toContain('<invoke name="edit">')
+    expect(out).not.toContain('<invoke name="bash">')
+    expect(out).not.toContain('<invoke name="task">')
   })
 
   it('renderWorkingDirectoryHint 返回工作区绝对路径', () => {

@@ -14,7 +14,7 @@ build/.icon-ico/
 .kiro
 # 品牌源图：assets/brand/（提交）
 # 打包/开发用图标：build/icon.png、src/renderer/assets/app-icon.png（npm run sync:icon 同步，建议一并提交）
-
+.nova/plans/
 scripts/trigram-fact-check.mjs
 
 .spec-workflow

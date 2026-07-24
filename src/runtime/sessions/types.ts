@@ -8,6 +8,7 @@ import type { Mode, MessageBlock } from '../../shared/session'
 import type { TodoItem } from '../../shared/todo/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
+import type { ActivePlanRef } from '../plans'
 export {
   SESSION_PLACEHOLDER_TITLE,
   SESSION_MIGRATED_EMPTY_TITLE,
@@ -83,6 +84,11 @@ export interface SessionData {
    * 不派生自标题 / 工作区路径 / apiKey。body 注入由后续阶段按 profile 白名单完成。
    */
   cacheRoutingKey?: string
+  /**
+   * 当前会话用于后续实施衔接的计划文档引用。
+   * 这里只保存工作区相对路径和显示元数据；计划正文始终留在 `<workspace>/.nova/plans/`。
+   */
+  activePlan?: ActivePlanRef
 }
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */

@@ -63,7 +63,7 @@ function ToolTraceDetail({
   result?: string
 }) {
   const shouldHideArguments = isPermissionDeniedResult(result)
-  const isFileTool = name === 'write' || name === 'edit'
+  const isFileTool = name === 'write' || name === 'edit' || name === 'save_plan'
   const filePreview = isFileTool ? getFileToolPreviewText(name, args) : ''
 
   const bashDisplay = useMemo(() => {

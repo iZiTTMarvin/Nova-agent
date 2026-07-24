@@ -88,10 +88,13 @@ export function parsePartialToolArgs(toolName: string, raw: string): Record<stri
   const args: Record<string, unknown> = {}
 
   switch (toolName) {
-    case 'write': {
+    case 'write':
+    case 'save_plan': {
       const path = extractPartialString(raw, 'path')
+      const title = extractPartialString(raw, 'title')
       const content = extractPartialString(raw, 'content')
       if (path !== undefined) args.path = path
+      if (title !== undefined) args.title = title
       if (content !== undefined) args.content = content
       break
     }

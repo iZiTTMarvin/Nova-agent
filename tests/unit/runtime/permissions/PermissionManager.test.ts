@@ -29,6 +29,14 @@ describe('PermissionManager', () => {
       }
     })
 
+    it('允许受限计划产物，模式切换仍要求用户确认', () => {
+      expect(pm.check({ toolName: 'save_plan', args: {} }, mode).decision).toBe('allow')
+      expect(pm.check({
+        toolName: 'switch_mode',
+        args: { mode: 'default', reason: '计划已确认' }
+      }, mode).decision).toBe('ask')
+    })
+
     it('bash 命令全部拒绝', () => {
       const result = pm.check({ toolName: 'bash', args: { command: 'ls -la' } }, mode)
       expect(result.decision).toBe('deny')
@@ -213,6 +221,25 @@ describe('PermissionManager', () => {
   // ── 边界场景 ──────────────────────────────────────────
 
   describe('边界场景', () => {
+    it('进入只读 Plan 自动允许，退出 Plan 仍要求用户确认', () => {
+      pm.setPermissionPolicy('auto')
+      pm.setRules([{
+        id: 'allow-switch',
+        toolName: 'switch_mode',
+        behavior: 'allow',
+        scope: 'global',
+        createdAt: Date.now()
+      }])
+      expect(pm.check({
+        toolName: 'switch_mode',
+        args: { mode: 'plan', reason: '先规划' }
+      }, 'default').decision).toBe('allow')
+      expect(pm.check({
+        toolName: 'switch_mode',
+        args: { mode: 'default', reason: '开始实施' }
+      }, 'plan').decision).toBe('ask')
+    })
+
     it('未知工具按最严格策略处理', () => {
       const result = pm.check({ toolName: 'unknownTool', args: {} }, 'default')
       // 未知工具走 bash 分支，default 模式下为 ask

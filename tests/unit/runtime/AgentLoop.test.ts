@@ -12,6 +12,7 @@ import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator
 import { AGING_GROUP_BYTES_THRESHOLD } from '../../../src/runtime/agent/compaction/toolResultAging'
 import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
 import { readTool } from '../../../src/runtime/tools/readTool'
+import { switchModeTool } from '../../../src/runtime/tools/switchMode'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -283,6 +284,64 @@ describe('AgentLoop', () => {
 
     expect(events.filter((e: { type?: string }) => e.type === 'tool_result').length).toBeGreaterThanOrEqual(1)
     expect(client.getCalls()).toHaveLength(2)
+  })
+
+  it('default 自动进入 plan 后在同一任务按 Plan 工具与指令继续', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'switch_to_plan',
+            name: 'switch_mode',
+            arguments: '{"mode":"plan","reason":"任务复杂，先规划"}'
+          }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '我会继续分析仓库并形成计划。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const eventBus = new EventBus()
+    const loop = new AgentLoop(client, eventBus, { maxToolRounds: 1 })
+    const registry = createTestRegistry()
+    registry.register(switchModeTool)
+    registry.register({
+      name: 'write',
+      description: '写文件',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        return { success: true, output: 'written' }
+      }
+    })
+    loop.setToolRegistry(registry)
+
+    let mode: 'default' | 'plan' = 'default'
+    loop.setSwitchModeHandler(async targetMode => {
+      const previousMode = mode
+      mode = targetMode
+      loop.setMode(targetMode)
+      return { previousMode, currentMode: targetMode }
+    })
+
+    await loop.sendMessage('做一个 PPT 工具，请先判断是否需要规划')
+
+    const calls = client.getCalls()
+    expect(calls).toHaveLength(2)
+    expect(calls[1].tools?.map(tool => tool.name)).not.toContain('write')
+    expect(calls[1].tools?.map(tool => tool.name)).toContain('switch_mode')
+    const transitionInstruction = calls[1].messages.at(-1)
+    expect(transitionInstruction?.role).toBe('user')
+    expect(transitionInstruction?.content).toContain('[当前模式: plan')
+    expect(transitionInstruction?.content).toContain('save_plan')
   })
 
   it('模型把工具调用误写成 JSON 文本时，仍会兜底解析并继续对话', async () => {
