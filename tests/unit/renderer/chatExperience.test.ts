@@ -40,7 +40,6 @@ function resetStore(messages: ExtendedMessage[] = []) {
     pendingPermissionRequest: null,
     isSubmittingPermission: false,
     permissionError: null,
-    pendingVerificationRequest: null,
     messageDiffs: {},
     loadingDiffs: new Set(),
     loadingDiffPlaceholders: {},

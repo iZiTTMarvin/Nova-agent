@@ -15,8 +15,8 @@ vi.mock('../../../src/renderer/features/chat/ProcessTraceList', () => ({
 }))
 
 vi.mock('../../../src/renderer/stores/useAgentStore', () => ({
-  useAgentStore: (selector: (s: { pendingPermissionRequest: null; pendingAskQuestion: null; pendingVerificationRequest: null }) => unknown) =>
-    selector({ pendingPermissionRequest: null, pendingAskQuestion: null, pendingVerificationRequest: null })
+  useAgentStore: (selector: (s: { pendingPermissionRequest: null; pendingAskQuestion: null }) => unknown) =>
+    selector({ pendingPermissionRequest: null, pendingAskQuestion: null })
 }))
 
 vi.mock('../../../src/renderer/features/compose/useComposeStore', () => ({

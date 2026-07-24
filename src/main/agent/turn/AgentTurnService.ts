@@ -691,8 +691,6 @@ function projectAgentEventToRun(
       writerLeaseRegistry.release(runId)
       break
     }
-    // verification_permission_request：message_end 后的异步验证 + 超时 waiter，
-    // 不得写入 InteractionInbox（会把即将终态的 run 拖入 waiting_user）。
     case 'message_end': {
       // 终态由 SEND_MESSAGE finally 统一 commit；此处只心跳
       coord.heartbeat(runId, { label: event.interrupted ? 'interrupted' : 'message_end' })

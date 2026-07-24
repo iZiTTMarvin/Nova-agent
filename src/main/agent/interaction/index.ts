@@ -6,6 +6,5 @@ export {
 export {
   cancelExecution,
   respondPermission,
-  respondVerificationPermission,
   respondAskQuestion
 } from './AgentInteractionController'

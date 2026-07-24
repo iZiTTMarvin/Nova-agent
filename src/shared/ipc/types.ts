@@ -212,10 +212,6 @@ export interface IpcCommands {
     }
     result: void | InteractionAnswerResult
   }
-  'respond-verification-permission': {
-    params: { requestId: string; granted: boolean }
-    result: void
-  }
   'respond-ask-question': {
     params: {
       requestId: string
@@ -599,19 +595,6 @@ export interface IpcEvents {
      */
     diffs: Array<{ filePath: string; status: DiffEntry['status']; hunks?: DiffEntry['hunks'] }>
     reviews: Record<string, DiffReviewStatus>
-  }
-  'agent:verification-result': {
-    messageId: string
-    result: string
-  }
-  'agent:verification-permission-request': {
-    messageId: string
-    requestId: string
-    command: string
-  }
-  'agent:verification-permission-cleared': {
-    messageId: string
-    requestId: string
   }
   'agent:ask-question-request': {
     requestId: string

@@ -41,12 +41,9 @@ function App(): JSX.Element {
   const handleDiffUpdate = useChatStore(state => state.handleDiffUpdate)
   const handleMessageEnd = useChatStore(state => state.handleMessageEnd)
   const handleError = useChatStore(state => state.handleError)
-  const handleVerificationResult = useChatStore(state => state.handleVerificationResult)
 
   // agent：权限 / askQuestion / 轮次归属
   const handlePermissionRequest = useAgentStore(state => state.handlePermissionRequest)
-  const handleVerificationPermissionRequest = useAgentStore(state => state.handleVerificationPermissionRequest)
-  const clearVerificationPermissionRequest = useAgentStore(state => state.clearVerificationPermissionRequest)
   const handleAskQuestionRequest = useAgentStore(state => state.handleAskQuestionRequest)
   const clearAskQuestionRequest = useAgentStore(state => state.clearAskQuestionRequest)
 
@@ -154,20 +151,6 @@ function App(): JSX.Element {
       buffer.flushNow()
       handleError(data.messageId, data.error)
     }))
-
-    // 监听：验证结果
-    const unsubVerificationResult = window.api.on('agent:verification-result', (data) => {
-      handleVerificationResult(data.messageId, data.result)
-    })
-
-    // 监听：验证权限请求（用户确认是否执行验证命令）
-    const unsubVerificationPermissionRequest = window.api.on('agent:verification-permission-request', (data) => {
-      handleVerificationPermissionRequest({ requestId: data.requestId, command: data.command })
-    })
-
-    const unsubVerificationPermissionCleared = window.api.on('agent:verification-permission-cleared', (data) => {
-      clearVerificationPermissionRequest(data.requestId)
-    })
 
     // 监听：askQuestion 工具请求 → 写入 pendingAskQuestion 触发面板渲染
     // 旧事件兼容：无 sessionId 时仍写入；有 sessionId 时仅当前会话渲染
@@ -316,9 +299,6 @@ function App(): JSX.Element {
       unsubPermissionRequest()
       unsubDiffUpdate()
       unsubError()
-      unsubVerificationResult()
-      unsubVerificationPermissionRequest()
-      unsubVerificationPermissionCleared()
       unsubAskQuestionRequest()
       unsubAskQuestionResolved()
       unsubRunSnapshot()
@@ -348,9 +328,6 @@ function App(): JSX.Element {
     handleDiffUpdate,
     handlePermissionRequest,
     handleError,
-    handleVerificationResult,
-    handleVerificationPermissionRequest,
-    clearVerificationPermissionRequest,
     handleAskQuestionRequest,
     clearAskQuestionRequest,
     applyTodoUpdate,

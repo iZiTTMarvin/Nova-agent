@@ -131,8 +131,6 @@ export const ChatPanel: React.FC = () => {
   const clearInterrupted = useRunStore(state => state.clearInterrupted)
   const interruptedSteps = useRunStore(state => state.interruptedSteps)
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
-  const pendingVerificationRequest = useAgentStore(state => state.pendingVerificationRequest)
-  const respondVerificationPermission = useAgentStore(state => state.respondVerificationPermission)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
   const pendingComposeAskUser = useComposeStore(state => state.pendingAskUser)
@@ -144,7 +142,6 @@ export const ChatPanel: React.FC = () => {
   const isPausedForUserInput =
     !!pendingAskQuestion ||
     !!pendingPermissionRequest ||
-    !!pendingVerificationRequest ||
     (!!pendingComposeAskUser && composeBelongsToCurrent)
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
 
@@ -697,28 +694,6 @@ export const ChatPanel: React.FC = () => {
           loadingDiffPlaceholders={loadingDiffPlaceholders}
           onLoadDiffs={loadMessageDiffs}
         />
-        {/* 验证权限确认：用户决定是否允许执行验证命令 */}
-        {pendingVerificationRequest && (
-          <div className="verification-permission">
-            <div className="verification-permission__text">
-              Agent 请求运行验证命令：<code>{pendingVerificationRequest.command}</code>
-            </div>
-            <div className="verification-permission__actions">
-              <button
-                className="verification-permission__btn verification-permission__btn--deny"
-                onClick={() => respondVerificationPermission(false)}
-              >
-                跳过
-              </button>
-              <button
-                className="verification-permission__btn verification-permission__btn--allow"
-                onClick={() => respondVerificationPermission(true)}
-              >
-                允许执行
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Phase 6：Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
         {pendingUserMessages.length > 0 && (

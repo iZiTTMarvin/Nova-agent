@@ -175,9 +175,6 @@ export class XForgeMainAgentSession {
       'tool_result',
       'permission_request',
       'diff_update',
-      'verification_result',
-      'verification_permission_request',
-      'verification_permission_cleared',
       'usage',
       'error',
       'hook_error'

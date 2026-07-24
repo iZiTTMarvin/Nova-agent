@@ -10,15 +10,12 @@ function baseState(overrides: Partial<AgentState> = {}): AgentState {
     pendingPermissionRequest: null,
     isSubmittingPermission: false,
     permissionError: null,
-    pendingVerificationRequest: null,
     pendingAskQuestion: null,
+    isSubmittingAskQuestion: false,
     cancelExecution: async () => {},
     clearCancelFallback: () => {},
     handlePermissionRequest: () => {},
     respondPermissionRequest: async () => {},
-    handleVerificationPermissionRequest: () => {},
-    clearVerificationPermissionRequest: () => {},
-    respondVerificationPermission: () => {},
     handleAskQuestionRequest: () => {},
     clearAskQuestionRequest: () => {},
     respondAskQuestion: async () => {},
@@ -64,12 +61,5 @@ describe('selectForceExpandedForMessage', () => {
     })
     expect(selectForceExpandedForMessage(state, 'msg_live', true)).toBe(true)
     expect(selectForceExpandedForMessage(state, 'msg_old', false)).toBe(false)
-  })
-
-  it('验证权限挂起时 live 消息强制展开', () => {
-    const state = baseState({
-      pendingVerificationRequest: { requestId: 'v1', command: 'npm test' }
-    })
-    expect(selectForceExpandedForMessage(state, 'msg_live', true)).toBe(true)
   })
 })

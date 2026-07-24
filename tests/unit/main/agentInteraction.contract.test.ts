@@ -1,5 +1,5 @@
 /**
- * T5 交互契约：verification 不得写入 InteractionInbox；permission/askQuestion 身份错配拒绝。
+ * T5 交互契约：permission/askQuestion 身份错配拒绝。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,8 +49,6 @@ vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
 }))
 
 vi.mock('../../../src/main/agent/events', () => ({
-  clearPendingVerificationPermissions: vi.fn(),
-  clearVerificationPermissionRequest: vi.fn(),
   markActiveStreamsCancelled: vi.fn()
 }))
 
@@ -65,13 +63,9 @@ vi.mock('../../../src/runtime/tools/subAgentBridge', () => ({
 
 import {
   respondAskQuestion,
-  respondPermission,
-  respondVerificationPermission
+  respondPermission
 } from '../../../src/main/agent/interaction/AgentInteractionController'
-import { clearVerificationPermissionRequest } from '../../../src/main/agent/events'
 import { pendingAskQuestions } from '../../../src/main/agent/interaction/askQuestionWaiters'
-import { readFileSync } from 'fs'
-import { join } from 'path'
 
 describe('AgentInteractionController 契约', () => {
   beforeEach(() => {
@@ -87,12 +81,6 @@ describe('AgentInteractionController 契约', () => {
     subAgentBridgeRegistry.hasBinding.mockReturnValue(false)
     subAgentBridgeRegistry.resolve.mockReturnValue(false)
     pendingAskQuestions.clear()
-  })
-
-  it('respondVerificationPermission 只清内存 waiter，不调用 inbox.answer', async () => {
-    await respondVerificationPermission({ requestId: 'vp_1', granted: true })
-    expect(clearVerificationPermissionRequest).toHaveBeenCalledWith('vp_1', true)
-    expect(coordinator.inbox.answer).not.toHaveBeenCalled()
   })
 
   it('permission requestId 与 durable payload 错配时拒绝，不唤醒 AgentLoop', async () => {
@@ -470,20 +458,5 @@ describe('AgentInteractionController 契约', () => {
     expect(resolve).toHaveBeenCalledWith(answers)
     expect(emit).toHaveBeenCalledWith({ type: 'ask_question_resolved', requestId: 'aq_1' })
     expect(pendingAskQuestions.has('aq_1')).toBe(false)
-  })
-})
-
-describe('verification 不得写入 InteractionInbox（源码契约）', () => {
-  it('projectAgentEventToRun 不含 verification_permission_request enqueue', () => {
-    const src = readFileSync(
-      join(__dirname, '../../../src/main/agent/turn/AgentTurnService.ts'),
-      'utf-8'
-    )
-    const projectFn = src.slice(
-      src.indexOf('function projectAgentEventToRun'),
-      src.indexOf('function isIdempotentToolName')
-    )
-    expect(projectFn).not.toMatch(/verification_permission_request[\s\S]*inbox\.enqueue/)
-    expect(projectFn).toMatch(/不得写入 InteractionInbox/)
   })
 })

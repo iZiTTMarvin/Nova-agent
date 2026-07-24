@@ -2,7 +2,7 @@
  * Nova 全局设置持久化（~/.nova/settings.json）
  *
  * Task 5/13：第三方 skill 开关等应用级配置
- * PRD §5.6：扩展为完整用户偏好 schema，含默认模式、bash shell、verification、字体、主题等。
+ * PRD §5.6：扩展为完整用户偏好 schema，含默认模式、bash shell、字体、主题等。
  *
  * 设计要点：
  * - NovaSettings 与 NovaSettingsDto 结构对齐（dto 即 schema）。
@@ -29,7 +29,6 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   permissionPolicy: 'ask',
   defaultShell: '',
   defaultShellTimeout: 120_000,
-  verificationEnabled: true,
   maxToolRounds: 100,
   editorFontSize: 13,
   editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
@@ -96,9 +95,6 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   if (typeof obj.defaultShellTimeout === 'number' && obj.defaultShellTimeout >= 0) {
     result.defaultShellTimeout = obj.defaultShellTimeout
-  }
-  if (typeof obj.verificationEnabled === 'boolean') {
-    result.verificationEnabled = obj.verificationEnabled
   }
   if (
     typeof obj.maxToolRounds === 'number' &&

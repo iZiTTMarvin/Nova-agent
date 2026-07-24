@@ -565,13 +565,6 @@ function MessageItemInner({
             {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
           />
         )}
-
-        {/* 验证结果摘要 */}
-        {isAssistant && msg.verificationSummary && (
-          <div className={`verification-summary ${msg.verificationSummary.startsWith('\u2717') ? 'verification-summary--failed' : 'verification-summary--passed'}`}>
-            <pre className="verification-summary__content">{msg.verificationSummary}</pre>
-          </div>
-        )}
         </div>
       </div>
     </div>

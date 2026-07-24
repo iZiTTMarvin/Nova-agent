@@ -37,9 +37,6 @@ export type AgentEvent =
       diffs: Array<{ filePath: string; status: 'added' | 'modified' | 'deleted' }>
       reviews: Record<string, DiffReviewStatus>
     }
-  | { type: 'verification_permission_request'; messageId: string; requestId: string; command: string; sessionId?: string }
-  | { type: 'verification_permission_cleared'; messageId: string; requestId: string; sessionId?: string }
-  | { type: 'verification_result'; messageId: string; result: string; sessionId?: string }
   | { type: 'usage'; messageId: string; usage: NormalizedUsage; cacheProfileId: string; sessionId?: string }
   | {
       type: 'context_breakdown'

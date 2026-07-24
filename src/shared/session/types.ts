@@ -97,8 +97,6 @@ export interface Message {
   blocks?: MessageBlock[]
   /** 单条消息 schema 子版本；1 = blocks 为事实源 */
   messageSchemaVersion?: number
-  /** 验证结果摘要 (S14)，修改后自动验证的结果 */
-  verificationSummary?: string
   /**
    * Phase 3：true 表示本条消息是 cancel 中断产生的。
    * 持久化层在 saveAssistantMessage 时根据 message_end.interrupted 写入，

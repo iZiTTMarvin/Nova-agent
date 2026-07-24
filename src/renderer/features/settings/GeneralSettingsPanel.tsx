@@ -1,7 +1,7 @@
 /**
  * GeneralSettingsPanel — 通用偏好设置面板（PRD §5.6）
  *
- * 包含：默认运行模式、bash shell/超时、verification 开关、编辑器字体/主题、diff 自动展开。
+ * 包含：默认运行模式、bash shell/超时、编辑器字体/主题、diff 自动展开。
  * 所有改动通过 settings:set 持久化，主进程做 schema 校验。
  */
 import React, { useEffect, useState } from 'react'
@@ -123,18 +123,6 @@ export const GeneralSettingsPanel: React.FC = () => {
             disabled={saving}
           />
           <span className="settings-modal__help">0 表示不超时。默认 120000ms（2 分钟）。</span>
-        </div>
-
-        {/* verification 开关 */}
-        <div className="settings-modal__field settings-modal__field--inline">
-          <label className="settings-modal__label">修改后自动验证</label>
-          <input
-            type="checkbox"
-            checked={settings.verificationEnabled}
-            onChange={e => void update('verificationEnabled', e.target.checked)}
-            disabled={saving}
-          />
-          <span className="settings-modal__help">文件修改后自动运行验证命令检查结果。</span>
         </div>
 
         {/* 最大工具调用轮数 */}

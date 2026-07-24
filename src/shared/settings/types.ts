@@ -49,8 +49,6 @@ export interface NovaSettingsDto {
   defaultShell: string
   /** bash 命令默认超时（毫秒，0 表示不超时） */
   defaultShellTimeout: number
-  /** 是否启用修改后自动验证 */
-  verificationEnabled: boolean
   /** 主 Agent 单条消息内最大连续工具调用轮数，防止长任务静默截断；范围 1~1000 */
   maxToolRounds: number
   /** 编辑器字体大小（px） */

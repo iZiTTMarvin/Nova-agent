@@ -8,11 +8,7 @@ import {
   getRunExecutionRegistry,
   getActiveRunId
 } from '../../services/RunCoordinatorHost'
-import {
-  clearPendingVerificationPermissions,
-  clearVerificationPermissionRequest,
-  markActiveStreamsCancelled
-} from '../events'
+import { markActiveStreamsCancelled } from '../events'
 import { getAgentLoopForRun, disposeIdleLoopForSession } from '../turn'
 import {
   pendingAskQuestions,
@@ -107,7 +103,6 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
       coord.commitTerminal({ runId, status: 'cancelled', reason: '用户取消未执行的运行' })
     }
 
-    clearPendingVerificationPermissions(runId)
     dismissPendingAskQuestionsForRun(runId)
 
     // 会话层面的清理：取消后 idle 压缩窗口不再需要，排队消息也不再处理。
@@ -199,22 +194,6 @@ export async function respondPermission(params: {
   if (!loopForRun) return
   loopForRun.respondPermission(params.requestId, granted)
   return durableResult
-}
-
-/**
- * 验证权限响应。
- *
- * 验证发生在 message_end 之后的异步路径，带超时，属于进程内 waiter，
- * 不得写入 InteractionInbox（否则会把已结束/即将结束的 run 拖入 waiting_user）。
- */
-export async function respondVerificationPermission(params: {
-  requestId: string
-  granted: boolean
-  commandId?: string
-  expectedVersion?: number
-  interactionId?: string
-}): Promise<void | InteractionAnswerResult> {
-  clearVerificationPermissionRequest(params.requestId, params.granted)
 }
 
 export async function respondAskQuestion(params: {

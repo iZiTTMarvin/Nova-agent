@@ -134,7 +134,7 @@ describe('SessionStore SQLite load', () => {
     expect(getSessionIndex(dir).activeCount()).toBe(5)
   })
 
-  it('patch 应用正确：loadMessagesPage 返回的消息含 verificationSummary', () => {
+  it('patch 应用正确：loadMessagesPage 返回的消息含 interrupted', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/ws')
     store.appendMessageFast(session.id, {
@@ -143,12 +143,12 @@ describe('SessionStore SQLite load', () => {
       content: 'done',
       timestamp: 1
     })
-    expect(store.appendMessagePatch(session.id, 'asst', { verificationSummary: '✓ ok' })).toBe(
-      true
-    )
+    expect(store.appendMessagePatch(session.id, 'asst', {
+      interrupted: true
+    })).toBe(true)
 
     const page = store.loadMessagesPage(session.id, { limit: 5 })
-    expect(page!.messages[0]!.verificationSummary).toBe('✓ ok')
+    expect(page!.messages[0]!.interrupted).toBe(true)
   })
 
   it('computeMessageCount / list 走 SQLite activeCount（不扫全图 jsonl）', () => {

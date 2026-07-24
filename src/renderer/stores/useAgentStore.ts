@@ -3,7 +3,6 @@
  *
  * 负责：
  * - 权限请求与提交状态
- * - 验证权限请求
  * - 取消执行（cancelExecution）：由 RunCoordinator 确认终态，不再本地 5s 宣布结束
  *
  * 依赖方向：
@@ -13,7 +12,7 @@
  */
 import { create } from 'zustand'
 import type { PermissionDecision } from '../../shared/session/types'
-import type { PendingPermissionRequest, PendingVerificationRequest } from './types'
+import type { PendingPermissionRequest } from './types'
 import type { AskQuestionRequest, AskQuestionAnswer } from '../../shared/askQuestion/types'
 
 export interface AgentState {
@@ -21,7 +20,6 @@ export interface AgentState {
   pendingPermissionRequest: PendingPermissionRequest | null
   isSubmittingPermission: boolean
   permissionError: string | null
-  pendingVerificationRequest: PendingVerificationRequest | null
   /** askQuestion 工具发起的提问请求；为空时面板不渲染 */
   pendingAskQuestion: AskQuestionRequest | null
   /** askQuestion 提交中（ACK 前不删 pending） */
@@ -29,7 +27,7 @@ export interface AgentState {
   // ── Actions ──
   /**
    * 中断当前流式生成。
-   * - 立即进入 cancelling（按钮「正在停止」）
+   * - 立刻进入 cancelling（按钮「正在停止」）
    * - 等 RunCoordinator snapshot 确认 terminal 后才 idle
    * - 超 grace 由 useRunStore 显示「部分任务未退出」+ 强制终止
    * - Renderer 不能独立宣布后台 run 已结束
@@ -45,13 +43,6 @@ export interface AgentState {
   handlePermissionRequest: (request: PendingPermissionRequest) => void
   /** 用户回应权限请求 */
   respondPermissionRequest: (decision: PermissionDecision) => Promise<void>
-
-  /** 收到验证权限请求 */
-  handleVerificationPermissionRequest: (request: PendingVerificationRequest) => void
-  /** 清除验证权限请求（用户回应、超时或取消后） */
-  clearVerificationPermissionRequest: (requestId: string) => void
-  /** 用户回应验证权限请求 */
-  respondVerificationPermission: (granted: boolean) => void
 
   /** 收到 askQuestion 工具请求，写入 pendingAskQuestion 触发面板渲染 */
   handleAskQuestionRequest: (request: AskQuestionRequest) => void
@@ -78,7 +69,6 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   pendingPermissionRequest: null,
   isSubmittingPermission: false,
   permissionError: null,
-  pendingVerificationRequest: null,
   pendingAskQuestion: null,
   isSubmittingAskQuestion: false,
 
@@ -171,30 +161,6 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
   },
 
-  handleVerificationPermissionRequest: (request: PendingVerificationRequest) => {
-    set({ pendingVerificationRequest: request })
-  },
-
-  clearVerificationPermissionRequest: (requestId: string) => {
-    set(state => ({
-      pendingVerificationRequest:
-        state.pendingVerificationRequest?.requestId === requestId
-          ? null
-          : state.pendingVerificationRequest
-    }))
-  },
-
-  respondVerificationPermission: (granted: boolean) => {
-    const { pendingVerificationRequest } = get()
-    if (!pendingVerificationRequest) return
-
-    window.api.invoke('respond-verification-permission', {
-      requestId: pendingVerificationRequest.requestId,
-      granted
-    })
-    set({ pendingVerificationRequest: null })
-  },
-
   handleAskQuestionRequest: (request: AskQuestionRequest) => {
     set({ pendingAskQuestion: request, isSubmittingAskQuestion: false })
   },
@@ -268,7 +234,6 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       pendingPermissionRequest: null,
       isSubmittingPermission: false,
       permissionError: null,
-      pendingVerificationRequest: null,
       pendingAskQuestion: null,
       isSubmittingAskQuestion: false
     })
@@ -281,7 +246,6 @@ export function resetAgentStoreForTests(): void {
     pendingPermissionRequest: null,
     isSubmittingPermission: false,
     permissionError: null,
-    pendingVerificationRequest: null,
     pendingAskQuestion: null,
     isSubmittingAskQuestion: false
   })

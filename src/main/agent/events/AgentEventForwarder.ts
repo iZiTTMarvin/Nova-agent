@@ -101,24 +101,6 @@ export function forwardEventToRenderer(
         sessionId: event.sessionId
       })
       break
-    case 'verification_result':
-      webContents.send('agent:verification-result', { messageId: event.messageId, result: event.result, sessionId: event.sessionId })
-      break
-    case 'verification_permission_request':
-      webContents.send('agent:verification-permission-request', {
-        messageId: event.messageId,
-        requestId: event.requestId,
-        command: event.command,
-        sessionId: event.sessionId
-      })
-      break
-    case 'verification_permission_cleared':
-      webContents.send('agent:verification-permission-cleared', {
-        messageId: event.messageId,
-        requestId: event.requestId,
-        sessionId: event.sessionId
-      })
-      break
     case 'todos_updated':
       webContents.send('agent:todos-updated', {
         sessionId: event.sessionId,

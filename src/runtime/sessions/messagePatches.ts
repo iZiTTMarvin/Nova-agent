@@ -1,7 +1,7 @@
 /**
  * 会话消息 append-only patch 事件
  *
- * 用于历史后补字段（如 verificationSummary），避免全量重写 messages.jsonl。
+ * 用于历史后补字段（如 interrupted），避免全量重写 messages.jsonl。
  * 加载时把 patch 叠到 base 消息上；空闲时可 compact 合并进 base。
  */
 import * as fs from 'fs'
@@ -16,7 +16,7 @@ export interface MessagePatchEvent {
   type: 'message_patch'
   messageId: string
   /** 要合并进目标消息的字段（浅合并） */
-  patch: Partial<Pick<SessionMessage, 'verificationSummary' | 'interrupted' | 'blocks' | 'content' | 'toolCalls'>>
+  patch: Partial<Pick<SessionMessage, 'interrupted' | 'blocks' | 'content' | 'toolCalls'>>
   timestamp: number
 }
 

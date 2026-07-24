@@ -81,7 +81,7 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     expect(active!.messageCount).toBe(5)
   })
 
-  it('verification 用 append-only patch，不重写 messages.jsonl', () => {
+  it('interrupted 用 append-only patch，不重写 messages.jsonl', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/ws')
     store.appendMessageFast(session.id, {
@@ -94,17 +94,19 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     const dir = path.join(tmpDir, 'sessions', session.id)
     const jsonlBefore = fs.readFileSync(path.join(dir, SESSION_MESSAGES_FILE), 'utf8')
 
-    expect(store.appendMessagePatch(session.id, 'msg_a', { verificationSummary: '✓ ok' })).toBe(true)
+    expect(store.appendMessagePatch(session.id, 'msg_a', {
+      interrupted: true
+    })).toBe(true)
 
     const jsonlAfter = fs.readFileSync(path.join(dir, SESSION_MESSAGES_FILE), 'utf8')
     expect(jsonlAfter).toBe(jsonlBefore)
 
     const patches = readMessagePatches(dir)
     expect(patches).toHaveLength(1)
-    expect(patches[0].patch.verificationSummary).toBe('✓ ok')
+    expect(patches[0].patch.interrupted).toBe(true)
 
     const loaded = store.load(session.id)
-    expect(loaded!.messages[0].verificationSummary).toBe('✓ ok')
+    expect(loaded!.messages[0].interrupted).toBe(true)
   })
 
   it('compactMessagePatches 合并后清空 patch 文件', () => {
@@ -116,7 +118,9 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
       content: 'done',
       timestamp: 1
     })
-    store.appendMessagePatch(session.id, 'msg_a', { verificationSummary: '✓ ok' })
+    store.appendMessagePatch(session.id, 'msg_a', {
+      interrupted: true
+    })
     expect(store.compactMessagePatches(session.id)).toBe(true)
 
     const dir = path.join(tmpDir, 'sessions', session.id)
@@ -125,7 +129,7 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     expect(patchContent).toBe('')
 
     const line = fs.readFileSync(path.join(dir, SESSION_MESSAGES_FILE), 'utf8').trim().split('\n')[0]
-    expect(JSON.parse(line).verificationSummary).toBe('✓ ok')
+    expect(JSON.parse(line).interrupted).toBe(true)
   })
 
   it('loadSessionPage 与 loadMessagesPage 同语义', () => {

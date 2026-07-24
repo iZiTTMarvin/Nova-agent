@@ -75,7 +75,6 @@ function seedLongConversation(): string {
     pendingPermissionRequest: null,
     isSubmittingPermission: false,
     permissionError: null,
-    pendingVerificationRequest: null,
     messageDiffs: {},
     loadingDiffs: new Set(),
     loadingDiffPlaceholders: {}
@@ -114,7 +113,6 @@ describe('Phase 3 渲染性能回归', () => {
       pendingPermissionRequest: null,
       isSubmittingPermission: false,
       permissionError: null,
-      pendingVerificationRequest: null,
       messageDiffs: {},
       loadingDiffs: new Set(),
       loadingDiffPlaceholders: {}

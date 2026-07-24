@@ -111,32 +111,39 @@ export function buildBlocksFromLegacyFields(message: {
  * 不强制写盘；调用方决定是否持久化。
  */
 export function normalizeMessageToBlocksSource(message: SessionMessage): SessionMessage {
-  if (message.blocks && message.blocks.length > 0) {
-    const content = projectContentFromBlocks(message.blocks, message.content)
-    const toolCalls = projectToolCallsFromBlocks(message.blocks, message.toolCalls)
+  // 丢弃历史自动验证字段（功能已移除）
+  const { verificationSummary: _drop, ...rest } = message as SessionMessage & {
+    verificationSummary?: unknown
+  }
+  void _drop
+  const cleaned = rest as SessionMessage
+
+  if (cleaned.blocks && cleaned.blocks.length > 0) {
+    const content = projectContentFromBlocks(cleaned.blocks, cleaned.content)
+    const toolCalls = projectToolCallsFromBlocks(cleaned.blocks, cleaned.toolCalls)
     return {
-      ...message,
+      ...cleaned,
       content,
       ...(toolCalls ? { toolCalls } : { toolCalls: undefined }),
-      messageSchemaVersion: message.messageSchemaVersion ?? MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
+      messageSchemaVersion: cleaned.messageSchemaVersion ?? MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
     }
   }
 
   // 旧消息：从 content/toolCalls 构造 blocks
-  const blocks = buildBlocksFromLegacyFields(message)
+  const blocks = buildBlocksFromLegacyFields(cleaned)
   if (blocks.length === 0) {
     return {
-      ...message,
-      messageSchemaVersion: message.messageSchemaVersion ?? MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
+      ...cleaned,
+      messageSchemaVersion: cleaned.messageSchemaVersion ?? MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
     }
   }
 
   return {
-    ...message,
+    ...cleaned,
     blocks,
     // content/toolCalls 保留作兼容序列化，但语义上是 projection
-    content: projectContentFromBlocks(blocks, message.content),
-    toolCalls: projectToolCallsFromBlocks(blocks, message.toolCalls),
+    content: projectContentFromBlocks(blocks, cleaned.content),
+    toolCalls: projectToolCallsFromBlocks(blocks, cleaned.toolCalls),
     messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
   }
 }

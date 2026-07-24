@@ -962,14 +962,6 @@ describe('useAppStore Zustand Store', () => {
       }
     })
 
-    it('handleVerificationResult 应通过索引定位消息', () => {
-      useAppStore.getState().handleMessageStart('msg_vr')
-      useAppStore.getState().handleVerificationResult('msg_vr', '✓ 验证通过')
-
-      const state = useAppStore.getState()
-      expect(state.messages[0].verificationSummary).toBe('✓ 验证通过')
-    })
-
     it('不存在的 messageId 应静默忽略，不修改状态', () => {
       useAppStore.getState().handleMessageStart('msg_exists')
       const before = useAppStore.getState().messages.length

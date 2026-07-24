@@ -57,14 +57,6 @@ describe('_revision bump', () => {
     expect(useChatStore.getState().messages[0]._revision).toBeGreaterThan(revBefore)
   })
 
-  it('handleVerificationResult 应 bump _revision', () => {
-    useChatStore.getState().handleMessageStart('msg_1')
-    const rev0 = useChatStore.getState().messages[0]._revision!
-
-    useChatStore.getState().handleVerificationResult('msg_1', 'all passed')
-    expect(useChatStore.getState().messages[0]._revision).toBeGreaterThan(rev0)
-  })
-
   it('handleMessageEnd (interrupted) 应 bump _revision', async () => {
     useChatStore.getState().handleMessageStart('msg_1')
     const rev0 = useChatStore.getState().messages[0]._revision!

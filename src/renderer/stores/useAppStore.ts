@@ -55,7 +55,6 @@ export interface AppState {
   pendingPermissionRequest: PendingPermissionRequest | null
   isSubmittingPermission: boolean
   permissionError: string | null
-  pendingVerificationRequest: { requestId: string; command: string } | null
   /** Phase 6：Steering Queue */
   pendingUserMessages: Array<{ text: string; images: import('../lib/image-attachments').ImageAttachment[] }>
   // ── actions ──
@@ -110,12 +109,8 @@ export interface AppState {
   handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => void
   setContextBreakdown: (payload: import('./useSettingsStore').ContextBreakdown) => void
   handleError: (messageId: string, error: string) => void
-  handleVerificationResult: (messageId: string, result: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
   respondPermissionRequest: (decision: PermissionDecision) => Promise<void>
-  handleVerificationPermissionRequest: (request: { requestId: string; command: string }) => void
-  clearVerificationPermissionRequest: (requestId: string) => void
-  respondVerificationPermission: (granted: boolean) => void
   /** Phase 2 批量 delta 入口（外部组件不直接调用，由 IPC listener 调用） */
   applyStreamDeltas: (deltas: import('./useChatStore').StreamDeltaBatch) => void
   /** Phase 6：入队一条挂起消息（Agent 运行期间用户输入） */
@@ -156,7 +151,6 @@ function mergeState(
     pendingPermissionRequest: agent.pendingPermissionRequest,
     isSubmittingPermission: agent.isSubmittingPermission,
     permissionError: agent.permissionError,
-    pendingVerificationRequest: agent.pendingVerificationRequest,
     pendingUserMessages: chat.pendingUserMessages,
     // actions（按子 store 转发）
     selectProject: settings.selectProject,
@@ -190,12 +184,8 @@ function mergeState(
     handleUsage: settings.handleUsage,
     setContextBreakdown: settings.setContextBreakdown,
     handleError: chat.handleError,
-    handleVerificationResult: chat.handleVerificationResult,
     handlePermissionRequest: agent.handlePermissionRequest,
     respondPermissionRequest: agent.respondPermissionRequest,
-    handleVerificationPermissionRequest: agent.handleVerificationPermissionRequest,
-    clearVerificationPermissionRequest: agent.clearVerificationPermissionRequest,
-    respondVerificationPermission: agent.respondVerificationPermission,
     applyStreamDeltas: chat.applyStreamDeltas,
     enqueuePendingMessage: chat.enqueuePendingMessage,
     removePendingMessage: chat.removePendingMessage,
@@ -226,7 +216,6 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   pendingPermissionRequest: 'agent',
   isSubmittingPermission: 'agent',
   permissionError: 'agent',
-  pendingVerificationRequest: 'agent',
   pendingUserMessages: 'chat',
   selectProject: 'settings',
   setMode: 'settings',
@@ -259,12 +248,8 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   handleUsage: 'settings',
   setContextBreakdown: 'settings',
   handleError: 'chat',
-  handleVerificationResult: 'chat',
   handlePermissionRequest: 'agent',
   respondPermissionRequest: 'agent',
-  handleVerificationPermissionRequest: 'agent',
-  clearVerificationPermissionRequest: 'agent',
-  respondVerificationPermission: 'agent',
   applyStreamDeltas: 'chat',
   enqueuePendingMessage: 'chat',
   removePendingMessage: 'chat',

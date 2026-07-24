@@ -3,14 +3,6 @@ export {
   activeStreams,
   markActiveStreamsCancelled,
   disposeTurnStreams,
-  accumulateStreamEvent,
-  triggerVerificationIfNeeded
+  accumulateStreamEvent
 } from './AgentEventAccumulator'
 export { forwardEventToRenderer } from './AgentEventForwarder'
-export {
-  pendingVerificationPermissions,
-  clearVerificationPermissionRequest,
-  clearPendingVerificationPermissions,
-  awaitVerificationPermission,
-  VERIFICATION_PERMISSION_TIMEOUT_MS
-} from './verificationPermissionWaiters'

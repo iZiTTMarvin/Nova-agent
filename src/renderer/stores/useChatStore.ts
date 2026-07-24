@@ -430,7 +430,6 @@ export interface ChatState {
    */
   handleMessageEnd: (messageId: string, interrupted?: boolean) => Promise<void>
   handleError: (messageId: string, error: string) => Promise<void>
-  handleVerificationResult: (messageId: string, result: string) => void
   /** 主进程 recovery_state 事件：更新当前消息的恢复状态机 */
   handleRecoveryState: (messageId: string, state: RendererRecoveryState) => void
   /** 主进程 recovery_hint 事件：追加一条恢复提示 */
@@ -1572,18 +1571,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (get().pendingBranchMetaReload) {
       await get().finishBranchMetaRefresh()
     }
-  },
-
-  handleVerificationResult: (messageId: string, result: string) => {
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, verificationSummary: result })
-      return { messages: nextMessages }
-    })
   },
 
   handleRecoveryState: (messageId: string, recovery: RendererRecoveryState) => {

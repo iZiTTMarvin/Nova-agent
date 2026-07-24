@@ -4,12 +4,9 @@ import type { SessionMessageAppend, AppendMessageResult } from '../../../runtime
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../../runtime/sessions/messageProjection'
 import type { MessageBlock } from '../../../shared/session/types'
 import { appendTerminalErrorToBlocks } from '../../../shared/session/terminalErrorBlocks'
-import { runVerification } from '../../../runtime/verification/service'
-import { formatVerificationSummary } from '../../../runtime/verification/format'
 import { getSessionStore } from '../../services/SessionStoreHost'
 import { getRunCoordinator } from '../../services/RunCoordinatorHost'
 import type { MessageContext, StreamAccumulator } from './types'
-import { awaitVerificationPermission } from './verificationPermissionWaiters'
 
 /** 当前正在累积的流式消息映射：messageId → 累积器（按 turn identity fencing） */
 export const activeStreams = new Map<string, StreamAccumulator>()
@@ -165,7 +162,6 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             } catch { /* ignore */ }
           }
         }
-        triggerVerificationIfNeeded(sessionId, event.messageId, ctx)
       }
       break
     }
@@ -296,76 +292,6 @@ function scheduleLiveDiffUpdate(sessionId: string, messageId: string, ctx: Messa
       console.debug(`[perf] tool_result → diff_update: ${dt.toFixed(1)}ms`)
     }
   })
-}
-
-/**
- * 基于 checkpoint manifest 判断本轮是否有真实文件修改
- */
-function hasRealModifications(sessionsDir: string, sessionId: string, messageId: string): boolean {
-  const manifest = readManifest(sessionsDir, sessionId, messageId)
-  if (!manifest) return false
-  return (
-    manifest.createdFiles.length > 0 ||
-    manifest.modifiedFiles.length > 0 ||
-    manifest.deletedFiles.length > 0
-  )
-}
-
-/**
- * 触发验证：所有状态通过参数传入，不依赖全局变量
- */
-export function triggerVerificationIfNeeded(
-  sessionId: string,
-  messageId: string,
-  ctx: MessageContext
-): void {
-  // 基于 checkpoint manifest 判定是否有真实文件修改
-  const hasModifications = hasRealModifications(ctx.sessionsDir, sessionId, messageId)
-  if (!hasModifications) return
-
-  // 异步执行验证，不阻塞主流程
-  // 所有状态已在闭包中捕获，不会因后续操作串线
-  const verifyAsync = async () => {
-    try {
-      const result = await runVerification({
-        workingDir: ctx.workspaceRoot,
-        mode: ctx.mode,
-        permissionPolicy: ctx.permissionPolicy,
-        hasModifications: true,
-        // default 模式：通过 EventBus → IPC 推送到 renderer 等待用户确认
-        permissionCallback: async (command: string): Promise<boolean> => {
-          return awaitVerificationPermission({
-            messageId,
-            runId: ctx.runId ?? '',
-            command,
-            eventBus: ctx.eventBus
-          })
-        }
-      })
-
-      if (!result) return
-
-      const summary = formatVerificationSummary(result)
-
-      ctx.eventBus.emit({
-        type: 'verification_result',
-        messageId,
-        result: summary
-      })
-
-      appendVerificationSummary(sessionId, messageId, summary)
-    } catch (err) {
-      console.error('验证执行失败:', err)
-    }
-  }
-
-  verifyAsync()
-}
-
-/** 将验证摘要追加到已保存的 assistant 消息（append-only patch，不重写全历史） */
-function appendVerificationSummary(sessionId: string, messageId: string, summary: string): void {
-  const sessionStore = getSessionStore()
-  sessionStore.appendMessagePatch(sessionId, messageId, { verificationSummary: summary })
 }
 
 /** 保存完整的 assistant 消息到会话存储（blocks 为事实源，content/toolCalls 为投影） */

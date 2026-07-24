@@ -1,6 +1,6 @@
 import type { PendingAskQuestionEntry } from '../runtime'
 
-/** 等待用户回复的 askQuestion 请求（requestId → 挂起状态）。与 verification permission 不同，无超时 */
+/** 等待用户回复的 askQuestion 请求（requestId → 挂起状态）。无超时 */
 export const pendingAskQuestions = new Map<string, PendingAskQuestionEntry>()
 
 /**

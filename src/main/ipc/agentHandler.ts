@@ -4,7 +4,7 @@
  */
 import { BrowserWindow } from 'electron'
 import { handle } from './secureIpc'
-import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_VERIFICATION_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
+import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import {
@@ -14,7 +14,6 @@ import {
 import {
   cancelExecution,
   respondPermission,
-  respondVerificationPermission,
   respondAskQuestion
 } from '../agent/interaction'
 
@@ -37,8 +36,6 @@ export function registerAgentHandler(
   handle(CANCEL_EXECUTION, async (_event, params) => cancelExecution(params ?? {}))
 
   handle(RESPOND_PERMISSION, async (_event, params) => respondPermission(params))
-
-  handle(RESPOND_VERIFICATION_PERMISSION, async (_event, params) => respondVerificationPermission(params))
 
   handle(RESPOND_ASK_QUESTION, async (_event, params) => respondAskQuestion(params))
 }

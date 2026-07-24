@@ -1,16 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { buildConversationContext } from '../../../src/runtime/agent/context/contextBuilder'
-import { formatVerificationSummary } from '../../../src/runtime/verification/service'
 import type { SessionData } from '../../../src/runtime/sessions/types'
-import type { VerificationResult } from '../../../src/runtime/verification/types'
 
 /**
  * S14 回归测试
  *
- * 验证三条主链路：
+ * 验证主链路：
  * 1. 多轮对话上下文恢复
  * 2. 模型层 abort 支持（已在 abortSignal.test.ts 覆盖）
- * 3. 验证结果持久化与恢复
  */
 
 function makeSession(messages: SessionData['messages']): SessionData {
@@ -115,64 +112,6 @@ describe('S14 回归测试', () => {
       expect(contextB).toHaveLength(2)
       expect(contextB[0].content).toBe('Session B 的问题')
       expect(contextB[1].content).toBe('Session B 的回答')
-    })
-  })
-
-  describe('验证结果持久化与恢复', () => {
-    it('验证摘要格式包含关键信息', () => {
-      const result: VerificationResult = {
-        command: 'npm test',
-        type: 'test',
-        success: true,
-        output: '5 tests passed',
-        exitCode: 0,
-        durationMs: 2500
-      }
-
-      const summary = formatVerificationSummary(result)
-
-      // 摘要应包含：状态、类型、耗时、命令
-      expect(summary).toContain('✓')
-      expect(summary).toContain('测试')
-      expect(summary).toContain('2.5s')
-      expect(summary).toContain('npm test')
-    })
-
-    it('失败验证摘要包含输出片段', () => {
-      const result: VerificationResult = {
-        command: 'npm test',
-        type: 'test',
-        success: false,
-        output: 'FAIL: test should pass\n  at test.js:5\n  at runner.js:10\n\n1 test failed',
-        exitCode: 1,
-        durationMs: 1200
-      }
-
-      const summary = formatVerificationSummary(result)
-
-      expect(summary).toContain('✗')
-      expect(summary).toContain('测试失败')
-      expect(summary).toContain('1.2s')
-      expect(summary).toContain('1 test failed')
-    })
-
-    it('SessionMessage 的 verificationSummary 可序列化恢复', () => {
-      const summary = '✓ 测试通过 (1.5s) — npm test'
-
-      // 模拟持久化和恢复
-      const msgJson = JSON.stringify({
-        id: 'msg_1',
-        role: 'assistant',
-        content: '修改完成',
-        verificationSummary: summary,
-        timestamp: 1
-      })
-
-      const restored = JSON.parse(msgJson)
-
-      expect(restored.verificationSummary).toBe(summary)
-      expect(restored.verificationSummary).toContain('✓')
-      expect(restored.verificationSummary).toContain('测试通过')
     })
   })
 })

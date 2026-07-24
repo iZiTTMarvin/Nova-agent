@@ -41,7 +41,6 @@ export interface ExtendedMessage {
   isError?: boolean
   thinking?: string
   blocks?: RendererMessageBlock[]
-  verificationSummary?: string
   /**
    * true 表示本条消息是 cancel 中断产生的（由主进程 message-end 事件携带的
    * interrupted 字段写入，前端在 Phase 3 用于 UI 区分"已中断"和"已完成"）。
@@ -79,12 +78,6 @@ export interface PendingPermissionRequest {
   runId?: string
   sessionId?: string
   version?: number
-}
-
-/** 等待用户决策的验证权限请求 */
-export interface PendingVerificationRequest {
-  requestId: string
-  command: string
 }
 
 /** 单条消息的 diff 缓存 */
