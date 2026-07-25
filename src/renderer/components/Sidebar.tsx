@@ -74,7 +74,7 @@ export const Sidebar: React.FC = () => {
   const [expandedSessionLists, setExpandedSessionLists] = useState<Record<string, boolean>>({})
 
   const toggleProject = (p: string) => {
-    setExpandedProjects(prev => ({ ...prev, [p]: !prev[p] }))
+    setExpandedProjects(prev => ({ ...prev, [p]: prev[p] === false }))
   }
 
   const getProjectName = (pathStr: string) => {

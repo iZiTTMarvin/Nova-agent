@@ -344,14 +344,14 @@ export interface ChatState {
   renameSession: (sessionId: string, title: string) => Promise<void>
   /** 创建新会话 */
   createNewSession: (workspaceRoot?: string) => Promise<void>
-  /** 发送用户消息（含图片） */
+  /** 发送用户消息（含图片）。返回 false 表示被守卫拦截未发出。 */
   sendMessage: (
     content: string,
     images?: ImageAttachment[],
     options?: {
       rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
     }
-  ) => Promise<void>
+  ) => Promise<boolean>
   /** 按消息回退到某条消息之前的状态 */
   regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
   /** 切换到兄弟分支（翻页器） */
@@ -614,9 +614,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (content: string, images?: ImageAttachment[], options?: {
     /** IPC 失败时恢复乐观截断前的消息树 */
     rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
-  }) => {
+  }): Promise<boolean> => {
     const { currentSessionId, isGenerating, sendInFlight } = get()
-    if (isGenerating || sendInFlight) return
+    if (isGenerating || sendInFlight) return false
 
     // 新发消息会改变工作区语义，退出 Tier 1「仅对话历史」视图
     set({ tier1BranchContext: null })
@@ -624,7 +624,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // PRD §5.1：project 路径统一从 workspace store 读取（单一事实源）
     const { useWorkspaceStore } = await import('./useWorkspaceStore')
     const currentProject = useWorkspaceStore.getState().currentProjectPath
-    if (!currentProject) return
+    if (!currentProject) return false
 
     const activeSessionId = currentSessionId || 'session_default'
 
@@ -707,11 +707,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             [userMsg.id]: (err as Error).message
           }
         }))
-        return
+        return true
       }
       set({ sendInFlight: false, activeAgentSessionId: null, isGenerating: false })
       await get().handleError('msg_err_' + Date.now(), (err as Error).message)
     }
+    return true
   },
 
   finishBranchMetaRefresh: async () => {

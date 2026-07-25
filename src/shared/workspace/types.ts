@@ -81,6 +81,4 @@ export interface ReadActivePlanParams {
   sessionId?: string
   /** 防止历史 save_plan 卡片误读后来切成另一文件路径的新计划 */
   expectedPath?: string
-  /** 防止历史 save_plan 卡片误读后来替换的另一份计划 */
-  expectedTitle?: string
 }

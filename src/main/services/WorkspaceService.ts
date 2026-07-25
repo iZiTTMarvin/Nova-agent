@@ -442,7 +442,6 @@ export class WorkspaceService {
     const activePlan = session?.activePlan
     if (!session || !activePlan) return null
     if (params.expectedPath && activePlan.path !== params.expectedPath) return null
-    if (params.expectedTitle && activePlan.title !== params.expectedTitle) return null
 
     const content = readPlanDocumentInWorkspace(session.workspaceRoot, activePlan.path)
     if (content === null) return null

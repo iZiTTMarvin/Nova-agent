@@ -61,8 +61,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     setLoadError(null)
     void window.api.invoke('workspace:read-active-plan', {
       sessionId,
-      ...(resultPath ? { expectedPath: resultPath } : {}),
-      expectedTitle: title
+      ...(resultPath ? { expectedPath: resultPath } : {})
     }).then(activePlan => {
       if (cancelled) return
       setDocument(activePlan)
@@ -79,7 +78,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     return () => {
       cancelled = true
     }
-  }, [resultPath, sessionId, status, title])
+  }, [resultPath, sessionId, status])
 
   const content = document?.content ?? preview
   const planPath = document?.path ?? resultPath
@@ -96,10 +95,13 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     setActionError(null)
     try {
       await useSettingsStore.getState().setMode('default')
-      await useChatStore.getState().sendMessage(
+      const sent = await useChatStore.getState().sendMessage(
         '请读取当前 active plan，结合最新仓库状态开始实施，并在完成后运行相关验证。',
         []
       )
+      if (!sent) {
+        setActionError('实施指令未能发出（Agent 可能仍在运行），请稍后手动发送。')
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -176,7 +178,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
                 onClick={() => void startImplementation()}
                 disabled={!canApprove}
               >
-                {submitting ? '正在切换…' : turnActive ? '等待计划完成' : '开始实施'}
+                {submitting ? '正在切换…' : turnActive ? '等待回复完成' : '开始实施'}
               </button>
             </>
           )}

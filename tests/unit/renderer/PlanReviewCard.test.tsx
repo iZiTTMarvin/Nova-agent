@@ -71,8 +71,7 @@ describe('PlanReviewCard', () => {
 
     expect(mockInvoke).toHaveBeenCalledWith('workspace:read-active-plan', {
       sessionId: 'sess_plan',
-      expectedPath: '.nova/plans/2026-07-24-readable.md',
-      expectedTitle: '可审阅计划'
+      expectedPath: '.nova/plans/2026-07-24-readable.md'
     })
     expect(renderer.root.findByProps({ className: 'markdown-test' }).children.join(''))
       .toContain('从项目文件加载的正文')
@@ -88,6 +87,7 @@ describe('PlanReviewCard', () => {
     })
     const sendMessage = vi.fn(async () => {
       calls.push('send')
+      return true
     })
     useSettingsStore.setState({ setMode })
     useChatStore.setState({ sendMessage })
@@ -128,7 +128,7 @@ describe('PlanReviewCard', () => {
       await Promise.resolve()
     })
 
-    expect(findButton(renderer!.root, '等待计划完成').props.disabled).toBe(true)
+    expect(findButton(renderer!.root, '等待回复完成').props.disabled).toBe(true)
   })
 
   it('继续完善只把修订提示送入输入框，不切换模式', async () => {

@@ -60,7 +60,7 @@ export interface AppState {
   // ── actions ──
   selectProject: () => Promise<void>
   setMode: (mode: Mode) => Promise<void>
-  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>
+  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<boolean>
   cancelExecution: () => Promise<void>
   loadModelConfig: () => Promise<void>
   saveModelConfig: (config: ModelConfig) => Promise<void>

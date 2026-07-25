@@ -16,6 +16,7 @@ import {
 } from '../permissions/PermissionManager'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { Mode } from '../../shared/session/types'
+import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
@@ -54,11 +55,10 @@ import { createToolPostProcessExtension } from './extensions/toolPostProcessExte
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
 
-/** 写入类工具名称集合，plan 模式下会被拒绝 */
-const WRITE_TOOLS: Record<string, true> = {
-  edit: true,
-  write: true,
-  bash: true
+/** plan 模式下仅允许只读和 plan-artifact 能力的工具 */
+function isPlanModeBlocked(toolName: string): boolean {
+  const cap = getToolCapability(toolName)
+  return cap !== 'readonly' && cap !== 'plan-artifact'
 }
 
 /**
@@ -1344,7 +1344,7 @@ export class AgentLoop implements IdleCompactionTarget {
             allowed: false,
             reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
           })
-        } else if (this.mode === 'plan' && WRITE_TOOLS[item.toolName]) {
+        } else if (this.mode === 'plan' && isPlanModeBlocked(item.toolName)) {
           results.set(item.toolCallId, {
             allowed: false,
             reason: `当前为 plan 模式，"${item.toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
@@ -1468,7 +1468,7 @@ export class AgentLoop implements IdleCompactionTarget {
           reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
         }
       }
-      if (this.mode === 'plan' && WRITE_TOOLS[toolName]) {
+      if (this.mode === 'plan' && isPlanModeBlocked(toolName)) {
         return {
           allowed: false,
           reason: `当前为 plan 模式，"${toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`

@@ -100,8 +100,7 @@ describe('WorkspaceService mode gate', () => {
 
     expect(service.readActivePlan({
       sessionId: session.id,
-      expectedPath: relativePath,
-      expectedTitle: 'Reviewable Plan'
+      expectedPath: relativePath
     })).toEqual({
       path: relativePath,
       title: 'Reviewable Plan',
@@ -110,12 +109,7 @@ describe('WorkspaceService mode gate', () => {
     })
     expect(service.readActivePlan({
       sessionId: session.id,
-      expectedPath: '.nova/plans/another-plan.md',
-      expectedTitle: 'Reviewable Plan'
-    })).toBeNull()
-    expect(service.readActivePlan({
-      sessionId: session.id,
-      expectedTitle: 'Another Plan'
+      expectedPath: '.nova/plans/another-plan.md'
     })).toBeNull()
   })
 
