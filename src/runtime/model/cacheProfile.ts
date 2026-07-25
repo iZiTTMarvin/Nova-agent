@@ -24,6 +24,13 @@ export interface CacheProfile {
   promptCacheKey: 'never' | 'session'
   /** T2 接线：历史 reasoning_content 回放范围 */
   reasoningReplay: 'none' | 'tool-call-history' | 'all-history'
+  /**
+   * reasoning 回放载体：
+   * - 'reasoning_content'：assistant 消息带独立 reasoning_content 字段（DeepSeek / Kimi / GLM）
+   * - 'think-tag'：注回 content 开头的 <think>…</think>（MiniMax OpenAI 兼容端点
+   *   不识别请求侧 reasoning_content 字段，官方要求 content 中完整保留 think 标签）
+   */
+  reasoningWire: 'reasoning_content' | 'think-tag'
   /** T3 接线：低于此 token 数时不指望前缀缓存收益 */
   minCacheableTokens?: number
   /** T3 接线：空闲压缩 / TTL 相关策略 */
@@ -45,6 +52,7 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     marker: 'cache_control',
     promptCacheKey: 'never',
     reasoningReplay: 'none',
+    reasoningWire: 'reasoning_content',
     idlePolicy: 'anthropic-short-ttl'
   },
   deepseek: {
@@ -52,6 +60,7 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     marker: 'none',
     promptCacheKey: 'never',
     reasoningReplay: 'tool-call-history',
+    reasoningWire: 'reasoning_content',
     idlePolicy: 'provider-managed'
   },
   kimi: {
@@ -59,6 +68,7 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     marker: 'none',
     promptCacheKey: 'session',
     reasoningReplay: 'all-history',
+    reasoningWire: 'reasoning_content',
     idlePolicy: 'provider-managed'
   },
   glm: {
@@ -66,13 +76,16 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     marker: 'none',
     promptCacheKey: 'never',
     reasoningReplay: 'all-history',
+    reasoningWire: 'reasoning_content',
     idlePolicy: 'provider-managed'
   },
   minimax: {
     id: 'minimax',
     marker: 'none',
     promptCacheKey: 'never',
-    reasoningReplay: 'none',
+    // M2/M3 为交错思维链模型：官方要求全量历史保留思考，否则模型退化为只输出摘要式标题
+    reasoningReplay: 'all-history',
+    reasoningWire: 'think-tag',
     idlePolicy: 'provider-managed'
   },
   openai: {
@@ -80,6 +93,7 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     marker: 'none',
     promptCacheKey: 'session',
     reasoningReplay: 'none',
+    reasoningWire: 'reasoning_content',
     idlePolicy: 'provider-managed'
   },
   generic: {
@@ -87,6 +101,7 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     marker: 'none',
     promptCacheKey: 'never',
     reasoningReplay: 'none',
+    reasoningWire: 'reasoning_content',
     idlePolicy: 'unknown'
   }
 }
@@ -102,6 +117,7 @@ const OFFICIAL_HOST_PROFILES: Array<{ host: string; id: CacheProfileId }> = [
   { host: 'z.ai', id: 'glm' },
   { host: 'minimax.chat', id: 'minimax' },
   { host: 'minimax.io', id: 'minimax' },
+  { host: 'minimaxi.com', id: 'minimax' },
   { host: 'openai.com', id: 'openai' }
 ]
 

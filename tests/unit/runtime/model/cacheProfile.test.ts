@@ -109,6 +109,7 @@ describe('resolveCacheProfile', () => {
     it('minimax 域名 → minimax', () => {
       expect(resolveCacheProfile('https://api.minimax.chat/v1', 'x').id).toBe('minimax')
       expect(resolveCacheProfile('https://api.minimax.io/v1', 'x').id).toBe('minimax')
+      expect(resolveCacheProfile('https://api.minimaxi.com/v1', 'x').id).toBe('minimax')
     })
 
     it('openai.com → openai', () => {
@@ -204,6 +205,7 @@ describe('resolveCacheProfile', () => {
         expect(['cache_control', 'none']).toContain(p.marker)
         expect(['never', 'session']).toContain(p.promptCacheKey)
         expect(['none', 'tool-call-history', 'all-history']).toContain(p.reasoningReplay)
+        expect(['reasoning_content', 'think-tag']).toContain(p.reasoningWire)
         expect(['anthropic-short-ttl', 'provider-managed', 'unknown']).toContain(p.idlePolicy)
       }
     })
@@ -221,6 +223,20 @@ describe('resolveCacheProfile', () => {
 
     it('glm 档案 reasoningReplay 为 all-history', () => {
       expect(getCacheProfileCatalog().glm.reasoningReplay).toBe('all-history')
+    })
+
+    it('推理模型家族档案不得剥离思维链回放（防止交错思维退化）', () => {
+      // deepseek/kimi/glm/minimax 均为推理模型：官方都要求多轮工具调用时回传历史思考。
+      // 新增推理模型档案时必须显式配置回放范围，禁止落到 'none'。
+      const catalog = getCacheProfileCatalog()
+      const reasoningFamilies: CacheProfileId[] = ['deepseek', 'kimi', 'glm', 'minimax']
+      for (const id of reasoningFamilies) {
+        expect(catalog[id].reasoningReplay, `${id} 不得为 'none'`).not.toBe('none')
+      }
+    })
+
+    it('minimax 回放载体为 think-tag（OpenAI 兼容端点要求 content 保留 <think> 标签）', () => {
+      expect(getCacheProfileCatalog().minimax.reasoningWire).toBe('think-tag')
     })
   })
 })

@@ -131,6 +131,7 @@ describe('canonicalizeForCacheComparison', () => {
       marker: 'cache_control',
       promptCacheKey: 'never',
       reasoningReplay: 'none',
+      reasoningWire: 'reasoning_content',
       idlePolicy: 'anthropic-short-ttl'
     })
 

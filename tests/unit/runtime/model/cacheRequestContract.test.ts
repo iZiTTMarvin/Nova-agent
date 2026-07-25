@@ -389,14 +389,13 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
       expect(JSON.stringify(messages2)).toBe(JSON.stringify(messages))
     })
 
-    it('anthropic/minimax/openai：即使有 reasoningContent 也绝不输出', async () => {
+    it('anthropic/openai：即使有 reasoningContent 也绝不输出', async () => {
       const profiles: Array<{
-        cacheProfile: 'anthropic' | 'minimax' | 'openai'
+        cacheProfile: 'anthropic' | 'openai'
         baseUrl: string
         modelId: string
       }> = [
         { cacheProfile: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', modelId: 'claude-3' },
-        { cacheProfile: 'minimax', baseUrl: 'https://api.minimax.chat/v1', modelId: 'MiniMax-Text' },
         { cacheProfile: 'openai', baseUrl: 'https://api.openai.com/v1', modelId: 'gpt-4o' }
       ]
       for (const p of profiles) {
@@ -414,7 +413,38 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
         expect(keys.has('reasoning_content'), `${p.cacheProfile} 不得输出 reasoning_content`).toBe(
           false
         )
+        // 也不得以 think 标签形式泄漏到 content
+        const messages = interceptor.body!.messages as Array<Record<string, unknown>>
+        expect(messages.every(m => !String(m.content).includes('<think>'))).toBe(true)
       }
+    })
+
+    it('minimax：all-history 以 <think> 标签注回 content，不出现 reasoning_content 字段', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        baseUrl: 'https://api.minimaxi.com/v1',
+        apiKey: 'test-key',
+        modelId: 'MiniMax-M3',
+        cacheProfile: 'minimax'
+      })
+      await drainChat(client, REASONING_HISTORY)
+
+      const messages = interceptor.body!.messages as Array<Record<string, unknown>>
+      const assistants = messages.filter(m => m.role === 'assistant')
+      expect(assistants[0].content).toBe('<think>先读 a.ts…</think>')
+      expect(assistants[1].content).toBe('<think>终态思考不应给 deepseek</think>已完成修复。')
+
+      // 载体是 content，不写独立字段
+      const keys = new Set<string>()
+      collectKeysDeep(interceptor.body!, keys)
+      expect(keys.has('reasoning_content')).toBe(false)
+
+      // 二次序列化逐字节一致（前缀缓存稳定性）
+      interceptor.restore()
+      interceptor = interceptFetch()
+      await drainChat(client, REASONING_HISTORY)
+      const messages2 = interceptor.body!.messages as Array<Record<string, unknown>>
+      expect(JSON.stringify(messages2)).toBe(JSON.stringify(messages))
     })
 
     it('glm：all-history 输出全部 reasoning_content', async () => {

@@ -3,6 +3,8 @@
  * 通过 fetch 调用兼容 OpenAI Chat Completions API 的模型服务
  * 支持 SSE 流式响应，纯 Node.js 实现，不依赖 Electron
  */
+import { mkdirSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from './types'
 import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
@@ -27,6 +29,22 @@ import {
 
 /** 会话级可禁用的请求能力（内存态，loop 重建后重新探测） */
 type DowngradeCapability = 'prompt_cache_key' | 'reasoning_content' | 'clear_thinking'
+
+/**
+ * 诊断开关：NOVA_WIRE_DUMP_DIR 指向目录时，把每次出站请求体原样落盘。
+ * 仅用于线下取证（含完整 prompt，不含 Authorization）；未设置时零开销。
+ */
+function dumpWireBody(body: string): void {
+  const dir = process.env.NOVA_WIRE_DUMP_DIR
+  if (!dir) return
+  try {
+    mkdirSync(dir, { recursive: true })
+    const name = `wire-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`
+    writeFileSync(join(dir, name), body, 'utf8')
+  } catch {
+    /* 诊断落盘失败不影响请求 */
+  }
+}
 
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
@@ -164,6 +182,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
       response: Response
       attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
     }> => {
+      const wireBody = JSON.stringify(body)
+      dumpWireBody(wireBody)
       return transportFetch({
         url,
         method: 'POST',
@@ -171,7 +191,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.apiKey}`
         },
-        body: JSON.stringify(body),
+        body: wireBody,
         userSignal: options?.abortSignal,
         timeouts: options?.transportTimeouts
       })
@@ -448,11 +468,15 @@ export class OpenAICompatibleModelClient implements ModelClient {
    * preserveInternal=true 时仅在本地缓存标记阶段保留 internal 元数据，
    * 之后会在真正发请求前统一剥离，不污染 API 字节流。
    *
-   * reasoning_content 按 cacheProfile.reasoningReplay 白名单输出，并做来源门控：
+   * reasoning 回放按 cacheProfile.reasoningReplay 白名单输出，并做来源门控：
    * - tool-call-history（deepseek）：仅含 tool_calls 的 assistant
-   * - all-history（kimi / glm）：全部有 reasoningContent 的 assistant
+   * - all-history（kimi / glm / minimax）：全部有 reasoningContent 的 assistant
    * - none：绝不输出（即使 ChatMessage 上有值）
-   * - 跨档案 / 已禁用 reasoning_content：不输出
+   * - 跨档案：不输出
+   *
+   * 回放载体由 cacheProfile.reasoningWire 决定：
+   * - 'reasoning_content'：独立字段（已被网关禁用时不输出）
+   * - 'think-tag'：注回 content 开头的 <think>…</think>，还原模型原始输出格式
    */
   private toApiMessage(
     msg: ChatMessage,
@@ -486,24 +510,27 @@ export class OpenAICompatibleModelClient implements ModelClient {
       result.tool_call_id = msg.toolCallId
     }
 
-    // 仅 assistant 消息可带 reasoning_content；按 profile 白名单 + 来源门控决定是否输出
+    // 仅 assistant 消息可回放 reasoning；按 profile 白名单 + 来源门控决定是否输出
     if (
       msg.role === 'assistant' &&
       msg.reasoningContent !== undefined &&
-      !disabled.has('reasoning_content') &&
       isReasoningSourceCompatible(msg.reasoningProviderId, this.cacheProfile.id)
     ) {
       const replay = this.cacheProfile.reasoningReplay
-      if (replay === 'all-history') {
-        result.reasoning_content = msg.reasoningContent
-      } else if (
-        replay === 'tool-call-history' &&
-        msg.toolCalls &&
-        msg.toolCalls.length > 0
-      ) {
-        result.reasoning_content = msg.reasoningContent
+      const shouldReplay =
+        replay === 'all-history' ||
+        (replay === 'tool-call-history' && !!msg.toolCalls && msg.toolCalls.length > 0)
+      // reasoningReplay === 'none'：剥离，不写任何载体
+      if (shouldReplay) {
+        if (this.cacheProfile.reasoningWire === 'think-tag') {
+          // ThinkTagParser 流式解析时剥离了标签，这里逆向还原为模型原始 content 格式
+          if (typeof result.content === 'string') {
+            result.content = `<think>${msg.reasoningContent}</think>${result.content}`
+          }
+        } else if (!disabled.has('reasoning_content')) {
+          result.reasoning_content = msg.reasoningContent
+        }
       }
-      // reasoningReplay === 'none'：剥离，不写字段
     }
 
     return result
