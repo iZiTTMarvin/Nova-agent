@@ -14,6 +14,7 @@ import type { ChatMessage } from '../../../src/runtime/model/types'
 import type { SessionData, SessionMessage } from '../../../src/runtime/sessions/types'
 import { extractTextFromSerializableContent } from '../../../src/runtime/sessions/types'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
+import { agentRoute } from '../../../src/runtime/agent/turn'
 
 /**
  * 阶段一止血测试：压缩触发后 session.messages 不得被截断。
@@ -208,7 +209,7 @@ describe('阶段一：压缩不截断 session.messages', () => {
     loop.setToolRegistry(createTestRegistry())
     injectCompactionTriggerHistory(loop)
 
-    await loop.sendMessage('触发压缩')
+    await loop.sendMessage('触发压缩', agentRoute())
 
     expect(capturedContext).not.toBeNull()
     // 压缩后运行时上下文应远小于完整 session 历史（否则对照无意义）
@@ -257,7 +258,7 @@ describe('阶段一：压缩不截断 session.messages', () => {
     loop.setToolRegistry(createTestRegistry())
     injectCompactionTriggerHistory(loop)
 
-    await loop.sendMessage('触发压缩')
+    await loop.sendMessage('触发压缩', agentRoute())
 
     // 模拟下一次 SEND_MESSAGE：从 SessionStore 全量重建
     const reloaded = store.load(session.id)!

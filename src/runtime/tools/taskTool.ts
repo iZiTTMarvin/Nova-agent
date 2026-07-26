@@ -12,6 +12,7 @@ import type { Mode } from '../../shared/session/types'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { ToolRegistry } from './ToolRegistry'
 import { defaultSubAgentPermissionBridge, type SubAgentPermissionBridge } from './subAgentBridge'
+import { agentRoute } from '../agent/turn'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是子代理，不要反问父 agent。'
 
@@ -138,7 +139,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
 
       // 3. checkpoint 隔离：不注入 checkpointManager
       try {
-        await subLoop.sendMessage(task)
+        await subLoop.sendMessage(task, agentRoute())
       } finally {
         unsub()
         permissionBridge.unregister(subLoop)

@@ -10,6 +10,7 @@ import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBui
 import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { L2_BLOCK_TITLE } from '../../../../src/runtime/memory/MemoryTailInjector'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 const L1_ESSENCE = '用户偏好：注释一律使用中文。'
 
@@ -38,8 +39,8 @@ describe('prefix-cache-stability（P1-B4）', () => {
 
     const loop = createMemoryLoop(client)
 
-    await loop.sendMessage('帮我查认证模块')
-    await loop.sendMessage('帮我看支付流程')
+    await loop.sendMessage('帮我查认证模块', agentRoute())
+    await loop.sendMessage('帮我看支付流程', agentRoute())
 
     const apiCalls = client.getCalls()
     expect(apiCalls).toHaveLength(2)
@@ -69,7 +70,7 @@ describe('prefix-cache-stability（P1-B4）', () => {
     })
 
     const loop = createMemoryLoop(client)
-    await loop.sendMessage('写个函数')
+    await loop.sendMessage('写个函数', agentRoute())
 
     const persisted = loop.getContext()
     const texts = persisted.map((m) => extractTextFromContent(m.content))

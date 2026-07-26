@@ -19,6 +19,7 @@ import type { AgentContext } from '../../../../src/runtime/agent/core/AgentConte
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ModelConfig } from '../../../../src/shared/config'
 import type { TurnStreamResult } from '../../../../src/runtime/agent/stream/streamTypes'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 function createNativeContext(): AgentContext {
   return {
@@ -323,7 +324,7 @@ describe('T2-1 AgentLoop：reasoningContent 进入 runtime context', () => {
     })
     loop.setToolRegistry(registry)
 
-    await loop.sendMessage('go')
+    await loop.sendMessage('go', agentRoute())
     const ctx = loop.getContext()
     const assistants = ctx.filter(m => m.role === 'assistant')
     expect(assistants).toHaveLength(2)

@@ -12,6 +12,7 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 /** 默认「有资格」的调度状态，供 timer 单测走通压缩路径 */
 function eligibleScheduleState(
@@ -336,7 +337,7 @@ describe('AgentLoop 空闲压缩集成', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
     await flush()
@@ -355,7 +356,7 @@ describe('AgentLoop 空闲压缩集成', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('第一条')
+    await loop.sendMessage('第一条', agentRoute())
 
     vi.advanceTimersByTime(200_000)
 
@@ -366,7 +367,7 @@ describe('AgentLoop 空闲压缩集成', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    await loop.sendMessage('第二条')
+    await loop.sendMessage('第二条', agentRoute())
 
     vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
     await flush()
@@ -385,7 +386,7 @@ describe('AgentLoop 空闲压缩集成', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     loop.reset()
 
@@ -406,7 +407,7 @@ describe('AgentLoop 空闲压缩集成', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     loop.dispose()
     const state = loop.getIdleCompactionScheduleState()
@@ -421,7 +422,7 @@ describe('AgentLoop 空闲压缩集成', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     expect(loop.getState()).toBe('error')
 
@@ -443,7 +444,7 @@ describe('AgentLoop 空闲压缩集成', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('第一条')
+    await loop.sendMessage('第一条', agentRoute())
 
     const contextBeforeCancel = loop.getContext().length
 

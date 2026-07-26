@@ -14,6 +14,7 @@ import type { ToolExecutor, ToolContext } from '../tools/types'
 import { defaultSubAgentPermissionBridge } from '../tools/subAgentBridge'
 import { expandTemplate } from './template'
 import type { TemplateContext } from './types'
+import { agentRoute } from '../agent/turn'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是技能子代理，不要反问父 agent。'
 
@@ -121,7 +122,7 @@ export async function runSkillFork(
 
   const task = args.trim() || '按技能说明执行'
   try {
-    await subLoop.sendMessage(task)
+    await subLoop.sendMessage(task, agentRoute())
   } finally {
     unsub()
     defaultSubAgentPermissionBridge.clearForLoop(subLoop)

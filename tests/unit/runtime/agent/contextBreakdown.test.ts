@@ -16,6 +16,7 @@ import {
 import { extractTextFromSerializableContent } from '../../../../src/runtime/sessions/types'
 import type { SessionData } from '../../../../src/runtime/sessions/types'
 import { getSessionActiveMessages } from '../../../../src/runtime/sessions/tree'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -76,7 +77,7 @@ describe('AgentLoop context_breakdown', () => {
       ]
     })
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     const breakdownEvents = events.filter((e) => e.type === 'context_breakdown')
     expect(breakdownEvents).toHaveLength(1)
@@ -106,7 +107,7 @@ describe('AgentLoop context_breakdown', () => {
       ]
     })
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     const breakdownEvents = events.filter((e) => e.type === 'context_breakdown')
     expect(breakdownEvents).toHaveLength(1)
@@ -132,7 +133,7 @@ describe('AgentLoop context_breakdown', () => {
       ]
     })
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     const ev = events.find((e) => e.type === 'context_breakdown') as Extract<
       AgentEvent,
@@ -173,7 +174,7 @@ describe('AgentLoop context_breakdown', () => {
       ]
     })
 
-    await loop.sendMessage('list')
+    await loop.sendMessage('list', agentRoute())
 
     const breakdownEvents = events.filter((e) => e.type === 'context_breakdown') as Array<
       Extract<AgentEvent, { type: 'context_breakdown' }>

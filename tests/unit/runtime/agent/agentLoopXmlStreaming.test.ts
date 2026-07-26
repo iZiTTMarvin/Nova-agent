@@ -13,6 +13,7 @@ import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 /** 构造 AgentLoop；通过 modelId + dialect 覆盖控制方言（xml / native） */
 function createLoop(opts: {
@@ -84,7 +85,7 @@ function createLoop(opts: {
 async function runAndCollect(loop: AgentLoop, eventBus: EventBus, userText: string) {
   const events: any[] = []
   eventBus.on((e) => events.push(e))
-  await loop.sendMessage(userText)
+  await loop.sendMessage(userText, agentRoute())
   return events
 }
 

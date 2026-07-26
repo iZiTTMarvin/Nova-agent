@@ -4,6 +4,7 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { ChatEvent, ToolDefinition } from '../../../../src/runtime/model/types'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolExecutor } from '../../../../src/runtime/tools/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 function tool(name: string): ToolExecutor {
   return {
@@ -76,7 +77,7 @@ describe('AgentLoop effective tool definitions', () => {
         )
       }
 
-      await loop.sendMessage('hello')
+      await loop.sendMessage('hello', agentRoute())
 
       const breakdown = events.find(event => event.type === 'context_breakdown')
       const cacheDiagnostics = events.filter(event => event.type === 'cache_diagnostic')
@@ -129,7 +130,7 @@ describe('AgentLoop effective tool definitions', () => {
     loop.setToolRegistry(registry)
     loop.setMode('plan')
 
-    await loop.sendMessage('plan this')
+    await loop.sendMessage('plan this', agentRoute())
 
     expect(modelTools).toEqual(['read', 'save_plan', 'switch_mode'])
     loop.dispose()

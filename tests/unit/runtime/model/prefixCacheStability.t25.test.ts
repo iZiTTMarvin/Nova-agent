@@ -16,6 +16,7 @@ import type { ChatMessage, ToolDefinition } from '../../../../src/runtime/model/
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
 import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
@@ -180,8 +181,8 @@ describe('T2-5 前缀稳定性黑盒', () => {
       }
     })
 
-    await loop.sendMessage('第一问')
-    await loop.sendMessage('第二问')
+    await loop.sendMessage('第一问', agentRoute())
+    await loop.sendMessage('第二问', agentRoute())
 
     const calls = client.getCalls()
     expect(calls).toHaveLength(2)

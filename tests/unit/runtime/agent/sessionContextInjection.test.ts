@@ -3,6 +3,7 @@ import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 /**
  * Session context 注入集成测试（v2 合并方案）
@@ -72,7 +73,7 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj/nova')
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     const received = client.getCalls()[0].messages
     // 找到真实的 user 消息（最后一条 user）
@@ -100,7 +101,7 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj')
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     const received = client.getCalls()[0].messages
     // 应该只有：system + user（2 条），没有独立的 session context 消息
@@ -131,8 +132,8 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj')
 
-    await loop.sendMessage('第一条')
-    await loop.sendMessage('第二条')
+    await loop.sendMessage('第一条', agentRoute())
+    await loop.sendMessage('第二条', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -168,8 +169,8 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj')
 
-    await loop.sendMessage(firstTurn)
-    await loop.sendMessage('第二条')
+    await loop.sendMessage(firstTurn, agentRoute())
+    await loop.sendMessage('第二条', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -201,10 +202,10 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     loop.setWorkingDir('D:/proj')
     loop.setSessionDate('2026-06-15T12:00:00')
 
-    await loop.sendMessage('第一天')
+    await loop.sendMessage('第一天', agentRoute())
 
     loop.setSessionDate('2026-06-16T12:00:00')
-    await loop.sendMessage('第二天')
+    await loop.sendMessage('第二天', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -235,10 +236,10 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj/a')
 
-    await loop.sendMessage('第一条')
+    await loop.sendMessage('第一条', agentRoute())
     // 切工作区 → 重置去重
     loop.setWorkingDir('D:/proj/b')
-    await loop.sendMessage('第二条')
+    await loop.sendMessage('第二条', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -269,9 +270,9 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj/nova-app')
 
-    await loop.sendMessage('旧工作区')
+    await loop.sendMessage('旧工作区', agentRoute())
     loop.setWorkingDir('D:/proj/nova')
-    await loop.sendMessage('新工作区')
+    await loop.sendMessage('新工作区', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -294,7 +295,7 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj/anchors')
 
-    await loop.sendMessage('hi')
+    await loop.sendMessage('hi', agentRoute())
 
     const received = client.getCalls()[0].messages
     const userMsg = lastUserMsg(received)
@@ -327,10 +328,10 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj')
 
-    await loop.sendMessage('第一条')
+    await loop.sendMessage('第一条', agentRoute())
     // reset 清空 context（system 除外）→ 锚点消失
     loop.reset()
-    await loop.sendMessage('reset 后第一条')
+    await loop.sendMessage('reset 后第一条', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -361,7 +362,7 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj')
 
-    await loop.sendMessage('第一条')
+    await loop.sendMessage('第一条', agentRoute())
     // 模拟压缩：手动清空 context 中所有非 system 消息（等价于 rebuildWithCompression
     // 后带前缀的旧 user 消息被摘要替代的场景）
     const currentContext = loop.getContext()
@@ -371,7 +372,7 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     // 压缩后 context 只有 system（含摘要），没有含 [Session context] 的消息
     void systemMsg
 
-    await loop.sendMessage('压缩后第一条')
+    await loop.sendMessage('压缩后第一条', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)
@@ -402,9 +403,9 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     const { loop } = createLoop(client)
     loop.setWorkingDir('D:/proj/persist')
 
-    await loop.sendMessage('第一条')
+    await loop.sendMessage('第一条', agentRoute())
     // 不 reset、不切工作区 —— 第一条的锚点仍在 context 中
-    await loop.sendMessage('第二条')
+    await loop.sendMessage('第二条', agentRoute())
 
     const call2 = client.getCalls()[1].messages
     const userMsg2 = lastUserMsg(call2)

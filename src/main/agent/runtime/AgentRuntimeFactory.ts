@@ -283,7 +283,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       toolSummary
     },
     skillsTokenEstimate,
-    useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
     contextWindow,
     supportsVision,
     maxToolRounds: novaSettings.maxToolRounds,
@@ -306,7 +305,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   })
   agentLoop.setPermissionManager(permissionManager)
   agentLoop.setMode(session.mode)
-  agentLoop.setSkillRegistry(skillRegistry)
   agentLoop.restoreSkillRoots(session.grantedSkillRoots)
   agentLoop.setOnSkillRootAdded((dir) => {
     sessionStore.addGrantedSkillRoot(sessionId, dir)

@@ -21,6 +21,7 @@ import type { ToolContext } from '../tools/types'
 import type { AgentHookOpts, ComposeState, HostFn, WorkflowRuntimeDeps } from './types'
 import { ensureRunDir, runLogPath } from './paths'
 import { marshalOut } from './marshal'
+import { agentRoute } from '../agent/turn'
 import { appendJournalSync, journalKeyBase, type JournalLoad } from './journal'
 import type { Semaphore } from './semaphore'
 import { applyStatePatch } from './state'
@@ -252,7 +253,7 @@ async function spawnAgent(
 
   try {
     await Promise.race([
-      subLoop.sendMessage(userPrompt),
+      subLoop.sendMessage(userPrompt, agentRoute()),
       new Promise<void>((_, reject) => {
         timeoutController.signal.addEventListener(
           'abort',

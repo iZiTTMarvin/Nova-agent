@@ -16,6 +16,7 @@ import type { ChatEvent, ChatMessage, ToolDefinition } from '../../../../src/run
 import type { ModelClient } from '../../../../src/runtime/model/ModelClient'
 import type { ModelConfig } from '../../../../src/shared/config'
 import { computeWireSnapshot } from '../../../../src/runtime/model/requestFingerprint'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 let tmpDir: string
 
@@ -149,7 +150,7 @@ describe('ChatOptions.promptCacheKey 透传', () => {
       promptCacheKey: 'route-key-abc'
     })
 
-    await loop.sendMessage('hi')
+    await loop.sendMessage('hi', agentRoute())
     loop.dispose()
 
     expect(captured.length).toBeGreaterThanOrEqual(1)

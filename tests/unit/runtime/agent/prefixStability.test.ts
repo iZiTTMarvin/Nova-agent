@@ -8,6 +8,7 @@ import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
 import type { Mode } from '../../../../src/shared/session/types'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 describe('前缀稳定性 (缓存 Harness C2)', () => {
   it('getStableSystemPrompt 对不同模式返回相同内容', () => {
@@ -97,7 +98,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     })
     loop.setMode('plan')
 
-    await loop.sendMessage('分析项目结构')
+    await loop.sendMessage('分析项目结构', agentRoute())
 
     const lastChat = client.getCalls().at(-1)
     const userMsg = lastChat?.messages?.find(m => m.role === 'user')

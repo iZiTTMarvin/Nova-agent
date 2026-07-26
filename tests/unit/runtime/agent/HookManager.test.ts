@@ -7,6 +7,7 @@ import type { HookEvent } from '../../../../src/runtime/agent/types'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 const ALL_EVENTS: HookEvent[] = [
   'onMessageStart', 'beforeAgentStart', 'preChat', 'context',
@@ -67,7 +68,7 @@ describe('HookManager', () => {
     const bus = new EventBus()
     const loop = new AgentLoop(client, bus)
     loop.getHookManager().on('onMessageStart', () => { throw new Error('hook fail') })
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
     expect(loop.getState()).toBe('idle')
   })
 

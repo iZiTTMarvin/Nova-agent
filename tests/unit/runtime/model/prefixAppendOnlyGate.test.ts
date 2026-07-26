@@ -16,6 +16,7 @@ import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { canonicalizeForCacheComparison } from '../../../../src/runtime/model/cacheCanonicalize'
 import type { ToolResult } from '../../../../src/runtime/tools/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 const TURNS = 12
 const READ_PATH = '/src/app.ts'
@@ -117,7 +118,7 @@ describe('wire 层 append-only 门禁（当前必败，A1 后转绿）', () => {
     loop.setToolRegistry(registry)
 
     for (let i = 0; i < TURNS; i++) {
-      await loop.sendMessage(`第 ${i + 1} 轮：请读取 ${READ_PATH}`)
+      await loop.sendMessage(`第 ${i + 1} 轮：请读取 ${READ_PATH}`, agentRoute())
     }
 
     // 每轮 2 次 fetch（tool_call 响应 + text 响应）
@@ -153,8 +154,8 @@ describe('wire 层 append-only 门禁（当前必败，A1 后转绿）', () => {
     registerReadTool(registry1)
     loop1.setToolRegistry(registry1)
 
-    await loop1.sendMessage('第 1 轮')
-    await loop1.sendMessage('第 2 轮')
+    await loop1.sendMessage('第 1 轮', agentRoute())
+    await loop1.sendMessage('第 2 轮', agentRoute())
 
     const bodiesBeforeRestore = interceptor.bodies.length
 
@@ -165,7 +166,7 @@ describe('wire 层 append-only 门禁（当前必败，A1 后转绿）', () => {
     registerReadTool(registry2)
     loop2.setToolRegistry(registry2)
 
-    await loop2.sendMessage('恢复后第 1 轮')
+    await loop2.sendMessage('恢复后第 1 轮', agentRoute())
 
     // 恢复后的请求之间仍满足前缀不变量（同 epoch 内）
     const restoreBodies = interceptor.bodies.slice(bodiesBeforeRestore)
@@ -222,7 +223,7 @@ describe('运行时消息层 append-only 门禁（当前必败，A1 后转绿）
     loop.setToolRegistry(registry)
 
     for (let i = 0; i < TURNS; i++) {
-      await loop.sendMessage(`第 ${i + 1} 轮：请读取 ${READ_PATH}`)
+      await loop.sendMessage(`第 ${i + 1} 轮：请读取 ${READ_PATH}`, agentRoute())
     }
 
     const calls = client.getCalls()

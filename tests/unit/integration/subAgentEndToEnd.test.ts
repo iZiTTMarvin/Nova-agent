@@ -5,6 +5,7 @@ import { MockModelClient } from '../../../src/test-support/builders/MockModelCli
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { createTaskTool } from '../../../src/runtime/tools/taskTool'
 import type { ToolResult } from '../../../src/runtime/tools/types'
+import { agentRoute } from '../../../src/runtime/agent/turn'
 
 function setupExploreE2E() {
   const client = new MockModelClient()
@@ -58,7 +59,7 @@ function setupExploreE2E() {
 describe('subAgent end-to-end', () => {
   it('父 agent 调用 task 工具，tool_result 含子代理摘要正文', async () => {
     const { loop } = setupExploreE2E()
-    await loop.sendMessage('列出 TODO')
+    await loop.sendMessage('列出 TODO', agentRoute())
     const toolMsg = loop.getContext().find(m => m.role === 'tool')
     expect(toolMsg).toBeDefined()
     expect(String(toolMsg?.content)).toContain('3 TODO comments in src/runtime')
@@ -67,7 +68,7 @@ describe('subAgent end-to-end', () => {
 
   it('子代理摘要不污染父 assistant 文本', async () => {
     const { loop } = setupExploreE2E()
-    await loop.sendMessage('调研')
+    await loop.sendMessage('调研', agentRoute())
     const assistantMsgs = loop.getContext().filter(m => m.role === 'assistant')
     const lastAssistant = assistantMsgs[assistantMsgs.length - 1]
     expect(String(lastAssistant?.content)).not.toContain('3 TODO comments')
@@ -76,7 +77,7 @@ describe('subAgent end-to-end', () => {
 
   it('完整流程后父 agent 处于 idle', async () => {
     const { loop } = setupExploreE2E()
-    await loop.sendMessage('go')
+    await loop.sendMessage('go', agentRoute())
     expect(loop.getState()).toBe('idle')
   })
 })

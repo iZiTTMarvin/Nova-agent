@@ -9,6 +9,7 @@ import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveSupportsVision } from '../../../shared/config/types'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SessionMessageAppend, SerializableContentBlock } from '../../../runtime/sessions/types'
+import type { MessageBlock } from '../../../shared/session/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
@@ -38,7 +39,8 @@ import {
 } from '../events'
 import {
   prepareAgentRuntime,
-  resolveToDataUrl
+  resolveToDataUrl,
+  USE_UNIFIED_SKILL_DISPATCH
 } from '../runtime'
 import {
   pendingAskQuestions,
@@ -50,6 +52,7 @@ import {
   dequeueSteeringMessage,
   type SteeringMessage
 } from './SteeringQueue'
+import { resolveAgentTurnRoute, routeRunKind } from '../../../runtime/agent/turn'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
@@ -191,14 +194,6 @@ export async function sendAgentMessage(
   const sessionsDir = sessionStore.getSessionsDir()
   const novaSettings = loadNovaSettings()
 
-  if (!resumableXForge && session.mode === 'compose') {
-    const existingXForge = activeRuns.find(run =>
-      run.kind === 'xforge' && run.workspaceId === projectPath
-    )
-    if (existingXForge) {
-      throw new Error('当前工作区已有未结束的 XForge 运行，请先继续或停止该运行。')
-    }
-  }
 
   // 在闭包中捕获本次调用的全部上下文，后续所有操作只读这些值
   const capturedSessionId = params.sessionId
@@ -268,14 +263,12 @@ export async function sendAgentMessage(
 
   const isRegenerate = params.regenerate === true
 
-  // 追加前记录是否已有含文字的用户消息（用于首条文字消息自动生成标题）
-  const hadTextUserMsg = session.messages.some(
-    m => m.role === 'user' && extractTextFromSerializableContent(m.content).trim() !== ''
-  )
-
   // 构建用户消息内容（含图片时为 ContentBlock[]，否则为 string）
   // modeInstruction 统一由 AgentLoop.sendMessage 追加，持久化中不包含
   let sendContent: string | ContentBlock[]
+  let persistContent: string | SerializableContentBlock[] | null = null
+  let persistBlocks: MessageBlock[] = []
+
   if (isRegenerate) {
     const activePath = getSessionActiveMessages(session)
     const leafUser = activePath[activePath.length - 1]
@@ -286,52 +279,75 @@ export async function sendAgentMessage(
       throw new Error('重新生成暂不支持含图片的消息')
     }
     sendContent = extractTextFromSerializableContent(leafUser.content)
-  } else {
-    let persistContent: string | SerializableContentBlock[]
-    const persistBlocks: import('../../../shared/session/types').MessageBlock[] = []
-
-    if (params.images && params.images.length > 0) {
-      // 主进程双门闩：非视觉模型拒绝写入会话，避免 image_url 污染历史导致整段会话废掉。
-      // 磁盘上已有的 nova-image 资产不在此删除；发 API 时由 visionProjection 按能力剥离。
-      if (!supportsVision) {
-        throw new Error(
-          '当前模型不支持图片输入。请切换到支持视觉的模型后再发送图片，或仅发送文字。'
-        )
-      }
-      // img.data 是 nova-image:// URL（渲染层上传时已落盘）。
-      // 持久化只存 URL（几十字节）；发给模型时再把 URL 临时转回 base64 data URL。
-      const imageReader = getImageStore()
-
-      const imageContentBlocks: ContentBlock[] = [
-        { type: 'text', text: params.content },
-        ...params.images.map(img => ({
-          type: 'image_url' as const,
-          // 模型 API 仅认识 http(s) URL 或 data URL，nova-image:// 需转回 base64
-          image_url: { url: resolveToDataUrl(imageReader, img.data, img.mimeType) }
-        }))
-      ]
-      sendContent = imageContentBlocks
-
-      // 持久化：content 与 blocks 都只存 nova-image:// URL，不再内联 base64
-      persistContent = [
-        { type: 'text', text: params.content },
-        ...params.images.map(img => ({
-          type: 'image_url' as const,
-          image_url: { url: img.data }
-        })) as SerializableContentBlock[]
-      ]
-      persistBlocks.push({ type: 'text', content: params.content })
-      persistBlocks.push(...params.images.map(img => ({
-        type: 'image' as const,
-        fileName: img.fileName,
-        dataUrl: img.data,
-        mimeType: img.mimeType
-      })))
-    } else {
-      // slash 调度由 AgentLoop.invokeSkill 处理；持久化保留用户原始输入
-      sendContent = params.content
-      persistContent = params.content
+  } else if (params.images && params.images.length > 0) {
+    // 主进程双门闩：非视觉模型拒绝写入会话，避免 image_url 污染历史导致整段会话废掉。
+    // 磁盘上已有的 nova-image 资产不在此删除；发 API 时由 visionProjection 按能力剥离。
+    if (!supportsVision) {
+      throw new Error(
+        '当前模型不支持图片输入。请切换到支持视觉的模型后再发送图片，或仅发送文字。'
+      )
     }
+    // img.data 是 nova-image:// URL（渲染层上传时已落盘）。
+    // 持久化只存 URL（几十字节）；发给模型时再把 URL 临时转回 base64 data URL。
+    const imageReader = getImageStore()
+
+    sendContent = [
+      { type: 'text', text: params.content },
+      ...params.images.map(img => ({
+        type: 'image_url' as const,
+        // 模型 API 仅认识 http(s) URL 或 data URL，nova-image:// 需转回 base64
+        image_url: { url: resolveToDataUrl(imageReader, img.data, img.mimeType) }
+      }))
+    ]
+
+    // 持久化：content 与 blocks 都只存 nova-image:// URL，不再内联 base64
+    persistContent = [
+      { type: 'text', text: params.content },
+      ...params.images.map(img => ({
+        type: 'image_url' as const,
+        image_url: { url: img.data }
+      })) as SerializableContentBlock[]
+    ]
+    persistBlocks.push({ type: 'text', content: params.content })
+    persistBlocks.push(...params.images.map(img => ({
+      type: 'image' as const,
+      fileName: img.fileName,
+      dataUrl: img.data,
+      mimeType: img.mimeType
+    })))
+  } else {
+    // 持久化保留用户原始输入；slash 调度由 resolveAgentTurnRoute 在 startRun 前解析
+    sendContent = params.content
+    persistContent = params.content
+  }
+
+  // Turn 路由：在 startRun 和用户消息落盘前确定实际执行类型
+  const turnRoute = resolveAgentTurnRoute({
+    content: sendContent,
+    mode: session.mode,
+    skillRegistry: prepared.skillRegistry,
+    useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
+    workspacePath: projectPath,
+    resumableXForge: !!resumableXForge
+  })
+  const turnRunKind = routeRunKind(turnRoute)
+
+  // XForge 工作区并发限制：基于 route 而非 session mode 判断
+  if (!resumableXForge && turnRunKind === 'xforge') {
+    const existingXForge = activeRuns.find(run =>
+      run.kind === 'xforge' && run.workspaceId === projectPath
+    )
+    if (existingXForge) {
+      throw new Error('当前工作区已有未结束的 XForge 运行，请先继续或停止该运行。')
+    }
+  }
+
+  // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
+  if (!isRegenerate && persistContent !== null) {
+    // 追加前记录是否已有含文字的用户消息（用于首条文字消息自动生成标题）
+    const hadTextUserMsg = session.messages.some(
+      m => m.role === 'user' && extractTextFromSerializableContent(m.content).trim() !== ''
+    )
 
     const userMessage: SessionMessageAppend = {
       // 与 renderer 乐观消息共用 id，避免分叉/编辑时「目标不在激活路径」
@@ -432,14 +448,14 @@ export async function sendAgentMessage(
       } else {
         runSnap = resumableXForge
       }
-    } else if (session.mode === 'compose') {
+    } else if (turnRunKind === 'xforge') {
       runSnap = xforgeService.startXForgeRun({
         workspaceId: projectPath,
         sessionId: params.sessionId
       })
     } else {
       runSnap = runCoordinator.startRun({
-        kind: 'agent',
+        kind: turnRunKind,
         workspaceId: projectPath,
         sessionId: params.sessionId
       })
@@ -473,7 +489,7 @@ export async function sendAgentMessage(
     }
 
     try {
-      await loopForRun.sendMessage(sendContent)
+      await loopForRun.sendMessage(sendContent, turnRoute)
       onUserTurnCompleteForExtract(
         params.sessionId,
         projectPath,

@@ -9,6 +9,7 @@ import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import type { ChatEvent, NormalizedUsage } from '../../../../src/runtime/model/types'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 const loops: AgentLoop[] = []
 
@@ -44,7 +45,7 @@ async function isSettled(p: Promise<unknown>): Promise<boolean> {
 async function runDrained(loop: AgentLoop, eventBus: EventBus, text: string): Promise<AgentEvent[]> {
   const events: AgentEvent[] = []
   eventBus.on(e => events.push(e))
-  const pending = loop.sendMessage(text)
+  const pending = loop.sendMessage(text, agentRoute())
   for (let i = 0; i < 200; i++) {
     await vi.advanceTimersByTimeAsync(1000)
     if (await isSettled(pending)) break
@@ -79,7 +80,7 @@ describe('usage 事件 cacheProfileId', () => {
 
     const events: AgentEvent[] = []
     eventBus.on(e => events.push(e))
-    await loop.sendMessage('hi')
+    await loop.sendMessage('hi', agentRoute())
 
     const usage = events.find(e => e.type === 'usage') as Extract<AgentEvent, { type: 'usage' }>
     expect(usage).toBeDefined()
@@ -164,7 +165,7 @@ describe('usage 事件 cacheProfileId', () => {
 
     const events: AgentEvent[] = []
     eventBus.on(e => events.push(e))
-    await loop.sendMessage('hi')
+    await loop.sendMessage('hi', agentRoute())
 
     const usage = events.find(e => e.type === 'usage') as Extract<AgentEvent, { type: 'usage' }>
     expect(usage.cacheProfileId).toBe('glm')

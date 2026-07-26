@@ -36,7 +36,6 @@ import { SystemPromptBuilder } from './promptBuilder/SystemPromptBuilder'
 import { buildSessionContext } from './context/sessionContext'
 import { calculateContextBreakdown } from './context/contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
-import type { SkillRegistry } from '../skills/SkillRegistry'
 import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
@@ -44,7 +43,7 @@ import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestio
 import type { FileEffectRecorder, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 
-import { invokeSkill } from '../skills/invokeSkill'
+import type { AgentTurnRoute } from './turn'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
@@ -299,8 +298,7 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 当前轮次 messageId（cancel / onCancel 使用） */
   private currentMessageId: string | null = null
 
-  /** 统一 skill 调度：slash inject / fork / workflow */
-  private skillRegistry: SkillRegistry | null = null
+  /** skill fork 执行依赖（由 agentHandler 注入） */
   private skillForkDeps: RunSkillForkDeps | null = null
   /**
    * 本会话已触发 skill 的目录集合，随 executeBatch 透传给只读工具。
@@ -390,7 +388,6 @@ export class AgentLoop implements IdleCompactionTarget {
       toolExecution: config?.toolExecution ?? 'parallel',
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
-      useUnifiedSkillDispatch: config?.useUnifiedSkillDispatch !== false,
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
       promptCacheKey: config?.promptCacheKey
@@ -628,10 +625,6 @@ export class AgentLoop implements IdleCompactionTarget {
     this.maxToolRounds = n
   }
 
-  /** 注入技能注册表（统一 slash 调度） */
-  setSkillRegistry(registry: SkillRegistry | null): void {
-    this.skillRegistry = registry
-  }
 
   /**
    * 注册一个 skill 目录为额外可读根（skill inject / fork / invoke_skill 工具触发时调用）。
@@ -777,12 +770,17 @@ export class AgentLoop implements IdleCompactionTarget {
   /**
    * 发送用户消息并启动循环
    * 发射 message_start → (流式 text_delta / tool_call / tool_result) → message_end
+   * route 由调用方在 startRun 前通过 resolveAgentTurnRoute 解析，本方法不再自行解析。
    */
-  async sendMessage(content: string | ContentBlock[]): Promise<void> {
+  async sendMessage(content: string | ContentBlock[], route: AgentTurnRoute): Promise<void> {
     if (this.state === 'running') {
       this.eventBus.emit({ type: 'error', messageId: '', error: '当前正在执行中，请先取消' })
       return
     }
+
+    // 执行能力校验：必须在任何轮次副作用（state/checkpoint/message_start/hook）之前。
+    // 非 agent route 缺少对应执行器时 fail closed，避免留下半开生命周期。
+    this.assertRouteExecutable(route)
 
     const messageId = randomUUID()
     this.currentMessageId = messageId
@@ -823,137 +821,114 @@ export class AgentLoop implements IdleCompactionTarget {
 
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
 
-    // 统一 skill 调度：slash inject / fork / system_notice（纯文本且开关开启时）
-    const useSkillDispatch =
-      typeof content === 'string' &&
-      this.skillRegistry &&
-      this.config.useUnifiedSkillDispatch !== false
+    // 按已解析 route 穷举分派（路由在 startRun 前由 resolveAgentTurnRoute 确定）
+    if (route.kind === 'xforge') {
+      try {
+        const result = await this.xforgeRunner!(
+          route.request,
+          {
+            abortSignal: this.abortController?.signal,
+            messageId,
+            explicitFullDev: route.explicitFullDev
+          }
+        )
+        this.context.push({ role: 'assistant', content: result.summary })
+        this.eventBus.emit({ type: 'text_delta', messageId, delta: result.summary })
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+        this.state = 'error'
+        this.checkpointManager?.endMessage()
+        this.eventBus.emit({ type: 'message_end', messageId })
+        this.idleTimer?.cancel()
+        this.idleTimer = null
+        return
+      }
+      await this.finishMessageRound(messageId)
+      return
+    }
 
-    if (useSkillDispatch) {
-      let dispatch = invokeSkill({
-        input: content,
-        registry: this.skillRegistry!,
-        profile: this.mode,
-        templateContext: { workspacePath: this.workingDir ?? undefined }
+    if (route.kind === 'workflow') {
+      // 编排入口：自动切入 compose，跑脚本，摘要推 UI
+      if (this.mode !== 'compose') {
+        this.setMode('compose')
+      }
+      try {
+        // 透传本轮取消信号：停止按钮 → cancel() → abortController.abort()
+        // → runWorkflow 内部 cancelWorkflow，编排 run 才能真正终止。
+        const wfResult = await this.workflowRunner!(route.scriptName, route.args, {
+          abortSignal: this.abortController?.signal
+        })
+        this.context.push({ role: 'assistant', content: wfResult.summary })
+        this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
+      } catch (err) {
+        const errMsg = (err as Error).message
+        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+        this.state = 'error'
+        this.checkpointManager?.endMessage()
+        this.eventBus.emit({ type: 'message_end', messageId })
+        this.idleTimer?.cancel()
+        this.idleTimer = null
+        return
+      }
+      await this.finishMessageRound(messageId)
+      return
+    }
+
+    if (route.kind === 'skill_fork') {
+      try {
+        const forkResult = await runSkillFork(this.skillForkDeps!, {
+          skill: route.skill,
+          args: route.args,
+          ctx: {
+            workingDir: this.workingDir ?? process.cwd(),
+            readState: this.readState,
+            shellPath: this.shellPath,
+            binDirs: this.binDirs
+          },
+          templateContext: { workspacePath: this.workingDir ?? undefined }
+        })
+        this.context.push({ role: 'assistant', content: forkResult.summary })
+        this.eventBus.emit({ type: 'text_delta', messageId, delta: forkResult.summary })
+      } catch (err) {
+        const errMsg = (err as Error).message
+        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
+        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
+        this.state = 'error'
+        this.checkpointManager?.endMessage()
+        this.eventBus.emit({ type: 'message_end', messageId })
+        this.idleTimer?.cancel()
+        this.idleTimer = null
+        return
+      }
+      await this.finishMessageRound(messageId)
+      return
+    }
+
+    // agent 路径：按 dispatch 子类型准备上下文，然后进入 runAgentLoop
+    const dispatch = route.dispatch
+
+    if (dispatch.kind === 'inject') {
+      // slash / 自动路由 inject：把该 skill 目录登记为额外只读根
+      if (dispatch.skillDirectory) {
+        this.addSkillRoot(dispatch.skillDirectory)
+      }
+      this.context.push({ role: 'assistant', content: dispatch.assistantContent })
+      this.context.push({
+        role: 'user',
+        content: withPrefix(`${dispatch.userContent}\n\n${modeInstruction}`)
       })
-
-      const explicitFullDev =
-        dispatch.kind === 'workflow' && dispatch.scriptName === 'br-full-dev'
-      if (
-        this.mode === 'compose' &&
-        this.xforgeRunner &&
-        (dispatch.kind === 'passthrough' || explicitFullDev)
-      ) {
-        try {
-          const result = await this.xforgeRunner(
-            explicitFullDev && dispatch.kind === 'workflow' ? dispatch.args : content as string,
-            {
-              abortSignal: this.abortController?.signal,
-              messageId,
-              explicitFullDev
-            }
-          )
-          this.context.push({ role: 'assistant', content: result.summary })
-          this.eventBus.emit({ type: 'text_delta', messageId, delta: result.summary })
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err)
-          await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-          this.eventBus.emit({ type: 'error', messageId, error: errMsg })
-          this.state = 'error'
-          this.checkpointManager?.endMessage()
-          this.eventBus.emit({ type: 'message_end', messageId })
-          this.idleTimer?.cancel()
-          this.idleTimer = null
-          return
-        }
-        await this.finishMessageRound(messageId)
-        return
-      }
-
-      if (dispatch.kind === 'workflow' && this.workflowRunner) {
-        // 编排入口：自动切入 compose，跑脚本，摘要推 UI
-        if (this.mode !== 'compose') {
-          this.setMode('compose')
-        }
-        try {
-          // 透传本轮取消信号：停止按钮 → cancel() → abortController.abort()
-          // → runWorkflow 内部 cancelWorkflow，编排 run 才能真正终止。
-          const wfResult = await this.workflowRunner(dispatch.scriptName, dispatch.args, {
-            abortSignal: this.abortController?.signal
-          })
-          this.context.push({ role: 'assistant', content: wfResult.summary })
-          this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
-        } catch (err) {
-          const errMsg = (err as Error).message
-          await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-          this.eventBus.emit({ type: 'error', messageId, error: errMsg })
-          this.state = 'error'
-          this.checkpointManager?.endMessage()
-          this.eventBus.emit({ type: 'message_end', messageId })
-          this.idleTimer?.cancel()
-          this.idleTimer = null
-          return
-        }
-        await this.finishMessageRound(messageId)
-        return
-      }
-
-      if (dispatch.kind === 'fork' && this.skillForkDeps) {
-        try {
-          const forkResult = await runSkillFork(this.skillForkDeps, {
-            skill: dispatch.skill,
-            args: dispatch.args,
-            ctx: {
-              workingDir: this.workingDir ?? process.cwd(),
-              readState: this.readState,
-              shellPath: this.shellPath,
-              binDirs: this.binDirs
-            },
-            templateContext: { workspacePath: this.workingDir ?? undefined }
-          })
-          this.context.push({ role: 'assistant', content: forkResult.summary })
-          this.eventBus.emit({ type: 'text_delta', messageId, delta: forkResult.summary })
-        } catch (err) {
-          const errMsg = (err as Error).message
-          await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-          this.eventBus.emit({ type: 'error', messageId, error: errMsg })
-          this.state = 'error'
-          this.checkpointManager?.endMessage()
-          this.eventBus.emit({ type: 'message_end', messageId })
-          // error 状态取消 idleTimer，避免后台压缩污染损坏 context
-          this.idleTimer?.cancel()
-          this.idleTimer = null
-          return
-        }
-        await this.finishMessageRound(messageId)
-        return
-      }
-
-      if (dispatch.kind === 'inject') {
-        // slash / 自动路由 inject：把该 skill 目录登记为额外只读根
-        if (dispatch.skillDirectory) {
-          this.addSkillRoot(dispatch.skillDirectory)
-        }
-        this.context.push({ role: 'assistant', content: dispatch.assistantContent })
-        this.context.push({
-          role: 'user',
-          content: withPrefix(`${dispatch.userContent}\n\n${modeInstruction}`)
-        })
-        userText = dispatch.userContent
-      } else if (dispatch.kind === 'system_notice') {
-        this.context.push({
-          role: 'user',
-          content: withPrefix(`${dispatch.text}\n\n${modeInstruction}`)
-        })
-        userText = dispatch.text
-      } else if (dispatch.kind === 'passthrough') {
-        this.context.push({
-          role: 'user',
-          content: withPrefix(`${content}\n\n${modeInstruction}`)
-        })
-      }
+      userText = dispatch.userContent
+    } else if (dispatch.kind === 'system_notice') {
+      this.context.push({
+        role: 'user',
+        content: withPrefix(`${dispatch.text}\n\n${modeInstruction}`)
+      })
+      userText = dispatch.text
     } else {
-      // 默认路径：用户消息 + 模式指令
+      // passthrough：用户消息 + 模式指令
       let userContent: string | ContentBlock[]
       if (typeof content === 'string') {
         userContent = withPrefix(`${content}\n\n${modeInstruction}`)
@@ -1068,6 +1043,33 @@ export class AgentLoop implements IdleCompactionTarget {
     }
 
     await this.finishMessageRound(messageId)
+  }
+
+  /**
+   * 校验已解析 route 是否具备执行能力。
+   * 非 agent route 必须已注入对应执行器，否则 fail closed。
+   * 仅做能力断言，不修改任何状态、不产生副作用，可在轮次副作用前安全调用。
+   */
+  private assertRouteExecutable(route: AgentTurnRoute): void {
+    switch (route.kind) {
+      case 'xforge':
+        if (!this.xforgeRunner) {
+          throw new Error('route 为 xforge 但未注入 xforgeRunner')
+        }
+        break
+      case 'workflow':
+        if (!this.workflowRunner) {
+          throw new Error('route 为 workflow 但未注入 workflowRunner')
+        }
+        break
+      case 'skill_fork':
+        if (!this.skillForkDeps) {
+          throw new Error('route 为 skill_fork 但未注入 skillForkDeps')
+        }
+        break
+      case 'agent':
+        break
+    }
   }
 
   /** 结束一轮消息：checkpoint 收尾、message_end、空闲压缩计时 */

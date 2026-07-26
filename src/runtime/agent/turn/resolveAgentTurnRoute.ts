@@ -1,0 +1,126 @@
+/**
+ * resolveAgentTurnRoute — Turn 路由唯一真源。
+ * 在创建 durable run 前确定实际执行类型，消除 session mode 代替执行类型的错位。
+ * 纯函数：不执行 runner、不产生副作用、不修改状态，只根据输入分类意图。
+ */
+import type { ContentBlock } from '../../model/types'
+import type { Mode } from '../../../shared/session/types'
+import type { RunKind } from '../../../shared/run/types'
+import type { SkillRegistry } from '../../skills/SkillRegistry'
+import type { SkillDispatchResult, SkillManifest } from '../../skills/types'
+import { invokeSkill } from '../../skills/invokeSkill'
+
+/**
+ * agent 路径允许的 dispatch 子类型。
+ * 从 SkillDispatchResult 派生（workflow/fork 已提升为独立 route kind，不在此列），
+ * 避免手工复制形成平行类型。
+ */
+export type AgentDispatch = Extract<
+  SkillDispatchResult,
+  { kind: 'passthrough' | 'inject' | 'system_notice' }
+>
+
+/** 已解析的 Turn 路由（不可变事实，只负责分类） */
+export type AgentTurnRoute =
+  | { kind: 'agent'; dispatch: AgentDispatch }
+  | { kind: 'xforge'; request: string; explicitFullDev: boolean }
+  | { kind: 'workflow'; scriptName: string; args: string }
+  | { kind: 'skill_fork'; skill: SkillManifest; args: string }
+
+export interface ResolveTurnRouteInput {
+  content: string | ContentBlock[]
+  mode: Mode
+  skillRegistry: SkillRegistry | null
+  useUnifiedSkillDispatch: boolean
+  workspacePath?: string
+  resumableXForge: boolean
+}
+
+/**
+ * 解析本轮的实际执行路由。
+ * 复用 invokeSkill 做 slash 解析，再叠加 compose/XForge 规则。
+ * 执行能力（runner 是否装配）由 AgentLoop 在副作用前校验，不在此处镜像。
+ */
+export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRoute {
+  const {
+    content,
+    mode,
+    skillRegistry,
+    useUnifiedSkillDispatch,
+    workspacePath,
+    resumableXForge
+  } = input
+
+  // 恢复中的 XForge 优先：不被新输入重新分类
+  if (resumableXForge) {
+    return {
+      kind: 'xforge',
+      request: typeof content === 'string' ? content : '',
+      explicitFullDev: false
+    }
+  }
+
+  // ContentBlock[]（含图片）始终走 agent
+  if (typeof content !== 'string') {
+    return { kind: 'agent', dispatch: { kind: 'passthrough' } }
+  }
+
+  // unified dispatch 关闭或无 registry 时走 agent
+  if (!useUnifiedSkillDispatch || !skillRegistry) {
+    return { kind: 'agent', dispatch: { kind: 'passthrough' } }
+  }
+
+  const dispatch = invokeSkill({
+    input: content,
+    registry: skillRegistry,
+    profile: mode,
+    templateContext: { workspacePath }
+  })
+  // compose + passthrough 或 br-full-dev → xforge
+  const explicitFullDev =
+    dispatch.kind === 'workflow' && dispatch.scriptName === 'br-full-dev'
+
+  if (
+    mode === 'compose' &&
+    (dispatch.kind === 'passthrough' || explicitFullDev)
+  ) {
+    return {
+      kind: 'xforge',
+      request: explicitFullDev && dispatch.kind === 'workflow' ? dispatch.args : content,
+      explicitFullDev
+    }
+  }
+
+  // workflow（非 compose 的 br-full-dev 或其他 workflow skill）
+  if (dispatch.kind === 'workflow') {
+    return { kind: 'workflow', scriptName: dispatch.scriptName, args: dispatch.args }
+  }
+
+  // fork
+  if (dispatch.kind === 'fork') {
+    return { kind: 'skill_fork', skill: dispatch.skill, args: dispatch.args }
+  }
+
+  // inject / system_notice / passthrough → agent
+  return { kind: 'agent', dispatch }
+}
+
+/** route → durable run kind 的唯一映射 */
+export function routeRunKind(route: AgentTurnRoute): RunKind {
+  switch (route.kind) {
+    case 'xforge':
+      return 'xforge'
+    case 'workflow':
+      return 'compose'
+    case 'skill_fork':
+    case 'agent':
+      return 'agent'
+  }
+}
+
+/** 内部 Agent（task/fork/XForge main session 等）的默认路由 */
+export function agentRoute(
+  dispatch: AgentDispatch = { kind: 'passthrough' }
+): AgentTurnRoute {
+  return { kind: 'agent', dispatch }
+}

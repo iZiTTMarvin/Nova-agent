@@ -25,6 +25,7 @@ import {
   runXForgeControlledTestCommand,
   writeXForgeRuntimeReport
 } from './deliveryRuntime'
+import { agentRoute } from '../../agent/turn'
 import { stagePrompt, renderMarkdownList } from './liveHostPrompt'
 import type { XForgeLiveHostRuntime } from './liveHostRuntime'
 import { isSafeRuntimeTestCommand } from './policy'
@@ -196,8 +197,7 @@ async function runIsolatedReview(
       skillBody
     ].join('\n\n'),
     maxToolRounds: 1,
-    contextWindow: options.contextWindow,
-    useUnifiedSkillDispatch: false
+    contextWindow: options.contextWindow
   })
   loop.setMode('plan')
   const onAbort = () => loop.cancel()
@@ -208,7 +208,7 @@ async function runIsolatedReview(
       '只返回 JSON：{"findings":[{"severity":"critical|high|medium|low|nit","location":"file:line","summary":"...","evidence":"...","suggestion":"...","unverified":false}]}。没有问题时 findings 为空数组。',
       JSON.stringify(input)
     ].join('\n\n')
-    await loop.sendMessage(reviewPrompt)
+    await loop.sendMessage(reviewPrompt, agentRoute())
     throwIfAborted(options.abortSignal)
     let parsed = parseJsonObject(output) as { findings?: unknown } | null
     let findings = parsed && isReviewFindings(parsed.findings) ? parsed.findings : null

@@ -16,6 +16,7 @@ import { switchModeTool } from '../../../src/runtime/tools/switchMode'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { agentRoute, resolveAgentTurnRoute } from '../../../src/runtime/agent/turn'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -65,7 +66,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     // message_start + 2 * text_delta + message_end
     expect(events.filter((e: any) => e.type === 'message_start')).toHaveLength(1)
@@ -84,7 +85,7 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('第一条消息')
+    await loop.sendMessage('第一条消息', agentRoute())
 
     // 第一次调用：system prompt + 用户消息（session context 拼在 user content 前缀）
     const calls = client.getCalls()
@@ -117,8 +118,8 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('问题1')
-    await loop.sendMessage('问题2')
+    await loop.sendMessage('问题1', agentRoute())
+    await loop.sendMessage('问题2', agentRoute())
 
     const calls = client.getCalls()
     // 第二次调用：system + user1（含 session context 前缀） + assistant1 + user2
@@ -141,7 +142,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
 
     expect(events.some((e: any) => e.type === 'error')).toBe(true)
     expect(loop.getState()).toBe('error')
@@ -163,7 +164,7 @@ describe('AgentLoop', () => {
     eventBus.on((e) => events.push(e))
 
     // 启动后立即取消
-    const promise = loop.sendMessage('hello')
+    const promise = loop.sendMessage('hello', agentRoute())
     loop.cancel()
     await promise
 
@@ -185,10 +186,10 @@ describe('AgentLoop', () => {
     eventBus.on((e) => events.push(e))
 
     // 第一个调用不 await，让它挂着
-    loop.sendMessage('first')
+    loop.sendMessage('first', agentRoute())
 
     // 第二个调用应该被拒绝
-    await loop.sendMessage('second')
+    await loop.sendMessage('second', agentRoute())
 
     const errorEvents = events.filter((e: any) => e.type === 'error')
     expect(errorEvents.length).toBeGreaterThanOrEqual(1)
@@ -205,7 +206,7 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('hello')
+    await loop.sendMessage('hello', agentRoute())
     expect(loop.getContext().length).toBeGreaterThan(1)
 
     loop.reset()
@@ -243,7 +244,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('列出当前目录')
+    await loop.sendMessage('列出当前目录', agentRoute())
 
     // 应该有 tool_call 和 tool_result 事件
     const toolCallEvents = events.filter((e: any) => e.type === 'tool_call')
@@ -280,7 +281,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('列出目录')
+    await loop.sendMessage('列出目录', agentRoute())
 
     expect(events.filter((e: { type?: string }) => e.type === 'tool_result').length).toBeGreaterThanOrEqual(1)
     expect(client.getCalls()).toHaveLength(2)
@@ -332,7 +333,7 @@ describe('AgentLoop', () => {
       return { previousMode, currentMode: targetMode }
     })
 
-    await loop.sendMessage('做一个 PPT 工具，请先判断是否需要规划')
+    await loop.sendMessage('做一个 PPT 工具，请先判断是否需要规划', agentRoute())
 
     const calls = client.getCalls()
     expect(calls).toHaveLength(2)
@@ -369,7 +370,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('列出当前目录')
+    await loop.sendMessage('列出当前目录', agentRoute())
 
     expect(client.getCalls()).toHaveLength(2)
     expect(events.some((e: any) => e.type === 'tool_call' && e.toolName === 'ls')).toBe(true)
@@ -408,7 +409,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('当前项目什么情况')
+    await loop.sendMessage('当前项目什么情况', agentRoute())
 
     expect(client.getCalls()).toHaveLength(2)
 
@@ -448,7 +449,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('列出文件')
+    await loop.sendMessage('列出文件', agentRoute())
 
     expect(client.getCalls()).toHaveLength(2)
     expect(events.some((e: any) => e.type === 'tool_call' && e.toolName === 'bash')).toBe(true)
@@ -474,7 +475,7 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('列出目录')
+    await loop.sendMessage('列出目录', agentRoute())
 
     // 第二次调用中，最后一条消息应该是 tool 消息
     const secondCall = client.getCalls()[1]
@@ -546,7 +547,7 @@ describe('AgentLoop', () => {
       }
     })
 
-    const promise = loop.sendMessage('并发读取')
+    const promise = loop.sendMessage('并发读取', agentRoute())
     await new Promise(resolve => setTimeout(resolve, 0))
     releaseRead.resolve()
     await promise
@@ -600,7 +601,7 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(client, eventBus)
     loop.setToolRegistry(registry)
 
-    await loop.sendMessage('读取图片')
+    await loop.sendMessage('读取图片', agentRoute())
 
     const toolMessages = loop.getContext().filter(m => m.role === 'tool')
     expect(toolMessages).toHaveLength(1)
@@ -639,7 +640,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('列出目录')
+    await loop.sendMessage('列出目录', agentRoute())
 
     // 工具调用次数不应超过 2
     const toolCallEvents = events.filter((e: any) => e.type === 'tool_call')
@@ -679,7 +680,7 @@ describe('AgentLoop', () => {
     const events: unknown[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('执行不存在的工具')
+    await loop.sendMessage('执行不存在的工具', agentRoute())
 
     const toolResultEvents = events.filter((e: any) => e.type === 'tool_result')
     expect(toolResultEvents.length).toBe(1)
@@ -740,7 +741,7 @@ describe('AgentLoop', () => {
       }
     })
 
-    await loop.sendMessage('执行测试命令')
+    await loop.sendMessage('执行测试命令', agentRoute())
 
     const permissionEvents = events.filter((e: any) => e.type === 'permission_request')
     expect(permissionEvents).toHaveLength(1)
@@ -801,7 +802,7 @@ describe('AgentLoop', () => {
       }
     })
 
-    await loop.sendMessage('执行构建命令')
+    await loop.sendMessage('执行构建命令', agentRoute())
 
     const toolResultEvents = events.filter((e: any) => e.type === 'tool_result')
     expect(toolResultEvents).toHaveLength(1)
@@ -858,7 +859,7 @@ describe('AgentLoop', () => {
       }
     })
 
-    await loop.sendMessage('执行需要权限的命令')
+    await loop.sendMessage('执行需要权限的命令', agentRoute())
 
     // 关键断言：
     // 1. 不应有 tool_result 事件被发出（更别说"权限拒绝"字样）
@@ -925,7 +926,7 @@ describe('AgentLoop', () => {
 
     // 发送第二条消息，此时上下文总长 > 阈值，会触发压缩
     // 上下文此时以 user 消息结尾（刚 push 的 user 消息）
-    await loop.sendMessage('触发压缩')
+    await loop.sendMessage('触发压缩', agentRoute())
 
     // 找到压缩调用（包含"请对上面的对话历史"的消息）
     const calls = client.getCalls()
@@ -1006,7 +1007,7 @@ describe('AgentLoop', () => {
     }
     loop.injectHistory(history)
 
-    await loop.sendMessage('问题2')
+    await loop.sendMessage('问题2', agentRoute())
 
     // 检查最终状态是 idle
     expect(loop.getState()).toBe('idle')
@@ -1065,7 +1066,7 @@ describe('AgentLoop', () => {
     }
     loop.injectHistory(history)
 
-    await loop.sendMessage('最终问题')
+    await loop.sendMessage('最终问题', agentRoute())
 
     expect(loop.getState()).toBe('idle')
     expect(loop.getContext()[0].content).toContain('更深层次的摘要。')
@@ -1100,7 +1101,7 @@ describe('AgentLoop', () => {
 
     const { loop } = createLoop(client)
 
-    await loop.sendMessage('触发溢出问题')
+    await loop.sendMessage('触发溢出问题', agentRoute())
 
     // 状态为 error
     expect(loop.getState()).toBe('error')
@@ -1124,7 +1125,7 @@ describe('AgentLoop', () => {
     const { loop } = createLoop(client)
 
     // 不注入历史（非系统消息只有 sendMessage 发出的 1 条，它会被弹起，弹起后剩余 0 条，触发 oldMessages 为空 early return）
-    await loop.sendMessage('单独一条消息')
+    await loop.sendMessage('单独一条消息', agentRoute())
 
     // 应该因为无可压缩消息且 chat 报错而进入 error 状态
     expect(loop.getState()).toBe('error')
@@ -1173,7 +1174,7 @@ describe('AgentLoop', () => {
     const events: any[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('反复触发同一失败调用')
+    await loop.sendMessage('反复触发同一失败调用', agentRoute())
 
     // 第 3 次失败后熔断：模型只应被调用 3 次（而非 maxToolRounds=20 次）
     expect(client.getCalls()).toHaveLength(3)
@@ -1214,7 +1215,7 @@ describe('AgentLoop', () => {
     const events: any[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('反复调用不存在的工具')
+    await loop.sendMessage('反复调用不存在的工具', agentRoute())
 
     // 第 3 次失败后熔断：模型只应被调用 3 次
     expect(client.getCalls()).toHaveLength(3)
@@ -1267,7 +1268,7 @@ describe('AgentLoop', () => {
     const events: any[] = []
     eventBus.on((e) => events.push(e))
 
-    await loop.sendMessage('每轮参数不同')
+    await loop.sendMessage('每轮参数不同', agentRoute())
 
     // 不应熔断：不应出现「已自动中断」提示
     const noticed = events.some(
@@ -1294,7 +1295,7 @@ describe('AgentLoop', () => {
     const events: Array<{ type: string; interrupted?: boolean }> = []
     eventBus.on((e) => events.push(e as { type: string; interrupted?: boolean }))
 
-    await loop.sendMessage('取消我')
+    await loop.sendMessage('取消我', agentRoute())
 
     const messageEndEvent = events.find(e => e.type === 'message_end')
     expect(messageEndEvent).toBeDefined()
@@ -1318,7 +1319,7 @@ describe('AgentLoop', () => {
     const events: Array<{ type: string; interrupted?: boolean }> = []
     eventBus.on((e) => events.push(e as { type: string; interrupted?: boolean }))
 
-    await loop.sendMessage('你好')
+    await loop.sendMessage('你好', agentRoute())
 
     const messageEndEvent = events.find(e => e.type === 'message_end')
     expect(messageEndEvent).toBeDefined()
@@ -1344,9 +1345,15 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    loop.setSkillRegistry(skillRegistry)
 
-    await loop.sendMessage('/onboard')
+    const route = resolveAgentTurnRoute({
+      content: '/onboard',
+      mode: 'default',
+      skillRegistry,
+      useUnifiedSkillDispatch: true,
+      resumableXForge: false,
+    })
+    await loop.sendMessage('/onboard', route)
 
     const ctx = loop.getContext()
     const assistant = ctx.find(m => m.role === 'assistant' && String(m.content).includes('Onboard instructions'))
@@ -1402,13 +1409,19 @@ describe('AgentLoop', () => {
     registry.register(readTool)
     loop.setToolRegistry(registry)
     loop.setWorkingDir(workDir)
-    loop.setSkillRegistry(skillRegistry)
     loop.setPermissionManager(new PermissionManager())
 
     const events: Array<{ type: string; result?: string; success?: boolean }> = []
     eventBus.on((e) => events.push(e as { type: string; result?: string; success?: boolean }))
 
-    await loop.sendMessage(`/${skillName}`)
+    const route = resolveAgentTurnRoute({
+      content: `/${skillName}`,
+      mode: 'default',
+      skillRegistry,
+      useUnifiedSkillDispatch: true,
+      resumableXForge: false,
+    })
+    await loop.sendMessage(`/${skillName}`, route)
 
     const toolResults = events.filter(e => e.type === 'tool_result')
     expect(toolResults.length).toBeGreaterThanOrEqual(1)
@@ -1446,11 +1459,17 @@ describe('AgentLoop', () => {
     const loop1 = new AgentLoop(client1, new EventBus())
     loop1.setToolRegistry(new ToolRegistry())
     loop1.setWorkingDir(workDir)
-    loop1.setSkillRegistry(SkillRegistry.load({ globalDir: skillsDir }))
     loop1.setPermissionManager(new PermissionManager())
     const persisted: string[] = []
     loop1.setOnSkillRootAdded(dir => persisted.push(dir))
-    await loop1.sendMessage(`/${skillName}`)
+    const route1 = resolveAgentTurnRoute({
+      content: `/${skillName}`,
+      mode: 'default',
+      skillRegistry: SkillRegistry.load({ globalDir: skillsDir }),
+      useUnifiedSkillDispatch: true,
+      resumableXForge: false,
+    })
+    await loop1.sendMessage(`/${skillName}`, route1)
     expect(persisted).toContain(skillDir)
     const roots = loop1.getSkillRoots()
     loop1.dispose()
@@ -1489,7 +1508,7 @@ describe('AgentLoop', () => {
 
     const events: Array<{ type: string; result?: string }> = []
     eventBus2.on((e) => events.push(e as { type: string; result?: string }))
-    await loop2.sendMessage('请读 reference')
+    await loop2.sendMessage('请读 reference', agentRoute())
 
     const output = events.filter(e => e.type === 'tool_result').map(e => e.result ?? '').join('\n')
     expect(output).toContain('RESTORED-REF-XYZ')
@@ -1541,7 +1560,7 @@ describe('AgentLoop', () => {
     const events: Array<{ type: string; result?: string; success?: boolean }> = []
     eventBus.on((e) => events.push(e as { type: string; result?: string; success?: boolean }))
 
-    await loop.sendMessage('普通对话，不要触发 skill')
+    await loop.sendMessage('普通对话，不要触发 skill', agentRoute())
 
     const toolResults = events.filter(e => e.type === 'tool_result')
     expect(toolResults.length).toBeGreaterThanOrEqual(1)
@@ -1567,7 +1586,7 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('trigger error')
+    await loop.sendMessage('trigger error', agentRoute())
 
     // 模型 error 后最终态为 error
     expect(loop.getState()).toBe('error')
@@ -1613,7 +1632,7 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('trigger overflow')
+    await loop.sendMessage('trigger overflow', agentRoute())
 
     // 无论 recovery 怎么决策，最终态必须是 error（不能是 idle）
     expect(loop.getState()).toBe('error')
@@ -1636,7 +1655,7 @@ describe('AgentLoop', () => {
     })
 
     const { loop } = createLoop(client)
-    await loop.sendMessage('normal flow')
+    await loop.sendMessage('normal flow', agentRoute())
 
     expect(loop.getState()).toBe('idle')
     expect(startSpy).toHaveBeenCalled()
@@ -1677,7 +1696,7 @@ describe('AgentLoop', () => {
       .filter(m => m.role === 'tool')
       .reduce((sum, m) => sum + Buffer.byteLength(extractTextFromContent(m.content), 'utf8'), 0)
 
-    await loop.sendMessage('继续')
+    await loop.sendMessage('继续', agentRoute())
 
     const ctx = loop.getContext()
     const toolBytesAfter = ctx
@@ -1727,7 +1746,7 @@ describe('AgentLoop', () => {
     const { loop } = createLoop(client)
     loop.injectHistory(Array.from({ length: 30 }, (_, i) => ({ role: 'user' as const, content: `历史 ${i}` })))
 
-    await loop.sendMessage('hi')
+    await loop.sendMessage('hi', agentRoute())
     expect(loop.getState()).toBe('error')
   })
 })

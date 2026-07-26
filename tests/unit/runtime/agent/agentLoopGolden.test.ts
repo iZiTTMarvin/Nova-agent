@@ -34,6 +34,7 @@ import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/type
 import type { ChatEvent, NormalizedUsage } from '../../../../src/runtime/model/types'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 // ── 公共辅助 ──────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ function registerTool(
 async function runAndCollect(loop: AgentLoop, eventBus: EventBus, userText: string): Promise<AgentEvent[]> {
   const events: AgentEvent[] = []
   eventBus.on(e => events.push(e))
-  await loop.sendMessage(userText)
+  await loop.sendMessage(userText, agentRoute())
   return events
 }
 
@@ -99,7 +100,7 @@ async function runAndCollect(loop: AgentLoop, eventBus: EventBus, userText: stri
 async function runAndCollectDrained(loop: AgentLoop, eventBus: EventBus, userText: string): Promise<AgentEvent[]> {
   const events: AgentEvent[] = []
   eventBus.on(e => events.push(e))
-  const pending = loop.sendMessage(userText)
+  const pending = loop.sendMessage(userText, agentRoute())
   // 循环推进：每次推进 1s + flush 微任务，直到 pending 落定或推进上限
   for (let i = 0; i < 200; i++) {
     await vi.advanceTimersByTimeAsync(1000)

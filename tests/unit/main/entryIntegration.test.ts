@@ -6,6 +6,7 @@ import { buildConversationContext } from '../../../src/runtime/agent/context/con
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import type { SessionData } from '../../../src/runtime/sessions/types'
+import { agentRoute } from '../../../src/runtime/agent/turn'
 
 /**
  * 入口级集成测试
@@ -83,7 +84,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
     loop.injectHistory(history)
 
     // 3. 发送第三轮消息
-    await loop.sendMessage('第三轮问题')
+    await loop.sendMessage('第三轮问题', agentRoute())
 
     // 4. 验证模型拿到了完整上下文
     const calls = client.getCalls()
@@ -128,7 +129,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
     const loop = new AgentLoop(client, eventBus, { systemPrompt: '助手' })
     loop.injectHistory(history)
 
-    await loop.sendMessage('你好')
+    await loop.sendMessage('你好', agentRoute())
 
     const calls = client.getCalls()
     expect(calls[0].messages[0]).toEqual({ role: 'system', content: '助手' })
@@ -166,7 +167,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, { systemPrompt: '助手' })
     loop.injectHistory(history)
-    await loop.sendMessage('继续分析')
+    await loop.sendMessage('继续分析', agentRoute())
 
     const modelMessages = client.getCalls()[0].messages
     // 不应出现 thinking 内容
@@ -216,7 +217,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, { systemPrompt: '助手' })
     loop.injectHistory(history)
-    await loop.sendMessage('再加一个')
+    await loop.sendMessage('再加一个', agentRoute())
 
     const modelMessages = client.getCalls()[0].messages
 

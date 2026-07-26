@@ -17,6 +17,7 @@ import { extractTextFromContent } from '../../../src/runtime/model/types'
 import type { ChatMessage } from '../../../src/runtime/model/types'
 import { CONTEXT_SNAPSHOT_VERSION } from '../../../src/runtime/sessions/types'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
+import { agentRoute } from '../../../src/runtime/agent/turn'
 
 /**
  * 阶段二集成测试：快照优先恢复 + 增量补齐 + 回退路径。
@@ -102,7 +103,7 @@ describe('阶段二：上下文快照恢复', () => {
     loop.setToolRegistry(createTestRegistry())
     injectCompactionTriggerHistory(loop)
 
-    await loop.sendMessage('触发压缩')
+    await loop.sendMessage('触发压缩', agentRoute())
 
     const snapshot = store.loadContextSnapshot(session.id)
     expect(snapshot).not.toBeNull()

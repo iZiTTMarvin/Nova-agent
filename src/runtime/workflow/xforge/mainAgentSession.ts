@@ -18,6 +18,7 @@ import {
 } from './policy'
 import type { XForgeRunCommitter } from './runState'
 import type { XForgeStage } from './types'
+import { agentRoute } from '../../agent/turn'
 
 export interface XForgeMainAgentSessionOptions {
   runId: string
@@ -61,8 +62,7 @@ export class XForgeMainAgentSession {
       maxToolRounds: 30,
       contextWindow: options.contextWindow,
       supportsVision: options.supportsVision ?? true,
-      toolExecution: 'sequential',
-      useUnifiedSkillDispatch: false
+      toolExecution: 'sequential'
     })
     const permission = new PermissionManager()
     permission.setPermissionPolicy('auto')
@@ -115,7 +115,7 @@ export class XForgeMainAgentSession {
     }
     this.lastStage = currentStage
     this.output = ''
-    await this.loop.sendMessage(prompt)
+    await this.loop.sendMessage(prompt, agentRoute())
     throwIfAborted(this.options.abortSignal)
     if (this.loop.getState() === 'error' || this.loop.getState() === 'cancelled') {
       throw new Error(`XForge 主 Agent 在 ${this.options.getStage()} 阶段未正常完成`)

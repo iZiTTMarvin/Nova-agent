@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { ModelClient, ChatEvent, ToolDefinition } from '../../../../src/runtime/model/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 /** 创建 mock ModelClient，返回空流 */
 function createMockClient(): ModelClient {
@@ -75,7 +76,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     }
     loop.setToolRegistry(mockRegistry as any)
 
-    await loop.sendMessage('test')
+    await loop.sendMessage('test', agentRoute())
 
     // XML 方言（显式 override='xml'）不传 native tools，工具定义在 system prompt 文本里恒定
     expect(getTools()).toBeUndefined()
@@ -95,7 +96,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     }
     loop.setToolRegistry(mockRegistry as any)
 
-    await loop.sendMessage('test')
+    await loop.sendMessage('test', agentRoute())
 
     expect(getTools()).toBeUndefined()
   })
@@ -114,7 +115,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     }
     loop.setToolRegistry(mockRegistry as any)
 
-    await loop.sendMessage('test')
+    await loop.sendMessage('test', agentRoute())
 
     expect(getTools()).toBeUndefined()
   })
@@ -133,7 +134,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     }
     loop.setToolRegistry(mockRegistry as any)
 
-    await loop.sendMessage('test')
+    await loop.sendMessage('test', agentRoute())
 
     const tools = getTools()
     const toolNames = tools?.map(t => t.name) ?? []
@@ -153,7 +154,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     }
     loop.setToolRegistry(mockRegistry as any)
 
-    await loop.sendMessage('test')
+    await loop.sendMessage('test', agentRoute())
 
     const tools = getTools()
     const toolNames = tools?.map(t => t.name) ?? []
@@ -207,7 +208,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     }
     loop.setToolRegistry(mockRegistry as any)
 
-    await loop.sendMessage('test')
+    await loop.sendMessage('test', agentRoute())
 
     // tool_call 事件仍然发射（工具集恒定，UI 可见）
     const toolCallEvents = events.filter(e => e.type === 'tool_call')
