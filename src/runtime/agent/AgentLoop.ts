@@ -43,7 +43,7 @@ import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestio
 import type { FileEffectRecorder, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 
-import type { AgentTurnRoute } from './turn'
+import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
@@ -768,14 +768,18 @@ export class AgentLoop implements IdleCompactionTarget {
   }
 
   /**
-   * 发送用户消息并启动循环
-   * 发射 message_start → (流式 text_delta / tool_call / tool_result) → message_end
+   * 发送用户消息并启动循环。
+   * 发射 message_start → (流式 text_delta / tool_call / tool_result) → 终态事件。
    * route 由调用方在 startRun 前通过 resolveAgentTurnRoute 解析，本方法不再自行解析。
+   *
+   * 终态契约：轮次一旦开始，所有成功 / 取消 / 失败路径都经 finalizeTurn 统一收尾，
+   * resolve 为结构化 AgentTurnOutcome；仅轮次副作用前的装配校验失败会 reject。
    */
-  async sendMessage(content: string | ContentBlock[], route: AgentTurnRoute): Promise<void> {
+  async sendMessage(content: string | ContentBlock[], route: AgentTurnRoute): Promise<AgentTurnOutcome> {
     if (this.state === 'running') {
-      this.eventBus.emit({ type: 'error', messageId: '', error: '当前正在执行中，请先取消' })
-      return
+      const busy = '当前正在执行中，请先取消'
+      this.eventBus.emit({ type: 'error', messageId: '', error: busy })
+      return { status: 'failed', error: new Error(busy) }
     }
 
     // 执行能力校验：必须在任何轮次副作用（state/checkpoint/message_start/hook）之前。
@@ -797,14 +801,47 @@ export class AgentLoop implements IdleCompactionTarget {
     // 空闲压缩：新消息到达时取消任何正在运行的压缩
     this.idleTimer?.cancel()
 
-    // 开启 checkpoint 事务边界（generation 失效时拒绝，避免假终止后仍建快照）
-    if (this.assertExecutionCurrent && !this.assertExecutionCurrent()) {
-      throw new Error('checkpoint 被拒绝：执行 generation 已失效')
+    // 显式记录 checkpoint 事务是否已开始：begin 前失败的轮次不得调用 endMessage
+    let checkpointBegun = false
+    let outcome: AgentTurnOutcome
+
+    try {
+      // 开启 checkpoint 事务边界（generation 失效时拒绝，避免假终止后仍建快照）
+      if (this.assertExecutionCurrent && !this.assertExecutionCurrent()) {
+        throw new Error('checkpoint 被拒绝：执行 generation 已失效')
+      }
+      this.checkpointManager?.beginMessage(messageId)
+      checkpointBegun = true
+
+      this.eventBus.emit({ type: 'message_start', messageId })
+
+      outcome = await this.runTurn(content, route, messageId)
+    } catch (err) {
+      if (this.cancelled) {
+        // 取消引发的执行中断（abort 拒绝等）按取消收尾，不伪装成失败
+        outcome = { status: 'cancelled' }
+      } else {
+        const error = err instanceof Error ? err : new Error(String(err))
+        // 模型终态错误的 onError 已在 StreamProcessor / runAgentLoop 内触发；
+        // 此处只覆盖分派执行器、hook、checkpoint begin 等抛出路径。
+        await this.notifyErrorHook(messageId, error.message)
+        outcome = { status: 'failed', error }
+      }
     }
-    this.checkpointManager?.beginMessage(messageId)
 
-    this.eventBus.emit({ type: 'message_start', messageId })
+    return this.finalizeTurn(messageId, outcome, checkpointBegun)
+  }
 
+  /**
+   * 执行一轮消息的产品路径：按已解析 route 分派到 XForge / Workflow / Fork 执行器，
+   * 或准备上下文进入 Agent kernel。只返回轮次结果，不做任何终态收尾——
+   * checkpoint、终态事件、state 与 idle timer 统一由 finalizeTurn 处理。
+   */
+  private async runTurn(
+    content: string | ContentBlock[],
+    route: AgentTurnRoute,
+    messageId: string
+  ): Promise<AgentTurnOutcome> {
     const modeInstruction = this.getCurrentModeInstruction()
     let userText = typeof content === 'string'
       ? content
@@ -823,30 +860,17 @@ export class AgentLoop implements IdleCompactionTarget {
 
     // 按已解析 route 穷举分派（路由在 startRun 前由 resolveAgentTurnRoute 确定）
     if (route.kind === 'xforge') {
-      try {
-        const result = await this.xforgeRunner!(
-          route.request,
-          {
-            abortSignal: this.abortController?.signal,
-            messageId,
-            explicitFullDev: route.explicitFullDev
-          }
-        )
-        this.context.push({ role: 'assistant', content: result.summary })
-        this.eventBus.emit({ type: 'text_delta', messageId, delta: result.summary })
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
-        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
-        this.state = 'error'
-        this.checkpointManager?.endMessage()
-        this.eventBus.emit({ type: 'message_end', messageId })
-        this.idleTimer?.cancel()
-        this.idleTimer = null
-        return
-      }
-      await this.finishMessageRound(messageId)
-      return
+      const result = await this.xforgeRunner!(
+        route.request,
+        {
+          abortSignal: this.abortController?.signal,
+          messageId,
+          explicitFullDev: route.explicitFullDev
+        }
+      )
+      this.context.push({ role: 'assistant', content: result.summary })
+      this.eventBus.emit({ type: 'text_delta', messageId, delta: result.summary })
+      return this.settledTurnOutcome()
     }
 
     if (route.kind === 'workflow') {
@@ -854,57 +878,31 @@ export class AgentLoop implements IdleCompactionTarget {
       if (this.mode !== 'compose') {
         this.setMode('compose')
       }
-      try {
-        // 透传本轮取消信号：停止按钮 → cancel() → abortController.abort()
-        // → runWorkflow 内部 cancelWorkflow，编排 run 才能真正终止。
-        const wfResult = await this.workflowRunner!(route.scriptName, route.args, {
-          abortSignal: this.abortController?.signal
-        })
-        this.context.push({ role: 'assistant', content: wfResult.summary })
-        this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
-      } catch (err) {
-        const errMsg = (err as Error).message
-        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
-        this.state = 'error'
-        this.checkpointManager?.endMessage()
-        this.eventBus.emit({ type: 'message_end', messageId })
-        this.idleTimer?.cancel()
-        this.idleTimer = null
-        return
-      }
-      await this.finishMessageRound(messageId)
-      return
+      // 透传本轮取消信号：停止按钮 → cancel() → abortController.abort()
+      // → runWorkflow 内部 cancelWorkflow，编排 run 才能真正终止。
+      const wfResult = await this.workflowRunner!(route.scriptName, route.args, {
+        abortSignal: this.abortController?.signal
+      })
+      this.context.push({ role: 'assistant', content: wfResult.summary })
+      this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
+      return this.settledTurnOutcome()
     }
 
     if (route.kind === 'skill_fork') {
-      try {
-        const forkResult = await runSkillFork(this.skillForkDeps!, {
-          skill: route.skill,
-          args: route.args,
-          ctx: {
-            workingDir: this.workingDir ?? process.cwd(),
-            readState: this.readState,
-            shellPath: this.shellPath,
-            binDirs: this.binDirs
-          },
-          templateContext: { workspacePath: this.workingDir ?? undefined }
-        })
-        this.context.push({ role: 'assistant', content: forkResult.summary })
-        this.eventBus.emit({ type: 'text_delta', messageId, delta: forkResult.summary })
-      } catch (err) {
-        const errMsg = (err as Error).message
-        await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-        this.eventBus.emit({ type: 'error', messageId, error: errMsg })
-        this.state = 'error'
-        this.checkpointManager?.endMessage()
-        this.eventBus.emit({ type: 'message_end', messageId })
-        this.idleTimer?.cancel()
-        this.idleTimer = null
-        return
-      }
-      await this.finishMessageRound(messageId)
-      return
+      const forkResult = await runSkillFork(this.skillForkDeps!, {
+        skill: route.skill,
+        args: route.args,
+        ctx: {
+          workingDir: this.workingDir ?? process.cwd(),
+          readState: this.readState,
+          shellPath: this.shellPath,
+          binDirs: this.binDirs
+        },
+        templateContext: { workspacePath: this.workingDir ?? undefined }
+      })
+      this.context.push({ role: 'assistant', content: forkResult.summary })
+      this.eventBus.emit({ type: 'text_delta', messageId, delta: forkResult.summary })
+      return this.settledTurnOutcome()
     }
 
     // agent 路径：按 dispatch 子类型准备上下文，然后进入 runAgentLoop
@@ -1000,6 +998,10 @@ export class AgentLoop implements IdleCompactionTarget {
       runOverflowCompaction: (mode) => this.runOverflowCompaction(mode)
     }
 
+    // 模型终态错误只在此记录；错误事件与全部收尾由 finalizeTurn 统一执行，
+    // 保证 checkpoint 在错误路径同样被关闭、终态事件恰好一个。
+    let terminalError: string | null = null
+
     const endResult: LoopEndResult = await runAgentLoop({
       messageId,
       userText,
@@ -1021,28 +1023,36 @@ export class AgentLoop implements IdleCompactionTarget {
       isCompressingForOverflow: () => this.compressingForOverflow,
       sleep: (ms: number) => this.sleep(ms),
       onTerminalError: (error) => {
-        // 终态错误：emit error + state=error + 取消 idleTimer，不经 finishMessageRound 直接 return。
-        this.eventBus.emit({ type: 'error', messageId, error })
-        this.state = 'error'
-        this.idleTimer?.cancel()
-        this.idleTimer = null
+        terminalError = error
       }
     })
 
     if (endResult.ended === 'error') {
-      // 终态错误：onTerminalError 已完成 emit/state/idleTimer 收尾，直接 return。
-      // 错误意味着本轮已损坏，后台压缩只会把损坏内容发给模型烧 token。
-      // 用户回来时应主动 sendMessage 触发新一轮，而不是后台悄悄压缩。
-      return
+      // onError hook 已在 StreamProcessor / runAgentLoop 内触发，此处不再重复
+      return { status: 'failed', error: new Error(terminalError ?? '模型调用失败') }
     }
 
-    // ended === 'normal'：cancelled 标志由 runAgentLoop 在 StreamProcessor cancelled /
+    // cancelled 标志由 runAgentLoop 在 StreamProcessor cancelled /
     // executeBatch abort 时通过 endResult.cancelled=true 透传。
     if (endResult.cancelled) {
       this.cancelled = true
     }
 
-    await this.finishMessageRound(messageId)
+    return this.settledTurnOutcome()
+  }
+
+  /** 正常返回路径的轮次结果：取消标志已置位时收敛为 cancelled */
+  private settledTurnOutcome(): AgentTurnOutcome {
+    return this.cancelled ? { status: 'cancelled' } : { status: 'completed' }
+  }
+
+  /** best-effort 触发 onError hook：hook 自身异常只记录，不得阻断终态收尾或覆盖原始错误 */
+  private async notifyErrorHook(messageId: string, error: string): Promise<void> {
+    try {
+      await this.hookManager.trigger({ event: 'onError', messageId, error })
+    } catch (hookErr) {
+      console.error('[AgentLoop] onError hook 异常（已忽略，保留原始错误）:', hookErr)
+    }
   }
 
   /**
@@ -1072,31 +1082,67 @@ export class AgentLoop implements IdleCompactionTarget {
     }
   }
 
-  /** 结束一轮消息：checkpoint 收尾、message_end、空闲压缩计时 */
-  private async finishMessageRound(messageId: string): Promise<void> {
-    if (this.state === 'running') {
+  /**
+   * 唯一的轮次终态收尾。所有开始过的轮次（成功 / 取消 / 失败）都必须经过这里：
+   * - 只关闭确已开始的 checkpoint 事务；endMessage 失败不得阻断其余清理——
+   *   成功轮次遇到关闭失败按 failed 收尾（forward 快照缺失会破坏分支重放），
+   *   已失败轮次只记录次生错误，不覆盖原始错误；
+   * - 清空本轮引用（currentMessageId / abortController）并收敛 state；
+   * - 发出恰好一个持久化终态事件：failed → error，completed/cancelled → message_end，
+   *   error 之后不得再补发 message_end；
+   * - 只在 completed 时启动空闲压缩计时器：cancel 通常意味着模型走偏，
+   *   failed 的上下文已损坏，两者后台压缩都只会烧 token 或在用户不知情时改写历史。
+   */
+  private finalizeTurn(
+    messageId: string,
+    outcome: AgentTurnOutcome,
+    checkpointBegun: boolean
+  ): AgentTurnOutcome {
+    if (checkpointBegun) {
+      try {
+        this.checkpointManager?.endMessage()
+      } catch (err) {
+        const endError = err instanceof Error ? err : new Error(String(err))
+        if (outcome.status === 'failed') {
+          console.error('[AgentLoop] checkpoint 收尾次生错误（保留原始错误）:', endError)
+        } else {
+          outcome = { status: 'failed', error: endError }
+        }
+      }
+    }
+
+    // onCancel 由 RunCoordinator.commitTerminal 统一触发（exactly-once）；
+    // 此处不再重复 hook，避免 cancel() + 终态收尾双触发。
+    this.currentMessageId = null
+    this.abortController = null
+
+    if (outcome.status === 'failed') {
+      this.state = 'error'
+    } else if (this.state === 'running') {
       this.state = 'idle'
     }
 
-    this.checkpointManager?.endMessage()
+    if (outcome.status === 'failed') {
+      this.eventBus.emit({ type: 'error', messageId, error: outcome.error.message })
+    } else {
+      this.eventBus.emit({
+        type: 'message_end',
+        messageId,
+        ...(outcome.status === 'cancelled' ? { interrupted: true } : {})
+      })
+    }
 
-    // onCancel 由 RunCoordinator.commitTerminal 统一触发（exactly-once）；
-    // 此处不再重复 hook，避免 cancel() + finishMessageRound 双触发。
-    this.currentMessageId = null
-
-    this.eventBus.emit({
-      type: 'message_end',
-      messageId,
-      ...(this.cancelled ? { interrupted: true } : {})
-    })
-
-    // cancel 状态下不启动 idleTimer。
-    // 用户主动取消通常意味着模型走偏，启动后台压缩既浪费 token 又可能在用户
-    // 不知情时改写 context（再次进入会话发现历史已被压缩）。让用户主动发起下一条消息。
-    if (!this.cancelled) {
+    if (outcome.status === 'completed') {
       this.idleTimer ??= new IdleCompressionTimer(this)
       this.idleTimer.start()
+    } else {
+      this.idleTimer?.cancel()
+      if (outcome.status === 'failed') {
+        this.idleTimer = null
+      }
     }
+
+    return outcome
   }
 
   /**

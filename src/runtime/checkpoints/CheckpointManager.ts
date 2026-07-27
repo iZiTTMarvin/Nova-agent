@@ -234,11 +234,14 @@ export class CheckpointManager {
 
   /** 结束当前消息事务，捕获 forward 快照后清理内存态 */
   endMessage(): void {
-    if (this.currentMessageId) {
-      this.captureForwardSnapshot(this.currentMessageId)
+    try {
+      if (this.currentMessageId) {
+        this.captureForwardSnapshot(this.currentMessageId)
+      }
+    } finally {
+      this.currentMessageId = null
+      this.backedUpFiles.clear()
     }
-    this.currentMessageId = null
-    this.backedUpFiles.clear()
   }
 
   /**

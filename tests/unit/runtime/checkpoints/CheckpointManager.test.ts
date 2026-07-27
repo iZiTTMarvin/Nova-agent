@@ -48,6 +48,19 @@ describe('CheckpointManager', () => {
       mgr.endMessage()
       expect(mgr.getCurrentMessageId()).toBeNull()
     })
+
+    it('forward 快照失败时仍清除消息事务', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+      mgr.backupBeforeWrite(join(TMP, 'existing.txt'), false)
+      writeFileSync(join(TMP, 'existing.txt'), '改动后内容\n')
+
+      const forwardDir = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'forward')
+      writeFileSync(forwardDir, '阻止创建 forward 目录')
+
+      expect(() => mgr.endMessage()).toThrow()
+      expect(mgr.getCurrentMessageId()).toBeNull()
+    })
   })
 
   // ── 备份已有文件（modifiedFiles） ──────────────────────────

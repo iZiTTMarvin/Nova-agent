@@ -43,7 +43,10 @@ const stubAgentLoop = vi.hoisted(() => ({
   cancel: vi.fn(),
   dispose: vi.fn(),
   getHookManager: vi.fn(() => ({ trigger: vi.fn() })),
-  sendMessage: vi.fn(async (_content: any, route: any) => { sentRoutes.push(route) })
+  sendMessage: vi.fn(async (_content: any, route: any) => {
+    sentRoutes.push(route)
+    return { status: 'completed' }
+  })
 }))
 
 // 每个用例可替换的 skillRegistry（决定 slash 解析结果）

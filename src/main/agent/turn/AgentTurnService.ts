@@ -52,7 +52,7 @@ import {
   dequeueSteeringMessage,
   type SteeringMessage
 } from './SteeringQueue'
-import { resolveAgentTurnRoute, routeRunKind } from '../../../runtime/agent/turn'
+import { resolveAgentTurnRoute, routeRunKind, type AgentTurnOutcome } from '../../../runtime/agent/turn'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
@@ -422,7 +422,6 @@ export async function sendAgentMessage(
 
   let resolveExecutionSettled = (): void => {}
   let executionRegistered = false
-  let turnFailed = false
   let startedRunId: string | null = null
 
   try {
@@ -488,73 +487,25 @@ export async function sendAgentMessage(
       runCoordinator.markRunning(runRefs.runId)
     }
 
-    try {
-      await loopForRun.sendMessage(sendContent, turnRoute)
+    // sendMessage 返回结构化 AgentTurnOutcome，轮次失败不再以 rejection 表达；
+    // 仅轮次副作用前的装配校验失败（route 缺执行器等）会 reject，走外层异常收敛。
+    const outcome = await loopForRun.sendMessage(sendContent, turnRoute)
+
+    // 记忆提炼只在轮次真正完成后触发：取消 / 失败的上下文不完整，提炼只会引入噪音
+    if (outcome.status === 'completed') {
       onUserTurnCompleteForExtract(
         params.sessionId,
         projectPath,
         sessionStore,
         modelPool
       )
-    } catch (err) {
-      turnFailed = true
-      const reason = err instanceof Error ? err.message : String(err)
-      try {
-        const failedSnap = getRunCoordinator().getSnapshot(runRefs.runId)
-        if (
-          failedSnap?.kind === 'xforge' &&
-          failedSnap.xforge &&
-          !['completed', 'failed', 'cancelled'].includes(failedSnap.xforge.currentStage)
-        ) {
-          getXForgeRunService()
-            .createExecutionCommitter(runRefs.executionGeneration)
-            .commitXForgeStageTransition(runRefs.runId, {
-              ok: true,
-              from: failedSnap.xforge.currentStage,
-              to: 'failed',
-              reason
-            })
-        }
-        getRunCoordinator().commitTerminal({
-          runId: runRefs.runId,
-          status: 'failed',
-          reason
-        })
-      } catch { /* ignore */ }
-      throw err
-    } finally {
-      // terminal 提交与 registry 清理分离：即使 commit 抛错，下方外层 finally 仍会 unregister
-      try {
-        const coord = getRunCoordinator()
-        const snap = coord.getSnapshot(runRefs.runId)
-        if (
-          snap &&
-          !['completed', 'failed', 'cancelled', 'interrupted', 'waiting_user'].includes(snap.status)
-        ) {
-          if (!turnFailed) {
-            const cancelled = snap.status === 'cancelling'
-            if (snap.kind === 'xforge' && snap.xforge) {
-              getXForgeRunService()
-                .createExecutionCommitter(runRefs.executionGeneration)
-                .commitXForgeStageTransition(runRefs.runId, {
-                  ok: true,
-                  from: snap.xforge.currentStage,
-                  to: cancelled ? 'cancelled' : 'failed',
-                  reason: cancelled
-                    ? '用户取消 XForge 执行'
-                    : 'XForge Pipeline 未进入 waiting_user 或终态即退出'
-                })
-            } else {
-              coord.commitTerminal({
-                runId: runRefs.runId,
-                status: cancelled ? 'cancelled' : 'completed'
-              })
-            }
-          }
-        }
-      } catch (terminalErr) {
-        console.error('[AgentTurnService] terminal 提交失败:', terminalErr)
-      }
+    }
+
+    // durable 对账基于 outcome；提交失败不阻断下方 finally 的 registry 清理
+    try {
+      reconcileDurableTerminal(runRefs.runId, runRefs.executionGeneration, outcome)
+    } catch (terminalErr) {
+      console.error('[AgentTurnService] terminal 提交失败:', terminalErr)
     }
   } catch (err) {
     // start/resume 后的任何异常都必须检查 durable 终态；不能用 registry 状态代替 run 状态。
@@ -583,6 +534,70 @@ export async function sendAgentMessage(
     idleLoopsBySession.set(params.sessionId, loopForRun)
     // 同会话排队消息：当前 turn 终态后，取出队首发起新 turn（递归，FIFO）
     drainSteeringQueue(params.sessionId, deps)
+  }
+}
+
+/**
+ * 轮次结束后的 durable 对账：按结构化 outcome 提交 run 终态。
+ *
+ * - snapshot 已处 waiting_user 或广义终态时保持权威状态（XForge 阶段状态机等已提交），
+ *   不得用通用终态覆盖；
+ * - failed：XForge 先提交阶段 failed 再关闭 run；agent / compose 直接 commitTerminal failed；
+ * - completed / cancelled：XForge 正常返回却仍处非法非终态时 fail closed
+ *   （cancelled 或 failed），agent / compose 按 outcome 提交；
+ * - durable 层已进入 cancelling（用户取消竞态）时取消优先于 completed。
+ */
+function reconcileDurableTerminal(
+  runId: string,
+  executionGeneration: number,
+  outcome: AgentTurnOutcome
+): void {
+  const coord = getRunCoordinator()
+  const snap = coord.getSnapshot(runId)
+  if (!snap) return
+  if (
+    ['completed', 'failed', 'cancelled', 'interrupted', 'waiting_user'].includes(snap.status)
+  ) {
+    return
+  }
+
+  if (outcome.status === 'failed') {
+    const reason = outcome.error.message
+    if (
+      snap.kind === 'xforge' &&
+      snap.xforge &&
+      !['completed', 'failed', 'cancelled'].includes(snap.xforge.currentStage)
+    ) {
+      getXForgeRunService()
+        .createExecutionCommitter(executionGeneration)
+        .commitXForgeStageTransition(runId, {
+          ok: true,
+          from: snap.xforge.currentStage,
+          to: 'failed',
+          reason
+        })
+    }
+    coord.commitTerminal({ runId, status: 'failed', reason })
+    return
+  }
+
+  const cancelled = outcome.status === 'cancelled' || snap.status === 'cancelling'
+  if (snap.kind === 'xforge' && snap.xforge) {
+    getXForgeRunService()
+      .createExecutionCommitter(executionGeneration)
+      .commitXForgeStageTransition(runId, {
+        ok: true,
+        from: snap.xforge.currentStage,
+        to: cancelled ? 'cancelled' : 'failed',
+        reason: cancelled
+          ? '用户取消 XForge 执行'
+          : 'XForge Pipeline 未进入 waiting_user 或终态即退出'
+      })
+  } else {
+    coord.commitTerminal({
+      runId,
+      status: cancelled ? 'cancelled' : 'completed'
+    })
   }
 }
 
@@ -708,7 +723,7 @@ function projectAgentEventToRun(
       break
     }
     case 'message_end': {
-      // 终态由 SEND_MESSAGE finally 统一 commit；此处只心跳
+      // 终态由 sendAgentMessage 按 AgentTurnOutcome 对账提交；此处只心跳
       coord.heartbeat(runId, { label: event.interrupted ? 'interrupted' : 'message_end' })
       break
     }

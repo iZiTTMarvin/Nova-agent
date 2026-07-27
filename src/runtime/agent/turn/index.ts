@@ -6,3 +6,4 @@ export {
   type AgentDispatch,
   type ResolveTurnRouteInput
 } from './resolveAgentTurnRoute'
+export type { AgentTurnOutcome } from './turnOutcome'
