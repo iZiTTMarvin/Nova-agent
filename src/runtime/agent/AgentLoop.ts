@@ -1,7 +1,7 @@
 /**
  * AgentLoop — 核心消息-模型-工具循环的门面类。
  * 接收用户消息，组织上下文，调用模型，处理工具调用，通过 EventBus 向外发射流式事件。
- * 纯循环驱动已下沉到 runAgentLoop，本类负责装配、收尾和上下文压缩。
+ * 纯循环驱动已下沉到 runAgentLoop，本类负责服务装配和消息生命周期收尾。
  */
 import type { ModelClient } from '../model/ModelClient'
 import { ModelClientPool } from '../model/ModelClientPool'
@@ -20,11 +20,9 @@ import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
-import { splitForCompaction, buildCompactionRequestTail, rebuildWithCompression, stripReasoningContent, MIN_RECENT_MESSAGES } from './compaction/compaction'
-import { createProductionContextBudgetManager, compactAtBoundary, ContextBudgetExceededError, type ContextBudgetManager } from './ContextBudgetManager'
+import { createProductionContextBudgetManager, type ContextBudgetManager } from './ContextBudgetManager'
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
-import { estimateContextTokens } from './tokenEstimator'
 import { executeToolBatch } from './execution/toolBatchExecutor'
 import { IdleCompressionTimer } from './compaction/IdleCompressionTimer'
 import type { IdleCompactionTarget } from './compaction/IdleCompressionTimer'
@@ -48,7 +46,7 @@ import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
 import { StreamProcessor } from './stream/StreamProcessor'
 import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
-import { createCompactionExtension } from './extensions/compactionExtension'
+import { CompactionService } from './compaction/CompactionService'
 import { createToolPostProcessExtension } from './extensions/toolPostProcessExtension'
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
@@ -170,34 +168,24 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 生产路径上下文硬预算（按 contextWindow 配置） */
   private contextBudgetManager: ContextBudgetManager
 
+  /** 活跃轮次压缩与压缩簿记的唯一 owner */
+  private readonly compactionService: CompactionService
+
   /** 缓存诊断跟踪器：检测 system prompt / 工具定义变化导致的缓存失效 */
   private cacheDiagnostics = new CacheDiagnostics()
 
   /** 截断管道：用于工具输出超限时进行结构化截断 */
   private truncationPipeline = createTruncationPipeline()
 
-  /** 是否正在执行溢出压缩（用于守卫正常压缩逻辑） */
-  private compressingForOverflow = false
-  /** 缓存上次估算的 token 数，用于判断守卫 */
+  /** 压缩簿记只读桥接；写入由 CompactionService 统一完成。 */
   private get lastEstimatedTokens(): number {
-    return this.ctx.lastEstimatedTokens
+    return this.compactionService.getLastEstimatedTokens()
   }
-  private set lastEstimatedTokens(value: number) {
-    this.ctx.lastEstimatedTokens = value
-  }
-  /** 距上次压缩后的 user 消息回合数（软触发冷却） */
   private get userTurnsSinceCompaction(): number {
-    return this.ctx.userTurnsSinceCompaction
+    return this.compactionService.getUserTurnsSinceCompaction()
   }
-  private set userTurnsSinceCompaction(value: number) {
-    this.ctx.userTurnsSinceCompaction = value
-  }
-  /** 压缩层级计数 */
   private get compactionLevel(): number {
-    return this.ctx.compactionLevel
-  }
-  private set compactionLevel(value: number) {
-    this.ctx.compactionLevel = value
+    return this.compactionService.getCompactionLevel()
   }
 
   /** 空闲压缩计时器（惰性创建） */
@@ -224,7 +212,8 @@ export class AgentLoop implements IdleCompactionTarget {
         cacheDiagnostics: this.cacheDiagnostics,
         emit: (event) => this.eventBus.emit(event),
         emitContextBreakdown: (messageId, promptTokens) => this.emitContextBreakdown(messageId, promptTokens),
-        runOverflowCompaction: (mode) => this.runOverflowCompaction(mode),
+        runOverflowCompaction: (mode) =>
+          this.compactionService.runOverflowCompaction(mode, this.abortController?.signal),
         hookManager: this.hookManager,
         promptCacheKey: this.config.promptCacheKey,
         syncToolDialect: (context) => {
@@ -363,6 +352,15 @@ export class AgentLoop implements IdleCompactionTarget {
     this.contextBudgetManager = createProductionContextBudgetManager({
       contextWindow: this.config.contextWindow ?? 200_000
     })
+    this.compactionService = new CompactionService({
+      context: this.ctx,
+      modelClient: this.modelPool,
+      contextBudgetManager: this.contextBudgetManager,
+      cacheDiagnostics: this.cacheDiagnostics,
+      contextWindow: this.config.contextWindow ?? 200_000,
+      promptCacheKey: this.config.promptCacheKey,
+      onCompaction: this.config.onCompaction
+    })
     this.hookManager = new HookManager(eventBus)
     this.frozenSystemPrompt = this.buildFrozenSystemPrompt()
 
@@ -458,14 +456,7 @@ export class AgentLoop implements IdleCompactionTarget {
    * @param compactionLevel 快照记录的压缩层级
    */
   restoreCompactedContext(summary: string, recentMessages: ChatMessage[], compactionLevel: number): void {
-    const systemPrompt = extractTextFromContent(
-      this.context.find(m => m.role === 'system')?.content ?? ''
-    )
-    this.context = rebuildWithCompression(systemPrompt, summary, recentMessages)
-    this.compactionLevel = compactionLevel
-    this.userTurnsSinceCompaction = 0
-    this.lastEstimatedTokens = estimateContextTokens(this.context)
-    this.cacheDiagnostics.bumpEpoch('compaction')
+    this.compactionService.restoreCompactedContext(summary, recentMessages, compactionLevel)
     this.emitContextBreakdown('', 0)
   }
 
@@ -842,15 +833,12 @@ export class AgentLoop implements IdleCompactionTarget {
       this.context.push({ role: 'user', content: blocks })
     }
 
-    // 每轮 user 消息递增压缩冷却计数
-    this.userTurnsSinceCompaction++
-
     // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。
     // 硬上限在压缩之后、发模型之前套用（见 runAgentLoop），避免大历史无法进入压缩。
-    this.lastEstimatedTokens = estimateContextTokens(this.context)
+    this.compactionService.recordUserTurn()
 
     // 主循环下沉到 runAgentLoop：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
-    // Facade 负责：装配 config（注入 extension）、构建 executeBatch（注入权限/截断 extension）、
+    // Facade 负责：装配循环依赖、构建 executeBatch（注入权限/截断 extension）、
     // 收尾（终态错误 / cancelled → finishMessageRound）。
     const executeBatch = (toolCalls: ChatToolCall[], mid: string) =>
       executeToolBatch({
@@ -897,9 +885,9 @@ export class AgentLoop implements IdleCompactionTarget {
       supportsVision: this.config.supportsVision ?? true,
       shouldStopAfterTurn: (args) => this.stopPolicy.shouldStopAfterTurn(args),
       getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
-      onCompaction: (context, meta) => this.config.onCompaction?.(context, meta),
       enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
-      runOverflowCompaction: (mode) => this.runOverflowCompaction(mode)
+      runOverflowCompaction: (mode) =>
+        this.compactionService.runOverflowCompaction(mode, this.abortController?.signal)
     }
 
     // 模型终态错误只在此记录；错误事件与全部收尾由 finalizeTurn 统一执行，
@@ -918,13 +906,10 @@ export class AgentLoop implements IdleCompactionTarget {
       signal: () => this.cancelled,
       abortSignal: () => this.abortController?.signal,
       executeBatch,
-      runCompactionIfThreshold: createCompactionExtension({
-        context: this.ctx,
-        contextWindow: this.config.contextWindow ?? 200_000,
-        isCompressingForOverflow: () => this.compressingForOverflow,
-        runCompaction: () => this.runCompaction()
-      }),
-      isCompressingForOverflow: () => this.compressingForOverflow,
+      runCompactionIfThreshold: async () => {
+        await this.compactionService.runThresholdCompaction(this.abortController?.signal)
+      },
+      updateTokenEstimate: () => this.compactionService.updateTokenEstimate(),
       sleep: (ms: number) => this.sleep(ms),
       onTerminalError: (error) => {
         terminalError = error
@@ -1028,110 +1013,6 @@ export class AgentLoop implements IdleCompactionTarget {
     }
 
     return outcome
-  }
-
-  /**
-   * 压缩成功后的统一簿记：用摘要重建上下文，并更新压缩层级 / 冷却计数 / token 估算 / 缓存基线。
-   *
-   * 主动阈值压缩（runCompaction）与反应式溢出压缩（runOverflowCompaction）共用此方法，
-   * 消除两处逐字节重复的「重建 + 簿记」逻辑。
-   *
-   * why 不在此触发 onCompaction：runCompaction 在 onCompaction 回调前还有一次
-   * abortSignal 检查（idle 压缩期间用户可能已发新消息），而溢出压缩没有。为保持两条路径
-   * 的 abort 语义与重构前逐字节一致，onCompaction 由各调用方在簿记后自行触发。
-   *
-   * @param systemPrompt 冻结的 system prompt 文本
-   * @param summary 已 trim 的摘要文本
-   * @param recentMessages 压缩后保留的最近消息
-   * @param pulledBackMessages 溢出压缩时被弹出、需追加回上下文尾部的消息（阈值压缩不传）
-   */
-  private applyCompactionResult(
-    systemPrompt: string,
-    summary: string,
-    recentMessages: ChatMessage[],
-    pulledBackMessages?: ChatMessage[]
-  ): void {
-    const rebuilt = rebuildWithCompression(systemPrompt, summary, recentMessages, pulledBackMessages)
-    // 压缩重建后仅校验预算，不做改写（治理已在 compactAtBoundary 完成）
-    const budget = this.contextBudgetManager.enforceInline(rebuilt)
-    if (budget.status === 'requires_compaction') {
-      throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
-    }
-    this.context = rebuilt
-    this.compactionLevel++
-    this.userTurnsSinceCompaction = 0
-    this.lastEstimatedTokens = estimateContextTokens(this.context)
-    this.cacheDiagnostics.bumpEpoch('compaction')
-  }
-
-  /**
-   * 执行上下文压缩
-   * 将旧消息发给模型生成摘要，然后用 [system, 摘要, 最近 N 条] 重建上下文。
-   * 压缩调用本身复用现有缓存前缀（只追加压缩指令到尾部）。
-   *
-   * @param abortSignal 可选的 abort 信号：传入时会在替换 context 前检查，
-   *   abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息能保留，
-   *   避免回滚方案误删用户新消息。
-   */
-  private async runCompaction(
-    abortSignal?: AbortSignal,
-    trigger: 'threshold' | 'idle' = 'threshold'
-  ): Promise<void> {
-    const systemMsg = this.context.find(m => m.role === 'system')
-    const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
-
-    const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
-    if (oldMessages.length === 0) return
-
-    // 边界治理：只治理旧段，recentMessages 绝不触碰
-    const { messages: governedOld } = compactAtBoundary(oldMessages)
-
-    // 摘要请求：system + 治理后旧段 + 尾部压缩指令（不改 this.context 前缀）
-    const compactionContext: ChatMessage[] = [
-      ...(systemMsg ? [systemMsg] : []),
-      ...stripReasoningContent(governedOld),
-      ...buildCompactionRequestTail(governedOld[governedOld.length - 1]?.role, recentMessages.length)
-    ]
-
-    let summary = ''
-    try {
-      const stream = this.modelPool.chat(compactionContext, undefined, {
-        abortSignal: this.abortController?.signal,
-        includeInternalMessages: true,
-        expectedCacheMiss: true,
-        ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
-      })
-      for await (const event of stream) {
-        if (this.cancelled) return
-        if (event.type === 'text_delta') {
-          summary += event.delta
-        }
-        // 压缩请求不经 StreamProcessor；自行写入诊断并标 expectedMiss
-        if (event.type === 'wire_snapshot') {
-          this.cacheDiagnostics.recordWireSnapshot(event.snapshot, { expectedMiss: true })
-        }
-      }
-    } catch {
-      return
-    }
-
-    if (!summary.trim()) return
-
-    // 关键：替换 context 前检查 abort，防止压缩期间用户 sendMessage 推入的新消息被覆盖。
-    // runIdleCompaction 会传 abortSignal，主循环的 runCompaction 不传。
-    if (abortSignal?.aborted) return
-
-    // 重建上下文 + 压缩后簿记（层级 / 冷却 / token 估算 / 缓存基线），与溢出压缩共用。
-    this.applyCompactionResult(systemPrompt, summary.trim(), recentMessages)
-
-    // onCompaction 回调前再检查一次：abort 后不应触发持久化，避免与主循环状态竞争
-    if (abortSignal?.aborted) return
-    // 通知外部持久化压缩态（agentHandler 写入 context-snapshot.json）
-    this.config.onCompaction?.(this.context, {
-      summary: summary.trim(),
-      compactionLevel: this.compactionLevel,
-      trigger
-    })
   }
 
   /** 对工具输出应用截断，超限时用三明治模式拼装提示 */
@@ -1261,111 +1142,6 @@ export class AgentLoop implements IdleCompactionTarget {
     this.permissionCoordinator.respondPermission(requestId, granted)
   }
 
-  /**
-   * 上下文溢出紧急压缩
-   * 参考 OpenClacky llm_caller.rb perform_context_overflow_compression (L426-517)
-   *
-   * @param mode 'standard' (pull_back=1, 保缓存) 或 'aggressive' (pull_back≈一半, 保生存)
-   * @returns true 表示压缩成功，应重试原始请求；false 表示压缩失败或不可用
-   */
-  private async runOverflowCompaction(mode: 'standard' | 'aggressive'): Promise<boolean> {
-    const pullBack = mode === 'aggressive'
-      ? Math.max(4, Math.min(
-          Math.floor(this.context.length / 2),
-          this.context.length - 2,
-          64))
-      : 1
-
-    this.compressingForOverflow = true
-    const pulledBackMessages: ChatMessage[] = []
-
-    const restorePulledBack = () => {
-      pulledBackMessages.forEach(m => this.context.push(m))
-    }
-
-    try {
-      // 1. 从 this.context 末尾弹出 pullBack 条消息
-      for (let i = 0; i < pullBack && this.context.length > 2; i++) {
-        const popped = this.context.pop()!
-        if (popped.role !== 'system') {
-          pulledBackMessages.unshift(popped)
-        } else {
-          this.context.push(popped)
-          break
-        }
-      }
-
-      // 2. 切分 + 边界治理
-      const systemMsg = this.context.find(m => m.role === 'system')
-      const systemPrompt = extractTextFromContent(systemMsg?.content ?? '')
-      const { oldMessages, recentMessages } = splitForCompaction(this.context, MIN_RECENT_MESSAGES)
-
-      if (oldMessages.length === 0) {
-        restorePulledBack()
-        return false
-      }
-
-      const { messages: governedOld } = compactAtBoundary(oldMessages)
-
-      // 3. 构造摘要请求（独立数组，不 mutate this.context）
-      const compactionContext: ChatMessage[] = [
-        ...(systemMsg ? [systemMsg] : []),
-        ...stripReasoningContent(governedOld),
-        ...buildCompactionRequestTail(governedOld[governedOld.length - 1]?.role, recentMessages.length)
-      ]
-
-      // 4. 调用模型获取摘要
-      let summary = ''
-      const stream = this.modelPool.chat(compactionContext, undefined, {
-        abortSignal: this.abortController?.signal,
-        includeInternalMessages: true,
-        expectedCacheMiss: true,
-        ...(this.config.promptCacheKey ? { promptCacheKey: this.config.promptCacheKey } : {})
-      })
-      for await (const event of stream) {
-        if (this.cancelled) {
-          restorePulledBack()
-          return false
-        }
-        if (event.type === 'text_delta') {
-          summary += event.delta
-        }
-        if (event.type === 'wire_snapshot') {
-          this.cacheDiagnostics.recordWireSnapshot(event.snapshot, { expectedMiss: true })
-        }
-        if (event.type === 'context_overflow') {
-          restorePulledBack()
-          return false
-        }
-        if (event.type === 'error') {
-          restorePulledBack()
-          return false
-        }
-      }
-
-      if (!summary.trim()) {
-        restorePulledBack()
-        return false
-      }
-
-      // 5. 重建上下文 + 压缩后簿记
-      this.applyCompactionResult(systemPrompt, summary.trim(), recentMessages, pulledBackMessages)
-
-      this.config.onCompaction?.(this.context, {
-        summary: summary.trim(),
-        compactionLevel: this.compactionLevel,
-        trigger: 'overflow'
-      })
-
-      return true
-    } catch {
-      restorePulledBack()
-      return false
-    } finally {
-      this.compressingForOverflow = false
-    }
-  }
-
   /** 清空对话上下文 */
   reset(): void {
     this.context = this.frozenSystemPrompt
@@ -1447,32 +1223,14 @@ export class AgentLoop implements IdleCompactionTarget {
   /**
    * @internal 供 IdleCompressionTimer 调用。
    *
-   * abort 时不回滚 context：依赖 runCompaction 在替换 context 前检查 abortSignal，
-   * abort 则直接 return 不替换。这样压缩期间 sendMessage 推入的新消息自然保留，
-   * 避免回滚方案把并发推入的新消息一并回滚掉。
-   *
-   * 独立 AbortController 通过 signal 转发与 timer 的 abort 联动，
-   * 不与主循环的 abortController 混用，避免 cancel 时误杀正常 LLM 调用。
+   * Timer 的 signal 直接控制摘要请求和写回 fence，不借用 active turn controller。
+   * 新消息取消 idle 时只会终止旧摘要，不会修改新 active turn 的取消状态。
    */
   async runIdleCompaction(abortSignal: AbortSignal): Promise<void> {
-    // 开始置位，finally 清零；与 timer 层 _compressing 互补，供资格预筛阻断重复调度
     this.idleCompactionInProgress = true
-    const prevAbortController = this.abortController
-    const prevCancelled = this.cancelled
-    const prevOverflowFlag = this.compressingForOverflow
-    const onAbort = () => this.abortController?.abort()
-
     try {
-      this.abortController = new AbortController()
-      abortSignal.addEventListener('abort', onAbort, { once: true })
-      this.cancelled = false
-      this.compressingForOverflow = false
-      await this.runCompaction(abortSignal, 'idle')
+      await this.compactionService.runIdleCompaction(abortSignal)
     } finally {
-      abortSignal.removeEventListener('abort', onAbort)
-      this.abortController = prevAbortController
-      this.cancelled = prevCancelled
-      this.compressingForOverflow = prevOverflowFlag
       this.idleCompactionInProgress = false
     }
   }

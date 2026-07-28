@@ -12,13 +12,6 @@ import type { AgentContext } from './AgentContext'
 import type { InlineBudgetResult } from '../ContextBudgetManager'
 import type { ToolControlSignal } from '../../tools/types'
 
-/** 压缩元数据（与 types.ts CompactionMeta 对齐，供 onCompaction 回调） */
-export interface CompactionMeta {
-  summary: string
-  compactionLevel: number
-  trigger: 'threshold' | 'overflow' | 'idle'
-}
-
 /** beforeToolCall 回调入参 */
 export interface BeforeToolCallArgs {
   messageId: string
@@ -86,9 +79,8 @@ export interface AgentLoopConfig {
   supportsVision: boolean
 
   /**
-   * 调 LLM 前改写上下文（主动阈值压缩）。返回新的 messages。
-   * 对应现状：!compressingForOverflow 时的 shouldCompact → runCompaction。
-   * 注意：本回调在每轮 streamAssistant 前调用。
+   * 预留的上下文变换接口，当前循环不消费。
+   * 主动压缩通过 runAgentLoop 的显式回调装配，不走此接口。
    */
   transformContext?: (ctx: AgentContext, signal?: AbortSignal) => Promise<void>
 
@@ -119,9 +111,6 @@ export interface AgentLoopConfig {
    * 工具结果之后，再在同一任务中继续调用模型。
    */
   getModeTransitionInstruction?: (transition: ToolControlSignal) => string
-
-  /** 持久化压缩态回调（透传现状 config.onCompaction） */
-  onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
 
   /**
    * 轮内预算校验（只估算，不改写）。

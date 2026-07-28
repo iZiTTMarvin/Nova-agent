@@ -9,6 +9,8 @@ import {
 } from '../../../../src/runtime/agent/compaction/compaction'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
+import type { ChatEvent, ChatMessage, ModelClientConfig, ToolDefinition } from '../../../../src/runtime/model/types'
+import type { ChatOptions, ModelClient } from '../../../../src/runtime/model/ModelClient'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
@@ -310,7 +312,7 @@ describe('IdleCompressionTimer', () => {
 })
 
 describe('AgentLoop 空闲压缩集成', () => {
-  function createLoop(mockClient?: MockModelClient) {
+  function createLoop(mockClient?: ModelClient) {
     const client = mockClient ?? new MockModelClient()
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus)
@@ -430,6 +432,86 @@ describe('AgentLoop 空闲压缩集成', () => {
     await flush()
 
     expect(loop.getState()).toBe('error')
+  })
+
+  it('idle 摘要与新 active turn 重叠时只取消 idle，不误杀 active controller', async () => {
+    class OverlapModelClient implements ModelClient {
+      private callIndex = 0
+      private resolveIdleStarted!: () => void
+      private resolveActiveStarted!: () => void
+      private releaseActive!: () => void
+      readonly idleStarted = new Promise<void>(resolve => {
+        this.resolveIdleStarted = resolve
+      })
+      readonly activeStarted = new Promise<void>(resolve => {
+        this.resolveActiveStarted = resolve
+      })
+      private readonly activeRelease = new Promise<void>(resolve => {
+        this.releaseActive = resolve
+      })
+      activeSignal: AbortSignal | undefined
+
+      async *chat(
+        _messages: ChatMessage[],
+        _tools?: ToolDefinition[],
+        options?: ChatOptions
+      ): AsyncIterable<ChatEvent> {
+        const callIndex = this.callIndex++
+        if (callIndex === 0) {
+          this.resolveIdleStarted()
+          await new Promise<void>(resolve => {
+            if (options?.abortSignal?.aborted) {
+              resolve()
+              return
+            }
+            options?.abortSignal?.addEventListener('abort', () => resolve(), { once: true })
+          })
+          yield { type: 'cancelled' }
+          return
+        }
+
+        this.activeSignal = options?.abortSignal
+        this.resolveActiveStarted()
+        await this.activeRelease
+        if (options?.abortSignal?.aborted) {
+          yield { type: 'cancelled' }
+          return
+        }
+        yield { type: 'text_delta', delta: 'second response' }
+        yield { type: 'message_end', finishReason: 'stop' }
+      }
+
+      updateConfig(_config: ModelClientConfig): void {}
+
+      continueActive(): void {
+        this.releaseActive()
+      }
+    }
+
+    const client = new OverlapModelClient()
+    const { loop } = createLoop(client)
+    loop.injectHistory(Array.from({ length: 30 }, (_, index): ChatMessage => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `history-${index}`
+    })))
+
+    const idleAbort = new AbortController()
+    const idlePromise = loop.runIdleCompaction(idleAbort.signal)
+    await client.idleStarted
+
+    const activePromise = loop.sendMessage('second', agentRoute())
+    await client.activeStarted
+    idleAbort.abort()
+    client.continueActive()
+
+    const outcome = await activePromise
+    await idlePromise
+
+    expect(outcome.status).toBe('completed')
+    expect(client.activeSignal?.aborted).toBe(false)
+    expect(loop.getContext().some(message =>
+      message.role === 'user' && String(message.content).includes('second')
+    )).toBe(true)
   })
 
   it('竞态：cancel 后 sendMessage 推入的用户消息不被回滚误删', async () => {

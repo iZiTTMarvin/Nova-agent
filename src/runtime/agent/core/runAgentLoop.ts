@@ -19,7 +19,6 @@
  * 「if(this.cancelled) break → finishMessageRound」等价（break 后 cancelled 仍为 true）。
  */
 import type { ChatMessage } from '../../model/types'
-import { estimateContextTokens } from '../tokenEstimator'
 import { toToolContent, type ToolBatchExecutionResult } from '../execution/toolBatchExecutor'
 import type { HookManager } from './HookManager'
 import { getEffectiveToolDefinitions } from './AgentContext'
@@ -68,10 +67,10 @@ export interface RunAgentLoopParams {
   abortSignal: () => AbortSignal | undefined
   /** 执行工具批次（Facade 构建 options，注入权限/截断 extension） */
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
-  /** 主动阈值压缩（compactionExtension.transformContext 的 Facade 端实现，stream 前调用） */
+  /** 主动阈值压缩（stream 前调用） */
   runCompactionIfThreshold: () => Promise<void>
-  /** 读取溢出压缩守卫态（compressingForOverflow） */
-  isCompressingForOverflow: () => boolean
+  /** 上下文变化后更新压缩 token 簿记 */
+  updateTokenEstimate: () => void
   /** 指数退避 sleep（透传给 StreamProcessor） */
   sleep: (ms: number) => Promise<void>
   /**
@@ -120,10 +119,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         }
       }
 
-      // ── 主动阈值压缩（compactionExtension，!compressingForOverflow 守卫下；对标现状 L722-731）──
-      if (!p.isCompressingForOverflow()) {
-        await p.runCompactionIfThreshold()
-      }
+      // ── 主动阈值压缩（Service 内部持有 overflow 守卫）──
+      await p.runCompactionIfThreshold()
 
       // 轮内预算校验：只估算不改写，超预算走压缩恢复链
       if (config.enforceInlineBudget) {
@@ -138,7 +135,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           continue
         }
       }
-      context.lastEstimatedTokens = estimateContextTokens(context.messages)
+      p.updateTokenEstimate()
 
       // ── 工具定义（对标现状 L733-741）──
       const tools = getEffectiveToolDefinitions(context)
@@ -207,7 +204,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       }
       context.messages.push(assistantMsg)
 
-      context.lastEstimatedTokens = estimateContextTokens(context.messages)
+      p.updateTokenEstimate()
       if (!sawUsage) {
         p.emitContextBreakdown(messageId, 0)
       }
@@ -258,7 +255,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             continue
           }
         }
-        context.lastEstimatedTokens = estimateContextTokens(context.messages)
+        p.updateTokenEstimate()
       }
 
       // ── abort/cancel 判定（对标现状 L871-874）──
@@ -273,7 +270,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         const instruction = config.getModeTransitionInstruction(modeTransition).trim()
         if (instruction) {
           context.messages.push({ role: 'user', content: instruction })
-          context.lastEstimatedTokens = estimateContextTokens(context.messages)
+          p.updateTokenEstimate()
         }
         // 模式切换是控制面动作，不消耗任务工具轮数；即使发生在上限边界，
         // 也必须保证新模式至少获得一次模型调用来继续当前任务。

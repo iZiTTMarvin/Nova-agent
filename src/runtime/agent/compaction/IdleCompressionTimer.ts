@@ -12,10 +12,9 @@
  * - 到期先做 shouldScheduleIdleCompaction 资格预筛，通过才进入摘要请求
  * - 静默失败：空闲压缩是优化手段，失败不应打扰用户
  *
- * 回滚职责：timer 不做上下文回滚。
- * runCompaction() 只在成功路径（rebuildWithCompression）替换 this.context，
- * 中断/失败时 this.context 不变。AgentLoop.runIdleCompaction() 在 finally 中用
- * prevContext 快照恢复 abort 导致的部分修改，timer 层无需关心。
+ * 写回职责：timer 不修改上下文。
+ * CompactionService 只在摘要成功且 signal 未中断时替换权威 context，
+ * 中断或失败不会产生需要回滚的部分写入。
  */
 import {
   shouldScheduleIdleCompaction,
@@ -24,7 +23,7 @@ import {
 
 /** AgentLoop 上需要暴露的接口，避免 IdleCompressionTimer 直接依赖 AgentLoop 类 */
 export interface IdleCompactionTarget {
-  /** 执行压缩（内部调用 runCompaction），abort 时回滚上下文 */
+  /** 执行 idle 压缩；abort 后不得写回上下文 */
   runIdleCompaction(abortSignal: AbortSignal): Promise<void>
   /** 供 timer 到期时做资格预筛的状态快照 */
   getIdleCompactionScheduleState(): IdleCompactionScheduleState
@@ -69,7 +68,7 @@ export class IdleCompressionTimer {
   /**
    * 取消计时器和正在运行的压缩。
    * 同步调用，不 await 压缩退出。
-   * 压缩的 LLM 调用被 AbortSignal 中断后由 AgentLoop.runIdleCompaction 自行回滚。
+   * 压缩的 LLM 调用与写回 fence 由同一个 AbortSignal 中断。
    */
   cancel(): void {
     this.clearTimer()
@@ -87,7 +86,7 @@ export class IdleCompressionTimer {
 
   /**
    * 内部方法：触发空闲压缩。
-   * 先资格预筛，通过才进入摘要请求；回滚由 AgentLoop.runIdleCompaction 负责。
+   * 先资格预筛，通过才进入摘要请求。
    */
   private async runIdleCompaction(): Promise<void> {
     const ac = this.abortController
@@ -104,7 +103,7 @@ export class IdleCompressionTimer {
     try {
       await this.target.runIdleCompaction(ac.signal)
     } catch {
-      // 静默处理。AbortError 的回滚由 target.runIdleCompaction 的 finally 负责
+      // 空闲压缩是后台优化；异常由 target 保证不产生部分写回。
     } finally {
       this._compressing = false
       this.abortController = null
