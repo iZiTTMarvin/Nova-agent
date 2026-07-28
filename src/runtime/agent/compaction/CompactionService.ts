@@ -83,18 +83,6 @@ export class CompactionService {
     return this.compressingForOverflow
   }
 
-  getCompactionLevel(): number {
-    return this.context.compactionLevel
-  }
-
-  getUserTurnsSinceCompaction(): number {
-    return this.context.userTurnsSinceCompaction
-  }
-
-  getLastEstimatedTokens(): number {
-    return this.context.lastEstimatedTokens
-  }
-
   recordUserTurn(): void {
     this.context.userTurnsSinceCompaction++
     this.updateTokenEstimate()

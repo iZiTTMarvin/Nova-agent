@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { buildSessionContext } from '../../../../src/runtime/agent/context/sessionContext'
+import {
+  buildSessionContext,
+  extractSessionContextPrefix,
+  hasValidSessionContextAnchor
+} from '../../../../src/runtime/agent/context/sessionContext'
 
 describe('buildSessionContext', () => {
   it('生成符合 [Session context: ...] 格式的文本', () => {
@@ -128,5 +132,38 @@ describe('buildSessionContext', () => {
     const match = text.match(/OS: ([^.]+)\./)
     expect(match).not.toBeNull()
     expect(match![1].trim().length).toBeGreaterThan(0)
+  })
+})
+
+describe('session context anchor', () => {
+  const prefix = '[Session context: Today is 2026-06-15, Monday. Current model: m. OS: Windows. Working directory: D:/proj]'
+
+  it('从字符串与多模态 user 消息开头提取完整前缀', () => {
+    expect(extractSessionContextPrefix(`${prefix}\n\nhello`)).toBe(prefix)
+    expect(extractSessionContextPrefix([
+      { type: 'text', text: prefix },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }
+    ])).toBe(prefix)
+  })
+
+  it('拒绝正文回显、非首块文本和部分匹配', () => {
+    expect(extractSessionContextPrefix(`hello\n\n${prefix}`)).toBeNull()
+    expect(extractSessionContextPrefix([
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+      { type: 'text', text: prefix }
+    ])).toBeNull()
+    expect(hasValidSessionContextAnchor([
+      { role: 'user', content: `${prefix} suffix\n\nhello` }
+    ], prefix)).toBe(false)
+  })
+
+  it('只接受 user 消息开头逐字相等的锚点', () => {
+    expect(hasValidSessionContextAnchor([
+      { role: 'assistant', content: prefix },
+      { role: 'user', content: `${prefix}\n\nhello` }
+    ], prefix)).toBe(true)
+    expect(hasValidSessionContextAnchor([
+      { role: 'assistant', content: prefix }
+    ], prefix)).toBe(false)
   })
 })

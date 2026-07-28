@@ -28,7 +28,10 @@ import { resolveCacheProfile } from '../model/cacheProfile'
 import { HookManager } from './core/HookManager'
 import { RecoveryStateMachine } from './recovery/RecoveryStateMachine'
 import { SystemPromptBuilder } from './promptBuilder/SystemPromptBuilder'
-import { buildSessionContext } from './context/sessionContext'
+import {
+  buildSessionContext,
+  hasValidSessionContextAnchor
+} from './context/sessionContext'
 import { calculateContextBreakdown } from './context/contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
 import { createReadState, type ReadState } from '../tools/editTool'
@@ -44,7 +47,6 @@ import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } fr
 import { StreamProcessor } from './stream/StreamProcessor'
 import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { CompactionService } from './compaction/CompactionService'
-import { createToolPostProcessExtension } from './extensions/toolPostProcessExtension'
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
 
@@ -58,106 +60,14 @@ export class AgentLoop {
   private cancelled = false
   private abortController: AbortController | null = null
 
-  /**
-   * 标准化状态容器。
-   * 下列字段通过访问器桥接到 this.ctx.*，让旧使用点（this.context / this.workingDir 等）
-   * 一行不动。Facade 级态（state/cancelled/modelPool/eventBus/...）仍保留为实例字段。
-   */
+  /** 循环共享状态；生命周期服务持有同一实例，不向外暴露可变引用。 */
   private ctx: AgentContext = createAgentContext({ readState: createReadState() })
-
-  /** 对话上下文：累积所有消息用于下一次模型调用 */
-  private get context(): ChatMessage[] {
-    return this.ctx.messages
-  }
-  private set context(value: ChatMessage[]) {
-    this.ctx.messages = value
-  }
-
-  /** 工具注册表 */
-  private get toolRegistry(): ToolRegistry | null {
-    return this.ctx.toolRegistry
-  }
-  private set toolRegistry(value: ToolRegistry | null) {
-    this.ctx.toolRegistry = value
-  }
-
-  /** 工作区路径（传入后工具执行才有工作区边界） */
-  private get workingDir(): string | null {
-    return this.ctx.workingDir
-  }
-  private set workingDir(value: string | null) {
-    this.ctx.workingDir = value
-  }
-
-  /** bash 工具的自定义 shell 路径（可选） */
-  private get shellPath(): string | undefined {
-    return this.ctx.shellPath
-  }
-  private set shellPath(value: string | undefined) {
-    this.ctx.shellPath = value
-  }
-
-  /** bash 工具的 PATH 注入目录（可选） */
-  private get binDirs(): string[] {
-    return this.ctx.binDirs
-  }
-  private set binDirs(value: string[]) {
-    this.ctx.binDirs = value
-  }
-
-  /** 运行模式（plan / default / auto） */
-  private get mode(): Mode {
-    return this.ctx.mode
-  }
-  private set mode(value: Mode) {
-    this.ctx.mode = value
-  }
 
   /** checkpoint 管理器（可选） */
   private checkpointManager: CheckpointManager | null = null
   private fileEffectRecorder: FileEffectRecorder | null = null
-  /** 当前工具调用方言，由模型 ID 决定 */
-  private get toolDialect(): ToolDialect {
-    return this.ctx.dialect
-  }
-  private set toolDialect(value: ToolDialect) {
-    this.ctx.dialect = value
-  }
-
   /** 权限交互协调器：规则判定委托 PermissionManager，pending resolver 的唯一 owner */
   private readonly permissionCoordinator: PermissionCoordinator
-
-  /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具） */
-  private get sessionStore(): SessionStore | null {
-    return this.ctx.sessionStore
-  }
-  private set sessionStore(value: SessionStore | null) {
-    this.ctx.sessionStore = value
-  }
-
-  /** 当前会话 ID，与 sessionStore 配套 */
-  private get sessionId(): string | null {
-    return this.ctx.sessionId
-  }
-  private set sessionId(value: string | null) {
-    this.ctx.sessionId = value
-  }
-
-  /** 会话级 artifact 存储（大输出落盘，透传给工具执行层） */
-  private get artifactStore(): ArtifactStore | null {
-    return this.ctx.artifactStore
-  }
-  private set artifactStore(value: ArtifactStore | null) {
-    this.ctx.artifactStore = value
-  }
-
-  /** 技能正文层独立 token 估算，作为'技能'分项桶的预算 */
-  private get skillsTokenBudget(): number {
-    return this.ctx.skillsTokenBudget
-  }
-  private set skillsTokenBudget(value: number) {
-    this.ctx.skillsTokenBudget = value
-  }
 
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
@@ -173,17 +83,6 @@ export class AgentLoop {
 
   /** 截断管道：用于工具输出超限时进行结构化截断 */
   private truncationPipeline = createTruncationPipeline()
-
-  /** 压缩簿记只读桥接；写入由 CompactionService 统一完成。 */
-  private get lastEstimatedTokens(): number {
-    return this.compactionService.getLastEstimatedTokens()
-  }
-  private get userTurnsSinceCompaction(): number {
-    return this.compactionService.getUserTurnsSinceCompaction()
-  }
-  private get compactionLevel(): number {
-    return this.compactionService.getCompactionLevel()
-  }
 
   /** Hook 编排层（与 EventBus 并行，负责干预） */
   private hookManager: HookManager
@@ -208,7 +107,7 @@ export class AgentLoop {
         promptCacheKey: this.config.promptCacheKey,
         syncToolDialect: (context) => {
           this.syncToolDialectFromActiveProvider()
-          context.dialect = this.toolDialect
+          context.dialect = this.ctx.dialect
         }
       })
     }
@@ -222,7 +121,7 @@ export class AgentLoop {
   private syncToolDialectFromActiveProvider(): void {
     const provider = this.modelPool.getActiveProvider()
     const override = this.config.toolDialectOverride ?? provider.toolDialect
-    this.toolDialect = preferredToolDialect(
+    this.ctx.dialect = preferredToolDialect(
       provider.modelId,
       provider.baseUrl,
       override
@@ -237,14 +136,6 @@ export class AgentLoop {
 
   /** 错误恢复状态机 */
   private recovery = new RecoveryStateMachine()
-
-  /** 冻结的 system prompt（6 层拼装结果） */
-  private get frozenSystemPrompt(): string {
-    return this.ctx.systemPrompt
-  }
-  private set frozenSystemPrompt(value: string) {
-    this.ctx.systemPrompt = value
-  }
 
   /** 当前轮次 messageId（cancel / onCancel 使用） */
   private currentMessageId: string | null = null
@@ -286,18 +177,6 @@ export class AgentLoop {
   /** 本轮构造时捕获的 active plan；计划正文仍以工作区文件为真源。 */
   private activePlanPath?: string
 
-  /**
-   * 文件读取状态：记录"已 read 过哪些文件"，edit/write 工具的"先读后改"校验依赖此。
-   * 默认实例化一个独立的 readState；agentHandler 注入主 readState（跨 SEND_MESSAGE 复用），
-   * sub agent 在 taskTool / runSkillFork 中 clone 主 readState 隔离。
-   */
-  private get readState(): ReadState {
-    return this.ctx.readState
-  }
-  private set readState(value: ReadState) {
-    this.ctx.readState = value
-  }
-
   constructor(
     modelClient: ModelClient | ModelClientPool,
     eventBus: EventBus,
@@ -319,7 +198,7 @@ export class AgentLoop {
     this.eventBus = eventBus
     this.permissionCoordinator = new PermissionCoordinator({
       emit: (event) => this.eventBus.emit(event),
-      getMode: () => this.mode
+      getMode: () => this.ctx.mode
     })
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
@@ -337,7 +216,7 @@ export class AgentLoop {
     // 按当前 active provider 判定方言；fallback 切换后由 StreamProcessor 重算
     this.syncToolDialectFromActiveProvider()
     /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
-    this.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
+    this.ctx.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.contextBudgetManager = createProductionContextBudgetManager({
       contextWindow: this.config.contextWindow ?? 200_000
@@ -359,12 +238,12 @@ export class AgentLoop {
       }
     })
     this.hookManager = new HookManager(eventBus)
-    this.frozenSystemPrompt = this.buildFrozenSystemPrompt()
+    this.ctx.systemPrompt = this.buildFrozenSystemPrompt()
 
-    if (this.frozenSystemPrompt) {
-      this.context.push({
+    if (this.ctx.systemPrompt) {
+      this.ctx.messages.push({
         role: 'system',
-        content: this.frozenSystemPrompt
+        content: this.ctx.systemPrompt
       })
     }
   }
@@ -387,7 +266,7 @@ export class AgentLoop {
 
   /** 返回当前应使用的工具调用方言 */
   getToolDialect(): ToolDialect {
-    return this.toolDialect
+    return this.ctx.dialect
   }
 
   /**
@@ -397,18 +276,18 @@ export class AgentLoop {
   private emitContextBreakdown(messageId: string, promptTokensActual: number): void {
     const result = calculateContextBreakdown({
       session: {
-        id: this.sessionId ?? '',
-        workspaceRoot: this.workingDir ?? '',
-        mode: this.mode ?? 'default',
+        id: this.ctx.sessionId ?? '',
+        workspaceRoot: this.ctx.workingDir ?? '',
+        mode: this.ctx.mode,
         messages: [],
         currentLeafId: null,
-        frozenSystemPrompt: this.frozenSystemPrompt,
+        frozenSystemPrompt: this.ctx.systemPrompt,
         schemaVersion: 2,
         createdAt: Date.now(),
         updatedAt: Date.now()
       },
-      runtimeMessages: this.context.filter(m => m.role !== 'system'),
-      skills: this.skillsTokenBudget,
+      runtimeMessages: this.ctx.messages.filter(m => m.role !== 'system'),
+      skills: this.ctx.skillsTokenBudget,
       toolDefinitions: getEffectiveToolDefinitions(this.ctx),
       contextLimit: this.config.contextWindow ?? 200_000
     })
@@ -435,10 +314,8 @@ export class AgentLoop {
    * 用于每次 send-message 时从 session 恢复多轮历史
    */
   injectHistory(messages: ChatMessage[]): void {
-    // 历史消息插入到 system prompt 之后
-    // this.context[0] 是 system prompt（如果配置了的话），后续是历史
-    this.context = [
-      ...this.context,
+    this.ctx.messages = [
+      ...this.ctx.messages,
       ...messages
     ]
     // 恢复历史后立即推送一次上下文占用，让 renderer 无需等待下一轮 LLM 调用即可显示
@@ -459,7 +336,7 @@ export class AgentLoop {
 
   /** 设置工具注册表 */
   setToolRegistry(registry: ToolRegistry): void {
-    this.toolRegistry = registry
+    this.ctx.toolRegistry = registry
   }
 
   /** 设置本轮实际暴露给模型、缓存诊断和上下文拆分的工具定义来源。 */
@@ -493,7 +370,7 @@ export class AgentLoop {
 
   /** 设置工作区路径（工具执行时的边界目录） */
   setWorkingDir(dir: string): void {
-    this.workingDir = dir
+    this.ctx.workingDir = dir
     // 无须显式重置 session context：getSessionContextPrefix 扫描 context 时会
     // 发现旧锚点的 Working directory ≠ 新 dir，自动触发重新拼接。
   }
@@ -518,8 +395,8 @@ export class AgentLoop {
    * 同时清空 bashTool.description 的懒缓存，让新 shellPath 生效。
    */
   setBashEnvironment(env: { shellPath?: string; binDirs?: string[] } = {}): void {
-    this.shellPath = env.shellPath
-    this.binDirs = env.binDirs ?? []
+    this.ctx.shellPath = env.shellPath
+    this.ctx.binDirs = env.binDirs ?? []
     if (env.shellPath) {
       // 动态 import 避免循环依赖（agent → tools → shellConfig 不会反向）
       import('../tools/bash').then((mod) => mod.invalidateBashDescriptionCache?.())
@@ -528,7 +405,7 @@ export class AgentLoop {
 
   /** 设置运行模式 */
   setMode(mode: Mode): void {
-    this.mode = mode
+    this.ctx.mode = mode
   }
 
   /** 设置 checkpoint 管理器 */
@@ -560,13 +437,13 @@ export class AgentLoop {
    * todo_write 等需要写会话元数据的工具会用到；其他工具不受影响。
    */
   setSessionContext(sessionStore: SessionStore, sessionId: string): void {
-    this.sessionStore = sessionStore
-    this.sessionId = sessionId
+    this.ctx.sessionStore = sessionStore
+    this.ctx.sessionId = sessionId
   }
 
   /** 注入会话级 artifact 存储，供 bash / grep / read 大输出落盘 */
   setArtifactStore(store: ArtifactStore): void {
-    this.artifactStore = store
+    this.ctx.artifactStore = store
   }
 
   /** 动态调整最大工具调用轮数 */
@@ -620,7 +497,7 @@ export class AgentLoop {
    * 不调用时使用 loop 自带的独立实例（用于 sub agent 隔离测试）。
    */
   setReadState(rs: ReadState): void {
-    this.readState = rs
+    this.ctx.readState = rs
   }
 
   /**
@@ -643,11 +520,11 @@ export class AgentLoop {
 
   private getCurrentModeInstruction(): string {
     const hasReadableActivePlan =
-      !!this.workingDir &&
-      isReadablePlanInWorkspace(this.workingDir, this.activePlanPath)
+      !!this.ctx.workingDir &&
+      isReadablePlanInWorkspace(this.ctx.workingDir, this.activePlanPath)
     return (
       this.modeInstructionProvider?.() ??
-      getModeInstruction(this.mode, {
+      getModeInstruction(this.ctx.mode, {
         ...(hasReadableActivePlan ? { activePlanPath: this.activePlanPath } : {})
       })
     )
@@ -663,7 +540,7 @@ export class AgentLoop {
 
   /** 获取当前 readState（供 toolBatchExecutor 注入到 ToolContext） */
   getReadState(): ReadState {
-    return this.readState
+    return this.ctx.readState
   }
 
   /**
@@ -673,7 +550,7 @@ export class AgentLoop {
    *   - 主 agent 的 readState 被修改后再创建 sub agent 时复用陈旧状态。
    */
   cloneReadState(): ReadState {
-    return this.readState.clone()
+    return this.ctx.readState.clone()
   }
 
   /** 获取当前状态 */
@@ -688,7 +565,7 @@ export class AgentLoop {
 
   /** 获取当前对话上下文的快照 */
   getContext(): ChatMessage[] {
-    return [...this.context]
+    return [...this.ctx.messages]
   }
 
   /**
@@ -783,7 +660,7 @@ export class AgentLoop {
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
 
     // 编排入口自动切入 compose：模式归 AgentLoop 所有，dispatcher 不修改状态
-    if (route.kind === 'workflow' && this.mode !== 'compose') {
+    if (route.kind === 'workflow' && this.ctx.mode !== 'compose') {
       this.setMode('compose')
     }
 
@@ -793,17 +670,17 @@ export class AgentLoop {
       messageId,
       abortSignal: this.abortController?.signal,
       fork: {
-        workingDir: this.workingDir ?? process.cwd(),
-        readState: this.readState,
-        shellPath: this.shellPath,
-        binDirs: this.binDirs,
-        workspacePath: this.workingDir ?? undefined
+        workingDir: this.ctx.workingDir ?? process.cwd(),
+        readState: this.ctx.readState,
+        shellPath: this.ctx.shellPath,
+        binDirs: this.ctx.binDirs,
+        workspacePath: this.ctx.workingDir ?? undefined
       }
     })
 
     if (dispatched.kind === 'handled') {
       // 执行器已完成产品路径：摘要写入上下文并推给 UI，不进入 Agent kernel
-      this.context.push({ role: 'assistant', content: dispatched.assistantSummary })
+      this.ctx.messages.push({ role: 'assistant', content: dispatched.assistantSummary })
       this.eventBus.emit({ type: 'text_delta', messageId, delta: dispatched.assistantSummary })
       return this.settledTurnOutcome()
     }
@@ -814,11 +691,11 @@ export class AgentLoop {
       this.addSkillRoot(dispatched.grantedSkillRoot)
     }
     if (dispatched.assistantPrelude !== undefined) {
-      this.context.push({ role: 'assistant', content: dispatched.assistantPrelude })
+      this.ctx.messages.push({ role: 'assistant', content: dispatched.assistantPrelude })
     }
     userText = dispatched.userText
     if (typeof dispatched.userContent === 'string') {
-      this.context.push({
+      this.ctx.messages.push({
         role: 'user',
         content: withPrefix(`${dispatched.userContent}\n\n${modeInstruction}`)
       })
@@ -827,27 +704,25 @@ export class AgentLoop {
       const blocks = sessionPrefix
         ? [{ type: 'text' as const, text: sessionPrefix }, ...dispatched.userContent, { type: 'text' as const, text: modeInstruction }]
         : [...dispatched.userContent, { type: 'text' as const, text: modeInstruction }]
-      this.context.push({ role: 'user', content: blocks })
+      this.ctx.messages.push({ role: 'user', content: blocks })
     }
 
     // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。
     // 硬上限在压缩之后、发模型之前套用（见 runAgentLoop），避免大历史无法进入压缩。
     this.compactionService.recordUserTurn()
 
-    // 主循环下沉到 runAgentLoop：hooks → compaction → StreamProcessor → assistant 续接 → executeBatch → shouldStopAfterTurn。
-    // Facade 负责：装配循环依赖、构建 executeBatch（注入权限/截断 extension）、
-    // 收尾（终态错误 / cancelled → finishMessageRound）。
+    // AgentLoop 装配 kernel 依赖，并在 kernel 返回后统一处理终态。
     const executeBatch = (toolCalls: ChatToolCall[], mid: string) =>
       executeToolBatch({
         toolCalls,
         messageId: mid,
-      toolRegistry: this.toolRegistry,
-      workingDir: this.workingDir ?? process.cwd(),
-      runId: this.ctx.runId ?? undefined,
-      workspaceRoot: this.ctx.workspaceRoot ?? undefined,
-      mode: this.mode,
-        shellPath: this.shellPath,
-        binDirs: this.binDirs,
+        toolRegistry: this.ctx.toolRegistry,
+        workingDir: this.ctx.workingDir ?? process.cwd(),
+        runId: this.ctx.runId ?? undefined,
+        workspaceRoot: this.ctx.workspaceRoot ?? undefined,
+        mode: this.ctx.mode,
+        shellPath: this.ctx.shellPath,
+        binDirs: this.ctx.binDirs,
         supportsVision: this.config.supportsVision ?? true,
         checkpointManager: this.checkpointManager,
         fileEffectRecorder: this.fileEffectRecorder,
@@ -857,15 +732,15 @@ export class AgentLoop {
         checkBatchPermission: (items, msgId) =>
           this.permissionCoordinator.checkBatchPermission(items, msgId),
         emit: (event) => this.eventBus.emit(event),
-        applyTruncation: createToolPostProcessExtension(this),
+        applyTruncation: (output, maxSize) => this.applyTruncation(output, maxSize),
         maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
         toolExecution: this.config.toolExecution ?? 'parallel',
-        sessionStore: this.sessionStore,
-        sessionId: this.sessionId,
+        sessionStore: this.ctx.sessionStore,
+        sessionId: this.ctx.sessionId,
         eventBus: this.eventBus,
         hookManager: this.hookManager,
-        readState: this.readState,
-        artifactStore: this.artifactStore,
+        readState: this.ctx.readState,
+        artifactStore: this.ctx.artifactStore,
         askQuestion: this.askQuestionHandler,
         switchMode: this.switchModeHandler,
         // 本会话已触发的 skill 目录 → 只读工具的额外允许根
@@ -1078,7 +953,7 @@ export class AgentLoop {
     // 兜底清理 pending permissions（cancel 在 idle 时跳过这一步）
     this.permissionCoordinator.abortPending()
 
-    // 如果还在 running，也走 cancel 流程触发 onCancel hook
+    // running 状态还需要中止当前请求并更新本地状态。
     if (this.state === 'running') {
       this.cancel()
     }
@@ -1110,8 +985,8 @@ export class AgentLoop {
 
   /** 清空对话上下文 */
   reset(): void {
-    this.context = this.frozenSystemPrompt
-      ? [{ role: 'system', content: this.frozenSystemPrompt }]
+    this.ctx.messages = this.ctx.systemPrompt
+      ? [{ role: 'system', content: this.ctx.systemPrompt }]
       : []
     this.state = 'idle'
     this.cancelled = false
@@ -1131,7 +1006,7 @@ export class AgentLoop {
    * @returns session context 文本，或 null（锚点仍在，跳过）
    */
   private getSessionContextPrefix(): string | null {
-    const workingDir = this.workingDir ?? process.cwd()
+    const workingDir = this.ctx.workingDir ?? process.cwd()
     const model = this.modelPool.getActiveProvider().modelId
     const sessionContext = buildSessionContext({
       workingDir,
@@ -1139,43 +1014,9 @@ export class AgentLoop {
       date: this.getSessionContextDate()
     })
 
-    // 扫描 context：是否仍保留与"当前工作区 / 当前模型 / 今天"完全一致的锚点
-    if (this.contextHasValidAnchor(sessionContext)) return null
+    if (hasValidSessionContextAnchor(this.ctx.messages, sessionContext)) return null
 
     return sessionContext
-  }
-
-  /**
-   * 检查当前 context 中是否存在"仍然有效的" session context 锚点。
-   *
-   * 判据：
-   * - 仅扫描 user 消息，避免 assistant/tool 回显文本误命中
-   * - 仅看消息开头的 session context 前缀段，避免正文里碰巧出现同样字符串
-   * - 与本轮应生成的完整前缀做逐字节相等比较，避免 workingDir 前缀子串误判
-   */
-  private contextHasValidAnchor(expectedPrefix: string): boolean {
-    return this.context.some(m => {
-      if (m.role !== 'user') return false
-      return this.extractSessionContextPrefix(m.content) === expectedPrefix
-    })
-  }
-
-  /**
-   * 从 user 消息里提取 session context 前缀。
-   *
-   * string 路径用 `\n\n` 分隔前缀与正文；多模态路径则把前缀放在首个 text block。
-   * 单独抽出来可避免 `extractTextFromContent()` 把 text block 全部拼接后，
-   * 把图片消息误判成"整条文本都等于前缀"。
-   */
-  private extractSessionContextPrefix(content: string | ContentBlock[]): string | null {
-    if (typeof content === 'string') {
-      if (!content.startsWith('[Session context:')) return null
-      return content.split('\n\n')[0] ?? content
-    }
-
-    const firstBlock = content[0]
-    if (!firstBlock || firstBlock.type !== 'text') return null
-    return firstBlock.text.startsWith('[Session context:') ? firstBlock.text : null
   }
 
   /**
@@ -1185,5 +1026,4 @@ export class AgentLoop {
   protected getSessionContextDate(date: Date = new Date()): Date {
     return date
   }
-
 }

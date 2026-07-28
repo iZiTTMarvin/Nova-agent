@@ -3,23 +3,10 @@ import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/types'
+import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
 
-/**
- * Session context 注入集成测试（v2 合并方案）
- *
- * v2 修正：session context 不再作为独立 internal 消息注入，而是拼到每轮第一条
- * user 消息的 content 前缀。模型在同一条 user 消息里看到：
- *   "[Session context: ...]\n\n用户真实输入"
- *
- * 关键验证点：
- *  - session context 在 user 消息 content 前缀中（不在独立消息里）
- *  - context 中没有独立 internal 消息（消息条数不增加）
- *  - 跨日去重：同一天第二轮 user 消息 content 不含 session context 前缀
- *  - setWorkingDir 重置去重，强制下次重新拼接
- *
- * 注意：MockModelClient 记录收到的 messages（含 content），可验证前缀拼接。
- */
+/** Session context 只注入模型运行时消息，不生成独立消息或持久化前缀。 */
 
 function createLoop(mockClient?: MockModelClient) {
   const client = mockClient ?? new MockModelClient()
@@ -55,7 +42,7 @@ function msgText(msg: ChatMessage | undefined): string {
   return typeof msg.content === 'string' ? msg.content : ''
 }
 
-describe('AgentLoop session context 注入（v2 合并方案）', () => {
+describe('AgentLoop session context 注入', () => {
   beforeEach(() => {
     vi.useRealTimers()
   })
@@ -282,6 +269,41 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     expect(text2).toContain('Working directory: D:/proj/nova]')
   })
 
+  it('主模型配置变化后重新注入当前模型锚点', async () => {
+    const client = new MockModelClient()
+    for (const reply of ['回复1', '回复2']) {
+      client.addResponse({
+        events: [
+          { type: 'message_start' },
+          { type: 'text_delta', delta: reply },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+    }
+    const pool = new ModelClientPool({
+      primary: client,
+      primaryConfig: {
+        baseUrl: 'https://example.invalid',
+        apiKey: '',
+        modelId: 'model-a'
+      }
+    })
+    const loop = new AgentLoop(pool, new EventBus())
+    loop.setWorkingDir('D:/proj')
+
+    await loop.sendMessage('第一条', agentRoute())
+    pool.updateConfig({
+      baseUrl: 'https://example.invalid',
+      apiKey: '',
+      modelId: 'model-b'
+    })
+    await loop.sendMessage('第二条', agentRoute())
+
+    const text = msgText(lastUserMsg(client.getCalls()[1].messages))
+    expect(text.startsWith('[Session context:')).toBe(true)
+    expect(text).toContain('Current model: model-b')
+  })
+
   it('session context 前缀包含日期、模型、OS、工作区四个锚点', async () => {
     const client = new MockModelClient()
     client.addResponse({
@@ -305,8 +327,6 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     expect(text).toContain('OS:')
     expect(text).toContain('Working directory: D:/proj/anchors')
   })
-
-  // ── v3 生命周期回归测试（审查 P2）──────────────────────────────────
 
   it('reset() 后重发：context 清空 → 无锚点 → 重新注入前缀', async () => {
     const client = new MockModelClient()
@@ -363,14 +383,11 @@ describe('AgentLoop session context 注入（v2 合并方案）', () => {
     loop.setWorkingDir('D:/proj')
 
     await loop.sendMessage('第一条', agentRoute())
-    // 模拟压缩：手动清空 context 中所有非 system 消息（等价于 rebuildWithCompression
-    // 后带前缀的旧 user 消息被摘要替代的场景）
-    const currentContext = loop.getContext()
-    const systemMsg = currentContext.find(m => m.role === 'system')
-    // 用 reset + injectHistory 模拟压缩后的 context 重建（只有 system + 摘要，无锚点）
-    loop.reset()
-    // 压缩后 context 只有 system（含摘要），没有含 [Session context] 的消息
-    void systemMsg
+    loop.restoreCompactedContext(
+      '已压缩的历史摘要',
+      [{ role: 'assistant', content: '压缩后保留的最近回复' }],
+      1
+    )
 
     await loop.sendMessage('压缩后第一条', agentRoute())
 

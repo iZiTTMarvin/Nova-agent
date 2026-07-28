@@ -875,7 +875,7 @@ describe('AgentLoop', () => {
   })
 
   /**
-   * P2 回归：压缩时上下文末尾为 user 消息，应插入 assistant 桥接，
+   * 压缩时上下文末尾为 user 消息，应插入 assistant 桥接，
    * 避免连续两条 user 消息导致 Anthropic 严格模式 400 错误。
    */
   it('压缩时上下文以 user 结尾，模型收到的压缩上下文不会出现连续 user', async () => {
@@ -962,9 +962,42 @@ describe('AgentLoop', () => {
     expect(ctx[0].role).toBe('system')
     expect(extractTextFromContent(ctx[0].content)).toContain('测试摘要内容')
     expect(ctx.slice(1)).toEqual(recentMessages)
-    // 压缩层级与冷却计数应被快照恢复
-    expect((loop as unknown as { compactionLevel: number }).compactionLevel).toBe(2)
-    expect((loop as unknown as { userTurnsSinceCompaction: number }).userTurnsSinceCompaction).toBe(0)
+  })
+
+  it('restoreCompactedContext 恢复压缩层级，后续压缩从该层级递增', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '新的摘要' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '继续回复' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const compactionLevels: number[] = []
+    const loop = new AgentLoop(client, new EventBus(), {
+      systemPrompt: '你是助手。',
+      onCompaction: (_context, meta) => compactionLevels.push(meta.compactionLevel)
+    })
+    loop.setToolRegistry(createTestRegistry())
+    const recentMessages: ChatMessage[] = []
+    for (let i = 0; i < 24; i++) {
+      recentMessages.push(
+        { role: 'user', content: 'x'.repeat(20_000) },
+        { role: 'assistant', content: 'y'.repeat(20_000) }
+      )
+    }
+
+    loop.restoreCompactedContext('已有摘要', recentMessages, 2)
+    await loop.sendMessage('继续', agentRoute())
+
+    expect(compactionLevels).toEqual([3])
   })
 
   it('Layer 1 紧急压缩成功并重试', async () => {
@@ -1277,10 +1310,7 @@ describe('AgentLoop', () => {
     expect(noticed).toBe(false)
   })
 
-  /**
-   * Phase 3：cancel 后 message_end 事件应携带 interrupted=true。
-   */
-  it('Phase 3: cancel 后 message_end 事件应携带 interrupted=true', async () => {
+  it('cancel 后 message_end 事件应携带 interrupted=true', async () => {
     const client = new MockModelClient()
     // 第一个 chunk 后立刻 cancelled
     client.addResponse({
@@ -1302,10 +1332,7 @@ describe('AgentLoop', () => {
     expect(messageEndEvent!.interrupted).toBe(true)
   })
 
-  /**
-   * Phase 3：正常完成（非 cancel）的 message_end 不应携带 interrupted 字段。
-   */
-  it('Phase 3: 正常完成的 message_end 不应携带 interrupted', async () => {
+  it('正常完成的 message_end 不应携带 interrupted', async () => {
     const client = new MockModelClient()
     client.addResponse({
       events: [
@@ -1676,7 +1703,7 @@ describe('AgentLoop', () => {
     const { loop } = createLoop(client)
 
     // 预置 35 轮 user+tool 上下文（确保有组落在 MIN_RECENT 保护区外且 user 年龄 > 8）
-    const seeded: ChatMessage[] = [{ role: 'system', content: '你是助手。' }]
+    const seeded: ChatMessage[] = []
     for (let u = 0; u < 35; u++) {
       seeded.push({ role: 'user', content: `question ${u}` })
       seeded.push({
@@ -1690,7 +1717,7 @@ describe('AgentLoop', () => {
         toolCallId: `tc_${u}`
       })
     }
-    ;(loop as unknown as { context: ChatMessage[] }).context = seeded
+    loop.injectHistory(seeded)
 
     const toolBytesBefore = seeded
       .filter(m => m.role === 'tool')

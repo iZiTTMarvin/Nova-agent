@@ -12,6 +12,8 @@ import {
   RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC,
   RULE_MAIN_AGENT_CANNOT_IMPORT_IPC,
   RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS,
+  RULE_AGENT_CORE_CANNOT_IMPORT_PRODUCT_ROUTING,
+  RULE_RUNTIME_CANNOT_IMPORT_ELECTRON,
   toRepoPosixPath,
   type AllowedBoundaryDebt,
   type BoundaryViolation
@@ -211,6 +213,22 @@ describe('import boundary layer rules (fixtures)', () => {
     expectOnlyRule(result.violations, RULE_RUNTIME_RUN_WORKFLOW)
   })
 
+  it('runtime 不能依赖 Electron API', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/target.ts',
+      sourceText: `import type { BrowserWindow } from 'electron'`,
+      exists
+    })
+    expectOnlyRule(result.violations, RULE_RUNTIME_CANNOT_IMPORT_ELECTRON)
+
+    const mainResult = collectViolationsFromSource({
+      fromFile: 'src/main/host.ts',
+      sourceText: `import { app } from 'electron'`,
+      exists
+    })
+    expect(mainResult.violations).toEqual([])
+  })
+
   it('main/services 不能依赖 main/ipc', () => {
     const result = collectViolationsFromSource({
       fromFile: 'src/main/services/WorkspaceService.ts',
@@ -268,6 +286,29 @@ describe('import boundary layer rules (fixtures)', () => {
       exists: files
     })
     expect(routeEdge.violations).toEqual([])
+  })
+
+  it('Agent core 不能依赖产品路由或执行器', () => {
+    const files = virtualExists(new Set([
+      'src/runtime/agent/core/runAgentLoop.ts',
+      'src/runtime/agent/turn/TurnDispatcher.ts',
+      'src/runtime/skills/runSkillFork.ts',
+      'src/runtime/workflow/index.ts'
+    ]))
+    const cases = [
+      `import { TurnDispatcher } from '../turn/TurnDispatcher'`,
+      `import { runSkillFork } from '../../skills/runSkillFork'`,
+      `import { runWorkflow } from '../../workflow'`
+    ]
+
+    for (const sourceText of cases) {
+      const result = collectViolationsFromSource({
+        fromFile: 'src/runtime/agent/core/runAgentLoop.ts',
+        sourceText,
+        exists: files
+      })
+      expectOnlyRule(result.violations, RULE_AGENT_CORE_CANNOT_IMPORT_PRODUCT_ROUTING)
+    }
   })
 
   it('别名路径与 Windows 风格 from 路径得到同一规则结果', () => {

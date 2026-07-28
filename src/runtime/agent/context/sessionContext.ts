@@ -1,23 +1,6 @@
-/**
- * sessionContext — 会话上下文注入文本构造（纯函数）
- *
- * 目标问题：模型在 system prompt 6 层里看不到工作区绝对路径，只能从 ls 等工具
- * 返回的相对路径自行脑补，进而产生"我不在工作区"的认知层判断错误。
- *
- * 修复路线（v2 合并方案，对标 OpenClacky `inject_session_context`）：
- * 把本函数返回的文本拼到每轮第一条 user 消息的 content 前缀，承载日期 / 模型 /
- * OS / 工作区绝对路径。它是真实 user 消息的一部分（不标 internal），模型能真正看到。
- *
- * v1 曾用 internal:true 独立消息注入，但 internal 消息会被序列化层整条过滤，
- * 导致 session context 到不了模型——已废弃。详见 docs/architecture/session-context-injection.md。
- *
- * 设计约束：
- * - 纯函数，**不**读全局状态，方便单测
- * - 文本格式稳定（不随时间漂移的部分固定在前半），便于缓存前缀匹配
- * - OS / 模型 / 工作区是认知锚点，日期会变但每天只注入一次（跨日去重见 AgentLoop）
- *
- * @see AgentLoop.getSessionContextPrefix 注入点
- */
+import type { ChatMessage, ContentBlock } from '../../model/types'
+
+/** 构造模型每个会话周期需要看到的运行环境锚点。 */
 export interface SessionContextOptions {
   /** 工作区绝对路径 */
   workingDir: string
@@ -35,8 +18,7 @@ const WEEKDAY_NAMES = [
 /**
  * 探测 OS 标签。
  *
- * 优先识别 Windows / macOS / Linux 三大类；未知平台回退到 process.platform 原值，
- * 让模型至少拿到一个明确信号而非空白。后续可抽成独立的 EnvironmentDetector。
+ * 优先识别 Windows / macOS / Linux；未知平台保留 process.platform 原值。
  */
 function detectOsLabel(): string {
   const platform = process.platform
@@ -76,5 +58,35 @@ export function buildSessionContext(opts: SessionContextOptions): string {
     `[Session context: Today is ${dateStr}, ${weekday}. ` +
     `Current model: ${model}. OS: ${osLabel}. ` +
     `Working directory: ${workingDir}]`
+  )
+}
+
+/**
+ * 提取 user 消息开头的 session context。
+ * 字符串消息以空行分隔正文；多模态消息只认可首个文本块，避免正文回显误命中。
+ */
+export function extractSessionContextPrefix(
+  content: string | ContentBlock[]
+): string | null {
+  if (typeof content === 'string') {
+    if (!content.startsWith('[Session context:')) return null
+    return content.split('\n\n')[0] ?? content
+  }
+
+  const firstBlock = content[0]
+  if (!firstBlock || firstBlock.type !== 'text') return null
+  return firstBlock.text.startsWith('[Session context:') ? firstBlock.text : null
+}
+
+/**
+ * 仅把 user 消息开头、且与当前完整环境文本逐字相等的前缀视为有效锚点。
+ */
+export function hasValidSessionContextAnchor(
+  messages: readonly ChatMessage[],
+  expectedPrefix: string
+): boolean {
+  return messages.some(message =>
+    message.role === 'user'
+    && extractSessionContextPrefix(message.content) === expectedPrefix
   )
 }

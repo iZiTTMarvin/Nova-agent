@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 import {
+  buildViolationsForExternalSpecifier,
   buildViolationsForEdge,
   toRepoPosixPath,
   type BoundaryViolation,
@@ -256,7 +257,16 @@ export function collectViolationsFromSource(params: {
   const seen = new Set<string>()
   for (const item of extracted.specifiers) {
     const resolved = resolveModuleSpecifier(from, item.specifier, params.exists)
-    if (resolved.kind === 'external' || resolved.kind === 'asset') continue
+    if (resolved.kind === 'external') {
+      for (const violation of buildViolationsForExternalSpecifier(from, item.specifier)) {
+        const key = `${violation.from}\0${violation.to}\0${violation.rule}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        violations.push(violation)
+      }
+      continue
+    }
+    if (resolved.kind === 'asset') continue
     if (resolved.kind === 'unresolved') {
       unresolved.push({ from, specifier: item.specifier, tried: resolved.tried })
       continue

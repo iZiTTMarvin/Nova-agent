@@ -40,6 +40,9 @@ export const RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC = 'main-services-cannot-import
 export const RULE_MAIN_AGENT_CANNOT_IMPORT_IPC = 'main-agent-cannot-import-ipc'
 export const RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS =
   'agent-loop-cannot-import-product-executors'
+export const RULE_AGENT_CORE_CANNOT_IMPORT_PRODUCT_ROUTING =
+  'agent-core-cannot-import-product-routing'
+export const RULE_RUNTIME_CANNOT_IMPORT_ELECTRON = 'runtime-cannot-import-electron'
 
 export function layerCannotImportRule(from: SrcLayer, to: SrcLayer): string {
   return `${from}-cannot-import-${to}`
@@ -80,12 +83,25 @@ export function isAgentLoopPath(repoRelativePosix: string): boolean {
   return toRepoPosixPath(repoRelativePosix) === 'src/runtime/agent/AgentLoop.ts'
 }
 
+export function isAgentCorePath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/runtime/agent/core/')
+}
+
 /** 产品执行器子树：AgentLoop 只能经 TurnDispatcher 间接使用，不得直接依赖 */
 export function isProductExecutorPath(repoRelativePosix: string): boolean {
   const normalized = toRepoPosixPath(repoRelativePosix)
   return (
     normalized.startsWith('src/runtime/skills/') ||
     normalized.startsWith('src/runtime/workflow/')
+  )
+}
+
+/** 路由解析和产品执行器都属于 kernel 外的产品控制面。 */
+export function isProductRoutingPath(repoRelativePosix: string): boolean {
+  const normalized = toRepoPosixPath(repoRelativePosix)
+  return (
+    normalized.startsWith('src/runtime/agent/turn/')
+    || isProductExecutorPath(normalized)
   )
 }
 
@@ -120,6 +136,9 @@ export function rulesForResolvedEdge(fromFile: string, toFile: string): string[]
   if (isAgentLoopPath(from) && isProductExecutorPath(to)) {
     rules.push(RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS)
   }
+  if (isAgentCorePath(from) && isProductRoutingPath(to)) {
+    rules.push(RULE_AGENT_CORE_CANNOT_IMPORT_PRODUCT_ROUTING)
+  }
   return rules
 }
 
@@ -136,6 +155,26 @@ export function buildViolationsForEdge(
     rule,
     specifier
   }))
+}
+
+export function buildViolationsForExternalSpecifier(
+  fromFile: string,
+  specifier: string
+): BoundaryViolation[] {
+  const from = toRepoPosixPath(fromFile)
+  const normalizedSpecifier = specifier.replace(/\\/g, '/')
+  if (
+    layerOf(from) === 'runtime'
+    && (normalizedSpecifier === 'electron' || normalizedSpecifier.startsWith('electron/'))
+  ) {
+    return [{
+      from,
+      to: normalizedSpecifier,
+      rule: RULE_RUNTIME_CANNOT_IMPORT_ELECTRON,
+      specifier
+    }]
+  }
+  return []
 }
 
 export type BoundaryReconcileResult = {

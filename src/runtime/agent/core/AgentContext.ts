@@ -1,15 +1,4 @@
-/**
- * AgentContext — 标准化状态容器（PRD §6.1）
- *
- * 在循环与各扩展间流转的纯状态。本阶段（Phase 1）只做"状态收纳"：
- * AgentLoop 内部原有字段被代理到 AgentContext 实例，对外行为逐字节等价。
- *
- * 设计约束（PRD §2.1 目标 4 / §6.1 注释）：
- * - fork() / snapshot() / rollback() 为 future，本期不实现。
- * - 本接口目前仅承载"数据"，不做任何控制流。
- *
- * 字段命名与 AgentLoop 既有字段一一对应，迁移时通过访问器桥接（PRD §8 Phase 1）。
- */
+/** Agent 循环与生命周期服务共享的可变运行态，不承载控制流。 */
 import type { ChatMessage, ToolDefinition } from '../../model/types'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
 import type { ToolDialect } from '../../model/dialect'
@@ -19,7 +8,6 @@ import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
 import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
 
-/** 标准化状态容器：在循环与各扩展间流转的纯状态 */
 export interface AgentContext {
   /** 对话上下文（含 system 在 [0]） */
   messages: ChatMessage[]
@@ -57,14 +45,11 @@ export interface AgentContext {
   /** 技能正文 token 预算 */
   skillsTokenBudget: number
 }
-// 注：fork()/snapshot()/rollback() 为 future，本期不实现。
 
 /**
  * 创建一个带默认值的 AgentContext。
- * AgentLoop 构造时调用，把既有字段初值收敛进 ctx。
- *
  * readState 是必填：它依赖 editTool 的具体实现，由调用方（AgentLoop 构造函数）
- * 传入 createReadState() 的结果，避免 core/ 反向依赖 tools/。
+ * 传入 createReadState() 的结果。
  */
 export function createAgentContext(initial: {
   readState: AgentContext['readState']

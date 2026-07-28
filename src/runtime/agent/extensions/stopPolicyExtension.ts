@@ -1,17 +1,8 @@
 /**
- * stopPolicyExtension — 停止策略扩展（PRD §6.2 shouldStopAfterTurn / §8 Phase 3）
+ * 单轮停止策略：重复失败熔断、工具轮数上限和连续空参保护。
  *
- * 对标现状 sendMessage L876-900：
- * - 重复失败熔断（trackRepeatedFailures）：相同签名累加、成功清零、达 REPEATED_FAILURE_LIMIT 熔断。
- * - maxToolRounds 上限提示。
- * - 连续空参护栏（native 优先后替代"全局退回 xml"）：连续多轮全空参则中断并引导用户切 XML 模式。
- *
- * 关键语义（用户决策）：熔断计数保持"batch 之后、整批、按源顺序"形态，不拆 per-tool。
- * 原因：并行模式下 per-tool 回调按完成顺序触发，会改变"多签名同时逼近阈值时熔断提示
- * 报哪个工具名"的行为——并发边角的隐性 C1 漂移。
- *
- * 熔断计数 Map 所有权：本扩展实例态。每条用户消息开始时由 Facade 调 clear() 重置
- * （对标现状 sendMessage 开头 repeatedFailureCounts.clear()）。
+ * 失败计数在整个 batch 完成后按调用源顺序更新。并行工具若按完成顺序计数，
+ * 多个签名同时达到阈值时会产生不稳定的熔断提示。
  */
 import type { ShouldStopArgs, StopDecision } from '../core/loopTypes'
 
@@ -29,24 +20,17 @@ export class StopPolicyExtension {
   /** 连续「本轮所有 tool_calls 参数均为空」的轮次计数 */
   private emptyArgsRoundCount = 0
 
-  /** 每条用户消息开始时清空熔断计数（对标现状 repeatedFailureCounts.clear()） */
+  /** 每条用户消息开始时清空轮次级计数。 */
   clear(): void {
     this.repeatedFailureCounts.clear()
     this.emptyArgsRoundCount = 0
   }
 
-  /**
-   * shouldStopAfterTurn 回调（config.shouldStopAfterTurn）。
-   * 逐字节对标现状 trackRepeatedFailures + maxRounds 提示逻辑。
-   *
-   * @returns StopDecision（breaker / max_rounds / empty_args）或 undefined（继续）
-   */
+  /** 返回停止决定；没有命中保护条件时继续下一轮。 */
   async shouldStopAfterTurn(args: ShouldStopArgs): Promise<StopDecision | void> {
-    // ── 连续空参护栏（native 优先策略的安全网）──
     const emptyArgsStop = this.trackEmptyArgsRounds(args)
     if (emptyArgsStop) return emptyArgsStop
 
-    // ── 熔断判定（整批、按源顺序；对标现状 trackRepeatedFailures L1082-1114）──
     const stuckTool = this.trackRepeatedFailures(args.outcomes)
     if (stuckTool) {
       const notice =
@@ -56,7 +40,6 @@ export class StopPolicyExtension {
       return { stop: true, reason: 'breaker', notice }
     }
 
-    // ── maxToolRounds 上限提示（对标现状 L893-900）──
     if (args.toolRound >= args.maxToolRounds) {
       const notice =
         `\n\n[已达到最大工具调用轮数 ${args.maxToolRounds}] ` +
@@ -99,8 +82,6 @@ export class StopPolicyExtension {
   }
 
   /**
-   * 跟踪并检测重复失败的工具调用（逐字节对标现状 trackRepeatedFailures）。
-   *
    * 对每个非中断的工具结果计算签名（工具名 + 序列化参数）：
    * - 失败结果累加该签名的失败计数；
    * - 成功结果清零该签名计数（说明该调用已不再卡住）。
