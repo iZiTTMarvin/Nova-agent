@@ -16,6 +16,8 @@ import {
 } from '../../../runtime/agent'
 import { runWorkflow } from '../../../runtime/workflow'
 import { runXForgeLiveRuntime } from '../../../runtime/workflow/xforge'
+import { TurnDispatcher } from '../../../runtime/agent/turn'
+import { runSkillFork } from '../../../runtime/skills/runSkillFork'
 import type { XForgeRunService } from '../../../runtime/workflow/xforge/XForgeRunService'
 import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
@@ -309,13 +311,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setOnSkillRootAdded((dir) => {
     sessionStore.addGrantedSkillRoot(sessionId, dir)
   })
-  agentLoop.setSkillForkDeps({
-    modelClient,
-    parentEventBus: eventBus,
-    resolveTool: (name) => toolRegistry.getTool(name),
-    contextWindow,
-    supportsVision
-  })
   agentLoop.setSessionContext(sessionStore, sessionId)
   agentLoop.setActivePlanPath(session.activePlan?.path)
   agentLoop.setSwitchModeHandler(async (targetMode, _reason) => {
@@ -426,79 +421,94 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   })
   agentLoop.setCheckpointManager(checkpointManager)
 
-  agentLoop.setWorkflowRunner(async (scriptName, args, opts) => {
-    if (session.mode !== 'compose') {
-      getWorkspaceService().setMode({ mode: 'compose', sessionId, source: 'workflow' })
-      agentLoop.setMode('compose')
-    }
-    permissionManager.setPermissionPolicy('auto')
+  // 产品执行器统一装配进 TurnDispatcher：AgentLoop 只持有分派器，不再持有 runner 字段
+  agentLoop.setTurnDispatcher(new TurnDispatcher({
+    workflowRunner: async (scriptName, args, opts) => {
+      if (session.mode !== 'compose') {
+        getWorkspaceService().setMode({ mode: 'compose', sessionId, source: 'workflow' })
+        agentLoop.setMode('compose')
+      }
+      permissionManager.setPermissionPolicy('auto')
 
-    const outcome = await runWorkflow({
-      script: scriptName,
-      args: { requirement: args, task: args },
-      abortSignal: opts?.abortSignal,
-      assertExecutionCurrent: () =>
-        !runRefs.runId ||
-        runRefs.executionGeneration === 0 ||
-        runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration),
-      deps: {
-        modelClient,
-        parentEventBus: eventBus,
-        resolveTool: (name) => toolRegistry.getTool(name),
-        resolveSkill: (name) => skillRegistry.get(name),
+      const outcome = await runWorkflow({
+        script: scriptName,
+        args: { requirement: args, task: args },
+        abortSignal: opts?.abortSignal,
+        assertExecutionCurrent: () =>
+          !runRefs.runId ||
+          runRefs.executionGeneration === 0 ||
+          runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration),
+        deps: {
+          modelClient,
+          parentEventBus: eventBus,
+          resolveTool: (name) => toolRegistry.getTool(name),
+          resolveSkill: (name) => skillRegistry.get(name),
+          workspaceRoot: projectPath,
+          // 按 run 隔离的子代理桥接（运行期 runRefs.runId 已分配）
+          permissionBridge: runRefs.runId
+            ? subAgentBridgeRegistry.getOrCreate(runRefs.runId)
+            : defaultSubAgentPermissionBridge,
+          checkpointManager,
+          contextWindow,
+          supportsVision,
+          mode: 'compose',
+          sessionId
+        }
+      })
+
+      if (outcome.status === 'completed') {
+        const summary =
+          typeof outcome.result === 'string'
+            ? outcome.result
+            : `编排完成（runId=${outcome.runId}）\n${JSON.stringify(outcome.result, null, 2)}`
+        return { summary }
+      }
+      if (outcome.status === 'cancelled') {
+        return { summary: `编排已取消（runId=${outcome.runId}）` }
+      }
+      throw new Error(outcome.error || `编排失败（runId=${outcome.runId}）`)
+    },
+
+    xforgeRunner: async (request, opts) => {
+      const persistedGoal = runCoordinator
+        .getSnapshot(runRefs.runId)
+        ?.xforge?.mainSession.goal.trim()
+      const result = await runXForgeLiveRuntime({
+        runId: runRefs.runId,
+        request: persistedGoal || request,
+        explicitFullDev: opts.explicitFullDev,
         workspaceRoot: projectPath,
-        // 按 run 隔离的子代理桥接（运行期 runRefs.runId 已分配）
-        permissionBridge: runRefs.runId
-          ? subAgentBridgeRegistry.getOrCreate(runRefs.runId)
-          : defaultSubAgentPermissionBridge,
+        modelClient: modelPool,
+        parentEventBus: eventBus,
+        parentMessageId: opts.messageId,
+        toolRegistry,
+        skillRegistry,
         checkpointManager,
+        committer: xforgeService.createExecutionCommitter(runRefs.executionGeneration),
+        askQuestion: askQuestionHandler,
+        abortSignal: opts.abortSignal,
+        assertExecutionCurrent: () =>
+          runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration),
         contextWindow,
         supportsVision,
-        mode: 'compose',
-        sessionId
-      }
-    })
+        readState,
+        initializeWorkspaceBaseline: !runRefs.resumableXForge
+      })
+      return { summary: result.summary }
+    },
 
-    if (outcome.status === 'completed') {
-      const summary =
-        typeof outcome.result === 'string'
-          ? outcome.result
-          : `编排完成（runId=${outcome.runId}）\n${JSON.stringify(outcome.result, null, 2)}`
-      return { summary }
-    }
-    if (outcome.status === 'cancelled') {
-      return { summary: `编排已取消（runId=${outcome.runId}）` }
-    }
-    throw new Error(outcome.error || `编排失败（runId=${outcome.runId}）`)
-  })
-
-  agentLoop.setXForgeRunner(async (request, opts) => {
-    const persistedGoal = runCoordinator
-      .getSnapshot(runRefs.runId)
-      ?.xforge?.mainSession.goal.trim()
-    const result = await runXForgeLiveRuntime({
-      runId: runRefs.runId,
-      request: persistedGoal || request,
-      explicitFullDev: opts.explicitFullDev,
-      workspaceRoot: projectPath,
-      modelClient: modelPool,
-      parentEventBus: eventBus,
-      parentMessageId: opts.messageId,
-      toolRegistry,
-      skillRegistry,
-      checkpointManager,
-      committer: xforgeService.createExecutionCommitter(runRefs.executionGeneration),
-      askQuestion: askQuestionHandler,
-      abortSignal: opts.abortSignal,
-      assertExecutionCurrent: () =>
-        runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration),
-      contextWindow,
-      supportsVision,
-      readState,
-      initializeWorkspaceBaseline: !runRefs.resumableXForge
-    })
-    return { summary: result.summary }
-  })
+    skillForkRunner: (request) =>
+      runSkillFork(
+        {
+          modelClient,
+          parentEventBus: eventBus,
+          resolveTool: (name) => toolRegistry.getTool(name),
+          contextWindow,
+          supportsVision
+        },
+        request
+      )
+  }))
 
   return {
     eventBus,

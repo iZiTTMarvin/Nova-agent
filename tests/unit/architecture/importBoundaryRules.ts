@@ -38,6 +38,8 @@ export const FORBIDDEN_LAYER_EDGES: Readonly<Record<SrcLayer, readonly SrcLayer[
 export const RULE_RUNTIME_RUN_WORKFLOW = 'runtime-run-cannot-import-workflow'
 export const RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC = 'main-services-cannot-import-ipc'
 export const RULE_MAIN_AGENT_CANNOT_IMPORT_IPC = 'main-agent-cannot-import-ipc'
+export const RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS =
+  'agent-loop-cannot-import-product-executors'
 
 export function layerCannotImportRule(from: SrcLayer, to: SrcLayer): string {
   return `${from}-cannot-import-${to}`
@@ -74,6 +76,19 @@ export function isRuntimeWorkflowPath(repoRelativePosix: string): boolean {
   return toRepoPosixPath(repoRelativePosix).startsWith('src/runtime/workflow/')
 }
 
+export function isAgentLoopPath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix) === 'src/runtime/agent/AgentLoop.ts'
+}
+
+/** 产品执行器子树：AgentLoop 只能经 TurnDispatcher 间接使用，不得直接依赖 */
+export function isProductExecutorPath(repoRelativePosix: string): boolean {
+  const normalized = toRepoPosixPath(repoRelativePosix)
+  return (
+    normalized.startsWith('src/runtime/skills/') ||
+    normalized.startsWith('src/runtime/workflow/')
+  )
+}
+
 export function violationKey(edge: Pick<BoundaryViolation, 'from' | 'to' | 'rule'>): string {
   return `${edge.from}\0${edge.to}\0${edge.rule}`
 }
@@ -101,6 +116,9 @@ export function rulesForResolvedEdge(fromFile: string, toFile: string): string[]
   }
   if (isMainAgentPath(from) && isMainIpcPath(to)) {
     rules.push(RULE_MAIN_AGENT_CANNOT_IMPORT_IPC)
+  }
+  if (isAgentLoopPath(from) && isProductExecutorPath(to)) {
+    rules.push(RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS)
   }
   return rules
 }

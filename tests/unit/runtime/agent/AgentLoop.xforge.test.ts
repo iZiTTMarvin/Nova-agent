@@ -6,7 +6,7 @@ import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { ModelClient } from '../../../../src/runtime/model/ModelClient'
 import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
-import { resolveAgentTurnRoute } from '../../../../src/runtime/agent/turn'
+import { resolveAgentTurnRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
 
 const roots: string[] = []
 
@@ -48,7 +48,7 @@ describe('AgentLoop native XForge dispatch', () => {
     const loop = new AgentLoop(neverCalledModel(), new EventBus())
     loop.setMode('compose')
     const runner = vi.fn(async () => ({ summary: 'XForge completed' }))
-    loop.setXForgeRunner(runner)
+    loop.setTurnDispatcher(new TurnDispatcher({ xforgeRunner: runner }))
 
     const route = resolveAgentTurnRoute({
       content: input,
@@ -74,7 +74,7 @@ describe('AgentLoop native XForge dispatch', () => {
     const loop = new AgentLoop(neverCalledModel(), new EventBus())
     loop.setMode('compose')
     const runner = vi.fn(async () => ({ summary: 'legacy completed' }))
-    loop.setWorkflowRunner(runner)
+    loop.setTurnDispatcher(new TurnDispatcher({ workflowRunner: runner }))
 
     const route = resolveAgentTurnRoute({
       content: '/legacy-flow 继续旧编排',
@@ -118,10 +118,10 @@ describe('AgentLoop route 执行能力 fail-closed', () => {
     loop.dispose()
   })
 
-  it('skill_fork route 缺少 deps 时抛错', async () => {
+  it('skill_fork route 缺少执行器时抛错', async () => {
     const loop = new AgentLoop(neverCalledModel(), new EventBus())
     const route = { kind: 'skill_fork' as const, skill: { name: 'f' } as never, args: '' }
-    await expect(loop.sendMessage('/f', route)).rejects.toThrow(/skillForkDeps/)
+    await expect(loop.sendMessage('/f', route)).rejects.toThrow(/skillForkRunner/)
     expect(loop.getState()).toBe('idle')
     loop.dispose()
   })

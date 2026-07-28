@@ -36,13 +36,13 @@ import { SystemPromptBuilder } from './promptBuilder/SystemPromptBuilder'
 import { buildSessionContext } from './context/sessionContext'
 import { calculateContextBreakdown } from './context/contextBreakdownCalculator'
 import { preferredToolDialect, type ToolDialect } from '../model/dialect'
-import { runSkillFork, type RunSkillForkDeps } from '../skills/runSkillFork'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { FileEffectRecorder, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 
+import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
@@ -298,8 +298,6 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 当前轮次 messageId（cancel / onCancel 使用） */
   private currentMessageId: string | null = null
 
-  /** skill fork 执行依赖（由 agentHandler 注入） */
-  private skillForkDeps: RunSkillForkDeps | null = null
   /**
    * 本会话已触发 skill 的目录集合，随 executeBatch 透传给只读工具。
    * 写入口仅限 addSkillRoot（inject / fork / invoke_skill），不接受模型参数直接注入。
@@ -310,24 +308,13 @@ export class AgentLoop implements IdleCompactionTarget {
   /** 新 skill 根登记时通知宿主持久化（restore 路径不触发） */
   private onSkillRootAdded: ((dir: string) => void) | null = null
   /**
-   * 编排脚本 runner（由 agentHandler 注入）。
-   * 返回摘要文本推给 UI；失败抛错由 sendMessage 捕获。
-   * opts.abortSignal 是本轮 AgentLoop 的取消信号——runner 必须把它接到
-   * runWorkflow，否则停止按钮无法终止编排 run（会全局卡死 send-message）。
+   * 产品分派器：按已解析 route 调用 XForge / Workflow / Fork 执行器。
+   * 默认无执行器（仅 agent route 可用，供子 agent / 测试裸构造）；
+   * 宿主（AgentRuntimeFactory / 测试）通过 setTurnDispatcher 装配完整执行器。
+   * dispatcher 只返回数据，不拥有生命周期；abortSignal 在分派时透传——
+   * 停止按钮 → cancel() → abortController.abort()，执行器必须消费该信号才能真正终止。
    */
-  private workflowRunner:
-    | ((
-        scriptName: string,
-        args: string,
-        opts?: { abortSignal?: AbortSignal }
-      ) => Promise<{ summary: string }>)
-    | null = null
-  private xforgeRunner:
-    | ((
-        request: string,
-        opts: { abortSignal?: AbortSignal; messageId: string; explicitFullDev: boolean }
-      ) => Promise<{ summary: string }>)
-    | null = null
+  private turnDispatcher = new TurnDispatcher({})
   private modeInstructionProvider: (() => string) | null = null
 
   /**
@@ -661,34 +648,9 @@ export class AgentLoop implements IdleCompactionTarget {
     this.onSkillRootAdded = cb
   }
 
-  /** 注入 fork skill 执行依赖 */
-  setSkillForkDeps(deps: RunSkillForkDeps | null): void {
-    this.skillForkDeps = deps
-  }
-
-  /** 注入编排脚本 runner（/br-full-dev 等 workflow skill） */
-  setWorkflowRunner(
-    runner:
-      | ((
-          scriptName: string,
-          args: string,
-          opts?: { abortSignal?: AbortSignal }
-        ) => Promise<{ summary: string }>)
-      | null
-  ): void {
-    this.workflowRunner = runner
-  }
-
-  /** 注入原生 XForge Stage Pipeline；自然语言与 /br-full-dev 共用此入口。 */
-  setXForgeRunner(
-    runner:
-      | ((
-          request: string,
-          opts: { abortSignal?: AbortSignal; messageId: string; explicitFullDev: boolean }
-        ) => Promise<{ summary: string }>)
-      | null
-  ): void {
-    this.xforgeRunner = runner
+  /** 装配产品分派器（XForge / Workflow / Fork 执行器由宿主构造） */
+  setTurnDispatcher(dispatcher: TurnDispatcher): void {
+    this.turnDispatcher = dispatcher
   }
 
   /**
@@ -858,86 +820,52 @@ export class AgentLoop implements IdleCompactionTarget {
 
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
 
-    // 按已解析 route 穷举分派（路由在 startRun 前由 resolveAgentTurnRoute 确定）
-    if (route.kind === 'xforge') {
-      const result = await this.xforgeRunner!(
-        route.request,
-        {
-          abortSignal: this.abortController?.signal,
-          messageId,
-          explicitFullDev: route.explicitFullDev
-        }
-      )
-      this.context.push({ role: 'assistant', content: result.summary })
-      this.eventBus.emit({ type: 'text_delta', messageId, delta: result.summary })
-      return this.settledTurnOutcome()
+    // 编排入口自动切入 compose：模式归 AgentLoop 所有，dispatcher 不修改状态
+    if (route.kind === 'workflow' && this.mode !== 'compose') {
+      this.setMode('compose')
     }
 
-    if (route.kind === 'workflow') {
-      // 编排入口：自动切入 compose，跑脚本，摘要推 UI
-      if (this.mode !== 'compose') {
-        this.setMode('compose')
+    // 产品分派下沉到 TurnDispatcher（路由在 startRun 前由 resolveAgentTurnRoute 确定）。
+    // dispatcher 只返回数据；上下文写入、事件与终态仍由本类持有。
+    const dispatched = await this.turnDispatcher.dispatch(content, route, {
+      messageId,
+      abortSignal: this.abortController?.signal,
+      fork: {
+        workingDir: this.workingDir ?? process.cwd(),
+        readState: this.readState,
+        shellPath: this.shellPath,
+        binDirs: this.binDirs,
+        workspacePath: this.workingDir ?? undefined
       }
-      // 透传本轮取消信号：停止按钮 → cancel() → abortController.abort()
-      // → runWorkflow 内部 cancelWorkflow，编排 run 才能真正终止。
-      const wfResult = await this.workflowRunner!(route.scriptName, route.args, {
-        abortSignal: this.abortController?.signal
-      })
-      this.context.push({ role: 'assistant', content: wfResult.summary })
-      this.eventBus.emit({ type: 'text_delta', messageId, delta: wfResult.summary })
+    })
+
+    if (dispatched.kind === 'handled') {
+      // 执行器已完成产品路径：摘要写入上下文并推给 UI，不进入 Agent kernel
+      this.context.push({ role: 'assistant', content: dispatched.assistantSummary })
+      this.eventBus.emit({ type: 'text_delta', messageId, delta: dispatched.assistantSummary })
       return this.settledTurnOutcome()
     }
 
-    if (route.kind === 'skill_fork') {
-      const forkResult = await runSkillFork(this.skillForkDeps!, {
-        skill: route.skill,
-        args: route.args,
-        ctx: {
-          workingDir: this.workingDir ?? process.cwd(),
-          readState: this.readState,
-          shellPath: this.shellPath,
-          binDirs: this.binDirs
-        },
-        templateContext: { workspacePath: this.workingDir ?? undefined }
-      })
-      this.context.push({ role: 'assistant', content: forkResult.summary })
-      this.eventBus.emit({ type: 'text_delta', messageId, delta: forkResult.summary })
-      return this.settledTurnOutcome()
-    }
-
-    // agent 路径：按 dispatch 子类型准备上下文，然后进入 runAgentLoop
-    const dispatch = route.dispatch
-
-    if (dispatch.kind === 'inject') {
+    // continue：按规范化输入准备上下文，然后进入 runAgentLoop
+    if (dispatched.grantedSkillRoot) {
       // slash / 自动路由 inject：把该 skill 目录登记为额外只读根
-      if (dispatch.skillDirectory) {
-        this.addSkillRoot(dispatch.skillDirectory)
-      }
-      this.context.push({ role: 'assistant', content: dispatch.assistantContent })
+      this.addSkillRoot(dispatched.grantedSkillRoot)
+    }
+    if (dispatched.assistantPrelude !== undefined) {
+      this.context.push({ role: 'assistant', content: dispatched.assistantPrelude })
+    }
+    userText = dispatched.userText
+    if (typeof dispatched.userContent === 'string') {
       this.context.push({
         role: 'user',
-        content: withPrefix(`${dispatch.userContent}\n\n${modeInstruction}`)
+        content: withPrefix(`${dispatched.userContent}\n\n${modeInstruction}`)
       })
-      userText = dispatch.userContent
-    } else if (dispatch.kind === 'system_notice') {
-      this.context.push({
-        role: 'user',
-        content: withPrefix(`${dispatch.text}\n\n${modeInstruction}`)
-      })
-      userText = dispatch.text
     } else {
-      // passthrough：用户消息 + 模式指令
-      let userContent: string | ContentBlock[]
-      if (typeof content === 'string') {
-        userContent = withPrefix(`${content}\n\n${modeInstruction}`)
-      } else {
-        // ContentBlock[]（含图片）：sessionPrefix 作为首个 text block 插入最前面
-        const blocks = sessionPrefix
-          ? [{ type: 'text' as const, text: sessionPrefix }, ...content, { type: 'text' as const, text: modeInstruction }]
-          : [...content, { type: 'text' as const, text: modeInstruction }]
-        userContent = blocks
-      }
-      this.context.push({ role: 'user', content: userContent })
+      // ContentBlock[]（含图片）：sessionPrefix 作为首个 text block 插入最前面
+      const blocks = sessionPrefix
+        ? [{ type: 'text' as const, text: sessionPrefix }, ...dispatched.userContent, { type: 'text' as const, text: modeInstruction }]
+        : [...dispatched.userContent, { type: 'text' as const, text: modeInstruction }]
+      this.context.push({ role: 'user', content: blocks })
     }
 
     // 每轮 user 消息递增压缩冷却计数
@@ -1056,30 +984,11 @@ export class AgentLoop implements IdleCompactionTarget {
   }
 
   /**
-   * 校验已解析 route 是否具备执行能力。
-   * 非 agent route 必须已注入对应执行器，否则 fail closed。
-   * 仅做能力断言，不修改任何状态、不产生副作用，可在轮次副作用前安全调用。
+   * 校验已解析 route 是否具备执行能力（委托 TurnDispatcher 的能力断言）。
+   * 不产生副作用，可在轮次副作用前安全调用。
    */
   private assertRouteExecutable(route: AgentTurnRoute): void {
-    switch (route.kind) {
-      case 'xforge':
-        if (!this.xforgeRunner) {
-          throw new Error('route 为 xforge 但未注入 xforgeRunner')
-        }
-        break
-      case 'workflow':
-        if (!this.workflowRunner) {
-          throw new Error('route 为 workflow 但未注入 workflowRunner')
-        }
-        break
-      case 'skill_fork':
-        if (!this.skillForkDeps) {
-          throw new Error('route 为 skill_fork 但未注入 skillForkDeps')
-        }
-        break
-      case 'agent':
-        break
-    }
+    this.turnDispatcher.assertRouteExecutable(route)
   }
 
   /**

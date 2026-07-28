@@ -11,6 +11,7 @@ import {
   RULE_RUNTIME_RUN_WORKFLOW,
   RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC,
   RULE_MAIN_AGENT_CANNOT_IMPORT_IPC,
+  RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS,
   toRepoPosixPath,
   type AllowedBoundaryDebt,
   type BoundaryViolation
@@ -237,6 +238,36 @@ describe('import boundary layer rules (fixtures)', () => {
       ]))
     })
     expectOnlyRule(result.violations, RULE_MAIN_AGENT_CANNOT_IMPORT_IPC)
+  })
+
+  it('AgentLoop 不能直接依赖 skills / workflow 产品执行器', () => {
+    const files = virtualExists(new Set([
+      'src/runtime/agent/AgentLoop.ts',
+      'src/runtime/skills/runSkillFork.ts',
+      'src/runtime/workflow/index.ts',
+      'src/runtime/agent/turn/resolveAgentTurnRoute.ts'
+    ]))
+    const skillEdge = collectViolationsFromSource({
+      fromFile: 'src/runtime/agent/AgentLoop.ts',
+      sourceText: `import { runSkillFork } from '../skills/runSkillFork'`,
+      exists: files
+    })
+    expectOnlyRule(skillEdge.violations, RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS)
+
+    const workflowEdge = collectViolationsFromSource({
+      fromFile: 'src/runtime/agent/AgentLoop.ts',
+      sourceText: `import { runWorkflow } from '../workflow'`,
+      exists: files
+    })
+    expectOnlyRule(workflowEdge.violations, RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS)
+
+    // 路由真源允许复用 invokeSkill：规则只约束 AgentLoop.ts 本身
+    const routeEdge = collectViolationsFromSource({
+      fromFile: 'src/runtime/agent/turn/resolveAgentTurnRoute.ts',
+      sourceText: `import { runSkillFork } from '../../skills/runSkillFork'`,
+      exists: files
+    })
+    expect(routeEdge.violations).toEqual([])
   })
 
   it('别名路径与 Windows 风格 from 路径得到同一规则结果', () => {

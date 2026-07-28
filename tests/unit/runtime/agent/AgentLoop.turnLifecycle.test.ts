@@ -18,7 +18,8 @@ import type { HookEvent, HookEventResultMap, HookPayload } from '../../../../src
 import type { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { SkillManifest } from '../../../../src/runtime/skills/types'
-import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { runSkillFork } from '../../../../src/runtime/skills/runSkillFork'
+import { agentRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
 
 const loops: AgentLoop[] = []
 
@@ -154,11 +155,15 @@ describe('终态协议：模型终态错误', () => {
 describe('终态协议：分派执行器抛错', () => {
   it.each([
     ['xforge', (loop: AgentLoop) => {
-      loop.setXForgeRunner(async () => { throw new Error('xforge boom') })
+      loop.setTurnDispatcher(new TurnDispatcher({
+        xforgeRunner: async () => { throw new Error('xforge boom') }
+      }))
       return { kind: 'xforge' as const, request: 'x', explicitFullDev: false }
     }],
     ['workflow', (loop: AgentLoop) => {
-      loop.setWorkflowRunner(async () => { throw new Error('workflow boom') })
+      loop.setTurnDispatcher(new TurnDispatcher({
+        workflowRunner: async () => { throw new Error('workflow boom') }
+      }))
       return { kind: 'workflow' as const, scriptName: 's', args: '' }
     }]
   ])('%s runner 抛错 → failed，error 恰好一个且无 message_end，checkpoint 关闭', async (_name, setup) => {
@@ -182,11 +187,17 @@ describe('终态协议：分派执行器抛错', () => {
     const client = new MockModelClient()
     const { loop, events } = createLoop(client)
     const cp = attachCheckpoint(loop)
-    loop.setSkillForkDeps({
-      modelClient: client,
-      parentEventBus: loop.getEventBus(),
-      resolveTool: () => { throw new Error('fork boom') }
-    })
+    loop.setTurnDispatcher(new TurnDispatcher({
+      skillForkRunner: (request) =>
+        runSkillFork(
+          {
+            modelClient: client,
+            parentEventBus: loop.getEventBus(),
+            resolveTool: () => { throw new Error('fork boom') }
+          },
+          request
+        )
+    }))
     const skill = {
       name: 'f',
       description: 'f',
@@ -209,10 +220,12 @@ describe('终态协议：分派执行器抛错', () => {
     const client = new MockModelClient()
     const { loop, events } = createLoop(client)
     attachCheckpoint(loop)
-    loop.setWorkflowRunner(async () => {
-      loop.cancel()
-      throw new Error('workflow aborted')
-    })
+    loop.setTurnDispatcher(new TurnDispatcher({
+      workflowRunner: async () => {
+        loop.cancel()
+        throw new Error('workflow aborted')
+      }
+    }))
 
     const outcome = await loop.sendMessage('/s', { kind: 'workflow', scriptName: 's', args: '' })
 
@@ -307,7 +320,9 @@ describe('终态协议：hook 失败', () => {
     const { loop, events } = createLoop(client)
     const cp = attachCheckpoint(loop)
     loop.setHookManager(new ThrowingHookManager('onError', 'hook error boom'))
-    loop.setWorkflowRunner(async () => { throw new Error('original boom') })
+    loop.setTurnDispatcher(new TurnDispatcher({
+      workflowRunner: async () => { throw new Error('original boom') }
+    }))
 
     const outcome = await loop.sendMessage('/s', { kind: 'workflow', scriptName: 's', args: '' })
 
