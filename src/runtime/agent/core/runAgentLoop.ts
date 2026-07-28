@@ -48,9 +48,9 @@ function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown
 }
 
 /**
- * runAgentLoop 入参（PRD §6.4 RunAgentLoopParams）。
+ * runAgentLoop 入参。
  * Facade 装配后传入。executeBatch 由 Facade 构建 options（注入
- * permissionExtension / toolPostProcessExtension 产出的 checkPermission / applyTruncation）。
+ * PermissionCoordinator 的权限回调与截断回调 applyTruncation）。
  */
 export interface RunAgentLoopParams {
   messageId: string

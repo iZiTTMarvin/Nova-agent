@@ -10,13 +10,13 @@ import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
+import type { PermissionManager } from '../permissions/PermissionManager'
 import {
-  isSafeAutomaticModeTransition,
-  type PermissionManager
-} from '../permissions/PermissionManager'
+  PermissionCoordinator,
+  type ToolAuthorizationPolicy
+} from '../permissions/PermissionCoordinator'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { Mode } from '../../shared/session/types'
-import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
@@ -49,28 +49,9 @@ import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } fr
 import { StreamProcessor } from './stream/StreamProcessor'
 import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { createCompactionExtension } from './extensions/compactionExtension'
-import { createPermissionExtension } from './extensions/permissionExtension'
 import { createToolPostProcessExtension } from './extensions/toolPostProcessExtension'
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
-
-/** plan 模式下仅允许只读和 plan-artifact 能力的工具 */
-function isPlanModeBlocked(toolName: string): boolean {
-  const cap = getToolCapability(toolName)
-  return cap !== 'readonly' && cap !== 'plan-artifact'
-}
-
-/**
- * 表示权限请求被 cancel 中断的 sentinel 错误。
- * 用于 checkPermission 区分"用户主动拒绝"（产生"权限拒绝"工具结果）
- * 和"流程被取消"（不产生任何 tool_result，不污染 context 与持久化）。
- */
-class PermissionAbortedError extends Error {
-  constructor() {
-    super('permission request aborted by cancel')
-    this.name = 'PermissionAbortedError'
-  }
-}
 
 export class AgentLoop implements IdleCompactionTarget {
   /** 模型客户端池，统一包装成 ModelClientPool（即使无 fallback 也包一层，对外接口不变） */
@@ -148,11 +129,8 @@ export class AgentLoop implements IdleCompactionTarget {
     this.ctx.dialect = value
   }
 
-  /** 权限决策引擎（可选） */
-  private permissionManager: PermissionManager | null = null
-  private toolAuthorizationPolicy:
-    | ((toolName: string, args: Record<string, unknown>) => { allowed: boolean; reason: string })
-    | null = null
+  /** 权限交互协调器：规则判定委托 PermissionManager，pending resolver 的唯一 owner */
+  private readonly permissionCoordinator: PermissionCoordinator
 
   /** 会话级状态存储（透传给 todo_write 等需要写会话元数据的工具） */
   private get sessionStore(): SessionStore | null {
@@ -185,12 +163,6 @@ export class AgentLoop implements IdleCompactionTarget {
   private set skillsTokenBudget(value: number) {
     this.ctx.skillsTokenBudget = value
   }
-
-  /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
-  private pendingPermissions: Map<
-    string,
-    { resolve: (granted: boolean) => void; reject: (err: Error) => void }
-  > = new Map()
 
   /** 最大工具调用轮数（可动态调整） */
   private maxToolRounds: number
@@ -366,6 +338,10 @@ export class AgentLoop implements IdleCompactionTarget {
         }
       })
     this.eventBus = eventBus
+    this.permissionCoordinator = new PermissionCoordinator({
+      emit: (event) => this.eventBus.emit(event),
+      getMode: () => this.mode
+    })
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       systemPromptLayers: config?.systemPromptLayers,
@@ -574,7 +550,7 @@ export class AgentLoop implements IdleCompactionTarget {
 
   /** 设置权限决策引擎 */
   setPermissionManager(manager: PermissionManager): void {
-    this.permissionManager = manager
+    this.permissionCoordinator.setPermissionManager(manager)
   }
 
   /** 注入写工具使用的持久化副作用协议。 */
@@ -586,10 +562,8 @@ export class AgentLoop implements IdleCompactionTarget {
    * 叠加在基础 PermissionManager 之前的运行时权限策略。
    * 用于阶段工作流等更窄的能力边界；拒绝项不会再弹基础权限确认。
    */
-  setToolAuthorizationPolicy(
-    policy: ((toolName: string, args: Record<string, unknown>) => { allowed: boolean; reason: string }) | null
-  ): void {
-    this.toolAuthorizationPolicy = policy
+  setToolAuthorizationPolicy(policy: ToolAuthorizationPolicy | null): void {
+    this.permissionCoordinator.setToolAuthorizationPolicy(policy)
   }
 
   /**
@@ -893,8 +867,10 @@ export class AgentLoop implements IdleCompactionTarget {
         checkpointManager: this.checkpointManager,
         fileEffectRecorder: this.fileEffectRecorder,
         abortSignal: this.abortController?.signal,
-        checkPermission: createPermissionExtension(this),
-        checkBatchPermission: (items, msgId) => this.checkBatchPermission(items, msgId),
+        checkPermission: (toolName, args, msgId, toolCallId) =>
+          this.permissionCoordinator.checkPermission(toolName, args, msgId, toolCallId),
+        checkBatchPermission: (items, msgId) =>
+          this.permissionCoordinator.checkBatchPermission(items, msgId),
         emit: (event) => this.eventBus.emit(event),
         applyTruncation: createToolPostProcessExtension(this),
         maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
@@ -1206,12 +1182,8 @@ export class AgentLoop implements IdleCompactionTarget {
       this.abortController?.abort()
       // onCancel 改由 RunCoordinator 在 commitTerminal 时 exactly-once 触发；
       // 此处不再直接 hook，避免与 finishMessageRound 双触发。
-      // 拒绝所有等待中的权限请求（用 PermissionAbortedError 而非 resolve(false)，
-      // 这样 checkPermission 不会把它当成"用户拒绝"生成权限拒绝 tool_result）
-      for (const [id, entry] of this.pendingPermissions) {
-        entry.reject(new PermissionAbortedError())
-        this.pendingPermissions.delete(id)
-      }
+      // 中止所有等待中的权限请求（PermissionAbortedError 语义，不生成权限拒绝 tool_result）
+      this.permissionCoordinator.abortPending()
     }
   }
 
@@ -1236,10 +1208,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.idleTimer = null
 
     // 兜底清理 pending permissions（cancel 在 idle 时跳过这一步）
-    for (const [, entry] of this.pendingPermissions) {
-      entry.reject(new PermissionAbortedError())
-    }
-    this.pendingPermissions.clear()
+    this.permissionCoordinator.abortPending()
 
     // 如果还在 running，也走 cancel 流程触发 onCancel hook
     if (this.state === 'running') {
@@ -1269,221 +1238,18 @@ export class AgentLoop implements IdleCompactionTarget {
   }
 
   /**
-   * 批量权限检查入口
+   * 批量权限检查入口（稳定代理：规则判定与交互等待由 PermissionCoordinator 持有）
    */
   public async checkBatchPermission(
     items: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>,
     messageId: string
   ): Promise<Map<string, { allowed: boolean; reason: string; aborted?: boolean }>> {
-    const results = new Map<string, { allowed: boolean; reason: string; aborted?: boolean }>()
-
-    if (items.length === 0) {
-      return results
-    }
-
-    const remainingItems = items.filter(item => {
-      const decision = this.toolAuthorizationPolicy?.(item.toolName, item.args)
-      if (!decision || decision.allowed) return true
-      results.set(item.toolCallId, decision)
-      return false
-    })
-
-    if (remainingItems.length === 0) return results
-
-    // 没有 PermissionManager 时，全部放行
-    if (!this.permissionManager) {
-      for (const item of remainingItems) {
-        if (
-          item.toolName === 'switch_mode' &&
-          !isSafeAutomaticModeTransition(this.mode, item.args.mode)
-        ) {
-          results.set(item.toolCallId, {
-            allowed: false,
-            reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
-          })
-        } else if (this.mode === 'plan' && isPlanModeBlocked(item.toolName)) {
-          results.set(item.toolCallId, {
-            allowed: false,
-            reason: `当前为 plan 模式，"${item.toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
-          })
-        } else {
-          results.set(item.toolCallId, { allowed: true, reason: '' })
-        }
-      }
-      return results
-    }
-
-    // 逐个匹配本地规则 (持久化与模式规则)
-    const askItems: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string }> = []
-    
-    for (const item of remainingItems) {
-      const result = this.permissionManager.check({ toolName: item.toolName, args: item.args }, this.mode)
-      if (result.decision === 'allow') {
-        results.set(item.toolCallId, { allowed: true, reason: '' })
-      } else if (result.decision === 'deny') {
-        results.set(item.toolCallId, { allowed: false, reason: result.reason })
-      } else {
-        // decision === 'ask'
-        askItems.push({
-          toolCallId: item.toolCallId,
-          toolName: item.toolName,
-          args: item.args,
-          riskLevel: result.riskLevel,
-          reason: result.reason
-        })
-      }
-    }
-
-    // 如果没有需要询问用户的项，直接返回
-    if (askItems.length === 0) {
-      return results
-    }
-
-    // 对需要询问的项，合并成一个批量 permission_request 弹卡片
-    const requestId = randomUUID()
-    const permissionResponse = this.waitForPermissionResponse(requestId)
-
-    // 收集所有需要 ask 的命令文本
-    const commands: string[] = []
-    let maxRiskLevel: 'low' | 'medium' | 'high' = 'low'
-    const riskLevelsWeight = { low: 1, medium: 2, high: 3 }
-    const reasons: string[] = []
-
-    for (const item of askItems) {
-      const cmd = typeof item.args.command === 'string' ? item.args.command : JSON.stringify(item.args)
-      commands.push(cmd)
-      
-      // 提取最高风险等级
-      if (riskLevelsWeight[item.riskLevel] > riskLevelsWeight[maxRiskLevel]) {
-        maxRiskLevel = item.riskLevel
-      }
-      reasons.push(item.reason)
-    }
-
-    // 合并说明文案
-    const combinedReason = Array.from(new Set(reasons)).join('; ')
-
-    this.eventBus.emit({
-      type: 'permission_request',
-      messageId,
-      requestId,
-      toolName: 'bash', // 既然合并了，以主类型 bash 描述
-      args: askItems[0].args, // 兼容旧字段
-      riskLevel: maxRiskLevel,
-      reason: combinedReason,
-      commands, // 传入批量命令列表
-      // 内联放行：携带本批命令对应的 toolCallId 列表，
-      // 渲染层据此把放行卡片直接挂到消息流中对应命令卡片上（锚点取末尾一张）。
-      toolCallIds: askItems.map(item => item.toolCallId)
-    })
-
-    try {
-      const granted = await permissionResponse
-      for (const item of askItems) {
-        if (!granted) {
-          results.set(item.toolCallId, { allowed: false, reason: `用户拒绝了 "${item.toolName}" 工具的执行请求` })
-        } else {
-          results.set(item.toolCallId, { allowed: true, reason: '' })
-        }
-      }
-      return results
-    } catch (err) {
-      if (err instanceof PermissionAbortedError) {
-        for (const item of askItems) {
-          results.set(item.toolCallId, { allowed: false, reason: '', aborted: true })
-        }
-        return results
-      }
-      throw err
-    }
-  }
-
-  /**
-   * 权限检查入口
-   * 返回：
-   * - { allowed: true }：可执行
-   * - { allowed: false, reason }：用户主动拒绝或规则拒绝，需把"权限拒绝: {reason}"作为 tool_result 回传模型
-   * - { aborted: true }：流程被 cancel 打断，调用方应跳过该工具的 tool_result 与 context 注入
-   */
-  private async checkPermission(
-    toolName: string,
-    args: Record<string, unknown>,
-    messageId: string,
-    toolCallId?: string
-  ): Promise<{ allowed: boolean; reason: string; aborted?: boolean }> {
-    const overlay = this.toolAuthorizationPolicy?.(toolName, args)
-    if (overlay && !overlay.allowed) return overlay
-
-    // 没有 PermissionManager 时退化为简单 plan 模式检查
-    if (!this.permissionManager) {
-      if (
-        toolName === 'switch_mode' &&
-        !isSafeAutomaticModeTransition(this.mode, args.mode)
-      ) {
-        return {
-          allowed: false,
-          reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
-        }
-      }
-      if (this.mode === 'plan' && isPlanModeBlocked(toolName)) {
-        return {
-          allowed: false,
-          reason: `当前为 plan 模式，"${toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
-        }
-      }
-      return { allowed: true, reason: '' }
-    }
-
-    const result = this.permissionManager.check({ toolName, args }, this.mode)
-
-    if (result.decision === 'allow') {
-      return { allowed: true, reason: '' }
-    }
-
-    if (result.decision === 'deny') {
-      return { allowed: false, reason: result.reason }
-    }
-
-    // decision === 'ask'：发射 permission_request 事件，等待用户决策
-    const requestId = randomUUID()
-    const permissionResponse = this.waitForPermissionResponse(requestId)
-
-    this.eventBus.emit({
-      type: 'permission_request',
-      messageId,
-      requestId,
-      toolName,
-      args,
-      riskLevel: result.riskLevel,
-      reason: result.reason,
-      // 内联放行：单工具场景把自身 toolCallId 作为唯一锚点传给渲染层
-      ...(toolCallId ? { toolCallIds: [toolCallId] } : {})
-    })
-
-    try {
-      const granted = await permissionResponse
-      if (!granted) {
-        return { allowed: false, reason: `用户拒绝了 "${toolName}" 工具的执行请求` }
-      }
-      return { allowed: true, reason: '' }
-    } catch (err) {
-      if (err instanceof PermissionAbortedError) {
-        return { allowed: false, reason: '', aborted: true }
-      }
-      throw err
-    }
-  }
-
-  /** 等待用户对权限请求的响应；cancel 时会以 PermissionAbortedError reject */
-  private waitForPermissionResponse(requestId: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      this.pendingPermissions.set(requestId, { resolve, reject })
-    })
+    return this.permissionCoordinator.checkBatchPermission(items, messageId)
   }
 
   /** 当前 loop 是否拥有指定权限请求的 resolver。 */
   hasPendingPermission(requestId: string): boolean {
-    return this.pendingPermissions.has(requestId)
+    return this.permissionCoordinator.hasPendingPermission(requestId)
   }
 
   /**
@@ -1492,11 +1258,7 @@ export class AgentLoop implements IdleCompactionTarget {
    * @param granted 用户是否允许
    */
   respondPermission(requestId: string, granted: boolean): void {
-    const entry = this.pendingPermissions.get(requestId)
-    if (entry) {
-      this.pendingPermissions.delete(requestId)
-      entry.resolve(granted)
-    }
+    this.permissionCoordinator.respondPermission(requestId, granted)
   }
 
   /**
