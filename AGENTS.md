@@ -1,201 +1,89 @@
-# AGENTS.md
+# Nova Agent 工程规则
 
-本文件面向后续 AI Agent开发前理解项目，补充仓库 README 不易直接看出的工程惯例与命令细节。若与 README 冲突，先去开真实代码，就怕readme和本文件更新不及时。如果是开发准则，请优先阅读此文档。
+本文件是所有人类开发者与 Coding Agent 的强制入口。开始任何修改前，必须先阅读本文件；涉及架构、状态、公共契约、兼容或跨模块改动时，还必须阅读 [`docs/architecture/engineering-rules.md`](docs/architecture/engineering-rules.md)。
 
----
-## 重点：所有提出的方案，都必须遵循以下原则：对于项目最优、最干净、不能影响如何正常功能、不要缝缝补补的方案。切记不要缝缝补补，能根治尽可能根治，确保项目看起来不冗余、不乱，写的代码要易于程序员人类的可读性。
-修复bug、加功能、按照任务方案完成开发这些都不要在注释里写出来，例如：完成上下文压缩（P0-1）、问题：上下文混乱，旧实现做了什么，现在改为了什么。这种千万不要写，注释是高价值的内容，为了给我（开发者）看的，写清楚这个功能即可
+规则优先级：任务明确要求 > 本文件 > 详细工程规则 > 现有代码惯例。现有代码不因存在已久而自动成为正确范例。
 
-## 1. 项目本质
+## 不可破坏的边界
 
-- Electron 33 + React 18 + TypeScript 5 的**本地桌面 Agent**。
-- **差异化重心**：缓存感知上下文压缩、XForge（BuildRail 阶段自适应顺序工作流；施工真源见 `docs/todo/XForge实施方案.md`）与 Compose 共享基础设施（journal 断点续跑等）、会话树 + 文件 forward、SQLite 记忆层；工具链/权限等为基线能力。
-- 核心循环（AgentLoop / Tools / ModelClient / Permissions / Checkpoints）放在 `src/runtime/`，刻意不依赖 Electron API，以便单测。
-- 渲染层只通过类型化 IPC 与主进程通信，不直接操作文件或模型。
+1. **一项职责，一个 Owner**
+   - 每个模块的核心职责必须能用一句话说明。
+   - 每项可变状态必须只有一个写入 Owner；其他模块只能查询、订阅或请求 Owner 修改。
+   - Facade、Coordinator、Service 和 Store 不得成为承接无关功能的万能容器。
 
----
+2. **Agent kernel 保持纯粹**
+   - Agent Loop 只负责“调用模型 → 执行工具 → 写回结果 → 判断继续或停止”的循环。
+   - 权限、持久化、上下文压缩、协议适配、Skill、Workflow、产品路由、UI 与 Electron 生命周期必须由独立 Owner 管理。
+   - kernel 不得直接依赖产品执行器、Renderer、Electron 或具体持久化实现。
 
-## 2. 常用开发与验证命令
+3. **依赖只能朝允许方向流动**
+   - `shared` 不依赖其他应用层；runtime 的 core/domain 只依赖 `shared`、同层公共契约和显式端口；`main` 负责装配 Electron、基础设施与 runtime；`preload` 只暴露类型化桥接；`renderer` 只依赖自身与 `shared`。
+   - 禁止跨层反向 import、循环依赖、从 barrel 或相对路径绕过边界、直接访问其他模块内部文件。
+   - 现有 import boundary 测试是最低门禁；不得用宽泛 allowlist 放行新债务。
 
-```bash
-# 安装依赖
-npm install
+4. **契约必须显式且唯一**
+   - 跨模块命令、事件和数据使用唯一来源的类型化契约。
+   - 禁止 `any`、松散 payload、复制相似类型、未校验的类型断言。
+   - 外部输入先以 `unknown` 接收并在边界校验；transport DTO、领域状态、持久化模型和诊断信息不得混成一个无结构对象。
 
-# 开发启动（Electron + Vite 热更新）
-npm run dev
+5. **目录表达领域和职责**
+   - 实现按业务领域放入子目录；测试应镜像或紧邻对应领域，能够直接定位。
+   - 禁止新增职责模糊的 `utils`、`helpers`、`common` 垃圾桶。
+   - 新工具必须位于 `src/runtime/tools/<tool-name>/` 并由该目录的 `index.ts` 导出。
+   - 不按行数机械拆文件；只有存在独立概念、独立契约或独立生命周期时才拆分。
 
-# 类型检查（全项目严格模式）
-npm run typecheck
+6. **修改必须最小且完整**
+   - 一次修改只处理一个主要目标。动手前先写清：目标、范围、非目标、不变量、验收方式。
+   - 在最早破坏约束的位置修根因；禁止在多个下游重复打补丁、创建平行状态或复制主路径。
+   - 禁止让新旧两套主路径长期并存。兼容代码必须写明兼容对象、存在原因、删除条件和保护测试。
+   - 不借局部任务大规模重构，不修改与目标无关的稳定行为。
 
-# 运行全部单元测试（Vitest，当前约 1500 用例）
-npm test
+7. **测试要证明边界与行为**
+   - 除结果外，按风险覆盖事件顺序、终态唯一性、取消/失败清理、状态写入权限、协议兼容和依赖方向。
+   - 禁止只断言非空、只断言 mock 被调用、放宽断言或吞错来制造假绿。
+   - 源码变更至少运行相关测试和 `npm run typecheck`；执行仓库已配置的 lint/build/架构门禁。若所需门禁尚未配置或无法执行，必须明确报告，不能声称验证完成。
 
-# 监听测试
-npm run test:watch
+8. **注释只解释长期成立的“为什么”**
+   - 注释用于不变量、设计原因、并发/安全边界和外部协议约束。
+   - 禁止在源码注释中写任务阶段、修复历史、完成汇报、临时文档章节引用或 AI 总结。
 
-# 生产构建
-npm run build
+9. **保护工作区与安全边界**
+   - 不读取、输出或硬编码密钥和凭据。
+   - 不覆盖、删除或回退无关改动；未经要求不 commit、push、rebase、reset、clean 或强制 checkout。
+   - 不新增依赖、不改变公共 API、持久化格式、默认值或错误语义，除非目标明确要求且迁移与回退已设计。
 
-# 构建后预览
-npm run preview
+## Coding Agent 停止条件
 
-# Windows NSIS 安装包（先 sync 品牌图标 → vite build → electron-builder）
-npm run sync:icon   # assets/brand → build/icon.png
-npm run dist        # 等价于 build + pack，产物在 release/NovaAgent-Setup-<version>.exe
-npm run pack        # 仅打包（需已 npm run build）
+发现以下任一情况时，停止实现并先汇报，不得自行猜测或补丁化绕过：
 
-# Spike：最小 portable exe，仅验证 better-sqlite3 打包链路
-npm run pack:spike
-npm run pack:spike:verify
+- 无法指出某项状态的唯一 Owner；
+- 两个公共契约互相冲突或同一事件存在多个类型来源；
+- 目标要求跨越禁止的依赖方向；
+- 只能靠新增第二条主路径、长期兼容层或重复状态完成；
+- 高风险重构无法用测试证明行为保持一致；
+- 任务范围、数据安全、公开接口或不可逆操作存在关键歧义。
 
-# 校验内置 skill frontmatter
-npm run validate:skills
-```
+## 开发检查清单
 
-CI/提交前建议顺序：`typecheck -> test -> build`，因为 `build` 还会触发自定义 Vite 插件复制静态资源。发版前额外跑 `npm run dist` 并在干净环境安装冒烟。
+### 修改前
 
----
+- [ ] 已阅读本文件；必要时已阅读详细工程规则。
+- [ ] 已查看真实调用方、被调用方、公共类型、相邻实现和相关测试。
+- [ ] 已写明目标、范围、非目标、不变量和验收方式。
+- [ ] 已确认职责 Owner、状态 Owner、依赖方向和兼容边界。
+- [ ] 已检查工作区，确认不会覆盖无关改动。
 
-## 3. 打包与品牌资源
+### 修改中
 
-- 品牌源图目录：`assets/brand/`（PNG / SVG）。
-- 打包图标：`build/icon.png`，由 `npm run sync:icon` 自动从 brand 目录取 512px（或 1024/256）同步。
-- 正式配置：`electron-builder.yml`（NSIS）；冒烟配置：`electron-builder.spike.yml`（portable）。
-- 产物目录：`release/`（已在 `.gitignore` 忽略，勿提交）。
-- 原生模块需在 asar 外：`better-sqlite3`、`@vscode/ripgrep`、`sharp`（已在 `electron-builder.yml` 的 `asarUnpack` 配置）。
-- v0.1 未配置代码签名；公开分发前需配置 `CSC_*` 证书环境变量。
+- [ ] 变更位于最接近根因和正确 Owner 的位置。
+- [ ] 未新增跨层 import、重复状态、松散契约、万能容器或垃圾桶目录。
+- [ ] 未保留无删除条件的旧主路径或兼容分支。
+- [ ] 注释描述当前设计原因，不记录开发过程。
 
----
+### 完成前
 
-## 4. 构建与路径约定
-
-- 入口：`package.json` 的 `main` 指向 `./out/main/index.js`，由 `electron-vite` 构建生成。
-- TypeScript path alias：
-  - `@renderer/*` -> `src/renderer/*`
-  - `@main/*` -> `src/main/*`
-  - `@preload/*` -> `src/preload/*`
-  - `@runtime/*` -> `src/runtime/*`
-  - `@shared/*` -> `src/shared/*`
-- 构建时会自动复制两类静态资源到 `out/main`：
-  1. `.nova/skills/*` -> `out/main/.nova/skills`（内置技能）
-  2. `src/runtime/agent/prompts/*` -> `out/main/prompts`（agent prompt 模板）
-
-如果运行时提示找不到 `.nova/skills` 或 `prompts/base-rules.md`，先跑一次 `npm run build`。
-
----
-
-## 5. 技能（Skills）
-
-- 内置技能目录：`.nova/skills/<name>/SKILL.md`，构建时打包进产物。
-- 全局技能：`~/.nova/skills/<name>/SKILL.md`。
-- 项目技能：`<workspace>/.nova/skills/<name>/SKILL.md`。
-- 优先级：**project > global > builtin**。
-- 每个 `SKILL.md` 必须含 YAML frontmatter，至少 `name`、`description`。
-- 可用命令行安装 skill（需要先 build）：
-  ```bash
-  node scripts/install-skill.mjs <zip或https-url> [--project <工作区路径>]
-  ```
-- 打包单个 skill：
-  ```bash
-  node scripts/package-skill.mjs <skill目录> [输出.zip]
-  ```
-
----
-
-## 6. IPC 与功能扩展流程
-
-若需新增 renderer ↔ main 通信：
-
-1. `src/shared/ipc/channels.ts` 添加 channel 常量。
-2. `src/shared/ipc/types.ts` 补充 `IpcCommands` / `IpcEvents` 类型。
-3. `src/main/ipc/` 下实现 handler，并在 `registerHandlers.ts` 注册。
-4. 如需暴露给渲染进程，在 `src/preload/` 封装并在 `preload.d.ts` 声明。
-
-若需新增工具：
-
-1. 在 `src/runtime/tools/` 实现 `ToolExecutor`。
-2. 在 `src/main/ipc/agentHandler.ts` 注册到 `ToolRegistry`。
-3. 注意 `plan` 模式下写入类工具的可见性与 `PermissionManager` 规则。
-
----
-
-## 7. 运行模式与权限
-
-| 模式 | 含义 |
-|------|------|
-| `plan` | 只读：`edit` / `write` / `bash` 被拒绝 |
-| `default` | 写入可用；`bash` 需要用户确认 |
-| `auto` | 自动执行；仍拦截高风险 shell 命令 |
-
-高风险操作（bash、写入类工具）会弹出权限确认；修改后可在消息流中逐文件接受或拒绝，也支持按消息回退。
-
----
-
-## 8. 测试与单测约定
-
-- 单测使用 Vitest，放在 `tests/unit/`。
-- 测试运行不需要启动 Electron，runtime 与 renderer 逻辑均可独立测试。
-- 部分测试依赖文件系统真实操作或子进程（如 `bashTool.test.ts`），运行时间可能较长（单条数百毫秒到数秒）。
-- 当前约 1498 个用例、149 个测试文件，全量运行约 30~90 秒。
-
-运行单个测试文件示例：
-
-```bash
-npx vitest run tests/unit/runtime/tools/bashTool.test.ts
-npx vitest run tests/unit/renderer/MessageItem.test.ts
-```
-
----
-
-## 9. 代码风格与提交（重点）
-
-- TypeScript 严格模式开启，不接收隐式 `any`。
-- 代码注释优先中文，除非仓库已有明确的英文注释规范。
-- Git commit message 使用中文，遵循这样子的格式，举个例子：
-```
-  fix(renderer): 根治流式/bash 权限期间消息区卡顿
-
-修复：
-  bash 权限弹窗或工具卡出现时 UI 数秒无响应（Idle 飙高、主线程硬卡）
-
-  等待 askQuestion/权限期间误触发整条消息 Markdown 逐行高亮尖峰
-  
-改动： 
-StreamingTextBlock：区分 paused 与轮次结束，暂停期停打字机、不做终态高亮
-
-MessageItem：拆分 isPausedForInput / isTurnActiveForThisMsg；接入 static/live 分层
-
-  ```
-- 不要读取 `.env` 或私钥文件，也不要在代码中硬编码密钥。
-- 注释里禁止写 `PRD §6.4`、`§8 Phase 3`、`pi-agent §4.3` 这类外部文档章节引用。没有上下文的人看不懂，应改为描述当前代码里的**具体行为、职责或边界条件**。重点！！！！
-- 新增 tools 必须放在 `src/runtime/tools/<toolName>/` 子文件夹内，并通过子文件夹的 `index.ts` 统一对外导出（参考 `src/runtime/tools/webSearch/`）。禁止在 `src/runtime/tools/` 根目录直接新增单个平铺文件。 重点！！！！
-
-                           
----
-
-## 10. 值得关注的路由与模块
-
-- `src/main/index.ts`：Electron 主进程入口，启动时加载持久化模型配置。
-- `src/main/ipc/agentHandler.ts`：连接 UI 与 `AgentLoop`，管理 checkpoint、权限、skill、askQuestion 等。
-- `src/runtime/agent/AgentLoop.ts`：核心循环门面，装配模型、工具、权限、上下文压缩。
-- `src/runtime/tools/index.ts`：工具统一出口。
-- `src/runtime/model/dialect.ts`：模型工具调用方言判定（native / XML），当前默认 native 优先。
-- `src/runtime/checkpoints/CheckpointManager.ts`：文件快照；`endMessage` 写 `forward/`（Tier 2 分支重放）。
-
-### 会话树（已落地，详设 `docs/未来目标/会话树模型设计.md`）
-
-- 分叉 IPC：`workspace:edit-resend`、`workspace:regenerate`、`workspace:switch-branch`（均在 `WorkspaceService`）。
-- 同会话刷新靠 `WorkspaceState.messagesRevision`，renderer `syncFromWorkspace` 在 revision 变化时重拉 `load-session`。
-- 树分叉 undo 用 `revertWorkspaceForMessageIds`（**不要**对分叉路径调 `revertToMessage`，会删 checkpoint 目录）。
-- 切分支文件：`revertWorkspace` → `applyForward`；缺 forward 时 `tier1BranchContext` 灰显 diff。
-- 阶段 4（delete-branch / repair-forward）仅设计见设计文档 §18，代码未实现。
-
----
-
-## 11. 常见问题
-
-- **运行时找不到 skill 或 prompt**：先执行 `npm run build`。
-- **安装 skill 脚本报错找不到 `out/main/runtime/skills/SkillService.js`**：同样先 `npm run build`。
-- **打包报找不到图标**：执行 `npm run sync:icon`，确保 `assets/brand/` 下有 PNG。
-- **`release/` 未出现在 git 中**：正常，打包产物已在 `.gitignore` 忽略，发版时上传到 GitHub Release。
-- **权限类回归问题**：优先检查 `src/shared/session/toolVisibility.ts` 与 `src/runtime/permissions/rules.ts`，未归类工具会被默认按 bash 处理。
+- [ ] 新行为和必须保持的旧行为都有有效测试。
+- [ ] 已运行与影响范围对应的测试、typecheck、架构门禁，以及已配置的 lint/build。
+- [ ] 已检查错误、取消、并发、恢复和清理路径。
+- [ ] 已检查 diff、tracked/untracked 文件和生成物边界。
+- [ ] 未验证项、剩余风险和兼容删除条件已如实报告。
