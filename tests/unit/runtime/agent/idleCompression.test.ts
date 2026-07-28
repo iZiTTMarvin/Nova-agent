@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { IdleCompressionTimer } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
-import type { IdleCompactionTarget } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
+import { CompactionService } from '../../../../src/runtime/agent/compaction/CompactionService'
 import {
   shouldScheduleIdleCompaction,
   getCompactionThreshold,
@@ -15,6 +15,10 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { createAgentContext } from '../../../../src/runtime/agent/core/AgentContext'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
+import { defaultContextBudgetManager } from '../../../../src/runtime/agent/ContextBudgetManager'
+import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 
 /** 默认「有资格」的调度状态，供 timer 单测走通压缩路径 */
 function eligibleScheduleState(
@@ -32,40 +36,6 @@ function eligibleScheduleState(
     // 默认可调度档案，便于测 token / disposed / inProgress 与 timer 路径
     profile: { idlePolicy: 'anthropic-short-ttl' },
     ...overrides
-  }
-}
-
-/**
- * 创建一个用于测试的 mock IdleCompactionTarget。
- * 回滚由 target.runIdleCompaction 自己负责（与 AgentLoop.runIdleCompaction 行为一致）。
- * compactionPromise 在压缩完成时 resolve。
- */
-function createMockTarget(overrides?: Partial<IdleCompactionTarget>): {
-  target: IdleCompactionTarget
-  compactionCalls: number
-  compactionPromise: Promise<void>
-} {
-  let compactionCalls = 0
-  let resolveCompaction!: () => void
-  const compactionPromise = new Promise<void>((r) => {
-    resolveCompaction = r
-  })
-
-  const target: IdleCompactionTarget = {
-    runIdleCompaction: async (_signal: AbortSignal) => {
-      compactionCalls++
-      resolveCompaction()
-    },
-    getIdleCompactionScheduleState: () => eligibleScheduleState(),
-    ...overrides
-  }
-
-  return {
-    target,
-    get compactionCalls() {
-      return compactionCalls
-    },
-    compactionPromise
   }
 }
 
@@ -157,165 +127,278 @@ describe('IdleCompressionTimer', () => {
     vi.useRealTimers()
   })
 
-  it('timer 在 delay 后触发压缩', async () => {
-    const mock = createMockTarget()
-    const timer = new IdleCompressionTimer(mock.target)
+  it('delay 到期后恰好触发一次回调', async () => {
+    const onElapsed = vi.fn()
+    const timer = new IdleCompressionTimer(onElapsed)
 
     timer.start()
-    expect(mock.compactionCalls).toBe(0)
+    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS - 1)
+    expect(onElapsed).not.toHaveBeenCalled()
 
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-
-    await mock.compactionPromise
-    await flush()
-
-    expect(mock.compactionCalls).toBe(1)
+    vi.advanceTimersByTime(1)
+    expect(onElapsed).toHaveBeenCalledTimes(1)
   })
 
-  it('资格预筛失败时不进入摘要调用', async () => {
-    let compactionCalls = 0
-    const target: IdleCompactionTarget = {
-      runIdleCompaction: async () => {
-        compactionCalls++
-      },
-      getIdleCompactionScheduleState: () =>
-        eligibleScheduleState({
-          estimatedTokens: 100 // 远低于阈值
-        })
-    }
-    const timer = new IdleCompressionTimer(target)
-    timer.start()
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-    expect(compactionCalls).toBe(0)
-  })
-
-  it('start() 后 cancel() 在 delay 内调用 → 压缩不被触发', async () => {
-    const mock = createMockTarget()
-    const timer = new IdleCompressionTimer(mock.target)
-
-    timer.start()
-    vi.advanceTimersByTime(100_000)
-    timer.cancel()
-
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-
-    expect(mock.compactionCalls).toBe(0)
-  })
-
-  it('压缩运行中 cancel() — timer 层静默吞异常，target 负责回滚', async () => {
-    let aborted = false
-    const target: IdleCompactionTarget = {
-      getIdleCompactionScheduleState: () => eligibleScheduleState(),
-      runIdleCompaction: async (signal) => {
-        try {
-          await new Promise<void>((_resolve, reject) => {
-            const onAbort = () => {
-              signal.removeEventListener('abort', onAbort)
-              reject(new DOMException('aborted', 'AbortError'))
-            }
-            if (signal.aborted) {
-              onAbort()
-              return
-            }
-            signal.addEventListener('abort', onAbort)
-          })
-        } finally {
-          if (signal.aborted) aborted = true
-        }
-      }
-    }
-
-    const timer = new IdleCompressionTimer(target)
-    timer.start()
-
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-
-    expect(timer.isCompressing()).toBe(true)
-
-    timer.cancel()
-    await flush()
-
-    expect(timer.isCompressing()).toBe(false)
-    expect(aborted).toBe(true)
-  })
-
-  it('压缩调用触发异常 → 静默失败不抛异常', async () => {
-    const target: IdleCompactionTarget = {
-      getIdleCompactionScheduleState: () => eligibleScheduleState(),
-      runIdleCompaction: async () => {
-        throw new Error('context_overflow: prompt is too long')
-      }
-    }
-
-    const timer = new IdleCompressionTimer(target)
-    timer.start()
-
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-
-    expect(timer.isCompressing()).toBe(false)
-  })
-
-  it('多次 start-cancel-start 循环 → 计时器状态正确', async () => {
-    let compactionCalls = 0
-    let resolveCompaction!: () => void
-    const makePromise = () =>
-      new Promise<void>((r) => {
-        resolveCompaction = r
-      })
-
-    const mock = createMockTarget({
-      runIdleCompaction: async () => {
-        compactionCalls++
-        resolveCompaction()
-      }
-    })
-    const timer = new IdleCompressionTimer(mock.target)
+  it('delay 内 cancel 后不触发回调', async () => {
+    const onElapsed = vi.fn()
+    const timer = new IdleCompressionTimer(onElapsed)
 
     timer.start()
     vi.advanceTimersByTime(100_000)
     timer.cancel()
     vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-    expect(compactionCalls).toBe(0)
+    expect(onElapsed).not.toHaveBeenCalled()
+  })
 
+  it('repeated start/cancel/start 只保留最后一次计时', async () => {
+    const onElapsed = vi.fn()
+    const timer = new IdleCompressionTimer(onElapsed)
+
+    timer.start()
+    vi.advanceTimersByTime(100_000)
+    timer.cancel()
     timer.start()
     vi.advanceTimersByTime(50_000)
-    timer.cancel()
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-    expect(compactionCalls).toBe(0)
-
-    const p = makePromise()
     timer.start()
     vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await p
-    await flush()
-    expect(compactionCalls).toBe(1)
+    expect(onElapsed).toHaveBeenCalledTimes(1)
+  })
+})
+
+function createIdleService(
+  modelClient: Pick<ModelClient, 'chat'>,
+  options?: {
+    messages?: ChatMessage[]
+    idlePolicy?: 'anthropic-short-ttl' | 'provider-managed' | 'unknown'
+    onCompaction?: () => void
+  }
+) {
+  const context = createAgentContext({
+    readState: createReadState(),
+    messages: options?.messages ?? [
+      { role: 'system', content: 'system prompt' },
+      ...Array.from({ length: 30 }, (_, index): ChatMessage => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `history-${index}-${'x'.repeat(80)}`
+      }))
+    ]
+  })
+  const service = new CompactionService({
+    context,
+    modelClient,
+    contextBudgetManager: defaultContextBudgetManager,
+    cacheDiagnostics: new CacheDiagnostics(),
+    contextWindow: 100,
+    onCompaction: options?.onCompaction,
+    getIdleCacheProfile: () => ({
+      idlePolicy: options?.idlePolicy ?? 'anthropic-short-ttl'
+    })
+  })
+  return { service, context }
+}
+
+describe('CompactionService idle ownership', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
   })
 
-  it('reset() 后 timer 被清理', async () => {
-    const mock = createMockTarget()
-    const timer = new IdleCompressionTimer(mock.target)
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
-    timer.start()
-    vi.advanceTimersByTime(100_000)
-    timer.cancel()
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
+  it.each([
+    ['短上下文', [{ role: 'system', content: 's' }] as ChatMessage[], 'anthropic-short-ttl' as const],
+    ['provider-managed', undefined, 'provider-managed' as const],
+    ['unknown provider', undefined, 'unknown' as const]
+  ])('%s 不进入摘要模型', async (_name, messages, idlePolicy) => {
+    const client = new MockModelClient()
+    const { service } = createIdleService(client, { messages, idlePolicy })
+
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
     await flush()
 
-    expect(mock.compactionCalls).toBe(0)
+    expect(client.getCalls()).toHaveLength(0)
+  })
+
+  it('reset 与 dispose 都会取消尚未开始的摘要', async () => {
+    const resetClient = new MockModelClient()
+    const resetService = createIdleService(resetClient).service
+    resetService.scheduleIdle()
+    resetService.reset()
+
+    const disposedClient = new MockModelClient()
+    const disposedService = createIdleService(disposedClient).service
+    disposedService.scheduleIdle()
+    disposedService.dispose()
+    expect(disposedService.scheduleIdle()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await flush()
+    expect(resetClient.getCalls()).toHaveLength(0)
+    expect(disposedClient.getCalls()).toHaveLength(0)
+  })
+
+  it('cancel during summary 会中止独立 idle signal 且不写回 context', async () => {
+    let resolveStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      resolveStarted = resolve
+    })
+    let resolveAborted!: () => void
+    const aborted = new Promise<void>(resolve => {
+      resolveAborted = resolve
+    })
+    const client: Pick<ModelClient, 'chat'> = {
+      async *chat(_messages, _tools, options) {
+        resolveStarted()
+        await new Promise<void>(resolve => {
+          options?.abortSignal?.addEventListener('abort', () => {
+            resolveAborted()
+            resolve()
+          }, { once: true })
+        })
+        yield { type: 'cancelled' }
+      }
+    }
+    const { service, context } = createIdleService(client)
+    const original = context.messages
+
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await started
+    service.cancelIdle()
+    await aborted
+    await flush()
+
+    expect(context.messages).toBe(original)
+  })
+
+  it('摘要异常后可再次调度并成功压缩', async () => {
+    let callCount = 0
+    let resolveCompacted!: () => void
+    const compacted = new Promise<void>(resolve => {
+      resolveCompacted = resolve
+    })
+    const client: Pick<ModelClient, 'chat'> = {
+      async *chat() {
+        callCount++
+        if (callCount === 1) throw new Error('summary failed')
+        yield { type: 'text_delta', delta: 'idle summary' }
+        yield { type: 'message_end', finishReason: 'stop' }
+      }
+    }
+    const { service, context } = createIdleService(client, {
+      onCompaction: resolveCompacted
+    })
+
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await flush()
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await compacted
+
+    expect(callCount).toBe(2)
+    expect(String(context.messages[0]?.content)).toContain('system prompt')
+    expect(context.compactionLevel).toBe(1)
+  })
+
+  it('旧摘要忽略 abort 时不会吞掉后续 idle 调度', async () => {
+    let callCount = 0
+    let resolveFirstStarted!: () => void
+    const firstStarted = new Promise<void>(resolve => {
+      resolveFirstStarted = resolve
+    })
+    let releaseFirst!: () => void
+    const firstRelease = new Promise<void>(resolve => {
+      releaseFirst = resolve
+    })
+    let resolveCompacted!: () => void
+    const compacted = new Promise<void>(resolve => {
+      resolveCompacted = resolve
+    })
+    const client: Pick<ModelClient, 'chat'> = {
+      async *chat() {
+        callCount++
+        if (callCount === 1) {
+          resolveFirstStarted()
+          await firstRelease
+          yield { type: 'text_delta', delta: 'stale summary' }
+          yield { type: 'message_end', finishReason: 'stop' }
+          return
+        }
+        yield { type: 'text_delta', delta: 'fresh summary' }
+        yield { type: 'message_end', finishReason: 'stop' }
+      }
+    }
+    const { service, context } = createIdleService(client, {
+      onCompaction: resolveCompacted
+    })
+
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await firstStarted
+
+    service.cancelIdle()
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    expect(callCount).toBe(1)
+
+    releaseFirst()
+    await flush()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await compacted
+
+    expect(callCount).toBe(2)
+    expect(context.messages.some(message =>
+      String(message.content).includes('fresh summary')
+    )).toBe(true)
+    expect(context.messages.some(message =>
+      String(message.content).includes('stale summary')
+    )).toBe(false)
+  })
+
+  it('dispose during summary 会阻止晚到摘要写回', async () => {
+    let releaseSummary!: () => void
+    const summaryRelease = new Promise<void>(resolve => {
+      releaseSummary = resolve
+    })
+    let resolveStarted!: () => void
+    const started = new Promise<void>(resolve => {
+      resolveStarted = resolve
+    })
+    const onCompaction = vi.fn()
+    const client: Pick<ModelClient, 'chat'> = {
+      async *chat() {
+        resolveStarted()
+        await summaryRelease
+        yield { type: 'text_delta', delta: 'late summary' }
+        yield { type: 'message_end', finishReason: 'stop' }
+      }
+    }
+    const { service, context } = createIdleService(client, { onCompaction })
+    const original = context.messages
+
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await started
+    service.dispose()
+    releaseSummary()
+    await flush()
+
+    expect(context.messages).toBe(original)
+    expect(onCompaction).not.toHaveBeenCalled()
   })
 })
 
 describe('AgentLoop 空闲压缩集成', () => {
-  function createLoop(mockClient?: ModelClient) {
+  function createLoop(
+    mockClient?: ModelClient,
+    config?: ConstructorParameters<typeof AgentLoop>[2]
+  ) {
     const client = mockClient ?? new MockModelClient()
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, config)
     loop.setToolRegistry(createTestRegistry())
     return { loop, eventBus, client }
   }
@@ -398,8 +481,13 @@ describe('AgentLoop 空闲压缩集成', () => {
     expect(loop.getState()).toBe('idle')
   })
 
-  it('dispose 后资格预筛阻断空闲压缩', async () => {
+  it('dispose 后不会执行已经调度的空闲摘要', async () => {
     const client = new MockModelClient()
+    client.updateConfig({
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: '',
+      modelId: 'claude-test'
+    })
     client.addResponse({
       events: [
         { type: 'message_start' },
@@ -408,16 +496,21 @@ describe('AgentLoop 空闲压缩集成', () => {
       ]
     })
 
-    const { loop } = createLoop(client)
+    const { loop } = createLoop(client, { contextWindow: 100 })
     await loop.sendMessage('hello', agentRoute())
-
+    loop.injectHistory(Array.from({ length: 30 }, (_, index): ChatMessage => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `history-${index}-${'x'.repeat(80)}`
+    })))
     loop.dispose()
-    const state = loop.getIdleCompactionScheduleState()
-    expect(state.disposed).toBe(true)
-    expect(shouldScheduleIdleCompaction(state)).toBe(false)
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await flush()
+
+    expect(client.getCalls()).toHaveLength(1)
   })
 
-  it('error 退出路径也启动空闲计时器', async () => {
+  it('error 退出路径不启动空闲计时器', async () => {
+    const idleStart = vi.spyOn(IdleCompressionTimer.prototype, 'start')
     const client = new MockModelClient()
     client.addResponse({
       events: [{ type: 'error', error: '模型调用失败' }]
@@ -427,18 +520,46 @@ describe('AgentLoop 空闲压缩集成', () => {
     await loop.sendMessage('hello', agentRoute())
 
     expect(loop.getState()).toBe('error')
-
-    vi.advanceTimersByTime(IdleCompressionTimer.IDLE_DELAY_MS)
-    await flush()
-
-    expect(loop.getState()).toBe('error')
+    expect(idleStart).not.toHaveBeenCalled()
   })
 
-  it('idle 摘要与新 active turn 重叠时只取消 idle，不误杀 active controller', async () => {
+  it('真实 provider profile 为 provider-managed 时跳过空闲摘要', async () => {
+    const client = new MockModelClient()
+    client.updateConfig({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: '',
+      modelId: 'deepseek-chat'
+    })
+    client.addResponse({
+      events: [
+        { type: 'text_delta', delta: 'active response' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { loop } = createLoop(client, { contextWindow: 10_000 })
+    loop.injectHistory(Array.from({ length: 30 }, (_, index): ChatMessage => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `history-${index}-${'x'.repeat(700)}`
+    })))
+
+    await loop.sendMessage('hello', agentRoute())
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await flush()
+
+    expect(client.getCalls()).toHaveLength(1)
+  })
+
+  it('真实竞态：晚到 idle 摘要不覆盖第二轮且不误杀 active controller', async () => {
     class OverlapModelClient implements ModelClient {
+      readonly config: ModelClientConfig = {
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: '',
+        modelId: 'claude-test'
+      }
       private callIndex = 0
       private resolveIdleStarted!: () => void
       private resolveActiveStarted!: () => void
+      private releaseIdle!: () => void
       private releaseActive!: () => void
       readonly idleStarted = new Promise<void>(resolve => {
         this.resolveIdleStarted = resolve
@@ -446,31 +567,36 @@ describe('AgentLoop 空闲压缩集成', () => {
       readonly activeStarted = new Promise<void>(resolve => {
         this.resolveActiveStarted = resolve
       })
+      private readonly idleRelease = new Promise<void>(resolve => {
+        this.releaseIdle = resolve
+      })
       private readonly activeRelease = new Promise<void>(resolve => {
         this.releaseActive = resolve
       })
       activeSignal: AbortSignal | undefined
+      activeMessages: ChatMessage[] = []
 
       async *chat(
-        _messages: ChatMessage[],
+        messages: ChatMessage[],
         _tools?: ToolDefinition[],
         options?: ChatOptions
       ): AsyncIterable<ChatEvent> {
         const callIndex = this.callIndex++
         if (callIndex === 0) {
+          yield { type: 'text_delta', delta: 'first response' }
+          yield { type: 'message_end', finishReason: 'stop' }
+          return
+        }
+        if (callIndex === 1) {
           this.resolveIdleStarted()
-          await new Promise<void>(resolve => {
-            if (options?.abortSignal?.aborted) {
-              resolve()
-              return
-            }
-            options?.abortSignal?.addEventListener('abort', () => resolve(), { once: true })
-          })
-          yield { type: 'cancelled' }
+          await this.idleRelease
+          yield { type: 'text_delta', delta: 'late idle summary' }
+          yield { type: 'message_end', finishReason: 'stop' }
           return
         }
 
         this.activeSignal = options?.abortSignal
+        this.activeMessages = messages
         this.resolveActiveStarted()
         await this.activeRelease
         if (options?.abortSignal?.aborted) {
@@ -483,62 +609,49 @@ describe('AgentLoop 空闲压缩集成', () => {
 
       updateConfig(_config: ModelClientConfig): void {}
 
+      continueIdle(): void {
+        this.releaseIdle()
+      }
+
       continueActive(): void {
         this.releaseActive()
       }
     }
 
     const client = new OverlapModelClient()
-    const { loop } = createLoop(client)
+    const onCompaction = vi.fn()
+    const { loop } = createLoop(client, {
+      contextWindow: 10_000,
+      onCompaction
+    })
     loop.injectHistory(Array.from({ length: 30 }, (_, index): ChatMessage => ({
       role: index % 2 === 0 ? 'user' : 'assistant',
-      content: `history-${index}`
+      content: `history-${index}-${'x'.repeat(700)}`
     })))
 
-    const idleAbort = new AbortController()
-    const idlePromise = loop.runIdleCompaction(idleAbort.signal)
+    await loop.sendMessage('first', agentRoute())
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
     await client.idleStarted
 
     const activePromise = loop.sendMessage('second', agentRoute())
     await client.activeStarted
-    idleAbort.abort()
+    client.continueIdle()
     client.continueActive()
 
     const outcome = await activePromise
-    await idlePromise
+    await flush()
 
     expect(outcome.status).toBe('completed')
     expect(client.activeSignal?.aborted).toBe(false)
+    expect(client.activeMessages.some(message =>
+      message.role === 'user' && String(message.content).includes('second')
+    )).toBe(true)
     expect(loop.getContext().some(message =>
       message.role === 'user' && String(message.content).includes('second')
     )).toBe(true)
-  })
-
-  it('竞态：cancel 后 sendMessage 推入的用户消息不被回滚误删', async () => {
-    const client = new MockModelClient()
-
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '回复1' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-
-    const { loop } = createLoop(client)
-    await loop.sendMessage('第一条', agentRoute())
-
-    const contextBeforeCancel = loop.getContext().length
-
-    const ac = new AbortController()
-    const runPromise = loop.runIdleCompaction(ac.signal)
-
-    ac.abort()
-
-    await runPromise.catch(() => {})
-    await flush()
-
-    const contextAfterAbort = loop.getContext()
-    expect(contextAfterAbort.length).toBe(contextBeforeCancel)
+    expect(loop.getContext().some(message =>
+      String(message.content).includes('late idle summary')
+    )).toBe(false)
+    expect(onCompaction).not.toHaveBeenCalled()
   })
 })

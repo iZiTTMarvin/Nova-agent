@@ -2,16 +2,19 @@ import type { ModelClient } from '../../model/ModelClient'
 import type { ChatMessage } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
+import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { compactAtBoundary, ContextBudgetExceededError } from '../ContextBudgetManager'
 import type { AgentContext } from '../core/AgentContext'
 import type { CompactionMeta } from '../types'
 import { estimateContextTokens } from '../tokenEstimator'
+import { IdleCompressionTimer } from './IdleCompressionTimer'
 import {
   MIN_RECENT_MESSAGES,
   buildCompactionRequestTail,
   getCompactionThreshold,
   rebuildWithCompression,
+  shouldScheduleIdleCompaction,
   shouldCompact,
   splitForCompaction,
   stripReasoningContent
@@ -28,6 +31,7 @@ export interface CompactionServiceOptions {
   contextWindow: number
   promptCacheKey?: string
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
+  getIdleCacheProfile: () => Pick<CacheProfile, 'idlePolicy'> | null
 }
 
 interface CompactionParts {
@@ -38,10 +42,11 @@ interface CompactionParts {
 }
 
 /**
- * 活跃轮次压缩的唯一 owner。
+ * 上下文压缩执行与压缩生命周期的唯一 owner。
  *
  * Service 直接更新 AgentContext 中的权威 messages 和压缩簿记，不维护平行上下文。
- * Idle timer 与独立取消控制器仍由 AgentLoop 持有；idle 只复用这里的摘要与写回入口。
+ * active turn 与 idle compaction 使用物理隔离的 AbortController；新消息通过 idle
+ * generation 使晚到摘要失去写回资格，不依赖共享数组回滚。
  */
 export class CompactionService {
   private readonly context: AgentContext
@@ -51,7 +56,14 @@ export class CompactionService {
   private readonly contextWindow: number
   private readonly promptCacheKey?: string
   private readonly onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
+  private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
+  private readonly idleTimer: IdleCompressionTimer
   private compressingForOverflow = false
+  private idleAbortController: AbortController | null = null
+  private idleCompactionInProgress = false
+  private idleReschedulePending = false
+  private idleGeneration = 0
+  private disposed = false
 
   constructor(options: CompactionServiceOptions) {
     this.context = options.context
@@ -61,6 +73,10 @@ export class CompactionService {
     this.contextWindow = options.contextWindow
     this.promptCacheKey = options.promptCacheKey
     this.onCompaction = options.onCompaction
+    this.getIdleCacheProfile = options.getIdleCacheProfile
+    this.idleTimer = new IdleCompressionTimer(() => {
+      void this.runScheduledIdleCompaction()
+    })
   }
 
   isCompressingForOverflow(): boolean {
@@ -121,9 +137,28 @@ export class CompactionService {
     return this.runCompaction('threshold', abortSignal)
   }
 
-  runIdleCompaction(abortSignal: AbortSignal): Promise<boolean> {
-    if (this.compressingForOverflow) return Promise.resolve(false)
-    return this.runCompaction('idle', abortSignal)
+  scheduleIdle(): boolean {
+    if (this.disposed) return false
+    this.idleReschedulePending = false
+    this.idleTimer.start()
+    return true
+  }
+
+  cancelIdle(): void {
+    this.idleGeneration++
+    this.idleReschedulePending = false
+    this.idleTimer.cancel()
+    this.idleAbortController?.abort()
+  }
+
+  reset(): void {
+    this.cancelIdle()
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.cancelIdle()
   }
 
   async runOverflowCompaction(
@@ -159,7 +194,8 @@ export class CompactionService {
 
   private async runCompaction(
     trigger: Extract<CompactionTrigger, 'threshold' | 'idle'>,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    canApply: () => boolean = () => true
   ): Promise<boolean> {
     if (abortSignal?.aborted) return false
 
@@ -167,12 +203,69 @@ export class CompactionService {
     if (parts.oldMessages.length === 0) return false
 
     const summary = await this.requestSummary(parts, abortSignal)
-    if (!summary || abortSignal?.aborted) return false
+    if (!summary || abortSignal?.aborted || !canApply()) return false
 
     this.applyCompactionResult(parts, summary)
-    if (abortSignal?.aborted) return false
+    if (abortSignal?.aborted || !canApply()) return false
     this.notifyCompaction(summary, trigger)
     return true
+  }
+
+  private async runScheduledIdleCompaction(): Promise<void> {
+    try {
+      await this.tryRunScheduledIdleCompaction()
+    } catch {
+      // 空闲压缩是后台优化；任何异常都不得逃逸为未处理的 Promise rejection。
+    }
+  }
+
+  private async tryRunScheduledIdleCompaction(): Promise<void> {
+    if (this.disposed) return
+    if (this.idleCompactionInProgress) {
+      this.idleReschedulePending = true
+      return
+    }
+
+    if (!shouldScheduleIdleCompaction({
+      context: this.context.messages,
+      contextWindow: this.contextWindow,
+      estimatedTokens: this.context.lastEstimatedTokens > 0
+        ? this.context.lastEstimatedTokens
+        : undefined,
+      idleCompactionInProgress: this.idleCompactionInProgress,
+      disposed: this.disposed,
+      profile: this.getIdleCacheProfile()
+    })) {
+      return
+    }
+
+    const controller = new AbortController()
+    const generation = this.idleGeneration
+    this.idleAbortController = controller
+    this.idleCompactionInProgress = true
+
+    try {
+      await this.runCompaction(
+        'idle',
+        controller.signal,
+        () => (
+          !this.disposed
+          && !controller.signal.aborted
+          && this.idleAbortController === controller
+          && this.idleGeneration === generation
+        )
+      )
+    } finally {
+      if (this.idleAbortController === controller) {
+        this.idleAbortController = null
+      }
+      this.idleCompactionInProgress = false
+      if (this.idleReschedulePending && !this.disposed) {
+        this.idleReschedulePending = false
+        // 旧请求退出后重新等待完整空闲窗口，避免后台摘要刚结束就立即再次消耗模型。
+        this.idleTimer.start()
+      }
+    }
   }
 
   private splitThresholdContext(): CompactionParts {

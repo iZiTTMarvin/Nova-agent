@@ -52,7 +52,8 @@ function createService(options?: {
     cacheDiagnostics,
     contextWindow: options?.contextWindow ?? 100,
     promptCacheKey: options?.promptCacheKey,
-    onCompaction: options?.onCompaction
+    onCompaction: options?.onCompaction,
+    getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' })
   })
   return { service, context, client, cacheDiagnostics }
 }

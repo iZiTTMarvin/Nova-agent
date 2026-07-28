@@ -24,9 +24,6 @@ import { createProductionContextBudgetManager, type ContextBudgetManager } from 
 import { CacheDiagnostics } from '../model/cacheDiagnostics'
 import { randomUUID } from 'crypto'
 import { executeToolBatch } from './execution/toolBatchExecutor'
-import { IdleCompressionTimer } from './compaction/IdleCompressionTimer'
-import type { IdleCompactionTarget } from './compaction/IdleCompressionTimer'
-import type { IdleCompactionScheduleState } from './compaction/compaction'
 import { resolveCacheProfile } from '../model/cacheProfile'
 import { HookManager } from './core/HookManager'
 import { RecoveryStateMachine } from './recovery/RecoveryStateMachine'
@@ -51,7 +48,7 @@ import { createToolPostProcessExtension } from './extensions/toolPostProcessExte
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
 
-export class AgentLoop implements IdleCompactionTarget {
+export class AgentLoop {
   /** 模型客户端池，统一包装成 ModelClientPool（即使无 fallback 也包一层，对外接口不变） */
   private modelPool: ModelClientPool
   private eventBus: EventBus
@@ -187,13 +184,6 @@ export class AgentLoop implements IdleCompactionTarget {
   private get compactionLevel(): number {
     return this.compactionService.getCompactionLevel()
   }
-
-  /** 空闲压缩计时器（惰性创建） */
-  private idleTimer: IdleCompressionTimer | null = null
-  /** 是否已有进行中的空闲压缩（供 shouldScheduleIdleCompaction 预筛） */
-  private idleCompactionInProgress = false
-  /** dispose 后阻断空闲压缩调度 */
-  private disposed = false
 
   /** Hook 编排层（与 EventBus 并行，负责干预） */
   private hookManager: HookManager
@@ -359,7 +349,14 @@ export class AgentLoop implements IdleCompactionTarget {
       cacheDiagnostics: this.cacheDiagnostics,
       contextWindow: this.config.contextWindow ?? 200_000,
       promptCacheKey: this.config.promptCacheKey,
-      onCompaction: this.config.onCompaction
+      onCompaction: this.config.onCompaction,
+      getIdleCacheProfile: () => {
+        const provider = this.modelPool.getActiveProvider()
+        return resolveCacheProfile(provider.baseUrl, provider.modelId, {
+          cacheProfile: provider.cacheProfile,
+          cacheStrategy: provider.cacheStrategy
+        })
+      }
     })
     this.hookManager = new HookManager(eventBus)
     this.frozenSystemPrompt = this.buildFrozenSystemPrompt()
@@ -713,6 +710,9 @@ export class AgentLoop implements IdleCompactionTarget {
     // 非 agent route 缺少对应执行器时 fail closed，避免留下半开生命周期。
     this.assertRouteExecutable(route)
 
+    // active turn 开始前先让旧 idle generation 失效；idle controller 与本轮 controller 独立。
+    this.compactionService.cancelIdle()
+
     const messageId = randomUUID()
     this.currentMessageId = messageId
     this.state = 'running'
@@ -724,9 +724,6 @@ export class AgentLoop implements IdleCompactionTarget {
     this.getStreamProcessor().resetRetryState()
     // 每条新消息开始时重置回主模型（降级不影响下一轮）
     this.modelPool.resetToPrimary()
-
-    // 空闲压缩：新消息到达时取消任何正在运行的压缩
-    this.idleTimer?.cancel()
 
     // 显式记录 checkpoint 事务是否已开始：begin 前失败的轮次不得调用 endMessage
     let checkpointBegun = false
@@ -1003,13 +1000,9 @@ export class AgentLoop implements IdleCompactionTarget {
     }
 
     if (outcome.status === 'completed') {
-      this.idleTimer ??= new IdleCompressionTimer(this)
-      this.idleTimer.start()
+      this.compactionService.scheduleIdle()
     } else {
-      this.idleTimer?.cancel()
-      if (outcome.status === 'failed') {
-        this.idleTimer = null
-      }
+      this.compactionService.cancelIdle()
     }
 
     return outcome
@@ -1072,7 +1065,7 @@ export class AgentLoop implements IdleCompactionTarget {
    * 彻底释放 AgentLoop 持有的所有资源。
    *
    * 与 cancel() 的区别：cancel() 只在 state==='running' 时生效，
-   * 而 dispose() 在 idle 状态下也要清理 idleTimer（否则 266 秒后会触发后台压缩烧 token，
+   * 而 dispose() 在 idle 状态下也要清理后台压缩（否则 266 秒后会触发摘要请求，
    * 且 subLoop 对象图无法被 GC）。
    *
    * 调用场景：
@@ -1080,13 +1073,7 @@ export class AgentLoop implements IdleCompactionTarget {
    * - 主 turn 的 loop 在 idle 托管期结束后释放（下一 turn 装配 / 会话取消 / 会话删除）
    */
   dispose(): void {
-    // 先置 disposed，阻断已排队的 idle timer 到期后进入摘要请求
-    this.disposed = true
-
-    // 即使 state 不是 running 也要清理 idleTimer：sendMessage 完成后 state===idle，
-    // cancel() 此时是空操作，idleTimer 仍在等待触发后台压缩
-    this.idleTimer?.cancel()
-    this.idleTimer = null
+    this.compactionService.dispose()
 
     // 兜底清理 pending permissions（cancel 在 idle 时跳过这一步）
     this.permissionCoordinator.abortPending()
@@ -1094,27 +1081,6 @@ export class AgentLoop implements IdleCompactionTarget {
     // 如果还在 running，也走 cancel 流程触发 onCancel hook
     if (this.state === 'running') {
       this.cancel()
-    }
-  }
-
-  /**
-   * 供 IdleCompressionTimer 到期时做资格预筛。
-   * profile 入口已预留（T3-2 按 idlePolicy 差异化）；本轮预筛只做中性判断。
-   */
-  getIdleCompactionScheduleState(): IdleCompactionScheduleState {
-    const provider = this.modelPool.getActiveProvider()
-    const profile = resolveCacheProfile(provider.baseUrl, provider.modelId, {
-      cacheProfile: provider.cacheProfile,
-      cacheStrategy: provider.cacheStrategy
-    })
-    return {
-      context: this.context,
-      contextWindow: this.config.contextWindow ?? 200_000,
-      estimatedTokens: this.lastEstimatedTokens > 0 ? this.lastEstimatedTokens : undefined,
-      idleCompactionInProgress: this.idleCompactionInProgress,
-      disposed: this.disposed,
-      // T3-2 按 idlePolicy 差异化调度；本轮 shouldScheduleIdleCompaction 不读此字段
-      profile
     }
   }
 
@@ -1150,7 +1116,7 @@ export class AgentLoop implements IdleCompactionTarget {
     this.state = 'idle'
     this.cancelled = false
     this.abortController = null
-    this.idleTimer?.cancel()
+    this.compactionService.reset()
   }
 
   /**
@@ -1220,18 +1186,4 @@ export class AgentLoop implements IdleCompactionTarget {
     return date
   }
 
-  /**
-   * @internal 供 IdleCompressionTimer 调用。
-   *
-   * Timer 的 signal 直接控制摘要请求和写回 fence，不借用 active turn controller。
-   * 新消息取消 idle 时只会终止旧摘要，不会修改新 active turn 的取消状态。
-   */
-  async runIdleCompaction(abortSignal: AbortSignal): Promise<void> {
-    this.idleCompactionInProgress = true
-    try {
-      await this.compactionService.runIdleCompaction(abortSignal)
-    } finally {
-      this.idleCompactionInProgress = false
-    }
-  }
 }

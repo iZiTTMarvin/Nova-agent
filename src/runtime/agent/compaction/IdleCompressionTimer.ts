@@ -1,117 +1,28 @@
 /**
- * 空闲时自动压缩计时器
+ * 只负责空闲延迟的轻量计时器。
  *
- * 当用户停止输入一段时间后（默认 266 秒），在后台尝试压缩对话历史。
- * 摘要请求复用压缩前前缀（尾部追加压缩指令）；重建后的
- * [system + summary + recent] 要等下一次真实用户请求才会首次发送，
- * 因此这里不是「预热压缩后上下文」。
- *
- * 参考 OpenClacky idle_compression_timer.rb，适配 nova-agent 的 AgentLoop 架构：
- * - 使用 Node.js 内置 setTimeout / clearTimeout，不引入额外依赖
- * - 独立 AbortController，不与主循环 cancel 混用
- * - 到期先做 shouldScheduleIdleCompaction 资格预筛，通过才进入摘要请求
- * - 静默失败：空闲压缩是优化手段，失败不应打扰用户
- *
- * 写回职责：timer 不修改上下文。
- * CompactionService 只在摘要成功且 signal 未中断时替换权威 context，
- * 中断或失败不会产生需要回滚的部分写入。
- */
-import {
-  shouldScheduleIdleCompaction,
-  type IdleCompactionScheduleState
-} from './compaction'
-
-/** AgentLoop 上需要暴露的接口，避免 IdleCompressionTimer 直接依赖 AgentLoop 类 */
-export interface IdleCompactionTarget {
-  /** 执行 idle 压缩；abort 后不得写回上下文 */
-  runIdleCompaction(abortSignal: AbortSignal): Promise<void>
-  /** 供 timer 到期时做资格预筛的状态快照 */
-  getIdleCompactionScheduleState(): IdleCompactionScheduleState
-}
-
-/**
- * 空闲压缩计时器
- *
- * 调用方在循环结束时 start()，新消息到达时 cancel()。
- * 计时器到期后异步执行压缩，不阻塞任何调用方。
+ * 压缩资格、取消信号、进行中状态和写回 fence 均由 CompactionService 持有，
+ * timer 不接触 AgentContext，也不拥有任何模型调用生命周期。
  */
 export class IdleCompressionTimer {
   /** 空闲延迟（毫秒），< 300s Anthropic prompt cache TTL */
   static readonly IDLE_DELAY_MS = 266_000
 
-  private target: IdleCompactionTarget
   private timerHandle: ReturnType<typeof setTimeout> | null = null
-  private abortController: AbortController | null = null
-  private _compressing = false
 
-  constructor(target: IdleCompactionTarget) {
-    this.target = target
-  }
+  constructor(private readonly onElapsed: () => void) {}
 
-  /**
-   * 启动空闲计时器（fire-and-forget）。
-   * 如果已有计时器在运行，先取消再重新开始。
-   */
-  start(): boolean {
-    this.clearTimer()
-
-    this.abortController = new AbortController()
-
+  /** 重新开始计时；同一实例始终只保留一个 timeout。 */
+  start(): void {
+    this.cancel()
     this.timerHandle = setTimeout(() => {
       this.timerHandle = null
-      this.runIdleCompaction()
+      this.onElapsed()
     }, IdleCompressionTimer.IDLE_DELAY_MS)
-
-    return true
   }
 
-  /**
-   * 取消计时器和正在运行的压缩。
-   * 同步调用，不 await 压缩退出。
-   * 压缩的 LLM 调用与写回 fence 由同一个 AbortSignal 中断。
-   */
+  /** 取消尚未到期的 timeout。 */
   cancel(): void {
-    this.clearTimer()
-
-    if (this.abortController) {
-      this.abortController.abort()
-    }
-    this.abortController = null
-  }
-
-  /** 是否正在执行压缩 */
-  isCompressing(): boolean {
-    return this._compressing
-  }
-
-  /**
-   * 内部方法：触发空闲压缩。
-   * 先资格预筛，通过才进入摘要请求。
-   */
-  private async runIdleCompaction(): Promise<void> {
-    const ac = this.abortController
-    if (!ac || ac.signal.aborted) return
-
-    // 资格预筛：短会话 / 已在压缩 / disposed 等不进入摘要模型请求
-    if (!shouldScheduleIdleCompaction(this.target.getIdleCompactionScheduleState())) {
-      this.abortController = null
-      return
-    }
-
-    this._compressing = true
-
-    try {
-      await this.target.runIdleCompaction(ac.signal)
-    } catch {
-      // 空闲压缩是后台优化；异常由 target 保证不产生部分写回。
-    } finally {
-      this._compressing = false
-      this.abortController = null
-    }
-  }
-
-  /** 清除 setTimeout 句柄 */
-  private clearTimer(): void {
     if (this.timerHandle !== null) {
       clearTimeout(this.timerHandle)
       this.timerHandle = null
