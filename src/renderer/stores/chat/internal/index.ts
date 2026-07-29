@@ -24,4 +24,7 @@ export {
   isHydrationEpochCurrent,
   nextHydrationEpoch
 } from './hydrationEpoch'
-export { reconcileFocusedSession, type ChatStoreApi } from './focusedSessionReconcile'
+export type { ChatStoreApi } from './storeApi'
+export { reconcileFocusedSession } from './focusedSessionReconcile'
+export { dispatchNextPendingMessage } from './dispatchNextPending'
+export { emptyStreamTransientState } from './streamTransients'

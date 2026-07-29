@@ -49,6 +49,8 @@ export const RULE_CHAT_SLICES_CANNOT_IMPORT_EACH_OTHER =
   'chat-slices-cannot-import-each-other'
 export const RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI =
   'chat-slice-cannot-import-renderer-ui'
+export const RULE_CHAT_SLICE_CANNOT_IMPORT_LEGACY_STORE_TYPES =
+  'chat-slice-cannot-import-legacy-store-types'
 export const RULE_CHAT_INTERNAL_CANNOT_IMPORT_SLICES =
   'chat-internal-cannot-import-slices'
 export const RULE_CHAT_INTERNAL_CANNOT_IMPORT_STORE_ROOT =
@@ -205,6 +207,12 @@ export function rulesForResolvedEdge(fromFile: string, toFile: string): string[]
   }
   if (isRendererChatSlicePath(from) && isRendererComponentPath(to)) {
     rules.push(RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI)
+  }
+  if (
+    isRendererChatSlicePath(from)
+    && toRepoPosixPath(to) === 'src/renderer/stores/types.ts'
+  ) {
+    rules.push(RULE_CHAT_SLICE_CANNOT_IMPORT_LEGACY_STORE_TYPES)
   }
   if (isRendererChatInternalPath(from) && isRendererChatSlicesPath(to)) {
     rules.push(RULE_CHAT_INTERNAL_CANNOT_IMPORT_SLICES)

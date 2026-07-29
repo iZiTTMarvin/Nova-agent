@@ -5,10 +5,11 @@ import type {
   ExtendedToolCall,
   RendererMessageBlock,
   RendererToolBlock
-} from '../../types'
+} from '../types'
 import {
   bumpRevision,
   commitMessageList,
+  emptyStreamTransientState,
   stripInlinePseudoToolCalls
 } from '../internal'
 import type {
@@ -20,10 +21,10 @@ import type {
 } from '../types'
 
 export function initialStreamState(): Pick<StreamSliceState, 'streamingToolArgs'> {
-  return { streamingToolArgs: {} }
+  return emptyStreamTransientState()
 }
 
-export function resetOnSessionSwitch(): Pick<StreamSliceState, 'streamingToolArgs'> {
+export function resetStreamOnSessionSwitch(): Pick<StreamSliceState, 'streamingToolArgs'> {
   return initialStreamState()
 }
 

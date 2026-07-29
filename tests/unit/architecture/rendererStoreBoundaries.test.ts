@@ -6,6 +6,7 @@ import {
   RULE_CHAT_INTERNAL_CANNOT_IMPORT_SLICES,
   RULE_CHAT_INTERNAL_CANNOT_IMPORT_STORE_ROOT,
   RULE_CHAT_SLICE_CANNOT_IMPORT_STORE_ROOT,
+  RULE_CHAT_SLICE_CANNOT_IMPORT_LEGACY_STORE_TYPES,
   RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI,
   RULE_CHAT_SLICES_CANNOT_IMPORT_EACH_OTHER,
   RULE_COMPONENTS_CANNOT_IMPORT_CHAT_INTERNALS,
@@ -16,6 +17,7 @@ import { findRepoRoot, scanSourceTree } from './importBoundaryScanner'
 const CHAT_SLICE_RULES = [
   RULE_CHAT_SLICE_CANNOT_IMPORT_STORE_ROOT,
   RULE_CHAT_SLICES_CANNOT_IMPORT_EACH_OTHER,
+  RULE_CHAT_SLICE_CANNOT_IMPORT_LEGACY_STORE_TYPES,
   RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI,
   RULE_CHAT_INTERNAL_CANNOT_IMPORT_SLICES,
   RULE_CHAT_INTERNAL_CANNOT_IMPORT_STORE_ROOT,
@@ -76,6 +78,17 @@ describe('renderer chat store boundaries', () => {
         RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI
       )
     }
+  })
+
+  it('slice 只能从 chat 契约读取 Store 类型', () => {
+    expectOnlyRule(
+      buildViolationsForEdge(
+        'src/renderer/stores/chat/slices/streamSlice.ts',
+        'src/renderer/stores/types.ts',
+        '../../types'
+      ),
+      RULE_CHAT_SLICE_CANNOT_IMPORT_LEGACY_STORE_TYPES
+    )
   })
 
   it('internal 不能依赖 slice', () => {
