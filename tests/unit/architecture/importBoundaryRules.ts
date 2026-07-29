@@ -43,6 +43,20 @@ export const RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS =
 export const RULE_AGENT_CORE_CANNOT_IMPORT_PRODUCT_ROUTING =
   'agent-core-cannot-import-product-routing'
 export const RULE_RUNTIME_CANNOT_IMPORT_ELECTRON = 'runtime-cannot-import-electron'
+export const RULE_CHAT_SLICE_CANNOT_IMPORT_STORE_ROOT =
+  'chat-slice-cannot-import-store-root'
+export const RULE_CHAT_SLICES_CANNOT_IMPORT_EACH_OTHER =
+  'chat-slices-cannot-import-each-other'
+export const RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI =
+  'chat-slice-cannot-import-renderer-ui'
+export const RULE_CHAT_INTERNAL_CANNOT_IMPORT_SLICES =
+  'chat-internal-cannot-import-slices'
+export const RULE_CHAT_INTERNAL_CANNOT_IMPORT_STORE_ROOT =
+  'chat-internal-cannot-import-store-root'
+export const RULE_CHAT_INTERNAL_CANNOT_IMPORT_RENDERER_IMPLEMENTATION =
+  'chat-internal-cannot-import-renderer-implementation'
+export const RULE_COMPONENTS_CANNOT_IMPORT_CHAT_INTERNALS =
+  'components-cannot-import-chat-internals'
 
 export function layerCannotImportRule(from: SrcLayer, to: SrcLayer): string {
   return `${from}-cannot-import-${to}`
@@ -85,6 +99,50 @@ export function isAgentLoopPath(repoRelativePosix: string): boolean {
 
 export function isAgentCorePath(repoRelativePosix: string): boolean {
   return toRepoPosixPath(repoRelativePosix).startsWith('src/runtime/agent/core/')
+}
+
+export function isRendererChatSlicePath(repoRelativePosix: string): boolean {
+  const normalized = toRepoPosixPath(repoRelativePosix)
+  return (
+    normalized.startsWith('src/renderer/stores/chat/slices/')
+    && normalized !== 'src/renderer/stores/chat/slices/index.ts'
+  )
+}
+
+export function isRendererChatSlicesPath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/renderer/stores/chat/slices/')
+}
+
+export function isRendererChatInternalPath(repoRelativePosix: string): boolean {
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/renderer/stores/chat/internal/')
+}
+
+export function isRendererChatStoreRootPath(repoRelativePosix: string): boolean {
+  const normalized = toRepoPosixPath(repoRelativePosix)
+  return (
+    normalized === 'src/renderer/stores/useChatStore.ts'
+    || normalized === 'src/renderer/stores/chat/index.ts'
+    || normalized === 'src/renderer/stores/chat/createChatStore.ts'
+  )
+}
+
+export function isAllowedRendererChatInternalDependency(repoRelativePosix: string): boolean {
+  const normalized = toRepoPosixPath(repoRelativePosix)
+  return (
+    isRendererChatInternalPath(normalized)
+    || normalized === 'src/renderer/stores/chat/types.ts'
+    || normalized === 'src/renderer/stores/chat/constants.ts'
+    || normalized.startsWith('src/renderer/lib/')
+  )
+}
+
+export function isRendererComponentPath(repoRelativePosix: string): boolean {
+  const normalized = toRepoPosixPath(repoRelativePosix)
+  return (
+    normalized === 'src/renderer/App.tsx'
+    || normalized.startsWith('src/renderer/components/')
+    || normalized.startsWith('src/renderer/features/')
+  )
 }
 
 /** 产品执行器子树：AgentLoop 只能经 TurnDispatcher 间接使用，不得直接依赖 */
@@ -138,6 +196,36 @@ export function rulesForResolvedEdge(fromFile: string, toFile: string): string[]
   }
   if (isAgentCorePath(from) && isProductRoutingPath(to)) {
     rules.push(RULE_AGENT_CORE_CANNOT_IMPORT_PRODUCT_ROUTING)
+  }
+  if (isRendererChatSlicePath(from) && isRendererChatStoreRootPath(to)) {
+    rules.push(RULE_CHAT_SLICE_CANNOT_IMPORT_STORE_ROOT)
+  }
+  if (isRendererChatSlicePath(from) && isRendererChatSlicesPath(to)) {
+    rules.push(RULE_CHAT_SLICES_CANNOT_IMPORT_EACH_OTHER)
+  }
+  if (isRendererChatSlicePath(from) && isRendererComponentPath(to)) {
+    rules.push(RULE_CHAT_SLICE_CANNOT_IMPORT_RENDERER_UI)
+  }
+  if (isRendererChatInternalPath(from) && isRendererChatSlicesPath(to)) {
+    rules.push(RULE_CHAT_INTERNAL_CANNOT_IMPORT_SLICES)
+  }
+  if (isRendererChatInternalPath(from) && isRendererChatStoreRootPath(to)) {
+    rules.push(RULE_CHAT_INTERNAL_CANNOT_IMPORT_STORE_ROOT)
+  }
+  if (
+    isRendererChatInternalPath(from)
+    && layerOf(to) === 'renderer'
+    && !isAllowedRendererChatInternalDependency(to)
+    && !isRendererChatSlicesPath(to)
+    && !isRendererChatStoreRootPath(to)
+  ) {
+    rules.push(RULE_CHAT_INTERNAL_CANNOT_IMPORT_RENDERER_IMPLEMENTATION)
+  }
+  if (
+    isRendererComponentPath(from)
+    && (isRendererChatInternalPath(to) || isRendererChatSlicesPath(to))
+  ) {
+    rules.push(RULE_COMPONENTS_CANNOT_IMPORT_CHAT_INTERNALS)
   }
   return rules
 }

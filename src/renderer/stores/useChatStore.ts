@@ -13,7 +13,6 @@
  * - 可以读 useAgentStore / useSettingsStore（通过 getState）
  * - 不被 useAgentStore 内部状态依赖（cancel 路径从 agent store 进入后调本 store）
  */
-import { create } from 'zustand'
 import type {
   Session,
   SessionDetail,
@@ -21,16 +20,11 @@ import type {
   Mode,
   PermissionDecision
 } from '../../shared/session/types'
-import type { RunStatus } from '../../shared/run/types'
 import { SESSION_HISTORY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { appendTerminalErrorToBlocks } from '../../shared/session/terminalErrorBlocks'
-import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
-import type { Tier1BranchContext } from '../../shared/workspace/types'
 import type { NormalizedUsage } from '../../shared/model/types'
 import type { HookEvent } from '../../shared/agent/types'
 import type { RendererRecoveryState } from '../../shared/ipc/types'
-import { stripTextToolCalls } from '../../shared/tool-call-text-fallback'
-import { stripMinimaxArtifacts } from '../../shared/stream/stripMinimaxArtifacts'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 import {
@@ -43,499 +37,30 @@ import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-s
 import type {
   ExtendedMessage,
   ExtendedToolCall,
-  MessageDiffCache,
   PendingPermissionRequest,
   RendererMessageBlock,
-  RendererToolBlock,
-  SessionMessagePayload
+  RendererToolBlock
 } from './types'
+import { MAX_PENDING_MESSAGES } from './chat/constants'
+import { createChatStore } from './chat/createChatStore'
+import { resetMessageOnSessionSwitch } from './chat/slices'
+import {
+  applyDiffReviewStatus,
+  buildMessageIndex,
+  bumpRevision,
+  commitMessageList,
+  invalidateHydrationEpoch,
+  isHydrationEpochCurrent,
+  isTerminalRunStatusLocal,
+  nextHydrationEpoch,
+  omitRecoveryFieldsForMessage,
+  reconcileFocusedSession,
+  restoreSessionMessages,
+  stripInlinePseudoToolCalls
+} from './chat/internal'
+import type { ChatState, StreamDelta, StreamDeltaBatch } from './chat/types'
 
-/** run 是否处于终态（切会话派生 isGenerating 时使用，与 useRunStore 口径一致） */
-function isTerminalRunStatusLocal(status: RunStatus): boolean {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'cancelled' ||
-    status === 'interrupted'
-  )
-}
-
-// ── 内部辅助函数（与 useAppStore 旧实现行为完全一致） ─────────────────
-
-/** 根据 tool_result 文本判断工具调用是否失败（与 runtime 文案协议） */
-function getToolCallStatus(result?: string): ExtendedToolCall['status'] {
-  if (!result) return 'success'
-  return result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
-    ? 'error'
-    : 'success'
-}
-
-/** 旧会话兼容路径：剥离历史 <think>...</think> 标签，不在 UI 重复展示 */
-function stripLegacyThinkingTags(content: string): string {
-  return content.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '')
-}
-
-/**
- * 某些模型会把工具调用误输出成正文里的 JSON / XML 片段。
- * 当后端随后补发真实 tool_call 事件时，这里把那段伪调用从消息文本里剥掉，
- * 避免界面同时出现“黑色 JSON 代码块 / XML + 真实工具卡片”的重复展示。
- */
-function stripInlinePseudoToolCalls(
-  content: string,
-  blocks: RendererMessageBlock[]
-): { content: string; blocks: RendererMessageBlock[] } {
-  let cleanedContent = stripMinimaxArtifacts(content)
-  cleanedContent = stripTextToolCalls(cleanedContent)
-  if (cleanedContent === content) {
-    return { content, blocks }
-  }
-
-  const nextBlocks = [...blocks]
-  for (let i = nextBlocks.length - 1; i >= 0; i--) {
-    const block = nextBlocks[i]
-    if (block.type !== 'text') continue
-
-    let cleanedBlockText = stripMinimaxArtifacts(block.content)
-    cleanedBlockText = stripTextToolCalls(cleanedBlockText)
-    if (cleanedBlockText === block.content) break
-
-    if (cleanedBlockText.length === 0) {
-      nextBlocks.splice(i, 1)
-    } else {
-      nextBlocks[i] = { ...block, content: cleanedBlockText }
-    }
-    break
-  }
-
-  return { content: cleanedContent, blocks: nextBlocks }
-}
-
-/** 把后端返回的 SessionDetail 消息列表恢复成 ExtendedMessage 数组 */
-function restoreSessionMessages(messages: SessionDetail['messages']): ExtendedMessage[] {
-  return messages.map((message) => {
-    const payload = message as SessionMessagePayload
-    const results = payload._toolCallResults ?? {}
-    const sanitizedContent = stripLegacyThinkingTags(message.content)
-
-    const toolCalls = message.toolCalls?.map((toolCall) => {
-      const result = results[toolCall.id]
-      // T01：历史消息恢复时对 write/edit 工具的 arguments 做摘要化
-      const sanitizedArgs = sanitizeToolInput(toolCall.name, toolCall.arguments)
-      // T02：对工具输出做截断，防止历史消息中的长 result 撑爆 heap
-      const isErr = result?.startsWith('工具执行失败') || result?.startsWith('权限拒绝:')
-      const sanitizedResult = result ? sanitizeToolOutput(toolCall.name, result, isErr) : result
-      return {
-        id: toolCall.id,
-        name: toolCall.name,
-        arguments: sanitizedArgs,
-        status: getToolCallStatus(result),
-        result: sanitizedResult
-      }
-    })
-
-    if (message.blocks && message.blocks.length > 0) {
-      // T01+T02：对已有 blocks 中的 tool block arguments 和 result 做摘要化/截断
-      const sanitizedBlocks = message.blocks.map(block => {
-        if (block.type === 'tool') {
-          const blockResult = (block as import('../../shared/session/types').ToolBlock).result
-          const isBlkErr = blockResult?.startsWith('工具执行失败') || blockResult?.startsWith('权限拒绝:')
-          return {
-            ...block,
-            arguments: sanitizeToolInput(block.toolName, block.arguments),
-            result: blockResult ? sanitizeToolOutput(block.toolName, blockResult, isBlkErr) : blockResult
-          }
-        }
-        return block
-      })
-      return { ...message, content: sanitizedContent, toolCalls, blocks: sanitizedBlocks, _revision: 0 }
-    }
-
-    // 旧消息无 blocks：从 content 和 toolCalls 构造
-    const blocks: MessageBlock[] = []
-    if (sanitizedContent) {
-      blocks.push({ type: 'text', content: sanitizedContent })
-    }
-    if (toolCalls) {
-      for (const tc of toolCalls) {
-        blocks.push({
-          type: 'tool',
-          toolCallId: tc.id,
-          toolName: tc.name,
-          arguments: tc.arguments,
-          status: tc.status,
-          result: tc.result
-        })
-      }
-    }
-
-    return { ...message, content: sanitizedContent, toolCalls, blocks, _revision: 0 }
-  })
-}
-
-/** 把 SessionDetail 转成 Session 摘要并 upsert 到 sessions 列表头部 */
-function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
-  const nextSummary: Session = {
-    id: detail.id,
-    workspaceRoot: detail.workspaceRoot,
-    mode: detail.mode,
-    createdAt: detail.createdAt,
-    updatedAt: detail.updatedAt,
-    messageCount: detail.messageCount
-  }
-
-  const others = sessions.filter(session => session.id !== detail.id)
-  return [nextSummary, ...others]
-}
-
-/** 把单条 diff 文件标记为某个 review 状态（若该文件尚未进入 diffs 列表则先追加占位） */
-function applyDiffReviewStatus(
-  cache: MessageDiffCache,
-  filePath: string,
-  status: DiffReviewStatus
-): MessageDiffCache {
-  const existingDiff = cache.diffs.find(diff => diff.filePath === filePath)
-  const nextDiffs = existingDiff
-    ? cache.diffs
-    : [...cache.diffs, { filePath, hunks: [], status: 'modified' as const }]
-
-  return {
-    diffs: nextDiffs,
-    reviews: { ...cache.reviews, [filePath]: status }
-  }
-}
-
-/** 给消息 bump 一次 _revision，返回新引用。所有 store 内 mutate 路径都通过它，保证 revision 单调递增。 */
-function bumpRevision(msg: ExtendedMessage): ExtendedMessage {
-  return { ...msg, _revision: (msg._revision ?? 0) + 1 }
-}
-
-/** 按 messageId 移除恢复 / Hook 相关临时状态（message-end 与 error 路径共用） */
-function omitRecoveryFieldsForMessage(
-  state: Pick<ChatState, 'recoveryState' | 'recoveryHints' | 'hookErrors'>,
-  messageId: string
-): Pick<ChatState, 'recoveryState' | 'recoveryHints' | 'hookErrors'> {
-  const { [messageId]: _rs, ...restRecoveryState } = state.recoveryState
-  const { [messageId]: _rh, ...restRecoveryHints } = state.recoveryHints
-  const { [messageId]: _he, ...restHookErrors } = state.hookErrors
-  return {
-    recoveryState: restRecoveryState,
-    recoveryHints: restRecoveryHints,
-    hookErrors: restHookErrors
-  }
-}
-
-/** 根据 messages 数组构建 id → index 索引，加速 delta handler O(1) 定位 */
-function buildMessageIndex(messages: ExtendedMessage[]): Record<string, number> {
-  const index: Record<string, number> = {}
-  for (let i = 0; i < messages.length; i++) {
-    index[messages[i].id] = i
-  }
-  return index
-}
-
-let focusedSessionHydrationEpoch = 0
-
-async function reconcileFocusedSessionFromStore(sessionId: string): Promise<void> {
-  const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
-  if (useChatStore.getState().currentSessionId !== sessionId) return
-
-  const restored = restoreSessionMessages(detail.messages)
-  useChatStore.setState(state => {
-    if (state.currentSessionId !== sessionId) return state
-    const messages = mergeFocusedSessionMessages(
-      restored,
-      state.messages,
-      state.currentGeneratingMessageId,
-      null
-    )
-    return {
-      messages,
-      messageIndexById: buildMessageIndex(messages),
-      sessions: upsertSessionSummary(state.sessions, detail)
-    }
-  })
-}
-
-// ── Store 接口与实现 ──────────────────────────────────────
-
-export interface ChatState {
-  // ── 状态 ──
-  sessions: Session[]
-  currentSessionId: string | null
-  messages: ExtendedMessage[]
-  /** id → 数组索引，用于 delta handler O(1) 定位 */
-  messageIndexById: Record<string, number>
-  /**
-   * 上次 syncFromWorkspace 见到的 messagesRevision。
-   * 用于检测「同会话内消息序列变化」（回退/切分支），据此绕过 sessionChanged 守卫重拉消息。
-   */
-  lastMessagesRevision: number
-  /**
-   * 编辑/重新生成分叉后，待本轮流式结束再 bump messagesRevision，
-   * 以便 load-session 下发 branch 元信息（翻页器可见）。
-   */
-  pendingBranchMetaReload: boolean
-  /** prepare 与 send-message 之间的短窗口：禁止 switchBranch */
-  branchForkInProgress: boolean
-  /** Tier 1 切分支后的提示与 diff 灰显上下文（来自 WorkspaceState） */
-  tier1BranchContext: Tier1BranchContext | null
-  /** 与消息生成生命周期强绑定，写入由 sendMessage / handleMessageStart / handleError 触发 */
-  isGenerating: boolean
-  currentGeneratingMessageId: string | null
-  /** 当前 Agent 轮次归属的会话 ID（切走后用于过滤旧会话事件） */
-  activeAgentSessionId: string | null
-  /** 发送请求已发出、尚未收到首个流式事件（防连点） */
-  sendInFlight: boolean
-
-  /**
-   * 流式工具调用参数累积：toolCallId → 已累积的 arguments 字符串。
-   * start 时初始化为空字符串，delta 追加片段，最终 tool_call 事件到达后清空。
-   */
-  streamingToolArgs: Record<string, string>
-
-  /** 每条消息的 diff 数据缓存 */
-  messageDiffs: Record<string, MessageDiffCache>
-  /** 正在加载 diff 的消息 ID 集合 */
-  loadingDiffs: Set<string>
-  /**
-   * live 阶段的占位文件列表，仅在等待最终 diff 数据时使用。
-   * 让 DiffViewer 在 skeleton 状态下也能展示文件名。
-   */
-  loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
-
-  /**
-   * Phase 6：Steering Queue 等待派发的用户消息。
-   * Agent 运行期间用户仍可输入，输入的消息会进入此队列，
-   * 在 turn boundary（handleMessageEnd / cancel 完成）自动 dispatch。
-   */
-  pendingUserMessages: Array<{ text: string; images: ImageAttachment[] }>
-
-  /** 每条消息当前的恢复状态（retrying / recovering 等） */
-  recoveryState: Record<string, RendererRecoveryState>
-  /** 每条消息累积的恢复提示（按到达顺序追加） */
-  recoveryHints: Record<string, Array<{ hint: string; attempt: number }>>
-  /** 每条消息累积的 Hook 执行异常 */
-  hookErrors: Record<string, Array<{ hookEvent: HookEvent; error: string }>>
-  /** 每条消息回滚失败的错误提示（key 为 messageId） */
-  rollbackErrors: Record<string, string>
-
-  /** 当前视窗顶部之前是否还有更早消息（可上滚补载） */
-  hasMoreMessagesAbove: boolean
-  /** 上滚补载进行中，防重入 */
-  isLoadingOlderMessages: boolean
-  /** 当前视窗内最早一条消息的 id，作为下次 beforeId 游标 */
-  oldestLoadedMessageId: string | null
-  /**
-   * 用户已向上翻历史并 prepend 过时为 true，暂停 trimMessageWindow 头部裁剪。
-   * 避免 prepend 的早期消息被流式 trim 立刻弹走。切换会话 / 回退重载时重置。
-   * 未上滚时若流式累计触发头部裁剪，游标由 paginationPatchAfterHeadTrim 同步到新窗口首条。
-   */
-  suspendHeadTrim: boolean
-
-  // ── Actions ──
-
-  /** 加载会话列表 */
-  loadSessions: () => Promise<void>
-  /** 选中指定会话并加载消息 */
-  selectSession: (sessionId: string) => Promise<void>
-  /** 删除会话（当前会话被删时切到下一条或清空） */
-  deleteSession: (sessionId: string) => Promise<void>
-  /** 重命名会话标题 */
-  renameSession: (sessionId: string, title: string) => Promise<void>
-  /** 创建新会话 */
-  createNewSession: (workspaceRoot?: string) => Promise<void>
-  /** 发送用户消息（含图片）。返回 false 表示被守卫拦截未发出。 */
-  sendMessage: (
-    content: string,
-    images?: ImageAttachment[],
-    options?: {
-      rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
-    }
-  ) => Promise<boolean>
-  /** 按消息回退到某条消息之前的状态 */
-  regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
-  /** 切换到兄弟分支（翻页器） */
-  switchBranch: (sessionId: string, targetMessageId: string) => Promise<void>
-  /** 编辑某条用户消息并重发：分叉手术 + 乐观截断 + 复用流式发送 */
-  editResend: (sessionId: string, messageId: string, newContent: string) => Promise<void>
-  /** 按文件接受改动 */
-  acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
-  /** 按文件拒绝改动 */
-  rejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
-  /** 批量接受多个文件改动（PRD §5.3） */
-  acceptAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<void>
-  /** 批量拒绝多个文件改动（PRD §5.3），返回恢复成功与失败的文件 */
-  rejectAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
-  /** 加载某条消息的 diff 数据 */
-  loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
-  /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
-  clearMessageDiffs: (messageId: string) => void
-  /** 上滚到顶时加载更早一页消息并 prepend 到视窗 */
-  loadOlderMessages: () => Promise<void>
-  /**
-   * 分叉轮次结束后 bump revision，拉取 branch 元信息；或 send 失败时强制与主进程对齐。
-   */
-  finishBranchMetaRefresh: () => Promise<void>
-  /** 用户关闭 Tier 1 横幅 */
-  dismissTier1BranchNotice: () => void
-
-  /**
-   * Phase 2 批量应用流式 delta：
-   * 把同帧累积的 delta 按 messageId 分组合并，一次 set() 写回 store。
-   * 接受三种 delta 类型：thinking / text / toolCall。
-   */
-  applyStreamDeltas: (deltas: StreamDeltaBatch) => void
-
-  // ── 主进程事件 handler ──
-  handleMessageStart: (messageId: string) => void
-  /**
-   * 某次模型 attempt 失败：清空该消息的临时流式内容，
-   * 保留消息气泡，供下一次 attempt 重新写入，避免 UI 重复文本。
-   */
-  handleAttemptFailed: (messageId: string, attemptId: string) => void
-  /**
-   * @deprecated 自 Phase 2 引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
-   * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
-   * 未来版本会移除；新代码请改用 `applyStreamDeltas`（buffer 在 App 端直接喂批量 delta）。
-   */
-  handleThinkingDelta: (messageId: string, delta: string) => void
-  /**
-   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`。
-   */
-  handleTextDelta: (messageId: string, delta: string) => void
-  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => void
-  /**
-   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`（kind: 'toolCall'）。
-   */
-  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => void
-  /**
-   * @deprecated 仍是主进程 tool_call 终态事件（不含 streaming）的合法处理入口；
-   * 不是被 buffer/scheduler 替代的对象。保留为长期 API。
-   */
-  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
-  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
-  handleDiffUpdate: (
-    messageId: string,
-    phase: 'live' | 'final',
-    diffs: Array<{ filePath: string; status: DiffEntry['status']; hunks?: DiffEntry['hunks'] }>,
-    reviews: Record<string, DiffReviewStatus>
-  ) => void
-  /**
-   * 主进程消息结束事件。
-   * @param messageId 消息 ID
-   * @param interrupted 是否为 cancel 中断结束（Phase 3）
-   *
-   * Phase 6：声明为 async 以便 await turn boundary 的 dispatchNextPending，
-   * 调用方拿到 Promise resolve 时 store 状态已稳定（pending 已 dispatch）。
-   */
-  handleMessageEnd: (messageId: string, interrupted?: boolean) => Promise<void>
-  handleError: (messageId: string, error: string) => Promise<void>
-  /** 主进程 recovery_state 事件：更新当前消息的恢复状态机 */
-  handleRecoveryState: (messageId: string, state: RendererRecoveryState) => void
-  /** 主进程 recovery_hint 事件：追加一条恢复提示 */
-  handleRecoveryHint: (messageId: string, hint: string, attempt: number) => void
-  /** 主进程 hook_error 事件：记录 Hook 执行异常（不中断 Agent） */
-  handleHookError: (messageId: string, hookEvent: HookEvent, error: string) => void
-
-  /**
-   * Phase 3：把当前所有 running tool 块标记为 error（"用户取消执行"）。
-   * 由 useAgentStore.cancelExecution 触发，保留旧 useAppStore 的兜底行为。
-   */
-  markRunningAsCancelled: () => void
-
-  /**
-   * Phase 6：Steering Queue — 用户在 Agent 运行期间入队消息
-   * 实际 dispatch 在 turn boundary 触发（handleMessageEnd / markRunningAsCancelled 后）
-   */
-  enqueuePendingMessage: (text: string, images: ImageAttachment[]) => void
-  /** 取消某条挂起消息的排队（按索引） */
-  removePendingMessage: (index: number) => void
-  /** 清空全部挂起消息 */
-  clearPendingMessages: () => void
-
-  /**
-   * PRD §5.1：把 workspace store 广播的工作区状态同步到本 store。
-   * 由 workspaceDispatcher 调用（workspace:changed 事件的唯一副作用入口）。
-   * - 同步 sessions 列表
-   * - 若 currentSessionId 变化（含从 null 切到某会话 / 从某会话切到 null），
-   *   重新加载该会话的消息（或清空）。
-   * @internal 不应被 UI 组件直接调用
-   */
-  syncFromWorkspace: (next: {
-    currentSessionId: string | null
-    availableSessions: Session[]
-    /** 同会话内消息序列版本号；与上次不同则强制重拉消息（回退/切分支用，绕过 sessionChanged 守卫） */
-    messagesRevision: number
-    tier1BranchContext: Tier1BranchContext | null
-  }) => void
-}
-
-// ── Phase 6：Steering Queue 容量上限 ─────────────────────────────
-
-/** 单个会话最多保留的挂起消息数。超过后丢弃最早入队的项。 */
-const MAX_PENDING_MESSAGES = 20
-
-// ── T05：消息窗口 LRU 裁剪常量 ──────────────────────────────
-
-/** 消息数组超过此阈值触发裁剪 */
-const MESSAGE_WINDOW_MAX_SIZE = 240
-/** 裁剪时保留尾部最近的消息数 */
-const MESSAGE_WINDOW_TAIL_PRESERVE = 80
-
-// ── Phase 2：流式 delta 批量结构 ──────────────────────────────
-
-/** 单条 delta 的统一结构（thinking / text / toolCall 三选一） */
-export type StreamDelta =
-  | { kind: 'thinking'; messageId: string; delta: string }
-  | { kind: 'text'; messageId: string; delta: string }
-  | { kind: 'toolCall'; messageId: string; toolCallId: string; delta: string }
-
-/** 一次 flush 的批量 delta 数组 */
-export type StreamDeltaBatch = StreamDelta[]
-
-/** T05：消息窗口 LRU 裁剪。超过 MESSAGE_WINDOW_MAX_SIZE 时从头部裁剪，保留尾部 N 条 */
-function trimMessageWindow(
-  messages: ExtendedMessage[],
-  index: Record<string, number>
-): { messages: ExtendedMessage[]; index: Record<string, number>; headTrimmed: boolean } {
-  if (messages.length <= MESSAGE_WINDOW_MAX_SIZE) {
-    return { messages, index, headTrimmed: false }
-  }
-  const tailPreserve = messages.length - MESSAGE_WINDOW_TAIL_PRESERVE
-  const trimCount = Math.min(messages.length - MESSAGE_WINDOW_MAX_SIZE, Math.max(0, tailPreserve))
-  if (trimCount <= 0) return { messages, index, headTrimmed: false }
-  const trimmed = messages.slice(trimCount)
-  const newIndex: Record<string, number> = {}
-  for (let i = 0; i < trimmed.length; i++) {
-    newIndex[trimmed[i].id] = i
-  }
-  return { messages: trimmed, index: newIndex, headTrimmed: true }
-}
-
-/**
- * 头部裁剪后同步分页游标：被裁消息仍在盘上，可通过 loadOlderMessages 补回。
- */
-function paginationPatchAfterHeadTrim(
-  trimResult: { messages: ExtendedMessage[]; headTrimmed: boolean }
-): Pick<ChatState, 'oldestLoadedMessageId' | 'hasMoreMessagesAbove'> | Record<string, never> {
-  if (!trimResult.headTrimmed) return {}
-  return {
-    oldestLoadedMessageId: trimResult.messages[0]?.id ?? null,
-    hasMoreMessagesAbove: true
-  }
-}
-
-/**
- * 在 suspendHeadTrim 时跳过头部裁剪（P1-c：用户上滚补载后保留已 prepend 的早期历史）。
- */
-function applyMessageWindowTrim(
-  messages: ExtendedMessage[],
-  index: Record<string, number>,
-  suspendHeadTrim: boolean
-): { messages: ExtendedMessage[]; index: Record<string, number>; headTrimmed: boolean } {
-  if (suspendHeadTrim) return { messages, index, headTrimmed: false }
-  return trimMessageWindow(messages, index)
-}
+export type { ChatState, StreamDelta, StreamDeltaBatch } from './chat/types'
 
 /**
  * Phase 6：turn boundary 自动 dispatch 挂起消息。
@@ -559,11 +84,9 @@ async function dispatchNextPending(get: () => ChatState): Promise<void> {
 
 // ── Store 实现 ─────────────────────────────────────────────
 
-export const useChatStore = create<ChatState>((set, get) => ({
+export const useChatStore = createChatStore((set, get) => ({
   sessions: [],
   currentSessionId: null,
-  messages: [],
-  messageIndexById: {},
   lastMessagesRevision: 0,
   pendingBranchMetaReload: false,
   branchForkInProgress: false,
@@ -657,15 +180,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set(state => {
       const nextMessages = [...state.messages, userMsg]
-      const trimmed = applyMessageWindowTrim(
-        nextMessages,
-        { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 },
-        state.suspendHeadTrim
-      )
       return {
-        messages: trimmed.messages,
-        messageIndexById: trimmed.index,
-        ...paginationPatchAfterHeadTrim(trimmed),
+        ...commitMessageList(state, {
+          nextMessages,
+          nextIndex: { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 }
+        }),
         isGenerating: true,
         sendInFlight: true,
         activeAgentSessionId: activeSessionId
@@ -687,8 +206,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       if (options?.rollbackSnapshot) {
         set({
-          messages: options.rollbackSnapshot.messages,
-          messageIndexById: options.rollbackSnapshot.messageIndexById,
+          ...commitMessageList(get(), {
+            nextMessages: options.rollbackSnapshot.messages,
+            nextIndex: options.rollbackSnapshot.messageIndexById,
+            skipWindowTrim: true
+          }),
           sendInFlight: false,
           activeAgentSessionId: null,
           isGenerating: false,
@@ -780,8 +302,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const truncated = messages.slice(0, assistantIdx)
       set({
-        messages: truncated,
-        messageIndexById: buildMessageIndex(truncated),
+        ...commitMessageList(get(), { nextMessages: truncated, skipWindowTrim: true }),
         messageDiffs: {},
         loadingDiffPlaceholders: {},
         loadingDiffs: new Set(),
@@ -800,8 +321,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
       } catch (err) {
         set({
-          messages: preTruncate.messages,
-          messageIndexById: preTruncate.messageIndexById,
+          ...commitMessageList(get(), {
+            nextMessages: preTruncate.messages,
+            nextIndex: preTruncate.messageIndexById,
+            skipWindowTrim: true
+          }),
           branchForkInProgress: false,
           isGenerating: false,
           sendInFlight: false,
@@ -902,8 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (idx !== -1) {
       const truncated = messages.slice(0, idx)
       set({
-        messages: truncated,
-        messageIndexById: buildMessageIndex(truncated),
+        ...commitMessageList(get(), { nextMessages: truncated, skipWindowTrim: true }),
         // 分叉后旧 diff 缓存与磁盘可能不一致，清空避免误导
         messageDiffs: {},
         loadingDiffPlaceholders: {},
@@ -1097,8 +620,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set(state => {
         const merged = [...older, ...state.messages]
         return {
-          messages: merged,
-          messageIndexById: buildMessageIndex(merged),
+          ...commitMessageList(state, { nextMessages: merged, skipWindowTrim: true }),
           hasMoreMessagesAbove: result.hasMore,
           oldestLoadedMessageId: merged[0]?.id ?? null,
           isLoadingOlderMessages: false,
@@ -1132,8 +654,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const assistantMsg = createAssistantMessage(activeSessionId, messageId)
       const nextMessages = [...state.messages, assistantMsg]
       return {
-        messages: nextMessages,
-        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        ...commitMessageList(state, {
+          nextMessages,
+          nextIndex: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+          skipWindowTrim: true
+        }),
         currentGeneratingMessageId: messageId,
         sendInFlight: false
       }
@@ -1156,7 +681,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blocks: [],
         _revision: (msg._revision ?? 0) + 1
       }
-      return { messages: next }
+      return commitMessageList(state, { nextMessages: next, nextIndex: state.messageIndexById, skipWindowTrim: true })
     })
   },
 
@@ -1176,7 +701,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const nextMessages = state.messages.slice()
       nextMessages[idx] = bumpRevision({ ...msg, thinking: (msg.thinking ?? '') + delta, blocks })
-      return { messages: nextMessages }
+      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
     })
   },
 
@@ -1196,7 +721,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const nextMessages = state.messages.slice()
       nextMessages[idx] = bumpRevision({ ...msg, content: msg.content + delta, blocks })
-      return { messages: nextMessages }
+      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
     })
   },
 
@@ -1262,7 +787,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextMessages[idx] = bumpRevision({ ...msg, content: cleanedMessage.content, toolCalls, blocks })
 
       const { [toolCallId]: _drop2, ...restStreaming } = state.streamingToolArgs
-      return { messages: nextMessages, streamingToolArgs: restStreaming }
+      return {
+        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
+        streamingToolArgs: restStreaming
+      }
     })
   },
 
@@ -1295,7 +823,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextMessages[idx] = bumpRevision({ ...msg, toolCalls, blocks })
 
       return {
-        messages: nextMessages,
+        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: '' }
       }
     })
@@ -1340,7 +868,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
 
       return {
-        messages: nextMessages,
+        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: nextRaw }
       }
     })
@@ -1372,7 +900,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const nextMessages = state.messages.slice()
       nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
-      return { messages: nextMessages }
+      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
     })
   },
 
@@ -1460,7 +988,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
       return {
-        messages: nextMessages,
+        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         isGenerating: false,
         currentGeneratingMessageId: null,
         activeAgentSessionId: null,
@@ -1477,7 +1005,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const sessionIdAtEnd = get().currentSessionId
     if (sessionIdAtEnd) {
       try {
-        await reconcileFocusedSessionFromStore(sessionIdAtEnd)
+        await reconcileFocusedSession({ getState: get, setState: set }, sessionIdAtEnd)
       } catch (err) {
         console.error('[useChatStore] message_end 终态消息对账失败:', err)
       }
@@ -1539,7 +1067,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           blocks: nextBlocks,
           toolCalls: prev.toolCalls
         })
-        return { messages: nextMessages, ...commonFields }
+        return {
+          ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
+          ...commonFields
+        }
       }
 
       // 罕见 fallback：error 在 message_start 之前到达，此时列表里还没有这条消息，
@@ -1555,15 +1086,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const nextMessages = [...state.messages, errorMsg]
       return {
-        messages: nextMessages,
-        messageIndexById: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+        ...commitMessageList(state, {
+          nextMessages,
+          nextIndex: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
+          skipWindowTrim: true
+        }),
         ...commonFields
       }
     })
 
     if (currentSessionId) {
       try {
-        await reconcileFocusedSessionFromStore(currentSessionId)
+        await reconcileFocusedSession({ getState: get, setState: set }, currentSessionId)
       } catch (reloadError) {
         console.error('[useChatStore] error 终态消息对账失败:', reloadError)
       }
@@ -1626,7 +1160,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
 
       return {
-        messages: nextMessages,
+        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         isGenerating: false,
         currentGeneratingMessageId: null,
         streamingToolArgs: {}
@@ -1848,17 +1382,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // T05：流式 delta 处理完后裁剪消息窗口
       let finalResult: Partial<ChatState>
       if (messagesChanged) {
-        const trimmed = applyMessageWindowTrim(
-          nextMessages,
-          nextMessageIndex,
-          state.suspendHeadTrim
-        )
         finalResult = {
-          messages: trimmed.messages,
-          ...(addedMissingMessage || trimmed.messages !== nextMessages
-            ? { messageIndexById: trimmed.index }
-            : {}),
-          ...paginationPatchAfterHeadTrim(trimmed),
+          ...commitMessageList(state, { nextMessages, nextIndex: nextMessageIndex }),
           ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
         }
       } else {
@@ -1889,8 +1414,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 会话切换先清掉旧会话的瞬态投影。目标会话的运行态与草稿由下方
     // snapshot-first 恢复，禁止从可能陈旧的 renderer 缓存同步猜测。
     if (sessionChanged) {
-      patch.messages = []
-      patch.messageIndexById = {}
+      Object.assign(patch, resetMessageOnSessionSwitch())
       patch.isGenerating = false
       patch.currentGeneratingMessageId = null
       patch.activeAgentSessionId = null
@@ -1915,7 +1439,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
 
       const targetSessionId = next.currentSessionId
-      const hydrationEpoch = ++focusedSessionHydrationEpoch
+      const hydrationEpoch = nextHydrationEpoch()
 
       if (targetSessionId) {
         void (async () => {
@@ -1929,7 +1453,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               await useRunStore.getState().pullSnapshot(targetSessionId)
             }
             if (
-              hydrationEpoch !== focusedSessionHydrationEpoch ||
+              !isHydrationEpochCurrent(hydrationEpoch) ||
               get().currentSessionId !== targetSessionId
             ) {
               return
@@ -1949,7 +1473,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (sessionChanged) {
               set(state => {
                 if (
-                  hydrationEpoch !== focusedSessionHydrationEpoch ||
+                  !isHydrationEpochCurrent(hydrationEpoch) ||
                   state.currentSessionId !== targetSessionId
                 ) {
                   return state
@@ -1961,8 +1485,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   draft
                 )
                 return {
-                  messages,
-                  messageIndexById: buildMessageIndex(messages),
+                  ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
                   isGenerating: targetRunning,
                   currentGeneratingMessageId: targetRunning ? snapshot?.messageId ?? null : null,
                   activeAgentSessionId: targetRunning ? targetSessionId : null
@@ -1972,7 +1495,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
             const detail = await detailPromise
             if (
-              hydrationEpoch !== focusedSessionHydrationEpoch ||
+              !isHydrationEpochCurrent(hydrationEpoch) ||
               get().currentSessionId !== targetSessionId
             ) {
               return
@@ -1980,7 +1503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const restored = restoreSessionMessages(detail.messages)
             set(state => {
               if (
-                hydrationEpoch !== focusedSessionHydrationEpoch ||
+                !isHydrationEpochCurrent(hydrationEpoch) ||
                 state.currentSessionId !== targetSessionId
               ) {
                 return state
@@ -1994,8 +1517,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 draft
               )
               return {
-                messages,
-                messageIndexById: buildMessageIndex(messages),
+                ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
                 hasMoreMessagesAbove: detail.hasMoreMessagesAbove ?? false,
                 oldestLoadedMessageId: messages[0]?.id ?? null,
                 isLoadingOlderMessages: false,
@@ -2008,7 +1530,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })()
       } else {
         // 切到"无会话"状态：清空消息
-        set({ messages: [], messageIndexById: {} })
+        set(resetMessageOnSessionSwitch())
       }
     }
   }
@@ -2019,7 +1541,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
  * 不导出给生产代码使用，保留为内部测试辅助。
  */
 export function resetChatStoreForTests(): void {
-  focusedSessionHydrationEpoch++
+  invalidateHydrationEpoch()
   useChatStore.setState({
     sessions: [],
     currentSessionId: null,
