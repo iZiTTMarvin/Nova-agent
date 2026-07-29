@@ -26,24 +26,19 @@ import type { NormalizedUsage } from '../../shared/model/types'
 import type { HookEvent } from '../../shared/agent/types'
 import type { RendererRecoveryState } from '../../shared/ipc/types'
 import type { ImageAttachment } from '../lib/image-attachments'
-import { parsePartialToolArgs } from '../features/chat/partialJsonArgs'
 import {
-  createAssistantMessage,
   mergeFocusedSessionMessages,
   restoreTurnDraftMessage
 } from '../lib/focusedSessionRecovery'
 import { useRunStore } from './useRunStore'
-import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 import type {
   ExtendedMessage,
-  ExtendedToolCall,
   PendingPermissionRequest,
-  RendererMessageBlock,
   RendererToolBlock
 } from './types'
 import { MAX_PENDING_MESSAGES } from './chat/constants'
 import { createChatStore } from './chat/createChatStore'
-import { resetMessageOnSessionSwitch } from './chat/slices'
+import { initialStreamState, resetMessageOnSessionSwitch, resetOnSessionSwitch } from './chat/slices'
 import {
   applyDiffReviewStatus,
   buildMessageIndex,
@@ -56,9 +51,8 @@ import {
   omitRecoveryFieldsForMessage,
   reconcileFocusedSession,
   restoreSessionMessages,
-  stripInlinePseudoToolCalls
 } from './chat/internal'
-import type { ChatState, StreamDelta, StreamDeltaBatch } from './chat/types'
+import type { ChatState } from './chat/types'
 
 export type { ChatState, StreamDelta, StreamDeltaBatch } from './chat/types'
 
@@ -95,7 +89,6 @@ export const useChatStore = createChatStore((set, get) => ({
   currentGeneratingMessageId: null,
   activeAgentSessionId: null,
   sendInFlight: false,
-  streamingToolArgs: {},
   messageDiffs: {},
   loadingDiffs: new Set(),
   loadingDiffPlaceholders: {},
@@ -635,275 +628,6 @@ export const useChatStore = createChatStore((set, get) => ({
     }
   },
 
-  // ── 主进程流式事件响应器 ────────────────────────────────────
-
-  handleMessageStart: (messageId: string) => {
-    const { currentSessionId } = get()
-    const activeSessionId = currentSessionId || 'session_default'
-
-    set(state => {
-      const existingIndex = state.messageIndexById[messageId]
-      if (existingIndex !== undefined) {
-        return {
-          currentGeneratingMessageId: messageId,
-          sendInFlight: false
-        }
-      }
-
-      // message_start 可能晚于切会话恢复出来的草稿；按 id 幂等创建消息壳。
-      const assistantMsg = createAssistantMessage(activeSessionId, messageId)
-      const nextMessages = [...state.messages, assistantMsg]
-      return {
-        ...commitMessageList(state, {
-          nextMessages,
-          nextIndex: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
-          skipWindowTrim: true
-        }),
-        currentGeneratingMessageId: messageId,
-        sendInFlight: false
-      }
-    })
-  },
-
-  handleAttemptFailed: (messageId: string, _attemptId: string) => {
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-      // 清空临时流式块；已成功落盘的 tool_result 不应出现在失败 attempt 中
-      const next = [...state.messages]
-      next[idx] = {
-        ...msg,
-        content: '',
-        thinking: '',
-        toolCalls: [],
-        blocks: [],
-        _revision: (msg._revision ?? 0) + 1
-      }
-      return commitMessageList(state, { nextMessages: next, nextIndex: state.messageIndexById, skipWindowTrim: true })
-    })
-  },
-
-  /** @deprecated 见 ChatState 接口同名字段注释。 */
-  handleThinkingDelta: (messageId: string, delta: string) => {
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-      const blocks = msg.blocks ? [...msg.blocks] : []
-      const last = blocks[blocks.length - 1]
-      if (last && last.type === 'thinking') {
-        blocks[blocks.length - 1] = { ...last, content: last.content + delta }
-      } else {
-        blocks.push({ type: 'thinking', content: delta })
-      }
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, thinking: (msg.thinking ?? '') + delta, blocks })
-      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
-    })
-  },
-
-  /** @deprecated 见 ChatState 接口同名字段注释。 */
-  handleTextDelta: (messageId: string, delta: string) => {
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-      const blocks = msg.blocks ? [...msg.blocks] : []
-      const last = blocks[blocks.length - 1]
-      if (last && last.type === 'text') {
-        blocks[blocks.length - 1] = { ...last, content: last.content + delta }
-      } else {
-        blocks.push({ type: 'text', content: delta })
-      }
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, content: msg.content + delta, blocks })
-      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
-    })
-  },
-
-  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
-    // T01：在 args 写入 store 前对 write/edit 的 content 做摘要化
-    const sanitizedArgs = sanitizeToolInput(toolName, args)
-
-    const newToolCall: ExtendedToolCall = {
-      id: toolCallId,
-      name: toolName,
-      arguments: sanitizedArgs,
-      status: 'running'
-    }
-
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-
-      const cleanedMessage = stripInlinePseudoToolCalls(msg.content, msg.blocks ? [...msg.blocks] : [])
-
-      // 查找是否已有 start 创建的占位 block
-      const blocks = cleanedMessage.blocks
-      const existingBlockIdx = blocks.findIndex(
-        b => b.type === 'tool' && b.toolCallId === toolCallId
-      )
-
-      if (existingBlockIdx !== -1) {
-        const existing = blocks[existingBlockIdx]
-        if (existing.type === 'tool') {
-          const { argumentsRaw: _drop, ...restBlock } = existing as RendererToolBlock
-          blocks[existingBlockIdx] = {
-            ...restBlock,
-            type: 'tool',
-            toolCallId,
-            toolName,
-            arguments: sanitizedArgs,
-            status: 'running'
-          }
-        }
-      } else {
-        blocks.push({
-          type: 'tool',
-          toolCallId,
-          toolName,
-          arguments: sanitizedArgs,
-          status: 'running'
-        })
-      }
-
-      // 同步更新 toolCalls 数组
-      const toolCalls = msg.toolCalls ? [...msg.toolCalls] : []
-      const tcIdx = toolCalls.findIndex(tc => tc.id === toolCallId)
-      if (tcIdx !== -1) {
-        const { argumentsRaw: _tcDrop, ...restTc } = toolCalls[tcIdx]
-        toolCalls[tcIdx] = { ...restTc, name: toolName, arguments: sanitizedArgs }
-      } else {
-        toolCalls.push(newToolCall)
-      }
-
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, content: cleanedMessage.content, toolCalls, blocks })
-
-      const { [toolCallId]: _drop2, ...restStreaming } = state.streamingToolArgs
-      return {
-        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-        streamingToolArgs: restStreaming
-      }
-    })
-  },
-
-  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => {
-    const placeholder: ExtendedToolCall = {
-      id: toolCallId,
-      name: toolName,
-      arguments: {},
-      status: 'running'
-    }
-
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-
-      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
-      blocks.push({
-        type: 'tool',
-        toolCallId,
-        toolName,
-        arguments: {},
-        status: 'running',
-        argumentsRaw: ''
-      })
-
-      const toolCalls = msg.toolCalls ? [...msg.toolCalls, placeholder] : [placeholder]
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, toolCalls, blocks })
-
-      return {
-        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: '' }
-      }
-    })
-  },
-
-  /** @deprecated 见 ChatState 接口同名字段注释。 */
-  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => {
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-
-      const prevRaw = state.streamingToolArgs[toolCallId] ?? ''
-      const nextRaw = prevRaw + argumentsDelta
-
-      const existingBlock = msg.blocks?.find(
-        b => b.type === 'tool' && b.toolCallId === toolCallId
-      )
-      const toolName = existingBlock?.type === 'tool' ? existingBlock.toolName : ''
-      const partialArgs = parsePartialToolArgs(toolName, nextRaw)
-
-      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
-      const blockIdx = blocks.findIndex(
-        b => b.type === 'tool' && b.toolCallId === toolCallId
-      )
-      if (blockIdx !== -1 && blocks[blockIdx].type === 'tool') {
-        blocks[blockIdx] = {
-          ...blocks[blockIdx],
-          arguments: partialArgs,
-          argumentsRaw: nextRaw
-        } as RendererToolBlock
-      }
-
-      const toolCalls = msg.toolCalls ? msg.toolCalls.map(tc =>
-        tc.id === toolCallId
-          ? { ...tc, arguments: partialArgs, argumentsRaw: nextRaw }
-          : tc
-      ) : msg.toolCalls
-
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
-
-      return {
-        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: nextRaw }
-      }
-    })
-  },
-
-  handleToolResult: (messageId: string, toolCallId: string, _toolName: string, result: string) => {
-    const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
-    // T02：在 tool_result 写 store 前对输出做截断，防止大输出撑爆 heap
-    const sanitizedResult = sanitizeToolOutput(_toolName, result, isError)
-    set(state => {
-      const idx = state.messageIndexById[messageId]
-      if (idx === undefined) return state
-      const msg = state.messages[idx]
-      if (!msg) return state
-
-      const blocks = msg.blocks?.map(b => {
-        if (b.type === 'tool' && b.toolCallId === toolCallId) {
-          return { ...b, status: isError ? 'error' as const : 'success' as const, result: sanitizedResult }
-        }
-        return b
-      })
-
-      const toolCalls = msg.toolCalls?.map(tc => {
-        if (tc.id === toolCallId) {
-          return { ...tc, result: sanitizedResult, status: isError ? 'error' as const : 'success' as const }
-        }
-        return tc
-      })
-
-      const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
-      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
-    })
-  },
-
   /**
    * 工具执行后实时点亮 diff 区域。
    *
@@ -996,7 +720,7 @@ export const useChatStore = createChatStore((set, get) => ({
         branchForkInProgress: false,
         ...omitRecoveryFieldsForMessage(state, messageId),
         // 中断时清空所有流式工具参数累积
-        ...(interrupted ? { streamingToolArgs: {} } : {})
+        ...(interrupted ? resetOnSessionSwitch() : {})
       }
     })
 
@@ -1163,7 +887,7 @@ export const useChatStore = createChatStore((set, get) => ({
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         isGenerating: false,
         currentGeneratingMessageId: null,
-        streamingToolArgs: {}
+        ...resetOnSessionSwitch()
       }
     })
 
@@ -1204,197 +928,6 @@ export const useChatStore = createChatStore((set, get) => ({
     set({ pendingUserMessages: [] })
   },
 
-  /**
-   * Phase 2：批量应用 delta。
-   * 把同帧累积的 delta 按 messageId 分组、对同消息的同 kind 合并，
-   * 一次 set() 写回 store，避免一帧多次 set() 触发多次 React 重渲染。
-   *
-   * 实现要点：先按 messageId 聚合 delta，再对每条消息只重建一次数组
-   * （避免之前每条 delta 都 `const next = [...nextMessages]` 产生的 O(N²) 拷贝）。
-   *
-   * 行为与单次 handleXxxDelta 完全一致：按 messageId 找到消息，
-   * 按 kind 找到或新建对应 block，再追加内容。
-   */
-  applyStreamDeltas: (deltas: StreamDeltaBatch) => {
-    if (deltas.length === 0) return
-
-    set(state => {
-      let nextMessages = state.messages
-      let nextMessageIndex = state.messageIndexById
-      let addedMissingMessage = false
-
-      // 切回运行中会话可能已经错过 message_start。任何有效 delta 都必须有落点，
-      // 因此按 messageId 幂等补建 assistant 消息壳，再继续走原有批量更新路径。
-      for (const delta of deltas) {
-        if (nextMessageIndex[delta.messageId] !== undefined) continue
-        if (
-          !state.isGenerating ||
-          state.currentGeneratingMessageId !== delta.messageId
-        ) {
-          continue
-        }
-        if (!addedMissingMessage) {
-          nextMessages = state.messages.slice()
-          nextMessageIndex = { ...state.messageIndexById }
-          addedMissingMessage = true
-        }
-        const assistant = createAssistantMessage(
-          state.currentSessionId ?? 'session_default',
-          delta.messageId
-        )
-        nextMessageIndex[delta.messageId] = nextMessages.length
-        nextMessages.push(assistant)
-      }
-
-      // 第一步：按 messageId 聚合 delta，保留组内到达顺序
-      const byMessageId = new Map<string, StreamDelta[]>()
-      for (const delta of deltas) {
-        if (nextMessageIndex[delta.messageId] === undefined) continue
-        let arr = byMessageId.get(delta.messageId)
-        if (!arr) {
-          arr = []
-          byMessageId.set(delta.messageId, arr)
-        }
-        arr.push(delta)
-      }
-
-      // 第二步：拷贝 messages 一次（顶层），对每条消息只在其 blocks 层级再拷贝
-      if (!addedMissingMessage) {
-        nextMessages = state.messages.slice()
-      }
-      const nextStreaming: Record<string, string> = { ...state.streamingToolArgs }
-      let messagesChanged = false
-      let streamingChanged = false
-
-      for (const [messageId, messageDeltas] of byMessageId) {
-        const idx = nextMessageIndex[messageId]
-        if (idx === undefined) continue
-        const msg = nextMessages[idx]
-        if (!msg) continue
-
-        let workingBlocks: RendererMessageBlock[] | undefined = msg.blocks ? [...msg.blocks] : undefined
-        let workingToolCalls = msg.toolCalls
-        let workingContent = msg.content
-        let workingThinking = msg.thinking ?? ''
-
-        for (const delta of messageDeltas) {
-          if (delta.kind === 'thinking') {
-            const blocks = workingBlocks ?? []
-            const last = blocks[blocks.length - 1]
-            if (last && last.type === 'thinking') {
-              // T07：原地 += 而非创建新对象，减少 GC 压力
-              ;(last as { content: string }).content += delta.delta
-            } else {
-              blocks.push({ type: 'thinking', content: delta.delta })
-            }
-            workingBlocks = blocks
-            workingThinking += delta.delta
-          } else if (delta.kind === 'text') {
-            const blocks = workingBlocks ?? []
-            const last = blocks[blocks.length - 1]
-            if (last && last.type === 'text') {
-              // T07：原地 += 而非创建新对象
-              ;(last as { content: string }).content += delta.delta
-            } else {
-              blocks.push({ type: 'text', content: delta.delta })
-            }
-            workingBlocks = blocks
-            workingContent += delta.delta
-          } else {
-            // toolCall delta：累积 argumentsRaw + partial 解析 + 更新 block / toolCalls
-            //
-            // 防御（竞态双保险）：若该 tool block 已被 handleToolCall finalize
-            // （finalize 时会删除 block.argumentsRaw 字段），说明完整 args 已写入，
-            // 此时任何迟到的 buffered partial delta 都不能再覆盖完整 args，直接跳过。
-            // 主修在 App.tsx：tool-call 最终事件前先 flushNow；这里是顺序兜底。
-            const finalizedBlocks = workingBlocks ?? []
-            const finalizedIdx = finalizedBlocks.findIndex(
-              b => b.type === 'tool' && b.toolCallId === delta.toolCallId
-            )
-            if (finalizedIdx !== -1 && finalizedBlocks[finalizedIdx].type === 'tool') {
-              const finalizedBlock = finalizedBlocks[finalizedIdx] as RendererToolBlock
-              if (finalizedBlock.argumentsRaw === undefined) {
-                continue
-              }
-            }
-
-            const prevRaw = nextStreaming[delta.toolCallId] ?? ''
-            const nextRaw = prevRaw + delta.delta
-            nextStreaming[delta.toolCallId] = nextRaw
-            streamingChanged = true
-
-            // 一次性查 blocks 找到对应 tool block 并取出 toolName，
-            // 避免在 toolCalls.map 里再 find 两次 + 重复 parsePartialToolArgs。
-            const blocks = workingBlocks ?? []
-            const blockIdx = blocks.findIndex(
-              b => b.type === 'tool' && b.toolCallId === delta.toolCallId
-            )
-            const toolBlock = blockIdx !== -1 && blocks[blockIdx].type === 'tool'
-              ? blocks[blockIdx]
-              : null
-            const partialArgs = toolBlock
-              ? parsePartialToolArgs(toolBlock.toolName, nextRaw)
-              : null
-
-            // T01：流式累积的 partialArgs 也做摘要化，防止大文件流式期间撑大 heap
-            const sanitizedPartialArgs = partialArgs !== null && toolBlock
-              ? sanitizeToolInput(toolBlock.toolName, partialArgs)
-              : partialArgs
-
-            if (toolBlock && sanitizedPartialArgs !== null) {
-              blocks[blockIdx] = {
-                ...toolBlock,
-                arguments: sanitizedPartialArgs,
-                argumentsRaw: nextRaw
-              } as RendererToolBlock
-              workingBlocks = blocks
-            }
-
-            if (workingToolCalls && toolBlock && sanitizedPartialArgs !== null) {
-              workingToolCalls = workingToolCalls.map(tc =>
-                tc.id === delta.toolCallId
-                  ? { ...tc, arguments: sanitizedPartialArgs, argumentsRaw: nextRaw }
-                  : tc
-              )
-            } else if (workingToolCalls && !toolBlock) {
-              // 块还没起来时（tool_call_start 还没到），仍要更新 toolCalls[].argumentsRaw，
-              // 这样 toolCallStart 事件上来时不会丢失已经累积的 raw。
-              workingToolCalls = workingToolCalls.map(tc =>
-                tc.id === delta.toolCallId
-                  ? { ...tc, argumentsRaw: nextRaw }
-                  : tc
-              )
-            }
-          }
-        }
-
-        // 整条消息处理完，原子写回 nextMessages[idx]
-        nextMessages[idx] = bumpRevision({
-          ...msg,
-          content: workingContent,
-          thinking: workingThinking,
-          blocks: workingBlocks,
-          toolCalls: workingToolCalls
-        })
-        messagesChanged = true
-      }
-
-      // T05：流式 delta 处理完后裁剪消息窗口
-      let finalResult: Partial<ChatState>
-      if (messagesChanged) {
-        finalResult = {
-          ...commitMessageList(state, { nextMessages, nextIndex: nextMessageIndex }),
-          ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
-        }
-      } else {
-        finalResult = {
-          ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
-        }
-      }
-
-      return finalResult
-    })
-  },
 
   syncFromWorkspace: (next) => {
     const prev = get()
@@ -1421,7 +954,7 @@ export const useChatStore = createChatStore((set, get) => ({
       patch.sendInFlight = false
       patch.pendingUserMessages = []
       patch.branchForkInProgress = false
-      patch.streamingToolArgs = {}
+      Object.assign(patch, resetOnSessionSwitch())
     }
 
     set(patch)
@@ -1555,7 +1088,7 @@ export function resetChatStoreForTests(): void {
     currentGeneratingMessageId: null,
     activeAgentSessionId: null,
     sendInFlight: false,
-    streamingToolArgs: {},
+    ...initialStreamState(),
     messageDiffs: {},
     loadingDiffs: new Set(),
     loadingDiffPlaceholders: {},

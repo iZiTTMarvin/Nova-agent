@@ -6,3 +6,8 @@ export {
   initialMessageState,
   resetMessageOnSessionSwitch
 } from './messageSlice'
+export {
+  createStreamSlice,
+  initialStreamState,
+  resetOnSessionSwitch
+} from './streamSlice'

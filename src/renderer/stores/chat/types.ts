@@ -44,7 +44,48 @@ export interface MessageSliceState {
   messageIndexById: Record<string, number>
 }
 
-export interface ChatState extends MessageSliceState {
+/** streamSlice 拥有的状态与流式事件 action。 */
+export interface StreamSliceState {
+  /**
+   * 流式工具调用参数累积：toolCallId → 已累积的 arguments 字符串。
+   * start 时初始化为空字符串，delta 追加片段，最终 tool_call 事件到达后清空。
+   */
+  streamingToolArgs: Record<string, string>
+
+  /**
+   * 批量应用流式 delta：
+   * 把同帧累积的 delta 按 messageId 分组合并，一次 set() 写回 store。
+   * 接受三种 delta 类型：thinking / text / toolCall。
+   */
+  applyStreamDeltas: (deltas: StreamDeltaBatch) => void
+  handleMessageStart: (messageId: string) => void
+  /**
+   * 某次模型 attempt 失败：清空该消息的临时流式内容，
+   * 保留消息气泡，供下一次 attempt 重新写入，避免 UI 重复文本。
+   */
+  handleAttemptFailed: (messageId: string, attemptId: string) => void
+  /**
+   * @deprecated 自引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
+   * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
+   * 未来版本会移除；新代码请改用 `applyStreamDeltas`（buffer 在 App 端直接喂批量 delta）。
+   */
+  handleThinkingDelta: (messageId: string, delta: string) => void
+  /** @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`。 */
+  handleTextDelta: (messageId: string, delta: string) => void
+  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => void
+  /**
+   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`（kind: 'toolCall'）。
+   */
+  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => void
+  /**
+   * @deprecated 仍是主进程 tool_call 终态事件（不含 streaming）的合法处理入口；
+   * 不是被 buffer/scheduler 替代的对象。保留为长期 API。
+   */
+  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
+  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
+}
+
+export interface ChatState extends MessageSliceState, StreamSliceState {
   // ── 状态 ──
   sessions: Session[]
   currentSessionId: string | null
@@ -69,12 +110,6 @@ export interface ChatState extends MessageSliceState {
   activeAgentSessionId: string | null
   /** 发送请求已发出、尚未收到首个流式事件（防连点） */
   sendInFlight: boolean
-
-  /**
-   * 流式工具调用参数累积：toolCallId → 已累积的 arguments 字符串。
-   * start 时初始化为空字符串，delta 追加片段，最终 tool_call 事件到达后清空。
-   */
-  streamingToolArgs: Record<string, string>
 
   /** 每条消息的 diff 数据缓存 */
   messageDiffs: Record<string, MessageDiffCache>
@@ -162,41 +197,7 @@ export interface ChatState extends MessageSliceState {
   /** 用户关闭 Tier 1 横幅 */
   dismissTier1BranchNotice: () => void
 
-  /**
-   * 批量应用流式 delta：
-   * 把同帧累积的 delta 按 messageId 分组合并，一次 set() 写回 store。
-   * 接受三种 delta 类型：thinking / text / toolCall。
-   */
-  applyStreamDeltas: (deltas: StreamDeltaBatch) => void
-
   // ── 主进程事件 handler ──
-  handleMessageStart: (messageId: string) => void
-  /**
-   * 某次模型 attempt 失败：清空该消息的临时流式内容，
-   * 保留消息气泡，供下一次 attempt 重新写入，避免 UI 重复文本。
-   */
-  handleAttemptFailed: (messageId: string, attemptId: string) => void
-  /**
-   * @deprecated 自引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
-   * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
-   * 未来版本会移除；新代码请改用 `applyStreamDeltas`（buffer 在 App 端直接喂批量 delta）。
-   */
-  handleThinkingDelta: (messageId: string, delta: string) => void
-  /**
-   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`。
-   */
-  handleTextDelta: (messageId: string, delta: string) => void
-  handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => void
-  /**
-   * @deprecated 同 handleThinkingDelta。新代码请改用 `applyStreamDeltas`（kind: 'toolCall'）。
-   */
-  handleToolCallDelta: (messageId: string, toolCallId: string, argumentsDelta: string) => void
-  /**
-   * @deprecated 仍是主进程 tool_call 终态事件（不含 streaming）的合法处理入口；
-   * 不是被 buffer/scheduler 替代的对象。保留为长期 API。
-   */
-  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
-  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
   handleDiffUpdate: (
     messageId: string,
     phase: 'live' | 'final',

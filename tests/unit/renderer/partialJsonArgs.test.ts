@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractPartialString, parsePartialToolArgs } from '../../../src/renderer/features/chat/partialJsonArgs'
+import { extractPartialString, parsePartialToolArgs } from '../../../src/renderer/lib/partialJsonArgs'
 
 describe('extractPartialString', () => {
   it('空字符串或缺失 key 返回 undefined', () => {

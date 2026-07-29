@@ -21,7 +21,7 @@ import { SpinnerIcon, CheckIcon, AlertIcon, ChevronIcon } from '../../components
 import { highlightLine } from '../diff/syntaxHighlight'
 import { highlightLineCached } from '../../lib/highlightCache'
 import { getToolSummary, countLines } from './toolDisplay'
-import { parsePartialToolArgs } from './partialJsonArgs'
+import { parsePartialToolArgs } from '../../lib/partialJsonArgs'
 import { isContentSummary } from '../../../shared/tool-input-sanitizer'
 import type { ContentSummary } from '../../../shared/tool-input-sanitizer'
 import './StreamingFileCard.css'

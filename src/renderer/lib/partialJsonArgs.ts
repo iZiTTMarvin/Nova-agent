@@ -1,11 +1,9 @@
 /**
- * partialJsonArgs — 流式工具调用参数的容错解析
+ * 流式工具调用参数的容错解析。
  *
- * SSE 流中 tool_call_delta 的 argumentsDelta 是分块到达的 JSON 片段，
- * 任意时刻拼起来都可能未闭合，JSON.parse 必失败。
- * extractPartialString 从 partial JSON 中容错地提取指定 key 的字符串值，
- * 能读多少读多少，遇到截断就返回已收部分。
- * parsePartialToolArgs 按工具名选取需要实时展示的字段，派发到 extractPartialString。
+ * SSE 流中的 argumentsDelta 是分块到达的 JSON 片段，任意时刻都可能未闭合。
+ * extractPartialString 从 partial JSON 中容错提取指定 key 的字符串值，
+ * parsePartialToolArgs 再按工具名选取实时展示字段。
  */
 
 /**
