@@ -1,6 +1,6 @@
 # Nova Agent 工程规则
 
-本文件是所有人类开发者与 Coding Agent 的强制入口。开始任何修改前，必须先阅读本文件；涉及架构、状态、公共契约、兼容或跨模块改动时，还必须阅读 [`docs/architecture/engineering-rules.md`](docs/architecture/engineering-rules.md)。
+本文件是所有人类开发者与 Coding Agent 的强制入口。开始任何修改前，必须先阅读本文件；涉及架构、状态、公共契约、兼容或跨模块改动时，还必须阅读 [`engineering-rules.md`](engineering-rules.md)。
 
 规则优先级：任务明确要求 > 本文件 > 详细工程规则 > 现有代码惯例。现有代码不因存在已久而自动成为正确范例。
 
