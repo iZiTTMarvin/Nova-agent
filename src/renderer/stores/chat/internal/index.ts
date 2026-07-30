@@ -15,10 +15,23 @@ export {
   stripInlinePseudoToolCalls,
   stripLegacyThinkingTags
 } from './restoreMessages'
-export { upsertSessionSummary } from './sessionSummary'
-export { applyDiffReviewStatus } from './diffReview'
+export {
+  captureDiffGeneration,
+  clearDiffLoadingPatch,
+  clearMessageDiffPatch,
+  clearRollbackErrorPatch,
+  commitLoadedDiffPatch,
+  finalDiffPatch,
+  initialDiffState,
+  invalidateDiffGeneration,
+  isDiffGenerationCurrent,
+  liveDiffPatch,
+  markDiffLoadingPatch,
+  resetDiffProjectionForBranchChange,
+  setRollbackErrorPatch,
+  updateDiffReviewPatch
+} from './diffState'
 export { omitRecoveryFieldsForMessage } from './recoveryFields'
-export { isTerminalRunStatusLocal } from './runStatus'
 export {
   invalidateHydrationEpoch,
   isHydrationEpochCurrent,

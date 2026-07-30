@@ -203,22 +203,8 @@ export interface BranchSliceState {
   dismissTier1BranchNotice: () => void
 }
 
-export interface ChatState
-  extends
-    MessageSliceState,
-    StreamSliceState,
-    RecoverySliceState,
-    TurnLifecycleSliceState,
-    SessionSliceState,
-    SendSliceState,
-    BranchSliceState {
-  // ── 状态 ──
-  /**
-   * 上次 syncFromWorkspace 见到的 messagesRevision。
-   * 用于检测「同会话内消息序列变化」（回退/切分支），据此绕过 sessionChanged 守卫重拉消息。
-   */
-  lastMessagesRevision: number
-
+/** diffSlice 拥有的 diff 投影、review 状态与公开 action。 */
+export interface DiffSliceState {
   /** 每条消息的 diff 数据缓存 */
   messageDiffs: Record<string, MessageDiffCache>
   /** 正在加载 diff 的消息 ID 集合 */
@@ -228,24 +214,8 @@ export interface ChatState
    * 让 DiffViewer 在 skeleton 状态下也能展示文件名。
    */
   loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
-
   /** 每条消息回滚失败的错误提示（key 为 messageId） */
   rollbackErrors: Record<string, string>
-
-  /** 当前视窗顶部之前是否还有更早消息（可上滚补载） */
-  hasMoreMessagesAbove: boolean
-  /** 上滚补载进行中，防重入 */
-  isLoadingOlderMessages: boolean
-  /** 当前视窗内最早一条消息的 id，作为下次 beforeId 游标 */
-  oldestLoadedMessageId: string | null
-  /**
-   * 用户已向上翻历史并 prepend 过时为 true，暂停 trimMessageWindow 头部裁剪。
-   * 避免 prepend 的早期消息被流式 trim 立刻弹走。切换会话 / 回退重载时重置。
-   * 未上滚时若流式累计触发头部裁剪，游标由 paginationPatchAfterHeadTrim 同步到新窗口首条。
-   */
-  suspendHeadTrim: boolean
-
-  // ── Actions ──
 
   /** 按文件接受改动 */
   acceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
@@ -259,23 +229,44 @@ export interface ChatState
   loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
   /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
   clearMessageDiffs: (messageId: string) => void
-  /** 上滚到顶时加载更早一页消息并 prepend 到视窗 */
-  loadOlderMessages: () => Promise<void>
-
-  // ── 主进程事件 handler ──
   handleDiffUpdate: (
     messageId: string,
     phase: 'live' | 'final',
     diffs: Array<{ filePath: string; status: DiffEntry['status']; hunks?: DiffEntry['hunks'] }>,
     reviews: Record<string, DiffReviewStatus>
   ) => void
+}
+
+/** paginationSlice 拥有的消息视窗游标与上滚补载 action。 */
+export interface PaginationSliceState {
+  /** 当前视窗顶部之前是否还有更早消息（可上滚补载） */
+  hasMoreMessagesAbove: boolean
+  /** 上滚补载进行中，防重入 */
+  isLoadingOlderMessages: boolean
+  /** 当前视窗内最早一条消息的 id，作为下次 beforeId 游标 */
+  oldestLoadedMessageId: string | null
+  /**
+   * 用户已向上翻历史并 prepend 过时为 true，暂停 trimMessageWindow 头部裁剪。
+   * 避免 prepend 的早期消息被流式 trim 立刻弹走。切换会话 / 回退重载时重置。
+   * 未上滚时若流式累计触发头部裁剪，游标由 paginationPatchAfterHeadTrim 同步到新窗口首条。
+   */
+  suspendHeadTrim: boolean
+
+  /** 上滚到顶时加载更早一页消息并 prepend 到视窗 */
+  loadOlderMessages: () => Promise<void>
+}
+
+/** workspaceSyncSlice 拥有 workspace 广播同步与会话水合生命周期。 */
+export interface WorkspaceSyncSliceState {
+  /**
+   * 上次 syncFromWorkspace 见到的 messagesRevision。
+   * 用于检测「同会话内消息序列变化」（回退/切分支），据此绕过 sessionChanged 守卫重拉消息。
+   */
+  lastMessagesRevision: number
 
   /**
    * 把 workspace store 广播的工作区状态同步到本 store。
    * 由 workspaceDispatcher 调用（workspace:changed 事件的唯一副作用入口）。
-   * - 同步 sessions 列表
-   * - 若 currentSessionId 变化（含从 null 切到某会话 / 从某会话切到 null），
-   *   重新加载该会话的消息（或清空）。
    * @internal 不应被 UI 组件直接调用
    */
   syncFromWorkspace: (next: {
@@ -286,6 +277,19 @@ export interface ChatState
     tier1BranchContext: Tier1BranchContext | null
   }) => void
 }
+
+export interface ChatState
+  extends
+    MessageSliceState,
+    StreamSliceState,
+    RecoverySliceState,
+    TurnLifecycleSliceState,
+    SessionSliceState,
+    SendSliceState,
+    BranchSliceState,
+    DiffSliceState,
+    PaginationSliceState,
+    WorkspaceSyncSliceState {}
 
 /** slice 创建器统一别名：所有 slice 共享同一个 ChatState 组合形状 */
 export type ChatSliceCreator<TSlice> = StateCreator<ChatState, [], [], TSlice>

@@ -623,6 +623,7 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('loadMessageDiffs 应缓存 diff 与审查状态', async () => {
+    useAppStore.setState({ currentSessionId: 'sess_1' })
     mockInvoke.mockImplementation(async (channel: string) => {
       if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
       if (channel === 'get-message-diffs') {
@@ -714,6 +715,7 @@ describe('useAppStore Zustand Store', () => {
   it('acceptFile 应更新本地缓存中的审查状态', async () => {
     mockInvoke.mockResolvedValueOnce(undefined)
     useAppStore.setState({
+      currentSessionId: 'sess_1',
       messageDiffs: {
         msg_1: {
           diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [] }],
@@ -735,6 +737,7 @@ describe('useAppStore Zustand Store', () => {
   it('rejectFile 应更新本地缓存中的 rejected 状态', async () => {
     mockInvoke.mockResolvedValueOnce(undefined)
     useAppStore.setState({
+      currentSessionId: 'sess_1',
       messageDiffs: {
         msg_1: {
           diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [] }],
@@ -760,6 +763,7 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    useAppStore.setState({ currentSessionId: 'sess_1' })
 
     try {
       await expect(

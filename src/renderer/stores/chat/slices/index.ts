@@ -34,3 +34,16 @@ export {
   initialBranchState,
   resetBranchForkOnSessionSwitch
 } from './branchSlice'
+export {
+  createDiffSlice,
+  initialDiffState
+} from './diffSlice'
+export {
+  createPaginationSlice,
+  invalidatePaginationGeneration,
+  initialPaginationState
+} from './paginationSlice'
+export {
+  createWorkspaceSyncSlice,
+  initialWorkspaceSyncState
+} from './workspaceSyncSlice'

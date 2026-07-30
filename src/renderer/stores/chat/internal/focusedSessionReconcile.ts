@@ -1,9 +1,20 @@
-import type { SessionDetail } from '../../../../shared/session/types'
+import type { Session, SessionDetail } from '../../../../shared/session/types'
 import { mergeFocusedSessionMessages } from '../../../lib/focusedSessionRecovery'
 import { commitMessageList } from './commitMessages'
 import { restoreSessionMessages } from './restoreMessages'
 import type { ChatStoreApi } from './storeApi'
-import { upsertSessionSummary } from './sessionSummary'
+
+function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
+  const nextSummary: Session = {
+    id: detail.id,
+    workspaceRoot: detail.workspaceRoot,
+    mode: detail.mode,
+    createdAt: detail.createdAt,
+    updatedAt: detail.updatedAt,
+    messageCount: detail.messageCount
+  }
+  return [nextSummary, ...sessions.filter(session => session.id !== detail.id)]
+}
 
 /**
  * 轮次终态回 SessionStore 按 id 对账焦点会话消息：

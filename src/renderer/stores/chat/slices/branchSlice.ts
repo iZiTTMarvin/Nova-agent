@@ -1,5 +1,11 @@
 import type { ChatSliceCreator, BranchSliceState } from '../types'
-import { buildMessageIndex, commitMessageList } from '../internal'
+import {
+  buildMessageIndex,
+  clearRollbackErrorPatch,
+  commitMessageList,
+  resetDiffProjectionForBranchChange,
+  setRollbackErrorPatch
+} from '../internal'
 
 export function initialBranchState(): Pick<
   BranchSliceState,
@@ -33,12 +39,7 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
     const assistantIdx = messages.findIndex(m => m.id === messageId)
     const parentUser = assistantIdx > 0 ? messages[assistantIdx - 1] : undefined
     if (parentUser?.role === 'user' && parentUser.blocks?.some(b => b.type === 'image')) {
-      set(state => ({
-        rollbackErrors: {
-          ...state.rollbackErrors,
-          [messageId]: '重新生成暂不支持含图片的消息'
-        }
-      }))
+      set(state => setRollbackErrorPatch(state, messageId, '重新生成暂不支持含图片的消息'))
       return
     }
 
@@ -47,17 +48,12 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().prepareRegenerate(sessionId, messageId)
-      set(state => {
-        const { [messageId]: _, ...rest } = state.rollbackErrors
-        return { rollbackErrors: rest }
-      })
+      set(state => clearRollbackErrorPatch(state, messageId))
     } catch (err) {
       set({ branchForkInProgress: false })
       const error = err instanceof Error ? err.message : '重新生成失败'
       console.error('重新生成出错:', err)
-      set(state => ({
-        rollbackErrors: { ...state.rollbackErrors, [messageId]: error }
-      }))
+      set(state => setRollbackErrorPatch(state, messageId, error))
       return
     }
 
@@ -69,9 +65,7 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
       const truncated = messages.slice(0, assistantIdx)
       set({
         ...commitMessageList(get(), { nextMessages: truncated, skipWindowTrim: true }),
-        messageDiffs: {},
-        loadingDiffPlaceholders: {},
-        loadingDiffs: new Set(),
+        ...resetDiffProjectionForBranchChange(),
         isGenerating: true,
         sendInFlight: true,
         activeAgentSessionId: sessionId
@@ -104,12 +98,11 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
         } catch (reloadErr) {
           console.error('[regenerateAssistant] 回滚后重载会话失败:', reloadErr)
         }
-        set(state => ({
-          rollbackErrors: {
-            ...state.rollbackErrors,
-            [messageId]: err instanceof Error ? err.message : '重新生成失败'
-          }
-        }))
+        set(state => setRollbackErrorPatch(
+          state,
+          messageId,
+          err instanceof Error ? err.message : '重新生成失败'
+        ))
       }
       return
     }
@@ -130,12 +123,11 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
         activeAgentSessionId: null,
         pendingBranchMetaReload: false
       })
-      set(state => ({
-        rollbackErrors: {
-          ...state.rollbackErrors,
-          [messageId]: err instanceof Error ? err.message : '重新生成失败'
-        }
-      }))
+      set(state => setRollbackErrorPatch(
+        state,
+        messageId,
+        err instanceof Error ? err.message : '重新生成失败'
+      ))
     }
   },
 
@@ -145,16 +137,11 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().switchBranch(sessionId, targetMessageId)
-      set(state => {
-        const { [targetMessageId]: _, ...rest } = state.rollbackErrors
-        return { rollbackErrors: rest }
-      })
+      set(state => clearRollbackErrorPatch(state, targetMessageId))
     } catch (err) {
       const error = err instanceof Error ? err.message : '切换分支失败'
       console.error('切换分支出错:', err)
-      set(state => ({
-        rollbackErrors: { ...state.rollbackErrors, [targetMessageId]: error }
-      }))
+      set(state => setRollbackErrorPatch(state, targetMessageId, error))
     }
   },
 
@@ -167,17 +154,12 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().prepareEditResend(sessionId, messageId)
-      set(state => {
-        const { [messageId]: _drop, ...rest } = state.rollbackErrors
-        return { rollbackErrors: rest }
-      })
+      set(state => clearRollbackErrorPatch(state, messageId))
     } catch (err) {
       set({ branchForkInProgress: false })
       const error = err instanceof Error ? err.message : '编辑重发失败'
       console.error('编辑重发出错:', err)
-      set(state => ({
-        rollbackErrors: { ...state.rollbackErrors, [messageId]: error }
-      }))
+      set(state => setRollbackErrorPatch(state, messageId, error))
       return
     }
 
@@ -194,9 +176,7 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
       set({
         ...commitMessageList(get(), { nextMessages: truncated, skipWindowTrim: true }),
         // 分叉后旧 diff 缓存与磁盘可能不一致，清空避免误导
-        messageDiffs: {},
-        loadingDiffPlaceholders: {},
-        loadingDiffs: new Set()
+        ...resetDiffProjectionForBranchChange()
       })
     }
 

@@ -4,6 +4,22 @@ import { SESSION_HISTORY_PAGE_SIZE } from '../../../src/shared/session/messagePa
 
 const mockInvoke = vi.fn()
 
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 describe('useChatStore 消息分页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -63,6 +79,22 @@ describe('useChatStore 消息分页', () => {
     expect(mockInvoke).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { currentSessionId: null, oldestLoadedMessageId: 'msg_1' },
+    { currentSessionId: 'sess_1', oldestLoadedMessageId: null }
+  ])('缺少 session 或游标时不请求：%o', async ({ currentSessionId, oldestLoadedMessageId }) => {
+    useChatStore.setState({
+      currentSessionId,
+      messages: [{ id: 'msg_1', sessionId: 'sess_1', role: 'user', content: 'x', timestamp: 0, _revision: 0 }],
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId
+    })
+
+    await useChatStore.getState().loadOlderMessages()
+
+    expect(mockInvoke).not.toHaveBeenCalled()
+  })
+
   it('加载中途切会话丢弃结果', async () => {
     useChatStore.setState({
       currentSessionId: 'sess_1',
@@ -72,7 +104,8 @@ describe('useChatStore 消息分页', () => {
     })
 
     mockInvoke.mockImplementation(async () => {
-      useChatStore.setState({ currentSessionId: 'sess_2' })
+      // workspace session reset 会先清掉旧会话的 loading。
+      useChatStore.setState({ currentSessionId: 'sess_2', isLoadingOlderMessages: false })
       return { messages: [{ id: 'msg_0', sessionId: 'sess_1', role: 'user', content: 'old', timestamp: 0 }], hasMore: false }
     })
 
@@ -81,6 +114,26 @@ describe('useChatStore 消息分页', () => {
     expect(useChatStore.getState().messages).toHaveLength(1)
     expect(useChatStore.getState().messages[0].id).toBe('msg_1')
     expect(useChatStore.getState().isLoadingOlderMessages).toBe(false)
+  })
+
+  it('切换后的迟到成功不能清掉新会话的 loading', async () => {
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId: 'msg_1'
+    })
+    mockInvoke.mockImplementation(async () => {
+      useChatStore.setState({
+        currentSessionId: 'sess_2',
+        isLoadingOlderMessages: true
+      })
+      return { messages: [], hasMore: false }
+    })
+
+    await useChatStore.getState().loadOlderMessages()
+
+    expect(useChatStore.getState().currentSessionId).toBe('sess_2')
+    expect(useChatStore.getState().isLoadingOlderMessages).toBe(true)
   })
 
   it('hasMore=false 且无守卫时不请求', async () => {
@@ -93,6 +146,143 @@ describe('useChatStore 消息分页', () => {
 
     await useChatStore.getState().loadOlderMessages()
     expect(mockInvoke).not.toHaveBeenCalled()
+  })
+
+  it('空页只更新 hasMore 并结束 loading', async () => {
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      messages: [{ id: 'msg_1', sessionId: 'sess_1', role: 'user', content: 'x', timestamp: 0, _revision: 0 }],
+      messageIndexById: { msg_1: 0 },
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId: 'msg_1'
+    })
+    mockInvoke.mockResolvedValue({ messages: [], hasMore: false })
+
+    await useChatStore.getState().loadOlderMessages()
+
+    const state = useChatStore.getState()
+    expect(state.messages.map(message => message.id)).toEqual(['msg_1'])
+    expect(state.oldestLoadedMessageId).toBe('msg_1')
+    expect(state.hasMoreMessagesAbove).toBe(false)
+    expect(state.isLoadingOlderMessages).toBe(false)
+    expect(state.suspendHeadTrim).toBe(false)
+  })
+
+  it('当前会话补载失败时结束 loading', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId: 'msg_1'
+    })
+    mockInvoke.mockRejectedValue(new Error('page unavailable'))
+
+    try {
+      await useChatStore.getState().loadOlderMessages()
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    expect(useChatStore.getState().isLoadingOlderMessages).toBe(false)
+  })
+
+  it('切换后的迟到错误不能清掉新会话的 loading', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId: 'msg_1'
+    })
+    mockInvoke.mockImplementation(async () => {
+      useChatStore.setState({
+        currentSessionId: 'sess_2',
+        isLoadingOlderMessages: true
+      })
+      throw new Error('old page failed')
+    })
+
+    try {
+      await useChatStore.getState().loadOlderMessages()
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    expect(useChatStore.getState().currentSessionId).toBe('sess_2')
+    expect(useChatStore.getState().isLoadingOlderMessages).toBe(true)
+  })
+
+  it('同会话 revision 变化后丢弃旧 active path 的迟到成功', async () => {
+    const oldPage = deferred<{
+      messages: Array<{ id: string; sessionId: string; role: 'user'; content: string; timestamp: number }>
+      hasMore: boolean
+    }>()
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'load-session-messages') return oldPage.promise
+      if (channel === 'load-session') return new Promise(() => {})
+      return Promise.resolve(undefined)
+    })
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      lastMessagesRevision: 1,
+      messages: [{ id: 'old-current', sessionId: 'sess_1', role: 'user', content: 'old', timestamp: 1, _revision: 0 }],
+      messageIndexById: { 'old-current': 0 },
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId: 'old-current'
+    })
+
+    const loadPromise = useChatStore.getState().loadOlderMessages()
+    useChatStore.getState().syncFromWorkspace({
+      currentSessionId: 'sess_1',
+      availableSessions: [],
+      messagesRevision: 2,
+      tier1BranchContext: null
+    })
+    useChatStore.setState({
+      messages: [{ id: 'new-current', sessionId: 'sess_1', role: 'user', content: 'new', timestamp: 2, _revision: 0 }],
+      messageIndexById: { 'new-current': 0 },
+      isLoadingOlderMessages: true
+    })
+    oldPage.resolve({
+      messages: [{ id: 'old-page', sessionId: 'sess_1', role: 'user', content: 'old page', timestamp: 0 }],
+      hasMore: false
+    })
+    await loadPromise
+
+    expect(useChatStore.getState().messages.map(message => message.id)).toEqual(['new-current'])
+    expect(useChatStore.getState().isLoadingOlderMessages).toBe(true)
+  })
+
+  it('同会话 revision 变化后旧分页异常不能清掉新请求的 loading', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const oldPage = deferred<never>()
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'load-session-messages') return oldPage.promise
+      if (channel === 'load-session') return new Promise(() => {})
+      return Promise.resolve(undefined)
+    })
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      lastMessagesRevision: 1,
+      hasMoreMessagesAbove: true,
+      oldestLoadedMessageId: 'old-current'
+    })
+
+    const loadPromise = useChatStore.getState().loadOlderMessages()
+    useChatStore.getState().syncFromWorkspace({
+      currentSessionId: 'sess_1',
+      availableSessions: [],
+      messagesRevision: 2,
+      tier1BranchContext: null
+    })
+    useChatStore.setState({ isLoadingOlderMessages: true })
+    oldPage.reject(new Error('old page failed'))
+    try {
+      await loadPromise
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    expect(useChatStore.getState().isLoadingOlderMessages).toBe(true)
   })
 
   it('流式头部裁剪后同步 oldestLoadedMessageId，避免上滚补载出现空洞', () => {

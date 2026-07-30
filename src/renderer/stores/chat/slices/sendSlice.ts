@@ -2,7 +2,7 @@ import type { MessageBlock } from '../../../../shared/session/types'
 import type { ImageAttachment } from '../../../lib/image-attachments'
 import type { ExtendedMessage } from '../types'
 import { MAX_PENDING_MESSAGES } from '../constants'
-import { commitMessageList } from '../internal'
+import { commitMessageList, setRollbackErrorPatch } from '../internal'
 import type { ChatSliceCreator, SendSliceState } from '../types'
 
 export function initialSendState(): Pick<SendSliceState, 'sendInFlight' | 'pendingUserMessages'> {
@@ -109,12 +109,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
         } catch (reloadErr) {
           console.error('[sendMessage] 回滚后重载会话失败:', reloadErr)
         }
-        set(state => ({
-          rollbackErrors: {
-            ...state.rollbackErrors,
-            [userMsg.id]: (err as Error).message
-          }
-        }))
+        set(state => setRollbackErrorPatch(state, userMsg.id, (err as Error).message))
         return true
       }
       set({ sendInFlight: false, activeAgentSessionId: null, isGenerating: false })

@@ -1,4 +1,5 @@
 import path from 'node:path'
+import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   buildViolationsForEdge,
@@ -192,5 +193,53 @@ describe('renderer chat store boundaries', () => {
     const scan = scanSourceTree(repoRoot)
     const chatViolations = scan.violations.filter((v) => CHAT_SLICE_RULES.includes(v.rule as (typeof CHAT_SLICE_RULES)[number]))
     expect(chatViolations, JSON.stringify(chatViolations, null, 2)).toEqual([])
+  })
+
+  it('branch/send slice 不直接写 diff owner 字段', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const forbiddenWrite = /\b(messageDiffs|loadingDiffs|loadingDiffPlaceholders|rollbackErrors)\s*:/
+
+    for (const relativePath of [
+      'src/renderer/stores/chat/slices/branchSlice.ts',
+      'src/renderer/stores/chat/slices/sendSlice.ts'
+    ]) {
+      const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
+      expect(source.match(forbiddenWrite), `${relativePath} 必须经 diff owner patch 写入`).toBeNull()
+    }
+  })
+
+  it('C6 字段只在声明的 owner 与协调边界生成 patch', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const chatRoot = path.join(repoRoot, 'src/renderer/stores/chat')
+    const sourceFiles = fs.readdirSync(chatRoot, { recursive: true })
+      .filter((entry): entry is string => typeof entry === 'string' && entry.endsWith('.ts'))
+      .filter(entry => entry !== 'types.ts')
+
+    const ownership = [
+      {
+        fields: /\b(messageDiffs|loadingDiffs|loadingDiffPlaceholders|rollbackErrors)\s*:/,
+        allowed: new Set(['internal/diffState.ts'])
+      },
+      {
+        fields: /\blastMessagesRevision\s*:/,
+        allowed: new Set(['slices/workspaceSyncSlice.ts'])
+      },
+      {
+        fields: /\b(hasMoreMessagesAbove|isLoadingOlderMessages|oldestLoadedMessageId|suspendHeadTrim)\s*:/,
+        allowed: new Set([
+          'internal/messageWindow.ts',
+          'slices/paginationSlice.ts',
+          'slices/workspaceSyncSlice.ts'
+        ])
+      }
+    ]
+
+    for (const rule of ownership) {
+      const violations = sourceFiles
+        .filter(relativePath => rule.fields.test(fs.readFileSync(path.join(chatRoot, relativePath), 'utf8')))
+        .map(relativePath => relativePath.replaceAll('\\', '/'))
+        .filter(relativePath => !rule.allowed.has(relativePath))
+      expect(violations).toEqual([])
+    }
   })
 })
