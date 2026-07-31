@@ -10,10 +10,7 @@ export type {
   TerminalHookName,
   TerminalHookContext,
   TerminalHookHandler,
-  RunCoordinatorOptions,
-  FeatureRunProjection,
-  CommitFeatureUpdateParams,
-  CommitFeatureUpdateResult
+  RunCoordinatorOptions
 } from './RunCoordinator'
 export { InteractionInbox } from './InteractionInbox'
 export type { EnqueueInteractionParams } from './InteractionInbox'

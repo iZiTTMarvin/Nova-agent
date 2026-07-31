@@ -145,7 +145,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-function createRegistry(skills: Array<{ name: string; workflow?: string }>): SkillRegistry {
+function createRegistry(skills: Array<{ name: string }>): SkillRegistry {
   const root = mkdtempSync(join(tmpdir(), 'nova-turn-svc-'))
   roots.push(root)
   const skillsDir = join(root, 'skills')
@@ -157,7 +157,6 @@ function createRegistry(skills: Array<{ name: string; workflow?: string }>): Ski
       `name: ${s.name}`,
       `description: ${s.name} skill`,
       'user-invocable: true',
-      ...(s.workflow ? [`workflow: ${s.workflow}`] : []),
       '---',
       `Body of ${s.name}.`
     ].join('\n'))
@@ -220,16 +219,19 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(sentRoutes[0]).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
   })
 
-  it('compose + Legacy Workflow → 仍创建 agent run', async () => {
-    registryHolder.current = createRegistry([{ name: 'legacy-flow', workflow: 'legacy-flow' }])
+  it('compose + 普通 slash skill → 仍创建 agent run', async () => {
+    registryHolder.current = createRegistry([{ name: 'onboard' }])
     sessionStore.load.mockReturnValue(makeSession('compose'))
 
-    await sendAgentMessage({ sessionId: 'sess-1', content: '/legacy-flow 继续旧编排' }, deps)
+    await sendAgentMessage({ sessionId: 'sess-1', content: '/onboard 当前项目' }, deps)
 
     expect(coordinator.startRun).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'agent' })
     )
-    expect(sentRoutes[0]).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
+    expect(sentRoutes[0]).toEqual(expect.objectContaining({
+      kind: 'agent',
+      dispatch: expect.objectContaining({ kind: 'inject' })
+    }))
   })
 
   it('default + 普通文本 → 创建 agent run', async () => {
@@ -258,37 +260,6 @@ describe('sendAgentMessage 路由行为级集成', () => {
       expect.objectContaining({ kind: 'agent' })
     )
     expect(sentRoutes[0].kind).toBe('agent')
-  })
-
-  it('compose + 工作区已有旧 run → 不触发旧执行器分支', async () => {
-    registryHolder.current = createRegistry([])
-    sessionStore.load.mockReturnValue(makeSession('compose'))
-    coordinator.listActiveRuns.mockReturnValue([
-      { runId: 'existing', kind: 'xforge', workspaceId: '/tmp/ws', status: 'running' }
-    ])
-
-    await sendAgentMessage({ sessionId: 'sess-1', content: '实现登录功能' }, deps)
-
-    expect(sessionStore.appendMessageFast).toHaveBeenCalledTimes(1)
-    expect(coordinator.startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'agent' })
-    )
-  })
-
-  it('default 模式触发同一 Legacy Workflow 不受 XForge 并发限制', async () => {
-    registryHolder.current = createRegistry([{ name: 'legacy-flow', workflow: 'legacy-flow' }])
-    sessionStore.load.mockReturnValue(makeSession('default'))
-    // 工作区已有旧 run 不改变 default 的普通路由。
-    coordinator.listActiveRuns.mockReturnValue([
-      { runId: 'existing', kind: 'xforge', workspaceId: '/tmp/ws', status: 'running' }
-    ])
-
-    await sendAgentMessage({ sessionId: 'sess-1', content: '/legacy-flow 做事' }, deps)
-
-    expect(coordinator.startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'agent' })
-    )
-    expect(sessionStore.appendMessageFast).toHaveBeenCalledTimes(1)
   })
 
   it('用户消息落盘发生在 startRun 之前', async () => {

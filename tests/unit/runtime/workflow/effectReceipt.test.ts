@@ -66,7 +66,7 @@ describe('EffectReceipt 安全回滚', () => {
     const runId = 'run2'
     writeFileSync(join(tmp, 'f.txt'), 'before\n')
     const beforeHash = hashContent('before\n')
-    const backupDir = join(tmp, '.nova', 'compose', 'runs', runId, 'effect-backups')
+    const backupDir = join(tmp, '.nova', 'workflow', 'runs', runId, 'effect-backups')
     mkdirSync(backupDir, { recursive: true })
     writeFileSync(join(backupDir, 'e1.bak'), 'before\n')
     writeFileSync(join(tmp, 'f.txt'), 'after\n')
@@ -102,7 +102,7 @@ describe('EffectReceipt 安全回滚', () => {
 
   it('同文件连续修改三次：preview 用虚拟状态逆序模拟', () => {
     const runId = 'run3'
-    const backupDir = join(tmp, '.nova', 'compose', 'runs', runId, 'effect-backups')
+    const backupDir = join(tmp, '.nova', 'workflow', 'runs', runId, 'effect-backups')
     mkdirSync(backupDir, { recursive: true })
     writeFileSync(join(tmp, 'm.txt'), 'v0\n')
 

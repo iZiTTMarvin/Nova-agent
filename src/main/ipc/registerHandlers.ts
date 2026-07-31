@@ -16,7 +16,6 @@ import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
 import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
-import { registerComposeHandler } from './composeHandler'
 import { registerMemoryHandler } from './memoryHandler'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
@@ -104,9 +103,6 @@ export function registerIpcHandlers(): ImageStore {
 
   // 权限持久化规则（PRD §5.2）
   registerPermissionHandler()
-
-  // 编排模式 compose IPC
-  registerComposeHandler(getMainWindow)
 
   // RunCoordinator：权威运行快照 / Interaction Inbox / 启动对账
   initRunCoordinatorHost(getMainWindow)

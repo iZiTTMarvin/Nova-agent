@@ -68,12 +68,6 @@ export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRo
     return { kind: 'skill_fork', skill: dispatch.skill, args: dispatch.args }
   }
 
-  // 工作流技能只提供输入提示；真正的编排入口由模型调用 start_workflow，
-  // 这样所有模式都经过同一条 AgentLoop 与 ToolRegistry 链路。
-  if (dispatch.kind === 'workflow') {
-    return { kind: 'agent', dispatch: { kind: 'passthrough' } }
-  }
-
   // inject / system_notice / passthrough → agent
   return { kind: 'agent', dispatch }
 }

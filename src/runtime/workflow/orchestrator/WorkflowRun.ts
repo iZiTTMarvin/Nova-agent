@@ -77,7 +77,6 @@ export class WorkflowRun {
       eventBus: host.eventBus,
       modelClient: host.modelClient,
       resolveTool: host.resolveTool,
-      ...(host.resolveSkill ? { resolveSkill: host.resolveSkill } : {}),
       ...(host.checkpointManager ? { checkpointManager: host.checkpointManager } : {}),
       ...(host.contextWindow !== undefined ? { contextWindow: host.contextWindow } : {}),
       ...(host.supportsVision !== undefined ? { supportsVision: host.supportsVision } : {}),

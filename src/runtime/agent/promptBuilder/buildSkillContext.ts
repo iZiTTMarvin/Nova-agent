@@ -20,39 +20,10 @@ export function buildSkillContext(skills: SkillManifest[]): string {
   ].join('\n')
 }
 
-/**
- * compose 模式额外拼装 <compose_skills>：列出全部 hidden 编排 skill。
- */
-export function buildComposeSkillContext(hiddenSkills: SkillManifest[]): string {
-  if (hiddenSkills.length === 0) return ''
-  const lines = hiddenSkills.map(s => {
-    const when = s.whenToUse ? ` whenToUse=${JSON.stringify(s.whenToUse)}` : ''
-    return `- ${s.name}: ${s.description}${when}`
-  })
-  return [
-    '<compose_skills>',
-    '以下编排技能仅在 compose 模式可用，由编排脚本通过 agent({ skill }) 调用：',
-    '',
-    ...lines,
-    '</compose_skills>'
-  ].join('\n')
-}
-
-/**
- * 按模式拼装技能上下文：compose 时包含 hidden + compose_skills 块。
- */
+/** 按当前 mode/profile 拼装普通技能上下文；编排元数据由 RouterContext 单独提供。 */
 export function buildSkillContextForMode(
   mode: Mode,
-  listForContext: (profile?: string, opts?: { includeHidden?: boolean }) => SkillManifest[],
-  listHidden: () => SkillManifest[]
+  listForContext: (profile?: string) => SkillManifest[]
 ): string {
-  const isCompose = mode === 'compose'
-  const visible = listForContext(mode, { includeHidden: isCompose })
-  // compose 下 listForContext 已含 hidden；普通 skills 块只列非 hidden，hidden 进 compose_skills
-  const normal = isCompose ? visible.filter(s => !s.hidden) : visible
-  const parts = [buildSkillContext(normal)]
-  if (isCompose) {
-    parts.push(buildComposeSkillContext(listHidden()))
-  }
-  return parts.filter(Boolean).join('\n\n')
+  return buildSkillContext(listForContext(mode))
 }

@@ -23,7 +23,8 @@ tasks/*
 !tasks/phase3-validation.md
 SPEC.md
 TASKS.md
-docs
+docs/*
+!docs/nova-harness-token-efficiency-audit.md
 .claude
 .commandcode
 .kilo

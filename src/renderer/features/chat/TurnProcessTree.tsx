@@ -10,7 +10,6 @@ import { ProcessTraceList } from './ProcessTraceList'
 import { formatL1Header, formatL2DiffSuffix, formatL2Summary } from './turnSummaryDisplay'
 import { selectForceExpandedForMessage } from './turnProcessSelectors'
 import { useAgentStore } from '../../stores/useAgentStore'
-import { useComposeStore } from '../compose/useComposeStore'
 import type { TurnRenderModel } from './turnProcessModel'
 import type { Mode } from '../../../shared/session/types'
 import type { RendererMessageBlock } from '../../stores/types'
@@ -71,8 +70,7 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   const agentForceExpanded = useAgentStore(state =>
     selectForceExpandedForMessage(state, messageId, isLive)
   )
-  const composeForceExpanded = useComposeStore(state => isLive && !!state.pendingAskUser)
-  const forceExpanded = agentForceExpanded || composeForceExpanded
+  const forceExpanded = agentForceExpanded
 
   const l1Open = forceExpanded ? true : userL1Open
   const l2Open = forceExpanded ? true : userL2Open

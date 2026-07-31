@@ -145,12 +145,12 @@ describe('T2-4 cancel 由 RunCoordinator 确认终态', () => {
     expect(useRunStore.getState().cancelling).toBe(true)
   })
 
-  it('指定 parked XForge runId 时精确传给 IPC，不依赖当前全局 active run', async () => {
+  it('指定 parked runId 时精确传给 IPC，不依赖当前全局 active run', async () => {
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
-    mockInvoke.mockResolvedValue({ runId: 'parked-xforge', status: 'cancelled' })
+    mockInvoke.mockResolvedValue({ runId: 'parked-run', status: 'cancelled' })
 
-    await useAgentStore.getState().cancelExecution('parked-xforge')
+    await useAgentStore.getState().cancelExecution('parked-run')
 
-    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'parked-xforge' })
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'parked-run' })
   })
 })

@@ -5,14 +5,12 @@
  * 所有副作用提交前必须过 assertScopeLive —— TaskScope 关闭（取消/超时/终态）后，
  * 旧 continuation 无权再写工作区、发事件或落盘。
  */
-import { createHash } from 'node:crypto'
 import type { EventBus } from '../../agent/EventBus'
 import type { ModelClient } from '../../model/ModelClient'
 import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import type { Mode } from '../../../shared/session/types'
 import type { ToolExecutor } from '../../tools/types'
 import type { SubAgentPermissionBridge } from '../../tools/subAgentBridge'
-import type { SkillManifest } from '../../skills/types'
 import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import type { WorkflowProgressDetail, WorkflowProgressStatus } from '../../agent/types'
 import type { TaskScope } from '../scheduling/TaskScope'
@@ -40,8 +38,6 @@ export interface AgentOptions {
   interactive?: boolean
   /** 强制结构化返回；命中后 agent() 解析为对象，解析失败返回 null */
   schema?: Record<string, unknown>
-  /** 以某个 skill 正文作为子 agent 角色；同时作为 journal 的 agentType */
-  skill?: string
   /** 单次调用超时，默认 10 分钟 */
   timeoutMs?: number
   /** 仅展示用，不参与 journal hash */
@@ -155,7 +151,6 @@ export interface HostContext {
   eventBus: EventBus
   modelClient: ModelClient
   resolveTool: (name: string) => ToolExecutor | undefined
-  resolveSkill?: (name: string) => SkillManifest | undefined
   checkpointManager?: CheckpointManager
   contextWindow?: number
   supportsVision?: boolean
@@ -212,7 +207,6 @@ export function hostEffectCtx(runId: string, key: string): SideEffectCtx {
   return {
     runId,
     stepId: key,
-    inputHash: createHash('sha256').update(key).digest('hex'),
     idempotencyKey: `${runId}:${key}`
   }
 }

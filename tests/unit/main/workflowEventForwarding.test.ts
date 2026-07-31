@@ -2,7 +2,7 @@
  * 编排事件的 main → renderer 转发。
  *
  * 进度块与 run 状态各走独立 channel：进度块在聊天流中产出消息块，
- * run 状态只驱动输入框运行态，两者不能挤在 compose:* 面板通道里。
+ * run 状态只驱动输入框运行态，两者使用独立 workflow:* 通道。
  */
 import { describe, expect, it, vi } from 'vitest'
 

@@ -26,45 +26,8 @@ import {
   type StartRunParams,
   type TerminalOutboxEntry,
   type ToolCommitPhase,
-  type ToolCommitRecord,
-  type XForgeRunState
+  type ToolCommitRecord
 } from '../../shared/run/types'
-
-/** Feature 提交时对通用 run 字段的投影（由 feature service 计算） */
-export interface FeatureRunProjection {
-  status: RunStatus
-  progress: RunProgress | null
-  terminalReason?: string
-  cancelPendingInteractions?: boolean
-}
-
-export type FeatureCommitAuthority =
-  | { kind: 'execution'; generation: number }
-  | { kind: 'host'; expectedSequence: number }
-
-export interface CommitFeatureUpdateParams {
-  runId: string
-  feature: { kind: 'xforge'; state: XForgeRunState }
-  authority: FeatureCommitAuthority
-  eventType: string
-  eventPayload?: Record<string, unknown>
-  projection: FeatureRunProjection
-}
-
-export type CommitFeatureUpdateResult =
-  | { ok: true; snapshot: RunSnapshot }
-  | {
-      ok: false
-      code:
-        | 'not_found'
-        | 'run_ended'
-        | 'kind_mismatch'
-        | 'stale_execution'
-        | 'sequence_mismatch'
-        | 'transition_rejected'
-      message: string
-      snapshot?: RunSnapshot
-    }
 
 export type RunSnapshotListener = (snapshot: RunSnapshot, event: RunEventRecord) => void
 
@@ -107,9 +70,6 @@ export class RunCoordinator {
 
   /** 注册新 run（queued → 立刻可切 running） */
   startRun(params: StartRunParams): RunSnapshot {
-    if (params.kind === 'xforge' && !params.xforge) {
-      throw new Error('kind=xforge 必须由 XForgeRunService 提供初始 feature state')
-    }
     const now = Date.now()
     const runId = params.runId ?? randomUUID()
     const existing = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
@@ -137,123 +97,10 @@ export class RunCoordinator {
       toolCommits: [],
       turnDraft: null,
       commandAcks: [],
-      terminalOutbox: [],
-      ...(params.kind === 'xforge' && params.xforge
-        ? { xforge: structuredClone(params.xforge) as XForgeRunState }
-        : {})
+      terminalOutbox: []
     }
-    this.commit(snapshot, 'run_started', {
-      kind: params.kind,
-      ...(snapshot.xforge ? { xforge: structuredClone(snapshot.xforge) } : {})
-    })
+    this.commit(snapshot, 'run_started', { kind: params.kind })
     return cloneSnapshot(snapshot)
-  }
-
-  /**
-   * 通用 feature 原子提交端口：写入不透明 feature 切片 + 通用 run 投影。
-   * 不解释 feature 内部阶段语义；由 feature service 负责合法性与投影。
-   */
-  commitFeatureUpdate(params: CommitFeatureUpdateParams): CommitFeatureUpdateResult {
-    const snap = this.requireMutable(params.runId)
-    if (!snap) {
-      const existing = this.getSnapshot(params.runId)
-      if (!existing) {
-        return { ok: false, code: 'not_found', message: `run 不存在: ${params.runId}` }
-      }
-      return {
-        ok: false,
-        code: 'run_ended',
-        message: `run 已终态，拒绝 feature 更新（status=${existing.status}）`,
-        snapshot: cloneSnapshot(existing)
-      }
-    }
-
-    if (snap.kind !== params.feature.kind) {
-      return {
-        ok: false,
-        code: 'kind_mismatch',
-        message: `run kind=${snap.kind} 与 feature kind=${params.feature.kind} 不一致`,
-        snapshot: cloneSnapshot(snap)
-      }
-    }
-
-    if (params.authority.kind === 'execution') {
-      if (!this.isExecutionCurrent(params.runId, params.authority.generation)) {
-        return {
-          ok: false,
-          code: 'stale_execution',
-          message: `execution generation 已失效，拒绝 feature 更新（generation=${params.authority.generation}）`,
-          snapshot: cloneSnapshot(snap)
-        }
-      }
-    } else if (snap.sequence !== params.authority.expectedSequence) {
-      return {
-        ok: false,
-        code: 'sequence_mismatch',
-        message: `run sequence 已变化，拒绝过期 host 更新（expected=${params.authority.expectedSequence}, actual=${snap.sequence}）`,
-        snapshot: cloneSnapshot(snap)
-      }
-    }
-
-    if (
-      params.projection.status !== snap.status &&
-      !RUN_STATUS_TRANSITIONS[snap.status].includes(params.projection.status)
-    ) {
-      return {
-        ok: false,
-        code: 'transition_rejected',
-        message: `非法 run 状态转换 ${snap.status} → ${params.projection.status}`,
-        snapshot: cloneSnapshot(snap)
-      }
-    }
-
-    snap.xforge = structuredClone(params.feature.state) as XForgeRunState
-    snap.status = params.projection.status
-    snap.progress = params.projection.progress
-      ? { ...params.projection.progress }
-      : null
-    if (params.projection.terminalReason !== undefined) {
-      snap.terminalReason = params.projection.terminalReason
-    }
-    if (params.projection.cancelPendingInteractions) {
-      for (const inter of snap.pendingInteractions) {
-        if (inter.status === 'pending' || inter.status === 'submitting') {
-          inter.status = 'cancelled'
-          inter.version += 1
-        }
-      }
-    }
-
-    const enteredHardTerminal = isHardTerminalRunStatus(snap.status)
-    const transitionId = enteredHardTerminal
-      ? (snap.terminalTransitionId ?? randomUUID())
-      : undefined
-    if (enteredHardTerminal && transitionId) {
-      snap.terminalTransitionId = transitionId
-    }
-
-    this.commit(snap, params.eventType, {
-      ...(params.eventPayload ?? {}),
-      ...(snap.xforge ? { xforge: structuredClone(snap.xforge) } : {}),
-      status: snap.status,
-      progress: snap.progress,
-      ...(snap.terminalReason !== undefined ? { terminalReason: snap.terminalReason } : {}),
-      ...(transitionId ? { terminalTransitionId: transitionId } : {})
-    })
-
-    if (enteredHardTerminal && transitionId) {
-      const hookName = mapTerminalToHook(snap.status)
-      if (hookName) {
-        void this.fireTerminalHook(params.runId, transitionId, hookName, snap)
-      }
-    }
-
-    return { ok: true, snapshot: cloneSnapshot(snap) }
-  }
-
-  /** feature service 判断 run 是否仍可写（硬终态不可变；interrupted 可恢复） */
-  isMutableRun(runId: string): boolean {
-    return this.requireMutable(runId) !== null
   }
 
   /** queued → running，并原子记录 turn_started */
@@ -1042,10 +889,7 @@ export class RunCoordinator {
   }
 }
 
-/**
- * 深拷贝 snapshot。xforge 作为不透明 feature 切片，使用 structuredClone，
- * 避免 run 内核依赖 workflow 层的专用克隆实现。
- */
+/** 深拷贝 snapshot，避免调用方反向修改权威状态。 */
 function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
   return {
     ...snap,
@@ -1060,8 +904,7 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
         }
       : snap.turnDraft,
     commandAcks: snap.commandAcks?.map(a => ({ ...a })),
-    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e })),
-    xforge: snap.xforge ? (structuredClone(snap.xforge) as XForgeRunState) : snap.xforge
+    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e }))
   }
 }
 

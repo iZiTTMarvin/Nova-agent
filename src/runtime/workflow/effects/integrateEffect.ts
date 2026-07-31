@@ -1,6 +1,6 @@
 /**
  * integrate 副作用凭证：防止 resume 重复合并。
- * 落盘路径：.nova/compose/runs/<runId>/integrate-receipts/<effectId>.json
+ * 落盘路径：.nova/workflow/runs/<runId>/integrate-receipts/<effectId>.json
  *
  * resume：
  * - 已 committed → 跳过（幂等提交凭证）
@@ -37,7 +37,7 @@ function assertSafeRunId(runId: string): void {
 
 function integrateReceiptsDir(workspaceRoot: string, runId: string): string {
   assertSafeRunId(runId)
-  return join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'integrate-receipts')
+  return join(workspaceRoot, '.nova', 'workflow', 'runs', runId, 'integrate-receipts')
 }
 
 export function integrateEffectId(stepCtx: SideEffectCtx): string {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
@@ -10,7 +10,7 @@ import {
 } from '../../../../../src/runtime/workflow/host/worktreeFn'
 import { hostEffectCtx } from '../../../../../src/runtime/workflow/host/types'
 import { tryReuseIntegrateReceipt } from '../../../../../src/runtime/workflow/effects/integrateEffect'
-import { _resetWorktreeLocksForTests } from '../../../../../src/runtime/worktree'
+import * as Worktree from '../../../../../src/runtime/worktree'
 import { addTextResponse, makeHostHarness } from './hostTestContext'
 import type { AgentResult } from '../../../../../src/runtime/workflow/host/types'
 
@@ -50,12 +50,13 @@ describe('host worktreeFn', () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-host-wt-'))
-    _resetWorktreeLocksForTests()
+    Worktree._resetWorktreeLocksForTests()
     initRepo(tmp)
   })
 
   afterEach(() => {
-    _resetWorktreeLocksForTests()
+    vi.restoreAllMocks()
+    Worktree._resetWorktreeLocksForTests()
     rmSync(tmp, { recursive: true, force: true })
   })
 
@@ -82,6 +83,22 @@ describe('host worktreeFn', () => {
     await releaseWorktree(h.ctx, handle.directory)
     expect(h.ctx.ownedWorktrees.size).toBe(0)
     expect(h.ctx.worktreeKeys.size).toBe(0)
+    expect(existsSync(handle.directory)).toBe(false)
+  })
+
+  it('底层删除失败时保留 ownership，允许终态清理重试', async () => {
+    const h = makeHostHarness(tmp)
+    const handle = await ensureWorktree(h.ctx, 'retry-cleanup')
+    vi.spyOn(Worktree, 'remove').mockRejectedValueOnce(new Error('busy'))
+
+    await expect(releaseWorktree(h.ctx, handle.directory)).resolves.toBe(false)
+    expect(h.ctx.ownedWorktrees.has(handle.directory)).toBe(true)
+    expect(h.ctx.worktreeKeys.get(handle.key)).toBe(handle.directory)
+    expect(existsSync(handle.directory)).toBe(true)
+
+    await expect(releaseWorktree(h.ctx, handle.directory)).resolves.toBe(true)
+    expect(h.ctx.ownedWorktrees.has(handle.directory)).toBe(false)
+    expect(h.ctx.worktreeKeys.has(handle.key)).toBe(false)
     expect(existsSync(handle.directory)).toBe(false)
   })
 
@@ -235,12 +252,13 @@ describe('host worktreeFn 与 agent 组合', () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'nova-host-wt-agent-'))
-    _resetWorktreeLocksForTests()
+    Worktree._resetWorktreeLocksForTests()
     initRepo(tmp)
   })
 
   afterEach(() => {
-    _resetWorktreeLocksForTests()
+    vi.restoreAllMocks()
+    Worktree._resetWorktreeLocksForTests()
     rmSync(tmp, { recursive: true, force: true })
   })
 

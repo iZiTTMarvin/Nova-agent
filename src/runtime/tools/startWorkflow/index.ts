@@ -3,15 +3,13 @@
  * 工具只负责校验调用参数并把当前 turn 的宿主能力交给 orchestrator。
  */
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
-import type { SkillManifest } from '../../skills/types'
 import type { SubAgentPermissionBridge } from '../subAgentBridge'
-import type { WorkflowOrchestrator } from '../../workflow/orchestrator'
+import type { WorkflowOrchestrator } from '../../workflow'
 import { isReadablePlanInWorkspace, readPlanDocumentInWorkspace } from '../../plans'
 
 export interface StartWorkflowToolDeps {
   getOrchestrator: () => WorkflowOrchestrator | undefined
   getPermissionBridge?: () => SubAgentPermissionBridge
-  resolveSkill?: (name: string) => SkillManifest | undefined
 }
 
 function readRequiredString(
@@ -112,7 +110,6 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
           eventBus: context.eventBus,
           modelClient: context.modelClient,
           resolveTool: context.resolveTool,
-          ...(deps.resolveSkill ? { resolveSkill: deps.resolveSkill } : {}),
           ...(context.checkpointManager ? { checkpointManager: context.checkpointManager } : {}),
           ...(context.contextWindow !== undefined ? { contextWindow: context.contextWindow } : {}),
           ...(context.supportsVision !== undefined ? { supportsVision: context.supportsVision } : {}),

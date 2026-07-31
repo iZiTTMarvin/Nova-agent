@@ -241,28 +241,17 @@ export class SkillLoader {
     return [...this.skills.values()]
   }
 
-  /**
-   * 模型可见技能：enabled + modelInvocable + agent 域 + 上限 30。
-   * 默认过滤 hidden；compose 模式传 includeHidden=true。
-   */
-  listForContext(profile?: string, opts?: { includeHidden?: boolean }): SkillManifest[] {
-    const includeHidden = opts?.includeHidden === true
+  /** 模型可见技能：enabled + modelInvocable + agent 域 + 上限 30。 */
+  listForContext(profile?: string): SkillManifest[] {
     const filtered = [...this.skills.values()].filter(s => {
       if (!s.enabled || !s.modelInvocable || s.invalid) return false
-      if (s.hidden && !includeHidden) return false
+      if (s.hidden) return false
       return SkillLoader.isAgentAllowed(s, profile)
     })
     return filtered.slice(0, MAX_CONTEXT_SKILLS)
   }
 
-  /** 仅隐藏编排 skill（compose_skills 块用） */
-  listHidden(): SkillManifest[] {
-    return [...this.skills.values()].filter(
-      s => s.hidden && s.enabled && !s.invalid
-    )
-  }
-
-  /** 用户可 slash 调用的技能（含 workflow 入口，不含 hidden） */
+  /** 用户可 slash 调用的技能（不含 hidden） */
   listUserInvocable(): SkillManifest[] {
     return [...this.skills.values()].filter(
       s => s.userInvocable && !s.invalid && !s.hidden

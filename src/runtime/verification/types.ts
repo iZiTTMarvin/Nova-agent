@@ -1,5 +1,5 @@
 /**
- * 验证命令执行结果类型（供 XForge Test Gate 等受控执行路径使用）
+ * 验证命令执行结果类型（供 Workflow Test Gate 等受控执行路径使用）
  */
 export type VerificationCommandType = 'test' | 'lint' | 'build'
 

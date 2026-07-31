@@ -24,12 +24,6 @@ vi.mock('../../../src/renderer/features/todo/TodoPanel', () => ({ TodoPanel: () 
 vi.mock('../../../src/renderer/features/ask/AskQuestionPanel', () => ({ AskQuestionPanel: () => null }))
 vi.mock('../../../src/renderer/features/chat/RecoveryBanner', () => ({ RecoveryBanner: () => null }))
 vi.mock('../../../src/renderer/components/ImagePreviewDialog', () => ({ ImagePreviewDialog: () => null }))
-vi.mock('../../../src/renderer/features/compose/ComposeProgressPanel', () => ({
-  ComposeProgressPanel: () => null
-}))
-vi.mock('../../../src/renderer/features/compose/ComposeAskUserPanel', () => ({
-  ComposeAskUserPanel: () => null
-}))
 vi.mock('../../../src/renderer/features/skills/SkillAC', () => ({
   SkillAC: React.forwardRef(() => null)
 }))

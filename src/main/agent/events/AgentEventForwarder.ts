@@ -195,15 +195,7 @@ export function forwardEventToRenderer(
         ...(event.interrupted ? { interrupted: true } : {})
       })
       break
-    case 'workflow_phase':
-      webContents.send('compose:phase-change', {
-        runId: event.runId,
-        sessionId: event.sessionId,
-        phase: event.phase
-      })
-      break
     case 'workflow_progress':
-      // 进度块走独立 channel：它在聊天流中产出消息块，与 compose 进度面板不是同一消费者
       webContents.send('workflow:progress', {
         runId: event.runId,
         sessionId: event.sessionId,
@@ -220,44 +212,6 @@ export function forwardEventToRenderer(
         status: event.status,
         phase: event.phase,
         ...(event.error !== undefined ? { error: event.error } : {})
-      })
-      break
-    case 'workflow_log':
-      webContents.send('compose:log', {
-        runId: event.runId,
-        sessionId: event.sessionId,
-        message: event.message
-      })
-      break
-    case 'workflow_agent_failed':
-      // 可观测事件，阶段 E UI 可订阅；当前仅转发为 log
-      webContents.send('compose:log', {
-        runId: event.runId,
-        sessionId: event.sessionId,
-        message: `[agent-failed] ${event.reason}`
-      })
-      break
-    case 'workflow_ask_user':
-      webContents.send('compose:ask-user', {
-        runId: event.runId,
-        sessionId: event.sessionId,
-        requestId: event.requestId,
-        question: event.question,
-        options: event.options
-      })
-      break
-    case 'workflow_task_update':
-      webContents.send('compose:task-update', {
-        runId: event.runId,
-        sessionId: event.sessionId,
-        tasks: event.tasks
-      })
-      break
-    case 'workflow_state':
-      webContents.send('compose:state', {
-        runId: event.runId,
-        sessionId: event.sessionId,
-        state: event.state
       })
       break
   }

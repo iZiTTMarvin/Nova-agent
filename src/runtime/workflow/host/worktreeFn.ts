@@ -132,14 +132,8 @@ export async function releaseWorktree(
   directory: string
 ): Promise<boolean> {
   if (!directory) return false
-  ctx.ownedWorktrees.delete(directory)
-  for (const [key, dir] of ctx.worktreeKeys) {
-    if (dir === directory) ctx.worktreeKeys.delete(key)
-  }
   try {
     await Worktree.remove({ workspaceRoot: ctx.workspaceRoot, directory })
-    markWorktreeCleaned(ctx.workspaceRoot, ctx.runId, { directory })
-    return true
   } catch (err) {
     console.warn(
       `[workflow] worktree 清理失败: ${directory}`,
@@ -147,6 +141,22 @@ export async function releaseWorktree(
     )
     return false
   }
+
+  // 删除成功后才能摘 ownership；失败时终态收尾必须仍能看见并重试该目录。
+  ctx.ownedWorktrees.delete(directory)
+  for (const [key, dir] of ctx.worktreeKeys) {
+    if (dir === directory) ctx.worktreeKeys.delete(key)
+  }
+  try {
+    markWorktreeCleaned(ctx.workspaceRoot, ctx.runId, { directory })
+  } catch (err) {
+    // 目录已经删除，凭证失败只影响 resume 诊断，不能把成功清理伪装成失败。
+    console.warn(
+      `[workflow] worktree 清理凭证写入失败: ${directory}`,
+      err instanceof Error ? err.message : err
+    )
+  }
+  return true
 }
 
 export function createWorktreeFn(ctx: HostContext): WorktreeFn {

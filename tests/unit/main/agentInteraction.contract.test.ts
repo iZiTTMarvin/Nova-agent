@@ -43,7 +43,6 @@ const subAgentBridgeRegistry = vi.hoisted(() => ({
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
-  getXForgeRunService: () => ({ cancelParkedXForgeRun: vi.fn() }),
   getRunExecutionRegistry: () => executionRegistry,
   getActiveRunId: () => null
 }))

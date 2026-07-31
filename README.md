@@ -14,9 +14,8 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-concondacondaoadsncasdclasksdlkcnalscksdnksdackjlascnasdkcnksadcklasdcnksdcnaksdccas  <img src="https://img.shields.io/badge/Version-0.1.1-blue" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.1.1-blue" alt="Version">
   <img src="https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platforms">
-  <img src="https://img.shields.io/badge/Tests-1500%2B-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/Stack-Electron%20%2B%20React%20%2B%20TypeScript-9cf" alt="Stack">
 </p>
 
@@ -53,7 +52,7 @@ concondacondaoadsncasdclasksdlkcnalscksdnksdackjlascnasdkcnksadcklasdcnksdcnaksd
 ### 一次说完整件事
 别人家的 AI 助手让你一步步来——`/plan` 看规划，`/run` 跑任务，`/test` 跑测试……学起来累不累？
 
-**Nova Agent 不这样。** 你就一句话：`/br-full-dev 帮我做一个番茄钟 app`。
+**Nova Agent 不这样。** 切到 **XForge**，直接说：`帮我做一个番茄钟 app`。
 剩下的流程它自动跑：先想清楚 → 拆任务 → 一个个实现 → 自己测一遍 → 给你汇报。
 
 半路崩了？没关系。**接着来，已经做完的不会重做。**
@@ -80,7 +79,7 @@ AI 给的回答不满意？想换个方向试试？
 
 | 你用别人家... | 用 Nova Agent... |
 |--------------|------------------|
-| 一步步 `/plan` `/run` `/test` | 一句话 `/br-full-dev`，全自动 |
+| 一步步 `/plan` `/run` `/test` | 切到 XForge 后一句话，全自动编排 |
 | 长会话账单爆炸 | 专门做了缓存治理，成本压得住 |
 | 聊错方向就完蛋 | 随时分叉，反悔不丢工作 |
 | 换项目要重新介绍背景 | 项目记忆自动续上 |
@@ -110,7 +109,7 @@ npm run dev
 
 第一次不知道说啥？输入 `/onboard`，Nova Agent 会带你熟悉一遍。
 
-想直接爽一把？输入 `/br-full-dev 帮我做一个待办事项 app`，看它自动跑完。
+想直接跑完整流程？切到 **XForge**，输入 `帮我做一个待办事项 app`。
 
 ---
 
@@ -118,34 +117,16 @@ npm run dev
 
 Nova Agent 装好就有这些开箱即用的技能，输入 `/` 就能用：
 
+完整开发、深度调研和代码审查由 **XForge** 模式按自然语言自动选择 Workflow，不需要记额外 slash 命令。
+
 **通用：**
 
 | 名称 | 干啥用 |
 |------|--------|
 | `/onboard` | 打开工作区后，让 AI 带你快速熟悉项目结构 |
-| `/br-full-dev <需求>` | **一句话跑完整个开发流程**（核心） |
+| `/nova-frontend` | 创建或重构高质量前端界面 |
 | `/skill-creator` | 想自己做技能？照着做 |
 | `/skill-add` | 从网上装个新技能 |
-
-**开发流程：**
-
-| 名称 | 干啥用 |
-|------|--------|
-| `/br-debug` | 卡 bug 了？让 AI 帮你找根因 |
-| `/br-test` | 帮你写测试、跑测试 |
-| `/br-review` | 改完了？让 AI 审查一遍代码 |
-| `/br-ship` | 要发布了？走发布流程 |
-| `/br-verify` | 改完不放心？让 AI 验证一遍 |
-| `/br-task-breakdown` | 任务太复杂？让 AI 拆成小步骤 |
-| `/br-scope-check` | 项目范围太大？让 AI 帮你砍 |
-
-**想法阶段：**
-
-| 名称 | 干啥用 |
-|------|--------|
-| `/br-brainstorming` | 没想法？让 AI 帮你头脑风暴 |
-| `/br-idea` | 想法太笼统？让 AI 帮你具象化 |
-| `/br-office-hours` | 想被"产品经理"挑战一下？ |
 
 要装新技能？把 `SKILL.md` 丢进 `~/.nova/skills/<name>/`，重启就生效。
 

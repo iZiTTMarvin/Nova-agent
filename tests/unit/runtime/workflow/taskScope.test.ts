@@ -3,7 +3,6 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { TaskScope, withTaskScope, _resetTaskScopeIdForTests } from '../../../../src/runtime/workflow/scheduling/TaskScope'
-import { evalScript } from '../../../../src/runtime/workflow/sandbox'
 
 describe('TaskScope', () => {
   beforeEach(() => {
@@ -34,51 +33,6 @@ describe('TaskScope', () => {
       })
     ).rejects.toThrow(/deadline/)
     expect(continuedAfterAbort).toBe(false)
-  })
-
-  it('parallel 分支失败时兄弟任务被 abort（fail-fast，不空等慢分支）', async () => {
-    const writes: string[] = []
-    const scope = new TaskScope({ label: 'par-root', graceMs: 500 })
-    const gen = scope.captureGeneration()
-    const hooks = {
-      write: (id: unknown) => {
-        // 模拟 host：提交前检查 generation / closed
-        if (!scope.isCurrent(gen) || scope.isClosed) return
-        writes.push(String(id))
-      },
-      fail: async () => {
-        await new Promise((r) => setTimeout(r, 20))
-        throw new Error('branch-fail')
-      },
-      slow: async () => {
-        await new Promise((r) => setTimeout(r, 400))
-        return 'slow'
-      }
-    }
-
-    const t0 = Date.now()
-    await expect(
-      evalScript(
-        `
-        await parallel([
-          () => fail(),
-          async () => { await slow(); write('after-slow'); }
-        ]);
-        return 1;
-        `,
-        hooks,
-        { scope, deadlineMs: 5_000 }
-      )
-    ).rejects.toThrow(/branch-fail|rejected|aborted/)
-    const elapsed = Date.now() - t0
-
-    // 必须 fail-fast：不能干等 400ms 慢分支跑完才返回
-    expect(elapsed).toBeLessThan(300)
-
-    await scope.close('failed')
-    // 根 scope 关闭后旧 continuation 的 write 被 generation 挡住
-    await new Promise((r) => setTimeout(r, 500))
-    expect(writes.includes('after-slow')).toBe(false)
   })
 
   it('close 后 spawn 抛错', async () => {

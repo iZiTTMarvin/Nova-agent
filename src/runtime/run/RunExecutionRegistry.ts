@@ -5,10 +5,12 @@
  * generation fencing：副作用入口必须用 isCurrent(runId, generation) 校验；
  * grace 超时后不得 unregister lingering handle，只能失效 generation。
  */
+import type { RunKind } from '../../shared/run/types'
+
 export interface RunExecutionHandle {
   runId: string
   generation: number
-  kind: 'agent' | 'compose' | 'xforge'
+  kind: RunKind
   abort(reason: string): void
   settled: Promise<void>
 }
@@ -84,7 +86,7 @@ export class RunExecutionRegistry {
   }
 
   /** 是否仍有未 settled 的 agent 句柄（全局 AgentLoop 重叠防护） */
-  hasUnsettledHandle(kind?: 'agent' | 'compose' | 'xforge'): boolean {
+  hasUnsettledHandle(kind?: RunKind): boolean {
     for (const h of this.handles.values()) {
       if (kind && h.kind !== kind) continue
       return true

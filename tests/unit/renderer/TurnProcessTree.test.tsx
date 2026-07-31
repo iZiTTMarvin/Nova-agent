@@ -19,10 +19,6 @@ vi.mock('../../../src/renderer/stores/useAgentStore', () => ({
     selector({ pendingPermissionRequest: null, pendingAskQuestion: null })
 }))
 
-vi.mock('../../../src/renderer/features/compose/useComposeStore', () => ({
-  useComposeStore: (selector: (s: { pendingAskUser: null }) => unknown) => selector({ pendingAskUser: null })
-}))
-
 function toolBlock(id: string): RendererToolBlock {
   return {
     type: 'tool',

@@ -440,63 +440,6 @@ export interface IpcCommands {
     params: { snapshotRetentionDays?: number }
     result: StorageCleanupResult
   }
-  // ── 编排模式 compose ──
-  'compose:run': {
-    params: { scriptName: string; args?: string; workspaceRoot: string; sessionId?: string }
-    result: { runId: string; status: string }
-  }
-  'compose:cancel': {
-    params: { runId: string }
-    result: { cancelled: boolean }
-  }
-  'compose:status': {
-    params: { runId: string }
-    result: { runId: string; status: string; phase?: string } | null
-  }
-  'compose:resume': {
-    params: {
-      runId: string
-      scriptName: string
-      args?: string
-      workspaceRoot: string
-      sessionId?: string
-      /** 从指定 step 起重跑（v2） */
-      rerunFromStepId?: string
-      /** 脚本源变化时：migrate 显式清 journal/steps */
-      scriptShaMismatch?: 'reject' | 'migrate'
-    }
-    result: { runId: string; status: string }
-  }
-  'compose:respond-ask-user': {
-    params: { runId: string; requestId: string; answer: string; commandId?: string }
-    result: { ok: boolean }
-  }
-  'compose:get-state': {
-    params: { workspaceRoot: string; runId?: string }
-    result: Record<string, unknown> | null
-  }
-  'compose:inspect-resume': {
-    params: { workspaceRoot: string; runId: string; rerunFromStepId?: string }
-    result: {
-      engine: 'v1' | 'v2'
-      skip: Array<{ stepId: string; kind: string; status: string }>
-      run: Array<{ stepId: string; kind: string; status: string }>
-      blocked: Array<{ stepId: string; kind: string; error?: string }>
-    } | null
-  }
-  'compose:rollback': {
-    params: { workspaceRoot: string; runId: string; sessionId?: string }
-    result: { ok: boolean; error?: string; restored?: number }
-  }
-  'compose:new-analysis': {
-    params: {
-      scriptName: string
-      args?: string
-      workspaceRoot: string
-      sessionId?: string
-    }
-    result: { runId: string; status: string }
-  }
   // ── 跨会话记忆（P2-1 可观测/可编辑）──
   'memory:list-files': {
     params: void
@@ -735,34 +678,6 @@ export interface IpcEvents {
   /** 工作区状态变更广播（PRD §5.1）。主进程是唯一写入方。 */
   'workspace:changed': {
     state: WorkspaceState
-  }
-  'compose:phase-change': {
-    runId: string
-    /** 发起编排的会话 id；renderer 据此按会话隔离面板 */
-    sessionId?: string
-    phase: string
-  }
-  'compose:task-update': {
-    runId: string
-    sessionId?: string
-    tasks: unknown[]
-  }
-  'compose:ask-user': {
-    runId: string
-    sessionId?: string
-    requestId: string
-    question: string
-    options: string[]
-  }
-  'compose:log': {
-    runId: string
-    sessionId?: string
-    message: string
-  }
-  'compose:state': {
-    runId: string
-    sessionId?: string
-    state: Record<string, unknown>
   }
   /** 编排进度块：在聊天流中渲染为醒目进度条 */
   'workflow:progress': {

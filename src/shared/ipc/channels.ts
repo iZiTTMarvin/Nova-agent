@@ -104,21 +104,6 @@ export const PERMISSION_GRANT_SESSION_SCOPE = 'permission:grant-session-scope' a
 // ── DiffViewer 批量审阅（PRD §5.3） ──────────────────────
 export const ACCEPT_ALL_FILES = 'accept-all-files' as const
 export const REJECT_ALL_FILES = 'reject-all-files' as const
-// ── 编排模式 compose ──────────────────────
-export const COMPOSE_RUN = 'compose:run' as const
-export const COMPOSE_CANCEL = 'compose:cancel' as const
-export const COMPOSE_STATUS = 'compose:status' as const
-export const COMPOSE_RESUME = 'compose:resume' as const
-/** 回复编排 askUser（解除脚本阻塞） */
-export const COMPOSE_RESPOND_ASK_USER = 'compose:respond-ask-user' as const
-/** 读取当前工作区 `.nova/compose/state.json` */
-export const COMPOSE_GET_STATE = 'compose:get-state' as const
-/** 预览 resume：将跳过 / 将执行的 step */
-export const COMPOSE_INSPECT_RESUME = 'compose:inspect-resume' as const
-/** 回滚本 run 文件修改（按 effect 凭证；禁止 git reset/clean） */
-export const COMPOSE_ROLLBACK = 'compose:rollback' as const
-/** 新建分析 run（保留工作区，开新 runId） */
-export const COMPOSE_NEW_ANALYSIS = 'compose:new-analysis' as const
 /** 跨会话记忆：列出 scope 下 md 文件 */
 export const MEMORY_LIST_FILES = 'memory:list-files' as const
 export const MEMORY_READ_FILE = 'memory:read-file' as const
@@ -162,15 +147,9 @@ export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */
 export const WORKSPACE_CHANGED = 'workspace:changed' as const
-/** 编排 phase / task / log / ask-user */
-export const COMPOSE_PHASE_CHANGE = 'compose:phase-change' as const
-export const COMPOSE_TASK_UPDATE = 'compose:task-update' as const
-export const COMPOSE_ASK_USER = 'compose:ask-user' as const
-export const COMPOSE_LOG = 'compose:log' as const
 /** 编排进度块 / run 状态 / 运行态互斥信号 */
 export const WORKFLOW_PROGRESS = 'workflow:progress' as const
 export const WORKFLOW_RUN_STATE = 'workflow:run-state' as const
 export const WORKFLOW_BUSY = 'workflow:busy' as const
 /** 自动更新已下载，提示用户重启安装 */
 export const APP_UPDATE_DOWNLOADED = 'app:update-downloaded' as const
-export const COMPOSE_STATE = 'compose:state' as const

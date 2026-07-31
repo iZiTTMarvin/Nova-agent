@@ -9,7 +9,6 @@ import { ChatPanel } from './features/chat/ChatPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
-import { useComposeStore } from './features/compose/useComposeStore'
 import { useWorkflowStore } from './features/workflow/useWorkflowStore'
 import { useRunStore } from './stores/useRunStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
@@ -50,13 +49,6 @@ function App(): JSX.Element {
 
   // todo: 由事件总线独立维护，订阅 IPC 即可
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
-
-  // 编排进度 / askUser：独立 store，订阅 compose:* 事件
-  const applyComposeState = useComposeStore(state => state.applyState)
-  const applyComposePhase = useComposeStore(state => state.applyPhase)
-  const applyComposeTasks = useComposeStore(state => state.applyTasks)
-  const appendComposeLog = useComposeStore(state => state.appendLog)
-  const handleComposeAskUser = useComposeStore(state => state.handleAskUser)
 
   // 1. 初始化时加载持久化的配置和会话列表
   //    会话列表改为由 workspace:get 统一拉取（单一事实源），
@@ -247,31 +239,6 @@ function App(): JSX.Element {
       useChatStore.getState().handleAttemptFailed(data.messageId, data.attemptId)
     }))
 
-    // 编排：state / phase / tasks / log / askUser（透传 sessionId 供门控）
-    const unsubComposeState = window.api.on('compose:state', (data) => {
-      applyComposeState(data.runId, data.state, data.sessionId)
-    })
-    const unsubComposePhase = window.api.on('compose:phase-change', (data) => {
-      applyComposePhase(data.runId, data.phase, data.sessionId)
-    })
-    const unsubComposeTasks = window.api.on('compose:task-update', (data) => {
-      applyComposeTasks(data.runId, data.tasks, data.sessionId)
-    })
-    const unsubComposeLog = window.api.on('compose:log', (data) => {
-      appendComposeLog(data.runId, data.message, data.sessionId)
-    })
-    const unsubComposeAskUser = window.api.on('compose:ask-user', (data) => {
-      handleComposeAskUser(
-        {
-          runId: data.runId,
-          requestId: data.requestId,
-          question: data.question,
-          options: data.options
-        },
-        data.sessionId
-      )
-    })
-
     // 编排进度块：写入当前生成中消息的 blocks，在聊天流里就地展示
     const unsubWorkflowProgress = window.api.on('workflow:progress', (data) => {
       const activeSessionId = useChatStore.getState().currentSessionId
@@ -340,11 +307,6 @@ function App(): JSX.Element {
       unsubRecoveryHint()
       unsubRecoveryState()
       unsubAttemptFailed()
-      unsubComposeState()
-      unsubComposePhase()
-      unsubComposeTasks()
-      unsubComposeLog()
-      unsubComposeAskUser()
       unsubWorkflowProgress()
       unsubWorkflowRunState()
       unsubWorkflowBusy()
@@ -363,11 +325,6 @@ function App(): JSX.Element {
     handleAskQuestionRequest,
     clearAskQuestionRequest,
     applyTodoUpdate,
-    applyComposeState,
-    applyComposePhase,
-    applyComposeTasks,
-    appendComposeLog,
-    handleComposeAskUser,
     handleMessageEnd,
     handleUsage,
     setContextBreakdown

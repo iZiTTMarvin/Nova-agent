@@ -4,7 +4,6 @@ import type { InteractionAnswerResult, PendingInteraction } from '../../../share
 import { subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import {
   getRunCoordinator,
-  getXForgeRunService,
   getRunExecutionRegistry,
   getActiveRunId
 } from '../../services/RunCoordinatorHost'
@@ -94,12 +93,6 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
       subAgentBridgeRegistry.cancelAllForRun(runId)
       subAgentBridgeRegistry.clearAllForRun(runId)
       markActiveStreamsCancelled(runId)
-    } else if (beforeCancel.kind === 'xforge' && beforeCancel.xforge) {
-      // parked XForge 没有执行句柄，必须在此原子落终态，不能遗留 cancelling。
-      getXForgeRunService().cancelParkedXForgeRun(
-        runId,
-        '用户取消已暂停的 XForge 运行'
-      )
     } else {
       coord.commitTerminal({ runId, status: 'cancelled', reason: '用户取消未执行的运行' })
     }
@@ -119,7 +112,7 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
     }
   }
 
-  // 有执行句柄时终态由 sendMessage finally 确认；parked XForge 已在上方同步终止。
+  // 有执行句柄时终态由 sendMessage finally 确认；无句柄 run 已在上方同步终止。
   const snap = runId ? coord.getSnapshot(runId) : null
   return { runId, status: snap?.status ?? 'idle' }
 }

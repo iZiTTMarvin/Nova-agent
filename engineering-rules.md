@@ -98,7 +98,7 @@ Agent Loop 的唯一核心职责是：
 - 上下文压缩策略与空闲压缩生命周期；
 - Provider/协议兼容和 transport 重试细节；
 - Skill 发现、加载和调用策略；
-- Workflow/XForge 阶段、产品路由和恢复策略；
+- Workflow 阶段、产品路由和恢复策略；
 - Electron 窗口、IPC、Renderer 状态和 UI 展示；
 - 产品级 run 生命周期、分支切换或工作区租约。
 
@@ -237,7 +237,7 @@ main ──────┼──> runtime ──> shared
 同处一个顶层目录不代表可以任意互相 import。至少遵循：
 
 - core/domain 不依赖产品路由和 feature executor；
-- 通用 run 生命周期不依赖具体 Workflow/XForge 语义；
+- 通用 run 生命周期不依赖具体 Workflow 语义；
 - Service/host 不依赖 IPC handler；
 - 协议适配器依赖领域端口，领域逻辑不依赖适配器；
 - 一个领域只通过公开入口访问另一个领域。
@@ -567,7 +567,7 @@ AI 只报告真实完成和执行过的验证。最终至少说明：
 - 通用 run 协调器作为生命周期、sequence 和终态的真源；Workflow 只提交 feature 状态与投影，Renderer 只消费快照。
 - 权限协调器拥有 pending resolver 与授权结果；Agent kernel 只调用 `authorize` 端口。
 - 压缩服务拥有阈值、active/idle 压缩和写回资格；Agent kernel 只在明确时机请求压缩。
-- 产品分派器把已解析 route 交给 Skill/Workflow/XForge executor，并返回声明式 outcome；它不拥有 run、checkpoint 或 UI 状态。
+- 产品分派器把已解析 route 交给 Skill/Workflow executor，并返回声明式 outcome；它不拥有 run、checkpoint 或 UI 状态。
 - IPC handler 只做 transport 适配和输入校验；生命周期编排属于主进程应用服务。
 
 ### 11.2 可接受的投影

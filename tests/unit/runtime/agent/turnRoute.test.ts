@@ -15,7 +15,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-function createRegistry(root: string, skills: Array<{ name: string; workflow?: string; forkAgent?: boolean }>): SkillRegistry {
+function createRegistry(root: string, skills: Array<{ name: string; forkAgent?: boolean }>): SkillRegistry {
   const skillsDir = join(root, 'skills')
   for (const s of skills) {
     const dir = join(skillsDir, s.name)
@@ -25,7 +25,6 @@ function createRegistry(root: string, skills: Array<{ name: string; workflow?: s
       `name: ${s.name}`,
       `description: ${s.name} skill`,
       'user-invocable: true',
-      ...(s.workflow ? [`workflow: ${s.workflow}`] : []),
       ...(s.forkAgent ? ['fork_agent: true'] : []),
       '---',
       `Body of ${s.name}.`
@@ -90,48 +89,6 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     expect(routeRunKind(route)).toBe('agent')
   })
 
-  it('compose + /br-full-dev → agent passthrough', () => {
-    const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
-    roots.push(root)
-    const registry = createRegistry(root, [{ name: 'br-full-dev', workflow: 'br-full-dev' }])
-    const route = resolveAgentTurnRoute(baseInput({
-      content: '/br-full-dev 实现登录',
-      mode: 'compose',
-      skillRegistry: registry
-    }))
-    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
-    expect(routeRunKind(route)).toBe('agent')
-  })
-
-  it('workflow skill 在 default 模式也回到 agent passthrough', () => {
-    const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
-    roots.push(root)
-    const registry = createRegistry(root, [{ name: 'legacy-flow', workflow: 'legacy-flow' }])
-    const route = resolveAgentTurnRoute(baseInput({
-      content: '/legacy-flow 继续旧编排',
-      mode: 'default',
-      skillRegistry: registry
-    }))
-    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
-    expect(routeRunKind(route)).toBe('agent')
-  })
-
-  it('compose + 普通 workflow skill → agent passthrough', () => {
-    const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
-    roots.push(root)
-    const registry = createRegistry(root, [{ name: 'legacy-flow', workflow: 'legacy-flow' }])
-    const route = resolveAgentTurnRoute(baseInput({
-      content: '/legacy-flow 继续旧编排',
-      mode: 'compose',
-      skillRegistry: registry
-    }))
-    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
-    expect(routeRunKind(route)).toBe('agent')
-  })
-  /*
-    Workflow slash entries are intentionally ordinary model input. The explicit
-    start_workflow tool is the only orchestration entry point.
-  */
   it('compose + passthrough remains a single AgentLoop route', () => {
     const route = resolveAgentTurnRoute(baseInput({ mode: 'compose' }))
     expect(route.kind).toBe('agent')

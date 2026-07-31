@@ -117,18 +117,9 @@ export type AgentEvent =
       requestId: string
     }
   | {
-      /** 编排脚本 phase()：阶段切换（compose 进度面板） */
-      type: 'workflow_phase'
-      runId: string
-      /** 发起编排的会话 id；renderer 据此做面板的会话隔离 */
-      sessionId?: string
-      phase: string
-    }
-  | {
       /**
        * 编排宿主 progress()：阶段流转与批次/任务进展。
-       * 与 workflow_phase 的区别：本事件带 status + detail，用于聊天流中的进度块；
-       * workflow_phase 只表达「当前阶段名」，供进度面板。
+       * 本事件带 status + detail，用于聊天流中的进度块。
        */
       type: 'workflow_progress'
       runId: string
@@ -163,29 +154,6 @@ export type AgentEvent =
       runId: string
       sessionId?: string
       reason: string
-    }
-  | {
-      /** 编排 askUser：阻塞等待用户选择（阶段 E 弹窗；测试可注入 resolver） */
-      type: 'workflow_ask_user'
-      runId: string
-      sessionId?: string
-      requestId: string
-      question: string
-      options: string[]
-    }
-  | {
-      /** 编排任务列表变更（进度面板） */
-      type: 'workflow_task_update'
-      runId: string
-      sessionId?: string
-      tasks: unknown[]
-    }
-  | {
-      /** 编排 state.json 快照（进度面板全量同步） */
-      type: 'workflow_state'
-      runId: string
-      sessionId?: string
-      state: Record<string, unknown>
     }
 
 /** 事件监听回调 */

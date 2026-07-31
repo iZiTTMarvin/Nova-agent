@@ -16,7 +16,7 @@ import {
 } from '../../../runtime/agent'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
-import { buildRouterContext, renderRouterContext } from '../../../runtime/workflow/router'
+import { buildRouterContext, renderRouterContext } from '../../../runtime/workflow'
 import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
 import { preferredToolDialect } from '../../../runtime/model/dialect'
@@ -197,8 +197,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const baseRules = renderBaseRules()
   const skillContext = buildSkillContextForMode(
     session.mode,
-    (profile, opts) => skillRegistry.listForContext(profile, opts),
-    () => skillRegistry.listHidden()
+    (profile) => skillRegistry.listForContext(profile)
   )
   /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
   const skillsTokenEstimate = estimateTokens(skillContext)

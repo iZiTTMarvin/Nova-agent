@@ -59,7 +59,7 @@ export interface ToolContext {
   readState: ReadState
   /** checkpoint 管理器（写入类工具需要通过它做写前备份） */
   checkpointManager?: import('../checkpoints/CheckpointManager').CheckpointManager
-  /** 可选的文件副作用凭证记录器；XForge 写入时由 Runtime 注入。 */
+  /** 可选的文件副作用凭证记录器；Workflow 写入时由 Runtime 注入。 */
   fileEffectRecorder?: FileEffectRecorder
   /** 取消信号，用户点击取消时触发，bashTool 等长时间运行工具应监听此信号终止执行 */
   abortSignal?: AbortSignal

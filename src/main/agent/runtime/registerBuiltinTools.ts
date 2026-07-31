@@ -18,7 +18,7 @@ import { createTaskTool } from '../../../runtime/tools/taskTool'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
-import type { WorkflowOrchestrator } from '../../../runtime/workflow/orchestrator'
+import type { WorkflowOrchestrator } from '../../../runtime/workflow'
 import type { AgentLoop, EventBus } from '../../../runtime/agent'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -77,8 +77,7 @@ export function registerBuiltinTools(
   toolRegistry.register(
     createStartWorkflowTool({
       getOrchestrator: deps.getWorkflowOrchestrator ?? (() => undefined),
-      ...(deps.getPermissionBridge ? { getPermissionBridge: deps.getPermissionBridge } : {}),
-      resolveSkill: (name) => deps.skillRegistry.get(name)
+      ...(deps.getPermissionBridge ? { getPermissionBridge: deps.getPermissionBridge } : {})
     })
   )
   toolRegistry.register(

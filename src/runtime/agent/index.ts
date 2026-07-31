@@ -9,8 +9,7 @@ export { buildStableSystemPrompt, normalizeFrozenSystemPrompt, getStableSystemPr
 export type { RecoveryState } from './recovery/RecoveryStateMachine'
 export {
   buildSkillContext,
-  buildSkillContextForMode,
-  buildComposeSkillContext
+  buildSkillContextForMode
 } from './promptBuilder/buildSkillContext'
 export { estimateTokens, estimateContextTokens, estimateChatMessageTokens } from './tokenEstimator'
 export { discoverProjectRules, discoverProjectRulesFile } from './context/projectRulesDiscovery'

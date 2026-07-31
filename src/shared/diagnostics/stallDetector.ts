@@ -12,7 +12,7 @@
  *    自动 console.warn（浏览器原生 API，零侵入，生产环境也安全）。
  * 2. 主进程：RunCoordinator 驱动的 stall 检测 —— 只在 status===running 且
  *    事件间隔超时时报 [STALL]。waiting_user（权限 / askQuestion /
- *    composeAskUser）与终态一律不算 stall，避免误报。
+ *    askQuestion）与终态一律不算 stall，避免误报。
  *
  * 两者对照即可区分：卡的是主进程（agent 循环）还是渲染进程（UI）。
  *

@@ -68,13 +68,6 @@ export interface SkillManifest {
    * 非 compose 的 listForContext 会过滤掉。
    */
   hidden?: boolean
-  /**
-   * 编排脚本名：slash 触发时走 workflow 而非 inject/fork。
-   * 例：workflow: br-full-dev
-   */
-  workflow?: string
-  /** 编排 skill 的 whenToUse（写入 compose_skills 块） */
-  whenToUse?: string
 }
 
 /** invokeSkill 调度结果 */
@@ -89,4 +82,3 @@ export type SkillDispatchResult =
       /** 本 skill 所在目录；调用方据此注册为额外只读根，供模型按需 read reference */
       skillDirectory?: string
     }
-  | { kind: 'workflow'; scriptName: string; args: string }

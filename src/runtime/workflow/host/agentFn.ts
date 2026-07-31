@@ -18,7 +18,7 @@ import { defaultSubAgentPermissionBridge } from '../../tools/subAgentBridge'
 import * as Worktree from '../../worktree'
 import type { Mode } from '../../../shared/session/types'
 import { appendJournalSync, journalKeyBase } from '../state/journal'
-import { extractJson } from '../jsonExtract'
+import { extractJson } from './jsonExtract'
 import { ensureWorktree, releaseWorktree } from './worktreeFn'
 import {
   assertScopeLive,
@@ -76,9 +76,8 @@ function resolveIsolation(opts: AgentOptions): IsolationMode {
   return opts.isolation ?? 'shared'
 }
 
-/** skill 名即 journal 的 agentType；无 skill 时归为 general */
 function resolveAgentType(opts: AgentOptions): string {
-  return opts.skill ?? 'general'
+  return opts.phase ?? 'general'
 }
 
 /**
@@ -98,14 +97,6 @@ async function spawnSubAgent(
   const permissionBridge = ctx.permissionBridge ?? defaultSubAgentPermissionBridge
   const mode: Mode = ctx.mode ?? 'compose'
 
-  let agentRole = BASE_RULES_MINIMAL
-  if (opts.skill) {
-    const skill = ctx.resolveSkill?.(opts.skill)
-    agentRole = skill
-      ? skill.body
-      : `你是编排技能 ${opts.skill} 的执行者。按技能职责完成任务并简洁汇报。`
-  }
-
   const subRegistry = new ToolRegistry()
   for (const name of tools) {
     const tool = ctx.resolveTool(name)
@@ -124,7 +115,7 @@ async function spawnSubAgent(
   }
 
   const systemPrompt = SystemPromptBuilder.build({
-    agentRole,
+    agentRole: BASE_RULES_MINIMAL,
     baseRules: BASE_RULES_MINIMAL,
     projectRules: null,
     skillContext: '',

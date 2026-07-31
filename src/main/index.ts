@@ -26,8 +26,7 @@ import { initMainLogger, mainLog } from './logger'
 import { initAutoUpdater } from './updater'
 import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
 import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeyStorage'
-import { runXForgeTestGateSmoke } from './diagnostics/xforgeTestGateSmoke'
-import { resolveWorkflowDefinition } from '../runtime/workflow/definitions'
+import { resolveWorkflowDefinition } from '../runtime/workflow'
 import { setWorkflowDefinitionResolver } from './services/WorkflowOrchestratorHost'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
@@ -224,20 +223,6 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  if (process.env.NOVA_XFORGE_TEST_GATE_SMOKE === '1') {
-    try {
-      const result = await runXForgeTestGateSmoke()
-      console.log(`[xforge-test-gate-smoke] ${JSON.stringify(result)}`)
-      requestedExitCode = result.exitCode === 0 && !result.timedOut && !result.blockedReason ? 0 : 1
-      app.exit(requestedExitCode)
-    } catch (error) {
-      console.error('[xforge-test-gate-smoke] failed:', error)
-      requestedExitCode = 1
-      app.exit(requestedExitCode)
-    }
-    return
-  }
-
   initMainLogger()
   bindRegistryApiKeyCrypto(encryptApiKeyForDisk, decryptApiKeyFromDisk)
 

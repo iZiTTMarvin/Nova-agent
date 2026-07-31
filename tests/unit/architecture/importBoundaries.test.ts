@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { IMPORT_BOUNDARY_ALLOWLIST } from './importBoundaryAllowlist'
@@ -26,6 +27,7 @@ import {
 } from './importBoundaryRules'
 import {
   collectViolationsFromSource,
+  createFsExists,
   extractModuleSpecifiers,
   findRepoRoot,
   resolveModuleSpecifier,
@@ -425,8 +427,50 @@ describe('编排内部分层边界（workflow/）', () => {
     expect(workflowLayerOf('src/runtime/workflow/definitions/compose/implement.ts'))
       .toBe('definitions')
     expect(workflowLayerOf('src/runtime/workflow/types.ts')).toBeNull()
-    expect(workflowLayerOf('src/runtime/workflow/v2/StepEngine.ts')).toBeNull()
     expect(workflowLayerOf('src/runtime/run/RunCoordinator.ts')).toBeNull()
+  })
+
+  it('真实 effects 依赖图无循环', () => {
+    const repoRoot = findRepoRoot()
+    const effectsRoot = path.join(repoRoot, 'src', 'runtime', 'workflow', 'effects')
+    const files = fs.readdirSync(effectsRoot)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => `src/runtime/workflow/effects/${name}`)
+      .sort()
+    const effectFiles = new Set(files)
+    const exists = createFsExists(repoRoot)
+    const graph = new Map<string, string[]>()
+
+    for (const from of files) {
+      const source = fs.readFileSync(path.join(repoRoot, ...from.split('/')), 'utf8')
+      const edges: string[] = []
+      for (const { specifier } of extractModuleSpecifiers(source, from).specifiers) {
+        const resolved = resolveModuleSpecifier(from, specifier, exists)
+        if (resolved.kind === 'resolved' && effectFiles.has(resolved.path)) {
+          edges.push(resolved.path)
+        }
+      }
+      graph.set(from, edges)
+    }
+
+    const visited = new Set<string>()
+    const visiting: string[] = []
+    const cycles: string[] = []
+    const visit = (node: string): void => {
+      if (visited.has(node)) return
+      const cycleStart = visiting.indexOf(node)
+      if (cycleStart >= 0) {
+        cycles.push([...visiting.slice(cycleStart), node].join(' -> '))
+        return
+      }
+      visiting.push(node)
+      for (const target of graph.get(node) ?? []) visit(target)
+      visiting.pop()
+      visited.add(node)
+    }
+    for (const file of files) visit(file)
+
+    expect(cycles).toEqual([])
   })
 
   it('host 不得 import definitions', () => {
@@ -457,7 +501,7 @@ describe('编排内部分层边界（workflow/）', () => {
 
     const toRoot = collectViolationsFromSource({
       fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
-      sourceText: `import type { ComposeState } from '../types'`,
+      sourceText: `import type { WorkflowPlan } from '../types'`,
       exists
     })
     expectOnlyRule(toRoot.violations, RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW)
@@ -517,7 +561,7 @@ describe('编排内部分层边界（workflow/）', () => {
     const result = collectViolationsFromSource({
       fromFile: 'src/runtime/workflow/state/journal.ts',
       sourceText: `
-        import type { ComposeState } from '../types'
+        import type { WorkflowPlan } from '../types'
         import { TaskScope } from '../scheduling/TaskScope'
       `,
       exists

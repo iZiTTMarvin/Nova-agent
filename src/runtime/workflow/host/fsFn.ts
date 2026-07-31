@@ -23,7 +23,7 @@ import {
   resolveUnderWorkspace
 } from '../effects/fileEffect'
 import { effectIdFromKey } from '../effects/sideEffectCtx'
-import { runDirV2 } from '../state/paths'
+import { runDir } from '../state/paths'
 import { assertScopeLive, type HostContext } from './types'
 
 export interface FsFns {
@@ -47,7 +47,7 @@ function relKey(workspaceRoot: string, absPath: string): string {
 }
 
 function backupDirOf(ctx: HostContext): string {
-  return join(runDirV2(ctx.workspaceRoot, ctx.runId), 'effect-backups')
+  return join(runDir(ctx.workspaceRoot, ctx.runId), 'effect-backups')
 }
 
 /** 把改前内容存进 run 目录，receipt 只记相对引用（禁止信任绝对路径） */

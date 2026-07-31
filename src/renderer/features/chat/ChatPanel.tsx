@@ -35,9 +35,6 @@ import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { useTodoStore } from '../todo/useTodoStore'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
-import { ComposeProgressPanel } from '../compose/ComposeProgressPanel'
-import { ComposeAskUserPanel } from '../compose/ComposeAskUserPanel'
-import { useComposeStore } from '../compose/useComposeStore'
 import { useWorkflowStore } from '../workflow/useWorkflowStore'
 import { RecoveryBanner } from './RecoveryBanner'
 import { formatPhaseLabel } from './WorkflowProgressBlock'
@@ -136,9 +133,6 @@ export const ChatPanel: React.FC = () => {
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
-  const pendingComposeAskUser = useComposeStore(state => state.pendingAskUser)
-  const composeSessionId = useComposeStore(state => state.sessionId)
-  const loadComposeState = useComposeStore(state => state.loadStateFromDisk)
 
   // ── 编排运行态（run 状态真源在主进程 orchestrator，本处只读投影） ──
   const activeWorkflowRun = useWorkflowStore(state => state.activeRun)
@@ -159,13 +153,9 @@ export const ChatPanel: React.FC = () => {
       phase: activeWorkflowRun.phase
     })
   }, [activeWorkflowRun])
-  /** 编排面板/askUser 仅归属当前会话时渲染 */
-  const composeBelongsToCurrent =
-    !!currentSessionId && composeSessionId === currentSessionId
   const isPausedForUserInput =
     !!pendingAskQuestion ||
-    !!pendingPermissionRequest ||
-    (!!pendingComposeAskUser && composeBelongsToCurrent)
+    !!pendingPermissionRequest
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
 
   // 新轮发起（isGenerating false→true）时清 turnTouched，避免 dock 秒弹上一轮残留 todo
@@ -176,13 +166,6 @@ export const ChatPanel: React.FC = () => {
     }
     prevGeneratingRef.current = isGenerating
   }, [isGenerating, currentSessionId])
-
-  // 切换会话/项目时按 sessionId 拉取磁盘编排 state（过滤归属）
-  useEffect(() => {
-    if (currentProject && currentSessionId) {
-      void loadComposeState(currentProject, currentSessionId)
-    }
-  }, [currentSessionId, currentProject, loadComposeState])
 
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!currentSessionId) return
@@ -876,13 +859,6 @@ export const ChatPanel: React.FC = () => {
             </div>
           )}
 
-          {/* 编排 askUser：仅归属当前会话时展示 */}
-          {composeBelongsToCurrent && pendingComposeAskUser && (
-            <div className="ask-question-dock">
-              <ComposeAskUserPanel />
-            </div>
-          )}
-
           {/* askQuestion 工具发起的提问面板：pendingAskQuestion 为 null 时组件内自返回 null */}
           {pendingAskQuestion && (
             <div className="ask-question-dock">
@@ -904,21 +880,11 @@ export const ChatPanel: React.FC = () => {
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 
-            {/* 编排进度 dock：ask 面板与 TodoPanel 之间；按会话门控 */}
-            {composeBelongsToCurrent && (
-              <div className="w-full px-3 pointer-events-auto">
-                <ComposeProgressPanel />
-              </div>
-            )}
-
             {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条 */}
             <div className="w-full px-3 pointer-events-auto">
               <TodoPanel
                 sessionId={currentSessionId}
-                priorityDockOccupied={
-                  !!pendingAskQuestion ||
-                  (!!pendingComposeAskUser && composeBelongsToCurrent)
-                }
+                priorityDockOccupied={!!pendingAskQuestion}
               />
             </div>
 

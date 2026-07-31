@@ -10,7 +10,6 @@ import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import type { Mode } from '../../../shared/session/types'
 import type { ToolExecutor } from '../../tools/types'
 import type { SubAgentPermissionBridge } from '../../tools/subAgentBridge'
-import type { SkillManifest } from '../../skills/types'
 import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import type { WorkflowRunStatus } from '../../../shared/workflow/types'
 import type { WorkflowDefinition } from '../definitions/types'
@@ -48,7 +47,6 @@ export interface WorkflowHostDeps {
   eventBus: EventBus
   modelClient: ModelClient
   resolveTool: (name: string) => ToolExecutor | undefined
-  resolveSkill?: (name: string) => SkillManifest | undefined
   checkpointManager?: CheckpointManager
   contextWindow?: number
   supportsVision?: boolean

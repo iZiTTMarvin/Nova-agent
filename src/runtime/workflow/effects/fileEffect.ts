@@ -86,7 +86,7 @@ function assertSafeRunId(runId: string): void {
 
 function runRoot(workspaceRoot: string, runId: string): string {
   assertSafeRunId(runId)
-  return join(workspaceRoot, '.nova', 'compose', 'runs', runId)
+  return join(workspaceRoot, '.nova', 'workflow', 'runs', runId)
 }
 
 function effectsDir(workspaceRoot: string, runId: string): string {

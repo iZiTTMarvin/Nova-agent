@@ -7,8 +7,7 @@
  * definition 解析器由应用启动时接入；本服务只保存单例 orchestrator 和解析端口，
  * 不拥有 definition 注册表。
  */
-import { WorkflowOrchestrator } from '../../runtime/workflow/orchestrator'
-import type { ResolveWorkflowDefinition } from '../../runtime/workflow/orchestrator'
+import { WorkflowOrchestrator, type ResolveWorkflowDefinition } from '../../runtime/workflow'
 
 let orchestrator: WorkflowOrchestrator | null = null
 let resolveDefinition: ResolveWorkflowDefinition = () => undefined

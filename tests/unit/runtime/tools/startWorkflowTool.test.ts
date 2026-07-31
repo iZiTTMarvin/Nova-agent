@@ -33,8 +33,7 @@ describe('start_workflow tool', () => {
     }))
     const tool = createStartWorkflowTool({
       getOrchestrator: () => ({ start } as never),
-      getPermissionBridge: () => ({ } as never),
-      resolveSkill: vi.fn()
+      getPermissionBridge: () => ({ } as never)
     })
     const ctx = context()
 

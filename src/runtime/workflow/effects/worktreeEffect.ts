@@ -1,6 +1,6 @@
 /**
  * worktree 副作用凭证：创建/清理对账。
- * 落盘路径：.nova/compose/runs/<runId>/worktree-receipts/<effectId>.json
+ * 落盘路径：.nova/workflow/runs/<runId>/worktree-receipts/<effectId>.json
  *
  * resume：
  * - directory 仍在且 branch/baseSha 匹配 → 复用，不重建
@@ -36,7 +36,7 @@ function assertSafeRunId(runId: string): void {
 
 function worktreeReceiptsDir(workspaceRoot: string, runId: string): string {
   assertSafeRunId(runId)
-  return join(workspaceRoot, '.nova', 'compose', 'runs', runId, 'worktree-receipts')
+  return join(workspaceRoot, '.nova', 'workflow', 'runs', runId, 'worktree-receipts')
 }
 
 export function worktreeEffectId(stepCtx: SideEffectCtx): string {

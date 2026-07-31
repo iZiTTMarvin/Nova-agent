@@ -4,12 +4,8 @@
  * 权威运行快照：主进程是唯一事实源；Renderer 只消费 snapshot + 带 sequence 的事件。
  */
 
-import type { XForgeRunState } from '../xforge/types'
-
-/** Run 种类（xforge = Stage Run；与 compose 脚本编排 run 分轨） */
-export type RunKind = 'agent' | 'compose' | 'xforge'
-
-export type { XForgeRunState }
+/** 所有用户轮次都由同一个 AgentLoop 执行。 */
+export type RunKind = 'agent'
 
 /**
  * Run 状态机（允许的主要转换）：
@@ -58,8 +54,6 @@ export function isHardTerminalRunStatus(status: RunStatus): boolean {
 export type InteractionType =
   | 'permission'
   | 'askQuestion'
-  | 'composeAskUser'
-  | 'verification'
 
 /** Interaction 生命周期状态 */
 export type InteractionStatus =
@@ -202,11 +196,6 @@ export interface RunSnapshot {
    * grace 超时 / 强制中断后递增或清零，使旧 continuation 失效。
    */
   executionGeneration?: number
-  /**
-   * XForge Stage Run 权威状态切片。
-   * 仅 kind==='xforge' 时写入；agent/compose run 不得依赖本字段。
-   */
-  xforge?: XForgeRunState
 }
 
 /** append-only 事件（落盘 events.jsonl） */
@@ -225,11 +214,8 @@ interface StartRunBase {
   messageId?: string
 }
 
-/** 启动 Run 的参数；feature state 必须由对应 feature service 显式提供。 */
-export type StartRunParams = StartRunBase & (
-  | { kind: 'xforge'; xforge: XForgeRunState }
-  | { kind: Exclude<RunKind, 'xforge'>; xforge?: never }
-)
+/** 启动 Run 的参数。 */
+export type StartRunParams = StartRunBase & { kind: RunKind }
 
 /** 终态提交参数 */
 export interface CommitTerminalParams {
