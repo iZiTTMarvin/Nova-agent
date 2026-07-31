@@ -16,7 +16,7 @@ export interface ActiveWorkflowRunRef {
 }
 
 export type EntryLockAction =
-  /** 入口空闲（或可 resume 的 XForge），继续本 turn */
+  /** 入口空闲，继续本 turn */
   | { kind: 'proceed' }
   /** 进 steering queue，当前 turn 终态后自动发起 */
   | { kind: 'steer' }
@@ -26,14 +26,12 @@ export type EntryLockAction =
 export interface EntryLockInput {
   /** 该会话是否已有占用 turn 的 run */
   turnInProgress: boolean
-  /** 存在可恢复的 XForge run 时入口锁让行（旧路径，随 XForge 一并删除） */
-  resumable: boolean
   /** 该会话运行中的编排；无则为 null */
   activeWorkflowRun: ActiveWorkflowRunRef | null
 }
 
 export function resolveEntryLockAction(input: EntryLockInput): EntryLockAction {
-  if (input.resumable || !input.turnInProgress) return { kind: 'proceed' }
+  if (!input.turnInProgress) return { kind: 'proceed' }
   if (input.activeWorkflowRun) {
     return { kind: 'workflow_busy', run: input.activeWorkflowRun }
   }

@@ -14,6 +14,10 @@ describe('getToolDisplayName', () => {
   it('未知工具回退到通用描述', () => {
     expect(getToolDisplayName('unknown_tool')).toContain('unknown_tool')
   })
+
+  it('start_workflow 使用专属显示名称', () => {
+    expect(getToolDisplayName('start_workflow')).toContain('start_workflow')
+  })
 })
 
 describe('getToolSummary', () => {
@@ -72,6 +76,14 @@ describe('getToolSummary', () => {
 
   it('未知工具返回空字符串', () => {
     expect(getToolSummary('unknown', {})).toBe('')
+  })
+
+  it('start_workflow 摘要包含工作流、起始阶段和请求', () => {
+    expect(getToolSummary('start_workflow', {
+      workflow: 'compose',
+      startStage: 'plan',
+      reason: '实现登录功能'
+    })).toBe('启动 compose/plan：实现登录功能')
   })
 })
 

@@ -27,6 +27,8 @@ import { initAutoUpdater } from './updater'
 import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
 import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeyStorage'
 import { runXForgeTestGateSmoke } from './diagnostics/xforgeTestGateSmoke'
+import { resolveWorkflowDefinition } from '../runtime/workflow/definitions'
+import { setWorkflowDefinitionResolver } from './services/WorkflowOrchestratorHost'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
 let quitInProgress = false
@@ -253,6 +255,9 @@ app.whenReady().then(async () => {
   // 2. 尝试从本地加载模型配置以初始化 modelClient
   //    同步毫秒级；保留在 show 前避免「用户极快点击发送时模型未就绪」窗口。
   loadModelConfigOnStartup()
+
+  // workflow 定义由 runtime 注册表统一提供，主进程只负责把解析器接入单例 orchestrator。
+  setWorkflowDefinitionResolver(resolveWorkflowDefinition)
 
   // 3. 注册所有 renderer → main 的 IPC 处理器（含 WorkspaceService.initOnStartup → store.list）
   //    必须在 createMainWindow 之前完成：renderer mount 即发 workspace:get / window-is-maximized 等

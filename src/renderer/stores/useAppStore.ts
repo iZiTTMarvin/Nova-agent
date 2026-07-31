@@ -56,7 +56,11 @@ export interface AppState {
   isSubmittingPermission: boolean
   permissionError: string | null
   /** Phase 6：Steering Queue */
-  pendingUserMessages: Array<{ text: string; images: import('../lib/image-attachments').ImageAttachment[] }>
+  pendingUserMessages: Array<{
+    text: string
+    images: import('../lib/image-attachments').ImageAttachment[]
+    autoMode?: boolean
+  }>
   // ── actions ──
   selectProject: () => Promise<void>
   setMode: (mode: Mode) => Promise<void>
@@ -114,7 +118,11 @@ export interface AppState {
   /** Phase 2 批量 delta 入口（外部组件不直接调用，由 IPC listener 调用） */
   applyStreamDeltas: (deltas: import('./useChatStore').StreamDeltaBatch) => void
   /** Phase 6：入队一条挂起消息（Agent 运行期间用户输入） */
-  enqueuePendingMessage: (text: string, images: import('../lib/image-attachments').ImageAttachment[]) => void
+  enqueuePendingMessage: (
+    text: string,
+    images: import('../lib/image-attachments').ImageAttachment[],
+    autoMode?: boolean
+  ) => void
   /** Phase 6：移除一条挂起消息（按索引） */
   removePendingMessage: (index: number) => void
   /** Phase 6：清空全部挂起消息 */

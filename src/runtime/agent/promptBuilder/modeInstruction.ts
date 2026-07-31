@@ -20,7 +20,7 @@ function buildPlanInstruction(opts?: ModeInstructionOptions): string {
     '计划必须覆盖目标、范围与非目标、当前调用链证据、职责与数据流、分阶段改动、保护的已有行为、失败模式、验证、回退和待决事项。',
     '完成前必须调用 save_plan；不要只在聊天正文里留下不可恢复的计划。',
     'save_plan 成功后，完整计划会显示在计划审阅卡中。请明确邀请用户选择「开始实施」或「继续完善」，不要假定用户已经批准。',
-    '用户通过审阅卡或文字明确批准计划后，可调用 switch_mode 请求切换到 default；切换必须经过用户确认，不能进入 XForge。'
+    '用户通过审阅卡或文字明确批准计划后，可调用 switch_mode 请求切换到 default；切换必须经过用户确认。'
   ]
   if (opts?.activePlanPath) {
     lines.push(`当前会话已有 active plan: ${opts.activePlanPath}。修订同一计划时沿用原标题，避免生成重复文件。`)
@@ -52,12 +52,11 @@ function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
 
 function buildComposeInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: XForge — BuildRail 阶段自适应顺序工作流]',
-    'XForge 是基于 BuildRail 开发生命周期的单主 Agent 自动工作流：根据用户自然语言与仓库事实选择安全起点，并自动向后推进（探索 → 计划 → Scope → 实现 → 测试 → 审查 → 汇报）。',
+    '[当前模式: compose — 编排模式]',
+    '复杂的多阶段开发请求应先根据编排路由上下文选择工作流与起始阶段，再调用 start_workflow；简单请求直接使用普通 Agent 工具完成。',
     '质量门禁以 Runtime 受控命令结果、真实测试与隔离 Review 为准；模型自报通过不算过。',
     '不自动执行 git commit、push 或 deploy；需要发布时须由用户确认。',
-    '自然语言需求与 /br-full-dev 统一进入原生 XForge 阶段执行器；历史脚本只用于恢复旧任务。',
-    '可以读取、修改和验证工作区；危险命令仍会被拦截。阻塞或连续失败时通过 askQuestion / askUser 询问用户，不要跳过强制门禁。'
+    '可以读取、修改和验证工作区；危险命令仍会被拦截。Auto 关闭时可通过 askQuestion 澄清，Auto 开启时应自行作出安全决定。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')

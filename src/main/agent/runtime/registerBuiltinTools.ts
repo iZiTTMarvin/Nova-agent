@@ -17,6 +17,8 @@ import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/taskTool'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
+import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
+import type { WorkflowOrchestrator } from '../../../runtime/workflow/orchestrator'
 import type { AgentLoop, EventBus } from '../../../runtime/agent'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -40,6 +42,8 @@ export interface BuiltinToolRegistrationDeps {
    * 装配时 runId 可能尚未分配，故延迟到执行期读取。
    */
   getPermissionBridge?: () => SubAgentPermissionBridge
+  /** 惰性获取主进程唯一编排器，工具执行时才读取。 */
+  getWorkflowOrchestrator?: () => WorkflowOrchestrator | undefined
 }
 
 /**
@@ -70,6 +74,13 @@ export function registerBuiltinTools(
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
+  toolRegistry.register(
+    createStartWorkflowTool({
+      getOrchestrator: deps.getWorkflowOrchestrator ?? (() => undefined),
+      ...(deps.getPermissionBridge ? { getPermissionBridge: deps.getPermissionBridge } : {}),
+      resolveSkill: (name) => deps.skillRegistry.get(name)
+    })
+  )
   toolRegistry.register(
     createInvokeSkillTool({
       modelClient: deps.modelClient,

@@ -168,6 +168,22 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     act(() => renderer.unmount())
   })
 
+  it('compose 模式 Auto 默认关闭，打开后随 send-message 传递快照', async () => {
+    useSettingsStore.setState({ currentMode: 'compose' } as never)
+    const renderer = mountChatPanel()
+    const toggle = renderer.root.findByProps({ role: 'switch' })
+
+    expect(toggle.props['aria-checked']).toBe(false)
+    expect(toggle.props.title).toBe('全自动完成')
+    act(() => toggle.props.onClick())
+    expect(renderer.root.findByProps({ role: 'switch' }).props['aria-checked']).toBe(true)
+
+    await typeAndPressEnter(renderer, '完成整套登录功能')
+
+    expect(sendMessage).toHaveBeenCalledWith('完成整套登录功能', [], { autoMode: true })
+    act(() => renderer.unmount())
+  })
+
   it('默认模式回归：Agent 运行中的入口行为不变（既不发送也不弹编排提示）', async () => {
     act(() => {
       useChatStore.setState({ isGenerating: true } as never)

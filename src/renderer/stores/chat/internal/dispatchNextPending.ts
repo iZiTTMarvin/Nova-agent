@@ -16,5 +16,9 @@ export async function dispatchNextPendingMessage(api: ChatStoreApi): Promise<voi
   if (pendingUserMessages.length === 0) return
   const [next, ...rest] = pendingUserMessages
   api.setState({ pendingUserMessages: rest })
-  await sendMessage(next.text, next.images)
+  await sendMessage(
+    next.text,
+    next.images,
+    next.autoMode !== undefined ? { autoMode: next.autoMode } : undefined
+  )
 }

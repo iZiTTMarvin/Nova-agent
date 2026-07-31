@@ -50,6 +50,10 @@ export function getToolCapability(toolName: string): ToolCapability {
       // 因此派遣动作本身不应再拦截一次（否则双重弹窗，且与主流 agent 行为不一致）。
       // 归为独立 orchestration 分类：default/auto 直接放行，plan 模式仍按非只读处理（deny + 隐藏）。
       return 'orchestration'
+    case 'start_workflow':
+      // 与 task / invoke_skill 同类：本身只把请求交给编排器，真正的副作用
+      // 由阶段子 agent 的工具各自走权限检查，派发动作不应重复拦截。
+      return 'orchestration'
     default:
       return 'unknown'
   }
@@ -57,6 +61,12 @@ export function getToolCapability(toolName: string): ToolCapability {
 
 /** 当前模式下模型/UI 是否应该看见该工具 */
 export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
+  // 编排入口按工具名单独收窄，而不是按能力分类：task / invoke_skill 同属
+  // orchestration 但在所有非 plan 模式都可用，start_workflow 只允许 compose 模式，
+  // 避免 default/plan 会话里模型把普通请求升级成多阶段编排。
+  if (toolName === 'start_workflow') {
+    return mode === 'compose'
+  }
   const capability = getToolCapability(toolName)
   if (mode === 'plan') {
     return (

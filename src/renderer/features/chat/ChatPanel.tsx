@@ -14,6 +14,7 @@ import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { ModelSelector } from './ModelSelector'
+import { AutoModeToggle } from './AutoModeToggle'
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
   browserFrameScheduler,
@@ -209,6 +210,7 @@ export const ChatPanel: React.FC = () => {
   }, [rejectFile])
 
   const [inputVal, setInputVal] = useState('')
+  const [autoMode, setAutoMode] = useState(false)
   const [isComposing, setIsComposing] = useState(false)
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
@@ -218,6 +220,10 @@ export const ChatPanel: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const composerBoxRef = useRef<HTMLDivElement>(null)
   const skillACRef = useRef<SkillACHandle>(null)
+
+  useEffect(() => {
+    setAutoMode(false)
+  }, [currentSessionId, currentMode])
 
   // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
   useEffect(() => {
@@ -485,10 +491,14 @@ export const ChatPanel: React.FC = () => {
     // Phase 6：Steering Queue
     // Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
     if (stillGenerating) {
-      enqueuePendingMessage(text, images)
+      enqueuePendingMessage(text, images, currentMode === 'compose' ? autoMode : undefined)
     } else {
       // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列
-      sendMessage(text, images)
+      if (currentMode === 'compose') {
+        sendMessage(text, images, { autoMode })
+      } else {
+        sendMessage(text, images)
+      }
     }
 
     setInputVal('')
@@ -987,6 +997,9 @@ export const ChatPanel: React.FC = () => {
                     onSelectImage={() => fileInputRef.current?.click()}
                     onSelectSkills={handleSlashButton}
                   />
+                  {currentMode === 'compose' && (
+                    <AutoModeToggle enabled={autoMode} onChange={setAutoMode} />
+                  )}
                   <ModelSelector />
                   <ContextIndicator />
                 </div>

@@ -60,7 +60,8 @@ describe('工具能力分类 / 显示名全覆盖守卫', () => {
       'invoke_skill',
       'todo_write',
       'save_plan',
-      'switch_mode'
+      'switch_mode',
+      'start_workflow'
     ]) {
       expect(toolNames, `注册清单应包含 ${expected}`).toContain(expected)
     }

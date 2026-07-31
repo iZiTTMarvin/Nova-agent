@@ -153,36 +153,6 @@ describe('终态协议：模型终态错误', () => {
 })
 
 describe('终态协议：分派执行器抛错', () => {
-  it.each([
-    ['xforge', (loop: AgentLoop) => {
-      loop.setTurnDispatcher(new TurnDispatcher({
-        xforgeRunner: async () => { throw new Error('xforge boom') }
-      }))
-      return { kind: 'xforge' as const, request: 'x', explicitFullDev: false }
-    }],
-    ['workflow', (loop: AgentLoop) => {
-      loop.setTurnDispatcher(new TurnDispatcher({
-        workflowRunner: async () => { throw new Error('workflow boom') }
-      }))
-      return { kind: 'workflow' as const, scriptName: 's', args: '' }
-    }]
-  ])('%s runner 抛错 → failed，error 恰好一个且无 message_end，checkpoint 关闭', async (_name, setup) => {
-    const client = new MockModelClient()
-    const { loop, events } = createLoop(client)
-    const cp = attachCheckpoint(loop)
-    const onErrorSpy = vi.fn()
-    loop.getHookManager().on('onError', onErrorSpy)
-    const route = setup(loop)
-
-    const outcome = await loop.sendMessage('x', route)
-
-    expect(outcome.status).toBe('failed')
-    expectExactlyOneTerminal(events, 'error')
-    expect(cp.endMessage).toHaveBeenCalledTimes(1)
-    expect(onErrorSpy).toHaveBeenCalledTimes(1)
-    expect(loop.getState()).toBe('error')
-  })
-
   it('fork 执行依赖抛错 → failed，error 恰好一个，checkpoint 关闭', async () => {
     const client = new MockModelClient()
     const { loop, events } = createLoop(client)
@@ -216,24 +186,6 @@ describe('终态协议：分派执行器抛错', () => {
     expect(cp.endMessage).toHaveBeenCalledTimes(1)
   })
 
-  it('cancel 后 runner 抛出中断错误 → 收敛为 cancelled，不伪装成 failed', async () => {
-    const client = new MockModelClient()
-    const { loop, events } = createLoop(client)
-    attachCheckpoint(loop)
-    loop.setTurnDispatcher(new TurnDispatcher({
-      workflowRunner: async () => {
-        loop.cancel()
-        throw new Error('workflow aborted')
-      }
-    }))
-
-    const outcome = await loop.sendMessage('/s', { kind: 'workflow', scriptName: 's', args: '' })
-
-    expect(outcome).toEqual({ status: 'cancelled' })
-    expectExactlyOneTerminal(events, 'message_end')
-    const end = events.find(e => e.type === 'message_end') as Extract<AgentEvent, { type: 'message_end' }>
-    expect(end.interrupted).toBe(true)
-  })
 })
 
 describe('终态协议：generation fence 与 checkpoint 失败', () => {
@@ -321,10 +273,14 @@ describe('终态协议：hook 失败', () => {
     const cp = attachCheckpoint(loop)
     loop.setHookManager(new ThrowingHookManager('onError', 'hook error boom'))
     loop.setTurnDispatcher(new TurnDispatcher({
-      workflowRunner: async () => { throw new Error('original boom') }
+      skillForkRunner: async () => { throw new Error('original boom') }
     }))
 
-    const outcome = await loop.sendMessage('/s', { kind: 'workflow', scriptName: 's', args: '' })
+    const outcome = await loop.sendMessage('/s', {
+      kind: 'skill_fork',
+      skill: { name: 's' } as never,
+      args: ''
+    })
 
     expect(outcome.status).toBe('failed')
     if (outcome.status === 'failed') {

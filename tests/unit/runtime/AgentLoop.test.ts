@@ -1378,7 +1378,6 @@ describe('AgentLoop', () => {
       mode: 'default',
       skillRegistry,
       useUnifiedSkillDispatch: true,
-      resumableXForge: false,
     })
     await loop.sendMessage('/onboard', route)
 
@@ -1446,7 +1445,6 @@ describe('AgentLoop', () => {
       mode: 'default',
       skillRegistry,
       useUnifiedSkillDispatch: true,
-      resumableXForge: false,
     })
     await loop.sendMessage(`/${skillName}`, route)
 
@@ -1494,7 +1492,6 @@ describe('AgentLoop', () => {
       mode: 'default',
       skillRegistry: SkillRegistry.load({ globalDir: skillsDir }),
       useUnifiedSkillDispatch: true,
-      resumableXForge: false,
     })
     await loop1.sendMessage(`/${skillName}`, route1)
     expect(persisted).toContain(skillDir)

@@ -1,5 +1,5 @@
 /**
- * TurnDispatcher — 按已解析 route 调用产品执行器（XForge / Workflow / Skill Fork），
+ * TurnDispatcher — 按已解析 route 调用产品执行器（Skill Fork），
  * 或把 agent 路径输入规范化为声明式结果。
  *
  * 边界：只返回数据，不拥有轮次生命周期——不修改 AgentLoop 状态、不写入对话上下文、
@@ -27,15 +27,6 @@ export interface SkillForkExecutionRequest {
 
 /** 产品执行器集合：由宿主（AgentRuntimeFactory / 测试）装配，缺失时对应 route fail closed */
 export interface TurnExecutors {
-  xforgeRunner?: (
-    request: string,
-    opts: { abortSignal?: AbortSignal; messageId: string; explicitFullDev: boolean }
-  ) => Promise<{ summary: string }>
-  workflowRunner?: (
-    scriptName: string,
-    args: string,
-    opts?: { abortSignal?: AbortSignal }
-  ) => Promise<{ summary: string }>
   skillForkRunner?: (
     request: SkillForkExecutionRequest
   ) => Promise<{ success: boolean; summary: string }>
@@ -80,16 +71,6 @@ export class TurnDispatcher {
    */
   assertRouteExecutable(route: AgentTurnRoute): void {
     switch (route.kind) {
-      case 'xforge':
-        if (!this.executors.xforgeRunner) {
-          throw new Error('route 为 xforge 但未注入 xforgeRunner')
-        }
-        break
-      case 'workflow':
-        if (!this.executors.workflowRunner) {
-          throw new Error('route 为 workflow 但未注入 workflowRunner')
-        }
-        break
       case 'skill_fork':
         if (!this.executors.skillForkRunner) {
           throw new Error('route 为 skill_fork 但未注入 skillForkRunner')
@@ -110,24 +91,6 @@ export class TurnDispatcher {
     ctx: TurnDispatchContext
   ): Promise<TurnDispatchOutcome> {
     switch (route.kind) {
-      case 'xforge': {
-        this.assertRouteExecutable(route)
-        const result = await this.executors.xforgeRunner!(route.request, {
-          abortSignal: ctx.abortSignal,
-          messageId: ctx.messageId,
-          explicitFullDev: route.explicitFullDev
-        })
-        return { kind: 'handled', assistantSummary: result.summary }
-      }
-
-      case 'workflow': {
-        this.assertRouteExecutable(route)
-        const result = await this.executors.workflowRunner!(route.scriptName, route.args, {
-          abortSignal: ctx.abortSignal
-        })
-        return { kind: 'handled', assistantSummary: result.summary }
-      }
-
       case 'skill_fork': {
         this.assertRouteExecutable(route)
         const result = await this.executors.skillForkRunner!({

@@ -1,7 +1,7 @@
 /**
  * AgentTurnService 路由行为级集成测试。
- * 真实执行 sendAgentMessage，观察 startXForgeRun / startRun / appendMessageFast 的调用，
- * 证明 route 与 durable run kind 一致、冲突在用户消息落盘前拦截。
+ * 真实执行 sendAgentMessage，观察 startRun / appendMessageFast 的调用，
+ * 证明 compose 与 default 都沿普通 AgentLoop durable run 进入执行。
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -24,13 +24,7 @@ const coordinator = vi.hoisted(() => ({
   inbox: { enqueue: vi.fn(() => ({ interactionId: 'i', version: 1 })), cancelAllForRun: vi.fn() },
   onTerminalHook: vi.fn()
 }))
-const xforgeService = vi.hoisted(() => ({
-  startXForgeRun: vi.fn(() => ({ runId: 'run-xforge', kind: 'xforge', status: 'queued' })),
-  resumeXForgeRun: vi.fn(),
-  createExecutionCommitter: vi.fn(() => ({ commitXForgeStageTransition: vi.fn() }))
-}))
 const executionRegistry = vi.hoisted(() => ({
-  hasUnsettledHandle: vi.fn(() => false),
   register: vi.fn(),
   unregister: vi.fn()
 }))
@@ -59,7 +53,6 @@ vi.mock('electron', () => ({
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
-  getXForgeRunService: () => xforgeService,
   getRunExecutionRegistry: () => executionRegistry,
   setActiveRunId: vi.fn()
 }))
@@ -136,7 +129,7 @@ vi.mock('../../../src/main/agent/runtime', async (importOriginal) => {
       agentLoop: stubAgentLoop,
       eventBus: { on: vi.fn() },
       modelPool: {},
-      runRefs: { runId: '', executionGeneration: 0, resumableXForge: false },
+      runRefs: { runId: '', executionGeneration: 0 },
       frozenPrompt: 'system',
       skillRegistry: registryHolder.current
     }))
@@ -214,29 +207,29 @@ beforeEach(() => {
 })
 
 describe('sendAgentMessage 路由行为级集成', () => {
-  it('compose + 普通文本 → 创建 xforge run，且 route 传给 sendMessage', async () => {
+  it('compose + 普通文本 → 创建 agent run，且 route 传给 sendMessage', async () => {
     registryHolder.current = createRegistry([])
     sessionStore.load.mockReturnValue(makeSession('compose'))
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '实现登录功能' }, deps)
 
-    expect(xforgeService.startXForgeRun).toHaveBeenCalledTimes(1)
-    expect(coordinator.startRun).not.toHaveBeenCalled()
+    expect(coordinator.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'agent' })
+    )
     expect(sentRoutes).toHaveLength(1)
-    expect(sentRoutes[0].kind).toBe('xforge')
+    expect(sentRoutes[0]).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
   })
 
-  it('compose + Legacy Workflow → 创建 compose run（不是 xforge run）', async () => {
+  it('compose + Legacy Workflow → 仍创建 agent run', async () => {
     registryHolder.current = createRegistry([{ name: 'legacy-flow', workflow: 'legacy-flow' }])
     sessionStore.load.mockReturnValue(makeSession('compose'))
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '/legacy-flow 继续旧编排' }, deps)
 
     expect(coordinator.startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'compose' })
+      expect.objectContaining({ kind: 'agent' })
     )
-    expect(xforgeService.startXForgeRun).not.toHaveBeenCalled()
-    expect(sentRoutes[0].kind).toBe('workflow')
+    expect(sentRoutes[0]).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
   })
 
   it('default + 普通文本 → 创建 agent run', async () => {
@@ -248,7 +241,6 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(coordinator.startRun).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'agent' })
     )
-    expect(xforgeService.startXForgeRun).not.toHaveBeenCalled()
     expect(sentRoutes[0].kind).toBe('agent')
   })
 
@@ -265,31 +257,28 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(coordinator.startRun).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'agent' })
     )
-    expect(xforgeService.startXForgeRun).not.toHaveBeenCalled()
     expect(sentRoutes[0].kind).toBe('agent')
   })
 
-  it('compose + 工作区已有 XForge → 冲突在用户消息落盘前拦截', async () => {
+  it('compose + 工作区已有旧 run → 不触发旧执行器分支', async () => {
     registryHolder.current = createRegistry([])
     sessionStore.load.mockReturnValue(makeSession('compose'))
     coordinator.listActiveRuns.mockReturnValue([
       { runId: 'existing', kind: 'xforge', workspaceId: '/tmp/ws', status: 'running' }
     ])
 
-    await expect(
-      sendAgentMessage({ sessionId: 'sess-1', content: '实现登录功能' }, deps)
-    ).rejects.toThrow(/已有未结束的 XForge/)
+    await sendAgentMessage({ sessionId: 'sess-1', content: '实现登录功能' }, deps)
 
-    // 冲突拦截：不落盘、不创建任何 run
-    expect(sessionStore.appendMessageFast).not.toHaveBeenCalled()
-    expect(xforgeService.startXForgeRun).not.toHaveBeenCalled()
-    expect(coordinator.startRun).not.toHaveBeenCalled()
+    expect(sessionStore.appendMessageFast).toHaveBeenCalledTimes(1)
+    expect(coordinator.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'agent' })
+    )
   })
 
   it('default 模式触发同一 Legacy Workflow 不受 XForge 并发限制', async () => {
     registryHolder.current = createRegistry([{ name: 'legacy-flow', workflow: 'legacy-flow' }])
     sessionStore.load.mockReturnValue(makeSession('default'))
-    // 工作区已有 XForge，但 default 的 workflow route 解析为 compose run，不应被拦截
+    // 工作区已有旧 run 不改变 default 的普通路由。
     coordinator.listActiveRuns.mockReturnValue([
       { runId: 'existing', kind: 'xforge', workspaceId: '/tmp/ws', status: 'running' }
     ])
@@ -297,7 +286,7 @@ describe('sendAgentMessage 路由行为级集成', () => {
     await sendAgentMessage({ sessionId: 'sess-1', content: '/legacy-flow 做事' }, deps)
 
     expect(coordinator.startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'compose' })
+      expect.objectContaining({ kind: 'agent' })
     )
     expect(sessionStore.appendMessageFast).toHaveBeenCalledTimes(1)
   })

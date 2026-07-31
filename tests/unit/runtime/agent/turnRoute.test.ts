@@ -42,21 +42,11 @@ function baseInput(overrides: Partial<Parameters<typeof resolveAgentTurnRoute>[0
     skillRegistry: null,
     useUnifiedSkillDispatch: true,
     workspacePath: '/tmp/test',
-    resumableXForge: false,
     ...overrides
   }
 }
 
 describe('resolveAgentTurnRoute 路由矩阵', () => {
-  it('resumable XForge 不被新输入重新分类', () => {
-    const route = resolveAgentTurnRoute(baseInput({
-      content: '随便说点什么',
-      resumableXForge: true
-    }))
-    expect(route.kind).toBe('xforge')
-    expect(routeRunKind(route)).toBe('xforge')
-  })
-
   it('ContentBlock[] 图片消息始终走 agent', () => {
     const blocks: ContentBlock[] = [
       { type: 'text', text: '看这张图' },
@@ -87,7 +77,7 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     expect(route.kind).toBe('agent')
   })
 
-  it('compose + passthrough → xforge', () => {
+  it('compose + passthrough → agent', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
     const registry = createRegistry(root, [])
@@ -96,15 +86,11 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
       mode: 'compose',
       skillRegistry: registry
     }))
-    expect(route.kind).toBe('xforge')
-    expect(routeRunKind(route)).toBe('xforge')
-    if (route.kind === 'xforge') {
-      expect(route.request).toBe('实现登录功能')
-      expect(route.explicitFullDev).toBe(false)
-    }
+    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
+    expect(routeRunKind(route)).toBe('agent')
   })
 
-  it('compose + /br-full-dev → xforge（explicitFullDev=true）', () => {
+  it('compose + /br-full-dev → agent passthrough', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
     const registry = createRegistry(root, [{ name: 'br-full-dev', workflow: 'br-full-dev' }])
@@ -113,32 +99,24 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
       mode: 'compose',
       skillRegistry: registry
     }))
-    expect(route.kind).toBe('xforge')
-    expect(routeRunKind(route)).toBe('xforge')
-    if (route.kind === 'xforge') {
-      expect(route.request).toBe('实现登录')
-      expect(route.explicitFullDev).toBe(true)
-    }
+    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
+    expect(routeRunKind(route)).toBe('agent')
   })
 
-  it('non-compose + /br-full-dev → workflow / compose run', () => {
+  it('workflow skill 在 default 模式也回到 agent passthrough', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
-    const registry = createRegistry(root, [{ name: 'br-full-dev', workflow: 'br-full-dev' }])
+    const registry = createRegistry(root, [{ name: 'legacy-flow', workflow: 'legacy-flow' }])
     const route = resolveAgentTurnRoute(baseInput({
-      content: '/br-full-dev 实现登录',
+      content: '/legacy-flow 继续旧编排',
       mode: 'default',
       skillRegistry: registry
     }))
-    expect(route.kind).toBe('workflow')
-    expect(routeRunKind(route)).toBe('compose')
-    if (route.kind === 'workflow') {
-      expect(route.scriptName).toBe('br-full-dev')
-      expect(route.args).toBe('实现登录')
-    }
+    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
+    expect(routeRunKind(route)).toBe('agent')
   })
 
-  it('compose + 其他 workflow skill → workflow / compose run（不是 xforge）', () => {
+  it('compose + 普通 workflow skill → agent passthrough', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
     const registry = createRegistry(root, [{ name: 'legacy-flow', workflow: 'legacy-flow' }])
@@ -147,10 +125,19 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
       mode: 'compose',
       skillRegistry: registry
     }))
-    expect(route.kind).toBe('workflow')
-    expect(routeRunKind(route)).toBe('compose')
-    if (route.kind === 'workflow') {
-      expect(route.scriptName).toBe('legacy-flow')
+    expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
+    expect(routeRunKind(route)).toBe('agent')
+  })
+  /*
+    Workflow slash entries are intentionally ordinary model input. The explicit
+    start_workflow tool is the only orchestration entry point.
+  */
+  it('compose + passthrough remains a single AgentLoop route', () => {
+    const route = resolveAgentTurnRoute(baseInput({ mode: 'compose' }))
+    expect(route.kind).toBe('agent')
+    expect(routeRunKind(route)).toBe('agent')
+    if (route.kind === 'agent') {
+      expect(route.dispatch.kind).toBe('passthrough')
     }
   })
 
@@ -215,9 +202,7 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
 })
 
 describe('routeRunKind 映射', () => {
-  it('每种 route kind 映射到正确的 RunKind', () => {
-    expect(routeRunKind({ kind: 'xforge', request: '', explicitFullDev: false })).toBe('xforge')
-    expect(routeRunKind({ kind: 'workflow', scriptName: 'x', args: '' })).toBe('compose')
+  it('所有公开 route 都进入普通 Agent run', () => {
     expect(routeRunKind({ kind: 'skill_fork', skill: {} as never, args: '' })).toBe('agent')
     expect(routeRunKind(agentRoute())).toBe('agent')
   })

@@ -30,41 +30,6 @@ function dispatchCtx(overrides: Partial<TurnDispatchContext> = {}): TurnDispatch
 const forkSkill = { name: 'f', directory: '/skills/f', body: 'do it' } as unknown as SkillManifest
 
 describe('TurnDispatcher 产品路径（handled）', () => {
-  it('xforge route → 调用 xforgeRunner 并透传 request/messageId/explicitFullDev/abortSignal', async () => {
-    const runner = vi.fn(async () => ({ summary: 'xforge done' }))
-    const dispatcher = new TurnDispatcher({ xforgeRunner: runner })
-    const abort = new AbortController()
-
-    const outcome = await dispatcher.dispatch(
-      '实现登录',
-      { kind: 'xforge', request: '实现登录', explicitFullDev: true },
-      dispatchCtx({ abortSignal: abort.signal })
-    )
-
-    expect(outcome).toEqual({ kind: 'handled', assistantSummary: 'xforge done' })
-    expect(runner).toHaveBeenCalledTimes(1)
-    expect(runner).toHaveBeenCalledWith('实现登录', {
-      abortSignal: abort.signal,
-      messageId: 'msg-1',
-      explicitFullDev: true
-    })
-  })
-
-  it('workflow route → 调用 workflowRunner 并透传 scriptName/args/abortSignal', async () => {
-    const runner = vi.fn(async () => ({ summary: 'wf done' }))
-    const dispatcher = new TurnDispatcher({ workflowRunner: runner })
-    const abort = new AbortController()
-
-    const outcome = await dispatcher.dispatch(
-      '/flow 继续',
-      { kind: 'workflow', scriptName: 'flow', args: '继续' },
-      dispatchCtx({ abortSignal: abort.signal })
-    )
-
-    expect(outcome).toEqual({ kind: 'handled', assistantSummary: 'wf done' })
-    expect(runner).toHaveBeenCalledWith('flow', '继续', { abortSignal: abort.signal })
-  })
-
   it('skill_fork route → 调用 skillForkRunner，fork ctx 与 templateContext 来自分派上下文', async () => {
     const runner = vi.fn(async () => ({ success: true, summary: 'fork done' }))
     const dispatcher = new TurnDispatcher({ skillForkRunner: runner })
@@ -107,10 +72,6 @@ describe('TurnDispatcher 产品路径（handled）', () => {
 
 describe('TurnDispatcher 执行器抛错原样传播', () => {
   it.each([
-    ['xforge', new TurnDispatcher({ xforgeRunner: async () => { throw new Error('xforge boom') } }),
-      { kind: 'xforge' as const, request: 'x', explicitFullDev: false }, 'xforge boom'],
-    ['workflow', new TurnDispatcher({ workflowRunner: async () => { throw new Error('workflow boom') } }),
-      { kind: 'workflow' as const, scriptName: 's', args: '' }, 'workflow boom'],
     ['skill_fork', new TurnDispatcher({ skillForkRunner: async () => { throw new Error('fork boom') } }),
       { kind: 'skill_fork' as const, skill: forkSkill, args: '' }, 'fork boom']
   ])('%s 执行器抛错 → dispatch 原样 reject，不吞错', async (_name, dispatcher, route, message) => {
@@ -120,8 +81,6 @@ describe('TurnDispatcher 执行器抛错原样传播', () => {
 
 describe('TurnDispatcher 能力断言（fail closed）', () => {
   it.each([
-    [{ kind: 'xforge' as const, request: 'x', explicitFullDev: false }, /xforgeRunner/],
-    [{ kind: 'workflow' as const, scriptName: 's', args: '' }, /workflowRunner/],
     [{ kind: 'skill_fork' as const, skill: forkSkill, args: '' }, /skillForkRunner/]
   ])('缺少执行器时 assertRouteExecutable 与 dispatch 都抛错', async (route, pattern) => {
     const dispatcher = new TurnDispatcher({})

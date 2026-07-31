@@ -24,7 +24,6 @@ import { ensureObservationCaptureForSession } from '../../services/MemoryConsoli
 import { onUserTurnCompleteForExtract } from '../../services/MemoryExtractHost'
 import {
   getRunCoordinator,
-  getXForgeRunService,
   getRunExecutionRegistry,
   setActiveRunId
 } from '../../services/RunCoordinatorHost'
@@ -122,6 +121,8 @@ export interface SendAgentMessageParams {
   userMessageId?: string
   images?: Array<{ fileName: string; data: string; mimeType: string }>
   regenerate?: boolean
+  /** compose 输入框的临时自动编排快照，不写入会话设置。 */
+  autoMode?: boolean
 }
 
 export interface SendAgentMessageDeps {
@@ -139,28 +140,10 @@ export async function sendAgentMessage(
 ): Promise<void> {
   const { getMainWindow, getModelClient, getImageStore } = deps
 
-  const coordinatorAtEntry = getRunCoordinator()
-  const activeRuns = coordinatorAtEntry.listActiveRuns()
-  const unsettledHandle = getRunExecutionRegistry().hasUnsettledHandle()
-  const activeResumableXForge = activeRuns.find(run =>
-    run.kind === 'xforge' &&
-    run.sessionId === params.sessionId &&
-    (run.status === 'waiting_user' || run.status === 'resuming') &&
-    !unsettledHandle
-  ) ?? null
-  const sessionRunSnapshot = coordinatorAtEntry.getSnapshotForSession(params.sessionId)
-  const interruptedResumableXForge =
-    !activeResumableXForge &&
-    sessionRunSnapshot?.kind === 'xforge' &&
-    sessionRunSnapshot.status === 'interrupted' &&
-    !unsettledHandle
-      ? sessionRunSnapshot
-      : null
-  const resumableXForge = activeResumableXForge ?? interruptedResumableXForge
   // 并发模型：不同会话可同时跑，同一会话同时最多一个 turn。
   // 该会话已有占用 turn 的 run 时，按占用者决定处理方式：编排运行中直接拒绝并回运行态信号，
   // 其余情况推入 steering queue 等当前 turn 结束后处理；其它会话不受影响。
-  if (handleEntryLock(params, !!resumableXForge, getMainWindow)) return
+  if (handleEntryLock(params, getMainWindow)) return
 
   // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 本会话挂起的 askQuestion 请求，
   // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
@@ -217,7 +200,6 @@ export async function sendAgentMessage(
 
   // 仅提前取得协调器；所有会抛错的装配和输入准备完成后才创建 run。
   const runCoordinator = getRunCoordinator()
-  const xforgeService = getXForgeRunService()
   const executionRegistry = getRunExecutionRegistry()
 
   // 关键段复查（TOCTOU 防御）：入口锁在第一次检查后到这里隔着
@@ -225,7 +207,7 @@ export async function sendAgentMessage(
   // 可能同时通过入口检查。在装配 / 持久化 / startRun 前再查一次：若该 session 期间已被
   // 另一个 turn 占用，按同一套入口锁规则处理后直接返回，绝不产生同会话双 run。
   // 此处位于 try/finally 之前，return 不会触发任何清理副作用。
-  if (handleEntryLock(params, !!resumableXForge, getMainWindow)) return
+  if (handleEntryLock(params, getMainWindow)) return
 
   // session 持久化副作用留在 TurnService：factory 只装配，不写 session
   const promptCacheKey = sessionStore.ensureCacheRoutingKey(params.sessionId) ?? undefined
@@ -246,8 +228,7 @@ export async function sendAgentMessage(
     readState: getReadStateForSession(params.sessionId),
     pendingAskQuestions,
     runCoordinator,
-    xforgeService,
-    resumableXForge: !!resumableXForge,
+    autoMode: session.mode === 'compose' && params.autoMode === true,
     promptCacheKey
   })
   // 本 turn 专属 AgentLoop（局部变量，不污染模块级状态，并发 turn 各自独立）
@@ -324,20 +305,9 @@ export async function sendAgentMessage(
     mode: session.mode,
     skillRegistry: prepared.skillRegistry,
     useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
-    workspacePath: projectPath,
-    resumableXForge: !!resumableXForge
+    workspacePath: projectPath
   })
   const turnRunKind = routeRunKind(turnRoute)
-
-  // XForge 工作区并发限制：基于 route 而非 session mode 判断
-  if (!resumableXForge && turnRunKind === 'xforge') {
-    const existingXForge = activeRuns.find(run =>
-      run.kind === 'xforge' && run.workspaceId === projectPath
-    )
-    if (existingXForge) {
-      throw new Error('当前工作区已有未结束的 XForge 运行，请先继续或停止该运行。')
-    }
-  }
 
   // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
   if (!isRegenerate && persistContent !== null) {
@@ -422,40 +392,11 @@ export async function sendAgentMessage(
   let startedRunId: string | null = null
 
   try {
-    let runSnap
-    if (resumableXForge) {
-      if (
-        resumableXForge.status === 'waiting_user' ||
-        (resumableXForge.status === 'interrupted' &&
-          resumableXForge.xforge?.currentStage === 'waiting_user')
-      ) {
-        const resumed = xforgeService.resumeXForgeRun(resumableXForge.runId, params.content)
-        if (!resumed.ok) throw new Error(resumed.message)
-        runSnap = resumed.snapshot
-      } else if (resumableXForge.status === 'interrupted') {
-        const resumed = runCoordinator.transition(
-          resumableXForge.runId,
-          'resuming',
-          'resumed_from_interrupted',
-          { status: resumableXForge.status }
-        )
-        if (!resumed) throw new Error('XForge 中断运行恢复失败')
-        runSnap = resumed
-      } else {
-        runSnap = resumableXForge
-      }
-    } else if (turnRunKind === 'xforge') {
-      runSnap = xforgeService.startXForgeRun({
-        workspaceId: projectPath,
-        sessionId: params.sessionId
-      })
-    } else {
-      runSnap = runCoordinator.startRun({
-        kind: turnRunKind,
-        workspaceId: projectPath,
-        sessionId: params.sessionId
-      })
-    }
+    const runSnap = runCoordinator.startRun({
+      kind: turnRunKind,
+      workspaceId: projectPath,
+      sessionId: params.sessionId
+    })
     startedRunId = runSnap.runId
     runRefs.runId = runSnap.runId
     runRefs.executionGeneration = Date.now()
@@ -500,7 +441,7 @@ export async function sendAgentMessage(
 
     // durable 对账基于 outcome；提交失败不阻断下方 finally 的 registry 清理
     try {
-      reconcileDurableTerminal(runRefs.runId, runRefs.executionGeneration, outcome)
+      reconcileDurableTerminal(runRefs.runId, outcome)
     } catch (terminalErr) {
       console.error('[AgentTurnService] terminal 提交失败:', terminalErr)
     }
@@ -542,12 +483,10 @@ export async function sendAgentMessage(
  */
 function handleEntryLock(
   params: SendAgentMessageParams,
-  resumable: boolean,
   getMainWindow: () => BrowserWindow | null
 ): boolean {
   const action = resolveEntryLockAction({
     turnInProgress: isSessionTurnInProgress(params.sessionId),
-    resumable,
     activeWorkflowRun: activeRunIsWorkflow(params.sessionId)
   })
   if (action.kind === 'proceed') return false
@@ -582,16 +521,12 @@ function activeRunIsWorkflow(
 /**
  * 轮次结束后的 durable 对账：按结构化 outcome 提交 run 终态。
  *
- * - snapshot 已处 waiting_user 或广义终态时保持权威状态（XForge 阶段状态机等已提交），
- *   不得用通用终态覆盖；
- * - failed：XForge 先提交阶段 failed 再关闭 run；agent / compose 直接 commitTerminal failed；
- * - completed / cancelled：XForge 正常返回却仍处非法非终态时 fail closed
- *   （cancelled 或 failed），agent / compose 按 outcome 提交；
+ * - snapshot 已处 waiting_user 或广义终态时保持权威状态，不得用通用终态覆盖；
+ * - failed / completed / cancelled 按 outcome 提交统一的 run 终态；
  * - durable 层已进入 cancelling（用户取消竞态）时取消优先于 completed。
  */
 function reconcileDurableTerminal(
   runId: string,
-  executionGeneration: number,
   outcome: AgentTurnOutcome
 ): void {
   const coord = getRunCoordinator()
@@ -605,42 +540,15 @@ function reconcileDurableTerminal(
 
   if (outcome.status === 'failed') {
     const reason = outcome.error.message
-    if (
-      snap.kind === 'xforge' &&
-      snap.xforge &&
-      !['completed', 'failed', 'cancelled'].includes(snap.xforge.currentStage)
-    ) {
-      getXForgeRunService()
-        .createExecutionCommitter(executionGeneration)
-        .commitXForgeStageTransition(runId, {
-          ok: true,
-          from: snap.xforge.currentStage,
-          to: 'failed',
-          reason
-        })
-    }
     coord.commitTerminal({ runId, status: 'failed', reason })
     return
   }
 
   const cancelled = outcome.status === 'cancelled' || snap.status === 'cancelling'
-  if (snap.kind === 'xforge' && snap.xforge) {
-    getXForgeRunService()
-      .createExecutionCommitter(executionGeneration)
-      .commitXForgeStageTransition(runId, {
-        ok: true,
-        from: snap.xforge.currentStage,
-        to: cancelled ? 'cancelled' : 'failed',
-        reason: cancelled
-          ? '用户取消 XForge 执行'
-          : 'XForge Pipeline 未进入 waiting_user 或终态即退出'
-      })
-  } else {
-    coord.commitTerminal({
-      runId,
-      status: cancelled ? 'cancelled' : 'completed'
-    })
-  }
+  coord.commitTerminal({
+    runId,
+    status: cancelled ? 'cancelled' : 'completed'
+  })
 }
 
 /**
@@ -679,7 +587,8 @@ function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageParams {
     content: msg.content,
     ...(msg.userMessageId !== undefined ? { userMessageId: msg.userMessageId } : {}),
     ...(msg.images !== undefined ? { images: msg.images } : {}),
-    ...(msg.regenerate !== undefined ? { regenerate: msg.regenerate } : {})
+    ...(msg.regenerate !== undefined ? { regenerate: msg.regenerate } : {}),
+    ...(msg.autoMode !== undefined ? { autoMode: msg.autoMode } : {})
   }
 }
 

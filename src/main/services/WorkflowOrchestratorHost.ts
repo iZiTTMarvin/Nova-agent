@@ -4,8 +4,8 @@
  * orchestrator 是 workflow run 状态的唯一 Owner；主进程各处（入口互斥判断、停止按钮、
  * 后续的 start_workflow 工具）都必须经这里取同一个实例，不得各自 new。
  *
- * definition 注册表尚未落地，此处先用可注入的解析器：注册表接入后只替换 resolver，
- * 不改本文件的对外形状。
+ * definition 解析器由应用启动时接入；本服务只保存单例 orchestrator 和解析端口，
+ * 不拥有 definition 注册表。
  */
 import { WorkflowOrchestrator } from '../../runtime/workflow/orchestrator'
 import type { ResolveWorkflowDefinition } from '../../runtime/workflow/orchestrator'

@@ -126,6 +126,8 @@ export interface IpcCommands {
       }>
       /** true 时跳过用户消息 append，从当前 leaf（user）取内容重新生成 assistant */
       regenerate?: boolean
+      /** compose 输入框的临时自动编排开关 */
+      autoMode?: boolean
     }
     result: void
   }

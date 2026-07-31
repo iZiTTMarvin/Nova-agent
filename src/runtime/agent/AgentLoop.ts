@@ -150,7 +150,7 @@ export class AgentLoop {
   /** 新 skill 根登记时通知宿主持久化（restore 路径不触发） */
   private onSkillRootAdded: ((dir: string) => void) | null = null
   /**
-   * 产品分派器：按已解析 route 调用 XForge / Workflow / Fork 执行器。
+   * 产品分派器：按已解析 route 调用 Fork 执行器。
    * 默认无执行器（仅 agent route 可用，供子 agent / 测试裸构造）；
    * 宿主（AgentRuntimeFactory / 测试）通过 setTurnDispatcher 装配完整执行器。
    * dispatcher 只返回数据，不拥有生命周期；abortSignal 在分派时透传——
@@ -172,6 +172,8 @@ export class AgentLoop {
    * 不调用时 askQuestion 工具降级为 no-op，主要用于子 agent / 测试场景。
    */
   private askQuestionHandler?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /** 当前轮次的编排自动化快照；只透传给工具上下文，不参与 AgentLoop 控制流。 */
+  private autoMode = false
   /** 经 PermissionManager 批准后，由宿主同步会话、WorkspaceService 与当前循环。 */
   private switchModeHandler?: ToolContext['switchMode']
   /** 本轮构造时捕获的 active plan；计划正文仍以工作区文件为真源。 */
@@ -344,7 +346,7 @@ export class AgentLoop {
     this.ctx.effectiveToolDefinitions = provider
   }
 
-  /** 外部触发 epoch 切换（如 XForge 阶段切换导致工具集变化） */
+  /** 外部触发 epoch 切换（例如工具集或运行阶段发生变化） */
   bumpCacheEpoch(reason: import('../model/cacheDiagnostics').EpochReason): void {
     this.cacheDiagnostics.bumpEpoch(reason)
   }
@@ -441,6 +443,11 @@ export class AgentLoop {
     this.ctx.sessionId = sessionId
   }
 
+  /** 设置当前轮次的编排自动化快照，供 start_workflow 工具读取。 */
+  setAutoMode(autoMode: boolean): void {
+    this.autoMode = autoMode
+  }
+
   /** 注入会话级 artifact 存储，供 bash / grep / read 大输出落盘 */
   setArtifactStore(store: ArtifactStore): void {
     this.ctx.artifactStore = store
@@ -487,7 +494,7 @@ export class AgentLoop {
     this.onSkillRootAdded = cb
   }
 
-  /** 装配产品分派器（XForge / Workflow / Fork 执行器由宿主构造） */
+  /** 装配产品分派器（当前仅由宿主提供 skill fork 执行器） */
   setTurnDispatcher(dispatcher: TurnDispatcher): void {
     this.turnDispatcher = dispatcher
   }
@@ -634,7 +641,7 @@ export class AgentLoop {
   }
 
   /**
-   * 执行一轮消息的产品路径：按已解析 route 分派到 XForge / Workflow / Fork 执行器，
+   * 执行一轮消息的产品路径：按已解析 route 分派到 Fork 执行器，
    * 或准备上下文进入 Agent kernel。只返回轮次结果，不做任何终态收尾——
    * checkpoint、终态事件、state 与 idle timer 统一由 finalizeTurn 处理。
    */
@@ -658,11 +665,6 @@ export class AgentLoop {
       sessionPrefix ? `${sessionPrefix}\n\n${text}` : text
 
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
-
-    // 编排入口自动切入 compose：模式归 AgentLoop 所有，dispatcher 不修改状态
-    if (route.kind === 'workflow' && this.ctx.mode !== 'compose') {
-      this.setMode('compose')
-    }
 
     // 产品分派下沉到 TurnDispatcher（路由在 startRun 前由 resolveAgentTurnRoute 确定）。
     // dispatcher 只返回数据；上下文写入、事件与终态仍由本类持有。
@@ -737,6 +739,10 @@ export class AgentLoop {
         toolExecution: this.config.toolExecution ?? 'parallel',
         sessionStore: this.ctx.sessionStore,
         sessionId: this.ctx.sessionId,
+        modelClient: this.modelPool,
+        resolveTool: (name) => this.ctx.toolRegistry?.getTool(name),
+        contextWindow: this.config.contextWindow,
+        autoMode: this.autoMode,
         eventBus: this.eventBus,
         hookManager: this.hookManager,
         readState: this.ctx.readState,

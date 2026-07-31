@@ -10,6 +10,7 @@ import type { ReadState } from './editTool'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { Mode } from '../../shared/session/types'
+import type { ModelClient } from '../model/ModelClient'
 
 export type { ToolTruncationMeta }
 
@@ -72,6 +73,16 @@ export interface ToolContext {
   sessionStore?: SessionStore
   /** 当前会话 ID，与 sessionStore 配套使用 */
   sessionId?: string
+  /** 当前轮次使用的模型客户端，供需要派发子任务的工具装配宿主能力。 */
+  modelClient?: ModelClient
+  /** 当前轮次的工具解析入口，供需要创建隔离工具集的工具使用。 */
+  resolveTool?: (name: string) => ToolExecutor | undefined
+  /** 当前模型上下文窗口，供需要创建子 Agent 的宿主能力使用。 */
+  contextWindow?: number
+  /** 当前轮次是否启用全自动编排；工具只能读取该快照。 */
+  autoMode?: boolean
+  /** 当前轮次运行模式，供宿主构造子 Agent 的行为上下文。 */
+  mode?: Mode
   /**
    * 事件总线（可选）。提供工具向 main → renderer 链路发送自定义事件的能力。
    * 当前只 todo_write 使用，emit 'todos_updated' 触发 renderer store 更新。

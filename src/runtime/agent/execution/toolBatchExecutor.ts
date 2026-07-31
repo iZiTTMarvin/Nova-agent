@@ -76,6 +76,14 @@ export interface ToolBatchExecutionOptions {
   sessionStore?: SessionStore | null
   /** 当前会话 ID（与 sessionStore 配套） */
   sessionId?: string | null
+  /** 当前轮次使用的模型客户端，供 start_workflow 装配 WorkflowHostDeps。 */
+  modelClient?: ToolContext['modelClient']
+  /** 当前轮次的工具解析入口，供 start_workflow 装配 WorkflowHostDeps。 */
+  resolveTool?: ToolContext['resolveTool']
+  /** 当前模型上下文窗口，供 start_workflow 装配 WorkflowHostDeps。 */
+  contextWindow?: number
+  /** 当前轮次是否启用全自动编排。 */
+  autoMode?: boolean
   /** 事件总线（供 todo_write 等向 renderer 推送事件） */
   eventBus?: EventBus | null
   /** bash 工具的自定义 shell 路径（可选） */
@@ -137,6 +145,11 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     supportsVision: options.supportsVision,
     ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(options.modelClient ? { modelClient: options.modelClient } : {}),
+    ...(options.resolveTool ? { resolveTool: options.resolveTool } : {}),
+    ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
+    ...(options.autoMode !== undefined ? { autoMode: options.autoMode } : {}),
+    ...(options.mode ? { mode: options.mode } : {}),
     ...(options.eventBus ? { eventBus: options.eventBus } : {}),
     ...(options.shellPath ? { shellPath: options.shellPath } : {}),
     ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {}),

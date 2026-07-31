@@ -14,17 +14,6 @@ describe('resolveEntryLockAction', () => {
     expect(
       resolveEntryLockAction({
         turnInProgress: false,
-        resumable: false,
-        activeWorkflowRun: null
-      })
-    ).toEqual({ kind: 'proceed' })
-  })
-
-  it('可 resume 的 run 让行，即使 turn 在进行中', () => {
-    expect(
-      resolveEntryLockAction({
-        turnInProgress: true,
-        resumable: true,
         activeWorkflowRun: null
       })
     ).toEqual({ kind: 'proceed' })
@@ -34,7 +23,6 @@ describe('resolveEntryLockAction', () => {
     expect(
       resolveEntryLockAction({
         turnInProgress: true,
-        resumable: false,
         activeWorkflowRun: null
       })
     ).toEqual({ kind: 'steer' })
@@ -44,7 +32,6 @@ describe('resolveEntryLockAction', () => {
     expect(
       resolveEntryLockAction({
         turnInProgress: true,
-        resumable: false,
         activeWorkflowRun: workflowRun
       })
     ).toEqual({ kind: 'workflow_busy', run: workflowRun })
@@ -54,19 +41,9 @@ describe('resolveEntryLockAction', () => {
     expect(
       resolveEntryLockAction({
         turnInProgress: false,
-        resumable: false,
         activeWorkflowRun: workflowRun
       })
     ).toEqual({ kind: 'proceed' })
   })
 
-  it('resumable 优先于编排分支，避免旧 XForge 恢复路径被误拦', () => {
-    expect(
-      resolveEntryLockAction({
-        turnInProgress: true,
-        resumable: true,
-        activeWorkflowRun: workflowRun
-      })
-    ).toEqual({ kind: 'proceed' })
-  })
 })
