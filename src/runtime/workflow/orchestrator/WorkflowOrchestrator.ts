@@ -5,6 +5,7 @@
  * 入口互斥判断、停止按钮）都必须经这里读状态，不得自行缓存一份 run 状态。
  */
 import { generateRunId } from '../state/paths'
+import { isSafeWorkflowRunId, readWorkflowRunMetadata } from '../state/runMetadata'
 import { WorkflowRun } from './WorkflowRun'
 import type {
   StartWorkflowOptions,
@@ -42,6 +43,46 @@ export class WorkflowOrchestrator {
         status: 'failed',
         runId: options.runId ?? '',
         error: `workflow ${definition.name} 不存在起始阶段 ${options.startStage}`
+      }
+    }
+
+    if (options.runId) {
+      const existing = this.runs.get(options.runId)
+      if (existing && !existing.isTerminal) {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: `workflow run ${options.runId} 仍在运行，不能重复启动`
+        }
+      }
+      if (!isSafeWorkflowRunId(options.runId)) {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: 'workflow runId 非法'
+        }
+      }
+      const metadata = readWorkflowRunMetadata(options.host.workspaceRoot, options.runId)
+      if (!metadata) {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: `找不到可恢复的 workflow run 元数据：${options.runId}`
+        }
+      }
+      if (metadata.workflow !== definition.name) {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: `workflow run ${options.runId} 属于 ${metadata.workflow}，不能按 ${definition.name} 恢复`
+        }
+      }
+      if (metadata.status === 'completed') {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: `workflow run ${options.runId} 已完成，不能按 resume 重复启动`
+        }
       }
     }
 

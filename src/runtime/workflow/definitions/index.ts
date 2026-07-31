@@ -1,4 +1,5 @@
 import type { WorkflowDefinition } from './types'
+import { composeWorkflow } from './compose'
 
 export interface WorkflowDefinitionMetadata {
   name: string
@@ -6,20 +7,7 @@ export interface WorkflowDefinitionMetadata {
   stages: string[]
 }
 
-const composeDefinition: WorkflowDefinition = {
-  name: 'compose',
-  description: '按阶段推进复杂的软件开发请求，并在终态返回摘要。',
-  matchHints: ['复杂开发任务', '多阶段实现', '需要计划、实现、验证和审查'],
-  stages: ['brainstorm', 'plan', 'implement', 'verify', 'review', 'report'],
-  async run() {
-    return {
-      status: 'failed',
-      reason: 'compose 工作流尚未提供可执行定义'
-    }
-  }
-}
-
-const definitions: readonly WorkflowDefinition[] = [composeDefinition]
+const definitions: readonly WorkflowDefinition[] = [composeWorkflow]
 
 export function resolveWorkflowDefinition(name: string): WorkflowDefinition | undefined {
   return definitions.find(definition => definition.name === name)
@@ -42,4 +30,4 @@ export function listWorkflowDefinitions(): WorkflowDefinition[] {
 }
 
 export type { WorkflowDefinition }
-
+export { composeWorkflow } from './compose'

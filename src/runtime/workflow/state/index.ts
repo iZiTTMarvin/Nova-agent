@@ -13,6 +13,12 @@ export {
   ScriptShaMismatchError
 } from './journal'
 export type { ScriptShaMismatchPolicy } from './journal'
+export {
+  isSafeWorkflowRunId,
+  readWorkflowRunMetadata,
+  writeWorkflowRunMetadata
+} from './runMetadata'
+export type { WorkflowRunMetadata } from './runMetadata'
 
 export {
   readComposeState,

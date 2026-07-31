@@ -60,6 +60,11 @@ export function runJournalPath(workspaceRoot: string, runId: string): string {
   return join(runDir(workspaceRoot, runId), 'journal.jsonl')
 }
 
+/** 新 orchestrator 的运行元数据；与 journal 放在同一 run 目录内。 */
+export function runMetadataPath(workspaceRoot: string, runId: string): string {
+  return join(runDirV2(workspaceRoot, runId), 'run.json')
+}
+
 export function runEventsPath(workspaceRoot: string, runId: string): string {
   return join(runDirV2(workspaceRoot, runId), 'events.jsonl')
 }

@@ -7,6 +7,8 @@
  */
 import type { HostFns } from '../host'
 
+export type { PlanTask, WorkflowPlan } from '../types'
+
 /** 单次执行交给 definition 的全部输入 */
 export interface WorkflowRunContext {
   /** 宿主能力，definition 的唯一依赖面 */

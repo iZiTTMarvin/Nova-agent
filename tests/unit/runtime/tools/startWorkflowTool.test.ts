@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { createStartWorkflowTool } from '../../../../src/runtime/tools/startWorkflow'
@@ -74,6 +77,66 @@ describe('start_workflow tool', () => {
     expect(start).not.toHaveBeenCalled()
   })
 
+  it('有可读取 active plan 时把只读正文注入 plan 阶段上下文', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-start-workflow-plan-'))
+    try {
+      const planPath = '.nova/plans/current.md'
+      mkdirSync(join(root, '.nova', 'plans'), { recursive: true })
+      writeFileSync(join(root, planPath), '# 当前计划\n\n- 完成入口\n', 'utf-8')
+      const start = vi.fn(async () => ({
+        status: 'completed' as const,
+        runId: 'wf-plan',
+        summary: '完成'
+      }))
+      const tool = createStartWorkflowTool({ getOrchestrator: () => ({ start } as never) })
+      const ctx = context({
+        workingDir: root,
+        workspaceRoot: root,
+        sessionStore: {
+          load: () => ({
+            workspaceRoot: root,
+            activePlan: { path: planPath, title: '当前计划', updatedAt: Date.now() }
+          })
+        } as ToolContext['sessionStore']
+      })
+
+      await tool.execute({ workflow: 'compose', startStage: 'plan', reason: '继续实施' }, ctx)
+
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({
+        injectedContext: {
+          activePlan: {
+            path: planPath,
+            title: '当前计划',
+            content: '# 当前计划\n\n- 完成入口\n'
+          }
+        }
+      }))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('传入 runId 时把恢复标识交给同一个 orchestrator 主路径', async () => {
+    const start = vi.fn(async () => ({
+      status: 'completed' as const,
+      runId: 'wf-resume',
+      summary: '恢复完成'
+    }))
+    const tool = createStartWorkflowTool({ getOrchestrator: () => ({ start } as never) })
+
+    await tool.execute(
+      {
+        workflow: 'compose',
+        startStage: 'brainstorm',
+        reason: '继续原编排',
+        runId: 'wf-resume'
+      },
+      context()
+    )
+
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ runId: 'wf-resume' }))
+  })
+
   it('orchestrator 失败或取消时返回失败结果', async () => {
     const failedTool = createStartWorkflowTool({
       getOrchestrator: () => ({
@@ -82,7 +145,7 @@ describe('start_workflow tool', () => {
     })
     await expect(
       failedTool.execute({ workflow: 'compose', startStage: 'plan', reason: 'x' }, context())
-    ).resolves.toEqual({ success: false, output: '', error: '失败原因' })
+    ).resolves.toEqual({ success: false, output: '', error: '失败原因（runId=wf-1）' })
 
     const cancelledTool = createStartWorkflowTool({
       getOrchestrator: () => ({
@@ -97,4 +160,3 @@ describe('start_workflow tool', () => {
     expect(result.error).toContain('已取消')
   })
 })
-

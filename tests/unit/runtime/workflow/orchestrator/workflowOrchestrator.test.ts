@@ -12,6 +12,7 @@ import { join } from 'path'
 import { EventBus } from '../../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../../src/test-support/builders/MockModelClient'
 import { WorkflowOrchestrator } from '../../../../../src/runtime/workflow/orchestrator/WorkflowOrchestrator'
+import { readWorkflowRunMetadata } from '../../../../../src/runtime/workflow/state/runMetadata'
 import { _resetWorktreeLocksForTests } from '../../../../../src/runtime/worktree'
 import type { AgentEvent } from '../../../../../src/runtime/agent/types'
 import type {
@@ -112,6 +113,47 @@ describe('WorkflowOrchestrator', () => {
     })
     expect(badStage).toMatchObject({ status: 'failed' })
     expect(orch.listActiveRuns()).toHaveLength(0)
+  })
+
+  it('新 workflow run 落盘 run.json，并允许显式 runId 恢复失败 run', async () => {
+    let calls = 0
+    const definition = fakeDefinition(
+      async () => {
+        calls += 1
+        return calls === 1
+          ? { status: 'failed', reason: '第一次执行中断' }
+          : { status: 'completed', summary: '恢复完成' }
+      },
+      { name: 'resumeable', stages: ['first'] }
+    )
+    const orch = makeOrchestrator(definition)
+    const h = makeHarness(tmp)
+
+    const first = await orch.start({
+      workflow: 'resumeable',
+      startStage: 'first',
+      request: '恢复测试',
+      host: h.host
+    })
+    expect(first).toMatchObject({ status: 'failed' })
+    if (first.status !== 'failed') return
+
+    expect(readWorkflowRunMetadata(tmp, first.runId)).toMatchObject({
+      runId: first.runId,
+      workflow: 'resumeable',
+      status: 'failed',
+      phase: 'first'
+    })
+
+    const resumed = await orch.start({
+      workflow: 'resumeable',
+      startStage: 'first',
+      request: '恢复测试',
+      runId: first.runId,
+      host: h.host
+    })
+    expect(resumed).toMatchObject({ status: 'completed', runId: first.runId })
+    expect(readWorkflowRunMetadata(tmp, first.runId)).toMatchObject({ status: 'completed' })
   })
 
   it('成功路径：running → completed，进度事件与 run 状态都投影出去', async () => {

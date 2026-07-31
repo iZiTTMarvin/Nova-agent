@@ -32,7 +32,9 @@ export type {
   ComposeTaskFailure,
   ComposeFailureReason,
   ComposeReview,
-  AskUserResolver
+  AskUserResolver,
+  PlanTask,
+  WorkflowPlan
 } from './types'
 
 export type { ResumePlan, WorkflowV2Manifest } from './v2/types'

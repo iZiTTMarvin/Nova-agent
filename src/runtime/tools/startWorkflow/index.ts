@@ -6,6 +6,7 @@ import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import type { SkillManifest } from '../../skills/types'
 import type { SubAgentPermissionBridge } from '../subAgentBridge'
 import type { WorkflowOrchestrator } from '../../workflow/orchestrator'
+import { isReadablePlanInWorkspace, readPlanDocumentInWorkspace } from '../../plans'
 
 export interface StartWorkflowToolDeps {
   getOrchestrator: () => WorkflowOrchestrator | undefined
@@ -28,6 +29,28 @@ function failed(error: string): ToolResult {
   return { success: false, output: '', error }
 }
 
+function readActivePlanContext(context: ToolContext): Record<string, unknown> | undefined {
+  if (!context.sessionStore || !context.sessionId) return undefined
+  try {
+    const session = context.sessionStore.load(context.sessionId)
+    const activePlan = session?.activePlan
+    if (!activePlan || !isReadablePlanInWorkspace(context.workingDir, activePlan.path)) {
+      return undefined
+    }
+    const content = readPlanDocumentInWorkspace(context.workingDir, activePlan.path)
+    if (!content) return undefined
+    return {
+      activePlan: {
+        path: activePlan.path,
+        title: activePlan.title,
+        content
+      }
+    }
+  } catch {
+    return undefined
+  }
+}
+
 export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecutor {
   return {
     name: 'start_workflow',
@@ -46,6 +69,10 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
         reason: {
           type: 'string',
           description: '本次编排要完成的用户请求与上下文'
+        },
+        runId: {
+          type: 'string',
+          description: '可选：恢复已有的中断或失败 workflow run；必须使用该 run 的原始 id'
         }
       },
       required: ['workflow', 'startStage', 'reason'],
@@ -58,6 +85,10 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
       if ('error' in startStage) return failed(startStage.error)
       const reason = readRequiredString(args, 'reason')
       if ('error' in reason) return failed(reason.error)
+      const runId = args.runId
+      if (runId !== undefined && (typeof runId !== 'string' || runId.trim() === '')) {
+        return failed('start_workflow 参数 runId 必须是非空字符串')
+      }
 
       const orchestrator = deps.getOrchestrator()
       if (!orchestrator) return failed('start_workflow 当前不可用：编排器未装配')
@@ -65,12 +96,16 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
         return failed('start_workflow 当前不可用：AgentLoop 未提供完整工作流宿主能力')
       }
 
+      const injectedContext = readActivePlanContext(context)
+
       const outcome = await orchestrator.start({
         workflow: workflow.value,
         startStage: startStage.value,
         request: reason.value,
         autoMode: context.autoMode ?? false,
         abortSignal: context.abortSignal,
+        ...(typeof runId === 'string' ? { runId: runId.trim() } : {}),
+        ...(injectedContext ? { injectedContext } : {}),
         host: {
           workspaceRoot: context.workspaceRoot ?? context.workingDir,
           ...(context.sessionId ? { sessionId: context.sessionId } : {}),
@@ -98,8 +133,9 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
       if (outcome.status === 'cancelled') {
         return failed(`工作流已取消（runId=${outcome.runId}）`)
       }
-      return failed(outcome.error)
+      return failed(
+        `${outcome.error}${outcome.runId ? `（runId=${outcome.runId}）` : ''}`
+      )
     }
   }
 }
-

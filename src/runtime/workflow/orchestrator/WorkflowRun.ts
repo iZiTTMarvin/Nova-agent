@@ -12,6 +12,7 @@ import { createHostFns, releaseWorktree, type HostContext } from '../host'
 import { TaskScope, type TaskScopeReason } from '../scheduling/TaskScope'
 import { makeRunSemaphore } from '../scheduling/semaphore'
 import { loadJournal } from '../state/journal'
+import { writeWorkflowRunMetadata } from '../state/runMetadata'
 import type { WorkflowDefinition, WorkflowResult } from '../definitions/types'
 import type {
   StartWorkflowOptions,
@@ -152,6 +153,7 @@ export class WorkflowRun {
   }
 
   private async runOnce(): Promise<WorkflowRunOutcome> {
+    this.persistMetadata()
     this.emitRunState()
 
     if (this.cancelRequested) {
@@ -229,7 +231,31 @@ export class WorkflowRun {
     this.detachAbort?.()
     await this.reclaimWorktrees(closeResult.settled)
     this.updatedAt = new Date().toISOString()
+    this.persistMetadata()
     this.emitRunState()
+  }
+
+  /** 元数据只记录 resume 校验和诊断所需的快照，不复制阶段产物。 */
+  private persistMetadata(): void {
+    const snapshot = this.snapshot()
+    try {
+      writeWorkflowRunMetadata(this.ctx.workspaceRoot, {
+        version: 1,
+        runId: snapshot.runId,
+        workflow: snapshot.workflow,
+        ...(snapshot.sessionId !== undefined ? { sessionId: snapshot.sessionId } : {}),
+        status: snapshot.status,
+        phase: snapshot.phase,
+        startedAt: snapshot.startedAt,
+        updatedAt: snapshot.updatedAt,
+        ...(snapshot.error !== undefined ? { error: snapshot.error } : {})
+      })
+    } catch (error) {
+      console.warn(
+        `[workflow] run metadata 写入失败：${snapshot.runId}`,
+        error instanceof Error ? error.message : error
+      )
+    }
   }
 
   /**
