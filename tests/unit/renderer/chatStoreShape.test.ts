@@ -14,6 +14,7 @@ const CHAT_STATE_KEYS = [
   'loadOlderMessages', 'finishBranchMetaRefresh', 'dismissTier1BranchNotice', 'applyStreamDeltas',
   'handleMessageStart', 'handleAttemptFailed', 'handleThinkingDelta', 'handleTextDelta',
   'handleToolCallStart', 'handleToolCallDelta', 'handleToolCall', 'handleToolResult',
+  'handleWorkflowProgress',
   'handleDiffUpdate', 'handleMessageEnd', 'handleError', 'handleRecoveryState',
   'handleRecoveryHint', 'handleHookError', 'markRunningAsCancelled', 'enqueuePendingMessage',
   'removePendingMessage', 'clearPendingMessages', 'syncFromWorkspace'
@@ -28,7 +29,7 @@ describe('chat store shape baseline', () => {
     const actual = Object.keys(useChatStore.getState()).sort()
     const expected = [...CHAT_STATE_KEYS].sort()
     expect(actual).toEqual(expected)
-    expect(actual).toHaveLength(63)
+    expect(actual).toHaveLength(64)
   })
 
   it('resetChatStoreForTests 恢复全部状态字段默认值', () => {

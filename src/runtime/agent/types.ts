@@ -10,32 +10,19 @@ import type { RecoveryState } from './recovery/RecoveryStateMachine'
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { AskQuestionItem } from '../../shared/askQuestion/types'
 import type { HookEvent } from '../../shared/agent/types'
+import type {
+  WorkflowProgressDetail,
+  WorkflowProgressStatus,
+  WorkflowRunStatus
+} from '../../shared/workflow/types'
 
 export type { HookEvent }
 
 /**
- * 编排进度语义。
- * started/completed/failed 描述阶段本身；task_* 与 batch_* 描述并行 implement 的批次进展。
+ * 编排进度语义与补充信息的唯一来源在 shared/workflow：
+ * main 的 IPC 转发与 renderer 的进度块必须与本层看到同一套类型。
  */
-export type WorkflowProgressStatus =
-  | 'started'
-  | 'completed'
-  | 'failed'
-  | 'task_started'
-  | 'task_complete'
-  | 'task_failed'
-  | 'batch_started'
-  | 'batch_merge'
-  | 'info'
-
-/** 进度块的可选补充信息；字段全部可缺省，renderer 只做展示不做逻辑分支 */
-export interface WorkflowProgressDetail {
-  taskId?: string
-  taskName?: string
-  batchIndex?: number
-  batchSize?: number
-  message?: string
-}
+export type { WorkflowProgressStatus, WorkflowProgressDetail }
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
@@ -149,6 +136,19 @@ export type AgentEvent =
       phase: string
       status: WorkflowProgressStatus
       detail?: WorkflowProgressDetail
+    }
+  | {
+      /**
+       * 编排 run 状态变更（running → completed / failed / cancelled）。
+       * renderer 据此让输入框进入 / 退出运行态；状态真源仍在 orchestrator，本事件只是投影。
+       */
+      type: 'workflow_run_state'
+      runId: string
+      sessionId?: string
+      workflow: string
+      status: WorkflowRunStatus
+      phase: string
+      error?: string
     }
   | {
       /** 编排脚本 log()：脚本日志行 */

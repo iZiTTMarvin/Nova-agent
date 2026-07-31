@@ -202,6 +202,26 @@ export function forwardEventToRenderer(
         phase: event.phase
       })
       break
+    case 'workflow_progress':
+      // 进度块走独立 channel：它在聊天流中产出消息块，与 compose 进度面板不是同一消费者
+      webContents.send('workflow:progress', {
+        runId: event.runId,
+        sessionId: event.sessionId,
+        phase: event.phase,
+        status: event.status,
+        ...(event.detail ? { detail: event.detail } : {})
+      })
+      break
+    case 'workflow_run_state':
+      webContents.send('workflow:run-state', {
+        runId: event.runId,
+        sessionId: event.sessionId,
+        workflow: event.workflow,
+        status: event.status,
+        phase: event.phase,
+        ...(event.error !== undefined ? { error: event.error } : {})
+      })
+      break
     case 'workflow_log':
       webContents.send('compose:log', {
         runId: event.runId,

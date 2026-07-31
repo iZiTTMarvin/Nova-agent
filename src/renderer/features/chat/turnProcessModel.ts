@@ -359,9 +359,7 @@ export function buildProcessTimeline(
     }
 
     flushToolRun()
-    if (block.type === 'thinking' || block.type === 'text' || block.type === 'image') {
-      segments.push({ kind: 'block', block, index: i })
-    }
+    segments.push({ kind: 'block', block, index: i })
   }
   flushToolRun()
 

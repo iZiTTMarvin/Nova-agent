@@ -73,13 +73,10 @@ export function buildBlockRenderUnits(
   for (let index = 0; index < blocks.length; index++) {
     const block = blocks[index]
 
-    if (block.type === 'thinking' || block.type === 'text' || block.type === 'image') {
+    // 非 tool 块（thinking / text / image / 编排进度）一律打断 tool 连续段并按原序输出
+    if (block.type !== 'tool') {
       flushBuffer()
       units.push({ kind: 'block', block, index })
-      continue
-    }
-
-    if (block.type !== 'tool') {
       continue
     }
 

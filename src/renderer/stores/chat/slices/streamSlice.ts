@@ -288,6 +288,33 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     })
   },
 
+  handleWorkflowProgress: (payload) => {
+    set(state => {
+      const messageId = state.currentGeneratingMessageId
+      if (!messageId) return state
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg) return state
+
+      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
+      blocks.push({
+        type: 'workflow_progress',
+        runId: payload.runId,
+        phase: payload.phase,
+        status: payload.status,
+        ...(payload.detail ? { detail: payload.detail } : {})
+      })
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = bumpRevision({ ...msg, blocks })
+      return commitMessageList(state, {
+        nextMessages,
+        nextIndex: state.messageIndexById,
+        skipWindowTrim: true
+      })
+    })
+  },
+
   applyStreamDeltas: (deltas: StreamDeltaBatch) => {
     if (deltas.length === 0) return
 

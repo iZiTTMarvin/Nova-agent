@@ -37,7 +37,9 @@ import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { ComposeProgressPanel } from '../compose/ComposeProgressPanel'
 import { ComposeAskUserPanel } from '../compose/ComposeAskUserPanel'
 import { useComposeStore } from '../compose/useComposeStore'
+import { useWorkflowStore } from '../workflow/useWorkflowStore'
 import { RecoveryBanner } from './RecoveryBanner'
+import { formatPhaseLabel } from './WorkflowProgressBlock'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
   fileToImageAttachment,
@@ -136,6 +138,26 @@ export const ChatPanel: React.FC = () => {
   const pendingComposeAskUser = useComposeStore(state => state.pendingAskUser)
   const composeSessionId = useComposeStore(state => state.sessionId)
   const loadComposeState = useComposeStore(state => state.loadStateFromDisk)
+
+  // ── 编排运行态（run 状态真源在主进程 orchestrator，本处只读投影） ──
+  const activeWorkflowRun = useWorkflowStore(state => state.activeRun)
+  const workflowBusyNotice = useWorkflowStore(state => state.busyNotice)
+  const dismissWorkflowBusyNotice = useWorkflowStore(state => state.dismissBusyNotice)
+  const workflowRunning =
+    !!activeWorkflowRun &&
+    (activeWorkflowRun.sessionId === null || activeWorkflowRun.sessionId === currentSessionId)
+  /**
+   * 本地拒绝发送时也要给出与主进程一致的提示。
+   * 主进程的 workflow:busy 是竞态兜底（消息已经发出去才被拒），两条路径共用同一份提示状态。
+   */
+  const showWorkflowBusyNotice = useCallback(() => {
+    if (!activeWorkflowRun) return
+    useWorkflowStore.getState().showBusyNotice({
+      runId: activeWorkflowRun.runId,
+      workflow: activeWorkflowRun.workflow,
+      phase: activeWorkflowRun.phase
+    })
+  }, [activeWorkflowRun])
   /** 编排面板/askUser 仅归属当前会话时渲染 */
   const composeBelongsToCurrent =
     !!currentSessionId && composeSessionId === currentSessionId
@@ -423,6 +445,12 @@ export const ChatPanel: React.FC = () => {
 
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
+    // 编排运行态：回车不发送、不排队。编排可能跑很久，排队消息会在用户早已遗忘后
+    // 才被当成一条全新请求消费，所以这里改为提示是否中断，输入内容保留在框里。
+    if (workflowRunning) {
+      showWorkflowBusyNotice()
+      return
+    }
     // 并发模型：仅拦截「当前会话」仍在跑的情况（isGenerating 已按 runStatus 派生）。
     // 其它会话在后台跑不再拦截本会话发送。
     if (isGenerating || sendInFlight) return
@@ -758,6 +786,32 @@ export const ChatPanel: React.FC = () => {
             </button>
           )}
 
+          {/* 编排运行态：回车被拒后提示是否中断；确认后穿透到 TaskScope.close */}
+          {workflowBusyNotice && (
+            <div className="chat-cross-turn-notice" role="alert">
+              <span className="chat-cross-turn-notice__text">
+                编排运行中（{formatPhaseLabel(workflowBusyNotice.phase)}）——是否中断？
+              </span>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={() => {
+                  dismissWorkflowBusyNotice()
+                  void cancelExecution()
+                }}
+              >
+                中断编排
+              </button>
+              <button
+                type="button"
+                className="chat-cross-turn-notice__stop"
+                onClick={dismissWorkflowBusyNotice}
+              >
+                继续等待
+              </button>
+            </div>
+          )}
+
           {/* 取消 grace 超时：部分任务未退出 + 强制终止 */}
           {cancelGraceExceeded && (
             <div className="chat-cross-turn-notice" role="alert">
@@ -911,9 +965,11 @@ export const ChatPanel: React.FC = () => {
                 className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
                 placeholder={pendingAskQuestion
                   ? '请先回答上方问题，再发送新消息（或输入排队）'
-                  : isGenerating
-                    ? 'Agent 正在运行，输入将进入排队队列...'
-                    : '向 Nova 提问或分配编程任务...'}
+                  : workflowRunning
+                    ? '编排运行中，回车将提示是否中断...'
+                    : isGenerating
+                      ? 'Agent 正在运行，输入将进入排队队列...'
+                      : '向 Nova 提问或分配编程任务...'}
                 rows={1}
                 value={inputVal}
                 onChange={handleInputChange}
@@ -935,11 +991,11 @@ export const ChatPanel: React.FC = () => {
                   <ContextIndicator />
                 </div>
                 <div>
-                  {isGenerating || sendInFlight || cancelling ? (
+                  {isGenerating || sendInFlight || cancelling || workflowRunning ? (
                     <button
                       className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
                       onClick={() => void cancelExecution()}
-                      title={cancelling ? '正在停止' : '中断生成'}
+                      title={cancelling ? '正在停止' : workflowRunning ? '中断编排' : '中断生成'}
                       disabled={cancelling && !cancelGraceExceeded}
                     >
                       <StopIcon size={14} />

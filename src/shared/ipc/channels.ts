@@ -167,6 +167,10 @@ export const COMPOSE_PHASE_CHANGE = 'compose:phase-change' as const
 export const COMPOSE_TASK_UPDATE = 'compose:task-update' as const
 export const COMPOSE_ASK_USER = 'compose:ask-user' as const
 export const COMPOSE_LOG = 'compose:log' as const
+/** 编排进度块 / run 状态 / 运行态互斥信号 */
+export const WORKFLOW_PROGRESS = 'workflow:progress' as const
+export const WORKFLOW_RUN_STATE = 'workflow:run-state' as const
+export const WORKFLOW_BUSY = 'workflow:busy' as const
 /** 自动更新已下载，提示用户重启安装 */
 export const APP_UPDATE_DOWNLOADED = 'app:update-downloaded' as const
 export const COMPOSE_STATE = 'compose:state' as const

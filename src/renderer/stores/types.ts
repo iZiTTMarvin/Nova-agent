@@ -16,12 +16,36 @@ import type {
   BranchMeta
 } from '../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../shared/diff/types'
+import type {
+  WorkflowProgressDetail,
+  WorkflowProgressStatus
+} from '../../shared/workflow/types'
 
 /** 流式增量阶段携带的额外字段：原始 JSON 字符串 */
 export type RendererToolBlock = ToolBlock & { argumentsRaw?: string }
 
+/**
+ * 编排进度块。
+ *
+ * 只存在于渲染层：它由 workflow:progress 事件即时产出，不参与会话持久化
+ * （shared 的 MessageBlock 不含此变体），因此重载历史会话后不会重现。
+ * 进度是运行期可观测信息，不是对话内容。
+ */
+export interface RendererWorkflowProgressBlock {
+  type: 'workflow_progress'
+  runId: string
+  phase: string
+  status: WorkflowProgressStatus
+  detail?: WorkflowProgressDetail
+}
+
 /** 顺序消息块：ToolBlock 使用携带 argumentsRaw 的 renderer 扩展版本 */
-export type RendererMessageBlock = ThinkingBlock | TextBlock | RendererToolBlock | ImageBlock
+export type RendererMessageBlock =
+  | ThinkingBlock
+  | TextBlock
+  | RendererToolBlock
+  | ImageBlock
+  | RendererWorkflowProgressBlock
 
 /** 渲染器专用 ToolCall：携带执行状态、结果、原始 JSON */
 export interface ExtendedToolCall extends ToolCall {

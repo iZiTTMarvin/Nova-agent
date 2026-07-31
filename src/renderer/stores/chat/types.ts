@@ -8,6 +8,10 @@ import type { Session } from '../../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus } from '../../../shared/diff/types'
 import type { Tier1BranchContext } from '../../../shared/workspace/types'
 import type { HookEvent } from '../../../shared/agent/types'
+import type {
+  WorkflowProgressDetail,
+  WorkflowProgressStatus
+} from '../../../shared/workflow/types'
 import type { RendererRecoveryState } from '../../../shared/ipc/types'
 import type { ImageAttachment } from '../../lib/image-attachments'
 import type {
@@ -85,6 +89,19 @@ export interface StreamSliceState {
    */
   handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
   handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
+  /**
+   * 编排进度事件 → 当前生成中消息追加一个进度块。
+   *
+   * 事件只带 runId，没有 messageId：编排是在 start_workflow 工具调用内部推进的，
+   * 归属消息必然是本会话当前生成中的那一条。没有生成中消息时丢弃，
+   * 避免把运行期信息写进历史消息。
+   */
+  handleWorkflowProgress: (payload: {
+    runId: string
+    phase: string
+    status: WorkflowProgressStatus
+    detail?: WorkflowProgressDetail
+  }) => void
 }
 
 /** recoverySlice 拥有的恢复态簿记字段与事件 handler。 */

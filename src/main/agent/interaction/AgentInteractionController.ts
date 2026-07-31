@@ -8,6 +8,7 @@ import {
   getRunExecutionRegistry,
   getActiveRunId
 } from '../../services/RunCoordinatorHost'
+import { cancelWorkflowRunsForSession } from '../../services/WorkflowOrchestratorHost'
 import { markActiveStreamsCancelled } from '../events'
 import { getAgentLoopForRun, disposeIdleLoopForSession } from '../turn'
 import {
@@ -109,6 +110,10 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
     // 两者都按 sessionId 精确清理，不影响并发中的其它会话。
     const sessionId = beforeCancel.sessionId
     if (sessionId) {
+      // 编排 run 的取消必须穿透到 TaskScope.close：只 abort AgentLoop 不会终止
+      // 已 spawn 的子 agent，也不会触发 worktree 回收。await 到收尾完成再返回，
+      // 让 renderer 拿到结果时工作区已按生命周期契约处理干净。
+      await cancelWorkflowRunsForSession(sessionId)
       disposeIdleLoopForSession(sessionId)
       clearSteeringQueue(sessionId)
     }

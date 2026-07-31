@@ -16,6 +16,7 @@ import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
+import { WorkflowProgressBlock } from './WorkflowProgressBlock'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
 import { PlanReviewCard } from './PlanReviewCard'
@@ -82,6 +83,10 @@ function hasVisibleBlocks(blocks: RendererMessageBlock[] | undefined, mode: Mode
       return block.content.trim().length > 0
     }
     if (block.type === 'image') {
+      return true
+    }
+    // 进度块本身就是可见内容：编排启动后不应再显示「思考中」占位
+    if (block.type === 'workflow_progress') {
       return true
     }
     return shouldRenderToolBlock(mode, block.toolName)
@@ -178,6 +183,13 @@ function renderMessageUnit(
         )
       case 'image':
         return null
+      case 'workflow_progress':
+        return (
+          <WorkflowProgressBlock
+            key={`workflow-progress-${index}-${block.runId}-${block.phase}-${block.status}`}
+            block={block}
+          />
+        )
       default:
         return null
     }

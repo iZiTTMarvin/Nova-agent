@@ -7,6 +7,11 @@ import type { ModelConfig, LlmRegistry } from '../config'
 import type { DiffEntry, DiffReviewStatus, MessageDiffsState } from '../diff'
 import type { NormalizedUsage } from '../model/types'
 import type { HookEvent } from '../agent/types'
+import type {
+  WorkflowProgressDetail,
+  WorkflowProgressStatus,
+  WorkflowRunStatus
+} from '../workflow/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
 import type {
@@ -756,6 +761,33 @@ export interface IpcEvents {
     runId: string
     sessionId?: string
     state: Record<string, unknown>
+  }
+  /** 编排进度块：在聊天流中渲染为醒目进度条 */
+  'workflow:progress': {
+    runId: string
+    sessionId?: string
+    phase: string
+    status: WorkflowProgressStatus
+    detail?: WorkflowProgressDetail
+  }
+  /** 编排 run 状态投影：renderer 据此让输入框进入 / 退出运行态 */
+  'workflow:run-state': {
+    runId: string
+    sessionId?: string
+    workflow: string
+    status: WorkflowRunStatus
+    phase: string
+    error?: string
+  }
+  /**
+   * 运行态入口互斥信号：编排运行期间用户仍然发出了新消息，主进程已拒绝。
+   * renderer 收到后提示「编排运行中——是否中断？」，不把消息放进 steering queue。
+   */
+  'workflow:busy': {
+    sessionId: string
+    runId: string
+    workflow: string
+    phase: string
   }
   /**
    * @deprecated 阶段 6 起不再广播。轮次归属请订阅 `run:snapshot`。

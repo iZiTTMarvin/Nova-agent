@@ -1,0 +1,73 @@
+/**
+ * 编排进度块样式。
+ *
+ * 视觉目标是「在正文流里一眼可见」：左侧彩色竖条 + 浅色背景 + 图标。
+ * 刻意不用动画，避免长编排里几十条进度块同时闪烁。
+ */
+.workflow-progress {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 12px 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+.workflow-progress__bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 3px 0 0 3px;
+}
+
+.workflow-progress__icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-progress__text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.workflow-progress--active {
+  background: rgba(56, 152, 236, 0.08);
+  color: #1b5e97;
+}
+.workflow-progress--active .workflow-progress__bar {
+  background: #3898ec;
+}
+
+.workflow-progress--done {
+  background: rgba(22, 163, 74, 0.08);
+  color: #15803d;
+}
+.workflow-progress--done .workflow-progress__bar {
+  background: #16a34a;
+}
+
+.workflow-progress--error {
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+.workflow-progress--error .workflow-progress__bar {
+  background: #dc2626;
+}
+
+.workflow-progress--info {
+  background: rgba(100, 116, 139, 0.1);
+  color: #475569;
+}
+.workflow-progress--info .workflow-progress__bar {
+  background: #64748b;
+}

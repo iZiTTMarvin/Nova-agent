@@ -1,9 +1,14 @@
 import type { MessageBlock, Mode } from '../../../shared/session/types'
 import { isModeHiddenWriteTool } from '../../../shared/session/toolVisibility'
 
-/** 仅最后一个 thinking block 可以继续计时，避免旧思考块也显示“仍在思考” */
+/**
+ * 仅最后一个 thinking block 可以继续计时，避免旧思考块也显示“仍在思考”。
+ *
+ * 参数只取 type，因此声明为结构化最小面：渲染层的块联合是 shared MessageBlock 的超集
+ * （含仅存在于渲染期的编排进度块），本策略无需感知具体变体。
+ */
 export function isActiveThinkingBlock(
-  blocks: MessageBlock[],
+  blocks: ReadonlyArray<{ type: MessageBlock['type'] | string }>,
   index: number,
   isGenerating: boolean,
   messageId: string,
