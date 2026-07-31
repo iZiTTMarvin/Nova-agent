@@ -26,7 +26,7 @@ import {
   assertSafeRelativePath,
   canonicalizeRoot,
   resolveExistingPathUnderRoot
-} from '../pathSafety'
+} from './pathSafety'
 
 export type FileEffectAction = 'create' | 'modify' | 'delete'
 export type FileEffectStatus = 'prepared' | 'committed'

@@ -9,6 +9,12 @@ import {
   layerOf,
   reconcileBoundaryDebts,
   RULE_RUNTIME_RUN_WORKFLOW,
+  RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS,
+  RULE_WORKFLOW_DEFINITIONS_CANNOT_IMPORT_ORCHESTRATOR,
+  RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW,
+  RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW,
+  RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS,
+  workflowLayerOf,
   RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC,
   RULE_MAIN_AGENT_CANNOT_IMPORT_IPC,
   RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS,
@@ -393,5 +399,145 @@ describe('import boundary production gate', () => {
     if (reconcile.unexpected.length > 0 || reconcile.stale.length > 0) {
       expect.fail(formatReconcileFailure(reconcile))
     }
+  })
+})
+
+describe('编排内部分层边界（workflow/）', () => {
+  const WORKFLOW_FILES = new Set([
+    'src/runtime/workflow/types.ts',
+    'src/runtime/workflow/orchestrator/WorkflowOrchestrator.ts',
+    'src/runtime/workflow/definitions/compose/implement.ts',
+    'src/runtime/workflow/host/agentFn.ts',
+    'src/runtime/workflow/host/types.ts',
+    'src/runtime/workflow/scheduling/TaskScope.ts',
+    'src/runtime/workflow/scheduling/semaphore.ts',
+    'src/runtime/workflow/effects/fileEffect.ts',
+    'src/runtime/workflow/effects/pathSafety.ts',
+    'src/runtime/workflow/state/journal.ts',
+    'src/runtime/workflow/state/paths.ts',
+    'src/runtime/storage/atomicFile.ts'
+  ])
+  const exists = virtualExists(WORKFLOW_FILES)
+
+  it('识别 workflow 内部层级，非分层目录返回 null', () => {
+    expect(workflowLayerOf('src/runtime/workflow/host/agentFn.ts')).toBe('host')
+    expect(workflowLayerOf('src/runtime/workflow/effects/fileEffect.ts')).toBe('effects')
+    expect(workflowLayerOf('src/runtime/workflow/definitions/compose/implement.ts'))
+      .toBe('definitions')
+    expect(workflowLayerOf('src/runtime/workflow/types.ts')).toBeNull()
+    expect(workflowLayerOf('src/runtime/workflow/v2/StepEngine.ts')).toBeNull()
+    expect(workflowLayerOf('src/runtime/run/RunCoordinator.ts')).toBeNull()
+  })
+
+  it('host 不得 import definitions', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/host/agentFn.ts',
+      sourceText: `import { runImplement } from '../definitions/compose/implement'`,
+      exists
+    })
+    expectOnlyRule(result.violations, RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS)
+  })
+
+  it('definitions 不得 import orchestrator', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/definitions/compose/implement.ts',
+      sourceText: `import { WorkflowOrchestrator } from '../../orchestrator/WorkflowOrchestrator'`,
+      exists
+    })
+    expectOnlyRule(result.violations, RULE_WORKFLOW_DEFINITIONS_CANNOT_IMPORT_ORCHESTRATOR)
+  })
+
+  it('effects 不得 import workflow 下任意其他模块（含根级 types）', () => {
+    const toState = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
+      sourceText: `import { runJournalPath } from '../state/paths'`,
+      exists
+    })
+    expectOnlyRule(toState.violations, RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW)
+
+    const toRoot = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
+      sourceText: `import type { ComposeState } from '../types'`,
+      exists
+    })
+    expectOnlyRule(toRoot.violations, RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW)
+  })
+
+  it('effects 内部互相 import 与依赖 workflow 之外的模块均放行', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
+      sourceText: `
+        import { assertSafeRelativePath } from './pathSafety'
+        import { atomicWriteFileSync } from '../../storage/atomicFile'
+      `,
+      exists
+    })
+    expect(result.violations).toEqual([])
+    expect(result.unresolved).toEqual([])
+  })
+
+  it('scheduling 不得 import workflow 下任意其他模块', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/scheduling/TaskScope.ts',
+      sourceText: `import { appendJournalSync } from '../state/journal'`,
+      exists
+    })
+    expectOnlyRule(result.violations, RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW)
+  })
+
+  it('scheduling 同层 import 放行', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/scheduling/TaskScope.ts',
+      sourceText: `import { makeSemaphore } from './semaphore'`,
+      exists
+    })
+    expect(result.violations).toEqual([])
+  })
+
+  it('state 不得 import host 或 definitions', () => {
+    const toHost = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/state/journal.ts',
+      sourceText: `import type { HostContext } from '../host/types'`,
+      exists
+    })
+    expectOnlyRule(toHost.violations, RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS)
+
+    const toDefinitions = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/state/journal.ts',
+      sourceText: `import { runImplement } from '../definitions/compose/implement'`,
+      exists
+    })
+    expectOnlyRule(
+      toDefinitions.violations,
+      RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS
+    )
+  })
+
+  it('state 依赖根级契约类型与 scheduling 不违规', () => {
+    const result = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/state/journal.ts',
+      sourceText: `
+        import type { ComposeState } from '../types'
+        import { TaskScope } from '../scheduling/TaskScope'
+      `,
+      exists
+    })
+    expect(result.violations).toEqual([])
+  })
+
+  it('type-only 与 dynamic import 同样命中内部分层规则', () => {
+    const typeOnly = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/host/agentFn.ts',
+      sourceText: `import type { PlanTask } from '../definitions/compose/implement'`,
+      exists
+    })
+    expectOnlyRule(typeOnly.violations, RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS)
+
+    const dynamic = collectViolationsFromSource({
+      fromFile: 'src/runtime/workflow/scheduling/semaphore.ts',
+      sourceText: `await import('../state/journal')`,
+      exists
+    })
+    expectOnlyRule(dynamic.violations, RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW)
   })
 })

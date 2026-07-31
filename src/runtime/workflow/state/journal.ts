@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { runJournalPath } from './paths'
-import { atomicWriteFileSync } from '../storage/atomicFile'
+import { atomicWriteFileSync } from '../../storage/atomicFile'
 
 /** 递归排序对象键，保证 JSON.stringify 与字段书写顺序无关 */
 export function canonical(value: unknown): unknown {

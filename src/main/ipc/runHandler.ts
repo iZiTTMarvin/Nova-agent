@@ -127,7 +127,7 @@ export function registerRunHandler(): void {
       const committed = (snap.toolCommits ?? []).filter(c => c.phase === 'committed')
       try {
         const { previewRollback, confirmRollback, listFileEffects } = await import(
-          '../../runtime/workflow/v2/EffectReceipt'
+          '../../runtime/workflow/effects/fileEffect'
         )
         const workspaceRoot = snap.workspaceId
         const effects = listFileEffects(workspaceRoot, params.runId)

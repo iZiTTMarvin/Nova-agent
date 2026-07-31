@@ -6,7 +6,7 @@ import { relative, resolve } from 'path'
 import {
   canonicalizeRoot,
   resolveExistingPathUnderRoot
-} from '../pathSafety'
+} from '../effects/pathSafety'
 
 import type {
   XForgeWorkspaceBaselineEntry,

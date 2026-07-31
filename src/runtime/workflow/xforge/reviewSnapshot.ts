@@ -5,12 +5,12 @@ import {
   listFileEffectsDetailedAsync,
   resolveBackupRef,
   type FileEffectReceipt
-} from '../v2/EffectReceipt'
+} from '../effects/fileEffect'
 import {
   canonicalizeRoot,
   isPathInside,
   resolveExistingPathUnderRoot
-} from '../pathSafety'
+} from '../effects/pathSafety'
 import { isPathAllowedByChangeScope, normalizeWorkspaceRelativePath } from './changeScope'
 import type { XForgeEvidenceRef } from './runState'
 import { getXForgeRunRoot, writeXForgeEvidenceAsync } from './stageArtifacts'

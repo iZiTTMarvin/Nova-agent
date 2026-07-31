@@ -6,7 +6,7 @@
 import vm from 'node:vm'
 import type { HostFn } from './types'
 import { marshalIn, marshalOut } from './marshal'
-import { TaskScope, withTaskScope } from './TaskScope'
+import { TaskScope, withTaskScope } from './scheduling/TaskScope'
 
 export interface SandboxOptions {
   /** 整脚本墙钟预算，默认 12h */

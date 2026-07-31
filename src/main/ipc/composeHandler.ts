@@ -371,7 +371,7 @@ export function registerComposeHandler(getMainWindow: () => BrowserWindow | null
     // 禁止 git reset --hard / git clean；仅按 FileEffectReceipt 逆序安全回滚。
     void params.sessionId
     const { listFileEffects, previewRollback, confirmRollback } = await import(
-      '../../runtime/workflow/v2/EffectReceipt'
+      '../../runtime/workflow/effects/fileEffect'
     )
     const effects = listFileEffects(params.workspaceRoot, params.runId)
     if (effects.length === 0) {

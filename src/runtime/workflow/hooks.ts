@@ -19,22 +19,22 @@ import * as Worktree from '../worktree'
 import type { Mode } from '../../shared/session/types'
 import type { ToolContext } from '../tools/types'
 import type { AgentHookOpts, ComposeState, HostFn, WorkflowRuntimeDeps } from './types'
-import { ensureRunDir, runLogPath } from './paths'
+import { ensureRunDir, runLogPath } from './state/paths'
 import { marshalOut } from './marshal'
 import { agentRoute } from '../agent/turn'
-import { appendJournalSync, journalKeyBase, type JournalLoad } from './journal'
-import type { Semaphore } from './semaphore'
-import { applyStatePatch } from './state'
-import { topoSort, type TopoTask } from './topo'
+import { appendJournalSync, journalKeyBase, type JournalLoad } from './state/journal'
+import type { Semaphore } from './scheduling/semaphore'
+import { applyStatePatch } from './state/runState'
+import { topoSort, type TopoTask } from './scheduling/topo'
 import { extractJson } from './jsonExtract'
-import type { TaskScope } from './TaskScope'
+import type { TaskScope } from './scheduling/TaskScope'
 import {
   effectIdFromKey,
   injectFault,
   isSideEffectCtx,
   SideEffectBlockedError,
   type SideEffectCtx
-} from './v2/sideEffectCtx'
+} from './effects/sideEffectCtx'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是编排子代理，不要反问父 agent。'
 const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000
@@ -405,7 +405,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
             // resume：已有 committed receipt 且目录仍在 → 复用，不重建
             if (stepCtx) {
               const { tryReuseWorktreeReceipt, commitWorktreeReceipt } = await import(
-                './v2/WorktreeReceipt'
+                './effects/worktreeEffect'
               )
               const reused = tryReuseWorktreeReceipt({
                 workspaceRoot,
@@ -435,7 +435,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
               }
 
               // 中断恢复：有 receipt 但目录已删 → retryable 可重建，否则 blocked
-              const { readWorktreeReceipt, worktreeEffectId } = await import('./v2/WorktreeReceipt')
+              const { readWorktreeReceipt, worktreeEffectId } = await import('./effects/worktreeEffect')
               const effectId = worktreeEffectId(stepCtx)
               const prior = readWorktreeReceipt(workspaceRoot, runId, effectId)
               if (stepCtx.resumingInterrupted && !prior) {
@@ -473,7 +473,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
 
               // 创建成功即写 committed receipt（目录已存在，可对账）
               if (stepCtx) {
-                const { commitWorktreeReceipt } = await import('./v2/WorktreeReceipt')
+                const { commitWorktreeReceipt } = await import('./effects/worktreeEffect')
                 injectFault(stepCtx.stepId, 'after-prepared')
                 commitWorktreeReceipt({
                   workspaceRoot,
@@ -497,7 +497,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
                 )
                 ctx.ownedWorktrees.delete(info.directory)
                 if (stepCtx) {
-                  const { markWorktreeCleaned } = await import('./v2/WorktreeReceipt')
+                  const { markWorktreeCleaned } = await import('./effects/worktreeEffect')
                   markWorktreeCleaned(workspaceRoot, runId, { stepCtx })
                 }
                 createdDir = undefined
@@ -655,7 +655,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       commitFileEffect,
       readFileEffect,
       hashFileIfExists
-    } = await import('./v2/EffectReceipt')
+    } = await import('./effects/fileEffect')
 
     // 稳定 effectId：有 stepCtx 用 idempotencyKey；v1 兼容回退随机
     const effectId = stepCtx
@@ -748,7 +748,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
       recordFileEffect,
       readFileEffect,
       hashFileIfExists
-    } = await import('./v2/EffectReceipt')
+    } = await import('./effects/fileEffect')
 
     const effectId = stepCtx
       ? effectIdFromKey(`${stepCtx.idempotencyKey}:delete`)
@@ -857,7 +857,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
         bashEffectId,
         readBashReceipt,
         writeBashReceipt
-      } = await import('./v2/BashReceipt')
+      } = await import('./effects/bashEffect')
 
       // 已有成功 receipt 且 commandHash 匹配 → 复用
       const reused = tryReuseBashReceipt({ workspaceRoot, stepCtx, command })
@@ -924,7 +924,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     }
 
     if (stepCtx && result.success) {
-      const { commitBashReceipt } = await import('./v2/BashReceipt')
+      const { commitBashReceipt } = await import('./effects/bashEffect')
       injectFault(stepCtx.stepId, 'after-execute')
       commitBashReceipt({
         workspaceRoot,
@@ -1036,7 +1036,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     ctx.ownedWorktrees.delete(directory)
     try {
       await Worktree.remove({ workspaceRoot, directory })
-      const { markWorktreeCleaned } = await import('./v2/WorktreeReceipt')
+      const { markWorktreeCleaned } = await import('./effects/worktreeEffect')
       markWorktreeCleaned(workspaceRoot, runId, stepCtx ? { stepCtx, directory } : { directory })
       return true
     } catch (err) {
@@ -1095,7 +1095,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
 
     if (stepCtx) {
       const { tryReuseIntegrateReceipt, commitIntegrateReceipt } = await import(
-        './v2/IntegrateReceipt'
+        './effects/integrateEffect'
       )
       const reused = tryReuseIntegrateReceipt({ workspaceRoot, stepCtx })
       if (reused) {
@@ -1115,7 +1115,7 @@ export function createHostHooks(ctx: HookContext): Record<string, HostFn> {
     const result = await agent(prompt, agentOpts)
 
     if (stepCtx && result !== null) {
-      const { commitIntegrateReceipt } = await import('./v2/IntegrateReceipt')
+      const { commitIntegrateReceipt } = await import('./effects/integrateEffect')
       injectFault(stepCtx.stepId, 'after-execute')
       commitIntegrateReceipt({
         workspaceRoot,

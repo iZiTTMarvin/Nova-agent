@@ -7,7 +7,7 @@ import {
   buildFileEffectReceipt,
   commitFileEffect,
   recordFileEffect
-} from '../../../../../src/runtime/workflow/v2/EffectReceipt'
+} from '../../../../../src/runtime/workflow/effects/fileEffect'
 import {
   createWorkspaceFingerprint,
   getXForgeRunRoot,

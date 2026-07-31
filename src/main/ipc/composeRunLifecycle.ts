@@ -6,7 +6,7 @@
  */
 import type { RunCoordinator } from '../../runtime/run/RunCoordinator'
 import type { RunExecutionRegistry } from '../../runtime/run/RunExecutionRegistry'
-import type { RunOutcome, RunWorkflowOptions } from '../../runtime/workflow/types'
+import type { RunOutcome, RunWorkflowOptions } from '../../runtime/workflow'
 
 export interface ComposeLifecycleDeps {
   coord: RunCoordinator

@@ -19,7 +19,7 @@ import {
   buildFileEffectReceipt,
   hashContent,
   recordFileEffect
-} from '../../../../../src/runtime/workflow/v2/EffectReceipt'
+} from '../../../../../src/runtime/workflow/effects/fileEffect'
 
 describe('XForge delivery Runtime adapters', () => {
   let workspaceRoot: string

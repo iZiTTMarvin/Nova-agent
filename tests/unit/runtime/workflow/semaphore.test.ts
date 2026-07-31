@@ -4,7 +4,7 @@ import {
   makeRunSemaphore,
   _resetGlobalSemaphoreForTests,
   getGlobalSemaphore
-} from '../../../../src/runtime/workflow/semaphore'
+} from '../../../../src/runtime/workflow/scheduling/semaphore'
 
 describe('workflow semaphore', () => {
   beforeEach(() => {

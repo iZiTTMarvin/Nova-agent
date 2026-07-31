@@ -7,17 +7,17 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
-import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
+import { TaskScope } from '../../../../src/runtime/workflow/scheduling/TaskScope'
 import { createHostHooks, type HookContext } from '../../../../src/runtime/workflow/hooks'
-import { makeRunSemaphore } from '../../../../src/runtime/workflow/semaphore'
-import { createInitialState } from '../../../../src/runtime/workflow/state'
+import { makeRunSemaphore } from '../../../../src/runtime/workflow/scheduling/semaphore'
+import { createInitialState } from '../../../../src/runtime/workflow/state/runState'
 import {
   readBashReceipt,
   bashEffectId,
   hashCommand
-} from '../../../../src/runtime/workflow/v2/BashReceipt'
-import { SideEffectBlockedError } from '../../../../src/runtime/workflow/v2/sideEffectCtx'
-import type { SideEffectCtx } from '../../../../src/runtime/workflow/v2/sideEffectCtx'
+} from '../../../../src/runtime/workflow/effects/bashEffect'
+import { SideEffectBlockedError } from '../../../../src/runtime/workflow/effects/sideEffectCtx'
+import type { SideEffectCtx } from '../../../../src/runtime/workflow/effects/sideEffectCtx'
 import type { WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 
 function makeHookCtx(workspaceRoot: string, runId: string): HookContext {

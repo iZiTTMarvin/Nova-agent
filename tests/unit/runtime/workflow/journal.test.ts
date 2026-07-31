@@ -6,8 +6,8 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { createHostHooks, type HookContext } from '../../../../src/runtime/workflow/hooks'
-import { makeRunSemaphore } from '../../../../src/runtime/workflow/semaphore'
-import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
+import { makeRunSemaphore } from '../../../../src/runtime/workflow/scheduling/semaphore'
+import { TaskScope } from '../../../../src/runtime/workflow/scheduling/TaskScope'
 import {
   appendJournalSync,
   clearJournal,
@@ -16,9 +16,9 @@ import {
   readScriptSha,
   scriptSha,
   writeScriptSha
-} from '../../../../src/runtime/workflow/journal'
-import { runJournalPath } from '../../../../src/runtime/workflow/paths'
-import { ensureRunDir } from '../../../../src/runtime/workflow/paths'
+} from '../../../../src/runtime/workflow/state/journal'
+import { runJournalPath } from '../../../../src/runtime/workflow/state/paths'
+import { ensureRunDir } from '../../../../src/runtime/workflow/state/paths'
 import {
   runWorkflow,
   _resetWorkflowRuntimeForTests

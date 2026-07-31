@@ -15,7 +15,7 @@ import {
   getWorkflowStatus,
   _resetWorkflowRuntimeForTests
 } from '../../../../src/runtime/workflow/runtime'
-import { statePath, runJournalPath, runStatePath } from '../../../../src/runtime/workflow/paths'
+import { statePath, runJournalPath, runStatePath } from '../../../../src/runtime/workflow/state/paths'
 import { getBuiltinScript } from '../../../../src/runtime/workflow/builtin'
 import type { ComposeState, WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 import type { ToolResult } from '../../../../src/runtime/tools/types'

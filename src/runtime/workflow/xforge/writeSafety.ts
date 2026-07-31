@@ -2,7 +2,7 @@ import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import {
   listFileEffectsDetailed,
   type FileEffectReceipt
-} from '../v2/EffectReceipt'
+} from '../effects/fileEffect'
 import { createWorkspaceFingerprint } from './stageArtifacts'
 import type {
   XForgeFileEffect,

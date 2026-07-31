@@ -9,7 +9,7 @@ import {
   runWorkflow,
   _resetWorkflowRuntimeForTests
 } from '../../../../src/runtime/workflow/runtime'
-import { _resetGlobalSemaphoreForTests } from '../../../../src/runtime/workflow/semaphore'
+import { _resetGlobalSemaphoreForTests } from '../../../../src/runtime/workflow/scheduling/semaphore'
 import type { WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 import type { ModelClient, ChatOptions } from '../../../../src/runtime/model/ModelClient'
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from '../../../../src/runtime/model/types'

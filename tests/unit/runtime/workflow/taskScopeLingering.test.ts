@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   TaskScope,
   _resetTaskScopeIdForTests
-} from '../../../../src/runtime/workflow/TaskScope'
+} from '../../../../src/runtime/workflow/scheduling/TaskScope'
 
 describe('P0-6 TaskScope 真实收敛', () => {
   beforeEach(() => {

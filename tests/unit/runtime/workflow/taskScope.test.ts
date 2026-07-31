@@ -2,7 +2,7 @@
  * TaskScope 结构化并发单测
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { TaskScope, withTaskScope, _resetTaskScopeIdForTests } from '../../../../src/runtime/workflow/TaskScope'
+import { TaskScope, withTaskScope, _resetTaskScopeIdForTests } from '../../../../src/runtime/workflow/scheduling/TaskScope'
 import { evalScript } from '../../../../src/runtime/workflow/sandbox'
 
 describe('TaskScope', () => {

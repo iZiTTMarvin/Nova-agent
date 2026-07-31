@@ -3,16 +3,16 @@
  */
 import { createHostHooks, type OwnedWorktree, type PendingAskUser } from '../hooks'
 import { getBuiltinScript } from '../builtin'
-import { scriptSha, loadJournal } from '../journal'
+import { scriptSha, loadJournal } from '../state/journal'
 import {
   createInitialState,
   updateStatePhase,
   updateStateStatus,
   writeComposeState
-} from '../state'
-import { ensureComposeRoot, ensureRunDir } from '../paths'
-import { makeRunSemaphore } from '../semaphore'
-import { TaskScope } from '../TaskScope'
+} from '../state/runState'
+import { ensureComposeRoot, ensureRunDir } from '../state/paths'
+import { makeRunSemaphore } from '../scheduling/semaphore'
+import { TaskScope } from '../scheduling/TaskScope'
 import { StepEngine, buildResumePlanFromDisk } from './StepEngine'
 import { runBrFullDevV2 } from './brFullDev'
 import { readManifest } from './stepStore'

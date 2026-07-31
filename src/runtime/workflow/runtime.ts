@@ -16,8 +16,8 @@ import {
   updateStatePhase,
   updateStateStatus,
   writeComposeState
-} from './state'
-import { ensureComposeRoot, ensureRunDir, generateRunId, pathExists, runDir } from './paths'
+} from './state/runState'
+import { ensureComposeRoot, ensureRunDir, generateRunId, pathExists, runDir } from './state/paths'
 import {
   clearJournal,
   handleScriptShaOnResume,
@@ -25,9 +25,9 @@ import {
   scriptSha,
   writeScriptSha,
   type ScriptShaMismatchPolicy
-} from './journal'
-import { makeRunSemaphore } from './semaphore'
-import { TaskScope } from './TaskScope'
+} from './state/journal'
+import { makeRunSemaphore } from './scheduling/semaphore'
+import { TaskScope } from './scheduling/TaskScope'
 import {
   cancelWorkflowV2,
   getV2ActiveRun,

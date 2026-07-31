@@ -12,7 +12,7 @@ import {
   confirmRollback,
   hashContent,
   resolveBackupRef
-} from '../../../../src/runtime/workflow/v2/EffectReceipt'
+} from '../../../../src/runtime/workflow/effects/fileEffect'
 
 describe('EffectReceipt 安全回滚', () => {
   let tmp: string

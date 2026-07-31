@@ -1,21 +1,16 @@
 /**
  * Workflow v2：step 状态与策略类型
  */
+import type { SideEffectPolicy } from '../effects/sideEffectCtx'
+
 export type StepStatus = 'pending' | 'running' | 'committed' | 'failed'
 
-/** step 重试 / 幂等策略 */
-export interface StepPolicy {
-  /** 失败是否可重试（resume 时重新执行） */
-  retryable?: boolean
-  /** 副作用类型：影响 resume 是否安全重跑 */
-  sideEffect?: 'none' | 'llm' | 'bash' | 'worktree' | 'integrate' | 'fs' | 'state'
-  /**
-   * bash 专用：命令是否幂等（默认 false）。
-   * 仅只读命令（rev-parse/status/log）可标 true；commit/push/install 永远 false。
-   * 非幂等 + 中断恢复且无成功 receipt → blocked，禁止自动重跑。
-   */
-  idempotent?: boolean
-}
+/**
+ * step 重试 / 幂等策略。
+ * 真源在 effects/sideEffectCtx.ts —— 副作用凭证层是策略的唯一 Owner，
+ * step 层只是复用，避免两处各自定义导致语义漂移。
+ */
+export type StepPolicy = SideEffectPolicy
 
 export type StepKind =
   | 'agent'

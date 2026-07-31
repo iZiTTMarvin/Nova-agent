@@ -9,14 +9,14 @@ import {
   createInitialState,
   readComposeState,
   writeComposeState
-} from '../../../../src/runtime/workflow/state'
+} from '../../../../src/runtime/workflow/state/runState'
 import {
   runStatePath,
   statePath,
   runDirV2,
   sessionCurrentPath
-} from '../../../../src/runtime/workflow/paths'
-import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
+} from '../../../../src/runtime/workflow/state/paths'
+import { TaskScope } from '../../../../src/runtime/workflow/scheduling/TaskScope'
 import { StepEngine } from '../../../../src/runtime/workflow/v2/StepEngine'
 import {
   computeInputHash,

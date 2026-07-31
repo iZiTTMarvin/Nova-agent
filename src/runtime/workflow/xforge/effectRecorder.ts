@@ -11,7 +11,7 @@ import {
   hashFileIfExists,
   nextFileEffectSequence,
   recordFileEffect
-} from '../v2/EffectReceipt'
+} from '../effects/fileEffect'
 
 /**
  * 把普通 write/edit 接入 XForge 的持久化副作用协议。

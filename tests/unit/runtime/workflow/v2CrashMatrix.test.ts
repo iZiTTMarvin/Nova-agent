@@ -9,18 +9,18 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
-import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
+import { TaskScope } from '../../../../src/runtime/workflow/scheduling/TaskScope'
 import { createHostHooks, type HookContext } from '../../../../src/runtime/workflow/hooks'
-import { makeRunSemaphore } from '../../../../src/runtime/workflow/semaphore'
-import { createInitialState } from '../../../../src/runtime/workflow/state'
+import { makeRunSemaphore } from '../../../../src/runtime/workflow/scheduling/semaphore'
+import { createInitialState } from '../../../../src/runtime/workflow/state/runState'
 import { StepEngine } from '../../../../src/runtime/workflow/v2/StepEngine'
 import { readStepRecord } from '../../../../src/runtime/workflow/v2/stepStore'
 import {
   setFaultInjector,
   effectIdFromKey
-} from '../../../../src/runtime/workflow/v2/sideEffectCtx'
-import { readFileEffect } from '../../../../src/runtime/workflow/v2/EffectReceipt'
-import { readBashReceipt, bashEffectId, hashCommand } from '../../../../src/runtime/workflow/v2/BashReceipt'
+} from '../../../../src/runtime/workflow/effects/sideEffectCtx'
+import { readFileEffect } from '../../../../src/runtime/workflow/effects/fileEffect'
+import { readBashReceipt, bashEffectId, hashCommand } from '../../../../src/runtime/workflow/effects/bashEffect'
 import type { WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 
 function makeHooks(workspaceRoot: string, runId: string): {
@@ -422,7 +422,7 @@ describe('v2 副作用崩溃注入恢复矩阵', () => {
     expect(readFileEffect(tmp, runId, effectId)?.status).toBe('committed')
 
     const { confirmRollback, previewRollback } = await import(
-      '../../../../src/runtime/workflow/v2/EffectReceipt'
+      '../../../../src/runtime/workflow/effects/fileEffect'
     )
     const preview = previewRollback(tmp, runId)
     const result = confirmRollback(tmp, runId, { previewToken: preview.previewToken })

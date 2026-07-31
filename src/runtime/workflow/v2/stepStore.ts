@@ -5,14 +5,14 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from
 import { createHash } from 'node:crypto'
 import { dirname } from 'path'
 import { atomicWriteFileSync } from '../../storage/atomicFile'
-import { canonical } from '../journal'
+import { canonical } from '../state/journal'
 import {
   ensureRunDir,
   runEventsPath,
   runStepPath,
   runStepsDir,
   runDirV2
-} from '../paths'
+} from '../state/paths'
 import type { StepRecord, WorkflowV2Manifest } from './types'
 
 function manifestPath(workspaceRoot: string, runId: string): string {

@@ -1,14 +1,34 @@
 /**
- * 副作用上下文：从 StepRunContext 显式传入 hook，禁止靠全局 currentStep 推断。
+ * 副作用上下文：由调用方显式传入，禁止靠全局 currentStep 推断。
+ *
+ * effects/ 是依赖图最底层，不得 import workflow 下任何其他模块，
+ * 因此副作用策略类型在此定义，由上层复用而非反向依赖。
  */
-import type { StepPolicy, StepRunContext } from './types'
 
-/** hook 侧需要的最小 step 上下文（可从 StepRunContext 直接传入） */
-export type SideEffectCtx = Pick<
-  StepRunContext,
-  'runId' | 'stepId' | 'idempotencyKey' | 'inputHash'
-> & {
-  policy?: StepPolicy
+/** 副作用的重试 / 幂等策略 */
+export interface SideEffectPolicy {
+  /** 失败是否可重试（resume 时重新执行） */
+  retryable?: boolean
+  /** 副作用类型：影响 resume 是否安全重跑 */
+  sideEffect?: 'none' | 'llm' | 'bash' | 'worktree' | 'integrate' | 'fs' | 'state'
+  /**
+   * bash 专用：命令是否幂等（默认 false）。
+   * 仅只读命令（rev-parse/status/log）可标 true；commit/push/install 永远 false。
+   * 非幂等 + 中断恢复且无成功 receipt → blocked，禁止自动重跑。
+   */
+  idempotent?: boolean
+}
+
+/**
+ * 副作用提交所需的最小上下文。
+ * 字段与上层 step 上下文结构兼容，因此可直接传入而无需转换。
+ */
+export interface SideEffectCtx {
+  runId: string
+  stepId: string
+  inputHash: string
+  idempotencyKey: string
+  policy?: SideEffectPolicy
   /** 从上次 status=running 崩溃恢复时为 true */
   resumingInterrupted?: boolean
 }

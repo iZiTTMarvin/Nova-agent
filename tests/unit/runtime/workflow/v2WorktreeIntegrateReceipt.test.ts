@@ -12,20 +12,20 @@ import {
   markWorktreeCleaned,
   readWorktreeReceipt,
   worktreeEffectId
-} from '../../../../src/runtime/workflow/v2/WorktreeReceipt'
+} from '../../../../src/runtime/workflow/effects/worktreeEffect'
 import {
   commitIntegrateReceipt,
   tryReuseIntegrateReceipt,
   integrateEffectId
-} from '../../../../src/runtime/workflow/v2/IntegrateReceipt'
-import { SideEffectBlockedError } from '../../../../src/runtime/workflow/v2/sideEffectCtx'
-import type { SideEffectCtx } from '../../../../src/runtime/workflow/v2/sideEffectCtx'
+} from '../../../../src/runtime/workflow/effects/integrateEffect'
+import { SideEffectBlockedError } from '../../../../src/runtime/workflow/effects/sideEffectCtx'
+import type { SideEffectCtx } from '../../../../src/runtime/workflow/effects/sideEffectCtx'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
-import { TaskScope } from '../../../../src/runtime/workflow/TaskScope'
+import { TaskScope } from '../../../../src/runtime/workflow/scheduling/TaskScope'
 import { createHostHooks, type HookContext } from '../../../../src/runtime/workflow/hooks'
-import { makeRunSemaphore } from '../../../../src/runtime/workflow/semaphore'
-import { createInitialState } from '../../../../src/runtime/workflow/state'
+import { makeRunSemaphore } from '../../../../src/runtime/workflow/scheduling/semaphore'
+import { createInitialState } from '../../../../src/runtime/workflow/state/runState'
 import type { WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 
 function git(cwd: string, args: string[]): void {

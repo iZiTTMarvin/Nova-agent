@@ -2,7 +2,7 @@
  * Workflow v2 StepEngine：可恢复 DAG 执行器。
  * step 状态 pending→running→committed|failed；已 committed 不重复执行。
  */
-import type { TaskScope } from '../TaskScope'
+import type { TaskScope } from '../scheduling/TaskScope'
 import {
   appendV2Event,
   computeInputHash,
@@ -386,7 +386,7 @@ export class StepEngine {
       }
 
       // 测试故障注入：receipt 已写、step 尚未 committed
-      const { injectFault } = await import('./sideEffectCtx')
+      const { injectFault } = await import('../effects/sideEffectCtx')
       injectFault(def.id, 'before-step-commit')
 
       const finishedAt = nowIso()

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { topoSort } from '../../../../src/runtime/workflow/topo'
+import { topoSort } from '../../../../src/runtime/workflow/scheduling/topo'
 
 describe('topoSort (Kahn)', () => {
   it('无依赖时全部同一批', () => {

@@ -6,7 +6,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'fs'
 import { join, resolve, normalize } from 'path'
 import { spawnSync } from 'child_process'
-import { makeSemaphore, type Semaphore } from '../workflow/semaphore'
+import { makeSemaphore, type Semaphore } from '../workflow/scheduling/semaphore'
 
 export interface WorktreeInfo {
   name: string

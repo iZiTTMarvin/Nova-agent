@@ -4,7 +4,7 @@
  * v1 全局 `.nova/compose/state.json`：默认只读加载旧产物；仅显式 mirrorV1 时写入。
  */
 import { existsSync, readFileSync } from 'fs'
-import { atomicWriteFileSync } from '../storage/atomicFile'
+import { atomicWriteFileSync } from '../../storage/atomicFile'
 import type {
   ComposeAutoDecision,
   ComposeCheckResult,
@@ -15,7 +15,7 @@ import type {
   ComposeTask,
   ComposeTaskFailure,
   RunStatus
-} from './types'
+} from '../types'
 import {
   ensureComposeRoot,
   ensureRunDir,

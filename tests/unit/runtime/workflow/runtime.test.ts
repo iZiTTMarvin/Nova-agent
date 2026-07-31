@@ -11,7 +11,7 @@ import {
   listWorkflows,
   _resetWorkflowRuntimeForTests
 } from '../../../../src/runtime/workflow/runtime'
-import { statePath, runLogPath } from '../../../../src/runtime/workflow/paths'
+import { statePath, runLogPath } from '../../../../src/runtime/workflow/state/paths'
 import type { WorkflowRuntimeDeps } from '../../../../src/runtime/workflow/types'
 import type { ToolResult } from '../../../../src/runtime/tools/types'
 import type { ComposeState } from '../../../../src/runtime/workflow/types'

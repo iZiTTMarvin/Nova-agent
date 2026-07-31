@@ -10,11 +10,11 @@
 import { existsSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { createHostHooks, type HookContext } from '../hooks'
-import { scriptSha } from '../journal'
+import { scriptSha } from '../state/journal'
 import { StepEngine } from './StepEngine'
 import type { StepRunContext } from './types'
 import type { ComposeState, WorkflowRuntimeDeps } from '../types'
-import type { TaskScope } from '../TaskScope'
+import type { TaskScope } from '../scheduling/TaskScope'
 
 const DESIGN_SHAPE = {
   type: 'object',
