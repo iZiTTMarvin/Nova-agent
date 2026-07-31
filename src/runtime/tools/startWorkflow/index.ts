@@ -60,11 +60,11 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
       properties: {
         workflow: {
           type: 'string',
-          description: '工作流名称，例如 compose'
+          description: '工作流名称，必须取自系统提示中列出的可用工作流'
         },
         startStage: {
           type: 'string',
-          description: '工作流的起始阶段名称'
+          description: '工作流的起始阶段名称，必须是该工作流已声明的起始阶段之一'
         },
         reason: {
           type: 'string',

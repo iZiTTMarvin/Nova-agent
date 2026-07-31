@@ -53,9 +53,12 @@ export function renderRouterContext(context: RouterContext): string {
       ]
     : ['当前没有可读取的 active plan。']
   const workflowLines = context.availableWorkflows.length > 0
-    ? context.availableWorkflows.map(workflow =>
-        `- ${workflow.name}: ${workflow.description}；可从 ${workflow.stages.join('、')} 开始`
-      )
+    ? context.availableWorkflows.flatMap(workflow => [
+        `- ${workflow.name}: ${workflow.description}；可从 ${workflow.stages.join('、')} 开始`,
+        ...(workflow.matchHints.length > 0
+          ? [`  适用场景: ${workflow.matchHints.join('；')}`]
+          : [])
+      ])
     : ['- 当前没有已注册的工作流。']
 
   return [
@@ -64,6 +67,7 @@ export function renderRouterContext(context: RouterContext): string {
     '可用工作流:',
     ...workflowLines,
     '简单请求直接回答或使用普通工具；复杂多阶段请求才调用 start_workflow。',
+    '有多条工作流时按"适用场景"选最匹配的一条：改代码走 compose，查资料给结论走 deep-research，只审查已有改动走 code-review。',
     '调用 start_workflow 时必须选择已列出的 workflow 和 startStage，并把完整用户请求放入 reason。'
   ].join('\n')
 }

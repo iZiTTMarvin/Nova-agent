@@ -1,3 +1,14 @@
+
+## 2026-07-31
+
+- **feat(workflow)**: 新增 deep-research 与 code-review 两条编排工作流（Workflow 模式 P5）
+  - `deep-research`：brief（提炼研究问题）→ research（并行只读检索）→ synthesize（综合结论）→ review（证据复核）。research 阶段一次性并发发起全部子问题，并发窗口由 host 的两层信号量控制；单个子问题失败只落成一条 failed finding，不影响其余子问题。检索原文留在子 agent 上下文内，主编排只承担结构化摘要的开销
+  - `code-review`：单阶段。优先收集工作区未提交改动，工作区干净时回退到最近一次提交，再以只读隔离做代码审查，产出带文件行号的问题清单。非 git 仓库或无可审查改动时立即失败，不空跑 agent
+  - 结论一致性：调研结论无任何来源引用时强制 block；代码审查存在 critical 问题时强制 block、存在 high 时 pass 降级为 conditional，避免模型给出与问题清单自相矛盾的结论
+  - 路由：`WorkflowDefinitionMetadata` 增加 `matchHints` 并在 compose 模式 system prompt 中渲染。此前该字段无消费者，模型只能靠 description 区分"改代码 / 查资料 / 审代码"三类语义相近的请求
+  - 新增 `definitions/agentOutput.ts` 承载 agent 输出归一化原语（asRecord / asString / asStringList / asEnum / truncate）
+  - 测试：+21 定向用例（并发峰值、失败隔离、只读工具集与不可提问、取消路径、范围回退、verdict 降级）+ 路由元数据断言；typecheck / build / 全量测试 2994 通过
+
 # Changelog
 
 ## 2026-06-30
