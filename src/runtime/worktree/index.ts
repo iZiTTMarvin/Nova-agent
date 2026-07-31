@@ -286,3 +286,144 @@ export async function isPristine(directory: string, base: string): Promise<boole
 export function _resetWorktreeLocksForTests(): void {
   repoLocks.clear()
 }
+
+export interface CommitAllResult {
+  /** 是否产生了新提交（无改动时为 false） */
+  committed: boolean
+  sha: string | null
+  error?: string
+}
+
+/**
+ * 把 worktree 内的全部改动提交到其自身分支。
+ * integrate 前必须提交：git merge 只能合并已提交内容。
+ * 提交者身份取仓库配置；未配置时用 -c 覆盖，避免因缺少 user.email 而整条编排卡死。
+ */
+export function commitAll(input: {
+  directory: string
+  message: string
+}): CommitAllResult {
+  const { directory, message } = input
+  const added = runGit(['add', '-A'], directory)
+  if (added.code !== 0) {
+    return { committed: false, sha: null, error: added.stderr || added.stdout }
+  }
+  const staged = runGit(['diff', '--cached', '--quiet'], directory)
+  // exit 0 = 无暂存差异；1 = 有差异；其他值视为 git 出错
+  if (staged.code === 0) {
+    return { committed: false, sha: null }
+  }
+  const commit = runGit(
+    [
+      '-c',
+      'user.name=nova-agent',
+      '-c',
+      'user.email=nova-agent@localhost',
+      'commit',
+      '--no-verify',
+      '-m',
+      message
+    ],
+    directory
+  )
+  if (commit.code !== 0) {
+    return { committed: false, sha: null, error: commit.stderr || commit.stdout }
+  }
+  let sha: string | null = null
+  const head = runGit(['rev-parse', 'HEAD'], directory)
+  if (head.code === 0) sha = head.stdout.trim()
+  return { committed: true, sha }
+}
+
+export type MergeStrategy = 'fast-forward' | 'three-way'
+
+export type MergeBranchResult =
+  | { status: 'merged'; strategy: MergeStrategy; sha: string | null }
+  /** up_to_date：目标分支内容已在主分支上，无需合并 */
+  | { status: 'up_to_date' }
+  /** conflict：冲突现场原样保留，交由上层的 integrate agent 处理 */
+  | { status: 'conflict'; files: string[] }
+  | { status: 'failed'; error: string }
+
+/**
+ * 把 worktree 分支合并回主工作区当前分支：先 fast-forward，失败再 3-way。
+ *
+ * 不做 `git merge --abort`：冲突现场必须保留，否则 integrate agent 无从解决。
+ * 主工作区若有未提交改动，交由 git 自身拒绝（仅当会被覆盖时），本层不额外预检——
+ * 单任务批本就直接在主工作区改文件，预检会把正常流程判死。
+ * 与 create/remove 共用 per-repo 锁，避免与并行 worktree 操作抢 index.lock。
+ */
+export async function mergeBranch(input: {
+  workspaceRoot: string
+  branch: string
+  /** 3-way 合并的提交信息 */
+  message?: string
+}): Promise<MergeBranchResult> {
+  const { workspaceRoot, branch } = input
+  return lockFor(workspaceRoot).run(async () => {
+    const ancestor = runGit(['merge-base', '--is-ancestor', branch, 'HEAD'], workspaceRoot)
+    if (ancestor.code === 0) return { status: 'up_to_date' } as MergeBranchResult
+
+    const ff = runGit(['merge', '--ff-only', branch], workspaceRoot)
+    if (ff.code === 0) {
+      const head = runGit(['rev-parse', 'HEAD'], workspaceRoot)
+      return {
+        status: 'merged',
+        strategy: 'fast-forward',
+        sha: head.code === 0 ? head.stdout.trim() : null
+      }
+    }
+
+    const threeWay = runGit(
+      [
+        '-c',
+        'user.name=nova-agent',
+        '-c',
+        'user.email=nova-agent@localhost',
+        'merge',
+        '--no-ff',
+        '--no-edit',
+        '-m',
+        input.message ?? `merge ${branch}`,
+        branch
+      ],
+      workspaceRoot
+    )
+    if (threeWay.code === 0) {
+      const head = runGit(['rev-parse', 'HEAD'], workspaceRoot)
+      return {
+        status: 'merged',
+        strategy: 'three-way',
+        sha: head.code === 0 ? head.stdout.trim() : null
+      }
+    }
+
+    const conflicts = conflictFiles(workspaceRoot)
+    if (conflicts.length > 0 || isMergeInProgress(workspaceRoot)) {
+      return { status: 'conflict', files: conflicts }
+    }
+    return { status: 'failed', error: threeWay.stderr || threeWay.stdout || 'merge failed' }
+  })
+}
+
+/** 未解决冲突的文件列表（相对仓库根，正斜杠） */
+export function conflictFiles(workspaceRoot: string): string[] {
+  const result = runGit(['diff', '--name-only', '--diff-filter=U'], workspaceRoot)
+  if (result.code !== 0) return []
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+/** 是否处于未完成的 merge 中（MERGE_HEAD 存在） */
+export function isMergeInProgress(workspaceRoot: string): boolean {
+  const result = runGit(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], workspaceRoot)
+  return result.code === 0 && result.stdout.trim() !== ''
+}
+
+/** 当前 HEAD sha；不在仓库或读取失败时返回 null（诊断用，不抛） */
+export function tryHeadSha(directory: string): string | null {
+  const result = runGit(['rev-parse', 'HEAD'], directory)
+  return result.code === 0 ? result.stdout.trim() : null
+}

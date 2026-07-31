@@ -167,6 +167,12 @@ export interface ToolResult {
   artifactId?: string
   /** 截断元数据：总行数/字节数、展示行数等，供 UI 与持久化使用 */
   truncationMeta?: ToolTruncationMeta
+  /**
+   * 进程退出码（仅执行外部命令的工具提供）。
+   * 非零退出码不算工具故障（success 仍为 true），因此调用方要判定命令成败必须看本字段，
+   * 不能从 success 推断。
+   */
+  exitCode?: number
   /** 成功执行后交给 AgentLoop 的结构化控制信号。 */
   control?: ToolControlSignal
 }

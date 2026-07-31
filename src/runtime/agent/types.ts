@@ -13,6 +13,30 @@ import type { HookEvent } from '../../shared/agent/types'
 
 export type { HookEvent }
 
+/**
+ * 编排进度语义。
+ * started/completed/failed 描述阶段本身；task_* 与 batch_* 描述并行 implement 的批次进展。
+ */
+export type WorkflowProgressStatus =
+  | 'started'
+  | 'completed'
+  | 'failed'
+  | 'task_started'
+  | 'task_complete'
+  | 'task_failed'
+  | 'batch_started'
+  | 'batch_merge'
+  | 'info'
+
+/** 进度块的可选补充信息；字段全部可缺省，renderer 只做展示不做逻辑分支 */
+export interface WorkflowProgressDetail {
+  taskId?: string
+  taskName?: string
+  batchIndex?: number
+  batchSize?: number
+  message?: string
+}
+
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
   | { type: 'message_start'; messageId: string; sessionId?: string }
@@ -112,6 +136,19 @@ export type AgentEvent =
       /** 发起编排的会话 id；renderer 据此做面板的会话隔离 */
       sessionId?: string
       phase: string
+    }
+  | {
+      /**
+       * 编排宿主 progress()：阶段流转与批次/任务进展。
+       * 与 workflow_phase 的区别：本事件带 status + detail，用于聊天流中的进度块；
+       * workflow_phase 只表达「当前阶段名」，供进度面板。
+       */
+      type: 'workflow_progress'
+      runId: string
+      sessionId?: string
+      phase: string
+      status: WorkflowProgressStatus
+      detail?: WorkflowProgressDetail
     }
   | {
       /** 编排脚本 log()：脚本日志行 */

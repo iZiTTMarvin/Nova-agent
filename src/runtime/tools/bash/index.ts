@@ -338,6 +338,7 @@ async function composeResult(
       success: false,
       output: outputWithPath,
       error: `命令执行超时（${Math.round(timeoutMs / 1000)} 秒），已强制终止`,
+      ...(exitCode !== null ? { exitCode } : {}),
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
     }
@@ -347,6 +348,7 @@ async function composeResult(
       success: false,
       output: outputWithPath,
       error: '命令已被用户取消',
+      ...(exitCode !== null ? { exitCode } : {}),
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
     }
@@ -373,6 +375,7 @@ async function composeResult(
     return {
       success: true,
       output: prependExitCodeNotice(outputWithPath, exitCode),
+      exitCode,
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
     }
@@ -380,6 +383,7 @@ async function composeResult(
   return {
     success: true,
     output: outputWithPath || '(命令执行成功，无输出)',
+    exitCode,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {})
   }
