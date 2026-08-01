@@ -75,7 +75,15 @@ export const WorkflowProgressBlock: React.FC<{
       <span className="workflow-progress__icon" aria-hidden="true">
         {style.icon}
       </span>
-      <span className="workflow-progress__text">{formatProgressText(block)}</span>
+      <span className="workflow-progress__content">
+        <span className="workflow-progress__text">{formatProgressText(block)}</span>
+        {block.activity ? (
+          // 活动行：运行中展示"正在做什么"，失败时展示最后一条诊断
+          <span className="workflow-progress__activity" title={block.activity}>
+            {block.activity}
+          </span>
+        ) : null}
+      </span>
     </div>
   )
 }

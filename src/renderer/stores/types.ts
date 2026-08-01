@@ -37,6 +37,11 @@ export interface RendererWorkflowProgressBlock {
   phase: string
   status: WorkflowProgressStatus
   detail?: WorkflowProgressDetail
+  /**
+   * 最近一条阶段活动行（来自 workflow:log，由 handleWorkflowLog 就地更新）。
+   * 长时间运行的阶段借此持续暴露"正在做什么"；失败时展示最后一条诊断。
+   */
+  activity?: string
 }
 
 /** 顺序消息块：ToolBlock 使用携带 argumentsRaw 的 renderer 扩展版本 */

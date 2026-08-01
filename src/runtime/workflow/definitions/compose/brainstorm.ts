@@ -113,7 +113,9 @@ export async function runBrainstorm(
 
   const result = normalizeBrainstorm(output)
   if (!result) {
-    host.progress('brainstorm', 'failed', { message: 'brainstorm 未产出有效方案备选' })
+    host.progress('brainstorm', 'failed', {
+      message: '未产出有效方案备选（模型输出解析失败或子代理异常，原因见活动日志）'
+    })
     return null
   }
   host.progress('brainstorm', 'completed', {

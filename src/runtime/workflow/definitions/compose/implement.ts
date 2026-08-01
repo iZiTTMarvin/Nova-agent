@@ -98,7 +98,9 @@ async function prepareWorktreeTask(
   try {
     worktree = await host.worktree(`compose-implement-${task.id}`)
   } catch (error) {
-    return failureResult(task, `worktree 创建失败：${error instanceof Error ? error.message : String(error)}`)
+    const message = `worktree 创建失败：${error instanceof Error ? error.message : String(error)}`
+    host.log(`[compose-implement-${task.id}] ${message}`)
+    return failureResult(task, message)
   }
 
   try {
@@ -160,7 +162,12 @@ function dependencyFailure(task: PlanTask, succeeded: Set<string>): string | nul
   return missing ? `依赖任务 ${missing} 未成功完成` : null
 }
 
-/** 按依赖批次执行实现任务；失败任务只影响自己的后继，不取消同批独立任务。 */
+/**
+ * 按依赖批次执行实现任务；失败任务只影响自己的后继，不取消同批独立任务。
+ *
+ * 多任务批次优先用 git worktree 隔离；非 git 工作区降级到主工作区顺序执行，
+ * 避免多任务并行修改同一目录产生冲突。
+ */
 export async function runImplement(
   host: HostFns,
   plan: WorkflowPlan,
@@ -212,16 +219,22 @@ export async function runImplement(
       }
     }
 
-    const isolated = eligible.length > 1
-    const executions = await Promise.all(
-      eligible.map((task) =>
-        isolated
-          ? prepareWorktreeTask(host, task, plan, brainstorm)
-          : runSharedTask(host, task, plan, brainstorm)
-      )
-    )
+    const useWorktree = host.supportsWorktree() && eligible.length > 1
 
-    const integrated = isolated
+    let executions: TaskExecution[]
+    if (useWorktree) {
+      executions = await Promise.all(
+        eligible.map((task) => prepareWorktreeTask(host, task, plan, brainstorm))
+      )
+    } else {
+      // 非 git 项目或单任务：在主工作区顺序执行，避免多任务并行冲突
+      executions = []
+      for (const task of eligible) {
+        executions.push(await runSharedTask(host, task, plan, brainstorm))
+      }
+    }
+
+    const integrated = useWorktree
       ? await integrateBatch(host, executions)
       : executions.map((execution) => execution.result)
 
@@ -250,10 +263,17 @@ export async function runImplement(
         }
       }
     }
+    const mergeMessage = useWorktree
+      ? '批次 worktree 已完成合并处理'
+      : eligible.length === 0
+        ? '本批无任务可执行'
+        : eligible.length === 1
+          ? '单任务批已在主工作区完成'
+          : '多任务在主工作区顺序完成'
     host.progress('implement', 'batch_merge', {
       batchIndex,
       batchSize: batches[batchIndex]!.length,
-      message: isolated ? '批次 worktree 已完成合并处理' : '单任务批已在主工作区完成'
+      message: mergeMessage
     })
   }
 

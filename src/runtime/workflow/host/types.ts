@@ -126,6 +126,8 @@ export interface HostFns {
   cleanupWorktree(directory: string): Promise<boolean>
   progress(phase: string, status: WorkflowProgressStatus, detail?: WorkflowProgressDetail): void
   log(message: string): void
+  /** 当前工作区是否支持 git worktree 隔离（非 git 项目返回 false） */
+  supportsWorktree(): boolean
 }
 
 /** 本 run 创建的 worktree，终态时按生命周期契约清理 */

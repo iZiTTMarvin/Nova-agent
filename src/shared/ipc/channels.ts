@@ -147,9 +147,10 @@ export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */
 export const WORKSPACE_CHANGED = 'workspace:changed' as const
-/** 编排进度块 / run 状态 / 运行态互斥信号 */
+/** 编排进度块 / run 状态 / 运行态互斥信号 / 阶段活动日志行 */
 export const WORKFLOW_PROGRESS = 'workflow:progress' as const
 export const WORKFLOW_RUN_STATE = 'workflow:run-state' as const
 export const WORKFLOW_BUSY = 'workflow:busy' as const
+export const WORKFLOW_LOG = 'workflow:log' as const
 /** 自动更新已下载，提示用户重启安装 */
 export const APP_UPDATE_DOWNLOADED = 'app:update-downloaded' as const

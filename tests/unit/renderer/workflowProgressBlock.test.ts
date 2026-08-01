@@ -90,6 +90,72 @@ describe('handleWorkflowProgress', () => {
   })
 })
 
+describe('handleWorkflowLog', () => {
+  beforeEach(() => {
+    resetChatStoreForTests()
+  })
+
+  function seedMessageWithProgress(): void {
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      messages: [assistantMessage('msg_1')],
+      messageIndexById: { msg_1: 0 },
+      currentGeneratingMessageId: 'msg_1'
+    })
+    const store = useChatStore.getState()
+    store.handleWorkflowProgress({ runId: 'run-1', phase: 'brainstorm', status: 'started' })
+    store.handleWorkflowProgress({ runId: 'run-1', phase: 'brainstorm', status: 'completed' })
+    store.handleWorkflowProgress({ runId: 'run-1', phase: 'plan', status: 'started' })
+  }
+
+  it('活动行附着到同 runId 的最后一个进度块，不新开块', () => {
+    seedMessageWithProgress()
+
+    useChatStore.getState().handleWorkflowLog({
+      runId: 'run-1',
+      message: '[compose-plan] 调用工具 read：src/a.ts'
+    })
+
+    const blocks = useChatStore.getState().messages[0].blocks ?? []
+    expect(blocks).toHaveLength(3)
+    const first = blocks[0]
+    const last = blocks[2]
+    expect(first.type === 'workflow_progress' && first.activity === undefined).toBe(true)
+    expect(last.type === 'workflow_progress' && last.phase === 'plan').toBe(true)
+    expect(
+      last.type === 'workflow_progress' && last.activity === '[compose-plan] 调用工具 read：src/a.ts'
+    ).toBe(true)
+  })
+
+  it('相同活动行重复到达时不产生多余更新', () => {
+    seedMessageWithProgress()
+    const store = useChatStore.getState()
+    store.handleWorkflowLog({ runId: 'run-1', message: 'm' })
+    const revisionAfterFirst = useChatStore.getState().messages[0]._revision
+
+    useChatStore.getState().handleWorkflowLog({ runId: 'run-1', message: 'm' })
+    expect(useChatStore.getState().messages[0]._revision).toBe(revisionAfterFirst)
+  })
+
+  it('找不到同 runId 进度块或无生成中消息时丢弃', () => {
+    seedMessageWithProgress()
+    useChatStore.getState().handleWorkflowLog({ runId: 'run-other', message: 'm' })
+    expect(
+      (useChatStore.getState().messages[0].blocks ?? []).every(
+        (b) => b.type !== 'workflow_progress' || b.activity === undefined
+      )
+    ).toBe(true)
+
+    useChatStore.setState({ currentGeneratingMessageId: null })
+    useChatStore.getState().handleWorkflowLog({ runId: 'run-1', message: 'm' })
+    expect(
+      (useChatStore.getState().messages[0].blocks ?? []).every(
+        (b) => b.type !== 'workflow_progress' || b.activity === undefined
+      )
+    ).toBe(true)
+  })
+})
+
 describe('进度块进入渲染单元', () => {
   it('buildBlockRenderUnits 输出 block 单元并打断 tool 聚合', () => {
     const units = buildBlockRenderUnits(

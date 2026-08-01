@@ -85,9 +85,12 @@ export function worktreesRoot(workspaceRoot: string): string {
   return join(workspaceRoot, '.nova', 'worktrees', projectIdOf(workspaceRoot))
 }
 
-function isGitRepo(workspaceRoot: string): boolean {
-  const r = runGit(['rev-parse', '--is-inside-work-tree'], workspaceRoot)
-  return r.code === 0 && r.stdout.trim() === 'true'
+/** 判断 workspaceRoot 是否在已提交的 git 仓库内，供上层决定能否使用 worktree 隔离。 */
+export function isGitRepo(workspaceRoot: string): boolean {
+  const inside = runGit(['rev-parse', '--is-inside-work-tree'], workspaceRoot)
+  if (inside.code !== 0 || inside.stdout.trim() !== 'true') return false
+  const head = runGit(['rev-parse', 'HEAD'], workspaceRoot)
+  return head.code === 0
 }
 
 /** 当前 HEAD sha（创建后 isPristine 的 base） */
@@ -102,7 +105,7 @@ export function headSha(directory: string): string {
  */
 export async function create(workspaceRoot: string, name?: string): Promise<WorktreeInfo> {
   if (!isGitRepo(workspaceRoot)) {
-    throw new Error('Worktrees are only supported for git projects')
+    throw new Error('Worktrees are only supported for git projects with at least one commit')
   }
 
   const root = worktreesRoot(workspaceRoot)

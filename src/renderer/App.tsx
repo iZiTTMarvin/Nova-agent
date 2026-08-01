@@ -251,6 +251,13 @@ function App(): JSX.Element {
       })
     })
 
+    // 编排日志行：附着到当前阶段进度块的活动区，长阶段不再"静得像卡死"
+    const unsubWorkflowLog = window.api.on('workflow:log', (data) => {
+      const activeSessionId = useChatStore.getState().currentSessionId
+      if (data.sessionId && activeSessionId && data.sessionId !== activeSessionId) return
+      useChatStore.getState().handleWorkflowLog({ runId: data.runId, message: data.message })
+    })
+
     // 编排 run 状态：输入框据此进入 / 退出运行态
     const unsubWorkflowRunState = window.api.on('workflow:run-state', (data) => {
       useWorkflowStore.getState().applyRunState(data)
@@ -308,6 +315,7 @@ function App(): JSX.Element {
       unsubRecoveryState()
       unsubAttemptFailed()
       unsubWorkflowProgress()
+      unsubWorkflowLog()
       unsubWorkflowRunState()
       unsubWorkflowBusy()
       unsubUpdateDownloaded()

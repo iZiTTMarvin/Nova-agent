@@ -140,7 +140,8 @@ function makeHarness(
         ...(detail?.message ? { message: detail.message } : {})
       })
     },
-    log: () => undefined
+    log: () => undefined,
+    supportsWorktree: () => true
   }
   return harness
 }

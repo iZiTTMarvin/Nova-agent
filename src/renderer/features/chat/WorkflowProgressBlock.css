@@ -34,10 +34,27 @@
   font-weight: 700;
 }
 
-.workflow-progress__text {
+.workflow-progress__content {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workflow-progress__text {
+  min-width: 0;
   word-break: break-word;
+}
+
+/* 阶段活动行：子代理正在做什么 / 失败诊断；单行省略，title 兜底全文 */
+.workflow-progress__activity {
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workflow-progress--active {

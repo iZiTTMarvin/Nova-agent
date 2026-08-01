@@ -8,6 +8,7 @@ import {
   remove,
   list,
   isPristine,
+  isGitRepo,
   headSha,
   projectIdOf,
   worktreesRoot,
@@ -96,5 +97,16 @@ describe('worktree service', () => {
     expect(a.branch).not.toBe(b.branch)
     await remove({ workspaceRoot: tmp, directory: a.directory })
     await remove({ workspaceRoot: tmp, directory: b.directory })
+  })
+
+  it('非 git 目录不支持 worktree', async () => {
+    const nonGit = mkdtempSync(join(tmpdir(), 'nova-wt-non-git-'))
+    _resetWorktreeLocksForTests()
+    try {
+      expect(isGitRepo(nonGit)).toBe(false)
+      await expect(create(nonGit, 'feat')).rejects.toThrow(/Worktrees are only supported for git projects/)
+    } finally {
+      rmSync(nonGit, { recursive: true, force: true })
+    }
   })
 })

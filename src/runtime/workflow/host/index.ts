@@ -8,7 +8,12 @@ import { createAgentFn } from './agentFn'
 import { createBashFn } from './bashFn'
 import { createFsFns } from './fsFn'
 import { createLogFn, createProgressFn } from './progressFn'
-import { createCleanupWorktreeFn, createIntegrateFn, createWorktreeFn } from './worktreeFn'
+import {
+  createCleanupWorktreeFn,
+  createIntegrateFn,
+  createSupportsWorktreeFn,
+  createWorktreeFn
+} from './worktreeFn'
 import { ensureRunDir } from '../state/paths'
 import type { HostContext, HostFns } from './types'
 
@@ -35,7 +40,8 @@ export function createHostFns(ctx: HostContext): HostFns {
     integrate: createIntegrateFn(ctx, agent),
     cleanupWorktree: createCleanupWorktreeFn(ctx),
     progress: createProgressFn(ctx),
-    log: createLogFn(ctx)
+    log: createLogFn(ctx),
+    supportsWorktree: createSupportsWorktreeFn(ctx)
   }
 }
 

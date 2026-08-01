@@ -315,6 +315,41 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     })
   },
 
+  handleWorkflowLog: (payload) => {
+    set(state => {
+      const messageId = state.currentGeneratingMessageId
+      if (!messageId) return state
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg?.blocks?.length) return state
+
+      // 附着到同 runId 的最后一个进度块：阶段 started 之后到达的活动行
+      // 都归属于它；阶段结束后新块出现，后续活动行自然跟着新块走。
+      let target = -1
+      for (let i = msg.blocks.length - 1; i >= 0; i--) {
+        const block = msg.blocks[i]
+        if (block.type === 'workflow_progress' && block.runId === payload.runId) {
+          target = i
+          break
+        }
+      }
+      if (target < 0) return state
+      const block = msg.blocks[target]
+      if (block.type !== 'workflow_progress' || block.activity === payload.message) return state
+
+      const blocks = msg.blocks.slice()
+      blocks[target] = { ...block, activity: payload.message }
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = bumpRevision({ ...msg, blocks })
+      return commitMessageList(state, {
+        nextMessages,
+        nextIndex: state.messageIndexById,
+        skipWindowTrim: true
+      })
+    })
+  },
+
   applyStreamDeltas: (deltas: StreamDeltaBatch) => {
     if (deltas.length === 0) return
 

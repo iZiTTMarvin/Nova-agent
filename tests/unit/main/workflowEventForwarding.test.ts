@@ -73,6 +73,24 @@ describe('编排事件转发', () => {
     })
   })
 
+  it('workflow_log → workflow:log（阶段活动与失败诊断行）', () => {
+    const win = makeMainWindow()
+    const event: AgentEvent = {
+      type: 'workflow_log',
+      runId: 'run-1',
+      sessionId: 'sess-1',
+      message: '[compose-brainstorm] 调用工具 read：src/a.ts'
+    }
+
+    forwardEventToRenderer(win as never, event)
+
+    expect(win._send).toHaveBeenCalledWith('workflow:log', {
+      runId: 'run-1',
+      sessionId: 'sess-1',
+      message: '[compose-brainstorm] 调用工具 read：src/a.ts'
+    })
+  })
+
   it('workflow_run_state → workflow:run-state', () => {
     const win = makeMainWindow()
     forwardEventToRenderer(win as never, {

@@ -159,6 +159,11 @@ export async function releaseWorktree(
   return true
 }
 
+/** 查询当前工作区是否支持 git worktree 隔离。 */
+export function createSupportsWorktreeFn(ctx: HostContext): () => boolean {
+  return () => Worktree.isGitRepo(ctx.workspaceRoot)
+}
+
 export function createWorktreeFn(ctx: HostContext): WorktreeFn {
   return (key) => ensureWorktree(ctx, key)
 }

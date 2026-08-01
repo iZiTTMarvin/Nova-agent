@@ -204,6 +204,13 @@ export function forwardEventToRenderer(
         ...(event.detail ? { detail: event.detail } : {})
       })
       break
+    case 'workflow_log':
+      webContents.send('workflow:log', {
+        runId: event.runId,
+        sessionId: event.sessionId,
+        message: event.message
+      })
+      break
     case 'workflow_run_state':
       webContents.send('workflow:run-state', {
         runId: event.runId,

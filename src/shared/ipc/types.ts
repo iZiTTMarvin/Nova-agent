@@ -687,6 +687,16 @@ export interface IpcEvents {
     status: WorkflowProgressStatus
     detail?: WorkflowProgressDetail
   }
+  /**
+   * 编排日志行：子代理活动与失败诊断。
+   * renderer 把它附着到当前生成消息里同 runId 的最后一个进度块活动区，
+   * 让长时间运行的阶段有持续的"正在做什么"反馈。
+   */
+  'workflow:log': {
+    runId: string
+    sessionId?: string
+    message: string
+  }
   /** 编排 run 状态投影：renderer 据此让输入框进入 / 退出运行态 */
   'workflow:run-state': {
     runId: string

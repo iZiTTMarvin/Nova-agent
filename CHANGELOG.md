@@ -1,4 +1,21 @@
 
+## 2026-08-01
+
+- **fix(workflow)**: 修复 compose 编排真实运行中 brainstorm 反复失败且阶段"静得像卡死"的问题
+  - 根因一（不可观测）：子 agent 在私有 EventBus 上运行，除权限请求外不向父总线转发任何活动；`workflow_log` 虽存在但 main 不转发 renderer，且失败被 `catch→null` 吞掉，run 目录只剩 run.json，无法诊断
+  - 根因二（解析脆弱）：`extractJson` 只取第一个围栏与"首个 { 到末个 }"切片，真实模型输出（散文+多围栏+示例对象）极易解析失败；且 AgentLoop 单 messageId 覆盖全部工具轮次，中间轮次的噪声文本会污染解析
+  - 修复（host/agentFn）：失败原因细分为 aborted / timeout / loop-error / empty-output / schema-parse-failed，统一经 run 日志落盘并随 `workflow_log` 上行；schema 解析改为"最终轮文本优先 + 多候选 + required 字段过滤"；解析失败自动做一次无工具修复重试（成功结果照常进 journal），一次性格式失误不再杀死整个 workflow
+  - 修复（`extractJsonCandidates`）：产出全部可解析候选（整段 → 各围栏 → 各平衡大括号切片，跳过字符串/转义），`extractJson` 保持原签名取首候选
+  - 修复（startStage 语义）：compose 的 startStage 现在是真正的进入点——`startStage=plan` 不再被静默拖回 brainstorm；失败 reason 给出可执行的恢复建议（重试或以 plan 起跑）
+  - UX（renderer）：进度块新增活动区，子代理工具调用以单行活动行实时附着到当前阶段进度块（相邻重复行去重）；失败时活动区展示最后一条诊断。新增 `workflow:log` IPC 通道与 `handleWorkflowLog` store handler
+  - 测试：+20 定向用例（多候选提取、修复重试成功/失败、required 过滤、最终轮优先、活动上行与去重、plan 跳过 brainstorm、log 转发与进度块附着）；typecheck / build / 全量测试 2726 通过
+
+- **fix(workflow)**: compose 实现阶段支持非 git 仓库自动降级到主工作区顺序执行
+  - 根因：当同一批次有多个任务时，`implement` 默认使用 `git worktree` 隔离；目标项目没有 `.git` 或 git 仓库没有提交时 `Worktree.create` 直接抛错，所有实现任务失败，run 目录也没有 log
+  - 修复：`HostFns` 新增 `supportsWorktree()` 能力查询；`implement` 根据该能力决定多任务批次使用 worktree 并行隔离（git 仓库），还是降级到主工作区顺序执行（非 git 仓库），避免无 git 用户无法使用
+  - `prepareWorktreeTask` 创建失败时写入 run 日志，提升无 git 以外的 worktree 失败诊断能力
+  - 测试：新增 compose 非 git 工作区同批顺序执行用例、worktree 非 git 目录检测用例；typecheck / build / 全量测试 2728 通过
+
 ## 2026-07-31
 
 - **feat(workflow)**: 新增 deep-research 与 code-review 两条编排工作流（Workflow 模式 P5）

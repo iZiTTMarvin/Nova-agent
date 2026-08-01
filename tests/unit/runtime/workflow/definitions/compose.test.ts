@@ -17,6 +17,7 @@ import type { WorkflowRunContext } from '../../../../../src/runtime/workflow/def
 import {
   composeWorkflow,
   runBrainstorm,
+  runImplement,
   runPlan,
   runVerify
 } from '../../../../../src/runtime/workflow/definitions/compose'
@@ -142,7 +143,8 @@ function makeHost(
     progress: (phase, status, detail) => {
       progress.push({ phase, status, ...(detail?.message ? { message: detail.message } : {}) })
     },
-    log: () => undefined
+    log: () => undefined,
+    supportsWorktree: () => true
   }
   return { host, calls, progress, integrations, cleaned, behavior: agentBehavior }
 }
@@ -177,6 +179,43 @@ describe('compose workflow definitions', () => {
     expect(harness.calls.filter((call) => call.options?.phase === 'implement').every((call) => !(call.options?.tools ?? []).includes('askQuestion'))).toBe(true)
     expect(harness.integrations).toEqual(['/tmp/compose-implement-task-a', '/tmp/compose-implement-task-b'])
     expect(harness.progress.some((event) => event.status === 'batch_merge')).toBe(true)
+  })
+
+  it('非 git 工作区下多任务批次降级到主工作区顺序执行，不创建 worktree', async () => {
+    const harness = makeHost()
+    // 模拟非 git 项目：host 声明不支持 worktree，且 worktree 被调用时应抛错
+    harness.host.supportsWorktree = () => false
+    harness.host.worktree = async () => {
+      throw new Error('should not call worktree in non-git workspace')
+    }
+
+    const result = await runImplement(harness.host, makePlan(), null)
+
+    expect(result.status).toBe('completed')
+    const implementCalls = harness.calls.filter((call) => call.options?.phase === 'implement')
+    expect(implementCalls).toHaveLength(2)
+    expect(implementCalls.every((call) => call.options?.isolation === 'shared')).toBe(true)
+    expect(harness.integrations).toHaveLength(0)
+    expect(harness.progress.some((event) => event.status === 'batch_merge')).toBe(true)
+  })
+
+  it('startStage=plan 跳过 brainstorm，不静默拖回方案构思', async () => {
+    const harness = makeHost()
+    const result = await composeWorkflow.run({
+      ...runContext(harness),
+      startStage: 'plan'
+    })
+
+    expect(result.status).toBe('completed')
+    expect(harness.calls.some((call) => call.options?.phase === 'brainstorm')).toBe(false)
+    expect(harness.calls.some((call) => call.options?.phase === 'plan')).toBe(true)
+    expect(harness.progress.filter((event) => event.status === 'started').map((event) => event.phase)).toEqual([
+      'plan',
+      'implement',
+      'verify',
+      'review',
+      'report'
+    ])
   })
 
   it('Auto 关闭时 brainstorm/plan 请求交互，Auto 开启时剔除交互权限', async () => {

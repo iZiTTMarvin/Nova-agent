@@ -102,6 +102,11 @@ export interface StreamSliceState {
     status: WorkflowProgressStatus
     detail?: WorkflowProgressDetail
   }) => void
+  /**
+   * 编排日志行 → 就地更新当前生成中消息里同 runId 最后一个进度块的 activity。
+   * 与进度块同规则：没有生成中消息或找不到对应进度块时丢弃。
+   */
+  handleWorkflowLog: (payload: { runId: string; message: string }) => void
 }
 
 /** recoverySlice 拥有的恢复态簿记字段与事件 handler。 */

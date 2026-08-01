@@ -102,7 +102,8 @@ function makeHarness(
     progress: (phase, status, detail) => {
       progress.push({ phase, status, ...(detail?.message ? { message: detail.message } : {}) })
     },
-    log: () => undefined
+    log: () => undefined,
+    supportsWorktree: () => true
   }
   return { host, agentCalls, bashCalls, worktreeCalls, progress }
 }
