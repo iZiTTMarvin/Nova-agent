@@ -1,11 +1,26 @@
 import { describe, it, expect } from 'vitest'
-import { migrateSessionData, migrateV3ToV4, CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  migrateSessionData,
+  migrateSessionFile,
+  migrateV3ToV4,
+  CURRENT_SESSION_SCHEMA_VERSION
+} from '../../../../src/runtime/sessions/migrations'
+import { SESSION_DATA_FILE } from '../../../../src/runtime/sessions/types'
 import { SESSION_MIGRATED_EMPTY_TITLE } from '../../../../src/shared/session/title'
-import type { SessionData } from '../../../../src/runtime/sessions/types'
 
 describe('migrateSessionData', () => {
   it('v1 会话自动升级到当前版本，原有字段不丢失', () => {
-    const v1: SessionData = {
+    const v1 = {
       schemaVersion: 1,
       id: 'sess_test',
       workspaceRoot: '/tmp/project',
@@ -74,7 +89,7 @@ describe('migrateSessionData', () => {
   })
 
   it('v3 线性会话经 migrateV3ToV4 串成 parentId 链', () => {
-    const v3: SessionData = {
+    const v3 = {
       schemaVersion: 3,
       id: 'sess_v3',
       workspaceRoot: '/ws',
@@ -96,7 +111,7 @@ describe('migrateSessionData', () => {
   })
 
   it('v4 会话经完整迁移链补全标题字段', () => {
-    const v4: SessionData = {
+    const v4 = {
       schemaVersion: 4,
       id: 'sess_v4',
       workspaceRoot: '/ws',
@@ -116,7 +131,7 @@ describe('migrateSessionData', () => {
   })
 
   it('v4 无用户消息的会话迁移后写入占位标题', () => {
-    const v4: SessionData = {
+    const v4 = {
       schemaVersion: 4,
       id: 'sess_empty',
       workspaceRoot: '/ws',
@@ -146,5 +161,120 @@ describe('migrateSessionData', () => {
     const migrated = migrateSessionData(v8)
     expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.cacheRoutingKey).toBeUndefined()
+  })
+
+  it('v9 fixture 迁移为 v10 primary，且不伪造 child metadata', () => {
+    const fixturePath = join(__dirname, '../../../fixtures/sessions/v9-primary-session.json')
+    const v9 = JSON.parse(readFileSync(fixturePath, 'utf-8')) as unknown
+
+    const migrated = migrateSessionData(v9)
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 10,
+      kind: 'primary',
+      id: 'sess_v9_primary',
+      messages: []
+    })
+    expect('subagent' in migrated).toBe(false)
+  })
+
+  it('v9 物理 session 文件迁移后写回 v10，并保留迁移前备份', () => {
+    const fixturePath = join(__dirname, '../../../fixtures/sessions/v9-primary-session.json')
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-session-v10-'))
+    const sessionId = 'sess_v9_primary'
+    const sessionDir = join(sessionsDir, sessionId)
+    mkdirSync(sessionDir)
+    writeFileSync(join(sessionDir, SESSION_DATA_FILE), readFileSync(fixturePath, 'utf-8'), 'utf-8')
+
+    try {
+      const migrated = migrateSessionFile(sessionsDir, sessionId)
+      expect(migrated).toMatchObject({ schemaVersion: 10, kind: 'primary', messages: [] })
+
+      const persisted = JSON.parse(
+        readFileSync(join(sessionDir, SESSION_DATA_FILE), 'utf-8')
+      ) as Record<string, unknown>
+      expect(persisted.schemaVersion).toBe(10)
+      expect(persisted.kind).toBe('primary')
+      expect('messages' in persisted).toBe(false)
+      expect(
+        readdirSync(sessionDir).filter((name) => name.startsWith(`${SESSION_DATA_FILE}.backup.`))
+      ).toHaveLength(1)
+    } finally {
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+
+  it('合法 v10 subagent 只接受完整、可判别的 metadata', () => {
+    const metadata = {
+      lineage: {
+        parentSessionId: 'sess_parent',
+        parentRunId: 'run_parent',
+        rootRunId: 'run_root',
+        depth: 1,
+        spawnKey: 'spawn_key',
+        spawnRunId: 'run_child',
+        origin: {
+          kind: 'task_tool' as const,
+          parentMessageId: 'msg_parent',
+          parentToolCallId: 'tc_parent'
+        }
+      },
+      profile: {
+        profileId: 'explore',
+        name: 'Explore',
+        description: 'Read-only review',
+        systemPrompt: 'Read only.',
+        toolNames: ['read', 'grep'],
+        permissionCeiling: 'read_only' as const,
+        maxToolRounds: 20,
+        configHash: 'cfg_hash'
+      }
+    }
+    const input = {
+      schemaVersion: 10,
+      kind: 'subagent' as const,
+      id: 'sess_child',
+      workspaceRoot: '/ws',
+      mode: 'default' as const,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2,
+      subagent: metadata
+    }
+
+    expect(migrateSessionData(input)).toEqual(input)
+  })
+
+  it('损坏的 v10 discriminant 输入 fail closed，不静默伪造 lineage', () => {
+    const base = {
+      schemaVersion: 10,
+      id: 'sess_bad',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    expect(() => migrateSessionData({ ...base, kind: 'primary', subagent: {} }))
+      .toThrow('primary 会话不得携带 subagent metadata')
+    expect(() => migrateSessionData({ ...base, kind: 'subagent' }))
+      .toThrow('subagent 会话必须携带合法的 subagent metadata')
+    expect(() => migrateSessionData({
+      ...base,
+      kind: 'subagent',
+      subagent: {
+        lineage: { depth: 'not-a-number' },
+        profile: {}
+      }
+    })).toThrow('subagent 会话必须携带合法的 subagent metadata')
+  })
+
+  it('未来 schemaVersion fail closed，绝不被降级为当前 v10', () => {
+    expect(() => migrateSessionData({ schemaVersion: 11 })).toThrow(
+      '会话 schemaVersion 11 高于当前支持的 10，拒绝降级读取'
+    )
   })
 })

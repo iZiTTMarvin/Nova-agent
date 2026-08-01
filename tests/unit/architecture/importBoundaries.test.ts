@@ -379,6 +379,16 @@ describe('import boundary allowlist reconciliation', () => {
 })
 
 describe('import boundary production gate', () => {
+  it('shared/subagents 实际源码不依赖 runtime、main、preload 或 renderer', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const scan = scanSourceTree(repoRoot)
+    const subagentViolations = scan.violations.filter((violation) =>
+      violation.from.startsWith('src/shared/subagents/')
+    )
+
+    expect(subagentViolations).toEqual([])
+  })
+
   it('真实 src 扫描结果与精确 allowlist 双向一致', () => {
     const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
     const scan = scanSourceTree(repoRoot)

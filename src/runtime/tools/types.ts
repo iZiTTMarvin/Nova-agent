@@ -17,6 +17,19 @@ export type { ToolTruncationMeta }
 /** 工具执行模式：并发安全工具可以进入并发批次，顺序工具必须独占执行 */
 export type ToolExecutionMode = 'parallel' | 'sequential'
 
+/**
+ * Immutable identity of one model-emitted tool invocation.
+ *
+ * It is absent when a host cannot provide a complete durable session/run
+ * identity; tools must not synthesize partially identified lineage.
+ */
+export interface ToolInvocationRef {
+  readonly sessionId: string
+  readonly runId: string
+  readonly messageId: string
+  readonly toolCallId: string
+}
+
 /** 工具触发的 Runtime 控制信号，不依赖本地化后的输出文本做控制流判断。 */
 export type ToolControlSignal = {
   type: 'mode_transition'
@@ -73,6 +86,8 @@ export interface ToolContext {
   sessionStore?: SessionStore
   /** 当前会话 ID，与 sessionStore 配套使用 */
   sessionId?: string
+  /** 当前单次模型工具调用的完整 durable 身份；由批执行器按调用注入。 */
+  readonly invocationRef?: ToolInvocationRef
   /** 当前轮次使用的模型客户端，供需要派发子任务的工具装配宿主能力。 */
   modelClient?: ModelClient
   /** 当前轮次的工具解析入口，供需要创建隔离工具集的工具使用。 */

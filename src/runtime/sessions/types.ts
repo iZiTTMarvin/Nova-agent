@@ -5,6 +5,7 @@
  * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
 import type { Mode, MessageBlock } from '../../shared/session'
+import type { SessionKind, SubagentSessionMetadata } from '../../shared/subagents'
 import type { TodoItem } from '../../shared/todo/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
@@ -32,13 +33,15 @@ export interface SessionSummary {
   titleSource?: SessionTitleSource
 }
 
-/** 会话完整数据（含所有消息） */
-export interface SessionData {
+/** 所有 Session kind 共有的持久化字段。 */
+interface SessionDataBase {
   /**
    * 数据结构版本号。旧会话首次加载时由 migrations.ts 迁移补全。
    * 新创建的会话固定写入 CURRENT_SESSION_SCHEMA_VERSION。
    */
   schemaVersion: number
+  /** primary / subagent 的持久化判别字段。 */
+  kind: SessionKind
   id: string
   workspaceRoot: string
   mode: Mode
@@ -90,6 +93,26 @@ export interface SessionData {
    */
   activePlan?: ActivePlanRef
 }
+
+/** 普通会话不携带任何 child-session metadata。 */
+export interface PrimarySessionData extends SessionDataBase {
+  kind: 'primary'
+  subagent?: never
+}
+
+/** 子代理会话必须携带完整的 lineage 与 profile 快照。 */
+export interface SubagentSessionData extends SessionDataBase {
+  kind: 'subagent'
+  subagent: SubagentSessionMetadata
+}
+
+/** 会话完整数据（含所有消息），由 kind 约束 child metadata 的合法组合。 */
+export type SessionData = PrimarySessionData | SubagentSessionData
+
+/** Session metadata without message bodies, preserving the kind discriminant. */
+export type SessionMetadata =
+  | Omit<PrimarySessionData, 'messages'>
+  | Omit<SubagentSessionData, 'messages'>
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */
 export type SerializableContentBlock =
@@ -155,7 +178,7 @@ export type AppendMessageResult =
   | {
       ok: true
       status: 'appended' | 'already_exists'
-      meta: Omit<SessionData, 'messages'>
+      meta: SessionMetadata
     }
   | {
       ok: false

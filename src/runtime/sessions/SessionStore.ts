@@ -19,7 +19,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import type { SessionSummary, SessionData, SessionMessage, SessionMessageAppend, AppendMessageResult, ContextSnapshot, SessionTitleSource } from './types'
+import type { SessionSummary, SessionData, SessionMetadata, SessionMessage, SessionMessageAppend, AppendMessageResult, ContextSnapshot, SessionTitleSource } from './types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
@@ -95,6 +95,7 @@ export class SessionStore {
     const now = Date.now()
     const session: SessionData = {
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      kind: 'primary',
       id: `sess_${randomUUID()}`,
       workspaceRoot,
       mode,
@@ -247,7 +248,7 @@ export class SessionStore {
    * 将会话数据转换为只含元数据的结构（用于写入 session.json）。
    * messages 字段被排除，避免重复存储与大文件重写。
    */
-  private toMetadata(session: SessionData): Omit<SessionData, 'messages'> & { schemaVersion: number } {
+  private toMetadata(session: SessionData): SessionMetadata {
     const { messages: _messages, ...metadata } = session
     return {
       ...metadata,
@@ -487,6 +488,8 @@ export class SessionStore {
     if (!fs.existsSync(path.join(dir, SESSION_DATA_FILE))) return false
 
     try {
+      const session = migrateSessionFile(this.sessionsDir, sessionId)
+      if (!session) return false
       appendPatchEvent(dir, {
         type: 'message_patch',
         messageId,
@@ -495,9 +498,8 @@ export class SessionStore {
       })
       // 触碰 updatedAt，不改 messageCount
       const sessionFile = path.join(dir, SESSION_DATA_FILE)
-      const raw = JSON.parse(fs.readFileSync(sessionFile, 'utf8')) as SessionData
-      raw.updatedAt = Date.now()
-      atomicWriteFileSync(sessionFile, JSON.stringify(this.toMetadata({ ...raw, messages: [] }), null, 2), 'utf8')
+      session.updatedAt = Date.now()
+      atomicWriteFileSync(sessionFile, JSON.stringify(this.toMetadata(session), null, 2), 'utf8')
       return true
     } catch (err) {
       console.error(`[SessionStore] 追加 patch 失败 session=${sessionId}:`, err)

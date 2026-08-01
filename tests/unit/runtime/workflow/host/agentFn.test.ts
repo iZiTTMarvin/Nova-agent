@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -9,9 +9,11 @@ import {
   resolveAgentTools
 } from '../../../../../src/runtime/workflow/host/agentFn'
 import { runJournalPath, runLogPath } from '../../../../../src/runtime/workflow/state/paths'
+import { journalKey } from '../../../../../src/runtime/workflow/state/journal'
 import { addEmptyResponse, addTextResponse, makeHostHarness } from './hostTestContext'
 import type { MockModelClient } from '../../../../../src/test-support/builders/MockModelClient'
 import type { ToolExecutor, ToolResult } from '../../../../../src/runtime/tools/types'
+import { AgentLoop } from '../../../../../src/runtime/agent/AgentLoop'
 
 function fakeTool(name: string): ToolExecutor {
   return {
@@ -94,7 +96,21 @@ describe('host agentFn never-throw 与 journal', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     rmSync(tmp, { recursive: true, force: true })
+  })
+
+  it('私有 AgentLoop 在执行后按 sendMessage → dispose 生命周期释放', async () => {
+    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
+    addTextResponse(h.client, 'done')
+    const sendMessage = vi.spyOn(AgentLoop.prototype, 'sendMessage')
+    const dispose = vi.spyOn(AgentLoop.prototype, 'dispose')
+
+    await expect(createAgentFn(h.ctx)('生命周期')).resolves.toBe('done')
+
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(dispose.mock.invocationCallOrder[0]).toBeGreaterThan(sendMessage.mock.invocationCallOrder[0]!)
   })
 
   it('成功返回文本并写入 journal', async () => {
@@ -105,7 +121,14 @@ describe('host agentFn never-throw 与 journal', () => {
     await expect(agent('工作 A')).resolves.toBe('done-1')
 
     const journal = readFileSync(runJournalPath(tmp, h.ctx.runId), 'utf-8')
-    expect(journal).toContain('done-1')
+    const key = journalKey('工作 A', {
+      agentType: 'test-phase',
+      phase: 'test-phase',
+      tools: [...BASE_TOOLS],
+      isolation: 'shared',
+      timeoutMs: null
+    }, 0)
+    expect(journal).toBe(`${JSON.stringify({ t: 'agent', key, result: 'done-1', pass: 1 })}\n`)
   })
 
   it('相同调用第二次命中 journal 缓存，不再 spawn', async () => {

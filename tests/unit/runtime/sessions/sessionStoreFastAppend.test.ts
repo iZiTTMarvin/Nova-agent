@@ -109,6 +109,30 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     expect(loaded!.messages[0].interrupted).toBe(true)
   })
 
+  it('旧版元数据追加 patch 前先迁移，不能写出缺少 kind 的 v10 文件', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    store.appendMessageFast(session.id, {
+      id: 'msg_legacy',
+      role: 'assistant',
+      content: 'done',
+      timestamp: 1
+    })
+
+    const sessionFile = path.join(tmpDir, 'sessions', session.id, 'session.json')
+    const legacy = JSON.parse(fs.readFileSync(sessionFile, 'utf8')) as Record<string, unknown>
+    legacy.schemaVersion = 9
+    delete legacy.kind
+    fs.writeFileSync(sessionFile, JSON.stringify(legacy, null, 2), 'utf8')
+
+    expect(store.appendMessagePatch(session.id, 'msg_legacy', { interrupted: true })).toBe(true)
+
+    const migrated = JSON.parse(fs.readFileSync(sessionFile, 'utf8')) as Record<string, unknown>
+    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.kind).toBe('primary')
+    expect('subagent' in migrated).toBe(false)
+  })
+
   it('compactMessagePatches 合并后清空 patch 文件', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/ws')

@@ -29,6 +29,7 @@ describe('SessionStore', () => {
       const session = store.create('/project/root')
 
       expect(session.id).toMatch(/^sess_/)
+      expect(session.kind).toBe('primary')
       expect(session.workspaceRoot).toBe('/project/root')
       expect(session.mode).toBe('default')
       expect(session.messages).toHaveLength(0)
@@ -37,6 +38,8 @@ describe('SessionStore', () => {
       expect(session.titleSource).toBe('placeholder')
       expect(session.createdAt).toBeGreaterThan(0)
       expect(session.updatedAt).toBe(session.createdAt)
+      expect(fs.readFileSync(path.join(tmpDir, 'sessions', session.id, 'session.json'), 'utf-8'))
+        .toContain('"kind": "primary"')
     })
 
     it('创建会话时可以指定模式', () => {

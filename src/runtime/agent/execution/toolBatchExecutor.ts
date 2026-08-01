@@ -5,7 +5,7 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { EventBus } from '../EventBus'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent, ToolTruncationMeta, FileEffectRecorder, ToolControlSignal } from '../../tools/types'
+import type { ToolContext, ToolExecutor, ImageContent, ToolInvocationRef, ToolTruncationMeta, FileEffectRecorder, ToolControlSignal } from '../../tools/types'
 import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
@@ -133,7 +133,10 @@ function parseArgs(argsStr: string): Record<string, unknown> {
   }
 }
 
-function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
+function buildToolContext(
+  options: ToolBatchExecutionOptions,
+  invocationRef?: ToolInvocationRef
+): ToolContext {
   return {
     workingDir: options.workingDir,
     ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
@@ -145,6 +148,7 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     supportsVision: options.supportsVision,
     ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(invocationRef ? { invocationRef } : {}),
     ...(options.modelClient ? { modelClient: options.modelClient } : {}),
     ...(options.resolveTool ? { resolveTool: options.resolveTool } : {}),
     ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
@@ -162,6 +166,31 @@ function buildToolContext(options: ToolBatchExecutionOptions): ToolContext {
     ...(options.assertExecutionCurrent
       ? { assertExecutionCurrent: options.assertExecutionCurrent }
       : {})
+  }
+}
+
+function hasNonEmptyIdentity(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function buildToolInvocationRef(
+  options: ToolBatchExecutionOptions,
+  toolCallId?: string
+): ToolInvocationRef | undefined {
+  if (
+    !hasNonEmptyIdentity(options.sessionId) ||
+    !hasNonEmptyIdentity(options.runId) ||
+    !hasNonEmptyIdentity(options.messageId) ||
+    !hasNonEmptyIdentity(toolCallId)
+  ) {
+    return undefined
+  }
+
+  return {
+    sessionId: options.sessionId,
+    runId: options.runId,
+    messageId: options.messageId,
+    toolCallId
   }
 }
 
@@ -262,7 +291,10 @@ async function executePreparedToolCall(
     }
   }
 
-  const toolContext = buildToolContext(options)
+  const toolContext = buildToolContext(
+    options,
+    buildToolInvocationRef(options, item.toolCall.id)
+  )
   let resultText = ''
   let resultImages: ImageContent[] | undefined
   let artifactId: string | undefined

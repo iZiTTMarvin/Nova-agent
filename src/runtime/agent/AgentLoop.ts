@@ -285,6 +285,7 @@ export class AgentLoop {
         currentLeafId: null,
         frozenSystemPrompt: this.ctx.systemPrompt,
         schemaVersion: 2,
+        kind: 'primary',
         createdAt: Date.now(),
         updatedAt: Date.now()
       },

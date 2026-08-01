@@ -6,6 +6,8 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { SUB_PERMISSION_PREFIX, SubAgentPermissionBridge } from '../../../../src/runtime/tools/subAgentBridge'
+import type { ModelClient, ChatOptions } from '../../../../src/runtime/model/ModelClient'
+import type { ChatEvent, ChatMessage, ModelClientConfig, ToolDefinition } from '../../../../src/runtime/model/types'
 
 function baseRegistry(): ToolRegistry {
   const reg = new ToolRegistry()
@@ -21,6 +23,41 @@ function baseRegistry(): ToolRegistry {
 }
 
 const ctx: ToolContext = { workingDir: process.cwd(), readState: createReadState() }
+
+class BlockingModelClient implements ModelClient {
+  private resolveStarted!: () => void
+  readonly started = new Promise<void>((resolve) => {
+    this.resolveStarted = resolve
+  })
+  wasAborted = false
+
+  async *chat(
+    _messages: ChatMessage[],
+    _tools?: ToolDefinition[],
+    options?: ChatOptions
+  ): AsyncIterable<ChatEvent> {
+    yield { type: 'message_start' }
+    this.resolveStarted()
+    await new Promise<void>((resolve) => {
+      if (options?.abortSignal?.aborted) {
+        this.wasAborted = true
+        resolve()
+        return
+      }
+      options?.abortSignal?.addEventListener(
+        'abort',
+        () => {
+          this.wasAborted = true
+          resolve()
+        },
+        { once: true }
+      )
+    })
+    yield { type: 'cancelled' }
+  }
+
+  updateConfig(_config: ModelClientConfig): void {}
+}
 
 describe('taskTool', () => {
   it('未知子代理类型返回错误', async () => {
@@ -52,7 +89,7 @@ describe('taskTool', () => {
     })
     const result = await tool.execute({ subagent_type: 'explore', task: 'list files' }, ctx)
     expect(result.success).toBe(true)
-    expect(result.output).toContain('found todos')
+    expect(result.output).toMatch(/^\[子代理 explore \/ [0-9a-f-]{36}\]\nfound todos$/)
   })
 
   it('子代理摘要不含父 EventBus 上的 text_delta（EventBus 隔离）', async () => {
@@ -121,6 +158,57 @@ describe('taskTool', () => {
     expect(result.output).toContain('blocked')
   })
 
+  it('explore 子代理不会获得 edit、write 或 bash，即使父注册表提供它们', async () => {
+    const reg = baseRegistry()
+    for (const name of ['edit', 'write', 'bash']) {
+      reg.register({
+        name,
+        description: `${name} tool`,
+        parameters: { type: 'object', properties: {} },
+        async execute(): Promise<ToolResult> {
+          return { success: true, output: 'unexpected' }
+        }
+      })
+    }
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const tool = createTaskTool({
+      modelClient: client,
+      parentEventBus: new EventBus(),
+      resolveTool: (name) => reg.getTool(name)
+    })
+
+    await tool.execute({ subagent_type: 'explore', task: 'inspect only' }, ctx)
+
+    const names = client.getCalls()[0]?.tools?.map((definition) => definition.name) ?? []
+    expect(names).not.toContain('edit')
+    expect(names).not.toContain('write')
+    expect(names).not.toContain('bash')
+  })
+
+  it('父取消经 bridge 真正 abort 活跃的子 AgentLoop', async () => {
+    const bridge = new SubAgentPermissionBridge()
+    const client = new BlockingModelClient()
+    const tool = createTaskTool({
+      modelClient: client,
+      parentEventBus: new EventBus(),
+      permissionBridge: bridge,
+      resolveTool: () => undefined
+    })
+
+    const execution = tool.execute({ subagent_type: 'explore', task: 'wait for cancellation' }, ctx)
+    await client.started
+    bridge.cancelAll()
+    await execution
+
+    expect(client.wasAborted).toBe(true)
+  })
+
   it('permission_request 转发到父 EventBus', async () => {
     const reg = baseRegistry()
     reg.register({
@@ -170,13 +258,22 @@ describe('taskTool', () => {
     expect(forwarded.length).toBe(1)
   })
 
-  it('工具名称为 task', () => {
+  it('工具注册名、完整描述与参数 schema 保持稳定', () => {
     const tool = createTaskTool({
       modelClient: new MockModelClient(),
       parentEventBus: new EventBus(),
       resolveTool: () => undefined
     })
     expect(tool.name).toBe('task')
+    expect(tool.description).toBe('启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。')
+    expect(tool.parameters).toEqual({
+      type: 'object',
+      properties: {
+        subagent_type: { type: 'string', description: '子代理类型，如 explore / code' },
+        task: { type: 'string', description: '子任务描述' }
+      },
+      required: ['subagent_type', 'task']
+    })
   })
 
   it('executionMode 为 sequential', () => {

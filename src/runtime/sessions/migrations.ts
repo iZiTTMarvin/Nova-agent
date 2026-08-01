@@ -12,13 +12,18 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { SessionData, SessionMessage } from './types'
+import type {
+  SubagentOrigin,
+  SubagentProfileSnapshot,
+  SubagentSessionMetadata
+} from '../../shared/subagents'
 import type { Mode } from '../../shared/session/types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 9
+export const CURRENT_SESSION_SCHEMA_VERSION = 10
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -40,6 +45,7 @@ function migrateV0ToV1(data: unknown): SessionData {
 
   const result: SessionData = {
     schemaVersion: 1,
+    kind: 'primary',
     id: typeof raw.id === 'string' ? raw.id : '',
     workspaceRoot: typeof raw.workspaceRoot === 'string' ? raw.workspaceRoot : '',
     mode: normalizeLegacyMode(raw.mode),
@@ -213,6 +219,118 @@ function migrateV8ToV9(data: unknown): SessionData {
   }
 }
 
+/**
+ * v9 → v10：为正式 child session lineage 引入 discriminated session kind。
+ * v9 是发布前的普通会话格式，因此一律归一为 primary，并丢弃不可信的伪 metadata。
+ */
+function migrateV9ToV10(data: unknown): SessionData {
+  const session = data as SessionData
+  const { kind: _kind, subagent: _subagent, ...primary } = session
+  return {
+    ...primary,
+    schemaVersion: 10,
+    kind: 'primary'
+  }
+}
+
+type UnknownObject = { [propertyName: string]: unknown }
+
+function isPlainObject(value: unknown): value is UnknownObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isOptionalNonEmptyString(value: unknown): boolean {
+  return value === undefined || isNonEmptyString(value)
+}
+
+function isSubagentOrigin(value: unknown): value is SubagentOrigin {
+  if (!isPlainObject(value)) return false
+  if (value.kind === 'task_tool') {
+    return (
+      isNonEmptyString(value.parentMessageId) &&
+      isNonEmptyString(value.parentToolCallId)
+    )
+  }
+  if (value.kind === 'workflow') {
+    return (
+      isNonEmptyString(value.workflowRunId) &&
+      isNonEmptyString(value.phase) &&
+      isOptionalNonEmptyString(value.taskId) &&
+      isOptionalNonEmptyString(value.batchId)
+    )
+  }
+  return false
+}
+
+function isSubagentProfileSnapshot(value: unknown): value is SubagentProfileSnapshot {
+  if (!isPlainObject(value)) return false
+  const maxToolRounds = value.maxToolRounds
+  if (
+    !isNonEmptyString(value.profileId) ||
+    !isNonEmptyString(value.name) ||
+    typeof value.description !== 'string' ||
+    typeof value.systemPrompt !== 'string' ||
+    !Array.isArray(value.toolNames) ||
+    !value.toolNames.every(isNonEmptyString) ||
+    (value.permissionCeiling !== 'read_only' && value.permissionCeiling !== 'workspace_write') ||
+    typeof maxToolRounds !== 'number' ||
+    !Number.isInteger(maxToolRounds) ||
+    maxToolRounds <= 0 ||
+    !isNonEmptyString(value.configHash)
+  ) {
+    return false
+  }
+
+  if (value.model === undefined) return true
+  return (
+    isPlainObject(value.model) &&
+    isNonEmptyString(value.model.providerId) &&
+    isNonEmptyString(value.model.modelId)
+  )
+}
+
+function isSubagentSessionMetadata(value: unknown): value is SubagentSessionMetadata {
+  if (!isPlainObject(value) || !isPlainObject(value.lineage)) return false
+  const { lineage } = value
+  const depth = lineage.depth
+  return (
+    isNonEmptyString(lineage.parentSessionId) &&
+    isNonEmptyString(lineage.parentRunId) &&
+    isNonEmptyString(lineage.rootRunId) &&
+    typeof depth === 'number' &&
+    Number.isInteger(depth) &&
+    depth >= 0 &&
+    isNonEmptyString(lineage.spawnKey) &&
+    isNonEmptyString(lineage.spawnRunId) &&
+    isSubagentOrigin(lineage.origin) &&
+    isSubagentProfileSnapshot(value.profile)
+  )
+}
+
+/** Validate the persisted v10 discriminant before business code can consume it. */
+function assertValidSessionKind(value: unknown): asserts value is SessionData {
+  if (!isPlainObject(value)) {
+    throw new Error('会话 v10 数据必须是对象')
+  }
+
+  if (value.kind === 'primary') {
+    if (Object.prototype.hasOwnProperty.call(value, 'subagent')) {
+      throw new Error('primary 会话不得携带 subagent metadata')
+    }
+    return
+  }
+
+  if (value.kind === 'subagent' && isSubagentSessionMetadata(value.subagent)) {
+    return
+  }
+
+  throw new Error('subagent 会话必须携带合法的 subagent metadata')
+}
+
 /** 旧字面量 auto → default；非法值兜底 default */
 function normalizeLegacyMode(mode: unknown): Mode {
   if (mode === 'plan' || mode === 'default' || mode === 'compose') return mode
@@ -244,34 +362,43 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV5ToV6, // v5 → v6
   migrateV6ToV7, // v6 → v7
   migrateV7ToV8, // v7 → v8
-  migrateV8ToV9  // v8 → v9
+  migrateV8ToV9, // v8 → v9
+  migrateV9ToV10 // v9 → v10
 ]
 
 /**
  * 把任意未知结构的会话数据迁移到 CURRENT_SESSION_SCHEMA_VERSION。
  *
  * - 无 schemaVersion 或 schemaVersion < CURRENT：顺序应用迁移链。
- * - schemaVersion === CURRENT：补字段后原样返回。
- * - schemaVersion > CURRENT（未来版本数据被旧代码读到）：不回滚，按当前结构尽力补全。
+ * - schemaVersion === CURRENT：校验当前 discriminated session contract 后返回。
+ * - schemaVersion > CURRENT：fail closed，绝不把未来数据错误降级为当前版本。
  */
 export function migrateSessionData(data: unknown): SessionData {
   const raw = (data ?? {}) as Record<string, unknown>
   const rawVersion = typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 0
 
-  // 已经是当前版本：补全树字段后原样返回
-  if (rawVersion >= CURRENT_SESSION_SCHEMA_VERSION) {
+  if (rawVersion > CURRENT_SESSION_SCHEMA_VERSION) {
+    throw new Error(
+      `会话 schemaVersion ${rawVersion} 高于当前支持的 ${CURRENT_SESSION_SCHEMA_VERSION}，拒绝降级读取`
+    )
+  }
+
+  // 已经是当前版本：补全树字段后校验 discriminated metadata。
+  if (rawVersion === CURRENT_SESSION_SCHEMA_VERSION) {
     const session = raw as unknown as SessionData
     const messages = Array.isArray(session.messages) ? session.messages : []
     const withTree =
       messages.length > 0 && messages.some(m => m.parentId === undefined)
         ? migrateV3ToV4({ ...session, messages }).messages
         : messages
-    return {
+    const result: SessionData = {
       ...session,
       messages: withTree,
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       currentLeafId: session.currentLeafId ?? withTree.at(-1)?.id ?? null
     }
+    assertValidSessionKind(result)
+    return result
   }
 
   // 从 rawVersion 顺序迁移到 CURRENT
@@ -283,11 +410,15 @@ export function migrateSessionData(data: unknown): SessionData {
     }
   }
 
-  const result = current as unknown as SessionData
-  result.schemaVersion = CURRENT_SESSION_SCHEMA_VERSION
-  if (result.currentLeafId === undefined) {
-    result.currentLeafId = result.messages.at(-1)?.id ?? null
+  const migrated = current as unknown as SessionData
+  const messages = Array.isArray(migrated.messages) ? migrated.messages : []
+  const result: SessionData = {
+    ...migrated,
+    schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+    messages,
+    currentLeafId: migrated.currentLeafId ?? messages.at(-1)?.id ?? null
   }
+  assertValidSessionKind(result)
   return result
 }
 

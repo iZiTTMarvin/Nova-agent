@@ -671,6 +671,97 @@ describe('executeToolBatch', () => {
     expect(receivedArgs[0].path).toBe('compus_mange.iml')
   })
 
+  it('为每个模型工具调用注入对应的 messageId/toolCallId，探测上下文不携带伪身份', async () => {
+    const registry = new ToolRegistry()
+    const executedRefs: Array<ToolContext['invocationRef']> = []
+    const probeRefs: Array<ToolContext['invocationRef']> = []
+
+    for (const name of ['read', 'grep']) {
+      registry.register({
+        name,
+        description: name,
+        executionMode: 'parallel',
+        isConcurrencySafe: (_args, context) => {
+          probeRefs.push(context.invocationRef)
+          return true
+        },
+        parameters: { type: 'object', properties: {} },
+        async execute(_args, context): Promise<ToolResult> {
+          executedRefs.push(context.invocationRef)
+          return { success: true, output: name }
+        }
+      })
+    }
+
+    await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_read_identity', name: 'read', arguments: '{}' },
+        { id: 'tc_grep_identity', name: 'grep', arguments: '{}' }
+      ],
+      messageId: 'msg_from_model',
+      sessionId: 'sess_parent',
+      runId: 'run_parent',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 2,
+      toolExecution: 'parallel'
+    })
+
+    expect(probeRefs).toEqual([undefined, undefined])
+    expect(executedRefs).toEqual([
+      {
+        sessionId: 'sess_parent',
+        runId: 'run_parent',
+        messageId: 'msg_from_model',
+        toolCallId: 'tc_read_identity'
+      },
+      {
+        sessionId: 'sess_parent',
+        runId: 'run_parent',
+        messageId: 'msg_from_model',
+        toolCallId: 'tc_grep_identity'
+      }
+    ])
+  })
+
+  it('缺少完整 durable session/run 身份时，普通工具保持原有调用且不拿 invocationRef', async () => {
+    const registry = new ToolRegistry()
+    let receivedRef: ToolContext['invocationRef']
+    registerTool(registry, 'read', async (_args, context) => {
+      receivedRef = context.invocationRef
+      return { success: true, output: 'normal-tool-result' }
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_no_identity', name: 'read', arguments: '{}' }],
+      messageId: 'msg_without_session',
+      sessionId: 'sess_present',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 1,
+      toolExecution: 'parallel'
+    })
+
+    expect(receivedRef).toBeUndefined()
+    expect(result.outcomes).toMatchObject([
+      { toolCall: { id: 'tc_no_identity' }, resultText: 'normal-tool-result', failed: false }
+    ])
+  })
+
   it('正常 native args 不触发修复，原样透传', async () => {
     const registry = new ToolRegistry()
     const receivedArgs: Record<string, unknown>[] = []
