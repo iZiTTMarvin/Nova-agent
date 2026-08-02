@@ -10,7 +10,10 @@ import { listPermissionRules } from '../../../runtime/permissions/PermissionServ
 import { CheckpointManager } from '../../../runtime/checkpoints/CheckpointManager'
 import { ArtifactStore } from '../../../runtime/artifacts/ArtifactStore'
 import type { SessionStore } from '../../../runtime/sessions/SessionStore'
-import { persistCompactionSnapshot } from '../../../runtime/sessions/contextSnapshot'
+import {
+  persistCompactionSnapshot,
+  restoreOrInjectHistory
+} from '../../../runtime/sessions/contextSnapshot'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type {
   PreparedSubagentTurn,
@@ -30,6 +33,7 @@ export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
   readonly contextWindow: number
   readonly supportsVision: boolean
   readonly promptCacheKey?: string
+  readonly resolveImageUrl?: (url: string) => string
 }
 
 /** 为 Child Session 装配普通 AgentLoop；不创建 Session/Run，也不提交终态。 */
@@ -111,6 +115,12 @@ export function prepareSubagentRuntime(
           : undefined
       }
     })
+  )
+  restoreOrInjectHistory(
+    agentLoop,
+    input.childSession,
+    input.sessionStore.loadContextSnapshot(input.childSession.id),
+    input.resolveImageUrl
   )
 
   return { agentLoop, eventBus }

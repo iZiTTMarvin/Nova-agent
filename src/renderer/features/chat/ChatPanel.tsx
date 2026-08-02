@@ -828,7 +828,7 @@ export const ChatPanel: React.FC = () => {
           )}
 
           {/* interrupted run：继续分析 / 回滚本轮 / 查看已执行步骤 */}
-          {interruptedRunId && (
+          {interruptedRunId && currentSession?.kind !== 'subagent' && (
             <div className="chat-cross-turn-notice" role="status">
               <span className="chat-cross-turn-notice__text">
                 上次任务异常中断
@@ -912,8 +912,17 @@ export const ChatPanel: React.FC = () => {
               )}
             </AnimatePresence>
 
-            {/* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */}
-            <div
+            {/* Child Session 是 durable 执行记录；继续/恢复必须回到统一子代理执行服务。 */}
+            {currentSession?.kind === 'subagent' ? (
+              <div
+                className="w-full rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm text-gray-500 shadow-[0_8px_30px_rgb(0,0,0,0.04)]"
+                role="note"
+              >
+                子会话为只读执行记录。请从父会话的子任务行继续、授权或重试。
+              </div>
+            ) : (
+              /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */
+              <div
               ref={composerBoxRef}
               className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
                 isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
@@ -1003,7 +1012,8 @@ export const ChatPanel: React.FC = () => {
                   )}
                 </div>
               </div>
-            </div>
+              </div>
+            )}
 
           </div>
 

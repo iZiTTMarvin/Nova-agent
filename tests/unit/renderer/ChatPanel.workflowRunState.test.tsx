@@ -13,6 +13,7 @@ import {
   resetSettingsStoreForTests
 } from '../../../src/renderer/stores/useSettingsStore'
 import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import { useRunStore } from '../../../src/renderer/stores/useRunStore'
 import { useWorkflowStore } from '../../../src/renderer/features/workflow/useWorkflowStore'
 
 vi.mock('../../../src/renderer/features/chat/MessageItem', () => ({ MessageItem: () => null }))
@@ -23,6 +24,9 @@ vi.mock('../../../src/renderer/components/ImagePreviewBar', () => ({ ImagePrevie
 vi.mock('../../../src/renderer/features/todo/TodoPanel', () => ({ TodoPanel: () => null }))
 vi.mock('../../../src/renderer/features/ask/AskQuestionPanel', () => ({ AskQuestionPanel: () => null }))
 vi.mock('../../../src/renderer/features/chat/RecoveryBanner', () => ({ RecoveryBanner: () => null }))
+vi.mock('../../../src/renderer/features/subagents/SubagentSessionHeader', () => ({
+  SubagentSessionHeader: () => null
+}))
 vi.mock('../../../src/renderer/components/ImagePreviewDialog', () => ({ ImagePreviewDialog: () => null }))
 vi.mock('../../../src/renderer/features/skills/SkillAC', () => ({
   SkillAC: React.forwardRef(() => null)
@@ -73,6 +77,7 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     resetChatStoreForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
+    useRunStore.getState().resetForTests()
     useWorkflowStore.getState().clear()
 
     sendMessage = vi.fn(async () => true)
@@ -103,6 +108,39 @@ describe('ChatPanel 编排运行态输入互斥', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('Child Session interrupted 视图不暴露普通会话的继续与回滚动作', () => {
+    useChatStore.setState({
+      currentSessionId: 'child-session',
+      currentSubagentTask: 'inspect',
+      sessions: [{
+        id: 'child-session',
+        workspaceRoot: 'D:/tmp/project',
+        mode: 'plan',
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        kind: 'subagent',
+        subagent: {
+          lineage: { parentSessionId: 'parent-session', depth: 1 },
+          profile: {
+            profileId: 'explore',
+            name: 'explore',
+            permissionCeiling: 'read_only'
+          }
+        }
+      }]
+    } as never)
+    useRunStore.setState({ interruptedRunId: 'run-child', interruptedSteps: [] })
+
+    const renderer = mountChatPanel()
+    const text = renderer.root.findAllByType('button')
+      .map((button) => button.children.join(''))
+
+    expect(text).not.toContain('继续分析')
+    expect(text).not.toContain('回滚本轮')
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(0)
   })
 
   it('编排运行中：回车既不发送也不排队，只弹中断提示', async () => {

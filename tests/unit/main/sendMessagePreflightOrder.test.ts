@@ -28,6 +28,15 @@ describe('P0-3 preflight 不得留下 active run', () => {
     }
   )
 
+  it('Child Session 不得绕过 SubagentExecutionService 从普通消息入口启动 turn', () => {
+    const src = readFileSync(TURN_SERVICE, 'utf-8')
+    const executeIdx = src.indexOf('turnExecutor.execute')
+    const preflight = src.slice(0, executeIdx)
+
+    expect(preflight).toMatch(/session\.kind === 'subagent'/)
+    expect(preflight).toMatch(/不能从普通消息入口启动新 turn/)
+  })
+
   it('契约：startRun 后进程内清理与 terminal 提交分离，unregister 不依赖 commit 成功', () => {
     const src = readFileSync(TURN_EXECUTOR, 'utf-8')
     const afterStart = src.slice(src.indexOf('runCoordinator.startRun'))

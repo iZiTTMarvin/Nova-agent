@@ -167,6 +167,7 @@ export type SubagentFailureCode =
   | 'timeout'
   | 'permission'
   | 'schema'
+  | 'scheduler'
   | 'host'
 
 export interface SubagentExecutionFailure {

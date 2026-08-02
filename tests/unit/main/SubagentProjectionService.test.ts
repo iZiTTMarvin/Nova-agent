@@ -142,4 +142,36 @@ describe('SubagentProjectionService', () => {
     ])
     expect(projections[0]).not.toHaveProperty('summary')
   })
+
+  it('interrupted child 的 pending interaction 仍从父行投影为等待授权', () => {
+    const child = createChild('call-waiting', 'run-child-waiting')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-waiting',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-child-waiting', 'msg-child')
+    coordinator.inbox.enqueue({
+      runId: 'run-child-waiting',
+      sessionId: child.id,
+      messageId: 'msg-child',
+      type: 'permission',
+      interactionId: 'permission-child',
+      payload: { requestId: 'permission-child' }
+    })
+    coordinator.commitTerminal({
+      runId: 'run-child-waiting',
+      status: 'interrupted',
+      reason: 'process_exit'
+    })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const projection = service.getByChildSessionId(child.id)
+
+    expect(projection).toEqual(expect.objectContaining({
+      status: 'waiting_user',
+      latestActivity: '等待你的授权'
+    }))
+  })
 })

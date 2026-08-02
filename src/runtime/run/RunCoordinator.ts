@@ -351,11 +351,13 @@ export class RunCoordinator {
     snap.updatedAt = Date.now()
     snap.lastHeartbeatAt = snap.updatedAt
 
-    // 取消挂起交互
-    for (const inter of snap.pendingInteractions) {
-      if (inter.status === 'pending' || inter.status === 'submitting') {
-        inter.status = 'cancelled'
-        inter.version += 1
+    // interrupted 需要在重启后恢复待处理交互；硬终态才取消 resolver 对应的 durable entry。
+    if (params.status !== 'interrupted') {
+      for (const inter of snap.pendingInteractions) {
+        if (inter.status === 'pending' || inter.status === 'submitting') {
+          inter.status = 'cancelled'
+          inter.version += 1
+        }
       }
     }
 
@@ -663,8 +665,8 @@ export class RunCoordinator {
       snap.terminalTransitionId = transitionId
       snap.executionGeneration = 0
       for (const inter of snap.pendingInteractions) {
-        if (inter.status === 'pending' || inter.status === 'submitting') {
-          inter.status = 'cancelled'
+        if (inter.status === 'submitting') {
+          inter.status = 'pending'
           inter.version += 1
         }
       }
@@ -915,6 +917,20 @@ export class RunCoordinator {
       !isTerminalRunStatus(snap.status) &&
       snap.executionGeneration === generation
     )
+  }
+
+  /** 将 fail-closed 身份冲突写入 run event/progress，避免只留下易丢失的控制台日志。 */
+  recordDiagnostic(runId: string, code: string, message: string): RunSnapshot | null {
+    const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!snap) return null
+    snap.progress = {
+      ...(snap.progress ?? {}),
+      label: message,
+      extras: { ...(snap.progress?.extras ?? {}), diagnosticCode: code }
+    }
+    snap.updatedAt = Date.now()
+    this.commit(snap, 'diagnostic', { code, message })
+    return cloneSnapshot(snap)
   }
 
   private indexSession(sessionId: string, runId: string): void {

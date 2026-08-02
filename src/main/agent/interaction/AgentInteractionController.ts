@@ -15,6 +15,7 @@ import {
   dismissPendingAskQuestionsForRun
 } from './askQuestionWaiters'
 import { clearSteeringQueue } from '../turn/SteeringQueue'
+import { getSubagentLifecycleCoordinator } from '../../services/SubagentLifecycleHost'
 
 /** 校验 IPC 请求指向的 durable interaction，返回不匹配原因。 */
 function interactionIdentityError(
@@ -81,23 +82,15 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
   const runId = params.runId ?? getActiveRunId()
   const coord = getRunCoordinator()
   const beforeCancel = runId ? coord.getSnapshot(runId) : null
-  const hasExecutionHandle = runId ? getRunExecutionRegistry().get(runId) !== null : false
   if (runId && beforeCancel) {
-    coord.beginCancel(runId)
-    coord.inbox.cancelAllForRun(runId)
-
-    if (hasExecutionHandle) {
-      // abort 会等待执行收敛；终态仍由 SEND_MESSAGE 的 finally 统一提交。
-      await getRunExecutionRegistry().abort(runId, 'cancel_execution')
-      // 只终止该 run 名下的子代理，不影响并发中的其它 run
-      subAgentBridgeRegistry.cancelAllForRun(runId)
-      subAgentBridgeRegistry.clearAllForRun(runId)
-      markActiveStreamsCancelled(runId)
-    } else {
-      coord.commitTerminal({ runId, status: 'cancelled', reason: '用户取消未执行的运行' })
+    const cancelled = await getSubagentLifecycleCoordinator().cancelRunTree(
+      runId,
+      'cancel_execution'
+    )
+    for (const cancelledRunId of cancelled.requestedRunIds) {
+      markActiveStreamsCancelled(cancelledRunId)
+      dismissPendingAskQuestionsForRun(cancelledRunId)
     }
-
-    dismissPendingAskQuestionsForRun(runId)
 
     // 会话层面的清理：取消后 idle 压缩窗口不再需要，排队消息也不再处理。
     // 两者都按 sessionId 精确清理，不影响并发中的其它会话。
@@ -142,20 +135,24 @@ export async function respondPermission(params: {
   }
 
   const loopForRun = found ? getAgentLoopForRun(found.runId) : undefined
+  const foundSnapshot = found ? coord.getSnapshot(found.runId) : null
+  const durableOnlyRecovery = foundSnapshot?.status === 'interrupted'
   if (found && isPendingInteraction(found)) {
     if (!params.commandId) {
       return identityMismatchResult('权限请求缺少 exactly-once commandId', found)
     }
-    const executionError = liveExecutionIdentityError(found)
-    if (executionError) return identityMismatchResult(executionError, found)
-    if (!loopForRun) {
-      return identityMismatchResult(`run ${found.runId} 没有对应的 AgentLoop`, found)
-    }
-    const hasResolver =
-      loopForRun.hasPendingPermission(params.requestId) ||
-      subAgentBridgeRegistry.hasBinding(params.requestId)
-    if (!hasResolver) {
-      return identityMismatchResult(`权限请求 ${params.requestId} 没有对应的 resolver`, found)
+    if (!durableOnlyRecovery) {
+      const executionError = liveExecutionIdentityError(found)
+      if (executionError) return identityMismatchResult(executionError, found)
+      if (!loopForRun) {
+        return identityMismatchResult(`run ${found.runId} 没有对应的 AgentLoop`, found)
+      }
+      const hasResolver =
+        loopForRun.hasPendingPermission(params.requestId) ||
+        subAgentBridgeRegistry.hasBinding(params.requestId)
+      if (!hasResolver) {
+        return identityMismatchResult(`权限请求 ${params.requestId} 没有对应的 resolver`, found)
+      }
     }
   }
 
@@ -184,10 +181,16 @@ export async function respondPermission(params: {
     if (!result.ok || !result.firstApplied) return result
   }
 
-  // 仅 firstApplied 时执行副作用：子代理权限经 registry 跨 run 路由，主 agent 按 run 定位 loop
+  // 仅 firstApplied 时执行副作用：Child Session 先按 child run 直达自己的 resolver；
+  // bridge 只保留给尚未迁移的旧 fork/Workflow 路径。
+  if (loopForRun?.hasPendingPermission(params.requestId)) {
+    loopForRun.respondPermission(params.requestId, granted)
+    return durableResult
+  }
   if (subAgentBridgeRegistry.resolve(params.requestId, granted)) {
     return durableResult
   }
+  if (durableOnlyRecovery) return durableResult
   // 并发模型下不再有全局 loop 兜底；权限响应必须命中具体 run 的 AgentLoop
   if (!loopForRun) return
   loopForRun.respondPermission(params.requestId, granted)

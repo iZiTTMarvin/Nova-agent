@@ -91,6 +91,19 @@ export class SubagentProjectionService {
       return { ...base, status: 'record_missing' }
     }
 
+    const hasPendingInteraction = snapshot.pendingInteractions.some(
+      (interaction) => interaction.status === 'pending' || interaction.status === 'submitting'
+    )
+    if (hasPendingInteraction) {
+      return {
+        ...base,
+        status: 'waiting_user',
+        sequence: snapshot.sequence,
+        startedAt: snapshot.turnStartedAt ?? snapshot.createdAt,
+        latestActivity: '等待你的授权'
+      }
+    }
+
     if (!isTerminalRunStatus(snapshot.status)) {
       return {
         ...base,

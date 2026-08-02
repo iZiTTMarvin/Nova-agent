@@ -21,7 +21,7 @@ describe('resolveSubagentProfileSnapshot', () => {
       name: 'code',
       description: 'writes code',
       systemPrompt: 'do the work',
-      toolNames: ['read', 'write', 'task'],
+      toolNames: ['read', 'write'],
       permissionCeiling: 'workspace_write',
       model: { providerId: 'provider', modelId: 'model' },
       maxToolRounds: 30,
@@ -31,6 +31,17 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(first.configHash).toBe(second.configHash)
     expect(Object.isFrozen(first)).toBe(true)
     expect(Object.isFrozen(first.toolNames)).toBe(true)
+  })
+
+  it('递归工具只有显式开启时可见，start_workflow 始终不可见', () => {
+    const snapshot = resolveSubagentProfileSnapshot({
+      name: 'code',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read', 'task', 'start_workflow']
+    }, 'code', { allowRecursion: true })
+
+    expect(snapshot.toolNames).toEqual(['read', 'task'])
   })
 
   it('read_only profile 永久剥离写工具与递归 delegation 工具', () => {

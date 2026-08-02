@@ -15,3 +15,21 @@ export {
   projectSubagentExecutionResult
 } from './resultProjection'
 export type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
+export {
+  SubagentScheduler,
+  SubagentScheduleRejectedError,
+  type AcquireSubagentPermitInput,
+  type SubagentPermit,
+  type SubagentPermitResult,
+  type SubagentScheduleRejectionCode,
+  type SubagentSchedulerLimits
+} from './SubagentScheduler'
+export {
+  SubagentLifecycleCoordinator,
+  type CancelSubagentTreeResult
+} from './SubagentLifecycleCoordinator'
+export {
+  executeSubagentBatch,
+  type SubagentBatchItem,
+  type SubagentBatchItemResult
+} from './SubagentBatchExecutor'

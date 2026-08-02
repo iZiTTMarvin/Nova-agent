@@ -28,6 +28,7 @@ import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
 import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeyStorage'
 import { resolveWorkflowDefinition } from '../runtime/workflow'
 import { setWorkflowDefinitionResolver } from './services/WorkflowOrchestratorHost'
+import { interruptActiveSubagentsOnShutdown } from './services/SubagentLifecycleHost'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
 let quitInProgress = false
@@ -296,6 +297,15 @@ app.on('will-quit', (event) => {
 
   event.preventDefault()
   quitInProgress = true
+
+  try {
+    const interrupted = interruptActiveSubagentsOnShutdown()
+    if (interrupted > 0) {
+      console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+    }
+  } catch {
+    // 运行态服务未初始化时无需对账。
+  }
 
   try {
     const ws = getWorkspaceService().getState()

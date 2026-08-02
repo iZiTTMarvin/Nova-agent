@@ -68,6 +68,7 @@ import {
 } from './SteeringQueue'
 import { resolveEntryLockAction } from './entryLock'
 import { SubagentExecutionHost } from '../subagents'
+import { getSubagentScheduler } from '../../services/SubagentSchedulerHost'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
@@ -173,6 +174,9 @@ export async function sendAgentMessage(
   if (!session) {
     throw new Error(`会话 ${params.sessionId} 不存在`)
   }
+  if (session.kind === 'subagent') {
+    throw new Error('Child Session 由父任务的执行服务管理，不能从普通消息入口启动新 turn')
+  }
 
   // Preflight：不得在这些可预见的输入错误前创建 run。
   if (params.regenerate === true) {
@@ -254,6 +258,8 @@ export async function sendAgentMessage(
     sessionStore,
     runCoordinator,
     turnExecutor,
+    scheduler: getSubagentScheduler(),
+    isRunExecutionActive: (runId) => executionRegistry.get(runId) !== null,
     loadProfile: (profileId) => getSubAgentSpec(profileId),
     prepareTurn: (input) => {
       const childPromptCacheKey =
@@ -268,10 +274,10 @@ export async function sendAgentMessage(
         readState: getReadStateForSession(input.childSession.id),
         contextWindow: prepared.contextWindow,
         supportsVision: prepared.supportsVision,
+        resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
         ...(childPromptCacheKey ? { promptCacheKey: childPromptCacheKey } : {})
       })
     },
-    adaptEvent: (event, context) => adaptSubagentPermissionEvent(event, context),
     onEvent: (event, context) => {
       forwardAgentEvent(event, {
         runId: context.runId,
@@ -287,16 +293,11 @@ export async function sendAgentMessage(
     },
     onExecutionStarted: (context) => {
       agentLoopsByRunId.set(context.runId, context.agentLoop)
-      subAgentBridgeRegistry
-        .getOrCreate(context.parentRunId)
-        .register(context.agentLoop)
     },
     onExecutionSettled: (context) => {
       agentLoopsByRunId.delete(context.runId)
       disposeTurnStreams(context.runId, context.executionGeneration)
-      const bridge = subAgentBridgeRegistry.get(context.parentRunId)
-      bridge?.unregister(context.agentLoop)
-      bridge?.clearForLoop(context.agentLoop)
+      writerLeaseRegistry.release(context.resourceOwnerRunId)
     },
     getMainWindow,
     refreshAvailableSessions: () => {
@@ -640,16 +641,4 @@ function forwardAgentEvent(
     runId: context.runId,
     executionGeneration: context.executionGeneration
   })
-}
-
-/** Bridge 只适配内存 resolver；durable Interaction 的唯一 Owner 仍是 child run。 */
-function adaptSubagentPermissionEvent(
-  event: AgentEvent,
-  context: SubagentEventContext
-): AgentEvent {
-  if (event.type !== 'permission_request') return event
-  const requestId = subAgentBridgeRegistry
-    .getOrCreate(context.parentRunId)
-    .bind(event.requestId, context.agentLoop)
-  return { ...event, requestId }
 }

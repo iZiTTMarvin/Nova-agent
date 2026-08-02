@@ -6,7 +6,7 @@ const MAX_DESCRIPTION_LENGTH = 4_096
 const MAX_SYSTEM_PROMPT_LENGTH = 65_536
 const MAX_TOOL_NAME_LENGTH = 128
 const MAX_TOOL_ROUNDS = 1_000
-const UNSUPPORTED_CHILD_TOOLS = new Set(['start_workflow'])
+const ALWAYS_UNSUPPORTED_CHILD_TOOLS = new Set(['start_workflow'])
 const WRITE_CAPABLE_TOOLS = new Set([
   'edit',
   'write',
@@ -28,7 +28,8 @@ interface ParsedSubagentProfile {
 /** 外部 JSON 只能以 unknown 进入，并在这里一次性归一化为冻结快照。 */
 export function resolveSubagentProfileSnapshot(
   input: unknown,
-  expectedProfileId: string
+  expectedProfileId: string,
+  options: { readonly allowRecursion?: boolean } = {}
 ): SubagentProfileSnapshot {
   const parsed = parseSubagentProfile(input)
   if (parsed.name !== expectedProfileId) {
@@ -43,10 +44,11 @@ export function resolveSubagentProfileSnapshot(
       ? 'read_only'
       : 'workspace_write'
   const toolNames = parsed.allowedTools.filter((name) => {
-    if (UNSUPPORTED_CHILD_TOOLS.has(name)) return false
+    if (ALWAYS_UNSUPPORTED_CHILD_TOOLS.has(name)) return false
+    if (name === 'task' && options.allowRecursion !== true) return false
     return (
       permissionCeiling !== 'read_only' ||
-      (!WRITE_CAPABLE_TOOLS.has(name) && name !== 'task')
+      !WRITE_CAPABLE_TOOLS.has(name)
     )
   })
   const hashInput = {

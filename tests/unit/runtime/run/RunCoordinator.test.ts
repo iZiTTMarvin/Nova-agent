@@ -175,6 +175,28 @@ describe('RunCoordinator', () => {
     expect(tc1?.phase).toBe('committed')
   })
 
+  it('启动对账保留 pending interaction，供 interrupted child 在恢复前回答', () => {
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 'child' })
+    coord.markRunning(snap.runId, 'msg-child')
+    coord.inbox.enqueue({
+      runId: snap.runId,
+      sessionId: 'child',
+      messageId: 'msg-child',
+      type: 'permission',
+      interactionId: 'permission-child',
+      payload: { requestId: 'permission-child', toolName: 'bash' }
+    })
+
+    const coord2 = new RunCoordinator({ store })
+    const [interrupted] = coord2.reconcileOnStartup()
+
+    expect(interrupted.status).toBe('interrupted')
+    expect(interrupted.pendingInteractions).toEqual([
+      expect.objectContaining({ interactionId: 'permission-child', status: 'pending' })
+    ])
+    expect(coord2.inbox.listPendingForSession('child')).toHaveLength(1)
+  })
+
   it('cancel 流程：beginCancel → cancelling，commitTerminal → cancelled', () => {
     const snap = coord.startRun({
       kind: 'agent',

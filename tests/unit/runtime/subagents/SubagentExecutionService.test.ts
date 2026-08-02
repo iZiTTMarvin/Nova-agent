@@ -12,6 +12,7 @@ import {
 import { SessionStore } from '../../../../src/runtime/sessions'
 import {
   SubagentExecutionService,
+  SubagentScheduler,
   createSpawnIdentity,
   resolveSubagentProfileSnapshot,
   type SubagentExecutionServiceDeps
@@ -81,21 +82,39 @@ describe('SubagentExecutionService', () => {
 
   function createService(options: {
     wait?: Promise<void>
+    cancelReleasesWait?: boolean
+    scheduler?: SubagentScheduler
+    registry?: RunExecutionRegistry
     loadProfile?: (profileId: string) => unknown
     onLinked?: SubagentExecutionServiceDeps['onLinked']
   } = {}) {
     const prepareTurn = vi.fn((input: any) => {
       const eventBus = new EventBus()
       let fence = (): boolean => false
+      let cancelled = false
+      let releaseCancellation!: () => void
+      const cancellation = new Promise<void>((resolveCancellation) => {
+        releaseCancellation = resolveCancellation
+      })
       const agentLoop = {
         setExecutionIdentity: vi.fn(),
         setExecutionFence: vi.fn((next: () => boolean) => { fence = next }),
-        cancel: vi.fn(),
+        cancel: vi.fn(() => {
+          cancelled = true
+          releaseCancellation()
+        }),
         dispose: vi.fn(),
         sendMessage: vi.fn(async () => {
           expect(fence()).toBe(true)
           eventBus.emit({ type: 'message_start', messageId: 'msg-child-final' })
-          if (options.wait) await options.wait
+          if (options.wait) {
+            if (options.cancelReleasesWait) {
+              await Promise.race([options.wait, cancellation])
+              if (cancelled) return { status: 'cancelled' }
+            } else {
+              await options.wait
+            }
+          }
           const appended = sessionStore.appendMessageFast(input.childSession.id, {
             id: 'msg-child-final',
             role: 'assistant',
@@ -119,13 +138,17 @@ describe('SubagentExecutionService', () => {
       } as unknown as AgentLoop
       return { agentLoop, eventBus }
     })
+    const scheduler = options.scheduler ?? new SubagentScheduler({ globalLimit: 4, perRootLimit: 3 })
+    const registry = options.registry ?? new RunExecutionRegistry()
     const service = new SubagentExecutionService({
       sessionStore,
       runCoordinator: coordinator,
       turnExecutor: new AgentTurnExecutor(
         coordinator,
-        new RunExecutionRegistry()
+        registry
       ),
+      scheduler,
+      isRunExecutionActive: (runId) => registry.get(runId) !== null,
       loadProfile: options.loadProfile ?? ((profileId) => {
         if (profileId === 'explore') return profile
         if (profileId === 'code') {
@@ -142,7 +165,7 @@ describe('SubagentExecutionService', () => {
       prepareTurn,
       ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
-    return { service, prepareTurn }
+    return { service, prepareTurn, scheduler }
   }
 
   it('创建 durable Child Session 与预分配 child run，并投影最终结果', async () => {
@@ -377,5 +400,235 @@ describe('SubagentExecutionService', () => {
         toolCallId: 'call-depth-three'
       }
     })).rejects.toThrow(/超过上限/)
+  })
+
+  it('crash window 中 Child Session 已存在但 run 未启动时复用预分配 runId', async () => {
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    sessionStore.createChildIfAbsent({
+      workspaceRoot: workspace,
+      mode: 'plan',
+      task: spawnCommand.task,
+      subagent: {
+        lineage: {
+          parentSessionId,
+          parentRunId: 'run-parent',
+          rootRunId: 'run-parent',
+          depth: 1,
+          spawnKey: identity.spawnKey,
+          spawnRunId: identity.spawnRunId,
+          origin: spawnCommand.invocation
+        },
+        profile: resolveSubagentProfileSnapshot(profile, 'explore')
+      }
+    })
+    const { service, prepareTurn } = createService()
+
+    const result = await service.spawn(spawnCommand, { invocationRef: invocationRef() })
+
+    expect(result.childRunId).toBe(identity.spawnRunId)
+    expect(result.status).toBe('completed')
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
+    expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
+  })
+
+  it('interrupted child 显式进入 resuming 后复用同一 run，不重复 spawn', async () => {
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    const child = sessionStore.createChildIfAbsent({
+      workspaceRoot: workspace,
+      mode: 'plan',
+      task: spawnCommand.task,
+      subagent: {
+        lineage: {
+          parentSessionId,
+          parentRunId: 'run-parent',
+          rootRunId: 'run-parent',
+          depth: 1,
+          spawnKey: identity.spawnKey,
+          spawnRunId: identity.spawnRunId,
+          origin: spawnCommand.invocation
+        },
+        profile: resolveSubagentProfileSnapshot(profile, 'explore')
+      }
+    }).session
+    coordinator.startRun({
+      kind: 'agent',
+      runId: identity.spawnRunId,
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning(identity.spawnRunId, 'msg-before-crash')
+    coordinator.recordToolPhase(
+      identity.spawnRunId,
+      'write-before-crash',
+      'write',
+      'executing',
+      { idempotent: false }
+    )
+    coordinator.commitTerminal({
+      runId: identity.spawnRunId,
+      status: 'interrupted',
+      reason: 'process_exit'
+    })
+    const { service, prepareTurn } = createService()
+
+    const result = await service.spawn(spawnCommand, { invocationRef: invocationRef() })
+
+    expect(result.status).toBe('completed')
+    expect(result.childRunId).toBe(identity.spawnRunId)
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
+    const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
+    expect(prepared.agentLoop.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('禁止自动重放的未提交非幂等步骤：write:write-before-crash'),
+      expect.anything()
+    )
+    expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
+  })
+
+  it('metadata 与 run parent identity 冲突时 fail closed 并写 durable diagnostic', async () => {
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    const otherSessionId = sessionStore.create(workspace).id
+    coordinator.startRun({
+      kind: 'agent',
+      runId: identity.spawnRunId,
+      workspaceId: workspace,
+      sessionId: otherSessionId
+    })
+    coordinator.markRunning(identity.spawnRunId)
+    const { service } = createService()
+
+    await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toThrow(/metadata 冲突/)
+    expect(coordinator.getSnapshot(identity.spawnRunId)?.progress?.extras)
+      .toEqual(expect.objectContaining({ diagnosticCode: 'subagent_identity_conflict' }))
+  })
+
+  it('timeout 会真正 cancel AgentLoop 并以 timeout failure 收敛，permit 同步释放', async () => {
+    const never = new Promise<void>(() => {})
+    const { service, prepareTurn, scheduler } = createService({ wait: never, cancelReleasesWait: true })
+
+    const result = await service.spawn(command({ timeoutMs: 1 }), {
+      invocationRef: invocationRef()
+    })
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'failed',
+      failure: expect.objectContaining({ code: 'timeout' })
+    }))
+    const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
+    expect(prepared.agentLoop.cancel).toHaveBeenCalled()
+    expect(scheduler.snapshot().activeGlobal).toBe(0)
+  })
+
+  it('interrupted resume 无 permit 时保持 interrupted，不留下假 resuming', async () => {
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    const child = sessionStore.createChildIfAbsent({
+      workspaceRoot: workspace,
+      mode: 'plan',
+      task: spawnCommand.task,
+      subagent: {
+        lineage: {
+          parentSessionId,
+          parentRunId: 'run-parent',
+          rootRunId: 'run-parent',
+          depth: 1,
+          spawnKey: identity.spawnKey,
+          spawnRunId: identity.spawnRunId,
+          origin: spawnCommand.invocation
+        },
+        profile: resolveSubagentProfileSnapshot(profile, 'explore')
+      }
+    }).session
+    coordinator.startRun({
+      kind: 'agent',
+      runId: identity.spawnRunId,
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning(identity.spawnRunId)
+    coordinator.commitTerminal({ runId: identity.spawnRunId, status: 'interrupted' })
+    const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      rootRunId: 'run-parent',
+      requestKey: 'occupied'
+    })
+    const { service } = createService({ scheduler })
+
+    await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toMatchObject({
+        name: 'SubagentScheduleRejectedError',
+        rejection: expect.objectContaining({ code: 'global_limit' })
+      })
+    expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('interrupted')
+    if (occupied.ok) occupied.permit.release()
+  })
+
+  it('首次 spawn 被调度器拒绝时写入 terminal run，不留下 record_missing 子会话', async () => {
+    const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      rootRunId: 'run-parent',
+      requestKey: 'occupied'
+    })
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    const { service } = createService({ scheduler })
+
+    const result = await service.spawn(spawnCommand, { invocationRef: invocationRef() })
+
+    expect(result).toEqual(expect.objectContaining({
+      childRunId: identity.spawnRunId,
+      status: 'failed',
+      failure: expect.objectContaining({ code: 'scheduler' })
+    }))
+    expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('failed')
+    if (occupied.ok) occupied.permit.release()
+  })
+
+  it('同一 stable childRunId 已由其他服务持有 permit 时无副作用地结构化拒绝', async () => {
+    const scheduler = new SubagentScheduler({ globalLimit: 2, perRootLimit: 2 })
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    const authoritative = await scheduler.acquire({
+      runId: identity.spawnRunId,
+      rootRunId: 'run-parent',
+      requestKey: 'authoritative-service'
+    })
+    if (!authoritative.ok) throw new Error('expected permit')
+    const { service } = createService({ scheduler })
+
+    await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toMatchObject({
+        name: 'SubagentScheduleRejectedError',
+        rejection: expect.objectContaining({ code: 'run_active' })
+      })
+    expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+
+    authoritative.permit.release()
+  })
+
+  it('两个服务实例竞争同一 command 时不会把权威执行的 Run 改写为失败', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const scheduler = new SubagentScheduler({ globalLimit: 2, perRootLimit: 2 })
+    const registry = new RunExecutionRegistry()
+    const firstHost = createService({ wait, scheduler, registry })
+    const secondHost = createService({ scheduler, registry })
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+
+    const first = firstHost.service.spawn(spawnCommand, { invocationRef: invocationRef() })
+    await vi.waitFor(() => expect(firstHost.prepareTurn).toHaveBeenCalledTimes(1))
+    await expect(secondHost.service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toThrow(`child run ${identity.spawnRunId} 已有活跃执行句柄`)
+
+    expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('running')
+    release()
+    await expect(first).resolves.toEqual(expect.objectContaining({ status: 'completed' }))
+    expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('completed')
   })
 })

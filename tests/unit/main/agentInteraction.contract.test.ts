@@ -47,6 +47,10 @@ vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getActiveRunId: () => null
 }))
 
+vi.mock('../../../src/main/services/SubagentLifecycleHost', () => ({
+  getSubagentLifecycleCoordinator: () => ({ cancelRunTree: vi.fn() })
+}))
+
 vi.mock('../../../src/main/agent/events', () => ({
   markActiveStreamsCancelled: vi.fn()
 }))
@@ -377,6 +381,86 @@ describe('AgentInteractionController 契约', () => {
     expect(result).toEqual(durable)
     expect(subAgentBridgeRegistry.resolve).toHaveBeenCalledWith('sub:raw_1', true)
     expect(parentLoop.respondPermission).not.toHaveBeenCalled()
+  })
+
+  it('Child Session permission 以 child run 原始 requestId 路由到自己的 AgentLoop', async () => {
+    const found = {
+      interactionId: 'child-permission',
+      runId: 'run-child',
+      sessionId: 'session-child',
+      messageId: 'msg-child',
+      type: 'permission' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: { requestId: 'child-permission' }
+    }
+    const snapshot = {
+      runId: 'run-child',
+      sessionId: 'session-child',
+      status: 'waiting_user',
+      executionGeneration: 8
+    }
+    const durable = { ok: true, firstApplied: true, interaction: found, snapshot }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue(snapshot)
+    coordinator.inbox.answer.mockReturnValue(durable)
+    executionRegistry.get.mockReturnValue({ runId: 'run-child', generation: 8 })
+    executionRegistry.isCurrent.mockReturnValue(true)
+    const childLoop = {
+      hasPendingPermission: vi.fn(() => true),
+      respondPermission: vi.fn()
+    }
+    loopLookup.byRun.mockReturnValue(childLoop)
+
+    const result = await respondPermission({
+      requestId: 'child-permission',
+      decision: 'allow',
+      commandId: 'answer-child',
+      interactionId: 'child-permission',
+      expectedVersion: 1
+    })
+
+    expect(result).toEqual(durable)
+    expect(childLoop.respondPermission).toHaveBeenCalledWith('child-permission', true)
+    expect(subAgentBridgeRegistry.resolve).not.toHaveBeenCalled()
+  })
+
+  it('重启后的 interrupted child 可先 durable 回答 pending permission，再等待显式 resume', async () => {
+    const found = {
+      interactionId: 'child-pending',
+      runId: 'run-child',
+      sessionId: 'session-child',
+      messageId: 'msg-child',
+      type: 'permission' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: { requestId: 'child-pending' }
+    }
+    const snapshot = {
+      runId: 'run-child',
+      sessionId: 'session-child',
+      status: 'interrupted',
+      executionGeneration: 0
+    }
+    const durable = { ok: true, firstApplied: true, interaction: found, snapshot }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue(snapshot)
+    coordinator.inbox.answer.mockReturnValue(durable)
+
+    const result = await respondPermission({
+      requestId: 'child-pending',
+      decision: 'deny',
+      commandId: 'answer-after-restart',
+      interactionId: 'child-pending',
+      expectedVersion: 1
+    })
+
+    expect(result).toEqual(durable)
+    expect(coordinator.inbox.answer).toHaveBeenCalled()
+    expect(executionRegistry.get).not.toHaveBeenCalled()
+    expect(loopLookup.byRun).toHaveBeenCalledWith('run-child')
   })
 
   it('重复 permission command 返回 durable ACK，不要求已结束 generation 仍存活', async () => {
