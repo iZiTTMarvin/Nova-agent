@@ -1,5 +1,5 @@
 /**
- * TurnProcessTree mount 门控单测：L1/L2 折叠时 L3 不 mount
+ * TurnProcessTree mount 门控单测：折叠时过程时间线不 mount
  */
 import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
@@ -38,6 +38,24 @@ function buildCompletedModel() {
   return buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
 }
 
+function renderTree(isLive: boolean) {
+  let renderer: TestRenderer.ReactTestRenderer | null = null
+  act(() => {
+    renderer = TestRenderer.create(
+      <TurnProcessTree
+        model={buildCompletedModel()}
+        messageId="msg_1"
+        isLive={isLive}
+        isCurrentAssistantGenerating={false}
+        isTurnActiveForThisMsg={false}
+        isPausedForInput={false}
+        blocks={[]}
+      />
+    )
+  })
+  return renderer!
+}
+
 describe('TurnProcessTree mount 门控', () => {
   beforeEach(() => {
     vi.stubGlobal('window', {
@@ -53,70 +71,28 @@ describe('TurnProcessTree mount 门控', () => {
     vi.unstubAllGlobals()
   })
 
-  it('completed 默认 L1 折叠 → 无 L3 DOM', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        <TurnProcessTree
-          model={buildCompletedModel()}
-          messageId="msg_1"
-          isLive={false}
-          currentMode="default"
-          isCurrentAssistantGenerating={false}
-          isTurnActiveForThisMsg={false}
-          isPausedForInput={false}
-          blocks={[]}
-        />
-      )
-    })
-    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
+  it('completed 默认折叠 → 过程时间线不 mount', () => {
+    const renderer = renderTree(false)
+    expect(renderer.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
   })
 
-  it('点击 L1 展开但 L2 未展开 → 仍无 L3', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        <TurnProcessTree
-          model={buildCompletedModel()}
-          messageId="msg_1"
-          isLive={false}
-          currentMode="default"
-          isCurrentAssistantGenerating={false}
-          isTurnActiveForThisMsg={false}
-          isPausedForInput={false}
-          blocks={[]}
-        />
-      )
-    })
-    const l1 = renderer!.root.findByProps({ 'data-testid': 'turn-process-l1' })
-    act(() => {
-      l1.props.onClick()
-    })
-    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
+  it('live 默认展开 → 过程时间线直接 mount', () => {
+    const renderer = renderTree(true)
+    expect(renderer.root.findAllByProps({ className: 'tool-trace-row' }).length).toBeGreaterThan(0)
   })
 
-  it('点击 L2 展开 → 挂载 L3', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
+  it('点击折叠头展开 → 挂载过程时间线；再次点击 → 收起卸载', () => {
+    const renderer = renderTree(false)
+    const header = renderer.root.findByProps({ 'data-testid': 'turn-process-header' })
+
     act(() => {
-      renderer = TestRenderer.create(
-        <TurnProcessTree
-          model={buildCompletedModel()}
-          messageId="msg_1"
-          isLive={false}
-          currentMode="default"
-          isCurrentAssistantGenerating={false}
-          isTurnActiveForThisMsg={false}
-          isPausedForInput={false}
-          blocks={[]}
-        />
-      )
+      header.props.onClick()
     })
+    expect(renderer.root.findAllByProps({ className: 'tool-trace-row' }).length).toBeGreaterThan(0)
+
     act(() => {
-      renderer!.root.findByProps({ 'data-testid': 'turn-process-l1' }).props.onClick()
+      header.props.onClick()
     })
-    act(() => {
-      renderer!.root.findByProps({ 'data-testid': 'turn-process-l2' }).props.onClick()
-    })
-    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' }).length).toBeGreaterThan(0)
+    expect(renderer.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
   })
 })

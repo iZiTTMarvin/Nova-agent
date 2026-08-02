@@ -1,4 +1,20 @@
 
+## 2026-08-02
+
+- **fix(main)**: 根治多实例争用 userData 缓存导致的启动白屏
+  - 根因：无单实例锁，僵尸 Electron 实例长期持有 userData 的 Chromium 磁盘缓存目录；新实例的缓存后端既读不了已损坏的旧缓存（block_files / backend_impl Critical error），也因目录被占用无法自恢复（Unable to move the cache: 拒绝访问）。dev 模式页面经 HTTP 缓存加载，缓存后端损坏即渲染白屏；生产模式走 file:// 不经过 HTTP 缓存，所以打包版不发病
+  - 修复一（防复发）：`requestSingleInstanceLock` 单实例锁，第二个实例直接让位并聚焦已有窗口，不再并行争用缓存目录；主进程装配收敛到 `bootstrap()`，仅持锁实例执行
+  - 修复二（自愈）：新增 `src/main/cacheReset.ts`，持锁后在 Chromium 初始化缓存前物理删除 Cache / Code Cache / GPUCache / Dawn*Cache 目录，每次启动必然拿到全新缓存；单个目录删除失败只记日志不阻断启动
+  - 验证：复现链路取证（CDP DOM 挂载检查 + 进程/端口/ACL 排查）；修复后生产与 dev 两种模式启动终端零缓存错误、DOM 正常挂载；第二实例按锁退出；typecheck / build / 全量测试通过（+3 用例）
+
+- **feat(ui)**: 聊天与侧边栏界面对齐主流 agent desktop（Codex）的扁平信息层级
+  - 工作过程区（TurnProcessTree）：三层嵌套（Worked for → Processed tools 摘要条 → 灰色轨迹列表）扁平化为单层「已工作 X 分 X 秒」折叠头 + 过程时间线；过程内中间状态句改用与最终结论一致的正文颜色字号；文案中文化（正在工作… / 已工作 · 已停止）；live 默认展开、completed 默认折叠的行为不变
+  - 数据模型精简：`buildTurnRenderModel` 删除随 L2 摘要条失去消费者的 `summary`（文件计数、diff 统计、思考摘要）与 `diffCache` 入参；diff 增删统计的唯一来源收敛到 DiffViewer 的 `countEntryChanges`
+  - assistant 消息去卡片化：移除背景/边框/阴影，正文平铺在页面底色上；错误态保留浅色反馈面；用户消息气泡不变
+  - 文件变更审查改为合并卡片：头部「已编辑 N 个文件 +X -Y」+ 批量「撤销 / 接受」按钮，文件列表默认只展示 3 行并以「再显示 N 个文件」展开，每个文件行附带自身增删统计；单文件 diff 不再对 pending 文件自动展开（点击文件行展开）；「只看未审阅 / 按目录折叠」保留为过滤开关
+  - 侧边栏会话项压缩为单行：右侧显示相对时间（刚刚 / N 分钟 / N 小时 / N 天），hover 或键盘聚焦时切换为重命名/删除按钮；完整时间与消息数移至标题 tooltip；子代理状态徽标改为图标 + sr-only 文本（可访问性与既有测试不变）；项目分组头常显「N 个任务」计数
+  - 测试：TurnProcessTree mount 门控改写为单层语义，turnSummaryDisplay 中文化断言，turnProcessModel 删除 summary 用例，DiffViewer +3 用例（合并卡片统计、折叠展开、头部批量操作）；typecheck / build / 全量测试 2781 通过
+
 ## 2026-08-01
 
 - **fix(workflow)**: 修复 compose 编排真实运行中 brainstorm 反复失败且阶段"静得像卡死"的问题

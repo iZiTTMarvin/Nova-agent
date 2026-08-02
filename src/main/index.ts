@@ -29,6 +29,7 @@ import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeySt
 import { resolveWorkflowDefinition } from '../runtime/workflow'
 import { setWorkflowDefinitionResolver } from './services/WorkflowOrchestratorHost'
 import { interruptActiveSubagentsOnShutdown } from './services/SubagentLifecycleHost'
+import { resetChromiumDiskCaches } from './cacheReset'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
 let quitInProgress = false
@@ -223,7 +224,12 @@ function createMainWindow(): void {
   }
 }
 
-app.whenReady().then(async () => {
+/**
+ * 主进程装配入口：仅由持有单实例锁的实例调用
+ */
+async function bootstrap(): Promise<void> {
+  await app.whenReady()
+
   initMainLogger()
   bindRegistryApiKeyCrypto(encryptApiKeyForDisk, decryptApiKeyFromDisk)
 
@@ -284,40 +290,56 @@ app.whenReady().then(async () => {
       createMainWindow()
     }
   })
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
-
-app.on('will-quit', (event) => {
-  if (quitInProgress) return
-
-  event.preventDefault()
-  quitInProgress = true
-
-  try {
-    const interrupted = interruptActiveSubagentsOnShutdown()
-    if (interrupted > 0) {
-      console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit()
     }
-  } catch {
-    // 运行态服务未初始化时无需对账。
-  }
+  })
 
-  try {
-    const ws = getWorkspaceService().getState()
-    if (ws.currentSessionId && ws.currentProjectPath) {
-      // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
-      flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+  app.on('will-quit', (event) => {
+    if (quitInProgress) return
+
+    event.preventDefault()
+    quitInProgress = true
+
+    try {
+      const interrupted = interruptActiveSubagentsOnShutdown()
+      if (interrupted > 0) {
+        console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+      }
+    } catch {
+      // 运行态服务未初始化时无需对账。
     }
-  } catch {
-    // WorkspaceService 未初始化时跳过
-  }
-  closeMemoryService()
-  // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
-  closeAllSessionIndexes()
-  app.exit(requestedExitCode)
-})
+
+    try {
+      const ws = getWorkspaceService().getState()
+      if (ws.currentSessionId && ws.currentProjectPath) {
+        // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
+        flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+      }
+    } catch {
+      // WorkspaceService 未初始化时跳过
+    }
+    closeMemoryService()
+    // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
+    closeAllSessionIndexes()
+    app.exit(requestedExitCode)
+  })
+}
+
+// 单实例锁：并行实例会争用同一 userData 的 Chromium 磁盘缓存，缓存后端损坏
+// 曾导致 dev 模式渲染白屏。第二个实例让位，把焦点交给已运行实例的窗口。
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = getMainWindow()
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
+  // Chromium 初始化缓存目录前物理重建，已损坏的缓存不进入本次渲染链路
+  resetChromiumDiskCaches(app.getPath('userData'))
+  void bootstrap()
+}

@@ -1,17 +1,17 @@
 /**
- * TurnProcessTree — L1/L2/L3 回合折叠树容器
+ * TurnProcessTree — 回合工作区折叠容器
  *
- * L1 Worked for → L2 Thought + 摘要条 → L3 原子轨迹（条件 mount）
+ * 单层结构：「已工作 X 分 X 秒」折叠头 + 过程时间线（折叠时不 mount）。
+ * 最终结论文案不在此容器内，由 MessageItem 以正文样式单独渲染。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronIcon } from '../../components/Icons'
 import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import { ProcessTraceList } from './ProcessTraceList'
-import { formatL1Header, formatL2DiffSuffix, formatL2Summary } from './turnSummaryDisplay'
+import { formatWorkedHeader } from './turnSummaryDisplay'
 import { selectForceExpandedForMessage } from './turnProcessSelectors'
 import { useAgentStore } from '../../stores/useAgentStore'
 import type { TurnRenderModel } from './turnProcessModel'
-import type { Mode } from '../../../shared/session/types'
 import type { RendererMessageBlock } from '../../stores/types'
 import './TurnProcessTree.css'
 
@@ -20,7 +20,6 @@ export interface TurnProcessTreeProps {
   messageId: string
   isLive: boolean
   interrupted?: boolean
-  currentMode: Mode
   isCurrentAssistantGenerating: boolean
   onRenderPoolTick?: () => void
   isTurnActiveForThisMsg: boolean
@@ -49,7 +48,6 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   messageId,
   isLive,
   interrupted = false,
-  currentMode,
   isCurrentAssistantGenerating,
   onRenderPoolTick,
   isTurnActiveForThisMsg,
@@ -58,13 +56,11 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   turnStartedAt
 }) {
   const reducedMotion = usePrefersReducedMotion()
-  const userL1ToggledRef = useRef(false)
-  const userL2ToggledRef = useRef(false)
+  const userToggledRef = useRef(false)
   const prevIsLiveRef = useRef(isLive)
 
-  // live 默认全展开；completed 默认全折叠
-  const [userL1Open, setUserL1Open] = useState(isLive)
-  const [userL2Open, setUserL2Open] = useState(isLive)
+  // live 默认展开；completed 默认折叠
+  const [userOpen, setUserOpen] = useState(isLive)
   const [liveElapsedMs, setLiveElapsedMs] = useState<number | undefined>(model.durationMs)
 
   const agentForceExpanded = useAgentStore(state =>
@@ -72,21 +68,15 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   )
   const forceExpanded = agentForceExpanded
 
-  const l1Open = forceExpanded ? true : userL1Open
-  const l2Open = forceExpanded ? true : userL2Open
+  const open = forceExpanded ? true : userOpen
 
-  // live → completed：未手动操作时自动收 L1/L2
+  // live → completed：未手动操作时自动收起；重新 live 时自动展开
   useEffect(() => {
     const wasLive = prevIsLiveRef.current
     prevIsLiveRef.current = isLive
 
-    if (wasLive && !isLive) {
-      if (!userL1ToggledRef.current) setUserL1Open(false)
-      if (!userL2ToggledRef.current) setUserL2Open(false)
-    }
-    if (isLive && !wasLive) {
-      if (!userL1ToggledRef.current) setUserL1Open(true)
-      if (!userL2ToggledRef.current) setUserL2Open(true)
+    if (wasLive !== isLive && !userToggledRef.current) {
+      setUserOpen(isLive)
     }
   }, [isLive])
 
@@ -99,91 +89,47 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
     return () => clearInterval(timer)
   }, [isLive, turnStartedAt])
 
-  const toggleL1 = useCallback(() => {
+  const toggle = useCallback(() => {
     if (forceExpanded) return
-    userL1ToggledRef.current = true
-    setUserL1Open(prev => !prev)
+    userToggledRef.current = true
+    setUserOpen(prev => !prev)
   }, [forceExpanded])
 
-  const toggleL2 = useCallback(() => {
-    if (forceExpanded) return
-    userL2ToggledRef.current = true
-    setUserL2Open(prev => !prev)
-  }, [forceExpanded])
-
-  const l1Title = formatL1Header({
+  const headerTitle = formatWorkedHeader({
     phase: model.phase,
     durationMs: model.durationMs,
     elapsedMs: liveElapsedMs,
     interrupted
   })
 
-  const l2Summary = formatL2Summary(model.summary)
-  const l2Diff = formatL2DiffSuffix(model.summary)
-  const thoughtPreview = model.summary.thoughtPreview
-
   return (
     <div className="turn-process-tree" data-testid="turn-process-tree">
-      {/* L1 头：始终 mount */}
       <button
         type="button"
-        className="turn-process-tree__l1"
-        onClick={toggleL1}
-        aria-expanded={l1Open}
-        data-testid="turn-process-l1"
+        className="turn-process-tree__header"
+        onClick={toggle}
+        aria-expanded={open}
+        data-testid="turn-process-header"
       >
-        <span className="turn-process-tree__l1-title">{l1Title}</span>
+        <span className="turn-process-tree__header-title">{headerTitle}</span>
         <ChevronIcon
           size={12}
-          direction={l1Open ? 'down' : 'right'}
+          direction={open ? 'down' : 'right'}
           className="turn-process-tree__chevron"
         />
       </button>
 
-      {/* L2 区域：L1 折叠时不 mount */}
-      <TurnProcessCollapsible open={l1Open} reducedMotion={reducedMotion} className="turn-process-tree__l2-wrap">
-        <div className="turn-process-tree__l2">
-          {thoughtPreview && (
-            <div className="turn-process-tree__thought-preview" title={thoughtPreview}>
-              {thoughtPreview}
-            </div>
-          )}
-
-          <button
-            type="button"
-            className="turn-process-tree__l2-bar"
-            onClick={toggleL2}
-            aria-expanded={l2Open}
-            data-testid="turn-process-l2"
-          >
-            <span className="turn-process-tree__l2-summary">{l2Summary}</span>
-            <span
-              className={`turn-process-tree__l2-diff tabular-nums${
-                l2Diff.isPlaceholder ? ' turn-process-tree__l2-diff--placeholder' : ''
-              }`}
-            >
-              {l2Diff.text}
-            </span>
-            <ChevronIcon
-              size={12}
-              direction={l2Open ? 'down' : 'right'}
-              className="turn-process-tree__chevron"
-            />
-          </button>
-
-          {/* L3：L2 展开时直接挂载，不再套动画壳（避免空白区） */}
-          {l2Open && (
-            <ProcessTraceList
-              segments={model.processTimeline}
-              messageId={messageId}
-              blocks={blocks}
-              isTurnActiveForThisMsg={isTurnActiveForThisMsg}
-              isPausedForInput={isPausedForInput}
-              isCurrentAssistantGenerating={isCurrentAssistantGenerating}
-              onRenderPoolTick={onRenderPoolTick}
-            />
-          )}
-        </div>
+      {/* 过程时间线：折叠时不 mount */}
+      <TurnProcessCollapsible open={open} reducedMotion={reducedMotion} className="turn-process-tree__body">
+        <ProcessTraceList
+          segments={model.processTimeline}
+          messageId={messageId}
+          blocks={blocks}
+          isTurnActiveForThisMsg={isTurnActiveForThisMsg}
+          isPausedForInput={isPausedForInput}
+          isCurrentAssistantGenerating={isCurrentAssistantGenerating}
+          onRenderPoolTick={onRenderPoolTick}
+        />
       </TurnProcessCollapsible>
     </div>
   )

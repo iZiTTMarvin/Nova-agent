@@ -19,6 +19,9 @@ import './DiffViewer.css'
 /** T04：单个 hunk 超过此行数时截断展示 */
 const PREVIEW_HUNK_LINE_LIMIT = 500
 
+/** 合并卡片文件列表默认展示行数，超出折叠到「再显示 N 个文件」 */
+const FILE_LIST_PREVIEW_COUNT = 3
+
 export interface DiffViewerProps {
   diffs: DiffEntry[]
   reviews: Record<string, DiffReviewStatus>
@@ -125,6 +128,34 @@ const HunkView: React.FC<{ hunk: DiffHunk; filePath: string }> = ({ hunk, filePa
   )
 }
 
+/**
+ * 按 hunk content 的 +/- 前缀统计真实增删行。
+ * hunk.oldLines/newLines 是 hunk 头跨度（含上下文行），不能当增删计数。
+ */
+function countEntryChanges(entry: DiffEntry): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const hunk of entry.hunks) {
+    if (!hunk.content) continue
+    for (const line of hunk.content.split('\n')) {
+      if (line.startsWith('+')) additions++
+      else if (line.startsWith('-')) deletions++
+    }
+  }
+  return { additions, deletions }
+}
+
+/** 单文件增删统计（对齐 Codex 合并卡片的文件行右侧 +N -N） */
+const FileChangeStats: React.FC<{ entry: DiffEntry }> = ({ entry }) => {
+  const { additions, deletions } = countEntryChanges(entry)
+  return (
+    <span className="diff-file__changes">
+      <span className="diff-file__changes-add">+{additions}</span>
+      <span className="diff-file__changes-del">-{deletions}</span>
+    </span>
+  )
+}
+
 /** 单个文件的 diff 面板 */
 const FileDiffPanel: React.FC<{
   entry: DiffEntry
@@ -132,8 +163,8 @@ const FileDiffPanel: React.FC<{
   onReject?: (filePath: string) => Promise<void>
   onAccept?: (filePath: string) => Promise<void>
 }> = ({ entry, reviewStatus, onReject, onAccept }) => {
-  // T04：默认折叠，但 pending 状态自动展开让用户立刻看到需要 review 的变更
-  const [expanded, setExpanded] = useState(reviewStatus === 'pending')
+  // 默认折叠为文件行，点击展开查看具体 diff（合并卡片内保持紧凑）
+  const [expanded, setExpanded] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const [accepting, setAccepting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -175,6 +206,7 @@ const FileDiffPanel: React.FC<{
           <ChevronIcon size={14} direction="right" />
           <span className="diff-file__name">{entry.filePath}</span>
           <span className="diff-file__status-badge">{statusLabel}</span>
+          <FileChangeStats entry={entry} />
           <span className="diff-file__review-badge diff-file__review-badge--rejected">已拒绝</span>
         </div>
       </div>
@@ -189,6 +221,7 @@ const FileDiffPanel: React.FC<{
           <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
           <span className="diff-file__name">{entry.filePath}</span>
           <span className="diff-file__status-badge">{statusLabel}</span>
+          <FileChangeStats entry={entry} />
           <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
         </div>
         {expanded && (
@@ -209,6 +242,7 @@ const FileDiffPanel: React.FC<{
         <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
         <span className="diff-file__name">{entry.filePath}</span>
         <span className="diff-file__status-badge">{statusLabel}</span>
+        <FileChangeStats entry={entry} />
         <div className="diff-file__actions" onClick={e => e.stopPropagation()}>
           <button
             className="diff-action-btn diff-action-btn--accept"
@@ -270,12 +304,12 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   onRejectAll
 }) => {
   const hasSkippedFiles = skippedFiles && skippedFiles.length > 0
-  // T04：DiffViewer 外层默认折叠；但存在 skippedFiles 时默认展开，确保用户看到未备份提示
-  const [expanded, setExpanded] = useState(hasSkippedFiles)
   // PRD §5.3：只看未审阅
   const [onlyPending, setOnlyPending] = useState(false)
   // PRD §5.3：按目录折叠
   const [groupByDir, setGroupByDir] = useState(false)
+  // 文件列表默认只展示前几行，点「再显示 N 个文件」展开全部
+  const [showAllFiles, setShowAllFiles] = useState(false)
   // 批量操作进行中
   const [batching, setBatching] = useState(false)
   const [batchError, setBatchError] = useState<string | null>(null)
@@ -316,15 +350,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 
   if ((!diffs || diffs.length === 0) && !hasSkippedFiles) return null
 
-  const totalAdded = diffs.reduce(
-    (sum, d) => sum + d.hunks.reduce(
-      (s, h) => s + h.content.split('\n').filter(l => l.startsWith('+')).length, 0
-    ), 0
-  )
-  const totalRemoved = diffs.reduce(
-    (sum, d) => sum + d.hunks.reduce(
-      (s, h) => s + h.content.split('\n').filter(l => l.startsWith('-')).length, 0
-    ), 0
+  const { totalAdded, totalRemoved } = diffs.reduce(
+    (acc, d) => {
+      const changes = countEntryChanges(d)
+      acc.totalAdded += changes.additions
+      acc.totalRemoved += changes.deletions
+      return acc
+    },
+    { totalAdded: 0, totalRemoved: 0 }
   )
 
   const pendingFiles = diffs.filter(d => !reviews[d.filePath])
@@ -376,27 +409,54 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     />
   )
 
+  // 文件列表默认收起为前几行（目录分组模式始终全量展示）
+  const capped = !groupByDir && !showAllFiles && visibleDiffs.length > FILE_LIST_PREVIEW_COUNT
+  const listedDiffs = capped ? visibleDiffs.slice(0, FILE_LIST_PREVIEW_COUNT) : visibleDiffs
+
   return (
     <div className={`diff-viewer${tier1Stale ? ' diff-viewer--tier1-stale' : ''}`} title={tier1Stale ? '此消息的文件改动未同步到当前工作区，以下 diff 仅作历史参考' : undefined}>
-      <div className="diff-viewer__header" onClick={() => setExpanded(!expanded)}>
-        <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
+      <div className="diff-viewer__header">
         <span className="diff-viewer__title">
-          {tier1Stale ? '文件变更（历史记录，工作区未同步）' : '文件变更审查'}
+          {tier1Stale ? '文件变更（历史记录，工作区未同步）' : `已编辑 ${diffs.length} 个文件`}
         </span>
+        {reviewedCount > 0 && (
+          <span className="diff-viewer__stat diff-viewer__stat--reviewed">
+            {reviewedCount}/{diffs.length} 已审
+          </span>
+        )}
         <span className="diff-viewer__stats">
           <span className="diff-viewer__stat diff-viewer__stat--added">+{totalAdded}</span>
           <span className="diff-viewer__stat diff-viewer__stat--removed">-{totalRemoved}</span>
-          <span className="diff-viewer__stat diff-viewer__stat--files">{diffs.length} 个文件</span>
-          {reviewedCount > 0 && (
-            <span className="diff-viewer__stat diff-viewer__stat--reviewed">
-              {reviewedCount}/{diffs.length} 已审
-            </span>
-          )}
         </span>
+        {pendingCount > 0 && (onAcceptAll || onRejectAll) && (
+          <div className="diff-viewer__header-actions">
+            {onRejectAll && (
+              <button
+                type="button"
+                className="diff-header-btn"
+                onClick={() => void handleRejectAll()}
+                disabled={batching}
+                title={`撤销全部 ${pendingCount} 个待审阅文件（从 checkpoint 恢复原始内容）`}
+              >
+                撤销
+              </button>
+            )}
+            {onAcceptAll && (
+              <button
+                type="button"
+                className="diff-header-btn diff-header-btn--primary"
+                onClick={() => void handleAcceptAll()}
+                disabled={batching}
+                title={`接受全部 ${pendingCount} 个待审阅文件（标记为已审查）`}
+              >
+                接受
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {expanded && (
-        <div className="diff-viewer__body">
+      <div className="diff-viewer__body">
           {/* WS1.1：标记因过大或排除规则未生成 snapshot 的文件 */}
           {skippedFiles && skippedFiles.length > 0 && (
             <div className="diff-viewer__skipped">
@@ -418,27 +478,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             </div>
           )}
 
-          {/* PRD §5.3：批量工具栏 */}
-          {pendingCount > 0 && (onAcceptAll || onRejectAll) && (
-            <div className="diff-viewer__toolbar" onClick={e => e.stopPropagation()}>
-              <button
-                type="button"
-                className="diff-toolbar__btn diff-toolbar__btn--accept-all"
-                onClick={() => void handleAcceptAll()}
-                disabled={batching}
-                title={`接受全部 ${pendingCount} 个待审阅文件`}
-              >
-                全部接受（{pendingCount}）
-              </button>
-              <button
-                type="button"
-                className="diff-toolbar__btn diff-toolbar__btn--reject-all"
-                onClick={() => void handleRejectAll()}
-                disabled={batching}
-                title={`拒绝全部 ${pendingCount} 个待审阅文件（从 checkpoint 恢复）`}
-              >
-                全部拒绝（{pendingCount}）
-              </button>
+          {/* PRD §5.3：过滤开关（批量撤销/接受已上移到卡片头部） */}
+          {diffs.length > 1 && (
+            <div className="diff-viewer__toolbar">
               <label className="diff-toolbar__toggle" title="只展示未审阅的文件">
                 <input
                   type="checkbox"
@@ -481,10 +523,21 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               ))}
             </div>
           ) : (
-            visibleDiffs.map(renderFile)
+            <>
+              {listedDiffs.map(renderFile)}
+              {capped && (
+                <button
+                  type="button"
+                  className="diff-viewer__show-more"
+                  onClick={() => setShowAllFiles(true)}
+                >
+                  再显示 {visibleDiffs.length - FILE_LIST_PREVIEW_COUNT} 个文件
+                  <ChevronIcon size={12} direction="down" />
+                </button>
+              )}
+            </>
           )}
-        </div>
-      )}
+      </div>
     </div>
   )
 }

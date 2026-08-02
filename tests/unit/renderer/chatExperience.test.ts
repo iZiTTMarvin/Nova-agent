@@ -215,7 +215,7 @@ describe('聊天体验回归', () => {
     })
   })
 
-  it('加载带摘要化 write 的历史会话时不应白屏（TurnProcessTree 默认折叠 L3）', () => {
+  it('加载带摘要化 write 的历史会话时不应白屏（TurnProcessTree 默认折叠过程时间线）', () => {
     const sanitizedWriteArgs = sanitizeToolInput('write', {
       path: 'index.html',
       content: '<!doctype html>\n' + '<section>hello</section>\n'.repeat(600)
@@ -247,22 +247,15 @@ describe('聊天体验回归', () => {
       renderer = TestRenderer.create(React.createElement(ChatPanel))
     })
 
-    // completed 默认 L1 折叠：过程树头可见，L3 不 mount
-    const l1 = renderer!.root.findByProps({ 'data-testid': 'turn-process-l1' })
-    expect(String(l1.findByProps({ className: 'turn-process-tree__l1-title' }).children.join(''))).toMatch(/^Worked/)
+    // completed 默认折叠：折叠头可见，过程时间线不 mount
+    const header = renderer!.root.findByProps({ 'data-testid': 'turn-process-header' })
+    expect(String(header.findByProps({ className: 'turn-process-tree__header-title' }).children.join(''))).toMatch(/^已工作/)
     expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ className: 'streaming-card__filename' })).toHaveLength(0)
 
-    // 展开 L1 → L2 后仍无 L3
+    // 展开折叠头 → 挂载过程时间线等宽行
     act(() => {
-      l1.props.onClick()
-    })
-    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
-
-    // 展开 L2 → 挂载 L3 等宽行
-    const l2 = renderer!.root.findByProps({ 'data-testid': 'turn-process-l2' })
-    act(() => {
-      l2.props.onClick()
+      header.props.onClick()
     })
     const action = renderer!.root.findByProps({ className: 'tool-trace-row__action' })
     expect(action.children).toEqual(['Wrote'])

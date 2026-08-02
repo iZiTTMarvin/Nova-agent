@@ -1,14 +1,12 @@
 /**
- * turnProcessModel 分区与摘要单测（T1~T10）
+ * turnProcessModel 分区单测（T1~T10）
  */
 import { describe, expect, it } from 'vitest'
 import {
   buildProcessTimeline,
   buildTurnRenderModel,
-  countHunkLineChanges,
   normalizeThinkingForDisplay
 } from '../../../src/renderer/features/chat/turnProcessModel'
-import { computeFileDiff } from '../../../src/shared/diff/compute'
 import type { RendererMessageBlock, RendererToolBlock } from '../../../src/renderer/stores/types'
 import type { ExtendedToolCall } from '../../../src/renderer/stores/types'
 
@@ -189,46 +187,6 @@ describe('buildTurnRenderModel', () => {
     }
   })
 
-  it('T8: diffCache 有 hunks → additions/deletions 按 content +/- 计数', () => {
-    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`)
-    const oldContent = lines.join('\n')
-    const changed = [...lines]
-    changed[14] = 'line 15 CHANGED'
-    const entry = computeFileDiff('a.ts', oldContent, changed.join('\n'), 'modified')
-
-    const blocks: RendererMessageBlock[] = [
-      toolBlock('1', 'edit', { path: 'a.ts' }),
-      { type: 'text', content: 'done' }
-    ]
-    const model = buildTurnRenderModel({
-      blocks,
-      toolCalls: [],
-      mode: 'default',
-      phase: 'completed',
-      diffCache: { diffs: [entry], reviews: {} }
-    })
-    expect(model.summary.diffStatsReady).toBe(true)
-    expect(model.summary.additions).toBe(1)
-    expect(model.summary.deletions).toBe(1)
-
-    // 回归：hunk 头跨度含上下文，会远大于真实 +/- 行数
-    const spanAdd = entry.hunks.reduce((s, h) => s + h.newLines, 0)
-    const spanDel = entry.hunks.reduce((s, h) => s + h.oldLines, 0)
-    expect(spanAdd).toBeGreaterThan(model.summary.additions!)
-    expect(spanDel).toBeGreaterThan(model.summary.deletions!)
-  })
-
-  it('countHunkLineChanges 不计上下文空格行', () => {
-    const hunk = {
-      oldStart: 1,
-      oldLines: 7,
-      newStart: 1,
-      newLines: 7,
-      content: ' line1\n-line2\n+line2 changed\n line3'
-    }
-    expect(countHunkLineChanges(hunk)).toEqual({ additions: 1, deletions: 1 })
-  })
-
   it('T9: 无 blocks，有 toolCalls → 降级路径正确', () => {
     const toolCalls: ExtendedToolCall[] = [
       { id: '1', name: 'read', arguments: { path: 'a.ts' }, status: 'success' }
@@ -254,29 +212,6 @@ describe('buildTurnRenderModel', () => {
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
     expect(model.hasProcess).toBe(true)
     expect(model.answerUnits).toHaveLength(0)
-    expect(model.summary.commandCount).toBe(1)
-  })
-
-  it('思考摘要复用展示规范化，不泄露 Markdown 标记', () => {
-    const blocks: RendererMessageBlock[] = [
-      {
-        type: 'thinking',
-        content:
-          '**Planning initial repository inspection****Drafting detailed implementation plan**'
-      },
-      toolBlock('1', 'read', { path: 'a.ts' })
-    ]
-
-    const model = buildTurnRenderModel({
-      blocks,
-      toolCalls: [],
-      mode: 'default',
-      phase: 'completed'
-    })
-
-    expect(model.summary.thoughtPreview).toBe(
-      'Planning initial repository inspection Drafting detailed implementation plan'
-    )
   })
 })
 
@@ -333,30 +268,6 @@ describe('normalizeThinkingForDisplay', () => {
     ].join('\n')
 
     expect(normalizeThinkingForDisplay(input)).toBe(expected)
-  })
-
-  it('过程摘要跳过可变长度和波浪号围栏代码', () => {
-    const blocks: RendererMessageBlock[] = [
-      {
-        type: 'thinking',
-        content: [
-          '~~~~text',
-          '**code A****code B**',
-          '~~~~',
-          '**真实摘要 A****真实摘要 B**'
-        ].join('\n')
-      },
-      toolBlock('1', 'read', { path: 'a.ts' })
-    ]
-
-    const model = buildTurnRenderModel({
-      blocks,
-      toolCalls: [],
-      mode: 'default',
-      phase: 'completed'
-    })
-
-    expect(model.summary.thoughtPreview).toBe('真实摘要 A 真实摘要 B')
   })
 })
 

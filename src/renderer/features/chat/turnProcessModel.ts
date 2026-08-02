@@ -10,11 +10,9 @@ import {
 } from './toolCallGrouping'
 import type {
   ExtendedToolCall,
-  MessageDiffCache,
   RendererMessageBlock,
   RendererToolBlock
 } from '../../stores/types'
-import type { DiffHunk } from '../../../shared/diff/types'
 
 /** 回合阶段 */
 export type TurnPhase = 'live' | 'completed'
@@ -26,17 +24,6 @@ export type TurnPhase = 'live' | 'completed'
  */
 function isAskQuestionTool(toolName: string): boolean {
   return toolName === 'askQuestion'
-}
-
-export interface TurnSummary {
-  editedFileCount: number
-  exploredFileCount: number
-  searchCount: number
-  commandCount: number
-  additions: number | null
-  deletions: number | null
-  diffStatsReady: boolean
-  thoughtPreview?: string
 }
 
 /** 过程区时间线段：block 单元与 tool/toolGroup 单元按原始顺序穿插 */
@@ -52,98 +39,6 @@ export interface TurnRenderModel {
   bubbleUnits: RenderUnit[]
   processTimeline: ProcessSegment[]
   answerUnits: RenderUnit[]
-  summary: TurnSummary
-}
-
-function extractPath(args: Record<string, unknown>): string | undefined {
-  const raw = args.path ?? args.filePath ?? args.directory ?? args.file
-  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
-}
-
-/**
- * 按 unified diff content 统计真实增删行（+/- 前缀行），不含上下文空格行。
- * hunk.newLines / hunk.oldLines 是 hunk 头跨度，含 CONTEXT 上下文，不能直接当增删计数。
- */
-export function countHunkLineChanges(hunk: DiffHunk): { additions: number; deletions: number } {
-  let additions = 0
-  let deletions = 0
-  if (!hunk.content) return { additions, deletions }
-  for (const line of hunk.content.split('\n')) {
-    if (line.startsWith('+')) additions++
-    else if (line.startsWith('-')) deletions++
-  }
-  return { additions, deletions }
-}
-
-function computeDiffStats(diffCache?: MessageDiffCache): Pick<TurnSummary, 'additions' | 'deletions' | 'diffStatsReady'> {
-  if (!diffCache?.diffs?.length) {
-    return { additions: null, deletions: null, diffStatsReady: false }
-  }
-
-  let additions = 0
-  let deletions = 0
-  for (const diff of diffCache.diffs) {
-    for (const hunk of diff.hunks) {
-      const delta = countHunkLineChanges(hunk)
-      additions += delta.additions
-      deletions += delta.deletions
-    }
-  }
-  return { additions, deletions, diffStatsReady: true }
-}
-
-function collectToolSummaryFromBlocks(
-  blocks: RendererMessageBlock[],
-  mode: Mode
-): Pick<TurnSummary, 'editedFileCount' | 'exploredFileCount' | 'searchCount' | 'commandCount'> {
-  const editedPaths = new Set<string>()
-  const exploredPaths = new Set<string>()
-  let searchCount = 0
-  let commandCount = 0
-
-  for (const block of blocks) {
-    if (block.type !== 'tool') continue
-    if (!shouldRenderToolBlock(mode, block.toolName)) continue
-    if (isAskQuestionTool(block.toolName)) continue
-
-    const args = block.arguments ?? {}
-    const path = extractPath(args)
-
-    if (block.toolName === 'write' || block.toolName === 'edit') {
-      if (path) editedPaths.add(path)
-    } else if (block.toolName === 'read' || block.toolName === 'ls' || block.toolName === 'find') {
-      if (path) exploredPaths.add(path)
-      else if (block.toolName === 'ls' || block.toolName === 'find') {
-        exploredPaths.add(`__${block.toolName}__${block.toolCallId}`)
-      }
-    } else if (block.toolName === 'grep' || block.toolName === 'web_search') {
-      searchCount += 1
-    } else if (block.toolName === 'bash') {
-      commandCount += 1
-    }
-  }
-
-  return {
-    editedFileCount: editedPaths.size,
-    exploredFileCount: exploredPaths.size,
-    searchCount,
-    commandCount
-  }
-}
-
-function collectToolSummaryFromToolCalls(
-  toolCalls: ExtendedToolCall[],
-  mode: Mode
-): Pick<TurnSummary, 'editedFileCount' | 'exploredFileCount' | 'searchCount' | 'commandCount'> {
-  const blocks: RendererMessageBlock[] = toolCalls.map(tc => ({
-    type: 'tool',
-    toolCallId: tc.id,
-    toolName: tc.name,
-    arguments: tc.arguments,
-    status: tc.status,
-    result: tc.result
-  }))
-  return collectToolSummaryFromBlocks(blocks, mode)
 }
 
 function findLastVisibleToolIndex(blocks: RendererMessageBlock[], mode: Mode): number {
@@ -272,56 +167,6 @@ export function normalizeThinkingForDisplay(thinking: string): string {
     .join('')
 }
 
-function removeFencedCodeForPreview(thinking: string): string {
-  let fence: MarkdownFence | null = null
-  return thinking
-    .split(/\r?\n/)
-    .map(line => {
-      const transition = transitionMarkdownFence(line, fence)
-      if (transition.delimiter) {
-        fence = transition.fence
-        return ''
-      }
-      return fence === null ? line : ''
-    })
-    .join('\n')
-}
-
-function thinkingPreviewText(thinking: string): string {
-  return removeFencedCodeForPreview(normalizeThinkingForDisplay(thinking))
-    .replace(/(`+)([\s\S]*?)\1/g, '$2')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s*[-+*>]\s+/gm, '')
-    .replace(/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/gm, '')
-    .replace(/(\*\*|__)(.*?)\1/g, '$2')
-    .replace(/~~([^~\n]+)~~/g, '$1')
-    .replace(/(^|[\s([{])([*_])(?=\S)([^*_\n]*?\S)\2(?=$|[\s)\]},.!?:;])/g, '$1$3')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function buildThoughtPreview(processBlocks: RendererMessageBlock[]): string | undefined {
-  for (const block of processBlocks) {
-    if (block.type === 'thinking') {
-      const preview = thinkingPreviewText(block.content)
-      if (preview) return preview.slice(0, 120)
-    }
-  }
-
-  let lastShortText: string | undefined
-  for (const block of processBlocks) {
-    if (block.type === 'text') {
-      const trimmed = block.content.trim()
-      if (trimmed.length > 0 && trimmed.length <= 200) {
-        lastShortText = trimmed
-      }
-    }
-  }
-  return lastShortText?.slice(0, 120)
-}
-
 /**
  * 将过程区 blocks 映射为按时间线排序的 ProcessSegment[]（tool 段经 buildBlockRenderUnits 聚合）。
  */
@@ -397,7 +242,6 @@ export function buildTurnRenderModel(input: {
   phase: TurnPhase
   turnStartedAt?: number
   turnEndedAt?: number
-  diffCache?: MessageDiffCache
   /** 旧路径：无 blocks 时的 thinking 字符串 */
   thinking?: string
   /** 旧路径：无 blocks 时的 content 字符串 */
@@ -410,13 +254,11 @@ export function buildTurnRenderModel(input: {
     phase,
     turnStartedAt,
     turnEndedAt,
-    diffCache,
     thinking,
     content
   } = input
 
   const durationMs = resolveDurationMs(phase, turnStartedAt, turnEndedAt)
-  const diffPart = computeDiffStats(diffCache)
 
   // ── blocks 路径（优先） ──
   if (blocks && blocks.length > 0) {
@@ -424,7 +266,6 @@ export function buildTurnRenderModel(input: {
     const hasProcess = lastToolIndex >= 0
 
     const answerBlocks: RendererMessageBlock[] = []
-    const processBlocksForSummary: RendererMessageBlock[] = []
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]
@@ -432,17 +273,7 @@ export function buildTurnRenderModel(input: {
         answerBlocks.push(block)
         continue
       }
-      if (i <= lastToolIndex) {
-        // ask 落在过程边界内：进 timeline；摘要统计仍跳过 ask
-        if (block.type === 'tool') {
-          if (!shouldRenderToolBlock(mode, block.toolName)) continue
-          if (!isAskQuestionTool(block.toolName)) {
-            processBlocksForSummary.push(block)
-          }
-        } else {
-          processBlocksForSummary.push(block)
-        }
-      } else {
+      if (i > lastToolIndex) {
         if (block.type === 'tool' && !shouldRenderToolBlock(mode, block.toolName)) {
           continue
         }
@@ -450,21 +281,13 @@ export function buildTurnRenderModel(input: {
       }
     }
 
-    const toolSummary = collectToolSummaryFromBlocks(processBlocksForSummary, mode)
-    const thoughtPreview = buildThoughtPreview(processBlocksForSummary)
-
     return {
       phase,
       hasProcess,
       durationMs,
       bubbleUnits: [],
       processTimeline: hasProcess ? buildProcessTimeline(blocks, lastToolIndex, mode) : [],
-      answerUnits: blocksToRenderUnits(answerBlocks, mode),
-      summary: {
-        ...toolSummary,
-        ...diffPart,
-        thoughtPreview
-      }
+      answerUnits: blocksToRenderUnits(answerBlocks, mode)
     }
   }
 
@@ -479,11 +302,6 @@ export function buildTurnRenderModel(input: {
     (u): u is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
       u.kind === 'tool' || u.kind === 'toolGroup'
   )
-
-  const legacyProcessBlocks: RendererMessageBlock[] = []
-  if (hasProcess && thinking?.trim()) {
-    legacyProcessBlocks.push({ type: 'thinking', content: thinking })
-  }
 
   const processTimeline: ProcessSegment[] = hasProcess
     ? [
@@ -507,22 +325,12 @@ export function buildTurnRenderModel(input: {
   }
   answerUnits.push(...buildToolCallRenderUnits(askToolCalls, mode))
 
-  const toolSummary = hasProcess
-    ? collectToolSummaryFromToolCalls(processToolCalls, mode)
-    : { editedFileCount: 0, exploredFileCount: 0, searchCount: 0, commandCount: 0 }
-  const thoughtPreview = buildThoughtPreview(legacyProcessBlocks)
-
   return {
     phase,
     hasProcess,
     durationMs,
     bubbleUnits: [],
     processTimeline,
-    answerUnits,
-    summary: {
-      ...toolSummary,
-      ...diffPart,
-      thoughtPreview
-    }
+    answerUnits
   }
 }

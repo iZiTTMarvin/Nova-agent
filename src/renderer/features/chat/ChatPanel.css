@@ -107,13 +107,28 @@
   border-top-right-radius: 4px;
 }
 
+/* assistant 消息平铺：无卡片背景/边框/阴影，正文直接落在页面底色上（对齐主流 agent desktop） */
 .chat-msg--assistant {
   width: 100%;
   max-width: 100%;
-  background-color: var(--bg-card);
+  padding: 4px 0;
+  background-color: transparent;
   color: var(--text-primary);
-  border: 1px solid var(--border-cream);
-  border-top-left-radius: 4px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 错误态仍是独立反馈面：保留浅色底与圆角，但不回到卡片边框 */
+.chat-msg--assistant.chat-msg--error {
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+}
+
+/* 平铺后悬浮操作按钮不再依附卡片上沿，改为贴消息右上角 */
+.chat-msg--assistant .chat-msg__actions {
+  top: 0;
+  right: 0;
 }
 
 .chat-msg--error {

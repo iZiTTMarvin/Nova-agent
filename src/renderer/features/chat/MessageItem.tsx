@@ -288,7 +288,6 @@ function MessageItemInner({
             phase: turnPhase,
             turnStartedAt: msg.turnStartedAt,
             turnEndedAt: msg.turnEndedAt,
-            diffCache,
             thinking: thinkingContent || undefined,
             content: textContent || undefined
           })
@@ -302,7 +301,6 @@ function MessageItemInner({
       msg.turnEndedAt,
       currentMode,
       turnPhase,
-      diffCache,
       thinkingContent,
       textContent
     ]
@@ -416,7 +414,6 @@ function MessageItemInner({
                 messageId={msg.id}
                 isLive={turnPhase === 'live'}
                 interrupted={msg.interrupted}
-                currentMode={currentMode}
                 isCurrentAssistantGenerating={isCurrentAssistantGenerating}
                 onRenderPoolTick={handleRenderPoolTick}
                 isTurnActiveForThisMsg={isTurnActiveForThisMsg}
@@ -457,7 +454,6 @@ function MessageItemInner({
                     messageId={msg.id}
                     isLive={turnPhase === 'live'}
                     interrupted={msg.interrupted}
-                    currentMode={currentMode}
                     isCurrentAssistantGenerating={isCurrentAssistantGenerating}
                     onRenderPoolTick={handleRenderPoolTick}
                     isTurnActiveForThisMsg={isTurnActiveForThisMsg}

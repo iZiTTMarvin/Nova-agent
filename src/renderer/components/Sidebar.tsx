@@ -99,6 +99,19 @@ export const Sidebar: React.FC = () => {
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
 
+  /** 相对时间（对齐 Codex 侧边栏）：刚刚 / N 分钟 / N 小时 / N 天，超过 30 天回退到日期 */
+  const formatRelativeTime = (ts: number) => {
+    const minutes = Math.floor((Date.now() - ts) / 60000)
+    if (minutes < 1) return '刚刚'
+    if (minutes < 60) return `${minutes} 分钟`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours} 小时`
+    const days = Math.floor(hours / 24)
+    if (days < 30) return `${days} 天`
+    const d = new Date(ts)
+    return `${d.getMonth() + 1}/${d.getDate()}`
+  }
+
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
     const response = await window.api.invoke('dialog:confirm', {
@@ -216,15 +229,18 @@ export const Sidebar: React.FC = () => {
                       {getProjectName(projectPath)}
                     </span>
                   </div>
-                  <div 
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-secondary transition-all"
-                    title="在此项目下新建会话"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      createNewSession(projectPath)
-                    }}
-                  >
-                    <PlusIcon size={12} />
+                  <div className="flex items-center shrink-0">
+                    <span className="text-[11px] text-text-muted group-hover:hidden">{sessionForest.length} 个任务</span>
+                    <div 
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-secondary transition-all"
+                      title="在此项目下新建会话"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        createNewSession(projectPath)
+                      }}
+                    >
+                      <PlusIcon size={12} />
+                    </div>
                   </div>
                 </div>
 
@@ -266,99 +282,104 @@ export const Sidebar: React.FC = () => {
                             : undefined
 
                           return (
-                            <div 
+                            <div
                               key={session.id}
                               onClick={() => !isEditing && selectSession(session.id)}
-                              className={`group relative flex flex-col px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
+                              className={`group relative flex items-center gap-1 px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
                                 isActive ? 'bg-white shadow-sm border border-border-warm' : 'hover:bg-gray-200/50'
                               }`}
                               style={{ marginLeft: `${depth * 14}px` }}
                               title={showWaiting ? '等待你处理' : undefined}
                             >
-                              <div className="flex items-center justify-between gap-1 min-w-0">
-                                {isEditing ? (
-                                  <input
-                                    ref={editInputRef}
-                                    className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
-                                    value={editValue}
-                                    maxLength={SESSION_TITLE_MAX_LENGTH}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onKeyDown={(e) => handleEditKeyDown(e, session.id)}
-                                    onBlur={() => void submitRename(session.id)}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                ) : (
+                              {isEditing ? (
+                                <input
+                                  ref={editInputRef}
+                                  className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
+                                  value={editValue}
+                                  maxLength={SESSION_TITLE_MAX_LENGTH}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onKeyDown={(e) => handleEditKeyDown(e, session.id)}
+                                  onBlur={() => void submitRename(session.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void selectSession(session.id)
+                                  }}
+                                  aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
+                                  aria-current={isActive ? 'page' : undefined}
+                                >
+                                  {childStatus ? (
+                                    <span
+                                      className="text-[11px] text-text-muted shrink-0"
+                                      title={childStatus[1]}
+                                    >
+                                      <span aria-hidden="true">{childStatus[0]}</span>
+                                      <span className="sr-only">{childStatus[1]}</span>
+                                    </span>
+                                  ) : null}
+                                  <span
+                                    className={`text-sm truncate flex-1 min-w-0 ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}
+                                    title={`${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`}
+                                  >
+                                    {displayTitle}
+                                  </span>
+                                </button>
+                              )}
+                              {showWaiting && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                                    title="等待你处理"
+                                  >
+                                    等待你处理
+                                  </span>
                                   <button
                                     type="button"
-                                    className="flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                                    className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
+                                    title="停止此 XForge 运行"
                                     onClick={(event) => {
                                       event.stopPropagation()
-                                      void selectSession(session.id)
+                                      void cancelExecution(waitingBadge?.runId)
                                     }}
-                                    aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
-                                    aria-current={isActive ? 'page' : undefined}
                                   >
-                                    {childStatus ? (
-                                      <span
-                                        className="text-[11px] text-text-muted shrink-0 flex items-center gap-1"
-                                        title={childStatus[1]}
-                                      >
-                                        <span aria-hidden="true">{childStatus[0]}</span>
-                                        <span>{childStatus[1]}</span>
-                                      </span>
-                                    ) : null}
-                                    <span
-                                      className={`text-sm truncate flex-1 min-w-0 ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}
-                                      title={displayTitle}
-                                    >
-                                      {displayTitle}
-                                    </span>
+                                    停止
                                   </button>
-                                )}
-                                {showWaiting && (
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <span
-                                      className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
-                                      title="等待你处理"
-                                    >
-                                      等待你处理
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
-                                      title="停止此 XForge 运行"
-                                      onClick={(event) => {
-                                        event.stopPropagation()
-                                        void cancelExecution(waitingBadge?.runId)
-                                      }}
-                                    >
-                                      停止
-                                    </button>
-                                  </div>
-                                )}
-                                {showRunning && (
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <span
-                                      className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1"
-                                      title="后台运行中"
-                                    >
-                                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                                      运行中
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
-                                      title="停止此会话的后台运行"
-                                      onClick={(event) => {
-                                        event.stopPropagation()
-                                        void cancelExecution(runningBadge?.runId)
-                                      }}
-                                    >
-                                      停止
-                                    </button>
-                                  </div>
-                                )}
-                                <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                                </div>
+                              )}
+                              {showRunning && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1"
+                                    title="后台运行中"
+                                  >
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                                    运行中
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
+                                    title="停止此会话的后台运行"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      void cancelExecution(runningBadge?.runId)
+                                    }}
+                                  >
+                                    停止
+                                  </button>
+                                </div>
+                              )}
+                              {!showWaiting && !showRunning && !isEditing && (
+                                <span className="text-[11px] text-text-muted shrink-0 group-hover:hidden group-focus-within:hidden">
+                                  {formatRelativeTime(session.updatedAt)}
+                                </span>
+                              )}
+                              {!isEditing && (
+                                <div className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
                                   <button
                                     className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-text-primary transition-all"
                                     title="重命名会话"
@@ -376,11 +397,7 @@ export const Sidebar: React.FC = () => {
                                     </button>
                                   ) : null}
                                 </div>
-                              </div>
-                              <span className="text-[10px] text-text-muted mt-0.5">
-                                {formatTime(session.updatedAt)}
-                                {session.messageCount > 0 && ` · ${session.messageCount} 条对话`}
-                              </span>
+                              )}
                             </div>
                           )
                         })}
