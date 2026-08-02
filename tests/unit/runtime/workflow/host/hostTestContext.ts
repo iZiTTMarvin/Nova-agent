@@ -1,15 +1,16 @@
 /**
  * host 层测试脚手架：构造一个可控的 HostContext。
- * 真实依赖只保留 TaskScope / 信号量 / journal，模型与工具用 mock。
+ * 真实依赖只保留 TaskScope / journal，子代理端口和模型输出可控。
  */
 import { EventBus } from '../../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../../../src/runtime/tools/ToolRegistry'
 import { TaskScope } from '../../../../../src/runtime/workflow/scheduling/TaskScope'
-import { makeRunSemaphore } from '../../../../../src/runtime/workflow/scheduling/semaphore'
 import type { HostContext } from '../../../../../src/runtime/workflow/host/types'
 import type { AgentEvent } from '../../../../../src/runtime/agent/types'
 import type { ToolExecutor } from '../../../../../src/runtime/tools/types'
+import type { SpawnSubagentPort } from '../../../../../src/runtime/subagents'
+import type { SpawnSubagentCommand } from '../../../../../src/shared/subagents'
 
 export interface HostTestHarness {
   ctx: HostContext
@@ -17,6 +18,7 @@ export interface HostTestHarness {
   events: AgentEvent[]
   client: MockModelClient
   registry: ToolRegistry
+  spawnCommands: SpawnSubagentCommand[]
 }
 
 export function makeHostHarness(
@@ -25,6 +27,7 @@ export function makeHostHarness(
     autoMode?: boolean
     runId?: string
     tools?: ToolExecutor[]
+    spawnSubagentPort?: SpawnSubagentPort
   } = {}
 ): HostTestHarness {
   const client = new MockModelClient()
@@ -36,30 +39,51 @@ export function makeHostHarness(
   eventBus.on((event) => events.push(event))
 
   const scope = new TaskScope({ label: 'host-test' })
-  const { runSem, globalSem } = makeRunSemaphore(4)
+  const spawnCommands: SpawnSubagentCommand[] = []
+  const spawnSubagentPort: SpawnSubagentPort = options.spawnSubagentPort ?? {
+    spawn: async (command) => {
+      spawnCommands.push(command)
+      let summary = ''
+      for await (const event of client.chat([{ role: 'user', content: command.task }])) {
+        if (event.type === 'text_delta') summary += event.delta
+      }
+      return {
+        childSessionId: `child-session-${spawnCommands.length}`,
+        childRunId: `child-run-${spawnCommands.length}`,
+        status: summary.trim() ? 'completed' : 'failed',
+        summary: summary.trim(),
+        artifactIds: [],
+        startedAt: 1,
+        completedAt: 2,
+        ...(!summary.trim()
+          ? { failure: { code: 'model' as const, message: 'empty-output' } }
+          : {})
+      }
+    }
+  }
 
   const ctx: HostContext = {
     runId: options.runId ?? 'test-run',
     workspaceRoot,
     sessionId: 'sess-1',
+    parentRunId: 'parent-run',
+    parentMessageId: 'parent-message',
+    parentToolCallId: 'parent-tool',
+    spawnSubagentPort,
     scope,
     scopeGeneration: scope.captureGeneration(),
     abortSignal: scope.signal,
     eventBus,
-    modelClient: client,
-    resolveTool: (name) => registry.getTool(name),
     mode: 'compose',
     autoMode: options.autoMode ?? false,
-    journal: { results: new Map(), pass: 1 },
+    journal: { results: new Map(), childRefs: new Map(), pass: 1 },
     occ: new Map(),
-    runSem,
-    globalSem,
     ownedWorktrees: new Map(),
     worktreeKeys: new Map(),
     currentPhase: { name: 'test-phase' }
   }
 
-  return { ctx, scope, events, client, registry }
+  return { ctx, scope, events, client, registry, spawnCommands }
 }
 
 /** 让 MockModelClient 回一段纯文本 */

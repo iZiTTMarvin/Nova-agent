@@ -21,6 +21,9 @@ export function canonical(value: unknown): unknown {
 
 export interface JournalKeyOpts {
   agentType?: string
+  /** Workflow 稳定任务与批次身份，避免相同 prompt 跨 item 错误复用。 */
+  taskId?: string
+  batchId?: string
   model?: unknown
   schema?: unknown
   phase?: string
@@ -44,6 +47,8 @@ export function journalKeyBase(prompt: string, opts: JournalKeyOpts): string {
   const material = canonical({
     prompt,
     agentType: opts.agentType ?? null,
+    taskId: opts.taskId ?? null,
+    batchId: opts.batchId ?? null,
     model: opts.model ?? null,
     schema: opts.schema ?? null,
     phase: opts.phase ?? null,
@@ -58,10 +63,18 @@ export function journalKey(prompt: string, opts: JournalKeyOpts, occ: number): s
   return journalKeyBase(prompt, opts) + ':' + occ
 }
 
-export type JournalEvent = { t: 'agent'; key: string; result: unknown; pass: number }
+export type JournalEvent = {
+  t: 'agent'
+  key: string
+  result: unknown
+  childSessionId?: string
+  childRunId?: string
+  pass: number
+}
 
 export interface JournalLoad {
   results: Map<string, unknown>
+  childRefs: Map<string, { childSessionId: string; childRunId: string }>
   pass: number
 }
 
@@ -95,9 +108,10 @@ export function appendJournalSync(
 export function loadJournal(workspaceRoot: string, runId: string): JournalLoad {
   assertSafeRunId(runId)
   const path = runJournalPath(workspaceRoot, runId)
-  if (!existsSync(path)) return { results: new Map(), pass: 1 }
+  if (!existsSync(path)) return { results: new Map(), childRefs: new Map(), pass: 1 }
   const text = readFileSync(path, 'utf-8')
   const results = new Map<string, unknown>()
+  const childRefs = new Map<string, { childSessionId: string; childRunId: string }>()
   let maxPass = 0
   for (const line of text.split('\n')) {
     if (!line) continue
@@ -108,7 +122,18 @@ export function loadJournal(workspaceRoot: string, runId: string): JournalLoad {
       continue
     }
     if (typeof ev.pass === 'number' && ev.pass > maxPass) maxPass = ev.pass
-    if (ev.t === 'agent') results.set(ev.key, ev.result)
+    if (ev.t === 'agent') {
+      results.set(ev.key, ev.result)
+      if (
+        typeof ev.childSessionId === 'string' && ev.childSessionId &&
+        typeof ev.childRunId === 'string' && ev.childRunId
+      ) {
+        childRefs.set(ev.key, {
+          childSessionId: ev.childSessionId,
+          childRunId: ev.childRunId
+        })
+      }
+    }
   }
-  return { results, pass: maxPass + 1 }
+  return { results, childRefs, pass: maxPass + 1 }
 }

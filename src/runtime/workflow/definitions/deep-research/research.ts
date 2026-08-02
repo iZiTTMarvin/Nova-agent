@@ -130,6 +130,8 @@ async function researchOne(
 
   const options: AgentOptions = {
     phase: 'research',
+    taskId: subQuestion.id,
+    batchId: 'research-0',
     isolation: 'readonly',
     interactive: false,
     schema: FINDING_SCHEMA,

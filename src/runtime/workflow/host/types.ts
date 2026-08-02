@@ -6,18 +6,14 @@
  * 旧 continuation 无权再写工作区、发事件或落盘。
  */
 import type { EventBus } from '../../agent/EventBus'
-import type { ModelClient } from '../../model/ModelClient'
 import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import type { Mode } from '../../../shared/session/types'
-import type { ToolExecutor } from '../../tools/types'
-import type { SubAgentPermissionBridge } from '../../tools/subAgentBridge'
-import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import type { WorkflowProgressDetail, WorkflowProgressStatus } from '../../agent/types'
 import type { TaskScope } from '../scheduling/TaskScope'
-import type { Semaphore } from '../scheduling/semaphore'
 import type { JournalLoad } from '../state/journal'
 import type { SideEffectCtx } from '../effects/sideEffectCtx'
 import type { WorktreeInfo } from '../../worktree'
+import type { SpawnSubagentPort } from '../../subagents'
 
 /**
  * 子 agent 的隔离模式。
@@ -46,6 +42,10 @@ export interface AgentOptions {
   model?: string
   /** 当前阶段名，参与 journal hash；缺省取 HostContext.currentPhase */
   phase?: string
+  /** 稳定 Workflow 任务身份；并行成员必须显式提供。 */
+  taskId?: string
+  /** 同一并行批次的稳定标识。 */
+  batchId?: string
   /**
    * 在已有目录内执行（复用某个 worktree 做 verify/debug）。
    * 优先于 isolation；不新建 worktree，也不写 journal。
@@ -143,7 +143,11 @@ export interface OwnedWorktree {
 export interface HostContext {
   runId: string
   workspaceRoot: string
-  sessionId?: string
+  sessionId: string
+  parentRunId: string
+  parentMessageId: string
+  parentToolCallId: string
+  spawnSubagentPort: SpawnSubagentPort
   /** 本 run 的 TaskScope；副作用提交前校验 generation */
   scope: TaskScope
   /** spawn 时捕获的 generation；scope close 后失效 */
@@ -151,30 +155,15 @@ export interface HostContext {
   abortSignal: AbortSignal
   /** 向 renderer 发事件的总线（父 run 的 bus） */
   eventBus: EventBus
-  modelClient: ModelClient
-  resolveTool: (name: string) => ToolExecutor | undefined
   checkpointManager?: CheckpointManager
-  contextWindow?: number
   supportsVision?: boolean
   /** 子 agent 行为模式，编排内默认 compose */
   mode?: Mode
-  permissionBridge?: SubAgentPermissionBridge
-  /**
-   * 提问通道：由装配方（agentHandler）注入。
-   * host 自身不提供 askUser 能力——决策交互只能由阶段 agent 的 askQuestion 工具发起，
-   * 这是 orchestrator 无暂停态的前提。缺省时该工具降级为 no-op。
-   */
-  askQuestion?: (
-    requestId: string,
-    questions: AskQuestionItem[]
-  ) => Promise<AskQuestionAnswer[]>
   /** Auto 模式：true 时任何子 agent 都不携带 askQuestion */
   autoMode: boolean
   /** journal 缓存（resume 预载）+ per-run 出现次数计数 */
   journal: JournalLoad
   occ: Map<string, number>
-  runSem: Semaphore
-  globalSem: Semaphore
   /** 本 run 拥有的 worktree，供终态 reclaim；key 为 directory */
   ownedWorktrees: Map<string, OwnedWorktree>
   /** worktree 复用索引：调用方 key → directory */

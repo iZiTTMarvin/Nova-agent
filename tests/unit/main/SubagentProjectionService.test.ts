@@ -58,6 +58,45 @@ describe('SubagentProjectionService', () => {
     }).session
   }
 
+  function createWorkflowChild(toolCallId: string, spawnRunId: string) {
+    const metadata: SubagentSessionMetadata = {
+      lineage: {
+        parentSessionId,
+        parentRunId: 'run-parent',
+        rootRunId: 'run-parent',
+        depth: 1,
+        spawnKey: `workflow:${toolCallId}`,
+        spawnRunId,
+        origin: {
+          kind: 'workflow',
+          workflowRunId: 'workflow-run',
+          phase: 'research',
+          parentMessageId: 'msg-parent',
+          parentToolCallId: toolCallId,
+          taskId: 'question-a',
+          batchId: 'research-0',
+          occurrence: 1
+        }
+      },
+      profile: {
+        profileId: 'workflow-readonly',
+        name: 'Workflow Researcher',
+        description: 'inspect',
+        systemPrompt: 'secret prompt',
+        toolNames: ['read'],
+        permissionCeiling: 'read_only',
+        maxToolRounds: 20,
+        configHash: 'workflow-hash'
+      }
+    }
+    return sessionStore.createChildIfAbsent({
+      workspaceRoot: workspace,
+      mode: 'compose',
+      task: 'research question',
+      subagent: metadata
+    }).session
+  }
+
   it('从 durable session 与 run 重建父工具投影且不泄露 profile 配置', () => {
     const child = createChild('call-1', 'run-child-1')
     coordinator.startRun({
@@ -113,6 +152,31 @@ describe('SubagentProjectionService', () => {
         status: 'record_missing'
       })
     ])
+  })
+
+  it('Workflow child 投影保留阶段与稳定 batch item 身份', () => {
+    const child = createWorkflowChild('workflow-tool', 'run-workflow-child')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-workflow-child',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-workflow-child', 'msg-workflow-child')
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const projection = service.getByChildSessionId(child.id)
+
+    expect(projection).toEqual(expect.objectContaining({
+      parentToolCallId: 'workflow-tool',
+      workflow: {
+        workflowRunId: 'workflow-run',
+        phase: 'research',
+        taskId: 'question-a',
+        batchId: 'research-0',
+        occurrence: 1
+      }
+    }))
   })
 
   it('启动批量轻投影只扫一次 metadata，不读取终态 transcript', () => {

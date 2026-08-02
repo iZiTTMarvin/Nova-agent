@@ -5,7 +5,7 @@
  * 入口互斥判断、停止按钮）都必须经这里读状态，不得自行缓存一份 run 状态。
  */
 import { generateRunId } from '../state/paths'
-import { isSafeWorkflowRunId, readWorkflowRunMetadata } from '../state/runMetadata'
+import { inspectWorkflowRunMetadata, isSafeWorkflowRunId } from '../state/runMetadata'
 import { WorkflowRun } from './WorkflowRun'
 import type {
   StartWorkflowOptions,
@@ -62,19 +62,44 @@ export class WorkflowOrchestrator {
           error: 'workflow runId 非法'
         }
       }
-      const metadata = readWorkflowRunMetadata(options.host.workspaceRoot, options.runId)
-      if (!metadata) {
+      const metadataRead = inspectWorkflowRunMetadata(
+        options.host.workspaceRoot,
+        options.runId
+      )
+      if (metadataRead.kind === 'legacy') {
         return {
           status: 'failed',
           runId: options.runId,
-          error: `找不到可恢复的 workflow run 元数据：${options.runId}`
+          error: `workflow run ${options.runId} 使用旧版元数据，缺少可验证的原始调用者身份，无法安全恢复`
         }
       }
+      if (metadataRead.kind !== 'current') {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: metadataRead.kind === 'missing'
+            ? `找不到可恢复的 workflow run 元数据：${options.runId}`
+            : `workflow run ${options.runId} 元数据已损坏或不受支持`
+        }
+      }
+      const metadata = metadataRead.metadata
       if (metadata.workflow !== definition.name) {
         return {
           status: 'failed',
           runId: options.runId,
           error: `workflow run ${options.runId} 属于 ${metadata.workflow}，不能按 ${definition.name} 恢复`
+        }
+      }
+      if (
+        metadata.sessionId !== options.host.sessionId ||
+        metadata.parentRunId !== options.host.parentRunId ||
+        metadata.parentMessageId !== options.host.parentMessageId ||
+        metadata.parentToolCallId !== options.host.parentToolCallId
+      ) {
+        return {
+          status: 'failed',
+          runId: options.runId,
+          error: `workflow run ${options.runId} 的原始调用者身份不匹配`
         }
       }
       if (metadata.status === 'completed') {

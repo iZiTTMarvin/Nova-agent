@@ -10,7 +10,6 @@
 import * as Worktree from '../../worktree'
 import { createHostFns, releaseWorktree, type HostContext } from '../host'
 import { TaskScope, type TaskScopeReason } from '../scheduling/TaskScope'
-import { makeRunSemaphore } from '../scheduling/semaphore'
 import { loadJournal } from '../state/journal'
 import { writeWorkflowRunMetadata } from '../state/runMetadata'
 import type { WorkflowDefinition, WorkflowResult } from '../definitions/types'
@@ -27,7 +26,7 @@ const DEFAULT_DEADLINE_MS = 12 * 60 * 60 * 1000
 export class WorkflowRun {
   readonly runId: string
   readonly workflow: string
-  readonly sessionId?: string
+  readonly sessionId: string
 
   private readonly definition: WorkflowDefinition
   private readonly options: StartWorkflowOptions
@@ -64,31 +63,27 @@ export class WorkflowRun {
       ...(options.graceMs !== undefined ? { graceMs: options.graceMs } : {})
     })
 
-    const { runSem, globalSem } = makeRunSemaphore(options.maxConcurrentAgents)
     const host = options.host
 
     this.ctx = {
       runId,
       workspaceRoot: host.workspaceRoot,
-      ...(host.sessionId !== undefined ? { sessionId: host.sessionId } : {}),
+      sessionId: host.sessionId,
+      parentRunId: host.parentRunId,
+      parentMessageId: host.parentMessageId,
+      parentToolCallId: host.parentToolCallId,
+      spawnSubagentPort: host.spawnSubagentPort,
       scope: this.scope,
       scopeGeneration: this.scope.captureGeneration(),
       abortSignal: this.scope.signal,
       eventBus: host.eventBus,
-      modelClient: host.modelClient,
-      resolveTool: host.resolveTool,
       ...(host.checkpointManager ? { checkpointManager: host.checkpointManager } : {}),
-      ...(host.contextWindow !== undefined ? { contextWindow: host.contextWindow } : {}),
       ...(host.supportsVision !== undefined ? { supportsVision: host.supportsVision } : {}),
       mode: host.mode ?? 'compose',
-      ...(host.permissionBridge ? { permissionBridge: host.permissionBridge } : {}),
-      ...(host.askQuestion ? { askQuestion: host.askQuestion } : {}),
       autoMode: options.autoMode ?? false,
       // resume 时命中缓存的 agent() 调用直接返回已有结果，不再 spawn
       journal: loadJournal(host.workspaceRoot, runId),
       occ: new Map(),
-      runSem,
-      globalSem,
       ownedWorktrees: new Map(),
       worktreeKeys: new Map(),
       currentPhase: { name: options.startStage },
@@ -239,10 +234,13 @@ export class WorkflowRun {
     const snapshot = this.snapshot()
     try {
       writeWorkflowRunMetadata(this.ctx.workspaceRoot, {
-        version: 1,
+        version: 2,
         runId: snapshot.runId,
         workflow: snapshot.workflow,
-        ...(snapshot.sessionId !== undefined ? { sessionId: snapshot.sessionId } : {}),
+        sessionId: this.ctx.sessionId,
+        parentRunId: this.ctx.parentRunId,
+        parentMessageId: this.ctx.parentMessageId,
+        parentToolCallId: this.ctx.parentToolCallId,
         status: snapshot.status,
         phase: snapshot.phase,
         startedAt: snapshot.startedAt,

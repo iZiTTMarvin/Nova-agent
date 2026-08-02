@@ -179,6 +179,7 @@ export async function runPlan(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(request, brainstorm, activePlan), {
+      taskId: 'plan',
       phase: 'plan',
       isolation: 'shared',
       interactive: !autoMode,

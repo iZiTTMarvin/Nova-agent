@@ -101,6 +101,7 @@ export async function runBrainstorm(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(request), {
+      taskId: 'brainstorm',
       phase: 'brainstorm',
       isolation: 'shared',
       interactive: !autoMode,

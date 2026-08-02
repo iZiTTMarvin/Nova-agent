@@ -163,8 +163,16 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         throw new Error(`spawnKey ${identity.spawnKey} 的 profile identity 冲突`)
       }
       profile = existingChild.subagent.profile
+      if (context.profile !== undefined) {
+        const supplied = resolveSubagentProfileSnapshot(context.profile, command.profileId, {
+          allowRecursion: this.allowRecursion
+        })
+        if (supplied.configHash !== profile.configHash) {
+          throw new Error(`spawnKey ${identity.spawnKey} 的 profile config 冲突`)
+        }
+      }
     } else {
-      const rawProfile = this.deps.loadProfile(command.profileId)
+      const rawProfile = context.profile ?? this.deps.loadProfile(command.profileId)
       if (rawProfile === undefined || rawProfile === null) {
         throw new Error(`未知子代理类型: ${command.profileId}`)
       }
@@ -540,7 +548,8 @@ function createStableSpawnKey(command: SpawnSubagentCommand): string {
           origin.workflowRunId,
           origin.phase,
           origin.taskId ?? '',
-          origin.batchId ?? ''
+          origin.batchId ?? '',
+          String(origin.occurrence ?? 0)
         ]
   const digest = createHash('sha256')
     .update(stableFields.join('\0'), 'utf8')

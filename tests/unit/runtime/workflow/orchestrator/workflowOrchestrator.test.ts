@@ -4,15 +4,15 @@
  * 覆盖：状态机唯一终态、取消穿透到 TaskScope、进度事件与 run 状态投影顺序、
  * worktree 生命周期（成功保留有改动 / 删 pristine，失败与取消全删）。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { EventBus } from '../../../../../src/runtime/agent/EventBus'
-import { MockModelClient } from '../../../../../src/test-support/builders/MockModelClient'
 import { WorkflowOrchestrator } from '../../../../../src/runtime/workflow/orchestrator/WorkflowOrchestrator'
 import { readWorkflowRunMetadata } from '../../../../../src/runtime/workflow/state/runMetadata'
+import { runMetadataPath } from '../../../../../src/runtime/workflow/state/paths'
 import { _resetWorktreeLocksForTests } from '../../../../../src/runtime/worktree'
 import type { AgentEvent } from '../../../../../src/runtime/agent/types'
 import type {
@@ -21,6 +21,7 @@ import type {
   WorkflowResult
 } from '../../../../../src/runtime/workflow/definitions/types'
 import type { WorkflowHostDeps } from '../../../../../src/runtime/workflow/orchestrator/types'
+import type { SpawnSubagentPort } from '../../../../../src/runtime/subagents'
 
 function git(args: string[], cwd: string): void {
   const r = spawnSync('git', args, { cwd, encoding: 'utf-8', windowsHide: true })
@@ -58,7 +59,25 @@ interface Harness {
   host: WorkflowHostDeps
 }
 
-function makeHarness(workspaceRoot: string, sessionId = 'sess-1'): Harness {
+function completedSpawnPort(): SpawnSubagentPort {
+  return {
+    spawn: async () => ({
+      childSessionId: 'child-session',
+      childRunId: 'child-run',
+      status: 'completed',
+      summary: 'child-result',
+      artifactIds: [],
+      startedAt: 1,
+      completedAt: 2
+    })
+  }
+}
+
+function makeHarness(
+  workspaceRoot: string,
+  sessionId = 'sess-1',
+  spawnSubagentPort: SpawnSubagentPort = completedSpawnPort()
+): Harness {
   const events: AgentEvent[] = []
   const eventBus = new EventBus()
   eventBus.on((event) => events.push(event))
@@ -67,9 +86,11 @@ function makeHarness(workspaceRoot: string, sessionId = 'sess-1'): Harness {
     host: {
       workspaceRoot,
       sessionId,
+      parentRunId: 'parent-run',
+      parentMessageId: 'parent-message',
+      parentToolCallId: 'parent-tool',
+      spawnSubagentPort,
       eventBus,
-      modelClient: new MockModelClient(),
-      resolveTool: () => undefined
     }
   }
 }
@@ -154,6 +175,124 @@ describe('WorkflowOrchestrator', () => {
     })
     expect(resumed).toMatchObject({ status: 'completed', runId: first.runId })
     expect(readWorkflowRunMetadata(tmp, first.runId)).toMatchObject({ status: 'completed' })
+  })
+
+  it('resume 必须匹配原始 session 与 start_workflow 调用身份', async () => {
+    const definition = fakeDefinition(
+      async () => ({ status: 'failed', reason: '等待恢复' }),
+      { name: 'identity-bound', stages: ['first'] }
+    )
+    const orch = makeOrchestrator(definition)
+    const original = makeHarness(tmp)
+    const first = await orch.start({
+      workflow: 'identity-bound',
+      startStage: 'first',
+      request: '身份绑定',
+      host: original.host
+    })
+    expect(first).toMatchObject({ status: 'failed' })
+    if (first.status !== 'failed') return
+
+    for (const host of [
+      { ...original.host, sessionId: 'other-session' },
+      { ...original.host, parentRunId: 'other-parent-run' },
+      { ...original.host, parentMessageId: 'other-message' },
+      { ...original.host, parentToolCallId: 'other-tool-call' }
+    ]) {
+      await expect(orch.start({
+        workflow: 'identity-bound',
+        startStage: 'first',
+        request: '尝试接管',
+        runId: first.runId,
+        host
+      })).resolves.toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining('原始调用者身份不匹配')
+      })
+    }
+  })
+
+  it('旧版 run 缺少 caller identity 时明确拒绝安全恢复', async () => {
+    const definition = fakeDefinition(
+      async () => ({ status: 'failed', reason: '等待恢复' }),
+      { name: 'legacy-run', stages: ['first'] }
+    )
+    const orch = makeOrchestrator(definition)
+    const host = makeHarness(tmp).host
+    const first = await orch.start({
+      workflow: 'legacy-run',
+      startStage: 'first',
+      request: '旧版元数据',
+      host
+    })
+    expect(first).toMatchObject({ status: 'failed' })
+    if (first.status !== 'failed') return
+
+    writeFileSync(runMetadataPath(tmp, first.runId), JSON.stringify({
+      version: 1,
+      runId: first.runId,
+      workflow: 'legacy-run',
+      sessionId: host.sessionId,
+      status: 'failed',
+      phase: 'first',
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }))
+
+    await expect(orch.start({
+      workflow: 'legacy-run',
+      startStage: 'first',
+      request: '尝试恢复旧版',
+      runId: first.runId,
+      host
+    })).resolves.toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('旧版元数据')
+    })
+  })
+
+  it('显式恢复复用 journal 中的 durable child 结果，不重复 spawn', async () => {
+    let calls = 0
+    const definition = fakeDefinition(
+      async (ctx) => {
+        const result = await ctx.host.agent('稳定子任务', {
+          phase: 'first',
+          taskId: 'stable-task'
+        })
+        calls += 1
+        return calls === 1
+          ? { status: 'failed', reason: '子任务后中断' }
+          : { status: 'completed', summary: String(result) }
+      },
+      { name: 'resume-child', stages: ['first'] }
+    )
+    const orch = makeOrchestrator(definition)
+    const firstPort = completedSpawnPort()
+
+    const first = await orch.start({
+      workflow: 'resume-child',
+      startStage: 'first',
+      request: '恢复 durable child',
+      host: makeHarness(tmp, 'sess-1', firstPort).host
+    })
+    expect(first).toMatchObject({ status: 'failed' })
+    if (first.status !== 'failed') return
+
+    const resumedSpawn = vi.fn<SpawnSubagentPort['spawn']>()
+    const resumed = await orch.start({
+      workflow: 'resume-child',
+      startStage: 'first',
+      request: '恢复 durable child',
+      runId: first.runId,
+      host: makeHarness(tmp, 'sess-1', { spawn: resumedSpawn }).host
+    })
+
+    expect(resumed).toMatchObject({
+      status: 'completed',
+      runId: first.runId,
+      summary: 'child-result'
+    })
+    expect(resumedSpawn).not.toHaveBeenCalled()
   })
 
   it('成功路径：running → completed，进度事件与 run 状态都投影出去', async () => {
@@ -257,6 +396,53 @@ describe('WorkflowOrchestrator', () => {
         e.type === 'workflow_run_state'
     )
     expect(runStates.map((e) => e.status)).toEqual(['running', 'cancelled'])
+  })
+
+  it('cancel 穿透到同一 Workflow 批次的所有 durable children', async () => {
+    const childSignals: AbortSignal[] = []
+    const port: SpawnSubagentPort = {
+      spawn: async (_command, context) => {
+        const signal = context?.abortSignal
+        if (!signal) throw new Error('missing child abort signal')
+        childSignals.push(signal)
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        return {
+          childSessionId: `child-session-${childSignals.length}`,
+          childRunId: `child-run-${childSignals.length}`,
+          status: 'cancelled',
+          artifactIds: [],
+          startedAt: 1,
+          completedAt: 2,
+          failure: { code: 'cancelled', message: 'cancelled' }
+        }
+      }
+    }
+    const definition = fakeDefinition(async (ctx) => {
+      await Promise.all([
+        ctx.host.agent('子任务 A', { taskId: 'a', batchId: 'batch-1' }),
+        ctx.host.agent('子任务 B', { taskId: 'b', batchId: 'batch-1' })
+      ])
+      return { status: 'completed' }
+    })
+    const orch = makeOrchestrator(definition)
+    const pending = orch.start({
+      workflow: 'fake',
+      startStage: 'first',
+      request: '取消批次',
+      host: makeHarness(tmp, 'sess-1', port).host,
+      graceMs: 50
+    })
+
+    await vi.waitFor(() => expect(childSignals).toHaveLength(2))
+    const active = orch.getActiveRunForSession('sess-1')
+    expect(active).not.toBeNull()
+    expect(await orch.cancel(active!.runId)).toBe(true)
+
+    expect(await pending).toEqual({ status: 'cancelled', runId: active!.runId })
+    expect(childSignals.every((signal) => signal.aborted)).toBe(true)
   })
 
   it('外部 abortSignal 触发等价于 cancel', async () => {

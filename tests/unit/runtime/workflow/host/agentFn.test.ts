@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SpawnSubagentPort } from '../../../../../src/runtime/subagents'
 import {
   BASE_TOOLS,
   READONLY_TOOLS,
@@ -9,336 +10,209 @@ import {
   resolveAgentTools
 } from '../../../../../src/runtime/workflow/host/agentFn'
 import { runJournalPath, runLogPath } from '../../../../../src/runtime/workflow/state/paths'
-import { journalKey } from '../../../../../src/runtime/workflow/state/journal'
-import { addEmptyResponse, addTextResponse, makeHostHarness } from './hostTestContext'
-import type { MockModelClient } from '../../../../../src/test-support/builders/MockModelClient'
-import type { ToolExecutor, ToolResult } from '../../../../../src/runtime/tools/types'
-import { AgentLoop } from '../../../../../src/runtime/agent/AgentLoop'
+import { makeHostHarness } from './hostTestContext'
 
-function fakeTool(name: string): ToolExecutor {
+function completed(summary: string, index = 1) {
   return {
-    name,
-    description: `${name} tool`,
-    parameters: { type: 'object', properties: {} },
-    async execute(): Promise<ToolResult> {
-      return { success: true, output: 'ok' }
-    }
+    childSessionId: `child-session-${index}`,
+    childRunId: `child-run-${index}`,
+    status: 'completed' as const,
+    summary,
+    artifactIds: [],
+    startedAt: 1,
+    completedAt: 2
   }
 }
 
-const ALL_TOOLS = [...BASE_TOOLS, ...READONLY_TOOLS, 'askQuestion'].map(fakeTool)
-
-/** 预设一轮「输出一段文本后调用工具」的响应；AgentLoop 执行工具后会消费下一条响应 */
-function addToolCallResponse(
-  client: MockModelClient,
-  text: string,
-  toolName: string,
-  args: Record<string, unknown>
-): void {
-  client.addResponse({
-    events: [
-      { type: 'message_start' },
-      { type: 'text_delta', delta: text },
-      {
-        type: 'tool_call',
-        toolCall: { id: 'tc-1', name: toolName, arguments: JSON.stringify(args) }
-      },
-      { type: 'message_end', finishReason: 'tool_calls' }
-    ]
-  })
-}
-
 describe('host agentFn 工具清单', () => {
-  it('Auto 关 + 交互式 + shared 隔离时才携带 askQuestion', () => {
-    const tools = resolveAgentTools({ isolation: 'shared', autoMode: false, interactive: true })
-    expect(tools).toContain('askQuestion')
-    expect(tools.filter((t) => t === 'askQuestion')).toHaveLength(1)
+  it('只有非 Auto 的 shared interactive 调用携带 askQuestion', () => {
+    expect(resolveAgentTools({ isolation: 'shared', autoMode: false, interactive: true }))
+      .toEqual([...BASE_TOOLS, 'askQuestion'])
+    expect(resolveAgentTools({ isolation: 'shared', autoMode: true, interactive: true }))
+      .toEqual([...BASE_TOOLS])
+    expect(resolveAgentTools({ isolation: 'readonly', autoMode: false, interactive: true }))
+      .toEqual([...READONLY_TOOLS])
   })
 
-  it('Auto 开时剔除 askQuestion', () => {
-    const tools = resolveAgentTools({ isolation: 'shared', autoMode: true, interactive: true })
-    expect(tools).not.toContain('askQuestion')
-  })
-
-  it('非交互调用即使显式传入 askQuestion 也被剔除', () => {
-    const tools = resolveAgentTools({
+  it('显式工具清单去重并在非交互调用剔除 askQuestion', () => {
+    expect(resolveAgentTools({
       isolation: 'shared',
       autoMode: false,
-      tools: ['read', 'askQuestion']
-    })
-    expect(tools).toEqual(['read'])
-  })
-
-  it('worktree / readonly 隔离一律不给提问工具（实现阶段不得阻塞等用户）', () => {
-    for (const isolation of ['worktree', 'readonly'] as const) {
-      const tools = resolveAgentTools({ isolation, autoMode: false, interactive: true })
-      expect(tools).not.toContain('askQuestion')
-    }
-  })
-
-  it('readonly 隔离默认只给只读工具', () => {
-    const tools = resolveAgentTools({ isolation: 'readonly', autoMode: false })
-    expect(tools).toEqual([...READONLY_TOOLS])
-    expect(tools).not.toContain('write')
-    expect(tools).not.toContain('bash')
-  })
-
-  it('shared 隔离默认给实现工具集', () => {
-    expect(resolveAgentTools({ isolation: 'shared', autoMode: false })).toEqual([...BASE_TOOLS])
+      tools: ['read', 'askQuestion', 'read']
+    })).toEqual(['read'])
   })
 })
 
-describe('host agentFn never-throw 与 journal', () => {
-  let tmp: string
+describe('host agentFn 统一 SpawnSubagentPort', () => {
+  let root: string
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'nova-host-agent-'))
+    root = mkdtempSync(join(tmpdir(), 'nova-workflow-agent-port-'))
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
-    rmSync(tmp, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true })
   })
 
-  it('私有 AgentLoop 在执行后按 sendMessage → dispose 生命周期释放', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, 'done')
-    const sendMessage = vi.spyOn(AgentLoop.prototype, 'sendMessage')
-    const dispose = vi.spyOn(AgentLoop.prototype, 'dispose')
+  it('构造完整 Workflow origin、动态受限 profile 与明确等待策略', async () => {
+    const spawn = vi.fn(async () => completed('done'))
+    const port: SpawnSubagentPort = { spawn }
+    const h = makeHostHarness(root, { spawnSubagentPort: port })
 
-    await expect(createAgentFn(h.ctx)('生命周期')).resolves.toBe('done')
+    await expect(createAgentFn(h.ctx)('研究边界', {
+      phase: 'research',
+      taskId: 'question-a',
+      batchId: 'research-0',
+      isolation: 'readonly'
+    })).resolves.toBe('done')
 
-    expect(sendMessage).toHaveBeenCalledTimes(1)
-    expect(dispose).toHaveBeenCalledTimes(1)
-    expect(dispose.mock.invocationCallOrder[0]).toBeGreaterThan(sendMessage.mock.invocationCallOrder[0]!)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const [command, context] = spawn.mock.calls[0]!
+    expect(command).toEqual(expect.objectContaining({
+      parentSessionId: 'sess-1',
+      parentRunId: 'parent-run',
+      workingDirectory: root,
+      isolation: 'readonly',
+      invocation: {
+        kind: 'workflow',
+        workflowRunId: 'test-run',
+        phase: 'research',
+        parentMessageId: 'parent-message',
+        parentToolCallId: 'parent-tool',
+        taskId: 'question-a',
+        batchId: 'research-0',
+        occurrence: 0
+      }
+    }))
+    expect(context).toEqual(expect.objectContaining({
+      waitForPermit: true,
+      abortSignal: h.ctx.abortSignal,
+      profile: expect.objectContaining({
+        name: command.profileId,
+        allowedTools: [...READONLY_TOOLS]
+      })
+    }))
   })
 
-  it('成功返回文本并写入 journal', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, 'done-1')
+  it('成功 journal 同时保存 child refs 与结果，resume 命中后不重复 spawn', async () => {
+    const spawn = vi.fn(async () => completed('cached'))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
     const agent = createAgentFn(h.ctx)
 
-    await expect(agent('工作 A')).resolves.toBe('done-1')
-
-    const journal = readFileSync(runJournalPath(tmp, h.ctx.runId), 'utf-8')
-    const key = journalKey('工作 A', {
-      agentType: 'test-phase',
-      phase: 'test-phase',
-      tools: [...BASE_TOOLS],
-      isolation: 'shared',
-      timeoutMs: null
-    }, 0)
-    expect(journal).toBe(`${JSON.stringify({ t: 'agent', key, result: 'done-1', pass: 1 })}\n`)
-  })
-
-  it('相同调用第二次命中 journal 缓存，不再 spawn', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, 'cached')
-    const agent = createAgentFn(h.ctx)
-
-    await agent('同一 prompt')
-    // 第二次没有可用响应；若真的 spawn 会拿不到文本而返回 null
-    const second = await agent('同一 prompt')
-    expect(second).toBeNull()
-
-    // occurrence 计数使同一 prompt 的第 1 次结果可被 resume 复用
+    await expect(agent('同一任务', { taskId: 'stable-task' })).resolves.toBe('cached')
     h.ctx.occ.clear()
-    const replay = await agent('同一 prompt')
-    expect(replay).toBe('cached')
+    await expect(agent('同一任务', { taskId: 'stable-task' })).resolves.toBe('cached')
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const events = readFileSync(runJournalPath(root, h.ctx.runId), 'utf-8')
+      .trim().split('\n').map((line) => JSON.parse(line))
+    expect(events).toHaveLength(1)
+    expect(events[0]).toEqual(expect.objectContaining({
+      t: 'agent',
+      result: 'cached',
+      childSessionId: 'child-session-1',
+      childRunId: 'child-run-1'
+    }))
   })
 
-  it('模型无产出返回 null 且不写 journal', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addEmptyResponse(h.client)
+  it('相同内容的不同 occurrence 生成不同 stable child identity', async () => {
+    const spawn = vi.fn(async (_command, _context) => completed('ok', spawn.mock.calls.length))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
     const agent = createAgentFn(h.ctx)
 
-    await expect(agent('空产出')).resolves.toBeNull()
-    expect(existsSync(runJournalPath(tmp, h.ctx.runId))).toBe(false)
-    expect(h.events.some((e) => e.type === 'workflow_agent_failed')).toBe(true)
+    await agent('重复任务', { taskId: 'repeat' })
+    await agent('重复任务', { taskId: 'repeat' })
+
+    const commands = spawn.mock.calls.map(([command]) => command)
+    expect(commands.map((command) => command.invocation)).toEqual([
+      expect.objectContaining({ occurrence: 0 }),
+      expect.objectContaining({ occurrence: 1 })
+    ])
   })
 
-  it('schema 调用拿到非 JSON 文本时先修复重试，仍失败才返回 null，不抛错', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, '这不是 JSON')
-    addTextResponse(h.client, '依然不是 JSON')
+  it('批次 item 以 taskId 隔离 journal，不受相同 prompt 干扰', async () => {
+    const spawn = vi.fn(async (_command, _context) => completed('ok', spawn.mock.calls.length))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
     const agent = createAgentFn(h.ctx)
 
-    await expect(
-      agent('要结构化结果', { schema: { type: 'object' } })
-    ).resolves.toBeNull()
-    // 首次解析失败 + 一次无工具修复重试，共两次模型调用
-    expect(h.client.getCalls()).toHaveLength(2)
+    await agent('相同内容', { taskId: 'item-a', batchId: 'batch-1' })
+    await agent('相同内容', { taskId: 'item-b', batchId: 'batch-1' })
+
+    expect(spawn).toHaveBeenCalledTimes(2)
+    expect(spawn.mock.calls.map(([command]) => command.invocation)).toEqual([
+      expect.objectContaining({ taskId: 'item-a', batchId: 'batch-1', occurrence: 0 }),
+      expect.objectContaining({ taskId: 'item-b', batchId: 'batch-1', occurrence: 0 })
+    ])
   })
 
-  it('schema 调用能解析出对象', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, '```json\n{"ok":true}\n```')
+  it('同一 taskId 的多次不同输入递增 occurrence，避免 stable spawnKey 冲突', async () => {
+    const spawn = vi.fn(async (_command, _context) => completed('ok', spawn.mock.calls.length))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
     const agent = createAgentFn(h.ctx)
 
-    await expect(agent('结构化', { schema: { type: 'object' } })).resolves.toEqual({ ok: true })
+    await agent('第一次输入', { taskId: 'same-item' })
+    await agent('第二次输入', { taskId: 'same-item' })
+
+    expect(spawn.mock.calls.map(([command]) => command.invocation)).toEqual([
+      expect.objectContaining({ taskId: 'same-item', occurrence: 0 }),
+      expect.objectContaining({ taskId: 'same-item', occurrence: 1 })
+    ])
   })
 
-  it('scope 关闭后返回 null，不抛错', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, 'never-used')
-    const agent = createAgentFn(h.ctx)
+  it('schema 只解释统一 child 结果，不再创建第二次 repair spawn', async () => {
+    const spawn = vi.fn(async () => completed('分析后得到 ```json\n{"ok":true}\n```'))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
+
+    await expect(createAgentFn(h.ctx)('结构化', {
+      schema: { type: 'object', required: ['ok'] }
+    })).resolves.toEqual({ ok: true })
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0]![0].resultSchema).toEqual({
+      type: 'object',
+      required: ['ok']
+    })
+  })
+
+  it('schema 解析失败返回 null、只记非 Agent 诊断且不写成功 journal', async () => {
+    const spawn = vi.fn(async () => completed('not-json'))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
+
+    await expect(createAgentFn(h.ctx)('结构化', {
+      label: 'plan',
+      schema: { type: 'object', required: ['ok'] }
+    })).resolves.toBeNull()
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(h.events).toContainEqual(expect.objectContaining({
+      type: 'workflow_agent_failed',
+      reason: 'schema-parse-failed'
+    }))
+    expect(readFileSync(runLogPath(root, h.ctx.runId), 'utf-8'))
+      .toContain('schema-parse-failed')
+    expect(existsSync(runJournalPath(root, h.ctx.runId))).toBe(false)
+  })
+
+  it('scope 关闭后不调用端口且按取消返回 null', async () => {
+    const spawn = vi.fn(async () => completed('should-not-run'))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
     await h.scope.close('cancelled')
 
-    await expect(agent('取消后调用')).resolves.toBeNull()
+    await expect(createAgentFn(h.ctx)('取消后')).resolves.toBeNull()
+    expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('交互式调用时模型确实看到 askQuestion，Auto 开时看不到', async () => {
-    const interactive = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(interactive.client, 'ok')
-    await createAgentFn(interactive.ctx)('问问用户', { interactive: true })
-    const interactiveTools = interactive.client.getCalls()[0]?.tools?.map((t) => t.name) ?? []
-    expect(interactiveTools).toContain('askQuestion')
+  it('child 失败保持 never-throw，且不把工具活动伪装为 workflow_log', async () => {
+    const spawn = vi.fn(async () => ({
+      ...completed(''),
+      status: 'failed' as const,
+      failure: { code: 'model' as const, message: 'provider failed' }
+    }))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
 
-    const auto = makeHostHarness(tmp, { autoMode: true, tools: ALL_TOOLS })
-    addTextResponse(auto.client, 'ok')
-    await createAgentFn(auto.ctx)('问问用户', { interactive: true })
-    const autoTools = auto.client.getCalls()[0]?.tools?.map((t) => t.name) ?? []
-    expect(autoTools).not.toContain('askQuestion')
-  })
-})
-
-describe('host agentFn 结构化输出鲁棒性', () => {
-  let tmp: string
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'nova-host-agent-schema-'))
-  })
-
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true })
-  })
-
-  it('解析失败时自动做一次无工具修复重试，重试成功即返回对象', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, '这不是 JSON，但包含分析结论')
-    addTextResponse(h.client, '```json\n{"ok":true}\n```')
-    const agent = createAgentFn(h.ctx)
-
-    await expect(
-      agent('要结构化结果', { schema: { type: 'object', required: ['ok'] } })
-    ).resolves.toEqual({ ok: true })
-
-    const calls = h.client.getCalls()
-    expect(calls).toHaveLength(2)
-    // 修复重试不携带任何工具：纯文本整理，避免再次跑题
-    expect(calls[1]?.tools ?? []).toHaveLength(0)
-    // 修复重试的 prompt 带上了首轮原文
-    const repairUser = calls[1]?.messages.find((m) => m.role === 'user')
-    expect(typeof repairUser?.content === 'string' ? repairUser.content : '').toContain(
-      '这不是 JSON，但包含分析结论'
-    )
-  })
-
-  it('schema 候选必须覆盖 required 字段：散文里的示例对象不被误选', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(
-      h.client,
-      '举个例子 ```json\n{"example":1}\n```，真正的结论是 ```json\n{"ok":"right"}\n```'
-    )
-    const agent = createAgentFn(h.ctx)
-
-    await expect(
-      agent('结构化', { schema: { type: 'object', required: ['ok'] } })
-    ).resolves.toEqual({ ok: 'right' })
-  })
-
-  it('最后一条 assistant 消息优先：中间轮次的同名字段噪声不污染结果', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    // 第一轮：思考散文里带一个同名 required 字段的噪声 JSON，然后调用工具
-    addToolCallResponse(h.client, '```json\n{"ok":"wrong"}\n```', 'read', { path: 'a.ts' })
-    // 第二轮（最终消息）：裸文本给出真正的 JSON
-    addTextResponse(h.client, '{"ok":"right"}')
-    const agent = createAgentFn(h.ctx)
-
-    await expect(
-      agent('结构化', { schema: { type: 'object', required: ['ok'] } })
-    ).resolves.toEqual({ ok: 'right' })
-  })
-
-  it('修复重试也失败时：workflow_agent_failed 带具体原因，且落 run 日志', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addTextResponse(h.client, '这不是 JSON')
-    addTextResponse(h.client, '依然无法解析')
-    const agent = createAgentFn(h.ctx)
-
-    await expect(
-      agent('结构化', { schema: { type: 'object', required: ['ok'] } })
-    ).resolves.toBeNull()
-
-    const failed = h.events.filter((e) => e.type === 'workflow_agent_failed')
-    expect(failed.length).toBeGreaterThan(0)
-    expect(failed[failed.length - 1]).toMatchObject({ reason: 'schema-parse-failed' })
-
-    const logFile = runLogPath(tmp, h.ctx.runId)
-    expect(existsSync(logFile)).toBe(true)
-    const content = readFileSync(logFile, 'utf-8')
-    expect(content).toContain('schema-parse-failed')
-    expect(content).toContain('修复重试')
-  })
-
-  it('空产出不上报修复重试，直接以 empty-output 诊断落盘', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addEmptyResponse(h.client)
-    const agent = createAgentFn(h.ctx)
-
-    await expect(agent('空产出')).resolves.toBeNull()
-    const failed = h.events.filter((e) => e.type === 'workflow_agent_failed')
-    expect(failed[failed.length - 1]).toMatchObject({ reason: 'empty-output' })
-    expect(h.client.getCalls()).toHaveLength(1)
-    expect(readFileSync(runLogPath(tmp, h.ctx.runId), 'utf-8')).toContain('empty-output')
-  })
-})
-
-describe('host agentFn 活动可观测性', () => {
-  let tmp: string
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'nova-host-agent-activity-'))
-  })
-
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true })
-  })
-
-  it('子代理工具调用以 workflow_log 活动行上行，并落 run 日志', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addToolCallResponse(h.client, '', 'read', { path: 'src/shared/ipc/types.ts' })
-    addTextResponse(h.client, 'done')
-    const agent = createAgentFn(h.ctx)
-
-    await expect(agent('干活', { label: 'compose-brainstorm' })).resolves.toBe('done')
-
-    const logs = h.events.filter((e) => e.type === 'workflow_log')
-    expect(
-      logs.some(
-        (e) =>
-          e.type === 'workflow_log' &&
-          e.message.includes('[compose-brainstorm]') &&
-          e.message.includes('read') &&
-          e.message.includes('src/shared/ipc/types.ts')
-      )
-    ).toBe(true)
-
-    const content = readFileSync(runLogPath(tmp, h.ctx.runId), 'utf-8')
-    expect(content).toContain('[compose-brainstorm] 调用工具 read：src/shared/ipc/types.ts')
-  })
-
-  it('相邻重复活动行不刷屏', async () => {
-    const h = makeHostHarness(tmp, { tools: ALL_TOOLS })
-    addToolCallResponse(h.client, '', 'read', { path: 'a.ts' })
-    addToolCallResponse(h.client, '', 'read', { path: 'a.ts' })
-    addTextResponse(h.client, 'done')
-    const agent = createAgentFn(h.ctx)
-
-    await agent('干活', { label: 'l' })
-    const lines = h.events.filter(
-      (e) => e.type === 'workflow_log' && e.message.includes('a.ts')
-    )
-    expect(lines).toHaveLength(1)
+    await expect(createAgentFn(h.ctx)('失败任务')).resolves.toBeNull()
+    expect(h.events.filter((event) => event.type === 'workflow_log')).toHaveLength(1)
+    expect(h.events.find((event) => event.type === 'workflow_log'))
+      .toEqual(expect.objectContaining({ message: expect.stringContaining('model') }))
   })
 })

@@ -137,6 +137,7 @@ export async function runCodeReview(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(request, scope), {
+      taskId: 'code-review',
       phase: 'review',
       isolation: 'readonly',
       interactive: false,

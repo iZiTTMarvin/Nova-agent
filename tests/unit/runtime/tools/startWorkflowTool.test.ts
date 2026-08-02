@@ -16,6 +16,12 @@ function context(overrides: Partial<ToolContext> = {}): ToolContext {
     modelClient: {} as ToolContext['modelClient'],
     resolveTool: vi.fn(),
     sessionId: 'session-1',
+    invocationRef: {
+      sessionId: 'session-1',
+      runId: 'parent-run',
+      messageId: 'parent-message',
+      toolCallId: 'parent-tool'
+    },
     autoMode: true,
     mode: 'compose',
     abortSignal: new AbortController().signal,
@@ -33,7 +39,7 @@ describe('start_workflow tool', () => {
     }))
     const tool = createStartWorkflowTool({
       getOrchestrator: () => ({ start } as never),
-      getPermissionBridge: () => ({ } as never)
+      getSpawnSubagentPort: () => ({ spawn: vi.fn() })
     })
     const ctx = context()
 
@@ -53,9 +59,10 @@ describe('start_workflow tool', () => {
       host: expect.objectContaining({
         workspaceRoot: 'D:/workspace',
         sessionId: 'session-1',
+        parentRunId: 'parent-run',
+        parentMessageId: 'parent-message',
+        parentToolCallId: 'parent-tool',
         eventBus: ctx.eventBus,
-        modelClient: ctx.modelClient,
-        resolveTool: ctx.resolveTool,
         assertExecutionCurrent: ctx.assertExecutionCurrent
       })
     }))
@@ -63,7 +70,10 @@ describe('start_workflow tool', () => {
 
   it('缺少 workflow、startStage 或 reason 时拒绝，不启动 orchestrator', async () => {
     const start = vi.fn()
-    const tool = createStartWorkflowTool({ getOrchestrator: () => ({ start } as never) })
+    const tool = createStartWorkflowTool({
+      getOrchestrator: () => ({ start } as never),
+      getSpawnSubagentPort: () => ({ spawn: vi.fn() })
+    })
 
     for (const args of [
       { startStage: 'plan', reason: 'x' },
@@ -87,7 +97,10 @@ describe('start_workflow tool', () => {
         runId: 'wf-plan',
         summary: '完成'
       }))
-      const tool = createStartWorkflowTool({ getOrchestrator: () => ({ start } as never) })
+      const tool = createStartWorkflowTool({
+        getOrchestrator: () => ({ start } as never),
+        getSpawnSubagentPort: () => ({ spawn: vi.fn() })
+      })
       const ctx = context({
         workingDir: root,
         workspaceRoot: root,
@@ -121,7 +134,10 @@ describe('start_workflow tool', () => {
       runId: 'wf-resume',
       summary: '恢复完成'
     }))
-    const tool = createStartWorkflowTool({ getOrchestrator: () => ({ start } as never) })
+    const tool = createStartWorkflowTool({
+      getOrchestrator: () => ({ start } as never),
+      getSpawnSubagentPort: () => ({ spawn: vi.fn() })
+    })
 
     await tool.execute(
       {
@@ -138,6 +154,7 @@ describe('start_workflow tool', () => {
 
   it('orchestrator 失败或取消时返回失败结果', async () => {
     const failedTool = createStartWorkflowTool({
+      getSpawnSubagentPort: () => ({ spawn: vi.fn() }),
       getOrchestrator: () => ({
         start: vi.fn(async () => ({ status: 'failed' as const, runId: 'wf-1', error: '失败原因' }))
       } as never)
@@ -147,6 +164,7 @@ describe('start_workflow tool', () => {
     ).resolves.toEqual({ success: false, output: '', error: '失败原因（runId=wf-1）' })
 
     const cancelledTool = createStartWorkflowTool({
+      getSpawnSubagentPort: () => ({ spawn: vi.fn() }),
       getOrchestrator: () => ({
         start: vi.fn(async () => ({ status: 'cancelled' as const, runId: 'wf-1' }))
       } as never)

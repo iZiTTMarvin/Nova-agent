@@ -76,6 +76,7 @@ export async function runReport(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(input), {
+      taskId: 'report',
       phase: 'report',
       isolation: 'readonly',
       interactive: false,

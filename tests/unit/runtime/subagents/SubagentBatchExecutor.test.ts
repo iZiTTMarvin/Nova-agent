@@ -14,6 +14,9 @@ function command(task: string): SpawnSubagentCommand {
       kind: 'workflow',
       workflowRunId: 'workflow-run',
       phase: 'implement',
+      parentMessageId: 'message-parent',
+      parentToolCallId: 'tool-parent',
+      occurrence: 0,
       batchId: 'batch-1'
     },
     profileId: 'code',

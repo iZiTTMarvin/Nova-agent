@@ -5,14 +5,11 @@
  * 读取或请求变更，不得自己维护一份并行的 run 状态。
  */
 import type { EventBus } from '../../agent/EventBus'
-import type { ModelClient } from '../../model/ModelClient'
 import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import type { Mode } from '../../../shared/session/types'
-import type { ToolExecutor } from '../../tools/types'
-import type { SubAgentPermissionBridge } from '../../tools/subAgentBridge'
-import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import type { WorkflowRunStatus } from '../../../shared/workflow/types'
 import type { WorkflowDefinition } from '../definitions/types'
+import type { SpawnSubagentPort } from '../../subagents'
 
 export type { WorkflowRunStatus }
 
@@ -43,24 +40,16 @@ export type WorkflowRunOutcome =
  */
 export interface WorkflowHostDeps {
   workspaceRoot: string
-  sessionId?: string
+  sessionId: string
+  parentRunId: string
+  parentMessageId: string
+  parentToolCallId: string
+  spawnSubagentPort: SpawnSubagentPort
   eventBus: EventBus
-  modelClient: ModelClient
-  resolveTool: (name: string) => ToolExecutor | undefined
   checkpointManager?: CheckpointManager
-  contextWindow?: number
   supportsVision?: boolean
   /** 子 agent 行为模式，编排内默认 compose */
   mode?: Mode
-  permissionBridge?: SubAgentPermissionBridge
-  /**
-   * 提问通道。host 层不提供 askUser，决策交互只能由阶段 agent 的 askQuestion 工具发起；
-   * 缺省时该工具降级为 no-op。
-   */
-  askQuestion?: (
-    requestId: string,
-    questions: AskQuestionItem[]
-  ) => Promise<AskQuestionAnswer[]>
   /** 父 Agent run 的 execution generation fencing，与 TaskScope 叠加 */
   assertExecutionCurrent?: () => boolean
 }
@@ -78,8 +67,6 @@ export interface StartWorkflowOptions {
   runId?: string
   /** 墙钟预算，到期真正 abort scope */
   deadlineMs?: number
-  /** per-run 子 agent 并发上限 */
-  maxConcurrentAgents?: number
   /**
    * 外部取消信号（停止按钮 / AgentLoop abort）。
    * 触发后等价于 cancel(runId)，让取消能穿透到 TaskScope.close。

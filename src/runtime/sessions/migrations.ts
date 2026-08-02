@@ -259,6 +259,10 @@ function isSubagentOrigin(value: unknown): value is SubagentOrigin {
     return (
       isNonEmptyString(value.workflowRunId) &&
       isNonEmptyString(value.phase) &&
+      isNonEmptyString(value.parentMessageId) &&
+      isNonEmptyString(value.parentToolCallId) &&
+      (value.occurrence === undefined ||
+        (Number.isInteger(value.occurrence) && (value.occurrence as number) >= 0)) &&
       isOptionalNonEmptyString(value.taskId) &&
       isOptionalNonEmptyString(value.batchId)
     )

@@ -84,6 +84,7 @@ export async function runSynthesize(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(brief, findings), {
+      taskId: 'synthesize',
       phase: 'synthesize',
       isolation: 'readonly',
       interactive: false,

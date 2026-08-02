@@ -140,6 +140,7 @@ export async function runResearchReview(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(brief, findings, synthesis), {
+      taskId: 'review',
       phase: 'review',
       isolation: 'readonly',
       interactive: false,

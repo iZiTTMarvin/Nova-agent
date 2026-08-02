@@ -42,6 +42,13 @@ export interface SubagentActivityProjection {
   readonly childRunId: string
   readonly parentSessionId: string
   readonly parentToolCallId?: string
+  readonly workflow?: {
+    readonly workflowRunId: string
+    readonly phase: string
+    readonly taskId?: string
+    readonly batchId?: string
+    readonly occurrence: number
+  }
   readonly profile: SubagentProfileProjection
   readonly taskLabel: string
   readonly status: SubagentActivityStatus

@@ -100,6 +100,9 @@ export type SubagentOrigin =
       readonly kind: 'workflow'
       readonly workflowRunId: string
       readonly phase: string
+      readonly parentMessageId: string
+      readonly parentToolCallId: string
+      readonly occurrence?: number
       readonly taskId?: string
       readonly batchId?: string
     }

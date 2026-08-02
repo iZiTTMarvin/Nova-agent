@@ -12,16 +12,25 @@ import { ensureRunDir, runMetadataPath } from './paths'
 const SAFE_RUN_ID = /^[0-9A-Za-z._-]+$/
 
 export interface WorkflowRunMetadata {
-  version: 1
+  version: 2
   runId: string
   workflow: string
-  sessionId?: string
+  sessionId: string
+  parentRunId: string
+  parentMessageId: string
+  parentToolCallId: string
   status: WorkflowRunStatus
   phase: string
   startedAt: string
   updatedAt: string
   error?: string
 }
+
+export type WorkflowRunMetadataRead =
+  | { kind: 'current'; metadata: WorkflowRunMetadata }
+  | { kind: 'legacy' }
+  | { kind: 'missing' }
+  | { kind: 'invalid' }
 
 export function isSafeWorkflowRunId(runId: string): boolean {
   return SAFE_RUN_ID.test(runId)
@@ -33,43 +42,75 @@ function assertSafeWorkflowRunId(runId: string): void {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isWorkflowRunStatus(value: unknown): value is WorkflowRunStatus {
+  return typeof value === 'string' &&
+    ['running', 'completed', 'failed', 'cancelled'].includes(value)
+}
+
 export function readWorkflowRunMetadata(
   workspaceRoot: string,
   runId: string
 ): WorkflowRunMetadata | null {
-  if (!isSafeWorkflowRunId(runId)) return null
+  const result = inspectWorkflowRunMetadata(workspaceRoot, runId)
+  return result.kind === 'current' ? result.metadata : null
+}
+
+/** 区分旧版与损坏/缺失元数据，让 resume 能给出真实且 fail-closed 的错误。 */
+export function inspectWorkflowRunMetadata(
+  workspaceRoot: string,
+  runId: string
+): WorkflowRunMetadataRead {
+  if (!isSafeWorkflowRunId(runId)) return { kind: 'invalid' }
   const path = runMetadataPath(workspaceRoot, runId)
-  if (!existsSync(path)) return null
+  if (!existsSync(path)) return { kind: 'missing' }
   try {
     const value: unknown = JSON.parse(readFileSync(path, 'utf-8'))
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-    const metadata = value as Partial<WorkflowRunMetadata>
+    if (!isRecord(value)) return { kind: 'invalid' }
+    const metadata = value
+    if (metadata.version === 1 && metadata.runId === runId) {
+      return { kind: 'legacy' }
+    }
     if (
-      metadata.version !== 1 ||
+      metadata.version !== 2 ||
       metadata.runId !== runId ||
       typeof metadata.workflow !== 'string' ||
-      typeof metadata.status !== 'string' ||
+      typeof metadata.sessionId !== 'string' ||
+      typeof metadata.parentRunId !== 'string' ||
+      typeof metadata.parentMessageId !== 'string' ||
+      typeof metadata.parentToolCallId !== 'string' ||
+      !isWorkflowRunStatus(metadata.status) ||
       typeof metadata.phase !== 'string' ||
       typeof metadata.startedAt !== 'string' ||
       typeof metadata.updatedAt !== 'string'
     ) {
-      return null
-    }
-    if (!['running', 'completed', 'failed', 'cancelled'].includes(metadata.status)) {
-      return null
-    }
-    if (
-      metadata.sessionId !== undefined &&
-      typeof metadata.sessionId !== 'string'
-    ) {
-      return null
+      return { kind: 'invalid' }
     }
     if (metadata.error !== undefined && typeof metadata.error !== 'string') {
-      return null
+      return { kind: 'invalid' }
     }
-    return metadata as WorkflowRunMetadata
+    return {
+      kind: 'current',
+      metadata: {
+        version: 2,
+        runId,
+        workflow: metadata.workflow,
+        sessionId: metadata.sessionId,
+        parentRunId: metadata.parentRunId,
+        parentMessageId: metadata.parentMessageId,
+        parentToolCallId: metadata.parentToolCallId,
+        status: metadata.status,
+        phase: metadata.phase,
+        startedAt: metadata.startedAt,
+        updatedAt: metadata.updatedAt,
+        ...(metadata.error !== undefined ? { error: metadata.error } : {})
+      }
+    }
   } catch {
-    return null
+    return { kind: 'invalid' }
   }
 }
 

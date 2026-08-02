@@ -24,7 +24,6 @@ import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
 import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
-import { defaultSubAgentPermissionBridge, subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
@@ -244,12 +243,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryService,
     loadSettings: loadNovaSettings,
     getWorkflowOrchestrator,
-    getSpawnSubagentPort,
-    // 按 run 隔离的子代理权限桥接：装配时 runId 可能尚未分配，延迟到执行期按 runRefs.runId 解析
-    getPermissionBridge: () =>
-      runRefs.runId
-        ? subAgentBridgeRegistry.getOrCreate(runRefs.runId)
-        : defaultSubAgentPermissionBridge
+    getSpawnSubagentPort
   })
 
   const modelPool = buildModelPoolWithFallbacks(modelClient)

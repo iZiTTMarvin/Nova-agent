@@ -3,13 +3,13 @@
  * 工具只负责校验调用参数并把当前 turn 的宿主能力交给 orchestrator。
  */
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
-import type { SubAgentPermissionBridge } from '../subAgentBridge'
 import type { WorkflowOrchestrator } from '../../workflow'
+import type { SpawnSubagentPort } from '../../subagents'
 import { isReadablePlanInWorkspace, readPlanDocumentInWorkspace } from '../../plans'
 
 export interface StartWorkflowToolDeps {
   getOrchestrator: () => WorkflowOrchestrator | undefined
-  getPermissionBridge?: () => SubAgentPermissionBridge
+  getSpawnSubagentPort: () => SpawnSubagentPort | undefined
 }
 
 function readRequiredString(
@@ -90,8 +90,15 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
 
       const orchestrator = deps.getOrchestrator()
       if (!orchestrator) return failed('start_workflow 当前不可用：编排器未装配')
-      if (!context.modelClient || !context.resolveTool || !context.eventBus) {
+      if (!context.eventBus) {
         return failed('start_workflow 当前不可用：AgentLoop 未提供完整工作流宿主能力')
+      }
+      if (!context.sessionId || !context.invocationRef) {
+        return failed('start_workflow 当前不可用：缺少 durable tool invocation identity')
+      }
+      const spawnSubagentPort = deps.getSpawnSubagentPort()
+      if (!spawnSubagentPort) {
+        return failed('start_workflow 当前不可用：统一子代理执行端口未装配')
       }
 
       const injectedContext = readActivePlanContext(context)
@@ -106,18 +113,15 @@ export function createStartWorkflowTool(deps: StartWorkflowToolDeps): ToolExecut
         ...(injectedContext ? { injectedContext } : {}),
         host: {
           workspaceRoot: context.workspaceRoot ?? context.workingDir,
-          ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+          sessionId: context.sessionId,
+          parentRunId: context.invocationRef.runId,
+          parentMessageId: context.invocationRef.messageId,
+          parentToolCallId: context.invocationRef.toolCallId,
+          spawnSubagentPort,
           eventBus: context.eventBus,
-          modelClient: context.modelClient,
-          resolveTool: context.resolveTool,
           ...(context.checkpointManager ? { checkpointManager: context.checkpointManager } : {}),
-          ...(context.contextWindow !== undefined ? { contextWindow: context.contextWindow } : {}),
           ...(context.supportsVision !== undefined ? { supportsVision: context.supportsVision } : {}),
           mode: context.mode ?? 'compose',
-          ...(deps.getPermissionBridge
-            ? { permissionBridge: deps.getPermissionBridge() }
-            : {}),
-          ...(context.askQuestion ? { askQuestion: context.askQuestion } : {}),
           ...(context.assertExecutionCurrent
             ? { assertExecutionCurrent: context.assertExecutionCurrent }
             : {})

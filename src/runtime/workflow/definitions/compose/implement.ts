@@ -71,14 +71,17 @@ async function runSharedTask(
   host: HostFns,
   task: PlanTask,
   plan: WorkflowPlan,
-  brainstorm: BrainstormResult | null
+  brainstorm: BrainstormResult | null,
+  batchId: string
 ): Promise<TaskExecution> {
   try {
     const output = await host.agent(taskPrompt(task, plan, brainstorm), {
       phase: 'implement',
       isolation: 'shared',
       interactive: false,
-      label: `compose-implement-${task.id}`
+      label: `compose-implement-${task.id}`,
+      taskId: task.id,
+      batchId
     })
     return output === null
       ? failureResult(task, '实现 agent 未产出结果')
@@ -92,7 +95,8 @@ async function prepareWorktreeTask(
   host: HostFns,
   task: PlanTask,
   plan: WorkflowPlan,
-  brainstorm: BrainstormResult | null
+  brainstorm: BrainstormResult | null,
+  batchId: string
 ): Promise<TaskExecution> {
   let worktree: WorktreeHandle
   try {
@@ -110,7 +114,9 @@ async function prepareWorktreeTask(
       directory: worktree.directory,
       worktreeKey: worktree.key,
       interactive: false,
-      label: `compose-implement-${task.id}`
+      label: `compose-implement-${task.id}`,
+      taskId: task.id,
+      batchId
     })
     if (output === null) {
       await host.cleanupWorktree(worktree.directory).catch(() => false)
@@ -220,17 +226,18 @@ export async function runImplement(
     }
 
     const useWorktree = host.supportsWorktree() && eligible.length > 1
+    const batchId = `implement-${batchIndex}`
 
     let executions: TaskExecution[]
     if (useWorktree) {
       executions = await Promise.all(
-        eligible.map((task) => prepareWorktreeTask(host, task, plan, brainstorm))
+        eligible.map((task) => prepareWorktreeTask(host, task, plan, brainstorm, batchId))
       )
     } else {
       // 非 git 项目或单任务：在主工作区顺序执行，避免多任务并行冲突
       executions = []
       for (const task of eligible) {
-        executions.push(await runSharedTask(host, task, plan, brainstorm))
+        executions.push(await runSharedTask(host, task, plan, brainstorm, batchId))
       }
     }
 

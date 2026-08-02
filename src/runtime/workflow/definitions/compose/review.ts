@@ -119,6 +119,7 @@ export async function runReview(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(plan, implement, verify), {
+      taskId: 'review',
       phase: 'review',
       isolation: 'readonly',
       interactive: false,

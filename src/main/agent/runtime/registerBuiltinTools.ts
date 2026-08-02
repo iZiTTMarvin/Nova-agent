@@ -24,7 +24,6 @@ import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { MemoryService } from '../../../runtime/memory/MemoryService'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
-import type { SubAgentPermissionBridge } from '../../../runtime/tools/subAgentBridge'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
 export interface BuiltinToolRegistrationDeps {
@@ -38,11 +37,6 @@ export interface BuiltinToolRegistrationDeps {
   getAgentLoop: () => AgentLoop | null
   getMemoryService: () => MemoryService | null
   loadSettings: () => NovaSettings
-  /**
-   * 惰性获取本 run 的子代理权限桥接（按当前 runId 解析）。
-   * 装配时 runId 可能尚未分配，故延迟到执行期读取。
-   */
-  getPermissionBridge?: () => SubAgentPermissionBridge
   /** 惰性获取主进程唯一编排器，工具执行时才读取。 */
   getWorkflowOrchestrator?: () => WorkflowOrchestrator | undefined
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
@@ -80,7 +74,7 @@ export function registerBuiltinTools(
   toolRegistry.register(
     createStartWorkflowTool({
       getOrchestrator: deps.getWorkflowOrchestrator ?? (() => undefined),
-      ...(deps.getPermissionBridge ? { getPermissionBridge: deps.getPermissionBridge } : {})
+      getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
     })
   )
   toolRegistry.register(

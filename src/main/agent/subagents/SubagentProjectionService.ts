@@ -81,7 +81,16 @@ export class SubagentProjectionService {
       parentSessionId: lineage.parentSessionId,
       ...(lineage.origin.kind === 'task_tool'
         ? { parentToolCallId: lineage.origin.parentToolCallId }
-        : {}),
+        : {
+            parentToolCallId: lineage.origin.parentToolCallId,
+            workflow: {
+              workflowRunId: lineage.origin.workflowRunId,
+              phase: lineage.origin.phase,
+              ...(lineage.origin.taskId ? { taskId: lineage.origin.taskId } : {}),
+              ...(lineage.origin.batchId ? { batchId: lineage.origin.batchId } : {}),
+              occurrence: lineage.origin.occurrence ?? 0
+            }
+          }),
       profile,
       taskLabel: session.title?.trim() || '未命名子任务',
       artifactCount: 0

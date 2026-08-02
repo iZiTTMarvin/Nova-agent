@@ -112,6 +112,7 @@ export async function runBrief(
   let output: AgentResult = null
   try {
     output = await host.agent(buildPrompt(request), {
+      taskId: 'brief',
       phase: 'brief',
       isolation: 'shared',
       tools: [...READONLY_TOOLS],
