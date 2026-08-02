@@ -19,8 +19,10 @@ import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
+import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
-import { initRunCoordinatorHost } from '../services/RunCoordinatorHost'
+import { getRunCoordinator, initRunCoordinatorHost } from '../services/RunCoordinatorHost'
+import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
 import {
   drainAndSchedulePersist,
@@ -81,6 +83,7 @@ export function registerIpcHandlers(): ImageStore {
   const workspaceService = initWorkspaceService({
     getSessionStore,
     getMainWindow,
+    getRunCoordinator,
     onWorkspaceRootChanged: (workspaceRoot) => {
       scheduleMemoryReconcileForWorkspace(workspaceRoot)
     },
@@ -107,6 +110,8 @@ export function registerIpcHandlers(): ImageStore {
   // RunCoordinator：权威运行快照 / Interaction Inbox / 启动对账
   initRunCoordinatorHost(getMainWindow)
   registerRunHandler()
+  initSubagentProjectionServiceHost()
+  registerSubagentProjectionHandler()
 
   // 跨会话记忆浏览/编辑 IPC（P2-1）
   registerMemoryHandler()

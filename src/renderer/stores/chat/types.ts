@@ -156,6 +156,8 @@ export interface TurnLifecycleSliceState {
 export interface SessionSliceState {
   sessions: Session[]
   currentSessionId: string | null
+  /** 当前选中子会话的持久化原始任务；普通会话或尚未水合时为 null。 */
+  currentSubagentTask: string | null
 
   /** 加载会话列表 */
   loadSessions: () => Promise<void>

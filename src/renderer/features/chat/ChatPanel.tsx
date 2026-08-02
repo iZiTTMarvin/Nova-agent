@@ -50,6 +50,7 @@ import {
 import { SkillAC, type SkillACHandle } from '../skills/SkillAC'
 import { useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
+import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
 import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
@@ -93,6 +94,10 @@ export const ChatPanel: React.FC = () => {
   const isGenerating = useChatStore(state => state.isGenerating)
   const sendInFlight = useChatStore(state => state.sendInFlight)
   const currentSessionId = useChatStore(state => state.currentSessionId)
+  const currentSubagentTask = useChatStore(state => state.currentSubagentTask)
+  const currentSession = useChatStore(state =>
+    state.sessions.find((session) => session.id === state.currentSessionId)
+  )
   const currentGeneratingMessageId = useChatStore(state => state.currentGeneratingMessageId)
   const sendMessage = useChatStore(state => state.sendMessage)
   const regenerateAssistant = useChatStore(state => state.regenerateAssistant)
@@ -650,6 +655,9 @@ export const ChatPanel: React.FC = () => {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {currentSession?.kind === 'subagent' ? (
+        <SubagentSessionHeader originalTask={currentSubagentTask} />
+      ) : null}
       {/* 拖拽高亮遮罩 */}
       {isDragOver && (
         <div className="chat-panel__drag-overlay">

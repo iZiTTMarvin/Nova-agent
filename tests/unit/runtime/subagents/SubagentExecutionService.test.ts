@@ -13,7 +13,8 @@ import { SessionStore } from '../../../../src/runtime/sessions'
 import {
   SubagentExecutionService,
   createSpawnIdentity,
-  resolveSubagentProfileSnapshot
+  resolveSubagentProfileSnapshot,
+  type SubagentExecutionServiceDeps
 } from '../../../../src/runtime/subagents'
 import type { SpawnSubagentCommand } from '../../../../src/shared/subagents'
 
@@ -81,6 +82,7 @@ describe('SubagentExecutionService', () => {
   function createService(options: {
     wait?: Promise<void>
     loadProfile?: (profileId: string) => unknown
+    onLinked?: SubagentExecutionServiceDeps['onLinked']
   } = {}) {
     const prepareTurn = vi.fn((input: any) => {
       const eventBus = new EventBus()
@@ -137,7 +139,8 @@ describe('SubagentExecutionService', () => {
         }
         return undefined
       }),
-      prepareTurn
+      prepareTurn,
+      ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
     return { service, prepareTurn }
   }
@@ -180,6 +183,17 @@ describe('SubagentExecutionService', () => {
     expect(child.subagent.profile.systemPrompt).toBe('inspect and summarize')
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('relation 首次持久化后通知 host，幂等重放不伪造新 relation', async () => {
+    const onLinked = vi.fn()
+    const { service } = createService({ onLinked })
+
+    await service.spawn(command(), { invocationRef: invocationRef() })
+    await service.spawn(command(), { invocationRef: invocationRef() })
+
+    expect(onLinked).toHaveBeenNthCalledWith(1, expect.objectContaining({ created: true }))
+    expect(onLinked).toHaveBeenNthCalledWith(2, expect.objectContaining({ created: false }))
   })
 
   it('同一 spawnKey 的并发调用连接同一 promise，终态重放不重复模型执行', async () => {

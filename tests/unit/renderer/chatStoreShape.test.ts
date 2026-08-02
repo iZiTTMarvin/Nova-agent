@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 
 const CHAT_STATE_KEYS = [
-  'sessions', 'currentSessionId', 'messages', 'messageIndexById', 'lastMessagesRevision',
+  'sessions', 'currentSessionId', 'currentSubagentTask', 'messages', 'messageIndexById', 'lastMessagesRevision',
   'pendingBranchMetaReload', 'branchForkInProgress', 'tier1BranchContext', 'isGenerating',
   'currentGeneratingMessageId', 'activeAgentSessionId', 'sendInFlight', 'streamingToolArgs',
   'messageDiffs', 'loadingDiffs', 'loadingDiffPlaceholders', 'pendingUserMessages',
@@ -29,13 +29,14 @@ describe('chat store shape baseline', () => {
     const actual = Object.keys(useChatStore.getState()).sort()
     const expected = [...CHAT_STATE_KEYS].sort()
     expect(actual).toEqual(expected)
-    expect(actual).toHaveLength(65)
+    expect(actual).toHaveLength(66)
   })
 
   it('resetChatStoreForTests 恢复全部状态字段默认值', () => {
     useChatStore.setState({
       sessions: [{ id: 's1', workspaceRoot: 'w', mode: 'default', createdAt: 1, updatedAt: 1, messageCount: 1 }],
       currentSessionId: 's1',
+      currentSubagentTask: 'delegated work',
       messages: [{ id: 'm1', sessionId: 's1', role: 'assistant', content: 'x', timestamp: 1, _revision: 0 }],
       messageIndexById: { m1: 0 },
       lastMessagesRevision: 99,
@@ -67,6 +68,7 @@ describe('chat store shape baseline', () => {
 
     expect(state.sessions).toEqual([])
     expect(state.currentSessionId).toBeNull()
+    expect(state.currentSubagentTask).toBeNull()
     expect(state.messages).toEqual([])
     expect(state.messageIndexById).toEqual({})
     expect(state.lastMessagesRevision).toBe(0)

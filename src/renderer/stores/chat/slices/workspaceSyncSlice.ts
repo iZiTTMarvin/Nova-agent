@@ -17,6 +17,7 @@ import type { ChatSliceCreator, ChatState, WorkspaceSyncSliceState } from '../ty
 interface WorkspaceSyncDependencies {
   buildSessionChangePatch: () => Partial<ChatState>
   buildMessageSequenceResetPatch: () => Partial<ChatState>
+  onSessionDetailHydrated: (detail: SessionDetail) => void
 }
 
 export function initialWorkspaceSyncState(): Pick<WorkspaceSyncSliceState, 'lastMessagesRevision'> {
@@ -47,6 +48,7 @@ export function createWorkspaceSyncSlice(
       const patch: Partial<ChatState> = {
         sessions: next.availableSessions,
         currentSessionId: next.currentSessionId,
+        currentSubagentTask: sessionChanged ? null : prev.currentSubagentTask,
         lastMessagesRevision: next.messagesRevision,
         tier1BranchContext: sessionChanged ? null : next.tier1BranchContext
       }
@@ -128,6 +130,7 @@ export function createWorkspaceSyncSlice(
             return
           }
           const restored = restoreSessionMessages(detail.messages)
+          dependencies.onSessionDetailHydrated(detail)
           set(state => {
             if (
               !isHydrationEpochCurrent(hydrationEpoch) ||
@@ -145,6 +148,7 @@ export function createWorkspaceSyncSlice(
             )
             return {
               ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
+              currentSubagentTask: detail.kind === 'subagent' ? detail.subagentTask ?? null : null,
               hasMoreMessagesAbove: detail.hasMoreMessagesAbove ?? false,
               oldestLoadedMessageId: messages[0]?.id ?? null,
               isLoadingOlderMessages: false,

@@ -11,6 +11,12 @@ import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon, E
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
+import { useSubagentProjectionStore } from '../features/subagents/projection'
+import {
+  buildSessionForest,
+  flattenSessionForest,
+  sessionTreeContains
+} from '../features/subagents/sessionTree'
 
 /** 每个项目下默认展示的最新会话数（对齐 Cursor「显示更多」） */
 const SIDEBAR_SESSION_PREVIEW_COUNT = 5
@@ -28,6 +34,7 @@ export const Sidebar: React.FC = () => {
   const waitingSessions = useRunStore(state => state.waitingSessions)
   const snapshotsByRunId = useRunStore(state => state.snapshotsByRunId)
   const cancelExecution = useAgentStore(state => state.cancelExecution)
+  const subagentProjections = useSubagentProjectionStore(state => state.byChildSessionId)
 
   /**
    * 后台运行中会话徽标：从 snapshotsByRunId 派生，取所有非终态活跃 run，
@@ -58,13 +65,13 @@ export const Sidebar: React.FC = () => {
     }
   }, [editingId])
 
-  // 按项目对会话进行分组
-  const projectGroups = sessions.reduce((acc, session) => {
-    const p = session.workspaceRoot
+  // 先按 durable lineage 建树，再按根会话工作区分组；worktree child 仍归父会话。
+  const projectGroups = buildSessionForest(sessions).reduce((acc, node) => {
+    const p = node.session.workspaceRoot
     if (!acc[p]) acc[p] = []
-    acc[p].push(session)
+    acc[p].push(node)
     return acc
-  }, {} as Record<string, typeof sessions>)
+  }, {} as Record<string, ReturnType<typeof buildSessionForest>>)
 
   // 控制每个项目的展开/收起状态 (默认都展开)
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>(
@@ -177,18 +184,19 @@ export const Sidebar: React.FC = () => {
         </div>
 
         <div className="mt-1 space-y-1">
-          {Object.entries(projectGroups).map(([projectPath, projectSessions]) => {
+          {Object.entries(projectGroups).map(([projectPath, sessionForest]) => {
             const isExpanded = expandedProjects[projectPath] !== false
             // 选中会话在预览区之外时强制展开，避免选中项被藏住
-            const selectedIndex = projectSessions.findIndex(s => s.id === currentSessionId)
+            const selectedIndex = sessionForest.findIndex(node => sessionTreeContains(node, currentSessionId))
             const selectedBeyondPreview = selectedIndex >= SIDEBAR_SESSION_PREVIEW_COUNT
             const userExpandedSessions = expandedSessionLists[projectPath] === true
             const isSessionListExpanded = userExpandedSessions || selectedBeyondPreview
-            const visibleSessions =
-              isSessionListExpanded || projectSessions.length <= SIDEBAR_SESSION_PREVIEW_COUNT
-                ? projectSessions
-                : projectSessions.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
-            const showMoreToggle = projectSessions.length > SIDEBAR_SESSION_PREVIEW_COUNT
+            const visibleRoots =
+              isSessionListExpanded || sessionForest.length <= SIDEBAR_SESSION_PREVIEW_COUNT
+                ? sessionForest
+                : sessionForest.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
+            const visibleSessions = flattenSessionForest(visibleRoots)
+            const showMoreToggle = sessionForest.length > SIDEBAR_SESSION_PREVIEW_COUNT
 
             return (
               <div key={projectPath} className="flex flex-col">
@@ -230,7 +238,7 @@ export const Sidebar: React.FC = () => {
                       className="overflow-hidden"
                     >
                       <div className="pl-6 pr-1 py-1 space-y-1 border-l border-border-cream ml-[11px]">
-                        {visibleSessions.map(session => {
+                        {visibleSessions.map(({ session, depth }) => {
                           const isActive = session.id === currentSessionId
                           const isEditing = editingId === session.id
                           const displayTitle = getDisplayTitle(session)
@@ -238,6 +246,24 @@ export const Sidebar: React.FC = () => {
                           const showWaiting = !!waitingBadge && !isActive
                           const runningBadge = runningSessions.find(r => r.sessionId === session.id)
                           const showRunning = !!runningBadge && !isActive
+                          const childProjection = session.kind === 'subagent'
+                            ? subagentProjections[session.id]
+                            : undefined
+                          const childStatus = childProjection
+                            ? ({
+                                queued: ['○', '等待开始'],
+                                running: ['●', '运行中'],
+                                waiting_user: ['!', '等待授权'],
+                                retrying: ['●', '重试中'],
+                                resuming: ['●', '恢复中'],
+                                cancelling: ['◌', '停止中'],
+                                completed: ['✓', '已完成'],
+                                failed: ['×', '失败'],
+                                cancelled: ['■', '已取消'],
+                                interrupted: ['◇', '已中断'],
+                                record_missing: ['?', '记录不可用']
+                              } as const)[childProjection.status]
+                            : undefined
 
                           return (
                             <div 
@@ -246,6 +272,7 @@ export const Sidebar: React.FC = () => {
                               className={`group relative flex flex-col px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
                                 isActive ? 'bg-white shadow-sm border border-border-warm' : 'hover:bg-gray-200/50'
                               }`}
+                              style={{ marginLeft: `${depth * 14}px` }}
                               title={showWaiting ? '等待你处理' : undefined}
                             >
                               <div className="flex items-center justify-between gap-1 min-w-0">
@@ -261,12 +288,32 @@ export const Sidebar: React.FC = () => {
                                     onClick={(e) => e.stopPropagation()}
                                   />
                                 ) : (
-                                  <span
-                                    className={`text-sm truncate flex-1 min-w-0 ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}
-                                    title={displayTitle}
+                                  <button
+                                    type="button"
+                                    className="flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      void selectSession(session.id)
+                                    }}
+                                    aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
+                                    aria-current={isActive ? 'page' : undefined}
                                   >
-                                    {displayTitle}
-                                  </span>
+                                    {childStatus ? (
+                                      <span
+                                        className="text-[11px] text-text-muted shrink-0 flex items-center gap-1"
+                                        title={childStatus[1]}
+                                      >
+                                        <span aria-hidden="true">{childStatus[0]}</span>
+                                        <span>{childStatus[1]}</span>
+                                      </span>
+                                    ) : null}
+                                    <span
+                                      className={`text-sm truncate flex-1 min-w-0 ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}
+                                      title={displayTitle}
+                                    >
+                                      {displayTitle}
+                                    </span>
+                                  </button>
                                 )}
                                 {showWaiting && (
                                   <div className="flex items-center gap-1 shrink-0">
@@ -311,7 +358,7 @@ export const Sidebar: React.FC = () => {
                                     </button>
                                   </div>
                                 )}
-                                <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                                   <button
                                     className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-text-primary transition-all"
                                     title="重命名会话"
@@ -319,13 +366,15 @@ export const Sidebar: React.FC = () => {
                                   >
                                     <EditIcon size={12} />
                                   </button>
-                                  <button
-                                    className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
-                                    title="删除会话"
-                                    onClick={(e) => handleDelete(e, session.id)}
-                                  >
-                                    <TrashIcon size={12} />
-                                  </button>
+                                  {session.kind === 'primary' ? (
+                                    <button
+                                      className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
+                                      title="删除会话"
+                                      onClick={(e) => handleDelete(e, session.id)}
+                                    >
+                                      <TrashIcon size={12} />
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
                               <span className="text-[10px] text-text-muted mt-0.5">

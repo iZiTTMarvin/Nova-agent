@@ -6,7 +6,6 @@
 import type { RunStatus } from '../run/types'
 import type {
   SubagentExecutionFailure,
-  SubagentLineage,
   SubagentProfileSnapshot
 } from './types'
 
@@ -27,7 +26,10 @@ export interface SubagentProfileProjection {
 
 /** Child-session metadata safe for session lists and renderer navigation. */
 export interface SubagentSessionListMetadata {
-  readonly lineage: SubagentLineage
+  readonly lineage: {
+    readonly parentSessionId: string
+    readonly depth: number
+  }
   readonly profile: SubagentProfileProjection
 }
 
@@ -41,7 +43,10 @@ export interface SubagentActivityProjection {
   readonly parentSessionId: string
   readonly parentToolCallId?: string
   readonly profile: SubagentProfileProjection
+  readonly taskLabel: string
   readonly status: SubagentActivityStatus
+  /** 对应 RunSnapshot 的单调序号；record_missing 时省略。 */
+  readonly sequence?: number
   readonly startedAt?: number
   readonly completedAt?: number
   readonly latestActivity?: string

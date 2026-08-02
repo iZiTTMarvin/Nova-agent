@@ -60,6 +60,9 @@ export const LOAD_SESSION = 'load-session' as const
 export const LOAD_SESSION_MESSAGES = 'load-session-messages' as const
 export const CREATE_SESSION = 'create-session' as const
 export const DELETE_SESSION = 'delete-session' as const
+export const SUBAGENT_LIST_PROJECTIONS = 'subagent:list-projections' as const
+export const SUBAGENT_LIST_PROJECTION_SUMMARIES = 'subagent:list-projection-summaries' as const
+export const SUBAGENT_GET_PROJECTION = 'subagent:get-projection' as const
 export const GET_MESSAGE_DIFFS = 'get-message-diffs' as const
 export const WINDOW_MINIMIZE = 'window-minimize' as const
 export const WINDOW_MAXIMIZE = 'window-maximize' as const
@@ -143,6 +146,8 @@ export const AGENT_MODEL_SWITCHED = 'agent:model-switched' as const
 export const AGENT_ATTEMPT_FAILED = 'agent:attempt-failed' as const
 /** RunCoordinator 权威快照推送（带 sequence） */
 export const RUN_SNAPSHOT = 'run:snapshot' as const
+/** Child relation 已持久化；renderer 收到后重拉权威投影。 */
+export const SUBAGENT_LINKED = 'subagent:linked' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */

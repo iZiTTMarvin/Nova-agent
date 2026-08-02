@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'crypto'
 import { isDeepStrictEqual } from 'util'
 import type {
   SessionSummary,
+  InternalSessionSummary,
   SessionData,
   SessionMetadata,
   SessionMessage,
@@ -388,11 +389,28 @@ export class SessionStore {
     }
   }
 
-  /** 加载所有会话的摘要列表（不含消息体，按 updatedAt 降序） */
+  /** 加载跨进程安全的窄会话摘要。 */
   list(): SessionSummary[] {
+    return this.listInternal().map((summary) => {
+      if (summary.kind === 'primary') return summary
+      return {
+        ...summary,
+        subagent: {
+          lineage: {
+            parentSessionId: summary.subagent.lineage.parentSessionId,
+            depth: summary.subagent.lineage.depth
+          },
+          profile: summary.subagent.profile
+        }
+      }
+    })
+  }
+
+  /** Runtime/main 内部 join 使用；完整 run/spawn 身份不能直接发往 renderer。 */
+  listInternal(): InternalSessionSummary[] {
     if (!fs.existsSync(this.sessionsDir)) return []
 
-    const summaries: SessionSummary[] = []
+    const summaries: InternalSessionSummary[] = []
     const entries = fs.readdirSync(this.sessionsDir, { withFileTypes: true })
 
     for (const entry of entries) {

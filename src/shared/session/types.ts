@@ -1,3 +1,8 @@
+import type {
+  SubagentActivityProjection,
+  SubagentSessionListMetadata
+} from '../subagents'
+
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
 /**
  * 行为模式（ModeSwitch）：
@@ -108,8 +113,7 @@ export interface Message {
   timestamp: number
 }
 
-/** 会话摘要（用于列表展示，不含消息体） */
-export interface Session {
+interface SessionBase {
   id: string
   workspaceRoot: string
   mode: Mode
@@ -120,9 +124,28 @@ export interface Session {
   title?: string
 }
 
+/** 普通会话摘要不携带 child lineage。 */
+export interface PrimarySession extends SessionBase {
+  kind: 'primary'
+  subagent?: never
+}
+
+/** Child Session 摘要只暴露导航所需的窄 lineage/profile。 */
+export interface SubagentSession extends SessionBase {
+  kind: 'subagent'
+  subagent: SubagentSessionListMetadata
+}
+
+/** 会话摘要（用于列表展示，不含消息体）。 */
+export type Session = PrimarySession | SubagentSession
+
 /** 会话详情（含完整消息列表，用于加载历史对话） */
-export interface SessionDetail extends Session {
+export type SessionDetail = Session & {
   messages: Message[]
+  /** 当前会话直接拥有的 Child Session 投影，可由 durable owners 重新构建。 */
+  subagentProjections: SubagentActivityProjection[]
+  /** Child Session 原始任务从首条 user message 派生，不复制进 metadata。 */
+  subagentTask?: string
   /**
    * 首屏是否只返回了尾部子集；为 true 时表示 messages 之前还有更早历史，
    * 可通过 load-session-messages 按游标补载。

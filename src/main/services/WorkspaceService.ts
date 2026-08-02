@@ -15,7 +15,7 @@ import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionData } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
-import type { Mode, Session, SessionDetail } from '../../shared/session'
+import type { Mode, SessionDetail } from '../../shared/session'
 import type {
   ActivePlanDocument,
   ReadActivePlanParams,
@@ -38,19 +38,7 @@ import { calculateContextBreakdown } from '../../runtime/agent'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
 import { readPlanDocumentInWorkspace } from '../../runtime/plans'
-/** SessionDetail 转换（与 sessionHandler 同构，独立实现避免双向依赖） */
-function toSession(data: SessionData): Session {
-  const activeMessages = getSessionActiveMessages(data)
-  return {
-    id: data.id,
-    workspaceRoot: data.workspaceRoot,
-    mode: data.mode,
-    createdAt: data.createdAt,
-    updatedAt: data.updatedAt,
-    messageCount: activeMessages.length,
-    title: data.title
-  }
-}
+import type { RunCoordinator } from '../../runtime/run'
 /** 计算并直接推送某会话的上下文容量拆分给 renderer */
 function pushContextBreakdownForSession(session: SessionData, getMainWindow: () => BrowserWindow | null): void {
   const skillService = getSkillService()
@@ -83,6 +71,11 @@ export interface WorkspaceServiceDeps {
   getSessionStore: () => SessionStore
   /** 获取主窗口（用于文件夹选择对话框） */
   getMainWindow: () => BrowserWindow | null
+  /** Run 删除由 RunCoordinator 完成；延迟获取避免启动装配顺序耦合。 */
+  getRunCoordinator: () => Pick<
+    RunCoordinator,
+    'assertNoNonTerminalRunsForSessions' | 'deleteRunsForSessions'
+  >
   /** 工作区根路径变更时回调（如触发记忆索引 reconcile，勿阻塞） */
   onWorkspaceRootChanged?: (workspaceRoot: string | null) => void
   /**
@@ -274,29 +267,51 @@ export class WorkspaceService {
    * 删除的是当前会话时，自动切到剩余列表的第一条；没有剩余会话则清空工作区。
    */
   deleteSession(sessionId: string): WorkspaceState {
-    // 该会话有进行中的 Agent 轮次（含编排 run）时禁止删除：
-    // 否则 run 变成无主孤儿，持续占用 RunCoordinator 非终态并向已删除会话写数据。
-    // 并发模型下必须按会话精确判断：全局 getActiveTurnSessionId 只返回单个会话，
-    // 无法拦截「另一个会话在跑」时删除非当前会话的情况。
-    if (isSessionTurnInProgress(sessionId)) {
-      throw new Error('该会话的 Agent 正在运行，请先停止再删除')
-    }
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
-
-    const deletingDetail = store.load(sessionId)
-    if (deletingDetail) {
-      this.leaveSession(sessionId, deletingDetail.workspaceRoot)
+    const summaries = store.listInternal()
+    const requested = summaries.find((summary) => summary.id === sessionId)
+    if (requested?.kind === 'subagent') {
+      throw new Error('Child Session 不允许单独删除，请删除父会话')
     }
 
-    store.delete(sessionId)
-    // 彻底回收被删会话的运行期资源：readState、idle 压缩 loop、排队消息
-    deleteReadStateForSession(sessionId)
-    disposeIdleLoopForSession(sessionId)
-    clearSteeringQueue(sessionId)
+    const childrenByParent = new Map<string, string[]>()
+    for (const summary of summaries) {
+      if (summary.kind !== 'subagent') continue
+      const parentId = summary.subagent.lineage.parentSessionId
+      const children = childrenByParent.get(parentId) ?? []
+      children.push(summary.id)
+      childrenByParent.set(parentId, children)
+    }
+    const deletingIds: string[] = []
+    const visited = new Set<string>()
+    const collectPostOrder = (id: string): void => {
+      if (visited.has(id)) return
+      visited.add(id)
+      for (const childId of childrenByParent.get(id) ?? []) collectPostOrder(childId)
+      deletingIds.push(id)
+    }
+    collectPostOrder(sessionId)
+    if (deletingIds.some((id) => isSessionTurnInProgress(id))) {
+      throw new Error('该会话或其子任务的 Agent 正在运行，请先停止再删除')
+    }
+    const deletingIdSet = new Set(deletingIds)
+    const runCoordinator = this.deps.getRunCoordinator()
+    runCoordinator.assertNoNonTerminalRunsForSessions(deletingIdSet)
+
+    for (const id of deletingIds) {
+      const detail = store.load(id)
+      if (detail) this.leaveSession(id, detail.workspaceRoot)
+      store.delete(id)
+      deleteReadStateForSession(id)
+      disposeIdleLoopForSession(id)
+      clearSteeringQueue(id)
+    }
+    runCoordinator.deleteRunsForSessions(deletingIdSet)
 
     const remaining = store.list()
-    const deletingCurrent = this.state.currentSessionId === sessionId
+    const deletingCurrent =
+      this.state.currentSessionId !== null && deletingIdSet.has(this.state.currentSessionId)
 
     if (deletingCurrent) {
       if (remaining.length > 0) {

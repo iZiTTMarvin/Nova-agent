@@ -15,7 +15,6 @@ import {
   resolveAgentTurnRoute
 } from '../../../runtime/agent/turn'
 import {
-  SubagentExecutionService,
   type SpawnSubagentPort,
   type SubagentEventContext
 } from '../../../runtime/subagents'
@@ -68,6 +67,7 @@ import {
   type SteeringMessage
 } from './SteeringQueue'
 import { resolveEntryLockAction } from './entryLock'
+import { SubagentExecutionHost } from '../subagents'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
@@ -250,7 +250,7 @@ export async function sendAgentMessage(
   const loopForRun = prepared.agentLoop
   const { eventBus, modelPool, runRefs, frozenPrompt } = prepared
   const turnExecutor = new AgentTurnExecutor(runCoordinator, executionRegistry)
-  spawnSubagentPort = new SubagentExecutionService({
+  spawnSubagentPort = new SubagentExecutionHost({
     sessionStore,
     runCoordinator,
     turnExecutor,
@@ -297,6 +297,10 @@ export async function sendAgentMessage(
       const bridge = subAgentBridgeRegistry.get(context.parentRunId)
       bridge?.unregister(context.agentLoop)
       bridge?.clearForLoop(context.agentLoop)
+    },
+    getMainWindow,
+    refreshAvailableSessions: () => {
+      getWorkspaceService().refreshAvailableSessions()
     }
   })
   if (session.frozenSystemPrompt !== frozenPrompt) {

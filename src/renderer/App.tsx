@@ -11,6 +11,7 @@ import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useWorkflowStore } from './features/workflow/useWorkflowStore'
 import { useRunStore } from './stores/useRunStore'
+import { useSubagentProjectionStore } from './features/subagents/projection'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
@@ -173,6 +174,11 @@ function App(): JSX.Element {
     // RunCoordinator 权威快照（带 sequence）；缺口时 store 内重拉
     const unsubRunSnapshot = window.api.on('run:snapshot', (data) => {
       useRunStore.getState().handleSnapshotEvent(data.snapshot, data.event)
+      useSubagentProjectionStore.getState().applyRunSnapshot(data.snapshot)
+    })
+
+    const unsubSubagentLinked = window.api.on('subagent:linked', (data) => {
+      void useSubagentProjectionStore.getState().refreshParent(data.parentSessionId)
     })
 
     // 监听：todo 列表更新（task 5 IPC 链路终点）
@@ -305,6 +311,7 @@ function App(): JSX.Element {
       unsubAskQuestionRequest()
       unsubAskQuestionResolved()
       unsubRunSnapshot()
+      unsubSubagentLinked()
       unsubTodosUpdated()
       unsubMessageEnd()
       unsubUsage()

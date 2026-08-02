@@ -16,6 +16,7 @@ import { useWorkspaceStore } from './useWorkspaceStore'
 import { useChatStore } from './useChatStore'
 import { useSettingsStore } from './useSettingsStore'
 import { useAgentStore } from './useAgentStore'
+import { useSubagentProjectionStore } from '../features/subagents/projection'
 
 /** 上一次处理的 currentSessionId，用于判断是否需要 resetAgentRuntime */
 let lastDispatchedSessionId: string | null | undefined = undefined
@@ -32,6 +33,7 @@ let unsubscribe: (() => void) | null = null
 export function dispatchWorkspaceChange(state: WorkspaceState): void {
   // 0. workspace store：更新事实源（幂等）
   useWorkspaceStore.setState({ ...state, initialized: true })
+  useSubagentProjectionStore.getState().syncSessionList(state.availableSessions)
 
   // 1. chat store：同步 sessions + currentSessionId（内部按需重载消息）
   useChatStore.getState().syncFromWorkspace({

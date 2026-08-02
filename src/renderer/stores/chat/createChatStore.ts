@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ChatState } from './types'
+import type { SessionDetail } from '../../../shared/session/types'
 import {
   createBranchSlice,
   createDiffSlice,
@@ -21,9 +22,14 @@ import {
   resetTurnLifecycleOnSessionSwitch
 } from './slices'
 
+export interface ChatStoreCompositionDeps {
+  onSessionDetailHydrated: (detail: SessionDetail) => void
+}
+
 /** 唯一的 create<ChatState> 调用点，负责装配 slice 与跨 owner reset 端口。 */
-export function createChatStore() {
+export function createChatStore(deps: ChatStoreCompositionDeps) {
   const createWorkspaceSync = createWorkspaceSyncSlice({
+    onSessionDetailHydrated: deps.onSessionDetailHydrated,
     buildSessionChangePatch: () => ({
       ...resetMessageOnSessionSwitch(),
       ...resetTurnLifecycleOnSessionSwitch(),

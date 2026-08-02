@@ -24,9 +24,13 @@ import { rejectFile } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
 import { setCurrentMode, setCurrentProjectPath, getMainWindow } from '../index'
-import type { Session, SessionDetail, Message, BranchMeta } from '../../shared/session'
+import type { SessionDetail, Message, BranchMeta } from '../../shared/session'
 import type { Mode } from '../../shared/session'
-import type { SessionData, SessionMessage } from '../../runtime/sessions/types'
+import {
+  extractTextFromSerializableContent,
+  type SessionData,
+  type SessionMessage
+} from '../../runtime/sessions/types'
 import { getSessionActiveMessages, attachBranchMeta, ensureMessageParentChain, resolveCurrentLeafId } from '../../runtime/sessions/tree'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
@@ -37,25 +41,12 @@ import { getSkillService } from '../services/SkillServiceHost'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
+import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
 
 /** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果与分支元信息 */
 function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
   const shared = toSharedMessage(msg)
   return msg.branch ? { ...shared, branch: msg.branch } : shared
-}
-
-/** 将持久化 SessionData 转换为共享 Session 摘要格式 */
-function toSessionSummary(data: SessionData): Session {
-  const activeMessages = getSessionActiveMessages(data)
-  return {
-    id: data.id,
-    workspaceRoot: data.workspaceRoot,
-    mode: data.mode,
-    createdAt: data.createdAt,
-    updatedAt: data.updatedAt,
-    messageCount: activeMessages.length,
-    title: data.title
-  }
 }
 
 /** 加载/切换会话时立即计算并推送上下文容量拆分 */
@@ -97,7 +88,7 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
   const withBranch = attachBranchMeta(sourceMessages, allMessages)
   const currentLeafId = resolveCurrentLeafId(allMessages, data.currentLeafId)
 
-  return {
+  const base = {
     id: data.id,
     workspaceRoot: data.workspaceRoot,
     mode: data.mode,
@@ -109,8 +100,31 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     messages: withBranch.map(msg => ({
       ...toMessage(msg),
       sessionId: data.id
-    }))
+    })),
+    subagentProjections: getSubagentProjectionService().listByParentSessionId(data.id)
   }
+  if (data.kind === 'subagent') {
+    const taskMessage = data.messages.find((message) => message.role === 'user')
+    return {
+      ...base,
+      kind: 'subagent',
+      subagent: {
+        lineage: {
+          parentSessionId: data.subagent.lineage.parentSessionId,
+          depth: data.subagent.lineage.depth
+        },
+        profile: {
+          profileId: data.subagent.profile.profileId,
+          name: data.subagent.profile.name,
+          permissionCeiling: data.subagent.profile.permissionCeiling
+        }
+      },
+      subagentTask: taskMessage
+        ? extractTextFromSerializableContent(taskMessage.content)
+        : ''
+    }
+  }
+  return { ...base, kind: 'primary' }
 }
 
 

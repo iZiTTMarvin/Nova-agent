@@ -112,7 +112,10 @@ describe('SessionStore', () => {
       expect(childSummary).toEqual(expect.objectContaining({
         kind: 'subagent',
         subagent: {
-          lineage: child.subagent.lineage,
+          lineage: {
+            parentSessionId: child.subagent.lineage.parentSessionId,
+            depth: child.subagent.lineage.depth
+          },
           profile: {
             profileId: 'explore',
             name: 'explore',
@@ -122,6 +125,8 @@ describe('SessionStore', () => {
       }))
       expect(JSON.stringify(childSummary)).not.toContain('private prompt')
       expect(JSON.stringify(childSummary)).not.toContain('toolNames')
+      expect(JSON.stringify(childSummary)).not.toContain('spawnRunId')
+      expect(JSON.stringify(childSummary)).not.toContain('parentMessageId')
     })
   })
 

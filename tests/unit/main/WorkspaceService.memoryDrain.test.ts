@@ -62,6 +62,10 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     const service = new WorkspaceService({
       getSessionStore: () => store,
       getMainWindow: () => null,
+      getRunCoordinator: () => ({
+        assertNoNonTerminalRunsForSessions: vi.fn(),
+        deleteRunsForSessions: vi.fn(() => 0)
+      }),
       onSessionLeaving: (sessionId, workspaceRoot) => {
         events.push('leaving')
         expect(sessionId).toBe(session.id)
@@ -90,6 +94,10 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     const service = new WorkspaceService({
       getSessionStore: () => store,
       getMainWindow: () => null,
+      getRunCoordinator: () => ({
+        assertNoNonTerminalRunsForSessions: vi.fn(),
+        deleteRunsForSessions: vi.fn(() => 0)
+      }),
       onSessionLeaving: (sessionId) => {
         leftSessions.push(sessionId)
       },

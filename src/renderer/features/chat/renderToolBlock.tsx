@@ -9,6 +9,7 @@ import React from 'react'
 import { AskQuestionToolCard } from './AskQuestionToolCard'
 import { ToolTraceRow } from './ToolTraceRow'
 import type { RendererToolBlock } from '../../stores/types'
+import { SubagentToolRow } from '../subagents/SubagentActivityRow'
 
 export function renderToolBlock(
   block: RendererToolBlock,
@@ -32,6 +33,20 @@ export function renderToolBlock(
       <AskQuestionToolCard
         key={block.toolCallId}
         toolCallId={block.toolCallId}
+        args={block.arguments}
+        status={block.status}
+        result={block.result}
+        isLiveStreaming={isLive}
+      />
+    )
+  }
+
+  if (block.toolName === 'task') {
+    return (
+      <SubagentToolRow
+        key={block.toolCallId}
+        toolCallId={block.toolCallId}
+        name={block.toolName}
         args={block.arguments}
         status={block.status}
         result={block.result}

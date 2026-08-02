@@ -190,6 +190,41 @@ export class RunCoordinator {
 
   // ── 状态转换 ─────────────────────────────────────────────
 
+  /** 会话删除前的 durable run 门禁：任何非终态都必须 fail closed。 */
+  assertNoNonTerminalRunsForSessions(sessionIds: ReadonlySet<string>): void {
+    for (const runId of this.store.listRunIds()) {
+      const snapshot = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      if (
+        snapshot &&
+        sessionIds.has(snapshot.sessionId) &&
+        !isTerminalRunStatus(snapshot.status)
+      ) {
+        throw new Error(`会话 ${snapshot.sessionId} 的 run ${runId} 尚未终态`)
+      }
+    }
+  }
+
+  /** 删除会话子树后，由 Run Owner 回收对应终态快照与内存索引。 */
+  deleteRunsForSessions(sessionIds: ReadonlySet<string>): number {
+    this.assertNoNonTerminalRunsForSessions(sessionIds)
+    let deleted = 0
+    for (const runId of this.store.listRunIds()) {
+      const snapshot = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      if (!snapshot || !sessionIds.has(snapshot.sessionId)) continue
+      this.store.deleteRun(runId)
+      this.runs.delete(runId)
+      this.sessionIndex.get(snapshot.sessionId)?.delete(runId)
+      for (const key of [...this.firedTerminalHooks]) {
+        if (key.startsWith(`${runId}|`)) this.firedTerminalHooks.delete(key)
+      }
+      deleted++
+    }
+    for (const sessionId of sessionIds) {
+      if (this.sessionIndex.get(sessionId)?.size === 0) this.sessionIndex.delete(sessionId)
+    }
+    return deleted
+  }
+
   transition(
     runId: string,
     to: RunStatus,

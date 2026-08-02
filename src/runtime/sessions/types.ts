@@ -7,6 +7,8 @@
 import type { Mode, MessageBlock } from '../../shared/session'
 import type {
   SessionKind,
+  SubagentLineage,
+  SubagentProfileProjection,
   SubagentSessionListMetadata,
   SubagentSessionMetadata
 } from '../../shared/subagents'
@@ -50,6 +52,16 @@ export interface SubagentSessionSummary extends SessionSummaryBase {
 
 /** 会话摘要（用于列表展示，不含完整消息） */
 export type SessionSummary = PrimarySessionSummary | SubagentSessionSummary
+
+/** Main/runtime 内部查询所需的完整持久化身份；不得直接跨 IPC。 */
+export type InternalSessionSummary =
+  | PrimarySessionSummary
+  | (Omit<SubagentSessionSummary, 'subagent'> & {
+      subagent: {
+        lineage: SubagentLineage
+        profile: SubagentProfileProjection
+      }
+    })
 
 /** 所有 Session kind 共有的持久化字段。 */
 interface SessionDataBase {

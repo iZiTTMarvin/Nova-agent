@@ -63,6 +63,22 @@ describe('RunCoordinator', () => {
     expect(t2?.sequence).toBe(seq)
   })
 
+  it('会话删除只回收终态 run，非终态 fail closed', () => {
+    const terminal = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-terminal' })
+    coord.markRunning(terminal.runId)
+    coord.commitTerminal({ runId: terminal.runId, status: 'completed' })
+
+    const active = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-active' })
+    coord.markRunning(active.runId)
+
+    expect(() => coord.deleteRunsForSessions(new Set(['s-active']))).toThrow(/尚未终态/)
+    expect(store.loadSnapshot(active.runId)).not.toBeNull()
+
+    expect(coord.deleteRunsForSessions(new Set(['s-terminal']))).toBe(1)
+    expect(store.loadSnapshot(terminal.runId)).toBeNull()
+    expect(coord.getSnapshotForSession('s-terminal')).toBeNull()
+  })
+
   it('InteractionInbox 持久化并支持幂等回答', () => {
     const snap = coord.startRun({
       kind: 'agent',

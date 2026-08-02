@@ -65,6 +65,11 @@ export interface SubagentExecutionServiceDeps {
   readonly onEvent?: (event: AgentEvent, context: SubagentEventContext) => void
   readonly onExecutionStarted?: (context: SubagentExecutionLifecycleContext) => void
   readonly onExecutionSettled?: (context: SubagentExecutionLifecycleContext) => void
+  /** Child relation 已持久化后的失效通知；不得成为第二份状态。 */
+  readonly onLinked?: (input: {
+    readonly childSession: SubagentSessionData
+    readonly created: boolean
+  }) => void
   readonly maxDepth?: number
 }
 
@@ -182,6 +187,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       subagent: { lineage, profile }
     })
     const childSession = childResult.session
+    this.deps.onLinked?.({ childSession, created: childResult.created })
 
     const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
     if (existingRun) {

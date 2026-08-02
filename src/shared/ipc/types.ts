@@ -64,6 +64,7 @@ import type {
   ReconcileStats
 } from '../memory/types'
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
+import type { SubagentActivityProjection } from '../subagents'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -250,6 +251,18 @@ export interface IpcCommands {
   'delete-session': {
     params: { sessionId: string }
     result: void
+  }
+  'subagent:list-projections': {
+    params: { parentSessionId: string }
+    result: SubagentActivityProjection[]
+  }
+  'subagent:list-projection-summaries': {
+    params: { parentSessionIds: string[] }
+    result: SubagentActivityProjection[]
+  }
+  'subagent:get-projection': {
+    params: { parentSessionId: string; parentToolCallId: string }
+    result: SubagentActivityProjection | null
   }
   'window-minimize': {
     params: void
@@ -567,6 +580,11 @@ export interface IpcEvents {
       type: string
       at: number
     }
+  }
+  /** 仅表示父子关系已变化；状态仍需从 projection IPC / run snapshot 读取。 */
+  'subagent:linked': {
+    parentSessionId: string
+    childSessionId: string
   }
   'agent:todos-updated': {
     sessionId: string

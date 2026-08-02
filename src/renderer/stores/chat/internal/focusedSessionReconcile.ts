@@ -5,7 +5,7 @@ import { restoreSessionMessages } from './restoreMessages'
 import type { ChatStoreApi } from './storeApi'
 
 function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
-  const nextSummary: Session = {
+  const base = {
     id: detail.id,
     workspaceRoot: detail.workspaceRoot,
     mode: detail.mode,
@@ -13,6 +13,9 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
     updatedAt: detail.updatedAt,
     messageCount: detail.messageCount
   }
+  const nextSummary: Session = detail.kind === 'subagent'
+    ? { ...base, kind: 'subagent', subagent: detail.subagent }
+    : { ...base, kind: 'primary' }
   return [nextSummary, ...sessions.filter(session => session.id !== detail.id)]
 }
 
@@ -35,6 +38,7 @@ export async function reconcileFocusedSession(api: ChatStoreApi, sessionId: stri
     )
     return {
       ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
+      currentSubagentTask: detail.kind === 'subagent' ? detail.subagentTask ?? null : null,
       sessions: upsertSessionSummary(state.sessions, detail)
     }
   })

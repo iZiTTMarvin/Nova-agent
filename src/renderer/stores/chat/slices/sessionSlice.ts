@@ -1,8 +1,11 @@
 import type { Session } from '../../../../shared/session/types'
 import type { ChatSliceCreator, SessionSliceState } from '../types'
 
-export function initialSessionState(): Pick<SessionSliceState, 'sessions' | 'currentSessionId'> {
-  return { sessions: [], currentSessionId: null }
+export function initialSessionState(): Pick<
+  SessionSliceState,
+  'sessions' | 'currentSessionId' | 'currentSubagentTask'
+> {
+  return { sessions: [], currentSessionId: null, currentSubagentTask: null }
 }
 
 /**
