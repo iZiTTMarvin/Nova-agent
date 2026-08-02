@@ -10,7 +10,6 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { TurnDispatcher, type TurnDispatchContext } from '../../../../src/runtime/agent/turn'
-import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { SkillManifest } from '../../../../src/runtime/skills/types'
 import type { ContentBlock } from '../../../../src/runtime/model/types'
 
@@ -20,7 +19,6 @@ function dispatchCtx(overrides: Partial<TurnDispatchContext> = {}): TurnDispatch
     abortSignal: undefined,
     fork: {
       workingDir: '/ws',
-      readState: createReadState(),
       workspacePath: '/ws'
     },
     ...overrides
@@ -47,9 +45,7 @@ describe('TurnDispatcher 产品路径（handled）', () => {
       args: '参数',
       ctx: {
         workingDir: '/ws',
-        readState: ctx.fork.readState,
-        shellPath: undefined,
-        binDirs: undefined
+        messageId: 'msg-1'
       },
       templateContext: { workspacePath: '/ws' }
     })

@@ -246,6 +246,69 @@ describe('migrateSessionData', () => {
     expect(migrateSessionData(input)).toEqual(input)
   })
 
+  it('skill fork 持久化根必须绑定 skill_fork origin 且为绝对路径', () => {
+    const base = {
+      schemaVersion: 10,
+      kind: 'subagent' as const,
+      id: 'sess_skill_child',
+      workspaceRoot: join(tmpdir(), 'workspace'),
+      mode: 'plan' as const,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2,
+      subagent: {
+        lineage: {
+          parentSessionId: 'sess_parent',
+          parentRunId: 'run_parent',
+          rootRunId: 'run_root',
+          depth: 1,
+          spawnKey: 'spawn_skill',
+          spawnRunId: 'run_skill',
+          origin: {
+            kind: 'skill_fork' as const,
+            parentMessageId: 'msg_parent',
+            skillName: 'inspect'
+          }
+        },
+        profile: {
+          profileId: 'inspect',
+          name: 'inspect',
+          description: 'Inspect references',
+          systemPrompt: 'Inspect.',
+          toolNames: ['read'],
+          permissionCeiling: 'read_only' as const,
+          maxToolRounds: 20,
+          skillRoots: [join(tmpdir(), 'skills', 'inspect')],
+          configHash: 'cfg_skill'
+        }
+      }
+    }
+
+    expect(migrateSessionData(base)).toEqual(base)
+    expect(() => migrateSessionData({
+      ...base,
+      subagent: {
+        ...base.subagent,
+        lineage: {
+          ...base.subagent.lineage,
+          origin: {
+            kind: 'task_tool',
+            parentMessageId: 'msg_parent',
+            parentToolCallId: 'tool_parent'
+          }
+        }
+      }
+    })).toThrow('subagent 会话必须携带合法的 subagent metadata')
+    expect(() => migrateSessionData({
+      ...base,
+      subagent: {
+        ...base.subagent,
+        profile: { ...base.subagent.profile, skillRoots: ['relative/path'] }
+      }
+    })).toThrow('subagent 会话必须携带合法的 subagent metadata')
+  })
+
   it('损坏的 v10 discriminant 输入 fail closed，不静默伪造 lineage', () => {
     const base = {
       schemaVersion: 10,

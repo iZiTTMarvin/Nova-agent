@@ -46,7 +46,7 @@ export function getToolCapability(toolName: string): ToolCapability {
     case 'task':
     case 'invoke_skill':
       // 编排类工具：本身没有文件系统/shell 副作用，只负责派遣子代理 / 调用技能。
-      // 真正的副作用由子代理内部的 bash/write 等工具各自走权限检查（见 subAgentBridge），
+      // 真正的副作用由子代理内部的 bash/write 等工具各自走权限检查，
       // 因此派遣动作本身不应再拦截一次（否则双重弹窗，且与主流 agent 行为不一致）。
       // 归为独立 orchestration 分类：default/auto 直接放行，plan 模式仍按非只读处理（deny + 隐藏）。
       return 'orchestration'

@@ -8,19 +8,17 @@
  * 全部由 AgentLoop 根据返回值统一执行。
  */
 import { extractTextFromContent, type ContentBlock } from '../../model/types'
-import type { ReadState } from '../../tools/editTool'
 import type { SkillManifest } from '../../skills/types'
 import type { AgentTurnRoute } from './resolveAgentTurnRoute'
 
-/** skill fork 执行请求：ctx 由 AgentLoop 在分派时按当前状态提供（含隔离用 readState） */
+/** skill fork 执行请求：ctx 由 AgentLoop 在分派时提供 durable message 身份。 */
 export interface SkillForkExecutionRequest {
   skill: SkillManifest
   args: string
   ctx: {
     workingDir: string
-    readState: ReadState
-    shellPath?: string
-    binDirs?: string[]
+    messageId: string
+    abortSignal?: AbortSignal
   }
   templateContext: { workspacePath?: string }
 }
@@ -38,9 +36,6 @@ export interface TurnDispatchContext {
   abortSignal?: AbortSignal
   fork: {
     workingDir: string
-    readState: ReadState
-    shellPath?: string
-    binDirs?: string[]
     workspacePath?: string
   }
 }
@@ -98,9 +93,8 @@ export class TurnDispatcher {
           args: route.args,
           ctx: {
             workingDir: ctx.fork.workingDir,
-            readState: ctx.fork.readState,
-            shellPath: ctx.fork.shellPath,
-            binDirs: ctx.fork.binDirs
+            messageId: ctx.messageId,
+            ...(ctx.abortSignal ? { abortSignal: ctx.abortSignal } : {})
           },
           templateContext: { workspacePath: ctx.fork.workspacePath }
         })

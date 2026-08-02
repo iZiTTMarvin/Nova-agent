@@ -138,7 +138,6 @@ vi.mock('../../../src/main/agent/runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/main/agent/runtime')>()
   return {
     ...actual,
-    USE_UNIFIED_SKILL_DISPATCH: true,
     resolveToDataUrl: vi.fn((_store: any, url: string) => url),
     prepareAgentRuntime: vi.fn(() => ({
       agentLoop: stubAgentLoop,

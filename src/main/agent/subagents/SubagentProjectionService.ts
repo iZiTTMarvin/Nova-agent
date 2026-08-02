@@ -79,9 +79,8 @@ export class SubagentProjectionService {
       childSessionId: session.id,
       childRunId: lineage.spawnRunId,
       parentSessionId: lineage.parentSessionId,
-      ...(lineage.origin.kind === 'task_tool'
-        ? { parentToolCallId: lineage.origin.parentToolCallId }
-        : {
+      ...(lineage.origin.kind === 'workflow'
+        ? {
             parentToolCallId: lineage.origin.parentToolCallId,
             workflow: {
               workflowRunId: lineage.origin.workflowRunId,
@@ -90,7 +89,10 @@ export class SubagentProjectionService {
               ...(lineage.origin.batchId ? { batchId: lineage.origin.batchId } : {}),
               occurrence: lineage.origin.occurrence ?? 0
             }
-          }),
+          }
+        : lineage.origin.parentToolCallId
+          ? { parentToolCallId: lineage.origin.parentToolCallId }
+          : {}),
       profile,
       taskLabel: session.title?.trim() || '未命名子任务',
       artifactCount: 0

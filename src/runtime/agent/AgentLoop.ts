@@ -556,16 +556,6 @@ export class AgentLoop {
     return this.ctx.readState
   }
 
-  /**
-   * 克隆当前 readState 的深拷贝，供 sub agent（task / skill fork）创建独立副本。
-   * 主 agent 与 sub agent 共享 readState 会导致：
-   *   - sub agent 读过的文件污染主 agent 后续 edit 校验；
-   *   - 主 agent 的 readState 被修改后再创建 sub agent 时复用陈旧状态。
-   */
-  cloneReadState(): ReadState {
-    return this.ctx.readState.clone()
-  }
-
   /** 获取当前状态 */
   getState(): AgentState {
     return this.state
@@ -679,9 +669,6 @@ export class AgentLoop {
       abortSignal: this.abortController?.signal,
       fork: {
         workingDir: this.ctx.workingDir ?? process.cwd(),
-        readState: this.ctx.readState,
-        shellPath: this.ctx.shellPath,
-        binDirs: this.ctx.binDirs,
         workspacePath: this.ctx.workingDir ?? undefined
       }
     })

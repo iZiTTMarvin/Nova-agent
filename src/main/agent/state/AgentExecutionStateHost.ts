@@ -21,7 +21,7 @@ import {
  * 享受第一条已读的文件状态（否则 edit 会陷入「File has not been read yet」循环）。
  * 不同会话之间各自独立，避免 A 会话读过的文件污染 B 会话的 edit 校验。
  *
- * Sub agent（task / skill fork）通过 cloneReadState 拿深拷贝，不污染任何会话实例。
+ * Child Session 使用自己的 sessionId 取得独立 readState，不污染父会话实例。
  * 会话切换 / 创建 / 回退 / 删除时由 sessionHandler / WorkspaceService 显式清理对应会话。
  */
 const readStateBySession = new Map<string, ReadState>()

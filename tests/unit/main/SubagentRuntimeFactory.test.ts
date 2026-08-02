@@ -27,6 +27,7 @@ describe('SubagentRuntimeFactory', () => {
     const workspace = resolve(sessionsDir, 'workspace')
     const store = new SessionStore(sessionsDir)
     const parent = store.create(workspace)
+    const skillRoot = resolve(workspace, 'skills', 'inspect')
     const child = store.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
@@ -40,17 +41,18 @@ describe('SubagentRuntimeFactory', () => {
           spawnKey: 'spawn-key',
           spawnRunId: 'run-child',
           origin: {
-            kind: 'task_tool',
+            kind: 'skill_fork',
             parentMessageId: 'message-parent',
-            parentToolCallId: 'tool-parent'
+            skillName: 'inspect'
           }
         },
         profile: resolveSubagentProfileSnapshot({
-          name: 'explore',
+          name: 'skill:inspect',
           description: 'read only',
           prompt: 'inspect',
-          allowedTools: []
-        }, 'explore')
+          allowedTools: [],
+          skillRoots: [skillRoot]
+        }, 'skill:inspect')
       }
     }).session
     store.appendMessage(child.id, {
@@ -91,6 +93,7 @@ describe('SubagentRuntimeFactory', () => {
     )
     expect(history).toContain('此前的问题')
     expect(history).toContain('此前的分析结果')
+    expect(prepared.agentLoop.getSkillRoots()).toEqual([skillRoot])
     prepared.agentLoop.dispose()
   })
 })

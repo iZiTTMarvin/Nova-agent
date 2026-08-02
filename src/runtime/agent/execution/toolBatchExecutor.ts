@@ -104,7 +104,7 @@ export interface ToolBatchExecutionOptions {
   readState: ReadState
   /**
    * askQuestion 阻塞回调（可选）。透传给 ToolContext，供 askQuestion 工具发起提问。
-   * 仅主 AgentLoop 注入；子 agent（task / skill fork）不注入，工具走降级跳过。
+   * 由宿主按 run 身份注入；未装配交互宿主的 AgentLoop 会降级跳过。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
   /** Plan/Default 模式切换宿主回调；权限确认在工具执行前完成。 */

@@ -25,22 +25,6 @@ const loopLookup = vi.hoisted(() => ({
   byRun: vi.fn()
 }))
 
-const subAgentBridge = vi.hoisted(() => ({
-  hasBinding: vi.fn(() => false),
-  resolve: vi.fn(() => false),
-  cancelAll: vi.fn(),
-  clear: vi.fn()
-}))
-
-const subAgentBridgeRegistry = vi.hoisted(() => ({
-  hasBinding: vi.fn(() => false),
-  resolve: vi.fn(() => false),
-  cancelAllForRun: vi.fn(),
-  clearAllForRun: vi.fn(),
-  release: vi.fn(),
-  getOrCreate: vi.fn(() => subAgentBridge)
-}))
-
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
   getRunExecutionRegistry: () => executionRegistry,
@@ -59,11 +43,6 @@ vi.mock('../../../src/main/agent/turn', () => ({
   getAgentLoopForRun: loopLookup.byRun
 }))
 
-vi.mock('../../../src/runtime/tools/subAgentBridge', () => ({
-  defaultSubAgentPermissionBridge: subAgentBridge,
-  subAgentBridgeRegistry
-}))
-
 import {
   respondAskQuestion,
   respondPermission
@@ -79,10 +58,6 @@ describe('AgentInteractionController 契约', () => {
     executionRegistry.isCurrent.mockReturnValue(false)
     loopLookup.current.mockReturnValue(null)
     loopLookup.byRun.mockReturnValue(undefined)
-    subAgentBridge.hasBinding.mockReturnValue(false)
-    subAgentBridge.resolve.mockReturnValue(false)
-    subAgentBridgeRegistry.hasBinding.mockReturnValue(false)
-    subAgentBridgeRegistry.resolve.mockReturnValue(false)
     pendingAskQuestions.clear()
   })
 
@@ -344,45 +319,6 @@ describe('AgentInteractionController 契约', () => {
     expect(runLoop.respondPermission).not.toHaveBeenCalled()
   })
 
-  it('sub-agent permission 由桥接 resolver 精确接管，不唤醒父 loop', async () => {
-    const found = {
-      interactionId: 'sub:raw_1',
-      runId: 'run_1',
-      sessionId: 's1',
-      messageId: 'm1',
-      type: 'permission' as const,
-      status: 'pending' as const,
-      version: 1,
-      createdAt: 1,
-      payload: { requestId: 'sub:raw_1' }
-    }
-    const snapshot = {
-      runId: 'run_1', sessionId: 's1', status: 'running', executionGeneration: 7
-    }
-    const durable = { ok: true, firstApplied: true, interaction: found, snapshot }
-    coordinator.findInteraction.mockReturnValue(found)
-    coordinator.getSnapshot.mockReturnValue(snapshot)
-    coordinator.inbox.answer.mockReturnValue(durable)
-    executionRegistry.get.mockReturnValue({ runId: 'run_1', generation: 7 })
-    executionRegistry.isCurrent.mockReturnValue(true)
-    const parentLoop = { respondPermission: vi.fn(), hasPendingPermission: vi.fn(() => false) }
-    loopLookup.byRun.mockReturnValue(parentLoop)
-    subAgentBridgeRegistry.hasBinding.mockReturnValue(true)
-    subAgentBridgeRegistry.resolve.mockReturnValue(true)
-
-    const result = await respondPermission({
-      requestId: 'sub:raw_1',
-      decision: 'allow',
-      commandId: 'cmd_sub',
-      interactionId: 'sub:raw_1',
-      expectedVersion: 1
-    })
-
-    expect(result).toEqual(durable)
-    expect(subAgentBridgeRegistry.resolve).toHaveBeenCalledWith('sub:raw_1', true)
-    expect(parentLoop.respondPermission).not.toHaveBeenCalled()
-  })
-
   it('Child Session permission 以 child run 原始 requestId 路由到自己的 AgentLoop', async () => {
     const found = {
       interactionId: 'child-permission',
@@ -423,7 +359,6 @@ describe('AgentInteractionController 契约', () => {
 
     expect(result).toEqual(durable)
     expect(childLoop.respondPermission).toHaveBeenCalledWith('child-permission', true)
-    expect(subAgentBridgeRegistry.resolve).not.toHaveBeenCalled()
   })
 
   it('重启后的 interrupted child 可先 durable 回答 pending permission，再等待显式 resume', async () => {

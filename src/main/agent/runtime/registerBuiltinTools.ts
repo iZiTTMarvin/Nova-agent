@@ -19,20 +19,14 @@ import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
 import type { WorkflowOrchestrator } from '../../../runtime/workflow'
-import type { AgentLoop, EventBus } from '../../../runtime/agent'
-import type { ModelClient } from '../../../runtime/model/ModelClient'
+import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { MemoryService } from '../../../runtime/memory/MemoryService'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
 export interface BuiltinToolRegistrationDeps {
-  modelClient: ModelClient
   skillRegistry: SkillRegistry
-  eventBus: EventBus
-  contextWindow: number
-  supportsVision: boolean
-  useUnifiedSkillDispatch: boolean
   /** invoke_skill 执行时惰性读取；工具创建可早于 AgentLoop */
   getAgentLoop: () => AgentLoop | null
   getMemoryService: () => MemoryService | null
@@ -79,13 +73,8 @@ export function registerBuiltinTools(
   )
   toolRegistry.register(
     createInvokeSkillTool({
-      modelClient: deps.modelClient,
       skillRegistry: deps.skillRegistry,
-      useUnifiedSkillDispatch: deps.useUnifiedSkillDispatch,
-      parentEventBus: deps.eventBus,
-      resolveTool: (name) => toolRegistry.getTool(name),
-      contextWindow: deps.contextWindow,
-      supportsVision: deps.supportsVision,
+      getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined),
       onSkillInvoked: (skill) => {
         deps.getAgentLoop()?.addSkillRoot(skill.directory)
       }

@@ -1,81 +1,63 @@
-/**
- * runSkillFork — 验证 fork 子代理能读取本 skill 目录下的 reference
- */
-import { describe, it, expect } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import { describe, expect, it, vi } from 'vitest'
+import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { EventBus } from '../../../../src/runtime/agent/EventBus'
-import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { runSkillFork } from '../../../../src/runtime/skills/runSkillFork'
 import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
-import { readTool } from '../../../../src/runtime/tools/readTool'
-import { createReadState } from '../../../../src/runtime/tools/editTool'
+import type { SpawnSubagentPort } from '../../../../src/runtime/subagents'
 
-describe('runSkillFork skillRoots', () => {
-  it('fork 子代理能用 read 读取本 skill 目录的 reference', async () => {
+describe('runSkillFork durable child consumer', () => {
+  it('slash fork 用父 message 身份建立 Child Session，并持久化 skill 可读根', async () => {
     const skillsDir = join(tmpdir(), `fork-skill-${Date.now()}`)
-    const skillName = 'fork-ref'
-    const skillDir = join(skillsDir, skillName)
+    const skillDir = join(skillsDir, 'fork-ref')
     mkdirSync(join(skillDir, 'references'), { recursive: true })
     writeFileSync(
       join(skillDir, 'SKILL.md'),
-      `---\nname: ${skillName}\ndescription: fork ref\ncontext: fork\n---\n读 references`
+      `---\nname: fork-ref\ndescription: fork ref\ncontext: fork\nallowed-tools: read\n---\n读 <%= skillDirectory %>/references`
     )
-    writeFileSync(join(skillDir, 'references', 'rule.md'), 'FORK-REF-XYZ\n')
-    const registry = SkillRegistry.load({ globalDir: skillsDir })
-    const skill = registry.get(skillName)!
-    expect(skill).toBeDefined()
+    const skill = SkillRegistry.load({ globalDir: skillsDir }).get('fork-ref')!
+    const spawn = vi.fn<SpawnSubagentPort['spawn']>(async () => ({
+      childSessionId: 'child-skill',
+      childRunId: 'run-skill',
+      status: 'completed',
+      summary: 'FORK-REF-XYZ',
+      artifactIds: [],
+      startedAt: 1,
+      completedAt: 2
+    }))
 
-    const refPath = join(skillDir, 'references', 'rule.md')
-    const workDir = join(tmpdir(), `fork-ws-${Date.now()}`)
-    mkdirSync(workDir, { recursive: true })
+    const result = await runSkillFork({
+      getSpawnSubagentPort: () => ({ spawn })
+    }, {
+      skill,
+      args: 'read the rule',
+      parentSessionId: 'session-parent',
+      parentRunId: 'run-parent',
+      parentMessageId: 'message-parent',
+      workingDirectory: process.cwd(),
+      templateContext: { workspacePath: process.cwd() }
+    })
 
-    const client = new MockModelClient()
-    // 子循环：先 tool_call read，再结束
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        {
-          type: 'tool_call',
-          toolCall: {
-            id: 'fork_read',
-            name: 'read',
-            arguments: JSON.stringify({ path: refPath })
-          }
+    expect(result).toEqual({ success: true, summary: 'FORK-REF-XYZ' })
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: 'fork-ref',
+        invocation: {
+          kind: 'skill_fork',
+          parentMessageId: 'message-parent',
+          skillName: 'fork-ref'
         },
-        { type: 'message_end', finishReason: 'tool_calls' }
-      ]
-    })
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: 'FORK-REF-XYZ' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-
-    const parentBus = new EventBus()
-    const result = await runSkillFork(
-      {
-        modelClient: client,
-        parentEventBus: parentBus,
-        resolveTool: (name) => (name === 'read' ? readTool : undefined)
-      },
-      {
-        skill,
-        args: 'read the rule',
-        ctx: {
-          workingDir: workDir,
-          readState: createReadState()
-        }
-      }
+        isolation: 'readonly'
+      }),
+      expect.objectContaining({
+        profile: expect.objectContaining({
+          name: 'fork-ref',
+          prompt: expect.stringContaining(`${skillDir}/references`),
+          skillRoots: [skillDir]
+        })
+      })
     )
-
-    expect(result.success).toBe(true)
-    expect(result.summary).toContain('FORK-REF-XYZ')
 
     rmSync(skillsDir, { recursive: true, force: true })
-    rmSync(workDir, { recursive: true, force: true })
   })
 })

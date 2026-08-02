@@ -56,6 +56,26 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(snapshot.toolNames).toEqual(['read'])
   })
 
+  it('skillRoots 进入冻结快照与 configHash，路径变化会生成不同配置身份', () => {
+    const base = {
+      name: 'skill:inspect',
+      description: 'inspect with skill references',
+      prompt: 'read the referenced material',
+      allowedTools: ['read'],
+      skillRoots: ['D:/skills/inspect', 'D:/skills/inspect']
+    }
+
+    const first = resolveSubagentProfileSnapshot(base, 'skill:inspect')
+    const second = resolveSubagentProfileSnapshot({
+      ...base,
+      skillRoots: ['D:/skills/other']
+    }, 'skill:inspect')
+
+    expect(first.skillRoots).toEqual(['D:/skills/inspect'])
+    expect(Object.isFrozen(first.skillRoots)).toBe(true)
+    expect(first.configHash).not.toBe(second.configHash)
+  })
+
   it('identity、类型与边界不合法时 fail closed', () => {
     expect(() => resolveSubagentProfileSnapshot(null, 'explore')).toThrow(/JSON object/)
     expect(() => resolveSubagentProfileSnapshot({
@@ -71,5 +91,12 @@ describe('resolveSubagentProfileSnapshot', () => {
       allowedTools: ['read'],
       maxToolRounds: 0
     }, 'explore')).toThrow(/maxToolRounds/)
+    expect(() => resolveSubagentProfileSnapshot({
+      name: 'explore',
+      description: 'x',
+      prompt: 'x',
+      allowedTools: [],
+      skillRoots: ['   ']
+    }, 'explore')).toThrow(/skillRoots/)
   })
 })

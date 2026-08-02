@@ -281,6 +281,71 @@ describe('SubagentExecutionService', () => {
     })).rejects.toThrow(/冲突/)
   })
 
+  it('slash skill fork 绑定 parent message 并持久化唯一 skill roots profile', async () => {
+    const skillRoot = resolve(workspace, 'skills', 'inspect')
+    const skillCommand: SpawnSubagentCommand = {
+      ...command(),
+      invocation: {
+        kind: 'skill_fork',
+        parentMessageId: 'msg-parent',
+        skillName: 'inspect'
+      },
+      profileId: 'skill:inspect'
+    }
+    const dynamicProfile = {
+      name: 'skill:inspect',
+      description: 'read skill references',
+      prompt: 'inspect using the selected skill',
+      allowedTools: ['read'],
+      skillRoots: [skillRoot]
+    }
+    const { service, prepareTurn } = createService()
+
+    const result = await service.spawn(skillCommand, { profile: dynamicProfile })
+
+    const child = sessionStore.load(result.childSessionId)
+    expect(child?.kind).toBe('subagent')
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(child.subagent.lineage.origin).toEqual(skillCommand.invocation)
+    expect(child.subagent.profile.skillRoots).toEqual([skillRoot])
+    expect(prepareTurn).toHaveBeenCalledWith(expect.objectContaining({
+      profile: expect.objectContaining({ skillRoots: [skillRoot] })
+    }))
+
+    await expect(service.spawn({
+      ...skillCommand,
+      invocation: { ...skillCommand.invocation, parentMessageId: 'forged-message' }
+    }, { profile: dynamicProfile })).rejects.toThrow(/消息身份/)
+  })
+
+  it('非 skill fork 与相对路径 skill roots 均在执行前 fail closed', async () => {
+    const { service, prepareTurn } = createService()
+    const taskProfile = { ...profile, skillRoots: [resolve(workspace, 'skills', 'bad')] }
+    await expect(service.spawn(command(), {
+      invocationRef: invocationRef(),
+      profile: taskProfile
+    })).rejects.toThrow(/只有 skill_fork/)
+
+    await expect(service.spawn({
+      ...command(),
+      invocation: {
+        kind: 'skill_fork',
+        parentMessageId: 'msg-parent',
+        skillName: 'relative'
+      },
+      profileId: 'skill:relative'
+    }, {
+      profile: {
+        name: 'skill:relative',
+        description: 'invalid root',
+        prompt: 'inspect',
+        allowedTools: ['read'],
+        skillRoots: ['relative/path']
+      }
+    })).rejects.toThrow(/绝对路径/)
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
   it('父信号已取消时仍持久化 child run cancelled，且不装配 AgentLoop', async () => {
     const controller = new AbortController()
     controller.abort()

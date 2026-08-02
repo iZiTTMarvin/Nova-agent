@@ -39,7 +39,6 @@ function baseInput(overrides: Partial<Parameters<typeof resolveAgentTurnRoute>[0
     content: '你好',
     mode: 'default' as const,
     skillRegistry: null,
-    useUnifiedSkillDispatch: true,
     workspacePath: '/tmp/test',
     ...overrides
   }
@@ -57,16 +56,6 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     }))
     expect(route.kind).toBe('agent')
     expect(routeRunKind(route)).toBe('agent')
-  })
-
-  it('unified dispatch 关闭时走 agent', () => {
-    const route = resolveAgentTurnRoute(baseInput({
-      useUnifiedSkillDispatch: false
-    }))
-    expect(route.kind).toBe('agent')
-    if (route.kind === 'agent') {
-      expect(route.dispatch.kind).toBe('passthrough')
-    }
   })
 
   it('无 skillRegistry 时走 agent', () => {

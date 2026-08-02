@@ -139,7 +139,7 @@ export interface ToolContext {
    *
    * 工具调用它发起一次提问请求，返回 Promise，resolve 时拿到用户答案。
    * 回调内部负责：创建 Promise → 存 resolve 到模块级 pendingAskQuestions → emit 事件到 renderer → IPC 回复时 resolve。
-   * 不存在时工具降级为 no-op（不阻塞）：主 agent 正常注入；子 agent（task / skill fork）未注入会走降级跳过。
+   * 不存在时工具降级为 no-op（不阻塞）；是否可交互由宿主按 run 身份装配。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
   /**

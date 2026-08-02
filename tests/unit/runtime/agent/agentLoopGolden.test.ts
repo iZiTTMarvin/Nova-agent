@@ -850,7 +850,7 @@ describe('黄金测试 §9.15 skill 调度四分支', () => {
     client.addResponse({
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: '回复' }, usage(40), { type: 'message_end', finishReason: 'stop' }]
     })
-    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client, config: { useUnifiedSkillDispatch: false } })
+    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
     const events = await runAndCollect(loop, eventBus, '普通消息')
     const seq = types(events)
     expect(seq[0]).toBe('message_start')

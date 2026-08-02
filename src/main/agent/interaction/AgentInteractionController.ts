@@ -1,7 +1,6 @@
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import type { PermissionDecision } from '../../../shared/session/types'
 import type { InteractionAnswerResult, PendingInteraction } from '../../../shared/run/types'
-import { subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import {
   getRunCoordinator,
   getRunExecutionRegistry,
@@ -147,9 +146,7 @@ export async function respondPermission(params: {
       if (!loopForRun) {
         return identityMismatchResult(`run ${found.runId} 没有对应的 AgentLoop`, found)
       }
-      const hasResolver =
-        loopForRun.hasPendingPermission(params.requestId) ||
-        subAgentBridgeRegistry.hasBinding(params.requestId)
+      const hasResolver = loopForRun.hasPendingPermission(params.requestId)
       if (!hasResolver) {
         return identityMismatchResult(`权限请求 ${params.requestId} 没有对应的 resolver`, found)
       }
@@ -181,13 +178,9 @@ export async function respondPermission(params: {
     if (!result.ok || !result.firstApplied) return result
   }
 
-  // 仅 firstApplied 时执行副作用：Child Session 先按 child run 直达自己的 resolver；
-  // bridge 只保留给尚未迁移的旧 fork/Workflow 路径。
+  // 仅 firstApplied 时执行副作用：按 durable run 直达其 AgentLoop resolver。
   if (loopForRun?.hasPendingPermission(params.requestId)) {
     loopForRun.respondPermission(params.requestId, granted)
-    return durableResult
-  }
-  if (subAgentBridgeRegistry.resolve(params.requestId, granted)) {
     return durableResult
   }
   if (durableOnlyRecovery) return durableResult

@@ -7,7 +7,6 @@ import {
   getSubAgentSpec,
   type AgentEvent
 } from '../../../runtime/agent'
-import { subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import { writerLeaseRegistry } from '../../../runtime/workspace'
 import {
   AgentTurnExecutor,
@@ -55,8 +54,7 @@ import {
 import {
   prepareAgentRuntime,
   prepareSubagentRuntime,
-  resolveToDataUrl,
-  USE_UNIFIED_SKILL_DISPATCH
+  resolveToDataUrl
 } from '../runtime'
 import {
   pendingAskQuestions,
@@ -409,7 +407,6 @@ export async function sendAgentMessage(
     content: sendContent,
     mode: session.mode,
     skillRegistry: prepared.skillRegistry,
-    useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
     workspacePath: projectPath
   })
 
@@ -510,7 +507,6 @@ export async function sendAgentMessage(
       onCleanup: (context) => {
         agentLoopsByRunId.delete(context.runId)
         disposeTurnStreams(context.runId, context.executionGeneration)
-        subAgentBridgeRegistry.release(context.runId)
         writerLeaseRegistry.release(context.resourceOwnerRunId)
         setActiveRunId(null)
       }

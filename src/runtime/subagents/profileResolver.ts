@@ -23,6 +23,7 @@ interface ParsedSubagentProfile {
   model?: { providerId: string; modelId: string }
   maxToolRounds: number
   contextWindow?: number
+  skillRoots?: string[]
 }
 
 /** 外部 JSON 只能以 unknown 进入，并在这里一次性归一化为冻结快照。 */
@@ -60,7 +61,8 @@ export function resolveSubagentProfileSnapshot(
     permissionCeiling,
     model: parsed.model,
     maxToolRounds: parsed.maxToolRounds,
-    contextWindow: parsed.contextWindow
+    contextWindow: parsed.contextWindow,
+    skillRoots: parsed.skillRoots
   }
   const configHash = createHash('sha256')
     .update(JSON.stringify(hashInput), 'utf8')
@@ -78,6 +80,7 @@ export function resolveSubagentProfileSnapshot(
     ...(parsed.contextWindow !== undefined
       ? { contextWindow: parsed.contextWindow }
       : {}),
+    ...(parsed.skillRoots ? { skillRoots: Object.freeze([...parsed.skillRoots]) } : {}),
     configHash
   }
   return Object.freeze(snapshot)
@@ -125,6 +128,21 @@ function parseSubagentProfile(input: unknown): ParsedSubagentProfile {
           Number.MAX_SAFE_INTEGER
         )
 
+  let skillRoots: string[] | undefined
+  if (input.skillRoots !== undefined) {
+    if (!Array.isArray(input.skillRoots) || input.skillRoots.length > 16) {
+      throw new Error('子代理 profile.skillRoots 必须是最多 16 项的 string[]')
+    }
+    skillRoots = []
+    for (const value of input.skillRoots) {
+      if (typeof value !== 'string' || !value.trim() || value.length > 4096) {
+        throw new Error('子代理 profile.skillRoots 包含非法路径')
+      }
+      const root = value.trim()
+      if (!skillRoots.includes(root)) skillRoots.push(root)
+    }
+  }
+
   let model: ParsedSubagentProfile['model']
   if (input.model !== undefined) {
     if (!isObject(input.model)) throw new Error('子代理 profile.model 必须是 object')
@@ -140,6 +158,7 @@ function parseSubagentProfile(input: unknown): ParsedSubagentProfile {
     allowedTools,
     maxToolRounds,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(skillRoots ? { skillRoots } : {}),
     ...(model ? { model } : {})
   }
 }

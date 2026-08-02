@@ -18,7 +18,6 @@ import type { HookEvent, HookEventResultMap, HookPayload } from '../../../../src
 import type { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { SkillManifest } from '../../../../src/runtime/skills/types'
-import { runSkillFork } from '../../../../src/runtime/skills/runSkillFork'
 import { agentRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
 
 const loops: AgentLoop[] = []
@@ -158,15 +157,7 @@ describe('终态协议：分派执行器抛错', () => {
     const { loop, events } = createLoop(client)
     const cp = attachCheckpoint(loop)
     loop.setTurnDispatcher(new TurnDispatcher({
-      skillForkRunner: (request) =>
-        runSkillFork(
-          {
-            modelClient: client,
-            parentEventBus: loop.getEventBus(),
-            resolveTool: () => { throw new Error('fork boom') }
-          },
-          request
-        )
+      skillForkRunner: async () => { throw new Error('fork boom') }
     }))
     const skill = {
       name: 'f',

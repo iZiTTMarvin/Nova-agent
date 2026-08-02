@@ -58,9 +58,6 @@ import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistenc
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
-/** 统一 skill 调度开关（默认开启；测试可经环境变量关闭） */
-export const USE_UNIFIED_SKILL_DISPATCH = process.env.NOVA_USE_UNIFIED_SKILL_DISPATCH !== 'false'
-
 export interface AgentRuntimeRunRefs {
   runId: string
   resourceOwnerRunId: string
@@ -233,12 +230,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   let loop: AgentLoop | null = null
 
   registerBuiltinTools(toolRegistry, {
-    modelClient,
     skillRegistry,
-    eventBus,
-    contextWindow,
-    supportsVision,
-    useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
     getAgentLoop: () => loop,
     getMemoryService,
     loadSettings: loadNovaSettings,
@@ -425,18 +417,23 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   })
   agentLoop.setCheckpointManager(checkpointManager)
 
-  // 只有需要脱离 AgentLoop 的 skill fork 保留独立执行器；编排通过 start_workflow 工具进入。
+  // fork skill 与 task/Workflow 共用 durable child 执行基座。
   agentLoop.setTurnDispatcher(new TurnDispatcher({
     skillForkRunner: (request) =>
       runSkillFork(
         {
-          modelClient,
-          parentEventBus: eventBus,
-          resolveTool: (name) => toolRegistry.getTool(name),
-          contextWindow,
-          supportsVision
+          getSpawnSubagentPort: getSpawnSubagentPort ?? (() => undefined)
         },
-        request
+        {
+          skill: request.skill,
+          args: request.args,
+          parentSessionId: sessionId,
+          parentRunId: runRefs.runId,
+          parentMessageId: request.ctx.messageId,
+          workingDirectory: request.ctx.workingDir,
+          ...(request.ctx.abortSignal ? { abortSignal: request.ctx.abortSignal } : {}),
+          templateContext: request.templateContext
+        }
       )
   }))
 

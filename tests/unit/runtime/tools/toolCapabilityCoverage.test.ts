@@ -19,8 +19,6 @@
  */
 import { describe, expect, it } from 'vitest'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
-import { EventBus } from '../../../../src/runtime/agent'
-import type { ModelClient } from '../../../../src/runtime/model/ModelClient'
 import type { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
 import { registerBuiltinTools } from '../../../../src/main/agent/runtime/registerBuiltinTools'
@@ -34,12 +32,7 @@ import { getToolDisplayName } from '../../../../src/renderer/features/chat/toolD
 function buildFullRegistry(): ToolRegistry {
   const registry = new ToolRegistry()
   registerBuiltinTools(registry, {
-    modelClient: {} as ModelClient,
     skillRegistry: {} as SkillRegistry,
-    eventBus: new EventBus(),
-    contextWindow: 128_000,
-    supportsVision: false,
-    useUnifiedSkillDispatch: true,
     getAgentLoop: () => null,
     getMemoryService: () => null,
     loadSettings: () => DEFAULT_NOVA_SETTINGS

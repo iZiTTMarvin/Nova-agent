@@ -9,7 +9,7 @@
  *   PermissionManager.check），不存在第二套规则入口。
  *
  * requestId 只由本类生成和持有；每个 AgentLoop 持有独立实例，
- * 跨 run / 子代理的路由仍由主进程 controller 与 SubAgentPermissionBridge 负责。
+ * 跨 run 路由由主进程 controller 通过 durable run 身份直达 AgentLoop。
  */
 import { randomUUID } from 'crypto'
 import type { Mode } from '../../shared/session/types'

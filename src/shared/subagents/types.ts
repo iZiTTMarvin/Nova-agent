@@ -106,6 +106,13 @@ export type SubagentOrigin =
       readonly taskId?: string
       readonly batchId?: string
     }
+  | {
+      readonly kind: 'skill_fork'
+      readonly parentMessageId: string
+      /** invoke_skill 触发时保留真实 toolCallId；slash fork 无此字段。 */
+      readonly parentToolCallId?: string
+      readonly skillName: string
+    }
 
 /** Stable parent-child identity, persisted with a child session. */
 export interface SubagentLineage {
@@ -134,6 +141,8 @@ export interface SubagentProfileSnapshot {
   readonly model?: SubagentModelSnapshot
   readonly maxToolRounds: number
   readonly contextWindow?: number
+  /** 仅 skill_fork 可用的持久化只读根，用于加载 skill references。 */
+  readonly skillRoots?: readonly string[]
   readonly configHash: string
 }
 

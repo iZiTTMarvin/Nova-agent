@@ -28,7 +28,6 @@ export interface ResolveTurnRouteInput {
   content: string | ContentBlock[]
   mode: Mode
   skillRegistry: SkillRegistry | null
-  useUnifiedSkillDispatch: boolean
   workspacePath?: string
 }
 
@@ -42,7 +41,6 @@ export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRo
     content,
     mode,
     skillRegistry,
-    useUnifiedSkillDispatch,
     workspacePath
   } = input
 
@@ -51,8 +49,7 @@ export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRo
     return { kind: 'agent', dispatch: { kind: 'passthrough' } }
   }
 
-  // unified dispatch 关闭或无 registry 时走 agent
-  if (!useUnifiedSkillDispatch || !skillRegistry) {
+  if (!skillRegistry) {
     return { kind: 'agent', dispatch: { kind: 'passthrough' } }
   }
 

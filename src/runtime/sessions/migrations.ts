@@ -267,6 +267,13 @@ function isSubagentOrigin(value: unknown): value is SubagentOrigin {
       isOptionalNonEmptyString(value.batchId)
     )
   }
+  if (value.kind === 'skill_fork') {
+    return (
+      isNonEmptyString(value.parentMessageId) &&
+      isOptionalNonEmptyString(value.parentToolCallId) &&
+      isNonEmptyString(value.skillName)
+    )
+  }
   return false
 }
 
@@ -280,6 +287,10 @@ function isSubagentProfileSnapshot(value: unknown): value is SubagentProfileSnap
     typeof value.systemPrompt !== 'string' ||
     !Array.isArray(value.toolNames) ||
     !value.toolNames.every(isNonEmptyString) ||
+    (value.skillRoots !== undefined &&
+      (!Array.isArray(value.skillRoots) ||
+        value.skillRoots.length > 16 ||
+        !value.skillRoots.every(isNonEmptyString))) ||
     (value.permissionCeiling !== 'read_only' && value.permissionCeiling !== 'workspace_write') ||
     typeof maxToolRounds !== 'number' ||
     !Number.isInteger(maxToolRounds) ||
@@ -305,6 +316,16 @@ function isSubagentSessionMetadata(value: unknown): value is SubagentSessionMeta
   if (!isPlainObject(value) || !isPlainObject(value.lineage)) return false
   const { lineage } = value
   const depth = lineage.depth
+  if (!isSubagentOrigin(lineage.origin) || !isSubagentProfileSnapshot(value.profile)) {
+    return false
+  }
+  const skillRoots = value.profile.skillRoots ?? []
+  if (
+    skillRoots.length > 0 &&
+    (lineage.origin.kind !== 'skill_fork' || skillRoots.some((root) => !path.isAbsolute(root)))
+  ) {
+    return false
+  }
   return (
     isNonEmptyString(lineage.parentSessionId) &&
     isNonEmptyString(lineage.parentRunId) &&
@@ -313,9 +334,7 @@ function isSubagentSessionMetadata(value: unknown): value is SubagentSessionMeta
     Number.isInteger(depth) &&
     depth >= 0 &&
     isNonEmptyString(lineage.spawnKey) &&
-    isNonEmptyString(lineage.spawnRunId) &&
-    isSubagentOrigin(lineage.origin) &&
-    isSubagentProfileSnapshot(value.profile)
+    isNonEmptyString(lineage.spawnRunId)
   )
 }
 

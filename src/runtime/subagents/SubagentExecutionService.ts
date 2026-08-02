@@ -187,6 +187,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     ) {
       throw new Error('read_only 父子代理不能派生 workspace_write 子代理')
     }
+    validateSkillRoots(command, profile)
     const lineage: SubagentLineage = {
       parentSessionId: command.parentSessionId,
       parentRunId: command.parentRunId,
@@ -467,6 +468,13 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     if (isTerminalRunStatus(parentRun.status)) {
       throw new Error(`parent run ${command.parentRunId} 已终止`)
     }
+    if (
+      command.invocation.kind === 'skill_fork' &&
+      command.invocation.parentToolCallId === undefined &&
+      parentRun.messageId !== command.invocation.parentMessageId
+    ) {
+      throw new Error('skill fork 消息身份与 parent run 不匹配')
+    }
   }
 
   private commitWithoutExecution(
@@ -508,16 +516,21 @@ function assertInvocationIdentity(
   command: SpawnSubagentCommand,
   context: SpawnSubagentContext
 ): void {
-  if (command.invocation.kind !== 'task_tool') return
+  if (command.invocation.kind === 'workflow') return
+  if (
+    command.invocation.kind === 'skill_fork' &&
+    command.invocation.parentToolCallId === undefined
+  ) return
   const ref = context.invocationRef
-  if (!ref) throw new Error('task 子代理缺少完整 ToolInvocationRef')
+  if (!ref) throw new Error('工具触发的子代理缺少完整 ToolInvocationRef')
+  const parentToolCallId = command.invocation.parentToolCallId
   if (
     ref.sessionId !== command.parentSessionId ||
     ref.runId !== command.parentRunId ||
     ref.messageId !== command.invocation.parentMessageId ||
-    ref.toolCallId !== command.invocation.parentToolCallId
+    ref.toolCallId !== parentToolCallId
   ) {
-    throw new Error('task 子代理调用身份与 SpawnSubagentCommand 不匹配')
+    throw new Error('工具触发的子代理调用身份与 SpawnSubagentCommand 不匹配')
   }
 }
 
@@ -540,21 +553,46 @@ export function createSpawnIdentity(command: SpawnSubagentCommand): SpawnIdentit
 
 function createStableSpawnKey(command: SpawnSubagentCommand): string {
   const origin = command.invocation
-  const stableFields =
-    origin.kind === 'task_tool'
-      ? ['task_tool', command.parentRunId, origin.parentMessageId, origin.parentToolCallId]
-      : [
-          'workflow',
-          origin.workflowRunId,
-          origin.phase,
-          origin.taskId ?? '',
-          origin.batchId ?? '',
-          String(origin.occurrence ?? 0)
-        ]
+  const stableFields = (() => {
+    if (origin.kind === 'task_tool') {
+      return ['task_tool', command.parentRunId, origin.parentMessageId, origin.parentToolCallId]
+    }
+    if (origin.kind === 'skill_fork') {
+      return [
+        'skill_fork',
+        command.parentRunId,
+        origin.parentMessageId,
+        origin.parentToolCallId ?? '',
+        origin.skillName
+      ]
+    }
+    return [
+      'workflow',
+      origin.workflowRunId,
+      origin.phase,
+      origin.taskId ?? '',
+      origin.batchId ?? '',
+      String(origin.occurrence ?? 0)
+    ]
+  })()
   const digest = createHash('sha256')
     .update(stableFields.join('\0'), 'utf8')
     .digest('hex')
   return `${origin.kind}:${digest}`
+}
+
+function validateSkillRoots(
+  command: SpawnSubagentCommand,
+  profile: SubagentProfileSnapshot
+): void {
+  const roots = profile.skillRoots ?? []
+  if (roots.length === 0) return
+  if (command.invocation.kind !== 'skill_fork') {
+    throw new Error('只有 skill_fork 子代理可以声明 skillRoots')
+  }
+  if (roots.some((root) => !path.isAbsolute(root))) {
+    throw new Error('skillRoots 必须全部是绝对路径')
+  }
 }
 
 function resolveLineageBase(

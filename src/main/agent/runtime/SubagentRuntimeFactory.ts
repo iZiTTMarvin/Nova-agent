@@ -100,6 +100,9 @@ export function prepareSubagentRuntime(
   agentLoop.setSessionContext(input.sessionStore, input.childSession.id)
   agentLoop.setReadState(input.readState)
   agentLoop.setArtifactStore(new ArtifactStore(input.sessionsDir))
+  for (const skillRoot of input.profile.skillRoots ?? []) {
+    agentLoop.addSkillRoot(skillRoot)
+  }
   agentLoop.setBashEnvironment({
     binDirs: [join(input.workingDirectory, 'node_modules', '.bin')]
   })
