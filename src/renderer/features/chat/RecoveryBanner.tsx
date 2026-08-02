@@ -17,7 +17,7 @@ interface ModelSwitchInfo {
 }
 
 /** 旋转加载指示器（retrying / recovering 共用） */
-function SpinnerIcon({ className }: { className?: string }): JSX.Element {
+function SpinnerIcon({ className }: { className?: string }): React.ReactNode {
   return (
     <svg className={className} width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
       <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="20 12" />
@@ -26,7 +26,7 @@ function SpinnerIcon({ className }: { className?: string }): JSX.Element {
 }
 
 /** 警告三角（hook_error 用） */
-function WarningIcon(): JSX.Element {
+function WarningIcon(): React.ReactNode {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
       <path

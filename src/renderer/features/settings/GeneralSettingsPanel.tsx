@@ -5,8 +5,28 @@
  * 所有改动通过 settings:set 持久化，主进程做 schema 校验。
  */
 import React, { useEffect, useState } from 'react'
-import type { NovaSettingsDto, PermissionPolicy } from '../../../shared/settings/types'
+import { TextInput } from '@astryxdesign/core/TextInput'
+import { NumberInput } from '@astryxdesign/core/NumberInput'
+import { Selector } from '@astryxdesign/core/Selector'
+import { Switch } from '@astryxdesign/core/Switch'
+import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
+
+const THEME_OPTIONS: { value: NovaSettingsDto['theme']; label: string }[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' }
+]
+
+const MODE_OPTIONS: { value: Mode; label: string }[] = [
+  { value: 'default', label: '默认模式（模型自主循环）' },
+  { value: 'plan', label: '计划模式（只读分析）' }
+]
+
+const PERMISSION_OPTIONS: { value: NovaSettingsDto['permissionPolicy']; label: string }[] = [
+  { value: 'ask', label: '执行前确认（bash 需批准）' },
+  { value: 'auto', label: '自动执行（危险命令仍拦截）' }
+]
 
 export const GeneralSettingsPanel: React.FC = () => {
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
@@ -58,6 +78,8 @@ export const GeneralSettingsPanel: React.FC = () => {
     )
   }
 
+  const defaultMode = settings.defaultMode === 'compose' ? 'default' : settings.defaultMode
+
   return (
     <div className="settings-panel">
       <header className="settings-panel__header">
@@ -66,138 +88,97 @@ export const GeneralSettingsPanel: React.FC = () => {
       </header>
 
       <div className="settings-modal__form settings-panel__scroll">
-        {/* 默认运行模式 */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">默认运行模式</label>
-          <select
-            className="settings-modal__input settings-modal__select"
-            value={settings.defaultMode === 'compose' ? 'default' : settings.defaultMode}
-            onChange={e => void update('defaultMode', e.target.value as Mode)}
-            disabled={saving}
-          >
-            <option value="default">默认模式（模型自主循环）</option>
-            <option value="plan">计划模式（只读分析）</option>
-          </select>
-          <span className="settings-modal__help">新建会话时使用的默认行为模式。</span>
-        </div>
+        <Selector
+          label="默认运行模式"
+          description="新建会话时使用的默认行为模式。"
+          options={MODE_OPTIONS}
+          value={defaultMode}
+          onChange={value => void update('defaultMode', value as Mode)}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* 工具批准策略（仅约束默认模式） */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">工具批准</label>
-          <select
-            className="settings-modal__input settings-modal__select"
-            value={settings.permissionPolicy}
-            onChange={e => void update('permissionPolicy', e.target.value as PermissionPolicy)}
-            disabled={saving}
-          >
-            <option value="ask">执行前确认（bash 需批准）</option>
-            <option value="auto">自动执行（危险命令仍拦截）</option>
-          </select>
-          <span className="settings-modal__help">仅约束默认模式；计划模式始终只读，XForge 模式 run 内固定自动执行语义。</span>
-        </div>
+        <Selector
+          label="工具批准"
+          description="仅约束默认模式；计划模式始终只读，XForge 模式 run 内固定自动执行语义。"
+          options={PERMISSION_OPTIONS}
+          value={settings.permissionPolicy}
+          onChange={value => void update('permissionPolicy', value as NovaSettingsDto['permissionPolicy'])}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* bash 默认 shell */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">默认 Shell（bash 工具）</label>
-          <input
-            type="text"
-            className="settings-modal__input"
-            value={settings.defaultShell}
-            onChange={e => void update('defaultShell', e.target.value)}
-            placeholder="留空使用系统默认（如 cmd / bash / zsh）"
-            disabled={saving}
-          />
-          <span className="settings-modal__help">为空时使用系统默认 shell。</span>
-        </div>
+        <TextInput
+          label="默认 Shell（bash 工具）"
+          description="为空时使用系统默认 shell。"
+          value={settings.defaultShell}
+          onChange={value => void update('defaultShell', value)}
+          placeholder="留空使用系统默认（如 cmd / bash / zsh）"
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* bash 超时 */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">Shell 命令超时（毫秒）</label>
-          <input
-            type="number"
-            className="settings-modal__input"
-            value={settings.defaultShellTimeout}
-            min={0}
-            step={1000}
-            onChange={e => void update('defaultShellTimeout', Number(e.target.value))}
-            disabled={saving}
-          />
-          <span className="settings-modal__help">0 表示不超时。默认 120000ms（2 分钟）。</span>
-        </div>
+        <NumberInput
+          label="Shell 命令超时（毫秒）"
+          description="0 表示不超时。默认 120000ms（2 分钟）。"
+          value={settings.defaultShellTimeout}
+          onChange={value => void update('defaultShellTimeout', value)}
+          min={0}
+          step={1000}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* 最大工具调用轮数 */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">最大工具调用轮数</label>
-          <input
-            type="number"
-            className="settings-modal__input"
-            value={settings.maxToolRounds}
-            min={1}
-            max={1000}
-            step={10}
-            onChange={e => void update('maxToolRounds', Number(e.target.value))}
-            disabled={saving}
-          />
-          <span className="settings-modal__help">
-            单条消息内 Agent 连续调用工具的上限，达到后会停下并提示。默认 100，范围 1~1000。长任务（脚手架 / 大规模重构）可调大。
-          </span>
-        </div>
+        <NumberInput
+          label="最大工具调用轮数"
+          description="单条消息内 Agent 连续调用工具的上限，达到后会停下并提示。默认 100，范围 1~1000。长任务（脚手架 / 大规模重构）可调大。"
+          value={settings.maxToolRounds}
+          onChange={value => void update('maxToolRounds', value)}
+          min={1}
+          max={1000}
+          step={10}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* diff 自动展开 */}
-        <div className="settings-modal__field settings-modal__field--inline">
-          <label className="settings-modal__label">Diff 自动展开</label>
-          <input
-            type="checkbox"
-            checked={settings.diffAutoExpand}
-            onChange={e => void update('diffAutoExpand', e.target.checked)}
-            disabled={saving}
-          />
-          <span className="settings-modal__help">默认展开文件变更审查区域。</span>
-        </div>
+        <Switch
+          label="Diff 自动展开"
+          description="默认展开文件变更审查区域。"
+          value={settings.diffAutoExpand}
+          onChange={checked => void update('diffAutoExpand', checked)}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* 编辑器字号 */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">编辑器字号（px）</label>
-          <input
-            type="number"
-            className="settings-modal__input"
-            value={settings.editorFontSize}
-            min={8}
-            max={32}
-            onChange={e => void update('editorFontSize', Number(e.target.value))}
-            disabled={saving}
-          />
-          <span className="settings-modal__help">范围 8~32。</span>
-        </div>
+        <NumberInput
+          label="编辑器字号（px）"
+          description="范围 8~32。"
+          value={settings.editorFontSize}
+          onChange={value => void update('editorFontSize', value)}
+          min={8}
+          max={32}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* 编辑器字体族 */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">编辑器字体族</label>
-          <input
-            type="text"
-            className="settings-modal__input"
-            value={settings.editorFontFamily}
-            onChange={e => void update('editorFontFamily', e.target.value)}
-            disabled={saving}
-          />
-          <span className="settings-modal__help">CSS font-family 值，多个用逗号分隔。</span>
-        </div>
+        <TextInput
+          label="编辑器字体族"
+          description="CSS font-family 值，多个用逗号分隔。"
+          value={settings.editorFontFamily}
+          onChange={value => void update('editorFontFamily', value)}
+          isDisabled={saving}
+          width="100%"
+        />
 
-        {/* 主题 */}
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">主题</label>
-          <select
-            className="settings-modal__input settings-modal__select"
-            value={settings.theme}
-            onChange={e => void update('theme', e.target.value as NovaSettingsDto['theme'])}
-            disabled={saving}
-          >
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
-          <span className="settings-modal__help">界面主题外观。</span>
-        </div>
+        <Selector
+          label="主题"
+          description="界面主题外观。"
+          options={THEME_OPTIONS}
+          value={settings.theme}
+          onChange={value => void update('theme', value as NovaSettingsDto['theme'])}
+          isDisabled={saving}
+          width="100%"
+        />
 
         {error && <div className="settings-modal__error">{error}</div>}
         {saved && <div className="settings-modal__help" style={{ color: '#2e7d32' }}>已保存</div>}

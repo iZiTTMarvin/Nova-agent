@@ -1,4 +1,6 @@
 import React, { useEffect } from 'react'
+import { Theme } from '@astryxdesign/core/theme'
+import { parchmentTheme } from './styles/astryx-parchment-theme'
 import { useAgentStore } from './stores/useAgentStore'
 import { useChatStore } from './stores/useChatStore'
 import { useSettingsStore } from './stores/useSettingsStore'
@@ -28,7 +30,7 @@ import './App.css'
  * 订阅策略（阶段 4）：只订阅稳定 action 引用，不订阅 messages / streaming 字段，
  * 保证 text delta 不会触发 App 根 commit。
  */
-function App(): JSX.Element {
+function App(): React.ReactNode {
   // settings：仅稳定 action
   const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
   const handleUsage = useSettingsStore(state => state.handleUsage)
@@ -346,23 +348,25 @@ function App(): JSX.Element {
   ])
 
   return (
-    <div className="app-wrapper">
-      {/* 自定义标题栏 */}
-      <TitleBar />
+    <Theme theme={parchmentTheme}>
+      <div className="app-wrapper">
+        {/* 自定义标题栏 */}
+        <TitleBar />
 
-      <div className="app-layout">
-        {/* 左侧功能配置与会话管理栏 */}
-        <Sidebar />
+        <div className="app-layout">
+          {/* 左侧功能配置与会话管理栏 */}
+          <Sidebar />
 
-        {/* 右侧主对话面板 */}
-        <main className="app-main">
-          <ChatPanel />
-        </main>
+          {/* 右侧主对话面板 */}
+          <main className="app-main">
+            <ChatPanel />
+          </main>
 
-        {/* 模型参数配置模态窗 */}
-        <SettingsModal />
+          {/* 模型参数配置模态窗 */}
+          <SettingsModal />
+        </div>
       </div>
-    </div>
+    </Theme>
   )
 }
 

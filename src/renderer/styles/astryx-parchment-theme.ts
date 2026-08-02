@@ -1,0 +1,70 @@
+/**
+ * Astryx 羊皮纸主题
+ *
+ * 基于项目现有 CSS 变量（见 styles/global.css）扩展自 neutralTheme，
+ * 让 Astryx 原子组件在视觉上融入 Nova 的暖色拟纸风格。
+ */
+import { defineTheme } from '@astryxdesign/core/theme'
+import { neutralTheme } from '@astryxdesign/theme-neutral'
+
+export const parchmentTheme = defineTheme({
+  name: 'parchment',
+  extends: neutralTheme,
+  tokens: {
+    // ── 字体 ──
+    '--font-family-body': 'var(--font-sans)',
+    '--font-family-heading': 'var(--font-sans)',
+    '--font-family-code': 'var(--font-mono)',
+
+    // ── 背景 ──
+    '--color-background-surface': 'var(--bg-app)',
+    '--color-background-body': 'var(--bg-app)',
+    '--color-background-card': 'var(--bg-card)',
+    '--color-background-popover': 'var(--bg-card)',
+    '--color-background-muted': 'var(--bg-sand)',
+
+    // ── 文本 ──
+    '--color-text-primary': 'var(--text-primary)',
+    '--color-text-secondary': 'var(--text-secondary)',
+    '--color-text-disabled': 'var(--text-muted)',
+    '--color-text-accent': 'var(--color-brand)',
+
+    // ── 图标 ──
+    '--color-icon-primary': 'var(--text-primary)',
+    '--color-icon-secondary': 'var(--text-secondary)',
+    '--color-icon-disabled': 'var(--text-muted)',
+    '--color-icon-accent': 'var(--color-brand)',
+
+    // ── 边框 ──
+    '--color-border': 'var(--border-warm)',
+    '--color-border-emphasized': 'var(--border-cream)',
+
+    // ── 强调 / 状态色 ──
+    '--color-accent': 'var(--color-brand)',
+    '--color-accent-muted': 'var(--color-brand-dim)',
+    '--color-success': 'var(--color-success)',
+    '--color-error': 'var(--color-error)',
+    '--color-warning': '#d97757',
+    '--color-success-muted': 'rgba(120, 140, 93, 0.12)',
+    '--color-error-muted': 'rgba(181, 51, 51, 0.06)',
+    '--color-warning-muted': 'rgba(217, 119, 87, 0.10)',
+
+    // ── 前景在强调色上的反色 ──
+    '--color-on-accent': '#ffffff',
+    '--color-on-success': '#ffffff',
+    '--color-on-error': '#ffffff',
+    '--color-on-warning': '#ffffff',
+    '--color-on-dark': '#ffffff',
+    '--color-on-light': 'var(--text-primary)',
+
+    // ── 覆盖层 / 悬停态 ──
+    '--color-overlay': 'rgba(20, 20, 19, 0.45)',
+    '--color-overlay-hover': 'rgba(20, 20, 19, 0.05)',
+    '--color-overlay-pressed': 'rgba(20, 20, 19, 0.10)',
+    '--color-tint-hover': 'var(--color-brand-dim)',
+
+    // ── 骨架与阴影 ──
+    '--color-skeleton': 'var(--bg-sand)',
+    '--color-shadow': 'rgba(20, 20, 19, 0.10)'
+  }
+})
