@@ -101,6 +101,22 @@ describe('generation fencing 与 lingering handle', () => {
     expect(coord.getSnapshot(snap.runId)?.executionGeneration).toBe(0)
   })
 
+  it('run 进入终态后旧 generation 即使数值仍在 snapshot 中也不再有效', () => {
+    const coord = createRunCoordinator(tmp)
+    const snap = coord.startRun({
+      kind: 'agent',
+      workspaceId: 'ws',
+      sessionId: 's1',
+      runId: 'run_terminal_fence'
+    })
+    coord.markRunning(snap.runId)
+    coord.bindExecutionGeneration(snap.runId, 8)
+    expect(coord.isExecutionCurrent(snap.runId, 8)).toBe(true)
+
+    coord.commitTerminal({ runId: snap.runId, status: 'completed' })
+    expect(coord.isExecutionCurrent(snap.runId, 8)).toBe(false)
+  })
+
   it('waitForSettlement 超时后清理 timer，settled 仍可完成', async () => {
     let resolveSettled!: () => void
     const settled = new Promise<void>(r => {

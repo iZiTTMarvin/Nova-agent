@@ -37,7 +37,7 @@ import { preferredToolDialect, type ToolDialect } from '../model/dialect'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
-import type { FileEffectRecorder, ToolContext } from '../tools/types'
+import type { ExecutionIdentity, FileEffectRecorder, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 
 import { TurnDispatcher } from './turn'
@@ -378,9 +378,14 @@ export class AgentLoop {
     // 发现旧锚点的 Working directory ≠ 新 dir，自动触发重新拼接。
   }
 
-  /** 绑定当前 runId；写者租约 / 子代理权限按 run 归属时由工具读取。 */
+  /** 单 run 执行同时拥有自身资源；delegated execution 必须显式传入 root Owner。 */
   setRunRef(runId: string): void {
-    this.ctx.runId = runId
+    this.setExecutionIdentity({ runId, resourceOwnerRunId: runId })
+  }
+
+  setExecutionIdentity(identity: ExecutionIdentity): void {
+    this.ctx.runId = identity.runId
+    this.ctx.resourceOwnerRunId = identity.resourceOwnerRunId
   }
 
   /** 绑定工作区根（与 workingDir 同义，专门给写者租约按工作区分桶）。 */
@@ -722,6 +727,7 @@ export class AgentLoop {
         toolRegistry: this.ctx.toolRegistry,
         workingDir: this.ctx.workingDir ?? process.cwd(),
         runId: this.ctx.runId ?? undefined,
+        resourceOwnerRunId: this.ctx.resourceOwnerRunId ?? undefined,
         workspaceRoot: this.ctx.workspaceRoot ?? undefined,
         mode: this.ctx.mode,
         shellPath: this.ctx.shellPath,
@@ -951,7 +957,7 @@ export class AgentLoop {
    * 且 subLoop 对象图无法被 GC）。
    *
    * 调用场景：
-   * - 子 agent（taskTool / runSkillFork / workflow）执行完后释放
+   * - 独立装配的子 AgentLoop（subagent / skill / workflow）执行完后释放
    * - 主 turn 的 loop 在 idle 托管期结束后释放（下一 turn 装配 / 会话取消 / 会话删除）
    */
   dispose(): void {

@@ -57,12 +57,14 @@ import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
+import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
 /** 统一 skill 调度开关（默认开启；测试可经环境变量关闭） */
 export const USE_UNIFIED_SKILL_DISPATCH = process.env.NOVA_USE_UNIFIED_SKILL_DISPATCH !== 'false'
 
 export interface AgentRuntimeRunRefs {
   runId: string
+  resourceOwnerRunId: string
   executionGeneration: number
 }
 
@@ -150,6 +152,8 @@ export interface PrepareAgentRuntimeInput {
   autoMode?: boolean
   /** 由 TurnService 预先 ensure 的 cache routing key；factory 不写 session */
   promptCacheKey?: string
+  /** task 工具执行时读取；装配完成后由 TurnService 绑定本 turn 的执行服务。 */
+  getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
 }
 
 export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAgentRuntime {
@@ -166,11 +170,13 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     pendingAskQuestions,
     runCoordinator,
     autoMode = false,
-    promptCacheKey
+    promptCacheKey,
+    getSpawnSubagentPort
   } = input
 
   const runRefs: AgentRuntimeRunRefs = {
     runId: '',
+    resourceOwnerRunId: '',
     executionGeneration: 0
   }
 
@@ -238,6 +244,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryService,
     loadSettings: loadNovaSettings,
     getWorkflowOrchestrator,
+    getSpawnSubagentPort,
     // 按 run 隔离的子代理权限桥接：装配时 runId 可能尚未分配，延迟到执行期按 runRefs.runId 解析
     getPermissionBridge: () =>
       runRefs.runId

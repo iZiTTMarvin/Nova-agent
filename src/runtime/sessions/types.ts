@@ -5,7 +5,11 @@
  * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
 import type { Mode, MessageBlock } from '../../shared/session'
-import type { SessionKind, SubagentSessionMetadata } from '../../shared/subagents'
+import type {
+  SessionKind,
+  SubagentSessionListMetadata,
+  SubagentSessionMetadata
+} from '../../shared/subagents'
 import type { TodoItem } from '../../shared/todo/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
@@ -21,8 +25,7 @@ export {
 /** 会话标题来源：占位名 → 自动截取 → 用户手动改名 */
 export type SessionTitleSource = 'placeholder' | 'generated' | 'manual'
 
-/** 会话摘要（用于列表展示，不含完整消息） */
-export interface SessionSummary {
+interface SessionSummaryBase {
   id: string
   workspaceRoot: string
   mode: Mode
@@ -32,6 +35,21 @@ export interface SessionSummary {
   title?: string
   titleSource?: SessionTitleSource
 }
+
+/** 普通会话列表项不携带 child metadata。 */
+export interface PrimarySessionSummary extends SessionSummaryBase {
+  kind: 'primary'
+  subagent?: never
+}
+
+/** Child Session 列表项只暴露 lineage 与可渲染 profile，不泄露 system prompt。 */
+export interface SubagentSessionSummary extends SessionSummaryBase {
+  kind: 'subagent'
+  subagent: SubagentSessionListMetadata
+}
+
+/** 会话摘要（用于列表展示，不含完整消息） */
+export type SessionSummary = PrimarySessionSummary | SubagentSessionSummary
 
 /** 所有 Session kind 共有的持久化字段。 */
 interface SessionDataBase {
@@ -113,6 +131,19 @@ export type SessionData = PrimarySessionData | SubagentSessionData
 export type SessionMetadata =
   | Omit<PrimarySessionData, 'messages'>
   | Omit<SubagentSessionData, 'messages'>
+
+/** SessionStore 原子创建 Child Session 所需的完整持久化意图。 */
+export interface CreateChildSessionCommand {
+  readonly workspaceRoot: string
+  readonly mode: Mode
+  readonly task: string
+  readonly subagent: SubagentSessionMetadata
+}
+
+export interface CreateChildSessionResult {
+  readonly session: SubagentSessionData
+  readonly created: boolean
+}
 
 /** 可序列化的内容块（与 runtime/model/types.ContentBlock 结构对齐） */
 export type SerializableContentBlock =

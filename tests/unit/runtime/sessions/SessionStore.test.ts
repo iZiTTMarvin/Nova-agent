@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import {
+  SessionStore,
+  deriveChildSessionId
+} from '../../../../src/runtime/sessions/SessionStore'
 import { CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
 import { resetSessionIndexHostForTests, getSessionIndex, sessionIndexCacheSizeForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import type { Mode } from '../../../../src/shared/session'
@@ -23,6 +26,105 @@ afterEach(() => {
 })
 
 describe('SessionStore', () => {
+  describe('createChildIfAbsent', () => {
+    const spawnKey = 'task_tool:stable-spawn-key'
+    const createCommand = () => ({
+      workspaceRoot: path.resolve(tmpDir, 'workspace'),
+      mode: 'plan' as const,
+      task: 'inspect the runtime',
+      subagent: {
+        lineage: {
+          parentSessionId: 'sess-parent',
+          parentRunId: 'run-parent',
+          rootRunId: 'run-parent',
+          depth: 1,
+          spawnKey,
+          spawnRunId: '11111111-2222-3333-4444-555555555555',
+          origin: {
+            kind: 'task_tool' as const,
+            parentMessageId: 'msg-parent',
+            parentToolCallId: 'call-task'
+          }
+        },
+        profile: {
+          profileId: 'explore',
+          name: 'explore',
+          description: 'read only',
+          systemPrompt: 'private prompt',
+          toolNames: ['read', 'grep'],
+          permissionCeiling: 'read_only' as const,
+          maxToolRounds: 20,
+          configHash: 'a'.repeat(64)
+        }
+      }
+    })
+
+    it('由 spawnKey 派生稳定 ID，并把原始 task 作为唯一首条 user message 原子发布', () => {
+      const store = new SessionStore(tmpDir)
+      const first = store.createChildIfAbsent(createCommand())
+
+      expect(first.created).toBe(true)
+      expect(first.session.id).toBe(deriveChildSessionId(spawnKey))
+      expect(first.session.kind).toBe('subagent')
+      expect(first.session.messages).toHaveLength(1)
+      expect(first.session.messages[0]).toEqual(
+        expect.objectContaining({ role: 'user', content: 'inspect the runtime' })
+      )
+      expect(store.load(first.session.id)?.messages).toHaveLength(1)
+    })
+
+    it('两个独立 Store owner 竞争同一 spawnKey 时保持 create-if-absent 幂等', async () => {
+      const firstOwner = new SessionStore(tmpDir)
+      const secondOwner = new SessionStore(tmpDir)
+      const [first, second] = await Promise.all([
+        Promise.resolve().then(() => firstOwner.createChildIfAbsent(createCommand())),
+        Promise.resolve().then(() => secondOwner.createChildIfAbsent(createCommand()))
+      ])
+
+      expect([first.created, second.created].sort()).toEqual([false, true])
+      expect(first.session.id).toBe(second.session.id)
+      expect(secondOwner.load(first.session.id)?.messages).toHaveLength(1)
+    })
+
+    it('同一 spawnKey 的 metadata 或初始 task 冲突时 fail closed', () => {
+      const store = new SessionStore(tmpDir)
+      store.createChildIfAbsent(createCommand())
+
+      const conflictingMetadata = createCommand()
+      conflictingMetadata.subagent.profile.systemPrompt = 'different prompt'
+      expect(() => store.createChildIfAbsent(conflictingMetadata)).toThrow(/冲突/)
+
+      const conflictingTask = createCommand()
+      conflictingTask.task = 'different task'
+      expect(() => store.createChildIfAbsent(conflictingTask)).toThrow(/冲突/)
+    })
+
+    it('list 只暴露窄 lineage/profile，普通会话保持 primary', () => {
+      const store = new SessionStore(tmpDir)
+      const primary = store.create(path.resolve(tmpDir, 'workspace'))
+      const child = store.createChildIfAbsent(createCommand()).session
+      const summaries = store.list()
+
+      expect(summaries.find((item) => item.id === primary.id)).toEqual(
+        expect.objectContaining({ kind: 'primary' })
+      )
+      const childSummary = summaries.find((item) => item.id === child.id)
+      expect(childSummary).toEqual(expect.objectContaining({
+        kind: 'subagent',
+        subagent: {
+          lineage: child.subagent.lineage,
+          profile: {
+            profileId: 'explore',
+            name: 'explore',
+            permissionCeiling: 'read_only'
+          }
+        }
+      }))
+      expect(JSON.stringify(childSummary)).not.toContain('private prompt')
+      expect(JSON.stringify(childSummary)).not.toContain('toolNames')
+    })
+  })
+
   describe('create', () => {
     it('创建新会话并返回完整数据', () => {
       const store = new SessionStore(tmpDir)

@@ -18,13 +18,28 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import { randomUUID } from 'crypto'
-import type { SessionSummary, SessionData, SessionMetadata, SessionMessage, SessionMessageAppend, AppendMessageResult, ContextSnapshot, SessionTitleSource } from './types'
+import { createHash, randomUUID } from 'crypto'
+import { isDeepStrictEqual } from 'util'
+import type {
+  SessionSummary,
+  SessionData,
+  SessionMetadata,
+  SessionMessage,
+  SessionMessageAppend,
+  AppendMessageResult,
+  ContextSnapshot,
+  SessionTitleSource,
+  CreateChildSessionCommand,
+  CreateChildSessionResult,
+  SubagentSessionData
+} from './types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
   SESSION_CONTEXT_SNAPSHOT_FILE,
-  CONTEXT_SNAPSHOT_VERSION
+  CONTEXT_SNAPSHOT_VERSION,
+  extractTextFromSerializableContent,
+  generateSessionTitleFromText
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode } from '../../shared/session'
@@ -63,6 +78,22 @@ import { isPlanRelativePath } from '../plans'
 
 /** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+
+const MAX_SPAWN_KEY_LENGTH = 8_192
+
+export function deriveChildSessionId(spawnKey: string): string {
+  const normalized = spawnKey.trim()
+  if (!normalized || normalized.length > MAX_SPAWN_KEY_LENGTH) {
+    throw new Error('[SessionStore] spawnKey 必须为非空且不超过 8192 字符')
+  }
+  const digest = createHash('sha256').update(normalized, 'utf8').digest('hex')
+  return `sess_sub_${digest.slice(0, 32)}`
+}
+
+function deriveInitialChildMessageId(spawnKey: string): string {
+  const digest = createHash('sha256').update(`initial-task\0${spawnKey}`, 'utf8').digest('hex')
+  return `msg_sub_user_${digest.slice(0, 32)}`
+}
 
 export class SessionStore {
   private readonly sessionsDir: string
@@ -110,6 +141,107 @@ export class SessionStore {
 
     this.save(session)
     return session
+  }
+
+  /**
+   * 原子创建由 spawnKey 唯一标识的 Child Session。
+   * 完整目录先写入同级临时目录，再以 rename 发布；并发输家只读取并校验既有事实。
+   */
+  createChildIfAbsent(command: CreateChildSessionCommand): CreateChildSessionResult {
+    const childSessionId = deriveChildSessionId(command.subagent.lineage.spawnKey)
+    const existing = this.load(childSessionId)
+    if (existing) {
+      return {
+        session: this.assertExistingChildMatches(existing, command),
+        created: false
+      }
+    }
+
+    const now = Date.now()
+    const initialMessage = normalizeMessageToBlocksSource({
+      id: deriveInitialChildMessageId(command.subagent.lineage.spawnKey),
+      parentId: null,
+      role: 'user',
+      content: command.task,
+      timestamp: now
+    })
+    const session: SubagentSessionData = {
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      kind: 'subagent',
+      subagent: command.subagent,
+      id: childSessionId,
+      workspaceRoot: command.workspaceRoot,
+      mode: command.mode,
+      messages: [initialMessage],
+      currentLeafId: initialMessage.id,
+      createdAt: now,
+      updatedAt: now,
+      title: generateSessionTitleFromText(command.task),
+      titleSource: 'generated',
+      messageCount: 1
+    }
+
+    fs.mkdirSync(this.sessionsDir, { recursive: true })
+    const finalDir = this.resolveSessionDir(childSessionId)
+    const tempRoot = path.join(this.sessionsDir, '.child-creates')
+    fs.mkdirSync(tempRoot, { recursive: true })
+    const tempDir = path.join(
+      tempRoot,
+      `${childSessionId}-${randomUUID()}`
+    )
+    fs.mkdirSync(tempDir)
+
+    try {
+      atomicWriteFileSync(
+        path.join(tempDir, SESSION_DATA_FILE),
+        JSON.stringify(this.toMetadata(session), null, 2),
+        'utf8'
+      )
+      writeMessagesJsonl(tempDir, session.messages)
+
+      try {
+        fs.renameSync(tempDir, finalDir)
+        return { session, created: true }
+      } catch (err) {
+        if (!fs.existsSync(finalDir)) throw err
+        const raced = this.load(childSessionId)
+        if (!raced) {
+          throw new Error(`[SessionStore] Child Session 并发创建后无法加载: ${childSessionId}`)
+        }
+        return {
+          session: this.assertExistingChildMatches(raced, command),
+          created: false
+        }
+      }
+    } finally {
+      if (fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true })
+      }
+    }
+  }
+
+  private assertExistingChildMatches(
+    existing: SessionData,
+    command: CreateChildSessionCommand
+  ): SubagentSessionData {
+    if (existing.kind !== 'subagent') {
+      throw new Error(`[SessionStore] spawnKey 冲突：${existing.id} 不是 Child Session`)
+    }
+    if (!isDeepStrictEqual(existing.subagent, command.subagent)) {
+      throw new Error(`[SessionStore] spawnKey 冲突：${existing.id} 的 subagent metadata 不匹配`)
+    }
+    if (existing.workspaceRoot !== command.workspaceRoot || existing.mode !== command.mode) {
+      throw new Error(`[SessionStore] spawnKey 冲突：${existing.id} 的执行环境不匹配`)
+    }
+    const firstMessage = existing.messages[0]
+    if (
+      !firstMessage ||
+      firstMessage.role !== 'user' ||
+      extractTextFromSerializableContent(firstMessage.content) !== command.task
+    ) {
+      throw new Error(`[SessionStore] spawnKey 冲突：${existing.id} 的初始任务不匹配`)
+    }
+    return existing
   }
 
   /**
@@ -273,7 +405,7 @@ export class SessionStore {
         const data = migrateSessionFile(this.sessionsDir, entry.name)
         if (!data) continue
         const messageCount = this.resolveMessageCountForList(entry.name, data)
-        summaries.push({
+        const baseSummary = {
           id: data.id,
           workspaceRoot: data.workspaceRoot,
           mode: data.mode,
@@ -282,7 +414,23 @@ export class SessionStore {
           messageCount,
           title: data.title,
           titleSource: data.titleSource
-        })
+        }
+        if (data.kind === 'subagent') {
+          summaries.push({
+            ...baseSummary,
+            kind: 'subagent',
+            subagent: {
+              lineage: data.subagent.lineage,
+              profile: {
+                profileId: data.subagent.profile.profileId,
+                name: data.subagent.profile.name,
+                permissionCeiling: data.subagent.profile.permissionCeiling
+              }
+            }
+          })
+        } else {
+          summaries.push({ ...baseSummary, kind: 'primary' })
+        }
       } catch {
         // 损坏的会话文件静默跳过
       }

@@ -762,7 +762,7 @@ export const editTool: ToolExecutor = {
         // 写者租约：同一工作区同时最多一个 run 写入。拿不到返回结构化冲突，让 agent 重规划。
         // 透传 abortSignal：run 取消时立即出队，避免持租者释放后把租约授予已死掉的 run。
         const conflict = await acquireWriterLeaseOrConflict({
-          runId: context.runId,
+          runId: context.resourceOwnerRunId ?? context.runId,
           workspaceRoot: context.workspaceRoot ?? context.workingDir,
           abortSignal: context.abortSignal
         })

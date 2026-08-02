@@ -26,5 +26,6 @@ export type {
   SubagentBatchMemberProjection,
   SubagentBatchProjection,
   SubagentBatchStatus,
-  SubagentProfileProjection
+  SubagentProfileProjection,
+  SubagentSessionListMetadata
 } from './projection'

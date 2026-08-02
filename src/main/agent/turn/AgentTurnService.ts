@@ -2,14 +2,28 @@
  * Agent turn 生命周期：SEND_MESSAGE 主链（preflight → persist → start/resume → execute → cleanup）
  */
 import { BrowserWindow, app } from 'electron'
-import { AgentLoop, type AgentEvent } from '../../../runtime/agent'
+import {
+  AgentLoop,
+  getSubAgentSpec,
+  type AgentEvent
+} from '../../../runtime/agent'
 import { subAgentBridgeRegistry } from '../../../runtime/tools/subAgentBridge'
 import { writerLeaseRegistry } from '../../../runtime/workspace'
+import {
+  AgentTurnExecutor,
+  projectAgentEventToRun,
+  resolveAgentTurnRoute
+} from '../../../runtime/agent/turn'
+import {
+  SubagentExecutionService,
+  type SpawnSubagentPort,
+  type SubagentEventContext
+} from '../../../runtime/subagents'
 import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveSupportsVision } from '../../../shared/config/types'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SessionMessageAppend, SerializableContentBlock } from '../../../runtime/sessions/types'
-import type { MessageBlock } from '../../../shared/session/types'
+import type { MessageBlock, Mode, PermissionPolicy } from '../../../shared/session/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
@@ -40,6 +54,7 @@ import {
 } from '../events'
 import {
   prepareAgentRuntime,
+  prepareSubagentRuntime,
   resolveToDataUrl,
   USE_UNIFIED_SKILL_DISPATCH
 } from '../runtime'
@@ -47,14 +62,12 @@ import {
   pendingAskQuestions,
   dismissPendingAskQuestionsForSession
 } from '../interaction/askQuestionWaiters'
-import { interruptStartedRunAfterFailure } from './turnLifecycle'
 import {
   enqueueSteeringMessage,
   dequeueSteeringMessage,
   type SteeringMessage
 } from './SteeringQueue'
 import { resolveEntryLockAction } from './entryLock'
-import { resolveAgentTurnRoute, routeRunKind, type AgentTurnOutcome } from '../../../runtime/agent/turn'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
@@ -215,6 +228,7 @@ export async function sendAgentMessage(
     session.cacheRoutingKey = promptCacheKey
   }
 
+  let spawnSubagentPort: SpawnSubagentPort | undefined
   const prepared = prepareAgentRuntime({
     session,
     sessionStore,
@@ -229,11 +243,62 @@ export async function sendAgentMessage(
     pendingAskQuestions,
     runCoordinator,
     autoMode: session.mode === 'compose' && params.autoMode === true,
-    promptCacheKey
+    promptCacheKey,
+    getSpawnSubagentPort: () => spawnSubagentPort
   })
   // 本 turn 专属 AgentLoop（局部变量，不污染模块级状态，并发 turn 各自独立）
   const loopForRun = prepared.agentLoop
   const { eventBus, modelPool, runRefs, frozenPrompt } = prepared
+  const turnExecutor = new AgentTurnExecutor(runCoordinator, executionRegistry)
+  spawnSubagentPort = new SubagentExecutionService({
+    sessionStore,
+    runCoordinator,
+    turnExecutor,
+    loadProfile: (profileId) => getSubAgentSpec(profileId),
+    prepareTurn: (input) => {
+      const childPromptCacheKey =
+        sessionStore.ensureCacheRoutingKey(input.childSession.id) ?? undefined
+      return prepareSubagentRuntime({
+        ...input,
+        modelClient,
+        resolveTool: (name) => prepared.toolRegistry.getTool(name),
+        sessionStore,
+        sessionsDir,
+        novaSettings,
+        readState: getReadStateForSession(input.childSession.id),
+        contextWindow: prepared.contextWindow,
+        supportsVision: prepared.supportsVision,
+        ...(childPromptCacheKey ? { promptCacheKey: childPromptCacheKey } : {})
+      })
+    },
+    adaptEvent: (event, context) => adaptSubagentPermissionEvent(event, context),
+    onEvent: (event, context) => {
+      forwardAgentEvent(event, {
+        runId: context.runId,
+        executionGeneration: context.executionGeneration,
+        sessionId: context.childSessionId,
+        mode: context.mode,
+        permissionPolicy: capturedPermissionPolicy,
+        workspaceRoot: context.workspaceRoot,
+        sessionsDir: capturedSessionsDir,
+        eventBus: context.agentLoop.getEventBus(),
+        getMainWindow
+      })
+    },
+    onExecutionStarted: (context) => {
+      agentLoopsByRunId.set(context.runId, context.agentLoop)
+      subAgentBridgeRegistry
+        .getOrCreate(context.parentRunId)
+        .register(context.agentLoop)
+    },
+    onExecutionSettled: (context) => {
+      agentLoopsByRunId.delete(context.runId)
+      disposeTurnStreams(context.runId, context.executionGeneration)
+      const bridge = subAgentBridgeRegistry.get(context.parentRunId)
+      bridge?.unregister(context.agentLoop)
+      bridge?.clearForLoop(context.agentLoop)
+    }
+  })
   if (session.frozenSystemPrompt !== frozenPrompt) {
     session.frozenSystemPrompt = frozenPrompt
     sessionStore.save(session)
@@ -307,7 +372,6 @@ export async function sendAgentMessage(
     useUnifiedSkillDispatch: USE_UNIFIED_SKILL_DISPATCH,
     workspacePath: projectPath
   })
-  const turnRunKind = routeRunKind(turnRoute)
 
   // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
   if (!isRegenerate && persistContent !== null) {
@@ -354,26 +418,19 @@ export async function sendAgentMessage(
   })
 
   eventBus.on((event: AgentEvent) => {
-    // 投影关键事件到 RunCoordinator（工具对账 + message 绑定 + 权限 inbox）
-    projectAgentEventToRun(runRefs.runId, capturedSessionId, event)
-    // 轻量刷新心跳（不落盘），stall 只认 running + heartbeat 超时
-    try {
-      getRunCoordinator().touchHeartbeat(runRefs.runId)
-    } catch { /* ignore */ }
-    stallMark(event.type)
-    // 给每个事件打上归属会话标记，供 renderer 区分焦点 / 后台会话，避免串台。
-    // 事件是 emit-and-forget 的瞬态对象，原地写入 sessionId 安全且零拷贝。
-    stampSessionId(event, capturedSessionId)
-    forwardEventToRenderer(getMainWindow(), event)
-    accumulateStreamEvent(capturedSessionId, event, {
+    handleAgentEvent(event, {
+      runCoordinator,
+      runId: runRefs.runId,
+      resourceOwnerRunId: runRefs.resourceOwnerRunId,
+      executionGeneration: runRefs.executionGeneration,
+      sessionId: capturedSessionId,
       mode: capturedMode,
       permissionPolicy: capturedPermissionPolicy,
       workspaceRoot: capturedWorkspaceRoot,
       sessionsDir: capturedSessionsDir,
       eventBus,
       getMainWindow,
-      runId: runRefs.runId,
-      executionGeneration: runRefs.executionGeneration
+      stallMark
     })
   })
 
@@ -387,85 +444,38 @@ export async function sendAgentMessage(
   // 同会话的「未 settled 执行」已在入口锁 isSessionTurnInProgress 中拦截（进入 steering queue）；
   // 不同会话允许并发持有各自执行句柄，此处不再做全局互斥。
 
-  let resolveExecutionSettled = (): void => {}
-  let executionRegistered = false
-  let startedRunId: string | null = null
-
   try {
-    const runSnap = runCoordinator.startRun({
-      kind: turnRunKind,
-      workspaceId: projectPath,
-      sessionId: params.sessionId
+    await turnExecutor.execute({
+      agentLoop: loopForRun,
+      task: sendContent,
+      route: turnRoute,
+      sessionId: params.sessionId,
+      workingDirectory: projectPath,
+      isolation: 'shared',
+      runRefs,
+      onStarted: (context) => {
+        agentLoopsByRunId.set(context.runId, loopForRun)
+        setActiveRunId(context.runId)
+      },
+      afterOutcome: (outcome) => {
+        if (outcome.status === 'completed') {
+          onUserTurnCompleteForExtract(
+            params.sessionId,
+            projectPath,
+            sessionStore,
+            modelPool
+          )
+        }
+      },
+      onCleanup: (context) => {
+        agentLoopsByRunId.delete(context.runId)
+        disposeTurnStreams(context.runId, context.executionGeneration)
+        subAgentBridgeRegistry.release(context.runId)
+        writerLeaseRegistry.release(context.resourceOwnerRunId)
+        setActiveRunId(null)
+      }
     })
-    startedRunId = runSnap.runId
-    runRefs.runId = runSnap.runId
-    runRefs.executionGeneration = Date.now()
-    // 把 runId 注入 AgentLoop，供写者租约 / 子代理权限按 run 归属
-    loopForRun.setRunRef(runRefs.runId)
-    // 副作用入口 fencing：write/edit/checkpoint 经 ToolContext 校验 generation
-    loopForRun.setExecutionFence(() =>
-      runCoordinator.isExecutionCurrent(runRefs.runId, runRefs.executionGeneration)
-    )
-    const executionSettled = new Promise<void>(resolve => {
-      resolveExecutionSettled = resolve
-    })
-    executionRegistry.register({
-      runId: runRefs.runId,
-      generation: runRefs.executionGeneration,
-      kind: runSnap.kind,
-      abort: () => loopForRun.cancel(),
-      settled: executionSettled
-    })
-    executionRegistered = true
-    runCoordinator.bindExecutionGeneration(runRefs.runId, runRefs.executionGeneration)
-    // onCancel 按 runId 精确解析 loop（进程内索引，非 durable 真源；finally 必须清理）
-    agentLoopsByRunId.set(runRefs.runId, loopForRun)
-    setActiveRunId(runRefs.runId)
-    if (runCoordinator.getSnapshot(runRefs.runId)?.status !== 'running') {
-      runCoordinator.markRunning(runRefs.runId)
-    }
-
-    // sendMessage 返回结构化 AgentTurnOutcome，轮次失败不再以 rejection 表达；
-    // 仅轮次副作用前的装配校验失败（route 缺执行器等）会 reject，走外层异常收敛。
-    const outcome = await loopForRun.sendMessage(sendContent, turnRoute)
-
-    // 记忆提炼只在轮次真正完成后触发：取消 / 失败的上下文不完整，提炼只会引入噪音
-    if (outcome.status === 'completed') {
-      onUserTurnCompleteForExtract(
-        params.sessionId,
-        projectPath,
-        sessionStore,
-        modelPool
-      )
-    }
-
-    // durable 对账基于 outcome；提交失败不阻断下方 finally 的 registry 清理
-    try {
-      reconcileDurableTerminal(runRefs.runId, outcome)
-    } catch (terminalErr) {
-      console.error('[AgentTurnService] terminal 提交失败:', terminalErr)
-    }
-  } catch (err) {
-    // start/resume 后的任何异常都必须检查 durable 终态；不能用 registry 状态代替 run 状态。
-    try {
-      interruptStartedRunAfterFailure(getRunCoordinator(), startedRunId, err)
-    } catch (terminalErr) {
-      console.error('[AgentTurnService] 异常收敛提交失败:', terminalErr)
-    }
-    throw err
   } finally {
-    // 统一进程内清理：settled → unregister → loop 索引 → activeRun → streams → bridge
-    resolveExecutionSettled()
-    if (executionRegistered && runRefs.runId) {
-      executionRegistry.unregister(runRefs.runId, runRefs.executionGeneration)
-      agentLoopsByRunId.delete(runRefs.runId)
-      disposeTurnStreams(runRefs.runId, runRefs.executionGeneration)
-      // 释放本 run 的子代理桥接，回收内存（并发 run 互不影响）
-      subAgentBridgeRegistry.release(runRefs.runId)
-      // 释放本 run 持有的写者租约，唤醒等待同一工作区的其它 run
-      writerLeaseRegistry.release(runRefs.runId)
-      setActiveRunId(null)
-    }
     // 主 loop 进入 idle 托管：turn 结束后保留存活以驱动空闲压缩计时器。
     // 同会话若已有上一轮残留的 idle loop，先 dispose 接替（执行期索引此时已无重叠）。
     retireIdleLoopForSession(params.sessionId)
@@ -519,39 +529,6 @@ function activeRunIsWorkflow(
 }
 
 /**
- * 轮次结束后的 durable 对账：按结构化 outcome 提交 run 终态。
- *
- * - snapshot 已处 waiting_user 或广义终态时保持权威状态，不得用通用终态覆盖；
- * - failed / completed / cancelled 按 outcome 提交统一的 run 终态；
- * - durable 层已进入 cancelling（用户取消竞态）时取消优先于 completed。
- */
-function reconcileDurableTerminal(
-  runId: string,
-  outcome: AgentTurnOutcome
-): void {
-  const coord = getRunCoordinator()
-  const snap = coord.getSnapshot(runId)
-  if (!snap) return
-  if (
-    ['completed', 'failed', 'cancelled', 'interrupted', 'waiting_user'].includes(snap.status)
-  ) {
-    return
-  }
-
-  if (outcome.status === 'failed') {
-    const reason = outcome.error.message
-    coord.commitTerminal({ runId, status: 'failed', reason })
-    return
-  }
-
-  const cancelled = outcome.status === 'cancelled' || snap.status === 'cancelling'
-  coord.commitTerminal({
-    runId,
-    status: cancelled ? 'cancelled' : 'completed'
-  })
-}
-
-/**
  * 销毁该会话当前托管的 idle loop（若有）。
  *
  * 与 disposeIdleLoopForSession（供外部取消/删除调用）共享实现，区别在于语义：
@@ -602,97 +579,73 @@ function stampSessionId(event: AgentEvent, sessionId: string): void {
   ;(event as { sessionId?: string }).sessionId = sessionId
 }
 
-/**
- * 将 AgentEvent 投影到 RunCoordinator（工具对账 / 权限 inbox / message 绑定）。
- * 旧 EventBus → IPC 路径保持不变，本函数只做旁路持久化。
- */
-function projectAgentEventToRun(
-  runId: string,
-  sessionId: string,
-  event: AgentEvent
-): void {
-  let coord: ReturnType<typeof getRunCoordinator>
-  try {
-    coord = getRunCoordinator()
-  } catch {
-    return
-  }
-
-  switch (event.type) {
-    case 'message_start':
-      coord.setMessageId(runId, event.messageId)
-      if (!coord.getSnapshot(runId)?.turnStartedAt) {
-        coord.markRunning(runId, event.messageId)
-      }
-      break
-    case 'tool_call': {
-      // prepared → executing：工具参数已就绪，即将执行
-      const idempotent = isIdempotentToolName(event.toolName)
-      coord.recordToolPhase(runId, event.toolCallId, event.toolName, 'prepared', { idempotent })
-      coord.recordToolPhase(runId, event.toolCallId, event.toolName, 'executing', { idempotent })
-      break
-    }
-    case 'tool_result': {
-      const isError =
-        event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')
-      coord.recordToolPhase(
-        runId,
-        event.toolCallId,
-        event.toolName,
-        isError ? 'failed' : 'committed',
-        { idempotent: isIdempotentToolName(event.toolName) }
-      )
-      break
-    }
-    case 'permission_request': {
-      coord.inbox.enqueue({
-        runId,
-        sessionId,
-        messageId: event.messageId,
-        type: 'permission',
-        interactionId: event.requestId,
-        payload: {
-          requestId: event.requestId,
-          toolName: event.toolName,
-          args: event.args,
-          riskLevel: event.riskLevel,
-          reason: event.reason,
-          commands: event.commands,
-          toolCallIds: event.toolCallIds
-        }
-      })
-      // 权限等待会让 run 进入 waiting_user，期间不写入；释放写者租约让其它会话能继续写。
-      // 用户授权后 turn 恢复，下次写操作会惰性重新获取租约（幂等）。
-      writerLeaseRegistry.release(runId)
-      break
-    }
-    case 'ask_question_request': {
-      // askQuestion 入队已在 askQuestionHandler 完成（让 run 进入 waiting_user）。
-      // 这里只负责释放写者租约：提问等待期间不写入，让其它会话能继续写。
-      // 用户回答后 turn 恢复，下次写操作惰性重新获取租约（幂等）。
-      writerLeaseRegistry.release(runId)
-      break
-    }
-    case 'message_end': {
-      // 终态由 sendAgentMessage 按 AgentTurnOutcome 对账提交；此处只心跳
-      coord.heartbeat(runId, { label: event.interrupted ? 'interrupted' : 'message_end' })
-      break
-    }
-    default:
-      break
-  }
+interface ForwardAgentEventContext {
+  readonly runId: string
+  readonly executionGeneration: number
+  readonly sessionId: string
+  readonly mode: Mode
+  readonly permissionPolicy: PermissionPolicy
+  readonly workspaceRoot: string
+  readonly sessionsDir: string
+  readonly eventBus: ReturnType<AgentLoop['getEventBus']>
+  readonly getMainWindow: () => BrowserWindow | null
+  readonly stallMark?: (eventType: string) => void
 }
 
-/** 只读类工具可视为幂等；写入类默认非幂等，中断后不自动重放 */
-function isIdempotentToolName(toolName: string): boolean {
-  const readOnly = new Set([
-    'read',
-    'ls',
-    'grep',
-    'find',
-    'webSearch',
-    'memorySearch',
-    'askQuestion'
-  ])
-  return readOnly.has(toolName)
+interface HandleAgentEventContext extends ForwardAgentEventContext {
+  readonly runCoordinator: ReturnType<typeof getRunCoordinator>
+  readonly resourceOwnerRunId: string
+}
+
+/** 普通与 delegated turn 共用同一套 Run 投影和既有 renderer 事件顺序。 */
+function handleAgentEvent(
+  event: AgentEvent,
+  context: HandleAgentEventContext
+): void {
+  projectAgentEventToRun(
+    {
+      runCoordinator: context.runCoordinator,
+      runId: context.runId,
+      resourceOwnerRunId: context.resourceOwnerRunId,
+      sessionId: context.sessionId
+    },
+    event
+  )
+  try {
+    context.runCoordinator.touchHeartbeat(context.runId)
+  } catch {
+    // 事件投影不能因并发终态导致 renderer 事件丢失。
+  }
+  forwardAgentEvent(event, context)
+}
+
+function forwardAgentEvent(
+  event: AgentEvent,
+  context: ForwardAgentEventContext
+): void {
+  context.stallMark?.(event.type)
+  stampSessionId(event, context.sessionId)
+  forwardEventToRenderer(context.getMainWindow(), event)
+  accumulateStreamEvent(context.sessionId, event, {
+    mode: context.mode,
+    permissionPolicy: context.permissionPolicy,
+    workspaceRoot: context.workspaceRoot,
+    sessionsDir: context.sessionsDir,
+    eventBus: context.eventBus,
+    getMainWindow: context.getMainWindow,
+    runId: context.runId,
+    executionGeneration: context.executionGeneration
+  })
+}
+
+/** Bridge 只适配内存 resolver；durable Interaction 的唯一 Owner 仍是 child run。 */
+function adaptSubagentPermissionEvent(
+  event: AgentEvent,
+  context: SubagentEventContext
+): AgentEvent {
+  if (event.type !== 'permission_request') return event
+  const requestId = subAgentBridgeRegistry
+    .getOrCreate(context.parentRunId)
+    .bind(event.requestId, context.agentLoop)
+  return { ...event, requestId }
 }

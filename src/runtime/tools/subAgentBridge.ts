@@ -33,7 +33,7 @@ export class SubAgentPermissionBridge {
    * 注册一个活跃子 AgentLoop。
    *
    * 必须在 subLoop.sendMessage 之前调用，否则 cancel 来时子代理已在跑但未注册。
-   * taskTool 创建 subLoop 后立即注册，finally 块注销。
+   * 装配方创建子 loop 后立即注册，并在 finally 中注销。
    */
   register(loop: AgentLoop): void {
     this.activeLoops.add(loop)

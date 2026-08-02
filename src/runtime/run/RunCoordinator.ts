@@ -876,7 +876,10 @@ export class RunCoordinator {
     if (!generation || generation <= 0) return false
     const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
     if (!snap) return false
-    return snap.executionGeneration === generation
+    return (
+      !isTerminalRunStatus(snap.status) &&
+      snap.executionGeneration === generation
+    )
   }
 
   private indexSession(sessionId: string, runId: string): void {

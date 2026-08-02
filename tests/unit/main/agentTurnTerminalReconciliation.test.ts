@@ -7,13 +7,19 @@ import { beforeEach, describe, it, expect, vi } from 'vitest'
 
 // ---- hoisted mocks：服务宿主与运行时装配 ----
 const snapHolder = vi.hoisted(() => ({
-  current: { runId: 'run-agent', kind: 'agent', status: 'running' } as Record<string, unknown> | null
+  current: {
+    runId: 'run-agent', kind: 'agent', status: 'running',
+    sessionId: 'sess-1', workspaceId: '/tmp/ws'
+  } as Record<string, unknown> | null
 }))
 const coordinator = vi.hoisted(() => ({
   listActiveRuns: vi.fn(() => [] as any[]),
   getSnapshotForSession: vi.fn(() => null),
   getSnapshot: vi.fn(() => snapHolder.current),
-  startRun: vi.fn((params: any) => ({ runId: 'run-agent', kind: params.kind, status: 'queued' })),
+  startRun: vi.fn((params: any) => ({
+    runId: 'run-agent', kind: params.kind, status: 'queued',
+    sessionId: params.sessionId, workspaceId: params.workspaceId
+  })),
   transition: vi.fn(),
   markRunning: vi.fn(),
   commitTerminal: vi.fn(),
@@ -34,6 +40,7 @@ const registryHolder = vi.hoisted(() => ({ current: null as any }))
 
 const stubAgentLoop = vi.hoisted(() => ({
   setRunRef: vi.fn(),
+  setExecutionIdentity: vi.fn(),
   setExecutionFence: vi.fn(),
   cancel: vi.fn(),
   dispose: vi.fn(),
@@ -123,7 +130,7 @@ vi.mock('../../../src/main/agent/runtime', async (importOriginal) => {
       agentLoop: stubAgentLoop,
       eventBus: { on: vi.fn() },
       modelPool: {},
-      runRefs: { runId: '', executionGeneration: 0 },
+      runRefs: { runId: '', resourceOwnerRunId: '', executionGeneration: 0 },
       frozenPrompt: 'system',
       skillRegistry: registryHolder.current
     }))
@@ -165,7 +172,10 @@ const deps = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  snapHolder.current = { runId: 'run-agent', kind: 'agent', status: 'running' }
+  snapHolder.current = {
+    runId: 'run-agent', kind: 'agent', status: 'running',
+    sessionId: 'sess-1', workspaceId: '/tmp/ws'
+  }
   registryHolder.current = null
   coordinator.listActiveRuns.mockReturnValue([])
   coordinator.getSnapshotForSession.mockReturnValue(null)
@@ -206,7 +216,10 @@ describe('agent/compose run 按 outcome 提交终态', () => {
   })
 
   it('durable 已进入 cancelling 时 completed 让位于 cancelled', async () => {
-    snapHolder.current = { runId: 'run-agent', kind: 'agent', status: 'cancelling' }
+    snapHolder.current = {
+      runId: 'run-agent', kind: 'agent', status: 'cancelling',
+      sessionId: 'sess-1', workspaceId: '/tmp/ws'
+    }
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '你好' }, deps)
 
@@ -216,7 +229,10 @@ describe('agent/compose run 按 outcome 提交终态', () => {
   })
 
   it('snapshot 已是硬终态时不再提交（不覆盖既有终态）', async () => {
-    snapHolder.current = { runId: 'run-agent', kind: 'agent', status: 'completed' }
+    snapHolder.current = {
+      runId: 'run-agent', kind: 'agent', status: 'completed',
+      sessionId: 'sess-1', workspaceId: '/tmp/ws'
+    }
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '你好' }, deps)
 

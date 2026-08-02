@@ -280,6 +280,10 @@ function isSubagentProfileSnapshot(value: unknown): value is SubagentProfileSnap
     typeof maxToolRounds !== 'number' ||
     !Number.isInteger(maxToolRounds) ||
     maxToolRounds <= 0 ||
+    (value.contextWindow !== undefined &&
+      (typeof value.contextWindow !== 'number' ||
+        !Number.isInteger(value.contextWindow) ||
+        value.contextWindow <= 0)) ||
     !isNonEmptyString(value.configHash)
   ) {
     return false

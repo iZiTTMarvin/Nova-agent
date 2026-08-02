@@ -12,10 +12,19 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 const coordinator = vi.hoisted(() => ({
   listActiveRuns: vi.fn(() => [] as any[]),
   getSnapshotForSession: vi.fn(() => null),
-  getSnapshot: vi.fn(() => ({ status: 'running' })),
-  startRun: vi.fn((params: any) => ({ runId: `run-${params.kind}`, kind: params.kind, status: 'queued' })),
+  getSnapshot: vi.fn(() => ({
+    runId: 'run-agent', kind: 'agent', status: 'running',
+    sessionId: 'sess-1', workspaceId: '/tmp/ws'
+  })),
+  startRun: vi.fn((params: any) => ({
+    runId: `run-${params.kind}`, kind: params.kind, status: 'queued',
+    sessionId: params.sessionId, workspaceId: params.workspaceId
+  })),
   transition: vi.fn(),
   markRunning: vi.fn(),
+  setMessageId: vi.fn(),
+  recordToolPhase: vi.fn(),
+  heartbeat: vi.fn(),
   commitTerminal: vi.fn(),
   bindExecutionGeneration: vi.fn(),
   isExecutionCurrent: vi.fn(() => true),
@@ -28,11 +37,17 @@ const executionRegistry = vi.hoisted(() => ({
   register: vi.fn(),
   unregister: vi.fn()
 }))
+const eventPipeline = vi.hoisted(() => ({
+  listeners: [] as Array<(event: any) => void>,
+  accumulated: vi.fn(),
+  forwarded: vi.fn()
+}))
 
 // 捕获 sendAgentMessage 实际传给 AgentLoop.sendMessage 的 route
 const sentRoutes = vi.hoisted(() => [] as any[])
 const stubAgentLoop = vi.hoisted(() => ({
   setRunRef: vi.fn(),
+  setExecutionIdentity: vi.fn(),
   setExecutionFence: vi.fn(),
   cancel: vi.fn(),
   dispose: vi.fn(),
@@ -84,9 +99,9 @@ vi.mock('../../../src/main/agent/state', () => ({
 }))
 
 vi.mock('../../../src/main/agent/events', () => ({
-  accumulateStreamEvent: vi.fn(),
+  accumulateStreamEvent: eventPipeline.accumulated,
   disposeTurnStreams: vi.fn(),
-  forwardEventToRenderer: vi.fn(),
+  forwardEventToRenderer: eventPipeline.forwarded,
   activeStreams: new Map()
 }))
 
@@ -127,9 +142,14 @@ vi.mock('../../../src/main/agent/runtime', async (importOriginal) => {
     resolveToDataUrl: vi.fn((_store: any, url: string) => url),
     prepareAgentRuntime: vi.fn(() => ({
       agentLoop: stubAgentLoop,
-      eventBus: { on: vi.fn() },
+      eventBus: {
+        on: vi.fn((listener: (event: any) => void) => {
+          eventPipeline.listeners.push(listener)
+          return vi.fn()
+        })
+      },
       modelPool: {},
-      runRefs: { runId: '', executionGeneration: 0 },
+      runRefs: { runId: '', resourceOwnerRunId: '', executionGeneration: 0 },
       frozenPrompt: 'system',
       skillRegistry: registryHolder.current
     }))
@@ -198,10 +218,14 @@ const deps = {
 beforeEach(() => {
   vi.clearAllMocks()
   sentRoutes.length = 0
+  eventPipeline.listeners.length = 0
   registryHolder.current = null
   coordinator.listActiveRuns.mockReturnValue([])
   coordinator.getSnapshotForSession.mockReturnValue(null)
-  coordinator.getSnapshot.mockReturnValue({ status: 'running' })
+  coordinator.getSnapshot.mockReturnValue({
+    runId: 'run-agent', kind: 'agent', status: 'running',
+    sessionId: 'sess-1', workspaceId: '/tmp/ws'
+  })
   sessionStore.load.mockReturnValue(makeSession())
 })
 
@@ -272,11 +296,39 @@ describe('sendAgentMessage 路由行为级集成', () => {
     })
     coordinator.startRun.mockImplementation((params: any) => {
       order.push('startRun')
-      return { runId: 'run-agent', kind: params.kind, status: 'queued' }
+      return {
+        runId: 'run-agent', kind: params.kind, status: 'queued',
+        sessionId: params.sessionId, workspaceId: params.workspaceId
+      }
     })
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '你好' }, deps)
 
     expect(order).toEqual(['append', 'startRun'])
+  })
+
+  it('普通 turn 切换到统一 executor 后仍按原顺序 forward 与 accumulate 全部事件', async () => {
+    const emitted = [
+      { type: 'message_start', messageId: 'msg-agent' },
+      { type: 'text_delta', messageId: 'msg-agent', delta: 'hello' },
+      { type: 'message_end', messageId: 'msg-agent', interrupted: false }
+    ] as const
+    stubAgentLoop.sendMessage.mockImplementationOnce(async (_content: any, route: any) => {
+      sentRoutes.push(route)
+      for (const event of emitted) {
+        for (const listener of eventPipeline.listeners) listener({ ...event })
+      }
+      return { status: 'completed' }
+    })
+
+    await sendAgentMessage({ sessionId: 'sess-1', content: 'hello' }, deps)
+
+    expect(eventPipeline.forwarded.mock.calls.map((call) => call[1].type)).toEqual([
+      'message_start', 'text_delta', 'message_end'
+    ])
+    expect(eventPipeline.accumulated.mock.calls.map((call) => call[1].type)).toEqual([
+      'message_start', 'text_delta', 'message_end'
+    ])
+    expect(eventPipeline.accumulated.mock.calls.every((call) => call[0] === 'sess-1')).toBe(true)
   })
 })

@@ -30,6 +30,12 @@ export interface ToolInvocationRef {
   readonly toolCallId: string
 }
 
+/** Run lifecycle identity and shared workspace ownership are intentionally distinct. */
+export interface ExecutionIdentity {
+  readonly runId: string
+  readonly resourceOwnerRunId: string
+}
+
 /** 工具触发的 Runtime 控制信号，不依赖本地化后的输出文本做控制流判断。 */
 export type ToolControlSignal = {
   type: 'mode_transition'
@@ -59,8 +65,10 @@ export interface ToolContext {
    * 写工具用它向 writer lease 登记；只读工具不消费。
    */
   workspaceRoot?: string
-  /** 当前 runId；写者租约按 run 归属，子代理权限按 run 路由都依赖它。 */
+  /** 当前 runId；用于 run 生命周期、interaction 与 generation fencing。 */
   runId?: string
+  /** root run 的 workspace ownership group；writer lease 只使用此身份。 */
+  resourceOwnerRunId?: string
   /**
    * 文件读取状态（read state）：记录"模型已 read 过哪些文件以及当时的内容/mtime"。
    * edit / write 工具的"先读后改"校验依赖此状态。

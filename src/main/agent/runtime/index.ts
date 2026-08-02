@@ -12,3 +12,7 @@ export {
   type BuiltinToolRegistrationDeps
 } from './registerBuiltinTools'
 export { resolveToDataUrl, PLACEHOLDER_PNG_DATA_URL } from './imageResolve'
+export {
+  prepareSubagentRuntime,
+  type PrepareSubagentRuntimeInput
+} from './SubagentRuntimeFactory'

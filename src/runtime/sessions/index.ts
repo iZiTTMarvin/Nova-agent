@@ -1,10 +1,12 @@
-export { SessionStore } from './SessionStore'
+export { SessionStore, deriveChildSessionId } from './SessionStore'
 export type {
   SessionSummary,
   SessionData,
   SessionMessage,
   SessionToolCall,
-  AppendMessageResult
+  AppendMessageResult,
+  CreateChildSessionCommand,
+  CreateChildSessionResult
 } from './types'
 export { SESSION_DATA_FILE } from './types'
 export {

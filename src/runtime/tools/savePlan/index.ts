@@ -241,7 +241,7 @@ export const savePlanTool: ToolExecutor = {
       return await withFileMutationQueue(planDirectory, async () => {
         assertSideEffectAllowed(context, '保存计划')
         const conflict = await acquireWriterLeaseOrConflict({
-          runId: context.runId,
+          runId: context.resourceOwnerRunId ?? context.runId,
           workspaceRoot: context.workspaceRoot ?? context.workingDir,
           abortSignal: context.abortSignal
         })

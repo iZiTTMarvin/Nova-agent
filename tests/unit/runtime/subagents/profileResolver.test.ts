@@ -1,0 +1,64 @@
+import { describe, expect, it } from 'vitest'
+import { resolveSubagentProfileSnapshot } from '../../../../src/runtime/subagents'
+
+describe('resolveSubagentProfileSnapshot', () => {
+  it('校验 unknown 输入并冻结稳定 profile snapshot 与 configHash', () => {
+    const raw = {
+      name: 'code',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read', 'write', 'read', 'task', 'start_workflow'],
+      model: { providerID: 'provider', modelID: 'model' },
+      maxToolRounds: 30,
+      contextWindow: 128_000
+    }
+
+    const first = resolveSubagentProfileSnapshot(raw, 'code')
+    const second = resolveSubagentProfileSnapshot(raw, 'code')
+
+    expect(first).toEqual({
+      profileId: 'code',
+      name: 'code',
+      description: 'writes code',
+      systemPrompt: 'do the work',
+      toolNames: ['read', 'write', 'task'],
+      permissionCeiling: 'workspace_write',
+      model: { providerId: 'provider', modelId: 'model' },
+      maxToolRounds: 30,
+      contextWindow: 128_000,
+      configHash: expect.stringMatching(/^[0-9a-f]{64}$/)
+    })
+    expect(first.configHash).toBe(second.configHash)
+    expect(Object.isFrozen(first)).toBe(true)
+    expect(Object.isFrozen(first.toolNames)).toBe(true)
+  })
+
+  it('read_only profile 永久剥离写工具与递归 delegation 工具', () => {
+    const snapshot = resolveSubagentProfileSnapshot({
+      name: 'explore',
+      description: 'inspect',
+      prompt: 'read only',
+      allowedTools: ['read', 'edit', 'write', 'bash', 'task', 'start_workflow']
+    }, 'explore')
+
+    expect(snapshot.permissionCeiling).toBe('read_only')
+    expect(snapshot.toolNames).toEqual(['read'])
+  })
+
+  it('identity、类型与边界不合法时 fail closed', () => {
+    expect(() => resolveSubagentProfileSnapshot(null, 'explore')).toThrow(/JSON object/)
+    expect(() => resolveSubagentProfileSnapshot({
+      name: 'other',
+      description: 'x',
+      prompt: 'x',
+      allowedTools: []
+    }, 'explore')).toThrow(/identity/)
+    expect(() => resolveSubagentProfileSnapshot({
+      name: 'explore',
+      description: 'x',
+      prompt: 'x',
+      allowedTools: ['read'],
+      maxToolRounds: 0
+    }, 'explore')).toThrow(/maxToolRounds/)
+  })
+})

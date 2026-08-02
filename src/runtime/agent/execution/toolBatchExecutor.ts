@@ -54,8 +54,10 @@ export interface ToolBatchExecutionOptions {
   messageId: string
   toolRegistry: ToolRegistry | null
   workingDir: string
-  /** 当前 runId，透传给 ToolContext 供写者租约 / 子代理权限按 run 归属 */
+  /** 当前 runId，透传给 ToolContext 供运行生命周期和 generation fencing 使用。 */
   runId?: string
+  /** root run 的 workspace ownership group，writer lease 只读取此字段。 */
+  resourceOwnerRunId?: string
   /** 工作区根，透传给 ToolContext 供写者租约按工作区分桶 */
   workspaceRoot?: string
   mode: Mode
@@ -141,6 +143,9 @@ function buildToolContext(
     workingDir: options.workingDir,
     ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
     ...(options.runId ? { runId: options.runId } : {}),
+    ...(options.resourceOwnerRunId
+      ? { resourceOwnerRunId: options.resourceOwnerRunId }
+      : {}),
     readState: options.readState,
     ...(options.checkpointManager ? { checkpointManager: options.checkpointManager } : {}),
     ...(options.fileEffectRecorder ? { fileEffectRecorder: options.fileEffectRecorder } : {}),

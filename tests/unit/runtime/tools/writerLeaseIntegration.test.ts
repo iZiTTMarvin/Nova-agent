@@ -26,12 +26,17 @@ describe('写者租约接入 edit / write', () => {
     writerLeaseRegistry.resetForTests()
   })
 
-  function createContext(runId: string): ToolContext {
+  function createContext(
+    runId: string,
+    resourceOwnerRunId = runId,
+    isolatedReadState = readState
+  ): ToolContext {
     return {
       workingDir: TMP,
       workspaceRoot: TMP,
       runId,
-      readState
+      resourceOwnerRunId,
+      readState: isolatedReadState
     }
   }
 
@@ -78,6 +83,32 @@ describe('写者租约接入 edit / write', () => {
       createContext('runA')
     )
     expect(result.success).toBe(true)
+  })
+
+  it('父持有 root 租约后 child 读同文件并以 root Owner 写入，不发生父子自锁', async () => {
+    const parent = createContext('run-parent')
+    const child = createContext(
+      'run-child',
+      'run-parent',
+      createReadState()
+    )
+    await writerLeaseRegistry.acquire(TMP, 'run-parent')
+    expect((await writeTool.execute(
+      { path: 'shared.txt', content: 'from parent' },
+      parent
+    )).success).toBe(true)
+
+    expect((await readTool.execute({ path: 'shared.txt' }, child)).success).toBe(true)
+    const childWrite = writeTool.execute(
+      { path: 'child.txt', content: 'from child' },
+      child
+    )
+    const settled = await Promise.race([
+      childWrite,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 200))
+    ])
+    expect(settled).not.toBe('timeout')
+    expect(settled).toEqual(expect.objectContaining({ success: true }))
   })
 
   it('无 runId / workspaceRoot 时放行（向后兼容）', async () => {

@@ -14,7 +14,7 @@ import { bashTool } from '../../../runtime/tools/bashTool'
 import { todoWriteTool } from '../../../runtime/tools/todoWriteTool'
 import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
-import { createTaskTool } from '../../../runtime/tools/taskTool'
+import { createTaskTool } from '../../../runtime/tools/task'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
@@ -25,6 +25,7 @@ import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { MemoryService } from '../../../runtime/memory/MemoryService'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SubAgentPermissionBridge } from '../../../runtime/tools/subAgentBridge'
+import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
 export interface BuiltinToolRegistrationDeps {
   modelClient: ModelClient
@@ -44,6 +45,8 @@ export interface BuiltinToolRegistrationDeps {
   getPermissionBridge?: () => SubAgentPermissionBridge
   /** 惰性获取主进程唯一编排器，工具执行时才读取。 */
   getWorkflowOrchestrator?: () => WorkflowOrchestrator | undefined
+  /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
+  getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
 }
 
 /**
@@ -96,12 +99,7 @@ export function registerBuiltinTools(
   )
   toolRegistry.register(
     createTaskTool({
-      modelClient: deps.modelClient,
-      parentEventBus: deps.eventBus,
-      contextWindow: deps.contextWindow,
-      supportsVision: deps.supportsVision,
-      resolveTool: (name) => toolRegistry.getTool(name),
-      ...(deps.getPermissionBridge ? { getPermissionBridge: deps.getPermissionBridge } : {})
+      getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
     })
   )
 }

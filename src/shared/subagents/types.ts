@@ -130,6 +130,7 @@ export interface SubagentProfileSnapshot {
   readonly permissionCeiling: 'read_only' | 'workspace_write'
   readonly model?: SubagentModelSnapshot
   readonly maxToolRounds: number
+  readonly contextWindow?: number
   readonly configHash: string
 }
 

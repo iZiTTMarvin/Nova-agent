@@ -30,6 +30,8 @@ export interface AgentContext {
    * 由 AgentTurnService 在 startRun 后注入；装配期可能为空字符串。
    */
   runId: string | null
+  /** writer lease 的 root ownership group；delegated run 与父级共享。 */
+  resourceOwnerRunId: string | null
   /** 工作区根，与 workingDir 同义；专门给写者租约按工作区分桶用。 */
   workspaceRoot: string | null
   /** 会话信息 */
@@ -65,6 +67,7 @@ export function createAgentContext(initial: {
     shellPath: undefined,
     binDirs: [],
     runId: null,
+    resourceOwnerRunId: null,
     workspaceRoot: null,
     sessionStore: null,
     sessionId: null,

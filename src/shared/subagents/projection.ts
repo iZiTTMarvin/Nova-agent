@@ -6,6 +6,7 @@
 import type { RunStatus } from '../run/types'
 import type {
   SubagentExecutionFailure,
+  SubagentLineage,
   SubagentProfileSnapshot
 } from './types'
 
@@ -22,6 +23,12 @@ export interface SubagentProfileProjection {
   readonly model?: never
   readonly maxToolRounds?: never
   readonly configHash?: never
+}
+
+/** Child-session metadata safe for session lists and renderer navigation. */
+export interface SubagentSessionListMetadata {
+  readonly lineage: SubagentLineage
+  readonly profile: SubagentProfileProjection
 }
 
 /**

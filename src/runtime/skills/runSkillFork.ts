@@ -1,6 +1,6 @@
 /**
  * runSkillFork — slash / tool 触发的 skill 子 agent 执行
- * 复用 taskTool 的隔离模式（ToolRegistry / PermissionManager / subAgentBridge）
+ * 独立装配 ToolRegistry 与 PermissionManager，并通过桥接器转发权限交互。
  */
 import { AgentLoop } from '../agent/AgentLoop'
 import { EventBus } from '../agent/EventBus'

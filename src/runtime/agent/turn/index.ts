@@ -14,3 +14,16 @@ export {
   type TurnDispatchOutcome,
   type SkillForkExecutionRequest
 } from './TurnDispatcher'
+export {
+  AgentTurnExecutor,
+  interruptAgentTurnAfterFailure,
+  reconcileAgentTurnTerminal,
+  type AgentTurnExecutionContext,
+  type AgentTurnExecutorInput,
+  type AgentTurnExecutorResult,
+  type AgentTurnRunRefs
+} from './AgentTurnExecutor'
+export {
+  projectAgentEventToRun,
+  type AgentEventRunProjectionContext
+} from './projectAgentEventToRun'
