@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React, { type ReactNode } from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { useStreamingRenderPool, getCatchupStep, RENDER_POOL_CONFIG, type RenderPoolConfig } from '../../../src/renderer/hooks/useStreamingRenderPool'
+import { act, renderDom } from './renderDom'
 
 /** 同步虚拟 rAF 调度器：tick 显式驱动，方便测试 */
 function createFakeRaf() {
@@ -150,8 +152,8 @@ describe('useStreamingRenderPool', () => {
   })
 
   /**
-   * 用 react-test-renderer 渲染一个 Probe 组件，组件里调用 hook 并把结果
-   * 存到 ref，外部断言 ref.current 的最新值。这样可以避免 testing-library 依赖。
+   * 用 React DOM 渲染一个 Probe 组件，组件里调用 hook 并把结果存到 ref，
+   * 外部断言 ref.current 的最新值。
    */
   function probeHook(props: { fullText: string; isStreaming: boolean; style?: 'agile' | 'elegant' }) {
     const ref: { current: ReturnType<typeof useStreamingRenderPool> | null } = { current: null }
@@ -164,10 +166,7 @@ describe('useStreamingRenderPool', () => {
 
   it('非流式时直接返回完整文本', () => {
     const { ref, Probe } = probeHook({ fullText: 'hello world', isStreaming: false })
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(Probe))
-    })
+    const renderer = renderDom(React.createElement(Probe))
 
     expect(ref.current).not.toBeNull()
     expect(ref.current!.text).toBe('hello world')
@@ -175,18 +174,13 @@ describe('useStreamingRenderPool', () => {
     expect(ref.current!.renderedLength).toBe(11)
     expect(ref.current!.targetLength).toBe(11)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('isStreaming 切换 false 时立即显示完整内容', () => {
     const props = { fullText: 'abc', isStreaming: true, style: 'agile' as const }
     const { ref, Probe } = probeHook(props)
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(Probe))
-    })
+    const renderer = renderDom(React.createElement(Probe))
 
     // 流式结束 + fullText 变长
     act(() => {
@@ -194,24 +188,19 @@ describe('useStreamingRenderPool', () => {
       props.fullText = 'abcde'
     })
     act(() => {
-      renderer?.update(React.createElement(Probe))
+      renderer.render(React.createElement(Probe))
     })
 
     expect(ref.current!.text).toBe('abcde')
     expect(ref.current!.renderedLength).toBe(5)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('流式期间 rAF 推进后 renderedLength 应大于 0', () => {
     const props = { fullText: '这是一段很长的文字' + 'x'.repeat(100), isStreaming: true, style: 'agile' as const }
     const { ref, Probe } = probeHook(props)
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(Probe))
-    })
+    const renderer = renderDom(React.createElement(Probe))
 
     // 流式期间首次挂载：renderedLength 从 0 开始（让打字机从头追赶 fullText）。
     // 这是渲染池打字机效果的关键不变量，对齐 useStreamingRenderPool 初始化策略。
@@ -227,9 +216,7 @@ describe('useStreamingRenderPool', () => {
     expect(ref.current!.renderedLength).toBeGreaterThan(0)
     expect(ref.current!.renderedLength).toBeLessThanOrEqual(ref.current!.targetLength)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('流式期间 fullText 持续增长：tick 真正推进了 renderedLength（核心追赶场景）', () => {
@@ -238,10 +225,7 @@ describe('useStreamingRenderPool', () => {
     // fullText 增长到 'a' + 'x'.repeat(500) → poolSize=501 → rAF tick 应逐步放出字符。
     const props = { fullText: 'a', isStreaming: true, style: 'agile' as const }
     const { ref, Probe } = probeHook(props)
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(Probe))
-    })
+    const renderer = renderDom(React.createElement(Probe))
 
     // 流式期间首次挂载 renderedLength=0
     expect(ref.current!.renderedLength).toBe(0)
@@ -253,7 +237,7 @@ describe('useStreamingRenderPool', () => {
       props.fullText = 'a' + 'x'.repeat(500)
     })
     act(() => {
-      renderer?.update(React.createElement(Probe))
+      renderer.render(React.createElement(Probe))
     })
 
     // 更新后：targetLength 跳到 501，renderedLength 仍为 0，poolSize = 501
@@ -288,19 +272,14 @@ describe('useStreamingRenderPool', () => {
     expect(ref.current!.poolSize).toBe(0)
     expect(fakeRaf.pending).toHaveLength(0)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('流式期间 fullText 继续增长：已追上后再增长，poolSize 重现非零', () => {
     // 边界：保证追赶不是 one-shot，而是持续可工作
     const props = { fullText: 'hello', isStreaming: true, style: 'agile' as const }
     const { ref, Probe } = probeHook(props)
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(Probe))
-    })
+    const renderer = renderDom(React.createElement(Probe))
 
     // 推进足够多帧把 5 个字符追上
     for (let i = 0; i < 5; i++) {
@@ -316,7 +295,7 @@ describe('useStreamingRenderPool', () => {
       props.fullText = 'hello' + 'y'.repeat(200)
     })
     act(() => {
-      renderer?.update(React.createElement(Probe))
+      renderer.render(React.createElement(Probe))
     })
     expect(ref.current!.targetLength).toBe(205)
     expect(ref.current!.poolSize).toBe(200)
@@ -328,19 +307,14 @@ describe('useStreamingRenderPool', () => {
     })
     expect(ref.current!.renderedLength).toBeGreaterThan(5)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('流式期间每次 tick 调用后 renderedLength 不会倒退（单调递增）', () => {
     // 反向断言：追赶算法不应当"多放出字符"
     const props = { fullText: 'seed', isStreaming: true, style: 'agile' as const }
     const { ref, Probe } = probeHook(props)
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(Probe))
-    })
+    const renderer = renderDom(React.createElement(Probe))
 
     let last = ref.current!.renderedLength
     for (let i = 0; i < 10; i++) {
@@ -349,7 +323,7 @@ describe('useStreamingRenderPool', () => {
         props.fullText = props.fullText + 'x'.repeat(50)
       })
       act(() => {
-        renderer?.update(React.createElement(Probe))
+        renderer.render(React.createElement(Probe))
       })
       act(() => {
         fakeRaf.advance(32)
@@ -360,8 +334,6 @@ describe('useStreamingRenderPool', () => {
       last = cur
     }
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 })

@@ -9,6 +9,9 @@ import {
 } from '../../shared/session/title'
 import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, ChevronIcon, TrashIcon, EditIcon } from './Icons'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Button } from '@astryxdesign/core/Button'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { TextInput } from '@astryxdesign/core/TextInput'
 import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
 import { useSubagentProjectionStore } from '../features/subagents/projection'
@@ -177,23 +180,37 @@ export const Sidebar: React.FC = () => {
       </div>
 
       <div className="px-3 py-3">
-        <button 
+        <Button
+          label="新对话"
+          variant="secondary"
+          icon={<PlusIcon size={14} className="text-text-secondary group-hover:text-text-primary transition-colors" />}
+          width="100%"
           className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-full bg-white border border-border-warm shadow-sm hover:shadow-md hover:border-gray-300 transition-all text-sm font-medium text-text-primary group"
           onClick={() => createNewSession(currentProject || undefined)}
-          title="新建对话"
-        >
-          <PlusIcon size={14} className="text-text-secondary group-hover:text-text-primary transition-colors" />
-          <span>新对话</span>
-        </button>
+          tooltip="新建对话"
+        />
       </div>
 
       {/* Projects and Sessions */}
       <div className="flex-1 overflow-y-auto px-3 pb-4">
-        <div className="flex items-center justify-between px-2 py-2 group cursor-pointer" onClick={selectProject}>
-          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">项目工作区</span>
-          <div className="p-1 rounded hover:bg-gray-200/50 text-text-muted hover:text-text-primary transition-colors" title="添加新工作区">
-            <PlusIcon size={12} />
-          </div>
+        <div className="flex items-center justify-between px-2 py-2 group">
+          <Button
+            label="项目工作区"
+            variant="ghost"
+            size="sm"
+            className="flex-1 justify-start px-0 text-xs font-semibold text-text-secondary uppercase tracking-wider"
+            onClick={selectProject}
+            tooltip="选择项目工作区"
+          />
+          <IconButton
+            label="添加新工作区"
+            icon={<PlusIcon size={12} />}
+            variant="ghost"
+            size="sm"
+            className="p-1 rounded hover:bg-gray-200/50 text-text-muted hover:text-text-primary transition-colors"
+            tooltip="添加新工作区"
+            onClick={selectProject}
+          />
         </div>
 
         <div className="mt-1 space-y-1">
@@ -213,35 +230,41 @@ export const Sidebar: React.FC = () => {
 
             return (
               <div key={projectPath} className="flex flex-col">
-                <div 
-                  className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-gray-200/50 cursor-pointer group"
-                  onClick={() => toggleProject(projectPath)}
-                >
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <ChevronIcon 
-                      size={12} 
-                      direction={isExpanded ? 'down' : 'right'} 
-                      style={{ transition: 'transform 0.2s' }}
-                      className="text-text-muted shrink-0" 
-                    />
-                    <FolderIcon size={14} className="text-text-secondary shrink-0" />
-                    <span className="text-sm text-text-primary truncate" title={projectPath}>
-                      {getProjectName(projectPath)}
-                    </span>
-                  </div>
-                  <div className="flex items-center shrink-0">
-                    <span className="text-[11px] text-text-muted group-hover:hidden">{sessionForest.length} 个任务</span>
-                    <div 
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-secondary transition-all"
-                      title="在此项目下新建会话"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        createNewSession(projectPath)
-                      }}
-                    >
-                      <PlusIcon size={12} />
-                    </div>
-                  </div>
+                <div className="flex items-center gap-1 px-2 py-1.5 rounded-md group">
+                  <Button
+                    label={getProjectName(projectPath)}
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={isExpanded}
+                    aria-label={`${isExpanded ? '收起' : '展开'}项目 ${getProjectName(projectPath)}`}
+                    className="flex-1 min-w-0 justify-start px-0 hover:bg-gray-200/50"
+                    icon={<FolderIcon size={14} className="text-text-secondary shrink-0" />}
+                    endContent={(
+                      <span className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                        <span className="group-hover:hidden">{sessionForest.length} 个任务</span>
+                        <ChevronIcon
+                          size={12}
+                          direction={isExpanded ? 'down' : 'right'}
+                          style={{ transition: 'transform 0.2s' }}
+                          className="text-text-muted shrink-0"
+                        />
+                      </span>
+                    )}
+                    onClick={() => toggleProject(projectPath)}
+                    tooltip={projectPath}
+                  />
+                  <IconButton
+                    label="在此项目下新建会话"
+                    icon={<PlusIcon size={12} />}
+                    variant="ghost"
+                    size="sm"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-secondary transition-all"
+                    tooltip="在此项目下新建会话"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      createNewSession(projectPath)
+                    }}
+                  />
                 </div>
 
                 <AnimatePresence initial={false}>
@@ -292,28 +315,35 @@ export const Sidebar: React.FC = () => {
                               title={showWaiting ? '等待你处理' : undefined}
                             >
                               {isEditing ? (
-                                <input
+                                <TextInput
                                   ref={editInputRef}
+                                  label="重命名会话"
+                                  isLabelHidden
+                                  size="sm"
+                                  width="100%"
                                   className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
                                   value={editValue}
-                                  maxLength={SESSION_TITLE_MAX_LENGTH}
-                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onChange={(value) => setEditValue(value.slice(0, SESSION_TITLE_MAX_LENGTH))}
                                   onKeyDown={(e) => handleEditKeyDown(e, session.id)}
                                   onBlur={() => void submitRename(session.id)}
                                   onClick={(e) => e.stopPropagation()}
                                 />
                               ) : (
-                                <button
+                                <Button
+                                  label={displayTitle}
+                                  variant="ghost"
+                                  size="sm"
                                   type="button"
-                                  className="flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                                  className={`flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+                                    isActive ? 'text-text-primary font-medium' : 'text-text-secondary'
+                                  }`}
                                   onClick={(event) => {
                                     event.stopPropagation()
                                     void selectSession(session.id)
                                   }}
-                                  aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
                                   aria-current={isActive ? 'page' : undefined}
-                                >
-                                  {childStatus ? (
+                                  aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
+                                  icon={childStatus ? (
                                     <span
                                       className="text-[11px] text-text-muted shrink-0"
                                       title={childStatus[1]}
@@ -321,14 +351,9 @@ export const Sidebar: React.FC = () => {
                                       <span aria-hidden="true">{childStatus[0]}</span>
                                       <span className="sr-only">{childStatus[1]}</span>
                                     </span>
-                                  ) : null}
-                                  <span
-                                    className={`text-sm truncate flex-1 min-w-0 ${isActive ? 'text-text-primary font-medium' : 'text-text-secondary'}`}
-                                    title={`${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`}
-                                  >
-                                    {displayTitle}
-                                  </span>
-                                </button>
+                                  ) : undefined}
+                                  tooltip={`${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`}
+                                />
                               )}
                               {showWaiting && (
                                 <div className="flex items-center gap-1 shrink-0">
@@ -338,17 +363,17 @@ export const Sidebar: React.FC = () => {
                                   >
                                     等待你处理
                                   </span>
-                                  <button
-                                    type="button"
+                                  <Button
+                                    label="停止"
+                                    variant="ghost"
+                                    size="sm"
                                     className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
-                                    title="停止此 XForge 运行"
+                                    tooltip="停止此 XForge 运行"
                                     onClick={(event) => {
                                       event.stopPropagation()
                                       void cancelExecution(waitingBadge?.runId)
                                     }}
-                                  >
-                                    停止
-                                  </button>
+                                  />
                                 </div>
                               )}
                               {showRunning && (
@@ -360,17 +385,17 @@ export const Sidebar: React.FC = () => {
                                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                                     运行中
                                   </span>
-                                  <button
-                                    type="button"
+                                  <Button
+                                    label="停止"
+                                    variant="ghost"
+                                    size="sm"
                                     className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
-                                    title="停止此会话的后台运行"
+                                    tooltip="停止此会话的后台运行"
                                     onClick={(event) => {
                                       event.stopPropagation()
                                       void cancelExecution(runningBadge?.runId)
                                     }}
-                                  >
-                                    停止
-                                  </button>
+                                  />
                                 </div>
                               )}
                               {!showWaiting && !showRunning && !isEditing && (
@@ -380,21 +405,25 @@ export const Sidebar: React.FC = () => {
                               )}
                               {!isEditing && (
                                 <div className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
-                                  <button
+                                  <IconButton
+                                    label="重命名会话"
+                                    icon={<EditIcon size={12} />}
+                                    variant="ghost"
+                                    size="sm"
                                     className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-text-primary transition-all"
-                                    title="重命名会话"
+                                    tooltip="重命名会话"
                                     onClick={(e) => startEditing(e, session)}
-                                  >
-                                    <EditIcon size={12} />
-                                  </button>
+                                  />
                                   {session.kind === 'primary' ? (
-                                    <button
+                                    <IconButton
+                                      label="删除会话"
+                                      icon={<TrashIcon size={12} />}
+                                      variant="ghost"
+                                      size="sm"
                                       className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
-                                      title="删除会话"
+                                      tooltip="删除会话"
                                       onClick={(e) => handleDelete(e, session.id)}
-                                    >
-                                      <TrashIcon size={12} />
-                                    </button>
+                                    />
                                   ) : null}
                                 </div>
                               )}
@@ -402,7 +431,11 @@ export const Sidebar: React.FC = () => {
                           )
                         })}
                         {showMoreToggle && (
-                          <button
+                          <Button
+                            label={isSessionListExpanded ? '收起' : '显示更多'}
+                            variant="ghost"
+                            size="sm"
+                            width="100%"
                             type="button"
                             className="w-full text-left px-3 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
                             onClick={(e) => {
@@ -413,9 +446,7 @@ export const Sidebar: React.FC = () => {
                                 [projectPath]: !isSessionListExpanded
                               }))
                             }}
-                          >
-                            {isSessionListExpanded ? '收起' : '显示更多'}
-                          </button>
+                          />
                         )}
                       </div>
                     </motion.div>
@@ -429,15 +460,18 @@ export const Sidebar: React.FC = () => {
 
       {/* Bottom Footer */}
       <div className="p-3 border-t border-border-cream">
-        <button 
+        <Button
+          label="设置"
+          variant="ghost"
+          width="100%"
+          icon={(
+            <span className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
+              <SettingsIcon size={16} />
+            </span>
+          )}
           onClick={() => setConfigModalOpen(true)}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200/50 transition-colors text-text-secondary hover:text-text-primary"
-        >
-          <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
-            <SettingsIcon size={16} />
-          </div>
-          <span className="text-sm font-medium">设置</span>
-        </button>
+        />
       </div>
     </aside>
   )

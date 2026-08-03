@@ -6,6 +6,7 @@
  * idle 后细条保留，直到下一条消息清 turnTouched。
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTodoStore, selectSessionTodoState } from './useTodoStore'
 import { TodoItemRow } from './TodoItemRow'
@@ -141,18 +142,19 @@ export const TodoPanel: React.FC<TodoPanelProps> = ({
           transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className="todo-panel" data-mode={view.mode} data-expanded={expanded}>
-            <button
-              type="button"
+            <Button
+              label="当前计划"
+              variant="ghost"
+              size="sm"
+              width="100%"
               className="todo-panel__header"
               onClick={handleHeaderClick}
               aria-expanded={expanded}
-            >
-              <span className="todo-panel__caret" data-collapsed={!expanded} aria-hidden="true">▾</span>
-              <span className="todo-panel__title">当前计划</span>
-              <span className="todo-panel__progress" aria-label={`已完成 ${completed} 项，共 ${total} 项`}>
+              icon={<span className="todo-panel__caret" data-collapsed={!expanded} aria-hidden="true">▾</span>}
+              endContent={<span className="todo-panel__progress" aria-label={`已完成 ${completed} 项，共 ${total} 项`}>
                 {completed}/{total}
-              </span>
-            </button>
+              </span>}
+            />
 
             {expanded && (
               <div className="todo-panel__body">

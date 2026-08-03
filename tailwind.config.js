@@ -20,5 +20,11 @@ module.exports = {
       }
     },
   },
+  // Astryx reset.css owns the document/form reset. Keeping Tailwind's
+  // utilities while disabling preflight prevents an unlayered reset from
+  // overriding Astryx component tokens and StyleX rules.
+  corePlugins: {
+    preflight: false,
+  },
   plugins: [],
 }

@@ -10,7 +10,10 @@
 .plan-review-card__header {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   width: 100%;
+  height: auto;
+  min-height: 56px;
   min-width: 0;
   gap: 10px;
   padding: 13px 14px;
@@ -37,34 +40,10 @@
   animation: plan-review-spin 0.9s linear infinite;
 }
 
-.plan-review-card__heading {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.plan-review-card__eyebrow {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-}
-
-.plan-review-card__title {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-family: var(--font-serif);
-  font-size: 0.98rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .plan-review-card__path {
-  max-width: 38%;
+  max-width: 100%;
   overflow: hidden;
+  padding: 8px 14px 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -122,25 +101,6 @@
   border-radius: 8px;
   font-size: 0.82rem;
   font-weight: 600;
-  cursor: pointer;
-}
-
-.plan-review-card__primary {
-  border: 1px solid color-mix(in srgb, var(--accent, #8f641f) 65%, transparent);
-  color: var(--bg-app);
-  background: var(--accent, #8f641f);
-}
-
-.plan-review-card__secondary {
-  border: 1px solid var(--border-warm);
-  color: var(--text-primary);
-  background: transparent;
-}
-
-.plan-review-card__primary:disabled,
-.plan-review-card__secondary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .plan-review-card__implemented {
@@ -157,7 +117,6 @@
 }
 
 @media (max-width: 760px) {
-  .plan-review-card__path,
   .plan-review-card__prompt {
     display: none;
   }

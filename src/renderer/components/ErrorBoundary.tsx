@@ -1,4 +1,5 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 
 interface Props {
   children: ReactNode
@@ -47,21 +48,11 @@ export class ErrorBoundary extends Component<Props, State> {
           <p style={{ marginBottom: 16, maxWidth: 480, textAlign: 'center', color: '#666' }}>
             {this.state.error.message || '未知错误'}
           </p>
-          <button
-            type="button"
+          <Button
+            label="重新加载"
+            variant="primary"
             onClick={this.handleReload}
-            style={{
-              padding: '8px 20px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#c96442',
-              color: '#fff',
-              cursor: 'pointer',
-              fontSize: 14
-            }}
-          >
-            重新加载
-          </button>
+          />
         </div>
       )
     }

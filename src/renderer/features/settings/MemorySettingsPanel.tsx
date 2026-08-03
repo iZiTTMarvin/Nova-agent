@@ -4,6 +4,11 @@
  * 提供：打开记忆目录、scope 信息、文件列表编辑、采集开关（逻辑 P2-2 才接）。
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
+import { TextArea } from '@astryxdesign/core/TextArea'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { MemoryScopeFileEntry, MemoryScopeStats } from '../../../shared/memory/types'
@@ -208,9 +213,12 @@ export const MemorySettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel memory-settings-panel">
-      <div className="settings-panel__warning-banner" role="note">
-        ⚠️ 记忆系统为实验性功能，可能不稳定，默认关闭。开启后仍可通过下方开关精细控制各项能力。
-      </div>
+      <Banner
+        status="warning"
+        title="记忆系统为实验性功能，可能不稳定，默认关闭。开启后仍可通过下方开关精细控制各项能力。"
+        container="section"
+        className="settings-panel__warning-banner"
+      />
 
       <header className="settings-panel__header settings-panel__header--row memory-settings-panel__header">
         <div>
@@ -220,22 +228,24 @@ export const MemorySettingsPanel: React.FC = () => {
           </p>
         </div>
         <div className="settings-panel__header-actions">
-          <button
-            type="button"
-            className="settings-panel__ghost-btn"
+          <Button
+            label="重建索引"
+            variant="secondary"
+            size="sm"
             onClick={() => void handleReconcile()}
-            disabled={!currentProject || loading}
+            isDisabled={!currentProject || loading}
           >
             重建索引
-          </button>
-          <button
-            type="button"
-            className="settings-panel__primary-btn"
+          </Button>
+          <Button
+            label="打开记忆目录"
+            variant="primary"
+            size="sm"
             onClick={() => void handleOpenDir()}
-            disabled={!currentProject}
+            isDisabled={!currentProject}
           >
             打开记忆目录
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -259,14 +269,15 @@ export const MemorySettingsPanel: React.FC = () => {
             >
               {stats.scopeDir}
             </code>
-            <button
-              type="button"
+            <Button
+              label="复制完整路径"
+              variant="ghost"
+              size="sm"
               className="memory-settings-panel__copy-btn"
               onClick={handleCopyScopePath}
-              title="复制完整路径"
             >
               复制
-            </button>
+            </Button>
           </div>
           <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--stats">
             <span className="memory-settings-panel__meta-label">统计</span>
@@ -290,12 +301,12 @@ export const MemorySettingsPanel: React.FC = () => {
                   一键开启全部能力：直读 MEMORY.md 注入 system prompt、工具轨迹自动采集、每 5 轮用 LLM 提炼为结论写入 episodic、模型可经 memory_search 工具主动检索。关闭后以上能力全部停止。
                 </p>
               </div>
-              <input
-                type="checkbox"
-                className="settings-modal__checkbox memory-settings-panel__toggle-input"
-                checked={settings.memoryEnabled}
-                onChange={e => void updateSetting('memoryEnabled', e.target.checked)}
-                aria-label="启用跨会话记忆"
+              <CheckboxInput
+                label="启用跨会话记忆"
+                isLabelHidden
+                className="memory-settings-panel__toggle-input"
+                value={settings.memoryEnabled}
+                onChange={checked => void updateSetting('memoryEnabled', checked)}
               />
             </div>
 
@@ -309,13 +320,13 @@ export const MemorySettingsPanel: React.FC = () => {
                   开启后，高分提炼结论会追加进 MEMORY.md（只追加、不覆盖）。由于这会改写你手写的项目长期记忆，测试版默认关闭；其余能力（采集 / 提炼 / episodic 落盘）不受影响。
                 </p>
               </div>
-              <input
-                type="checkbox"
-                className="settings-modal__checkbox memory-settings-panel__toggle-input"
-                checked={settings.memoryAutoMergeEnabled}
-                onChange={e => void updateSetting('memoryAutoMergeEnabled', e.target.checked)}
-                disabled={!settings.memoryEnabled}
-                aria-label="自动合并到 MEMORY.md"
+              <CheckboxInput
+                label="自动合并到 MEMORY.md"
+                isLabelHidden
+                className="memory-settings-panel__toggle-input"
+                value={settings.memoryAutoMergeEnabled}
+                onChange={checked => void updateSetting('memoryAutoMergeEnabled', checked)}
+                isDisabled={!settings.memoryEnabled}
               />
             </div>
           </div>
@@ -335,9 +346,12 @@ export const MemorySettingsPanel: React.FC = () => {
             </p>
           )}
           {files.map(file => (
-            <button
+            <ClickableCard
               key={file.relPath}
-              type="button"
+              label={file.relPath}
+              variant="transparent"
+              padding={0}
+              width="100%"
               className={`memory-settings-panel__file-item${
                 selectedPath === file.relPath ? ' memory-settings-panel__file-item--active' : ''
               }`}
@@ -352,7 +366,7 @@ export const MemorySettingsPanel: React.FC = () => {
               <span className="memory-settings-panel__file-meta">
                 {formatBytes(file.size)} · {formatMtime(file.mtimeMs)}
               </span>
-            </button>
+            </ClickableCard>
           ))}
         </aside>
 
@@ -369,11 +383,14 @@ export const MemorySettingsPanel: React.FC = () => {
                   </span>
                 )}
               </div>
-              <textarea
+              <TextArea
+                label="记忆文件内容"
+                isLabelHidden
                 className="memory-settings-panel__textarea"
                 value={content}
-                onChange={e => setContent(e.target.value)}
-                spellCheck={false}
+                onChange={value => setContent(value)}
+                hasSpellCheck={false}
+                width="100%"
               />
               <div className="memory-settings-panel__editor-footer">
                 {status && <span className="settings-panel__status">{status}</span>}
@@ -382,14 +399,15 @@ export const MemorySettingsPanel: React.FC = () => {
                     有未保存的更改
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="settings-panel__primary-btn"
+                <Button
+                  label={saving ? '保存中…' : '保存'}
+                  variant="primary"
+                  size="sm"
                   onClick={() => void handleSave()}
-                  disabled={saving}
+                  isDisabled={saving}
                 >
                   {saving ? '保存中…' : '保存'}
-                </button>
+                </Button>
               </div>
             </>
           ) : (

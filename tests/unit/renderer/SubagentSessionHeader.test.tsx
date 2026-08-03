@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubagentSessionHeader } from '../../../src/renderer/features/subagents/SubagentSessionHeader'
 import { useSubagentProjectionStore } from '../../../src/renderer/features/subagents/projection'
@@ -7,6 +8,7 @@ import { resetAgentStoreForTests, useAgentStore } from '../../../src/renderer/st
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import type { Session } from '../../../src/shared/session/types'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
+import { act, renderDom } from './renderDom'
 
 const session: Session = {
   id: 'child-session',
@@ -60,22 +62,20 @@ describe('SubagentSessionHeader', () => {
     useAgentStore.setState({ cancelExecution })
     useSubagentProjectionStore.getState().hydrateParent('parent-session', [projection])
 
-    let renderer: TestRenderer.ReactTestRenderer
-    act(() => {
-      renderer = TestRenderer.create(
-        <SubagentSessionHeader originalTask="inspect the durable session history" />
-      )
-    })
+    const renderer = renderDom(
+      <SubagentSessionHeader originalTask="inspect the durable session history" />
+    )
 
-    const output = JSON.stringify(renderer!.toJSON())
+    const output = renderer.container.textContent ?? ''
     expect(output).toContain('inspect the durable session history')
     expect(output).toContain('只读')
 
     act(() => {
-      renderer!.root.findByProps({ 'aria-label': '返回父任务' }).props.onClick()
-      renderer!.root.findByProps({ 'aria-label': '停止子代理 Explore' }).props.onClick()
+      renderer.container.querySelector<HTMLButtonElement>('button[aria-label="返回父任务"]')?.click()
+      renderer.container.querySelector<HTMLButtonElement>('button[aria-label="停止子代理 Explore"]')?.click()
     })
     expect(selectSession).toHaveBeenCalledWith('parent-session')
     expect(cancelExecution).toHaveBeenCalledWith('child-run')
+    renderer.unmount()
   })
 })

@@ -5,6 +5,7 @@
  * running：正在询问；success：已询问 N 个问题，可展开回看问答摘要。
  */
 import React, { useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 
 export interface AskQuestionToolCardProps {
@@ -86,25 +87,25 @@ export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.mem
 
     return (
       <div className={rootClass}>
-        <button
-          type="button"
+        <Button
+          label={label}
+          variant="ghost"
+          size="sm"
           className="ask-question-tool-card__header"
           onClick={() => {
             if (canExpand) setExpanded(prev => !prev)
           }}
           aria-expanded={canExpand ? expanded : undefined}
-          disabled={!canExpand}
-        >
-          <span className={`ask-question-tool-card__glyph ask-question-tool-card__glyph--${status}`} aria-hidden="true">
+          isDisabled={!canExpand}
+          icon={<span className={`ask-question-tool-card__glyph ask-question-tool-card__glyph--${status}`} aria-hidden="true">
             ?
-          </span>
-          <span className="ask-question-tool-card__label">{label}</span>
-          {canExpand && (
+          </span>}
+          endContent={canExpand ? (
             <span className="ask-question-tool-card__chevron" data-expanded={expanded} aria-hidden="true">
               <ChevronIcon size={14} direction={expanded ? 'up' : 'down'} />
             </span>
-          )}
-        </button>
+          ) : undefined}
+        />
 
         {expanded && parsed.pairs.length > 0 && (
           <div className="ask-question-tool-card__detail">

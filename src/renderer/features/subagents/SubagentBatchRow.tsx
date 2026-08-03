@@ -1,4 +1,5 @@
 import React from 'react'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import type { SubagentBatchProjection } from '../../../shared/subagents'
 import { useChatStore } from '../../stores/useChatStore'
 import './SubagentActivityRow.css'
@@ -31,17 +32,19 @@ export const SubagentBatchRow: React.FC<{ projection: SubagentBatchProjection }>
       {projection.members.map((member) => {
         const status = MEMBER_STATUS[member.status]
         return (
-          <button
-            type="button"
+          <ClickableCard
+            label={`打开 ${member.profileName}，${status.label}`}
+            variant="transparent"
+            padding={0}
+            width="100%"
             key={member.childSessionId}
             className="subagent-batch-row__member"
             onClick={() => void selectSession(member.childSessionId)}
-            aria-label={`打开 ${member.profileName}，${status.label}`}
           >
             <span aria-hidden="true">{status.icon}</span>
             <span>{member.profileName}</span>
             <span>{status.label}</span>
-          </button>
+          </ClickableCard>
         )
       })}
     </section>

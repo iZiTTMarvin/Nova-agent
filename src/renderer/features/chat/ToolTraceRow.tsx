@@ -5,6 +5,7 @@
  * 权限放行条始终挂在行下（冒泡），不依赖 L4 展开。
  */
 import React, { useMemo, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
 import { getToolTraceAction, getToolTraceTarget, getFileToolPreviewText } from './toolTraceDisplay'
@@ -167,23 +168,21 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
 
   return (
     <div className={rootClass}>
-      <button
-        type="button"
+      <Button
+        label={`${action} ${target}`}
+        variant="ghost"
+        size="sm"
         className="tool-trace-row__header"
         onClick={() => setIsOpen(prev => !prev)}
         aria-expanded={isOpen}
-      >
-        <StatusDot status={status} />
-        <span className="tool-trace-row__action">{action}</span>
-        <span className="tool-trace-row__target" title={target}>
-          {target}
-        </span>
-        <ChevronIcon
+        icon={<StatusDot status={status} />}
+        endContent={<ChevronIcon
           size={12}
           direction={isOpen ? 'down' : 'right'}
           className="tool-trace-row__chevron"
-        />
-      </button>
+        />}
+        tooltip={`${action} ${target}`}
+      />
 
       {/* L4：仅展开时挂载，避免默认渲染大段 result / 参数 DOM */}
       {isOpen && (

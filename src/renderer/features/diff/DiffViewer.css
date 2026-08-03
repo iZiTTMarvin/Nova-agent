@@ -69,36 +69,7 @@
 }
 
 .diff-header-btn {
-  padding: 3px 12px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-warm);
-  background-color: var(--bg-card);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.diff-header-btn:hover:not(:disabled) {
-  color: var(--color-error);
-  border-color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.06);
-}
-
-.diff-header-btn--primary {
-  color: var(--text-primary);
-}
-
-.diff-header-btn--primary:hover:not(:disabled) {
-  color: var(--color-success);
-  border-color: var(--color-success);
-  background-color: rgba(120, 140, 93, 0.08);
-}
-
-.diff-header-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  flex-shrink: 0;
 }
 
 /* ── diff 内容体 ──────────────────────────────────── */
@@ -266,29 +237,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  border: 1px solid var(--border-cream);
-  background-color: var(--bg-card);
-  color: var(--text-muted);
-  transition: all var(--transition-fast);
-}
-
-.diff-action-btn:hover {
-  transform: scale(1.1);
-}
-
-.diff-action-btn--accept:hover {
-  color: var(--color-success);
-  border-color: var(--color-success);
-  background-color: rgba(120, 140, 93, 0.08);
-}
-
-.diff-action-btn--reject:hover {
-  color: var(--color-error);
-  border-color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.06);
 }
 
 /* ── diff hunk 区块 ────────────────────────────────── */
@@ -428,19 +376,9 @@
 
 /* T04：hunk 截断提示 */
 .diff-hunk__truncation {
-  padding: 8px 14px;
-  font-size: 0.78rem;
-  color: var(--color-brand);
-  cursor: pointer;
-  background-color: var(--bg-sand);
-  border-top: 1px dashed var(--border-warm);
-  text-align: center;
-  user-select: none;
-  transition: background-color var(--transition-fast);
-}
-
-.diff-hunk__truncation:hover {
-  background-color: var(--border-cream);
+  width: 100%;
+  justify-content: center;
+  border-radius: 0;
 }
 
 /* ── PRD §5.3：过滤开关行 ── */
@@ -457,17 +395,6 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  cursor: pointer;
-  user-select: none;
-}
-
-.diff-toolbar__toggle input {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--color-brand);
-  cursor: pointer;
 }
 
 .diff-viewer__empty {
@@ -483,19 +410,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 8px 14px;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
   text-align: left;
-  transition: background-color var(--transition-fast);
-}
-
-.diff-viewer__show-more:hover {
-  background-color: var(--bg-sand);
-  color: var(--text-secondary);
 }
 
 .diff-viewer__batch-error {

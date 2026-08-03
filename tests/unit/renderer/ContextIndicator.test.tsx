@@ -1,8 +1,10 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContextIndicator } from '../../../src/renderer/features/chat/ContextIndicator'
 import { useAppStore } from '../../../src/renderer/stores/useAppStore'
+import { act, renderDom } from './renderDom'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
@@ -56,11 +58,6 @@ function setContextState(overrides?: Partial<{
 describe('ContextIndicator', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    global.window = {
-      ...(global.window ?? {}),
-      setTimeout,
-      clearTimeout
-    } as unknown as Window & typeof globalThis
     setContextState()
   })
 
@@ -69,50 +66,36 @@ describe('ContextIndicator', () => {
   })
 
   it('hover 后在弹层内展示平均缓存命中率', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
+    const renderer = renderDom(React.createElement(ContextIndicator))
+    const wrap = renderer.container.querySelector<HTMLElement>('.context-indicator-wrap')
+    expect(wrap).not.toBeNull()
     act(() => {
-      renderer = TestRenderer.create(React.createElement(ContextIndicator))
-    })
-
-    const wrap = renderer!.root.findByProps({ className: 'context-indicator-wrap' })
-    act(() => {
-      wrap.props.onMouseEnter()
+      wrap?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
       vi.advanceTimersByTime(100)
     })
 
-    expect(renderer!.root.findByProps({ className: 'context-usage__title' }).children).toEqual([
-      '平均缓存命中率'
-    ])
-    expect(renderer!.root.findByProps({ className: 'context-usage__summary' }).children.join('')).toContain(
-      '39.0%'
-    )
-    expect(renderer!.root.findAllByProps({ className: 'context-usage__label' })).toHaveLength(0)
+    expect(renderer.container.querySelector('.context-usage__title')?.textContent).toBe('平均缓存命中率')
+    expect(renderer.container.querySelector('.context-usage__summary')?.textContent ?? '').toContain('39.0%')
+    expect(renderer.container.querySelectorAll('.context-usage__label')).toHaveLength(0)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('本会话还没有 usage 时，在 hover 内明确提示未报告', () => {
     setContextState({ sessionUsage: null })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
+    const renderer = renderDom(React.createElement(ContextIndicator))
+    const wrap = renderer.container.querySelector<HTMLElement>('.context-indicator-wrap')
+    expect(wrap).not.toBeNull()
     act(() => {
-      renderer = TestRenderer.create(React.createElement(ContextIndicator))
-    })
-
-    const wrap = renderer!.root.findByProps({ className: 'context-indicator-wrap' })
-    act(() => {
-      wrap.props.onMouseEnter()
+      wrap?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
       vi.advanceTimersByTime(100)
     })
 
     // T1-3：无 usage 必须显示「未报告」，不得伪装成 0 命中
-    expect(renderer!.root.findByProps({ className: 'context-usage__summary' }).children).toEqual(['未报告'])
-    expect(renderer!.root.findByProps({ className: 'context-usage__hint' }).children.join('')).toContain('不会把未知显示为 0')
+    expect(renderer.container.querySelector('.context-usage__summary')?.textContent).toBe('未报告')
+    expect(renderer.container.querySelector('.context-usage__hint')?.textContent ?? '').toContain('不会把未知显示为 0')
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 })

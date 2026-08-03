@@ -4,6 +4,7 @@
  * 与单条 ToolTraceRow 同一过程轨视觉；展开仅列出各条目 Target。
  */
 import React, { useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 import { getToolGroupSummaryParts } from './toolCallGrouping'
 import { getToolTraceTarget } from './toolTraceDisplay'
@@ -33,24 +34,20 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
 
   return (
     <div className="tool-call-group">
-      <button
-        type="button"
+      <Button
+        label={`${prefix} ${pill}${suffix ? ` ${suffix}` : ''}`}
+        variant="ghost"
+        size="sm"
         className="tool-call-group__header"
         onClick={() => setIsOpen(prev => !prev)}
         aria-expanded={isOpen}
-      >
-        <GroupStatusDot status={aggregateStatus(blocks)} />
-        <span className="tool-call-group__action">{prefix}</span>
-        <span className="tool-call-group__target">
-          <span>{pill}</span>
-          {suffix ? <span className="tool-call-group__suffix"> {suffix}</span> : null}
-        </span>
-        <ChevronIcon
+        icon={<GroupStatusDot status={aggregateStatus(blocks)} />}
+        endContent={<ChevronIcon
           size={12}
           direction={isOpen ? 'down' : 'right'}
           className="tool-call-group__chevron"
-        />
-      </button>
+        />}
+      />
 
       {isOpen && (
         <ul className="tool-call-group__list">

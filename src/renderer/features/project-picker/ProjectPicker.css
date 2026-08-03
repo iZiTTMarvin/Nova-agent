@@ -5,6 +5,11 @@
   width: 100%;
 }
 
+.project-picker-narrow__control {
+  position: relative;
+  display: inline-flex;
+}
+
 .project-picker-narrow__btn {
   position: relative;
   display: flex;

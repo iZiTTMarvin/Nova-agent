@@ -58,7 +58,9 @@ function renderMessageRow(
   msg: ExtendedMessage,
   rowIndex: number,
   total: number,
-  props: VirtualMessageListProps
+  props: VirtualMessageListProps,
+  turnProcessOpen: boolean | undefined,
+  onTurnProcessOpenChange: (messageId: string, open: boolean) => void
 ): React.ReactNode {
   const {
     isGenerating,
@@ -114,6 +116,8 @@ function renderMessageRow(
       onAcceptAllFiles={onAcceptAllFiles}
       onRejectAllFiles={onRejectAllFiles}
       onRenderPoolTick={onRenderPoolTick}
+      turnProcessOpen={turnProcessOpen}
+      onTurnProcessOpenChange={onTurnProcessOpenChange}
       isPausedForInput={isPausedForUserInput && msg.id === pausedMessageId}
       diffCache={diffCache}
       isDiffLoading={isDiffLoading}
@@ -126,6 +130,19 @@ function renderMessageRow(
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => {
   const { messages, scrollElement } = props
   const [viewportReady, setViewportReady] = useState(false)
+  const [turnProcessOpenByMessageId, setTurnProcessOpenByMessageId] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    setTurnProcessOpenByMessageId({})
+  }, [props.currentSessionId])
+
+  const handleTurnProcessOpenChange = useCallback((messageId: string, open: boolean) => {
+    setTurnProcessOpenByMessageId(previous => (
+      previous[messageId] === open
+        ? previous
+        : { ...previous, [messageId]: open }
+    ))
+  }, [])
 
   // 检测滚动容器是否有真实布局尺寸（jsdom / TestRenderer 通常为 0）
   useEffect(() => {
@@ -168,7 +185,14 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
           const rowIndex = start + i
           return (
             <div key={msg.id} className="chat-messages__virtual-row" data-index={rowIndex}>
-              {renderMessageRow(msg, rowIndex, messages.length, props)}
+              {renderMessageRow(
+                msg,
+                rowIndex,
+                messages.length,
+                props,
+                turnProcessOpenByMessageId[msg.id],
+                handleTurnProcessOpenChange
+              )}
             </div>
           )
         })}
@@ -205,7 +229,14 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
             paddingBottom: MESSAGE_GAP_PX
           }}
         >
-          {renderMessageRow(messages[item.index], item.index, messages.length, props)}
+          {renderMessageRow(
+            messages[item.index],
+            item.index,
+            messages.length,
+            props,
+            turnProcessOpenByMessageId[messages[item.index].id],
+            handleTurnProcessOpenChange
+          )}
         </div>
       ))}
     </div>

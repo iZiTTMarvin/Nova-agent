@@ -2,6 +2,12 @@
  * LLM 多服务商配置面板 — 左侧服务商列表 + 右侧详情
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { NumberInput } from '@astryxdesign/core/NumberInput'
+import { Selector } from '@astryxdesign/core/Selector'
+import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore, getDefaultLlmRegistry } from '../../stores/useSettingsStore'
 import {
   type LlmRegistry,
@@ -300,9 +306,12 @@ export const LlmSettingsPanel: React.FC = () => {
             const isActive =
               selection.kind === 'preset' && selection.presetId === presetId
             return (
-              <button
+              <ClickableCard
                 key={presetId}
-                type="button"
+                label={meta.name}
+                variant="transparent"
+                padding={0}
+                width="100%"
                 className={`settings-split__item${isActive ? ' settings-split__item--active' : ''}`}
                 onClick={() => handlePresetSelect(presetId)}
               >
@@ -314,7 +323,7 @@ export const LlmSettingsPanel: React.FC = () => {
                 >
                   {connected ? '已连接' : '未连接'}
                 </span>
-              </button>
+              </ClickableCard>
             )
           })}
 
@@ -325,9 +334,12 @@ export const LlmSettingsPanel: React.FC = () => {
           {customProviders.map(p => {
             const isActive = selection.kind === 'custom' && selection.providerId === p.id
             return (
-              <button
+              <ClickableCard
                 key={p.id}
-                type="button"
+                label={p.name}
+                variant="transparent"
+                padding={0}
+                width="100%"
                 className={`settings-split__item${isActive ? ' settings-split__item--active' : ''}`}
                 onClick={() => handleCustomSelect(p.id)}
               >
@@ -339,17 +351,20 @@ export const LlmSettingsPanel: React.FC = () => {
                 >
                   {p.apiKey.trim() ? '已连接' : '未连接'}
                 </span>
-              </button>
+              </ClickableCard>
             )
           })}
 
-          <button
-            type="button"
+          <Button
+            label="添加自定义服务商"
+            variant="ghost"
+            size="sm"
+            width="100%"
             className="llm-provider-add"
             onClick={handleAddCustomProvider}
           >
             + 添加自定义服务商
-          </button>
+          </Button>
         </div>
 
         {/* 右侧：服务商详情 */}
@@ -358,38 +373,37 @@ export const LlmSettingsPanel: React.FC = () => {
             {selection.kind === 'custom' && (
               <div className="llm-provider-detail__toolbar">
                 <div className="settings-modal__field llm-provider-detail__name-field">
-                  <label className="settings-modal__label">服务商名称</label>
-                  <input
-                    type="text"
-                    className="settings-modal__input"
+                  <TextInput
+                    label="服务商名称"
                     value={editingProvider.name}
-                    onChange={e =>
-                      updateProviderInDraft({ ...editingProvider, name: e.target.value })
+                    onChange={value =>
+                      updateProviderInDraft({ ...editingProvider, name: value })
                     }
-                    disabled={saving}
+                    isDisabled={saving}
+                    width="100%"
                   />
                 </div>
-                <button
-                  type="button"
-                  className="settings-modal__btn settings-modal__btn--cancel llm-provider-detail__remove"
+                <Button
+                  label="删除服务商"
+                  variant="destructive"
+                  size="sm"
+                  className="llm-provider-detail__remove"
                   onClick={() => handleRemoveCustomProvider(editingProvider.id)}
                 >
                   删除
-                </button>
+                </Button>
               </div>
             )}
 
             <div className="settings-modal__field">
-            <label className="settings-modal__label">接口地址 (Base URL)</label>
-            <input
-              type="text"
-              className="settings-modal__input"
+            <TextInput
+              label="接口地址 (Base URL)"
               value={editingProvider.baseUrl}
-              onChange={e =>
-                updateProviderInDraft({ ...editingProvider, baseUrl: e.target.value })
+              onChange={value =>
+                updateProviderInDraft({ ...editingProvider, baseUrl: value })
               }
-              readOnly={Boolean(editingProvider.presetId)}
-              disabled={saving || Boolean(editingProvider.presetId)}
+              isDisabled={saving || Boolean(editingProvider.presetId)}
+              width="100%"
             />
             {editingProvider.presetId && (
               <span className="settings-modal__help">预设服务商地址不可修改。</span>
@@ -397,63 +411,66 @@ export const LlmSettingsPanel: React.FC = () => {
           </div>
 
           <div className="settings-modal__field">
-            <label className="settings-modal__label">API Key</label>
             <div className="settings-modal__input-wrapper">
-              <input
+              <TextInput
+                label="API Key"
                 type={showKey ? 'text' : 'password'}
-                className="settings-modal__input settings-modal__input--password"
                 value={editingProvider.apiKey}
-                onChange={e =>
-                  updateProviderInDraft({ ...editingProvider, apiKey: e.target.value })
+                onChange={value =>
+                  updateProviderInDraft({ ...editingProvider, apiKey: value })
                 }
                 placeholder="填写后保存即可使用"
-                disabled={saving}
+                isDisabled={saving}
+                width="100%"
               />
-              <button
-                type="button"
+              <Button
+                label={showKey ? '隐藏 API Key' : '显示 API Key'}
+                variant="ghost"
+                size="sm"
                 className="settings-modal__toggle-pwd"
                 onClick={() => setShowKey(!showKey)}
               >
                 {showKey ? '隐藏' : '显示'}
-              </button>
+              </Button>
             </div>
           </div>
 
           <div className="settings-modal__field">
-            <label className="settings-modal__label">工具调用方式</label>
-            <select
-              className="settings-modal__input settings-modal__select"
+            <Selector
+              label="工具调用方式"
+              width="100%"
+              options={[
+                { value: 'auto', label: '自动（推荐）' },
+                { value: 'native', label: '原生函数调用' },
+                { value: 'xml', label: 'XML 兼容模式' }
+              ]}
               value={editingProvider.toolDialect ?? 'auto'}
-              onChange={e =>
+              onChange={value =>
                 updateProviderInDraft({
                   ...editingProvider,
-                  toolDialect: e.target.value as 'auto' | 'native' | 'xml'
+                  toolDialect: value as 'auto' | 'native' | 'xml'
                 })
               }
-              disabled={saving}
-            >
-              <option value="auto">自动（推荐）</option>
-              <option value="native">原生函数调用</option>
-              <option value="xml">XML 兼容模式</option>
-            </select>
+              isDisabled={saving}
+            />
           </div>
 
           <div className="settings-modal__field">
             <div className="llm-model-list__toolbar">
               <label className="settings-modal__label">模型列表</label>
-              <button
-                type="button"
-                className="settings-modal__btn settings-modal__btn--cancel llm-model-refresh"
+              <Button
+                label={refreshing ? '刷新中…' : '刷新模型列表'}
+                variant="secondary"
+                size="sm"
+                className="llm-model-refresh"
                 onClick={() => void handleRefreshModels()}
-                disabled={saving || refreshing || !editingProvider.apiKey.trim()}
-                title={
+                isDisabled={saving || refreshing || !editingProvider.apiKey.trim()}
+                tooltip={
                   editingProvider.apiKey.trim()
                     ? '从服务商拉取可用模型'
                     : '请先填写 API Key'
                 }
-              >
-                {refreshing ? '刷新中…' : '刷新模型列表'}
-              </button>
+              >刷新模型列表</Button>
             </div>
             {refreshMessage && (
               <span className="settings-modal__help">{refreshMessage}</span>
@@ -479,13 +496,14 @@ export const LlmSettingsPanel: React.FC = () => {
             </ul>
 
             <div className="llm-model-add">
-              <input
-                type="text"
-                className="settings-modal__input"
+              <TextInput
+                label="手动输入模型 ID"
+                isLabelHidden
                 value={newModelId}
-                onChange={e => setNewModelId(e.target.value)}
+                onChange={value => setNewModelId(value)}
                 placeholder="手动输入模型 ID"
-                disabled={saving}
+                isDisabled={saving}
+                width="100%"
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
@@ -493,14 +511,15 @@ export const LlmSettingsPanel: React.FC = () => {
                   }
                 }}
               />
-              <button
-                type="button"
-                className="settings-modal__btn settings-modal__btn--cancel"
+              <Button
+                label="添加模型"
+                variant="secondary"
+                size="sm"
                 onClick={handleAddModel}
-                disabled={saving || !newModelId.trim()}
+                isDisabled={saving || !newModelId.trim()}
               >
                 添加
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -508,22 +527,22 @@ export const LlmSettingsPanel: React.FC = () => {
           </div>
 
           <div className="settings-modal__actions llm-provider-detail__actions">
-            <button
-              type="button"
-              className="settings-modal__btn settings-modal__btn--cancel"
+            <Button
+              label="取消"
+              variant="secondary"
               onClick={() => setConfigModalOpen(false)}
-              disabled={saving}
+              isDisabled={saving}
             >
               取消
-            </button>
-            <button
-              type="button"
-              className="settings-modal__btn settings-modal__btn--save"
+            </Button>
+            <Button
+              label={saving ? '保存中…' : '保存配置'}
+              variant="primary"
               onClick={() => void handleSave()}
-              disabled={saving}
+              isDisabled={saving}
             >
               {saving ? '保存中…' : '保存配置'}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -560,85 +579,88 @@ const ModelEntryRow: React.FC<{
           {advancedOpen && (
             <span className="llm-model-list__badge" title="已展开高级配置">高级</span>
           )}
-          <button
-            type="button"
+          <IconButton
+            label={`高级配置 ${label}`}
+            icon={<ChevronIcon size={14} direction={advancedOpen ? 'up' : 'down'} />}
+            variant="ghost"
+            size="sm"
             className="llm-model-list__advanced-toggle"
             onClick={() => setAdvancedOpen(!advancedOpen)}
-            disabled={disabled}
-            title="高级配置"
+            isDisabled={disabled}
+            tooltip="高级配置"
             aria-expanded={advancedOpen}
-            aria-label={`高级配置 ${label}`}
-          >
-            <ChevronIcon size={14} direction={advancedOpen ? 'up' : 'down'} />
-          </button>
-          <button
-            type="button"
+          />
+          <IconButton
+            label={`移除 ${label}`}
+            icon={<span aria-hidden="true">×</span>}
+            variant="ghost"
+            size="sm"
             className="llm-model-list__remove"
             onClick={onRemove}
-            disabled={disabled}
-            title="移除模型"
-            aria-label={`移除 ${label}`}
-          >
-            ×
-          </button>
+            isDisabled={disabled}
+            tooltip="移除模型"
+          />
         </div>
       </div>
 
       {advancedOpen && (
         <div className="llm-model-list__advanced">
           <div className="settings-modal__field">
-            <label className="settings-modal__label">显示名</label>
-            <input
-              type="text"
-              className="settings-modal__input"
+            <TextInput
+              label="显示名"
               value={entry.displayName ?? ''}
-              onChange={e =>
-                onUpdate(e.target.value.trim() ? { displayName: e.target.value } : { displayName: undefined })
+              onChange={value =>
+                onUpdate(value.trim() ? { displayName: value } : { displayName: undefined })
               }
               placeholder="默认用模型 ID"
-              disabled={disabled}
+              isDisabled={disabled}
+              width="100%"
             />
           </div>
 
           <div className="settings-modal__field">
-            <label className="settings-modal__label">上下文窗口（tokens）</label>
-            <input
-              type="number"
-              className="settings-modal__input"
-              value={entry.contextWindow ?? ''}
-              onChange={e => {
-                const v = e.target.value
-                onUpdate(v === '' ? { contextWindow: undefined } : { contextWindow: Number(v) })
-              }}
+            <NumberInput
+              label="上下文窗口（tokens）"
+              value={entry.contextWindow ?? null}
+              onChange={value => onUpdate({ contextWindow: value ?? undefined })}
               placeholder="留空则自动推断"
               min={1024}
-              disabled={disabled}
+              hasClear
+              isDisabled={disabled}
+              width="100%"
             />
             <span className="settings-modal__help">如 128000；留空时按模型 ID 猜测。</span>
           </div>
 
           <div className="settings-modal__field">
-            <label className="settings-modal__label">思考强度</label>
-            <select
-              className="settings-modal__input settings-modal__select"
+            <Selector
+              label="思考强度"
+              width="100%"
+              options={[
+                { value: 'auto', label: '自动（推荐，不发送参数）' },
+                { value: 'low', label: '低' },
+                { value: 'medium', label: '中' },
+                { value: 'high', label: '高' }
+              ]}
               value={entry.reasoningEffort ?? 'auto'}
-              onChange={e =>
-                onUpdate({ reasoningEffort: e.target.value as ReasoningEffort })
+              onChange={value =>
+                onUpdate({ reasoningEffort: value as ReasoningEffort })
               }
-              disabled={disabled}
+              isDisabled={disabled}
             >
-              <option value="auto">自动（推荐，不发送参数）</option>
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
+            </Selector>
             <span className="settings-modal__help">控制推理深度；auto 不影响现有行为。</span>
           </div>
 
           <div className="settings-modal__field">
-            <label className="settings-modal__label">支持图片</label>
-            <select
-              className="settings-modal__input settings-modal__select"
+            <Selector
+              label="支持图片"
+              width="100%"
+              options={[
+                { value: 'auto', label: '自动（留空）' },
+                { value: 'yes', label: '是' },
+                { value: 'no', label: '否' }
+              ]}
               value={
                 entry.supportsVision === undefined
                   ? 'auto'
@@ -646,18 +668,14 @@ const ModelEntryRow: React.FC<{
                     ? 'yes'
                     : 'no'
               }
-              onChange={e => {
-                const v = e.target.value
+              onChange={value => {
+                const v = value
                 onUpdate({
                   supportsVision: v === 'auto' ? undefined : v === 'yes'
                 })
               }}
-              disabled={disabled}
-            >
-              <option value="auto">自动（留空）</option>
-              <option value="yes">是</option>
-              <option value="no">否</option>
-            </select>
+              isDisabled={disabled}
+            />
           </div>
         </div>
       )}

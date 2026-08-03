@@ -22,15 +22,48 @@
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
+  min-height: 0;
+  height: auto;
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
   user-select: none;
-  background-color: var(--bg-card);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  justify-content: flex-start;
+  text-align: left;
   transition: background-color var(--transition-fast);
   min-width: 0;
 }
 
+/* Astryx Button keeps the visible content in a flex wrapper. The wrapper and
+ * its label/end-content slots are sized here so the file path can truncate
+ * while the status metadata stays visible at the trailing edge. */
+.streaming-card__header > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.streaming-card__header > span:first-child > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.streaming-card__header > span:first-child > span:nth-child(3) {
+  flex-shrink: 0;
+}
+
 .streaming-card__header:hover {
-  background-color: var(--bg-sand);
+  background: var(--bg-sand);
+}
+
+.streaming-card__header:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
 }
 
 .streaming-card__status-icon {
@@ -111,6 +144,12 @@
 .streaming-card__arrow {
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.streaming-card__header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* ── Body ─────────────────────────────────────────────── */
@@ -203,16 +242,21 @@
 /* T03：截断提示行 */
 .streaming-card__truncation-hint {
   padding: 8px 14px;
+  min-height: 0;
+  height: auto;
+  border: 0;
+  border-radius: 0;
   font-size: 0.78rem;
   color: var(--color-brand);
   cursor: pointer;
-  background-color: var(--bg-sand);
+  background: var(--bg-sand);
   border-top: 1px dashed var(--border-warm);
   text-align: center;
+  justify-content: center;
   user-select: none;
   transition: background-color var(--transition-fast);
 }
 
 .streaming-card__truncation-hint:hover {
-  background-color: var(--border-cream);
+  background: var(--border-cream);
 }

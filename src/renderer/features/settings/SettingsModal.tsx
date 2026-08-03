@@ -3,6 +3,9 @@
  * 导航：通用 / LLM / 规则 / 技能 / 子代理 / 权限
  */
 import React, { useEffect, useState } from 'react'
+import { Dialog } from '@astryxdesign/core/Dialog'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { GeneralSettingsPanel } from './GeneralSettingsPanel'
 import { LlmSettingsPanel } from './LlmSettingsPanel'
@@ -70,47 +73,56 @@ export const SettingsModal: React.FC = () => {
   if (!isOpen) return null
 
   return (
-    <div className="settings-modal-overlay" onClick={() => setConfigModalOpen(false)}>
-      <div className="settings-modal settings-modal--wide" onClick={e => e.stopPropagation()}>
-        <div className="settings-modal__header">
-          <h2 className="settings-modal__title">设置</h2>
-          <button
-            className="settings-modal__close-btn"
-            onClick={() => setConfigModalOpen(false)}
-            aria-label="关闭"
-            type="button"
-          >
-            &times;
-          </button>
-        </div>
+    <Dialog
+      isOpen={isOpen}
+      onOpenChange={open => {
+        if (!open) setConfigModalOpen(false)
+      }}
+      width="min(96vw, 56rem)"
+      maxHeight="min(88vh, 640px)"
+      padding={0}
+      className="settings-modal settings-modal--wide"
+      aria-label="设置"
+    >
+      <div className="settings-modal__header">
+        <h2 className="settings-modal__title">设置</h2>
+        <IconButton
+          className="settings-modal__close-btn"
+          onClick={() => setConfigModalOpen(false)}
+          aria-label="关闭"
+          label="关闭"
+          icon={<span aria-hidden="true">×</span>}
+          variant="ghost"
+          size="sm"
+        />
+      </div>
 
-        <div className="settings-modal__body">
-          <nav className="settings-nav" aria-label="设置导航">
+      <div className="settings-modal__body">
+        <SideNav className="settings-nav">
+          <SideNavSection title="设置" isHeaderHidden>
             {NAV_ITEMS.map(item => (
-              <button
+              <SideNavItem
                 key={item.id}
-                type="button"
-                className={`settings-nav__item${section === item.id ? ' settings-nav__item--active' : ''}`}
+                label={item.label}
+                isSelected={section === item.id}
                 onClick={() => selectSection(item.id)}
-              >
-                {item.label}
-              </button>
+              />
             ))}
-          </nav>
+          </SideNavSection>
+        </SideNav>
 
-          <div className="settings-modal__content">
-            {section === 'general' && <GeneralSettingsPanel />}
-            {section === 'llm' && <LlmSettingsPanel />}
-            {section === 'websearch' && <WebSearchSettingsPanel />}
-            {section === 'memory' && <MemorySettingsPanel />}
-            {section === 'rules' && <RulesSettingsPanel />}
-            {section === 'skills' && <SkillsSettingsPanel />}
-            {section === 'subagents' && <SubagentsSettingsPanel />}
-            {section === 'permissions' && <PermissionsSettingsPanel />}
-            {section === 'storage' && <StorageSettingsPanel />}
-          </div>
+        <div className="settings-modal__content">
+          {section === 'general' && <GeneralSettingsPanel />}
+          {section === 'llm' && <LlmSettingsPanel />}
+          {section === 'websearch' && <WebSearchSettingsPanel />}
+          {section === 'memory' && <MemorySettingsPanel />}
+          {section === 'rules' && <RulesSettingsPanel />}
+          {section === 'skills' && <SkillsSettingsPanel />}
+          {section === 'subagents' && <SubagentsSettingsPanel />}
+          {section === 'permissions' && <PermissionsSettingsPanel />}
+          {section === 'storage' && <StorageSettingsPanel />}
         </div>
       </div>
-    </div>
+    </Dialog>
   )
 }

@@ -4,6 +4,7 @@
 import React, { useCallback, useState } from 'react'
 import type { SkillCreateLocation } from '../../../shared/skills/types'
 import { skillsI18n } from './i18n'
+import { Button } from '@astryxdesign/core/Button'
 import './CreateSkillDialog.css'
 import './SkillImportBar.css'
 
@@ -84,22 +85,26 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
       <div className="skill-import-bar__location">
         <span className="settings-modal__label">{skillsI18n.importLocationLabel}</span>
         <div className="skill-dialog__template-row">
-          <button
+          <Button
+            label={skillsI18n.createLocationGlobal}
+            variant={location === 'global' ? 'primary' : 'secondary'}
+            size="sm"
+            aria-pressed={location === 'global'}
             type="button"
-            className={`skill-dialog__template-btn ${location === 'global' ? 'skill-dialog__template-btn--active' : ''}`}
+            className="skill-dialog__template-btn"
             onClick={() => setLocation('global')}
-            disabled={busy}
-          >
-            {skillsI18n.createLocationGlobal}
-          </button>
-          <button
+            isDisabled={busy}
+          />
+          <Button
+            label={skillsI18n.createLocationProject}
+            variant={location === 'project' ? 'primary' : 'secondary'}
+            size="sm"
+            aria-pressed={location === 'project'}
             type="button"
-            className={`skill-dialog__template-btn ${location === 'project' ? 'skill-dialog__template-btn--active' : ''}`}
+            className="skill-dialog__template-btn"
             onClick={() => setLocation('project')}
-            disabled={busy || !hasProject}
-          >
-            {skillsI18n.createLocationProject}
-          </button>
+            isDisabled={busy || !hasProject}
+          />
         </div>
       </div>
 
@@ -113,17 +118,18 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
         onDrop={e => void handleDrop(e)}
       >
         <p className="skill-import-bar__hint">{skillsI18n.importDropHint}</p>
-        <button
+        <Button
+          label={skillsI18n.importPickZip}
+          variant="secondary"
+          size="sm"
           type="button"
-          className="settings-panel__ghost-btn"
           onClick={() => void handlePickZip()}
-          disabled={busy}
-        >
-          {skillsI18n.importPickZip}
-        </button>
+          isDisabled={busy}
+        />
       </div>
 
       <form className="skill-import-bar__url" onSubmit={e => void handleUrlImport(e)}>
+        {/* Astryx TextInput has no URL input type; keep native URL validation for this transport field. */}
         <input
           type="url"
           className="settings-modal__input"
@@ -132,13 +138,13 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
           onChange={e => setUrl(e.target.value)}
           disabled={busy}
         />
-        <button
+        <Button
+          label={skillsI18n.importFromUrl}
+          variant="primary"
+          size="sm"
           type="submit"
-          className="settings-panel__primary-btn"
-          disabled={busy || !url.trim()}
-        >
-          {skillsI18n.importFromUrl}
-        </button>
+          isDisabled={busy || !url.trim()}
+        />
       </form>
 
       {status && <p className="settings-panel__status">{status}</p>}

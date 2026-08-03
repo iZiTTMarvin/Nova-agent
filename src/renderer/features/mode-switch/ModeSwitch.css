@@ -1,1 +1,109 @@
-/* 样式已迁移至 ModeSwitch.tsx 内使用 Tailwind CSS 实现 */
+.mode-switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-switch__menu {
+  display: inline-flex;
+}
+
+.mode-switch__menu-title {
+  padding: 8px 12px 6px;
+  color: var(--text-secondary, #6b6760);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mode-switch__error {
+  margin: 0 8px 6px;
+  padding: 7px 9px;
+  border: 1px solid rgba(181, 51, 51, 0.2);
+  border-radius: 6px;
+  background: rgba(181, 51, 51, 0.08);
+  color: var(--color-error, #b53333);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.mode-switch__menu-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-cream, rgba(0, 0, 0, 0.1));
+}
+
+.mode-switch__menu-item {
+  justify-content: flex-start;
+  min-height: 44px;
+  text-align: left;
+}
+
+.mode-switch__menu-item-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.mode-switch__menu-item-label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.mode-switch__menu-item-desc {
+  overflow: hidden;
+  color: var(--text-secondary, #6b6760);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-switch__menu-item--active .mode-switch__menu-item-desc {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.mode-switch__chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid var(--border-warm, #d8cfc0);
+  border-radius: 8px;
+}
+
+.mode-switch__chip--plan {
+  border-color: #c9973f;
+  background: #3a2f1d;
+  color: #f0c665;
+}
+
+.mode-switch__chip--compose {
+  border-color: #7665b5;
+  background: #2e2940;
+  color: #cec3ff;
+}
+
+.mode-switch__chip-main,
+.mode-switch__chip-close {
+  min-height: 30px;
+  color: inherit;
+}
+
+.mode-switch__chip-main {
+  border-radius: 7px 0 0 7px;
+}
+
+.mode-switch__chip-close {
+  border-radius: 0 7px 7px 0;
+}
+
+.mode-switch__chip-main:hover,
+.mode-switch__chip-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

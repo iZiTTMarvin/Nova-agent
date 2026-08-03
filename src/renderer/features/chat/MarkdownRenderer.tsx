@@ -9,6 +9,7 @@
  * ⚠️ 禁止只叠 React.memo 但仍每帧对完整 content 跑 ReactMarkdown。
  */
 import React, { Fragment, useCallback, useMemo, useRef, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
@@ -81,15 +82,15 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
     <div className="md-code-block">
       <div className="md-code-block__header">
         <span className="md-code-block__lang">{language || 'text'}</span>
-        <button
-          type="button"
+        <Button
+          label={copied ? '已复制' : '复制'}
+          variant="ghost"
+          size="sm"
+          icon={copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
           className="md-code-block__copy"
           onClick={handleCopy}
-          title="复制代码"
-        >
-          {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-          <span>{copied ? '已复制' : '复制'}</span>
-        </button>
+          tooltip="复制代码"
+        />
       </div>
       <pre className="md-code-block__pre">
         <code>

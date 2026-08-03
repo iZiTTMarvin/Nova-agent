@@ -9,6 +9,9 @@
  * 注意：权限规则 ≠ 规则文件（RuleFileEntry）。本面板只管工具调用授权规则。
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { Selector } from '@astryxdesign/core/Selector'
+import { TextInput } from '@astryxdesign/core/TextInput'
 import type { PermissionRuleDto, PermissionUpsertParams } from '../../../shared/permissions/types'
 import type { PermissionDecision } from '../../../shared/session/types'
 
@@ -101,56 +104,66 @@ export const PermissionsSettingsPanel: React.FC = () => {
         <div className="settings-modal__field">
           <label className="settings-modal__label">新增规则</label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <select
-              className="settings-modal__input settings-modal__select"
+            <Selector
+              label="工具"
+              isLabelHidden
+              options={[
+                { value: 'bash', label: 'bash' },
+                { value: 'write', label: 'write' },
+                { value: 'edit', label: 'edit' },
+                { value: '*', label: '所有工具 (*)' }
+              ]}
               value={toolName}
-              onChange={e => setToolName(e.target.value)}
-              style={{ width: 'auto', minWidth: 100 }}
-              disabled={adding}
+              onChange={value => setToolName(value)}
+              width={120}
+              isDisabled={adding}
             >
-              <option value="bash">bash</option>
-              <option value="write">write</option>
-              <option value="edit">edit</option>
-              <option value="*">所有工具 (*)</option>
-            </select>
-            <select
-              className="settings-modal__input settings-modal__select"
+            </Selector>
+            <Selector
+              label="行为"
+              isLabelHidden
+              options={[
+                { value: 'allow', label: '允许' },
+                { value: 'ask', label: '询问' },
+                { value: 'deny', label: '拒绝' }
+              ]}
               value={behavior}
-              onChange={e => setBehavior(e.target.value as PermissionDecision)}
-              style={{ width: 'auto', minWidth: 80 }}
-              disabled={adding}
+              onChange={value => setBehavior(value as PermissionDecision)}
+              width={100}
+              isDisabled={adding}
             >
-              <option value="allow">允许</option>
-              <option value="ask">询问</option>
-              <option value="deny">拒绝</option>
-            </select>
-            <select
-              className="settings-modal__input settings-modal__select"
+            </Selector>
+            <Selector
+              label="范围"
+              isLabelHidden
+              options={[
+                { value: 'project', label: '本项目' },
+                { value: 'global', label: '全局' }
+              ]}
               value={scope}
-              onChange={e => setScope(e.target.value as 'global' | 'project')}
-              style={{ width: 'auto', minWidth: 100 }}
-              disabled={adding}
+              onChange={value => setScope(value as 'global' | 'project')}
+              width={120}
+              isDisabled={adding}
             >
-              <option value="project">本项目</option>
-              <option value="global">全局</option>
-            </select>
-            <input
-              type="text"
-              className="settings-modal__input"
+            </Selector>
+            <TextInput
+              label="命令前缀"
+              isLabelHidden
               value={commandPrefix}
-              onChange={e => setCommandPrefix(e.target.value)}
+              onChange={value => setCommandPrefix(value)}
               placeholder="命令前缀（可选，如 npm install）"
-              style={{ flex: 1, minWidth: 180 }}
-              disabled={adding}
+              width="100%"
+              isDisabled={adding}
             />
-            <button
-              type="button"
-              className="settings-modal__btn settings-modal__btn--save"
+            <Button
+              label={adding ? '添加中…' : '添加'}
+              variant="primary"
+              size="sm"
               onClick={() => void handleAdd()}
-              disabled={adding}
+              isDisabled={adding}
             >
               {adding ? '添加中…' : '添加'}
-            </button>
+            </Button>
           </div>
           <span className="settings-modal__help">
             匹配优先级：项目级 &gt; 全局；显式工具 &gt; 通配；同级 deny 优先于 allow。
@@ -192,13 +205,15 @@ export const PermissionsSettingsPanel: React.FC = () => {
                       {rule.scope === 'project' ? '项目级' : '全局'}
                     </span>
                     {rule.description && <span className="perm-rule__desc">{rule.description}</span>}
-                    <button
-                      type="button"
+                    <Button
+                      label="删除"
+                      variant="destructive"
+                      size="sm"
                       className="perm-rule__delete"
                       onClick={() => void handleDelete(rule.id)}
                     >
                       删除
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ))}

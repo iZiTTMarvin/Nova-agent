@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sidebar } from '../../../src/renderer/components/Sidebar'
 import { useSubagentProjectionStore } from '../../../src/renderer/features/subagents/projection'
@@ -7,6 +8,7 @@ import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentSt
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { resetSettingsStoreForTests, useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
 import type { Session } from '../../../src/shared/session/types'
+import { act, renderDom } from './renderDom'
 
 vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
@@ -74,17 +76,15 @@ describe('Sidebar child session accessibility', () => {
       artifactCount: 0
     }])
 
-    let renderer: TestRenderer.ReactTestRenderer
-    act(() => {
-      renderer = TestRenderer.create(<Sidebar />)
-    })
-    const openChild = renderer!.root.findAllByType('button').find(
-      (button) => button.props['aria-label'] === '打开会话 Inspect runtime boundaries，运行中'
+    const renderer = renderDom(<Sidebar />)
+    const openChild = renderer.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="打开会话 Inspect runtime boundaries，运行中"]'
     )
 
     expect(openChild).toBeDefined()
-    expect(JSON.stringify(renderer!.toJSON())).toContain('运行中')
-    act(() => openChild!.props.onClick({ stopPropagation: vi.fn() }))
+    expect(renderer.container.textContent ?? '').toContain('运行中')
+    act(() => openChild?.click())
     expect(selectSession).toHaveBeenCalledWith(child.id)
+    renderer.unmount()
   })
 })

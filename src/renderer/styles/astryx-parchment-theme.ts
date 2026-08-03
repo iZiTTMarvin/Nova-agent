@@ -42,8 +42,10 @@ export const parchmentTheme = defineTheme({
     // ── 强调 / 状态色 ──
     '--color-accent': 'var(--color-brand)',
     '--color-accent-muted': 'var(--color-brand-dim)',
-    '--color-success': 'var(--color-success)',
-    '--color-error': 'var(--color-error)',
+    // Keep status colors in Nova-owned variables so light/dark mode can swap
+    // them without a self-referential Astryx token declaration.
+    '--color-success': 'var(--nova-status-success)',
+    '--color-error': 'var(--nova-status-error)',
     '--color-warning': '#d97757',
     '--color-success-muted': 'rgba(120, 140, 93, 0.12)',
     '--color-error-muted': 'rgba(181, 51, 51, 0.06)',

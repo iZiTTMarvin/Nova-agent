@@ -8,6 +8,7 @@
  * - 手动运行一次 GC
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import type { StorageUsageReport, StorageCleanupResult, SessionStorageBreakdown } from '../../../shared/storage/types'
 
 function formatBytes(bytes: number): string {
@@ -110,14 +111,15 @@ export const StorageSettingsPanel: React.FC = () => {
             查看会话磁盘占用，并清理 checkpoint 快照或彻底删除不再需要的会话。
           </p>
         </div>
-        <button
-          type="button"
-          className="settings-panel__ghost-btn"
+        <Button
+          label={loading ? '刷新中…' : '刷新'}
+          variant="secondary"
+          size="sm"
           onClick={() => void load()}
-          disabled={loading}
+          isDisabled={loading}
         >
           {loading ? '刷新中…' : '刷新'}
-        </button>
+        </Button>
       </header>
 
       <div className="settings-panel__scroll">
@@ -135,22 +137,24 @@ export const StorageSettingsPanel: React.FC = () => {
         <div className="settings-modal__field">
           <label className="settings-modal__label">全局操作</label>
           <div className="storage-actions">
-            <button
-              type="button"
-              className="settings-panel__ghost-btn"
+            <Button
+              label="清理全部过期 checkpoint"
+              variant="secondary"
+              size="sm"
               onClick={handlePruneAll}
-              disabled={actionId !== null}
+              isDisabled={actionId !== null}
             >
               清理全部过期 checkpoint
-            </button>
-            <button
-              type="button"
-              className="settings-panel__ghost-btn"
+            </Button>
+            <Button
+              label="立即运行 GC"
+              variant="secondary"
+              size="sm"
               onClick={handleRunGc}
-              disabled={actionId !== null}
+              isDisabled={actionId !== null}
             >
               立即运行 GC
-            </button>
+            </Button>
           </div>
           <span className="settings-modal__help">
             总占用：{report ? formatBytes(report.totalBytes) : '-'}
@@ -209,24 +213,28 @@ function SessionStorageRow({ row, isBusy, onPrune, onDelete }: SessionStorageRow
         {formatBytes(row.totalBytes)}
       </span>
       <span className="storage-table__cell storage-table__cell--actions">
-        <button
-          type="button"
+        <Button
+          label="清理"
+          variant="ghost"
+          size="sm"
           className="storage-table__action"
           onClick={onPrune}
-          disabled={isBusy}
-          title="清理该会话的过期 checkpoint 快照"
+          isDisabled={isBusy}
+          tooltip="清理该会话的过期 checkpoint 快照"
         >
           清理
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          label="删除"
+          variant="destructive"
+          size="sm"
           className="storage-table__action storage-table__action--danger"
           onClick={onDelete}
-          disabled={isBusy}
-          title="彻底删除该会话及其所有数据"
+          isDisabled={isBusy}
+          tooltip="彻底删除该会话及其所有数据"
         >
           删除
-        </button>
+        </Button>
       </span>
     </div>
   )

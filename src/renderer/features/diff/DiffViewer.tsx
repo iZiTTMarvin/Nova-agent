@@ -10,6 +10,9 @@
  * 6. PRD §5.3：批量审阅（全部接受 / 全部拒绝 / 只看未审阅 / 按目录折叠）
  */
 import React, { useMemo, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
+import { IconButton } from '@astryxdesign/core/IconButton'
 import type { DiffEntry, DiffHunk, DiffReviewStatus, SkippedFileInfo } from '../../../shared/diff/types'
 import { ChevronIcon, CheckIcon, UndoIcon } from '../../components/Icons'
 import { highlightLine } from './syntaxHighlight'
@@ -114,14 +117,24 @@ const HunkView: React.FC<{ hunk: DiffHunk; filePath: string }> = ({ hunk, filePa
           <DiffLineView key={idx} prefix={line.prefix} text={line.text} realLineNo={line.realLineNo} filePath={filePath} />
         ))}
         {needsTruncation && !showFull && (
-          <div className="diff-hunk__truncation" onClick={() => setShowFull(true)}>
-            还有 {allLines.length - PREVIEW_HUNK_LINE_LIMIT} 行未显示，点击展开完整 hunk
-          </div>
+          <Button
+            label={`还有 ${allLines.length - PREVIEW_HUNK_LINE_LIMIT} 行未显示，点击展开完整 hunk`}
+            variant="ghost"
+            size="sm"
+            className="diff-hunk__truncation"
+            onClick={() => setShowFull(true)}
+          />
         )}
         {needsTruncation && showFull && (
-          <div className="diff-hunk__truncation" onClick={() => setShowFull(false)}>
+          <Button
+            label="点击折叠"
+            variant="ghost"
+            size="sm"
+            className="diff-hunk__truncation"
+            onClick={() => setShowFull(false)}
+          >
             点击折叠
-          </div>
+          </Button>
         )}
       </div>
     </div>
@@ -217,7 +230,19 @@ const FileDiffPanel: React.FC<{
   if (reviewStatus === 'accepted') {
     return (
       <div className="diff-file diff-file--accepted">
-        <div className="diff-file__header" onClick={() => setExpanded(!expanded)}>
+        <div
+          className="diff-file__header"
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setExpanded(value => !value)
+            }
+          }}
+        >
           <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
           <span className="diff-file__name">{entry.filePath}</span>
           <span className="diff-file__status-badge">{statusLabel}</span>
@@ -238,28 +263,48 @@ const FileDiffPanel: React.FC<{
   // 待审查状态
   return (
     <div className={`diff-file ${statusClass}`}>
-      <div className="diff-file__header" onClick={() => setExpanded(!expanded)}>
+        <div
+          className="diff-file__header"
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setExpanded(value => !value)
+            }
+          }}
+        >
         <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
         <span className="diff-file__name">{entry.filePath}</span>
         <span className="diff-file__status-badge">{statusLabel}</span>
         <FileChangeStats entry={entry} />
-        <div className="diff-file__actions" onClick={e => e.stopPropagation()}>
-          <button
+        <div
+          className="diff-file__actions"
+          onClick={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+        >
+          <IconButton
+            label="接受改动（标记为已审查）"
+            icon={<CheckIcon size={13} />}
+            variant="ghost"
+            size="sm"
             className="diff-action-btn diff-action-btn--accept"
             onClick={handleAccept}
-            disabled={accepting || rejecting}
-            title="接受改动（标记为已审查）"
-          >
-            <CheckIcon size={13} />
-          </button>
-          <button
+            isDisabled={accepting || rejecting}
+            tooltip="接受改动（标记为已审查）"
+          />
+          <IconButton
+            label="拒绝改动（恢复原始文件）"
+            icon={<UndoIcon size={13} />}
+            variant="ghost"
+            size="sm"
             className="diff-action-btn diff-action-btn--reject"
             onClick={handleReject}
-            disabled={accepting || rejecting}
-            title="拒绝改动（恢复原始文件）"
-          >
-            <UndoIcon size={13} />
-          </button>
+            isDisabled={accepting || rejecting}
+            tooltip="拒绝改动（恢复原始文件）"
+          />
         </div>
       </div>
 
@@ -431,26 +476,30 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         {pendingCount > 0 && (onAcceptAll || onRejectAll) && (
           <div className="diff-viewer__header-actions">
             {onRejectAll && (
-              <button
-                type="button"
+              <Button
+                label="撤销"
+                variant="secondary"
+                size="sm"
                 className="diff-header-btn"
                 onClick={() => void handleRejectAll()}
-                disabled={batching}
-                title={`撤销全部 ${pendingCount} 个待审阅文件（从 checkpoint 恢复原始内容）`}
+                isDisabled={batching}
+                tooltip={`撤销全部 ${pendingCount} 个待审阅文件（从 checkpoint 恢复原始内容）`}
               >
                 撤销
-              </button>
+              </Button>
             )}
             {onAcceptAll && (
-              <button
-                type="button"
+              <Button
+                label="接受"
+                variant="primary"
+                size="sm"
                 className="diff-header-btn diff-header-btn--primary"
                 onClick={() => void handleAcceptAll()}
-                disabled={batching}
-                title={`接受全部 ${pendingCount} 个待审阅文件（标记为已审查）`}
+                isDisabled={batching}
+                tooltip={`接受全部 ${pendingCount} 个待审阅文件（标记为已审查）`}
               >
                 接受
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -481,22 +530,20 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           {/* PRD §5.3：过滤开关（批量撤销/接受已上移到卡片头部） */}
           {diffs.length > 1 && (
             <div className="diff-viewer__toolbar">
-              <label className="diff-toolbar__toggle" title="只展示未审阅的文件">
-                <input
-                  type="checkbox"
-                  checked={onlyPending}
-                  onChange={e => setOnlyPending(e.target.checked)}
-                />
-                <span>只看未审阅</span>
-              </label>
-              <label className="diff-toolbar__toggle" title="按文件路径首段分组">
-                <input
-                  type="checkbox"
-                  checked={groupByDir}
-                  onChange={e => setGroupByDir(e.target.checked)}
-                />
-                <span>按目录折叠</span>
-              </label>
+              <CheckboxInput
+                label="只看未审阅"
+                value={onlyPending}
+                size="sm"
+                className="diff-toolbar__toggle"
+                onChange={checked => setOnlyPending(checked)}
+              />
+              <CheckboxInput
+                label="按目录折叠"
+                value={groupByDir}
+                size="sm"
+                className="diff-toolbar__toggle"
+                onChange={checked => setGroupByDir(checked)}
+              />
             </div>
           )}
 
@@ -526,14 +573,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <>
               {listedDiffs.map(renderFile)}
               {capped && (
-                <button
-                  type="button"
+                <Button
+                  label={`再显示 ${visibleDiffs.length - FILE_LIST_PREVIEW_COUNT} 个文件`}
+                  variant="ghost"
+                  size="sm"
                   className="diff-viewer__show-more"
                   onClick={() => setShowAllFiles(true)}
-                >
-                  再显示 {visibleDiffs.length - FILE_LIST_PREVIEW_COUNT} 个文件
-                  <ChevronIcon size={12} direction="down" />
-                </button>
+                  endContent={<ChevronIcon size={12} direction="down" />}
+                />
               )}
             </>
           )}
@@ -556,7 +603,19 @@ const DiffDirGroup: React.FC<{ dir: string; entries: DiffEntry[]; children: Reac
   const [open, setOpen] = useState(true)
   return (
     <div className="diff-dir-group">
-      <div className="diff-dir-group__header" onClick={() => setOpen(!open)}>
+      <div
+        className="diff-dir-group__header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setOpen(value => !value)
+          }
+        }}
+      >
         <ChevronIcon size={13} direction={open ? 'down' : 'right'} />
         <span className="diff-dir-group__name">{dir}</span>
         <span className="diff-dir-group__count">{entries.length}</span>

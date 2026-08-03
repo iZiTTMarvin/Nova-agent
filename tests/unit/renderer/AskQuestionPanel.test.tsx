@@ -1,22 +1,23 @@
+// @vitest-environment jsdom
+
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import TestRenderer, { act } from 'react-test-renderer'
 import { AskQuestionPanel } from '../../../src/renderer/features/ask/AskQuestionPanel'
 import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import { act, renderDom, type DomRenderResult } from './renderDom'
 
 const mockInvoke = vi.fn()
 
 beforeEach(() => {
   vi.clearAllMocks()
   resetAgentStoreForTests()
-  global.window = {
-    ...global.window,
+  Object.assign(window, {
     api: {
       invoke: mockInvoke,
       on: vi.fn(),
       removeAllListeners: vi.fn()
     }
-  } as unknown as Window & typeof globalThis
+  })
 })
 
 afterEach(() => {
@@ -37,26 +38,35 @@ function makeRequest(questions: { question: string; options: string[]; multiple?
   }
 }
 
-function renderPanel() {
-  let renderer: TestRenderer.ReactTestRenderer | null = null
-  act(() => {
-    renderer = TestRenderer.create(React.createElement(AskQuestionPanel))
-  })
-  return renderer!
+function renderPanel(): DomRenderResult {
+  return renderDom(React.createElement(AskQuestionPanel))
 }
 
-function findByText(root: TestRenderer.ReactTestInstance, text: string) {
-  return root.find(node => node.children.some(child => typeof child === 'string' && child.includes(text)))
+function findByText(container: HTMLElement, text: string): HTMLElement {
+  const element = Array.from(container.querySelectorAll<HTMLElement>('*')).find(node =>
+    node.textContent?.includes(text)
+  )
+  if (!element) throw new Error(`text not found: ${text}`)
+  return element
 }
 
-function findAllByType(root: TestRenderer.ReactTestInstance, type: string) {
-  return root.findAll(node => node.type === type)
+function findAllByType(container: HTMLElement, selector: string): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(selector))
+}
+
+function findButton(container: HTMLElement, text: string): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(node =>
+    node.textContent?.includes(text)
+  )
+  if (!button) throw new Error(`button not found: ${text}`)
+  return button
 }
 
 describe('AskQuestionPanel 基础渲染', () => {
   it('pendingAskQuestion 为空时不渲染', () => {
     const renderer = renderPanel()
-    expect(renderer.toJSON()).toBeNull()
+    expect(renderer.container.querySelector('.ask-question-panel')).toBeNull()
+    renderer.unmount()
   })
 
   it('单题时渲染问题和选项', () => {
@@ -64,10 +74,10 @@ describe('AskQuestionPanel 基础渲染', () => {
       pendingAskQuestion: makeRequest([{ question: '你喜欢什么颜色？', options: ['红', '蓝'] }])
     })
     const renderer = renderPanel()
-    const root = renderer.root
-    expect(() => findByText(root, '你喜欢什么颜色？')).not.toThrow()
-    expect(() => findByText(root, '红')).not.toThrow()
-    expect(() => findByText(root, '蓝')).not.toThrow()
+    expect(() => findByText(renderer.container, '你喜欢什么颜色？')).not.toThrow()
+    expect(() => findByText(renderer.container, '红')).not.toThrow()
+    expect(() => findByText(renderer.container, '蓝')).not.toThrow()
+    renderer.unmount()
   })
 
   it('多题时显示进度', () => {
@@ -78,7 +88,8 @@ describe('AskQuestionPanel 基础渲染', () => {
       ])
     })
     const renderer = renderPanel()
-    expect(() => findByText(renderer.root, '1 / 2')).not.toThrow()
+    expect(() => findByText(renderer.container, '1 / 2')).not.toThrow()
+    renderer.unmount()
   })
 })
 
@@ -89,18 +100,14 @@ describe('AskQuestionPanel 单选题', () => {
       pendingAskQuestion: makeRequest([{ question: '选择框架', options: ['React', 'Vue'] }])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const radio = findAllByType(root, 'input')[0]
+    const radio = findAllByType(renderer.container, 'input')[0]
     expect(radio).toBeDefined()
-    act(() => radio.props.onChange())
+    act(() => radio.click())
 
     // 直接点击提交，不走 autoSubmit debounce
-    const submitBtn = root.find(node =>
-      node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('提交答案'))
-    )
     await act(async () => {
-      submitBtn.props.onClick()
+      findButton(renderer.container, '提交答案').click()
       await Promise.resolve()
     })
 
@@ -113,6 +120,7 @@ describe('AskQuestionPanel 单选题', () => {
         interactionId: 'req_1'
       })
     )
+    renderer.unmount()
   })
 
   it('单题多选时不自动提交', async () => {
@@ -122,11 +130,10 @@ describe('AskQuestionPanel 单选题', () => {
       pendingAskQuestion: makeRequest([{ question: '选择水果', options: ['苹果', '香蕉'], multiple: true }])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const checkbox = findAllByType(root, 'input')[0]
+    const checkbox = findAllByType(renderer.container, 'input')[0]
     expect(checkbox).toBeDefined()
-    act(() => checkbox.props.onChange())
+    act(() => checkbox.click())
 
     await act(async () => {
       vi.advanceTimersByTime(200)
@@ -134,6 +141,7 @@ describe('AskQuestionPanel 单选题', () => {
     })
 
     expect(mockInvoke).not.toHaveBeenCalled()
+    renderer.unmount()
   })
 
   it('单题单选选中后须手动点提交，不会在 120ms 后误提交空答案', async () => {
@@ -145,10 +153,9 @@ describe('AskQuestionPanel 单选题', () => {
       ])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const thirdOption = findAllByType(root, 'input')[2]
-    act(() => thirdOption.props.onChange())
+    const thirdOption = findAllByType(renderer.container, 'input')[2]
+    act(() => thirdOption.click())
 
     await act(async () => {
       vi.advanceTimersByTime(200)
@@ -158,6 +165,7 @@ describe('AskQuestionPanel 单选题', () => {
     // 回归：旧版 autoSubmit 因闭包陈旧会在此刻提交 selectedLabels: []，模型误判为「跳过」
     expect(mockInvoke).not.toHaveBeenCalled()
     expect(useAgentStore.getState().pendingAskQuestion).not.toBeNull()
+    renderer.unmount()
   })
 })
 
@@ -168,22 +176,18 @@ describe('AskQuestionPanel 多选题', () => {
       pendingAskQuestion: makeRequest([{ question: '选择依赖', options: ['lodash', 'dayjs', 'axios'], multiple: true }])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const lodash = findAllByType(root, 'input')[0]
-    act(() => lodash.props.onChange())
+    const lodash = findAllByType(renderer.container, 'input')[0]
+    act(() => lodash.click())
     await act(async () => { await Promise.resolve() })
 
-    const axios = findAllByType(root, 'input')[2]
+    const axios = findAllByType(renderer.container, 'input')[2]
     expect(axios).toBeDefined()
-    act(() => axios.props.onChange())
+    act(() => axios.click())
     await act(async () => { await Promise.resolve() })
 
-    const submitBtn = root.find(node =>
-      node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('提交答案'))
-    )
     await act(async () => {
-      submitBtn.props.onClick()
+      findButton(renderer.container, '提交答案').click()
       await Promise.resolve()
     })
 
@@ -196,6 +200,7 @@ describe('AskQuestionPanel 多选题', () => {
         interactionId: 'req_1'
       })
     )
+    renderer.unmount()
   })
 })
 
@@ -206,20 +211,26 @@ describe('AskQuestionPanel custom 输入', () => {
       pendingAskQuestion: makeRequest([{ question: '你的建议？', options: ['A', 'B'], custom: true }])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const customTrigger = root.find(node => node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('输入你的回答')))
-    act(() => customTrigger.props.onClick())
+    act(() => findButton(renderer.container, '输入你的回答').click())
     await act(async () => { await Promise.resolve() })
 
-    const customInput = root.find(node => node.type === 'input' && node.props.placeholder === '输入你的回答…')
-    act(() => customInput.props.onChange({ target: { value: '我的自定义回答' } }))
+    const customInput = renderer.container.querySelector<HTMLInputElement>('input[placeholder="输入你的回答…"]')
+    expect(customInput).not.toBeNull()
+    act(() => {
+      if (customInput) {
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value'
+        )?.set
+        valueSetter?.call(customInput, '我的自定义回答')
+        customInput.dispatchEvent(new Event('input', { bubbles: true }))
+        customInput.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })
 
-    const submitBtn = root.find(node =>
-      node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('提交答案'))
-    )
     await act(async () => {
-      submitBtn.props.onClick()
+      findButton(renderer.container, '提交答案').click()
       await Promise.resolve()
     })
 
@@ -232,6 +243,7 @@ describe('AskQuestionPanel custom 输入', () => {
         interactionId: 'req_1'
       })
     )
+    renderer.unmount()
   })
 })
 
@@ -242,13 +254,9 @@ describe('AskQuestionPanel dismiss', () => {
       pendingAskQuestion: makeRequest([{ question: '问题', options: ['A', 'B'] }])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const dismissBtn = root.find(node =>
-      node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('跳过全部'))
-    )
     await act(async () => {
-      dismissBtn.props.onClick()
+      findButton(renderer.container, '跳过全部').click()
       await Promise.resolve()
     })
 
@@ -261,6 +269,7 @@ describe('AskQuestionPanel dismiss', () => {
         interactionId: 'req_1'
       })
     )
+    renderer.unmount()
   })
 })
 
@@ -274,48 +283,38 @@ describe('AskQuestionPanel 多题向导', () => {
       ])
     })
     const renderer = renderPanel()
-    const root = renderer.root
 
-    const allButtons = root.findAll(node => node.type === 'button' && node.children.some(c => typeof c === 'string')
-    )
-    const nextBtn = allButtons.find(b => b.children.some(c => typeof c === 'string' && c.includes('下一题')))
-    let prevBtn = allButtons.find(b => b.children.some(c => typeof c === 'string' && c.includes('上一题')))
+    const nextBtn = findButton(renderer.container, '下一题')
 
     // 第一题选 A1
-    const a1 = findAllByType(root, 'input')[0]
+    const a1 = findAllByType(renderer.container, 'input')[0]
     expect(a1).toBeDefined()
-    act(() => a1.props.onChange())
+    act(() => a1.click())
     await act(async () => { await Promise.resolve() })
 
     // 下一题
-    expect(nextBtn).toBeDefined()
-    act(() => nextBtn!.props.onClick())
+    act(() => nextBtn.click())
     await act(async () => { await Promise.resolve() })
 
     // 第二题选 B2
-    const b2 = findAllByType(root, 'input')[1]
+    const b2 = findAllByType(renderer.container, 'input')[1]
     expect(b2).toBeDefined()
-    act(() => b2.props.onChange())
+    act(() => b2.click())
     await act(async () => { await Promise.resolve() })
 
     // 返回上一题验证状态保留
-    const buttonsAfterNext = root.findAll(node => node.type === 'button' && node.children.some(c => typeof c === 'string'))
-    prevBtn = buttonsAfterNext.find(b => b.children.some(c => typeof c === 'string' && c.includes('上一题')))
-    expect(prevBtn).toBeDefined()
-    act(() => prevBtn!.props.onClick())
+    const prevBtn = findButton(renderer.container, '上一题')
+    act(() => prevBtn.click())
     await act(async () => { await Promise.resolve() })
-    const a1Again = findAllByType(root, 'input')[0]
+    const a1Again = findAllByType(renderer.container, 'input')[0]
     expect(a1Again).toBeDefined()
-    expect(a1Again.props.checked).toBe(true)
+    expect((a1Again as HTMLInputElement).checked).toBe(true)
 
     // 再回到第二题提交
-    act(() => nextBtn!.props.onClick())
+    act(() => findButton(renderer.container, '下一题').click())
     await act(async () => { await Promise.resolve() })
-    const submitBtn = root.find(node =>
-      node.type === 'button' && node.children.some(c => typeof c === 'string' && c.includes('提交答案'))
-    )
     await act(async () => {
-      submitBtn.props.onClick()
+      findButton(renderer.container, '提交答案').click()
       await Promise.resolve()
     })
 
@@ -331,6 +330,7 @@ describe('AskQuestionPanel 多题向导', () => {
         interactionId: 'req_1'
       })
     )
+    renderer.unmount()
   })
 })
 
@@ -340,12 +340,13 @@ describe('AskQuestionPanel 状态清理', () => {
       pendingAskQuestion: makeRequest([{ question: '问题', options: ['A'] }])
     })
     const renderer = renderPanel()
-    expect(renderer.toJSON()).not.toBeNull()
+    expect(renderer.container.querySelector('.ask-question-panel')).not.toBeNull()
 
     act(() => {
       useAgentStore.setState({ pendingAskQuestion: null })
     })
 
-    expect(renderer.toJSON()).toBeNull()
+    expect(renderer.container.querySelector('.ask-question-panel')).toBeNull()
+    renderer.unmount()
   })
 })

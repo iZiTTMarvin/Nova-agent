@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { MinimizeIcon, MaximizeIcon, RestoreIcon, CloseIcon, NovaLogo } from './Icons'
+import { IconButton } from '@astryxdesign/core/IconButton'
 import './TitleBar.css'
 
 export const TitleBar: React.FC = () => {
@@ -37,27 +38,33 @@ export const TitleBar: React.FC = () => {
         <span className="title-bar__title">Nova Agent</span>
       </div>
       <div className="title-bar__right">
-        <button 
-          className="title-bar__btn title-bar__btn--minimize" 
+        <IconButton
+          label="最小化"
+          icon={<MinimizeIcon size={12} />}
+          variant="ghost"
+          size="sm"
+          className="title-bar__btn title-bar__btn--minimize"
           onClick={handleMinimize}
-          title="最小化"
-        >
-          <MinimizeIcon size={12} />
-        </button>
-        <button 
-          className="title-bar__btn title-bar__btn--maximize" 
+          tooltip="最小化"
+        />
+        <IconButton
+          label={isMaximized ? '向下还原' : '最大化'}
+          icon={isMaximized ? <RestoreIcon size={12} /> : <MaximizeIcon size={12} />}
+          variant="ghost"
+          size="sm"
+          className="title-bar__btn title-bar__btn--maximize"
           onClick={handleMaximize}
-          title={isMaximized ? "向下还原" : "最大化"}
-        >
-          {isMaximized ? <RestoreIcon size={12} /> : <MaximizeIcon size={12} />}
-        </button>
-        <button 
-          className="title-bar__btn title-bar__btn--close" 
+          tooltip={isMaximized ? '向下还原' : '最大化'}
+        />
+        <IconButton
+          label="关闭"
+          icon={<CloseIcon size={12} />}
+          variant="ghost"
+          size="sm"
+          className="title-bar__btn title-bar__btn--close"
           onClick={handleClose}
-          title="关闭"
-        >
-          <CloseIcon size={12} />
-        </button>
+          tooltip="关闭"
+        />
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 import React from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useSubagentProjectionStore } from './projection'
@@ -27,14 +28,13 @@ export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> =
 
   return (
     <header className="subagent-session-header">
-      <button
-        type="button"
+      <Button
+        label="← 返回父任务"
+        variant="ghost"
+        size="sm"
         className="subagent-session-header__back"
         onClick={() => void selectSession(session.subagent.lineage.parentSessionId)}
-        aria-label="返回父任务"
-      >
-        ← 返回父任务
-      </button>
+      />
       <div className="subagent-session-header__identity">
         <span className="subagent-session-header__name">{session.subagent.profile.name}</span>
         <span className="subagent-session-header__permission">
@@ -45,14 +45,14 @@ export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> =
         <p className="subagent-session-header__task" title={originalTask}>{originalTask}</p>
       ) : null}
       {active ? (
-        <button
-          type="button"
+        <Button
+          label="停止"
+          aria-label={`停止子代理 ${session.subagent.profile.name}`}
+          variant="destructive"
+          size="sm"
           className="subagent-session-header__stop"
           onClick={() => void cancelExecution(projection.childRunId)}
-          aria-label={`停止子代理 ${session.subagent.profile.name}`}
-        >
-          停止
-        </button>
+        />
       ) : null}
     </header>
   )

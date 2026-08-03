@@ -144,7 +144,7 @@ export const SkillAC = forwardRef<SkillACHandle, SkillACProps>(function SkillAC(
     el?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex])
 
-  // 测试环境（react-test-renderer）无 document，跳过 Portal 渲染
+  // 非浏览器预渲染阶段没有 document，无法挂载 body Portal。
   if (!open || typeof document === 'undefined') return null
 
   return createPortal(

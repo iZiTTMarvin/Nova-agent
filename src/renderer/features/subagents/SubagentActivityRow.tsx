@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { useChatStore } from '../../stores/useChatStore'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
@@ -94,11 +95,13 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
   }, [fallbackResult, projection])
 
   return (
-    <button
-      type="button"
+    <ClickableCard
+      label={`打开子代理 ${projection.profile.name}，${status.label}`}
+      variant="transparent"
+      padding={0}
+      width="100%"
       className={`subagent-activity-row subagent-activity-row--${status.tone}`}
       onClick={() => void selectSession(projection.childSessionId)}
-      aria-label={`打开子代理 ${projection.profile.name}，${status.label}`}
     >
       <span className="subagent-activity-row__glyph" aria-hidden="true">{status.icon}</span>
       <span className="subagent-activity-row__body">
@@ -120,7 +123,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
         ) : null}
       </span>
       <span className="subagent-activity-row__open" aria-hidden="true">打开 ›</span>
-    </button>
+    </ClickableCard>
   )
 }
 

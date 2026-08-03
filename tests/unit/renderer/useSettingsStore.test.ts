@@ -250,3 +250,37 @@ describe('useSettingsStore.handleUsage', () => {
     expect(useSettingsStore.getState().sessionUsageByProfile).toEqual({})
   })
 })
+
+describe('useSettingsStore.theme', () => {
+  beforeEach(() => {
+    resetSettingsStoreForTests()
+    mockInvoke.mockReset()
+  })
+
+  it('loadTheme 将持久化主题投影到 renderer store', async () => {
+    mockInvoke.mockResolvedValue({ theme: 'dark' })
+
+    await useSettingsStore.getState().loadTheme()
+
+    expect(mockInvoke).toHaveBeenCalledWith('settings:get')
+    expect(useSettingsStore.getState().theme).toBe('dark')
+  })
+
+  it('setTheme 只在 IPC 成功后采用权威返回值', async () => {
+    mockInvoke.mockResolvedValue({ theme: 'light' })
+
+    await useSettingsStore.getState().setTheme('dark')
+
+    expect(mockInvoke).toHaveBeenCalledWith('settings:set', { theme: 'dark' })
+    expect(useSettingsStore.getState().theme).toBe('light')
+  })
+
+  it('setTheme 失败时保留原投影并向调用方抛错', async () => {
+    useSettingsStore.setState({ theme: 'light' })
+    const failure = new Error('保存失败')
+    mockInvoke.mockRejectedValue(failure)
+
+    await expect(useSettingsStore.getState().setTheme('dark')).rejects.toBe(failure)
+    expect(useSettingsStore.getState().theme).toBe('light')
+  })
+})

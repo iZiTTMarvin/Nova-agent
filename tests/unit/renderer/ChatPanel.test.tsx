@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
+import { act, renderDom } from './renderDom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
@@ -71,8 +73,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     resetAgentStoreForTests()
 
     mockInvoke.mockResolvedValue(undefined)
-    global.window = {
-      ...global.window,
+    Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: {
         skill: {
@@ -80,7 +81,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
           list: vi.fn(() => [])
         }
       }
-    } as unknown as Window & typeof globalThis
+    })
 
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -99,13 +100,8 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
       useAgentStore.setState({ pendingAskQuestion: null })
     })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel))
-    })
-    act(() => {
-      renderer?.unmount()
-    })
+    const renderer = renderDom(React.createElement(ChatPanel))
+    renderer.unmount()
 
     const captured = messageItemPropsByRender.find(p => p.msgId === 'msg_1')
     expect(captured).toBeDefined()
@@ -122,10 +118,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
       })
     })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel))
-    })
+    const renderer = renderDom(React.createElement(ChatPanel))
 
     // 切到 askQuestion 面板打开，触发 ChatPanel 重渲染
     act(() => {
@@ -138,9 +131,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
         }
       })
     })
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
 
     // 取面板打开后最近一次渲染：历史消息不暂停，当前生成消息才暂停。
     const historical = messageItemPropsByRender.filter(p => p.msgId === 'msg_1').pop()
@@ -161,10 +152,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
       })
     })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel))
-    })
+    const renderer = renderDom(React.createElement(ChatPanel))
 
     act(() => {
       useAgentStore.setState({
@@ -179,9 +167,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
         }
       })
     })
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
 
     const historical = messageItemPropsByRender.filter(p => p.msgId === 'msg_1').pop()
     const current = messageItemPropsByRender.filter(p => p.msgId === 'msg_2').pop()
@@ -200,8 +186,8 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
  * 启动 poller 的 effect 只依赖 isGenerating」——答完时 poller 被重建成停止态却不再 start，
  * 轮询永久失效（bash 撑高列表不再跟随底部）。
  *
- * react-test-renderer 默认宿主 ref 为 null，scrollTo 不会触发；这里用 createNodeMock
- * 提供带 scrollTo / 尺寸的假节点，并用假定时器驱动 setInterval。
+ * jsdom 不提供可布局的滚动尺寸；这里给真实滚动容器注入可控尺寸与 scrollTo，
+ * 再用假定时器驱动 setInterval。
  */
 describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () => {
   beforeEach(() => {
@@ -211,11 +197,10 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     mockInvoke.mockResolvedValue(undefined)
-    global.window = {
-      ...global.window,
+    Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
-    } as unknown as Window & typeof globalThis
+    })
     // rAF 桩成不回调，隔离出 setInterval 轮询路径
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -242,12 +227,24 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
       useAgentStore.setState({ pendingAskQuestion: null })
     })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel), {
-        createNodeMock: () => nodeMock
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const scrollContainer = renderer.container.querySelector<HTMLElement>('.chat-messages')
+    expect(scrollContainer).not.toBeNull()
+    if (scrollContainer) {
+      Object.defineProperties(scrollContainer, {
+        scrollHeight: { configurable: true, value: nodeMock.scrollHeight },
+        clientHeight: { configurable: true, value: nodeMock.clientHeight },
+        scrollTop: {
+          configurable: true,
+          get: () => nodeMock.scrollTop,
+          set: (value: number) => { nodeMock.scrollTop = value }
+        }
       })
-    })
+      Object.defineProperty(scrollContainer, 'scrollTo', {
+        configurable: true,
+        value: scrollTo
+      })
+    }
 
     // 1) 弹出 askQuestion（暂停轮询）
     act(() => {
@@ -274,8 +271,6 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
 
     expect(scrollTo).toHaveBeenCalled()
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 })

@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { useSettingsStore } from '../../stores/useSettingsStore'
+import React, { useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu'
 import {
   HandIcon,
   PlanIcon,
@@ -10,8 +12,8 @@ import {
   PlusIcon,
   SparklesIcon
 } from '../../components/Icons'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import type { Mode } from '../../../shared/session/types'
-import { motion, AnimatePresence } from 'framer-motion'
 import './ModeSwitch.css'
 
 interface ModeOption {
@@ -27,6 +29,41 @@ interface ModeSwitchProps {
   onSelectSkills?: () => void
 }
 
+interface ModeMenuItemProps {
+  label: string
+  description?: string
+  icon: React.ReactNode
+  isActive?: boolean
+  onClick: () => void
+}
+
+/** Button-backed menu row keeps the menu item in the same Astryx focus path. */
+const ModeMenuItem: React.FC<ModeMenuItemProps> = ({
+  label,
+  description,
+  icon,
+  isActive = false,
+  onClick
+}) => (
+  <Button
+    label={label}
+    variant={isActive ? 'primary' : 'ghost'}
+    size="sm"
+    width="100%"
+    role="menuitem"
+    tabIndex={-1}
+    icon={icon}
+    endContent={isActive ? <CheckSmallIcon size={16} /> : undefined}
+    className={`mode-switch__menu-item${isActive ? ' mode-switch__menu-item--active' : ''}`}
+    onClick={onClick}
+  >
+    <span className="mode-switch__menu-item-content">
+      <span className="mode-switch__menu-item-label">{label}</span>
+      {description ? <span className="mode-switch__menu-item-desc">{description}</span> : null}
+    </span>
+  </Button>
+)
+
 export const ModeSwitch: React.FC<ModeSwitchProps> = ({
   supportsVision = false,
   onSelectImage,
@@ -34,10 +71,8 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
 }) => {
   const currentMode = useSettingsStore(state => state.currentMode)
   const setMode = useSettingsStore(state => state.setMode)
-
   const [isOpen, setIsOpen] = useState(false)
   const [switchError, setSwitchError] = useState<string | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const modeOptions: ModeOption[] = [
     {
@@ -60,188 +95,130 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
     }
   ]
 
-  const activeOption = modeOptions.find(m => m.id === currentMode) || modeOptions[0]
+  const activeOption = modeOptions.find(option => option.id === currentMode) ?? modeOptions[0]
   const activeChip = currentMode === 'plan'
-    ? {
-        label: 'Plan',
-        className: 'border-[#c9973f] bg-[#3a2f1d] text-[#f0c665]',
-        iconClassName: 'text-[#f0c665]'
-      }
+    ? { label: 'Plan', className: 'mode-switch__chip--plan' }
     : currentMode === 'compose'
-      ? {
-          label: 'XForge',
-          className: 'border-[#7665b5] bg-[#2e2940] text-[#cec3ff]',
-          iconClassName: 'text-[#cec3ff]'
-        }
+      ? { label: 'XForge', className: 'mode-switch__chip--compose' }
       : null
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
+  const openMenu = () => {
+    setSwitchError(null)
+    setIsOpen(true)
+  }
+
+  const handleModeSelect = async (option: ModeOption): Promise<void> => {
+    if (currentMode === option.id) {
+      setIsOpen(false)
+      return
     }
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
+    setSwitchError(null)
+    try {
+      await setMode(option.id)
+      setIsOpen(false)
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '切换模式失败')
+      setIsOpen(true)
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
+  }
+
+  const handleExitMode = async (): Promise<void> => {
+    setSwitchError(null)
+    try {
+      await setMode('default')
+      setIsOpen(false)
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '退出模式失败')
+      setIsOpen(true)
     }
-  }, [isOpen])
+  }
 
   return (
-    <div className="relative flex items-center gap-1.5" ref={containerRef}>
-      <button
-        onClick={() => {
-          setSwitchError(null)
-          setIsOpen(!isOpen)
+    <div className="mode-switch">
+      <DropdownMenu
+        className="mode-switch__menu"
+        placement="above"
+        menuWidth={320}
+        isMenuOpen={isOpen}
+        onOpenChange={setIsOpen}
+        button={{
+          label: '添加工作流、上下文与工具',
+          variant: 'ghost',
+          size: 'sm',
+          isIconOnly: true,
+          icon: <PlusIcon size={16} />,
+          tooltip: '添加工作流、上下文与工具'
         }}
-        className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 text-gray-500 transition-colors hover:bg-[rgba(201,100,66,0.1)] hover:text-[#c96442]"
-        title="添加工作流、上下文与工具"
-        aria-label="添加工作流、上下文与工具"
-        type="button"
       >
-        <PlusIcon size={16} />
-      </button>
+        <div className="mode-switch__menu-title">添加工作流、上下文与工具</div>
+        {switchError && (
+          <div className="mode-switch__error" role="status">
+            {switchError}
+          </div>
+        )}
+        {modeOptions.map(option => {
+          const isActive = currentMode === option.id
+          return (
+            <ModeMenuItem
+              key={option.id}
+              icon={option.icon}
+              label={option.name}
+              description={option.desc}
+              isActive={isActive}
+              onClick={() => void handleModeSelect(option)}
+            />
+          )
+        })}
+        {(supportsVision || onSelectSkills) && (
+          <div className="mode-switch__menu-section">
+            {supportsVision && onSelectImage && (
+              <ModeMenuItem
+                icon={<ImageIcon size={14} />}
+                label="添加图片"
+                onClick={() => {
+                  setIsOpen(false)
+                  onSelectImage()
+                }}
+              />
+            )}
+            {onSelectSkills && (
+              <ModeMenuItem
+                icon={<SparklesIcon size={14} />}
+                label="技能与命令"
+                onClick={() => {
+                  setIsOpen(false)
+                  onSelectSkills()
+                }}
+              />
+            )}
+          </div>
+        )}
+      </DropdownMenu>
 
       {activeChip && (
-        <div
-          data-testid="active-mode-chip"
-          className={`flex h-8 items-center rounded-lg border text-[13px] font-medium transition-colors ${activeChip.className}`}
-        >
-          <button
-            onClick={() => {
-              setSwitchError(null)
-              setIsOpen(!isOpen)
-            }}
-            className="flex h-full items-center gap-1.5 rounded-l-lg pl-2.5 pr-1 hover:bg-white/5"
-            title="切换工作模式"
-            type="button"
+        <div data-testid="active-mode-chip" className={`mode-switch__chip ${activeChip.className}`}>
+          <Button
+            label="切换工作模式"
+            variant="ghost"
+            size="sm"
+            icon={activeOption.icon}
+            tooltip="切换工作模式"
+            className="mode-switch__chip-main"
+            onClick={openMenu}
           >
-            <span className={activeChip.iconClassName}>{activeOption.icon}</span>
-            <span>{activeChip.label}</span>
-          </button>
-          <button
-            aria-label={`退出 ${activeChip.label}`}
-            className="flex h-full items-center rounded-r-lg pl-1 pr-2 hover:bg-white/5"
-            onClick={async event => {
-              event.stopPropagation()
-              setSwitchError(null)
-              try {
-                await setMode('default')
-                setIsOpen(false)
-              } catch (error) {
-                setSwitchError(error instanceof Error ? error.message : '退出模式失败')
-                setIsOpen(true)
-              }
-            }}
-            title={`退出 ${activeChip.label}`}
-            type="button"
-          >
-            <CloseIcon size={12} />
-          </button>
+            {activeChip.label}
+          </Button>
+          <IconButton
+            label={`退出 ${activeChip.label}`}
+            variant="ghost"
+            size="sm"
+            icon={<CloseIcon size={12} />}
+            className="mode-switch__chip-close"
+            tooltip={`退出 ${activeChip.label}`}
+            onClick={() => void handleExitMode()}
+          />
         </div>
       )}
-
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute bottom-[calc(100%+8px)] left-0 w-[320px] bg-[#1e1e1e] border border-[#333] rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col"
-          >
-            <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#2d2d2d]">
-              <span className="text-[#a0a0a0] text-xs font-medium">添加工作流、上下文与工具</span>
-            </div>
-
-            <div className="flex flex-col p-1.5">
-              {switchError && (
-                <div className="mx-1.5 mb-1.5 rounded-md border border-[#6b3030] bg-[#351f1f] px-2.5 py-2 text-[11px] leading-snug text-[#f0a5a5]">
-                  {switchError}
-                </div>
-              )}
-              {modeOptions.map(option => {
-                const isActive = currentMode === option.id
-                return (
-                  <button
-                    key={option.id}
-                    onClick={async () => {
-                      if (isActive) {
-                        setIsOpen(false)
-                        return
-                      }
-                      setSwitchError(null)
-                      try {
-                        await setMode(option.id)
-                        setIsOpen(false)
-                      } catch (error) {
-                        setSwitchError(
-                          error instanceof Error ? error.message : '切换模式失败'
-                        )
-                      }
-                    }}
-                    className={`flex items-start gap-2.5 p-2.5 rounded-lg text-left transition-colors relative ${
-                      isActive
-                        ? 'bg-[#005fb8]'
-                        : 'hover:bg-[#2d2d2d]'
-                    }`}
-                  >
-                    <div className={`mt-[3px] shrink-0 ${isActive ? 'text-[#e0e0e0]' : 'text-[#a0a0a0]'}`}>
-                      {option.icon}
-                    </div>
-                    <div className="flex flex-col gap-0.5 flex-1 pr-6">
-                      <span className={`text-[13px] font-medium leading-tight ${isActive ? 'text-white' : 'text-[#e0e0e0]'}`}>
-                        {option.name}
-                      </span>
-                      <span className={`text-[11px] leading-snug ${isActive ? 'text-[#a0c5ff]' : 'text-[#888]'}`}>
-                        {option.desc}
-                      </span>
-                    </div>
-                    {isActive && (
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 text-white">
-                        <CheckSmallIcon size={16} />
-                      </div>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-
-            {(supportsVision || onSelectSkills) && (
-              <div className="flex flex-col border-t border-[#2d2d2d] p-1.5">
-                {supportsVision && onSelectImage && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsOpen(false)
-                      onSelectImage()
-                    }}
-                    className="flex items-center gap-2.5 rounded-lg p-2.5 text-left text-[#e0e0e0] transition-colors hover:bg-[#2d2d2d]"
-                  >
-                    <span className="text-[#a0a0a0]"><ImageIcon size={14} /></span>
-                    <span className="text-[13px] font-medium">添加图片</span>
-                  </button>
-                )}
-                {onSelectSkills && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsOpen(false)
-                      onSelectSkills()
-                    }}
-                    className="flex items-center gap-2.5 rounded-lg p-2.5 text-left text-[#e0e0e0] transition-colors hover:bg-[#2d2d2d]"
-                  >
-                    <span className="text-[#a0a0a0]"><SparklesIcon size={14} /></span>
-                    <span className="text-[13px] font-medium">技能与命令</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   )
 }

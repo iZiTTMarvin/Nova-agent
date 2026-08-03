@@ -1,13 +1,15 @@
+// @vitest-environment jsdom
+
 /**
  * AskQuestionToolCard 解析与文案
  */
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { describe, expect, it } from 'vitest'
 import {
   AskQuestionToolCard,
   parseAskQuestionResult
 } from '../../../src/renderer/features/chat/AskQuestionToolCard'
+import { renderDom } from './renderDom'
 
 describe('parseAskQuestionResult', () => {
   it('解析正常问答', () => {
@@ -35,40 +37,30 @@ describe('parseAskQuestionResult', () => {
 
 describe('AskQuestionToolCard', () => {
   it('running 显示正在询问', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        <AskQuestionToolCard
-          args={{ questions: [{ question: 'Q' }] }}
-          status="running"
-        />
-      )
-    })
-    expect(JSON.stringify(renderer?.toJSON())).toContain('正在询问')
-    act(() => {
-      renderer?.unmount()
-    })
+    const renderer = renderDom(
+      <AskQuestionToolCard
+        args={{ questions: [{ question: 'Q' }] }}
+        status="running"
+      />
+    )
+    expect(renderer.container.textContent ?? '').toContain('正在询问')
+    renderer.unmount()
   })
 
   it('success 显示已询问 N 个问题', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        <AskQuestionToolCard
-          args={{
-            questions: [
-              { question: 'Q1' },
-              { question: 'Q2' }
-            ]
-          }}
-          status="success"
-          result='User has answered your questions: "Q1"="A"; "Q2"="B".'
-        />
-      )
-    })
-    expect(JSON.stringify(renderer?.toJSON())).toContain('已询问 2 个问题')
-    act(() => {
-      renderer?.unmount()
-    })
+    const renderer = renderDom(
+      <AskQuestionToolCard
+        args={{
+          questions: [
+            { question: 'Q1' },
+            { question: 'Q2' }
+          ]
+        }}
+        status="success"
+        result='User has answered your questions: "Q1"="A"; "Q2"="B".'
+      />
+    )
+    expect(renderer.container.textContent ?? '').toContain('已询问 2 个问题')
+    renderer.unmount()
   })
 })

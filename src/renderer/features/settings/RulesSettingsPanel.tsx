@@ -2,6 +2,9 @@
  * Rules 配置面板 — 列表 + textarea 编辑器
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
+import { TextArea } from '@astryxdesign/core/TextArea'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { rulesI18n } from '../skills/i18n'
 import type { RuleFileEntry } from '../../../shared/settings/types'
@@ -109,9 +112,9 @@ export const RulesSettingsPanel: React.FC = () => {
           <h3 className="settings-panel__title">{rulesI18n.panelTitle}</h3>
           <p className="settings-panel__desc">{rulesI18n.panelDesc}</p>
         </div>
-        <button type="button" className="settings-panel__primary-btn" onClick={handleCreate}>
+        <Button label={rulesI18n.create} variant="primary" size="sm" onClick={handleCreate}>
           {rulesI18n.create}
-        </button>
+        </Button>
       </header>
 
       <div className="settings-split">
@@ -121,9 +124,12 @@ export const RulesSettingsPanel: React.FC = () => {
             <p className="settings-panel__muted">{rulesI18n.empty}</p>
           )}
           {rules.map(rule => (
-            <button
+            <ClickableCard
               key={rule.id}
-              type="button"
+              label={rule.relativePath}
+              variant="transparent"
+              padding={0}
+              width="100%"
               className={`settings-split__item${selectedId === rule.id ? ' settings-split__item--active' : ''}`}
               onClick={() => setSelectedId(rule.id)}
             >
@@ -131,29 +137,33 @@ export const RulesSettingsPanel: React.FC = () => {
               <span className="settings-split__item-meta">
                 {rule.scope === 'workspace' ? rulesI18n.scopeWorkspace : rulesI18n.scopeGlobal}
               </span>
-            </button>
+            </ClickableCard>
           ))}
         </aside>
 
         <div className="settings-split__editor">
           {selected ? (
             <>
-              <textarea
+              <TextArea
+                label="规则文件内容"
+                isLabelHidden
                 className="settings-editor"
                 value={content}
-                onChange={e => setContent(e.target.value)}
-                spellCheck={false}
+                onChange={value => setContent(value)}
+                hasSpellCheck={false}
+                width="100%"
               />
               <div className="settings-editor__footer">
                 {status && <span className="settings-panel__status">{status}</span>}
-                <button
-                  type="button"
-                  className="settings-panel__primary-btn"
+                <Button
+                  label={saving ? '保存中…' : rulesI18n.save}
+                  variant="primary"
+                  size="sm"
                   onClick={handleSave}
-                  disabled={saving}
+                  isDisabled={saving}
                 >
                   {saving ? '保存中…' : rulesI18n.save}
-                </button>
+                </Button>
               </div>
             </>
           ) : (

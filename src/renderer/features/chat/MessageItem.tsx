@@ -6,6 +6,10 @@
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
 import React, { useEffect, useMemo, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { TextArea } from '@astryxdesign/core/TextArea'
+import { Thumbnail } from '@astryxdesign/core/Thumbnail'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { DiffViewer } from '../diff/DiffViewer'
@@ -64,6 +68,8 @@ export interface MessageItemProps {
   /** PRD §5.3：批量拒绝，返回恢复成功与失败的文件 */
   onRejectAllFiles?: (sessionId: string, messageId: string, filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
   onRenderPoolTick: () => void
+  turnProcessOpen?: boolean
+  onTurnProcessOpenChange?: (messageId: string, open: boolean) => void
   diffCache?: MessageDiffCache
   isDiffLoading: boolean
   diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
@@ -234,6 +240,8 @@ function MessageItemInner({
   onAcceptAllFiles,
   onRejectAllFiles,
   onRenderPoolTick,
+  turnProcessOpen,
+  onTurnProcessOpenChange,
   diffCache,
   isDiffLoading,
   diffPlaceholders,
@@ -339,66 +347,62 @@ function MessageItemInner({
         {/* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出 */}
         {isAssistant && !isGenerating && (
           <div className="chat-msg__actions">
-            <button
+            <IconButton
+              label="重新生成此回答"
+              icon={<RegenerateIcon size={13} />}
               className={`chat-msg__action-btn${rollbackError || regenerateBlocked ? ' chat-msg__action-btn--disabled' : ''}`}
               onClick={() => onRegenerate(msg.id)}
-              disabled={!!rollbackError || regenerateBlocked}
-              title={
+              isDisabled={!!rollbackError || regenerateBlocked}
+              tooltip={
                 rollbackError
                   ? `无法重新生成：${rollbackError}`
                   : regenerateBlocked
                     ? '重新生成暂不支持含图片的消息'
                     : '重新生成此回答（保留原分支）'
               }
-            >
-              <RegenerateIcon size={13} />
-            </button>
+            />
           </div>
         )}
 
         {/* 兄弟分支翻页器：‹ k/n › */}
         {msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating && (
           <div className="chat-msg__branch-flipper">
-            <button
-              type="button"
+            <IconButton
+              label="上一条分支"
+              icon={<span aria-hidden="true">‹</span>}
               className="chat-msg__branch-btn"
-              disabled={msg.branch.index <= 1 || !!rollbackError}
+              isDisabled={msg.branch.index <= 1 || !!rollbackError}
               onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index - 2]!)}
-              title="上一条分支"
-              aria-label="上一条分支"
-            >
-              ‹
-            </button>
+              tooltip="上一条分支"
+            />
             <span className="chat-msg__branch-label">
               {msg.branch.index} / {msg.branch.total}
             </span>
-            <button
-              type="button"
+            <IconButton
+              label="下一条分支"
+              icon={<span aria-hidden="true">›</span>}
               className="chat-msg__branch-btn"
-              disabled={msg.branch.index >= msg.branch.total || !!rollbackError}
+              isDisabled={msg.branch.index >= msg.branch.total || !!rollbackError}
               onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index]!)}
-              title="下一条分支"
-              aria-label="下一条分支"
-            >
-              ›
-            </button>
+              tooltip="下一条分支"
+            />
           </div>
         )}
 
         {/* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */}
         {isUser && !isGenerating && !isEditing && onEditResend && userImageBlocks.length === 0 && (
           <div className="chat-msg__actions">
-            <button
+            <IconButton
+              label="编辑并重发"
+              icon={<EditIcon size={13} />}
               className={`chat-msg__action-btn${rollbackError ? ' chat-msg__action-btn--disabled' : ''}`}
               onClick={() => {
                 setEditText(typeof textContent === 'string' ? textContent : '')
                 setIsEditing(true)
               }}
-              disabled={!!rollbackError}
-              title={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
-            >
-              <EditIcon size={13} />
-            </button>
+              isDisabled={!!rollbackError}
+              tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
+            />
           </div>
         )}
 
@@ -420,6 +424,8 @@ function MessageItemInner({
                 isPausedForInput={isPausedForInput}
                 blocks={msg.blocks ?? []}
                 turnStartedAt={msg.turnStartedAt}
+                persistedUserOpen={turnProcessOpen}
+                onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
               />
             )}
             {turnModel.answerUnits.map((unit, i) => (
@@ -460,6 +466,8 @@ function MessageItemInner({
                     isPausedForInput={isPausedForInput}
                     blocks={msg.blocks ?? []}
                     turnStartedAt={msg.turnStartedAt}
+                    persistedUserOpen={turnProcessOpen}
+                    onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
                   />
                 )}
                 {turnModel.answerUnits.map((unit, i) => (
@@ -480,11 +488,13 @@ function MessageItemInner({
             )}
             {isUser && isEditing && (
               <div className="chat-msg__edit">
-                <textarea
+                <TextArea
+                  label="编辑消息"
+                  isLabelHidden
                   className="chat-msg__edit-input"
                   value={editText}
-                  onChange={e => setEditText(e.target.value)}
-                  autoFocus
+                  onChange={value => setEditText(value)}
+                  hasAutoFocus
                   rows={Math.min(10, Math.max(2, editText.split('\n').length))}
                   onKeyDown={e => {
                     // Esc 取消；Ctrl/⌘+Enter 确认重发
@@ -502,15 +512,19 @@ function MessageItemInner({
                   }}
                 />
                 <div className="chat-msg__edit-actions">
-                  <button
-                    className="chat-msg__edit-btn chat-msg__edit-btn--cancel"
+                  <Button
+                    label="取消"
+                    variant="secondary"
+                    size="sm"
+                    className="chat-msg__edit-btn"
                     onClick={() => setIsEditing(false)}
-                  >
-                    取消
-                  </button>
-                  <button
-                    className="chat-msg__edit-btn chat-msg__edit-btn--confirm"
-                    disabled={!editText.trim()}
+                  />
+                  <Button
+                    label="重发"
+                    variant="primary"
+                    size="sm"
+                    className="chat-msg__edit-btn"
+                    isDisabled={!editText.trim()}
                     onClick={() => {
                       const t = editText.trim()
                       if (t) {
@@ -518,9 +532,7 @@ function MessageItemInner({
                         onEditResend?.(msg.id, t)
                       }
                     }}
-                  >
-                    重发
-                  </button>
+                  />
                 </div>
               </div>
             )}
@@ -531,14 +543,14 @@ function MessageItemInner({
         {isUser && userImageBlocks.length > 0 && (
           <div className="user-message-image-grid">
             {userImageBlocks.map((img, idx) => (
-              <button
+              <Thumbnail
                 key={`${img.fileName}-${idx}`}
                 className="user-message-image-grid__item"
-                type="button"
-                title={img.fileName}
-              >
-                <img src={img.dataUrl} alt={img.fileName} draggable={false} />
-              </button>
+                src={img.dataUrl}
+                alt={img.fileName}
+                label={img.fileName}
+                style={{ width: '100%' }}
+              />
             ))}
           </div>
         )}
@@ -604,6 +616,8 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.onAcceptAllFiles === next.onAcceptAllFiles &&
     prev.onRejectAllFiles === next.onRejectAllFiles &&
     prev.onRenderPoolTick === next.onRenderPoolTick &&
+    prev.turnProcessOpen === next.turnProcessOpen &&
+    prev.onTurnProcessOpenChange === next.onTurnProcessOpenChange &&
     prev.diffCache === next.diffCache &&
     prev.isDiffLoading === next.isDiffLoading &&
     prev.diffPlaceholders === next.diffPlaceholders &&

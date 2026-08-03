@@ -1,7 +1,7 @@
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CloseIcon } from './Icons'
 import type { ImageAttachment } from '../lib/image-attachments'
+import { Thumbnail } from '@astryxdesign/core/Thumbnail'
 import './ImagePreviewBar.css'
 
 interface ImagePreviewBarProps {
@@ -31,30 +31,18 @@ export const ImagePreviewBar: React.FC<ImagePreviewBarProps> = ({
               transition={{ type: 'spring', stiffness: 400, damping: 28 }}
               className="image-preview-bar__item"
             >
-              <button
-                className="image-preview-bar__thumb-btn"
+              <Thumbnail
+                src={img.dataUrl}
+                alt={img.fileName}
+                label={img.fileName}
                 onClick={() => onPreview?.(idx)}
-                title={img.fileName}
-                type="button"
-              >
-                <img
-                  src={img.dataUrl}
-                  alt={img.fileName}
-                  className="image-preview-bar__thumb"
-                  draggable={false}
-                />
-              </button>
+                onRemove={() => onRemove(img.id)}
+                showRemoveOn="always"
+                className="image-preview-bar__thumb-btn"
+              />
               <span className="image-preview-bar__name" title={img.fileName}>
                 {img.fileName}
               </span>
-              <button
-                className="image-preview-bar__remove"
-                onClick={() => onRemove(img.id)}
-                title="移除图片"
-                type="button"
-              >
-                <CloseIcon size={10} />
-              </button>
             </motion.div>
           ))}
         </AnimatePresence>

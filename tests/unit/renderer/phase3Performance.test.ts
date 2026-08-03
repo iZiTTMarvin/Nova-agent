@@ -1,17 +1,11 @@
+// @vitest-environment jsdom
+
 import React, { Profiler } from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
-
-/**
- * ⚠️ 局限（阶段 4 / T4-4）：
- * 本文件用 ReactTestRenderer，无真实 DOM / Chromium layout。
- * 通过时仍可能出现 DOM 缺失或 detached tree 噪音，只能粗测 store 更新与虚拟树 commit，
- * **不能**作为「真实 Electron Renderer 不卡」的证明。
- * 真实门禁见 tests/perf/（npm run test:perf）与 tests/perf/README.md。
- */
+import { act, renderDom } from './renderDom'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 import { createNovaSkillMock } from './_novaSkillMock'
@@ -20,8 +14,7 @@ const mockInvoke = vi.fn()
 const mockOn = vi.fn()
 const mockRemoveAllListeners = vi.fn()
 
-global.window = {
-  ...global.window,
+Object.assign(window, {
   api: {
     invoke: mockInvoke,
     on: mockOn,
@@ -29,7 +22,7 @@ global.window = {
   },
   nova: { skill: createNovaSkillMock() },
   confirm: vi.fn(() => false)
-} as unknown as Window & typeof globalThis
+})
 
 const MODEL_CONFIG: ModelConfig = {
   baseUrl: 'https://example.com/v1',
@@ -141,24 +134,20 @@ describe('Phase 3 渲染性能回归', () => {
     const messageId = seedLongConversation()
     const commitDurations: number[] = []
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(
-          Profiler,
-          {
-            id: 'ChatPanel',
-            onRender: (_id, phase, actualDuration) => {
-              if (phase === 'update') {
-                commitDurations.push(actualDuration)
-              }
+    const renderer = renderDom(
+      React.createElement(
+        Profiler,
+        {
+          id: 'ChatPanel',
+          onRender: (_id, phase, actualDuration) => {
+            if (phase === 'update') {
+              commitDurations.push(actualDuration)
             }
-          },
-          React.createElement(ChatPanel)
-        )
+          }
+        },
+        React.createElement(ChatPanel)
       )
-    })
+    )
 
     for (let i = 0; i < 120; i++) {
       act(() => {
@@ -174,8 +163,6 @@ describe('Phase 3 渲染性能回归', () => {
     expect(commitDurations.length).toBeGreaterThan(0)
     expect(stats.max).toBeLessThan(50)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 })

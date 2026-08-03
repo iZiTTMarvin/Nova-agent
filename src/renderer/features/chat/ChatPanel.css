@@ -64,6 +64,59 @@
   background: var(--bg-sand);
 }
 
+/* Astryx icon buttons keep the composer action dimensions while supplying
+   consistent focus, disabled and hover states. */
+.chat-scroll-to-bottom.astryx-button,
+.chat-composer__send.astryx-button,
+.chat-composer__stop.astryx-button {
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.chat-composer__send.astryx-button {
+  background: var(--text-primary);
+  color: var(--bg-app);
+}
+
+.chat-composer__send.astryx-button[disabled] {
+  background: var(--bg-sand);
+  color: var(--text-muted);
+}
+
+.chat-composer__stop.astryx-button {
+  background: color-mix(in srgb, var(--color-error) 9%, transparent);
+  color: var(--color-error);
+}
+
+.chat-composer__textarea {
+  width: 100%;
+  margin: 0;
+  min-width: 0;
+}
+
+.chat-composer__textarea textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 300px;
+  padding: 5px 8px;
+  overflow-y: auto;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.chat-composer__textarea textarea::placeholder {
+  color: var(--text-muted);
+}
+
 .chat-messages__history-hint {
   align-self: center;
   font-size: 0.78rem;
@@ -355,10 +408,10 @@
   line-height: 1.4;
 }
 
-/* static 分层：仅消息正文参与 content-visibility，操作栏留在容器外避免 contain:paint 裁切溢出 */
+/* 虚拟列表已经限制历史消息 DOM 数量。正文不能再使用 content-visibility，
+   否则折叠过程、Diff 等交互改变高度时会让虚拟列表读到过期的 intrinsic size。 */
 .chat-msg__static-body {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 120px;
+  content-visibility: visible;
 }
 
 /* ── web_search 搜索结果卡片 ─────────────────────────────── */
@@ -515,6 +568,19 @@
   transform: none;
 }
 
+.chat-msg__action-btn.astryx-button {
+  min-width: 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.chat-msg__action-btn[disabled],
+.chat-msg__branch-btn[disabled] {
+  cursor: not-allowed;
+}
+
 /* ── 用户消息编辑重发 ────────────────────────────────────── */
 .chat-msg__edit {
   display: flex;
@@ -525,22 +591,10 @@
 
 .chat-msg__edit-input {
   width: 100%;
-  min-height: 2.5rem;
-  padding: 8px 10px;
-  border: 1px solid var(--border-cream);
-  border-radius: 8px;
-  background: var(--bg-surface, #fff);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 0.92rem;
-  line-height: 1.5;
-  resize: vertical;
 }
 
-.chat-msg__edit-input:focus {
-  outline: none;
-  border-color: var(--color-brand, #c96442);
-  box-shadow: 0 0 0 2px var(--color-brand-dim, rgba(201, 100, 66, 0.15));
+.chat-msg__edit-input textarea {
+  resize: vertical;
 }
 
 .chat-msg__edit-actions {
@@ -549,33 +603,11 @@
   gap: 8px;
 }
 
-.chat-msg__edit-btn {
-  padding: 4px 12px;
+.chat-msg__edit-btn.astryx-button {
+  min-height: 30px;
+  padding-inline: 12px;
   border-radius: 6px;
   font-size: 0.82rem;
-  cursor: pointer;
-  border: 1px solid var(--border-cream);
-  background: var(--bg-sand);
-  color: var(--text-primary);
-}
-
-.chat-msg__edit-btn--confirm {
-  border-color: var(--color-brand, #c96442);
-  background: var(--color-brand, #c96442);
-  color: #fff;
-}
-
-.chat-msg__edit-btn--confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.chat-msg__edit-btn--cancel:hover {
-  background: var(--bg-cream);
-}
-
-.chat-msg__edit-btn--confirm:not(:disabled):hover {
-  filter: brightness(1.05);
 }
 
 /* ── 兄弟分支翻页器 ‹ k/n › ─────────────────────────────── */
@@ -674,18 +706,13 @@
 
 .chat-cross-turn-notice__stop {
   flex-shrink: 0;
-  padding: 2px 12px;
-  border: 1px solid rgba(207, 34, 46, 0.3);
-  border-radius: 6px;
-  background: transparent;
-  font-size: 12px;
-  color: #a40e26;
-  cursor: pointer;
-  line-height: 1.4;
 }
 
-.chat-cross-turn-notice__stop:hover {
-  background: rgba(207, 34, 46, 0.1);
+.chat-cross-turn-notice__stop.astryx-button {
+  min-height: 28px;
+  padding-inline: 10px;
+  border-radius: 6px;
+  font-size: 12px;
 }
 
 /* ── 用户消息图片网格 ─────────────────────────────────────── */
@@ -699,20 +726,13 @@
 
 .user-message-image-grid__item {
   position: relative;
+  width: 100%;
   aspect-ratio: 1;
   border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--border-warm);
   background: var(--bg-card);
-  cursor: pointer;
   padding: 0;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
-}
-
-.user-message-image-grid__item:hover {
-  border-color: var(--color-accent);
-  box-shadow: 0 2px 10px rgba(201, 100, 66, 0.14);
-  transform: translateY(-1px);
 }
 
 .user-message-image-grid__item img {
@@ -1006,10 +1026,9 @@
    Composer 区域 + AskQuestion Dock
    ────────────────────────────────────────────────────────── */
 .chat-panel__composer-area {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1019,8 +1038,8 @@
 }
 
 .chat-panel__composer-area--empty {
-  top: 0;
-  bottom: 0;
+  flex: 1 1 auto;
+  min-height: 0;
   justify-content: center;
 }
 

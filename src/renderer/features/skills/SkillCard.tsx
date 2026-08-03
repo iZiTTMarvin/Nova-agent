@@ -4,6 +4,8 @@
 import React from 'react'
 import type { SkillSummary } from '../../../shared/skills/types'
 import { skillSourceLabel, skillsI18n } from './i18n'
+import { Button } from '@astryxdesign/core/Button'
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import './SkillCard.css'
 
 export interface SkillCardProps {
@@ -24,41 +26,42 @@ export const SkillCard: React.FC<SkillCardProps> = ({
   return (
     <div className="skill-card">
       <div className="skill-card__main">
-        <button
-          type="button"
+        <Button
+          label={skill.name}
+          variant="ghost"
+          size="sm"
           className="skill-card__name"
           onClick={() => onUse(skill.name)}
-          title={skillsI18n.use}
-        >
-          {skill.name}
-        </button>
+        />
         <span className={`skill-card__badge skill-card__badge--${skill.source}`}>
           {skillSourceLabel(skill.source)}
         </span>
         {skill.modelInvocable && (
-          <label className="skill-card__toggle" title={skillsI18n.toggle}>
-            <input
-              type="checkbox"
-              checked={skill.enabled}
-              onChange={e => onToggle(skill.name, e.target.checked)}
+          <span className="skill-card__toggle" title={skillsI18n.toggle}>
+            <CheckboxInput
+              label="模型"
+              value={skill.enabled}
+              onChange={checked => onToggle(skill.name, checked)}
+              size="sm"
             />
-            <span>模型</span>
-          </label>
+          </span>
         )}
       </div>
       <p className="skill-card__desc">{skill.descriptionZh || skill.description}</p>
       <div className="skill-card__actions">
-        <button type="button" className="skill-card__btn" onClick={() => onUse(skill.name)}>
-          {skillsI18n.use}
-        </button>
+        <Button
+          label={skillsI18n.use}
+          variant="secondary"
+          size="sm"
+          onClick={() => onUse(skill.name)}
+        />
         {canDelete && onDelete && (
-          <button
-            type="button"
-            className="skill-card__btn skill-card__btn--danger"
+          <Button
+            label={skillsI18n.delete}
+            variant="destructive"
+            size="sm"
             onClick={() => onDelete(skill.name)}
-          >
-            {skillsI18n.delete}
-          </button>
+          />
         )}
       </div>
     </div>

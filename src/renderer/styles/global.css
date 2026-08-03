@@ -23,8 +23,10 @@
   --color-brand-hover: #b05131;
   --color-brand-dim: rgba(201, 100, 66, 0.08);
   --color-accent: #d97757;     /* 珊瑚橙，次要高亮 */
-  --color-error: #b53333;      /* 温暖深红，错误状态 */
-  --color-success: #788c5d;    /* 莫兰迪绿，成功状态 */
+  --nova-status-error: #b53333;      /* 温暖深红，错误状态 */
+  --nova-status-success: #788c5d;    /* 莫兰迪绿，成功状态 */
+  --color-error: var(--nova-status-error);
+  --color-success: var(--nova-status-success);
   --color-focus: #3898ec;      /* 焦点蓝，无障碍对焦环 */
   
   /* 边框（极淡的奶油色 border 与暖边框） */
@@ -55,12 +57,60 @@
   --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The parchment palette keeps its warm brand accent in dark mode while
+   swapping only surfaces, text, and borders. Astryx's Theme provider toggles
+   the root data-theme attribute for explicit modes; the media query covers
+   the system mode without creating a second renderer state. */
+:root[data-theme='dark'] {
+  --bg-app: #20201d;
+  --bg-sidebar: #292925;
+  --bg-card: #2c2c27;
+  --bg-sand: #37372f;
+  --bg-input: #252520;
+  --text-primary: #f3f1e8;
+  --text-secondary: #c3c0b3;
+  --text-muted: #9a978a;
+  --text-charcoal: #e5e1d5;
+  --color-brand: #df8a62;
+  --color-brand-hover: #ef9d74;
+  --color-brand-dim: rgba(223, 138, 98, 0.18);
+  --color-accent: #e29a73;
+  --nova-status-error: #f08a83;
+  --nova-status-success: #b4c98e;
+  --color-error: var(--nova-status-error);
+  --color-success: var(--nova-status-success);
+  --border-cream: #3c3b33;
+  --border-warm: #4a493f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg-app: #20201d;
+    --bg-sidebar: #292925;
+    --bg-card: #2c2c27;
+    --bg-sand: #37372f;
+    --bg-input: #252520;
+    --text-primary: #f3f1e8;
+    --text-secondary: #c3c0b3;
+    --text-muted: #9a978a;
+    --text-charcoal: #e5e1d5;
+    --color-brand: #df8a62;
+    --color-brand-hover: #ef9d74;
+    --color-brand-dim: rgba(223, 138, 98, 0.18);
+    --color-accent: #e29a73;
+    --nova-status-error: #f08a83;
+    --nova-status-success: #b4c98e;
+    --color-error: var(--nova-status-error);
+    --color-success: var(--nova-status-success);
+    --border-cream: #3c3b33;
+    --border-warm: #4a493f;
+  }
+}
+
 *,
 *::before,
 *::after {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html,
@@ -82,10 +132,7 @@ body {
 /* 按钮基础微交互 */
 button {
   font-family: var(--font-sans);
-  background: none;
-  border: none;
   cursor: pointer;
-  outline: none;
 }
 
 /* 滚动条整体美化，与纸张质感契合 */
@@ -124,12 +171,4 @@ button {
     opacity: 0.95;
     filter: drop-shadow(0 0 0px var(--color-brand));
   }
-}
-
-/* 拟物输入框聚焦样式 */
-input:focus,
-textarea:focus {
-  outline: none;
-  border-color: var(--color-focus) !important;
-  box-shadow: 0 0 0 2px rgba(56, 152, 236, 0.15) !important;
 }

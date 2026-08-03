@@ -1,7 +1,10 @@
+// @vitest-environment jsdom
+
+import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
-import { act, create as createRenderer } from 'react-test-renderer'
 import { DiffViewer } from '../../../src/renderer/features/diff/DiffViewer'
 import type { DiffEntry, SkippedFileInfo } from '../../../src/shared/diff/types'
+import { act, renderDom } from './renderDom'
 
 /** 构造一个最小 DiffEntry */
 function makeDiff(overrides: Partial<DiffEntry> = {}): DiffEntry {
@@ -20,7 +23,7 @@ describe('DiffViewer', () => {
       { path: 'node_modules/foo/index.js', reason: 'excluded', bytes: 0 }
     ]
 
-    const tree = createRenderer(
+    const renderer = renderDom(
       <DiffViewer
         diffs={[makeDiff()]}
         reviews={{}}
@@ -28,15 +31,15 @@ describe('DiffViewer', () => {
         sessionId="sess_1"
         messageId="msg_1"
       />
-    ).toJSON()
+    )
 
-    // 通过序列化字符串判断提示内容与文件列表均出现
-    const text = JSON.stringify(tree)
+    const text = renderer.container.textContent ?? ''
     expect(text).toContain('未生成快照')
     expect(text).toContain('assets/big.bin')
     expect(text).toContain('node_modules/foo/index.js')
     expect(text).toContain('过大')
     expect(text).toContain('排除规则')
+    renderer.unmount()
   })
 
   it('无 diff 但有 skippedFiles 时仍渲染提示', () => {
@@ -44,7 +47,7 @@ describe('DiffViewer', () => {
       { path: 'huge.zip', reason: 'oversized', bytes: 1024 * 1024 * 1024 }
     ]
 
-    const tree = createRenderer(
+    const renderer = renderDom(
       <DiffViewer
         diffs={[]}
         reviews={{}}
@@ -52,10 +55,11 @@ describe('DiffViewer', () => {
         sessionId="sess_1"
         messageId="msg_1"
       />
-    ).toJSON()
+    )
 
-    const text = JSON.stringify(tree)
+    const text = renderer.container.textContent ?? ''
     expect(text).toContain('huge.zip')
+    renderer.unmount()
   })
 
   it('合并卡片头部：已编辑文件数 + 总增删统计 + 每文件统计', () => {
@@ -70,65 +74,65 @@ describe('DiffViewer', () => {
       })
     ]
 
-    const renderer = createRenderer(
+    const renderer = renderDom(
       <DiffViewer diffs={diffs} reviews={{}} sessionId="sess_1" messageId="msg_1" />
     )
 
-    expect(JSON.stringify(renderer.toJSON())).toContain('已编辑 2 个文件')
+    expect(renderer.container.textContent ?? '').toContain('已编辑 2 个文件')
     // 总计 +3 -1（只按 +/- 前缀行计数，不含上下文行）
-    const statText = (cls: string) => renderer.root.findByProps({ className: cls }).children.join('')
+    const statText = (cls: string) => renderer.container.querySelector(`.${cls.split(' ').join('.')}`)?.textContent ?? ''
     expect(statText('diff-viewer__stat diff-viewer__stat--added')).toBe('+3')
     expect(statText('diff-viewer__stat diff-viewer__stat--removed')).toBe('-1')
     // 每文件行各自的增删统计
-    const perFile = renderer.root
-      .findAllByProps({ className: 'diff-file__changes-add' })
-      .map(node => node.children.join(''))
+    const perFile = Array.from(renderer.container.querySelectorAll('.diff-file__changes-add'))
+      .map(node => node.textContent ?? '')
     expect(perFile).toEqual(['+2', '+1'])
+    renderer.unmount()
   })
 
   it('超过 3 个文件时默认折叠并显示「再显示 N 个文件」', () => {
     const diffs = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts'].map(filePath => makeDiff({ filePath }))
 
-    const renderer = createRenderer(
+    const renderer = renderDom(
       <DiffViewer diffs={diffs} reviews={{}} sessionId="sess_1" messageId="msg_1" />
     )
 
-    const text = JSON.stringify(renderer.toJSON())
+    const text = renderer.container.textContent ?? ''
     expect(text).toContain('已编辑 5 个文件')
     expect(text).toContain('c.ts')
     expect(text).not.toContain('d.ts')
 
-    const showMore = renderer.root.findByProps({ className: 'diff-viewer__show-more' })
-    const label = showMore.children.filter(child => typeof child === 'string').join('')
+    const showMore = renderer.container.querySelector('.diff-viewer__show-more')
+    const label = showMore?.textContent ?? ''
     expect(label).toBe('再显示 2 个文件')
+    renderer.unmount()
   })
 
   it('待审阅时头部提供撤销/接受批量操作', () => {
     const onAcceptAll = vi.fn().mockResolvedValue(undefined)
     const onRejectAll = vi.fn().mockResolvedValue({ restored: [], failed: [] })
 
-    let renderer!: ReturnType<typeof createRenderer>
-    act(() => {
-      renderer = createRenderer(
-        <DiffViewer
-          diffs={[makeDiff()]}
-          reviews={{}}
-          sessionId="sess_1"
-          messageId="msg_1"
-          onAcceptAll={onAcceptAll}
-          onRejectAll={onRejectAll}
-        />
-      )
-    })
+    const renderer = renderDom(
+      <DiffViewer
+        diffs={[makeDiff()]}
+        reviews={{}}
+        sessionId="sess_1"
+        messageId="msg_1"
+        onAcceptAll={onAcceptAll}
+        onRejectAll={onRejectAll}
+      />
+    )
 
-    const text = JSON.stringify(renderer.toJSON())
+    const text = renderer.container.textContent ?? ''
     expect(text).toContain('撤销')
     expect(text).toContain('接受')
 
-    const acceptBtn = renderer.root.findByProps({ className: 'diff-header-btn diff-header-btn--primary' })
+    const acceptBtn = renderer.container.querySelector<HTMLButtonElement>('.diff-header-btn--primary')
+    expect(acceptBtn).not.toBeNull()
     act(() => {
-      acceptBtn.props.onClick()
+      acceptBtn?.click()
     })
     expect(onAcceptAll).toHaveBeenCalledWith(['src/a.ts'])
+    renderer.unmount()
   })
 })

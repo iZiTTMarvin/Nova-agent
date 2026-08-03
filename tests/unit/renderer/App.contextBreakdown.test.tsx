@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../../src/renderer/App'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
@@ -7,6 +8,20 @@ import { useSettingsStore, resetSettingsStoreForTests, type ContextBreakdown } f
 import { resetWorkspaceStoreForTests } from '../../../src/renderer/stores/useWorkspaceStore'
 import { resetWorkspaceDispatcherForTests } from '../../../src/renderer/stores/workspaceDispatcher'
 import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import { act, renderDom } from './renderDom'
+
+const themeModeSpy = vi.hoisted(() => vi.fn())
+
+vi.mock('@astryxdesign/core/theme', async importOriginal => {
+  const actual = await importOriginal<typeof import('@astryxdesign/core/theme')>()
+  return {
+    ...actual,
+    Theme: ({ children, mode }: { children: React.ReactNode; mode?: string }) => {
+      themeModeSpy(mode)
+      return children
+    }
+  }
+})
 
 vi.mock('../../../src/renderer/components/Sidebar', () => ({
   Sidebar: () => null
@@ -66,6 +81,7 @@ function makeContextBreakdown(sessionId: string, totalEstimated: number): Contex
 describe('App agent:context-breakdown 监听', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    themeModeSpy.mockClear()
     eventHandlers.clear()
 
     resetChatStoreForTests()
@@ -76,6 +92,7 @@ describe('App agent:context-breakdown 监听', () => {
 
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'load-model-config') return Promise.resolve(null)
+      if (channel === 'settings:get') return Promise.resolve({ theme: 'system' })
       if (channel === 'workspace:get') {
         return Promise.resolve({
           currentSessionId: null,
@@ -94,14 +111,13 @@ describe('App agent:context-breakdown 监听', () => {
       }
     })
 
-    global.window = {
-      ...global.window,
+    Object.assign(window, {
       api: {
         invoke: mockInvoke,
         on: mockOn,
         removeAllListeners: mockRemoveAllListeners
       }
-    } as unknown as Window & typeof globalThis
+    })
 
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -112,10 +128,8 @@ describe('App agent:context-breakdown 监听', () => {
   })
 
   it('会话在挂载后才切入时，仍应接受当前会话的 breakdown', async () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-
+    const renderer = renderDom(React.createElement(App))
     await act(async () => {
-      renderer = TestRenderer.create(React.createElement(App))
       await Promise.resolve()
     })
 
@@ -133,16 +147,12 @@ describe('App agent:context-breakdown 监听', () => {
 
     expect(useSettingsStore.getState().contextBreakdown).toEqual(payload)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('会话切换后应按最新 currentSessionId 过滤旧 breakdown 事件', async () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-
+    const renderer = renderDom(React.createElement(App))
     await act(async () => {
-      renderer = TestRenderer.create(React.createElement(App))
       await Promise.resolve()
     })
 
@@ -170,8 +180,18 @@ describe('App agent:context-breakdown 监听', () => {
 
     expect(useSettingsStore.getState().contextBreakdown).toEqual(firstPayload)
 
-    act(() => {
-      renderer?.unmount()
+    renderer.unmount()
+  })
+
+  it('将 settings store 的主题 mode 只读投影给 Astryx Theme provider', async () => {
+    useSettingsStore.setState({ theme: 'dark' })
+
+    const renderer = renderDom(React.createElement(App))
+    await act(async () => {
+      await Promise.resolve()
     })
+
+    expect(themeModeSpy).toHaveBeenCalledWith('dark')
+    renderer.unmount()
   })
 })

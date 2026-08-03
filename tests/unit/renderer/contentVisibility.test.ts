@@ -2,9 +2,6 @@ import { describe, it, expect } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 
-/**
- * 任务 3 验收：static 层 content-visibility 样式契约（实现已在 ChatPanel.css + MessageItem）。
- */
 describe('content-visibility（static 历史消息）', () => {
   const cssPath = path.resolve(
     __dirname,
@@ -12,11 +9,12 @@ describe('content-visibility（static 历史消息）', () => {
   )
   const css = fs.readFileSync(cssPath, 'utf8')
 
-  it('.chat-msg__static-body 含 content-visibility: auto', () => {
-    expect(css).toMatch(/\.chat-msg__static-body\s*\{[^}]*content-visibility:\s*auto/)
+  it('交互正文保持可测量，避免折叠内容与虚拟列表高度失配', () => {
+    expect(css).toMatch(/\.chat-msg__static-body\s*\{[^}]*content-visibility:\s*visible/)
   })
 
-  it('.chat-msg__static-body 含 contain-intrinsic-size 估计高度', () => {
-    expect(css).toMatch(/\.chat-msg__static-body\s*\{[^}]*contain-intrinsic-size:\s*auto\s+120px/)
+  it('不再为交互正文声明固定 intrinsic 高度', () => {
+    const rule = css.match(/\.chat-msg__static-body\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).not.toContain('contain-intrinsic-size')
   })
 })

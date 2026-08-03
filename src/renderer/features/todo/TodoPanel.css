@@ -38,8 +38,11 @@
 
 .todo-panel__header {
   width: 100%;
+  height: auto;
+  min-height: 32px;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   padding: 8px 12px;
   background: transparent;

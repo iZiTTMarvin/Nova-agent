@@ -27,12 +27,14 @@ import './App.css'
  * 2. 注册主进程 AgentLoop 流式事件监听器
  * 3. 装配流式缓冲（buffer → store 直连，已去掉中间 rAF 调度层）
  *
- * 订阅策略（阶段 4）：只订阅稳定 action 引用，不订阅 messages / streaming 字段，
- * 保证 text delta 不会触发 App 根 commit。
+ * 订阅策略：事件处理只订阅稳定 action；主题 mode 是根 Theme 的只读投影，
+ * 除此之外不订阅 messages / streaming 字段，保证 text delta 不会触发 App 根 commit。
  */
 function App(): React.ReactNode {
   // settings：仅稳定 action
   const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
+  const loadTheme = useSettingsStore(state => state.loadTheme)
+  const theme = useSettingsStore(state => state.theme)
   const handleUsage = useSettingsStore(state => state.handleUsage)
   const setContextBreakdown = useSettingsStore(state => state.setContextBreakdown)
 
@@ -59,6 +61,7 @@ function App(): React.ReactNode {
   useEffect(() => {
     installStreamingPerfMonitor()
     loadModelConfig()
+    void loadTheme()
     // 启动工作区分发器（订阅 workspace:changed）
     const stopDispatcher = startWorkspaceDispatcher()
     // 拉取初始工作区状态（会触发首次 dispatch，加载会话列表 + 选中最近会话）
@@ -71,7 +74,7 @@ function App(): React.ReactNode {
     return () => {
       stopDispatcher()
     }
-  }, [loadModelConfig])
+  }, [loadModelConfig, loadTheme])
 
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
   useEffect(() => {
@@ -348,7 +351,7 @@ function App(): React.ReactNode {
   ])
 
   return (
-    <Theme theme={parchmentTheme}>
+    <Theme theme={parchmentTheme} mode={theme}>
       <div className="app-wrapper">
         {/* 自定义标题栏 */}
         <TitleBar />

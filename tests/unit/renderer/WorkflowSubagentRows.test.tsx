@@ -1,10 +1,12 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
 import { WorkflowSubagentRows } from '../../../src/renderer/features/subagents/WorkflowSubagentRows'
 import { useSubagentProjectionStore } from '../../../src/renderer/features/subagents/projection'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
+import { renderDom } from './renderDom'
 
 function projection(
   childSessionId: string,
@@ -53,24 +55,22 @@ describe('WorkflowSubagentRows', () => {
       childIdsByParentSessionId: { 'parent-session': ['child-a', 'child-b'] },
       childSessionIdByParentToolCallId: {}
     })
-    let renderer!: TestRenderer.ReactTestRenderer
+    const renderer = renderDom(
+      <WorkflowSubagentRows
+        toolCallId="workflow-tool"
+        name="start_workflow"
+        args={{}}
+        status="completed"
+      />
+    )
 
-    act(() => {
-      renderer = TestRenderer.create(
-        <WorkflowSubagentRows
-          toolCallId="workflow-tool"
-          name="start_workflow"
-          args={{}}
-          status="completed"
-        />
-      )
-    })
-
-    const section = renderer.root.findByProps({ className: 'subagent-batch-row' })
-    expect(section.props['aria-label']).toBe('并行执行，2 个子代理')
-    expect(section.findAllByType('button')).toHaveLength(2)
-    expect(section.findAllByType('span').map((node) => node.children.join('')))
+    const section = renderer.container.querySelector<HTMLElement>('.subagent-batch-row')
+    expect(section).not.toBeNull()
+    expect(section?.getAttribute('aria-label')).toBe('并行执行，2 个子代理')
+    expect(section?.querySelectorAll('button')).toHaveLength(2)
+    expect(Array.from(section?.querySelectorAll('span') ?? []).map((node) => node.textContent ?? ''))
       .toContain('partial')
+    renderer.unmount()
   })
 
   it('相同 toolCallId 但不同 parent session 的 child 不会串到当前行', () => {
@@ -86,24 +86,17 @@ describe('WorkflowSubagentRows', () => {
       },
       childSessionIdByParentToolCallId: {}
     })
-    let renderer!: TestRenderer.ReactTestRenderer
+    const renderer = renderDom(
+      <WorkflowSubagentRows
+        toolCallId="workflow-tool"
+        name="start_workflow"
+        args={{}}
+        status="completed"
+      />
+    )
 
-    act(() => {
-      renderer = TestRenderer.create(
-        <WorkflowSubagentRows
-          toolCallId="workflow-tool"
-          name="start_workflow"
-          args={{}}
-          status="completed"
-        />
-      )
-    })
-
-    expect(renderer.root.findAll(
-      (node) =>
-        typeof node.props.className === 'string' &&
-        node.props.className.split(' ').includes('subagent-activity-row')
-    )).toHaveLength(1)
+    expect(renderer.container.querySelectorAll('.subagent-activity-row')).toHaveLength(1)
+    renderer.unmount()
   })
 
   it('同一 parent/tool 出现多个 workflowRunId 时 fail closed 为普通工具行', () => {
@@ -119,24 +112,17 @@ describe('WorkflowSubagentRows', () => {
       },
       childSessionIdByParentToolCallId: {}
     })
-    let renderer!: TestRenderer.ReactTestRenderer
+    const renderer = renderDom(
+      <WorkflowSubagentRows
+        toolCallId="workflow-tool"
+        name="start_workflow"
+        args={{}}
+        status="completed"
+      />
+    )
 
-    act(() => {
-      renderer = TestRenderer.create(
-        <WorkflowSubagentRows
-          toolCallId="workflow-tool"
-          name="start_workflow"
-          args={{}}
-          status="completed"
-        />
-      )
-    })
-
-    expect(renderer.root.findAll(
-      (node) =>
-        typeof node.props.className === 'string' &&
-        node.props.className.split(' ').includes('subagent-activity-row')
-    )).toHaveLength(0)
-    expect(renderer.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(1)
+    expect(renderer.container.querySelectorAll('.subagent-activity-row')).toHaveLength(0)
+    expect(renderer.container.querySelectorAll('.tool-trace-row')).toHaveLength(1)
+    renderer.unmount()
   })
 })

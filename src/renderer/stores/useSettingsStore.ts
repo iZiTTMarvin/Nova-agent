@@ -12,7 +12,10 @@ import {
 import { resolveContextWindow } from '../../shared/config/types'
 import type { NormalizedUsage } from '../../shared/model/types'
 import { computeCacheHitRate } from '../../shared/model/types'
+import type { NovaSettingsDto } from '../../shared/settings/types'
 import type { SessionUsageStats } from './types'
+
+export type SettingsTheme = NovaSettingsDto['theme']
 
 export interface SettingsState {
   // ── 状态 ──
@@ -24,6 +27,8 @@ export interface SettingsState {
   isConfigModalOpen: boolean
   currentProject: string | null
   currentMode: Mode
+  /** 持久化 settings.theme 的 renderer 投影，作为 Astryx Theme mode 的唯一 Owner */
+  theme: SettingsTheme
   /**
    * 全部分桶合计（兼容旧 UI / 测试）。
    * 有数据时非 null；reset 后清空。
@@ -38,6 +43,10 @@ export interface SettingsState {
 
   // ── Actions ──
   loadLlmRegistry: () => Promise<void>
+  /** 从持久化 settings 加载主题模式 */
+  loadTheme: () => Promise<void>
+  /** 持久化并更新主题模式；调用方不得维护第二份主题状态 */
+  setTheme: (theme: SettingsTheme) => Promise<void>
   /** @deprecated 请使用 loadLlmRegistry */
   loadModelConfig: () => Promise<void>
   saveLlmRegistry: (registry: LlmRegistry) => Promise<void>
@@ -218,6 +227,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   isConfigModalOpen: false,
   currentProject: null,
   currentMode: 'default',
+  theme: 'system',
   sessionUsage: null,
   sessionUsageByProfile: {},
   contextBreakdown: null,
@@ -236,6 +246,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   loadModelConfig: async () => {
     await get().loadLlmRegistry()
+  },
+
+  loadTheme: async () => {
+    try {
+      const settings = await window.api.invoke('settings:get')
+      set({ theme: settings.theme })
+    } catch (err) {
+      console.error('读取主题设置失败:', err)
+    }
+  },
+
+  setTheme: async (theme: SettingsTheme) => {
+    try {
+      const settings = await window.api.invoke('settings:set', { theme })
+      set({ theme: settings.theme })
+    } catch (err) {
+      console.error('保存主题设置失败:', err)
+      throw err
+    }
   },
 
   saveLlmRegistry: async (registry: LlmRegistry) => {
@@ -369,6 +398,7 @@ export function resetSettingsStoreForTests(): void {
     isConfigModalOpen: false,
     currentProject: null,
     currentMode: 'default',
+    theme: 'system',
     sessionUsage: null,
     sessionUsageByProfile: {},
     contextBreakdown: null,

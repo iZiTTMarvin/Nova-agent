@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { ButtonGroup } from '@astryxdesign/core/ButtonGroup'
+import {
+  DropdownMenu,
+  DropdownMenuItem
+} from '@astryxdesign/core/DropdownMenu'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -45,19 +51,6 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
   const currentSessionId = useChatStore(state => state.currentSessionId)
 
   const [showDropdown, setShowDropdown] = useState(false)
-  const groupRef = useRef<HTMLDivElement>(null)
-
-  // 点击外部关闭下拉菜单
-  useEffect(() => {
-    if (!showDropdown) return
-    const handler = (e: MouseEvent) => {
-      if (groupRef.current && !groupRef.current.contains(e.target as Node)) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('click', handler)
-    return () => document.removeEventListener('click', handler)
-  }, [showDropdown])
 
   const isBatch = !!request.commands && request.commands.length > 1
   const allowLabel = isBatch ? `全部允许（${request.commands!.length} 条）` : '允许'
@@ -119,11 +112,6 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
     setShowDropdown(false)
   }
 
-  const toggleDropdown = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setShowDropdown(prev => !prev)
-  }
-
   return (
     <div className="inline-perm" onClick={e => e.stopPropagation()}>
       {request.reason && (
@@ -135,74 +123,77 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
       {permissionError && <div className="inline-perm__error">{permissionError}</div>}
 
       <div className="inline-perm__actions">
-        <button
-          type="button"
+        <Button
+          label="拒绝"
+          variant="secondary"
+          size="sm"
           className="inline-perm__btn inline-perm__btn--deny"
           onClick={() => respondPermissionRequest('deny')}
-          disabled={isSubmitting}
+          isDisabled={isSubmitting}
         >
           拒绝
-        </button>
+        </Button>
 
-        <div className="inline-perm__btn-group" ref={groupRef}>
-          <button
-            type="button"
+        <ButtonGroup label="权限决策" className="inline-perm__btn-group" size="sm">
+          <Button
+            label={allowLabel}
+            variant="primary"
+            size="sm"
             className="inline-perm__btn inline-perm__btn--allow"
             onClick={() => respondPermissionRequest('allow')}
-            disabled={isSubmitting}
+            isDisabled={isSubmitting}
           >
             {isSubmitting ? '提交中...' : allowLabel}
-          </button>
-          <button
-            type="button"
-            className="inline-perm__btn-dropdown-toggle"
-            onClick={toggleDropdown}
-            disabled={isSubmitting}
-            title="更多授权选项"
+          </Button>
+          <DropdownMenu
+            className="inline-perm__dropdown"
+            placement="above"
+            menuWidth={230}
+            isMenuOpen={showDropdown}
+            onOpenChange={setShowDropdown}
+            button={{
+              label: '更多授权选项',
+              variant: 'primary',
+              size: 'sm',
+              isIconOnly: true,
+              isDisabled: isSubmitting,
+              icon: <span aria-hidden="true">▾</span>,
+              tooltip: '更多授权选项',
+              className: 'inline-perm__btn-dropdown-toggle'
+            }}
           >
-            <span className="inline-perm__dropdown-arrow">▾</span>
-          </button>
-
-          {showDropdown && (
-            <div className="inline-perm__dropdown-menu">
-              <button type="button" onClick={() => respondPermissionRequest('allow')} title="仅本次允许执行当前命令">
-                仅本次允许
-              </button>
-              {hasPrefix && (
-                <button
-                  type="button"
-                  onClick={rememberSessionAndRespond}
-                  title={`本会话内执行以 ${commandPrefixText} 开头的命令均直接放行，无需确认`}
-                >
-                  本会话允许（{commandPrefixText}）
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void rememberAndRespond('project', 'allow')}
-                title="创建项目级允许规则，本项目内该命令不再弹窗"
-              >
-                本项目永久允许
-              </button>
-              <button
-                type="button"
-                onClick={() => void rememberAndRespond('global', 'allow')}
-                title="创建全局允许规则，所有项目内该命令不再弹窗"
-              >
-                全局永久允许
-              </button>
-              <div className="inline-perm__dropdown-divider" />
-              <button
-                type="button"
-                className="inline-perm__danger-option"
-                onClick={() => void rememberAndRespond('global', 'deny')}
-                title="创建全局拒绝规则，该命令将被永久拦截"
-              >
-                始终拒绝执行
-              </button>
-            </div>
-          )}
-        </div>
+            <DropdownMenuItem
+              label="仅本次允许"
+              description="仅允许当前命令执行一次"
+              onClick={() => respondPermissionRequest('allow')}
+            />
+            {hasPrefix && (
+              <DropdownMenuItem
+                label={`本会话允许（${commandPrefixText}）`}
+                description="本会话内相同命令前缀无需再次确认"
+                isDisabled={!currentSessionId}
+                onClick={() => void rememberSessionAndRespond()}
+              />
+            )}
+            <DropdownMenuItem
+              label="本项目永久允许"
+              description="创建项目级允许规则"
+              onClick={() => void rememberAndRespond('project', 'allow')}
+            />
+            <DropdownMenuItem
+              label="全局永久允许"
+              description="创建全局允许规则"
+              onClick={() => void rememberAndRespond('global', 'allow')}
+            />
+            <div role="separator" className="inline-perm__dropdown-divider" />
+            <DropdownMenuItem
+              label="始终拒绝执行"
+              description="创建全局拒绝规则"
+              className="inline-perm__danger-option"
+              onClick={() => void rememberAndRespond('global', 'deny')}
+            />
+          </DropdownMenu>
+        </ButtonGroup>
       </div>
     </div>
   )

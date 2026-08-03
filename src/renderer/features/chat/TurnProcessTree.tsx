@@ -5,6 +5,7 @@
  * 最终结论文案不在此容器内，由 MessageItem 以正文样式单独渲染。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import { ProcessTraceList } from './ProcessTraceList'
@@ -26,6 +27,8 @@ export interface TurnProcessTreeProps {
   isPausedForInput: boolean
   blocks: RendererMessageBlock[]
   turnStartedAt?: number
+  persistedUserOpen?: boolean
+  onUserOpenChange?: (open: boolean) => void
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -53,14 +56,16 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   isTurnActiveForThisMsg,
   isPausedForInput,
   blocks,
-  turnStartedAt
+  turnStartedAt,
+  persistedUserOpen,
+  onUserOpenChange
 }) {
   const reducedMotion = usePrefersReducedMotion()
-  const userToggledRef = useRef(false)
+  const userToggledRef = useRef(persistedUserOpen !== undefined)
   const prevIsLiveRef = useRef(isLive)
 
   // live 默认展开；completed 默认折叠
-  const [userOpen, setUserOpen] = useState(isLive)
+  const [userOpen, setUserOpen] = useState(persistedUserOpen ?? isLive)
   const [liveElapsedMs, setLiveElapsedMs] = useState<number | undefined>(model.durationMs)
 
   const agentForceExpanded = useAgentStore(state =>
@@ -92,8 +97,12 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   const toggle = useCallback(() => {
     if (forceExpanded) return
     userToggledRef.current = true
-    setUserOpen(prev => !prev)
-  }, [forceExpanded])
+    setUserOpen(prev => {
+      const next = !prev
+      onUserOpenChange?.(next)
+      return next
+    })
+  }, [forceExpanded, onUserOpenChange])
 
   const headerTitle = formatWorkedHeader({
     phase: model.phase,
@@ -104,20 +113,20 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
 
   return (
     <div className="turn-process-tree" data-testid="turn-process-tree">
-      <button
-        type="button"
+      <Button
+        label={headerTitle}
+        variant="ghost"
+        size="sm"
         className="turn-process-tree__header"
         onClick={toggle}
         aria-expanded={open}
         data-testid="turn-process-header"
-      >
-        <span className="turn-process-tree__header-title">{headerTitle}</span>
-        <ChevronIcon
+        endContent={<ChevronIcon
           size={12}
           direction={open ? 'down' : 'right'}
           className="turn-process-tree__chevron"
-        />
-      </button>
+        />}
+      />
 
       {/* 过程时间线：折叠时不 mount */}
       <TurnProcessCollapsible open={open} reducedMotion={reducedMotion} className="turn-process-tree__body">

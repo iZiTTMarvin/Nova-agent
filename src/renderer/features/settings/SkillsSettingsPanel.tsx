@@ -2,6 +2,9 @@
  * Skills 配置面板 — 列表、开关、第三方 skill 选项、创建与导入
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useSkillsStore } from '../skills/store'
 import { SkillCard } from '../skills/SkillCard'
@@ -91,7 +94,15 @@ export const SkillsSettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel">
-      {toast && <div className="skill-settings-toast">{toast}</div>}
+      {toast && (
+        <Banner
+          status="info"
+          title={toast}
+          isDismissable
+          onDismiss={() => setToast(null)}
+          className="skill-settings-toast"
+        />
+      )}
 
       <header className="settings-panel__header settings-panel__header--row">
         <div>
@@ -99,32 +110,33 @@ export const SkillsSettingsPanel: React.FC = () => {
           <p className="settings-panel__desc">{skillsI18n.panelDesc}</p>
         </div>
         <div className="settings-panel__header-actions">
-          <button
-            type="button"
-            className="settings-panel__ghost-btn"
+          <Button
+            label={importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
+            variant="secondary"
+            size="sm"
             onClick={() => setImportOpen(v => !v)}
           >
             {importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
-          </button>
-          <button
-            type="button"
-            className="settings-panel__primary-btn"
+          </Button>
+          <Button
+            label={skillsI18n.create}
+            variant="primary"
+            size="sm"
             onClick={() => setCreateOpen(true)}
           >
             {skillsI18n.create}
-          </button>
+          </Button>
         </div>
       </header>
 
-      <label className="settings-toggle-row">
-        <input
-          type="checkbox"
-          checked={settings?.loadThirdPartySkills ?? true}
-          onChange={e => void handleThirdPartyToggle(e.target.checked)}
-        />
-        <span className="settings-toggle-row__label">{skillsI18n.loadThirdParty}</span>
-        <span className="settings-toggle-row__hint">{skillsI18n.loadThirdPartyHint}</span>
-      </label>
+      <CheckboxInput
+        label={skillsI18n.loadThirdParty}
+        description={skillsI18n.loadThirdPartyHint}
+        value={settings?.loadThirdPartySkills ?? true}
+        onChange={checked => void handleThirdPartyToggle(checked)}
+        className="settings-toggle-row"
+        width="100%"
+      />
 
       {importOpen && (
         <SkillImportBar hasProject={Boolean(currentProject)} onImported={handleImported} />
@@ -144,13 +156,15 @@ export const SkillsSettingsPanel: React.FC = () => {
       </div>
 
       {sorted.length > COLLAPSE_LIMIT && (
-        <button
-          type="button"
+        <Button
+          label={expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
+          variant="ghost"
+          size="sm"
           className="settings-panel__link-btn"
           onClick={() => setExpanded(v => !v)}
         >
           {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
-        </button>
+        </Button>
       )}
 
       <CreateSkillDialog

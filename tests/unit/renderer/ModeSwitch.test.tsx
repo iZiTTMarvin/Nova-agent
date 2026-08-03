@@ -1,21 +1,19 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModeSwitch } from '../../../src/renderer/features/mode-switch/ModeSwitch'
 import { useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
+import { act, renderDom } from './renderDom'
 
-global.document = {
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn()
-} as unknown as Document
+vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
-function findButton(root: TestRenderer.ReactTestInstance, label: string) {
-  return root.find(node =>
-    node.type === 'button' &&
-    node.findAll(child =>
-      child.children.some(value => typeof value === 'string' && value.includes(label))
-    ).length > 0
+function findButton(container: HTMLElement, label: string): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(element =>
+    element.textContent?.includes(label)
   )
+  if (!button) throw new Error(`button not found: ${label}`)
+  return button
 }
 
 describe('ModeSwitch 工作流菜单', () => {
@@ -27,7 +25,7 @@ describe('ModeSwitch 工作流菜单', () => {
   it('通过加号统一展示模式、图片与技能入口', () => {
     const onSelectImage = vi.fn()
     const onSelectSkills = vi.fn()
-    const renderer = TestRenderer.create(
+    const renderer = renderDom(
       <ModeSwitch
         supportsVision
         onSelectImage={onSelectImage}
@@ -36,29 +34,31 @@ describe('ModeSwitch 工作流菜单', () => {
     )
 
     act(() => {
-      renderer.root.findByProps({ 'aria-label': '添加工作流、上下文与工具' }).props.onClick()
+      renderer.container.querySelector<HTMLButtonElement>('[aria-label="添加工作流、上下文与工具"]')?.click()
     })
 
-    expect(findButton(renderer.root, '计划模式')).toBeDefined()
-    expect(findButton(renderer.root, 'XForge')).toBeDefined()
-    expect(findButton(renderer.root, '添加图片')).toBeDefined()
-    expect(findButton(renderer.root, '技能与命令')).toBeDefined()
+    expect(findButton(renderer.container, '计划模式')).toBeDefined()
+    expect(findButton(renderer.container, 'XForge')).toBeDefined()
+    expect(findButton(renderer.container, '添加图片')).toBeDefined()
+    expect(findButton(renderer.container, '技能与命令')).toBeDefined()
 
     act(() => {
-      findButton(renderer.root, '添加图片').props.onClick()
+      findButton(renderer.container, '添加图片').click()
     })
     expect(onSelectImage).toHaveBeenCalledTimes(1)
+    renderer.unmount()
   })
 
   it('默认模式只显示加号，不显示常驻模式标签', () => {
-    const renderer = TestRenderer.create(<ModeSwitch />)
+    const renderer = renderDom(<ModeSwitch />)
 
     expect(
-      renderer.root.findAllByProps({ 'data-testid': 'active-mode-chip' })
+      renderer.container.querySelectorAll('[data-testid="active-mode-chip"]')
     ).toHaveLength(0)
     expect(
-      renderer.root.findByProps({ 'aria-label': '添加工作流、上下文与工具' })
-    ).toBeDefined()
+      renderer.container.querySelector('[aria-label="添加工作流、上下文与工具"]')
+    ).not.toBeNull()
+    renderer.unmount()
   })
 
   it('选择 Plan 使用现有会话模式真源并关闭菜单', async () => {
@@ -69,17 +69,19 @@ describe('ModeSwitch 工作流菜单', () => {
     useSettingsStore.setState({ setMode })
 
     try {
-      const renderer = TestRenderer.create(<ModeSwitch />)
+      const renderer = renderDom(<ModeSwitch />)
       act(() => {
-        renderer.root.findByProps({ 'aria-label': '添加工作流、上下文与工具' }).props.onClick()
+        renderer.container.querySelector<HTMLButtonElement>('[aria-label="添加工作流、上下文与工具"]')?.click()
       })
       await act(async () => {
-        await findButton(renderer.root, '计划模式').props.onClick()
+        findButton(renderer.container, '计划模式').click()
+        await Promise.resolve()
       })
 
       expect(setMode).toHaveBeenCalledWith('plan')
       expect(useSettingsStore.getState().currentMode).toBe('plan')
-      expect(renderer.root.findByProps({ 'data-testid': 'active-mode-chip' })).toBeDefined()
+      expect(renderer.container.querySelector('[data-testid="active-mode-chip"]')).not.toBeNull()
+      renderer.unmount()
     } finally {
       useSettingsStore.setState({ setMode: originalSetMode })
     }
@@ -93,20 +95,20 @@ describe('ModeSwitch 工作流菜单', () => {
     useSettingsStore.setState({ currentMode: 'plan', setMode })
 
     try {
-      const renderer = TestRenderer.create(<ModeSwitch />)
+      const renderer = renderDom(<ModeSwitch />)
 
-      expect(renderer.root.findByProps({ 'data-testid': 'active-mode-chip' })).toBeDefined()
+      expect(renderer.container.querySelector('[data-testid="active-mode-chip"]')).not.toBeNull()
       await act(async () => {
-        await renderer.root.findByProps({ 'aria-label': '退出 Plan' }).props.onClick({
-          stopPropagation: vi.fn()
-        })
+        renderer.container.querySelector<HTMLButtonElement>('[aria-label="退出 Plan"]')?.click()
+        await Promise.resolve()
       })
 
       expect(setMode).toHaveBeenCalledWith('default')
       expect(useSettingsStore.getState().currentMode).toBe('default')
       expect(
-        renderer.root.findAllByProps({ 'data-testid': 'active-mode-chip' })
+        renderer.container.querySelectorAll('[data-testid="active-mode-chip"]')
       ).toHaveLength(0)
+      renderer.unmount()
     } finally {
       useSettingsStore.setState({ setMode: originalSetMode })
     }

@@ -17,6 +17,7 @@
  *   思路与 MarkdownRenderer 的 isStreaming 降级一致。
  */
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { SpinnerIcon, CheckIcon, AlertIcon, ChevronIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { highlightLineCached } from '../../lib/highlightCache'
@@ -199,31 +200,39 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
 
   return (
     <div className={`streaming-card ${statusClass}`}>
-      <div className="streaming-card__header" onClick={handleToggle}>
-        <div className="streaming-card__status-icon">
-          {status === 'running' && (
-            <div className="streaming-card__spinner">
-              <SpinnerIcon size={14} />
-            </div>
-          )}
-          {status === 'success' && <CheckIcon size={14} />}
-          {status === 'error' && <AlertIcon size={14} />}
-        </div>
-
+      <Button
+        label={`${isOpen ? '折叠' : '展开'} ${filePath || '未命名文件'}`}
+        variant="ghost"
+        width="100%"
+        className="streaming-card__header"
+        icon={(
+          <span className="streaming-card__status-icon" aria-hidden="true">
+            {status === 'running' && (
+              <span className="streaming-card__spinner">
+                <SpinnerIcon size={14} />
+              </span>
+            )}
+            {status === 'success' && <CheckIcon size={14} />}
+            {status === 'error' && <AlertIcon size={14} />}
+          </span>
+        )}
+        endContent={(
+          <span className="streaming-card__header-meta">
+            <span className="streaming-card__status-badge">{statusLabel}</span>
+            <span className="streaming-card__line-count">
+              {lineCount > 0 && `${lineCount} 行`}
+            </span>
+            <span className="streaming-card__arrow" aria-hidden="true">
+              <ChevronIcon size={14} direction={isOpen ? 'up' : 'down'} />
+            </span>
+          </span>
+        )}
+        onClick={handleToggle}
+      >
         <span className="streaming-card__filename" title={filePath}>
           {filePath || '未命名文件'}
         </span>
-
-        <span className="streaming-card__status-badge">{statusLabel}</span>
-
-        <span className="streaming-card__line-count">
-          {lineCount > 0 && `${lineCount} 行`}
-        </span>
-
-        <div className="streaming-card__arrow">
-          <ChevronIcon size={14} direction={isOpen ? 'up' : 'down'} />
-        </div>
-      </div>
+      </Button>
 
       {isOpen && (
         <div className="streaming-card__body" ref={bodyRef}>
@@ -244,14 +253,24 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
 
           {/* T03：截断提示行 */}
           {needsTruncation && !showFull && (
-            <div className="streaming-card__truncation-hint" onClick={() => setShowFull(true)}>
-              还有 {lines.length - PREVIEW_LINE_LIMIT} 行未显示，点击展开全部
-            </div>
+            <Button
+              label={`还有 ${lines.length - PREVIEW_LINE_LIMIT} 行未显示，点击展开全部`}
+              variant="ghost"
+              size="sm"
+              width="100%"
+              className="streaming-card__truncation-hint"
+              onClick={() => setShowFull(true)}
+            />
           )}
           {needsTruncation && showFull && (
-            <div className="streaming-card__truncation-hint" onClick={() => setShowFull(false)}>
-              点击折叠
-            </div>
+            <Button
+              label="点击折叠"
+              variant="ghost"
+              size="sm"
+              width="100%"
+              className="streaming-card__truncation-hint"
+              onClick={() => setShowFull(false)}
+            />
           )}
 
           {/* error 状态下展示错误信息 */}

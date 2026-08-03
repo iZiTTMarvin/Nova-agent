@@ -1,4 +1,8 @@
 import React, { useEffect, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
+import { RadioList, RadioListItem } from '@astryxdesign/core/RadioList'
+import { TextInput } from '@astryxdesign/core/TextInput'
 import { useAgentStore } from '../../stores/useAgentStore'
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import './AskQuestionPanel.css'
@@ -127,46 +131,70 @@ export const AskQuestionPanel: React.FC = () => {
         <p className="ask-question-text">{current.question}</p>
 
         <div className="ask-question-options">
-          {current.options.map((option) => (
-            <label
-              key={option.label}
-              className={`ask-question-option ${isOptionSelected(option.label) ? 'selected' : ''}`}
+          {current.multiple ? (
+            current.options.map(option => (
+              <div
+                key={option.label}
+                className={`ask-question-option ${isOptionSelected(option.label) ? 'selected' : ''}`}
+              >
+                <CheckboxInput
+                  label={`${option.label}${option.recommended ? ' (Recommended)' : ''}`}
+                  description={option.description}
+                  value={isOptionSelected(option.label)}
+                  size="sm"
+                  className="ask-question-control"
+                  onChange={() => toggleOption(option.label)}
+                />
+              </div>
+            ))
+          ) : (
+            <RadioList
+              label="可选答案"
+              isLabelHidden
+              value={getAnswer(currentStep).selectedLabels[0] ?? ''}
+              onChange={toggleOption}
+              orientation="vertical"
+              size="sm"
+              className="ask-question-radio-list"
+              htmlName={`ask-question-${currentStep}`}
             >
-              <input
-                type={current.multiple ? 'checkbox' : 'radio'}
-                name={`ask-question-${currentStep}`}
-                checked={isOptionSelected(option.label)}
-                onChange={() => toggleOption(option.label)}
-              />
-              <span className="ask-question-option-content">
-                <span className="ask-question-option-label">
-                  {option.label}
-                  {option.recommended && <span className="ask-question-recommended-tag">(Recommended)</span>}
-                </span>
-                {option.description && <span className="ask-question-option-desc">{option.description}</span>}
-              </span>
-            </label>
-          ))}
+              {current.options.map(option => (
+                <RadioListItem
+                  key={option.label}
+                  label={option.label}
+                  value={option.label}
+                  description={option.description}
+                  endContent={option.recommended ? <span className="ask-question-recommended-tag">(Recommended)</span> : undefined}
+                />
+              ))}
+            </RadioList>
+          )}
 
           {current.custom !== false && (
             <div className="ask-question-custom-row">
               {showCustom ? (
-                <input
-                  type="text"
-                  autoFocus
+                <TextInput
+                  label="自定义回答"
+                  isLabelHidden
+                  hasAutoFocus
                   placeholder="输入你的回答…"
                   value={customInputs.get(currentStep) ?? ''}
-                  onChange={(e) => handleCustomInput(e.target.value)}
+                  onChange={value => handleCustomInput(value)}
+                  size="sm"
+                  width="100%"
                   className="ask-question-custom-input"
                 />
               ) : (
-                <button
-                  type="button"
+                <Button
+                  label="输入你的回答…"
+                  variant="ghost"
+                  size="sm"
+                  width="100%"
                   className="ask-question-custom-trigger"
                   onClick={() => setShowCustom(true)}
                 >
                   输入你的回答…
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -176,28 +204,48 @@ export const AskQuestionPanel: React.FC = () => {
       <div className="ask-question-footer">
         <div className="ask-question-nav">
           {currentStep > 0 && (
-            <button type="button" onClick={goPrev} className="ask-question-btn-secondary">
+            <Button
+              label="上一题"
+              variant="secondary"
+              size="sm"
+              onClick={goPrev}
+              className="ask-question-btn-secondary"
+            >
               上一题
-            </button>
+            </Button>
           )}
           {currentStep < questions.length - 1 ? (
-            <button type="button" onClick={goNext} className="ask-question-btn-primary">
+            <Button
+              label="下一题"
+              variant="primary"
+              size="sm"
+              onClick={goNext}
+              className="ask-question-btn-primary"
+            >
               下一题
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
+            <Button
+              label="提交答案"
+              variant="primary"
+              size="sm"
               onClick={handleSubmit}
-              disabled={!canSubmit()}
+              isDisabled={!canSubmit()}
               className="ask-question-btn-primary"
             >
               提交答案
-            </button>
+            </Button>
           )}
         </div>
-        <button type="button" onClick={handleDismiss} className="ask-question-btn-dismiss">
+        <Button
+          label="跳过全部"
+          variant="ghost"
+          size="sm"
+          onClick={handleDismiss}
+          className="ask-question-btn-dismiss"
+        >
           跳过全部
-        </button>
+        </Button>
       </div>
     </div>
   )

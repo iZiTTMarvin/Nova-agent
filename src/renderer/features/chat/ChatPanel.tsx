@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Profiler } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { TextArea } from '@astryxdesign/core/TextArea'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useRunStore } from '../../stores/useRunStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { selectSupportsVisionFromConfig } from '../../stores/selectors'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
   SendIcon,
   StopIcon,
@@ -429,8 +431,8 @@ export const ChatPanel: React.FC = () => {
   )
 
   // 处理文本域自动折行高度自适应
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputVal(e.target.value)
+  const handleInputChange = (nextValue: string) => {
+    setInputVal(nextValue)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px'
@@ -668,7 +670,7 @@ export const ChatPanel: React.FC = () => {
       {/* 消息流区域，只有非空状态时才显示并占据空间 */}
       {!isEmptyState && (
         <div
-          className="chat-messages flex-1 overflow-y-auto pt-6 px-4 pb-64"
+          className="chat-messages flex-1 overflow-y-auto pt-6 px-4"
           ref={bindScrollContainer}
           onScroll={handleScroll}
           style={{ overflowAnchor: 'none' }}
@@ -681,14 +683,14 @@ export const ChatPanel: React.FC = () => {
                   ? '（部分文件改动因缺少 forward 快照未能重放）'
                   : '（仅对话历史，工作区停在分叉点状态）'}
               </span>
-              <button
-                type="button"
+              <IconButton
+                label="关闭提示"
+                icon={<span aria-hidden="true">×</span>}
+                variant="ghost"
+                size="sm"
                 className="chat-tier1-notice__dismiss"
                 onClick={dismissTier1BranchNotice}
-                aria-label="关闭提示"
-              >
-                ×
-              </button>
+              />
             </div>
           )}
 
@@ -737,14 +739,14 @@ export const ChatPanel: React.FC = () => {
                 <div key={`pending-${idx}`} className="steering-queue__item">
                   <span className="steering-queue__index">{idx + 1}.</span>
                   <span className="steering-queue__text">{msg.text || '(空文本)'}</span>
-                  <button
+                  <IconButton
+                    label="从队列移除"
+                    icon={<span aria-hidden="true">×</span>}
+                    variant="ghost"
+                    size="sm"
                     className="steering-queue__remove"
                     onClick={() => removePendingMessage(idx)}
-                    title="从队列移除"
-                    type="button"
-                  >
-                    ×
-                  </button>
+                  />
                 </div>
               ))}
             </div>
@@ -763,28 +765,30 @@ export const ChatPanel: React.FC = () => {
         <div className="chat-panel__composer-inner">
           {/* 回到底部：放在 composer 栈顶，AskQuestion/Todo dock 展开时自然上移，不重叠 */}
           {!isEmptyState && showScrollToBottom && (
-            <button
-              type="button"
+            <IconButton
+              label="回到底部"
+              icon={
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4 6.5L8 10.5L12 6.5"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              }
+              variant="secondary"
+              size="sm"
               className="chat-scroll-to-bottom"
               onClick={handleScrollToBottomClick}
-              aria-label="回到底部"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path
-                  d="M4 6.5L8 10.5L12 6.5"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
+            />
           )}
 
           {/* 编排运行态：回车被拒后提示是否中断；确认后穿透到 TaskScope.close */}
@@ -793,23 +797,23 @@ export const ChatPanel: React.FC = () => {
               <span className="chat-cross-turn-notice__text">
                 编排运行中（{formatPhaseLabel(workflowBusyNotice.phase)}）——是否中断？
               </span>
-              <button
-                type="button"
+              <Button
+                label="中断编排"
+                variant="destructive"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => {
                   dismissWorkflowBusyNotice()
                   void cancelExecution()
                 }}
-              >
-                中断编排
-              </button>
-              <button
-                type="button"
+              />
+              <Button
+                label="继续等待"
+                variant="secondary"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={dismissWorkflowBusyNotice}
-              >
-                继续等待
-              </button>
+              />
             </div>
           )}
 
@@ -817,13 +821,13 @@ export const ChatPanel: React.FC = () => {
           {cancelGraceExceeded && (
             <div className="chat-cross-turn-notice" role="alert">
               <span className="chat-cross-turn-notice__text">部分任务未退出</span>
-              <button
-                type="button"
+              <Button
+                label="强制终止"
+                variant="destructive"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => void forceTerminate()}
-              >
-                强制终止
-              </button>
+              />
             </div>
           )}
 
@@ -836,34 +840,34 @@ export const ChatPanel: React.FC = () => {
                   ? `（已记录 ${interruptedSteps.length} 个工具步骤）`
                   : ''}
               </span>
-              <button
-                type="button"
+              <Button
+                label="继续分析"
+                variant="secondary"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => void interruptedAction('continue')}
-              >
-                继续分析
-              </button>
-              <button
-                type="button"
+              />
+              <Button
+                label="回滚本轮"
+                variant="secondary"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => void interruptedAction('rollback')}
-              >
-                回滚本轮
-              </button>
-              <button
-                type="button"
+              />
+              <Button
+                label="查看已执行步骤"
+                variant="secondary"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => void interruptedAction('inspect')}
-              >
-                查看已执行步骤
-              </button>
-              <button
-                type="button"
+              />
+              <Button
+                label="关闭"
+                variant="ghost"
+                size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => clearInterrupted()}
-              >
-                关闭
-              </button>
+              />
             </div>
           )}
 
@@ -896,21 +900,14 @@ export const ChatPanel: React.FC = () => {
               />
             </div>
 
-            <AnimatePresence>
-              {isEmptyState && (
-                <motion.div
-                  initial={{ opacity: 0, y: -20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="mb-8 flex flex-col items-center justify-center space-y-4"
-                >
-                  <NovaLogo size={48} />
-                  <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
-                    说出你的想法
-                  </h1>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {isEmptyState && (
+              <div className="mb-8 flex flex-col items-center justify-center space-y-4">
+                <NovaLogo size={48} />
+                <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
+                  说出你的想法
+                </h1>
+              </div>
+            )}
 
             {/* Child Session 是 durable 执行记录；继续/恢复必须回到统一子代理执行服务。 */}
             {currentSession?.kind === 'subagent' ? (
@@ -953,9 +950,11 @@ export const ChatPanel: React.FC = () => {
                 isComposing={isComposing}
               />
 
-              <textarea
+              <TextArea
                 ref={textareaRef}
-                className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-text-primary placeholder:text-gray-400 min-h-[44px] max-h-[300px] overflow-y-auto px-2 py-1"
+                className="chat-composer__textarea"
+                label="消息输入"
+                isLabelHidden
                 placeholder={pendingAskQuestion
                   ? '请先回答上方问题，再发送新消息（或输入排队）'
                   : workflowRunning
@@ -988,27 +987,25 @@ export const ChatPanel: React.FC = () => {
                 </div>
                 <div>
                   {isGenerating || sendInFlight || cancelling || workflowRunning ? (
-                    <button
-                      className="flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                    <IconButton
+                      label={cancelling ? '正在停止' : workflowRunning ? '中断编排' : '中断生成'}
+                      icon={<StopIcon size={14} />}
+                      variant="destructive"
+                      size="sm"
+                      className="chat-composer__stop"
                       onClick={() => void cancelExecution()}
-                      title={cancelling ? '正在停止' : workflowRunning ? '中断编排' : '中断生成'}
-                      disabled={cancelling && !cancelGraceExceeded}
-                    >
-                      <StopIcon size={14} />
-                    </button>
+                      isDisabled={cancelling && !cancelGraceExceeded}
+                    />
                   ) : (
-                    <button
-                      className={`flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
-                        inputVal.trim() || imageAttachments.length > 0
-                          ? 'bg-text-primary text-white hover:bg-gray-800'
-                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      }`}
+                    <IconButton
+                      label="发送"
+                      icon={<SendIcon size={14} />}
+                      variant="primary"
+                      size="sm"
+                      className="chat-composer__send"
                       onClick={handleSend}
-                      disabled={!inputVal.trim() && imageAttachments.length === 0}
-                      title="发送"
-                    >
-                      <SendIcon size={14} />
-                    </button>
+                      isDisabled={!inputVal.trim() && imageAttachments.length === 0}
+                    />
                   )}
                 </div>
               </div>

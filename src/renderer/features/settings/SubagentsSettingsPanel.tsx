@@ -2,6 +2,9 @@
  * Subagents 配置面板 — 内置 + 自定义 JSON
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
+import { ClickableCard } from '@astryxdesign/core/ClickableCard'
+import { TextArea } from '@astryxdesign/core/TextArea'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { subagentsI18n } from '../skills/i18n'
 import type { SubagentListItem } from '../../../shared/settings/types'
@@ -125,9 +128,9 @@ export const SubagentsSettingsPanel: React.FC = () => {
           <h3 className="settings-panel__title">{subagentsI18n.panelTitle}</h3>
           <p className="settings-panel__desc">{subagentsI18n.panelDesc}</p>
         </div>
-        <button type="button" className="settings-panel__primary-btn" onClick={handleCreate}>
+        <Button label={subagentsI18n.create} variant="primary" size="sm" onClick={handleCreate}>
           {subagentsI18n.create}
-        </button>
+        </Button>
       </header>
 
       <div className="settings-split">
@@ -137,9 +140,12 @@ export const SubagentsSettingsPanel: React.FC = () => {
             <p className="settings-panel__muted">{subagentsI18n.empty}</p>
           )}
           {items.map(item => (
-            <button
+            <ClickableCard
               key={item.name}
-              type="button"
+              label={item.name}
+              variant="transparent"
+              padding={0}
+              width="100%"
               className={`settings-split__item${selectedName === item.name ? ' settings-split__item--active' : ''}`}
               onClick={() => setSelectedName(item.name)}
             >
@@ -147,7 +153,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
               <span className="settings-split__item-meta">
                 {item.builtin ? subagentsI18n.builtin : subagentsI18n.custom}
               </span>
-            </button>
+            </ClickableCard>
           ))}
         </aside>
 
@@ -165,32 +171,37 @@ export const SubagentsSettingsPanel: React.FC = () => {
               ) : (
                 <>
                   <p className="settings-panel__muted">{subagentsI18n.editJson}</p>
-                  <textarea
+                  <TextArea
+                    label="子代理 JSON"
+                    isLabelHidden
                     className="settings-editor"
                     value={jsonText}
-                    onChange={e => {
-                      setJsonText(e.target.value)
+                    onChange={value => {
+                      setJsonText(value)
                       setSaveError(null)
                     }}
-                    spellCheck={false}
+                    hasSpellCheck={false}
+                    width="100%"
                   />
                   <div className="settings-editor__footer">
                     {saveError && <span className="settings-panel__status settings-panel__status--error">{saveError}</span>}
-                    <button
-                      type="button"
-                      className="settings-panel__ghost-btn settings-panel__ghost-btn--danger"
+                    <Button
+                      label={subagentsI18n.delete}
+                      variant="destructive"
+                      size="sm"
                       onClick={handleDelete}
                     >
                       {subagentsI18n.delete}
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-panel__primary-btn"
+                    </Button>
+                    <Button
+                      label={saving ? '保存中…' : subagentsI18n.save}
+                      variant="primary"
+                      size="sm"
                       onClick={handleSave}
-                      disabled={saving}
+                      isDisabled={saving}
                     >
                       {saving ? '保存中…' : subagentsI18n.save}
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}

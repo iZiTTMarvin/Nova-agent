@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import type { Mode } from '../../../shared/session/types'
 import type { ActivePlanDocument } from '../../../shared/workspace/types'
 import { isContentSummary, type ContentSummary } from '../../../shared/tool-input-sanitizer'
@@ -88,6 +89,11 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     currentMode === 'plan' &&
     document !== null &&
     !submitting
+  const statusLabel = status === 'running'
+    ? '正在生成计划'
+    : status === 'error'
+      ? '计划生成失败'
+      : '计划待审阅'
 
   const startImplementation = async () => {
     if (!canApprove) return
@@ -115,27 +121,24 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
 
   return (
     <section className={`plan-review-card plan-review-card--${status}`} aria-label="计划审阅">
-      <button
-        type="button"
+      <Button
+        label={`${statusLabel} · ${title}`}
+        variant="ghost"
+        size="md"
         className="plan-review-card__header"
         onClick={() => setExpanded(value => !value)}
         aria-expanded={expanded}
-      >
-        <span className="plan-review-card__icon" aria-hidden="true">
+        icon={<span className="plan-review-card__icon" aria-hidden="true">
           {status === 'running' ? <SpinnerIcon size={16} /> : <PlanIcon size={16} />}
-        </span>
-        <span className="plan-review-card__heading">
-          <span className="plan-review-card__eyebrow">
-            {status === 'running' ? '正在生成计划' : status === 'error' ? '计划生成失败' : '计划待审阅'}
-          </span>
-          <span className="plan-review-card__title">{title}</span>
-        </span>
-        {planPath && <span className="plan-review-card__path" title={planPath}>{planPath}</span>}
-        <ChevronIcon size={14} direction={expanded ? 'up' : 'down'} />
-      </button>
+        </span>}
+        endContent={<ChevronIcon size={14} direction={expanded ? 'up' : 'down'} />}
+      />
 
       {expanded && (
         <div className="plan-review-card__body">
+          {planPath && (
+            <div className="plan-review-card__path" title={planPath}>{planPath}</div>
+          )}
           {loading && !content && (
             <div className="plan-review-card__loading">
               <SpinnerIcon size={15} />
@@ -164,22 +167,22 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
           ) : (
             <>
               <span className="plan-review-card__prompt">确认计划后再允许编辑项目文件</span>
-              <button
-                type="button"
+              <Button
+                label="继续完善"
+                variant="secondary"
+                size="sm"
                 className="plan-review-card__secondary"
                 onClick={continuePlanning}
-                disabled={submitting || turnActive}
-              >
-                继续完善
-              </button>
-              <button
-                type="button"
+                isDisabled={submitting || turnActive}
+              />
+              <Button
+                label={submitting ? '正在切换…' : turnActive ? '等待回复完成' : '开始实施'}
+                variant="primary"
+                size="sm"
                 className="plan-review-card__primary"
                 onClick={() => void startImplementation()}
-                disabled={!canApprove}
-              >
-                {submitting ? '正在切换…' : turnActive ? '等待回复完成' : '开始实施'}
-              </button>
+                isDisabled={!canApprove}
+              />
             </>
           )}
         </div>

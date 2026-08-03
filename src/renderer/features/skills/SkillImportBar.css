@@ -48,7 +48,3 @@
   flex: 1;
   min-width: 0;
 }
-
-.skill-import-bar__url .settings-panel__primary-btn {
-  flex-shrink: 0;
-}

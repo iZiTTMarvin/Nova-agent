@@ -1,10 +1,11 @@
+// @vitest-environment jsdom
+
 /**
  * 输入框运行态：编排运行期间回车不发送、不排队，只提示是否中断。
  *
  * 同时回归默认模式：没有编排 run 时回车照常发送 / 排队，行为不变。
  */
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
@@ -15,6 +16,7 @@ import {
 import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
 import { useWorkflowStore } from '../../../src/renderer/features/workflow/useWorkflowStore'
+import { act, renderDom, type DomRenderResult } from './renderDom'
 
 vi.mock('../../../src/renderer/features/chat/MessageItem', () => ({ MessageItem: () => null }))
 vi.mock('../../../src/renderer/features/mode-switch/ModeSwitch', () => ({ ModeSwitch: () => null }))
@@ -41,29 +43,29 @@ vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
 const mockInvoke = vi.fn()
 
-function mountChatPanel(): TestRenderer.ReactTestRenderer {
-  let renderer: TestRenderer.ReactTestRenderer | null = null
-  act(() => {
-    renderer = TestRenderer.create(React.createElement(ChatPanel))
-  })
-  return renderer as unknown as TestRenderer.ReactTestRenderer
+function mountChatPanel(): DomRenderResult {
+  return renderDom(React.createElement(ChatPanel))
 }
 
 async function typeAndPressEnter(
-  renderer: TestRenderer.ReactTestRenderer,
+  renderer: DomRenderResult,
   text: string
 ): Promise<void> {
-  const textarea = renderer.root.findByType('textarea')
+  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('textarea')
+  if (!textarea) throw new Error('textarea not found')
   act(() => {
-    textarea.props.onChange({ target: { value: text } })
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    valueSetter?.call(textarea, text)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
   })
   // handleSend 内部有 await（preSendGate）：必须把微任务排空后再断言
   await act(async () => {
-    renderer.root.findByType('textarea').props.onKeyDown({
+    textarea.dispatchEvent(new KeyboardEvent('keydown', {
       key: 'Enter',
       shiftKey: false,
-      preventDefault: () => {}
-    })
+      bubbles: true,
+      cancelable: true
+    }))
     await Promise.resolve()
   })
 }
@@ -84,11 +86,10 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     enqueuePendingMessage = vi.fn()
 
     mockInvoke.mockResolvedValue(undefined)
-    global.window = {
-      ...global.window,
+    Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
-    } as unknown as Window & typeof globalThis
+    })
 
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -135,12 +136,13 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     useRunStore.setState({ interruptedRunId: 'run-child', interruptedSteps: [] })
 
     const renderer = mountChatPanel()
-    const text = renderer.root.findAllByType('button')
-      .map((button) => button.children.join(''))
+    const text = Array.from(renderer.container.querySelectorAll('button'))
+      .map(button => button.textContent ?? '')
 
     expect(text).not.toContain('继续分析')
     expect(text).not.toContain('回滚本轮')
-    expect(renderer.root.findAllByType('textarea')).toHaveLength(0)
+    expect(renderer.container.querySelectorAll('textarea')).toHaveLength(0)
+    renderer.unmount()
   })
 
   it('编排运行中：回车既不发送也不排队，只弹中断提示', async () => {
@@ -165,9 +167,9 @@ describe('ChatPanel 编排运行态输入互斥', () => {
       phase: 'implement'
     })
     // 输入内容保留，用户可以在中断后直接再发
-    expect(renderer.root.findByType('textarea').props.value).toBe('再改一下登录页')
+    expect(renderer.container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('再改一下登录页')
 
-    act(() => renderer.unmount())
+    renderer.unmount()
   })
 
   it('编排属于其它会话时不拦截本会话发送', async () => {
@@ -187,7 +189,7 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     expect(sendMessage).toHaveBeenCalledWith('你好', [])
     expect(useWorkflowStore.getState().busyNotice).toBeNull()
 
-    act(() => renderer.unmount())
+    renderer.unmount()
   })
 
   it('默认模式回归：无编排 run 时回车照常发送', async () => {
@@ -197,23 +199,27 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     expect(sendMessage).toHaveBeenCalledWith('写个测试', [])
     expect(useWorkflowStore.getState().busyNotice).toBeNull()
 
-    act(() => renderer.unmount())
+    renderer.unmount()
   })
 
   it('compose 模式 Auto 默认关闭，打开后随 send-message 传递快照', async () => {
     useSettingsStore.setState({ currentMode: 'compose' } as never)
     const renderer = mountChatPanel()
-    const toggle = renderer.root.findByProps({ role: 'switch' })
+    const toggle = renderer.container.querySelector<HTMLButtonElement>('[aria-pressed]')
+    expect(toggle).not.toBeNull()
 
-    expect(toggle.props['aria-checked']).toBe(false)
-    expect(toggle.props.title).toBe('全自动完成')
-    act(() => toggle.props.onClick())
-    expect(renderer.root.findByProps({ role: 'switch' }).props['aria-checked']).toBe(true)
+    expect(toggle?.getAttribute('aria-pressed')).toBe('false')
+    expect(toggle?.getAttribute('aria-label')).toBe('全自动完成')
+    await act(async () => {
+      toggle?.click()
+      await Promise.resolve()
+    })
+    expect(renderer.container.querySelector<HTMLButtonElement>('[aria-pressed]')?.getAttribute('aria-pressed')).toBe('true')
 
     await typeAndPressEnter(renderer, '完成整套登录功能')
 
     expect(sendMessage).toHaveBeenCalledWith('完成整套登录功能', [], { autoMode: true })
-    act(() => renderer.unmount())
+    renderer.unmount()
   })
 
   it('默认模式回归：Agent 运行中的入口行为不变（既不发送也不弹编排提示）', async () => {
@@ -228,7 +234,7 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     expect(sendMessage).not.toHaveBeenCalled()
     expect(useWorkflowStore.getState().busyNotice).toBeNull()
 
-    act(() => renderer.unmount())
+    renderer.unmount()
   })
 
   it('编排运行时输入框占位提示中断语义', async () => {
@@ -243,8 +249,8 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     })
 
     const renderer = mountChatPanel()
-    expect(renderer.root.findByType('textarea').props.placeholder).toContain('中断')
+    expect(renderer.container.querySelector<HTMLTextAreaElement>('textarea')?.placeholder).toContain('中断')
 
-    act(() => renderer.unmount())
+    renderer.unmount()
   })
 })

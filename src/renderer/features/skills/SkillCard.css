@@ -19,10 +19,6 @@
   font-weight: 600;
   font-size: 0.92rem;
   color: var(--color-brand);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
   text-align: left;
 }
 
@@ -62,10 +58,6 @@
   cursor: pointer;
 }
 
-.skill-card__toggle input {
-  accent-color: var(--color-brand);
-}
-
 .skill-card__desc {
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -81,25 +73,4 @@
   display: flex;
   gap: 8px;
   margin-top: 4px;
-}
-
-.skill-card__btn {
-  font-size: 0.78rem;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-warm);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.skill-card__btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.skill-card__btn--danger:hover {
-  border-color: var(--color-error, #b53333);
-  color: var(--color-error, #b53333);
 }

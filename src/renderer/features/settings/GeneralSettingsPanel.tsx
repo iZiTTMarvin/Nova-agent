@@ -9,6 +9,7 @@ import { TextInput } from '@astryxdesign/core/TextInput'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
 import { Selector } from '@astryxdesign/core/Selector'
 import { Switch } from '@astryxdesign/core/Switch'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
 
@@ -29,6 +30,8 @@ const PERMISSION_OPTIONS: { value: NovaSettingsDto['permissionPolicy']; label: s
 ]
 
 export const GeneralSettingsPanel: React.FC = () => {
+  const theme = useSettingsStore(state => state.theme)
+  const setTheme = useSettingsStore(state => state.setTheme)
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -59,6 +62,22 @@ export const GeneralSettingsPanel: React.FC = () => {
       setSettings(next)
       setSaved(true)
       // 1.5s 后隐藏"已保存"提示
+      window.setTimeout(() => setSaved(false), 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存设置失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const updateTheme = async (nextTheme: NovaSettingsDto['theme']): Promise<void> => {
+    setSaving(true)
+    setError(null)
+    setSaved(false)
+    try {
+      await setTheme(nextTheme)
+      setSettings(current => (current ? { ...current, theme: nextTheme } : current))
+      setSaved(true)
       window.setTimeout(() => setSaved(false), 1500)
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存设置失败')
@@ -174,8 +193,8 @@ export const GeneralSettingsPanel: React.FC = () => {
           label="主题"
           description="界面主题外观。"
           options={THEME_OPTIONS}
-          value={settings.theme}
-          onChange={value => void update('theme', value as NovaSettingsDto['theme'])}
+          value={theme}
+          onChange={value => void updateTheme(value as NovaSettingsDto['theme'])}
           isDisabled={saving}
           width="100%"
         />

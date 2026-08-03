@@ -4,6 +4,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SkillCreateLocation } from '../../../shared/skills/types'
 import { skillsI18n } from './i18n'
+import { Button } from '@astryxdesign/core/Button'
+import { Dialog } from '@astryxdesign/core/Dialog'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { TextArea } from '@astryxdesign/core/TextArea'
+import { TextInput } from '@astryxdesign/core/TextInput'
+import { CloseIcon } from '../../components/Icons'
 import './CreateSkillDialog.css'
 
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -47,7 +53,6 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
   const [error, setError] = useState<string | null>(null)
 
   const nameValid = useMemo(() => SLUG_RE.test(name.trim()), [name])
-  const descLen = description.length
 
   const resetForm = useCallback(() => {
     setName('')
@@ -126,55 +131,55 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
   if (!open) return null
 
   return (
-    <div className="skill-dialog-overlay" onClick={onClose}>
-      <div
-        className="skill-dialog"
-        role="dialog"
-        aria-labelledby="create-skill-title"
-        onClick={e => e.stopPropagation()}
-      >
+    <Dialog
+      isOpen={open}
+      onOpenChange={nextOpen => {
+        if (!nextOpen) onClose()
+      }}
+      purpose="info"
+      padding={0}
+      width="min(520px, 96vw)"
+      maxHeight="min(88vh, 680px)"
+      className="skill-dialog"
+      aria-labelledby="create-skill-title"
+    >
         <header className="skill-dialog__header">
           <h3 id="create-skill-title" className="skill-dialog__title">
             {skillsI18n.createTitle}
           </h3>
-          <button type="button" className="skill-dialog__close" onClick={onClose} aria-label="关闭">
-            ×
-          </button>
+          <IconButton
+            label="关闭"
+            icon={<CloseIcon size={16} />}
+            variant="ghost"
+            size="sm"
+            className="skill-dialog__close"
+            onClick={onClose}
+          />
         </header>
 
         <form className="skill-dialog__form" onSubmit={e => void handleSubmit(e)}>
           <div className="settings-modal__field">
-            <label className="settings-modal__label" htmlFor="skill-name">
-              {skillsI18n.createNameLabel}
-            </label>
-            <input
+            <TextInput
               id="skill-name"
-              className={`settings-modal__input ${name && !nameValid ? 'settings-modal__input--error' : ''}`}
+              label={skillsI18n.createNameLabel}
               value={name}
-              onChange={e => setName(e.target.value.toLowerCase())}
+              onChange={value => setName(value.toLowerCase())}
               placeholder="my-skill"
-              autoFocus
+              hasAutoFocus
+              status={name && !nameValid ? { type: 'error', message: skillsI18n.createNameInvalid } : undefined}
+              description={skillsI18n.createNameHint}
             />
-            <span className="settings-modal__help">{skillsI18n.createNameHint}</span>
-            {name && !nameValid && (
-              <span className="settings-modal__field-error">{skillsI18n.createNameInvalid}</span>
-            )}
           </div>
 
           <div className="settings-modal__field">
-            <label className="settings-modal__label" htmlFor="skill-desc">
-              {skillsI18n.createDescLabel}
-              <span className="skill-dialog__counter">
-                {descLen}/{MAX_DESC}
-              </span>
-            </label>
-            <textarea
+            <TextArea
               id="skill-desc"
               className="settings-editor skill-dialog__textarea--sm"
+              label={skillsI18n.createDescLabel}
               rows={3}
               maxLength={MAX_DESC}
               value={description}
-              onChange={e => setDescription(e.target.value)}
+              onChange={value => setDescription(value.slice(0, MAX_DESC))}
             />
           </div>
 
@@ -182,14 +187,16 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             <span className="settings-modal__label">{skillsI18n.createTemplateLabel}</span>
             <div className="skill-dialog__template-row">
               {(['blank', 'new', 'onboard'] as SkillTemplateId[]).map(id => (
-                <button
+                <Button
                   key={id}
+                  label={skillsI18n.createTemplates[id]}
+                  variant={template === id ? 'primary' : 'secondary'}
+                  size="sm"
+                  aria-pressed={template === id}
                   type="button"
-                  className={`skill-dialog__template-btn ${template === id ? 'skill-dialog__template-btn--active' : ''}`}
+                  className="skill-dialog__template-btn"
                   onClick={() => void applyTemplate(id)}
-                >
-                  {skillsI18n.createTemplates[id]}
-                </button>
+                />
               ))}
             </div>
           </div>
@@ -197,59 +204,61 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
           <div className="settings-modal__field">
             <span className="settings-modal__label">{skillsI18n.createLocationLabel}</span>
             <div className="skill-dialog__template-row">
-              <button
+              <Button
+                label={skillsI18n.createLocationGlobal}
+                variant={location === 'global' ? 'primary' : 'secondary'}
+                size="sm"
+                aria-pressed={location === 'global'}
                 type="button"
-                className={`skill-dialog__template-btn ${location === 'global' ? 'skill-dialog__template-btn--active' : ''}`}
+                className="skill-dialog__template-btn"
                 onClick={() => setLocation('global')}
-              >
-                {skillsI18n.createLocationGlobal}
-              </button>
-              <button
+              />
+              <Button
+                label={skillsI18n.createLocationProject}
+                variant={location === 'project' ? 'primary' : 'secondary'}
+                size="sm"
+                aria-pressed={location === 'project'}
                 type="button"
-                className={`skill-dialog__template-btn ${location === 'project' ? 'skill-dialog__template-btn--active' : ''}`}
+                className="skill-dialog__template-btn"
                 onClick={() => setLocation('project')}
-                disabled={!hasProject}
-                title={!hasProject ? skillsI18n.createNeedProject : undefined}
-              >
-                {skillsI18n.createLocationProject}
-              </button>
+                isDisabled={!hasProject}
+                tooltip={!hasProject ? skillsI18n.createNeedProject : undefined}
+              />
             </div>
           </div>
 
           <div className="settings-modal__field skill-dialog__body-field">
-            <label className="settings-modal__label" htmlFor="skill-body">
-              {skillsI18n.createBodyLabel}
-            </label>
-            <textarea
+            <TextArea
               id="skill-body"
               className="settings-editor"
+              label={skillsI18n.createBodyLabel}
               rows={10}
               value={body}
-              onChange={e => setBody(e.target.value)}
+              onChange={value => setBody(value)}
             />
           </div>
 
           {error && <p className="settings-modal__error">{error}</p>}
 
           <div className="settings-modal__actions">
-            <button
+            <Button
+              label={skillsI18n.createCancel}
+              variant="ghost"
+              size="sm"
               type="button"
-              className="settings-modal__btn settings-modal__btn--cancel"
               onClick={onClose}
-              disabled={submitting}
-            >
-              {skillsI18n.createCancel}
-            </button>
-            <button
+              isDisabled={submitting}
+            />
+            <Button
+              label={submitting ? skillsI18n.createSubmitting : skillsI18n.createSubmit}
+              variant="primary"
+              size="sm"
               type="submit"
-              className="settings-modal__btn settings-modal__btn--save"
-              disabled={submitting || !nameValid || !description.trim()}
-            >
-              {submitting ? skillsI18n.createSubmitting : skillsI18n.createSubmit}
-            </button>
+              isDisabled={submitting || !nameValid || !description.trim()}
+              isLoading={submitting}
+            />
           </div>
         </form>
-      </div>
-    </div>
+    </Dialog>
   )
 }

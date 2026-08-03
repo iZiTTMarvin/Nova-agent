@@ -11,6 +11,7 @@
 .turn-process-tree__header {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
   width: 100%;
   padding: 4px 0;
@@ -27,11 +28,6 @@
 
 .turn-process-tree__header:hover {
   color: var(--text-primary, #141413);
-}
-
-.turn-process-tree__header-title {
-  flex: 1;
-  min-width: 0;
 }
 
 .turn-process-tree__chevron {

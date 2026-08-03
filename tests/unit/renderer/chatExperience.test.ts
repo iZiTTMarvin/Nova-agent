@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
+
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { StreamingFileCard } from '../../../src/renderer/features/chat/StreamingFileCard'
@@ -7,6 +8,7 @@ import { ThinkingBlock } from '../../../src/renderer/features/chat/ThinkingBlock
 import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
 import { sanitizeToolInput } from '../../../src/shared/tool-input-sanitizer'
+import { act, renderDom } from './renderDom'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 import { createNovaSkillMock } from './_novaSkillMock'
@@ -59,26 +61,19 @@ describe('聊天体验回归', () => {
     })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    vi.stubGlobal('document', {
-      visibilityState: 'visible',
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn()
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible'
     })
-    global.window = {
-      ...global.window,
+    Object.assign(window, {
       api: {
         invoke: mockInvoke,
         on: mockOn,
         removeAllListeners: mockRemoveAllListeners
       },
       nova: { skill: createNovaSkillMock() },
-      confirm: vi.fn(() => false),
-      matchMedia: vi.fn().mockImplementation(() => ({
-        matches: false,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn()
-      }))
-    } as unknown as Window & typeof globalThis
+      confirm: vi.fn(() => false)
+    })
     resetStore()
   })
 
@@ -112,68 +107,43 @@ describe('聊天体验回归', () => {
       currentGeneratingMessageId: 'msg_assistant'
     })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel))
-    })
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const pending = renderer.container.querySelector('.assistant-pending')
+    expect(pending?.querySelector('.assistant-pending__label')?.textContent).toBe('正在思考')
 
-    const pending = renderer!.root.findByProps({ className: 'assistant-pending' })
-    expect(pending.findByProps({ className: 'assistant-pending__label' }).children).toEqual(['正在思考'])
-
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('思考块结束后自动收起为 Thought 行（Cursor 风）', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: true })
-      )
-    })
+    const renderer = renderDom(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: true }))
 
-    expect(renderer!.root.findByType('details').props.open).toBe(true)
+    expect(renderer.container.querySelector<HTMLDetailsElement>('details')?.open).toBe(true)
 
-    act(() => {
-      renderer!.update(
-        React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: false })
-      )
-    })
+    renderer.render(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: false }))
 
     // 结束后默认折叠，只留 Thought for Xs 一行
-    expect(renderer!.root.findByType('details').props.open).toBe(false)
-    const title = renderer!.root.findByProps({ className: 'thinking-block__title' })
-    expect(String(title.children.join(''))).toMatch(/^Thought/)
+    expect(renderer.container.querySelector<HTMLDetailsElement>('details')?.open).toBe(false)
+    const title = renderer.container.querySelector('.thinking-block__title')
+    expect(title?.textContent ?? '').toMatch(/^Thought/)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('思考块将连续 Markdown 摘要渲染为独立标题，不暴露星号', () => {
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(ThinkingBlock, {
-          thinking:
-            '**Planning initial repository inspection****Drafting detailed implementation plan**',
-          active: true
-        })
-      )
-    })
+    const renderer = renderDom(React.createElement(ThinkingBlock, {
+      thinking: '**Planning initial repository inspection****Drafting detailed implementation plan**',
+      active: true
+    }))
 
-    const headings = renderer!.root.findAllByType('strong')
+    const headings = renderer.container.querySelectorAll('strong')
     expect(headings).toHaveLength(2)
-    expect(headings.map(node => node.children.join(''))).toEqual([
+    expect(Array.from(headings).map(node => node.textContent ?? '')).toEqual([
       'Planning initial repository inspection',
       'Drafting detailed implementation plan'
     ])
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain('****')
+    expect(renderer.container.innerHTML).not.toContain('****')
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('T03：流式文件卡片完成后自动折叠，减少大段代码占用的视口', () => {
@@ -181,38 +151,27 @@ describe('聊天体验回归', () => {
       path: 'src/example.ts',
       content: 'export const value = 1\nexport const next = 2'
     }
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(StreamingFileCard, {
-          toolCallId: 'tc_1',
-          toolName: 'write',
-          status: 'running',
-          args
-        })
-      )
-    })
+    const renderer = renderDom(React.createElement(StreamingFileCard, {
+      toolCallId: 'tc_1',
+      toolName: 'write',
+      status: 'running',
+      args
+    }))
 
     // running 时自动展开
-    expect(renderer!.root.findAllByProps({ className: 'streaming-card__body' })).toHaveLength(1)
+    expect(renderer.container.querySelectorAll('.streaming-card__body')).toHaveLength(1)
 
-    act(() => {
-      renderer!.update(
-        React.createElement(StreamingFileCard, {
-          toolCallId: 'tc_1',
-          toolName: 'write',
-          status: 'success',
-          args
-        })
-      )
-    })
+    renderer.render(React.createElement(StreamingFileCard, {
+      toolCallId: 'tc_1',
+      toolName: 'write',
+      status: 'success',
+      args
+    }))
 
     // T03：完成后自动折叠，不再保持展开
-    expect(renderer!.root.findAllByProps({ className: 'streaming-card__body' })).toHaveLength(0)
+    expect(renderer.container.querySelectorAll('.streaming-card__body')).toHaveLength(0)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('加载带摘要化 write 的历史会话时不应白屏（TurnProcessTree 默认折叠过程时间线）', () => {
@@ -242,30 +201,22 @@ describe('聊天体验回归', () => {
 
     resetStore(messages)
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel))
-    })
+    const renderer = renderDom(React.createElement(ChatPanel))
 
     // completed 默认折叠：折叠头可见，过程时间线不 mount
-    const header = renderer!.root.findByProps({ 'data-testid': 'turn-process-header' })
-    expect(String(header.findByProps({ className: 'turn-process-tree__header-title' }).children.join(''))).toMatch(/^已工作/)
-    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row' })).toHaveLength(0)
-    expect(renderer!.root.findAllByProps({ className: 'streaming-card__filename' })).toHaveLength(0)
+    const header = renderer.container.querySelector<HTMLElement>('[data-testid="turn-process-header"]')
+    expect(header).not.toBeNull()
+    expect(header?.querySelector('.turn-process-tree__header-title')?.textContent ?? '').toMatch(/^已工作/)
+    expect(renderer.container.querySelectorAll('.tool-trace-row')).toHaveLength(0)
+    expect(renderer.container.querySelectorAll('.streaming-card__filename')).toHaveLength(0)
 
     // 展开折叠头 → 挂载过程时间线等宽行
-    act(() => {
-      header.props.onClick()
-    })
-    const action = renderer!.root.findByProps({ className: 'tool-trace-row__action' })
-    expect(action.children).toEqual(['Wrote'])
-    const target = renderer!.root.findByProps({ className: 'tool-trace-row__target' })
-    expect(String(target.children.join(''))).toContain('index.html')
-    expect(renderer!.root.findAllByProps({ className: 'tool-trace-row__detail' })).toHaveLength(0)
+    act(() => header?.click())
+    expect(renderer.container.querySelector('.tool-trace-row__action')?.textContent).toBe('Wrote')
+    expect(renderer.container.querySelector('.tool-trace-row__target')?.textContent ?? '').toContain('index.html')
+    expect(renderer.container.querySelectorAll('.tool-trace-row__detail')).toHaveLength(0)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 
   it('底部工具栏不再常驻显示独立 UsageStats，避免与上下文指示器混淆', () => {
@@ -294,16 +245,11 @@ describe('聊天体验回归', () => {
       }
     })
 
-    let renderer: TestRenderer.ReactTestRenderer | null = null
-    act(() => {
-      renderer = TestRenderer.create(React.createElement(ChatPanel))
-    })
+    const renderer = renderDom(React.createElement(ChatPanel))
 
-    expect(renderer!.root.findAllByProps({ className: 'usage-stats' })).toHaveLength(0)
-    expect(renderer!.root.findAllByProps({ className: 'context-indicator-wrap' })).toHaveLength(1)
+    expect(renderer.container.querySelectorAll('.usage-stats')).toHaveLength(0)
+    expect(renderer.container.querySelectorAll('.context-indicator-wrap')).toHaveLength(1)
 
-    act(() => {
-      renderer?.unmount()
-    })
+    renderer.unmount()
   })
 })
