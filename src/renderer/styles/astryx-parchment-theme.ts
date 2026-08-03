@@ -93,6 +93,26 @@ export const parchmentTheme = defineTheme({
 
     // ── 骨架与阴影 ──
     '--color-skeleton': 'var(--bg-sand)',
-    '--color-shadow': 'rgba(20, 20, 19, 0.10)'
+    '--color-shadow': 'rgba(20, 20, 19, 0.10)',
+
+    // ── 聊天气泡几何 ──
+    // Astryx 默认 --radius-chat = base×7 = 28px（偏圆润的移动端风格）；
+    // Nova 卡片语言在 8–16px，收敛到 16px 保持同一设计系统的圆角节奏。
+    '--radius-chat': '16px'
+  },
+  components: {
+    /* 用户气泡品牌表达：沙色底 + 暖边框 + 收尾角（sender 侧小圆角），
+       宽度上限保留 Nova 既有 640px 阅读宽度。
+       其余几何（padding/圆角基线/max(80%,280px) 下限）由 ChatMessageBubble 拥有。 */
+    'chat-message-bubble': {
+      'sender:user': {
+        maxWidth: 'min(80%, 640px)',
+        backgroundColor: 'var(--bg-sand)',
+        borderWidth: '1px',
+        borderStyle: 'solid',
+        borderColor: 'var(--border-warm)',
+        borderEndEndRadius: 'var(--radius-inner)'
+      }
+    }
   }
 })

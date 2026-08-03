@@ -1,34 +1,28 @@
 /**
- * MarkdownRenderer — 模型文本输出的 Markdown 渲染器
+ * MarkdownRenderer — 模型文本输出的 Markdown 渲染器（Astryx 内核）
  *
- * 职责：
- * 1. 通过 react-markdown + remark-gfm 渲染 CommonMark 与 GFM 扩展
- * 2. 代码块复用 syntaxHighlight；流式期间跳过逐行高亮
- * 3. 两阶段增量：已封口 prefix blocks（解析一次冻结）+ 活动 tail（只重解析尾部）
- *
- * ⚠️ 禁止只叠 React.memo 但仍每帧对完整 content 跑 ReactMarkdown。
+ * 职责分层（P3 spike 结论：迁内核、保流式算法）：
+ * 1. 流式算法仍是 Nova 两阶段增量（sealed + tail，splitIncrementalMarkdown）：
+ *    已封口 prefix 冻结只渲染一次，活动 tail 每帧低成本重解析。打字机节奏、
+ *    暂停、后台降频由 StreamingTextBlock + render pool 拥有，本组件不引入
+ *    第二份放出状态（Astryx <Markdown isStreaming> 的内置平滑因此不使用）。
+ * 2. 解析/渲染引擎换成 Astryx <Markdown>（替代 react-markdown + remark-gfm）：
+ *    每块以非流式模式同步全量渲染，无内部动画，语义与旧 ReactMarkdown 块一致；
+ *    prose 排版（字号/行高/间距）自此走 theme typography token。
+ * 3. 代码块保留 Nova CodeBlock：深色品牌底 + 复制按钮 + highlightLine；
+ *    流式期间跳过逐行高亮（不变量，唯一终态高亮路径）。
+ * 4. 链接保留 isSafeMarkdownHref 安全语义（unsafe → 纯文本）；
+ *    autolink="gfm" 对齐原 remark-gfm 的裸 URL 自动链接行为。
  */
-import React, { Fragment, useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Markdown } from '@astryxdesign/core/Markdown'
+import type { MarkdownComponents } from '@astryxdesign/core/Markdown'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
 import { splitIncrementalMarkdown } from './incrementalMarkdown'
 import './MarkdownRenderer.css'
-
-// hast 节点的最小结构，避免引入 @types/hast 这一额外依赖
-interface HastTextNode {
-  type: 'text'
-  value: string
-}
-interface HastElementNode {
-  type: 'element'
-  tagName?: string
-  properties?: { className?: string[] | string }
-  children?: Array<HastElementNode | HastTextNode>
-}
 
 const LANG_EXT_MAP: Record<string, string> = {
   typescript: 'ts',
@@ -95,41 +89,19 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
       <pre className="md-code-block__pre">
         <code>
           {lines.map((line, idx) => (
-            <Fragment key={idx}>
+            <React.Fragment key={idx}>
               {idx > 0 && '\n'}
               {isStreaming ? line : highlightLine(line, fakePath).map((token, tIdx) => (
                 <span key={tIdx} className={`diff-token diff-token--${token.type}`}>
                   {token.text}
                 </span>
               ))}
-            </Fragment>
+            </React.Fragment>
           ))}
         </code>
       </pre>
     </div>
   )
-}
-
-function getCodeFromPreNode(node: unknown): { language: string; code: string } | null {
-  const root = node as HastElementNode | undefined
-  const codeNode = root?.children?.find(
-    (c): c is HastElementNode => (c as HastElementNode).type === 'element' && (c as HastElementNode).tagName === 'code'
-  )
-  if (!codeNode) return null
-
-  const rawClassNames = codeNode.properties?.className
-  const classList = Array.isArray(rawClassNames)
-    ? rawClassNames
-    : typeof rawClassNames === 'string'
-      ? rawClassNames.split(/\s+/)
-      : []
-  const langClass = classList.find(c => c.startsWith('language-'))
-  const language = langClass ? langClass.slice('language-'.length) : ''
-  const code = (codeNode.children || [])
-    .map(c => (c.type === 'text' ? c.value : ''))
-    .join('')
-    .replace(/\n$/, '')
-  return { language, code }
 }
 
 interface MarkdownRendererProps {
@@ -142,55 +114,16 @@ interface MarkdownRendererProps {
   isStreaming?: boolean
 }
 
-const STATIC_MARKDOWN_COMPONENTS: Omit<Components, 'pre'> = {
-  code({ children, ...rest }) {
-    const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
-    return (
-      <code className="markdown-inline-code" {...domSafe}>
-        {children}
-      </code>
-    )
-  },
-  a({ children, href, ...rest }) {
-    const { node: _node, ...domSafe } = rest as { node?: unknown } & Record<string, unknown>
-    if (!isSafeMarkdownHref(href)) {
-      return <span className="markdown-link-text">{children}</span>
-    }
-    return (
-      <a
-        className="markdown-link"
-        href={href}
-        target="_blank"
-        rel="noreferrer noopener"
-        {...domSafe}
-      >
-        {children}
-      </a>
-    )
-  },
-  table({ children }) {
-    return (
-      <div className="markdown-table-wrap">
-        <table className="markdown-table">{children}</table>
-      </div>
-    )
-  }
-}
-
-const REMARK_PLUGINS = [remarkGfm]
-
-/** 单块 Markdown 解析单元；content 不变时 React.memo 短路，不再重建 AST */
+/** 单块 Markdown 渲染单元；content 不变时 React.memo 短路，不重建 AST */
 const MarkdownChunk = React.memo<{
   content: string
-  isStreaming: boolean
-  remarkPlugins: typeof REMARK_PLUGINS
-  components: Components
-}>(function MarkdownChunk({ content, remarkPlugins, components }) {
+  components: MarkdownComponents
+}>(function MarkdownChunk({ content, components }) {
   if (!content) return null
   return (
-    <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+    <Markdown autolink="gfm" contentWidth="100%" components={components}>
       {content}
-    </ReactMarkdown>
+    </Markdown>
   )
 })
 
@@ -217,16 +150,25 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   content,
   isStreaming = false
 }) {
-  const remarkPlugins = useMemo(() => REMARK_PLUGINS, [])
-
-  const components = useMemo<Components>(() => ({
-    ...STATIC_MARKDOWN_COMPONENTS,
-    pre({ node, children }) {
-      const parsed = getCodeFromPreNode(node)
-      if (!parsed) return <pre className="md-code-block__pre">{children}</pre>
-      return <CodeBlock language={parsed.language} code={parsed.code} isStreaming={isStreaming} />
-    }
-  }), [isStreaming])
+  // components 随 isStreaming 重建：保证流式/终态切换时高亮门控立即生效
+  const components = useMemo<MarkdownComponents>(
+    () => ({
+      code({ code, language }) {
+        return <CodeBlock language={language ?? ''} code={code} isStreaming={isStreaming} />
+      },
+      link({ href, children }) {
+        if (!isSafeMarkdownHref(href)) {
+          return <span className="markdown-link-text">{children}</span>
+        }
+        return (
+          <a className="markdown-link" href={href} target="_blank" rel="noreferrer noopener">
+            {children}
+          </a>
+        )
+      }
+    }),
+    [isStreaming]
+  )
 
   // 跨 render 累积已封口块：只追加，不回退；content 前缀不匹配时重置
   const sealedCacheRef = useRef<SealedCache>({
@@ -251,12 +193,7 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
     __markdownReparseChars += content.length
     return (
       <div className="markdown-body">
-        <MarkdownChunk
-          content={content}
-          isStreaming={false}
-          remarkPlugins={remarkPlugins}
-          components={components}
-        />
+        <MarkdownChunk content={content} components={components} />
       </div>
     )
   }
@@ -313,24 +250,12 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   __markdownReparseChars += activeTail.length
 
   return (
-    <div className="markdown-body markdown-body--incremental">
+    <div className="markdown-body">
       {sealedParts.map((part, idx) => (
-        <MarkdownChunk
-          key={`sealed-${idx}`}
-          content={part}
-          isStreaming={true}
-          remarkPlugins={remarkPlugins}
-          components={components}
-        />
+        <MarkdownChunk key={`sealed-${idx}`} content={part} components={components} />
       ))}
       {activeTail ? (
-        <MarkdownChunk
-          key="active-tail"
-          content={activeTail}
-          isStreaming={true}
-          remarkPlugins={remarkPlugins}
-          components={components}
-        />
+        <MarkdownChunk key="active-tail" content={activeTail} components={components} />
       ) : null}
     </div>
   )

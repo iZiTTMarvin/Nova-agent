@@ -19,6 +19,21 @@ function basenameFromPath(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+/**
+ * L3 行目标紧凑化：工作区内的绝对路径显示为相对路径（正斜杠），
+ * 避免 D:\visual_... 式全路径噪声；区外路径原样保留。
+ */
+export function compactPathForTrace(path: string, workspaceRoot?: string | null): string {
+  if (!path || !workspaceRoot) return path
+  const norm = path.replace(/\\/g, '/')
+  const root = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (!root) return path
+  if (norm.toLowerCase().startsWith(root.toLowerCase() + '/')) {
+    return norm.slice(root.length + 1)
+  }
+  return path
+}
+
 /** L3 行动作动词 */
 export function getToolTraceAction(toolName: string): string {
   switch (toolName) {
@@ -57,19 +72,26 @@ export function getToolTraceAction(toolName: string): string {
 
 /**
  * L3 行 Target：路径、命令前缀、搜索词等。
- * 过长截断；完整内容进 L4。
+ * 工作区内路径紧凑为相对路径；过长截断；完整内容进 L4。
  */
-export function getToolTraceTarget(toolName: string, args: Record<string, unknown>): string {
+export function getToolTraceTarget(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspaceRoot?: string | null
+): string {
+  const compact = (path: string): string => compactPathForTrace(path, workspaceRoot)
   switch (toolName) {
     case 'read': {
       const path = (args.path as string) || ''
-      return path ? truncateTarget(path) : 'file'
+      return path ? truncateTarget(compact(path)) : 'file'
     }
     case 'write': {
       const path = (args.path as string) || ''
       const lines = countLines(args.content)
       if (!path) return lines > 0 ? `file +${lines}` : 'file'
-      return lines > 0 ? truncateTarget(`${path} +${lines}`) : truncateTarget(path)
+      return lines > 0
+        ? truncateTarget(`${compact(path)} +${lines}`)
+        : truncateTarget(compact(path))
     }
     case 'edit': {
       const path = (args.filePath as string) || (args.path as string) || ''
@@ -84,7 +106,7 @@ export function getToolTraceTarget(toolName: string, args: Record<string, unknow
         lines = Math.max(1, countLines(args.old))
       }
       if (!path) return `file ~${lines}`
-      return truncateTarget(`${path} ~${lines}`)
+      return truncateTarget(`${compact(path)} ~${lines}`)
     }
     case 'bash': {
       const command = (args.command as string) || ''
@@ -95,7 +117,7 @@ export function getToolTraceTarget(toolName: string, args: Record<string, unknow
       const path = (args.path as string) || ''
       if (!pattern) return 'pattern'
       return path
-        ? truncateTarget(`${pattern} in ${path}`)
+        ? truncateTarget(`${pattern} in ${compact(path)}`)
         : truncateTarget(pattern)
     }
     case 'find': {
@@ -104,7 +126,7 @@ export function getToolTraceTarget(toolName: string, args: Record<string, unknow
     }
     case 'ls': {
       const path = (args.path as string) || ''
-      return path ? truncateTarget(path) : '.'
+      return path ? truncateTarget(compact(path)) : '.'
     }
     case 'web_search': {
       const query = (args.query as string) || ''
@@ -138,7 +160,7 @@ export function getToolTraceTarget(toolName: string, args: Record<string, unknow
     default: {
       // 兜底：尝试常见 path / command 字段
       const path = (args.path as string) || (args.filePath as string) || ''
-      if (path) return truncateTarget(path)
+      if (path) return truncateTarget(compact(path))
       const command = (args.command as string) || ''
       if (command) return truncateTarget(command)
       return toolName

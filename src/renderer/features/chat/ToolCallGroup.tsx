@@ -4,10 +4,10 @@
  * 与单条 ToolTraceRow 同一过程轨视觉；展开仅列出各条目 Target。
  */
 import React, { useState } from 'react'
-import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 import { getToolGroupSummaryParts } from './toolCallGrouping'
 import { getToolTraceTarget } from './toolTraceDisplay'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import type { RendererToolBlock } from '../../stores/types'
 import './ToolCallGroup.css'
 
@@ -30,24 +30,31 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
   blocks
 }) {
   const [isOpen, setIsOpen] = useState(false)
+  const workspaceRoot = useWorkspaceStore(state => state.currentProjectPath)
   const { prefix, pill, suffix } = getToolGroupSummaryParts(toolName, blocks)
 
   return (
     <div className="tool-call-group">
-      <Button
-        label={`${prefix} ${pill}${suffix ? ` ${suffix}` : ''}`}
-        variant="ghost"
-        size="sm"
+      {/* 原生 disclosure 行：Astryx Button 内容居中，不能用作全宽过程轨行 */}
+      <button
+        type="button"
         className="tool-call-group__header"
         onClick={() => setIsOpen(prev => !prev)}
         aria-expanded={isOpen}
-        icon={<GroupStatusDot status={aggregateStatus(blocks)} />}
-        endContent={<ChevronIcon
+        title={`${prefix} ${pill}${suffix ? ` ${suffix}` : ''}`}
+      >
+        <GroupStatusDot status={aggregateStatus(blocks)} />
+        <span className="tool-call-group__action">{prefix}</span>
+        <span className="tool-call-group__target">
+          {pill}
+          {suffix ? <span className="tool-call-group__suffix"> {suffix}</span> : null}
+        </span>
+        <ChevronIcon
           size={12}
           direction={isOpen ? 'down' : 'right'}
           className="tool-call-group__chevron"
-        />}
-      />
+        />
+      </button>
 
       {isOpen && (
         <ul className="tool-call-group__list">
@@ -55,7 +62,7 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
             <li key={block.toolCallId} className="tool-call-group__item">
               <GroupStatusDot status={block.status} />
               <span className="tool-call-group__item-text">
-                {getToolTraceTarget(toolName, block.arguments ?? {})}
+                {getToolTraceTarget(toolName, block.arguments ?? {}, workspaceRoot)}
               </span>
             </li>
           ))}

@@ -5,13 +5,13 @@
  * 权限放行条始终挂在行下（冒泡），不依赖 L4 展开。
  */
 import React, { useMemo, useState } from 'react'
-import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
 import { getToolTraceAction, getToolTraceTarget, getFileToolPreviewText } from './toolTraceDisplay'
 import { clampBashShellOutputForDisplay } from './bashOutputDisplay'
 import { parsePartialToolArgs } from '../../lib/partialJsonArgs'
 import { useAgentStore } from '../../stores/useAgentStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { WebSearchCard } from './WebSearchCard'
 import type { PendingPermissionRequest } from '../../stores/types'
@@ -151,8 +151,9 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
     return argsProp ?? {}
   }, [name, argumentsRaw, argsProp])
 
+  const workspaceRoot = useWorkspaceStore(state => state.currentProjectPath)
   const action = getToolTraceAction(name)
-  const target = getToolTraceTarget(name, args)
+  const target = getToolTraceTarget(name, args, workspaceRoot)
 
   const anchoredRequest = useAgentStore(state =>
     selectAnchoredRequest(state.pendingPermissionRequest, toolCallId)
@@ -168,21 +169,23 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
 
   return (
     <div className={rootClass}>
-      <Button
-        label={`${action} ${target}`}
-        variant="ghost"
-        size="sm"
+      {/* 原生 disclosure 行：Astryx Button 内容居中，不能用作全宽过程轨行 */}
+      <button
+        type="button"
         className="tool-trace-row__header"
         onClick={() => setIsOpen(prev => !prev)}
         aria-expanded={isOpen}
-        icon={<StatusDot status={status} />}
-        endContent={<ChevronIcon
+        title={`${action} ${target}`}
+      >
+        <StatusDot status={status} />
+        <span className="tool-trace-row__action">{action}</span>
+        <span className="tool-trace-row__target">{target}</span>
+        <ChevronIcon
           size={12}
           direction={isOpen ? 'down' : 'right'}
           className="tool-trace-row__chevron"
-        />}
-        tooltip={`${action} ${target}`}
-      />
+        />
+      </button>
 
       {/* L4：仅展开时挂载，避免默认渲染大段 result / 参数 DOM */}
       {isOpen && (

@@ -1,12 +1,12 @@
 /**
- * ToolCallGroup — 与 ToolTraceRow 同一过程轨
+ * ToolCallGroup — 与 ToolTraceRow 同一过程轨（连续左轨、左对齐 disclosure 行）
  */
 .tool-call-group {
-  margin: 2px 0;
-  padding-left: 10px;
+  margin: 0;
+  padding-left: 12px;
   border-left: 2px solid var(--border-warm, rgba(20, 20, 19, 0.12));
-  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
-  font-size: 13px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12.5px;
   line-height: 1.5;
   color: var(--text-muted, #8a857d);
 }
@@ -14,9 +14,9 @@
 .tool-call-group__header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 3px 0;
+  padding: 3px 4px 3px 0;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -34,10 +34,10 @@
 
 .tool-call-group__action {
   flex-shrink: 0;
-  min-width: 5em;
-  color: var(--text-primary, #1f1d1a);
+  min-width: 4.5em;
+  color: var(--text-secondary, #6b6760);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .tool-call-group__target {
@@ -46,8 +46,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary, #6b6760);
-  font-size: 12.5px;
+  color: var(--text-muted, #8a857d);
+  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
+  font-size: 12px;
 }
 
 .tool-call-group__suffix {
@@ -104,4 +105,6 @@
 .tool-call-group__item-text {
   word-break: break-word;
   min-width: 0;
+  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
+  font-size: 12px;
 }

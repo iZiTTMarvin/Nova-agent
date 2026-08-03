@@ -89,3 +89,50 @@ describe('MarkdownRenderer 增量 reparseChars 探针', () => {
     tree.unmount()
   })
 })
+
+describe('MarkdownRenderer GFM 全文渲染（Astryx 内核接管后）', () => {
+  const GFM_DOC = [
+    '## 标题',
+    '',
+    '正文 **加粗** 与 `内联代码`。',
+    '',
+    '| 列A | 列B |',
+    '| --- | --- |',
+    '| 1 | 2 |',
+    '',
+    '- [x] 已完成',
+    '- [ ] 未完成',
+    '',
+    '> 引用内容',
+    '',
+    '```typescript',
+    'const a: number = 1',
+    '```'
+  ].join('\n')
+
+  it('标题/表格/任务列表/引用/代码块在终态路径全部落 DOM', () => {
+    const tree = renderDom(<MarkdownRenderer content={GFM_DOC} />)
+    expect(tree.container.querySelector('h2')).not.toBeNull()
+    expect(tree.container.querySelector('table')).not.toBeNull()
+    expect(tree.container.querySelectorAll('input[type="checkbox"]').length).toBe(2)
+    expect(tree.container.querySelector('blockquote')).not.toBeNull()
+    expect(tree.container.querySelector('.md-code-block__pre')).not.toBeNull()
+    // 终态代码高亮不变量
+    expect(tree.container.querySelectorAll('.diff-token').length).toBeGreaterThan(0)
+    tree.unmount()
+  })
+})
+
+describe('MarkdownRenderer 链接安全（isSafeMarkdownHref 语义保留）', () => {
+  it('http(s)/mailto 链接正常渲染；javascript: 降级为纯文本', () => {
+    const tree = renderDom(
+      <MarkdownRenderer content={'[ok](https://example.com) 与 [bad](javascript:alert(1))'} />
+    )
+    const links = tree.container.querySelectorAll('a[href]')
+    expect(links).toHaveLength(1)
+    expect(links[0]?.getAttribute('href')).toBe('https://example.com')
+    expect(tree.container.textContent).toContain('bad')
+    expect(tree.container.querySelector('a[href^="javascript:"]')).toBeNull()
+    tree.unmount()
+  })
+})

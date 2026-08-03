@@ -5,7 +5,6 @@
  * 最终结论文案不在此容器内，由 MessageItem 以正文样式单独渲染。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Button } from '@astryxdesign/core/Button'
 import { ChevronIcon } from '../../components/Icons'
 import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import { ProcessTraceList } from './ProcessTraceList'
@@ -113,20 +112,21 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
 
   return (
     <div className="turn-process-tree" data-testid="turn-process-tree">
-      <Button
-        label={headerTitle}
-        variant="ghost"
-        size="sm"
+      {/* 原生 disclosure 头：Astryx Button 内容居中，不适合全宽折叠头 */}
+      <button
+        type="button"
         className="turn-process-tree__header"
         onClick={toggle}
         aria-expanded={open}
         data-testid="turn-process-header"
-        endContent={<ChevronIcon
+      >
+        <span className="turn-process-tree__header-title">{headerTitle}</span>
+        <ChevronIcon
           size={12}
           direction={open ? 'down' : 'right'}
           className="turn-process-tree__chevron"
-        />}
-      />
+        />
+      </button>
 
       {/* 过程时间线：折叠时不 mount */}
       <TurnProcessCollapsible open={open} reducedMotion={reducedMotion} className="turn-process-tree__body">

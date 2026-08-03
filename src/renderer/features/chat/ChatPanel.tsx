@@ -785,7 +785,8 @@ export const ChatPanel: React.FC = () => {
                 </svg>
               }
               variant="secondary"
-              size="sm"
+              size="md"
+              elevation="low"
               className="chat-scroll-to-bottom"
               onClick={handleScrollToBottomClick}
             />
@@ -991,8 +992,7 @@ export const ChatPanel: React.FC = () => {
                       label={cancelling ? '正在停止' : workflowRunning ? '中断编排' : '中断生成'}
                       icon={<StopIcon size={14} />}
                       variant="destructive"
-                      size="sm"
-                      className="chat-composer__stop"
+                      size="md"
                       onClick={() => void cancelExecution()}
                       isDisabled={cancelling && !cancelGraceExceeded}
                     />
@@ -1001,8 +1001,7 @@ export const ChatPanel: React.FC = () => {
                       label="发送"
                       icon={<SendIcon size={14} />}
                       variant="primary"
-                      size="sm"
-                      className="chat-composer__send"
+                      size="md"
                       onClick={handleSend}
                       isDisabled={!inputVal.trim() && imageAttachments.length === 0}
                     />

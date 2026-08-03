@@ -1,12 +1,13 @@
 /**
- * L3 过程轨：比正文安静，但 Action 足够可扫读；左边线标识身份
+ * L3 过程轨：比正文安静，但 Action 足够可扫读；连续左边线标识身份。
+ * 行 margin 归零，竖线在列表内连续成轨。
  */
 .tool-trace-row {
-  margin: 2px 0;
-  padding-left: 10px;
+  margin: 0;
+  padding-left: 12px;
   border-left: 2px solid var(--border-warm, rgba(20, 20, 19, 0.12));
-  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
-  font-size: 13px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12.5px;
   line-height: 1.5;
   color: var(--text-muted, #8a857d);
   max-width: 100%;
@@ -26,9 +27,9 @@
 .tool-trace-row__header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 3px 0;
+  padding: 3px 4px 3px 0;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -67,10 +68,11 @@
 
 .tool-trace-row__action {
   flex-shrink: 0;
-  min-width: 5em;
-  color: var(--text-primary, #1f1d1a);
+  min-width: 4.5em;
+  color: var(--text-secondary, #6b6760);
+  font-family: var(--font-sans, system-ui, sans-serif);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12.5px;
   letter-spacing: 0.01em;
 }
 
@@ -80,8 +82,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary, #6b6760);
-  font-size: 12.5px;
+  color: var(--text-muted, #8a857d);
+  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
+  font-size: 12px;
   font-weight: 400;
 }
 

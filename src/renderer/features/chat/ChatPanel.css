@@ -40,55 +40,11 @@
   min-width: 0;
 }
 
-/* Cursor 风格：圆形向下箭头，叠在 composer 栈顶 */
+/* 滚动到底部：几何/悬停/焦点全部交给 Astryx IconButton（size/elevation/variant），
+   Nova 只保留它在 composer 栈中的垂直占位 */
 .chat-scroll-to-bottom {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
   margin-bottom: 8px;
   flex-shrink: 0;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
-  border: 1px solid var(--border-warm);
-  border-radius: 50%;
-  box-shadow: var(--shadow-card);
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.chat-scroll-to-bottom:hover {
-  background: var(--bg-sand);
-}
-
-/* Astryx icon buttons keep the composer action dimensions while supplying
-   consistent focus, disabled and hover states. */
-.chat-scroll-to-bottom.astryx-button,
-.chat-composer__send.astryx-button,
-.chat-composer__stop.astryx-button {
-  min-width: 32px;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: 50%;
-}
-
-.chat-composer__send.astryx-button {
-  background: var(--text-primary);
-  color: var(--bg-app);
-}
-
-.chat-composer__send.astryx-button[disabled] {
-  background: var(--bg-sand);
-  color: var(--text-muted);
-}
-
-.chat-composer__stop.astryx-button {
-  background: color-mix(in srgb, var(--color-error) 9%, transparent);
-  color: var(--color-error);
 }
 
 .chat-composer__textarea {
@@ -128,36 +84,12 @@
   user-select: none;
 }
 
-.chat-msg-wrapper {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-}
-
-.chat-msg-wrapper--user {
-  justify-content: flex-end;
-}
-
-.chat-msg-wrapper--assistant {
-  justify-content: flex-start;
-}
-
+/* 消息行对齐/头像 slot 由 Astryx ChatMessage 拥有；用户气泡几何
+   （radius/padding/max-width/背景/边框）由 ChatMessageBubble + theme components hook 拥有。
+   .chat-msg 只保留 Nova body 区域的定位上下文。 */
 .chat-msg {
   position: relative;
   min-width: 0;
-  padding: 16px;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  line-height: 1.6;
-  font-size: 0.95rem;
-}
-
-.chat-msg--user {
-  max-width: min(80%, 640px);
-  background-color: var(--bg-sand);
-  color: var(--text-primary);
-  border: 1px solid var(--border-warm);
-  border-top-right-radius: 4px;
 }
 
 /* assistant 消息平铺：无卡片背景/边框/阴影，正文直接落在页面底色上（对齐主流 agent desktop） */
@@ -165,11 +97,6 @@
   width: 100%;
   max-width: 100%;
   padding: 4px 0;
-  background-color: transparent;
-  color: var(--text-primary);
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
 }
 
 /* 错误态仍是独立反馈面：保留浅色底与圆角，但不回到卡片边框 */
@@ -531,55 +458,8 @@
   transform: translateY(0);
 }
 
-.chat-msg__action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-warm);
-  color: var(--text-muted);
-  box-shadow: var(--shadow-whisper);
-  transition: all var(--transition-fast);
-}
-
-.chat-msg__action-btn:hover {
-  color: var(--color-brand);
-  border-color: var(--color-brand);
-  background-color: var(--color-brand-dim);
-  box-shadow: 0 2px 6px rgba(201, 100, 66, 0.15);
-}
-
-.chat-msg__action-btn:active {
-  transform: scale(0.9);
-}
-
-.chat-msg__action-btn--disabled,
-.chat-msg__action-btn--disabled:hover,
-.chat-msg__action-btn--disabled:active {
-  opacity: 0.5;
-  cursor: not-allowed;
-  color: var(--text-muted);
-  border-color: var(--border-cream);
-  background-color: var(--bg-sand);
-  box-shadow: none;
-  transform: none;
-}
-
-.chat-msg__action-btn.astryx-button {
-  min-width: 26px;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: 50%;
-}
-
-.chat-msg__action-btn[disabled],
-.chat-msg__branch-btn[disabled] {
-  cursor: not-allowed;
-}
+/* 动作按钮（重新生成/编辑/分支翻页）几何交给 Astryx IconButton size/variant，
+   此处不再有 .astryx-* 几何覆盖 */
 
 /* ── 用户消息编辑重发 ────────────────────────────────────── */
 .chat-msg__edit {
@@ -603,12 +483,7 @@
   gap: 8px;
 }
 
-.chat-msg__edit-btn.astryx-button {
-  min-height: 30px;
-  padding-inline: 12px;
-  border-radius: 6px;
-  font-size: 0.82rem;
-}
+/* 编辑确认/取消按钮几何交给 Astryx Button size="sm"，无 .astryx-* 覆盖 */
 
 /* ── 兄弟分支翻页器 ‹ k/n › ─────────────────────────────── */
 .chat-msg__branch-flipper {
@@ -621,29 +496,7 @@
   user-select: none;
 }
 
-.chat-msg__branch-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--border-subtle, #ddd);
-  border-radius: 4px;
-  background: var(--bg-surface, #fff);
-  color: inherit;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.chat-msg__branch-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.chat-msg__branch-btn:not(:disabled):hover {
-  background: var(--bg-cream, #f5f5f0);
-}
+/* 翻页按钮几何交给 Astryx IconButton size/variant，无 .astryx-* 覆盖 */
 
 .chat-msg__branch-label {
   min-width: 2.5rem;
@@ -704,15 +557,9 @@
   min-width: 0;
 }
 
+/* 横幅内按钮几何交给 Astryx Button size="sm"，Nova 只保留行内不收缩 */
 .chat-cross-turn-notice__stop {
   flex-shrink: 0;
-}
-
-.chat-cross-turn-notice__stop.astryx-button {
-  min-height: 28px;
-  padding-inline: 10px;
-  border-radius: 6px;
-  font-size: 12px;
 }
 
 /* ── 用户消息图片网格 ─────────────────────────────────────── */

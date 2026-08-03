@@ -7,6 +7,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
+import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { Thumbnail } from '@astryxdesign/core/Thumbnail'
@@ -339,74 +340,75 @@ function MessageItemInner({
     ? msg.blocks?.filter((b): b is { type: 'image'; fileName: string; dataUrl: string; mimeType: string } => b.type === 'image') ?? []
     : []
 
-  return (
-    <div
-      className={`chat-msg-wrapper chat-msg-wrapper--${msg.role === 'user' ? 'user' : 'assistant'}`}
-    >
-      <div className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'} ${msg.isError ? 'chat-msg--error' : ''}`}>
-        {/* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出 */}
-        {isAssistant && !isGenerating && (
-          <div className="chat-msg__actions">
-            <IconButton
-              label="重新生成此回答"
-              icon={<RegenerateIcon size={13} />}
-              className={`chat-msg__action-btn${rollbackError || regenerateBlocked ? ' chat-msg__action-btn--disabled' : ''}`}
-              onClick={() => onRegenerate(msg.id)}
-              isDisabled={!!rollbackError || regenerateBlocked}
-              tooltip={
-                rollbackError
-                  ? `无法重新生成：${rollbackError}`
-                  : regenerateBlocked
-                    ? '重新生成暂不支持含图片的消息'
-                    : '重新生成此回答（保留原分支）'
-              }
-            />
-          </div>
-        )}
+  /* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出。
+     按钮几何全部交给 Astryx（IconButton size/variant），不再有 .astryx-* 几何覆盖。 */
+  const actionsBar =
+    isAssistant && !isGenerating ? (
+      <div className="chat-msg__actions">
+        <IconButton
+          label="重新生成此回答"
+          icon={<RegenerateIcon size={13} />}
+          variant="ghost"
+          size="sm"
+          onClick={() => onRegenerate(msg.id)}
+          isDisabled={!!rollbackError || regenerateBlocked}
+          tooltip={
+            rollbackError
+              ? `无法重新生成：${rollbackError}`
+              : regenerateBlocked
+                ? '重新生成暂不支持含图片的消息'
+                : '重新生成此回答（保留原分支）'
+          }
+        />
+      </div>
+    ) : isUser && !isGenerating && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
+      /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
+      <div className="chat-msg__actions">
+        <IconButton
+          label="编辑并重发"
+          icon={<EditIcon size={13} />}
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setEditText(typeof textContent === 'string' ? textContent : '')
+            setIsEditing(true)
+          }}
+          isDisabled={!!rollbackError}
+          tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
+        />
+      </div>
+    ) : null
 
-        {/* 兄弟分支翻页器：‹ k/n › */}
-        {msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating && (
-          <div className="chat-msg__branch-flipper">
-            <IconButton
-              label="上一条分支"
-              icon={<span aria-hidden="true">‹</span>}
-              className="chat-msg__branch-btn"
-              isDisabled={msg.branch.index <= 1 || !!rollbackError}
-              onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index - 2]!)}
-              tooltip="上一条分支"
-            />
-            <span className="chat-msg__branch-label">
-              {msg.branch.index} / {msg.branch.total}
-            </span>
-            <IconButton
-              label="下一条分支"
-              icon={<span aria-hidden="true">›</span>}
-              className="chat-msg__branch-btn"
-              isDisabled={msg.branch.index >= msg.branch.total || !!rollbackError}
-              onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index]!)}
-              tooltip="下一条分支"
-            />
-          </div>
-        )}
+  /* 兄弟分支翻页器：‹ k/n › */
+  const branchFlipper =
+    msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating ? (
+      <div className="chat-msg__branch-flipper">
+        <IconButton
+          label="上一条分支"
+          icon={<span aria-hidden="true">‹</span>}
+          variant="ghost"
+          size="sm"
+          isDisabled={msg.branch.index <= 1 || !!rollbackError}
+          onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index - 2]!)}
+          tooltip="上一条分支"
+        />
+        <span className="chat-msg__branch-label">
+          {msg.branch.index} / {msg.branch.total}
+        </span>
+        <IconButton
+          label="下一条分支"
+          icon={<span aria-hidden="true">›</span>}
+          variant="ghost"
+          size="sm"
+          isDisabled={msg.branch.index >= msg.branch.total || !!rollbackError}
+          onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index]!)}
+          tooltip="下一条分支"
+        />
+      </div>
+    ) : null
 
-        {/* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */}
-        {isUser && !isGenerating && !isEditing && onEditResend && userImageBlocks.length === 0 && (
-          <div className="chat-msg__actions">
-            <IconButton
-              label="编辑并重发"
-              icon={<EditIcon size={13} />}
-              className={`chat-msg__action-btn${rollbackError ? ' chat-msg__action-btn--disabled' : ''}`}
-              onClick={() => {
-                setEditText(typeof textContent === 'string' ? textContent : '')
-                setIsEditing(true)
-              }}
-              isDisabled={!!rollbackError}
-              tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
-            />
-          </div>
-        )}
-
-        <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>
+  const messageBody = (
+    <>
         {shouldShowPending && <AssistantPendingIndicator />}
 
         {hasBlocks && isAssistant && turnModel ? (
@@ -516,14 +518,12 @@ function MessageItemInner({
                     label="取消"
                     variant="secondary"
                     size="sm"
-                    className="chat-msg__edit-btn"
                     onClick={() => setIsEditing(false)}
                   />
                   <Button
                     label="重发"
                     variant="primary"
                     size="sm"
-                    className="chat-msg__edit-btn"
                     isDisabled={!editText.trim()}
                     onClick={() => {
                       const t = editText.trim()
@@ -585,9 +585,38 @@ function MessageItemInner({
             {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
           />
         )}
+    </>
+  )
+
+  /* 消息结构交回 Astryx：ChatMessage 负责 sender 对齐/头像 slot，
+     用户气泡几何（radius/padding/max-width/背景）交给 ChatMessageBubble + theme hook，
+     assistant 平铺正文保留为 Nova 自有 body 区域（定位上下文 + 全宽）。
+     约定：Nova 当前不渲染逐条消息的时间/模型/用量元数据行；未来若新增，
+     必须走 ChatMessage/ChatMessageBubble 的 metadata 槽，禁止手写 flex 元数据行。 */
+  const bodyWithChrome = (
+    <>
+      {actionsBar}
+      {branchFlipper}
+      <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>{messageBody}</div>
+    </>
+  )
+
+  return (
+    /* 产品决策：assistant 不渲染头像（平铺正文即身份），仅保留 sender 对齐语义 */
+    <ChatMessage sender={isUser ? 'user' : 'assistant'}>
+      {isUser ? (
+        <ChatMessageBubble
+          variant="filled"
+          className={`chat-msg chat-msg--user${msg.isError ? ' chat-msg--error' : ''}`}
+        >
+          {bodyWithChrome}
+        </ChatMessageBubble>
+      ) : (
+        <div className={`chat-msg chat-msg--assistant${msg.isError ? ' chat-msg--error' : ''}`}>
+          {bodyWithChrome}
         </div>
-      </div>
-    </div>
+      )}
+    </ChatMessage>
   )
 }
 
