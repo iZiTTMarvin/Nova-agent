@@ -8,6 +8,7 @@ import { join } from 'path'
 import { getMemoryRoot, computeWorkspaceHash } from '../../runtime/memory/MemoryPaths'
 import { MemoryService } from '../../runtime/memory/MemoryService'
 import { openBetterSqliteMemoryDb } from '../../runtime/memory/BetterSqliteMemoryDb'
+import type { BetterSqliteMemoryDb } from '../../runtime/memory/BetterSqliteMemoryDb'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 let memoryService: MemoryService | null = null
@@ -24,7 +25,18 @@ export function getMemoryService(): MemoryService {
     const memoryRoot = getMemoryRoot(userData)
     mkdirSync(memoryRoot, { recursive: true })
     const dbPath = join(memoryRoot, 'memory.db')
-    const db = openBetterSqliteMemoryDb(dbPath)
+    let db: BetterSqliteMemoryDb
+    try {
+      db = openBetterSqliteMemoryDb(dbPath)
+    } catch (err) {
+      // 原生绑定缺失（node_modules 重建跳过 lifecycle scripts 的典型后果）
+      // 在 owner 处转成可行动报错，禁止把 bindings 原始堆栈抛给渲染层。
+      throw new Error(
+        '记忆存储不可用：better-sqlite3 原生模块未对当前 Electron ABI 构建。'
+        + '请在仓库根目录运行 `npm run rebuild:native:electron` 后重启应用。'
+        + `原始错误：${err instanceof Error ? err.message : String(err)}`
+      )
+    }
     memoryService = new MemoryService(memoryRoot, db, {
       reconcileOnSearch: settings.memoryReconcileOnSearch,
       searchLimit: settings.memorySearchLimit,

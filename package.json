@@ -6,6 +6,7 @@
   "license": "MIT",
   "main": "./out/main/index.js",
   "scripts": {
+    "predev": "node scripts/verify-native-bootstrap.mjs",
     "dev": "npm run sync:icon && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",

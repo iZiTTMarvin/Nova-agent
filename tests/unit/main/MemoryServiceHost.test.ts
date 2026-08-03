@@ -87,4 +87,18 @@ describe('MemoryServiceHost reconcile 调度', () => {
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(reconcileMock).not.toHaveBeenCalled()
   })
+
+  it('原生绑定缺失时 getMemoryService 抛可行动报错（含修复命令，不透传原始堆栈）', async () => {
+    const { openBetterSqliteMemoryDb } = await import(
+      '../../../src/runtime/memory/BetterSqliteMemoryDb'
+    )
+    vi.mocked(openBetterSqliteMemoryDb).mockImplementationOnce(() => {
+      throw new Error('Could not locate the bindings file')
+    })
+    const { getMemoryService } = await import(
+      '../../../src/main/services/MemoryServiceHost'
+    )
+    expect(() => getMemoryService()).toThrow(/rebuild:native:electron/)
+    expect(() => getMemoryService()).not.toThrow()
+  })
 })
