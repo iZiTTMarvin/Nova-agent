@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { Theme } from '@astryxdesign/core/theme'
+import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
 import { neutralIconRegistry } from '@astryxdesign/theme-neutral'
 import { parchmentTheme } from './styles/parchment'
@@ -361,23 +362,25 @@ function App(): React.ReactNode {
 
   return (
     <Theme theme={parchmentTheme} mode={theme}>
-      <div className="app-wrapper">
-        {/* 自定义标题栏 */}
-        <TitleBar />
+      {/*
+        壳结构由 AppShell 拥有：topNav=TitleBar、sideNav=Sidebar、content=对话面板。
+        height="fill" → 100dvh 内部滚动；contentPadding=0 → 对话区边到边；
+        mobileNav=false → Electron 桌面端无移动断点抽屉。
+        variant="section" 提供 nav 与内容间的分隔线（替代手写 border）。
+      */}
+      <AppShell
+        variant="section"
+        topNav={<TitleBar />}
+        sideNav={<Sidebar />}
+        contentPadding={0}
+        height="fill"
+        mobileNav={false}
+      >
+        <ChatPanel />
 
-        <div className="app-layout">
-          {/* 左侧功能配置与会话管理栏 */}
-          <Sidebar />
-
-          {/* 右侧主对话面板 */}
-          <main className="app-main">
-            <ChatPanel />
-          </main>
-
-          {/* 模型参数配置模态窗 */}
-          <SettingsModal />
-        </div>
-      </div>
+        {/* 模型参数配置模态窗 */}
+        <SettingsModal />
+      </AppShell>
     </Theme>
   )
 }

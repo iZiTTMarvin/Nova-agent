@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { TextInput } from '@astryxdesign/core/TextInput'
+import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
 import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
 import { useSubagentProjectionStore } from '../features/subagents/projection'
@@ -170,38 +171,39 @@ export const Sidebar: React.FC = () => {
   }
 
   return (
-    <aside className="w-[260px] h-full flex flex-col bg-[rgba(250,249,245,0.85)] backdrop-blur-xl border-r border-border-warm shrink-0 select-none">
-      {/* Top Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border-cream">
-        <div className="flex items-center gap-2 cursor-pointer" title="Nova Agent">
-          <NovaLogo size={20} />
-          <span className="text-sm font-semibold text-text-primary tracking-wide font-serif">Nova Agent</span>
-        </div>
-      </div>
-
-      <div className="px-3 py-3">
-        <Button
-          label="新对话"
-          variant="secondary"
-          icon={<PlusIcon size={14} className="text-text-secondary group-hover:text-text-primary transition-colors" />}
-          width="100%"
-          className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-full bg-white border border-border-warm shadow-sm hover:shadow-md hover:border-gray-300 transition-all text-sm font-medium text-text-primary group"
-          onClick={() => createNewSession(currentProject || undefined)}
-          tooltip="新建对话"
-        />
-      </div>
-
-      {/* Projects and Sessions */}
-      <div className="flex-1 overflow-y-auto px-3 pb-4">
-        <div className="flex items-center justify-between px-2 py-2 group">
+    <SideNav
+      className="bg-[var(--bg-sidebar)] select-none"
+      header={(
+        <SideNavHeading heading="Nova Agent" icon={<NovaLogo size={20} />} />
+      )}
+      topContent={(
+        <div className="px-3 py-3">
           <Button
-            label="项目工作区"
-            variant="ghost"
-            size="sm"
-            className="flex-1 justify-start px-0 text-xs font-semibold text-text-secondary uppercase tracking-wider"
-            onClick={selectProject}
-            tooltip="选择项目工作区"
+            label="新对话"
+            variant="secondary"
+            icon={<PlusIcon size={14} className="text-text-secondary group-hover:text-text-primary transition-colors" />}
+            width="100%"
+            className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-full bg-white border border-border-warm shadow-sm hover:shadow-md hover:border-gray-300 transition-all text-sm font-medium text-text-primary group"
+            onClick={() => createNewSession(currentProject || undefined)}
+            tooltip="新建对话"
           />
+        </div>
+      )}
+      footer={(
+        <SideNavItem
+          label="设置"
+          icon={(
+            <span className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
+              <SettingsIcon size={16} />
+            </span>
+          )}
+          onClick={() => setConfigModalOpen(true)}
+        />
+      )}
+    >
+      <SideNavSection
+        title="项目工作区"
+        endContent={(
           <IconButton
             label="添加新工作区"
             icon={<PlusIcon size={12} />}
@@ -211,34 +213,35 @@ export const Sidebar: React.FC = () => {
             tooltip="添加新工作区"
             onClick={selectProject}
           />
-        </div>
+        )}
+      >
+        {Object.entries(projectGroups).map(([projectPath, sessionForest]) => {
+          const isExpanded = expandedProjects[projectPath] !== false
+          // 选中会话在预览区之外时强制展开，避免选中项被藏住
+          const selectedIndex = sessionForest.findIndex(node => sessionTreeContains(node, currentSessionId))
+          const selectedBeyondPreview = selectedIndex >= SIDEBAR_SESSION_PREVIEW_COUNT
+          const userExpandedSessions = expandedSessionLists[projectPath] === true
+          const isSessionListExpanded = userExpandedSessions || selectedBeyondPreview
+          const visibleRoots =
+            isSessionListExpanded || sessionForest.length <= SIDEBAR_SESSION_PREVIEW_COUNT
+              ? sessionForest
+              : sessionForest.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
+          const visibleSessions = flattenSessionForest(visibleRoots)
+          const showMoreToggle = sessionForest.length > SIDEBAR_SESSION_PREVIEW_COUNT
 
-        <div className="mt-1 space-y-1">
-          {Object.entries(projectGroups).map(([projectPath, sessionForest]) => {
-            const isExpanded = expandedProjects[projectPath] !== false
-            // 选中会话在预览区之外时强制展开，避免选中项被藏住
-            const selectedIndex = sessionForest.findIndex(node => sessionTreeContains(node, currentSessionId))
-            const selectedBeyondPreview = selectedIndex >= SIDEBAR_SESSION_PREVIEW_COUNT
-            const userExpandedSessions = expandedSessionLists[projectPath] === true
-            const isSessionListExpanded = userExpandedSessions || selectedBeyondPreview
-            const visibleRoots =
-              isSessionListExpanded || sessionForest.length <= SIDEBAR_SESSION_PREVIEW_COUNT
-                ? sessionForest
-                : sessionForest.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
-            const visibleSessions = flattenSessionForest(visibleRoots)
-            const showMoreToggle = sessionForest.length > SIDEBAR_SESSION_PREVIEW_COUNT
-
-            return (
-              <div key={projectPath} className="flex flex-col">
-                <div className="flex items-center gap-1 px-2 py-1.5 rounded-md group">
-                  <Button
+          /*
+           * 「+」与 SideNavItem 是行级兄弟而非 endContent：
+           * SideNavItem 的 endContent 渲染在主按钮内部，放 IconButton 会形成
+           * button 嵌 button 的无效交互元素嵌套。外层 .group 驱动 hover 显示。
+           */
+          return (
+            <div key={projectPath} className="group flex flex-col">
+              <div className="flex items-center gap-1">
+                <div className="flex-1 min-w-0">
+                  <SideNavItem
                     label={getProjectName(projectPath)}
-                    variant="ghost"
-                    size="sm"
-                    aria-expanded={isExpanded}
-                    aria-label={`${isExpanded ? '收起' : '展开'}项目 ${getProjectName(projectPath)}`}
-                    className="flex-1 min-w-0 justify-start px-0 hover:bg-gray-200/50"
                     icon={<FolderIcon size={14} className="text-text-secondary shrink-0" />}
+                    onClick={() => toggleProject(projectPath)}
                     endContent={(
                       <span className="flex items-center gap-1.5 text-[11px] text-text-muted">
                         <span className="group-hover:hidden">{sessionForest.length} 个任务</span>
@@ -250,229 +253,211 @@ export const Sidebar: React.FC = () => {
                         />
                       </span>
                     )}
-                    onClick={() => toggleProject(projectPath)}
-                    tooltip={projectPath}
-                  />
-                  <IconButton
-                    label="在此项目下新建会话"
-                    icon={<PlusIcon size={12} />}
-                    variant="ghost"
-                    size="sm"
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-secondary transition-all"
-                    tooltip="在此项目下新建会话"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      createNewSession(projectPath)
-                    }}
                   />
                 </div>
+                <IconButton
+                  label="在此项目下新建会话"
+                  icon={<PlusIcon size={12} />}
+                  variant="ghost"
+                  size="sm"
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-300/50 text-text-secondary transition-all shrink-0"
+                  tooltip="在此项目下新建会话"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    createNewSession(projectPath)
+                  }}
+                />
+              </div>
 
-                <AnimatePresence initial={false}>
-                  {isExpanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2, ease: "easeInOut" }}
-                      className="overflow-hidden"
-                    >
-                      <div className="pl-6 pr-1 py-1 space-y-1 border-l border-border-cream ml-[11px]">
-                        {visibleSessions.map(({ session, depth }) => {
-                          const isActive = session.id === currentSessionId
-                          const isEditing = editingId === session.id
-                          const displayTitle = getDisplayTitle(session)
-                          const waitingBadge = waitingSessions.find(w => w.sessionId === session.id)
-                          const showWaiting = !!waitingBadge && !isActive
-                          const runningBadge = runningSessions.find(r => r.sessionId === session.id)
-                          const showRunning = !!runningBadge && !isActive
-                          const childProjection = session.kind === 'subagent'
-                            ? subagentProjections[session.id]
-                            : undefined
-                          const childStatus = childProjection
-                            ? ({
-                                queued: ['○', '等待开始'],
-                                running: ['●', '运行中'],
-                                waiting_user: ['!', '等待授权'],
-                                retrying: ['●', '重试中'],
-                                resuming: ['●', '恢复中'],
-                                cancelling: ['◌', '停止中'],
-                                completed: ['✓', '已完成'],
-                                failed: ['×', '失败'],
-                                cancelled: ['■', '已取消'],
-                                interrupted: ['◇', '已中断'],
-                                record_missing: ['?', '记录不可用']
-                              } as const)[childProjection.status]
-                            : undefined
+              <AnimatePresence initial={false}>
+                {isExpanded && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2, ease: "easeInOut" }}
+                    className="overflow-hidden"
+                  >
+                    <div className="pl-6 pr-1 py-1 space-y-1 border-l border-border-cream ml-[11px]">
+                      {visibleSessions.map(({ session, depth }) => {
+                        const isActive = session.id === currentSessionId
+                        const isEditing = editingId === session.id
+                        const displayTitle = getDisplayTitle(session)
+                        const waitingBadge = waitingSessions.find(w => w.sessionId === session.id)
+                        const showWaiting = !!waitingBadge && !isActive
+                        const runningBadge = runningSessions.find(r => r.sessionId === session.id)
+                        const showRunning = !!runningBadge && !isActive
+                        const childProjection = session.kind === 'subagent'
+                          ? subagentProjections[session.id]
+                          : undefined
+                        const childStatus = childProjection
+                          ? ({
+                              queued: ['○', '等待开始'],
+                              running: ['●', '运行中'],
+                              waiting_user: ['!', '等待授权'],
+                              retrying: ['●', '重试中'],
+                              resuming: ['●', '恢复中'],
+                              cancelling: ['◌', '停止中'],
+                              completed: ['✓', '已完成'],
+                              failed: ['×', '失败'],
+                              cancelled: ['■', '已取消'],
+                              interrupted: ['◇', '已中断'],
+                              record_missing: ['?', '记录不可用']
+                            } as const)[childProjection.status]
+                          : undefined
 
-                          return (
-                            <div
-                              key={session.id}
-                              onClick={() => !isEditing && selectSession(session.id)}
-                              className={`group relative flex items-center gap-1 px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
-                                isActive ? 'bg-white shadow-sm border border-border-warm' : 'hover:bg-gray-200/50'
-                              }`}
-                              style={{ marginLeft: `${depth * 14}px` }}
-                              title={showWaiting ? '等待你处理' : undefined}
-                            >
-                              {isEditing ? (
-                                <TextInput
-                                  ref={editInputRef}
-                                  label="重命名会话"
-                                  isLabelHidden
-                                  size="sm"
-                                  width="100%"
-                                  className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
-                                  value={editValue}
-                                  onChange={(value) => setEditValue(value.slice(0, SESSION_TITLE_MAX_LENGTH))}
-                                  onKeyDown={(e) => handleEditKeyDown(e, session.id)}
-                                  onBlur={() => void submitRename(session.id)}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              ) : (
+                        return (
+                          <div
+                            key={session.id}
+                            onClick={() => !isEditing && selectSession(session.id)}
+                            className={`group/session relative flex items-center gap-1 px-3 py-1.5 rounded-md cursor-pointer transition-colors ${
+                              isActive ? 'bg-white shadow-sm border border-border-warm' : 'hover:bg-gray-200/50'
+                            }`}
+                            style={{ marginLeft: `${depth * 14}px` }}
+                            title={showWaiting ? '等待你处理' : undefined}
+                          >
+                            {isEditing ? (
+                              <TextInput
+                                ref={editInputRef}
+                                label="重命名会话"
+                                isLabelHidden
+                                size="sm"
+                                width="100%"
+                                className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
+                                value={editValue}
+                                onChange={(value) => setEditValue(value.slice(0, SESSION_TITLE_MAX_LENGTH))}
+                                onKeyDown={(e) => handleEditKeyDown(e, session.id)}
+                                onBlur={() => void submitRename(session.id)}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <Button
+                                label={displayTitle}
+                                variant="ghost"
+                                size="sm"
+                                type="button"
+                                className={`flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+                                  isActive ? 'text-text-primary font-medium' : 'text-text-secondary'
+                                }`}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  void selectSession(session.id)
+                                }}
+                                aria-current={isActive ? 'page' : undefined}
+                                aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
+                                icon={childStatus ? (
+                                  <span
+                                    className="text-[11px] text-text-muted shrink-0"
+                                    title={childStatus[1]}
+                                  >
+                                    <span aria-hidden="true">{childStatus[0]}</span>
+                                    <span className="sr-only">{childStatus[1]}</span>
+                                  </span>
+                                ) : undefined}
+                                tooltip={`${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`}
+                              />
+                            )}
+                            {showWaiting && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                                  title="等待你处理"
+                                >
+                                  等待你处理
+                                </span>
                                 <Button
-                                  label={displayTitle}
+                                  label="停止"
                                   variant="ghost"
                                   size="sm"
-                                  type="button"
-                                  className={`flex items-center gap-1.5 min-w-0 flex-1 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
-                                    isActive ? 'text-text-primary font-medium' : 'text-text-secondary'
-                                  }`}
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
+                                  tooltip="停止此 XForge 运行"
                                   onClick={(event) => {
                                     event.stopPropagation()
-                                    void selectSession(session.id)
+                                    void cancelExecution(waitingBadge?.runId)
                                   }}
-                                  aria-current={isActive ? 'page' : undefined}
-                                  aria-label={`打开会话 ${displayTitle}${childStatus ? `，${childStatus[1]}` : ''}`}
-                                  icon={childStatus ? (
-                                    <span
-                                      className="text-[11px] text-text-muted shrink-0"
-                                      title={childStatus[1]}
-                                    >
-                                      <span aria-hidden="true">{childStatus[0]}</span>
-                                      <span className="sr-only">{childStatus[1]}</span>
-                                    </span>
-                                  ) : undefined}
-                                  tooltip={`${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`}
                                 />
-                              )}
-                              {showWaiting && (
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
-                                    title="等待你处理"
-                                  >
-                                    等待你处理
-                                  </span>
-                                  <Button
-                                    label="停止"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
-                                    tooltip="停止此 XForge 运行"
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      void cancelExecution(waitingBadge?.runId)
-                                    }}
-                                  />
-                                </div>
-                              )}
-                              {showRunning && (
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1"
-                                    title="后台运行中"
-                                  >
-                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                                    运行中
-                                  </span>
-                                  <Button
-                                    label="停止"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
-                                    tooltip="停止此会话的后台运行"
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      void cancelExecution(runningBadge?.runId)
-                                    }}
-                                  />
-                                </div>
-                              )}
-                              {!showWaiting && !showRunning && !isEditing && (
-                                <span className="text-[11px] text-text-muted shrink-0 group-hover:hidden group-focus-within:hidden">
-                                  {formatRelativeTime(session.updatedAt)}
+                              </div>
+                            )}
+                            {showRunning && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1"
+                                  title="后台运行中"
+                                >
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                                  运行中
                                 </span>
-                              )}
-                              {!isEditing && (
-                                <div className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+                                <Button
+                                  label="停止"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-border-warm text-text-secondary hover:bg-gray-100"
+                                  tooltip="停止此会话的后台运行"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void cancelExecution(runningBadge?.runId)
+                                  }}
+                                />
+                              </div>
+                            )}
+                            {!showWaiting && !showRunning && !isEditing && (
+                              <span className="text-[11px] text-text-muted shrink-0 group-hover/session:hidden group-focus-within/session:hidden">
+                                {formatRelativeTime(session.updatedAt)}
+                              </span>
+                            )}
+                            {!isEditing && (
+                              <div className="hidden group-hover/session:flex group-focus-within/session:flex items-center shrink-0">
+                                <IconButton
+                                  label="重命名会话"
+                                  icon={<EditIcon size={12} />}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-text-primary transition-all"
+                                  tooltip="重命名会话"
+                                  onClick={(e) => startEditing(e, session)}
+                                />
+                                {session.kind === 'primary' ? (
                                   <IconButton
-                                    label="重命名会话"
-                                    icon={<EditIcon size={12} />}
+                                    label="删除会话"
+                                    icon={<TrashIcon size={12} />}
                                     variant="ghost"
                                     size="sm"
-                                    className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-text-primary transition-all"
-                                    tooltip="重命名会话"
-                                    onClick={(e) => startEditing(e, session)}
+                                    className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
+                                    tooltip="删除会话"
+                                    onClick={(e) => handleDelete(e, session.id)}
                                   />
-                                  {session.kind === 'primary' ? (
-                                    <IconButton
-                                      label="删除会话"
-                                      icon={<TrashIcon size={12} />}
-                                      variant="ghost"
-                                      size="sm"
-                                      className="p-1 rounded hover:bg-gray-300/50 text-text-muted hover:text-red-500 transition-all"
-                                      tooltip="删除会话"
-                                      onClick={(e) => handleDelete(e, session.id)}
-                                    />
-                                  ) : null}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                        {showMoreToggle && (
-                          <Button
-                            label={isSessionListExpanded ? '收起' : '显示更多'}
-                            variant="ghost"
-                            size="sm"
-                            width="100%"
-                            type="button"
-                            className="w-full text-left px-3 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // 收起只清用户态；选中项仍在预览区外时由 selectedBeyondPreview 继续强制展开
-                              setExpandedSessionLists(prev => ({
-                                ...prev,
-                                [projectPath]: !isSessionListExpanded
-                              }))
-                            }}
-                          />
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Bottom Footer */}
-      <div className="p-3 border-t border-border-cream">
-        <Button
-          label="设置"
-          variant="ghost"
-          width="100%"
-          icon={(
-            <span className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
-              <SettingsIcon size={16} />
-            </span>
-          )}
-          onClick={() => setConfigModalOpen(true)}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200/50 transition-colors text-text-secondary hover:text-text-primary"
-        />
-      </div>
-    </aside>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {showMoreToggle && (
+                        <Button
+                          label={isSessionListExpanded ? '收起' : '显示更多'}
+                          variant="ghost"
+                          size="sm"
+                          width="100%"
+                          type="button"
+                          className="w-full text-left px-3 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            // 收起只清用户态；选中项仍在预览区外时由 selectedBeyondPreview 继续强制展开
+                            setExpandedSessionLists(prev => ({
+                              ...prev,
+                              [projectPath]: !isSessionListExpanded
+                            }))
+                          }}
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )
+        })}
+      </SideNavSection>
+    </SideNav>
   )
 }

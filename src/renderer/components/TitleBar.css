@@ -1,14 +1,16 @@
+/*
+ * TitleBar 位于 AppShell topNav slot：外层布局（高度堆叠、分隔线）由 AppShell 负责。
+ * 本文件只保留 Nova 特有职责：拖拽区（-webkit-app-region）、标题字号、窗口按钮 hover。
+ */
 .title-bar {
   height: 32px;
   background-color: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border-cream);
   display: flex;
   align-items: center;
   justify-content: space-between;
   position: relative;
   user-select: none;
   flex-shrink: 0;
-  z-index: 1000;
 }
 
 /* 整个标题栏背景上，除了按钮和Logo，都是可拖拽区域 */
