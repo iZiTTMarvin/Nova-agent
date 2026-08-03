@@ -1,5 +1,5 @@
 /**
- * P3 对话表面契约：
+ * 对话表面契约：
  * 1. ChatPanel.css 禁止 .astryx-* 覆盖（几何/颜色一律走 Astryx API 或 theme components hook）
  * 2. 消息结构走 ChatMessage/ChatMessageBubble（气泡/头像不再手写 flex）
  * 3. Markdown 内核为 Astryx <Markdown>（sealed/tail 流式算法仍归 Nova incrementalMarkdown）
@@ -75,6 +75,16 @@ describe('对话表面：Markdown 内核为 Astryx', () => {
 
   it('sealed/tail 流式算法仍由 Nova incrementalMarkdown 拥有', () => {
     expect(markdownRendererSource).toContain("from './incrementalMarkdown'")
+  })
+
+  it('围栏代码块走羊皮纸 token，不再硬编码 VS Code 深色底', () => {
+    const markdownCss = readFileSync(
+      new URL('../../../src/renderer/features/chat/MarkdownRenderer.css', import.meta.url),
+      'utf8'
+    )
+    expect(markdownCss).toContain('var(--code-block-bg)')
+    expect(markdownCss).not.toContain('#1e1e1e')
+    expect(markdownCss).not.toContain('#161616')
   })
 })
 

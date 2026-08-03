@@ -25,4 +25,13 @@ describe('chat panel layout contracts', () => {
     expect(composerRule).not.toMatch(/position:\s*(?:absolute|fixed)/)
     expect(composerRule).not.toMatch(/\bbottom\s*:/)
   })
+
+  it('scroll-to-bottom floats above composer without claiming document flow', () => {
+    const scrollRule = rule('.chat-scroll-to-bottom')
+    expect(scrollRule).toMatch(/position:\s*absolute/)
+    expect(scrollRule).toMatch(/bottom:\s*100%/)
+    expect(scrollRule).toMatch(/background:\s*var\(--bg-card\)/)
+    expect(scrollRule).toMatch(/box-shadow:/)
+    expect(rule('.chat-panel__composer-inner')).toMatch(/position:\s*relative/)
+  })
 })

@@ -1,5 +1,5 @@
 /**
- * 技能列表轻量 store — 设置页与 SkillAC 共享数据源
+ * 技能列表轻量 store — 设置页与 composer `/` trigger 共享数据源
  */
 import { create } from 'zustand'
 import type { SkillSummary } from '../../../shared/skills/types'

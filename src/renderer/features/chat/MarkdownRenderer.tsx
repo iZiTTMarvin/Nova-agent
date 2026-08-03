@@ -1,7 +1,7 @@
 /**
  * MarkdownRenderer — 模型文本输出的 Markdown 渲染器（Astryx 内核）
  *
- * 职责分层（P3 spike 结论：迁内核、保流式算法）：
+ * 职责分层（迁内核、保流式算法）：
  * 1. 流式算法仍是 Nova 两阶段增量（sealed + tail，splitIncrementalMarkdown）：
  *    已封口 prefix 冻结只渲染一次，活动 tail 每帧低成本重解析。打字机节奏、
  *    暂停、后台降频由 StreamingTextBlock + render pool 拥有，本组件不引入
@@ -9,7 +9,7 @@
  * 2. 解析/渲染引擎换成 Astryx <Markdown>（替代 react-markdown + remark-gfm）：
  *    每块以非流式模式同步全量渲染，无内部动画，语义与旧 ReactMarkdown 块一致；
  *    prose 排版（字号/行高/间距）自此走 theme typography token。
- * 3. 代码块保留 Nova CodeBlock：深色品牌底 + 复制按钮 + highlightLine；
+ * 3. 代码块保留 Nova CodeBlock：羊皮纸暖底 + 复制按钮 + highlightLine；
  *    流式期间跳过逐行高亮（不变量，唯一终态高亮路径）。
  * 4. 链接保留 isSafeMarkdownHref 安全语义（unsafe → 纯文本）；
  *    autolink="gfm" 对齐原 remark-gfm 的裸 URL 自动链接行为。

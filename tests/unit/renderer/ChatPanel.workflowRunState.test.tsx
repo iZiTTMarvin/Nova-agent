@@ -30,14 +30,12 @@ vi.mock('../../../src/renderer/features/subagents/SubagentSessionHeader', () => 
   SubagentSessionHeader: () => null
 }))
 vi.mock('../../../src/renderer/components/ImagePreviewDialog', () => ({ ImagePreviewDialog: () => null }))
-vi.mock('../../../src/renderer/features/skills/SkillAC', () => ({
-  SkillAC: React.forwardRef(() => null)
-}))
 vi.mock('../../../src/renderer/components/Icons', () => ({
   SendIcon: () => null,
   StopIcon: () => null,
   NovaLogo: () => null,
-  ImageIcon: () => null
+  ImageIcon: () => null,
+  ChevronIcon: () => null
 }))
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
@@ -47,20 +45,26 @@ function mountChatPanel(): DomRenderResult {
   return renderDom(React.createElement(ChatPanel))
 }
 
+function composerEditable(renderer: DomRenderResult): HTMLElement {
+  const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"][aria-label="消息输入"]')
+  if (!editable) throw new Error('ChatComposerInput editable not found')
+  return editable
+}
+
 async function typeAndPressEnter(
   renderer: DomRenderResult,
   text: string
 ): Promise<void> {
-  const textarea = renderer.container.querySelector<HTMLTextAreaElement>('textarea')
-  if (!textarea) throw new Error('textarea not found')
-  act(() => {
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-    valueSetter?.call(textarea, text)
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  const editable = composerEditable(renderer)
+  await act(async () => {
+    editable.focus()
+    editable.textContent = text
+    editable.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }))
+    await Promise.resolve()
   })
   // handleSend 内部有 await（preSendGate）：必须把微任务排空后再断言
   await act(async () => {
-    textarea.dispatchEvent(new KeyboardEvent('keydown', {
+    editable.dispatchEvent(new KeyboardEvent('keydown', {
       key: 'Enter',
       shiftKey: false,
       bubbles: true,
@@ -167,7 +171,7 @@ describe('ChatPanel 编排运行态输入互斥', () => {
       phase: 'implement'
     })
     // 输入内容保留，用户可以在中断后直接再发
-    expect(renderer.container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('再改一下登录页')
+    expect(composerEditable(renderer).textContent).toBe('再改一下登录页')
 
     renderer.unmount()
   })
@@ -249,7 +253,9 @@ describe('ChatPanel 编排运行态输入互斥', () => {
     })
 
     const renderer = mountChatPanel()
-    expect(renderer.container.querySelector<HTMLTextAreaElement>('textarea')?.placeholder).toContain('中断')
+    // ChatComposerInput 的 placeholder 是兄弟节点（aria-hidden），不是 textarea 属性
+    const placeholder = renderer.container.querySelector('.chat-composer__input [aria-hidden="true"]')
+    expect(placeholder?.textContent).toContain('中断')
 
     renderer.unmount()
   })

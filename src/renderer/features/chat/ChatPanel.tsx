@@ -1,7 +1,11 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Profiler } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { TextArea } from '@astryxdesign/core/TextArea'
+import {
+  ChatComposerInput,
+  type ChatComposerInputHandle,
+  type ChatComposerTrigger
+} from '@astryxdesign/core/Chat'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useRunStore } from '../../stores/useRunStore'
@@ -10,7 +14,8 @@ import { selectSupportsVisionFromConfig } from '../../stores/selectors'
 import {
   SendIcon,
   StopIcon,
-  NovaLogo
+  NovaLogo,
+  ChevronIcon
 } from '../../components/Icons'
 import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
@@ -43,13 +48,12 @@ import { formatPhaseLabel } from './WorkflowProgressBlock'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
   fileToImageAttachment,
-  getPastedImageFiles,
   getDroppedImageFiles,
   getDroppedNonImageFiles,
   MAX_IMAGE_COUNT,
   type ImageAttachment
 } from '../../lib/image-attachments'
-import { SkillAC, type SkillACHandle } from '../skills/SkillAC'
+import { createComposerSkillTrigger } from '../skills/composerSkillTrigger'
 import { useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
@@ -201,15 +205,25 @@ export const ChatPanel: React.FC = () => {
 
   const [inputVal, setInputVal] = useState('')
   const [autoMode, setAutoMode] = useState(false)
-  const [isComposing, setIsComposing] = useState(false)
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSkills = useSkillsStore(state => state.setSkills)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const composerInputHandleRef = useRef<ChatComposerInputHandle>(null)
   const composerBoxRef = useRef<HTMLDivElement>(null)
-  const skillACRef = useRef<SkillACHandle>(null)
+  const slashSkillsRef = useRef(slashSkills)
+  slashSkillsRef.current = slashSkills
+
+  // skills 变更时不重建 trigger，避免打断已打开的 `/` 菜单。
+  const skillTrigger = useMemo(
+    () => createComposerSkillTrigger(() => slashSkillsRef.current),
+    []
+  )
+  const composerTriggers = useMemo<ChatComposerTrigger[]>(
+    () => [skillTrigger],
+    [skillTrigger]
+  )
 
   useEffect(() => {
     setAutoMode(false)
@@ -234,11 +248,7 @@ export const ChatPanel: React.FC = () => {
       setInputVal(composerPrefill)
       clearComposerPrefill()
       requestAnimationFrame(() => {
-        textareaRef.current?.focus()
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto'
-          textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-        }
+        composerInputHandleRef.current?.focus()
       })
     }
   }, [composerPrefill, clearComposerPrefill])
@@ -430,13 +440,9 @@ export const ChatPanel: React.FC = () => {
     []
   )
 
-  // 处理文本域自动折行高度自适应
+  // 处理受控输入；行高由 ChatComposerInput maxRows 拥有，不再手调 textarea 高度
   const handleInputChange = (nextValue: string) => {
     setInputVal(nextValue)
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px'
-    }
   }
 
   const handleSend = async () => {
@@ -478,8 +484,7 @@ export const ChatPanel: React.FC = () => {
     // message_end 来 drain，消息永久卡在 steering 队列。
     const stillGenerating = useChatStore.getState().isGenerating
 
-    // Phase 6：Steering Queue
-    // Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
+    // Steering Queue：Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
     if (stillGenerating) {
       enqueuePendingMessage(text, images, currentMode === 'compose' ? autoMode : undefined)
     } else {
@@ -493,33 +498,33 @@ export const ChatPanel: React.FC = () => {
 
     setInputVal('')
     setImageAttachments([])
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
   }
 
-  const handleSlashSelect = useCallback((text: string) => {
-    setInputVal(text)
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus()
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-        textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-      }
-    })
-  }, [])
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (skillACRef.current?.onKeyDown(e)) return
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+  /**
+   * Enter 由产品层拥有：ChatComposerInput 内置 onSubmit 会在调用后无条件清空编辑器，
+   * 而 Nova 的发送可被编排忙/缺配置等路径拒绝且必须保留草稿，因此在 onKeyDown 里
+   * preventDefault 后走 handleSend。
+   */
+  const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey) return
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+    // 触发菜单打开但未消费 Enter（无高亮/无结果）时，禁止把草稿当消息发出。
+    if (e.currentTarget.getAttribute('aria-expanded') === 'true') {
       e.preventDefault()
-      handleSend()
+      e.currentTarget.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+      return
     }
+    e.preventDefault()
+    void handleSend()
   }
 
   const handleSlashButton = () => {
     setInputVal(prev => (prev.startsWith('/') ? prev : `/${prev}`))
-    textareaRef.current?.focus()
+    requestAnimationFrame(() => {
+      composerInputHandleRef.current?.focus()
+    })
   }
 
   // ── 图片上传交互 ─────────────────────────────────────────
@@ -573,13 +578,12 @@ export const ChatPanel: React.FC = () => {
     e.target.value = '' // 允许重复选择相同文件
   }, [supportsVision, addImageFiles])
 
-  /** textarea onPaste：仅 supportsVision 时拦截图片 */
-  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  /** ChatComposerInput onFiles：粘贴/拖入文件时只收图片附件 */
+  const handleComposerFiles = useCallback((files: File[]) => {
     if (!supportsVision) return
-    const imageFiles = getPastedImageFiles(e.clipboardData)
+    const imageFiles = files.filter(f => f.type.startsWith('image/'))
     if (imageFiles.length > 0) {
-      e.preventDefault()
-      await addImageFiles(imageFiles)
+      void addImageFiles(imageFiles)
     }
   }, [supportsVision, addImageFiles])
 
@@ -622,13 +626,9 @@ export const ChatPanel: React.FC = () => {
     if (fileRefs.length > 0) {
       const refs = fileRefs.map(f => `@${f.name}`).join(' ')
       setInputVal(prev => (prev ? prev + ' ' : '') + refs)
-      // 统一调整 textarea 高度
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto'
-          textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px'
-        }
-      }, 0)
+      requestAnimationFrame(() => {
+        composerInputHandleRef.current?.focus()
+      })
     }
   }, [supportsVision, addImageFiles])
 
@@ -726,7 +726,7 @@ export const ChatPanel: React.FC = () => {
           onLoadDiffs={loadMessageDiffs}
         />
 
-        {/* Phase 6：Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
+        {/* Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
         {pendingUserMessages.length > 0 && (
           <div className="steering-queue">
             <div className="steering-queue__header">
@@ -763,33 +763,16 @@ export const ChatPanel: React.FC = () => {
         }`}
       >
         <div className="chat-panel__composer-inner">
-          {/* 回到底部：放在 composer 栈顶，AskQuestion/Todo dock 展开时自然上移，不重叠 */}
+          {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
           {!isEmptyState && showScrollToBottom && (
-            <IconButton
-              label="回到底部"
-              icon={
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M4 6.5L8 10.5L12 6.5"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              }
-              variant="secondary"
-              size="md"
-              elevation="low"
+            <button
+              type="button"
               className="chat-scroll-to-bottom"
+              aria-label="回到底部"
               onClick={handleScrollToBottomClick}
-            />
+            >
+              <ChevronIcon size={14} direction="down" />
+            </button>
           )}
 
           {/* 编排运行态：回车被拒后提示是否中断；确认后穿透到 TaskScope.close */}
@@ -942,20 +925,10 @@ export const ChatPanel: React.FC = () => {
                 onChange={handleFileInputChange}
               />
 
-              <SkillAC
-                ref={skillACRef}
-                inputValue={inputVal}
-                anchorRef={composerBoxRef}
-                skills={slashSkills}
-                onSelect={handleSlashSelect}
-                isComposing={isComposing}
-              />
-
-              <TextArea
-                ref={textareaRef}
-                className="chat-composer__textarea"
+              <ChatComposerInput
+                className="chat-composer__input"
+                handleRef={composerInputHandleRef}
                 label="消息输入"
-                isLabelHidden
                 placeholder={pendingAskQuestion
                   ? '请先回答上方问题，再发送新消息（或输入排队）'
                   : workflowRunning
@@ -963,15 +936,16 @@ export const ChatPanel: React.FC = () => {
                     : isGenerating
                       ? 'Agent 正在运行，输入将进入排队队列...'
                       : '向 Nova 提问或分配编程任务...'}
-                rows={1}
                 value={inputVal}
                 onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onCompositionStart={() => setIsComposing(true)}
-                onCompositionEnd={() => setIsComposing(false)}
-                onPaste={handlePaste}
-                // Phase 6：textarea 在 Agent 运行期间不再 disabled，
-                // 用户可以继续输入，新消息进入 Steering Queue 等 turn boundary 自动 dispatch
+                onKeyDown={handleComposerKeyDown}
+                onFiles={handleComposerFiles}
+                triggers={composerTriggers}
+                // Nova 无跨会话持久化 prompt history；内置 hasHistory 是 per-mount 且不可清除。
+                hasHistory={false}
+                // 长文本保持明文粘贴，不转 token chip（与迁移前语义一致）。
+                pasteAsToken={false}
+                maxRows={14}
               />
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
                 <div className="flex items-center gap-2">

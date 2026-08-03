@@ -42,6 +42,9 @@ export const parchmentTheme = defineTheme({
     '--font-family-heading': 'var(--font-sans)',
     '--font-family-code': 'var(--font-mono)',
 
+    // ── 语法高亮底（与 Markdown 围栏代码块暖色面一致）──
+    '--color-syntax-background': 'var(--code-block-bg)',
+
     // ── 背景 ──
     '--color-background-surface': 'var(--bg-app)',
     '--color-background-body': 'var(--bg-app)',

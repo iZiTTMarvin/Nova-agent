@@ -1,0 +1,49 @@
+/**
+ * Composer `/` 菜单行内排版（触发菜单壳由 Astryx 拥有，这里只排标题/描述层级）
+ *
+ * useTriggerMenu 给菜单 180px 地板、无上限：长 description 会把 popover 撑到
+ * 比 composer 更宽。封顶后行内 ellipsis 才有约束可作用（与 Maka 同款思路）。
+ */
+.astryx-trigger-menu {
+  max-width: min(420px, calc(100vw - 2rem));
+}
+
+.composer-skill-trigger__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.composer-skill-trigger__title {
+  font-size: var(--font-size-ui, 14px);
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-skill-trigger__slash {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.composer-skill-trigger__kind {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption, 12px);
+}
+
+.composer-skill-trigger__desc {
+  font-size: var(--font-size-caption, 12px);
+  color: var(--text-muted);
+  line-height: 1.4;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

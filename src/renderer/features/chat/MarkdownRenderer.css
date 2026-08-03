@@ -1,16 +1,10 @@
-/* MarkdownRenderer 样式（Astryx 内核，P3 收敛）
+/* MarkdownRenderer 样式（Astryx 内核）
  *
- * prose 排版权威已交回 Astryx <Markdown> + theme tokens：
- * - 字号/行高/字重 → --text-* / --font-size-*（parchment typography.scale 生成）
- * - 块级间距 → --spacing-*（Astryx prose margin，不再叠 flex gap）
- * - 标题/段落/列表/引用/表格/内联代码 → Astryx 组件样式
+ * prose 排版权威已交回 Astryx <Markdown> + theme tokens。
+ * 本文件只保留 Nova 品牌面：serif 标题、安全链接、围栏代码块表面。
  *
- * 本文件只保留 Nova 品牌面：
- * - 标题 serif 字体（羊皮纸品牌，尺寸仍走 token）
- * - 安全链接配色（components.link 注入的 Nova <a>）
- * - 深色底围栏代码块（品牌表面；尺寸同样走 token）
- *
- * 容器仍叫 .markdown-body：外层过程轨间距选择器依赖该类名。
+ * 代码块走暖色浅底（--code-block-*），与羊皮纸正文一致，同时用边框、
+ * 抬头条、等宽字体与正文区分，仍可一眼认出是代码。
  */
 
 .markdown-body {
@@ -46,13 +40,14 @@
   color: var(--color-brand-hover);
 }
 
-/* ── 围栏代码块（Nova 品牌深色底；字号/行高走 token）────────── */
+/* ── 围栏代码块（羊皮纸暖底；字号/行高走 token）─────────────── */
 .md-code-block {
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-md);
-  border: 1px solid #2d2d2d;
-  background-color: #1e1e1e;
+  border: 1px solid var(--code-block-border);
+  background-color: var(--code-block-bg);
+  box-shadow: var(--ring-shadow-subtle);
   overflow: hidden;
   max-width: 100%;
   min-width: 0;
@@ -63,8 +58,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px 6px 14px;
-  background-color: #161616;
-  border-bottom: 1px solid #2d2d2d;
+  background-color: var(--code-block-header-bg);
+  border-bottom: 1px solid var(--code-block-border);
   user-select: none;
 }
 
@@ -73,7 +68,7 @@
   font-size: var(--text-supporting-size);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #8a8a8a;
+  color: var(--code-block-muted);
 }
 
 .md-code-block__copy {
@@ -83,15 +78,15 @@
   padding: 3px 8px;
   border-radius: 4px;
   font-size: var(--text-supporting-size);
-  color: #c2c2c2;
-  background-color: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--code-block-muted);
+  background-color: transparent;
+  border: 1px solid var(--code-block-border);
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .md-code-block__copy:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
+  background-color: var(--bg-sand);
+  color: var(--text-primary);
 }
 
 .md-code-block__copy:active {
@@ -105,7 +100,7 @@
   font-family: var(--font-mono);
   font-size: var(--text-code-size);
   line-height: var(--text-code-leading);
-  color: #d4d4d4;
+  color: var(--code-block-text);
   white-space: pre;
 }
 
@@ -113,12 +108,10 @@
   font-family: inherit;
 }
 
-/* 代码块内的 token 颜色：复用 diff-token 命名，但在深色背景下重新调色，
- * 以保证可读性（DiffViewer 是浅色底，这里是深色底）。 */
-.md-code-block .diff-token--plain { color: #d4d4d4; }
-.md-code-block .diff-token--comment { color: #6a9955; font-style: italic; }
-.md-code-block .diff-token--string { color: #ce9178; }
-.md-code-block .diff-token--number { color: #b5cea8; }
-.md-code-block .diff-token--keyword { color: #c586c0; font-weight: 600; }
-.md-code-block .diff-token--operator { color: #d4d4d4; }
-.md-code-block .diff-token--property { color: #9cdcfe; }
+.md-code-block .diff-token--plain { color: var(--code-token-plain); }
+.md-code-block .diff-token--comment { color: var(--code-token-comment); font-style: italic; }
+.md-code-block .diff-token--string { color: var(--code-token-string); }
+.md-code-block .diff-token--number { color: var(--code-token-number); }
+.md-code-block .diff-token--keyword { color: var(--code-token-keyword); font-weight: 600; }
+.md-code-block .diff-token--operator { color: var(--code-token-operator); }
+.md-code-block .diff-token--property { color: var(--code-token-property); }

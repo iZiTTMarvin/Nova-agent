@@ -32,6 +32,20 @@
   /* 边框（极淡的奶油色 border 与暖边框） */
   --border-cream: #f0eee6;
   --border-warm: #e8e6dc;
+
+  /* 围栏代码块：暖色浅底，仍用边框+mono+抬头与正文区分 */
+  --code-block-bg: #f3f1e8;
+  --code-block-header-bg: #ebe8df;
+  --code-block-border: #ddd8cc;
+  --code-block-text: #2a2926;
+  --code-block-muted: #7a776e;
+  --code-token-plain: #2a2926;
+  --code-token-comment: #6f7d5a;
+  --code-token-string: #a35a3a;
+  --code-token-number: #8a5a2b;
+  --code-token-keyword: #8b4a78;
+  --code-token-operator: #5e5d59;
+  --code-token-property: #3d6b8a;
   
   /* 字体族 */
   --font-serif: Georgia, Cambria, "Times New Roman", Times, serif;
@@ -81,6 +95,18 @@
   --color-success: var(--nova-status-success);
   --border-cream: #3c3b33;
   --border-warm: #4a493f;
+  --code-block-bg: #2a2924;
+  --code-block-header-bg: #24231f;
+  --code-block-border: #4a493f;
+  --code-block-text: #e5e1d5;
+  --code-block-muted: #9a978a;
+  --code-token-plain: #e5e1d5;
+  --code-token-comment: #9aab7a;
+  --code-token-string: #e0a07a;
+  --code-token-number: #d4b07a;
+  --code-token-keyword: #d4a0c8;
+  --code-token-operator: #c3c0b3;
+  --code-token-property: #9ec0e0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -104,6 +130,18 @@
     --color-success: var(--nova-status-success);
     --border-cream: #3c3b33;
     --border-warm: #4a493f;
+    --code-block-bg: #2a2924;
+    --code-block-header-bg: #24231f;
+    --code-block-border: #4a493f;
+    --code-block-text: #e5e1d5;
+    --code-block-muted: #9a978a;
+    --code-token-plain: #e5e1d5;
+    --code-token-comment: #9aab7a;
+    --code-token-string: #e0a07a;
+    --code-token-number: #d4b07a;
+    --code-token-keyword: #d4a0c8;
+    --code-token-operator: #c3c0b3;
+    --code-token-property: #9ec0e0;
   }
 }
 

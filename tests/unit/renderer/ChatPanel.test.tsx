@@ -10,9 +10,9 @@ import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/st
 import type { ExtendedMessage } from '../../../src/renderer/stores/types'
 
 /**
- * ChatPanel 接线测试（修 GPT P2 指出的测试缺口）。
+ * ChatPanel 接线测试。
  *
- * 本次 bug 的本质：MessageItem 侧 isPausedForInput 全部就绪，但 ChatPanel 渲染时漏传 →
+ * MessageItem 侧 isPausedForInput 全部就绪，但 ChatPanel 渲染时漏传 →
  * 等待用户决策期间流式动画常驻循环不停 → 卡死。sendOrchestration.test.ts 只验证
  * preSendGate 逻辑，无法捕捉"接线是否真的传了 isPausedForInput"。本文件通过 mock
  * MessageItem 捕获其实际收到的 props，断言 pendingAskQuestion / pendingPermissionRequest
@@ -39,14 +39,12 @@ vi.mock('../../../src/renderer/features/todo/TodoPanel', () => ({ TodoPanel: () 
 vi.mock('../../../src/renderer/features/ask/AskQuestionPanel', () => ({ AskQuestionPanel: () => null }))
 vi.mock('../../../src/renderer/features/chat/RecoveryBanner', () => ({ RecoveryBanner: () => null }))
 vi.mock('../../../src/renderer/components/ImagePreviewDialog', () => ({ ImagePreviewDialog: () => null }))
-vi.mock('../../../src/renderer/features/skills/SkillAC', () => ({
-  SkillAC: React.forwardRef(() => null)
-}))
 vi.mock('../../../src/renderer/components/Icons', () => ({
   SendIcon: () => null,
   StopIcon: () => null,
   NovaLogo: () => null,
-  ImageIcon: () => null
+  ImageIcon: () => null,
+  ChevronIcon: () => null
 }))
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 

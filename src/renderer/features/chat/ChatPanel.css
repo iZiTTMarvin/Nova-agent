@@ -40,37 +40,45 @@
   min-width: 0;
 }
 
-/* 滚动到底部：几何/悬停/焦点全部交给 Astryx IconButton（size/elevation/variant），
-   Nova 只保留它在 composer 栈中的垂直占位 */
+/* 回到底部：绝对悬浮在 composer 栈顶上方；实心底 + 边框 + 阴影，
+   叠在深色/浅色代码块上都能读清，且不占文档流。 */
 .chat-scroll-to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
   margin-bottom: 8px;
-  flex-shrink: 0;
-}
-
-.chat-composer__textarea {
-  width: 100%;
-  margin: 0;
-  min-width: 0;
-}
-
-.chat-composer__textarea textarea {
-  width: 100%;
-  min-height: 44px;
-  max-height: 300px;
-  padding: 5px 8px;
-  overflow-y: auto;
-  resize: none;
-  border: 0;
-  outline: 0;
-  background: transparent;
+  z-index: 5;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-warm);
+  background: var(--bg-card);
   color: var(--text-primary);
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.5;
+  box-shadow: var(--shadow-popup);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
-.chat-composer__textarea textarea::placeholder {
-  color: var(--text-muted);
+.chat-scroll-to-bottom:hover {
+  background: var(--bg-sand);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.chat-scroll-to-bottom:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.chat-composer__input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
 }
 
 .chat-messages__history-hint {
@@ -891,6 +899,7 @@
 }
 
 .chat-panel__composer-inner {
+  position: relative;
   width: 100%;
   max-width: 48rem; /* 与 composer 的 max-w-3xl 对齐 */
   display: flex;
@@ -911,10 +920,10 @@
 }
 
 /* ──────────────────────────────────────────────────────────
-   Phase 6：Steering Queue 提示
+   Steering Queue 提示
    Agent 运行期间，用户入队的消息以淡蓝虚线框展示在消息流底部，
    turn boundary 自动 dispatch 时逐条消失。
-   ────────────────────────────────────────────────────────── */
+────────────────────────────────────────────────────────── */
 .steering-queue {
   margin: 12px 0 0 0;
   padding: 10px 14px;
