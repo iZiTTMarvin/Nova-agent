@@ -1,6 +1,8 @@
 import React, { useEffect } from 'react'
 import { Theme } from '@astryxdesign/core/theme'
-import { parchmentTheme } from './styles/astryx-parchment-theme'
+import { registerIcons } from '@astryxdesign/core/Icon'
+import { neutralIconRegistry } from '@astryxdesign/theme-neutral'
+import { parchmentTheme } from './styles/parchment'
 import { useAgentStore } from './stores/useAgentStore'
 import { useChatStore } from './stores/useChatStore'
 import { useSettingsStore } from './stores/useSettingsStore'
@@ -18,6 +20,13 @@ import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
 import './App.css'
+
+// 图标注册：built 主题产物（parchment.js）由 CLI 生成时丢弃 icons 字段
+// （ReactNode 无法序列化），这里补上语义图标注册表，保证 Astryx 组件
+// 的图标（chevron/check/stop 等）在运行时可用。
+// registerIcons 语义是 app 初始化时调用一次（全局注册表幂等合并），
+// 必须留在模块级；放进组件体会在每次 render 重复执行（StrictMode 下双次）。
+registerIcons(neutralIconRegistry)
 
 /**
  * App 根组件

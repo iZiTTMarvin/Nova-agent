@@ -16,6 +16,7 @@
     "test:memory-integration": "node scripts/run-memory-integration-test.mjs",
     "validate:skills": "node scripts/validate-skill-frontmatter.mjs",
     "sync:icon": "node scripts/sync-build-icon.mjs",
+    "astryx:theme": "astryx theme build src/renderer/styles/astryx-parchment-theme.ts -o src/renderer/styles/astryx-parchment.css",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",
     "rebuild:native:node": "node scripts/rebuild-better-sqlite3-node.mjs",
@@ -45,6 +46,7 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.2.0",
     "@electron/rebuild": "^3.7.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/react": "^19.0.0",
@@ -55,6 +57,7 @@
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "gpt-tokenizer": "^3.4.0",
     "jsdom": "^26.1.0",
     "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",

@@ -103,6 +103,7 @@ describe('import boundary module resolution', () => {
     'src/runtime/pkg/index.ts',
     'src/renderer/c.tsx',
     'src/renderer/styles.css',
+    'src/renderer/styles/theme.js',
     'src/runtime/config.json'
   ])
   const exists = virtualExists(files)
@@ -147,6 +148,19 @@ describe('import boundary module resolution', () => {
     expectOnlyRule(resourceViolation.violations, 'shared-cannot-import-runtime')
     const unresolved = resolveModuleSpecifier('src/shared/a.ts', '../runtime/missing', exists)
     expect(unresolved.kind).toBe('unresolved')
+  })
+
+  it('生成的 .js 模块按真实文件解析，且仍参与层级判定', () => {
+    expect(resolveModuleSpecifier('src/renderer/c.tsx', './styles/theme', exists)).toEqual({
+      kind: 'resolved',
+      path: 'src/renderer/styles/theme.js'
+    })
+    const crossLayer = collectViolationsFromSource({
+      fromFile: 'src/shared/a.ts',
+      sourceText: "import theme from '../renderer/styles/theme'",
+      exists
+    })
+    expectOnlyRule(crossLayer.violations, layerCannotImportRule('shared', 'renderer'))
   })
 })
 

@@ -3,13 +3,39 @@
  *
  * 基于项目现有 CSS 变量（见 styles/global.css）扩展自 neutralTheme，
  * 让 Astryx 原子组件在视觉上融入 Nova 的暖色拟纸风格。
+ *
+ * 权威方向：
+ * - 颜色（中性色/表面/边框/状态）→ 由 Nova 变量桥接（多套可切换色板）
+ * - 排版（字号/行高/字重）→ 由 typography.scale 决定（Astryx 是唯一权威）
+ * - 圆角/过渡 → 由 radius/motion 配置生成 token（全局 --radius-* 走此）
+ * - 组件级覆盖 → components hook（禁在页面 CSS 硬盖 .astryx-*）
  */
 import { defineTheme } from '@astryxdesign/core/theme'
 import { neutralTheme } from '@astryxdesign/theme-neutral'
+import { neutralIconRegistry } from '@astryxdesign/theme-neutral'
 
 export const parchmentTheme = defineTheme({
   name: 'parchment',
   extends: neutralTheme,
+  typography: {
+    // 几何级数 type scale：base 14px、ratio 1.125。
+    // 对标 Cursor / Claude Code / Codex 的紧凑正文密度。
+    // 生成 --font-size-*（11 档）与 --text-* 语义 token，
+    // 并成为产品字号/行高的唯一权威（全局 CSS 硬编码字号将逐步收敛）。
+    scale: { base: 14, ratio: 1.125 }
+  },
+  radius: {
+    // 生成 --radius-* token；保持 Astryx 默认 multiplier=1（base 4px）。
+    // Nova 侧 --radius-sm/md/lg/xl 为业务自用，与 Astryx token 并存但
+    // 组件几何一律走 Astryx token，不再手工覆盖。
+    base: 4,
+    multiplier: 1
+  },
+  icons: {
+    // 显式声明图标注册表，防止 theme build 产物丢失图标。
+    // 全量继承 neutralIconRegistry（lucide 语义图标 25 个）。
+    ...neutralIconRegistry
+  },
   tokens: {
     // ── 字体 ──
     '--font-family-body': 'var(--font-sans)',

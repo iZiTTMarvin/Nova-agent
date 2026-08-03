@@ -22,7 +22,12 @@ const ALIAS_TO_SRC_PREFIX: ReadonlyArray<{ prefix: string; target: string }> = [
   { prefix: '@renderer/', target: 'src/renderer/' }
 ]
 
-const RESOLVE_EXTENSIONS = ['.ts', '.tsx'] as const
+/**
+ * 内部模块解析扩展名。`.js` 覆盖 CLI 生成的构建产物（如 theme build 的
+ * parchment.js）：它们被生产代码 import，必须解析到真实文件并参与层级判定，
+ * 而不是被报为 unresolved 或当作 asset 跳过。
+ */
+const RESOLVE_EXTENSIONS = ['.ts', '.tsx', '.js'] as const
 
 /** 外部资源包不参与层级判定；仓库内资源仍按真实路径检查依赖方向。 */
 const ASSET_EXTENSIONS = new Set([
