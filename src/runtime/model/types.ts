@@ -6,6 +6,7 @@
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { NormalizedUsage } from '../../shared/model/types'
 import type { CacheStrategy, CacheProfileId } from '../../shared/config/types'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 
 export type { NormalizedUsage, UsageDialect } from '../../shared/model/types'
 export { computeCacheHitRate } from '../../shared/model/types'
@@ -107,9 +108,9 @@ export interface ModelClientConfig {
   cacheProfile?: 'auto' | CacheProfileId
   /**
    * 思考强度覆盖。缺省或 'auto'：非 GLM 不发送；GLM 仍注入保留式思考。
-   * 'low'/'medium'/'high' 按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
+   * 显式值按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
    */
-  reasoningEffort?: 'auto' | 'low' | 'medium' | 'high'
+  reasoningEffort?: ReasoningEffort
   /**
    * 是否支持图片输入。未设置时按优先级查注册表→字符串兜底→默认 false（见 resolveSupportsVision）。
    * 用于 API 层视觉投影（剥离 / provider 适配），与 UI 门控共用同一语义。

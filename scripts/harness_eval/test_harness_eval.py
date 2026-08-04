@@ -1,0 +1,398 @@
+from __future__ import annotations
+
+import unittest
+import csv
+import hashlib
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from scripts.harness_eval.report import exact_mcnemar_p, generate
+from scripts.harness_eval.install_network import prepare_command, proxy_environment
+from scripts.harness_eval.run_experiment import (
+    CSV_FIELDS,
+    Paths,
+    agent_command,
+    classify_failure,
+    estimated_cost,
+    ensure_node_runtime_archive,
+    harbor_environment,
+    is_retryable,
+    newest_result,
+    next_admission_for_cell,
+    node_runtime_archive_path,
+    ordered_task_names,
+    result_is_complete,
+    token_fields,
+    write_progress_snapshot,
+)
+
+
+class HarnessEvalTests(unittest.TestCase):
+    def test_exact_mcnemar_matches_reference_case(self) -> None:
+        self.assertAlmostEqual(exact_mcnemar_p(16, 4), 0.01181793212890625)
+
+    def test_budget_exhaustion_is_not_infrastructure_retry(self) -> None:
+        row = {"exception_type": "AgentTimeoutError", "budget_exhausted": True}
+        self.assertFalse(is_retryable(row))
+        self.assertEqual(
+            classify_failure(
+                {"exception_info": {"exception_type": "AgentTimeoutError"}},
+                reward=None,
+                budget=True,
+            ),
+            "budget_exhausted",
+        )
+
+    def test_transient_provider_failure_gets_one_retry_admission(self) -> None:
+        row = {"exception_type": "ApiOverloadedError", "budget_exhausted": False}
+        self.assertTrue(is_retryable(row))
+
+    def test_generic_setup_failure_is_retryable_after_csv_round_trip(self) -> None:
+        trial = {
+            "agent_setup": {
+                "started_at": "2026-08-03T00:00:00Z",
+                "finished_at": "2026-08-03T00:00:01Z",
+            },
+            "agent_execution": None,
+            "exception_info": {"exception_type": "NonZeroAgentExitCodeError"},
+        }
+        failure = classify_failure(trial, reward=None, budget=False)
+        self.assertEqual(failure, "agent_setup_infra")
+        self.assertTrue(
+            is_retryable(
+                {
+                    "exception_type": "NonZeroAgentExitCodeError",
+                    "failure_class": failure,
+                    "budget_exhausted": "False",
+                }
+            )
+        )
+
+    def test_resume_continues_with_second_infrastructure_admission(self) -> None:
+        row = {
+            "task": "fixture",
+            "agent": "nova",
+            "admission": "1",
+            "exception_type": "NonZeroAgentExitCodeError",
+            "failure_class": "agent_setup_infra",
+            "budget_exhausted": "False",
+        }
+        self.assertEqual(
+            next_admission_for_cell(
+                "fixture",
+                "nova",
+                [row],
+                {("fixture", "nova"): row},
+                max_admissions=2,
+            ),
+            2,
+        )
+
+    def test_incomplete_harbor_result_gets_infrastructure_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result_path = Path(directory) / "result.json"
+            result_path.write_text(json.dumps({"finished_at": None}), encoding="utf-8")
+            self.assertFalse(result_is_complete(result_path))
+        row = {"exception_type": "HarborIncompleteResultError", "budget_exhausted": False}
+        self.assertTrue(is_retryable(row))
+
+    def test_trial_result_is_preferred_over_completed_job_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            job_dir = Path(directory)
+            outer = job_dir / "result.json"
+            outer.write_text(
+                json.dumps({"finished_at": "2026-08-03T00:00:00Z", "stats": {}}),
+                encoding="utf-8",
+            )
+            trial_dir = job_dir / "task__trial"
+            trial_dir.mkdir()
+            trial = trial_dir / "result.json"
+            trial.write_text(
+                json.dumps(
+                    {
+                        "task_name": "terminal-bench/task",
+                        "agent_info": {"name": "nova-headless"},
+                        "finished_at": "2026-08-03T00:00:00Z",
+                        "exception_info": {"exception_type": "AgentTimeoutError"},
+                        "verifier_result": {"rewards": {"reward": 0.0}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(newest_result(job_dir), trial)
+            self.assertFalse(result_is_complete(outer))
+            self.assertTrue(result_is_complete(trial))
+
+    def test_event_usage_recovers_tokens_when_timeout_prevents_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            job_dir = Path(directory)
+            events = job_dir / "agent" / "events.jsonl"
+            events.parent.mkdir()
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "usage",
+                                "usage": {
+                                    "uncachedInputTokens": 10,
+                                    "cacheReadTokens": 20,
+                                    "cacheWriteTokens": 3,
+                                    "outputTokens": 4,
+                                },
+                            }
+                        ),
+                        json.dumps({"type": "tool_call", "toolName": "bash"}),
+                        json.dumps(
+                            {
+                                "type": "usage",
+                                "usage": {
+                                    "uncachedInputTokens": 5,
+                                    "cacheReadTokens": 30,
+                                    "cacheWriteTokens": 0,
+                                    "outputTokens": 6,
+                                },
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            trial = {
+                "agent_result": {
+                    "n_input_tokens": None,
+                    "n_cache_tokens": None,
+                    "n_output_tokens": None,
+                    "cost_usd": None,
+                }
+            }
+
+            self.assertEqual(token_fields(trial, job_dir), (15, 50, 3, 10, None))
+
+    def test_harbor_environment_exposes_custom_agent_module_and_claude_endpoint(self) -> None:
+        env = harbor_environment(
+            "claude_code",
+            {"reasoning_effort": "max"},
+            {"DEEPSEEK_API_KEY": "test-key", "PYTHONPATH": "existing"},
+        )
+        self.assertEqual(env["PYTHONPATH"].split(os.pathsep), [str(Path.cwd()), "existing"])
+        self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "test-key")
+        self.assertEqual(env["CLAUDE_CODE_EFFORT_LEVEL"], "max")
+        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertEqual(env["PYTHONIOENCODING"], "utf-8")
+
+    def test_nova_deadline_uses_task_timeout_with_frozen_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "dataset"
+            task_dir = dataset / "tasks" / "fixture"
+            task_dir.mkdir(parents=True)
+            (task_dir / "task.toml").write_text(
+                "[agent]\ntimeout_sec = 900.0\n",
+                encoding="utf-8",
+            )
+            paths = Paths(
+                root=root,
+                run=root / "run",
+                dataset=dataset,
+                jobs=root / "run" / "jobs",
+                ledger=root / "run" / "admissions.jsonl",
+                selected_csv=root / "run" / "results.csv",
+                admissions_csv=root / "run" / "admissions.csv",
+            )
+            config = {
+                "timeout_multiplier": 1.0,
+                "agent_setup_timeout_multiplier": 3.0,
+                "model": "deepseek-v4-flash",
+                "reasoning_effort": "max",
+                "max_tool_rounds": 100,
+                "agent_deadline_grace_seconds": 15,
+                "install_network": {
+                    "proxy_url": "http://proxy",
+                    "ubuntu_archive_mirror": "http://mirror",
+                },
+                "node_runtime": {
+                    "archive_filename": "node-runtime.tar.gz",
+                },
+                "agents": {"nova": {"version": "workspace"}},
+            }
+
+            command, _ = agent_command("nova", "fixture", 1, config, paths)
+
+            self.assertIn("deadline_seconds=885", command)
+            self.assertIn(
+                f"node_archive_path={root / 'cache' / 'node-runtime.tar.gz'}",
+                command,
+            )
+
+    def test_pinned_node_runtime_uses_verified_local_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            content = b"pinned node runtime fixture"
+            digest = hashlib.sha256(content).hexdigest()
+            config = {
+                "node_runtime": {
+                    "archive_url": "https://nodejs.org/dist/fixture/node-runtime.tar.gz",
+                    "archive_filename": "node-runtime.tar.gz",
+                    "archive_sha256": digest,
+                }
+            }
+            paths = Paths(
+                root=root,
+                run=root / "run",
+                dataset=root / "dataset",
+                jobs=root / "run" / "jobs",
+                ledger=root / "run" / "admissions.jsonl",
+                selected_csv=root / "run" / "results.csv",
+                admissions_csv=root / "run" / "admissions.csv",
+            )
+            archive = node_runtime_archive_path(config, paths)
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(content)
+
+            self.assertEqual(ensure_node_runtime_archive(config, paths), archive)
+
+    def test_task_order_prioritizes_shorter_official_timeouts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tasks = Path(directory)
+            for name, timeout in (("slow", 3600), ("fast-b", 900), ("fast-a", 900)):
+                task = tasks / name
+                task.mkdir()
+                (task / "task.toml").write_text(
+                    f"[agent]\ntimeout_sec = {timeout}\n",
+                    encoding="utf-8",
+                )
+
+            self.assertEqual(
+                ordered_task_names(tasks),
+                ["fast-a", "fast-b", "slow"],
+            )
+
+    def test_install_network_is_scoped_and_restorable(self) -> None:
+        command = prepare_command(
+            "http://http.docker.internal:3128",
+            "http://free.nchc.org.tw/ubuntu",
+        )
+        self.assertIn("Components: main", command)
+        self.assertIn("nova-harness-ubuntu.sources", command)
+        self.assertIn("99nova-harness-network", command)
+        proxy = proxy_environment("http://http.docker.internal:3128/")
+        self.assertEqual(proxy["HTTPS_PROXY"], "http://http.docker.internal:3128")
+        self.assertIn("localhost", proxy["NO_PROXY"])
+
+    def test_uniform_deepseek_cost_formula(self) -> None:
+        config = {
+            "pricing_usd_per_million": {
+                "uncached_input": 0.14,
+                "cached_input": 0.0028,
+                "cache_write": 0.0,
+                "output": 0.28,
+                "multiplier": 1.0,
+            }
+        }
+        self.assertAlmostEqual(estimated_cost((1_000_000, 1_000_000, 0, 1_000_000, None), config), 0.4228)
+
+    def test_progress_snapshot_reports_partial_pass_rate_and_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = root / "run"
+            run.mkdir()
+            paths = Paths(
+                root=root,
+                run=run,
+                dataset=root / "dataset",
+                jobs=run / "jobs",
+                ledger=run / "admissions.jsonl",
+                selected_csv=run / "results.csv",
+                admissions_csv=run / "admissions.csv",
+            )
+            write_progress_snapshot(
+                paths,
+                [
+                    {
+                        "passed": True,
+                        "estimated_cost_usd": 0.01,
+                        "uncached_input_tokens": 10,
+                        "cache_read_tokens": 20,
+                        "output_tokens": 3,
+                    },
+                    {
+                        "passed": False,
+                        "estimated_cost_usd": 0.02,
+                        "uncached_input_tokens": 30,
+                        "cache_read_tokens": 40,
+                        "output_tokens": 5,
+                    },
+                ],
+                total_cells=10,
+            )
+            snapshot = json.loads((run / "progress.json").read_text(encoding="utf-8"))
+            self.assertEqual(snapshot["completed_cells"], 2)
+            self.assertEqual(snapshot["passed_cells"], 1)
+            self.assertEqual(snapshot["pass_rate"], 0.5)
+            self.assertAlmostEqual(snapshot["estimated_cost_usd"], 0.03)
+
+    def test_report_generates_tables_plots_and_checksums(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            setup = {
+                "model": "deepseek-v4-flash",
+                "reasoning_effort": "max",
+                "dataset": {"revision": "test-revision"},
+            }
+            (run_dir / "frozen_setup.json").write_text(json.dumps(setup), encoding="utf-8")
+            (run_dir / "experiment-design.md").write_text("# Fixture\n", encoding="utf-8")
+            rows = []
+            outcomes = {
+                "nova": [True, False],
+                "opencode": [False, False],
+                "claude_code": [True, True],
+            }
+            for agent, passes in outcomes.items():
+                for index, passed in enumerate(passes):
+                    row = {field: "" for field in CSV_FIELDS}
+                    row.update(
+                        {
+                            "run_id": "fixture",
+                            "task": f"task-{index}",
+                            "difficulty": "easy" if index == 0 else "hard",
+                            "agent": agent,
+                            "admission": 1,
+                            "selected": True,
+                            "recovered": False,
+                            "passed": passed,
+                            "reward": 1 if passed else 0,
+                            "failure_class": "pass" if passed else "verifier_fail",
+                            "budget_exhausted": False,
+                            "uncached_input_tokens": 100,
+                            "cache_read_tokens": 50,
+                            "cache_write_tokens": 0,
+                            "output_tokens": 20,
+                            "estimated_cost_usd": 0.01,
+                            "duration_seconds": 1.5,
+                        }
+                    )
+                    rows.append(row)
+            for name in ("results.csv", "admissions.csv"):
+                with (run_dir / name).open("w", encoding="utf-8-sig", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+                    writer.writeheader()
+                    writer.writerows(rows)
+            generate(run_dir)
+            for name in (
+                "report.md",
+                "per_task_comparison.csv",
+                "pass_rate.png",
+                "cost_per_pass.png",
+                "budget_exhaustion.png",
+                "pass_rate_by_difficulty.png",
+                "SHA256SUMS",
+            ):
+                self.assertTrue((run_dir / name).is_file(), name)
+
+
+if __name__ == "__main__":
+    unittest.main()

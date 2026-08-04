@@ -2,6 +2,9 @@ node_modules/
 out/
 dist/
 *.log
+__pycache__/
+*.py[cod]
+.local/
 .DS_Store
 Thumbs.db
 .devin

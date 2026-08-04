@@ -1,0 +1,46 @@
+{
+  "run_id": "deepseek-v4-flash-nova-tbench-2.1-short-first-20260804",
+  "dataset": {
+    "repo": "https://github.com/harbor-framework/terminal-bench-2-1.git",
+    "revision": "d49e28f1e4ddd13d289e85a5f312a66750951932",
+    "task_count": 89,
+    "task_tree_sha256": "daed74b442e46f8c0201e23467342737d0ded2405e32b6d0d3f4fd6a06a2ece6"
+  },
+  "model": "deepseek-v4-flash",
+  "reasoning_effort": "max",
+  "max_tool_rounds": 100,
+  "agent_deadline_grace_seconds": 15,
+  "task_attempts": 1,
+  "task_order": "agent_timeout_ascending_then_name",
+  "timeout_multiplier": 1.0,
+  "agent_setup_timeout_multiplier": 3.0,
+  "node_runtime": {
+    "version": "22.23.2",
+    "archive_url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.gz",
+    "archive_filename": "node-v22.23.2-linux-x64.tar.gz",
+    "archive_sha256": "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a"
+  },
+  "install_network": {
+    "proxy_url": "http://http.docker.internal:3128",
+    "ubuntu_archive_mirror": "http://free.nchc.org.tw/ubuntu"
+  },
+  "outer_timeout_seconds": 7200,
+  "pair_concurrency": 1,
+  "arms_parallel": false,
+  "infra_retry_limit": 1,
+  "max_total_estimated_cost_usd": 15.0,
+  "agents": {
+    "nova": { "version": "workspace" },
+    "opencode": { "version": "1.17.11" },
+    "claude_code": { "version": "2.1.220" }
+  },
+  "active_agents": ["nova"],
+  "pricing_usd_per_million": {
+    "snapshot_date": "2026-08-03",
+    "uncached_input": 0.14,
+    "cached_input": 0.0028,
+    "output": 0.28,
+    "cache_write": 0.0,
+    "multiplier": 1.0
+  }
+}

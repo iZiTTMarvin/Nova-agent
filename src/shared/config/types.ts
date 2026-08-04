@@ -54,10 +54,10 @@ export interface ModelConfig {
   toolDialect?: 'auto' | 'native' | 'xml'
   /**
    * 思考强度（reasoning effort）覆盖。
-   * 缺省或 'auto' 时不发送该参数；'low'/'medium'/'high' 显式控制推理深度。
+   * 缺省或 'auto' 时不发送该参数；'low'/'medium'/'high'/'max' 显式控制推理深度。
    * 运行时按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
    */
-  reasoningEffort?: 'auto' | 'low' | 'medium' | 'high'
+  reasoningEffort?: 'auto' | 'low' | 'medium' | 'high' | 'max'
 }
 
 /** 从 baseUrl 推断默认缓存策略 */

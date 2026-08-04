@@ -640,7 +640,8 @@ const ModelEntryRow: React.FC<{
                 { value: 'auto', label: '自动（推荐，不发送参数）' },
                 { value: 'low', label: '低' },
                 { value: 'medium', label: '中' },
-                { value: 'high', label: '高' }
+                { value: 'high', label: '高' },
+                { value: 'max', label: '最高' }
               ]}
               value={entry.reasoningEffort ?? 'auto'}
               onChange={value =>

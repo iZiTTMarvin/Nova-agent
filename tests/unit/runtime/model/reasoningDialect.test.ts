@@ -49,6 +49,16 @@ describe('buildReasoningParams', () => {
     expect(params).not.toHaveProperty('thinking')
   })
 
+  it('DeepSeek 端点：max 原样透传', () => {
+    expect(
+      buildReasoningParams(
+        'deepseek-v4-flash',
+        'https://api.deepseek.com',
+        'max'
+      )
+    ).toEqual({ reasoning_effort: 'max' })
+  })
+
   it('非 GLM + auto：不注入', () => {
     expect(
       buildReasoningParams('deepseek-reasoner', 'https://api.deepseek.com/v1', 'auto')

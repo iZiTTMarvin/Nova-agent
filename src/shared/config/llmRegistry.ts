@@ -12,9 +12,9 @@ export type PresetProviderId = 'minimax' | 'glm' | 'deepseek'
 /**
  * 思考强度（reasoning effort）。
  * - 'auto'：不发送该参数，让模型用默认行为（零行为变化）
- * - 'low' / 'medium' / 'high'：显式控制推理深度
+ * - 'low' / 'medium' / 'high' / 'max'：显式控制推理深度
  */
-export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high'
+export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'max'
 
 /** 活跃模型引用（provider + model entry） */
 export interface ActiveModelRef {

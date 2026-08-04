@@ -14,7 +14,6 @@ import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { resolveToolArg } from './toolArgResolver'
 import { decodeFileBuffer } from './editDiff'
 import { detectImageMimeTypeFromFile } from './mime'
-import { resizeImage, formatDimensionNote } from './image-resize'
 import { OutputSink } from './OutputSink'
 import {
   isSummarizableExtension,
@@ -428,6 +427,7 @@ export const readTool: ToolExecutor = {
             }
           }
 
+          const { resizeImage, formatDimensionNote } = await import('./image-resize')
           const imageBuf = await asyncReadFile(absolutePath)
 
           // 尝试缩放图片到合理尺寸（2000×2000、4.5MB base64 上限、EXIF 自动修正）
