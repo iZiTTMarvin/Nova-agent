@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
 import { SESSION_MESSAGES_FILE } from '../../../../src/runtime/sessions/types'
 import { SESSION_MESSAGE_INDEX_FILE } from '../../../../src/runtime/sessions/messageIndex'
 import { SESSION_MESSAGE_PATCHES_FILE, readMessagePatches } from '../../../../src/runtime/sessions/messagePatches'
@@ -128,7 +129,7 @@ describe('T5-1 SessionStore O(1) 热追加', () => {
     expect(store.appendMessagePatch(session.id, 'msg_legacy', { interrupted: true })).toBe(true)
 
     const migrated = JSON.parse(fs.readFileSync(sessionFile, 'utf8')) as Record<string, unknown>
-    expect(migrated.schemaVersion).toBe(10)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.kind).toBe('primary')
     expect('subagent' in migrated).toBe(false)
   })

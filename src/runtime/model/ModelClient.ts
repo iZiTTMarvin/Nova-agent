@@ -3,6 +3,7 @@
  * 定义模型调用的标准契约，便于测试时 mock 和未来替换模型后端
  */
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from './types'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 
 /** 模型调用时的可选参数 */
 export interface ChatOptions {
@@ -33,6 +34,11 @@ export interface ChatOptions {
    * wire_snapshot 诊断应标记为预期 miss，避免污染命中率解读。
    */
   expectedCacheMiss?: boolean
+  /**
+   * 请求级思考强度覆盖（会话级覆盖经此下发）。
+   * 缺省时回落到 client config 的模型默认思考强度。
+   */
+  reasoningEffort?: ReasoningEffort
 }
 
 export interface ModelClient {

@@ -8,6 +8,7 @@ import {
   mergeFetchedModelEntries,
   groupSelectableModels,
   resolveActiveModelAfterSave,
+  getActiveModelReasoningEffort,
   PRESET_PROVIDERS
 } from '../../../../src/shared/config/llmRegistry'
 import type { ModelConfig, ProviderConfig } from '../../../../src/shared/config'
@@ -177,6 +178,27 @@ describe('llmRegistry', () => {
     if (result.valid) {
       expect(result.registry.providers[0].models[0].reasoningEffort).toBeUndefined()
     }
+  })
+
+  it('getActiveModelReasoningEffort 返回活跃模型默认强度', () => {
+    const provider = createProviderFromPreset('deepseek', 'key')
+    provider.models[0].reasoningEffort = 'high'
+    const registry = {
+      version: 2 as const,
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelEntryId: provider.models[0].id }
+    }
+    expect(getActiveModelReasoningEffort(registry)).toBe('high')
+  })
+
+  it('getActiveModelReasoningEffort 未配置或模型不存在时视为 auto', () => {
+    const provider = createProviderFromPreset('deepseek', 'key')
+    const registry = {
+      version: 2 as const,
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelEntryId: 'no-such-entry' }
+    }
+    expect(getActiveModelReasoningEffort(registry)).toBe('auto')
   })
 })
 

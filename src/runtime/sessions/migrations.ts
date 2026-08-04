@@ -23,7 +23,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 10
+export const CURRENT_SESSION_SCHEMA_VERSION = 11
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -233,6 +233,18 @@ function migrateV9ToV10(data: unknown): SessionData {
   }
 }
 
+/**
+ * v10 → v11：引入可选 reasoningEffortOverride（会话思考强度覆盖）。
+ * 旧会话无此字段即无覆盖，运行时按需写入，无需数据重写。
+ */
+function migrateV10ToV11(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 11
+  }
+}
+
 type UnknownObject = { [propertyName: string]: unknown }
 
 function isPlainObject(value: unknown): value is UnknownObject {
@@ -390,7 +402,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV6ToV7, // v6 → v7
   migrateV7ToV8, // v7 → v8
   migrateV8ToV9, // v8 → v9
-  migrateV9ToV10 // v9 → v10
+  migrateV9ToV10, // v9 → v10
+  migrateV10ToV11 // v10 → v11
 ]
 
 /**

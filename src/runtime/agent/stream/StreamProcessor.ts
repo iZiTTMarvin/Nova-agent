@@ -37,6 +37,7 @@ import type { HookManager } from '../core/HookManager'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
 import type { StreamProcessorDeps, StreamRunParams, TurnStreamResult } from './streamTypes'
+import type { ReasoningEffort } from '../../../shared/config/llmRegistry'
 import { estimateContextTokens } from '../tokenEstimator'
 import {
   metricAttemptStart,
@@ -60,6 +61,11 @@ export interface StreamProcessorOptions extends StreamProcessorDeps {
    * 会话级 promptCacheKey；透传到每次 modelPool.chat，本阶段不写 body。
    */
   promptCacheKey?: string
+  /**
+   * 会话思考强度覆盖；仅主对话 modelPool.chat 注入 ChatOptions，
+   * 压缩等内部调用不经过此路径。
+   */
+  reasoningEffort?: ReasoningEffort
 }
 
 export class StreamProcessor {
@@ -75,6 +81,8 @@ export class StreamProcessor {
   private syncToolDialect: StreamProcessorOptions['syncToolDialect']
   /** 会话路由 key，注入 ChatOptions（不写 API body） */
   private promptCacheKey: string | undefined
+  /** 会话思考强度覆盖，注入主对话 ChatOptions */
+  private reasoningEffort: ReasoningEffort | undefined
 
   /**
    * 单轮溢出压缩守卫（与 AttemptController 正交）。
@@ -95,6 +103,7 @@ export class StreamProcessor {
     this.hookManager = opts.hookManager
     this.syncToolDialect = opts.syncToolDialect
     this.promptCacheKey = opts.promptCacheKey
+    this.reasoningEffort = opts.reasoningEffort
     this.attemptController = new AttemptController({
       recovery: opts.recovery,
       modelPool: opts.modelPool
@@ -138,7 +147,9 @@ export class StreamProcessor {
 
     const stream = this.modelPool.chat(chatMessages, nativeTools, {
       ...(signal ? { abortSignal: signal } : {}),
-      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
+      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {}),
+      // 'auto' 是合法覆盖值（显式不发送参数），仅 undefined 才视为无覆盖
+      ...(this.reasoningEffort !== undefined ? { reasoningEffort: this.reasoningEffort } : {})
     })
 
     let assistantContent = ''

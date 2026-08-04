@@ -351,6 +351,14 @@ export function getActiveModelDisplayName(registry: LlmRegistry): string | null 
   return entry.displayName ?? entry.modelId
 }
 
+/** 获取活跃模型的默认思考强度；未配置时视为 auto */
+export function getActiveModelReasoningEffort(registry: LlmRegistry): ReasoningEffort {
+  const provider = findProvider(registry, registry.activeModel.providerId)
+  if (!provider) return 'auto'
+  const entry = findModelEntry(provider, registry.activeModel.modelEntryId)
+  return entry?.reasoningEffort ?? 'auto'
+}
+
 /**
  * 将 v1 单 ModelConfig 迁移为 v2 LlmRegistry
  */

@@ -138,11 +138,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
       stream_options: { include_usage: true }
     }
 
-    // 思考参数：GLM 在 auto 时也注入保留式思考；能力降级后再剥离 clear_thinking
+    // 思考参数：GLM 在 auto 时也注入保留式思考；能力降级后再剥离 clear_thinking。
+    // 请求级覆盖（会话思考强度覆盖）优先于 client config 的模型默认值。
     const reasoningParams = buildReasoningParams(
       this.config.modelId,
       this.config.baseUrl,
-      this.config.reasoningEffort ?? 'auto'
+      options?.reasoningEffort ?? this.config.reasoningEffort ?? 'auto'
     )
     if (reasoningParams) {
       Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams, requestDisabled))

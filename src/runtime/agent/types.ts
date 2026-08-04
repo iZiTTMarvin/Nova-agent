@@ -10,6 +10,7 @@ import type { RecoveryState } from './recovery/RecoveryStateMachine'
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { AskQuestionItem } from '../../shared/askQuestion/types'
 import type { HookEvent } from '../../shared/agent/types'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   WorkflowProgressDetail,
   WorkflowProgressStatus,
@@ -213,6 +214,11 @@ export interface AgentLoopConfig {
    * 主对话 / 压缩 / 工具子轮共用；本阶段不写 API body。
    */
   promptCacheKey?: string
+  /**
+   * 会话思考强度覆盖，仅透传到主对话 modelPool.chat 的 ChatOptions.reasoningEffort；
+   * 压缩等内部调用不跟随（见 CONTEXT.md 术语边界）。
+   */
+  reasoningEffort?: ReasoningEffort
 }
 
 /** 压缩完成时传给 onCompaction 的元数据 */

@@ -105,6 +105,7 @@ export class AgentLoop {
           this.compactionService.runOverflowCompaction(mode, this.abortController?.signal),
         hookManager: this.hookManager,
         promptCacheKey: this.config.promptCacheKey,
+        reasoningEffort: this.config.reasoningEffort,
         syncToolDialect: (context) => {
           this.syncToolDialectFromActiveProvider()
           context.dialect = this.ctx.dialect
@@ -213,7 +214,8 @@ export class AgentLoop {
       onCompaction: config?.onCompaction,
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
-      promptCacheKey: config?.promptCacheKey
+      promptCacheKey: config?.promptCacheKey,
+      reasoningEffort: config?.reasoningEffort
     }
     // 按当前 active provider 判定方言；fallback 切换后由 StreamProcessor 重算
     this.syncToolDialectFromActiveProvider()

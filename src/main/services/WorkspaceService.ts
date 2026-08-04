@@ -16,6 +16,7 @@ import type { SessionData } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, SessionDetail } from '../../shared/session'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   ActivePlanDocument,
   ReadActivePlanParams,
@@ -96,6 +97,7 @@ export class WorkspaceService {
     currentSessionId: null,
     currentProjectPath: null,
     currentMode: 'default',
+    reasoningEffortOverride: null,
     availableSessions: []
   }
 
@@ -185,10 +187,13 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     const sessions = store.list()
     const selected = sessions[0] ?? null
+    // 列表摘要不含会话级覆盖字段；启动选中态需读一次详情以恢复思考强度覆盖
+    const selectedDetail = selected ? store.load(selected.id) : null
     this.state = {
       currentSessionId: selected?.id ?? null,
       currentProjectPath: selected?.workspaceRoot ?? null,
       currentMode: selected?.mode ?? 'default',
+      reasoningEffortOverride: selectedDetail?.reasoningEffortOverride ?? null,
       availableSessions: sessions
     }
     setCurrentProjectPath(selected?.workspaceRoot ?? null)
@@ -234,6 +239,7 @@ export class WorkspaceService {
       currentSessionId: data.id,
       currentProjectPath: selectedPath,
       currentMode: data.mode,
+      reasoningEffortOverride: null,
       availableSessions: store.list()
     }
     this.broadcast()
@@ -255,6 +261,7 @@ export class WorkspaceService {
       currentSessionId: data.id,
       currentProjectPath: params.workspaceRoot,
       currentMode: data.mode,
+      reasoningEffortOverride: null,
       availableSessions: store.list()
     }
     this.broadcast()
@@ -328,6 +335,7 @@ export class WorkspaceService {
             currentSessionId: detail.id,
             currentProjectPath: detail.workspaceRoot,
             currentMode: detail.mode,
+            reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
             availableSessions: remaining
           }
           pushContextBreakdownForSession(detail, this.deps.getMainWindow)
@@ -340,6 +348,7 @@ export class WorkspaceService {
           currentSessionId: null,
           currentProjectPath: null,
           currentMode: 'default',
+          reasoningEffortOverride: null,
           availableSessions: []
         }
       }
@@ -398,6 +407,7 @@ export class WorkspaceService {
       currentSessionId: detail.id,
       currentProjectPath: detail.workspaceRoot,
       currentMode: detail.mode,
+      reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
       availableSessions: store.list()
     }
     this.broadcast()
@@ -442,6 +452,33 @@ export class WorkspaceService {
     if (session) {
       pushContextBreakdownForSession(session, this.deps.getMainWindow)
     }
+    return this.getState()
+  }
+
+  /**
+   * 设置会话思考强度覆盖（并持久化到目标会话）。
+   * effort 为 null 清除覆盖；进行中的 run 不受影响，下一次 run 生效。
+   */
+  setReasoningEffortOverride(params: {
+    effort: ReasoningEffort | null
+    sessionId?: string
+  }): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    const sessionId = params.sessionId ?? this.state.currentSessionId
+    if (!sessionId) {
+      throw new Error('当前没有会话，无法设置思考强度')
+    }
+
+    const session = store.updateReasoningEffortOverride(sessionId, params.effort)
+    if (!session) {
+      throw new Error(`会话不存在: ${sessionId}`)
+    }
+
+    const targetIsCurrent = sessionId === this.state.currentSessionId
+    if (targetIsCurrent) {
+      this.state = { ...this.state, reasoningEffortOverride: params.effort }
+    }
+    this.broadcast()
     return this.getState()
   }
 

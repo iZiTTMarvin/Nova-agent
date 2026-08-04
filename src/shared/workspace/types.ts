@@ -7,6 +7,7 @@
  */
 import type { Mode } from '../session/types'
 import type { Session } from '../session/types'
+import type { ReasoningEffort } from '../config/llmRegistry'
 
 /** 工作区状态广播载荷 */
 export interface WorkspaceState {
@@ -16,6 +17,12 @@ export interface WorkspaceState {
   currentProjectPath: string | null
   /** 当前运行模式 */
   currentMode: Mode
+  /**
+   * 当前会话的思考强度覆盖（会话级，优先于模型默认思考强度）。
+   * null 表示无覆盖；随 selectSession 恢复，由 set-reasoning-effort 写入。
+   * 必填：广播载荷始终显式携带，避免 renderer 旧值残留。
+   */
+  reasoningEffortOverride: ReasoningEffort | null
   /** 当前可用的会话列表（供侧边栏展示，避免 renderer 二次拉取） */
   availableSessions: Session[]
   /**
@@ -64,6 +71,13 @@ export interface CreateSessionParams {
 export interface SetModeParams {
   mode: Mode
   /** 若提供则同时持久化到指定会话；否则用当前会话 */
+  sessionId?: string
+}
+
+/** 设置会话思考强度覆盖的参数；effort 为 null 表示清除覆盖 */
+export interface SetReasoningEffortParams {
+  effort: ReasoningEffort | null
+  /** 若提供则持久化到指定会话；否则用当前会话 */
   sessionId?: string
 }
 

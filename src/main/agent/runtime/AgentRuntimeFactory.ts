@@ -285,6 +285,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     maxToolRounds: novaSettings.maxToolRounds,
     toolDialectOverride: persistedConfig?.toolDialect,
     promptCacheKey,
+    reasoningEffort: session.reasoningEffortOverride,
     onCompaction: (compactedContext, meta) => {
       if (!persistCompactionSnapshot(sessionStore, sessionId, compactedContext, meta)) {
         console.error(`[onCompaction] 找不到会话 ${sessionId}，快照未写`)

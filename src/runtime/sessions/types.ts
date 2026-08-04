@@ -5,6 +5,7 @@
  * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
 import type { Mode, MessageBlock } from '../../shared/session'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   SessionKind,
   SubagentLineage,
@@ -122,6 +123,11 @@ interface SessionDataBase {
    * 这里只保存工作区相对路径和显示元数据；计划正文始终留在 `<workspace>/.nova/plans/`。
    */
   activePlan?: ActivePlanRef
+  /**
+   * 会话思考强度覆盖（术语见 CONTEXT.md）。
+   * 设置后优先于模型默认思考强度，只作用于主会话主对话；缺省表示无覆盖。
+   */
+  reasoningEffortOverride?: ReasoningEffort
 }
 
 /** 普通会话不携带任何 child-session metadata。 */

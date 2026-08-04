@@ -44,6 +44,7 @@ import {
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode } from '../../shared/session'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
 import {
@@ -808,6 +809,27 @@ export class SessionStore {
     if (!session) return null
 
     session.mode = mode
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /**
+   * 更新会话思考强度覆盖并持久化（只写 session.json 元数据）。
+   * effort 为 null 时清除覆盖，回落模型默认思考强度。
+   */
+  updateReasoningEffortOverride(
+    sessionId: string,
+    effort: ReasoningEffort | null
+  ): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    if (effort === null) {
+      delete session.reasoningEffortOverride
+    } else {
+      session.reasoningEffortOverride = effort
+    }
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return session

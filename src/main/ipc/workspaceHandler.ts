@@ -14,6 +14,7 @@ import {
   WORKSPACE_RENAME_SESSION,
   WORKSPACE_SELECT_SESSION,
   WORKSPACE_SET_MODE,
+  WORKSPACE_SET_REASONING_EFFORT,
   WORKSPACE_READ_ACTIVE_PLAN,
   WORKSPACE_REGENERATE,
   WORKSPACE_SWITCH_BRANCH,
@@ -66,6 +67,10 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       source: 'user'
     })
+  })
+
+  handle(WORKSPACE_SET_REASONING_EFFORT, async (_event, params: import('../../shared/workspace/types').SetReasoningEffortParams) => {
+    return service.setReasoningEffortOverride(params)
   })
 
   handle(WORKSPACE_READ_ACTIVE_PLAN, async (_event, params: import('../../shared/workspace/types').ReadActivePlanParams) => {

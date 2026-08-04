@@ -170,7 +170,7 @@ describe('migrateSessionData', () => {
     const migrated = migrateSessionData(v9)
 
     expect(migrated).toMatchObject({
-      schemaVersion: 10,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       kind: 'primary',
       id: 'sess_v9_primary',
       messages: []
@@ -188,12 +188,12 @@ describe('migrateSessionData', () => {
 
     try {
       const migrated = migrateSessionFile(sessionsDir, sessionId)
-      expect(migrated).toMatchObject({ schemaVersion: 10, kind: 'primary', messages: [] })
+      expect(migrated).toMatchObject({ schemaVersion: CURRENT_SESSION_SCHEMA_VERSION, kind: 'primary', messages: [] })
 
       const persisted = JSON.parse(
         readFileSync(join(sessionDir, SESSION_DATA_FILE), 'utf-8')
       ) as Record<string, unknown>
-      expect(persisted.schemaVersion).toBe(10)
+      expect(persisted.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
       expect(persisted.kind).toBe('primary')
       expect('messages' in persisted).toBe(false)
       expect(
@@ -231,7 +231,7 @@ describe('migrateSessionData', () => {
       }
     }
     const input = {
-      schemaVersion: 10,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       kind: 'subagent' as const,
       id: 'sess_child',
       workspaceRoot: '/ws',
@@ -248,7 +248,7 @@ describe('migrateSessionData', () => {
 
   it('skill fork 持久化根必须绑定 skill_fork origin 且为绝对路径', () => {
     const base = {
-      schemaVersion: 10,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       kind: 'subagent' as const,
       id: 'sess_skill_child',
       workspaceRoot: join(tmpdir(), 'workspace'),
@@ -335,9 +335,9 @@ describe('migrateSessionData', () => {
     })).toThrow('subagent 会话必须携带合法的 subagent metadata')
   })
 
-  it('未来 schemaVersion fail closed，绝不被降级为当前 v10', () => {
-    expect(() => migrateSessionData({ schemaVersion: 11 })).toThrow(
-      '会话 schemaVersion 11 高于当前支持的 10，拒绝降级读取'
+  it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {
+    expect(() => migrateSessionData({ schemaVersion: CURRENT_SESSION_SCHEMA_VERSION + 1 })).toThrow(
+      `会话 schemaVersion ${CURRENT_SESSION_SCHEMA_VERSION + 1} 高于当前支持的 ${CURRENT_SESSION_SCHEMA_VERSION}，拒绝降级读取`
     )
   })
 })

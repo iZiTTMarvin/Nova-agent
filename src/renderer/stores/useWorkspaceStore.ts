@@ -16,12 +16,15 @@
 import { create } from 'zustand'
 import type { Mode, Session, BranchMeta } from '../../shared/session/types'
 import type { WorkspaceState } from '../../shared/workspace/types'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 
 export interface WorkspaceStoreState {
   // ── 状态（由 dispatcher 写入） ──
   currentSessionId: string | null
   currentProjectPath: string | null
   currentMode: Mode
+  /** 当前会话思考强度覆盖；null 表示无覆盖（回落模型默认） */
+  reasoningEffortOverride: ReasoningEffort | null
   availableSessions: Session[]
   /** 启动时是否已完成首次 workspace:get 拉取 */
   initialized: boolean
@@ -41,6 +44,8 @@ export interface WorkspaceStoreState {
   selectSession: (sessionId: string) => Promise<void>
   /** 切换模式 */
   setMode: (mode: Mode) => Promise<void>
+  /** 设置当前会话思考强度覆盖；null 清除覆盖 */
+  setReasoningEffortOverride: (effort: ReasoningEffort | null) => Promise<void>
   /** 重新生成助手消息的分叉准备 */
   prepareRegenerate: (sessionId: string, messageId: string) => Promise<void>
   /** 切换到兄弟分支 */
@@ -55,6 +60,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   currentSessionId: null,
   currentProjectPath: null,
   currentMode: 'default',
+  reasoningEffortOverride: null,
   availableSessions: [],
   initialized: false,
 
@@ -132,6 +138,16 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
     }
   },
 
+  setReasoningEffortOverride: async (effort: ReasoningEffort | null) => {
+    try {
+      const state = await window.api.invoke('workspace:set-reasoning-effort', { effort })
+      const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+      dispatchWorkspaceChange(state)
+    } catch (err) {
+      console.error('[useWorkspaceStore] 设置思考强度失败:', err)
+    }
+  },
+
   prepareRegenerate: async (sessionId: string, messageId: string) => {
     const state = await window.api.invoke('workspace:regenerate', { sessionId, messageId })
     const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
@@ -164,6 +180,7 @@ export function resetWorkspaceStoreForTests(): void {
     currentSessionId: null,
     currentProjectPath: null,
     currentMode: 'default',
+    reasoningEffortOverride: null,
     availableSessions: [],
     initialized: false
   })
