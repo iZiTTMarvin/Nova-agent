@@ -135,4 +135,51 @@ describe('DiffViewer', () => {
     expect(onAcceptAll).toHaveBeenCalledWith(['src/a.ts'])
     renderer.unmount()
   })
+
+  it('点击文件行打开 Inspector 审查，不内联展开 hunk', async () => {
+    const map = new Map<string, string>()
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        get length() { return map.size },
+        clear: () => map.clear(),
+        getItem: (k: string) => (map.has(k) ? map.get(k)! : null),
+        key: (i: number) => Array.from(map.keys())[i] ?? null,
+        removeItem: (k: string) => { map.delete(k) },
+        setItem: (k: string, v: string) => { map.set(k, String(v)) }
+      },
+      configurable: true,
+      writable: true
+    })
+
+    const { useLayoutStore, resetLayoutStoreForTests } = await import(
+      '../../../src/renderer/stores/useLayoutStore'
+    )
+    resetLayoutStoreForTests()
+
+    const diffs = [
+      makeDiff({
+        filePath: 'src/a.ts',
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: '+line' }]
+      })
+    ]
+
+    const renderer = renderDom(
+      <DiffViewer diffs={diffs} reviews={{}} sessionId="sess_1" messageId="msg_open" />
+    )
+
+    expect(renderer.container.querySelector('.diff-file__body')).toBeNull()
+    expect(renderer.container.querySelector('.diff-hunk')).toBeNull()
+
+    const header = renderer.container.querySelector('.diff-file__header')
+    expect(header).not.toBeNull()
+    act(() => {
+      header?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const layout = useLayoutStore.getState()
+    expect(layout.inspectorOpen).toBe(true)
+    expect(layout.inspectorTab).toBe('review')
+    expect(layout.reviewTarget).toEqual({ messageId: 'msg_open', filePath: 'src/a.ts' })
+    renderer.unmount()
+  })
 })

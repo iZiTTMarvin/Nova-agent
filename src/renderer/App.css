@@ -3,7 +3,21 @@
 @tailwind utilities;
 
 /*
- * 壳布局（根容器 / topNav / sideNav / 内容区）由 Astryx AppShell + SideNav 拥有，
- * 装配见 src/renderer/App.tsx。本文件只保留 Tailwind 生成入口：
+ * 壳布局（根容器 / topNav / sideNav）由 Astryx AppShell + SideNav 拥有，
+ * 装配见 src/renderer/App.tsx。本文件另含内容区「对话 + inspector」行布局；
  * preflight 已禁用，utilities 契约见 tests/unit/renderer/globalStyles.test.ts。
  */
+
+.app-workspace {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.app-workspace__main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}

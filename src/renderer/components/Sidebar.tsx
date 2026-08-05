@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useChatStore } from '../stores/useChatStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useLayoutStore } from '../stores/useLayoutStore'
 import type { Session } from '../../shared/session/types'
 import {
   SESSION_PLACEHOLDER_TITLE,
@@ -21,11 +22,13 @@ import {
   flattenSessionForest,
   sessionTreeContains
 } from '../features/subagents/sessionTree'
+import './Sidebar.css'
 
 /** 每个项目下默认展示的最新会话数（对齐 Cursor「显示更多」） */
 const SIDEBAR_SESSION_PREVIEW_COUNT = 5
 
-export const Sidebar: React.FC = () => {
+/** 会话树内容：不订阅布局宽度，拖拽调宽时仅壳层重绘 */
+const SidebarSessions = React.memo(function SidebarSessions() {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const createNewSession = useChatStore(state => state.createNewSession)
@@ -173,6 +176,7 @@ export const Sidebar: React.FC = () => {
   return (
     <SideNav
       className="bg-[var(--bg-sidebar)] select-none"
+      style={{ width: '100%' }}
       header={(
         <SideNavHeading heading="Nova Agent" icon={<NovaLogo size={20} />} />
       )}
@@ -459,5 +463,77 @@ export const Sidebar: React.FC = () => {
         })}
       </SideNavSection>
     </SideNav>
+  )
+})
+
+export const Sidebar: React.FC = () => {
+  const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
+  const sidebarWidth = useLayoutStore(state => state.sidebarWidth)
+  const [isResizing, setIsResizing] = useState(false)
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+  useEffect(() => {
+    if (!isResizing) return
+
+    const onMove = (e: MouseEvent) => {
+      const drag = dragRef.current
+      if (!drag) return
+      useLayoutStore.getState().setSidebarWidth(drag.startWidth + (e.clientX - drag.startX))
+    }
+
+    const onUp = () => {
+      dragRef.current = null
+      setIsResizing(false)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [isResizing])
+
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    dragRef.current = {
+      startX: e.clientX,
+      startWidth: useLayoutStore.getState().sidebarWidth
+    }
+    setIsResizing(true)
+  }
+
+  const shellClass = [
+    'sidebar-shell',
+    sidebarCollapsed ? 'sidebar-shell--collapsed' : '',
+    isResizing ? 'sidebar-shell--resizing' : ''
+  ].filter(Boolean).join(' ')
+
+  return (
+    <div
+      className={shellClass}
+      style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
+      aria-hidden={sidebarCollapsed}
+    >
+      <div className="sidebar-shell__inner" style={{ width: sidebarWidth }}>
+        <SidebarSessions />
+      </div>
+      {!sidebarCollapsed && (
+        <div
+          className="sidebar-shell__resize-handle"
+          onMouseDown={onResizeMouseDown}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整会话导航宽度"
+        />
+      )}
+    </div>
   )
 }

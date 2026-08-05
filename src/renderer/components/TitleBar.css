@@ -27,15 +27,26 @@
 .title-bar__left {
   display: flex;
   align-items: center;
-  padding-left: 12px;
+  padding-left: 4px;
   gap: 8px;
   position: relative;
   z-index: 1;
-  pointer-events: none; /* 让它不阻挡拖动 */
+  pointer-events: none; /* 让它不阻挡拖动；布局按钮自行恢复交互 */
 }
 
 .title-bar__logo {
   border-radius: 3px;
+}
+
+/* 左侧布局开关：穿透 left 的 pointer-events:none，且不抢窗口拖拽 */
+.title-bar__btn--layout {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.title-bar__btn--layout-active {
+  background-color: var(--color-brand-dim);
+  color: var(--text-primary);
 }
 
 .title-bar__title {

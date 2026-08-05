@@ -17,6 +17,7 @@ import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
 import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
+import { registerFsHandler } from './fsHandler'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
 import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
@@ -115,6 +116,9 @@ export function registerIpcHandlers(): ImageStore {
 
   // 跨会话记忆浏览/编辑 IPC（P2-1）
   registerMemoryHandler()
+
+  // 当前项目只读文件浏览（Inspector 文件 tab）
+  registerFsHandler()
 
   // 图片落盘 IPC + nova-image:// 协议 handler 共用同一 ImageStore 实例。
   // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。

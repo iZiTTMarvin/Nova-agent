@@ -117,6 +117,10 @@ export const MEMORY_RECONCILE = 'memory:reconcile' as const
 export const MEMORY_STATS = 'memory:stats' as const
 /** 在系统文件管理器中打开当前 scope 记忆目录 */
 export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
+/** 当前项目：单层目录列举（只读） */
+export const FS_LIST_DIRECTORY = 'fs:list-directory' as const
+/** 当前项目：文件预览（只读，有大小上限） */
+export const FS_READ_FILE_PREVIEW = 'fs:read-file-preview' as const
 /** 安装已下载的应用更新并重启 */
 export const INSTALL_APP_UPDATE = 'app:install-update' as const
 /** 图片落盘：用户上传的 base64 data URL → 主进程写盘 → 返回 nova-image:// URL */

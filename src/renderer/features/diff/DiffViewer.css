@@ -2,6 +2,8 @@
    DiffViewer — 文件变更差异审查面板
    ────────────────────────────────────────────────────────── */
 
+@import './diffLines.css';
+
 .diff-viewer {
   margin-top: 12px;
   border: 1px solid var(--border-warm);
@@ -125,25 +127,6 @@
   flex-shrink: 0;
 }
 
-/* 文件行右侧增删统计（对齐合并卡片 +N -N） */
-.diff-file__changes {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.diff-file__changes-add {
-  color: var(--color-success);
-}
-
-.diff-file__changes-del {
-  color: var(--color-error);
-}
-
 .diff-file--added .diff-file__status-badge {
   background-color: rgba(120, 140, 93, 0.12);
   color: var(--color-success);
@@ -239,149 +222,7 @@
   justify-content: center;
 }
 
-/* ── diff hunk 区块 ────────────────────────────────── */
-.diff-file__body {
-  background-color: #fafaf7;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.diff-hunk {
-  border-top: 1px solid var(--border-cream);
-  min-width: 0;
-  max-width: 100%;
-}
-
-.diff-hunk:first-child {
-  border-top: none;
-}
-
-.diff-hunk__header {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  padding: 4px 14px;
-  background-color: var(--bg-sand);
-  border-bottom: 1px solid var(--border-cream);
-}
-
-.diff-hunk__content {
-  margin: 0;
-  padding: 0;
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  line-height: 1.5;
-  overflow-x: auto;
-  max-width: 100%;
-}
-
-/* ── 单行 diff ────────────────────────────────────── */
-.diff-line {
-  display: flex;
-  width: max-content;
-  min-width: 100%;
-  min-height: 22px;
-}
-
-.diff-line__no {
-  display: inline-block;
-  width: 40px;
-  text-align: right;
-  padding-right: 8px;
-  color: var(--text-muted);
-  background-color: rgba(0, 0, 0, 0.03);
-  user-select: none;
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  padding-top: 1px;
-}
-
-.diff-line__text {
-  padding-left: 8px;
-  padding-right: 14px;
-  white-space: pre;
-  flex: 1 0 auto;
-  min-width: 0;
-}
-
-.diff-line__prefix {
-  color: var(--text-muted);
-}
-
-.diff-token--plain {
-  color: inherit;
-}
-
-.diff-token--comment {
-  color: #667a63;
-  font-style: italic;
-}
-
-.diff-token--string {
-  color: #8f4e1f;
-}
-
-.diff-token--number {
-  color: #1f5d75;
-}
-
-.diff-token--keyword {
-  color: #7a2f54;
-  font-weight: 600;
-}
-
-.diff-token--operator {
-  color: #6f5c4b;
-}
-
-.diff-token--property {
-  color: #2f5f7a;
-}
-
-/* 新增行：柔和绿底色 */
-.diff-line--add {
-  background-color: rgba(120, 140, 93, 0.1);
-}
-
-.diff-line--add .diff-line__text {
-  color: #3d5a1e;
-}
-
-.diff-line--add .diff-line__no {
-  background-color: rgba(120, 140, 93, 0.06);
-}
-
-/* 删除行：柔和红底色 */
-.diff-line--remove {
-  background-color: rgba(181, 51, 51, 0.08);
-}
-
-.diff-line--remove .diff-line__text {
-  color: #8b2020;
-}
-
-.diff-line--remove .diff-line__no {
-  background-color: rgba(181, 51, 51, 0.04);
-}
-
-/* 上下文行 */
-.diff-line--context {
-  background-color: transparent;
-}
-
-.diff-line--context .diff-line__text {
-  color: var(--text-primary);
-}
-
-/* T04：hunk 截断提示 */
-.diff-hunk__truncation {
-  width: 100%;
-  justify-content: center;
-  border-radius: 0;
-}
-
-/* ── PRD §5.3：过滤开关行 ── */
+/* ── 过滤开关行 ── */
 .diff-viewer__toolbar {
   display: flex;
   align-items: center;
@@ -423,7 +264,7 @@
   border-radius: var(--radius-sm);
 }
 
-/* ── PRD §5.3：按目录分组 ── */
+/* ── 按目录分组 ── */
 .diff-viewer__groups {
   display: flex;
   flex-direction: column;
@@ -468,7 +309,7 @@
   padding: 6px;
 }
 
-/* ── WS1.1：被跳过快照的文件提示 ── */
+/* ── 被跳过快照的文件提示 ── */
 .diff-viewer__skipped {
   padding: 10px 14px;
   background-color: rgba(183, 110, 28, 0.06);

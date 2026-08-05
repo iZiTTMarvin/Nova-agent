@@ -1,0 +1,50 @@
+/*
+ * 侧栏壳：AppShell sideNav 槽宽度由内容决定，折叠/调宽在此自实现。
+ * SideNav 本体固定默认 260px，内容区用 100% 宽填满壳内层，折叠时只收壳宽、裁剪内容。
+ */
+.sidebar-shell {
+  position: relative;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+  transition: width var(--transition-normal);
+}
+
+.sidebar-shell--collapsed {
+  pointer-events: none;
+}
+
+.sidebar-shell--resizing {
+  transition: none;
+}
+
+.sidebar-shell__inner {
+  height: 100%;
+}
+
+.sidebar-shell__resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.sidebar-shell__resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background-color: transparent;
+  transition: background-color var(--transition-fast);
+}
+
+.sidebar-shell__resize-handle:hover::after,
+.sidebar-shell__resize-handle:active::after {
+  background-color: var(--color-brand);
+}

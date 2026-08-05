@@ -64,6 +64,12 @@ import type {
   MemoryWriteFileParams,
   ReconcileStats
 } from '../memory/types'
+import type {
+  FsListDirectoryParams,
+  FsListDirectoryResult,
+  FsReadFilePreviewParams,
+  FsReadFilePreviewResult
+} from '../fs/types'
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 import type { SubagentActivityProjection } from '../subagents'
 
@@ -482,6 +488,14 @@ export interface IpcCommands {
   'memory:open-dir': {
     params: void
     result: void
+  }
+  'fs:list-directory': {
+    params: FsListDirectoryParams
+    result: FsListDirectoryResult
+  }
+  'fs:read-file-preview': {
+    params: FsReadFilePreviewParams
+    result: FsReadFilePreviewResult
   }
   'app:install-update': {
     params: void
