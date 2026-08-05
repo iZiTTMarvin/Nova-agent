@@ -1,13 +1,18 @@
 /*
  * 侧栏壳：AppShell sideNav 槽宽度由内容决定，折叠/调宽在此自实现。
- * SideNav 本体固定默认 260px，内容区用 100% 宽填满壳内层，折叠时只收壳宽、裁剪内容。
+ * 折叠采用「宽度瞬时切换 + 内容 transform 滑出」：
+ *  - 壳层宽度在开合瞬间一次切换（布局只重排一次，而非动画期间每帧重排）
+ *  - 内部内容用 translateX 合成器滑动，动画帧走 GPU、不触发布局
  */
 .sidebar-shell {
   position: relative;
   flex-shrink: 0;
   height: 100%;
   overflow: hidden;
-  transition: width var(--transition-normal);
+  transition: none;
+  /* 内容 transform 滑动的合成层 */
+  will-change: transform;
+  contain: paint;
 }
 
 .sidebar-shell--collapsed {
@@ -20,6 +25,9 @@
 
 .sidebar-shell__inner {
   height: 100%;
+  /* 折叠滑出的合成器动画；宽度由父壳裁剪 */
+  transition: transform var(--transition-normal);
+  will-change: transform;
 }
 
 .sidebar-shell__resize-handle {

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useChatStore } from '../stores/useChatStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import { useLayoutStore } from '../stores/useLayoutStore'
+import { useLayoutStore, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX } from '../stores/useLayoutStore'
 import type { Session } from '../../shared/session/types'
 import {
   SESSION_PLACEHOLDER_TITLE,
@@ -471,14 +471,18 @@ export const Sidebar: React.FC = () => {
   const sidebarWidth = useLayoutStore(state => state.sidebarWidth)
   const [isResizing, setIsResizing] = useState(false)
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  /** 拖拽期间宽度直写壳层 DOM，避免每次 mousemove 触发 store 重渲染 */
+  const shellRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!isResizing) return
 
     const onMove = (e: MouseEvent) => {
       const drag = dragRef.current
-      if (!drag) return
-      useLayoutStore.getState().setSidebarWidth(drag.startWidth + (e.clientX - drag.startX))
+      const el = shellRef.current
+      if (!drag || !el) return
+      // 拖拽期间直接写 DOM：过渡已关闭，不触发 store / localStorage / 重渲染
+      el.style.width = `${Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, drag.startWidth + (e.clientX - drag.startX)))}px`
     }
 
     const onUp = () => {
@@ -501,6 +505,19 @@ export const Sidebar: React.FC = () => {
     }
   }, [isResizing])
 
+  /** 拖拽结束：一次性提交最终宽度到 store（含持久化） */
+  useEffect(() => {
+    if (isResizing) return
+    const el = shellRef.current
+    if (!el) return
+    const w = el.style.width
+    if (!w) return
+    const finalWidth = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Number.parseFloat(w)))
+    if (Number.isFinite(finalWidth) && finalWidth !== sidebarWidth) {
+      useLayoutStore.getState().setSidebarWidth(finalWidth)
+    }
+  }, [isResizing, sidebarWidth])
+
   const onResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     dragRef.current = {
@@ -518,11 +535,18 @@ export const Sidebar: React.FC = () => {
 
   return (
     <div
+      ref={shellRef}
       className={shellClass}
       style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
       aria-hidden={sidebarCollapsed}
     >
-      <div className="sidebar-shell__inner" style={{ width: sidebarWidth }}>
+      <div
+        className="sidebar-shell__inner"
+        style={{
+          width: sidebarWidth,
+          transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)'
+        }}
+      >
         <SidebarSessions />
       </div>
       {!sidebarCollapsed && (

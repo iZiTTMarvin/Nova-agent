@@ -10,6 +10,9 @@
   background-color: var(--bg-sidebar);
   border-left: 1px solid var(--border-warm);
   box-sizing: border-box;
+  /* transform 合成器动画专用层 + 隔离重排范围 */
+  will-change: transform;
+  contain: paint;
 }
 
 .inspector-panel--dragging {

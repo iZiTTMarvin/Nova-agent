@@ -3,13 +3,18 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CloseIcon } from '../../components/Icons'
-import { useLayoutStore } from '../../stores/useLayoutStore'
+import { useLayoutStore, INSPECTOR_WIDTH_MIN, INSPECTOR_WIDTH_MAX } from '../../stores/useLayoutStore'
 import type { InspectorTab as InspectorTabId } from '../../stores/useLayoutStore'
 import { ReviewTab } from './ReviewTab'
 import { FilesTab } from './FilesTab'
 import './InspectorPanel.css'
 
-const WIDTH_TRANSITION = 'width var(--transition-normal), opacity var(--transition-normal)'
+/**
+ * 展开/收起统一用 transform 合成器动画（width 是布局属性，会触发每帧主线程 layout+paint）。
+ * 宽度在开合瞬间一次性切换（布局只重排一次），动画帧走 GPU、不触发布局。
+ * 拖拽期间：宽度只写 DOM（ref），过渡关闭、不触发 store / localStorage，松手一次性提交。
+ */
+const SLIDE_TRANSITION = 'transform var(--transition-normal), opacity var(--transition-normal)'
 
 export const InspectorPanel: React.FC = () => {
   const inspectorOpen = useLayoutStore(s => s.inspectorOpen)
@@ -25,6 +30,8 @@ export const InspectorPanel: React.FC = () => {
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
   const dragStartWidth = useRef(0)
+  /** 拖拽期间宽度直写面板 DOM，避免每次 mousemove 触发 store 重渲染 */
+  const asideRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     if (inspectorOpen) setMounted(true)
@@ -75,7 +82,9 @@ export const InspectorPanel: React.FC = () => {
 
     const onMove = (e: MouseEvent) => {
       const delta = dragStartX.current - e.clientX
-      setInspectorWidth(dragStartWidth.current + delta)
+      // 拖拽期间直接写 DOM 宽度：过渡已关闭，不触发 store / localStorage / 重渲染
+      const el = asideRef.current
+      if (el) el.style.width = `${Math.min(INSPECTOR_WIDTH_MAX, Math.max(INSPECTOR_WIDTH_MIN, dragStartWidth.current + delta))}px`
     }
     const onUp = () => {
       setDragging(false)
@@ -90,7 +99,20 @@ export const InspectorPanel: React.FC = () => {
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [dragging, setInspectorWidth])
+  }, [dragging])
+
+  /** 拖拽结束：一次性提交最终宽度到 store（含持久化） */
+  useEffect(() => {
+    if (dragging) return
+    const el = asideRef.current
+    if (!el) return
+    const w = el.style.width
+    if (!w) return
+    const finalWidth = Math.min(INSPECTOR_WIDTH_MAX, Math.max(INSPECTOR_WIDTH_MIN, Number.parseFloat(w)))
+    if (Number.isFinite(finalWidth) && finalWidth !== inspectorWidth) {
+      setInspectorWidth(finalWidth)
+    }
+  }, [dragging, inspectorWidth, setInspectorWidth])
 
   const width = inspectorOpen ? inspectorWidth : 0
   const showContent = mounted && inspectorOpen
@@ -101,10 +123,12 @@ export const InspectorPanel: React.FC = () => {
 
   return (
     <aside
+      ref={asideRef}
       className={`inspector-panel${inspectorOpen ? ' inspector-panel--open' : ''}${dragging ? ' inspector-panel--dragging' : ''}`}
       style={{
         width,
-        transition: dragging ? 'none' : WIDTH_TRANSITION,
+        transform: inspectorOpen ? 'translateX(0)' : 'translateX(100%)',
+        transition: dragging ? 'none' : SLIDE_TRANSITION,
         opacity: inspectorOpen ? 1 : 0
       }}
       aria-hidden={!inspectorOpen}

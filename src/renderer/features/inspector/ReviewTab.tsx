@@ -1,7 +1,7 @@
 /**
  * Inspector 审阅 Tab：展示目标消息的文件 diff，支持逐文件保留/回退。
  */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import {
   ChevronIcon,
@@ -81,6 +81,8 @@ const ReviewContent: React.FC<{
   const [syntaxMode, setSyntaxMode] = useState<'syntax' | 'text'>('syntax')
   const [wrap, setWrap] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** diff 区外层滚动容器：大 hunk 虚拟化共享同一滚动条 */
+  const bodyScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!diffCache && currentSessionId) {
@@ -233,7 +235,7 @@ const ReviewContent: React.FC<{
         </div>
       )}
 
-      <div className="inspector-review__body">
+      <div className="inspector-review__body" ref={bodyScrollRef}>
         {currentEntry.hunks.map((hunk, idx) => (
           <HunkView
             key={idx}
@@ -241,6 +243,7 @@ const ReviewContent: React.FC<{
             filePath={currentEntry.filePath}
             syntaxHighlight={syntaxMode === 'syntax'}
             wrap={wrap}
+            scrollRef={bodyScrollRef}
           />
         ))}
       </div>

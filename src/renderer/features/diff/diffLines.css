@@ -46,6 +46,13 @@
   min-height: 22px;
 }
 
+/* 虚拟化行：高度严格锁定为 DIFF_LINE_HEIGHT_PX，避免行内容溢出破坏滚动对齐 */
+.diff-hunk__virtual .diff-line {
+  height: 22px;
+  min-height: 22px;
+  overflow: hidden;
+}
+
 .diff-hunk__content--wrap .diff-line {
   width: 100%;
 }

@@ -12,10 +12,12 @@ export type ReviewTarget = {
 }
 
 const STORAGE_PREFIX = 'nova.layout.'
-const SIDEBAR_WIDTH_MIN = 200
-const SIDEBAR_WIDTH_MAX = 400
-const INSPECTOR_WIDTH_MIN = 320
-const INSPECTOR_WIDTH_MAX = 640
+
+/** 拖拽 clamp 与面板实现共享的宽度边界 */
+export const SIDEBAR_WIDTH_MIN = 200
+export const SIDEBAR_WIDTH_MAX = 400
+export const INSPECTOR_WIDTH_MIN = 320
+export const INSPECTOR_WIDTH_MAX = 640
 
 const DEFAULTS = {
   sidebarCollapsed: false,
