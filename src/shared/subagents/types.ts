@@ -4,6 +4,7 @@
  * These DTOs describe durable identities and read-only execution facts. They
  * intentionally do not depend on any runtime, main-process, or renderer type.
  */
+import type { TurnTruncationReason } from '../run/types'
 
 /** JSON values accepted by the environment-neutral result-schema contract. */
 export type JsonValue =
@@ -169,6 +170,7 @@ export interface SpawnSubagentCommand {
 
 export type SubagentExecutionStatus =
   | 'completed'
+  | 'incomplete'
   | 'failed'
   | 'cancelled'
   | 'interrupted'
@@ -197,4 +199,6 @@ export interface SubagentExecutionResult {
   readonly startedAt: number
   readonly completedAt: number
   readonly failure?: SubagentExecutionFailure
+  /** status === 'incomplete' 时的截断原因（源自 durable run 记录） */
+  readonly incompleteReason?: TurnTruncationReason
 }

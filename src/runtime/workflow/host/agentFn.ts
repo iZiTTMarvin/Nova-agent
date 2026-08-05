@@ -254,7 +254,8 @@ async function spawnViaPort(
     return {
       result: null,
       execution,
-      reason: execution.failure?.code ?? execution.status
+      // 截断原因优先于泛化状态，让工作流日志可区分 max_rounds 与一般失败
+      reason: execution.incompleteReason ?? execution.failure?.code ?? execution.status
     }
   }
   if (schema) {

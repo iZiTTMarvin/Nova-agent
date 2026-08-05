@@ -141,6 +141,39 @@ describe('SubagentProjectionService', () => {
     expect(projection?.profile).not.toHaveProperty('toolNames')
   })
 
+  it('被截断的 child 经 durable 记录投影为未完成摘要（第二投影点防漂移）', () => {
+    const child = createChild('call-trunc', 'run-child-trunc')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-trunc',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-child-trunc', 'msg-final')
+    sessionStore.appendMessageFast(child.id, {
+      id: 'msg-final',
+      role: 'assistant',
+      content: 'partial progress text',
+      timestamp: Date.now()
+    })
+    coordinator.commitTerminal({
+      runId: 'run-child-trunc',
+      status: 'completed',
+      incompleteReason: 'max_rounds'
+    })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const projection = service.getByParentToolCallId(parentSessionId, 'call-trunc')
+
+    // activity 状态是 RunStatus 投影（completed 不变）；摘要来自 execution 投影
+    expect(projection).toMatchObject({
+      childRunId: 'run-child-trunc',
+      status: 'completed',
+      summary: 'partial progress text'
+    })
+    expect(projection).not.toHaveProperty('failure')
+  })
+
   it('Child Session 存在但 run 缺失时显式返回 record_missing', () => {
     const child = createChild('call-missing', 'run-missing')
     const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })

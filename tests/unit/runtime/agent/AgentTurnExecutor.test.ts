@@ -92,6 +92,57 @@ describe('AgentTurnExecutor', () => {
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
+  it('incomplete 轮次 → durable run 按 completed 收，截断原因落 incompleteReason，outcome 原样返回', async () => {
+    const coordinator = createRunCoordinator(tempRoot)
+    const registry = new RunExecutionRegistry()
+    const executor = new AgentTurnExecutor(coordinator, registry)
+    const fake = fakeLoop(async () => ({ status: 'incomplete', reason: 'max_rounds' }))
+    const cleanup = vi.fn()
+    const runRefs = { runId: '', resourceOwnerRunId: '', executionGeneration: 0 }
+
+    const executed = await executor.execute({
+      agentLoop: fake.loop,
+      task: 'hello',
+      route: agentRoute(),
+      sessionId: 'sess-1',
+      workingDirectory: tempRoot,
+      isolation: 'shared',
+      runRefs,
+      onCleanup: cleanup
+    })
+
+    expect(executed.outcome).toEqual({ status: 'incomplete', reason: 'max_rounds' })
+    const terminal = coordinator.getSnapshot(executed.runId)
+    expect(terminal?.status).toBe('completed')
+    expect(terminal?.incompleteReason).toBe('max_rounds')
+    expect(registry.get(executed.runId)).toBeNull()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancelled 轮次 → durable cancelled，不携带 incompleteReason（取消优先于截断）', async () => {
+    const coordinator = createRunCoordinator(tempRoot)
+    const registry = new RunExecutionRegistry()
+    const executor = new AgentTurnExecutor(coordinator, registry)
+    const fake = fakeLoop(async () => ({ status: 'cancelled' }))
+    const cleanup = vi.fn()
+    const runRefs = { runId: '', resourceOwnerRunId: '', executionGeneration: 0 }
+
+    const executed = await executor.execute({
+      agentLoop: fake.loop,
+      task: 'hello',
+      route: agentRoute(),
+      sessionId: 'sess-1',
+      workingDirectory: tempRoot,
+      isolation: 'shared',
+      runRefs,
+      onCleanup: cleanup
+    })
+
+    const terminal = coordinator.getSnapshot(executed.runId)
+    expect(terminal?.status).toBe('cancelled')
+    expect(terminal?.incompleteReason).toBeUndefined()
+  })
+
   it('delegated fence 同时要求 child 与 root generation 当前', async () => {
     const coordinator = createRunCoordinator(tempRoot)
     const registry = new RunExecutionRegistry()

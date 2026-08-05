@@ -215,4 +215,19 @@ describe('host agentFn 统一 SpawnSubagentPort', () => {
     expect(h.events.find((event) => event.type === 'workflow_log'))
       .toEqual(expect.objectContaining({ message: expect.stringContaining('model') }))
   })
+
+  it('child 被截断（incomplete）→ 不当作成功推进，失败 reason 细化到截断原因', async () => {
+    const spawn = vi.fn(async () => ({
+      ...completed('部分进展'),
+      status: 'incomplete' as const,
+      incompleteReason: 'max_rounds' as const
+    }))
+    const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
+
+    await expect(createAgentFn(h.ctx)('截断任务')).resolves.toBeNull()
+    expect(h.events).toContainEqual(expect.objectContaining({
+      type: 'workflow_agent_failed',
+      reason: 'max_rounds'
+    }))
+  })
 })

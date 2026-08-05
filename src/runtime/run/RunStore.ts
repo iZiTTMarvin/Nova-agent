@@ -12,6 +12,7 @@ import * as path from 'path'
 import { atomicWriteFileSync } from '../storage/atomicFile'
 import {
   isTerminalRunStatus,
+  isTurnTruncationReason,
   type RunEventRecord,
   type RunSnapshot
 } from '../../shared/run/types'
@@ -271,7 +272,10 @@ function reduceEventPayload(
         terminalTransitionId:
           typeof p.terminalTransitionId === 'string'
             ? p.terminalTransitionId
-            : snap.terminalTransitionId
+            : snap.terminalTransitionId,
+        incompleteReason: isTurnTruncationReason(p.incompleteReason)
+          ? p.incompleteReason
+          : snap.incompleteReason
       }
     case 'execution_generation':
       return {

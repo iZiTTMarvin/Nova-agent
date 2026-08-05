@@ -6,7 +6,7 @@ export {
   type AgentDispatch,
   type ResolveTurnRouteInput
 } from './resolveAgentTurnRoute'
-export type { AgentTurnOutcome } from './turnOutcome'
+export type { AgentTurnOutcome, IncompleteReason } from './turnOutcome'
 export {
   TurnDispatcher,
   type TurnExecutors,

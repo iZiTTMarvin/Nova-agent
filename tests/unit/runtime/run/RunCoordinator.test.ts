@@ -63,6 +63,36 @@ describe('RunCoordinator', () => {
     expect(t2?.sequence).toBe(seq)
   })
 
+  it('completed + incompleteReason 落盘并在重载后保留', () => {
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId)
+    const terminal = coord.commitTerminal({
+      runId: snap.runId,
+      status: 'completed',
+      incompleteReason: 'max_rounds'
+    })
+
+    expect(terminal?.incompleteReason).toBe('max_rounds')
+    // snapshot 整体序列化 → 磁盘 round-trip 保留字段
+    const reloaded = store.loadSnapshot(snap.runId)
+    expect(reloaded?.status).toBe('completed')
+    expect(reloaded?.incompleteReason).toBe('max_rounds')
+  })
+
+  it('cancelled / failed 终态强制清空 incompleteReason（取消优先于截断）', () => {
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId)
+    const terminal = coord.commitTerminal({
+      runId: snap.runId,
+      status: 'cancelled',
+      incompleteReason: 'max_rounds'
+    })
+
+    expect(terminal?.status).toBe('cancelled')
+    expect(terminal?.incompleteReason).toBeUndefined()
+    expect(store.loadSnapshot(snap.runId)?.incompleteReason).toBeUndefined()
+  })
+
   it('会话删除只回收终态 run，非终态 fail closed', () => {
     const terminal = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-terminal' })
     coord.markRunning(terminal.runId)

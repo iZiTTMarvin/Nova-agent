@@ -15,7 +15,7 @@ export function projectSubagentExecutionResult(input: {
   readonly runSnapshot: RunSnapshot
   readonly failureCode?: SubagentFailureCode
 }): SubagentExecutionResult {
-  const status = toExecutionStatus(input.runSnapshot.status)
+  const status = toExecutionStatus(input.runSnapshot)
   const finalMessage = findFinalMessage(input.childSession, input.runSnapshot.messageId)
   const rawSummary = finalMessage ? extractSummary(finalMessage) : ''
   const summary = boundText(
@@ -30,6 +30,7 @@ export function projectSubagentExecutionResult(input: {
       )]
     : []
   const terminalReason = input.runSnapshot.terminalReason?.trim()
+  const incompleteReason = input.runSnapshot.incompleteReason
 
   return {
     childSessionId: input.childSession.id,
@@ -39,6 +40,9 @@ export function projectSubagentExecutionResult(input: {
     artifactIds,
     startedAt: input.runSnapshot.turnStartedAt ?? input.runSnapshot.createdAt,
     completedAt: input.runSnapshot.updatedAt,
+    ...(status === 'incomplete' && incompleteReason
+      ? { incompleteReason }
+      : {}),
     ...(status === 'failed'
       ? {
           failure: {
@@ -75,22 +79,28 @@ function extractSummary(message: SessionMessage): string {
   return extractTextFromSerializableContent(message.content).trim()
 }
 
-function toExecutionStatus(status: RunSnapshot['status']): SubagentExecutionStatus {
-  if (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'cancelled' ||
-    status === 'interrupted'
-  ) {
-    return status
+function toExecutionStatus(run: RunSnapshot): SubagentExecutionStatus {
+  // completed + 截断原因 = 轮次结束但任务未声称完成
+  if (run.status === 'completed' && run.incompleteReason) {
+    return 'incomplete'
   }
-  throw new Error(`child run 尚未终止: ${status}`)
+  if (
+    run.status === 'completed' ||
+    run.status === 'failed' ||
+    run.status === 'cancelled' ||
+    run.status === 'interrupted'
+  ) {
+    return run.status
+  }
+  throw new Error(`child run 尚未终止: ${run.status}`)
 }
 
 function fallbackSummary(status: SubagentExecutionStatus): string {
   switch (status) {
     case 'completed':
       return '子代理未产生文本输出'
+    case 'incomplete':
+      return '子代理未完成任务'
     case 'failed':
       return '子代理执行出错'
     case 'cancelled':

@@ -801,12 +801,21 @@ export class AgentLoop {
       this.cancelled = true
     }
 
-    return this.settledTurnOutcome()
+    return this.settledTurnOutcome(endResult)
   }
 
-  /** 正常返回路径的轮次结果：取消标志已置位时收敛为 cancelled */
-  private settledTurnOutcome(): AgentTurnOutcome {
-    return this.cancelled ? { status: 'cancelled' } : { status: 'completed' }
+  /**
+   * 正常返回路径的轮次结果：取消标志已置位时收敛为 cancelled；
+   * kernel 报告停止原因（熔断 / 轮数耗尽 / 空参护栏）时收敛为 incomplete——
+   * 轮次确实结束，仍发 message_end，只是不声称任务完成。
+   * 产品分派（handled）路径不经过 kernel，没有 stopReason，恒为 completed。
+   */
+  private settledTurnOutcome(endResult?: LoopEndResult): AgentTurnOutcome {
+    if (this.cancelled) return { status: 'cancelled' }
+    if (endResult?.stopReason) {
+      return { status: 'incomplete', reason: endResult.stopReason }
+    }
+    return { status: 'completed' }
   }
 
   /** best-effort 触发 onError hook：hook 自身异常只记录，不得阻断终态收尾或覆盖原始错误 */
@@ -832,9 +841,9 @@ export class AgentLoop {
    *   成功轮次遇到关闭失败按 failed 收尾（forward 快照缺失会破坏分支重放），
    *   已失败轮次只记录次生错误，不覆盖原始错误；
    * - 清空本轮引用（currentMessageId / abortController）并收敛 state；
-   * - 发出恰好一个持久化终态事件：failed → error，completed/cancelled → message_end，
+   * - 发出恰好一个持久化终态事件：failed → error，completed/incomplete/cancelled → message_end，
    *   error 之后不得再补发 message_end；
-   * - 只在 completed 时启动空闲压缩计时器：cancel 通常意味着模型走偏，
+   * - 只在 completed / incomplete 时启动空闲压缩计时器：cancel 通常意味着模型走偏，
    *   failed 的上下文已损坏，两者后台压缩都只会烧 token 或在用户不知情时改写历史。
    */
   private finalizeTurn(
@@ -869,6 +878,8 @@ export class AgentLoop {
     if (outcome.status === 'failed') {
       this.eventBus.emit({ type: 'error', messageId, error: outcome.error.message })
     } else {
+      // incomplete 与 completed 一样发 message_end 且不带 interrupted：
+      // 轮次确实结束了，只是任务未被声称完成。
       this.eventBus.emit({
         type: 'message_end',
         messageId,
@@ -876,7 +887,9 @@ export class AgentLoop {
       })
     }
 
-    if (outcome.status === 'completed') {
+    // incomplete 轮次只是被停止策略截断，用户大概率会继续对话，
+    // 与 completed 同样调度空闲压缩；cancelled / failed 不调度。
+    if (outcome.status === 'completed' || outcome.status === 'incomplete') {
       this.compactionService.scheduleIdle()
     } else {
       this.compactionService.cancelIdle()

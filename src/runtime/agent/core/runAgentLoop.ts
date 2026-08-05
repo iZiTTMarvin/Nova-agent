@@ -15,7 +15,7 @@ import type { HookManager } from './HookManager'
 import { getEffectiveToolDefinitions } from './AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
-import type { AgentLoopConfig } from './loopTypes'
+import type { AgentLoopConfig, StopReason } from './loopTypes'
 import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
@@ -78,12 +78,16 @@ export interface LoopEndResult {
   ended: LoopEndReason
   /** StreamProcessor 返回 cancelled 或 executeBatch abort 时为 true */
   cancelled?: boolean
+  /** 命中停止策略或循环条件耗尽时的原因；模型自然收工（无工具调用）时为 undefined */
+  stopReason?: StopReason
 }
 
 /** 执行一轮模型与工具循环。 */
 export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult> {
   const { messageId, userText, context, config, streamProcessor, hookManager, emit } = p
   let toolRound = 0
+  /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
+  let stopReason: StopReason | undefined
 
   try {
     while (toolRound < config.maxToolRounds) {
@@ -267,6 +271,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           }))
         })
         if (stopDecision?.stop) {
+          stopReason = stopDecision.reason
           emit({ type: 'text_delta', messageId, delta: stopDecision.notice })
           break
         }
@@ -286,5 +291,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
     }
   }
 
-  return { ended: 'normal' }
+  // 循环条件耗尽（while 判定为 false 而非 break 退出）同样记为 max_rounds。
+  // toolRound > 0 排除从未进入循环的配置（模型一次都未被调用，不算轮数耗尽）；
+  // signal 提前 break 时 toolRound 尚未触及上限，也不会误判。
+  if (stopReason === undefined && toolRound > 0 && toolRound >= config.maxToolRounds) {
+    stopReason = 'max_rounds'
+  }
+  return { ended: 'normal', ...(stopReason ? { stopReason } : {}) }
 }

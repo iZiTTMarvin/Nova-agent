@@ -30,7 +30,11 @@ function session(content: string): SessionData {
   }
 }
 
-function run(status: RunSnapshot['status'], reason?: string): RunSnapshot {
+function run(
+  status: RunSnapshot['status'],
+  reason?: string,
+  incompleteReason?: RunSnapshot['incompleteReason']
+): RunSnapshot {
   return {
     runId: 'run-child',
     kind: 'agent',
@@ -46,7 +50,8 @@ function run(status: RunSnapshot['status'], reason?: string): RunSnapshot {
     createdAt: 1,
     updatedAt: 3,
     turnStartedAt: 2,
-    ...(reason ? { terminalReason: reason } : {})
+    ...(reason ? { terminalReason: reason } : {}),
+    ...(incompleteReason ? { incompleteReason } : {})
   }
 }
 
@@ -80,5 +85,37 @@ describe('projectSubagentExecutionResult', () => {
       childSession: session('partial'),
       runSnapshot: run('running')
     })).toThrow(/尚未终止/)
+  })
+
+  it('completed + incompleteReason → 投影为 incomplete 并携带截断原因', () => {
+    const projected = projectSubagentExecutionResult({
+      childSession: session('部分工作已做'),
+      runSnapshot: run('completed', undefined, 'max_rounds')
+    })
+
+    expect(projected.status).toBe('incomplete')
+    expect(projected.incompleteReason).toBe('max_rounds')
+    expect(projected.failure).toBeUndefined()
+  })
+
+  it('completed 无截断字段 → 仍为 completed（旧记录兼容）', () => {
+    const projected = projectSubagentExecutionResult({
+      childSession: session('done'),
+      runSnapshot: run('completed')
+    })
+
+    expect(projected.status).toBe('completed')
+    expect(projected.incompleteReason).toBeUndefined()
+  })
+
+  it('incomplete 且无最终消息 → 使用未完成 fallback 摘要', () => {
+    const projected = projectSubagentExecutionResult({
+      childSession: session(''),
+      runSnapshot: run('completed', undefined, 'empty_args')
+    })
+
+    expect(projected.status).toBe('incomplete')
+    expect(projected.incompleteReason).toBe('empty_args')
+    expect(projected.summary).toBe('子代理未完成任务')
   })
 })

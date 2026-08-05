@@ -23,10 +23,18 @@ export interface ShouldStopArgs {
   }>
 }
 
+import type { StopPolicyReason as StopReason } from '../../../shared/run/types'
+
+/**
+ * 停止策略命中或循环条件耗尽时的停止原因；模型自然收工时为 undefined。
+ * 类型唯一来源在 shared/run（durable 终态记录复用同一联合）。
+ */
+export type { StopPolicyReason as StopReason } from '../../../shared/run/types'
+
 /** shouldStopAfterTurn 返回：停止原因 + 提示文案（文案由调用方 emit） */
 export interface StopDecision {
   stop: true
-  reason: 'breaker' | 'max_rounds' | 'empty_args'
+  reason: StopReason
   notice: string
 }
 

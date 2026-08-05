@@ -7,6 +7,22 @@
 /** 所有用户轮次都由同一个 AgentLoop 执行。 */
 export type RunKind = 'agent'
 
+/** 停止策略截断原因（runtime AgentTurnOutcome.incomplete 的类型唯一来源） */
+export type StopPolicyReason = 'breaker' | 'max_rounds' | 'empty_args'
+
+/** 轮次被截断的完整原因：停止策略截断，或宿主 deadline 到期 */
+export type TurnTruncationReason = StopPolicyReason | 'deadline'
+
+/** 持久化边界校验：未知字符串不得冒充截断原因 */
+export function isTurnTruncationReason(value: unknown): value is TurnTruncationReason {
+  return (
+    value === 'breaker' ||
+    value === 'max_rounds' ||
+    value === 'empty_args' ||
+    value === 'deadline'
+  )
+}
+
 /**
  * Run 状态机（允许的主要转换）：
  * queued → running
@@ -178,6 +194,8 @@ export interface RunSnapshot {
   updatedAt: number
   /** 终态原因（取消 / 失败文案等） */
   terminalReason?: string
+  /** status 为 completed 但轮次被停止策略截断时携带：任务未被声称完成 */
+  incompleteReason?: TurnTruncationReason
   /** 本轮工具对账（T2-5） */
   toolCommits?: ToolCommitRecord[]
   /** turn_started 是否已原子落盘 */
@@ -222,6 +240,8 @@ export interface CommitTerminalParams {
   runId: string
   status: 'completed' | 'failed' | 'cancelled' | 'interrupted'
   reason?: string
+  /** status 为 completed 且轮次被停止策略截断时携带；其余终态一律不携带 */
+  incompleteReason?: TurnTruncationReason
   /** 外部传入的 transition id；缺省由 coordinator 生成 */
   terminalTransitionId?: string
 }

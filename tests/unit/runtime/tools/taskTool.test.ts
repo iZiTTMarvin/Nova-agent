@@ -139,6 +139,26 @@ describe('task tool spawn adapter', () => {
     expect(output.error).toBe('tool failed')
   })
 
+  it('incomplete 子代理 → 失败语义，保留部分摘要并说明截断原因', async () => {
+    const spawn = vi.fn(async () => result({
+      status: 'incomplete',
+      summary: '部分工作已做',
+      incompleteReason: 'max_rounds'
+    }))
+    const tool = createTaskTool({
+      getSpawnSubagentPort: () => ({ spawn } as SpawnSubagentPort)
+    })
+
+    const output = await tool.execute(
+      { subagent_type: 'code', task: 'keep going' },
+      context()
+    )
+
+    expect(output.success).toBe(false)
+    expect(output.output).toContain('部分工作已做')
+    expect(output.error).toBe('子代理未完成任务（已达工具轮数上限）')
+  })
+
   it('缺少参数、durable 调用身份或服务装配时 fail closed', async () => {
     const { tool } = setup()
     expect((await tool.execute({ subagent_type: '', task: 'x' }, context())).success).toBe(false)

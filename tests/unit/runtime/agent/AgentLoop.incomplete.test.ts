@@ -1,0 +1,165 @@
+/**
+ * 终态诚实行为护栏：三种停止策略截断必须如实报告为 incomplete，
+ * 模型自然收工仍为 completed；incomplete 轮次与 completed 一样发 message_end
+ * （不带 interrupted）、调度空闲压缩、不破坏后续轮次。
+ */
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
+import { EventBus } from '../../../../src/runtime/agent/EventBus'
+import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
+import { IdleCompressionTimer } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
+import type { AgentEvent } from '../../../../src/runtime/agent/types'
+import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
+import type { AgentLoopConfig } from '../../../../src/runtime/agent/types'
+import { agentRoute } from '../../../../src/runtime/agent/turn'
+
+const loops: AgentLoop[] = []
+
+afterEach(() => {
+  while (loops.length) loops.pop()!.dispose()
+  vi.restoreAllMocks()
+})
+
+function createLoop(
+  client: MockModelClient,
+  config?: AgentLoopConfig
+): { loop: AgentLoop; events: AgentEvent[] } {
+  const eventBus = new EventBus()
+  const loop = new AgentLoop(client, eventBus, config)
+  loops.push(loop)
+  const events: AgentEvent[] = []
+  eventBus.on(e => events.push(e))
+  return { loop, events }
+}
+
+function registerTool(
+  registry: ToolRegistry,
+  name: string,
+  impl: (args: Record<string, unknown>, ctx: ToolContext) => ToolResult | Promise<ToolResult>
+): void {
+  registry.register({
+    name,
+    description: name,
+    parameters: { type: 'object', properties: {}, additionalProperties: true },
+    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+      return impl(args, ctx)
+    }
+  })
+}
+
+/** 一轮原生工具调用响应 */
+function toolCallResponse(toolCallId: string, name: string, args: string): {
+  events: import('../../../../src/runtime/model/types').ChatEvent[]
+} {
+  return {
+    events: [
+      { type: 'message_start' },
+      { type: 'tool_call_start', toolCallId, toolName: name, index: 0 },
+      { type: 'tool_call', toolCall: { id: toolCallId, name, arguments: args } },
+      { type: 'message_end', finishReason: 'tool_calls' }
+    ]
+  }
+}
+
+/** 断言恰好一个 message_end 且不带 interrupted、无 error 事件 */
+function expectCleanMessageEnd(events: AgentEvent[]): void {
+  const ends = events.filter(e => e.type === 'message_end')
+  expect(ends).toHaveLength(1)
+  expect((ends[0] as Extract<AgentEvent, { type: 'message_end' }>).interrupted).toBeUndefined()
+  expect(events.some(e => e.type === 'error')).toBe(false)
+}
+
+describe('终态诚实：max_rounds', () => {
+  it('工具轮数耗尽 → incomplete/max_rounds，message_end 无 interrupted，空闲压缩仍调度', async () => {
+    const idleStart = vi.spyOn(IdleCompressionTimer.prototype, 'start')
+    const client = new MockModelClient()
+    client.addResponse(toolCallResponse('t1', 'ls', '{"path":"."}'))
+    const registry = new ToolRegistry()
+    registerTool(registry, 'ls', () => ({ success: true, output: 'ok' }))
+    const { loop, events } = createLoop(client, { maxToolRounds: 1 })
+    loop.setToolRegistry(registry)
+
+    const outcome = await loop.sendMessage('列出文件', agentRoute())
+
+    expect(outcome).toEqual({ status: 'incomplete', reason: 'max_rounds' })
+    expectCleanMessageEnd(events)
+    expect(loop.getState()).toBe('idle')
+    expect(idleStart).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('终态诚实：breaker', () => {
+  it('相同调用连续失败 3 次熔断 → incomplete/breaker', async () => {
+    const client = new MockModelClient()
+    for (let i = 0; i < 3; i += 1) {
+      client.addResponse(toolCallResponse(`t${i}`, 'ls', '{"path":"."}'))
+    }
+    const registry = new ToolRegistry()
+    registerTool(registry, 'ls', () => ({ success: false, output: '', error: 'boom' }))
+    const { loop, events } = createLoop(client, { maxToolRounds: 10 })
+    loop.setToolRegistry(registry)
+
+    const outcome = await loop.sendMessage('读', agentRoute())
+
+    expect(outcome).toEqual({ status: 'incomplete', reason: 'breaker' })
+    expectCleanMessageEnd(events)
+  })
+})
+
+describe('终态诚实：empty_args', () => {
+  it('连续两轮空参且工具未成功 → incomplete/empty_args', async () => {
+    const client = new MockModelClient()
+    client.addResponse(toolCallResponse('e0', 'ls', '{}'))
+    client.addResponse(toolCallResponse('e1', 'ls', '{}'))
+    const registry = new ToolRegistry()
+    registerTool(registry, 'ls', () => ({ success: false, output: '', error: 'boom' }))
+    const { loop, events } = createLoop(client, { maxToolRounds: 10 })
+    loop.setToolRegistry(registry)
+
+    const outcome = await loop.sendMessage('列', agentRoute())
+
+    expect(outcome).toEqual({ status: 'incomplete', reason: 'empty_args' })
+    expectCleanMessageEnd(events)
+  })
+})
+
+describe('终态诚实：自然收工与后续轮次', () => {
+  it('模型不调用工具自然收工 → completed，不带 stopReason', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '好的' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { loop } = createLoop(client)
+
+    const outcome = await loop.sendMessage('你好', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+  })
+
+  it('incomplete 轮次后下一轮可继续执行并正常完成', async () => {
+    const client = new MockModelClient()
+    client.addResponse(toolCallResponse('t1', 'ls', '{"path":"."}'))
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '继续' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const registry = new ToolRegistry()
+    registerTool(registry, 'ls', () => ({ success: true, output: 'ok' }))
+    const { loop } = createLoop(client, { maxToolRounds: 1 })
+    loop.setToolRegistry(registry)
+
+    const first = await loop.sendMessage('列出文件', agentRoute())
+    expect(first.status).toBe('incomplete')
+
+    const second = await loop.sendMessage('继续', agentRoute())
+    expect(second).toEqual({ status: 'completed' })
+  })
+})

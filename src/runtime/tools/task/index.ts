@@ -1,4 +1,6 @@
 import type { SpawnSubagentPort } from '../../subagents'
+import type { SubagentExecutionStatus } from '../../../shared/subagents'
+import type { TurnTruncationReason } from '../../../shared/run/types'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 
 export interface TaskToolDeps {
@@ -59,7 +61,11 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
         return {
           success: false,
           output,
-          error: result.failure?.message ?? `子代理执行${statusLabel(result.status)}`
+          error:
+            result.failure?.message ??
+            (result.status === 'incomplete'
+              ? `子代理未完成任务${describeIncompleteReason(result.incompleteReason)}`
+              : `子代理执行${statusLabel(result.status)}`)
         }
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error))
@@ -72,13 +78,33 @@ function failure(error: string): ToolResult {
   return { success: false, output: '', error }
 }
 
-function statusLabel(status: 'failed' | 'cancelled' | 'interrupted'): string {
+function statusLabel(status: SubagentExecutionStatus): string {
   switch (status) {
+    case 'completed':
+      return '成功'
+    case 'incomplete':
+      return '未完成'
     case 'failed':
       return '失败'
     case 'cancelled':
       return '已取消'
     case 'interrupted':
       return '已中断'
+  }
+}
+
+/** 截断原因的可读说明（仅文案；判定不依赖文案） */
+function describeIncompleteReason(reason: TurnTruncationReason | undefined): string {
+  switch (reason) {
+    case 'max_rounds':
+      return '（已达工具轮数上限）'
+    case 'breaker':
+      return '（重复失败已熔断）'
+    case 'empty_args':
+      return '（连续空参已中断）'
+    case 'deadline':
+      return '（达到宿主截止时间）'
+    default:
+      return ''
   }
 }

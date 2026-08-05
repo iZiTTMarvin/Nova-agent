@@ -20,6 +20,10 @@ import { writeTool } from '../runtime/tools/writeTool'
 import { bashTool } from '../runtime/tools/bashTool'
 import type { AgentEvent } from '../runtime/agent/types'
 import type { NormalizedUsage } from '../shared/model/types'
+import {
+  deriveHeadlessSummary,
+  type HeadlessTurnReport
+} from './summary'
 
 interface CliOptions {
   workdir: string
@@ -145,7 +149,6 @@ async function main(): Promise<void> {
     outputTokens: 0
   }
   const events: AgentEvent[] = []
-  let budgetExhausted = false
   let deadlineReached = false
 
   const registry = createCodingTools()
@@ -155,12 +158,6 @@ async function main(): Promise<void> {
     events.push(event)
     appendFileSync(eventsPath, `${JSON.stringify(event)}\n`, 'utf8')
     if (event.type === 'usage') addUsage(usage, event.usage)
-    if (
-      event.type === 'text_delta' &&
-      event.delta.includes('[已达到最大工具调用轮数')
-    ) {
-      budgetExhausted = true
-    }
   })
 
   const modelClient = new OpenAICompatibleModelClient({
@@ -191,25 +188,33 @@ async function main(): Promise<void> {
   loop.setRunRef(runId)
   loop.setMode('default')
 
-  let status: 'completed' | 'failed' | 'cancelled' = 'failed'
   let error: string | undefined
   const deadlineTimer = options.deadlineSeconds === undefined
     ? undefined
     : setTimeout(() => {
         deadlineReached = true
-        budgetExhausted = true
         loop.cancel()
       }, options.deadlineSeconds * 1000)
+  let report: HeadlessTurnReport
   try {
     const outcome = await loop.sendMessage(instruction, agentRoute())
-    status = outcome.status
-    if (outcome.status === 'failed') error = outcome.error.message
+    if (outcome.status === 'incomplete') {
+      report = { status: 'incomplete', reason: outcome.reason, deadlineReached }
+    } else if (outcome.status === 'failed') {
+      report = { status: 'failed', deadlineReached }
+      error = outcome.error.message
+    } else {
+      report = { status: outcome.status, deadlineReached }
+    }
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause)
+    report = { status: 'failed', deadlineReached }
   } finally {
-    if (deadlineTimer) clearTimeout(deadlineTimer)
+    clearTimeout(deadlineTimer)
     loop.dispose()
   }
+
+  const summaryDerivation = deriveHeadlessSummary(report)
 
   const finishedAt = new Date()
   const assistantText = events
@@ -272,15 +277,9 @@ async function main(): Promise<void> {
     reasoning_effort: options.reasoningEffort,
     deadline_seconds: options.deadlineSeconds,
     deadline_reached: deadlineReached,
-    status,
-    budget_exhausted: budgetExhausted,
-    failure_class: budgetExhausted
-      ? 'budget_exhausted'
-      : status === 'completed'
-        ? null
-        : status === 'cancelled'
-          ? 'agent_cancelled'
-          : 'agent_error',
+    status: report.status,
+    budget_exhausted: summaryDerivation.budgetExhausted,
+    failure_class: summaryDerivation.failureClass,
     error,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
@@ -291,7 +290,7 @@ async function main(): Promise<void> {
   }
   writeJson(summaryPath, summary)
   process.stdout.write(`${JSON.stringify(summary)}\n`)
-  if (status !== 'completed' && !deadlineReached) process.exitCode = 1
+  if (summaryDerivation.exitNonZero) process.exitCode = 1
 }
 
 main().catch(error => {

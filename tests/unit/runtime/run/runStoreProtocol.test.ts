@@ -118,6 +118,66 @@ describe('RunStore 落盘协议与 sequence', () => {
     expect(replayed.status).toBe('interrupted')
   })
 
+  it('terminal 事件领先时从 payload 重建 incompleteReason，未知字符串拒绝', () => {
+    const store = new RunStore({ runsRoot: tmp })
+    const runId = 'run_replay2'
+    store.commitTransaction(
+      {
+        runId,
+        kind: 'agent',
+        workspaceId: 'ws',
+        sessionId: 's1',
+        messageId: '',
+        status: 'running',
+        sequence: 1,
+        pendingInteractions: [],
+        currentAttempt: null,
+        progress: null,
+        lastHeartbeatAt: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      'run_started'
+    )
+    const eventsPath = join(tmp, runId, 'events.jsonl')
+    appendFileSync(
+      eventsPath,
+      JSON.stringify({
+        sequence: 2,
+        runId,
+        type: 'terminal',
+        at: Date.now(),
+        payload: {
+          status: 'completed',
+          incompleteReason: 'max_rounds'
+        }
+      }) + '\n',
+      'utf8'
+    )
+
+    const replayed = store.loadSnapshotWithReplay(runId)!
+    expect(replayed.status).toBe('completed')
+    expect(replayed.incompleteReason).toBe('max_rounds')
+
+    // 未知字符串不得冒充截断原因
+    appendFileSync(
+      eventsPath,
+      JSON.stringify({
+        sequence: 3,
+        runId,
+        type: 'terminal',
+        at: Date.now(),
+        payload: {
+          status: 'completed',
+          incompleteReason: 'arbitrary-string'
+        }
+      }) + '\n',
+      'utf8'
+    )
+    const replayedAgain = store.loadSnapshotWithReplay(runId)!
+    expect(replayedAgain.incompleteReason).toBe('max_rounds')
+  })
+
   it('saveSnapshot 直接调用被禁用', () => {
     const store = new RunStore({ runsRoot: tmp })
     expect(() =>

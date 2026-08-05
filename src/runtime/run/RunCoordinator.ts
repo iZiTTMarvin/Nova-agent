@@ -347,6 +347,8 @@ export class RunCoordinator {
     const transitionId = params.terminalTransitionId ?? randomUUID()
     snap.status = params.status
     snap.terminalReason = params.reason
+    // 只有 completed 才携带截断原因；取消 / 失败 / 中断强制清空（取消优先于截断）
+    snap.incompleteReason = params.status === 'completed' ? params.incompleteReason : undefined
     snap.terminalTransitionId = transitionId
     snap.updatedAt = Date.now()
     snap.lastHeartbeatAt = snap.updatedAt
@@ -364,7 +366,8 @@ export class RunCoordinator {
     this.commit(snap, 'terminal', {
       status: params.status,
       reason: params.reason,
-      terminalTransitionId: transitionId
+      terminalTransitionId: transitionId,
+      ...(snap.incompleteReason ? { incompleteReason: snap.incompleteReason } : {})
     })
 
     // exactly-once terminal hooks

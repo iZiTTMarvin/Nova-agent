@@ -8,6 +8,7 @@ const workspace = mkdtempSync(join(tmpdir(), 'nova-headless-smoke-'))
 const logs = join(workspace, 'logs')
 let requestBody
 let holdResponse = false
+let toolCallsMode = false
 
 const server = createServer((request, response) => {
   const chunks = []
@@ -26,6 +27,12 @@ const server = createServer((request, response) => {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache'
     })
+    if (toolCallsMode) {
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'smoke-tc', type: 'function', function: { name: 'ls', arguments: '{"path":"."}' } }] }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+      response.end('data: [DONE]\n\n')
+      return
+    }
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'smoke complete' }, finish_reason: null }] })}\n\n`)
     response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
     response.end('data: [DONE]\n\n')
@@ -113,6 +120,33 @@ try {
   const deadlineSummary = JSON.parse(readFileSync(join(deadlineLogs, 'summary.json'), 'utf8'))
   if (deadlineSummary.status !== 'cancelled' || deadlineSummary.budget_exhausted !== true) {
     throw new Error(`deadline summary mismatch: ${JSON.stringify(deadlineSummary)}`)
+  }
+
+  // 模型持续调用工具 → max_rounds 截断：退出码 1、failure_class=max_rounds、budget_exhausted=true
+  holdResponse = false
+  toolCallsMode = true
+  const budgetLogs = join(workspace, 'budget-logs')
+  const budget = await runHeadless(
+    [
+      '--workdir', workspace,
+      '--logs-dir', budgetLogs,
+      '--base-url', `http://127.0.0.1:${address.port}`,
+      '--model', 'deepseek-v4-flash',
+      '--reasoning-effort', 'max',
+      '--max-tool-rounds', '2'
+    ],
+    'Keep calling tools until the round cap stops this run.'
+  )
+  if (budget.exitCode !== 1) {
+    throw new Error(`budget run exited ${budget.exitCode}, expected 1: ${budget.stderr || budget.stdout}`)
+  }
+  const budgetSummary = JSON.parse(readFileSync(join(budgetLogs, 'summary.json'), 'utf8'))
+  if (
+    budgetSummary.status !== 'incomplete' ||
+    budgetSummary.failure_class !== 'max_rounds' ||
+    budgetSummary.budget_exhausted !== true
+  ) {
+    throw new Error(`budget summary mismatch: ${JSON.stringify(budgetSummary)}`)
   }
   process.stdout.write('headless smoke passed\n')
 } finally {

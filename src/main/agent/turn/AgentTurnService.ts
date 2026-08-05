@@ -495,7 +495,8 @@ export async function sendAgentMessage(
         setActiveRunId(context.runId)
       },
       afterOutcome: (outcome) => {
-        if (outcome.status === 'completed') {
+        // incomplete 轮次同样已结束（被停止策略截断），对话内容照样值得提炼
+        if (outcome.status === 'completed' || outcome.status === 'incomplete') {
           onUserTurnCompleteForExtract(
             params.sessionId,
             projectPath,

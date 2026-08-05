@@ -61,7 +61,11 @@ export function reconcileAgentTurnTerminal(
     status:
       outcome.status === 'cancelled' || snapshot.status === 'cancelling'
         ? 'cancelled'
-        : 'completed'
+        : 'completed',
+    // incomplete 故意落入 completed：轮次确实结束了，incomplete 是轮次级语义
+    // （停止策略截断），不扩展 durable run 状态枚举；截断原因单独落字段，
+    // 供子代理结果投影层如实报告。cancelled 分支不携带（取消优先于截断）。
+    ...(outcome.status === 'incomplete' ? { incompleteReason: outcome.reason } : {})
   })
 }
 
