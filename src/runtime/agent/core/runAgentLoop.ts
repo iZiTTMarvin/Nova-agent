@@ -16,6 +16,7 @@ import { getEffectiveToolDefinitions } from './AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
+import { projectRequestMessages, DISABLED_PRUNE_POLICY } from './projectRequestMessages'
 import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
@@ -143,6 +144,29 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         messages: [...chatMessages]
       })
       chatMessages = preChatHook?.messages ?? chatMessages
+      // 请求投影：把本次模型请求看到的消息与权威上下文分离。
+      // 投影结果只赋给 chatMessages，绝不写回 context.messages（权威事实保留全文）。
+      // 上方 enforceInlineBudget 恢复成功后的 continue 会回到循环顶重新执行投影，
+      // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
+      const projection = await projectRequestMessages({
+        messages: chatMessages,
+        toolRound,
+        policy: config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY,
+        archive: async (candidate) => {
+          if (!context.artifactStore || !context.sessionId) return null
+          try {
+            const meta = await context.artifactStore.write(
+              context.sessionId,
+              candidate.body,
+              { toolName: candidate.toolName }
+            )
+            return { artifactId: meta.id }
+          } catch {
+            return null
+          }
+        }
+      })
+      chatMessages = projection.messages
 
       // native 为默认主路径：向 API 下发 tools，由服务端解析各家原生格式（DSML 等）。
       // xml 为兜底路径（用户 override 或 ollama 等本地推理）：不传 tools，
