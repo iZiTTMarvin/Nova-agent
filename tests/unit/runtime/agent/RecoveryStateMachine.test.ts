@@ -27,9 +27,11 @@ describe('RecoveryStateMachine', () => {
     expect(rsm.shouldRetry(s)).toBe(true)
   })
 
-  it('超过 maxAttempts 进入 failed', () => {
-    const s = rsm.classify('timeout', 3)
-    expect(s.kind).toBe('failed')
+  it('超过 maxAttempts 进入 failed（上限 10）', () => {
+    // maxAttempts 已从 3 提到 10（阶段四安全重试，对齐 maka）
+    expect(rsm.classify('timeout', 10).kind).toBe('failed')
+    // 未达上限仍可重试
+    expect(rsm.classify('timeout', 9).kind).toBe('retrying')
   })
 
   it('retrying 状态 buildRecoveryHint 含尝试次数', () => {
@@ -47,10 +49,13 @@ describe('RecoveryStateMachine', () => {
     expect(rsm.buildRecoveryHint({ kind: 'continuing' })).toBe('')
   })
 
-  it('backoffMs 指数增长有上限', () => {
+  it('backoffMs 指数增长有上限（对齐 maka：base 1s，max 32s）', () => {
     expect(rsm.backoffMs(1)).toBe(1000)
     expect(rsm.backoffMs(3)).toBe(4000)
-    expect(rsm.backoffMs(10)).toBe(8000)
+    expect(rsm.backoffMs(5)).toBe(16000)
+    expect(rsm.backoffMs(6)).toBe(32000)
+    // 触顶后不再增长
+    expect(rsm.backoffMs(10)).toBe(32000)
   })
 
   it('5xx 错误触发 retrying', () => {

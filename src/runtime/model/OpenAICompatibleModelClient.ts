@@ -14,6 +14,10 @@ import { buildReasoningParams } from './reasoningDialect'
 import { isReasoningSourceCompatible } from './reasoningSource'
 import { projectMessagesForVision } from './visionProjection'
 import { resolveCacheProfile, type CacheMarker, type CacheProfile } from './cacheProfile'
+import {
+  observeReasoningField,
+  type ObservedReasoningField
+} from './reasoningObservation'
 import type { CacheStrategy } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
@@ -22,7 +26,7 @@ import {
   transportFetch,
   TransportBodyReader,
   transportErrorToChatEvent,
-  httpStatusToError,
+  httpStatusToFailure,
   formatTransportError,
   readErrorResponseBody
 } from './ModelTransport'
@@ -55,15 +59,23 @@ export class OpenAICompatibleModelClient implements ModelClient {
   private cacheProfile: CacheProfile
   /** 网关不兼容后禁用的能力；仅内存态，不跨进程持久化 */
   private disabledCapabilities = new Set<DowngradeCapability>()
+  /**
+   * 观测到的 reasoning 字段名（仅 cacheProfile.reasoningWireObservable=true 时生效）。
+   * 初始取 reasoningWire；每次响应观测到实际字段后覆盖（后写覆盖先写）。
+   * 不写回静态 cacheProfile 表。
+   */
+  private observedReasoningField: ObservedReasoningField | undefined
 
   constructor(config: ModelClientConfig) {
     this.config = config
     this.cacheProfile = this.resolveProfile(config)
+    this.initObservedReasoningField()
   }
 
   updateConfig(config: ModelClientConfig): void {
     this.config = config
     this.cacheProfile = this.resolveProfile(config)
+    this.initObservedReasoningField()
   }
 
   /**
@@ -82,13 +94,35 @@ export class OpenAICompatibleModelClient implements ModelClient {
   private get cacheMarker(): CacheMarker {
     return this.cacheProfile.marker
   }
-
   /** 按当前配置解析完整 CacheProfile（判定集中在 cacheProfile.ts） */
   private resolveProfile(config: ModelClientConfig): CacheProfile {
     return resolveCacheProfile(config.baseUrl, config.modelId, {
       cacheProfile: config.cacheProfile,
       cacheStrategy: config.cacheStrategy
     })
+  }
+
+  /**
+   * 初始化观测字段：仅当档案标记 reasoningWireObservable 时启用观测，
+   * 初始值取静态 reasoningWire（限定为 reasoning_content / reasoning 两类载体）。
+   */
+  private initObservedReasoningField(): void {
+    if (!this.cacheProfile.reasoningWireObservable) {
+      this.observedReasoningField = undefined
+      return
+    }
+    this.observedReasoningField =
+      this.cacheProfile.reasoningWire === 'reasoning' ? 'reasoning' : 'reasoning_content'
+  }
+
+  /**
+   * 回放历史 reasoning 时实际写入的字段名。
+   * 可观测档案：用观测值（响应决定），覆盖静态初始；
+   * 不可观测档案：用静态 reasoningWire。
+   * think-tag 载体不走本方法（直接注回 content）。
+   */
+  private effectiveReasoningWireField(): 'reasoning_content' | 'reasoning' {
+    return this.observedReasoningField ?? 'reasoning_content'
   }
 
   /** 测试/诊断：当前已禁用的能力集合 */
@@ -214,46 +248,103 @@ export class OpenAICompatibleModelClient implements ModelClient {
         response.status === 400 ? detectDowngradeCapability(text, body) : null
 
       if (downgradeCap && !requestDisabled.has(downgradeCap)) {
-        // 记录到网关级记忆：后续所有请求不再发送该参数，避免重复 400。
-        // 同一底层 client 的并发 turn 共享此记忆（同一网关行为一致）。
-        requestDisabled.add(downgradeCap)
-        yield {
-          type: 'capability_downgrade',
-          capability: downgradeCap,
-          detail: text
-        }
-        applyCapabilityStripToBody(body, downgradeCap)
-        try {
-          const retry = await doFetch()
-          response = retry.response
-          attempt = retry.attempt
-        } catch (err) {
-          yield snapshotEvent()
-          yield transportErrorToChatEvent(err)
-          return
-        }
-        if (!response.ok) {
-          const retryText = await readErrorResponseBody(
-            response,
-            attempt,
-            options?.transportTimeouts
-          )
-          yield snapshotEvent()
-          if (response.status === 400 && isContextOverflowError(400, retryText)) {
-            yield { type: 'context_overflow', rawError: retryText }
-          } else {
-            yield { type: 'error', error: httpStatusToError(response.status, retryText) }
+        // 可观测档案的 reasoning_content 400：先尝试切换到另一个字段变体，仍失败才降级剥离。
+        // 切换而非直接剥离，避免在 provider 其实支持 reasoning（仅字段名不同）时丢失思考链回放。
+        const triedFieldSwitch =
+          downgradeCap === 'reasoning_content' &&
+          this.cacheProfile.reasoningWireObservable &&
+          this.trySwitchReasoningField(body, text)
+
+        if (triedFieldSwitch) {
+          // 已把 body 中的 reasoning_content 换成 reasoning（或反向），重新请求
+          try {
+            const retry = await doFetch()
+            response = retry.response
+            attempt = retry.attempt
+          } catch (err) {
+            yield snapshotEvent()
+            yield transportErrorToChatEvent(err)
+            return
           }
-          return
+          if (response.ok) {
+            // 切换成功：response/attempt 已就绪，落入下方公共成功路径（snapshot + message_start）
+          } else {
+            const retryText = await readErrorResponseBody(
+              response,
+              attempt,
+              options?.transportTimeouts
+            )
+            // 切换后仍失败 → 降级剥离 reasoning 作为最后手段（计划：仍失败才降级剥离）。
+            // 记录到网关级记忆后剥离并重试一次；若剥离重试仍失败则终态 error。
+            requestDisabled.add('reasoning_content')
+            yield { type: 'capability_downgrade', capability: 'reasoning_content', detail: retryText }
+            applyCapabilityStripToBody(body, 'reasoning_content')
+            try {
+              const stripRetry = await doFetch()
+              response = stripRetry.response
+              attempt = stripRetry.attempt
+            } catch (err) {
+              yield snapshotEvent()
+              yield transportErrorToChatEvent(err)
+              return
+            }
+            if (!response.ok) {
+              const stripText = await readErrorResponseBody(
+                response,
+                attempt,
+                options?.transportTimeouts
+              )
+              yield snapshotEvent()
+              const failure = httpStatusToFailure(response.status, stripText, response.headers)
+              yield { type: 'error', error: failure.message, failure }
+              return
+            }
+            // 剥离重试成功：落入下方公共成功路径
+          }
+        } else {
+          // 记录到网关级记忆：后续所有请求不再发送该参数，避免重复 400。
+          // 同一底层 client 的并发 turn 共享此记忆（同一网关行为一致）。
+          requestDisabled.add(downgradeCap)
+          yield {
+            type: 'capability_downgrade',
+            capability: downgradeCap,
+            detail: text
+          }
+          applyCapabilityStripToBody(body, downgradeCap)
+          try {
+            const retry = await doFetch()
+            response = retry.response
+            attempt = retry.attempt
+          } catch (err) {
+            yield snapshotEvent()
+            yield transportErrorToChatEvent(err)
+            return
+          }
+          if (!response.ok) {
+            const retryText = await readErrorResponseBody(
+              response,
+              attempt,
+              options?.transportTimeouts
+            )
+            yield snapshotEvent()
+            if (response.status === 400 && isContextOverflowError(400, retryText)) {
+              yield { type: 'context_overflow', rawError: retryText }
+            } else {
+              const failure = httpStatusToFailure(response.status, retryText, response.headers)
+              yield { type: 'error', error: failure.message, failure }
+            }
+            return
+          }
+          // 降级重试成功：继续走下方流式解析
         }
-        // 降级重试成功：继续走下方流式解析
       } else if (response.status === 400 && isContextOverflowError(400, text)) {
         yield snapshotEvent()
         yield { type: 'context_overflow', rawError: text }
         return
       } else {
         yield snapshotEvent()
-        yield { type: 'error', error: httpStatusToError(response.status, text) }
+        const failure = httpStatusToFailure(response.status, text, response.headers)
+        yield { type: 'error', error: failure.message, failure }
         return
       }
     }
@@ -328,33 +419,49 @@ export class OpenAICompatibleModelClient implements ModelClient {
               choice?.finish_reason ||
               delta?.content ||
               delta?.reasoning_content ||
+              delta?.reasoning ||
               (Array.isArray(delta?.tool_calls) && delta.tool_calls.length > 0)
             ) {
               bodyReader.markSemanticEvent()
             }
 
-            // SSE chunk.error：无 choice 时也必须产出明确 error，不能只 mark 后跳过
+            // SSE chunk.error：无 choice 时也必须产出明确 error，不能只 mark 后跳过。
+            // 产出的 error 携带结构化 failure（provider 中段错误默认按可重试瞬态处理，
+            // 由 hasNoObservableOutput 门闩决定是否真的重试）。
             if (chunk.error && !choice) {
               const errMsg =
                 typeof chunk.error === 'string'
                   ? chunk.error
                   : String(chunk.error?.message ?? JSON.stringify(chunk.error))
-              yield { type: 'error', error: errMsg }
+              const failure = { kind: 'provider_unavailable', retryable: true, message: errMsg } as const
+              yield { type: 'error', error: errMsg, failure }
               continue
             }
 
             // 末尾 usage chunk：无 choices 但有 usage 字段
             if (chunk.usage) {
-              rawUsage = chunk.usage as Record<string, unknown>
+              rawUsage = normalizeRawUsageDetails(chunk.usage as Record<string, unknown>)
             }
 
             if (!choice) continue
 
+            // 协议观测：记录本轮响应实际使用的 reasoning 字段名（覆盖式，后写覆盖先写）
+            if (this.cacheProfile.reasoningWireObservable) {
+              const observed = observeReasoningField(delta) ?? observeReasoningField(choice?.message)
+              if (observed) this.observedReasoningField = observed
+            }
+
             finishReason = choice.finish_reason ?? finishReason
 
-            // 思考/推理内容增量（DeepSeek、MiniMax 等模型通过此字段返回内部推理过程）
-            if (delta?.reasoning_content) {
-              yield { type: 'thinking_delta', delta: delta.reasoning_content }
+            // 思考/推理内容增量。reasoning 字段名由观测决定（reasoning_content / reasoning 变体）。
+            const reasoningDelta =
+              typeof delta?.reasoning_content === 'string'
+                ? delta.reasoning_content
+                : typeof delta?.reasoning === 'string'
+                  ? delta.reasoning
+                  : undefined
+            if (reasoningDelta) {
+              yield { type: 'thinking_delta', delta: reasoningDelta }
             }
 
             // 文本增量（经过 think 标签状态机处理）
@@ -529,7 +636,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
             result.content = `<think>${msg.reasoningContent}</think>${result.content}`
           }
         } else if (!disabled.has('reasoning_content')) {
-          result.reasoning_content = msg.reasoningContent
+          // 载体字段名：可观测档案用观测值（响应决定），否则用静态 reasoningWire。
+          // 空串 reasoning 直接写入：JSON.stringify 天然保留空字符串字段，
+          // 无需哨兵占位（Nova 的出站序列化路径不会丢弃空串）。
+          result[this.effectiveReasoningWireField()] = msg.reasoningContent
         }
       }
     }
@@ -546,6 +656,28 @@ export class OpenAICompatibleModelClient implements ModelClient {
     return rest
   }
 
+  /**
+   * 可观测档案的 reasoning 400 降级前置：把 body 中所有消息的 reasoning_content 键
+   * 换成 reasoning 变体，并把观测态切到 reasoning。
+   * 仅当 body 确实含 reasoning_content 键时返回 true（表示已就地改写，调用方应重新请求）。
+   * 失败（body 无该键 / 非数组）返回 false，调用方回退到剥离降级。
+   */
+  private trySwitchReasoningField(body: Record<string, unknown>, _errorText: string): boolean {
+    const messages = body.messages
+    if (!Array.isArray(messages)) return false
+    const hasKey = messages.some(
+      m => m && typeof m === 'object' && 'reasoning_content' in (m as Record<string, unknown>)
+    )
+    if (!hasKey) return false
+    body.messages = messages.map(m => {
+      if (!m || typeof m !== 'object') return m
+      const { reasoning_content: rc, ...rest } = m as Record<string, unknown>
+      if (rc === undefined) return m
+      return { ...rest, reasoning: rc }
+    })
+    this.observedReasoningField = 'reasoning'
+    return true
+  }
   /** 按本轮禁用标志过滤 thinking 注入参数 */
   private applyThinkingCapabilityFilter(
     params: Record<string, unknown>,
@@ -622,5 +754,23 @@ function applyCapabilityStripToBody(
       const { reasoning_content: _r, ...rest } = m as Record<string, unknown>
       return rest
     })
+  }
+}
+/**
+ * 补齐 usage 的 prompt_tokens_details.cached_tokens。
+ * 部分 provider（如 Kimi）在顶层返回 cached_tokens，但 prompt_tokens_details 缺失该字段，
+ * 导致下游按 details 口径读取时拿不到缓存命中数。补齐后保证 NormalizedUsage 与 rawUsage 口径一致。
+ * 仅在顶层有 cached_tokens 且 details 缺该字段时补齐，其余原样返回。
+ */
+function normalizeRawUsageDetails(raw: Record<string, unknown>): Record<string, unknown> {
+  if (typeof raw.cached_tokens !== 'number') return raw
+  const details =
+    typeof raw.prompt_tokens_details === 'object' && raw.prompt_tokens_details !== null
+      ? (raw.prompt_tokens_details as Record<string, unknown>)
+      : undefined
+  if (details && typeof details.cached_tokens === 'number') return raw
+  return {
+    ...raw,
+    prompt_tokens_details: { ...(details ?? {}), cached_tokens: raw.cached_tokens }
   }
 }

@@ -392,11 +392,18 @@ export class StreamProcessor {
 
           case 'error': {
             // AttemptController 原子决定 retry / fallback / fail（修复 P0-2）
-            const errState = this.attemptController.classifyForEmit(event.error)
+            // 安全重试门闩（I4）：已产生可观察输出的失败不得重试。
+            // hasNoObservableOutput 只看 toolCalls / 正文 / reasoning，不看 usage。
+            const hasNoObservableOutput =
+              toolCalls.length === 0 &&
+              assistantContent.length === 0 &&
+              rawContent.length === 0 &&
+              reasoningContent.length === 0
+            const errState = this.attemptController.classifyForEmit(event.error, event.failure)
             this.emit({ type: 'recovery_state', messageId, state: errState })
             await this.hookManager.trigger({ event: 'onError', messageId, error: event.error })
 
-            const decision = this.attemptController.onError(event.error)
+            const decision = this.attemptController.onError(event.error, event.failure, hasNoObservableOutput)
             if (decision.action === 'retry' || decision.action === 'fallback') {
               // 丢弃本 attempt 临时输出，避免与下一次 attempt 文本重复
               this.emit({
@@ -496,6 +503,12 @@ export class StreamProcessor {
         return finish({ kind: 'cancelled' })
       }
       const errMsg = `network_reset: ${(streamErr as Error)?.message ?? String(streamErr)}`
+      // 流读取异常也走门闩：已产生可观察输出则不重试。
+      const hasNoObservableOutput =
+        toolCalls.length === 0 &&
+        assistantContent.length === 0 &&
+        rawContent.length === 0 &&
+        reasoningContent.length === 0
       const errState = this.attemptController.classifyForEmit(errMsg)
       this.emit({ type: 'recovery_state', messageId, state: errState })
       await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
@@ -505,7 +518,7 @@ export class StreamProcessor {
       reasoningContent = ''
       toolCalls.length = 0
 
-      const decision = this.attemptController.onError(errMsg)
+      const decision = this.attemptController.onError(errMsg, undefined, hasNoObservableOutput)
       switch (decision.action) {
         case 'retry': {
           this.emit({

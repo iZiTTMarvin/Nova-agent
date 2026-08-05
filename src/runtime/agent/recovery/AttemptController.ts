@@ -1,11 +1,15 @@
 /**
  * AttemptController — 统一 retry / fallback 的 attempt 所有权
- 
+ *
  * 本控制器：
  * - 明确定义 maxAttempts =「当前 provider 的恢复尝试次数」（含首次错误）
  * - 每次模型流开始时分配唯一 attemptId；只有模型错误进入恢复链时才消耗预算
- * - 失败后按错误分类决定：再试 / 切 fallback / 上下文恢复 / 终止
+ * - 失败后按结构化 failure + hasNoObservableOutput 门闩决定：再试 / 切 fallback / 上下文恢复 / 终止
  * - fallback 切换后为新 provider 建独立计数，保留全 run 总预算
+ *
+ * 安全重试门闩：只有当本次 attempt 未产生任何可观察输出（无 tool call /
+ * 无正文 / 无 reasoning）时才允许重试。已产生权威输出的失败不得重试，
+ * 否则会导致副作用重复执行（如迁移跑两遍）或半个有效答案被丢弃。
  *
  * 禁止：只把 `<` 改成 `<=`（两状态机仍争 attempt 语义）。
  */
@@ -17,6 +21,7 @@ import {
   type RecoveryStateMachine
 } from './RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
+import type { ModelFailure } from '../../model/failureTypes'
 
 /** attempt 失败后的决策 */
 export type AttemptDecision =
@@ -32,6 +37,11 @@ export interface AttemptControllerOptions {
   maxAttemptsPerProvider?: number
   /** 全 run 恢复尝试总预算（含所有 provider），默认按 provider 数量计算 */
   maxTotalAttempts?: number
+  /**
+   * 随机源注入点，便于测试断言确定性退避序列；生产用 Math.random。
+   * 返回 [0,1) 区间的数，用于叠加 jitter。
+   */
+  random?: () => number
 }
 
 export class AttemptController {
@@ -45,6 +55,7 @@ export class AttemptController {
   private readonly maxTotalAttempts: number
   /** 当前进行中的 attemptId（beginAttempt 写入） */
   private currentAttemptId: string | null = null
+  private readonly random: () => number
 
   constructor(opts: AttemptControllerOptions) {
     this.recovery = opts.recovery
@@ -54,6 +65,7 @@ export class AttemptController {
     this.maxTotalAttempts =
       opts.maxTotalAttempts ??
       this.maxAttemptsPerProvider * (1 + Math.max(0, fallbackCount))
+    this.random = opts.random ?? Math.random
   }
 
   /** 新消息开始时重置 */
@@ -89,15 +101,21 @@ export class AttemptController {
   /**
    * 处理一次模型 error 事件，返回下一步动作。
    *
-   * 关键修复：用「已消耗的 providerAttempt」作为 decideFallback 的 retryAttempt，
-   * 而不是只在 shouldRetry 分支才更新的陈旧计数。
+   * 安全重试门闩：重试仅在 failure.retryable 且 hasNoObservableOutput 时允许。
+   * 已产生可观察输出的失败直接走 fallback 或终态失败，绝不重试。
    *
    * @param error 错误文本（可含 ModelTransport 分类前缀）
+   * @param failure 结构化失败；存在时为决策真源
+   * @param hasNoObservableOutput 本次 attempt 是否未产生任何权威输出
    */
-  onError(error: string): AttemptDecision {
+  onError(
+    error: string,
+    failure?: ModelFailure,
+    hasNoObservableOutput = false
+  ): AttemptDecision {
     // classify 的 attempt 参数语义：当前错误前已消耗的恢复次数（从 0 起）。
     const completedBeforeThis = this.providerAttempt
-    const errState = this.recovery.classify(error, completedBeforeThis)
+    const errState = this.recovery.classify(error, completedBeforeThis, failure)
     this.providerAttempt += 1
     this.totalAttempts += 1
 
@@ -109,19 +127,27 @@ export class AttemptController {
       return { action: 'recover_context', state: errState }
     }
 
-    // 当前 provider 仍可重试（attempt < max）
-    if (errState.kind === 'retrying' && this.recovery.shouldRetry(errState)) {
+    // 重试门闩：retryable + 未超限 + 本次 attempt 无可观察输出。
+    // 任何已产生权威事实的失败都不重试——直接走 fallback 或终态失败。
+    const failureRetryable = failure ? failure.retryable : errState.kind === 'retrying'
+    const mayRetry =
+      failureRetryable &&
+      hasNoObservableOutput &&
+      errState.kind === 'retrying' &&
+      this.recovery.shouldRetry(errState)
+
+    if (mayRetry) {
       const hint = this.recovery.buildRecoveryHint(errState)
       return {
         action: 'retry',
         attemptId: this.currentAttemptId ?? '',
         attempt: errState.attempt,
         hint,
-        backoffMs: this.recovery.backoffMs(errState.attempt)
+        backoffMs: this.computeBackoffMs(errState.attempt, failure)
       }
     }
 
-    // 重试耗尽（或非 retrying）：用「已消耗次数」驱动 fallback。
+    // 重试耗尽（或非 retrying / 已有可观察输出）：用「已消耗次数」驱动 fallback。
     // providerAttempt 在本次错误进入恢复链时已递增，故耗尽时 === maxAttemptsPerProvider。
     const fallbackDecision = decideFallback({
       currentError: error,
@@ -152,9 +178,21 @@ export class AttemptController {
     return { action: 'fail', error: failError }
   }
 
+  /**
+   * 退避毫秒数：retryAfterMs 优先（provider 明示），否则指数退避叠加 jitter。
+   */
+  private computeBackoffMs(attempt: number, failure?: ModelFailure): number {
+    if (failure?.retryAfterMs !== undefined) {
+      return failure.retryAfterMs
+    }
+    const base = this.recovery.backoffMs(attempt)
+    const jitter = Math.ceil(this.random() * this.recovery.jitterCeilMs(attempt))
+    return base + jitter
+  }
+
   /** 构造 recovery_state 事件用的状态（与 onError 分类一致，供 emit） */
-  classifyForEmit(error: string): RecoveryState {
+  classifyForEmit(error: string, failure?: ModelFailure): RecoveryState {
     const completedBeforeThis = this.providerAttempt
-    return this.recovery.classify(error, completedBeforeThis)
+    return this.recovery.classify(error, completedBeforeThis, failure)
   }
 }

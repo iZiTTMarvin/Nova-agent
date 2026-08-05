@@ -10,6 +10,7 @@
  * 禁止：只在 fetch 外层套固定总时长 Promise.race（无法区分正常长回复与真空闲）。
  */
 import type { ChatEvent } from './types'
+import type { ModelFailure, ModelFailureKind } from './failureTypes'
 
 /** 规范化错误类别（写入 ChatEvent.error 文本，供 Recovery 匹配） */
 export type TransportErrorClass =
@@ -429,10 +430,9 @@ function concatChunks(chunks: Uint8Array[], bytes: number): Uint8Array {
   }
   return output
 }
-
 /**
  * 将 transport 层异常转为 ChatEvent（供 ModelClient yield）。
- * 用户取消 → cancelled；其余 → error（带分类前缀）。
+ * 用户取消 → cancelled；其余 → error（携带结构化 failure，供重试决策消费）。
  */
 export function transportErrorToChatEvent(err: unknown): ChatEvent {
   const cls = classifyThrownError(err)
@@ -440,15 +440,113 @@ export function transportErrorToChatEvent(err: unknown): ChatEvent {
     return { type: 'cancelled' }
   }
   const msg = String((err as Error)?.message ?? err)
-  if (/^timeout_|^network_reset:|^http_/.test(msg)) {
-    return { type: 'error', error: msg }
-  }
-  return { type: 'error', error: formatTransportError(cls, msg) }
+  const failure = thrownToFailure(cls, msg)
+  return { type: 'error', error: failure.message, failure }
 }
 
-/** HTTP 状态码 → 分类错误文本 */
-export function httpStatusToError(status: number, bodyText: string): string {
-  const retryable = status === 429 || (status >= 500 && status < 600)
-  const cls: TransportErrorClass = retryable ? 'http_retryable' : 'http_fatal'
-  return formatTransportError(cls, `API 错误 ${status}: ${bodyText}`)
+
+/** TransportErrorClass（含超时/网络子类）→ ModelFailureKind */
+function thrownFailureKind(cls: TransportErrorClass): ModelFailureKind {
+  switch (cls) {
+    case 'timeout_connect':
+    case 'timeout_first_byte':
+    case 'timeout_idle':
+    case 'timeout_total':
+      return 'timeout'
+    case 'network_reset':
+      return 'network'
+    default:
+      return 'unknown'
+  }
 }
+
+/** 把抛出的 transport 异常归一化为结构化失败 */
+export function thrownToFailure(cls: TransportErrorClass, message: string): ModelFailure {
+  // cancelled 不应进入失败路径（调用方已先行返回 cancelled 事件）
+  const kind = thrownFailureKind(cls)
+  return { kind, retryable: true, message }
+}
+
+/**
+ * HTTP 状态码 → 结构化失败。
+ * 429 → rate_limit；5xx → provider_unavailable；401/403 → auth；
+ * 402 → provider_billing；其余 4xx → 不可重试 unknown。
+ * Retry-After 头（429/503）解析为 retryAfterMs，存在时由调用方覆盖指数退避。
+ */
+export function httpStatusToFailure(
+  status: number,
+  bodyText: string,
+  headers?: Headers
+): ModelFailure {
+  const requestId = readRequestId(headers)
+  const message = formatTransportError(
+    httpErrorClass(status),
+    `API 错误 ${status}: ${bodyText}`
+  )
+  let kind: ModelFailureKind
+  let retryable: boolean
+  if (status === 429) {
+    kind = 'rate_limit'
+    retryable = true
+  } else if (status === 503 || status === 502 || status === 504) {
+    kind = 'provider_unavailable'
+    retryable = true
+  } else if (status >= 500 && status < 600) {
+    kind = 'provider_unavailable'
+    retryable = true
+  } else if (status === 401 || status === 403) {
+    kind = 'auth'
+    retryable = false
+  } else if (status === 402) {
+    kind = 'provider_billing'
+    retryable = false
+  } else {
+    kind = 'unknown'
+    retryable = false
+  }
+  const retryAfterMs = parseRetryAfter(headers)
+  const failure: ModelFailure = { kind, retryable, message }
+  if (retryAfterMs !== undefined) failure.retryAfterMs = retryAfterMs
+  if (requestId !== undefined) failure.requestId = requestId
+  return failure
+}
+
+/** HTTP 状态码 → transport 错误类（用于消息前缀） */
+function httpErrorClass(status: number): TransportErrorClass {
+  const retryable = status === 429 || (status >= 500 && status < 600)
+  return retryable ? 'http_retryable' : 'http_fatal'
+}
+
+/** 读取网关请求 id，仅诊断用 */
+function readRequestId(headers?: Headers): string | undefined {
+  if (!headers) return undefined
+  return headers.get('x-request-id') ?? headers.get('request-id') ?? undefined
+}
+
+/**
+ * 解析 Retry-After 头（RFC 7231）。
+ * 支持两种格式：秒数（`120`）与 HTTP-date（`Wed, 21 Oct 2026 07:28:00 GMT`）。
+ * 解析失败或为负/过大（>1h，避免网关异常值导致长时间冻结）时返回 undefined。
+ */
+export function parseRetryAfter(headers?: Headers): number | undefined {
+  if (!headers) return undefined
+  const raw = headers.get('retry-after')
+  if (!raw) return undefined
+
+  const seconds = Number(raw.trim())
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    const ms = Math.ceil(seconds * 1000)
+    return ms <= MAX_RETRY_AFTER_MS ? ms : undefined
+  }
+
+  const dateMs = Date.parse(raw.trim())
+  if (!Number.isNaN(dateMs)) {
+    const ms = Math.ceil(dateMs - Date.now())
+    if (ms <= 0) return 0
+    return ms <= MAX_RETRY_AFTER_MS ? ms : undefined
+  }
+  return undefined
+}
+
+/** Retry-After 上界：超过 1h 视为网关异常值，忽略以退回指数退避 */
+const MAX_RETRY_AFTER_MS = 60 * 60 * 1000

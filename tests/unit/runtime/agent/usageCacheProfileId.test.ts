@@ -91,9 +91,10 @@ describe('usage 事件 cacheProfileId', () => {
   it('fallback 切换后 usage 归属新 provider 的 profileId', async () => {
     vi.useFakeTimers()
     const primary = new MockModelClient()
-    primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
-    primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
-    primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
+    // 主模型重试上限 = 10，连续 10 次 429 耗尽后切 fallback
+    for (let i = 0; i < 10; i++) {
+      primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
+    }
 
     const fallback = new MockModelClient()
     fallback.addResponse({

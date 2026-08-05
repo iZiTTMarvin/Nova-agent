@@ -227,14 +227,13 @@ describe('T2-1 StreamProcessor：reasoningContent 累积', () => {
     expect(result.reasoningContent).toBeUndefined()
   })
 
-  it('retry：失败 attempt 的 reasoning 清空，成功 attempt 不重复拼接', async () => {
+  it('retry：无可观察输出的失败 attempt 不残留 reasoning，成功 attempt 独立拼接', async () => {
+    // I4 安全重试：只有未产生任何可观察输出（含 reasoning）的失败才允许重试。
+    // 因此失败 attempt 必须在首个 thinking/text 前报错。
     const client = new MockModelClient()
-    // 第一次：thinking 后网络错误 → retry
+    // 第一次：首字节前网络错误 → retry（无可观察输出）
     client.addResponse({
-      events: [
-        { type: 'thinking_delta', delta: '失败 attempt 的思考' },
-        { type: 'error', error: 'network_reset: connection reset' }
-      ]
+      events: [{ type: 'error', error: 'network_reset: connection reset' }]
     })
     // 第二次：全新 thinking + 文本
     client.addResponse({
@@ -252,9 +251,22 @@ describe('T2-1 StreamProcessor：reasoningContent 累积', () => {
     const second = await runOnce(processor)
     expect(second.kind).toBe('assistant')
     if (second.kind !== 'assistant') return
-    // 不得拼接失败 attempt 的 reasoning
     expect(second.reasoningContent).toBe('成功 attempt 的思考')
     expect(second.assistantContent).toBe('ok')
+  })
+
+  it('I4：已产生 reasoning 后的错误不重试（走终态失败）', async () => {
+    // thinking_delta 已落地 → reasoning 非空 → hasNoObservableOutput=false → 不重试
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'thinking_delta', delta: '半截思考' },
+        { type: 'error', error: 'network_reset: connection reset' }
+      ]
+    })
+    const { processor } = createProcessor(client)
+    const result = await runOnce(processor)
+    expect(result.kind).toBe('error')
   })
 
   it('cancel：流中取消返回 cancelled，不产出带 reasoning 的 assistant', async () => {

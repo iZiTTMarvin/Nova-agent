@@ -10,6 +10,7 @@ import {
   renderModeToolInventory
 } from '../runtime/agent'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
+import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
@@ -161,12 +162,11 @@ async function main(): Promise<void> {
     appendFileSync(eventsPath, `${JSON.stringify(event)}\n`, 'utf8')
     if (event.type === 'usage') addUsage(usage, event.usage)
   })
-
   const modelClient = new OpenAICompatibleModelClient({
     apiKey,
     baseUrl: options.baseUrl,
     modelId: options.model,
-    cacheProfile: 'deepseek',
+    cacheProfile: resolveCacheProfile(options.baseUrl, options.model).id,
     reasoningEffort: options.reasoningEffort,
     supportsVision: false
   })

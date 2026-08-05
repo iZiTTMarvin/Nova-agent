@@ -31,7 +31,7 @@ export interface FallbackDeciderInput {
   currentError: string
   /** 当前模型（主或某 fallback）已重试次数 */
   retryAttempt: number
-  /** 当前模型重试上限（与 RecoveryStateMachine 的 MAX_RETRY_ATTEMPTS 对齐） */
+  /** 当前模型重试上限（与 RecoveryStateMachine 的 MAX_RETRY_ATTEMPTS=10 对齐） */
   maxAttempts: number
   /** 当前正在使用的 fallback 索引（0 表示主模型，1+ 表示第 N 个 fallback） */
   currentFallbackIndex: number

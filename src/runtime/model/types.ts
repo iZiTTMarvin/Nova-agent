@@ -130,7 +130,7 @@ export type ChatEvent =
   | { type: 'message_start' }
   | { type: 'message_end'; finishReason: 'stop' | 'tool_calls' | string }
   | { type: 'usage'; usage: NormalizedUsage }
-  | { type: 'error'; error: string }
+  | { type: 'error'; error: string; failure?: import('./failureTypes').ModelFailure }
   | { type: 'context_overflow'; rawError: string }
   | { type: 'cancelled' }
   /**

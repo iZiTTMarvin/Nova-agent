@@ -582,17 +582,17 @@ describe('黄金测试 §9.9 模型瞬时错误重试', () => {
 // ============================================================
 // 场景 10：模型降级 fallback
 //
-// FIXME(P0-2): 待 AttemptController 修复后，本场景应断言「应切 fallback」。
-// 根因：modelErrorAttempt 只在 shouldRetry=true 分支更新，耗尽时停在 2，
-// decideFallback 收到陈旧值 → 永不切 fallback。黄金测试不再把该缺陷锁成基线。
+// 主模型重试上限提升到 10 后，需连续 10 次瞬态错误才耗尽当前 provider 预算，
+// 之后 decideFallback 切换到备用模型。退避序列最长触顶 32s，用 fake timers。
 // ============================================================
 describe('黄金测试 模型降级 fallback', () => {
   it('契约：主模型连续 429 → model_switched → fallback 成功完成', async () => {
     vi.useFakeTimers()
     const primary = new MockModelClient()
-    primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
-    primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
-    primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
+    // 主模型重试上限 = 10，连续 10 次 429 耗尽后切 fallback
+    for (let i = 0; i < 10; i++) {
+      primary.addResponse({ events: [{ type: 'error', error: '429 rate limit' }] })
+    }
 
     const fallback = new MockModelClient()
     fallback.addResponse({
@@ -973,6 +973,7 @@ describe('黄金测试 §9.18 context_breakdown 兜底', () => {
 // ============================================================
 describe('黄金测试 §9.19 runAgentLoop 异常兜底（catch 路径）', () => {
   it('流迭代器抛异常 → onError + 恰好一个 error + state=error + 无 message_end', async () => {
+    vi.useFakeTimers()
     // 自定义 client：chat 返回的 async generator 在遍历时直接 throw（而非 yield error 事件）。
     // 这模拟底层连接崩溃，异常从 StreamProcessor.run 的 for-await 冒泡到 runAgentLoop 的 catch。
     const throwingClient = {
@@ -987,7 +988,9 @@ describe('黄金测试 §9.19 runAgentLoop 异常兜底（catch 路径）', () =
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client: throwingClient })
     loop.setToolRegistry(registry)
 
-    const events = await runAndCollect(loop, eventBus, 'hi')
+    // 抛异常的 client 每次都是 network_reset + 无可观察输出，会重试到上限 10 次后终态失败。
+    // 退避序列最长触顶 32s，用 fake timers + drained 收集推进。
+    const events = await runAndCollectDrained(loop, eventBus, 'hi')
 
     // 恰好一个 error 事件（验证无双重 emit——曾经的 C1 违规点）
     const errorEvents = events.filter(e => e.type === 'error')

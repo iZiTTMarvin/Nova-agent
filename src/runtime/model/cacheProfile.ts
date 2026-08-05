@@ -27,10 +27,18 @@ export interface CacheProfile {
   /**
    * reasoning 回放载体：
    * - 'reasoning_content'：assistant 消息带独立 reasoning_content 字段（DeepSeek / Kimi / GLM）
+   * - 'reasoning'：同上但字段名为 reasoning（部分 provider 端点变体）
    * - 'think-tag'：注回 content 开头的 <think>…</think>（MiniMax OpenAI 兼容端点
    *   不识别请求侧 reasoning_content 字段，官方要求 content 中完整保留 think 标签）
    */
-  reasoningWire: 'reasoning_content' | 'think-tag'
+  reasoningWire: 'reasoning_content' | 'reasoning' | 'think-tag'
+  /**
+   * 为 true 时，实际使用的 reasoning 字段由首次响应观测决定，初始值取 reasoningWire。
+   * 观测结果存在 client 实例态（不写回本静态表），且允许被后续响应覆盖。
+   * 已知局限（接受，不在本阶段解决）：新建 client 实例会丢失观测，需一次请求重新学习；
+   * 不跨进程持久化。
+   */
+  reasoningWireObservable?: boolean
   /** T3 接线：低于此 token 数时不指望前缀缓存收益 */
   minCacheableTokens?: number
   /** T3 接线：空闲压缩 / TTL 相关策略 */
@@ -69,6 +77,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     promptCacheKey: 'session',
     reasoningReplay: 'all-history',
     reasoningWire: 'reasoning_content',
+    // Kimi 实际 reasoning 字段由首次响应观测决定（reasoning_content / reasoning 两种端点变体）
+    reasoningWireObservable: true,
     idlePolicy: 'provider-managed'
   },
   glm: {
