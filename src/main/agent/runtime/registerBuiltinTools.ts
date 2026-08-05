@@ -17,6 +17,7 @@ import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
+import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
 import type { WorkflowOrchestrator } from '../../../runtime/workflow'
 import type { AgentLoop } from '../../../runtime/agent'
@@ -61,6 +62,7 @@ export function registerBuiltinTools(
   toolRegistry.register(editTool)
   toolRegistry.register(writeTool)
   toolRegistry.register(bashTool)
+  toolRegistry.register(archiveReadTool)
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)

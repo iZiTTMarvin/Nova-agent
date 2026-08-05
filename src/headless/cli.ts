@@ -18,6 +18,7 @@ import { findTool } from '../runtime/tools/findTool'
 import { editTool } from '../runtime/tools/editTool'
 import { writeTool } from '../runtime/tools/writeTool'
 import { bashTool } from '../runtime/tools/bashTool'
+import { archiveReadTool } from '../runtime/tools/archiveRead'
 import type { AgentEvent } from '../runtime/agent/types'
 import type { NormalizedUsage } from '../shared/model/types'
 import {
@@ -114,6 +115,7 @@ function createCodingTools(): ToolRegistry {
   registry.register(editTool)
   registry.register(writeTool)
   registry.register(bashTool)
+  registry.register(archiveReadTool)
   return registry
 }
 

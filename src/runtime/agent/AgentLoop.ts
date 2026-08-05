@@ -761,7 +761,8 @@ export class AgentLoop {
       getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
       enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
       runOverflowCompaction: (mode) =>
-        this.compactionService.runOverflowCompaction(mode, this.abortController?.signal)
+        this.compactionService.runOverflowCompaction(mode, this.abortController?.signal),
+      requestProjectionPolicy: { enabled: true },
     }
 
     // 模型终态错误只在此记录；错误事件与全部收尾由 finalizeTurn 统一执行，
