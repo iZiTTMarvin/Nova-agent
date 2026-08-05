@@ -2,6 +2,30 @@
 
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@pierre/diffs', () => ({
+  DEFAULT_VIRTUAL_FILE_METRICS: {
+    lineHeight: 20,
+    hunkSeparatorHeight: 20,
+    spacing: 0
+  }
+}))
+
+vi.mock('@pierre/diffs/react', async () => {
+  const ReactModule = await import('react')
+  return {
+    VirtualizerContext: ReactModule.createContext(undefined),
+    PatchDiff: () => ReactModule.createElement('div', { 'data-testid': 'pierre-diff' })
+  }
+})
+
+vi.mock('../../../../src/renderer/features/diff/pierreVirtualizer', () => ({
+  acquirePierreVirtualizer: () => ({
+    virtualizer: {},
+    release: () => undefined
+  })
+}))
+
 import { ReviewTab } from '../../../../src/renderer/features/inspector/ReviewTab'
 import { resetLayoutStoreForTests, useLayoutStore } from '../../../../src/renderer/stores/useLayoutStore'
 import { resetChatStoreForTests, useChatStore } from '../../../../src/renderer/stores/useChatStore'

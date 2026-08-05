@@ -33,6 +33,7 @@
   "dependencies": {
     "@astryxdesign/core": "^0.2.0",
     "@astryxdesign/theme-neutral": "^0.2.0",
+    "@pierre/diffs": "1.2.12",
     "@tanstack/react-virtual": "^3.14.5",
     "@vscode/ripgrep": "^1.18.0",
     "better-sqlite3": "^11.9.1",

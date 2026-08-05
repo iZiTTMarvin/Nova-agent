@@ -1,5 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { WorkerPoolContextProvider } from '@pierre/diffs/react'
+import DiffWorkerUrl from '@pierre/diffs/worker/worker.js?worker&url'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { installRendererStallDetector } from '../shared/diagnostics/stallDetector'
@@ -15,7 +17,19 @@ installRendererStallDetector()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <WorkerPoolContextProvider
+        poolOptions={{
+          poolSize: 2,
+          workerFactory: () => new Worker(DiffWorkerUrl, { type: 'module' })
+        }}
+        highlighterOptions={{
+          theme: { light: 'pierre-light', dark: 'pierre-dark' },
+          lineDiffType: 'word-alt',
+          preferredHighlighter: 'shiki-wasm'
+        }}
+      >
+        <App />
+      </WorkerPoolContextProvider>
     </ErrorBoundary>
   </React.StrictMode>
 )

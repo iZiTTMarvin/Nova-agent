@@ -1,70 +1,145 @@
 // @vitest-environment jsdom
 
 import React, { createRef } from 'react'
-import { describe, expect, it } from 'vitest'
-import { HunkView, VIRTUALIZE_HUNK_LINE_THRESHOLD } from '../../../src/renderer/features/diff/diffLines'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderDom } from './renderDom'
 import type { DiffHunk } from '../../../src/shared/diff/types'
 
-function makeHunk(lineCount: number): DiffHunk {
-  const lines: string[] = []
-  for (let i = 0; i < lineCount; i++) {
-    if (i % 3 === 0) lines.push(`+const value${i} = call(${i});`)
-    else if (i % 3 === 1) lines.push(`-const old${i} = legacy(${i});`)
-    else lines.push(` context line ${i}`)
+const mocks = vi.hoisted(() => ({
+  patchDiff: vi.fn(),
+  acquire: vi.fn(),
+  release: vi.fn(),
+  virtualizer: {}
+}))
+
+vi.mock('@pierre/diffs', () => ({
+  DEFAULT_VIRTUAL_FILE_METRICS: {
+    lineHeight: 20,
+    hunkSeparatorHeight: 20,
+    spacing: 0
   }
+}))
+
+vi.mock('@pierre/diffs/react', async () => {
+  const ReactModule = await import('react')
+  return {
+    VirtualizerContext: ReactModule.createContext(undefined),
+    PatchDiff: (props: Record<string, unknown>) => {
+      mocks.patchDiff(props)
+      return ReactModule.createElement('div', {
+        'data-testid': 'pierre-diff',
+        'data-patch': props.patch
+      })
+    }
+  }
+})
+
+vi.mock('../../../src/renderer/features/diff/pierreVirtualizer', () => ({
+  acquirePierreVirtualizer: (element: HTMLElement) => {
+    mocks.acquire(element)
+    return {
+      virtualizer: mocks.virtualizer,
+      release: mocks.release
+    }
+  }
+}))
+
+import {
+  HunkView,
+  PREVIEW_HUNK_LINE_LIMIT
+} from '../../../src/renderer/features/diff/diffLines'
+
+function makeHunk(lineCount: number): DiffHunk {
+  const lines = Array.from({ length: lineCount }, (_, index) => (
+    index % 2 === 0
+      ? `+const value${index} = ${index}`
+      : `-const old${index} = ${index}`
+  ))
+
   return {
     oldStart: 1,
-    oldLines: lineCount,
+    oldLines: Math.floor(lineCount / 2),
     newStart: 1,
-    newLines: lineCount,
+    newLines: Math.ceil(lineCount / 2),
     content: lines.join('\n')
   }
 }
 
-describe('HunkView 虚拟化', () => {
-  it('小 hunk（≤阈值）全量渲染', () => {
-    const hunk = makeHunk(10)
-    const renderer = renderDom(<HunkView hunk={hunk} filePath="a.ts" />)
-    const rows = renderer.container.querySelectorAll('.diff-line')
-    expect(rows.length).toBe(10)
-    renderer.unmount()
+describe('HunkView Pierre 集成', () => {
+  beforeEach(() => {
+    mocks.patchDiff.mockClear()
+    mocks.acquire.mockClear()
+    mocks.release.mockClear()
   })
 
-  it('大 hunk（>阈值）走虚拟化：挂载行数有界，不随总行数线性增长', () => {
+  it('复用 ReviewTab 外层滚动容器的 Pierre Virtualizer', () => {
     const scrollRef = createRef<HTMLDivElement>()
-    const big = makeHunk(1000)
-    const lineCount = big.content.split('\n').length
     const renderer = renderDom(
-      <div ref={scrollRef} style={{ height: 400, overflow: 'auto' }}>
-        <HunkView hunk={big} filePath="a.ts" scrollRef={scrollRef} />
+      <div ref={scrollRef}>
+        <HunkView
+          hunk={makeHunk(20)}
+          filePath="src/a.ts"
+          scrollRef={scrollRef}
+        />
       </div>
     )
-    const rows = renderer.container.querySelectorAll('.diff-line')
-    // 虚拟化：只渲染可见窗口 + overscan，远小于总行数
-    expect(rows.length).toBeLessThan(200)
-    expect(rows.length).toBeGreaterThan(0)
-    // 虚拟容器高度 = 全部行高（虚拟化路径不再截断，撑起完整滚动条）
-    const virtual = renderer.container.querySelector<HTMLElement>('.diff-hunk__virtual')
-    expect(virtual?.style.height).toBe(`${lineCount * 22}px`)
+
+    expect(mocks.acquire).toHaveBeenCalledTimes(1)
+    expect(mocks.acquire).toHaveBeenCalledWith(scrollRef.current)
+    expect(mocks.patchDiff).toHaveBeenCalledTimes(1)
+    expect(mocks.patchDiff.mock.calls[0][0]).toMatchObject({
+      disableWorkerPool: false
+    })
+
     renderer.unmount()
+    expect(mocks.release).toHaveBeenCalledTimes(1)
   })
 
-  it('wrap 模式禁用虚拟化（行高不固定会错位）', () => {
+  it('展开大 hunk 后仍走同一 Virtualizer，并向 Pierre 交付完整 patch', () => {
     const scrollRef = createRef<HTMLDivElement>()
-    const big = makeHunk(200)
+    const hunk = makeHunk(PREVIEW_HUNK_LINE_LIMIT + 20)
     const renderer = renderDom(
-      <div ref={scrollRef} style={{ height: 400, overflow: 'auto' }}>
-        <HunkView hunk={big} filePath="a.ts" scrollRef={scrollRef} wrap />
+      <div ref={scrollRef}>
+        <HunkView
+          hunk={hunk}
+          filePath="src/large.ts"
+          scrollRef={scrollRef}
+        />
       </div>
     )
-    const rows = renderer.container.querySelectorAll('.diff-line')
-    expect(rows.length).toBe(200)
-    expect(renderer.container.querySelector('.diff-hunk__virtual')).toBeNull()
+
+    const initial = mocks.patchDiff.mock.calls.at(-1)?.[0] as { patch: string }
+    expect(initial.patch).not.toContain(`value${PREVIEW_HUNK_LINE_LIMIT + 18}`)
+
+    const expand = renderer.container.querySelector<HTMLButtonElement>('.diff-hunk__truncation')
+    expect(expand).not.toBeNull()
+    act(() => expand?.click())
+
+    const expanded = mocks.patchDiff.mock.calls.at(-1)?.[0] as { patch: string }
+    expect(expanded.patch).toContain(`value${PREVIEW_HUNK_LINE_LIMIT + 18}`)
+    expect(mocks.acquire).toHaveBeenCalledTimes(1)
+
     renderer.unmount()
   })
 
-  it('阈值常量已导出且合理', () => {
-    expect(VIRTUALIZE_HUNK_LINE_THRESHOLD).toBeGreaterThan(0)
+  it('文本模式显式关闭 Worker 和昂贵高亮', () => {
+    const renderer = renderDom(
+      <HunkView
+        hunk={makeHunk(4)}
+        filePath="notes.txt"
+        syntaxHighlight={false}
+      />
+    )
+
+    expect(mocks.patchDiff.mock.calls.at(-1)?.[0]).toMatchObject({
+      disableWorkerPool: true,
+      options: {
+        lineDiffType: 'none',
+        maxLineDiffLength: 0,
+        tokenizeMaxLineLength: 0
+      }
+    })
+
+    renderer.unmount()
   })
 })

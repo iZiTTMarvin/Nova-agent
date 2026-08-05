@@ -78,6 +78,9 @@ export default defineConfig({
       }
     },
     plugins: [react()],
+    worker: {
+      format: 'es'
+    },
     server: {
       host: '127.0.0.1'
     }
