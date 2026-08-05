@@ -26,7 +26,7 @@ const ROWS: Array<{ key: BreakdownRow['key']; label: string }> = [
   { key: 'other', label: '其他' }
 ]
 
-/** 渲染进度圆环的小图标,无依赖 */
+/** 渲染进度圆环的小图标,圆环底色走主题变量,进度色随占用率走语义 token */
 const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ratio }) => {
   const size = 16
   const strokeWidth = 3
@@ -35,7 +35,14 @@ const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ra
   const dashOffset = circumference * (1 - Math.min(1, Math.max(0, ratio)))
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke="var(--border-warm)"
+        strokeWidth={strokeWidth}
+      />
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -47,10 +54,15 @@ const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ra
         strokeDashoffset={dashOffset}
         strokeLinecap="round"
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 0.3s ease, stroke 0.3s ease' }}
+        style={{ transition: 'stroke-dashoffset 0.3s ease' }}
       />
     </svg>
   )
+}
+
+interface PopoverGeometry {
+  placement: 'left' | 'right'
+  maxWidth: number
 }
 
 export const ContextIndicator: React.FC = () => {
@@ -64,17 +76,48 @@ export const ContextIndicator: React.FC = () => {
   const ratio = effectiveLimit > 0 && total > 0 ? Math.min(total / effectiveLimit, 1) : 0
   const percent = total > 0 ? Math.round(ratio * 1000) / 10 : 0
   const getColor = () => {
-    if (ratio >= 0.8) return '#ef4444'
-    if (ratio >= 0.5) return '#f59e0b'
-    return '#10b981'
+    if (ratio >= 0.8) return 'var(--color-error)'
+    if (ratio >= 0.5) return 'var(--color-accent)'
+    return 'var(--color-success)'
   }
   const color = getColor()
 
   /** hover 触发(短延迟避免误触),离开容器再关 */
   const [isOpen, setIsOpen] = useState(false)
+  const [geometry, setGeometry] = useState<PopoverGeometry>({ placement: 'right', maxWidth: 320 })
   const openTimer = useRef<number | null>(null)
   const closeTimer = useRef<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  /** 根据 composer 中心与视口剩余空间,决定 popover 向左还是向右展开,避免遮挡回到底部按钮 */
+  const computeGeometry = useCallback(() => {
+    const wrap = containerRef.current
+    if (!wrap) return
+    const wrapRect = wrap.getBoundingClientRect()
+    const composer = wrap.closest('.chat-panel__composer-inner')
+    const composerRect = composer?.getBoundingClientRect()
+    const composerCenterX = composerRect
+      ? composerRect.left + composerRect.width / 2
+      : window.innerWidth / 2
+    const iconCenterX = wrapRect.left + wrapRect.width / 2
+    const preferRight = iconCenterX >= composerCenterX
+
+    const margin = 12
+    const minWidth = 180
+    const maxPreferred = 320
+    const rightSpace = window.innerWidth - wrapRect.right - margin
+    const leftSpace = wrapRect.left - margin
+    const rightFits = rightSpace >= minWidth
+    const leftFits = leftSpace >= minWidth
+
+    let placement: 'left' | 'right' = preferRight ? 'right' : 'left'
+    if (placement === 'right' && !rightFits && leftFits) placement = 'left'
+    if (placement === 'left' && !leftFits && rightFits) placement = 'right'
+
+    const space = placement === 'right' ? rightSpace : leftSpace
+    const maxWidth = Math.max(minWidth, Math.min(maxPreferred, space))
+    setGeometry({ placement, maxWidth })
+  }, [])
 
   const handleMouseEnter = useCallback(() => {
     if (closeTimer.current) {
@@ -82,8 +125,9 @@ export const ContextIndicator: React.FC = () => {
       closeTimer.current = null
     }
     if (openTimer.current) window.clearTimeout(openTimer.current)
+    computeGeometry()
     openTimer.current = window.setTimeout(() => setIsOpen(true), 80)
-  }, [])
+  }, [computeGeometry])
 
   const handleMouseLeave = useCallback(() => {
     if (openTimer.current) {
@@ -100,6 +144,15 @@ export const ContextIndicator: React.FC = () => {
       if (closeTimer.current) window.clearTimeout(closeTimer.current)
     }
   }, [])
+
+  /** popover 打开期间随窗口resize重新计算位置,避免拉伸后溢出 */
+  useEffect(() => {
+    if (!isOpen) return
+    computeGeometry()
+    const onResize = () => computeGeometry()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [isOpen, computeGeometry])
 
   /** 分项行:按 tokens 降序,百分比按 totalEstimated 算 */
   const rows = useMemo<Array<BreakdownRow & { percent: string }>>(() => {
@@ -136,7 +189,8 @@ export const ContextIndicator: React.FC = () => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.96 }}
             transition={{ duration: 0.14, ease: 'easeOut' }}
-            className="context-popover"
+            className={`context-popover context-popover--${geometry.placement}`}
+            style={{ maxWidth: geometry.maxWidth }}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
@@ -164,7 +218,7 @@ export const ContextIndicator: React.FC = () => {
               <ul className="context-popover__list">
                 {rows.map(row => (
                   <li key={row.key} className="context-popover__row">
-                    <span className="context-popover__dot" aria-hidden="true" />
+                    <span className="context-popover__dot" data-key={row.key} aria-hidden="true" />
                     <span className="context-popover__label">{row.label}</span>
                     <span className="context-popover__value">{formatTokens(row.tokens)}</span>
                     <span className="context-popover__pct">{row.percent}%</span>

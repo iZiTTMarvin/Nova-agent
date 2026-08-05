@@ -622,19 +622,34 @@
 
 .context-popover {
   position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 320px;
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  bottom: 100%;
+  width: max-content;
+  min-width: 180px;
+  max-width: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popup);
   padding: 12px 14px;
   z-index: 60;
   font-size: 12px;
-  color: #d4d4d4;
+  color: var(--text-primary);
   user-select: none;
+}
+
+/* 根据 context ring 在 composer 中的位置自动向左/右展开,避免遮挡回到底部按钮 */
+.context-popover--right {
+  left: 100%;
+  right: auto;
+  margin: 0 0 8px 8px;
+  transform-origin: bottom left;
+}
+
+.context-popover--left {
+  right: 100%;
+  left: auto;
+  margin: 0 8px 8px 0;
+  transform-origin: bottom right;
 }
 
 .context-popover__header {
@@ -648,24 +663,24 @@
 .context-popover__title {
   font-size: 12px;
   font-weight: 500;
-  color: #e5e5e5;
+  color: var(--text-primary);
 }
 
 .context-popover__total {
   font-size: 11px;
-  color: #a3a3a3;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .context-popover__pct {
-  color: #737373;
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .context-popover__bar {
   height: 4px;
   width: 100%;
-  background: #2a2a2a;
+  background: var(--bg-sand);
   border-radius: 2px;
   overflow: hidden;
   margin-bottom: 10px;
@@ -674,7 +689,7 @@
 .context-popover__bar-fill {
   height: 100%;
   border-radius: 2px;
-  transition: width 0.3s ease, background 0.3s ease;
+  transition: width 0.3s ease;
 }
 
 .context-popover__list {
@@ -692,36 +707,46 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #d4d4d4;
+  color: var(--text-secondary);
 }
 
 .context-popover__dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: var(--text-muted);
   display: inline-block;
 }
 
+.context-popover__dot[data-key='messages'] { background: var(--color-brand); }
+.context-popover__dot[data-key='skills'] { background: var(--color-success); }
+.context-popover__dot[data-key='tools'] { background: var(--color-focus); }
+.context-popover__dot[data-key='systemPrompt'] { background: var(--color-accent); }
+.context-popover__dot[data-key='other'] { background: var(--text-muted); }
+
 .context-popover__label {
-  color: #d4d4d4;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .context-popover__value {
   font-variant-numeric: tabular-nums;
-  color: #d4d4d4;
+  color: var(--text-primary);
 }
 
 .context-popover__row .context-popover__pct {
   min-width: 44px;
   text-align: right;
-  color: #737373;
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .context-popover__divider {
   height: 1px;
-  background: #2a2a2a;
+  background: var(--border-warm);
   margin: 10px 0 8px;
 }
 
@@ -730,19 +755,19 @@
   align-items: center;
   justify-content: space-between;
   font-size: 12px;
-  color: #a3a3a3;
+  color: var(--text-secondary);
 }
 
 .context-popover__hitrate {
   font-variant-numeric: tabular-nums;
-  color: #d4d4d4;
+  color: var(--text-primary);
   font-weight: 500;
 }
 
 .context-usage {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #2a2a2a;
+  border-top: 1px solid var(--border-warm);
 }
 
 .context-usage__header {
@@ -756,12 +781,12 @@
 .context-usage__title {
   font-size: 12px;
   font-weight: 500;
-  color: #e5e5e5;
+  color: var(--text-primary);
 }
 
 .context-usage__summary {
   font-size: 11px;
-  color: #a3a3a3;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -769,13 +794,13 @@
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #8a8a8a;
+  color: var(--text-muted);
 }
 
 .context-usage__bar {
   height: 4px;
   width: 100%;
-  background: #2a2a2a;
+  background: var(--bg-sand);
   border-radius: 2px;
   overflow: hidden;
   display: flex;
@@ -783,12 +808,12 @@
 }
 
 .context-usage__bar-hit {
-  background: #34d399;
+  background: var(--color-success);
   height: 100%;
 }
 
 .context-usage__bar-write {
-  background: #60a5fa;
+  background: var(--color-focus);
   height: 100%;
 }
 
@@ -800,11 +825,42 @@
 }
 
 .context-usage__label {
-  color: #a3a3a3;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .context-usage__value {
-  color: #d4d4d4;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-usage__profile {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-warm);
+}
+
+.context-usage__profile-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.context-usage__profile-id {
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-usage__profile-hit {
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -814,7 +870,7 @@
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--text-muted);
   user-select: none;
   cursor: default;
 }
@@ -823,38 +879,39 @@
 .usage-stats__bar {
   width: 32px;
   height: 4px;
-  background: #e5e7eb;
+  background: var(--bg-sand);
   border-radius: 2px;
   overflow: hidden;
   display: flex;
 }
 
 .usage-stats__bar-hit {
-  background: #34d399;
+  background: var(--color-success);
   height: 100%;
 }
 
 .usage-stats__bar-write {
-  background: #60a5fa;
+  background: var(--color-focus);
   height: 100%;
 }
 
 .usage-stats__hit {
   font-variant-numeric: tabular-nums;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .usage-stats__sep {
-  color: #d1d5db;
+  color: var(--border-warm);
 }
 
 .usage-stats__total {
   font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
 }
 
 .usage-stats__write {
   font-variant-numeric: tabular-nums;
-  color: #60a5fa;
+  color: var(--color-focus);
 }
 
 /* ── 拖拽高亮遮罩 ────────────────────────────────────────── */
