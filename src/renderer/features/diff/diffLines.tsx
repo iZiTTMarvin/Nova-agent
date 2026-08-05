@@ -55,6 +55,7 @@ export function selectDiffRenderPolicy(
 export interface HunkViewProps {
   hunk: DiffHunk
   filePath: string
+  status: DiffEntry['status']
   syntaxHighlight?: boolean
   wrap?: boolean
   scrollRef?: React.RefObject<HTMLDivElement | null>
@@ -63,6 +64,7 @@ export interface HunkViewProps {
 export const HunkView: React.FC<HunkViewProps> = ({
   hunk,
   filePath,
+  status,
   syntaxHighlight = true,
   wrap = false,
   scrollRef
@@ -83,9 +85,10 @@ export const HunkView: React.FC<HunkViewProps> = ({
     () => buildHunkPatch(
       filePath,
       hunk,
+      status,
       showFull ? undefined : PREVIEW_HUNK_LINE_LIMIT
     ),
-    [filePath, hunk, showFull]
+    [filePath, hunk, status, showFull]
   )
   const policy = useMemo(
     () => selectDiffRenderPolicy(preview.patch.length, syntaxHighlight),

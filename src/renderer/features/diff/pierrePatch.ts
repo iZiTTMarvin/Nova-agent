@@ -1,4 +1,4 @@
-import type { DiffHunk } from '../../../shared/diff/types'
+import type { DiffEntry, DiffHunk } from '../../../shared/diff/types'
 
 export interface HunkPatchPreview {
   patch: string
@@ -19,12 +19,6 @@ function formatGitPath(filePath: string): string {
   return /[\s"\\]/.test(filePath) ? JSON.stringify(filePath) : filePath
 }
 
-function inferStatus(hunk: DiffHunk): 'added' | 'modified' | 'deleted' {
-  if (hunk.oldStart === 0 && hunk.oldLines === 0) return 'added'
-  if (hunk.newStart === 0 && hunk.newLines === 0) return 'deleted'
-  return 'modified'
-}
-
 function countSpan(lines: string[]): { oldLines: number; newLines: number } {
   let oldLines = 0
   let newLines = 0
@@ -40,10 +34,10 @@ function countSpan(lines: string[]): { oldLines: number; newLines: number } {
 export function buildHunkPatch(
   filePath: string,
   hunk: DiffHunk,
+  status: DiffEntry['status'],
   lineLimit?: number
 ): HunkPatchPreview {
   const normalizedPath = normalizePath(filePath)
-  const status = inferStatus(hunk)
   const allLines = splitHunkContent(hunk.content)
   const rendered = lineLimit === undefined ? allLines : allLines.slice(0, lineLimit)
   const { oldLines, newLines } = countSpan(rendered)

@@ -58,11 +58,3 @@
 .diff-file__changes-del {
   color: var(--color-error);
 }
-
-.diff-token--plain { color: inherit; }
-.diff-token--comment { color: var(--code-token-comment); font-style: italic; }
-.diff-token--string { color: var(--code-token-string); }
-.diff-token--number { color: var(--code-token-number); }
-.diff-token--keyword { color: var(--code-token-keyword); font-weight: 600; }
-.diff-token--operator { color: var(--code-token-operator); }
-.diff-token--property { color: var(--code-token-property); }

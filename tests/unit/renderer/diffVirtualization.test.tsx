@@ -79,6 +79,7 @@ describe('HunkView Pierre 集成', () => {
         <HunkView
           hunk={makeHunk(20)}
           filePath="src/a.ts"
+          status="modified"
           scrollRef={scrollRef}
         />
       </div>
@@ -103,6 +104,7 @@ describe('HunkView Pierre 集成', () => {
         <HunkView
           hunk={hunk}
           filePath="src/large.ts"
+          status="modified"
           scrollRef={scrollRef}
         />
       </div>
@@ -127,6 +129,7 @@ describe('HunkView Pierre 集成', () => {
       <HunkView
         hunk={makeHunk(4)}
         filePath="notes.txt"
+        status="modified"
         syntaxHighlight={false}
       />
     )

@@ -12,7 +12,7 @@ describe('buildHunkPatch', () => {
       content: ' keep\n-old\n+new'
     }
 
-    const result = buildHunkPatch('src\\value.ts', hunk)
+    const result = buildHunkPatch('src\\value.ts', hunk, 'modified')
 
     expect(result.patch).toContain('diff --git a/src/value.ts b/src/value.ts')
     expect(result.patch).toContain('--- a/src/value.ts')
@@ -30,7 +30,7 @@ describe('buildHunkPatch', () => {
       content: ' context\n-remove\n+add\n tail'
     }
 
-    const result = buildHunkPatch('a.ts', hunk, 3)
+    const result = buildHunkPatch('a.ts', hunk, 'modified', 3)
 
     expect(result.patch).toContain('@@ -3,2 +3,2 @@')
     expect(result.patch).not.toContain(' tail')
@@ -48,19 +48,37 @@ describe('buildHunkPatch', () => {
       newStart: 1,
       newLines: 1,
       content: '+hello'
-    })
+    }, 'added')
     const deleted = buildHunkPatch('old.ts', {
       oldStart: 1,
       oldLines: 1,
       newStart: 0,
       newLines: 0,
       content: '-bye'
-    })
+    }, 'deleted')
 
     expect(added.patch).toContain('--- /dev/null')
     expect(added.patch).toContain('+++ "b/new file.ts"')
     expect(deleted.patch).toContain('--- a/old.ts')
     expect(deleted.patch).toContain('+++ /dev/null')
+  })
+
+  it('status 决定 /dev/null 落在 old 或 new 侧，与 hunk 行号无关', () => {
+    const hunk: DiffHunk = {
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 1,
+      content: ' x\n-old\n+new'
+    }
+
+    const asAdded = buildHunkPatch('f.ts', hunk, 'added')
+    const asDeleted = buildHunkPatch('f.ts', hunk, 'deleted')
+
+    expect(asAdded.patch).toContain('--- /dev/null')
+    expect(asAdded.patch).toContain('+++ b/f.ts')
+    expect(asDeleted.patch).toContain('--- a/f.ts')
+    expect(asDeleted.patch).toContain('+++ /dev/null')
   })
 
   it('空 content 不伪造 1/1 hunk', () => {
@@ -70,7 +88,7 @@ describe('buildHunkPatch', () => {
       newStart: 1,
       newLines: 0,
       content: ''
-    })
+    }, 'modified')
 
     expect(result.patch).not.toContain('@@')
     expect(result).toMatchObject({

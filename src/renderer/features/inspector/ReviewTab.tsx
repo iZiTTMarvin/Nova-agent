@@ -241,6 +241,7 @@ const ReviewContent: React.FC<{
             key={idx}
             hunk={hunk}
             filePath={currentEntry.filePath}
+            status={currentEntry.status}
             syntaxHighlight={syntaxMode === 'syntax'}
             wrap={wrap}
             scrollRef={bodyScrollRef}
