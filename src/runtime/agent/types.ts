@@ -172,7 +172,7 @@ export type AgentEventCallback = (event: AgentEvent) => void
 /** AgentLoop 的当前状态 */
 export type AgentState = 'idle' | 'running' | 'cancelled' | 'error'
 
-/** 7 层 system prompt 结构（见 SystemPromptBuilder；memoryContext 在 projectRules 之后） */
+/** system prompt 分层结构（见 SystemPromptBuilder；memoryContext 在 projectRules 之后） */
 export interface SystemPromptLayers {
   agentRole: string
   baseRules?: string
@@ -180,6 +180,8 @@ export interface SystemPromptLayers {
   memoryContext?: string | null
   skillContext?: string
   modeInstruction?: string
+  /** 任务策略约束（如 headless economy 硬约束）；空则跳过 */
+  taskPolicy?: string
   toolSummary?: string
 }
 

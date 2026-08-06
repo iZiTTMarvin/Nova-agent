@@ -21,6 +21,8 @@ export function getToolCapability(toolName: string): ToolCapability {
     case 'archive_read':
     case 'memory_search':
       return 'readonly'
+    case 'load_tools':
+      return 'readonly'
     case 'edit':
     case 'write':
       return 'write'

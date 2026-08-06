@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ToolResult } from '../../../../src/runtime/tools/types'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -849,5 +850,36 @@ describe('executeToolBatch', () => {
     // 校验接收到的参数应该是被修改后的 "rm -rf /"，而不是原始的 "ls"
     expect(checkedArgs).toHaveLength(1)
     expect(checkedArgs[0].command).toBe('rm -rf /')
+  })
+
+  it('未激活工具组的已注册工具在执行层被拦截', async () => {
+    const registry = new ToolRegistry()
+    let executed = false
+    registerTool(registry, 'web_search', async () => {
+      executed = true
+      return { success: true, output: 'should-not-run' }
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc1', name: 'web_search', arguments: '{}' }],
+      messageId: 'msg_gate',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel',
+      isToolAvailable: name => name !== 'web_search',
+      readState: createReadState()
+    })
+
+    expect(executed).toBe(false)
+    expect(result.outcomes[0]?.failed).toBe(true)
+    expect(result.outcomes[0]?.resultText).toContain('工具组未激活')
   })
 })

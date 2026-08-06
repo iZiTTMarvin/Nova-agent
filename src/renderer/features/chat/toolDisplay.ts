@@ -41,6 +41,8 @@ export function getToolDisplayName(toolName: string): string {
       return '切换运行模式 (switch_mode)'
     case 'start_workflow':
       return '启动工作流 (start_workflow)'
+    case 'load_tools':
+      return '加载工具组 (load_tools)'
     default:
       return `运行自动化工具 (${toolName})`
   }

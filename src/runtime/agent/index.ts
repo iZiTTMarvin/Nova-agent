@@ -27,3 +27,15 @@ export {
 } from './context/rulesDiscovery'
 export { BUILTIN_SUBAGENTS, getSubAgentSpec, listSubAgents } from './core/SubAgentConfig'
 export type { SubAgentSpec } from './core/SubAgentConfig'
+export {
+  resolveTaskPolicy,
+  buildEconomyHardConstraints,
+  buildHeavyGuidance
+} from './taskPolicy'
+export type {
+  TaskPolicyTier,
+  TaskPolicySurface,
+  TaskPolicyMatchSource,
+  TaskPolicySignals,
+  ResolvedTaskPolicy
+} from './taskPolicy'

@@ -7,12 +7,16 @@ import {
   buildStableSystemPrompt,
   discoverProjectRules,
   renderBaseRules,
-  renderModeToolInventory
+  renderModeToolInventory,
+  resolveTaskPolicy
 } from '../runtime/agent'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { resolveContextWindow } from '../shared/config'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
+import { ToolAvailability } from '../runtime/tools/availability'
+import { createLoadToolsTool } from '../runtime/tools/loadTools'
+import { projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
 import { createGrepTool } from '../runtime/tools/grepTool'
@@ -42,6 +46,12 @@ interface CliOptions {
   instructionFile?: string
   /** 显式上下文窗口覆盖；缺省时由模型元数据解析 */
   contextWindow?: number
+  economyTaskMode?: boolean
+  heavyTaskMode?: boolean
+  taskCategory?: string
+  taskTags?: string[]
+  /** 强制开启工具分组过滤（即使任务分级不是 economy） */
+  toolEconomy?: boolean
 }
 
 interface UsageTotals {
@@ -61,14 +71,29 @@ function parseArgs(argv: string[]): CliOptions {
     'max-tool-rounds',
     'deadline-seconds',
     'instruction-file',
-    'context-window'
+    'context-window',
+    'economy-task-mode',
+    'heavy-task-mode',
+    'task-category',
+    'task-tags',
+    'tool-economy'
+  ])
+  const flagOnly = new Set([
+    'economy-task-mode',
+    'heavy-task-mode',
+    'tool-economy'
   ])
   const values = new Map<string, string>()
+  const flags = new Set<string>()
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (!arg.startsWith('--')) throw new Error(`无法识别的参数: ${arg}`)
     const name = arg.slice(2)
     if (!supported.has(name)) throw new Error(`无法识别的参数: ${arg}`)
+    if (flagOnly.has(name)) {
+      flags.add(name)
+      continue
+    }
     const value = argv[i + 1]
     if (!value || value.startsWith('--')) throw new Error(`参数 ${arg} 缺少值`)
     values.set(name, value)
@@ -96,6 +121,11 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error('--context-window 必须是正整数')
   }
 
+  const taskTagsRaw = values.get('task-tags')
+  const taskTags = taskTagsRaw
+    ? taskTagsRaw.split(',').map(t => t.trim()).filter(Boolean)
+    : undefined
+
   return {
     workdir,
     logsDir,
@@ -107,7 +137,12 @@ function parseArgs(argv: string[]): CliOptions {
     ...(contextWindow === undefined ? {} : { contextWindow }),
     ...(values.get('instruction-file')
       ? { instructionFile: resolve(values.get('instruction-file')!) }
-      : {})
+      : {}),
+    ...(flags.has('economy-task-mode') ? { economyTaskMode: true } : {}),
+    ...(flags.has('heavy-task-mode') ? { heavyTaskMode: true } : {}),
+    ...(values.get('task-category') ? { taskCategory: values.get('task-category') } : {}),
+    ...(taskTags ? { taskTags } : {}),
+    ...(flags.has('tool-economy') ? { toolEconomy: true } : {})
   }
 }
 
@@ -120,7 +155,7 @@ async function readInstruction(filePath?: string): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-function createCodingTools(): ToolRegistry {
+function createCodingTools(availability: ToolAvailability | null): ToolRegistry {
   const registry = new ToolRegistry()
   registry.register(lsTool)
   registry.register(readTool)
@@ -130,6 +165,13 @@ function createCodingTools(): ToolRegistry {
   registry.register(writeTool)
   registry.register(bashTool)
   registry.register(archiveReadTool)
+  if (availability) {
+    registry.register(
+      createLoadToolsTool({
+        getAvailability: () => availability
+      })
+    )
+  }
   return registry
 }
 
@@ -152,6 +194,18 @@ async function main(): Promise<void> {
   const apiKey = process.env.DEEPSEEK_API_KEY
   if (!apiKey) throw new Error('缺少 DEEPSEEK_API_KEY 环境变量')
 
+  const taskPolicy = resolveTaskPolicy({
+    instruction,
+    surface: 'headless',
+    economyTaskMode: options.economyTaskMode,
+    heavyTaskMode: options.heavyTaskMode,
+    category: options.taskCategory,
+    tags: options.taskTags
+  })
+  const toolEconomyEnabled = taskPolicy.toolEconomy || options.toolEconomy === true
+  const toolAvailability = new ToolAvailability()
+  toolAvailability.setEnabled(toolEconomyEnabled)
+
   mkdirSync(options.logsDir, { recursive: true })
   const eventsPath = resolve(options.logsDir, 'events.jsonl')
   const summaryPath = resolve(options.logsDir, 'summary.json')
@@ -167,8 +221,12 @@ async function main(): Promise<void> {
   const events: AgentEvent[] = []
   let deadlineReached = false
 
-  const registry = createCodingTools()
-  const definitions = registry.getToolDefinitions()
+  const registry = createCodingTools(toolEconomyEnabled ? toolAvailability : null)
+  const definitions = projectEffectiveToolDefinitions(
+    'default',
+    registry.getToolDefinitions(),
+    toolAvailability
+  )
   const eventBus = new EventBus()
   eventBus.on(event => {
     events.push(event)
@@ -189,6 +247,7 @@ async function main(): Promise<void> {
       baseRules: renderBaseRules(),
       projectRules: discoverProjectRules(options.workdir)?.text ?? '',
       modeInstruction: '',
+      taskPolicy: taskPolicy.systemLayerText,
       toolSummary: renderModeToolInventory('default', definitions, { dialect: 'native' })
     },
     maxToolRounds: options.maxToolRounds,
@@ -199,6 +258,7 @@ async function main(): Promise<void> {
     maxParallelToolCalls: 4
   })
   loop.setToolRegistry(registry)
+  loop.setToolAvailability(toolAvailability)
   loop.setWorkingDir(options.workdir)
   loop.setWorkspaceRoot(options.workdir)
   loop.setRunRef(runId)
@@ -280,7 +340,12 @@ async function main(): Promise<void> {
     tool_calls: atif.steps.reduce((sum, step) => sum + (step.tool_calls?.length ?? 0), 0),
     model_calls: atif.llmCallCount,
     repair: accumulateRepairTotals(events),
-    repair_outcome: accumulateRepairOutcomes(events)
+    repair_outcome: accumulateRepairOutcomes(events),
+    task_policy: {
+      tier: taskPolicy.tier,
+      matched_by: taskPolicy.matchedBy,
+      tool_economy: toolEconomyEnabled
+    }
   }
   writeJson(summaryPath, summary)
   process.stdout.write(`${JSON.stringify(summary)}\n`)

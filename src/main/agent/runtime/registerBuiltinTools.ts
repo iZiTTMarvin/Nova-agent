@@ -19,6 +19,8 @@ import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
+import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
+import type { ToolAvailability } from '../../../runtime/tools/availability'
 import type { WorkflowOrchestrator } from '../../../runtime/workflow'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -36,6 +38,8 @@ export interface BuiltinToolRegistrationDeps {
   getWorkflowOrchestrator?: () => WorkflowOrchestrator | undefined
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
+  /** load_tools 写入的会话级工具可用性 Owner */
+  getToolAvailability?: () => ToolAvailability | null
 }
 
 /**
@@ -63,6 +67,11 @@ export function registerBuiltinTools(
   toolRegistry.register(writeTool)
   toolRegistry.register(bashTool)
   toolRegistry.register(archiveReadTool)
+  toolRegistry.register(
+    createLoadToolsTool({
+      getAvailability: deps.getToolAvailability ?? (() => null)
+    })
+  )
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)

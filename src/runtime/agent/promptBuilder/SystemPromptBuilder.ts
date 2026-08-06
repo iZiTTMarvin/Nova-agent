@@ -1,5 +1,5 @@
 /**
- * SystemPromptBuilder — 7 层 system prompt 流水线拼装
+ * SystemPromptBuilder — system prompt 分层流水线拼装
  * 每层独立包裹标题，顺序固定以保障缓存前缀稳定性
  */
 import type { SystemPromptLayers } from '../types'
@@ -11,6 +11,7 @@ const LAYER_TITLES: Record<keyof SystemPromptLayers, string> = {
   memoryContext: 'Project Memory',
   skillContext: 'Skills',
   modeInstruction: 'Mode',
+  taskPolicy: 'Task Policy',
   toolSummary: 'Available Tools'
 }
 
@@ -28,6 +29,7 @@ export class SystemPromptBuilder {
       'memoryContext',
       'skillContext',
       'modeInstruction',
+      'taskPolicy',
       'toolSummary'
     ]
     for (const key of ordered) {

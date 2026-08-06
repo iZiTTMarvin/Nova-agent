@@ -26,6 +26,24 @@ describe('SystemPromptBuilder', () => {
     expect(modeIdx).toBeLessThan(toolIdx)
   })
 
+  it('taskPolicy 插在 modeInstruction 之后、toolSummary 之前', () => {
+    const out = SystemPromptBuilder.build({
+      ...fullLayers,
+      taskPolicy: 'Economy task constraints'
+    })
+    const modeIdx = out.indexOf('=== Mode ===')
+    const policyIdx = out.indexOf('=== Task Policy ===')
+    const toolIdx = out.indexOf('=== Available Tools ===')
+    expect(policyIdx).toBeGreaterThan(modeIdx)
+    expect(policyIdx).toBeLessThan(toolIdx)
+    expect(out).toContain('Economy task constraints')
+  })
+
+  it('taskPolicy 为空时跳过该层', () => {
+    const out = SystemPromptBuilder.build({ agentRole: 'r', taskPolicy: '   ' })
+    expect(out).not.toContain('Task Policy')
+  })
+
   it('memoryContext 插在 projectRules 之后、skillContext 之前', () => {
     const out = SystemPromptBuilder.build({
       ...fullLayers,

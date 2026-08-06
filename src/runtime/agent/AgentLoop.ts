@@ -263,6 +263,7 @@ export class AgentLoop {
         memoryContext: layers.memoryContext ?? '',
         skillContext: layers.skillContext ?? '',
         modeInstruction: layers.modeInstruction ?? '',
+        taskPolicy: layers.taskPolicy ?? '',
         toolSummary: layers.toolSummary ?? ''
       })
     }
@@ -324,6 +325,7 @@ export class AgentLoop {
       ...this.ctx.messages,
       ...messages
     ]
+    this.ctx.toolAvailability?.restoreFromMessages(this.ctx.messages)
     // 恢复历史后立即推送一次上下文占用，让 renderer 无需等待下一轮 LLM 调用即可显示
     this.emitContextBreakdown('', 0)
   }
@@ -337,12 +339,21 @@ export class AgentLoop {
    */
   restoreCompactedContext(summary: string, recentMessages: ChatMessage[], compactionLevel: number): void {
     this.compactionService.restoreCompactedContext(summary, recentMessages, compactionLevel)
+    this.ctx.toolAvailability?.restoreFromMessages(this.ctx.messages)
     this.emitContextBreakdown('', 0)
   }
 
   /** 设置工具注册表 */
   setToolRegistry(registry: ToolRegistry): void {
     this.ctx.toolRegistry = registry
+  }
+
+  /**
+   * 注入工具分组可用性 Owner。
+   * enabled=false 时投影隐藏 load_tools、其余全量可见；enabled=true 时按组过滤。
+   */
+  setToolAvailability(availability: import('../tools/availability').ToolAvailability | null): void {
+    this.ctx.toolAvailability = availability
   }
 
   /** 设置本轮实际暴露给模型、缓存诊断和上下文拆分的工具定义来源。 */
@@ -649,10 +660,11 @@ export class AgentLoop {
     route: AgentTurnRoute,
     messageId: string
   ): Promise<AgentTurnOutcome> {
-    const modeInstruction = this.getCurrentModeInstruction()
     let userText = typeof content === 'string'
       ? content
       : extractTextFromContent(content)
+
+    const modeInstruction = this.getCurrentModeInstruction()
 
     // Session context 前缀（合并方案）：只在当前上下文里不存在"仍有效的锚点"时拼接，
     // 并放到本轮 user 消息 content 最前面。它是真实 user 消息的一部分（不标
@@ -742,6 +754,8 @@ export class AgentLoop {
         autoMode: this.autoMode,
         eventBus: this.eventBus,
         hookManager: this.hookManager,
+        isToolAvailable: (name) =>
+          this.ctx.toolAvailability ? this.ctx.toolAvailability.isToolAvailable(name) : true,
         readState: this.ctx.readState,
         artifactStore: this.ctx.artifactStore,
         askQuestion: this.askQuestionHandler,

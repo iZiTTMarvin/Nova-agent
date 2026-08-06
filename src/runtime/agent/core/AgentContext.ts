@@ -6,6 +6,7 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
+import type { ToolAvailability } from '../../tools/availability'
 import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
 
 export interface AgentContext {
@@ -17,6 +18,11 @@ export interface AgentContext {
   toolRegistry: ToolRegistry | null
   /** 可选的运行时有效工具定义来源；未设置时使用 toolRegistry 全量定义 */
   effectiveToolDefinitions: (() => ToolDefinition[]) | null
+  /**
+   * 工具分组可用性（会话级）。
+   * 与 mode 过滤正交；在 getEffectiveToolDefinitions 中于 mode 之后组合。
+   */
+  toolAvailability: ToolAvailability | null
   /** 当前工具方言 */
   dialect: ToolDialect
   /** 运行模式 */
@@ -61,6 +67,7 @@ export function createAgentContext(initial: {
     systemPrompt: '',
     toolRegistry: null,
     effectiveToolDefinitions: null,
+    toolAvailability: null,
     dialect: 'xml',
     mode: 'default',
     workingDir: null,
@@ -80,8 +87,22 @@ export function createAgentContext(initial: {
   }
 }
 
+/**
+ * 模型可见工具投影唯一出口：registry/provider → mode → group。
+ * 装配层拼 toolSummary 时必须调用本函数，禁止平行过滤。
+ */
+export function projectEffectiveToolDefinitions(
+  mode: Mode,
+  definitions: readonly ToolDefinition[],
+  availability: ToolAvailability | null | undefined
+): ToolDefinition[] {
+  const modeVisible = getModeVisibleTools(mode, definitions)
+  if (!availability) return modeVisible
+  return availability.filterDefinitions(modeVisible)
+}
+
 export function getEffectiveToolDefinitions(context: AgentContext): ToolDefinition[] {
   const definitions =
     context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
-  return getModeVisibleTools(context.mode, definitions)
+  return projectEffectiveToolDefinitions(context.mode, definitions, context.toolAvailability)
 }

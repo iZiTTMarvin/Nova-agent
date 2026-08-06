@@ -14,6 +14,7 @@ import {
   discoverProjectRules,
   renderBaseRules
 } from '../../../runtime/agent'
+import { projectEffectiveToolDefinitions } from '../../../runtime/agent/core/AgentContext'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
 import { buildRouterContext, renderRouterContext } from '../../../runtime/workflow'
@@ -24,6 +25,7 @@ import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
 import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
+import { ToolAvailability } from '../../../runtime/tools/availability'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
@@ -226,6 +228,9 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   permissionManager.setPermissionPolicy(novaSettings.permissionPolicy)
 
   const toolRegistry = new ToolRegistry()
+  // 交互默认关闭工具经济过滤（全量可见，回归无感）；Owner 仍注入以便 load_tools / 恢复路径可用。
+  const toolAvailability = new ToolAvailability()
+  toolAvailability.setEnabled(false)
   // 两阶段局部持有：invoke_skill 创建早于 AgentLoop，执行时惰性读取
   let loop: AgentLoop | null = null
 
@@ -235,7 +240,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryService,
     loadSettings: loadNovaSettings,
     getWorkflowOrchestrator,
-    getSpawnSubagentPort
+    getSpawnSubagentPort,
+    getToolAvailability: () => toolAvailability
   })
 
   const modelPool = buildModelPoolWithFallbacks(modelClient)
@@ -254,7 +260,11 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   )
   const toolSummary = renderModeToolInventory(
     session.mode,
-    toolRegistry.getToolDefinitions(),
+    projectEffectiveToolDefinitions(
+      session.mode,
+      toolRegistry.getToolDefinitions(),
+      toolAvailability
+    ),
     { dialect: toolDialect }
   )
 
@@ -298,6 +308,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   // 工作区根供写者租约按工作区分桶；runId 在 startRun 后由 AgentTurnService 注入
   agentLoop.setWorkspaceRoot(projectPath)
   agentLoop.setToolRegistry(toolRegistry)
+  agentLoop.setToolAvailability(toolAvailability)
   agentLoop.setBashEnvironment({
     binDirs: [join(projectPath, 'node_modules', '.bin')]
   })

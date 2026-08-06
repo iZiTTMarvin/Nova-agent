@@ -97,6 +97,11 @@ export interface ToolBatchExecutionOptions {
   /** Hook 编排层（preToolUse / postToolUse） */
   hookManager?: HookManager | null
   /**
+   * 工具分组可用性闸门：未激活组内工具即使已注册也拦截。
+   * 由 AgentLoop 在注入 ToolAvailability 时提供；测试可直接传入。
+   */
+  isToolAvailable?: (toolName: string) => boolean
+  /**
    * read state：记录"模型已读过的文件 + 当时内容/mtime"。
    * edit/write 的"先读后改"校验依赖它。
    * 每个 AgentLoop 实例持有独立 readState（sub agent 通过 clone 隔离）。
@@ -566,6 +571,23 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         toolCall,
         args,
         tool: undefined,
+        precheckOutcome: outcome
+      })
+      continue
+    }
+
+    if (options.isToolAvailable && !options.isToolAvailable(toolCall.name)) {
+      const outcome = createErrorOutcome(
+        index,
+        toolCall,
+        args,
+        `工具 "${toolCall.name}" 不可用：所属工具组未激活，请先调用 load_tools`
+      )
+      preparedCalls.push({
+        index,
+        toolCall,
+        args,
+        tool,
         precheckOutcome: outcome
       })
       continue
