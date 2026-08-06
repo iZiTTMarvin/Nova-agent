@@ -35,4 +35,60 @@ describe('contextOverflow', () => {
     expect(isContextOverflowError(400, 'Invalid parameter type')).toBe(false)
     expect(isContextOverflowError(400, 'API key not provided')).toBe(false)
   })
+
+  describe('否决层', () => {
+    it('限速消息含 token 字样 → 不判溢出', () => {
+      expect(isContextOverflowError(
+        400,
+        'ThrottlingException: too many tokens, please wait before trying again',
+      )).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        "ThrottlingException: quota exceeded. This endpoint's maximum context length is 262144 tokens.",
+      )).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        'Rate limit exceeded: please reduce token usage and retry',
+      )).toBe(false)
+    })
+
+    it('输出侧超限 → 不判溢出', () => {
+      expect(isContextOverflowError(400, 'Output token limit exceeded')).toBe(false)
+      expect(isContextOverflowError(400, 'Maximum output token limit exceeded')).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        'output token count of 8192 exceeds the limit of 4096',
+      )).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        'completion has too many tokens for this model',
+      )).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        'Invalid request: max_tokens token limit exceeded',
+      )).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        'too many tokens were requested for the completion',
+      )).toBe(false)
+      expect(isContextOverflowError(
+        400,
+        "Too many completion tokens were requested. This endpoint's maximum context length is 262144 tokens.",
+      )).toBe(false)
+    })
+
+    it('真实输入溢出仍判溢出（OpenAI / Anthropic / DeepSeek / Qwen）', () => {
+      expect(isContextOverflowError(
+        400,
+        "This model's maximum context length is 8192 tokens. However, you requested 10240 tokens (10140 in the messages, 100 in the completion). Please reduce the length of the messages or completion.",
+      )).toBe(true)
+      expect(isContextOverflowError(
+        400,
+        'Your prompt has 200000 tokens, which is > 100000 maximum.',
+      )).toBe(true)
+      expect(isContextOverflowError(400, 'context length exceeded')).toBe(true)
+      expect(isContextOverflowError(400, 'parameter=input_tokens')).toBe(true)
+      expect(isContextOverflowError(400, 'Input token limit exceeded: 250000 tokens > 200000 maximum')).toBe(true)
+    })
+  })
 })

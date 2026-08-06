@@ -15,6 +15,12 @@ import { withFileMutationQueue } from './file-mutation-queue'
 import { decodeFileBuffer, encodeFile, type FileEncoding } from './editDiff'
 import { lineDiff, renderLineDiff, computeFirstChangedLine, generateUnifiedPatch, extractSnippet } from './editDiff'
 import { acquireWriterLeaseOrConflict, WORKSPACE_CONFLICT_PREFIX } from '../workspace'
+import {
+  EditMatchError,
+  findUniqueEditMatch,
+  isEditMatchFallbackAllowed,
+  type EditMatchStrategy,
+} from './editMatch'
 
 // ── EditOperations ────────────────────────────────────────────────────────────
 
@@ -461,6 +467,7 @@ export interface ResolvedEdit {
   actualOldText: string
   actualNewText: string
   startOffset: number
+  matchedVia: EditMatchStrategy | 'quote' | 'desanitize'
 }
 
 function countOccurrences(text: string, search: string): number {
@@ -497,11 +504,28 @@ export function resolveEdits(
 
   for (let i = 0; i < edits.length; i++) {
     const edit = edits[i]
+    if (edit.oldText === edit.newText) {
+      throw new Error(
+        `Edit #${i + 1}: No changes to apply in "${path}": oldText and newText are identical`
+      )
+    }
+
     let actualOldText: string | null = null
     let actualNewText = edit.newText
+    let matchedVia: ResolvedEdit['matchedVia'] = 'exact'
 
-    if (original.includes(edit.oldText)) {
-      actualOldText = edit.oldText
+    try {
+      const match = findUniqueEditMatch(original, edit.oldText, path)
+      actualOldText = match.span
+      matchedVia = match.matchedVia
+    } catch (err) {
+      if (!(err instanceof EditMatchError)) throw err
+      // 兼容对象：弯引号归一化与 XML 反序列化（Nova 既有 exact-after-transform）。
+      // 原因：模糊门控只约束 fuzzy cascade，不得切断上述路径。
+      // 删除条件：两者并入 editMatch 策略表并有保护测试后可移除回退。
+      if (!isEditMatchFallbackAllowed(err)) {
+        throw new Error(`Edit #${i + 1}: ${err.message}`)
+      }
     }
 
     if (actualOldText === null) {
@@ -509,6 +533,7 @@ export function resolveEdits(
       if (found !== null) {
         actualOldText = found
         actualNewText = preserveQuoteStyle(edit.oldText, found, edit.newText)
+        matchedVia = 'quote'
       }
     }
 
@@ -517,6 +542,7 @@ export function resolveEdits(
       if (applied.length > 0 && original.includes(desanitized)) {
         actualOldText = desanitized
         actualNewText = applyCorrespondingDesanitization(edit.newText, edit.oldText, desanitized)
+        matchedVia = 'desanitize'
       }
     }
 
@@ -542,6 +568,7 @@ export function resolveEdits(
       actualOldText,
       actualNewText,
       startOffset: original.indexOf(actualOldText),
+      matchedVia,
     })
   }
 
@@ -809,8 +836,12 @@ export const editTool: ToolExecutor = {
         const firstChangedLine = computeFirstChangedLine(readResult.normalized, newContent)
         const snippet = extractSnippet(newContent, resolved)
 
+        const viaSummary = resolved
+          .map((r) => `#${r.index + 1}:${r.matchedVia}`)
+          .join(', ')
         const parts: string[] = [
           `已修改 "${input.filePath}"，替换了 ${resolved.length} 处。首个变更行: ${firstChangedLine}`,
+          `matchedVia: ${viaSummary}`,
           '',
           diffStr,
         ]
