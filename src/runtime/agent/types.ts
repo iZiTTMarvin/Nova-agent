@@ -237,5 +237,5 @@ export interface CompactionMeta {
   /** 压缩层级（写入快照，用于恢复 AgentLoop.compactionLevel） */
   compactionLevel: number
   /** 触发来源，仅诊断用 */
-  trigger: 'threshold' | 'overflow' | 'idle'
+  trigger: 'threshold' | 'overflow' | 'idle' | 'mid-turn'
 }

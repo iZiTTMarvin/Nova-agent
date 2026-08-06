@@ -4,11 +4,20 @@ import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
-import { compactAtBoundary, ContextBudgetExceededError } from '../ContextBudgetManager'
+import {
+  compactAtBoundary,
+  ContextBudgetExceededError,
+  resolveProductionBudgetLimits
+} from '../ContextBudgetManager'
 import type { AgentContext } from '../core/AgentContext'
 import type { CompactionMeta } from '../types'
-import { estimateContextTokens } from '../tokenEstimator'
+import { CHARS_PER_TOKEN, estimateContextTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
+import {
+  estimateNextRequestTokens,
+  measureRequestPayloadChars
+} from './estimateNextRequestTokens'
+import { selectMidTurnSafeBoundary } from './selectMidTurnSafeBoundary'
 import {
   MIN_RECENT_MESSAGES,
   buildCompactionRequestTail,
@@ -47,6 +56,7 @@ interface CompactionParts {
  * Service 直接更新 AgentContext 中的权威 messages 和压缩簿记，不维护平行上下文。
  * active turn 与 idle compaction 使用物理隔离的 AbortController；新消息通过 idle
  * generation 使晚到摘要失去写回资格，不依赖共享数组回滚。
+ * mid-turn 复用同一压缩管线，仅新增触发时机；失败时 fail-open，不终止 turn。
  */
 export class CompactionService {
   private readonly context: AgentContext
@@ -64,6 +74,10 @@ export class CompactionService {
   private idleReschedulePending = false
   private idleGeneration = 0
   private disposed = false
+  /** 上一次已发出请求的 provider input tokens；冷启动为 undefined */
+  private lastRequestInputTokens: number | undefined
+  /** 上一次已发出请求的 payload 字符量；与 lastRequestInputTokens 成对 */
+  private lastRequestPayloadChars: number | undefined
 
   constructor(options: CompactionServiceOptions) {
     this.context = options.context
@@ -90,6 +104,16 @@ export class CompactionService {
 
   updateTokenEstimate(): void {
     this.context.lastEstimatedTokens = estimateContextTokens(this.context.messages)
+  }
+
+  /**
+   * 记录刚发出的请求锚点：provider 真实 input usage + 当时 payload 字符量。
+   * 仅在见到正数 usage 时更新；供下一步 mid-turn 估算使用。
+   */
+  recordRequestAnchor(inputTokens: number, payloadChars: number): void {
+    if (!Number.isFinite(inputTokens) || inputTokens <= 0) return
+    this.lastRequestInputTokens = Math.floor(inputTokens)
+    this.lastRequestPayloadChars = Math.max(0, Math.floor(payloadChars))
   }
 
   restoreCompactedContext(
@@ -125,6 +149,59 @@ export class CompactionService {
     return this.runCompaction('threshold', abortSignal)
   }
 
+  /**
+   * 工具结果写回后、下一次模型请求前：估算 → 超高水位则压缩。
+   * 返回 true 表示已压缩；skip / fail-open 均返回 false，调用方继续原投影。
+   */
+  async runMidTurnCompaction(abortSignal?: AbortSignal): Promise<boolean> {
+    if (this.compressingForOverflow || abortSignal?.aborted || this.disposed) return false
+
+    const { highWaterTokens } = resolveProductionBudgetLimits({
+      contextWindow: this.contextWindow
+    })
+    const payloadChars = measureRequestPayloadChars(this.context.messages)
+    const estimate = estimateNextRequestTokens({
+      ...(this.lastRequestInputTokens !== undefined
+        ? { priorUsageTokens: this.lastRequestInputTokens }
+        : {}),
+      appendedChars: payloadChars - (this.lastRequestPayloadChars ?? payloadChars),
+      coldStartChars: payloadChars,
+      charsPerToken: CHARS_PER_TOKEN
+    })
+    if (estimate <= highWaterTokens) {
+      return false
+    }
+
+    // 权威消息在工具写回后已是完整协议单元；当前无 partial/pin 字段，故不传钩子。
+    const nonSystem = this.context.messages.filter(message => message.role !== 'system')
+    const boundary = selectMidTurnSafeBoundary(nonSystem, { reserveTailMessages: 1 })
+    if (!boundary.ok || boundary.coveredCount < 1) return false
+
+    const oldMessages = nonSystem.slice(0, boundary.coveredCount)
+    const recentMessages = nonSystem.slice(boundary.coveredCount)
+    if (oldMessages.length === 0) return false
+
+    const systemMessage = this.context.messages.find(message => message.role === 'system')
+    const parts: CompactionParts = {
+      systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
+      oldMessages,
+      recentMessages,
+      pulledBackMessages: []
+    }
+
+    try {
+      const summary = await this.requestSummary(parts, abortSignal)
+      if (!summary || abortSignal?.aborted) return false
+
+      this.applyCompactionResult(parts, summary)
+      if (abortSignal?.aborted) return false
+      this.notifyCompaction(summary, 'mid-turn')
+      return true
+    } catch {
+      return false
+    }
+  }
+
   scheduleIdle(): boolean {
     if (this.disposed) return false
     this.idleReschedulePending = false
@@ -141,6 +218,8 @@ export class CompactionService {
 
   reset(): void {
     this.cancelIdle()
+    this.lastRequestInputTokens = undefined
+    this.lastRequestPayloadChars = undefined
   }
 
   dispose(): void {

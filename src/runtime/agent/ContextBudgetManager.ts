@@ -247,18 +247,40 @@ function simpleContentHash(text: string): string {
 /** 无硬上限的默认实例（仅测试/兼容）；生产路径必须用 createProductionContextBudgetManager */
 export const defaultContextBudgetManager = new ContextBudgetManager()
 
+/**
+ * 与 createProductionContextBudgetManager / mid-turn 共用的输出预留与高水位。
+ * 预留：min(8192, floor(contextWindow * 15%))；高水位：contextWindow - reserved。
+ */
+export function resolveProductionBudgetLimits(opts: {
+  contextWindow: number
+  reservedOutputTokens?: number
+}): {
+  reservedOutputTokens: number
+  /** mid-turn 高水位；亦为生产预算器的 maxEstimatedTokens */
+  highWaterTokens: number
+  maxSerializedBytes: number
+} {
+  const reservedOutputTokens =
+    opts.reservedOutputTokens ?? Math.min(8192, Math.floor(opts.contextWindow * 0.15))
+  const highWaterTokens = Math.max(1024, opts.contextWindow - reservedOutputTokens)
+  return {
+    reservedOutputTokens,
+    highWaterTokens,
+    maxSerializedBytes: highWaterTokens * 4
+  }
+}
+
 /** 按 contextWindow 创建带真实硬上限的预算器 */
 export function createProductionContextBudgetManager(opts: {
   contextWindow: number
   reservedOutputTokens?: number
 }): ContextBudgetManager {
-  const reserved = opts.reservedOutputTokens ?? Math.min(8192, Math.floor(opts.contextWindow * 0.15))
-  const maxEstimatedTokens = Math.max(1024, opts.contextWindow - reserved)
-  const maxSerializedBytes = maxEstimatedTokens * 4
+  const { reservedOutputTokens, highWaterTokens, maxSerializedBytes } =
+    resolveProductionBudgetLimits(opts)
   return new ContextBudgetManager({
-    maxEstimatedTokens,
+    maxEstimatedTokens: highWaterTokens,
     maxSerializedBytes,
-    reservedOutputTokens: reserved,
+    reservedOutputTokens,
     agingUserTurnThreshold: AGING_USER_TURN_THRESHOLD,
     agingGroupBytesThreshold: AGING_GROUP_BYTES_THRESHOLD
   })

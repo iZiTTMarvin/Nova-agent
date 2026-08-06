@@ -784,6 +784,12 @@ export class AgentLoop {
       runCompactionIfThreshold: async () => {
         await this.compactionService.runThresholdCompaction(this.abortController?.signal)
       },
+      runMidTurnCompaction: async () => {
+        await this.compactionService.runMidTurnCompaction(this.abortController?.signal)
+      },
+      recordRequestAnchor: (inputTokens, payloadChars) => {
+        this.compactionService.recordRequestAnchor(inputTokens, payloadChars)
+      },
       updateTokenEstimate: () => this.compactionService.updateTokenEstimate(),
       sleep: (ms: number) => this.sleep(ms),
       onTerminalError: (error) => {

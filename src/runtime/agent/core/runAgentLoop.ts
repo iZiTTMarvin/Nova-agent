@@ -22,6 +22,7 @@ import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 import { ContextBudgetExceededError } from '../ContextBudgetManager'
+import { measureRequestPayloadChars } from '../compaction/estimateNextRequestTokens'
 
 /** 将 toolCall.arguments 字符串解析为对象，供空参护栏统计 */
 function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown> {
@@ -61,6 +62,13 @@ export interface RunAgentLoopParams {
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
   /** 主动阈值压缩（stream 前调用） */
   runCompactionIfThreshold: () => Promise<void>
+  /**
+   * 工具写回后、下一轮模型请求前的 mid-turn 主动压缩。
+   * 编排层保证 fail-open：即便本回调抛错也不终止 turn。
+   */
+  runMidTurnCompaction?: () => Promise<void>
+  /** 记录本轮发出请求的 usage 锚点（input tokens + 当时 payload 字符） */
+  recordRequestAnchor?: (inputTokens: number, payloadChars: number) => void
   /** 上下文变化后更新压缩 token 簿记 */
   updateTokenEstimate: () => void
   /** 指数退避 sleep（透传给 StreamProcessor） */
@@ -173,6 +181,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       // 改由 XmlToolScanner 从正文扫描 <invoke>。防空转由 StopPolicyExtension 空参护栏兜底。
       const nativeTools = context.dialect === 'xml' ? undefined : tools
 
+      const requestPayloadChars = measureRequestPayloadChars(chatMessages)
       const turnResult: TurnStreamResult = await streamProcessor.run({
         messageId,
         chatMessages,
@@ -194,6 +203,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         // Processor 已触发 onError；门面负责记录终态并完成资源收尾。
         p.onTerminalError(turnResult.error)
         return { ended: 'error' }
+      }
+
+      if (turnResult.promptTokens !== undefined && p.recordRequestAnchor) {
+        p.recordRequestAnchor(turnResult.promptTokens, requestPayloadChars)
       }
 
       const { assistantContent, toolCalls, sawUsage, reasoningContent, reasoningProviderId } =
@@ -251,6 +264,15 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
           })
+        }
+        // 工具写回后、下一轮模型前：mid-turn 主动压缩。
+        // fail-open 由编排层兜底：端口拒绝不得终止 turn，交给后续溢出恢复。
+        if (p.runMidTurnCompaction) {
+          try {
+            await p.runMidTurnCompaction()
+          } catch {
+            // mid-turn 只做预防性整形，任何失败都保持原投影继续。
+          }
         }
         // 工具批次后轮内预算校验：超预算走压缩恢复链
         if (config.enforceInlineBudget) {

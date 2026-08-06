@@ -30,6 +30,8 @@ export type TurnStreamResult =
       toolCalls: ChatToolCall[]
       finishReason: string
       sawUsage: boolean
+      /** 本轮 provider 回报的 prompt/input tokens；未见 usage 时省略 */
+      promptTokens?: number
       /** 本子轮聚合的 reasoning；无 thinking_delta 时省略 */
       reasoningContent?: string
       /** 产生 reasoningContent 的缓存档案 ID */

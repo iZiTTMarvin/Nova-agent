@@ -159,6 +159,7 @@ export class StreamProcessor {
     const toolCalls: ChatToolCall[] = []
     let finishReason = ''
     let roundSawUsage = false
+    let roundPromptTokens: number | undefined
     let shouldRetryChat = false
 
     const dialect = context.dialect
@@ -456,6 +457,7 @@ export class StreamProcessor {
 
           case 'usage':
             roundSawUsage = true
+            roundPromptTokens = event.usage.promptTokens
             {
               // 按当前 active provider 解析档案；fallback 切换后归属新 provider，不沿用主模型
               const provider = this.modelPool.getActiveProvider()
@@ -581,6 +583,7 @@ export class StreamProcessor {
       toolCalls,
       finishReason,
       sawUsage: roundSawUsage,
+      ...(roundPromptTokens !== undefined ? { promptTokens: roundPromptTokens } : {}),
       // 仅在有内容时携带，避免无 thinking 的子轮多出空字段
       ...(reasoningContent
         ? {
