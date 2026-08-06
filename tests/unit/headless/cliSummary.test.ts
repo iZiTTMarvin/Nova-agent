@@ -117,7 +117,8 @@ describe('accumulateRepairTotals', () => {
       native_xml: 1,
       empty_args_from_content: 1,
       unclosed_parameter: 0,
-      type_coercion: 1
+      type_coercion: 1,
+      tool_name_case: 0
     })
   })
 
@@ -126,8 +127,22 @@ describe('accumulateRepairTotals', () => {
       native_xml: 0,
       empty_args_from_content: 0,
       unclosed_parameter: 0,
-      type_coercion: 0
+      type_coercion: 0,
+      tool_name_case: 0
     })
+  })
+
+  it('tool_name_case 分型计数', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'tool_name_case',
+        toolCallId: 'tc1',
+        toolName: 'bash'
+      }
+    ]
+    expect(accumulateRepairTotals(events).tool_name_case).toBe(1)
   })
 })
 
@@ -252,5 +267,26 @@ describe('accumulateRepairOutcomes', () => {
     expect(outcomes.empty_args_from_content).toEqual({ success: 0, failure: 0 })
     expect(outcomes.unclosed_parameter).toEqual({ success: 0, failure: 0 })
     expect(outcomes.type_coercion).toEqual({ success: 0, failure: 0 })
+    expect(outcomes.tool_name_case).toEqual({ success: 0, failure: 0 })
+  })
+
+  it('tool_name_case 修复后执行成功计入 success', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'tool_name_case',
+        toolCallId: 'tc1',
+        toolName: 'bash'
+      },
+      {
+        type: 'tool_result',
+        messageId: 'm1',
+        toolCallId: 'tc1',
+        toolName: 'bash',
+        result: 'ok'
+      }
+    ]
+    expect(accumulateRepairOutcomes(events).tool_name_case).toEqual({ success: 1, failure: 0 })
   })
 })

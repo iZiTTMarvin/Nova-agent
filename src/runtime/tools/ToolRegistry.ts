@@ -12,6 +12,15 @@ export type ResolveResult =
   | { ok: false; error: string }
 
 /**
+ * 工具名大小写模糊解析结果：
+ * 唯一命中给出正确名字；多候选给出候选列表；未命中由调用方维持原错误。
+ */
+export type ToolNameCaseResolution =
+  | { kind: 'unique'; name: string }
+  | { kind: 'ambiguous'; candidates: string[] }
+  | { kind: 'miss' }
+
+/**
  * 判断 resolved 是否落在 allowedRoot 之内（含根自身）。
  * 两侧先 normalize 再 relative，避免 Windows 盘符大小写 / 多余分隔符造成误判。
  *
@@ -79,6 +88,24 @@ export class ToolRegistry {
   /** 按名称获取工具，不存在返回 undefined */
   getTool(name: string): ToolExecutor | undefined {
     return this.tools.get(name)
+  }
+
+  /**
+   * 大小写不敏感解析工具名，供模型写错大小写时自愈。
+   * 精确匹配不在此方法职责内（调用方先走 getTool），此处只统计
+   * toLowerCase 相等的已注册名：唯一命中才可安全纠正，多候选无法判断正主。
+   */
+  resolveToolNameCaseInsensitive(name: string): ToolNameCaseResolution {
+    const lower = name.toLowerCase()
+    const candidates: string[] = []
+    for (const registered of this.tools.keys()) {
+      if (registered.toLowerCase() === lower) {
+        candidates.push(registered)
+      }
+    }
+    if (candidates.length === 1) return { kind: 'unique', name: candidates[0] }
+    if (candidates.length > 1) return { kind: 'ambiguous', candidates }
+    return { kind: 'miss' }
   }
 
   /** 获取所有已注册工具的 schema 定义（用于传给模型） */

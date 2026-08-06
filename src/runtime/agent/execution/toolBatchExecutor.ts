@@ -204,6 +204,21 @@ function buildToolInvocationRef(
   }
 }
 
+/** 失败回传的最大字符数：错误堆栈关键信息在尾部，超限保留尾部，防止撑爆上下文 */
+const TOOL_ERROR_RESULT_MAX_CHARS = 4000
+
+function limitToolErrorText(text: string): string {
+  if (text.length <= TOOL_ERROR_RESULT_MAX_CHARS) return text
+  // 省略标记内含省略字符数，其位数反过来影响标记长度，迭代到数值稳定
+  let omitted = text.length - TOOL_ERROR_RESULT_MAX_CHARS
+  for (;;) {
+    const marker = `…[已省略前 ${omitted} 字符]\n`
+    const next = text.length - (TOOL_ERROR_RESULT_MAX_CHARS - marker.length)
+    if (next === omitted) return marker + text.slice(omitted)
+    omitted = next
+  }
+}
+
 function createErrorOutcome(index: number, toolCall: ChatToolCall, args: Record<string, unknown>, resultText: string): ToolExecutionOutcome {
   return {
     index,
@@ -344,11 +359,11 @@ async function executePreparedToolCall(
         typeof toolResult.output === 'string' && toolResult.output.trim().length > 0
           ? `\n${toolResult.output}`
           : ''
-      resultText = `工具执行失败: ${toolResult.error}${detail}`
+      resultText = limitToolErrorText(`工具执行失败: ${toolResult.error}${detail}`)
       failed = true
     }
   } catch (err) {
-    resultText = `工具执行失败: ${(err as Error).message}`
+    resultText = limitToolErrorText(`工具执行失败: ${(err as Error).message}`)
     failed = true
   }
 
@@ -530,7 +545,26 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         toolCall.id
       )
     }
-    const tool = options.toolRegistry?.getTool(toolCall.name)
+    let tool = options.toolRegistry?.getTool(toolCall.name)
+    // 精确未命中时尝试大小写自愈：唯一命中则按正确名字走全流程。
+    // prepared 中的 toolCall 换成浅拷贝的纠正名（toolCallId 不变，协议配对不受影响），
+    // 使下游权限校验、bash 批量分组、工具组闸门与事件统一使用纠正后的名字，
+    // 大小写写错不能绕过 bash 等工具的权限策略。
+    let resolvedToolCall = toolCall
+    if (!tool && options.toolRegistry) {
+      const resolution = options.toolRegistry.resolveToolNameCaseInsensitive(toolCall.name)
+      if (resolution.kind === 'unique') {
+        resolvedToolCall = { ...toolCall, name: resolution.name }
+        tool = options.toolRegistry.getTool(resolution.name)
+        options.emit({
+          type: 'repair_diagnostic',
+          messageId: options.messageId,
+          kind: 'tool_name_case',
+          toolCallId: toolCall.id,
+          toolName: resolution.name
+        })
+      }
+    }
 
     // preToolUse：拦截或修改参数
     let blocked = false
@@ -539,14 +573,14 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
       const pre = await options.hookManager.trigger({
         event: 'preToolUse',
         messageId: options.messageId,
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
+        toolCallId: resolvedToolCall.id,
+        toolName: resolvedToolCall.name,
         toolArgs: args
       })
       if (pre?.block) {
         blocked = true
         const reason = pre.reason ?? 'hook 拦截'
-        blockedOutcome = createErrorOutcome(index, toolCall, args, `工具被 hook 拦截: ${reason}`)
+        blockedOutcome = createErrorOutcome(index, resolvedToolCall, args, `工具被 hook 拦截: ${reason}`)
       }
       if (pre?.modifiedArgs) {
         args = { ...args, ...pre.modifiedArgs }
@@ -556,7 +590,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     if (blocked && blockedOutcome) {
       preparedCalls.push({
         index,
-        toolCall,
+        toolCall: resolvedToolCall,
         args,
         tool,
         precheckOutcome: blockedOutcome
@@ -565,10 +599,10 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     }
 
     if (!tool) {
-      const outcome = createErrorOutcome(index, toolCall, args, `工具 "${toolCall.name}" 不可用：未注册工具`)
+      const outcome = createErrorOutcome(index, resolvedToolCall, args, `工具 "${resolvedToolCall.name}" 不可用：未注册工具`)
       preparedCalls.push({
         index,
-        toolCall,
+        toolCall: resolvedToolCall,
         args,
         tool: undefined,
         precheckOutcome: outcome
@@ -576,16 +610,16 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
       continue
     }
 
-    if (options.isToolAvailable && !options.isToolAvailable(toolCall.name)) {
+    if (options.isToolAvailable && !options.isToolAvailable(resolvedToolCall.name)) {
       const outcome = createErrorOutcome(
         index,
-        toolCall,
+        resolvedToolCall,
         args,
-        `工具 "${toolCall.name}" 不可用：所属工具组未激活，请先调用 load_tools`
+        `工具 "${resolvedToolCall.name}" 不可用：所属工具组未激活，请先调用 load_tools`
       )
       preparedCalls.push({
         index,
-        toolCall,
+        toolCall: resolvedToolCall,
         args,
         tool,
         precheckOutcome: outcome
@@ -595,7 +629,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
 
     preparedCalls.push({
       index,
-      toolCall,
+      toolCall: resolvedToolCall,
       args,
       tool
     })

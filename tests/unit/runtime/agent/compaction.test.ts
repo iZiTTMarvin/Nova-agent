@@ -4,14 +4,22 @@ import {
   splitForCompaction,
   buildCompactionPrompt,
   buildCompactionRequestTail,
+  boundSummaryText,
+  extractPriorSummary,
   rebuildWithCompression,
   rollbackBefore,
   COMPACTION_THRESHOLD,
+  MAX_SUMMARY_ESTIMATED_TOKENS,
   MIN_RECENT_MESSAGES,
   SOFT_COMPACTION_COOLDOWN_TURNS,
   estimateToolMessageTokens,
 } from '../../../../src/runtime/agent/compaction/compaction'
-import { estimateTokens, estimateContextTokens } from '../../../../src/runtime/agent/tokenEstimator'
+import {
+  CHARS_PER_TOKEN,
+  estimateTokens,
+  estimateContextTokens
+} from '../../../../src/runtime/agent/tokenEstimator'
+import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 
 function makeMessages(count: number, contentLength = 100): ChatMessage[] {
@@ -273,6 +281,94 @@ describe('compaction', () => {
       expect(prompt).toContain('artifact://')
       expect(prompt).toContain('只保留结论')
     })
+
+    it('包含五个固定段标题', () => {
+      const prompt = buildCompactionPrompt(20)
+      expect(prompt).toContain('## 目标')
+      expect(prompt).toContain('## 进展')
+      expect(prompt).toContain('## 关键决策')
+      expect(prompt).toContain('## 下一步')
+      expect(prompt).toContain('## 关键上下文')
+    })
+
+    it('进展分已完成与进行中两个子列表，下一步为有序列表', () => {
+      const prompt = buildCompactionPrompt(20)
+      expect(prompt).toContain('已完成')
+      expect(prompt).toContain('进行中')
+      expect(prompt).toContain('有序列表')
+    })
+
+    it('关键上下文要求精确路径与错误信息，缺失时写 (none)', () => {
+      const prompt = buildCompactionPrompt(20)
+      expect(prompt).toContain('文件路径')
+      expect(prompt).toContain('错误信息')
+      expect(prompt).toContain('(none)')
+    })
+
+    it('只输出摘要：不继续对话、不复述、不加前缀说明', () => {
+      const prompt = buildCompactionPrompt(20)
+      expect(prompt).toContain('不要继续对话')
+      expect(prompt).toContain('只输出摘要')
+      expect(prompt).toContain('不要加任何前缀说明')
+    })
+  })
+
+  describe('boundSummaryText', () => {
+    it('未超限的摘要原样返回', () => {
+      const summary = '## 目标\n完成压缩协议\n## 下一步\n1. 继续'
+      expect(boundSummaryText(summary)).toBe(summary)
+    })
+
+    it('超过 768 估算 token 的摘要被截断到字符上限内并带省略标记', () => {
+      const maxChars = MAX_SUMMARY_ESTIMATED_TOKENS * CHARS_PER_TOKEN
+      const summary = Array.from({ length: 100 }, () => 'x'.repeat(100)).join('\n')
+      expect(summary.length).toBeGreaterThan(maxChars)
+
+      const bounded = boundSummaryText(summary)
+      expect(bounded.endsWith('\n…[摘要已截断]')).toBe(true)
+      expect(bounded.length).toBeLessThanOrEqual(maxChars + '\n…[摘要已截断]'.length)
+    })
+
+    it('截断发生在行边界，不产生半行', () => {
+      const summary = Array.from({ length: 50 }, (_, i) => `line-${i}-` + 'y'.repeat(90)).join('\n')
+      const bounded = boundSummaryText(summary)
+      const body = bounded.slice(0, bounded.indexOf('\n…[摘要已截断]'))
+      for (const line of body.split('\n')) {
+        expect(line).toMatch(/^line-\d+-y+$/)
+      }
+    })
+
+    it('无换行的超长文本在上限处硬截', () => {
+      const maxChars = MAX_SUMMARY_ESTIMATED_TOKENS * CHARS_PER_TOKEN
+      const summary = 'z'.repeat(maxChars + 500)
+      expect(boundSummaryText(summary)).toBe('z'.repeat(maxChars) + '\n…[摘要已截断]')
+    })
+
+    it('自定义 maxTokens 生效，且有 80 字符下限', () => {
+      const summary = 'a'.repeat(200)
+      expect(boundSummaryText(summary, 10)).toBe('a'.repeat(80) + '\n…[摘要已截断]')
+    })
+  })
+
+  describe('extractPriorSummary', () => {
+    it('从 rebuildWithCompression 产出的 system 文本中提取摘要', () => {
+      const rebuilt = rebuildWithCompression('冻结 prompt', '第一版摘要', [])
+      const systemText = extractTextFromContent(rebuilt[0].content)
+      expect(extractPriorSummary(systemText)).toBe('第一版摘要')
+    })
+
+    it('无标记时返回 undefined', () => {
+      expect(extractPriorSummary('普通 system prompt')).toBeUndefined()
+    })
+
+    it('标记后内容为空时返回 undefined', () => {
+      expect(extractPriorSummary('prompt\n\n[对话历史摘要]\n')).toBeUndefined()
+    })
+
+    it('多次压缩叠加多个标记段时取最后一版摘要', () => {
+      const text = 'prompt\n\n[对话历史摘要]\n旧摘要\n\n[对话历史摘要]\n新摘要'
+      expect(extractPriorSummary(text)).toBe('新摘要')
+    })
   })
 
   describe('rebuildWithCompression', () => {
@@ -401,6 +497,34 @@ describe('compaction', () => {
       const instruction = tail[tail.length - 1]
       expect(instruction.internal).toBe(true)
       expect(instruction.content).toBe(buildCompactionPrompt(15))
+    })
+
+    it('传入 previousSummary 时指令包含前序摘要与增量更新要求', () => {
+      const tail = buildCompactionRequestTail('assistant', 20, '前一版摘要内容')
+      const instruction = tail[tail.length - 1]
+      expect(instruction.internal).toBe(true)
+      const text = extractTextFromContent(instruction.content)
+      // 固定五段结构仍然保留
+      expect(text).toContain('## 目标')
+      expect(text).toContain('## 关键上下文')
+      // 前序摘要与增量更新要求
+      expect(text).toContain('前序摘要')
+      expect(text).toContain('前一版摘要内容')
+      expect(text).toContain('不要推翻重写')
+    })
+
+    it('首次压缩（无 previousSummary）指令不含前序摘要段', () => {
+      const tail = buildCompactionRequestTail('assistant', 20)
+      const instruction = tail[tail.length - 1]
+      expect(instruction.content).toBe(buildCompactionPrompt(20))
+      expect(extractTextFromContent(instruction.content)).not.toContain('前序摘要')
+    })
+
+    it('传入 previousSummary 时保留 user 结尾的 assistant 桥接', () => {
+      const tail = buildCompactionRequestTail('user', 20, '前一版摘要内容')
+      expect(tail).toHaveLength(2)
+      expect(tail[0].role).toBe('assistant')
+      expect(extractTextFromContent(tail[1].content)).toContain('前一版摘要内容')
     })
   })
 })

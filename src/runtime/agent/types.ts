@@ -53,8 +53,8 @@ export type AgentEvent =
   | {
       type: 'repair_diagnostic'
       messageId: string
-      /** 修复分型：native_xml / empty_args_from_content / unclosed_parameter / type_coercion */
-      kind: 'native_xml' | 'empty_args_from_content' | 'unclosed_parameter' | 'type_coercion'
+      /** 修复分型：native_xml / empty_args_from_content / unclosed_parameter / type_coercion / tool_name_case */
+      kind: 'native_xml' | 'empty_args_from_content' | 'unclosed_parameter' | 'type_coercion' | 'tool_name_case'
       toolCallId: string
       toolName: string
       sessionId?: string

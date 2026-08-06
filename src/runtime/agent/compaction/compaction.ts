@@ -9,7 +9,7 @@
  */
 import type { ChatMessage } from '../../model/types'
 import type { CacheProfile } from '../../model/cacheProfile'
-import { estimateContextTokens } from '../tokenEstimator'
+import { CHARS_PER_TOKEN, estimateContextTokens } from '../tokenEstimator'
 
 /** 触发压缩的 token 阈值（默认 120K），当未提供 contextWindow 时作为 fallback */
 export const COMPACTION_THRESHOLD = 120_000
@@ -138,18 +138,73 @@ export function shouldCompact(
 /**
  * 构建压缩指令文本
  * 告诉模型对旧消息生成摘要
+ *
+ * 固定五段结构：多轮压缩时输出结构不漂移，后续增量更新有稳定的落点。
  */
 export function buildCompactionPrompt(recentCount: number): string {
   return [
-    '请对上面的对话历史生成一份简洁的摘要。',
-    '摘要应保留：关键决策、文件修改、工具执行结果、用户意图和当前任务状态。',
-    '摘要应丢弃：冗余的思考过程、重复的工具输出、过时的中间状态。',
-    '遇到含 artifact:// 的工具结果时，摘要里只保留结论，不要复述大段输出。',
-    '摘要中可保留 artifact:// 指针，供后续 read 续读。',
-    '摘要开头请用一行注明当前工作区绝对路径（Working directory），让后续对话能继续基于该路径操作。',
-    `摘要之后，对话将从最近 ${recentCount} 条消息继续。`,
-    '请直接输出摘要文本，不要加任何前缀说明。'
+    '请对上面的对话历史生成一份结构化摘要。不要继续对话，只输出摘要。',
+    '摘要开头先用一行注明当前工作区绝对路径（Working directory），让后续对话能继续基于该路径操作。',
+    '随后严格按以下固定结构输出，五个段落标题不得更改或省略：',
+    '',
+    '## 目标',
+    '用户要达成什么。',
+    '',
+    '## 进展',
+    '分「已完成」「进行中」两个子列表。',
+    '',
+    '## 关键决策',
+    '每项决策附一句简要理由。',
+    '',
+    '## 下一步',
+    '按执行顺序列出有序列表。',
+    '',
+    '## 关键上下文',
+    '精确的文件路径、函数名、命令与错误信息；没有则写 "(none)"。',
+    '',
+    '要求：',
+    '- 丢弃冗余的思考过程、重复的工具输出、过时的中间状态。',
+    '- 遇到含 artifact:// 的工具结果时，摘要里只保留结论，不要复述大段输出。',
+    '- 摘要中可保留 artifact:// 指针，供后续 read 续读。',
+    `- 摘要之后，对话将从最近 ${recentCount} 条消息继续。`,
+    '- 只输出摘要文本，不要复述对话，不要加任何前缀说明。'
   ].join('\n')
+}
+
+/** 摘要估算 token 上限：防止坏摘要无限膨胀挤占上下文，超出后在行边界截断 */
+export const MAX_SUMMARY_ESTIMATED_TOKENS = 768
+
+/**
+ * 按估算 token 上限约束摘要文本。
+ * 超限时在上限内最后一个换行处截断（无换行则硬截），末尾追加省略标记；
+ * 未超限原样返回。80 字符下限防止 maxTokens 过小时截成空串。
+ */
+export function boundSummaryText(
+  summary: string,
+  maxTokens: number = MAX_SUMMARY_ESTIMATED_TOKENS
+): string {
+  const maxChars = Math.max(80, Math.floor(maxTokens * CHARS_PER_TOKEN))
+  if (summary.length <= maxChars) return summary
+  const lineBreak = summary.lastIndexOf('\n', maxChars)
+  const cutAt = lineBreak > 0 ? lineBreak : maxChars
+  return `${summary.slice(0, cutAt)}\n…[摘要已截断]`
+}
+
+/** system 文本中历史摘要的合并标记，与 rebuildWithCompression 的拼接保持一致 */
+const PRIOR_SUMMARY_MARKER = '[对话历史摘要]'
+
+/**
+ * 从含历史摘要标记的 system 文本中提取前序摘要；找不到或为空返回 undefined。
+ * 多次压缩会在 system 尾部叠加多个标记段，取最后一个标记之后的内容（最新一版摘要）。
+ */
+export function extractPriorSummary(systemPrompt: string): string | undefined {
+  const markerIndex = systemPrompt.lastIndexOf(PRIOR_SUMMARY_MARKER)
+  if (markerIndex === -1) return undefined
+  const summary = systemPrompt
+    .slice(markerIndex + PRIOR_SUMMARY_MARKER.length)
+    .replace(/^\r?\n/, '')
+    .trim()
+  return summary.length > 0 ? summary : undefined
 }
 
 /**
@@ -167,17 +222,27 @@ export function buildCompactionPrompt(recentCount: number): string {
  *
  * @param lastMessageRole 当前上下文最后一条消息的 role（用于判断是否需要桥接）
  * @param recentCount 压缩后保留的最近消息数，用于在指令文案中告知模型续接位置
+ * @param previousSummary 前序摘要；存在时显式注入指令，要求模型增量更新而非重写
  */
 export function buildCompactionRequestTail(
   lastMessageRole: ChatMessage['role'] | undefined,
-  recentCount: number
+  recentCount: number,
+  previousSummary?: string
 ): ChatMessage[] {
   const needsAssistantBridge = lastMessageRole === 'user'
+  const instruction = previousSummary
+    ? [
+        buildCompactionPrompt(recentCount),
+        '',
+        '前序摘要如下，请在它的基础上只更新新增事件与发生的变化，不要推翻重写仍然成立的部分：',
+        previousSummary
+      ].join('\n')
+    : buildCompactionPrompt(recentCount)
   return [
     ...(needsAssistantBridge
       ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
       : []),
-    { role: 'user' as const, content: buildCompactionPrompt(recentCount), internal: true }
+    { role: 'user' as const, content: instruction, internal: true }
   ]
 }
 

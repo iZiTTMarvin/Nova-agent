@@ -11,7 +11,7 @@ import {
 } from '../ContextBudgetManager'
 import type { AgentContext } from '../core/AgentContext'
 import type { CompactionMeta } from '../types'
-import { CHARS_PER_TOKEN, estimateContextTokens } from '../tokenEstimator'
+import { CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import {
   estimateNextRequestTokens,
@@ -20,7 +20,9 @@ import {
 import { selectMidTurnSafeBoundary } from './selectMidTurnSafeBoundary'
 import {
   MIN_RECENT_MESSAGES,
+  boundSummaryText,
   buildCompactionRequestTail,
+  extractPriorSummary,
   getCompactionThreshold,
   rebuildWithCompression,
   shouldScheduleIdleCompaction,
@@ -193,7 +195,7 @@ export class CompactionService {
       const summary = await this.requestSummary(parts, abortSignal)
       if (!summary || abortSignal?.aborted) return false
 
-      this.applyCompactionResult(parts, summary)
+      if (!this.applyCompactionResult(parts, summary)) return false
       if (abortSignal?.aborted) return false
       this.notifyCompaction(summary, 'mid-turn')
       return true
@@ -248,7 +250,7 @@ export class CompactionService {
       const summary = await this.requestSummary(parts, abortSignal)
       if (!summary || abortSignal?.aborted) return false
 
-      this.applyCompactionResult(parts, summary)
+      if (!this.applyCompactionResult(parts, summary)) return false
       if (abortSignal?.aborted) return false
       this.notifyCompaction(summary, 'overflow')
       return true
@@ -272,7 +274,7 @@ export class CompactionService {
     const summary = await this.requestSummary(parts, abortSignal)
     if (!summary || abortSignal?.aborted || !canApply()) return false
 
-    this.applyCompactionResult(parts, summary)
+    if (!this.applyCompactionResult(parts, summary)) return false
     if (abortSignal?.aborted || !canApply()) return false
     this.notifyCompaction(summary, trigger)
     return true
@@ -372,12 +374,15 @@ export class CompactionService {
 
     const systemMessage = this.context.messages.find(message => message.role === 'system')
     const { messages: governedOld } = compactAtBoundary(parts.oldMessages)
+    // 二次及以后压缩时 system 尾部已含前序摘要，显式注入压缩输入要求增量更新
+    const priorSummary = extractPriorSummary(extractTextFromContent(systemMessage?.content ?? ''))
     const compactionContext: ChatMessage[] = [
       ...(systemMessage ? [systemMessage] : []),
       ...stripReasoningContent(governedOld),
       ...buildCompactionRequestTail(
         governedOld[governedOld.length - 1]?.role,
-        parts.recentMessages.length
+        parts.recentMessages.length,
+        priorSummary
       )
     ]
 
@@ -408,10 +413,24 @@ export class CompactionService {
     }
 
     const trimmed = summary.trim()
-    return trimmed || null
+    if (!trimmed) return null
+    return boundSummaryText(trimmed)
   }
 
-  private applyCompactionResult(parts: CompactionParts, summary: string): void {
+  /**
+   * 采纳摘要并重建上下文。
+   * 返回 false 表示摘要未通过采纳校验（替换后总量不小于压缩前），
+   * 本次压缩放弃写回，原上下文与簿记保持不变（fail-open，不终止 turn）。
+   */
+  private applyCompactionResult(parts: CompactionParts, summary: string): boolean {
+    // 采纳校验：替换后总量必须严格小于压缩前，否则摘要没有压缩收益。
+    // 两侧保留区相同，等价于摘要必须小于被折叠的 oldMessages；按完整两侧计算便于阅读。
+    const keptTokens =
+      estimateContextTokens(parts.recentMessages) + estimateContextTokens(parts.pulledBackMessages)
+    const projectedTokens = estimateTokens(summary) + keptTokens
+    const originalTokens = estimateContextTokens(parts.oldMessages) + keptTokens
+    if (projectedTokens >= originalTokens) return false
+
     const rebuilt = rebuildWithCompression(
       parts.systemPrompt,
       summary,
@@ -428,6 +447,7 @@ export class CompactionService {
     this.context.userTurnsSinceCompaction = 0
     this.updateTokenEstimate()
     this.cacheDiagnostics.bumpEpoch('compaction')
+    return true
   }
 
   private notifyCompaction(summary: string, trigger: CompactionTrigger): void {

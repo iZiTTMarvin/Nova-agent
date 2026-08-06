@@ -115,6 +115,35 @@ describe('ToolRegistry', () => {
   })
 })
 
+describe('resolveToolNameCaseInsensitive', () => {
+  it('大小写唯一命中时返回正确名字', () => {
+    const registry = new ToolRegistry()
+    registry.register(makeTool('bash', 'ok'))
+
+    expect(registry.resolveToolNameCaseInsensitive('Bash')).toEqual({ kind: 'unique', name: 'bash' })
+    expect(registry.resolveToolNameCaseInsensitive('BASH')).toEqual({ kind: 'unique', name: 'bash' })
+  })
+
+  it('多个仅大小写不同的候选时返回 ambiguous 与候选列表', () => {
+    const registry = new ToolRegistry()
+    registry.register(makeTool('read', 'a'))
+    registry.register(makeTool('Read', 'b'))
+
+    const result = registry.resolveToolNameCaseInsensitive('READ')
+    expect(result.kind).toBe('ambiguous')
+    if (result.kind === 'ambiguous') {
+      expect([...result.candidates].sort()).toEqual(['Read', 'read'])
+    }
+  })
+
+  it('完全不存在的名字返回 miss', () => {
+    const registry = new ToolRegistry()
+    registry.register(makeTool('bash', 'ok'))
+
+    expect(registry.resolveToolNameCaseInsensitive('no_such_tool')).toEqual({ kind: 'miss' })
+  })
+})
+
 describe('resolveAndValidatePath 多根校验', () => {
   const workDir = resolve('/workspace/project')
   const skillRoot = resolve('/home/user/.nova/skills/ref-test')

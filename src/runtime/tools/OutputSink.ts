@@ -1,13 +1,13 @@
 /**
  * OutputSink — 统一大输出截断 + artifact 指针生成
  *
- * 小输出原样返回；超限则写入 ArtifactStore，上下文只保留 head + 截断提示。
+ * 小输出原样返回；超限则写入 ArtifactStore，上下文保留 head + tail + 截断提示。
  * bash 流式路径由 OutputAccumulator 落盘，此处提供 formatNotice 复用截断模板。
  */
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import { countTextLines } from '../artifacts/ArtifactStore'
 import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
-import { truncateHead } from './bash/truncate'
+import { truncateHead, truncateTail } from './bash/truncate'
 
 export interface OutputSinkOptions {
   /** 进入模型上下文的最大字节数，默认 50KB */
@@ -35,6 +35,10 @@ export interface SinkResult {
 const DEFAULT_MAX_CONTEXT_BYTES = 50_000
 const DEFAULT_MAX_CONTEXT_LINES = 3000
 
+// 头尾预算切分：尾部承载错误信息，头部承载命令上下文，故头部略多
+const HEAD_BUDGET_RATIO = 0.6
+const TAIL_BUDGET_RATIO = 0.4
+
 export class OutputSink {
   private readonly maxContextBytes: number
   private readonly maxContextLines: number
@@ -51,7 +55,7 @@ export class OutputSink {
   }
 
   /**
-   * 对大段文本做二次控量：未超限原样返回；超限写 artifact 并保留 head + 指针。
+   * 对大段文本做二次控量：未超限原样返回；超限写 artifact 并保留 head + tail + 指针。
    */
   async finalize(text: string): Promise<SinkResult> {
     const totalBytes = Buffer.byteLength(text, 'utf8')
@@ -76,11 +80,16 @@ export class OutputSink {
     })
 
     const head = truncateHead(text, {
-      maxBytes: this.maxContextBytes,
-      maxLines: this.maxContextLines
+      maxBytes: Math.floor(this.maxContextBytes * HEAD_BUDGET_RATIO),
+      maxLines: Math.floor(this.maxContextLines * HEAD_BUDGET_RATIO)
     })
-    const shownLines = head.outputLines
-    const nextOffset = shownLines + 1
+    const tail = truncateTail(text, {
+      maxBytes: Math.floor(this.maxContextBytes * TAIL_BUDGET_RATIO),
+      maxLines: Math.floor(this.maxContextLines * TAIL_BUDGET_RATIO)
+    })
+
+    const shownLines = head.outputLines + tail.outputLines
+    const nextOffset = head.outputLines + 1
     const notice = OutputSink.formatNotice({
       totalLines,
       totalBytes,
@@ -90,7 +99,15 @@ export class OutputSink {
       nextOffset
     })
 
-    const contextText = head.content.length > 0 ? `${head.content}\n${notice}` : notice
+    // 头尾之间标注省略行数；纯字节超限可能一行未省（如少量长行），此时不出标记
+    const omittedLines = totalLines - shownLines
+    const parts: string[] = []
+    if (head.content.length > 0) parts.push(head.content)
+    if (omittedLines > 0) parts.push(`[已省略中间 ${omittedLines} 行]`)
+    if (tail.content.length > 0) parts.push(tail.content)
+    parts.push(notice)
+    const contextText = parts.join('\n')
+
     return {
       contextText,
       artifactId: artifact.id,

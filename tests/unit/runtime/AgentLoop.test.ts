@@ -1089,12 +1089,14 @@ describe('AgentLoop', () => {
 
     const { loop } = createLoop(client)
 
-    // 注入多条历史消息，使 Layer 2 弹起后依然有消息可以被压缩（至少 44 条非系统消息）
+    // 注入多条历史消息，使 Layer 2 弹起后依然有消息可以被压缩（至少 44 条非系统消息）。
+    // 消息需带真实内容体量：采纳校验要求摘要严格小于被折叠的旧消息，
+    // 仅剩两条空壳消息时摘要没有压缩收益会被拒绝。
     const history: ChatMessage[] = []
     for (let i = 0; i < 22; i++) {
       history.push(
-        { role: 'user', content: `q${i}` },
-        { role: 'assistant', content: `a${i}` }
+        { role: 'user', content: `q${i}-` + 'x'.repeat(100) },
+        { role: 'assistant', content: `a${i}-` + 'y'.repeat(100) }
       )
     }
     loop.injectHistory(history)

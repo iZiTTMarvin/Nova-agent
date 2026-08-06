@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolExecutor, ToolResult } from '../../../../src/runtime/tools/types'
+import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 
@@ -881,5 +882,218 @@ describe('executeToolBatch', () => {
     expect(executed).toBe(false)
     expect(result.outcomes[0]?.failed).toBe(true)
     expect(result.outcomes[0]?.resultText).toContain('工具组未激活')
+  })
+
+  it('工具失败回传超过 4000 字符时保留尾部并如实标注省略字符数', async () => {
+    const registry = new ToolRegistry()
+    const tail = 'ERROR_TAIL_END'
+    const longOutput = 'x'.repeat(5000) + tail
+
+    registerTool(registry, 'read', async () => {
+      return { success: false, output: longOutput, error: 'boom' }
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_long_err', name: 'read', arguments: '{}' }],
+      messageId: 'msg_long_err',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    const outcome = result.outcomes[0]
+    const original = `工具执行失败: boom\n${longOutput}`
+    expect(outcome.failed).toBe(true)
+    expect(outcome.resultText.length).toBeLessThanOrEqual(4000)
+    expect(outcome.resultText.endsWith(tail)).toBe(true)
+
+    const markerMatch = outcome.resultText.match(/^…\[已省略前 (\d+) 字符\]\n/)
+    expect(markerMatch).not.toBeNull()
+    const omitted = Number(markerMatch![1])
+    expect(omitted).toBeGreaterThan(0)
+    // 省略字符数必须如实：标记 + 原文尾部切片能完整还原限长后的文本
+    expect(outcome.resultText).toBe(`…[已省略前 ${omitted} 字符]\n` + original.slice(omitted))
+  })
+
+  it('工具抛异常的超长错误信息同样限长并保留尾部', async () => {
+    const registry = new ToolRegistry()
+    const longMessage = 'z'.repeat(5000) + 'THROW_TAIL'
+
+    registerTool(registry, 'read', async () => {
+      throw new Error(longMessage)
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_throw', name: 'read', arguments: '{}' }],
+      messageId: 'msg_throw',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    const outcome = result.outcomes[0]
+    expect(outcome.failed).toBe(true)
+    expect(outcome.resultText.length).toBeLessThanOrEqual(4000)
+    expect(outcome.resultText.endsWith('THROW_TAIL')).toBe(true)
+    expect(outcome.resultText.startsWith('…[已省略前 ')).toBe(true)
+  })
+
+  it('工具失败回传不超过 4000 字符时原样保留', async () => {
+    const registry = new ToolRegistry()
+    const output = 'y'.repeat(1000)
+
+    registerTool(registry, 'read', async () => {
+      return { success: false, output, error: 'boom' }
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_short_err', name: 'read', arguments: '{}' }],
+      messageId: 'msg_short_err',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(result.outcomes[0].failed).toBe(true)
+    expect(result.outcomes[0].resultText).toBe(`工具执行失败: boom\n${output}`)
+  })
+
+  it('工具名大小写唯一命中时按正确名字执行，权限与事件均使用纠正后的名字', async () => {
+    const registry = new ToolRegistry()
+    const executed: string[] = []
+    registerTool(registry, 'bash', async () => {
+      executed.push('bash')
+      return { success: true, output: 'ok' }
+    })
+
+    const permissionNames: string[] = []
+    const availabilityNames: string[] = []
+    const events: AgentEvent[] = []
+
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_case', name: 'Bash', arguments: '{"command":"ls"}' }],
+      messageId: 'msg_case',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async name => {
+        permissionNames.push(name)
+        return { allowed: true, reason: '' }
+      },
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel',
+      isToolAvailable: name => {
+        availabilityNames.push(name)
+        return true
+      }
+    })
+
+    expect(executed).toEqual(['bash'])
+    expect(result.outcomes[0].failed).toBe(false)
+    expect(result.outcomes[0].resultText).toBe('ok')
+
+    const diagnostics = events.filter(event => event.type === 'repair_diagnostic')
+    expect(diagnostics).toHaveLength(1)
+    expect(diagnostics[0]).toMatchObject({
+      messageId: 'msg_case',
+      kind: 'tool_name_case',
+      toolCallId: 'tc_case',
+      toolName: 'bash'
+    })
+
+    // 权限校验与工具组闸门收到的都是纠正后的名字，大小写写错不能绕过权限策略
+    expect(permissionNames).toEqual(['bash'])
+    expect(availabilityNames).toEqual(['bash'])
+
+    const toolResult = events.find(event => event.type === 'tool_result')
+    expect(toolResult).toMatchObject({ toolCallId: 'tc_case', toolName: 'bash' })
+  })
+
+  it('大小写存在多个候选时不纠正，维持未注册错误且不写诊断事件', async () => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', async () => ({ success: true, output: 'lower' }))
+    registerTool(registry, 'Read', async () => ({ success: true, output: 'upper' }))
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_ambiguous', name: 'READ', arguments: '{}' }],
+      messageId: 'msg_ambiguous',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(result.outcomes[0].failed).toBe(true)
+    expect(result.outcomes[0].resultText).toBe('工具 "READ" 不可用：未注册工具')
+    expect(events.filter(event => event.type === 'repair_diagnostic')).toHaveLength(0)
+  })
+
+  it('工具名完全不存在时维持未注册错误且不写诊断事件', async () => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', async () => ({ success: true, output: 'ok' }))
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_miss', name: 'no_such_tool', arguments: '{}' }],
+      messageId: 'msg_miss',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(result.outcomes[0].failed).toBe(true)
+    expect(result.outcomes[0].resultText).toBe('工具 "no_such_tool" 不可用：未注册工具')
+    expect(events.filter(event => event.type === 'repair_diagnostic')).toHaveLength(0)
   })
 })
