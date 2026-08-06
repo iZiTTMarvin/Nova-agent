@@ -193,6 +193,7 @@ def make_plots(
     agents: list[str],
     metrics: dict[str, dict[str, Any]],
     by_task: dict[str, dict[str, dict[str, str]]],
+    setup_label: str,
 ) -> list[Path]:
     try:
         import matplotlib
@@ -219,7 +220,13 @@ def make_plots(
         plt.close(fig)
         paths.append(path)
 
-    bar_plot([metrics[a]["pass_rate"] for a in agents], "Pass rate", "Terminal-Bench 2.1 paired pass@1", "pass_rate.png", True)
+    bar_plot(
+        [metrics[a]["pass_rate"] for a in agents],
+        "Pass rate",
+        f"{setup_label} paired pass@1",
+        "pass_rate.png",
+        True,
+    )
     bar_plot([metrics[a]["cost_per_pass"] or 0 for a in agents], "USD per pass", "Uniform estimated cost per passing task", "cost_per_pass.png")
     bar_plot([metrics[a]["budget_rate"] for a in agents], "Budget exhaustion rate", "Budget exhaustion", "budget_exhaustion.png", True)
 
@@ -368,12 +375,14 @@ def generate(run_dir: Path) -> None:
     )
     failure_table = markdown_table(["Failure class", "Cells"], sorted(failures.items()))
 
+    dataset_label = setup.get("dataset", {}).get("label", "Terminal-Bench 2.1")
+    task_count = setup.get("dataset", {}).get("task_count", 0)
     report_kind = "comparison" if len(agents) > 1 else "evaluation"
-    report = f"""# Terminal-Bench 2.1 harness {report_kind}
+    report = f"""# {dataset_label} harness {report_kind}
 
 Generated from `{results_path.name}`. Model `{setup['model']}`, effort `{setup['reasoning_effort']}`, dataset revision `{setup['dataset']['revision']}`.
 
-Unscored infrastructure-invalid cells are never converted to failures. A final 89-task claim is valid only when every arm has 89 scored cells.
+Unscored infrastructure-invalid cells are never converted to failures. A final {task_count}-task claim is valid only when every arm has {task_count} scored cells.
 
 ## Main results
 
@@ -414,7 +423,13 @@ Cost is recomputed uniformly from the frozen DeepSeek price snapshot, not from h
     report_path.write_text(report, encoding="utf-8")
     per_task_path = run_dir / "per_task_comparison.csv"
     write_per_task(per_task_path, agents, by_task)
-    plot_paths = make_plots(run_dir, agents, metrics, by_task)
+    plot_paths = make_plots(
+        run_dir,
+        agents,
+        metrics,
+        by_task,
+        setup.get("dataset", {}).get("label", "Terminal-Bench 2.1"),
+    )
 
     checksum_targets = [
         results_path,

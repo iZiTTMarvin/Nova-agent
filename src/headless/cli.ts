@@ -11,6 +11,7 @@ import {
 } from '../runtime/agent'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
+import { resolveContextWindow } from '../shared/config'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
@@ -24,8 +25,11 @@ import type { AgentEvent } from '../runtime/agent/types'
 import type { NormalizedUsage } from '../shared/model/types'
 import {
   deriveHeadlessSummary,
+  accumulateRepairTotals,
+  accumulateRepairOutcomes,
   type HeadlessTurnReport
 } from './summary'
+import { buildAtifTrajectory } from './atif'
 
 interface CliOptions {
   workdir: string
@@ -36,6 +40,8 @@ interface CliOptions {
   maxToolRounds: number
   deadlineSeconds?: number
   instructionFile?: string
+  /** 显式上下文窗口覆盖；缺省时由模型元数据解析 */
+  contextWindow?: number
 }
 
 interface UsageTotals {
@@ -54,7 +60,8 @@ function parseArgs(argv: string[]): CliOptions {
     'reasoning-effort',
     'max-tool-rounds',
     'deadline-seconds',
-    'instruction-file'
+    'instruction-file',
+    'context-window'
   ])
   const values = new Map<string, string>()
   for (let i = 0; i < argv.length; i += 1) {
@@ -83,6 +90,11 @@ function parseArgs(argv: string[]): CliOptions {
   if (deadlineSeconds !== undefined && (!Number.isFinite(deadlineSeconds) || deadlineSeconds <= 0)) {
     throw new Error('--deadline-seconds 必须是正数')
   }
+  const contextWindowValue = values.get('context-window')
+  const contextWindow = contextWindowValue === undefined ? undefined : Number(contextWindowValue)
+  if (contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0)) {
+    throw new Error('--context-window 必须是正整数')
+  }
 
   return {
     workdir,
@@ -92,6 +104,7 @@ function parseArgs(argv: string[]): CliOptions {
     reasoningEffort: effort as CliOptions['reasoningEffort'],
     maxToolRounds,
     ...(deadlineSeconds === undefined ? {} : { deadlineSeconds }),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
     ...(values.get('instruction-file')
       ? { instructionFile: resolve(values.get('instruction-file')!) }
       : {})
@@ -179,7 +192,8 @@ async function main(): Promise<void> {
       toolSummary: renderModeToolInventory('default', definitions, { dialect: 'native' })
     },
     maxToolRounds: options.maxToolRounds,
-    contextWindow: 1_000_000,
+    // 显式参数优先；缺省时由模型元数据解析（不再硬编码 1M，避免压缩阈值永不触发）
+    contextWindow: options.contextWindow ?? resolveContextWindow(options.model),
     supportsVision: false,
     toolExecution: 'parallel',
     maxParallelToolCalls: 4
@@ -219,24 +233,12 @@ async function main(): Promise<void> {
   const summaryDerivation = deriveHeadlessSummary(report)
 
   const finishedAt = new Date()
-  const assistantText = events
-    .filter((event): event is Extract<AgentEvent, { type: 'text_delta' }> => event.type === 'text_delta')
-    .map(event => event.delta)
-    .join('')
-  const reasoningText = events
-    .filter((event): event is Extract<AgentEvent, { type: 'thinking_delta' }> => event.type === 'thinking_delta')
-    .map(event => event.delta)
-    .join('')
-  const toolCalls = events
-    .filter((event): event is Extract<AgentEvent, { type: 'tool_call' }> => event.type === 'tool_call')
-    .map(event => ({
-      tool_call_id: event.toolCallId,
-      function_name: event.toolName,
-      arguments: event.args
-    }))
-  const observations = events
-    .filter((event): event is Extract<AgentEvent, { type: 'tool_result' }> => event.type === 'tool_result')
-    .map(event => ({ source_call_id: event.toolCallId, content: event.result }))
+  const atif = buildAtifTrajectory({
+    instruction,
+    startedAt: startedAt.toISOString(),
+    finishedAt: finishedAt.toISOString(),
+    events
+  })
 
   writeJson(trajectoryPath, {
     schema_version: 'ATIF-v1.7',
@@ -247,24 +249,12 @@ async function main(): Promise<void> {
       model_name: options.model,
       extra: { reasoning_effort: options.reasoningEffort }
     },
-    steps: [
-      { step_id: 1, source: 'user', message: instruction, timestamp: startedAt.toISOString() },
-      {
-        step_id: 2,
-        source: 'agent',
-        message: assistantText,
-        timestamp: finishedAt.toISOString(),
-        llm_call_count: events.filter(event => event.type === 'usage').length,
-        ...(reasoningText ? { reasoning_content: reasoningText } : {}),
-        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        ...(observations.length > 0 ? { observation: { results: observations } } : {})
-      }
-    ],
+    steps: atif.steps,
     final_metrics: {
       total_prompt_tokens: usage.uncachedInputTokens + usage.cacheReadTokens,
       total_completion_tokens: usage.outputTokens,
       total_cached_tokens: usage.cacheReadTokens,
-      total_steps: 2,
+      total_steps: atif.totalSteps,
       extra: {
         cache_write_tokens: usage.cacheWriteTokens,
         uncached_input_tokens: usage.uncachedInputTokens
@@ -287,8 +277,10 @@ async function main(): Promise<void> {
     finished_at: finishedAt.toISOString(),
     duration_seconds: (finishedAt.getTime() - startedAt.getTime()) / 1000,
     usage,
-    tool_calls: toolCalls.length,
-    model_calls: events.filter(event => event.type === 'usage').length
+    tool_calls: atif.steps.reduce((sum, step) => sum + (step.tool_calls?.length ?? 0), 0),
+    model_calls: atif.llmCallCount,
+    repair: accumulateRepairTotals(events),
+    repair_outcome: accumulateRepairOutcomes(events)
   }
   writeJson(summaryPath, summary)
   process.stdout.write(`${JSON.stringify(summary)}\n`)

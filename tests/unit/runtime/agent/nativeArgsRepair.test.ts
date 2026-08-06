@@ -251,3 +251,84 @@ describe('repairEmptyArgsFromContent —— 正文兜底补全', () => {
     expect(repairEmptyArgsFromContent([{ id: 'x', name: 'read', arguments: '' }], '')).toEqual([])
   })
 })
+
+describe('修复分型诊断', () => {
+  it('native_xml 修复报告 native_xml 分型', () => {
+    const raw = '<invoke name="read"><parameter name="path">src/foo.ts</parameter></invoke>'
+    const parsed = tryParse(raw)
+    const diagnostics: string[] = []
+    repairNativeArguments('read', raw, parsed, d => diagnostics.push(d.kind))
+
+    expect(diagnostics).toContain('native_xml')
+  })
+
+  it('未闭合 parameter 标签报告 unclosed_parameter 分型', () => {
+    const raw = '<invoke name="read"><parameter name="path">src/foo.ts</invoke>'
+    const parsed = tryParse(raw)
+    const diagnostics: string[] = []
+    repairNativeArguments('read', raw, parsed, d => diagnostics.push(d.kind))
+
+    expect(diagnostics).toContain('unclosed_parameter')
+  })
+
+  it('已闭合 parameter 标签不误报 unclosed_parameter（</invoke> 不参与参数配对）', () => {
+    // 完整闭合：<parameter>...</parameter> + <invoke>...</invoke>，不应报 unclosed
+    const raw = '<invoke name="read"><parameter name="path">src/foo.ts</parameter></invoke>'
+    const parsed = tryParse(raw)
+    const diagnostics: string[] = []
+    repairNativeArguments('read', raw, parsed, d => diagnostics.push(d.kind))
+
+    expect(diagnostics).toContain('native_xml')
+    expect(diagnostics).not.toContain('unclosed_parameter')
+  })
+
+  it('多参数一个未闭合时只报一次 unclosed_parameter', () => {
+    const raw = '<invoke name="read"><parameter name="path">a.ts</parameter><parameter name="offset">10</invoke>'
+    const parsed = tryParse(raw)
+    const diagnostics: string[] = []
+    repairNativeArguments('read', raw, parsed, d => diagnostics.push(d.kind))
+
+    expect(diagnostics.filter(k => k === 'unclosed_parameter')).toHaveLength(1)
+  })
+
+  it('类型还原报告 type_coercion 分型', () => {
+    const raw = '<invoke name="read"><parameter name="path">a.ts</parameter><parameter name="offset">10</parameter></invoke>'
+    const parsed = tryParse(raw)
+    const diagnostics: string[] = []
+    repairNativeArguments('read', raw, parsed, d => diagnostics.push(d.kind))
+
+    expect(diagnostics.filter(k => k === 'type_coercion').length).toBe(1)
+  })
+
+  it('empty_args_from_content 分型在正文补参时报告', () => {
+    const toolCalls = [
+      { id: 'tc1', name: 'read', arguments: '' }
+    ]
+    const diagnostics: string[] = []
+    repairEmptyArgsFromContent(
+      toolCalls,
+      '<invoke name="read"><parameter name="path">src/foo.ts</parameter></invoke>',
+      d => diagnostics.push(d.kind)
+    )
+
+    expect(diagnostics).toEqual(['empty_args_from_content'])
+  })
+
+  it('无法修复时不报告任何分型', () => {
+    const raw = '{"random":"stuff"}'
+    const parsed = tryParse(raw)
+    const diagnostics: string[] = []
+    repairNativeArguments('read', raw, parsed, d => diagnostics.push(d.kind))
+
+    expect(diagnostics).toEqual([])
+  })
+
+  it('诊断回调携带真实 toolCallId', () => {
+    const raw = '<invoke name="read"><parameter name="path">src/foo.ts</parameter></invoke>'
+    const parsed = tryParse(raw)
+    const ids: string[] = []
+    repairNativeArguments('read', raw, parsed, d => ids.push(d.toolCallId), 'real-tc-id')
+
+    expect(ids).toEqual(['real-tc-id'])
+  })
+})

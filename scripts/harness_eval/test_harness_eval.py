@@ -23,6 +23,7 @@ from scripts.harness_eval.run_experiment import (
     next_admission_for_cell,
     node_runtime_archive_path,
     ordered_task_names,
+    resolve_dataset_config,
     result_is_complete,
     token_fields,
     write_progress_snapshot,
@@ -270,6 +271,62 @@ class HarnessEvalTests(unittest.TestCase):
                 ordered_task_names(tasks),
                 ["fast-a", "fast-b", "slow"],
             )
+
+    def test_ordered_task_names_filters_selected_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tasks = Path(directory)
+            for name, timeout in (("slow", 3600), ("fast-b", 900), ("fast-a", 900)):
+                task = tasks / name
+                task.mkdir()
+                (task / "task.toml").write_text(
+                    f"[agent]\ntimeout_sec = {timeout}\n",
+                    encoding="utf-8",
+                )
+
+            self.assertEqual(
+                ordered_task_names(tasks, selected_ids=["slow", "fast-a"]),
+                ["fast-a", "slow"],
+            )
+
+    def test_ordered_task_names_rejects_unknown_selected_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tasks = Path(directory)
+            (tasks / "task-a").mkdir()
+            (tasks / "task-a" / "task.toml").write_text(
+                "[agent]\ntimeout_sec = 900.0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                ordered_task_names(tasks, selected_ids=["task-a", "nope"])
+
+    def test_resolve_dataset_config_merges_deepswe_manifest(self) -> None:
+        config = {
+            "dataset": {
+                "manifest": "deepswe_subset30.json",
+                "task_count": 30,
+            }
+        }
+        dataset = resolve_dataset_config(config)
+        self.assertEqual(dataset["label"], "DeepSWE subset-30")
+        self.assertEqual(dataset["slug"], "deep-swe")
+        self.assertEqual(
+            dataset["revision"],
+            "6db64a40f3318d8659238ff34a8cc4b491c49205",
+        )
+        self.assertEqual(len(dataset["task_ids"]), 30)
+        # 内联字段覆盖 manifest 同名字段
+        config = {"dataset": {"manifest": "deepswe_subset30.json", "task_count": 30, "task_ids": ["only-one"]}}
+        self.assertEqual(resolve_dataset_config(config)["task_ids"], ["only-one"])
+
+    def test_deepswe_full_manifest_has_113_tasks(self) -> None:
+        full = resolve_dataset_config({"dataset": {"manifest": "deepswe_full113.json"}})
+        self.assertEqual(len(full["task_ids"]), 113)
+        # 子集必须是全集的子集
+        subset = resolve_dataset_config({"dataset": {"manifest": "deepswe_subset30.json"}})
+        full_ids = set(full["task_ids"])
+        for task_id in subset["task_ids"]:
+            self.assertIn(task_id, full_ids)
+        self.assertEqual(len(set(full["task_ids"])), 113)
 
     def test_install_network_is_scoped_and_restorable(self) -> None:
         command = prepare_command(

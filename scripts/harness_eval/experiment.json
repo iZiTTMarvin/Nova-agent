@@ -1,10 +1,8 @@
 {
-  "run_id": "deepseek-v4-flash-nova-tbench-2.1-short-first-20260804",
+  "run_id": "deepseek-v4-flash-nova-deepswe-subset30-20260805",
   "dataset": {
-    "repo": "https://github.com/harbor-framework/terminal-bench-2-1.git",
-    "revision": "d49e28f1e4ddd13d289e85a5f312a66750951932",
-    "task_count": 89,
-    "task_tree_sha256": "daed74b442e46f8c0201e23467342737d0ded2405e32b6d0d3f4fd6a06a2ece6"
+    "manifest": "deepswe_subset30.json",
+    "task_count": 30
   },
   "model": "deepseek-v4-flash",
   "reasoning_effort": "max",
@@ -24,7 +22,7 @@
     "proxy_url": "http://http.docker.internal:3128",
     "ubuntu_archive_mirror": "http://free.nchc.org.tw/ubuntu"
   },
-  "outer_timeout_seconds": 7200,
+  "outer_timeout_seconds": 14400,
   "pair_concurrency": 1,
   "arms_parallel": false,
   "infra_retry_limit": 1,

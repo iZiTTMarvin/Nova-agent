@@ -84,6 +84,23 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def resolve_dataset_config(config: dict[str, Any]) -> dict[str, Any]:
+    """dataset.manifest 引用 DeepSWE 冻结清单时，合并 repo/revision/task_ids/label。
+
+    终端评测（terminal-bench）无需 manifest，直接使用 dataset 内联字段。
+    """
+    dataset = dict(config.get("dataset", {}))
+    manifest_name = dataset.pop("manifest", None)
+    if manifest_name is None:
+        return dataset
+    manifest_path = Path(__file__).with_name(manifest_name)
+    if not manifest_path.is_file():
+        raise RuntimeError(f"dataset manifest not found: {manifest_path}")
+    manifest = read_json(manifest_path)
+    merged = {**manifest, **dataset}
+    return merged
+
+
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -238,7 +255,8 @@ class Paths:
 def resolve_paths(config: dict[str, Any], eval_root: Path) -> Paths:
     run = eval_root / config["run_id"]
     revision = config["dataset"]["revision"]
-    dataset = eval_root / "datasets" / "terminal-bench-2.1" / revision
+    dataset_slug = config["dataset"].get("slug", "terminal-bench-2.1")
+    dataset = eval_root / "datasets" / dataset_slug / revision
     return Paths(
         root=eval_root,
         run=run,
@@ -250,15 +268,21 @@ def resolve_paths(config: dict[str, Any], eval_root: Path) -> Paths:
     )
 
 
-def ordered_task_names(tasks_dir: Path) -> list[str]:
+def ordered_task_names(tasks_dir: Path, selected_ids: list[str] | None = None) -> list[str]:
+    """按 agent timeout 升序排列任务名；selected_ids 非空时只保留子集。"""
     tasks: list[tuple[float, str]] = []
     for path in tasks_dir.iterdir():
         if not path.is_dir():
+            continue
+        if selected_ids is not None and path.name not in selected_ids:
             continue
         task_config = tomllib.loads(
             (path / "task.toml").read_text(encoding="utf-8")
         )
         tasks.append((float(task_config["agent"]["timeout_sec"]), path.name))
+    missing = [name for name in (selected_ids or []) if not (tasks_dir / name).is_dir()]
+    if missing:
+        raise RuntimeError(f"task id(s) not found in dataset: {', '.join(missing)}")
     return [name for _timeout, name in sorted(tasks)]
 
 
@@ -288,7 +312,11 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         raise RuntimeError(f"dataset revision mismatch: {actual_revision}")
 
     tasks_dir = paths.dataset / "tasks"
-    task_names = ordered_task_names(tasks_dir)
+    selected_ids = config["dataset"].get("task_ids")
+    if selected_ids is not None:
+        if not isinstance(selected_ids, list) or not all(isinstance(x, str) for x in selected_ids):
+            raise RuntimeError("dataset.task_ids must be a list of task id strings")
+    task_names = ordered_task_names(tasks_dir, selected_ids)
     if len(task_names) != int(config["dataset"]["task_count"]):
         raise RuntimeError(f"expected {config['dataset']['task_count']} tasks, found {len(task_names)}")
 
@@ -351,7 +379,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 
 ## Frozen setup
 
-- Dataset: Terminal-Bench 2.1 全 {config['dataset']['task_count']} 题，revision `{config['dataset']['revision']}`。
+- Dataset: {config['dataset'].get('label', 'Terminal-Bench 2.1')} {config['dataset']['task_count']} 题，revision `{config['dataset']['revision']}`。
 - Task tree SHA256: `{config['dataset']['task_tree_sha256']}`。
 - Active arms: {agents}；每题每臂一次有效 model attempt，{design}。
 - Model: `{config['model']}`；reasoning effort: `{config['reasoning_effort']}`。
@@ -1145,6 +1173,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = read_json(args.config.resolve())
+    # dataset.manifest 在进入路径解析前合并（revision/slug 决定数据集目录位置）
+    config = {**config, "dataset": resolve_dataset_config(config)}
     paths = resolve_paths(config, args.eval_root.expanduser().resolve())
     if args.action == "reconcile":
         frozen_path = paths.run / "frozen_setup.json"

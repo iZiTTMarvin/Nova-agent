@@ -219,7 +219,15 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       if (toolCalls.length === 0) break
 
       // 尝试从正文恢复 native 工具调用的空参数。
-      const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent)
+      const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent, diagnostic => {
+        emit({
+          type: 'repair_diagnostic',
+          messageId,
+          kind: diagnostic.kind,
+          toolCallId: diagnostic.toolCallId,
+          toolName: diagnostic.toolName
+        })
+      })
       if (repairedIds.length > 0) {
         assistantMsg.content = stripTextToolCalls(assistantContent)
       }

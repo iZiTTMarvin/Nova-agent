@@ -10,8 +10,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   deriveHeadlessSummary,
+  accumulateRepairTotals,
+  accumulateRepairOutcomes,
   type HeadlessTurnReport
 } from '../../../src/headless/summary'
+import type { AgentEvent } from '../../../src/runtime/agent/types'
 
 function report(
   status: HeadlessTurnReport['status'],
@@ -79,5 +82,175 @@ describe('deriveHeadlessSummary', () => {
     expect(derived.budgetExhausted).toBe(false)
     expect(derived.failureClass).toBe('agent_error')
     expect(derived.exitNonZero).toBe(true)
+  })
+})
+
+describe('accumulateRepairTotals', () => {
+  it('按分型累计计数，非 repair 事件忽略', () => {
+    const events: AgentEvent[] = [
+      { type: 'message_start', messageId: 'm1' },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'native_xml',
+        toolCallId: 'tc1',
+        toolName: 'read'
+      },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'empty_args_from_content',
+        toolCallId: 'tc2',
+        toolName: 'bash'
+      },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'type_coercion',
+        toolCallId: 'tc2',
+        toolName: 'bash'
+      },
+      { type: 'tool_call', messageId: 'm1', toolCallId: 'tc2', toolName: 'bash', args: {} }
+    ]
+
+    expect(accumulateRepairTotals(events)).toEqual({
+      native_xml: 1,
+      empty_args_from_content: 1,
+      unclosed_parameter: 0,
+      type_coercion: 1
+    })
+  })
+
+  it('空事件流全零', () => {
+    expect(accumulateRepairTotals([])).toEqual({
+      native_xml: 0,
+      empty_args_from_content: 0,
+      unclosed_parameter: 0,
+      type_coercion: 0
+    })
+  })
+})
+
+describe('accumulateRepairOutcomes', () => {
+  it('修复后执行成功的调用计入 success', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'native_xml',
+        toolCallId: 'tc1',
+        toolName: 'read'
+      },
+      {
+        type: 'tool_result',
+        messageId: 'm1',
+        toolCallId: 'tc1',
+        toolName: 'read',
+        result: 'file content'
+      }
+    ]
+    const outcomes = accumulateRepairOutcomes(events)
+    expect(outcomes.native_xml).toEqual({ success: 1, failure: 0 })
+  })
+
+  it('修复后执行失败的调用计入 failure（工具执行失败前缀）', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'empty_args_from_content',
+        toolCallId: 'tc2',
+        toolName: 'bash'
+      },
+      {
+        type: 'tool_result',
+        messageId: 'm1',
+        toolCallId: 'tc2',
+        toolName: 'bash',
+        result: '工具执行失败: command not found'
+      }
+    ]
+    const outcomes = accumulateRepairOutcomes(events)
+    expect(outcomes.empty_args_from_content).toEqual({ success: 0, failure: 1 })
+  })
+
+  it('同一 toolCallId 的多个分型共享同一执行结果', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'native_xml',
+        toolCallId: 'tc1',
+        toolName: 'read'
+      },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'unclosed_parameter',
+        toolCallId: 'tc1',
+        toolName: 'read'
+      },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'type_coercion',
+        toolCallId: 'tc1',
+        toolName: 'read'
+      },
+      {
+        type: 'tool_result',
+        messageId: 'm1',
+        toolCallId: 'tc1',
+        toolName: 'read',
+        result: 'ok'
+      }
+    ]
+    const outcomes = accumulateRepairOutcomes(events)
+    expect(outcomes.native_xml).toEqual({ success: 1, failure: 0 })
+    expect(outcomes.unclosed_parameter).toEqual({ success: 1, failure: 0 })
+    expect(outcomes.type_coercion).toEqual({ success: 1, failure: 0 })
+  })
+
+  it('权限拒绝前缀计入 failure', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'native_xml',
+        toolCallId: 'tc1',
+        toolName: 'edit'
+      },
+      {
+        type: 'tool_result',
+        messageId: 'm1',
+        toolCallId: 'tc1',
+        toolName: 'edit',
+        result: '权限拒绝: 用户拒绝'
+      }
+    ]
+    const outcomes = accumulateRepairOutcomes(events)
+    expect(outcomes.native_xml).toEqual({ success: 0, failure: 1 })
+  })
+
+  it('被取消/未执行的修复调用不计入任何结果', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'native_xml',
+        toolCallId: 'tc-no-result',
+        toolName: 'read'
+      }
+    ]
+    const outcomes = accumulateRepairOutcomes(events)
+    expect(outcomes.native_xml).toEqual({ success: 0, failure: 0 })
+  })
+
+  it('空事件流全零', () => {
+    const outcomes = accumulateRepairOutcomes([])
+    expect(outcomes.native_xml).toEqual({ success: 0, failure: 0 })
+    expect(outcomes.empty_args_from_content).toEqual({ success: 0, failure: 0 })
+    expect(outcomes.unclosed_parameter).toEqual({ success: 0, failure: 0 })
+    expect(outcomes.type_coercion).toEqual({ success: 0, failure: 0 })
   })
 })

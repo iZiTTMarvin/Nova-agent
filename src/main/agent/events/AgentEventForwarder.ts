@@ -132,6 +132,11 @@ export function forwardEventToRenderer(
         sessionId: event.sessionId
       })
       break
+    case 'repair_diagnostic':
+      // headless 遥测专用事件：桌面端主进程不消费，也不转发给 renderer。
+      // 发射方（toolBatchExecutor / runAgentLoop）在桌面与 headless 共用，
+      // 事件开销仅几个字段，桌面端忽略即可。
+      break
     case 'context_breakdown':
       webContents.send('agent:context-breakdown', {
         sessionId: event.sessionId,

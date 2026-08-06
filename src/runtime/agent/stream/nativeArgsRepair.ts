@@ -42,6 +42,26 @@ const BAD_KEY_PATTERN = /[<>"/\\]/
 const VALID_KEY = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 /**
+ * 参数修复分型，各分型独立计数用于 headless telemetry。
+ * - native_xml：arguments 被塞成 XML（<invoke>/<parameter>），从 XML 重解析
+ * - empty_args_from_content：arguments 为空，从 assistant 正文同名调用补参
+ * - unclosed_parameter：修复时补全了未闭合的 <parameter> 标签
+ * - type_coercion：把字符串值还原为 number/boolean/JSON（offset → 10 等）
+ */
+export type RepairKind =
+  | 'native_xml'
+  | 'empty_args_from_content'
+  | 'unclosed_parameter'
+  | 'type_coercion'
+
+/** 单次修复诊断（headless 汇总写入 summary） */
+export interface RepairDiagnostic {
+  kind: RepairKind
+  toolCallId: string
+  toolName: string
+}
+
+/**
  * 判断一个 native tool_call 的 arguments 是否为损坏数据，需要重解析。
  *
  * 命中任一条件即判定为坏：
@@ -82,24 +102,43 @@ export function needsRepair(argumentsStr: string, parsed: Record<string, unknown
  * @param toolName 模型下发的工具名（通常正确）
  * @param argumentsStr 原始 arguments 字符串
  * @param parsed 已 JSON.parse 的对象
+ * @param onRepair 修复发生时的诊断回调；不传则跳过
  * @returns 修复后的 args；无法修复时返回原 parsed
  */
 export function repairNativeArguments(
   toolName: string,
   argumentsStr: string,
-  parsed: Record<string, unknown>
+  parsed: Record<string, unknown>,
+  onRepair?: (diagnostic: RepairDiagnostic) => void,
+  toolCallId = 'unknown'
 ): Record<string, unknown> {
   const candidates = buildRepairCandidates(toolName, argumentsStr, parsed)
 
   for (const rawCandidate of candidates) {
     // 预处理：补全未闭合的 <parameter> 标签（真实模型常吐残缺 XML），
     // 避免 scanner 把 </invoke> 等后续标签字符误吞进参数值。
+    const unclosed = hasUnclosedParameters(rawCandidate)
     const candidate = closeUnclosedParameters(rawCandidate)
     const repaired = scanAndPick(candidate, toolName)
     if (repaired) {
       // scanner 返回的值都是字符串；对数字 / 布尔 / JSON 数组对象做轻量推断还原，
       // 对齐 parseXmlToolCalls 的行为（offset → number, edits → array 等）。
-      return coerceJsonLikeValues(repaired)
+      const coerced = coerceJsonLikeValues(repaired)
+      const coercedTypes = countTypeCoercions(repaired, coerced)
+      if (onRepair) {
+        onRepair({
+          kind: 'native_xml',
+          toolCallId,
+          toolName
+        })
+        if (unclosed) {
+          onRepair({ kind: 'unclosed_parameter', toolCallId, toolName })
+        }
+        for (let i = 0; i < coercedTypes; i++) {
+          onRepair({ kind: 'type_coercion', toolCallId, toolName })
+        }
+      }
+      return coerced
     }
   }
 
@@ -118,11 +157,13 @@ export function repairNativeArguments(
  *
  * @param toolCalls 本轮所有工具调用（会被原地修改 arguments）
  * @param content assistant 正文（可能含 XML 工具调用）
+ * @param onRepair 修复发生时的诊断回调；不传则跳过
  * @returns 被补全的 toolCallId 列表（用于诊断 / 日志）
  */
 export function repairEmptyArgsFromContent(
   toolCalls: ChatToolCall[],
-  content: string
+  content: string,
+  onRepair?: (diagnostic: RepairDiagnostic) => void
 ): string[] {
   if (!content || toolCalls.length === 0) return []
 
@@ -149,6 +190,7 @@ export function repairEmptyArgsFromContent(
     if (match && Object.keys(match.arguments).length > 0) {
       tc.arguments = JSON.stringify(match.arguments)
       repaired.push(tc.id)
+      onRepair?.({ kind: 'empty_args_from_content', toolCallId: tc.id, toolName: tc.name })
     }
   }
   return repaired
@@ -254,6 +296,51 @@ function collectScanEvent(
 /** 判断 args 是否含至少一个合法 key（避免取到空 args） */
 function hasUsefulArgs(args: Record<string, unknown>): boolean {
   return Object.keys(args).some(k => VALID_KEY.test(k))
+}
+
+/** 判断文本中是否存在未闭合的 <parameter> 标签（与 closeUnclosedParameters 同规则：
+ * 只认 </parameter> 为闭合标签，</invoke> 不参与配对——避免诊断与修复动作不一致） */
+function hasUnclosedParameters(text: string): boolean {
+  const anyTag = /<\/?(?:parameter|invoke)\b[^>]*>/gi
+  const marks: Array<{ isCloseParam: boolean; isOpenParam: boolean }> = []
+  let m: RegExpExecArray | null
+  while ((m = anyTag.exec(text)) !== null) {
+    const tag = m[0]
+    marks.push({
+      isCloseParam: /^<\s*\/\s*parameter/.test(tag),
+      isOpenParam: /^<\s*parameter/.test(tag)
+    })
+  }
+
+  // 与 closeUnclosedParameters 相同的从后往前配对：未配对的 <parameter> 即为未闭合
+  let depth = 0
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const mark = marks[i]
+    if (mark.isCloseParam) {
+      depth++
+    } else if (mark.isOpenParam) {
+      if (depth > 0) {
+        depth--
+      } else {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/** 统计类型还原次数：repaired 中字符串值被 coerce 成非字符串的数量 */
+function countTypeCoercions(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): number {
+  let count = 0
+  for (const [key, value] of Object.entries(after)) {
+    if (typeof before[key] === 'string' && typeof value !== 'string') {
+      count++
+    }
+  }
+  return count
 }
 
 /**

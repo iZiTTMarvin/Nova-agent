@@ -95,7 +95,7 @@ try {
   }
   if (requestBody?.model !== 'deepseek-v4-flash') throw new Error('model ID was not forwarded')
   if (requestBody?.reasoning_effort !== 'max') throw new Error('max effort was not forwarded')
-  if (!Array.isArray(requestBody?.tools) || requestBody.tools.length !== 7) {
+  if (!Array.isArray(requestBody?.tools) || requestBody.tools.length !== 8) {
     throw new Error('coding tool registry was not forwarded')
   }
 
@@ -147,6 +147,26 @@ try {
     budgetSummary.budget_exhausted !== true
   ) {
     throw new Error(`budget summary mismatch: ${JSON.stringify(budgetSummary)}`)
+  }
+  // ATIF 逐步记录：2 轮工具调用 → 1 user step + 2 agent step，llm_call_count=2
+  const trajectory = JSON.parse(readFileSync(join(budgetLogs, 'trajectory.json'), 'utf8'))
+  if (
+    trajectory.final_metrics.total_steps !== 3 ||
+    trajectory.steps.filter(step => step.source === 'agent').length !== 2 ||
+    budgetSummary.model_calls !== 2 ||
+    budgetSummary.tool_calls !== 2
+  ) {
+    throw new Error(`ATIF step recording mismatch: ${JSON.stringify(trajectory)}`)
+  }
+  // 修复分型 telemetry：normal 场景无修复，全零
+  if (summary.repair?.native_xml !== 0 || summary.repair?.empty_args_from_content !== 0) {
+    throw new Error(`repair totals mismatch: ${JSON.stringify(summary.repair)}`)
+  }
+  if (
+    summary.repair_outcome?.native_xml?.success !== 0 ||
+    summary.repair_outcome?.native_xml?.failure !== 0
+  ) {
+    throw new Error(`repair outcome mismatch: ${JSON.stringify(summary.repair_outcome)}`)
   }
   process.stdout.write('headless smoke passed\n')
 } finally {

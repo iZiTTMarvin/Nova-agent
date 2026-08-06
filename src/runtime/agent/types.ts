@@ -51,6 +51,15 @@ export type AgentEvent =
     }
   | { type: 'usage'; messageId: string; usage: NormalizedUsage; cacheProfileId: string; sessionId?: string }
   | {
+      type: 'repair_diagnostic'
+      messageId: string
+      /** 修复分型：native_xml / empty_args_from_content / unclosed_parameter / type_coercion */
+      kind: 'native_xml' | 'empty_args_from_content' | 'unclosed_parameter' | 'type_coercion'
+      toolCallId: string
+      toolName: string
+      sessionId?: string
+    }
+  | {
       type: 'context_breakdown'
       sessionId: string
       /** 对应触发该统计的消息 ID;启动/注入历史时可为空字符串 */

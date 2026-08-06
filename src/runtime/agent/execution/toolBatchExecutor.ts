@@ -509,7 +509,21 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     const toolCall = options.toolCalls[index]
     let args = parseArgs(toolCall.arguments)
     if (needsRepair(toolCall.arguments, args)) {
-      args = repairNativeArguments(toolCall.name, toolCall.arguments, args)
+      args = repairNativeArguments(
+        toolCall.name,
+        toolCall.arguments,
+        args,
+        diagnostic => {
+          options.emit({
+            type: 'repair_diagnostic',
+            messageId: options.messageId,
+            kind: diagnostic.kind,
+            toolCallId: toolCall.id,
+            toolName: toolCall.name
+          })
+        },
+        toolCall.id
+      )
     }
     const tool = options.toolRegistry?.getTool(toolCall.name)
 
