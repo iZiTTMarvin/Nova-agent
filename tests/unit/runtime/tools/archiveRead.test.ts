@@ -103,7 +103,7 @@ describe('archiveReadTool', () => {
     expect(parsed.matches[0].contextAfter).toBe('delta epsilon')
   })
 
-  it('sha256 不匹配时返回失败，不抛异常', async () => {
+  it('sha256 不匹配时返回含 expected/actual 的结构化错误', async () => {
     const content = 'hello world'
     const meta = await store.write(sessionId, content, { toolName: 'test' })
     // 使用错误 sha256 构造 ref
@@ -113,7 +113,24 @@ describe('archiveReadTool', () => {
 
     const result = await archiveReadTool.execute({ ref }, toolCtx)
     expect(result.success).toBe(false)
-    expect(result.error).toContain('完整性校验')
+    const err = JSON.parse(result.error!)
+    expect(err.error).toBe('integrity_mismatch')
+    expect(err.expected).toBe(wrongSha)
+    expect(err.actual).toBe(createHash('sha256').update(content, 'utf8').digest('hex'))
+    expect(err.artifactId).toBe(meta.id)
+  })
+
+  it('缺失 hash 的旧指针仍可读（兼容）', async () => {
+    const content = 'legacy artifact body'
+    const meta = await store.write(sessionId, content, { toolName: 'test' })
+    const result = await archiveReadTool.execute(
+      { ref: `artifact://${meta.id}`, operation: 'inspect' },
+      toolCtx
+    )
+    expect(result.success).toBe(true)
+    const parsed = JSON.parse(result.output)
+    expect(parsed.ok).toBe(true)
+    expect(parsed.totalBytes).toBe(Buffer.byteLength(content, 'utf8'))
   })
 
   it('无效 ref 格式返回失败', async () => {

@@ -14,6 +14,25 @@ const WRITE_CAPABLE_TOOLS = new Set([
   'save_plan',
   'switch_mode'
 ])
+const ARCHIVE_READ_TOOL = 'archive_read'
+
+/**
+ * 宿主有 archive_read 时子 Agent 必须继承；宿主明确没有时不得携带。
+ * hostHasArchiveRead 未提供时保持 profile 原样，避免装配漏接线误剥能力。
+ */
+export function applyHostArchiveReadCapability(
+  toolNames: readonly string[],
+  hostHasArchiveRead: boolean | undefined
+): string[] {
+  if (hostHasArchiveRead === undefined) {
+    return [...toolNames]
+  }
+  const withoutArchive = toolNames.filter((name) => name !== ARCHIVE_READ_TOOL)
+  if (hostHasArchiveRead) {
+    return [...withoutArchive, ARCHIVE_READ_TOOL]
+  }
+  return withoutArchive
+}
 
 interface ParsedSubagentProfile {
   name: string

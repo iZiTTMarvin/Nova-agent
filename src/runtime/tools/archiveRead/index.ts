@@ -1,28 +1,16 @@
 /**
  * archive_read — 按结构/关键词/分页读回归档的工具结果内容，响应始终有界。
  */
-import { createHash } from 'crypto'
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
+import {
+  integrityMismatchError,
+  isSafeArtifactId,
+  parseArtifactRef
+} from '../../artifacts/artifactRef'
 
 export const ARCHIVE_READ_MAX_RESPONSE_CHARS = 7500
 export const ARCHIVE_READ_DEFAULT_LIMIT = 4000
 export const ARCHIVE_READ_MAX_LIMIT = 6000
-
-interface ParsedRef {
-  artifactId: string
-  sha256: string
-  bytes: number
-}
-
-function parseResourceRef(ref: string): ParsedRef | null {
-  const match = ref.match(/^artifact:\/\/([^?]+)\?sha256=([0-9a-f]+)&bytes=(\d+)$/)
-  if (!match) return null
-  return { artifactId: match[1], sha256: match[2], bytes: Number(match[3]) }
-}
-
-function sha256Hex(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex')
-}
 
 function shrinkLimitToFit(
   buildResponse: (limit: number) => string,
@@ -83,8 +71,8 @@ const archiveReadTool: ToolExecutor = {
       return { success: false, output: '', error: 'ref 参数不能为空' }
     }
 
-    const parsed = parseResourceRef(ref)
-    if (!parsed) {
+    const parsed = parseArtifactRef(ref)
+    if (!parsed || !isSafeArtifactId(parsed.artifactId)) {
       return { success: false, output: '', error: '无效的 ref 格式' }
     }
 
@@ -101,9 +89,10 @@ const archiveReadTool: ToolExecutor = {
       return { success: false, output: '', error: '读取 artifact 失败' }
     }
 
-    // 完整性校验
-    if (sha256Hex(content) !== parsed.sha256) {
-      return { success: false, output: '', error: '完整性校验失败：artifact 内容与引用不匹配' }
+    // 有 hash 时校验；旧指针缺 hash 时跳过（见 artifactRef 兼容删除条件）
+    const mismatch = integrityMismatchError(content, parsed.sha256, parsed.artifactId)
+    if (mismatch) {
+      return { success: false, output: '', error: mismatch }
     }
 
     const operation = (typeof args.operation === 'string' ? args.operation : 'inspect') as

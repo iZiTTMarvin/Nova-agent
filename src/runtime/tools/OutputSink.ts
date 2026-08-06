@@ -6,6 +6,7 @@
  */
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import { countTextLines } from '../artifacts/ArtifactStore'
+import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
 import { truncateHead } from './bash/truncate'
 
 export interface OutputSinkOptions {
@@ -85,6 +86,7 @@ export class OutputSink {
       totalBytes,
       shownLines,
       artifactId: artifact.id,
+      sha256: sha256Hex(text),
       nextOffset
     })
 
@@ -108,12 +110,14 @@ export class OutputSink {
     totalBytes: number
     shownLines: number
     artifactId: string
+    sha256: string
     nextOffset: number
   }): string {
+    const ref = buildArtifactRef(params.artifactId, params.sha256, params.totalBytes)
     return [
       `[输出已截断: 共 ${params.totalLines} 行 / ${params.totalBytes} 字节。上下文保留 ${params.shownLines} 行。`,
-      `完整输出: artifact://${params.artifactId}`,
-      `续读: read path="artifact://${params.artifactId}" offset=${params.nextOffset} limit=500]`
+      `完整输出: ${ref}`,
+      `续读: read path="${ref}" offset=${params.nextOffset} limit=500]`
     ].join('\n')
   }
 }

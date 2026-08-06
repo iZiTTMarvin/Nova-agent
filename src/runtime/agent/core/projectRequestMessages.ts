@@ -6,8 +6,8 @@
  * 2. 溢出压缩恢复后必须重新投影（调用方的 continue 路径回到循环顶会重新执行投影；若未来有人把恢复改成就地重试，必须显式重新投影）。
  * 3. 投影是幂等的——对已是占位符的内容再次投影原样返回。
  */
-import { createHash } from 'crypto'
 import type { ChatMessage } from '../../model/types'
+import { buildArtifactRef, sha256Hex } from '../../artifacts/artifactRef'
 
 /** 当轮归档阈值：超过此估算 token 的工具结果替换为占位符 */
 export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
@@ -15,6 +15,10 @@ export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
 export const ACTIVE_PRUNE_MIN_TOOL_ROUND = 1
 /** 字符/token 估算系数，与 estimateContextSize 的 JSON 字节 / 4 口径一致 */
 const CHARS_PER_TOKEN = 4
+/** 占位符预览：正文前 N 行 */
+const PREVIEW_HEAD_LINES = 3
+/** 占位符预览：正文后 N 行 */
+const PREVIEW_TAIL_LINES = 2
 
 /** 占位符 kind 常量 */
 export const ARCHIVED_PLACEHOLDER_KIND = 'nova.archived_tool_result'
@@ -33,6 +37,8 @@ export interface ArchivedToolResultPlaceholder {
   sha256: string
   originalBytes: number
   originalEstimatedTokens: number
+  /** 正文头尾预览，供模型多数情况下免回读决策 */
+  preview: string
   reason: 'active_current_turn_pruned'
   readInstructions: string
 }
@@ -62,8 +68,15 @@ function asText(content: ChatMessage['content']): string {
   return typeof content === 'string' ? content : ''
 }
 
-function sha256Hex(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex')
+/** 头尾预览：行数不足时退回全文，避免重复中间省略。 */
+export function buildArchiveContentPreview(body: string): string {
+  const lines = body.split('\n')
+  if (lines.length <= PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES) {
+    return body
+  }
+  const head = lines.slice(0, PREVIEW_HEAD_LINES)
+  const tail = lines.slice(-PREVIEW_TAIL_LINES)
+  return [...head, '…', ...tail].join('\n')
 }
 
 function buildPlaceholder(
@@ -72,16 +85,18 @@ function buildPlaceholder(
   body: string,
   bodySha256: string
 ): string {
+  const originalBytes = Buffer.byteLength(body, 'utf8')
   const placeholder: ArchivedToolResultPlaceholder = {
     kind: ARCHIVED_PLACEHOLDER_KIND,
     v: ARCHIVED_PLACEHOLDER_VERSION,
     artifactId,
-    resourceRef: `artifact://${artifactId}?sha256=${bodySha256}&bytes=${Buffer.byteLength(body, 'utf8')}`,
+    resourceRef: buildArtifactRef(artifactId, bodySha256, originalBytes),
     toolCallId,
     toolName: ARCHIVE_TOOL_NAME_TAG,
     sha256: bodySha256,
-    originalBytes: Buffer.byteLength(body, 'utf8'),
+    originalBytes,
     originalEstimatedTokens: Math.ceil(body.length / CHARS_PER_TOKEN),
+    preview: buildArchiveContentPreview(body),
     reason: 'active_current_turn_pruned',
     readInstructions: 'This result is archived but still readable. Call archive_read with this ref: operation "inspect" for structure, "search" with keyword to locate content, "read" with offset/limit for a bounded page.'
   }
@@ -137,6 +152,13 @@ const EMPTY_DIAGNOSTICS: RequestProjectionDiagnostics = {
 
 /** 关闭态策略：门面默认值 */
 export const DISABLED_PRUNE_POLICY: ActiveToolResultPrunePolicy = { enabled: false }
+
+/** 仅在模型具备 archive_read 时启用投影归档，避免发出无法回读的占位符。 */
+export function resolveRequestProjectionPolicy(
+  hasArchiveRead: boolean
+): ActiveToolResultPrunePolicy {
+  return hasArchiveRead ? { enabled: true } : DISABLED_PRUNE_POLICY
+}
 
 export async function projectRequestMessages(
   input: RequestProjectionInput

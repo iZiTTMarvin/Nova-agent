@@ -87,6 +87,7 @@ describe('SubagentExecutionService', () => {
     registry?: RunExecutionRegistry
     loadProfile?: (profileId: string) => unknown
     onLinked?: SubagentExecutionServiceDeps['onLinked']
+    hostHasArchiveRead?: () => boolean
   } = {}) {
     const prepareTurn = vi.fn((input: any) => {
       const eventBus = new EventBus()
@@ -163,6 +164,9 @@ describe('SubagentExecutionService', () => {
         return undefined
       }),
       prepareTurn,
+      ...(options.hostHasArchiveRead
+        ? { hostHasArchiveRead: options.hostHasArchiveRead }
+        : {}),
       ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
     return { service, prepareTurn, scheduler }
@@ -206,6 +210,37 @@ describe('SubagentExecutionService', () => {
     expect(child.subagent.profile.systemPrompt).toBe('inspect and summarize')
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('宿主有 archive_read 时 prepareTurn 收到含该工具的执行 profile', async () => {
+    const { service, prepareTurn } = createService({
+      hostHasArchiveRead: () => true
+    })
+    await service.spawn(command(), { invocationRef: invocationRef() })
+    expect(prepareTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({
+          toolNames: expect.arrayContaining(['read', 'grep', 'archive_read'])
+        })
+      })
+    )
+  })
+
+  it('宿主无 archive_read 时 prepareTurn 的执行 profile 不含该工具', async () => {
+    const { service, prepareTurn } = createService({
+      hostHasArchiveRead: () => false,
+      loadProfile: () => ({
+        name: 'explore',
+        description: 'read only exploration',
+        allowedTools: ['read', 'grep', 'archive_read'],
+        prompt: 'inspect and summarize',
+        maxToolRounds: 20
+      })
+    })
+    await service.spawn(command(), { invocationRef: invocationRef() })
+    const preparedProfile = prepareTurn.mock.calls[0][0].profile
+    expect(preparedProfile.toolNames).toEqual(['read', 'grep'])
+    expect(preparedProfile.toolNames).not.toContain('archive_read')
   })
 
   it('relation 首次持久化后通知 host，幂等重放不伪造新 relation', async () => {

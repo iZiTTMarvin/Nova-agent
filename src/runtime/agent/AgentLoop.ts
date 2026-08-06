@@ -44,6 +44,7 @@ import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
+import { resolveRequestProjectionPolicy } from './core/projectRequestMessages'
 import { StreamProcessor } from './stream/StreamProcessor'
 import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { CompactionService } from './compaction/CompactionService'
@@ -752,6 +753,9 @@ export class AgentLoop {
           : {})
       })
 
+    const hasArchiveRead = getEffectiveToolDefinitions(this.ctx).some(
+      (tool) => tool.name === 'archive_read'
+    )
     const loopConfig: LoopConfig = {
       maxToolRounds: this.maxToolRounds,
       toolExecution: this.config.toolExecution ?? 'parallel',
@@ -762,7 +766,7 @@ export class AgentLoop {
       enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
       runOverflowCompaction: (mode) =>
         this.compactionService.runOverflowCompaction(mode, this.abortController?.signal),
-      requestProjectionPolicy: { enabled: true },
+      requestProjectionPolicy: resolveRequestProjectionPolicy(hasArchiveRead),
     }
 
     // 模型终态错误只在此记录；错误事件与全部收尾由 finalizeTurn 统一执行，

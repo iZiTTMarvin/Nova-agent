@@ -8,7 +8,8 @@ export {
   type SubagentExecutionServiceDeps
 } from './SubagentExecutionService'
 export {
-  resolveSubagentProfileSnapshot
+  resolveSubagentProfileSnapshot,
+  applyHostArchiveReadCapability
 } from './profileResolver'
 export {
   MAX_SUBAGENT_SUMMARY_CHARS,

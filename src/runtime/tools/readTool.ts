@@ -16,6 +16,11 @@ import { decodeFileBuffer } from './editDiff'
 import { detectImageMimeTypeFromFile } from './mime'
 import { OutputSink } from './OutputSink'
 import {
+  integrityMismatchError,
+  isSafeArtifactId,
+  parseArtifactRef
+} from '../artifacts/artifactRef'
+import {
   isSummarizableExtension,
   summarizeStructure,
   MIN_SUMMARY_LINES,
@@ -143,12 +148,16 @@ export function buildContinuationHint(
   return `\n[显示 ${startLine}-${endLine} 行，共 ${totalLineCount} 行。使用 offset=${endLine} 继续读取]`
 }
 
-/** 从 path 参数解析 artifact ID；非 artifact 路径返回 null */
-function parseArtifactId(inputPath: string): string | null {
-  if (!inputPath.startsWith(ARTIFACT_PATH_PREFIX)) return null
-  const id = inputPath.slice(ARTIFACT_PATH_PREFIX.length).trim()
-  if (!id || id.includes('..') || id.includes('/') || id.includes('\\')) return null
-  return id
+/** 从 path 参数解析 artifact 引用；非 artifact 路径返回 null */
+function parseArtifactPath(inputPath: string): {
+  artifactId: string
+  sha256?: string
+} | null {
+  const parsed = parseArtifactRef(inputPath)
+  if (!parsed || !isSafeArtifactId(parsed.artifactId)) return null
+  return parsed.sha256
+    ? { artifactId: parsed.artifactId, sha256: parsed.sha256 }
+    : { artifactId: parsed.artifactId }
 }
 
 /**
@@ -276,6 +285,7 @@ async function processStructureSummary(
 /** 读取 artifact://{id} 片段（续读 bash/grep 等大输出） */
 async function readFromArtifact(
   artifactId: string,
+  expectedSha256: string | undefined,
   paramOffset: number,
   paramLimit: number | undefined,
   context: ToolContext
@@ -290,6 +300,10 @@ async function readFromArtifact(
 
   try {
     const raw = await context.artifactStore.read(context.sessionId, artifactId)
+    const mismatch = integrityMismatchError(raw, expectedSha256, artifactId)
+    if (mismatch) {
+      return { success: false, output: '', error: mismatch }
+    }
     const normalized = normalizeToLF(raw)
     const allLines = normalized.split('\n')
     const readStateKey = `${ARTIFACT_PATH_PREFIX}${artifactId}`
@@ -370,9 +384,15 @@ export const readTool: ToolExecutor = {
     const paramLimit = typeof rawLimit === 'number' && rawLimit >= 1 ? rawLimit : undefined
 
     // artifact:// 续读路径：不走工作区路径校验
-    const artifactId = parseArtifactId(inputPath)
-    if (artifactId) {
-      return readFromArtifact(artifactId, paramOffset, paramLimit, context)
+    const artifactRef = parseArtifactPath(inputPath)
+    if (artifactRef) {
+      return readFromArtifact(
+        artifactRef.artifactId,
+        artifactRef.sha256,
+        paramOffset,
+        paramLimit,
+        context
+      )
     }
 
     // 第三参：本会话已触发的 skill 目录可作为额外只读根

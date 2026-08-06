@@ -33,7 +33,7 @@ describe('OutputSink', () => {
     expect(result.truncationNotice).toBe('')
   })
 
-  it('大输出返回 artifactId，contextText 含 artifact 指针且字节数受控', async () => {
+  it('大输出返回 artifactId，contextText 含带 hash 的 artifact 指针且字节数受控', async () => {
     const sink = new OutputSink({
       artifactStore: store,
       sessionId,
@@ -44,7 +44,8 @@ describe('OutputSink', () => {
     const result = await sink.finalize(lines)
 
     expect(result.artifactId).toBeTruthy()
-    expect(result.contextText).toContain(`artifact://${result.artifactId}`)
+    expect(result.contextText).toContain(`artifact://${result.artifactId}?sha256=`)
+    expect(result.contextText).toContain('&bytes=')
     expect(result.contextText).toContain('续读: read path=')
     expect(Buffer.byteLength(result.contextText, 'utf8')).toBeLessThanOrEqual(2_500)
 
@@ -67,15 +68,16 @@ describe('OutputSink', () => {
     }
   })
 
-  it('formatNotice 生成固定格式提示', () => {
+  it('formatNotice 生成含 sha256 的固定格式提示', () => {
     const notice = OutputSink.formatNotice({
       totalLines: 100,
       totalBytes: 5000,
       shownLines: 20,
       artifactId: 'abc123',
+      sha256: 'deadbeef',
       nextOffset: 21
     })
-    expect(notice).toContain('artifact://abc123')
+    expect(notice).toContain('artifact://abc123?sha256=deadbeef&bytes=5000')
     expect(notice).toContain('offset=21')
     expect(notice).toContain('limit=500')
   })

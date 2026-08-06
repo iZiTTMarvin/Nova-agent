@@ -20,6 +20,7 @@ import { getShellConfig, getShellEnv, killProcessTree, spawnShell, waitForChildP
 import { OutputAccumulator } from './output-accumulator'
 import { renderBashDescription } from './prompt'
 import { OutputSink } from '../OutputSink'
+import { sha256File } from '../../artifacts/artifactRef'
 import type { BashOperations, BashToolParams } from './types'
 import { resolveToolArg } from '../toolArgResolver'
 import { isDestructiveBashCommand } from './classifyCommand'
@@ -407,6 +408,7 @@ async function buildOutputWithArtifact(
     context?.artifactStore &&
     context.sessionId
   ) {
+    const sha256 = await sha256File(snapshot.fullOutputPath)
     const meta = await context.artifactStore.writeFromPath(
       context.sessionId,
       snapshot.fullOutputPath,
@@ -417,6 +419,7 @@ async function buildOutputWithArtifact(
       totalBytes: snapshot.totalBytes,
       shownLines: snapshot.outputLines,
       artifactId: meta.id,
+      sha256,
       nextOffset: snapshot.outputLines + 1
     })
     const output = snapshot.content.length > 0 ? `${snapshot.content}\n${notice}` : notice

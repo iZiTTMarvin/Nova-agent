@@ -26,7 +26,10 @@ import { isTerminalRunStatus, type RunSnapshot } from '../../shared/run/types'
 import type { ToolInvocationRef } from '../tools/types'
 import type { Mode } from '../../shared/session'
 import type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
-import { resolveSubagentProfileSnapshot } from './profileResolver'
+import {
+  applyHostArchiveReadCapability,
+  resolveSubagentProfileSnapshot
+} from './profileResolver'
 import { projectSubagentExecutionResult } from './resultProjection'
 import {
   SubagentScheduleRejectedError,
@@ -78,6 +81,8 @@ export interface SubagentExecutionServiceDeps {
   readonly allowRecursion?: boolean
   readonly scheduler: SubagentScheduler
   readonly isRunExecutionActive?: (runId: string) => boolean
+  /** 宿主是否具备 archive_read；用于子 Agent 能力继承与投影门控。 */
+  readonly hostHasArchiveRead?: () => boolean
 }
 
 interface SpawnIdentity {
@@ -345,8 +350,17 @@ export class SubagentExecutionService implements SpawnSubagentPort {
 
     let prepared: PreparedSubagentTurn
     try {
+      const hostHasArchiveRead = this.deps.hostHasArchiveRead?.()
+      const toolNames = applyHostArchiveReadCapability(
+        profile.toolNames,
+        hostHasArchiveRead
+      )
+      const executionProfile: SubagentProfileSnapshot = Object.freeze({
+        ...profile,
+        toolNames: Object.freeze(toolNames)
+      })
       prepared = this.deps.prepareTurn({
-        profile,
+        profile: executionProfile,
         task: command.task,
         workingDirectory: command.workingDirectory,
         isolation: command.isolation,

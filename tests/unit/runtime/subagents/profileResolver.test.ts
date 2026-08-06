@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSubagentProfileSnapshot } from '../../../../src/runtime/subagents'
+import {
+  applyHostArchiveReadCapability,
+  resolveSubagentProfileSnapshot
+} from '../../../../src/runtime/subagents'
 
 describe('resolveSubagentProfileSnapshot', () => {
   it('校验 unknown 输入并冻结稳定 profile snapshot 与 configHash', () => {
@@ -98,5 +101,33 @@ describe('resolveSubagentProfileSnapshot', () => {
       allowedTools: [],
       skillRoots: ['   ']
     }, 'explore')).toThrow(/skillRoots/)
+  })
+})
+
+describe('applyHostArchiveReadCapability', () => {
+  it('宿主有 archive_read 时子工具列表继承该能力', () => {
+    expect(applyHostArchiveReadCapability(['read', 'grep'], true)).toEqual([
+      'read',
+      'grep',
+      'archive_read'
+    ])
+  })
+
+  it('宿主有能力时不重复插入 archive_read', () => {
+    expect(
+      applyHostArchiveReadCapability(['read', 'archive_read', 'grep'], true)
+    ).toEqual(['read', 'grep', 'archive_read'])
+  })
+
+  it('宿主无 archive_read 时子工具列表不得携带', () => {
+    expect(
+      applyHostArchiveReadCapability(['read', 'archive_read', 'grep'], false)
+    ).toEqual(['read', 'grep'])
+  })
+
+  it('宿主能力未知时保持 profile 工具列表不变', () => {
+    expect(
+      applyHostArchiveReadCapability(['read', 'archive_read'], undefined)
+    ).toEqual(['read', 'archive_read'])
   })
 })
