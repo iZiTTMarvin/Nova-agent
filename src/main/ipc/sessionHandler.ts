@@ -102,6 +102,8 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     composeStages: data.composeStages,
     // 计划确认门状态随详情水合，renderer 据此决定审阅卡是否已放行；旧会话为 undefined
     composePlanApproval: data.composePlanApproval,
+    // 会话级待办随详情水合，renderer 恢复 TodoPanel 与 compose 阶段条进度；旧会话为 undefined
+    todos: data.todos,
     messages: withBranch.map(msg => ({
       ...toMessage(msg),
       sessionId: data.id

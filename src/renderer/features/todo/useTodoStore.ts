@@ -9,7 +9,7 @@
  * 设计要点：
  * - 使用 zustand 局部 store（与 useAppStore 平级，但不混入消息状态）
  * - view 由后端计算并随事件下发，前端不做二次计算
- * - 会话切换时不主动拉取 todo（todo 是 session 的元数据，未来如需补齐可在 selectSession 里主动拉一次）
+ * - 会话详情水合时经 setSessionTodos 从持久化恢复（磁盘是事实源：todo_write 先落盘后推送）
  */
 import { create } from 'zustand'
 import type { TodoItem, TodoViewInfo, TodoViewItem } from '../../../shared/todo/types'
@@ -60,7 +60,10 @@ function summarize(todos: TodoItem[]): { completed: number; total: number } {
   return { completed, total: todos.length }
 }
 
-const EMPTY_VIEW: TodoViewInfo = { mode: 'full', todos: [], hiddenBefore: 0, hiddenAfter: 0, changed: 0 }
+/** 水合恢复时构造 full 视图：compact 窗口是后端针对单次增量的优化，恢复场景全量渲染即可 */
+function fullView(todos: TodoItem[]): TodoViewInfo {
+  return { mode: 'full', todos: todos.map(todo => ({ ...todo })), hiddenBefore: 0, hiddenAfter: 0, changed: 0 }
+}
 
 export const useTodoStore = create<TodoStoreState & TodoStoreActions>((set) => ({
   bySession: {},
@@ -83,8 +86,9 @@ export const useTodoStore = create<TodoStoreState & TodoStoreActions>((set) => (
     set((state) => ({
       bySession: {
         ...state.bySession,
-        // 从持久化恢复的数据视为已知，直接可显示
-        [sessionId]: { todos, view: EMPTY_VIEW, completed, total, updatedAt: Date.now(), turnTouched: true }
+        // 从持久化恢复的数据视为已知，直接可显示；view 必须全量构造，
+        // 否则 TodoPanel 只能看到总数、展开后列表为空
+        [sessionId]: { todos, view: fullView(todos), completed, total, updatedAt: Date.now(), turnTouched: true }
       },
       seen: { ...state.seen, [sessionId]: true }
     }))

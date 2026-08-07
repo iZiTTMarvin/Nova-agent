@@ -85,6 +85,23 @@ describe('useTodoStore', () => {
     expect(state!.turnTouched).toBe(true)
   })
 
+  it('setSessionTodos 恢复时构造 full 视图：TodoPanel 展开能看到全部条目', () => {
+    useTodoStore.getState().setSessionTodos('sess_full', [
+      { content: 'A', status: 'completed', priority: 'high' },
+      { content: 'B', status: 'in_progress', priority: 'medium' },
+      { content: 'C', status: 'pending', priority: 'low' }
+    ])
+
+    const state = selectSessionTodoState(useTodoStore.getState(), 'sess_full')!
+    expect(state.view.mode).toBe('full')
+    expect(state.view.hiddenBefore).toBe(0)
+    expect(state.view.hiddenAfter).toBe(0)
+    // TodoPanel 经 selectVisibleTodoItems 渲染，恢复后必须能渲染出全部条目而非空列表
+    expect(selectVisibleTodoItems(state).map(todo => todo.content)).toEqual(['A', 'B', 'C'])
+    expect(state.completed).toBe(1)
+    expect(state.total).toBe(3)
+  })
+
   it('applyUpdate 后 turnTouched 为 true', () => {
     useTodoStore.getState().applyUpdate(makeUpdate('sess_t', [
       { content: 'A', status: 'pending', priority: 'medium' }
