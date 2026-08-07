@@ -8,7 +8,7 @@ const brandDir = join(root, 'assets', 'brand')
 const buildDir = join(root, 'build')
 const rendererIcon = join(root, 'src', 'renderer', 'assets', 'app-icon.png')
 const outFile = join(buildDir, 'icon.png')
-const activeBrandFile = 'nova-agent-icon-v6-nova-mark-512.png'
+const activeBrandFile = 'nova-agent-icon-v7-cosmic-oracle-512.png'
 
 function pickBrandPng() {
   if (!existsSync(brandDir)) {

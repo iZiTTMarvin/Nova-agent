@@ -33,7 +33,7 @@ async function main() {
   const brandPng = join(root, 'assets', 'brand')
   if (!existsSync(brandPng)) fail('assets/brand 不存在')
 
-  const activeBrandFile = join(brandPng, 'nova-agent-icon-v6-nova-mark-512.png')
+  const activeBrandFile = join(brandPng, 'nova-agent-icon-v7-cosmic-oracle-512.png')
   const buildIcon = join(root, 'build', 'icon.png')
   const rendererIcon = join(root, 'src', 'renderer', 'assets', 'app-icon.png')
   const setupExe = join(root, 'release', `NovaAgent-Setup-${version}.exe`)
