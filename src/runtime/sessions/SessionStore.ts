@@ -48,6 +48,7 @@ import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import {
   applyStageTransition,
+  type ComposePlanApproval,
   type ComposeStageAction,
   type ComposeStageEntry
 } from '../../shared/composeLifecycle'
@@ -941,6 +942,49 @@ export class SessionStore {
       stages: result.stages,
       previousStages
     }
+  }
+
+  /**
+   * 读取计划确认门状态。旧会话或尚未保存过计划的会话视为 pending——
+   * 硬门默认关闭，stage_transition 无法把「计划」阶段 complete 掉。
+   */
+  getComposePlanApproval(sessionId: string): ComposePlanApproval | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+    return session.composePlanApproval ?? { status: 'pending' }
+  }
+
+  /**
+   * 批准计划确认门（用户手动点击，或 auto 模式下自动放行并留痕 auto: true）。
+   * 不校验当前阶段是否为「计划」——阶段判断属于调用方（stage_transition 工具、
+   * compose:approve-plan IPC）的编排职责，持久化层只负责状态写入本身。
+   */
+  approveComposePlan(sessionId: string, opts: { auto: boolean }): ComposePlanApproval | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    const approval: ComposePlanApproval = {
+      status: 'approved',
+      approvedAt: Date.now(),
+      auto: opts.auto
+    }
+    session.composePlanApproval = approval
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return approval
+  }
+
+  /**
+   * 计划文档被重新保存后，此前的批准针对的是旧内容，必须清空重新走一遍确认门。
+   */
+  resetComposePlanApproval(sessionId: string): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    session.composePlanApproval = { status: 'pending' }
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
   }
 
   /**

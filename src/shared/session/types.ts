@@ -2,7 +2,7 @@ import type {
   SubagentActivityProjection,
   SubagentSessionListMetadata
 } from '../subagents'
-import type { ComposeStageEntry } from '../composeLifecycle'
+import type { ComposePlanApproval, ComposeStageEntry } from '../composeLifecycle'
 
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
 /**
@@ -159,4 +159,9 @@ export type SessionDetail = Session & {
    * 旧会话缺省，renderer 按初始表投影纯显示，不回填落盘。
    */
   composeStages?: ComposeStageEntry[]
+  /**
+   * 计划阶段确认门状态。仅 compose 会话由 save_plan / stage_transition / 批准 IPC 写入；
+   * 旧会话缺省，renderer 视为 pending。
+   */
+  composePlanApproval?: ComposePlanApproval
 }

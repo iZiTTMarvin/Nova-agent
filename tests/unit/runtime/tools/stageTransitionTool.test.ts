@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { stageTransitionTool } from '../../../../src/runtime/tools/stageTransition'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import type { EventBus } from '../../../../src/runtime/agent/EventBus'
-import type { ComposeStageEntry } from '../../../../src/shared/composeLifecycle'
+import type { ComposePlanApproval, ComposeStageEntry } from '../../../../src/shared/composeLifecycle'
 import { createInitialStageTable } from '../../../../src/shared/composeLifecycle'
 import type { Mode } from '../../../../src/shared/session/types'
 
@@ -21,10 +21,14 @@ type MockSessionStore = {
     sessionId: string,
     action: unknown
   ) => ApplyResult
+  getComposeStages?: (sessionId: string) => ComposeStageEntry[] | null
+  getComposePlanApproval?: (sessionId: string) => ComposePlanApproval | null
+  approveComposePlan?: (sessionId: string, opts: { auto: boolean }) => ComposePlanApproval | null
 }
 
 function createContext(opts: {
   mode?: Mode
+  autoMode?: boolean
   sessionStore?: MockSessionStore | null
   sessionId?: string | null
   eventBus?: { emit: (event: unknown) => void } | null
@@ -48,7 +52,12 @@ function createContext(opts: {
                   stages,
                   previousStages: createInitialStageTable()
                 }
-          )
+          ),
+          // 默认场景推进的是「构思」→「计划」，与上面 applyResult 的 previousStages 口径一致：
+          // 计划确认门只在当前进行中阶段为「计划」时生效，这里不触发。
+          getComposeStages: vi.fn(() => createInitialStageTable()),
+          getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval),
+          approveComposePlan: vi.fn(() => ({ status: 'approved', auto: true }) as ComposePlanApproval)
         })
 
   const eventBus =
@@ -59,6 +68,7 @@ function createContext(opts: {
   const context: ToolContext = {
     workingDir: process.cwd(),
     mode: opts.mode,
+    autoMode: opts.autoMode,
     ...(opts.sessionStore === null ? {} : { sessionStore: sessionStore as ToolContext['sessionStore'] }),
     ...(opts.sessionId === null
       ? {}
@@ -121,7 +131,8 @@ describe('stage_transition', () => {
 
   it('store 返回 null / rejected 时透传失败', async () => {
     const nullStore: MockSessionStore = {
-      applyComposeStageTransition: vi.fn(() => null)
+      applyComposeStageTransition: vi.fn(() => null),
+      getComposeStages: vi.fn(() => null)
     }
     const nullCtx = createContext({ mode: 'compose', sessionStore: nullStore })
     const nullResult = await stageTransitionTool.execute({ action: 'complete' }, nullCtx.context)
@@ -170,5 +181,108 @@ describe('stage_transition', () => {
     const r2 = await stageTransitionTool.execute({ action: 'complete' }, noId.context)
     expect(r2.success).toBe(false)
     expect(r2.error).toMatch(/会话/)
+  })
+})
+
+describe('stage_transition：计划确认门', () => {
+  function planInProgressStages(): ComposeStageEntry[] {
+    const stages = createInitialStageTable()
+    stages[0] = { id: 'brainstorm', status: 'completed', completedAt: 1 }
+    stages[1] = { id: 'plan', status: 'in_progress' }
+    return stages
+  }
+
+  it('计划阶段未获批准时 complete 被拒绝，且不落盘', async () => {
+    const applyFn = vi.fn()
+    const sessionStore: MockSessionStore = {
+      applyComposeStageTransition: applyFn,
+      getComposeStages: vi.fn(() => planInProgressStages()),
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }))
+    }
+    const { context } = createContext({ mode: 'compose', sessionStore })
+
+    const result = await stageTransitionTool.execute({ action: 'complete' }, context)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('批准')
+    expect(applyFn).not.toHaveBeenCalled()
+  })
+
+  it('计划已获批准后 complete 正常推进到开发阶段', async () => {
+    const nextStages = planInProgressStages()
+    nextStages[1] = { id: 'plan', status: 'completed', completedAt: 2 }
+    nextStages[2] = { id: 'implement', status: 'in_progress' }
+    const sessionStore: MockSessionStore = {
+      applyComposeStageTransition: vi.fn(() => ({
+        status: 'applied' as const,
+        session: {},
+        stages: nextStages,
+        previousStages: planInProgressStages()
+      })),
+      getComposeStages: vi.fn(() => planInProgressStages()),
+      getComposePlanApproval: vi.fn(() => ({ status: 'approved', approvedAt: 1 }))
+    }
+    const { context } = createContext({ mode: 'compose', sessionStore })
+
+    const result = await stageTransitionTool.execute({ action: 'complete' }, context)
+
+    expect(result.success).toBe(true)
+    expect(sessionStore.applyComposeStageTransition).toHaveBeenCalledWith('sess_test', {
+      type: 'complete'
+    })
+    expect(result.output).toContain('开发')
+  })
+
+  it('auto 模式下计划未批准会自动放行并留痕，同时 emit 批准更新事件', async () => {
+    const nextStages = planInProgressStages()
+    nextStages[1] = { id: 'plan', status: 'completed', completedAt: 2 }
+    nextStages[2] = { id: 'implement', status: 'in_progress' }
+    const approveFn = vi.fn(() => ({ status: 'approved' as const, auto: true, approvedAt: 123 }))
+    const applyFn = vi.fn(() => ({
+      status: 'applied' as const,
+      session: {},
+      stages: nextStages,
+      previousStages: planInProgressStages()
+    }))
+    const sessionStore: MockSessionStore = {
+      applyComposeStageTransition: applyFn,
+      getComposeStages: vi.fn(() => planInProgressStages()),
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' })),
+      approveComposePlan: approveFn
+    }
+    const { context, events } = createContext({ mode: 'compose', autoMode: true, sessionStore })
+
+    const result = await stageTransitionTool.execute({ action: 'complete' }, context)
+
+    expect(result.success).toBe(true)
+    expect(approveFn).toHaveBeenCalledWith('sess_test', { auto: true })
+    expect(applyFn).toHaveBeenCalled()
+    expect(events).toContainEqual({
+      type: 'compose_plan_approval_updated',
+      sessionId: 'sess_test',
+      approval: { status: 'approved', auto: true, approvedAt: 123 }
+    })
+  })
+
+  it('skip/return 不受计划确认门约束（门禁只作用于 complete）', async () => {
+    const sessionStore: MockSessionStore = {
+      applyComposeStageTransition: vi.fn(() => ({
+        status: 'applied' as const,
+        session: {},
+        stages: planInProgressStages(),
+        previousStages: planInProgressStages()
+      })),
+      getComposeStages: vi.fn(() => planInProgressStages()),
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }))
+    }
+    const { context } = createContext({ mode: 'compose', sessionStore })
+
+    const result = await stageTransitionTool.execute(
+      { action: 'skip', reason: '需求简单，直接开发' },
+      context
+    )
+
+    expect(result.success).toBe(true)
+    expect(sessionStore.getComposePlanApproval).not.toHaveBeenCalled()
   })
 })

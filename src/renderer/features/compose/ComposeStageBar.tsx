@@ -21,6 +21,8 @@ import {
   useComposeStageStore
 } from './useComposeStageStore'
 import { projectStageBar, type StageNodeProjection } from './stageBarProjection'
+import { selectSessionTodoState, useTodoStore } from '../todo/useTodoStore'
+import { TodoItemRow } from '../todo/TodoItemRow'
 import './ComposeStageBar.css'
 
 interface ComposeStageBarProps {
@@ -49,14 +51,27 @@ function formatStageTime(ts: number): string {
   }).format(new Date(ts))
 }
 
-/** 节点是否可展开详情：完成/跳过必有记录；进行中仅在携带回退原因时可展开 */
+/** 节点是否可展开详情：完成/跳过必有记录；进行中仅在携带回退原因或有开发进度时可展开 */
 function canExpandNode(node: StageNodeProjection): boolean {
-  return node.status === 'completed' || node.status === 'skipped' || !!node.note
+  return (
+    node.status === 'completed' ||
+    node.status === 'skipped' ||
+    !!node.note ||
+    (node.id === 'implement' && !!node.progress)
+  )
+}
+
+function nodeLabel(node: StageNodeProjection): string {
+  // 清单被清空（total=0）时不拼进度，避免出现「开发 ● 0/0」这种噪声标签
+  return node.progress && node.progress.total > 0
+    ? `${node.label} ● ${node.progress.completed}/${node.progress.total}`
+    : node.label
 }
 
 function nodeTitle(node: StageNodeProjection): string {
   const status = STAGE_STATUS_LABELS[node.status]
   const parts = [`${node.label}：${status}`]
+  if (node.progress && node.progress.total > 0) parts.push(`任务完成 ${node.progress.completed}/${node.progress.total}`)
   if (node.note) parts.push(`原因：${node.note}`)
   if (node.completedAt) parts.push(`完成于 ${formatStageTime(node.completedAt)}`)
   if (canExpandNode(node)) parts.push('点击查看详情')
@@ -68,7 +83,9 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
   interactionLocked
 }) => {
   const stages = useComposeStageStore((state) => selectSessionComposeStages(state, sessionId))
-  const projection = projectStageBar(stages)
+  const todoState = useTodoStore((state) => selectSessionTodoState(state, sessionId))
+  const implementProgress = todoState ? { completed: todoState.completed, total: todoState.total } : undefined
+  const projection = projectStageBar(stages, implementProgress)
 
   const [expandedStageId, setExpandedStageId] = useState<ComposeStageId | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -184,7 +201,7 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
                 <span className="compose-stage-bar__glyph" aria-hidden="true">
                   {node.status === 'completed' ? '✓' : node.status === 'skipped' ? '⊘' : ''}
                 </span>
-                <span className="compose-stage-bar__label">{node.label}</span>
+                <span className="compose-stage-bar__label">{nodeLabel(node)}</span>
               </>
             )
             return (
@@ -381,6 +398,15 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
                 <span className="compose-stage-bar__plan-hint">当前会话暂无计划文件</span>
               )}
               {planError && <span className="compose-stage-bar__plan-error">{planError}</span>}
+            </div>
+          )}
+          {expandedNode.id === 'implement' && (
+            <div className="compose-stage-bar__todos">
+              {todoState && todoState.todos.length > 0 ? (
+                todoState.todos.map((todo, index) => <TodoItemRow key={`${todo.content}-${index}`} todo={todo} />)
+              ) : (
+                <span className="compose-stage-bar__plan-hint">当前会话暂无任务清单</span>
+              )}
             </div>
           )}
         </div>

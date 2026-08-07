@@ -93,6 +93,8 @@ export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 export const WORKSPACE_OPEN_ACTIVE_PLAN = 'workspace:open-active-plan' as const
 /** compose 阶段条手动推进/跳过/回退（与 stage_transition 工具同一套校验） */
 export const COMPOSE_APPLY_STAGE_TRANSITION = 'compose:apply-stage-transition' as const
+/** 计划审阅卡「批准」按钮专用：只推进计划确认门，不改动阶段表 */
+export const COMPOSE_APPROVE_PLAN = 'compose:approve-plan' as const
 /** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */
 export const WORKSPACE_REGENERATE = 'workspace:regenerate' as const
 /** 切换兄弟分支（LCA 文件 undo + setCurrentLeaf） */
@@ -146,6 +148,7 @@ export const AGENT_ASK_QUESTION_RESOLVED = 'agent:ask-question-resolved' as cons
 export const AGENT_DIFF_UPDATE = 'agent:diff-update' as const
 export const AGENT_TODOS_UPDATED = 'agent:todos-updated' as const
 export const AGENT_COMPOSE_STAGES_UPDATED = 'agent:compose-stages-updated' as const
+export const AGENT_COMPOSE_PLAN_APPROVAL_UPDATED = 'agent:compose-plan-approval-updated' as const
 export const AGENT_ERROR = 'agent:error' as const
 export const AGENT_MESSAGE_END = 'agent:message-end' as const
 export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const

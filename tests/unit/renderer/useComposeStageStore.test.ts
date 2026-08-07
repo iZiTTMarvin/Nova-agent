@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  selectSessionComposePlanApproval,
   selectSessionComposeStages,
   useComposeStageStore
 } from '../../../src/renderer/features/compose/useComposeStageStore'
@@ -59,5 +60,48 @@ describe('useComposeStageStore', () => {
     useComposeStageStore.getState().applyUpdate({ sessionId: 'sess_a', stages: createInitialStageTable() })
     useComposeStageStore.getState().reset()
     expect(selectSessionComposeStages(useComposeStageStore.getState(), 'sess_a')).toBeNull()
+  })
+
+  it('计划确认门：未见过的会话 selector 返回 null', () => {
+    const state = useComposeStageStore.getState()
+    expect(selectSessionComposePlanApproval(state, 'sess_missing')).toBeNull()
+    expect(selectSessionComposePlanApproval(state, null)).toBeNull()
+  })
+
+  it('计划确认门：applyPlanApprovalUpdate 按 sessionId 隔离', () => {
+    useComposeStageStore.getState().applyPlanApprovalUpdate({
+      sessionId: 'sess_a',
+      approval: { status: 'approved', approvedAt: 1, auto: false }
+    })
+    useComposeStageStore.getState().applyPlanApprovalUpdate({
+      sessionId: 'sess_b',
+      approval: { status: 'pending' }
+    })
+
+    const state = useComposeStageStore.getState()
+    expect(selectSessionComposePlanApproval(state, 'sess_a')).toEqual({
+      status: 'approved',
+      approvedAt: 1,
+      auto: false
+    })
+    expect(selectSessionComposePlanApproval(state, 'sess_b')).toEqual({ status: 'pending' })
+  })
+
+  it('计划确认门：setSessionPlanApproval 水合持久化状态；旧会话无记录时写 null', () => {
+    useComposeStageStore.getState().setSessionPlanApproval('sess_a', { status: 'approved', auto: true })
+    useComposeStageStore.getState().setSessionPlanApproval('sess_legacy', null)
+
+    const state = useComposeStageStore.getState()
+    expect(selectSessionComposePlanApproval(state, 'sess_a')).toEqual({ status: 'approved', auto: true })
+    expect(selectSessionComposePlanApproval(state, 'sess_legacy')).toBeNull()
+  })
+
+  it('reset 同时清空计划确认门缓存', () => {
+    useComposeStageStore.getState().applyPlanApprovalUpdate({
+      sessionId: 'sess_a',
+      approval: { status: 'approved' }
+    })
+    useComposeStageStore.getState().reset()
+    expect(selectSessionComposePlanApproval(useComposeStageStore.getState(), 'sess_a')).toBeNull()
   })
 })

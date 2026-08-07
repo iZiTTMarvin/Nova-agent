@@ -378,3 +378,12 @@ button.compose-stage-bar__node:hover,
   color: var(--color-error);
   font-size: 11px;
 }
+
+/* 开发节点展开的任务勾选明细：与计划产物区同一分隔语言 */
+.compose-stage-bar__todos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-cream);
+}

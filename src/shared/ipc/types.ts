@@ -19,7 +19,7 @@ import type {
 } from '../workflow/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
-import type { ComposeStageAction, ComposeStageEntry } from '../composeLifecycle'
+import type { ComposePlanApproval, ComposeStageAction, ComposeStageEntry } from '../composeLifecycle'
 import type {
   SkillSummary,
   SkillCreateInput,
@@ -419,6 +419,10 @@ export interface IpcCommands {
     params: { sessionId: string; action: ComposeStageAction }
     result: { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string }
   }
+  'compose:approve-plan': {
+    params: { sessionId: string }
+    result: { ok: true; approval: ComposePlanApproval } | { ok: false; error: string }
+  }
   'workspace:regenerate': {
     params: { sessionId: string; messageId: string }
     result: WorkspaceState
@@ -631,6 +635,10 @@ export interface IpcEvents {
   'agent:compose-stages-updated': {
     sessionId: string
     stages: ComposeStageEntry[]
+  }
+  'agent:compose-plan-approval-updated': {
+    sessionId: string
+    approval: ComposePlanApproval
   }
   'agent:error': {
     messageId: string

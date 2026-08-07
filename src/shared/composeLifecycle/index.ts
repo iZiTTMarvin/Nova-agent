@@ -5,7 +5,9 @@ export {
   type ComposeStageId,
   type ComposeStageStatus,
   type ComposeStageEntry,
-  type ComposeStageAction
+  type ComposeStageAction,
+  type ComposePlanApprovalStatus,
+  type ComposePlanApproval
 } from './types'
 export {
   createInitialStageTable,

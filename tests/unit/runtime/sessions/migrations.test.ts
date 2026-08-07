@@ -382,6 +382,43 @@ describe('migrateSessionData', () => {
     expect(migrated.composeReviewLoops).toBe(1)
   })
 
+  it('v13 会话含计划确认门状态：迁移到当前版本后原样保留', () => {
+    const v13 = {
+      schemaVersion: 13,
+      kind: 'primary',
+      id: 'sess_v13',
+      workspaceRoot: '/tmp/ws',
+      mode: 'compose',
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      composePlanApproval: { status: 'approved', approvedAt: 5, auto: true }
+    }
+
+    const migrated = migrateSessionData(v13)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.composePlanApproval).toEqual(v13.composePlanApproval)
+  })
+
+  it('v13 会话未含计划确认门状态：迁移后不凭空造出该字段', () => {
+    const v13 = {
+      schemaVersion: 13,
+      kind: 'primary',
+      id: 'sess_v13_bare',
+      workspaceRoot: '/tmp/ws',
+      mode: 'default',
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const migrated = migrateSessionData(v13)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.composePlanApproval).toBeUndefined()
+  })
+
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {
     expect(() => migrateSessionData({ schemaVersion: CURRENT_SESSION_SCHEMA_VERSION + 1 })).toThrow(
       `会话 schemaVersion ${CURRENT_SESSION_SCHEMA_VERSION + 1} 高于当前支持的 ${CURRENT_SESSION_SCHEMA_VERSION}，拒绝降级读取`

@@ -23,7 +23,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 13
+export const CURRENT_SESSION_SCHEMA_VERSION = 14
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -269,6 +269,18 @@ function migrateV12ToV13(data: unknown): SessionData {
   }
 }
 
+/**
+ * v13 → v14：引入可选 composePlanApproval（计划阶段确认门状态）。
+ * 旧会话无此字段即视为 pending，仅升级 schemaVersion，无需数据重写。
+ */
+function migrateV13ToV14(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 14
+  }
+}
+
 type UnknownObject = { [propertyName: string]: unknown }
 
 function isPlainObject(value: unknown): value is UnknownObject {
@@ -429,7 +441,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV9ToV10, // v9 → v10
   migrateV10ToV11, // v10 → v11
   migrateV11ToV12, // v11 → v12
-  migrateV12ToV13 // v12 → v13
+  migrateV12ToV13, // v12 → v13
+  migrateV13ToV14 // v13 → v14
 ]
 
 /**

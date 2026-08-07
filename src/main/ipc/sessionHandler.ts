@@ -100,6 +100,8 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     currentLeafId,
     // compose 阶段表随会话详情透出，renderer 水合阶段条；旧会话为 undefined
     composeStages: data.composeStages,
+    // 计划确认门状态随详情水合，renderer 据此决定审阅卡是否已放行；旧会话为 undefined
+    composePlanApproval: data.composePlanApproval,
     messages: withBranch.map(msg => ({
       ...toMessage(msg),
       sessionId: data.id

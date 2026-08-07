@@ -24,6 +24,8 @@ export interface StageNodeProjection {
   note?: string
   completedAt?: number
   isCurrent: boolean
+  /** 仅「开发」节点：会话 todo 的聚合进度，驱动 `开发 ● 3/5` 标签与可展开明细 */
+  progress?: { completed: number; total: number }
 }
 
 export interface StageReturnTarget {
@@ -40,7 +42,10 @@ export interface StageBarProjection {
   returnTargets: StageReturnTarget[]
 }
 
-export function projectStageBar(stages: ComposeStageEntry[] | null | undefined): StageBarProjection {
+export function projectStageBar(
+  stages: ComposeStageEntry[] | null | undefined,
+  implementProgress?: { completed: number; total: number }
+): StageBarProjection {
   const source = stages ?? createInitialStageTable()
   const byId = new Map(source.map((entry) => [entry.id, entry]))
 
@@ -54,6 +59,7 @@ export function projectStageBar(stages: ComposeStageEntry[] | null | undefined):
     }
     if (entry?.note !== undefined) node.note = entry.note
     if (entry?.completedAt !== undefined) node.completedAt = entry.completedAt
+    if (id === 'implement' && implementProgress) node.progress = implementProgress
     return node
   })
 

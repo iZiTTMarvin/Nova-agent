@@ -15,7 +15,7 @@ import type {
   SubagentSessionMetadata
 } from '../../shared/subagents'
 import type { TodoItem } from '../../shared/todo/types'
-import type { ComposeStageEntry } from '../../shared/composeLifecycle'
+import type { ComposeStageEntry, ComposePlanApproval } from '../../shared/composeLifecycle'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
 import type { ActivePlanRef } from '../plans'
@@ -113,6 +113,11 @@ interface SessionDataBase {
   composeStages?: ComposeStageEntry[]
   /** 审查回退开发的循环计数（代码兜底上限，旧会话缺省视为 0） */
   composeReviewLoops?: number
+  /**
+   * 计划阶段的确认门状态。缺省视为 pending——批准前 stage_transition
+   * 无法把「计划」阶段 complete 掉。save_plan 每次成功写入都会重置为 pending。
+   */
+  composePlanApproval?: ComposePlanApproval
   /** 侧边栏展示的会话标题 */
   title?: string
   /** 标题来源，用于覆盖保护（manual 后不再被自动逻辑改写） */

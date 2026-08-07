@@ -69,6 +69,8 @@ function App(): React.ReactNode {
 
   // compose 阶段表：阶段条唯一推送源，订阅 IPC 写入独立 store
   const applyComposeStageUpdate = useComposeStageStore(state => state.applyUpdate)
+  // compose 计划确认门：审阅卡与阶段条共用同一份批准状态缓存
+  const applyComposePlanApprovalUpdate = useComposeStageStore(state => state.applyPlanApprovalUpdate)
 
   // 1. 初始化时加载持久化的配置和会话列表
   //    会话列表改为由 workspace:get 统一拉取（单一事实源），
@@ -211,6 +213,11 @@ function App(): React.ReactNode {
       applyComposeStageUpdate({ sessionId: data.sessionId, stages: data.stages })
     })
 
+    // 监听：计划确认门批准状态更新（手动批准 IPC 与 auto 模式自动放行共用同一事件）
+    const unsubComposePlanApprovalUpdated = window.api.on('agent:compose-plan-approval-updated', (data) => {
+      applyComposePlanApprovalUpdate({ sessionId: data.sessionId, approval: data.approval })
+    })
+
     // 监听：Agent 本轮思考和应答全部完成 → 强制 flush
     const unsubMessageEnd = window.api.on('agent:message-end', gateAgentEvent('message-end', (data) => {
       buffer.flushNow()
@@ -339,6 +346,7 @@ function App(): React.ReactNode {
       unsubSubagentLinked()
       unsubTodosUpdated()
       unsubComposeStagesUpdated()
+      unsubComposePlanApprovalUpdated()
       unsubMessageEnd()
       unsubUsage()
       unsubCacheDiagnostic()
@@ -367,6 +375,7 @@ function App(): React.ReactNode {
     clearAskQuestionRequest,
     applyTodoUpdate,
     applyComposeStageUpdate,
+    applyComposePlanApprovalUpdate,
     handleMessageEnd,
     handleUsage,
     setContextBreakdown

@@ -4,13 +4,19 @@ import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ComposeStageBar } from '../../../src/renderer/features/compose/ComposeStageBar'
 import { useComposeStageStore } from '../../../src/renderer/features/compose/useComposeStageStore'
+import { useTodoStore } from '../../../src/renderer/features/todo/useTodoStore'
 import type { ComposeStageEntry } from '../../../src/shared/composeLifecycle'
+import type { TodoItem } from '../../../src/shared/todo/types'
 import { act, renderDom } from './renderDom'
 
 const mockInvoke = vi.fn()
 
 function seedStages(stages: ComposeStageEntry[] | null, sessionId = 'sess_1'): void {
   useComposeStageStore.getState().setSessionStages(sessionId, stages)
+}
+
+function seedTodos(todos: TodoItem[], sessionId = 'sess_1'): void {
+  useTodoStore.getState().setSessionTodos(sessionId, todos)
 }
 
 function midFlowStages(): ComposeStageEntry[] {
@@ -46,6 +52,7 @@ describe('ComposeStageBar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useComposeStageStore.getState().reset()
+    useTodoStore.getState().reset()
     mockInvoke.mockResolvedValue({ ok: true, stages: [] })
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() }
@@ -290,6 +297,50 @@ describe('ComposeStageBar', () => {
     expect(byText('完成当前阶段').disabled).toBe(true)
     expect(byText('跳过当前阶段…').disabled).toBe(true)
     expect(byText('回退到…').disabled).toBe(false)
+    renderer.unmount()
+  })
+
+  it('开发节点聚合会话 todo 进度，标签显示为「开发 ● 完成/总数」', () => {
+    seedStages(midFlowStages())
+    seedTodos([
+      { content: '接入登录接口', status: 'completed', priority: 'high' },
+      { content: '补充单测', status: 'in_progress', priority: 'medium' },
+      { content: '联调验收', status: 'pending', priority: 'low' }
+    ])
+    const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
+
+    const implementNode = queryNode(renderer.container, 'in_progress')
+    expect(implementNode).not.toBeNull()
+    expect(implementNode!.textContent).toContain('开发 ● 1/3')
+    renderer.unmount()
+  })
+
+  it('点击开发节点展开任务清单明细', () => {
+    seedStages(midFlowStages())
+    seedTodos([
+      { content: '接入登录接口', status: 'completed', priority: 'high' },
+      { content: '补充单测', status: 'in_progress', priority: 'medium' }
+    ])
+    const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
+
+    click(queryNode(renderer.container, 'in_progress')!)
+    const detail = renderer.container.querySelector('.compose-stage-bar__detail')
+    expect(detail).not.toBeNull()
+    const todoRows = detail!.querySelectorAll('.todo-row')
+    expect(todoRows).toHaveLength(2)
+    expect(detail!.textContent).toContain('接入登录接口')
+    expect(detail!.textContent).toContain('补充单测')
+    renderer.unmount()
+  })
+
+  it('开发节点没有任务清单时展示提示文案', () => {
+    seedStages(midFlowStages())
+    seedTodos([])
+    const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
+
+    click(queryNode(renderer.container, 'in_progress')!)
+    const detail = renderer.container.querySelector('.compose-stage-bar__detail')
+    expect(detail!.textContent).toContain('当前会话暂无任务清单')
     renderer.unmount()
   })
 })

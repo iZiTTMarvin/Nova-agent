@@ -296,6 +296,24 @@ export const savePlanTool: ToolExecutor = {
           throw new Error('计划已写入，但 active plan 元数据更新失败')
         }
 
+        // 批准针对的是已审阅过的具体计划内容；任何阶段重新保存计划后旧批准都不再适用，
+        // 必须清空重新走一遍确认门，否则模型可能借"改计划"绕过用户复核
+        // （例如开发阶段改计划再回退计划阶段直接 complete）。
+        // 批准被清空时必须推送事件，否则 renderer 缓存仍显示「已批准」，与后端状态撕裂。
+        if (session.mode === 'compose') {
+          const sessionStore = context.sessionStore!
+          const sessionId = context.sessionId!
+          const before = sessionStore.getComposePlanApproval(sessionId)
+          sessionStore.resetComposePlanApproval(sessionId)
+          if (before?.status === 'approved') {
+            context.eventBus?.emit({
+              type: 'compose_plan_approval_updated',
+              sessionId,
+              approval: { status: 'pending' }
+            })
+          }
+        }
+
         return {
           success: true,
           output:

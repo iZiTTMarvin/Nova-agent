@@ -39,3 +39,18 @@ export const COMPOSE_STAGE_LABELS: Record<ComposeStageId, string> = {
 export function isComposeStageId(value: string): value is ComposeStageId {
   return (COMPOSE_STAGE_IDS as readonly string[]).includes(value)
 }
+
+export type ComposePlanApprovalStatus = 'pending' | 'approved'
+
+/**
+ * 计划确认门状态：批准前 stage_transition 无法把「计划」阶段 complete 掉。
+ * 每次 save_plan 成功写入后必须重置为 pending——批准针对的是已审阅过的具体内容，
+ * 计划改动后旧批准不再有效。
+ */
+export interface ComposePlanApproval {
+  status: ComposePlanApprovalStatus
+  /** 批准时间戳，仅 approved 时存在 */
+  approvedAt?: number
+  /** auto 模式下自动放行；缺省或 false 表示用户手动点击批准 */
+  auto?: boolean
+}

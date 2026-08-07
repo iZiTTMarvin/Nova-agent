@@ -89,6 +89,25 @@ describe('projectStageBar', () => {
     expect(projection.currentStageId).toBe('implement')
     expect(projection.returnTargets.map((target) => target.id)).toEqual(['brainstorm', 'plan'])
   })
+
+  it('传入 implementProgress 时只挂在开发节点上', () => {
+    const projection = projectStageBar(
+      stages([{ id: 'implement', status: 'in_progress' }]),
+      { completed: 3, total: 5 }
+    )
+
+    const implementNode = projection.nodes.find((node) => node.id === 'implement')
+    expect(implementNode?.progress).toEqual({ completed: 3, total: 5 })
+    for (const node of projection.nodes) {
+      if (node.id !== 'implement') expect(node.progress).toBeUndefined()
+    }
+  })
+
+  it('未传 implementProgress 时开发节点没有 progress 字段', () => {
+    const projection = projectStageBar(stages([{ id: 'implement', status: 'in_progress' }]))
+    const implementNode = projection.nodes.find((node) => node.id === 'implement')
+    expect(implementNode?.progress).toBeUndefined()
+  })
 })
 
 describe('shouldShowComposeStageBar', () => {

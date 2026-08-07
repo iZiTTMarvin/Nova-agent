@@ -882,13 +882,16 @@ export const ChatPanel: React.FC = () => {
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 
-            {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条 */}
-            <div className="w-full px-3 pointer-events-auto">
-              <TodoPanel
-                sessionId={currentSessionId}
-                priorityDockOccupied={!!pendingAskQuestion}
-              />
-            </div>
+            {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条。
+                compose 模式下任务清单收进阶段条「开发」节点展开面板，不再重复展示这条独立 dock。 */}
+            {currentMode !== 'compose' && (
+              <div className="w-full px-3 pointer-events-auto">
+                <TodoPanel
+                  sessionId={currentSessionId}
+                  priorityDockOccupied={!!pendingAskQuestion}
+                />
+              </div>
+            )}
 
             {isEmptyState && (
               <div className="mb-8 flex flex-col items-center justify-center space-y-4">

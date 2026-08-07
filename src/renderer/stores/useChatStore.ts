@@ -12,6 +12,7 @@ export const useChatStore = createChatStore({
     // compose 阶段表随详情水合：磁盘是事实源（转换先落盘后推送）；
     // 旧会话无表时写 null，阶段条按初始表纯显示。本回调在 epoch 守卫之后触发
     useComposeStageStore.getState().setSessionStages(detail.id, detail.composeStages ?? null)
+    useComposeStageStore.getState().setSessionPlanApproval(detail.id, detail.composePlanApproval ?? null)
   }
 })
 
