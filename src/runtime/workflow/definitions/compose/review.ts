@@ -101,7 +101,8 @@ function buildPrompt(
   return [
     '你负责 compose workflow 的 review 阶段。',
     '以真实工作区代码、测试结果和计划验收标准为证据，独立审查正确性、范围、架构边界、安全和可维护性。',
-    '只读审查，不修改文件，不向用户提问。必须返回 verdict、summary、issues、strengths、recommendations 的 JSON。',
+    '只读审查，不修改文件，不向用户提问。',
+    '给出总体结论、逐条问题（标注严重级别与位置）、值得保留的优点和可执行的后续建议；每条问题都必须有真实证据支撑，不要凭猜测下判断。',
     '',
     `WorkflowPlan：\n${JSON.stringify(plan)}`,
     `Implement 结果：\n${JSON.stringify(implement)}`,

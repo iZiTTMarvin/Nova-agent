@@ -11,9 +11,11 @@ export {
   resolveSubagentProfileSnapshot,
   applyHostArchiveReadCapability
 } from './profileResolver'
+export { extractJson, extractJsonCandidates } from './jsonExtract'
 export {
   MAX_SUBAGENT_SUMMARY_CHARS,
-  projectSubagentExecutionResult
+  projectSubagentExecutionResult,
+  selectStructuredResult
 } from './resultProjection'
 export type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
 export {

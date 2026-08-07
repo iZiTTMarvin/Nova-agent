@@ -1,96 +1,109 @@
-import type { AgentResult, HostFns } from '../../host'
-import type { ComposeReportInput, ReportResult } from './types'
+import type { HostFns } from '../../host'
+import type {
+  ComposeReportInput,
+  ReportOutcome,
+  ReportResult,
+  ReviewIssue,
+  ReviewVerdict,
+  VerifyResult
+} from './types'
 
-export const REPORT_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    outcome: { type: 'string', enum: ['completed', 'completed_with_concerns', 'blocked'] },
-    summary: { type: 'string' },
-    highlights: { type: 'array', items: { type: 'string' } },
-    failures: { type: 'array', items: { type: 'string' } },
-    nextSteps: { type: 'array', items: { type: 'string' } }
-  },
-  required: ['outcome', 'summary', 'highlights', 'failures', 'nextSteps']
+const OUTCOME_TEXT: Record<ReportOutcome, string> = {
+  completed: '编排完成',
+  completed_with_concerns: '编排完成但存在遗留问题',
+  blocked: '编排受阻'
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
+const VERDICT_TEXT: Record<ReviewVerdict, string> = {
+  pass: '审查通过',
+  conditional: '审查有条件通过',
+  block: '审查判定阻塞'
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null
+/** 实现整体失败或审查判定阻塞：成果不可交付。 */
+function isBlocked(input: ComposeReportInput): boolean {
+  return input.implement.status === 'failed' || input.review.verdict === 'block'
 }
 
-function asStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value
-    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    .map((item) => item.trim())
+/** 有任务失败、验证未全绿、有条件通过或存在高危问题：可交付但有遗留。 */
+function hasConcerns(input: ComposeReportInput): boolean {
+  return (
+    input.implement.status === 'partial' ||
+    !input.verify.passed ||
+    input.review.verdict === 'conditional' ||
+    input.review.criticalCount > 0 ||
+    input.review.highCount > 0
+  )
 }
 
-export function normalizeReport(value: AgentResult): ReportResult | null {
-  const record = asRecord(value)
-  if (!record) return null
-  const outcome = record.outcome
-  if (
-    outcome !== 'completed' &&
-    outcome !== 'completed_with_concerns' &&
-    outcome !== 'blocked'
-  ) {
-    return null
+function resolveOutcome(input: ComposeReportInput): ReportOutcome {
+  if (isBlocked(input)) return 'blocked'
+  return hasConcerns(input) ? 'completed_with_concerns' : 'completed'
+}
+
+function verifyText(verify: VerifyResult): string {
+  if (verify.passed) return '验证检查全部通过'
+  const failed = verify.failedChecks.join('、')
+  return failed ? `验证未通过（${failed}）` : '验证未通过'
+}
+
+function buildSummary(input: ComposeReportInput, outcome: ReportOutcome): string {
+  const succeeded = input.implement.succeededTaskIds.length
+  const failed = input.implement.failedTaskIds.length
+  return (
+    `${OUTCOME_TEXT[outcome]}：${succeeded} 个任务成功、${failed} 个任务失败，` +
+    `${verifyText(input.verify)}，${VERDICT_TEXT[input.review.verdict]}。`
+  )
+}
+
+function issueText(issue: ReviewIssue): string {
+  const location = issue.file
+    ? `${issue.file}${issue.line === undefined ? '' : `:${issue.line}`} `
+    : ''
+  return `审查 ${issue.severity} 问题：${location}${issue.summary}`
+}
+
+function buildHighlights(input: ComposeReportInput): string[] {
+  return input.implement.tasks
+    .filter((task) => task.status === 'succeeded')
+    .map((task) => `${task.taskId} ${task.title}${task.summary ? `：${task.summary}` : ''}`)
+}
+
+function buildFailures(input: ComposeReportInput): string[] {
+  const failures = input.implement.tasks
+    .filter((task) => task.status === 'failed')
+    .map((task) => `${task.taskId} ${task.title} 失败：${task.failure ?? '原因未记录'}`)
+  if (input.implement.fatalReason) {
+    failures.push(`实现阶段中止：${input.implement.fatalReason}`)
   }
-  const summary = asString(record.summary)
-  if (!summary) return null
-  return {
-    outcome,
-    summary,
-    highlights: asStringList(record.highlights),
-    failures: asStringList(record.failures ?? record.concerns),
-    nextSteps: asStringList(record.nextSteps ?? record.recommendations)
+  for (const check of input.verify.checks) {
+    if (!check.passed) {
+      failures.push(`${check.name} 未通过（退出码 ${check.exitCode}）：${check.command}`)
+    }
   }
+  for (const issue of input.review.issues) {
+    if (issue.severity === 'critical' || issue.severity === 'high') {
+      failures.push(issueText(issue))
+    }
+  }
+  return failures
 }
 
-function buildPrompt(input: ComposeReportInput): string {
-  return [
-    '你负责 compose workflow 的 report 阶段。',
-    '请根据以下结构化事实生成最终交付摘要，不要凭空声称未执行的验证通过。',
-    '必须返回 outcome、summary、highlights、failures、nextSteps 的 JSON。',
-    '若实现任务失败、验证失败或 review verdict 为 conditional/block，必须在 failures 中明确写出，并选择 completed_with_concerns 或 blocked。',
-    '',
-    `用户请求：\n${input.request}`,
-    `WorkflowPlan：\n${JSON.stringify(input.plan)}`,
-    `Brainstorm：\n${JSON.stringify(input.brainstorm)}`,
-    `Implement：\n${JSON.stringify(input.implement)}`,
-    `Verify：\n${JSON.stringify(input.verify)}`,
-    `Review：\n${JSON.stringify(input.review)}`
-  ].join('\n')
-}
-
-export async function runReport(
-  host: HostFns,
-  input: ComposeReportInput
-): Promise<ReportResult | null> {
+/**
+ * 由前序阶段的结构化事实确定性地归纳交付结论。
+ *
+ * 这里的输入全部已是结构化事实，再派子代理只会让「实现/验证/审查都成功、
+ * 唯独汇报解析失败」变成整条工作流失败，所以本阶段不调用模型，也不会失败。
+ */
+export function runReport(host: HostFns, input: ComposeReportInput): ReportResult {
   host.progress('report', 'started')
-  let output: AgentResult = null
-  try {
-    output = await host.agent(buildPrompt(input), {
-      taskId: 'report',
-      phase: 'report',
-      isolation: 'readonly',
-      interactive: false,
-      schema: REPORT_SCHEMA,
-      label: 'compose-report'
-    })
-  } catch {
-    output = null
-  }
-
-  const result = normalizeReport(output)
-  if (!result) {
-    host.progress('report', 'failed', { message: 'report 未产出最终结构化摘要' })
-    return null
+  const outcome = resolveOutcome(input)
+  const result: ReportResult = {
+    outcome,
+    summary: buildSummary(input, outcome),
+    highlights: buildHighlights(input),
+    failures: buildFailures(input),
+    nextSteps: [...input.review.recommendations]
   }
   host.progress('report', 'completed', { message: result.summary })
   host.log(result.summary)

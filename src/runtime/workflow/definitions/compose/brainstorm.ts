@@ -1,4 +1,4 @@
-import type { AgentResult, HostFns } from '../../host'
+import { READONLY_TOOLS, type AgentResult, type HostFns } from '../../host'
 import type { BrainstormAlternative, BrainstormResult } from './types'
 
 export const BRAINSTORM_SCHEMA: Record<string, unknown> = {
@@ -84,9 +84,9 @@ function buildPrompt(request: string): string {
   return [
     '你负责 compose workflow 的 brainstorm 阶段。',
     '请先检查与需求相关的真实代码、测试、配置和项目规则，再提出可比较的实现方案。',
-    '必须返回一个 JSON 对象：summary、assumptions、alternatives、recommendation、openQuestions。',
-    'alternatives 至少包含两个可行方案（若需求确实只有一种，请明确说明原因），每个方案包含 title、approach、tradeoffs、risks。',
-    '不要修改文件，不要执行不可逆操作；未知事实要写入 assumptions 或 openQuestions。',
+    '至少给出两个可行方案，并逐个说明做法、取舍和风险；若需求确实只有一个可行方向，请明确说明原因。',
+    '最后明确推荐其中一个方案，并列出你依赖的前提假设与仍待用户确认的问题。',
+    '只做调研，不修改文件，不执行不可逆操作；未经证实的事实必须作为假设或待确认问题写出，不要当成结论。',
     '',
     `用户请求：\n${request}`
   ].join('\n')
@@ -103,7 +103,9 @@ export async function runBrainstorm(
     output = await host.agent(buildPrompt(request), {
       taskId: 'brainstorm',
       phase: 'brainstorm',
+      // 共享工作区只为读到真实代码；调研阶段不发写工具，但保留非 Auto 下的提问能力。
       isolation: 'shared',
+      tools: [...READONLY_TOOLS],
       interactive: !autoMode,
       schema: BRAINSTORM_SCHEMA,
       label: 'compose-brainstorm'

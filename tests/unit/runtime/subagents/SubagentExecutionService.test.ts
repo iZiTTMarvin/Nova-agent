@@ -11,6 +11,7 @@ import {
 } from '../../../../src/runtime/run'
 import { SessionStore } from '../../../../src/runtime/sessions'
 import {
+  MAX_SUBAGENT_SUMMARY_CHARS,
   SubagentExecutionService,
   SubagentScheduler,
   createSpawnIdentity,
@@ -88,6 +89,7 @@ describe('SubagentExecutionService', () => {
     loadProfile?: (profileId: string) => unknown
     onLinked?: SubagentExecutionServiceDeps['onLinked']
     hostHasArchiveRead?: () => boolean
+    childFinalText?: string
   } = {}) {
     const prepareTurn = vi.fn((input: any) => {
       const eventBus = new EventBus()
@@ -119,7 +121,7 @@ describe('SubagentExecutionService', () => {
           const appended = sessionStore.appendMessageFast(input.childSession.id, {
             id: 'msg-child-final',
             role: 'assistant',
-            content: 'child summary',
+            content: options.childFinalText ?? 'child summary',
             toolCalls: [{
               id: 'read-1',
               name: 'read',
@@ -210,6 +212,43 @@ describe('SubagentExecutionService', () => {
     expect(child.subagent.profile.systemPrompt).toBe('inspect and summarize')
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('命令携带 resultSchema 时结果含完整结构化结果，摘要仍有界', async () => {
+    const plan = {
+      version: 1,
+      goal: '完成用户请求',
+      tasks: Array.from({ length: 120 }, (_, index) => ({
+        id: `task-${index}`,
+        title: `任务 ${index}`,
+        acceptance: ['x'.repeat(60)]
+      }))
+    }
+    const childFinalText = [
+      `已完成规划，共 ${plan.tasks.length} 个任务。`,
+      '```json',
+      JSON.stringify(plan, null, 2),
+      '```'
+    ].join('\n')
+    expect(childFinalText.length).toBeGreaterThan(MAX_SUBAGENT_SUMMARY_CHARS)
+    const { service } = createService({ childFinalText })
+
+    const execution = await service.spawn(
+      command({ resultSchema: { type: 'object', required: ['version', 'goal', 'tasks'] } }),
+      { invocationRef: invocationRef() }
+    )
+
+    expect(execution.status).toBe('completed')
+    expect(execution.structuredResult).toEqual(plan)
+    expect(execution.summary).toHaveLength(MAX_SUBAGENT_SUMMARY_CHARS)
+  })
+
+  it('命令未携带 resultSchema 时不产出结构化结果', async () => {
+    const { service } = createService({ childFinalText: '```json\n{"a":1}\n```' })
+
+    const execution = await service.spawn(command(), { invocationRef: invocationRef() })
+
+    expect(execution.structuredResult).toBeUndefined()
   })
 
   it('宿主有 archive_read 时 prepareTurn 收到含该工具的执行 profile', async () => {

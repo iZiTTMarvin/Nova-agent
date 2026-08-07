@@ -114,8 +114,7 @@ export const composeWorkflow: WorkflowDefinition = {
       verify,
       review
     }
-    const report = await runReport(ctx.host, reportInput)
-    if (!report) return { status: 'failed', reason: 'report failed' }
+    const report = runReport(ctx.host, reportInput)
 
     return {
       status: 'completed',
@@ -143,6 +142,7 @@ export type {
   ActivePlanDocument,
   BrainstormAlternative,
   BrainstormResult,
+  ComposeReportInput,
   ImplementResult,
   ImplementTaskResult,
   ReportResult,

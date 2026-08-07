@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractJson,
   extractJsonCandidates
-} from '../../../../../src/runtime/workflow/host/jsonExtract'
+} from '../../../../src/runtime/subagents'
 
 describe('extractJsonCandidates', () => {
   it('纯净 JSON 整段解析', () => {

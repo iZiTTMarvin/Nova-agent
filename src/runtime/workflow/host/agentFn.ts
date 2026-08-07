@@ -7,8 +7,8 @@ import type {
   SubagentExecutionResult
 } from '../../../shared/subagents'
 import { appendJournalSync, journalKeyBase } from '../state/journal'
-import { extractJsonCandidates } from './jsonExtract'
 import { createLogFn, type LogFn } from './progressFn'
+import { buildSchemaInstruction } from './schemaInstruction'
 import { ensureWorktree, releaseWorktree } from './worktreeFn'
 import {
   assertScopeLive,
@@ -86,16 +86,6 @@ function buildProfile(tools: readonly string[]): {
   }
 }
 
-function appendSchemaInstruction(prompt: string, schema: JsonSchema | undefined): string {
-  if (!schema) return prompt
-  return [
-    prompt,
-    '',
-    '请严格按以下 JSON Schema 返回恰好一个 JSON 值；最终消息只输出 JSON，不要 markdown 围栏与解释：',
-    JSON.stringify(schema)
-  ].join('\n')
-}
-
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -128,19 +118,6 @@ function isJsonSchema(value: unknown): value is JsonSchema {
     ) return false
   }
   return true
-}
-
-function parseSchemaResult(schema: JsonSchema, text: string): Record<string, unknown> | null {
-  if (schema === false) return null
-  const required =
-    typeof schema === 'object' && schema.type === 'object' && Array.isArray(schema.required)
-      ? schema.required
-      : []
-  for (const candidate of extractJsonCandidates(text)) {
-    if (!isUnknownRecord(candidate)) continue
-    if (required.every((key) => key in candidate)) return candidate
-  }
-  return null
 }
 
 function reportFailure(
@@ -229,7 +206,7 @@ async function spawnViaPort(
       occurrence: identity.occurrence
     },
     profileId,
-    task: appendSchemaInstruction(prompt, schema),
+    task: buildSchemaInstruction(prompt, schema),
     workingDirectory,
     isolation,
     ...(schema ? { resultSchema: schema } : {}),
@@ -259,9 +236,10 @@ async function spawnViaPort(
     }
   }
   if (schema) {
-    const parsed = parseSchemaResult(schema, execution.summary)
-    return parsed
-      ? { result: parsed, execution }
+    // 结构化结果由子代理执行边界解析；summary 是有界展示文本，不得二次解析。
+    const structured = execution.structuredResult
+    return structured
+      ? { result: structured, execution }
       : { result: null, execution, reason: 'schema-parse-failed' }
   }
   return { result: execution.summary, execution }

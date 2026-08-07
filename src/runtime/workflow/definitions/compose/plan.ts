@@ -1,4 +1,4 @@
-import type { HostFns, AgentResult } from '../../host'
+import { READONLY_TOOLS, type AgentResult, type HostFns } from '../../host'
 import type { PlanTask, WorkflowPlan } from '../../types'
 import type { ActivePlanDocument, BrainstormResult } from './types'
 
@@ -148,10 +148,10 @@ function buildPrompt(
 ): string {
   const lines = [
     '你负责 compose workflow 的 plan 阶段。',
-    '请返回一个符合 WorkflowPlan 结构的 JSON 对象；每个任务必须有唯一 id、title、dependsOn 和 acceptance。',
-    'dependsOn 只能引用当前 tasks 中存在的 id；没有依赖时必须返回空数组。不要创建环，也不要把不确定的依赖留在文本中。',
-    '任务应足够独立，使无依赖任务可以在同一批次并行；acceptance 要可验证。',
-    '必须填写 goal、constraints、nonGoals、repositoryFacts、changeScope、acceptanceMap、verificationChecklist 和 risks。',
+    '请先核对真实代码与配置，再把需求拆成可独立执行的任务，每个任务有稳定唯一的标识、明确标题和可验证的验收标准。',
+    '任务依赖只能指向本计划内已存在的任务，且不得形成循环；没有前置任务时依赖为空，也不要把不确定的依赖留在文本描述里。',
+    '任务应足够独立，使互不依赖的任务可以在同一批次并行执行。',
+    '同时说清整体目标、约束、非目标、已核实的仓库事实、改动范围、每个任务对应的验收条件、整体验证清单和风险。',
     '',
     `用户请求：\n${request}`
   ]
@@ -181,7 +181,9 @@ export async function runPlan(
     output = await host.agent(buildPrompt(request, brainstorm, activePlan), {
       taskId: 'plan',
       phase: 'plan',
+      // 共享工作区只为读到真实代码；调研阶段不发写工具，但保留非 Auto 下的提问能力。
       isolation: 'shared',
+      tools: [...READONLY_TOOLS],
       interactive: !autoMode,
       schema: PLAN_SCHEMA,
       label: activePlan ? 'compose-plan-active' : 'compose-plan'

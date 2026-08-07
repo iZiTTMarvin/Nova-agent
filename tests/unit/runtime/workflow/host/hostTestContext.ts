@@ -9,6 +9,7 @@ import { TaskScope } from '../../../../../src/runtime/workflow/scheduling/TaskSc
 import type { HostContext } from '../../../../../src/runtime/workflow/host/types'
 import type { AgentEvent } from '../../../../../src/runtime/agent/types'
 import type { ToolExecutor } from '../../../../../src/runtime/tools/types'
+import { selectStructuredResult } from '../../../../../src/runtime/subagents'
 import type { SpawnSubagentPort } from '../../../../../src/runtime/subagents'
 import type { SpawnSubagentCommand } from '../../../../../src/shared/subagents'
 
@@ -47,15 +48,21 @@ export function makeHostHarness(
       for await (const event of client.chat([{ role: 'user', content: command.task }])) {
         if (event.type === 'text_delta') summary += event.delta
       }
+      const finalText = summary.trim()
+      // 与真实端口一致：结构化结果在截断前从完整文本解析，而不是由调用方解析 summary
+      const structuredResult = command.resultSchema === undefined
+        ? undefined
+        : selectStructuredResult(command.resultSchema, finalText)
       return {
         childSessionId: `child-session-${spawnCommands.length}`,
         childRunId: `child-run-${spawnCommands.length}`,
-        status: summary.trim() ? 'completed' : 'failed',
-        summary: summary.trim(),
+        status: finalText ? 'completed' : 'failed',
+        summary: finalText,
+        ...(structuredResult ? { structuredResult } : {}),
         artifactIds: [],
         startedAt: 1,
         completedAt: 2,
-        ...(!summary.trim()
+        ...(!finalText
           ? { failure: { code: 'model' as const, message: 'empty-output' } }
           : {})
       }

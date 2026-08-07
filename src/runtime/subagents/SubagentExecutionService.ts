@@ -228,7 +228,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         throw error
       }
       if (existingRun.status === 'completed' || existingRun.status === 'failed' || existingRun.status === 'cancelled') {
-        return this.projectResult(childSession, identity.spawnRunId)
+        return this.projectResult(command, childSession, identity.spawnRunId)
       }
       if (this.deps.isRunExecutionActive?.(existingRun.runId)) {
         throw new Error(`child run ${existingRun.runId} 已有活跃执行句柄`)
@@ -284,7 +284,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         'cancelled',
         '父执行已取消'
       )
-      return this.projectResult(childSession, identity.spawnRunId)
+      return this.projectResult(command, childSession, identity.spawnRunId)
     }
 
     const permitResult = await this.deps.scheduler.acquire({
@@ -305,6 +305,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         `scheduler:${permitResult.code}:${permitResult.message}`
       )
       return this.projectResult(
+        command,
         childSession,
         identity.spawnRunId,
         permitResult.code === 'aborted' ? undefined : 'scheduler'
@@ -376,7 +377,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         'failed',
         error instanceof Error ? error.message : String(error)
       )
-      return this.projectResult(childSession, identity.spawnRunId, 'host')
+      return this.projectResult(command, childSession, identity.spawnRunId, 'host')
     }
 
     const runRefs: AgentTurnRunRefs = {
@@ -456,6 +457,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       })
     } catch {
       return this.projectResult(
+        command,
         childSession,
         identity.spawnRunId,
         timedOut ? 'timeout' : 'host'
@@ -468,6 +470,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
 
     return this.projectResult(
+      command,
       childSession,
       identity.spawnRunId,
       timedOut ? 'timeout' : undefined
@@ -511,6 +514,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   }
 
   private projectResult(
+    command: SpawnSubagentCommand,
     childSession: SubagentSessionData,
     runId: string,
     failureCode?: SubagentFailureCode
@@ -521,7 +525,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     return projectSubagentExecutionResult({
       childSession: reloaded,
       runSnapshot: snapshot,
-      ...(failureCode ? { failureCode } : {})
+      ...(failureCode ? { failureCode } : {}),
+      ...(command.resultSchema !== undefined ? { resultSchema: command.resultSchema } : {})
     })
   }
 }

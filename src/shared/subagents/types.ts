@@ -195,6 +195,11 @@ export interface SubagentExecutionResult {
   readonly childRunId: string
   readonly status: SubagentExecutionStatus
   readonly summary: string
+  /**
+   * 命令携带 resultSchema 时，从子代理完整最终消息解析出的结构化结果。
+   * summary 有截断上限，结构化数据必须走本字段而不是重新解析 summary。
+   */
+  readonly structuredResult?: Record<string, unknown>
   readonly artifactIds: readonly string[]
   readonly startedAt: number
   readonly completedAt: number

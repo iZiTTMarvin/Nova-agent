@@ -159,22 +159,27 @@ describe('host agentFn 统一 SpawnSubagentPort', () => {
     ])
   })
 
-  it('schema 只解释统一 child 结果，不再创建第二次 repair spawn', async () => {
-    const spawn = vi.fn(async () => completed('分析后得到 ```json\n{"ok":true}\n```'))
+  it('schema 结果取自端口结构化字段，不二次解析有界摘要', async () => {
+    const spawn = vi.fn(async () => ({
+      ...completed('已完成分析，结构化结果见末尾代码块（摘要可能被截断）'),
+      structuredResult: { ok: true, items: ['a'] }
+    }))
     const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
 
     await expect(createAgentFn(h.ctx)('结构化', {
       schema: { type: 'object', required: ['ok'] }
-    })).resolves.toEqual({ ok: true })
+    })).resolves.toEqual({ ok: true, items: ['a'] })
 
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(spawn.mock.calls[0]![0].resultSchema).toEqual({
       type: 'object',
       required: ['ok']
     })
+    expect(spawn.mock.calls[0]![0].task).toContain('json 代码块')
+    expect(spawn.mock.calls[0]![0].task).not.toContain('"type":"object"')
   })
 
-  it('schema 解析失败返回 null、只记非 Agent 诊断且不写成功 journal', async () => {
+  it('端口未产出结构化结果时返回 null、只记非 Agent 诊断且不写成功 journal', async () => {
     const spawn = vi.fn(async () => completed('not-json'))
     const h = makeHostHarness(root, { spawnSubagentPort: { spawn } })
 
