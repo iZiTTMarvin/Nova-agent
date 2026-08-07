@@ -2,6 +2,7 @@ import type {
   SubagentActivityProjection,
   SubagentSessionListMetadata
 } from '../subagents'
+import type { ComposeStageEntry } from '../composeLifecycle'
 
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
 /**
@@ -153,4 +154,9 @@ export type SessionDetail = Session & {
   hasMoreMessagesAbove?: boolean
   /** 当前激活叶子 id；正常 UI 不依赖，调试与 Tier 1 上下文用 */
   currentLeafId?: string | null
+  /**
+   * compose 生命周期阶段表。仅 compose 会话由 stage_transition 工具写入；
+   * 旧会话缺省，renderer 按初始表投影纯显示，不回填落盘。
+   */
+  composeStages?: ComposeStageEntry[]
 }

@@ -14,7 +14,7 @@ import type {
 } from '../workflow/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
-import type { ComposeStageEntry } from '../composeLifecycle'
+import type { ComposeStageAction, ComposeStageEntry } from '../composeLifecycle'
 import type {
   SkillSummary,
   SkillCreateInput,
@@ -401,6 +401,14 @@ export interface IpcCommands {
   'workspace:read-active-plan': {
     params: ReadActivePlanParams
     result: ActivePlanDocument | null
+  }
+  'workspace:open-active-plan': {
+    params: { sessionId: string }
+    result: void
+  }
+  'compose:apply-stage-transition': {
+    params: { sessionId: string; action: ComposeStageAction }
+    result: { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string }
   }
   'workspace:regenerate': {
     params: { sessionId: string; messageId: string }

@@ -57,6 +57,8 @@ import { createComposerSkillTrigger } from '../skills/composerSkillTrigger'
 import { useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
+import { ComposeStageBar } from '../compose/ComposeStageBar'
+import { shouldShowComposeStageBar } from '../compose/stageBarProjection'
 import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
@@ -659,6 +661,10 @@ export const ChatPanel: React.FC = () => {
     >
       {currentSession?.kind === 'subagent' ? (
         <SubagentSessionHeader originalTask={currentSubagentTask} />
+      ) : null}
+      {/* compose 主会话的常驻阶段条：挂在消息流条件块之外，空状态新会话也显示 */}
+      {currentSession && shouldShowComposeStageBar(currentSession) ? (
+        <ComposeStageBar sessionId={currentSession.id} interactionLocked={isGenerating} />
       ) : null}
       {/* 拖拽高亮遮罩 */}
       {isDragOver && (

@@ -29,6 +29,11 @@ export function renderToolBlock(
     return null
   }
 
+  // stage_transition 由会话顶部阶段条统一呈现，不在消息流里展示原始 JSON/状态码
+  if (block.toolName === 'stage_transition') {
+    return null
+  }
+
   if (block.toolName === 'askQuestion') {
     return (
       <AskQuestionToolCard
