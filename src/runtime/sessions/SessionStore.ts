@@ -399,6 +399,8 @@ export class SessionStore {
   list(): SessionSummary[] {
     return this.listInternal().map((summary) => {
       if (summary.kind === 'primary') return summary
+      // 内部摘要可携带 profile.model（供投影 join），对外列表保持窄形状
+      const { model: _model, ...profileProjection } = summary.subagent.profile
       return {
         ...summary,
         subagent: {
@@ -406,7 +408,7 @@ export class SessionStore {
             parentSessionId: summary.subagent.lineage.parentSessionId,
             depth: summary.subagent.lineage.depth
           },
-          profile: summary.subagent.profile
+          profile: profileProjection
         }
       }
     })
@@ -437,7 +439,10 @@ export class SessionStore {
           updatedAt: data.updatedAt,
           messageCount,
           title: data.title,
-          titleSource: data.titleSource
+          titleSource: data.titleSource,
+          ...(data.reasoningEffortOverride
+            ? { reasoningEffortOverride: data.reasoningEffortOverride }
+            : {})
         }
         if (data.kind === 'subagent') {
           summaries.push({
@@ -448,7 +453,10 @@ export class SessionStore {
               profile: {
                 profileId: data.subagent.profile.profileId,
                 name: data.subagent.profile.name,
-                permissionCeiling: data.subagent.profile.permissionCeiling
+                permissionCeiling: data.subagent.profile.permissionCeiling,
+                ...(data.subagent.profile.model
+                  ? { model: data.subagent.profile.model }
+                  : {})
               }
             }
           })
@@ -913,12 +921,18 @@ export class SessionStore {
     if (!session) return null
 
     const previousStages = Array.isArray(session.composeStages) ? session.composeStages : null
-    const result = applyStageTransition(previousStages, action, Date.now())
+    const result = applyStageTransition(
+      previousStages,
+      action,
+      Date.now(),
+      session.composeReviewLoops ?? 0
+    )
     if (!result.ok) {
       return { status: 'rejected', error: result.error }
     }
 
     session.composeStages = result.stages
+    session.composeReviewLoops = result.reviewLoops
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return {

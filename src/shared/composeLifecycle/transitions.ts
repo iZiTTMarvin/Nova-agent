@@ -67,13 +67,18 @@ function pendingEntry(id: ComposeStageEntry['id']): ComposeStageEntry {
 /**
  * 对阶段表应用一次转换。current 为空时先物化初始表（懒创建）。
  * 非法转换返回中文可读原因，不抛异常。
+ *
+ * reviewLoops 为修复-复审循环计数；审查阶段发出的回退放行时 +1，
+ * 其余转换原样返回，超 3 次拒绝（代码兜底，与阶段指南口径一致）。
  */
 export function applyStageTransition(
   current: ComposeStageEntry[] | null | undefined,
   action: ComposeStageAction,
-  now: number
-): { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string } {
+  now: number,
+  reviewLoops?: number
+): { ok: true; stages: ComposeStageEntry[]; reviewLoops: number } | { ok: false; error: string } {
   const stages = current == null ? createInitialStageTable() : cloneStages(current)
+  const loops = reviewLoops ?? 0
   const inProgressCount = stages.filter(entry => entry.status === 'in_progress').length
   if (inProgressCount > 1) {
     return { ok: false, error: '阶段表状态异常：存在多个进行中的阶段' }
@@ -101,7 +106,7 @@ export function applyStageTransition(
         status: 'in_progress'
       }
     }
-    return { ok: true, stages }
+    return { ok: true, stages, reviewLoops: loops }
   }
 
   if (action.type === 'skip') {
@@ -125,7 +130,7 @@ export function applyStageTransition(
         status: 'in_progress'
       }
     }
-    return { ok: true, stages }
+    return { ok: true, stages, reviewLoops: loops }
   }
 
   // return
@@ -143,6 +148,16 @@ export function applyStageTransition(
     return { ok: false, error: '只能回退到当前进行中阶段之前的阶段' }
   }
 
+  // 审查阶段发出的任何回退都计为一次修复-复审返工（不限于回退开发，
+  // 否则经回退计划等路径可绕开上限无限重审）：3 次后拒绝并让主 Agent 停住向用户说明
+  const isReviewReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'review'
+  if (isReviewReturn && loops >= 3) {
+    return {
+      ok: false,
+      error: '修复-复审循环已达上限（3 次）。请向用户说明审查结论与阻塞点，停在审查阶段等待用户决定。'
+    }
+  }
+
   const resetUntil = inProgressIdx >= 0 ? inProgressIdx : stages.length - 1
   for (let i = targetIdx + 1; i <= resetUntil; i++) {
     stages[i] = pendingEntry(stages[i].id)
@@ -152,5 +167,5 @@ export function applyStageTransition(
     status: 'in_progress',
     note: reason
   }
-  return { ok: true, stages }
+  return { ok: true, stages, reviewLoops: isReviewReturn ? loops + 1 : loops }
 }

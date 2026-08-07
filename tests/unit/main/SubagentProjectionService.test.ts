@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubagentProjectionService } from '../../../src/main/agent/subagents'
 import { createRunCoordinator } from '../../../src/runtime/run'
 import { SessionStore } from '../../../src/runtime/sessions'
+import { writeManifest, getFilesDir } from '../../../src/runtime/checkpoints/manifest'
 import type { SubagentSessionMetadata } from '../../../src/shared/subagents'
 
 describe('SubagentProjectionService', () => {
@@ -24,7 +25,11 @@ describe('SubagentProjectionService', () => {
 
   afterEach(() => rmSync(tempRoot, { recursive: true, force: true }))
 
-  function createChild(toolCallId: string, spawnRunId: string) {
+  function createChild(
+    toolCallId: string,
+    spawnRunId: string,
+    profileModel?: { providerId: string; modelId: string }
+  ) {
     const metadata: SubagentSessionMetadata = {
       lineage: {
         parentSessionId,
@@ -47,7 +52,8 @@ describe('SubagentProjectionService', () => {
         toolNames: ['read'],
         permissionCeiling: 'read_only',
         maxToolRounds: 20,
-        configHash: 'hash'
+        configHash: 'hash',
+        ...(profileModel ? { model: profileModel } : {})
       }
     }
     return sessionStore.createChildIfAbsent({
@@ -270,5 +276,176 @@ describe('SubagentProjectionService', () => {
       status: 'waiting_user',
       latestActivity: '等待你的授权'
     }))
+  })
+
+  it('model 继承父会话活跃模型，profile.model 覆盖优先', () => {
+    const child = createChild('call-model', 'run-child-model')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-model',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-child-model', 'msg-child')
+    coordinator.commitTerminal({ runId: 'run-child-model', status: 'completed' })
+
+    const service = new SubagentProjectionService({
+      sessionStore,
+      runCoordinator: coordinator,
+      resolveParentModel: () => ({ providerId: 'parent-provider', modelId: 'parent-model' })
+    })
+    expect(service.getByParentToolCallId(parentSessionId, 'call-model')?.model).toEqual({
+      providerId: 'parent-provider',
+      modelId: 'parent-model'
+    })
+
+    const overridden = createChild('call-override', 'run-child-override', {
+      providerId: 'profile-provider',
+      modelId: 'profile-model'
+    })
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-override',
+      workspaceId: workspace,
+      sessionId: overridden.id
+    })
+    coordinator.commitTerminal({ runId: 'run-child-override', status: 'completed' })
+
+    const projection = service.getByParentToolCallId(parentSessionId, 'call-override')
+    expect(projection?.model).toEqual({
+      providerId: 'profile-provider',
+      modelId: 'profile-model'
+    })
+    // 对外 profile 投影不携带 model（model 只出现在投影顶层）
+    expect(projection?.profile).not.toHaveProperty('model')
+  })
+
+  it('model 无法推导时省略字段；profile 投影保持窄形状', () => {
+    const child = createChild('call-no-model', 'run-no-model')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-no-model',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.commitTerminal({ runId: 'run-no-model', status: 'completed' })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const projection = service.getByParentToolCallId(parentSessionId, 'call-no-model')
+
+    expect(projection).not.toHaveProperty('model')
+  })
+
+  it('reasoningEffort 继承父会话覆盖；无覆盖时省略', () => {
+    const child = createChild('call-effort', 'run-child-effort')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-effort',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.commitTerminal({ runId: 'run-child-effort', status: 'completed' })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    expect(service.getByParentToolCallId(parentSessionId, 'call-effort')).not.toHaveProperty(
+      'reasoningEffort'
+    )
+
+    sessionStore.updateReasoningEffortOverride(parentSessionId, 'high')
+    expect(service.getByParentToolCallId(parentSessionId, 'call-effort')).toMatchObject({
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('终态且有 checkpoint 改动时投影输出 fileChanges（逐文件增删行数）', () => {
+    const child = createChild('call-files', 'run-child-files')
+    // SessionStore 的会话与 checkpoint 都挂在 <appDataPath>/sessions 下
+    const sessionRoot = join(tempRoot, 'sessions')
+    const backupPath = resolve(getFilesDir(sessionRoot, child.id, 'msg-child'), 'src', 'a.ts')
+    mkdirSync(join(backupPath, '..'), { recursive: true })
+    writeFileSync(backupPath, 'old line', 'utf-8')
+    const workspaceFile = join(workspace, 'src', 'a.ts')
+    mkdirSync(join(workspaceFile, '..'), { recursive: true })
+    writeFileSync(workspaceFile, 'new line\nsecond line', 'utf-8')
+    writeManifest(sessionRoot, {
+      sessionId: child.id,
+      messageId: 'msg-child',
+      workspaceRoot: workspace,
+      createdFiles: [],
+      modifiedFiles: ['src/a.ts'],
+      deletedFiles: [],
+      status: 'active',
+      createdAt: Date.now()
+    })
+    sessionStore.appendMessageFast(child.id, {
+      id: 'msg-child',
+      role: 'assistant',
+      content: 'done',
+      timestamp: Date.now()
+    })
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-files',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-child-files', 'msg-child')
+    coordinator.commitTerminal({ runId: 'run-child-files', status: 'completed' })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const projection = service.getByParentToolCallId(parentSessionId, 'call-files')
+
+    expect(projection?.fileChanges).toEqual([
+      {
+        filePath: 'src/a.ts',
+        status: 'modified',
+        addedLines: 2,
+        removedLines: 1
+      }
+    ])
+  })
+
+  it('终态但无 checkpoint 且只读子代理不输出 fileChanges', () => {
+    const child = createChild('call-no-files', 'run-no-files')
+    sessionStore.appendMessageFast(child.id, {
+      id: 'msg-child',
+      role: 'assistant',
+      content: 'read only summary',
+      timestamp: Date.now()
+    })
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-no-files',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-no-files', 'msg-child')
+    coordinator.commitTerminal({ runId: 'run-no-files', status: 'completed' })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const projection = service.getByParentToolCallId(parentSessionId, 'call-no-files')
+
+    expect(projection?.status).toBe('completed')
+    expect(projection).not.toHaveProperty('fileChanges')
+  })
+
+  it('轻投影不读取终态 transcript，也不携带 fileChanges', () => {
+    const child = createChild('call-light2', 'run-light2')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-light2',
+      workspaceId: workspace,
+      sessionId: child.id
+    })
+    coordinator.markRunning('run-light2', 'msg-light2')
+    coordinator.commitTerminal({ runId: 'run-light2', status: 'completed' })
+    const load = vi.spyOn(sessionStore, 'load')
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const [projection] = service.listLightweightByParentSessionIds([parentSessionId])
+
+    expect(load).not.toHaveBeenCalled()
+    expect(projection).not.toHaveProperty('fileChanges')
+    expect(projection).not.toHaveProperty('summary')
   })
 })

@@ -39,6 +39,7 @@ describe('applyStageTransition', () => {
     const result = applyStageTransition(createInitialStageTable(), { type: 'complete' }, NOW)
     expect(result).toEqual({
       ok: true,
+      reviewLoops: 0,
       stages: [
         { id: 'brainstorm', status: 'completed', completedAt: NOW },
         { id: 'plan', status: 'in_progress' },
@@ -205,6 +206,118 @@ describe('applyStageTransition', () => {
       expect(inProgressCount(result.stages)).toBeLessThanOrEqual(1)
       stages = result.stages
     }
+  })
+
+  it('review→implement 回退第 1~3 次放行且计数递增，第 4 次拒绝', () => {
+    const atReview = completeThrough(createInitialStageTable(), 4)
+    let loops: number | undefined
+    for (let i = 0; i < 3; i++) {
+      const result = applyStageTransition(
+        atReview,
+        { type: 'return', targetStage: 'implement', reason: `返工 ${i + 1}` },
+        NOW,
+        loops
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.reviewLoops).toBe(i + 1)
+      expect(result.stages[2]).toMatchObject({ id: 'implement', status: 'in_progress' })
+      loops = result.reviewLoops
+    }
+
+    const fourth = applyStageTransition(
+      atReview,
+      { type: 'return', targetStage: 'implement', reason: '第 4 次' },
+      NOW,
+      loops
+    )
+    expect(fourth.ok).toBe(false)
+    if (fourth.ok) return
+    expect(fourth.error).toMatch(/上限/)
+    expect(fourth.error).toContain('停在审查阶段')
+  })
+
+  it('未传计数时 review 回退按 0 起步', () => {
+    const atReview = completeThrough(createInitialStageTable(), 4)
+    const result = applyStageTransition(
+      atReview,
+      { type: 'return', targetStage: 'implement', reason: '返工' },
+      NOW
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.reviewLoops).toBe(1)
+  })
+
+  it('非审查阶段发出的回退不计数', () => {
+    const atVerify = completeThrough(createInitialStageTable(), 3)
+    const fromVerify = applyStageTransition(
+      atVerify,
+      { type: 'return', targetStage: 'implement', reason: '验证失败' },
+      NOW,
+      2
+    )
+    expect(fromVerify.ok).toBe(true)
+    if (!fromVerify.ok) return
+    expect(fromVerify.reviewLoops).toBe(2)
+
+    const atReport = completeThrough(createInitialStageTable(), 5)
+    const fromReport = applyStageTransition(
+      atReport,
+      { type: 'return', targetStage: 'implement', reason: '收尾阶段返工' },
+      NOW,
+      3
+    )
+    expect(fromReport.ok).toBe(true)
+    if (!fromReport.ok) return
+    expect(fromReport.reviewLoops).toBe(3)
+
+    const terminal = completeThrough(createInitialStageTable(), 6)
+    const fromTerminal = applyStageTransition(
+      terminal,
+      { type: 'return', targetStage: 'implement', reason: '终态返工' },
+      NOW,
+      3
+    )
+    expect(fromTerminal.ok).toBe(true)
+    if (!fromTerminal.ok) return
+    expect(fromTerminal.reviewLoops).toBe(3)
+  })
+
+  it('complete / skip 不改变循环计数', () => {
+    const atReview = completeThrough(createInitialStageTable(), 4)
+    const complete = applyStageTransition(atReview, { type: 'complete' }, NOW, 2)
+    expect(complete.ok).toBe(true)
+    if (!complete.ok) return
+    expect(complete.reviewLoops).toBe(2)
+
+    const skip = applyStageTransition(atReview, { type: 'skip', reason: '无需审查' }, NOW, 3)
+    expect(skip.ok).toBe(true)
+    if (!skip.ok) return
+    expect(skip.reviewLoops).toBe(3)
+  })
+
+  it('审查阶段回退到非开发目标同样计数，上限后一并拒绝（防绕过重审）', () => {
+    const atReview = completeThrough(createInitialStageTable(), 4)
+    const toPlan = applyStageTransition(
+      atReview,
+      { type: 'return', targetStage: 'plan', reason: '计划本身有误' },
+      NOW,
+      2
+    )
+    expect(toPlan.ok).toBe(true)
+    if (!toPlan.ok) return
+    expect(toPlan.reviewLoops).toBe(3)
+
+    const blocked = applyStageTransition(
+      atReview,
+      { type: 'return', targetStage: 'plan', reason: '再次回退计划' },
+      NOW,
+      3
+    )
+    expect(blocked.ok).toBe(false)
+    if (blocked.ok) return
+    expect(blocked.error).toMatch(/上限/)
   })
 })
 

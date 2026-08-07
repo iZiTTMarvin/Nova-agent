@@ -3,6 +3,7 @@ import {
   applyHostArchiveReadCapability,
   resolveSubagentProfileSnapshot
 } from '../../../../src/runtime/subagents'
+import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentConfig'
 
 describe('resolveSubagentProfileSnapshot', () => {
   it('校验 unknown 输入并冻结稳定 profile snapshot 与 configHash', () => {
@@ -101,6 +102,23 @@ describe('resolveSubagentProfileSnapshot', () => {
       allowedTools: [],
       skillRoots: ['   ']
     }, 'explore')).toThrow(/skillRoots/)
+  })
+})
+
+describe('builtin review profile', () => {
+  it('解析为 read_only：写工具全部剥离，prompt 含审查职责语义', () => {
+    const spec = BUILTIN_SUBAGENTS.find(s => s.name === 'review')
+    expect(spec).toBeDefined()
+    if (!spec) return
+
+    const snapshot = resolveSubagentProfileSnapshot(spec, 'review')
+    expect(snapshot.permissionCeiling).toBe('read_only')
+    for (const writeTool of ['edit', 'write', 'bash', 'save_plan', 'switch_mode']) {
+      expect(snapshot.toolNames).not.toContain(writeTool)
+    }
+    expect(snapshot.toolNames).toEqual(['ls', 'read', 'grep', 'find'])
+    expect(snapshot.systemPrompt.length).toBeGreaterThan(0)
+    expect(snapshot.systemPrompt).toMatch(/审查/)
   })
 })
 

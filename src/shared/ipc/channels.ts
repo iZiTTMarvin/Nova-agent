@@ -64,6 +64,8 @@ export const SUBAGENT_LIST_PROJECTIONS = 'subagent:list-projections' as const
 export const SUBAGENT_LIST_PROJECTION_SUMMARIES = 'subagent:list-projection-summaries' as const
 export const SUBAGENT_GET_PROJECTION = 'subagent:get-projection' as const
 export const GET_MESSAGE_DIFFS = 'get-message-diffs' as const
+/** 会话级 diff 聚合：跨消息合并净变化 + messageIdByFile 路由表 */
+export const GET_SESSION_DIFFS = 'get-session-diffs' as const
 export const WINDOW_MINIMIZE = 'window-minimize' as const
 export const WINDOW_MAXIMIZE = 'window-maximize' as const
 export const WINDOW_CLOSE = 'window-close' as const

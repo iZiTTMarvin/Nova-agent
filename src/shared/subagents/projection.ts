@@ -3,9 +3,12 @@
  * They never contain a profile system prompt and are not a state source.
  */
 
+import type { ReasoningEffort } from '../config/llmRegistry'
+import type { DiffEntry } from '../diff/types'
 import type { RunStatus } from '../run/types'
 import type {
   SubagentExecutionFailure,
+  SubagentModelSnapshot,
   SubagentProfileSnapshot
 } from './types'
 
@@ -22,6 +25,18 @@ export interface SubagentProfileProjection {
   readonly model?: never
   readonly maxToolRounds?: never
   readonly configHash?: never
+}
+
+/**
+ * 会话级聚合的单文件净变化（已与当前工作区对比）。
+ * 行数由 DiffEntry hunks 统计而来，仅展示语义。
+ */
+export interface SubagentFileChange {
+  readonly filePath: string
+  /** 与 DiffEntry 同一判别联合，不另起第二份状态词汇 */
+  readonly status: DiffEntry['status']
+  readonly addedLines: number
+  readonly removedLines: number
 }
 
 /** Child-session metadata safe for session lists and renderer navigation. */
@@ -60,6 +75,18 @@ export interface SubagentActivityProjection {
   readonly summary?: string
   readonly artifactCount: number
   readonly failure?: SubagentExecutionFailure
+  /**
+   * 子代理实际生效模型：profile 覆盖优先，否则父会话活跃模型。
+   * 无法从持久化事实推导时省略，UI 对应不展示模型段。
+   */
+  readonly model?: SubagentModelSnapshot
+  /** 父会话思考强度覆盖，传递到子代理运行时；auto/缺省时省略。 */
+  readonly reasoningEffort?: ReasoningEffort
+  /**
+   * 终态且存在 checkpoint 改动时输出会话级聚合的净文件变化。
+   * 只读子代理无写入工具，恒缺省；UI 据此不渲染 diff 卡。
+   */
+  readonly fileChanges?: readonly SubagentFileChange[]
 }
 
 export type SubagentBatchStatus =

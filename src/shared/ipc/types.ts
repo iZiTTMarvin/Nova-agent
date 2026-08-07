@@ -4,7 +4,12 @@
  */
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig, LlmRegistry } from '../config'
-import type { DiffEntry, DiffReviewStatus, MessageDiffsState } from '../diff'
+import type {
+  DiffEntry,
+  DiffReviewStatus,
+  MessageDiffsState,
+  SessionMessageDiffsState
+} from '../diff'
 import type { NormalizedUsage } from '../model/types'
 import type { HookEvent } from '../agent/types'
 import type {
@@ -212,6 +217,10 @@ export interface IpcCommands {
   'get-message-diffs': {
     params: { sessionId: string; messageId: string }
     result: MessageDiffsState
+  }
+  'get-session-diffs': {
+    params: { sessionId: string }
+    result: SessionMessageDiffsState
   }
   'reject-file': {
     params: { sessionId: string; messageId: string; filePath: string }

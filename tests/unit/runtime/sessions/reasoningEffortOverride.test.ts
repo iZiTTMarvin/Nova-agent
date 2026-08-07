@@ -53,8 +53,8 @@ describe('SessionStore 思考强度覆盖', () => {
 })
 
 describe('schema v10 → v11 迁移', () => {
-  it('当前版本为 12', () => {
-    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(12)
+  it('当前版本为 13', () => {
+    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(13)
   })
 
   it('v10 会话迁移后无覆盖字段，结构合法', () => {
@@ -71,7 +71,7 @@ describe('schema v10 → v11 迁移', () => {
     }
 
     const migrated = migrateSessionData(v10)
-    expect(migrated.schemaVersion).toBe(12)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.reasoningEffortOverride).toBeUndefined()
     expect(migrated.kind).toBe('primary')
   })

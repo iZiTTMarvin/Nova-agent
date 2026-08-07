@@ -56,6 +56,18 @@ describe('getComposeStageGuide', () => {
     expect(guide).toContain('return')
   })
 
+  it('审查：brief 四要素与 review 子代理类型完整（自然语言交接约定）', () => {
+    const guide = getComposeStageGuide('review')
+    // brief 四要素：需求背景、计划位置、改动清单、验证证据
+    expect(guide).toContain('需求背景')
+    expect(guide).toContain('计划文档位置')
+    expect(guide).toContain('改动清单')
+    expect(guide).toContain('验证证据')
+    // 唯一审查子代理的固定身份与 markdown 报告约定
+    expect(guide).toContain('subagent_type: review')
+    expect(guide).toContain('markdown')
+  })
+
   it('收尾：自然语言总结交付与遗留问题', () => {
     const guide = getComposeStageGuide('report')
     expect(guide).toContain('总结')

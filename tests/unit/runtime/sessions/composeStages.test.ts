@@ -92,4 +92,66 @@ describe('SessionStore composeStages', () => {
     expect(store2.getComposeStages(session.id)).toEqual(applied.stages)
     expect(store2.load(session.id)?.composeStages).toEqual(applied.stages)
   })
+
+  it('review→implement 回退计数落盘，重建 store 后仍在', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create(path.resolve(tmpDir, 'workspace'), 'compose')
+    for (let i = 0; i < 4; i++) {
+      const r = store.applyComposeStageTransition(session.id, { type: 'complete' })
+      expect(r).toMatchObject({ status: 'applied' })
+      if (!r || r.status !== 'applied') throw new Error('无法推进到审查阶段')
+    }
+
+    const applied = store.applyComposeStageTransition(session.id, {
+      type: 'return',
+      targetStage: 'implement',
+      reason: '审查发现问题'
+    })
+    expect(applied).toMatchObject({ status: 'applied' })
+    if (!applied || applied.status !== 'applied') return
+    expect(applied.session.composeReviewLoops).toBe(1)
+    expect(store.load(session.id)?.composeReviewLoops).toBe(1)
+
+    const fresh = new SessionStore(tmpDir)
+    expect(fresh.load(session.id)?.composeReviewLoops).toBe(1)
+  })
+
+  it('第 4 次 review→implement 回退拒绝，阶段表与计数不被破坏', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create(path.resolve(tmpDir, 'workspace'), 'compose')
+
+    const completeToReview = (count: number): void => {
+      for (let i = 0; i < count; i++) {
+        const r = store.applyComposeStageTransition(session.id, { type: 'complete' })
+        expect(r).toMatchObject({ status: 'applied' })
+        if (!r || r.status !== 'applied') throw new Error('无法推进到审查阶段')
+      }
+    }
+
+    completeToReview(4)
+    for (let i = 0; i < 3; i++) {
+      const ret = store.applyComposeStageTransition(session.id, {
+        type: 'return',
+        targetStage: 'implement',
+        reason: `返工 ${i + 1}`
+      })
+      expect(ret).toMatchObject({ status: 'applied' })
+      if (!ret || ret.status !== 'applied') throw new Error('修复-复审回退应被放行')
+      expect(ret.session.composeReviewLoops).toBe(i + 1)
+      // 回到开发修复后重新推进：implement、verify 各 complete 一次再入审查
+      completeToReview(2)
+    }
+
+    const before = store.getComposeStages(session.id)
+    const fourth = store.applyComposeStageTransition(session.id, {
+      type: 'return',
+      targetStage: 'implement',
+      reason: '第 4 次回退'
+    })
+    expect(fourth).toMatchObject({ status: 'rejected' })
+    if (!fourth || fourth.status !== 'rejected') return
+    expect(fourth.error).toMatch(/上限/)
+    expect(store.getComposeStages(session.id)).toEqual(before)
+    expect(store.load(session.id)?.composeReviewLoops).toBe(3)
+  })
 })

@@ -148,17 +148,5 @@ export const HunkView: React.FC<HunkViewProps> = ({
   )
 }
 
-export function countEntryChanges(entry: DiffEntry): { additions: number; deletions: number } {
-  let additions = 0
-  let deletions = 0
-
-  for (const hunk of entry.hunks) {
-    if (!hunk.content) continue
-    for (const line of hunk.content.split('\n')) {
-      if (line.startsWith('+')) additions++
-      else if (line.startsWith('-')) deletions++
-    }
-  }
-
-  return { additions, deletions }
-}
+// 增删行统计的唯一实现在 shared/diff/compute，这里 re-export 保持既有调用方不变
+export { countEntryChanges } from '../../../shared/diff/compute'

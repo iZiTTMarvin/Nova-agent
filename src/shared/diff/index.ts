@@ -1,2 +1,2 @@
-export { type DiffHunk, type DiffEntry, type DiffReviewStatus, type SkippedFileInfo, type MessageDiffsState } from './types'
-export { computeFileDiff } from './compute'
+export { type DiffHunk, type DiffEntry, type DiffReviewStatus, type SkippedFileInfo, type MessageDiffsState, type SessionMessageDiffsState } from './types'
+export { computeFileDiff, countEntryChanges } from './compute'

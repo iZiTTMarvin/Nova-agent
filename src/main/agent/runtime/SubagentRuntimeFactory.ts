@@ -72,6 +72,7 @@ export function prepareSubagentRuntime(
     contextWindow: input.profile.contextWindow ?? input.contextWindow,
     supportsVision: input.supportsVision,
     toolExecution: 'sequential',
+    reasoningEffort: input.reasoningEffort,
     ...(input.promptCacheKey ? { promptCacheKey: input.promptCacheKey } : {}),
     onCompaction: (compactedContext, meta) => {
       if (

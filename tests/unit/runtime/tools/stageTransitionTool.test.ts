@@ -143,6 +143,23 @@ describe('stage_transition', () => {
     expect(rejected.error).toBe('只能回退到当前进行中阶段之前的阶段')
   })
 
+  it('超限回退：存储层 rejected 透传 success false 与可读原因', async () => {
+    const limitStore: MockSessionStore = {
+      applyComposeStageTransition: vi.fn(() => ({
+        status: 'rejected',
+        error: '修复-复审循环已达上限（3 次）。请向用户说明审查结论与阻塞点，停在审查阶段等待用户决定。'
+      }))
+    }
+    const { context } = createContext({ mode: 'compose', sessionStore: limitStore })
+    const result = await stageTransitionTool.execute(
+      { action: 'return', targetStage: 'implement', reason: '第 4 次回退' },
+      context
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('修复-复审循环已达上限')
+    expect(result.error).toContain('停在审查阶段')
+  })
+
   it('缺少 sessionStore/sessionId 时失败且可读', async () => {
     const noStore = createContext({ mode: 'compose', sessionStore: null })
     const r1 = await stageTransitionTool.execute({ action: 'complete' }, noStore.context)

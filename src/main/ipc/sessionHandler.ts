@@ -22,6 +22,7 @@ import {
 import { initSessionStoreHost, getSessionStore } from '../services/SessionStoreHost'
 import { rejectFile } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
+import { buildSessionDiffState } from '../../runtime/checkpoints/sessionDiffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
 import { setCurrentMode, setCurrentProjectPath, getMainWindow } from '../index'
 import type { SessionDetail, Message, BranchMeta } from '../../shared/session'
@@ -33,7 +34,7 @@ import {
 } from '../../runtime/sessions/types'
 import { getSessionActiveMessages, attachBranchMeta, ensureMessageParentChain, resolveCurrentLeafId } from '../../runtime/sessions/tree'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
-import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
+import { GET_MESSAGE_DIFFS, GET_SESSION_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
 import { calculateContextBreakdown } from '../../runtime/agent'
@@ -242,6 +243,22 @@ export function registerSessionHandler(): void {
       session.workspaceRoot,
       params.sessionId,
       params.messageId
+    )
+  })
+
+  handle(GET_SESSION_DIFFS, async (
+    _event,
+    params: { sessionId: string }
+  ) => {
+    const session = sessionStore.load(params.sessionId)
+    if (!session) {
+      throw new Error(`会话 ${params.sessionId} 不存在`)
+    }
+
+    return buildSessionDiffState(
+      sessionStore.getSessionsDir(),
+      session.workspaceRoot,
+      params.sessionId
     )
   })
 
