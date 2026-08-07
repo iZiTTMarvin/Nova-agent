@@ -2,8 +2,41 @@ import {
   COMPOSE_STAGE_IDS,
   isComposeStageId,
   type ComposeStageAction,
-  type ComposeStageEntry
+  type ComposeStageEntry,
+  type ComposeStageId
 } from './types'
+
+export interface ComposeStageCursor {
+  /** 当前进行中阶段；终态或异常表为 null */
+  currentStageId: ComposeStageId | null
+  /** 无进行中且全部 completed/skipped：生命周期已走完 */
+  isTerminal: boolean
+  /**
+   * 回退游标：仅下标小于 returnCursor 的阶段可作为回退目标。
+   * 口径与 applyStageTransition 一致：进行中阶段的下标；终态视作游标在
+   * 末尾之后（任意阶段可回退）；异常表（无进行中且非终态）为 0（不可回退）。
+   */
+  returnCursor: number
+}
+
+/**
+ * 阶段表读路径游标：门禁、UI 投影等消费方共用同一份推导，
+ * 避免各处重复实现「当前阶段 / 终态 / 可回退范围」导致口径漂移。
+ */
+export function getComposeStageCursor(
+  stages: ReadonlyArray<Pick<ComposeStageEntry, 'id' | 'status'>>
+): ComposeStageCursor {
+  const inProgressIdx = stages.findIndex(entry => entry.status === 'in_progress')
+  const isTerminal =
+    inProgressIdx < 0 &&
+    stages.length > 0 &&
+    stages.every(entry => entry.status === 'completed' || entry.status === 'skipped')
+  return {
+    currentStageId: inProgressIdx >= 0 ? stages[inProgressIdx].id : null,
+    isTerminal,
+    returnCursor: inProgressIdx >= 0 ? inProgressIdx : isTerminal ? stages.length : 0
+  }
+}
 
 export function createInitialStageTable(): ComposeStageEntry[] {
   return COMPOSE_STAGE_IDS.map((id, index) => ({

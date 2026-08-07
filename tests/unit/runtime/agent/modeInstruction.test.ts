@@ -30,4 +30,20 @@ describe('modeInstruction', () => {
     expect(instruction).toContain('不需要额外征求用户确认')
     expect(instruction).toContain('不要滥用计划模式')
   })
+
+  it('Compose 由主 Agent 亲自按阶段推进，不再路由编排工具', () => {
+    const instruction = getModeInstruction('compose')
+    expect(instruction).not.toContain('start_workflow')
+    expect(instruction).toContain('亲自')
+    expect(instruction).toContain('stage_transition')
+    expect(instruction).toContain('构思')
+    expect(instruction).toContain('阶段指南')
+    expect(instruction).toContain('已废弃')
+  })
+
+  it('Compose 保留不自动发布与危险命令拦截约束', () => {
+    const instruction = getModeInstruction('compose')
+    expect(instruction).toContain('不自动执行 git commit、push 或 deploy')
+    expect(instruction).toContain('危险命令仍会被拦截')
+  })
 })

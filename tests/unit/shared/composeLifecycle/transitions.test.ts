@@ -3,6 +3,7 @@ import {
   COMPOSE_STAGE_IDS,
   applyStageTransition,
   createInitialStageTable,
+  getComposeStageCursor,
   type ComposeStageEntry
 } from '../../../../src/shared/composeLifecycle'
 
@@ -204,5 +205,45 @@ describe('applyStageTransition', () => {
       expect(inProgressCount(result.stages)).toBeLessThanOrEqual(1)
       stages = result.stages
     }
+  })
+})
+
+describe('getComposeStageCursor', () => {
+  it('初始表：当前构思、非终态、无可回退阶段', () => {
+    const cursor = getComposeStageCursor(createInitialStageTable())
+    expect(cursor).toEqual({ currentStageId: 'brainstorm', isTerminal: false, returnCursor: 0 })
+  })
+
+  it('进行中阶段：游标即其下标，之前阶段可回退', () => {
+    const stages = completeThrough(createInitialStageTable(), 2)
+    const cursor = getComposeStageCursor(stages)
+    expect(cursor).toEqual({ currentStageId: 'implement', isTerminal: false, returnCursor: 2 })
+  })
+
+  it('终态：无当前阶段，游标在末尾之后（全部阶段可回退）', () => {
+    const stages = completeThrough(createInitialStageTable(), COMPOSE_STAGE_IDS.length)
+    const cursor = getComposeStageCursor(stages)
+    expect(cursor).toEqual({
+      currentStageId: null,
+      isTerminal: true,
+      returnCursor: COMPOSE_STAGE_IDS.length
+    })
+  })
+
+  it('异常表（无进行中且非终态）：不可回退，与转换校验的拒绝口径一致', () => {
+    const abnormal: ComposeStageEntry[] = createInitialStageTable().map(entry => ({
+      id: entry.id,
+      status: 'pending'
+    }))
+    const cursor = getComposeStageCursor(abnormal)
+    expect(cursor).toEqual({ currentStageId: null, isTerminal: false, returnCursor: 0 })
+  })
+
+  it('空表：非终态、不可回退', () => {
+    expect(getComposeStageCursor([])).toEqual({
+      currentStageId: null,
+      isTerminal: false,
+      returnCursor: 0
+    })
   })
 })
