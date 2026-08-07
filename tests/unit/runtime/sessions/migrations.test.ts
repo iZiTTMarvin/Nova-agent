@@ -335,6 +335,25 @@ describe('migrateSessionData', () => {
     })).toThrow('subagent 会话必须携带合法的 subagent metadata')
   })
 
+  it('v11 会话迁移到 v12 后不报错、不造阶段表', () => {
+    const v11 = {
+      schemaVersion: 11,
+      kind: 'primary',
+      id: 'sess_v11',
+      workspaceRoot: '/tmp/ws',
+      mode: 'default',
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const migrated = migrateSessionData(v11)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.composeStages).toBeUndefined()
+    expect(migrated.kind).toBe('primary')
+  })
+
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {
     expect(() => migrateSessionData({ schemaVersion: CURRENT_SESSION_SCHEMA_VERSION + 1 })).toThrow(
       `会话 schemaVersion ${CURRENT_SESSION_SCHEMA_VERSION + 1} 高于当前支持的 ${CURRENT_SESSION_SCHEMA_VERSION}，拒绝降级读取`

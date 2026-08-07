@@ -139,6 +139,7 @@ export const AGENT_ASK_QUESTION_REQUEST = 'agent:ask-question-request' as const
 export const AGENT_ASK_QUESTION_RESOLVED = 'agent:ask-question-resolved' as const
 export const AGENT_DIFF_UPDATE = 'agent:diff-update' as const
 export const AGENT_TODOS_UPDATED = 'agent:todos-updated' as const
+export const AGENT_COMPOSE_STAGES_UPDATED = 'agent:compose-stages-updated' as const
 export const AGENT_ERROR = 'agent:error' as const
 export const AGENT_MESSAGE_END = 'agent:message-end' as const
 export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const

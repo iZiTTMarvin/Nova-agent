@@ -14,6 +14,7 @@ import type {
   SubagentSessionMetadata
 } from '../../shared/subagents'
 import type { TodoItem } from '../../shared/todo/types'
+import type { ComposeStageEntry } from '../../shared/composeLifecycle'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
 import type { ActivePlanRef } from '../plans'
@@ -96,6 +97,11 @@ interface SessionDataBase {
    * 旧会话没有此字段，反序列化后视为空数组。
    */
   todos?: TodoItem[]
+  /**
+   * compose 生命周期阶段表。
+   * 由 stage_transition 工具维护；旧会话无此字段时按原行为运行，不强制进入阶段流程。
+   */
+  composeStages?: ComposeStageEntry[]
   /** 侧边栏展示的会话标题 */
   title?: string
   /** 标题来源，用于覆盖保护（manual 后不再被自动逻辑改写） */

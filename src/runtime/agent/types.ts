@@ -6,6 +6,7 @@ import type { DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../shared/model/types'
 import type { CacheDiagnosticResult } from '../model/cacheDiagnostics'
 import type { TodoItem, TodoViewInfo } from '../../shared/todo/types'
+import type { ComposeStageEntry } from '../../shared/composeLifecycle'
 import type { RecoveryState } from './recovery/RecoveryStateMachine'
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { AskQuestionItem } from '../../shared/askQuestion/types'
@@ -108,6 +109,15 @@ export type AgentEvent =
       sessionId: string
       todos: TodoItem[]
       view: TodoViewInfo
+    }
+  | {
+      /**
+       * compose 阶段表更新事件（不参与 AgentLoop 主流程状态机，仅给渲染端订阅）。
+       * 由 stage_transition 工具在写入 store 后同步 emit。
+       */
+      type: 'compose_stages_updated'
+      sessionId: string
+      stages: ComposeStageEntry[]
     }
   | {
       /** askQuestion 工具请求事件，转发到 renderer 展示提问 UI */

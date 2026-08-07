@@ -46,6 +46,11 @@ import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode } from '../../shared/session'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
+import {
+  applyStageTransition,
+  type ComposeStageAction,
+  type ComposeStageEntry
+} from '../../shared/composeLifecycle'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
 import {
   computeActivePath,
@@ -877,6 +882,51 @@ export class SessionStore {
     const session = this.load(sessionId)
     if (!session) return []
     return Array.isArray(session.todos) ? session.todos : []
+  }
+
+  /**
+   * 读取 compose 阶段表。旧会话（无 composeStages 字段）返回 null。
+   */
+  getComposeStages(sessionId: string): ComposeStageEntry[] | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+    return Array.isArray(session.composeStages) ? session.composeStages : null
+  }
+
+  /**
+   * 校验并写入一次 compose 阶段转换（单次 load，避免双次读盘）。
+   * null = 会话不存在；rejected = 非法转换；applied = 已落盘。
+   */
+  applyComposeStageTransition(
+    sessionId: string,
+    action: ComposeStageAction
+  ):
+    | {
+        status: 'applied'
+        session: SessionData
+        stages: ComposeStageEntry[]
+        previousStages: ComposeStageEntry[] | null
+      }
+    | { status: 'rejected'; error: string }
+    | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    const previousStages = Array.isArray(session.composeStages) ? session.composeStages : null
+    const result = applyStageTransition(previousStages, action, Date.now())
+    if (!result.ok) {
+      return { status: 'rejected', error: result.error }
+    }
+
+    session.composeStages = result.stages
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return {
+      status: 'applied',
+      session,
+      stages: result.stages,
+      previousStages
+    }
   }
 
   /**

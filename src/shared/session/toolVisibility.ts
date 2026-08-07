@@ -33,6 +33,9 @@ export function getToolCapability(toolName: string): ToolCapability {
       // 归为 readonly：plan 模式下可见且可用，UI 不会被染成危险操作色，
       // PermissionManager 走读类工具的宽松默认规则。
       return 'readonly'
+    case 'stage_transition':
+      // stage_transition 写的是会话级元数据，不动文件系统。
+      return 'readonly'
     case 'askQuestion':
       // askQuestion 是用户交互工具：阻塞等待用户回答，不触碰文件系统 / shell，无副作用。
       // 归为 readonly，使其在所有模式下直接放行、无需"执行前确认"，且 plan 模式下可见可用
@@ -68,6 +71,10 @@ export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
   // orchestration 但在所有非 plan 模式都可用，start_workflow 只允许 compose 模式，
   // 避免 default/plan 会话里模型把普通请求升级成多阶段编排。
   if (toolName === 'start_workflow') {
+    return mode === 'compose'
+  }
+  // compose 生命周期工具，其他模式不可见。
+  if (toolName === 'stage_transition') {
     return mode === 'compose'
   }
   const capability = getToolCapability(toolName)

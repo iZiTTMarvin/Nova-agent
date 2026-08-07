@@ -14,6 +14,7 @@ import type {
 } from '../workflow/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
+import type { ComposeStageEntry } from '../composeLifecycle'
 import type {
   SkillSummary,
   SkillCreateInput,
@@ -609,6 +610,10 @@ export interface IpcEvents {
     sessionId: string
     todos: TodoItem[]
     view: TodoViewInfo
+  }
+  'agent:compose-stages-updated': {
+    sessionId: string
+    stages: ComposeStageEntry[]
   }
   'agent:error': {
     messageId: string
