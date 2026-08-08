@@ -9,13 +9,6 @@ import {
   layerCannotImportRule,
   layerOf,
   reconcileBoundaryDebts,
-  RULE_RUNTIME_RUN_WORKFLOW,
-  RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS,
-  RULE_WORKFLOW_DEFINITIONS_CANNOT_IMPORT_ORCHESTRATOR,
-  RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW,
-  RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW,
-  RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS,
-  workflowLayerOf,
   RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC,
   RULE_MAIN_AGENT_CANNOT_IMPORT_IPC,
   RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS,
@@ -27,7 +20,6 @@ import {
 } from './importBoundaryRules'
 import {
   collectViolationsFromSource,
-  createFsExists,
   extractModuleSpecifiers,
   findRepoRoot,
   resolveModuleSpecifier,
@@ -49,7 +41,7 @@ describe('import boundary path helpers', () => {
     expect(toRepoPosixPath('./src/shared/ipc/types.ts')).toBe('src/shared/ipc/types.ts')
   })
 
-  it('正确识别各层与 run/workflow 子树', () => {
+  it('正确识别各层路径', () => {
     expect(layerOf('src/shared/ipc/types.ts')).toBe('shared')
     expect(layerOf('src/runtime/run/RunCoordinator.ts')).toBe('runtime')
     expect(layerOf('src/renderer/stores/useChatStore.ts')).toBe('renderer')
@@ -178,7 +170,6 @@ describe('import boundary layer rules (fixtures)', () => {
     'src/shared/bad.ts',
     'src/runtime/target.ts',
     'src/runtime/run/core.ts',
-    'src/runtime/workflow/x.ts',
     'src/renderer/ui.ts',
     'src/main/host.ts',
     'src/preload/bridge.ts'
@@ -234,15 +225,6 @@ describe('import boundary layer rules (fixtures)', () => {
     expectOnlyRule(result.violations, layerCannotImportRule('runtime', 'renderer'))
   })
 
-  it('runtime/run 不能依赖 runtime/workflow', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/run/core.ts',
-      sourceText: `import { x } from '../workflow/x'`,
-      exists
-    })
-    expectOnlyRule(result.violations, RULE_RUNTIME_RUN_WORKFLOW)
-  })
-
   it('runtime 不能依赖 Electron API', () => {
     const result = collectViolationsFromSource({
       fromFile: 'src/runtime/target.ts',
@@ -269,8 +251,7 @@ describe('import boundary layer rules (fixtures)', () => {
         'src/runtime/target.ts',
         'src/shared/ok.ts',
         'src/renderer/ui.ts',
-        'src/runtime/run/core.ts',
-        'src/runtime/workflow/x.ts'
+        'src/runtime/run/core.ts'
       ]))
     })
     expectOnlyRule(result.violations, RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC)
@@ -288,11 +269,10 @@ describe('import boundary layer rules (fixtures)', () => {
     expectOnlyRule(result.violations, RULE_MAIN_AGENT_CANNOT_IMPORT_IPC)
   })
 
-  it('AgentLoop 不能直接依赖 skills / workflow 产品执行器', () => {
+  it('AgentLoop 不能直接依赖 skills 产品执行器', () => {
     const files = virtualExists(new Set([
       'src/runtime/agent/AgentLoop.ts',
       'src/runtime/skills/runSkillFork.ts',
-      'src/runtime/workflow/index.ts',
       'src/runtime/agent/turn/resolveAgentTurnRoute.ts'
     ]))
     const skillEdge = collectViolationsFromSource({
@@ -301,13 +281,6 @@ describe('import boundary layer rules (fixtures)', () => {
       exists: files
     })
     expectOnlyRule(skillEdge.violations, RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS)
-
-    const workflowEdge = collectViolationsFromSource({
-      fromFile: 'src/runtime/agent/AgentLoop.ts',
-      sourceText: `import { runWorkflow } from '../workflow'`,
-      exists: files
-    })
-    expectOnlyRule(workflowEdge.violations, RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS)
 
     // 路由真源允许复用 invokeSkill：规则只约束 AgentLoop.ts 本身
     const routeEdge = collectViolationsFromSource({
@@ -322,13 +295,11 @@ describe('import boundary layer rules (fixtures)', () => {
     const files = virtualExists(new Set([
       'src/runtime/agent/core/runAgentLoop.ts',
       'src/runtime/agent/turn/TurnDispatcher.ts',
-      'src/runtime/skills/runSkillFork.ts',
-      'src/runtime/workflow/index.ts'
+      'src/runtime/skills/runSkillFork.ts'
     ]))
     const cases = [
       `import { TurnDispatcher } from '../turn/TurnDispatcher'`,
-      `import { runSkillFork } from '../../skills/runSkillFork'`,
-      `import { runWorkflow } from '../../workflow'`
+      `import { runSkillFork } from '../../skills/runSkillFork'`
     ]
 
     for (const sourceText of cases) {
@@ -434,186 +405,27 @@ describe('import boundary production gate', () => {
       expect.fail(formatReconcileFailure(reconcile))
     }
   })
-})
 
-describe('编排内部分层边界（workflow/）', () => {
-  const WORKFLOW_FILES = new Set([
-    'src/runtime/workflow/types.ts',
-    'src/runtime/workflow/orchestrator/WorkflowOrchestrator.ts',
-    'src/runtime/workflow/definitions/compose/implement.ts',
-    'src/runtime/workflow/host/agentFn.ts',
-    'src/runtime/workflow/host/types.ts',
-    'src/runtime/workflow/scheduling/TaskScope.ts',
-    'src/runtime/workflow/scheduling/semaphore.ts',
-    'src/runtime/workflow/effects/fileEffect.ts',
-    'src/runtime/workflow/effects/pathSafety.ts',
-    'src/runtime/workflow/state/journal.ts',
-    'src/runtime/workflow/state/paths.ts',
-    'src/runtime/storage/atomicFile.ts'
-  ])
-  const exists = virtualExists(WORKFLOW_FILES)
+  it('禁止再引入已删除的编排引擎路径', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const scan = scanSourceTree(repoRoot)
+    const banned = scan.violations
+      .map((v) => `${v.from} -> ${v.to} (${v.specifier})`)
+      .concat(
+        // 扫描本身不把缺失模块当 violation；额外用 unresolved + 源码路径守卫目录复活
+        scan.unresolved.map((u) => `${u.from} unresolved ${u.detail}`)
+      )
 
-  it('识别 workflow 内部层级，非分层目录返回 null', () => {
-    expect(workflowLayerOf('src/runtime/workflow/host/agentFn.ts')).toBe('host')
-    expect(workflowLayerOf('src/runtime/workflow/effects/fileEffect.ts')).toBe('effects')
-    expect(workflowLayerOf('src/runtime/workflow/definitions/compose/implement.ts'))
-      .toBe('definitions')
-    expect(workflowLayerOf('src/runtime/workflow/types.ts')).toBeNull()
-    expect(workflowLayerOf('src/runtime/run/RunCoordinator.ts')).toBeNull()
-  })
-
-  it('真实 effects 依赖图无循环', () => {
-    const repoRoot = findRepoRoot()
-    const effectsRoot = path.join(repoRoot, 'src', 'runtime', 'workflow', 'effects')
-    const files = fs.readdirSync(effectsRoot)
-      .filter((name) => name.endsWith('.ts'))
-      .map((name) => `src/runtime/workflow/effects/${name}`)
-      .sort()
-    const effectFiles = new Set(files)
-    const exists = createFsExists(repoRoot)
-    const graph = new Map<string, string[]>()
-
-    for (const from of files) {
-      const source = fs.readFileSync(path.join(repoRoot, ...from.split('/')), 'utf8')
-      const edges: string[] = []
-      for (const { specifier } of extractModuleSpecifiers(source, from).specifiers) {
-        const resolved = resolveModuleSpecifier(from, specifier, exists)
-        if (resolved.kind === 'resolved' && effectFiles.has(resolved.path)) {
-          edges.push(resolved.path)
-        }
-      }
-      graph.set(from, edges)
-    }
-
-    const visited = new Set<string>()
-    const visiting: string[] = []
-    const cycles: string[] = []
-    const visit = (node: string): void => {
-      if (visited.has(node)) return
-      const cycleStart = visiting.indexOf(node)
-      if (cycleStart >= 0) {
-        cycles.push([...visiting.slice(cycleStart), node].join(' -> '))
-        return
-      }
-      visiting.push(node)
-      for (const target of graph.get(node) ?? []) visit(target)
-      visiting.pop()
-      visited.add(node)
-    }
-    for (const file of files) visit(file)
-
-    expect(cycles).toEqual([])
-  })
-
-  it('host 不得 import definitions', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/host/agentFn.ts',
-      sourceText: `import { runImplement } from '../definitions/compose/implement'`,
-      exists
-    })
-    expectOnlyRule(result.violations, RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS)
-  })
-
-  it('definitions 不得 import orchestrator', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/definitions/compose/implement.ts',
-      sourceText: `import { WorkflowOrchestrator } from '../../orchestrator/WorkflowOrchestrator'`,
-      exists
-    })
-    expectOnlyRule(result.violations, RULE_WORKFLOW_DEFINITIONS_CANNOT_IMPORT_ORCHESTRATOR)
-  })
-
-  it('effects 不得 import workflow 下任意其他模块（含根级 types）', () => {
-    const toState = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
-      sourceText: `import { runJournalPath } from '../state/paths'`,
-      exists
-    })
-    expectOnlyRule(toState.violations, RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW)
-
-    const toRoot = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
-      sourceText: `import type { WorkflowPlan } from '../types'`,
-      exists
-    })
-    expectOnlyRule(toRoot.violations, RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW)
-  })
-
-  it('effects 内部互相 import 与依赖 workflow 之外的模块均放行', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/effects/fileEffect.ts',
-      sourceText: `
-        import { assertSafeRelativePath } from './pathSafety'
-        import { atomicWriteFileSync } from '../../storage/atomicFile'
-      `,
-      exists
-    })
-    expect(result.violations).toEqual([])
-    expect(result.unresolved).toEqual([])
-  })
-
-  it('scheduling 不得 import workflow 下任意其他模块', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/scheduling/TaskScope.ts',
-      sourceText: `import { appendJournalSync } from '../state/journal'`,
-      exists
-    })
-    expectOnlyRule(result.violations, RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW)
-  })
-
-  it('scheduling 同层 import 放行', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/scheduling/TaskScope.ts',
-      sourceText: `import { makeSemaphore } from './semaphore'`,
-      exists
-    })
-    expect(result.violations).toEqual([])
-  })
-
-  it('state 不得 import host 或 definitions', () => {
-    const toHost = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/state/journal.ts',
-      sourceText: `import type { HostContext } from '../host/types'`,
-      exists
-    })
-    expectOnlyRule(toHost.violations, RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS)
-
-    const toDefinitions = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/state/journal.ts',
-      sourceText: `import { runImplement } from '../definitions/compose/implement'`,
-      exists
-    })
-    expectOnlyRule(
-      toDefinitions.violations,
-      RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS
+    const workflowImports = banned.filter(
+      (line) =>
+        /runtime\/workflow|shared\/workflow|tools\/startWorkflow|WorkflowOrchestratorHost/.test(
+          line
+        )
     )
-  })
+    expect(workflowImports).toEqual([])
 
-  it('state 依赖根级契约类型与 scheduling 不违规', () => {
-    const result = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/state/journal.ts',
-      sourceText: `
-        import type { WorkflowPlan } from '../types'
-        import { TaskScope } from '../scheduling/TaskScope'
-      `,
-      exists
-    })
-    expect(result.violations).toEqual([])
-  })
-
-  it('type-only 与 dynamic import 同样命中内部分层规则', () => {
-    const typeOnly = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/host/agentFn.ts',
-      sourceText: `import type { PlanTask } from '../definitions/compose/implement'`,
-      exists
-    })
-    expectOnlyRule(typeOnly.violations, RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS)
-
-    const dynamic = collectViolationsFromSource({
-      fromFile: 'src/runtime/workflow/scheduling/semaphore.ts',
-      sourceText: `await import('../state/journal')`,
-      exists
-    })
-    expectOnlyRule(dynamic.violations, RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW)
+    expect(fs.existsSync(path.join(repoRoot, 'src/runtime/workflow'))).toBe(false)
+    expect(fs.existsSync(path.join(repoRoot, 'src/shared/workflow'))).toBe(false)
+    expect(fs.existsSync(path.join(repoRoot, 'src/runtime/tools/startWorkflow'))).toBe(false)
   })
 })

@@ -51,7 +51,6 @@ describe('toolVisibility', () => {
     it('task / invoke_skill 归为 orchestration（编排类，派遣动作本身无副作用）', () => {
       expect(getToolCapability('task')).toBe('orchestration')
       expect(getToolCapability('invoke_skill')).toBe('orchestration')
-      expect(getToolCapability('start_workflow')).toBe('orchestration')
     })
 
     it('未知工具归为 unknown', () => {
@@ -60,12 +59,11 @@ describe('toolVisibility', () => {
   })
 
   describe('isToolVisibleInMode', () => {
-    it('default 模式不暴露 start_workflow，compose 模式才暴露', () => {
+    it('default / compose 暴露常规工具，plan 隐藏写入类', () => {
       expect(isToolVisibleInMode('default', 'bash')).toBe(true)
       expect(isToolVisibleInMode('compose', 'edit')).toBe(true)
-      expect(isToolVisibleInMode('default', 'start_workflow')).toBe(false)
-      expect(isToolVisibleInMode('compose', 'start_workflow')).toBe(true)
-      expect(isToolVisibleInMode('plan', 'start_workflow')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'bash')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'read')).toBe(true)
     })
 
     it('stage_transition 仅 compose 可见', () => {

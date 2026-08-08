@@ -11,7 +11,7 @@ describe('resolveSubagentProfileSnapshot', () => {
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
-      allowedTools: ['read', 'write', 'read', 'task', 'start_workflow'],
+      allowedTools: ['read', 'write', 'read', 'task'],
       model: { providerID: 'provider', modelID: 'model' },
       maxToolRounds: 30,
       contextWindow: 128_000
@@ -37,12 +37,12 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(Object.isFrozen(first.toolNames)).toBe(true)
   })
 
-  it('递归工具只有显式开启时可见，start_workflow 始终不可见', () => {
+  it('递归工具只有显式开启时可见', () => {
     const snapshot = resolveSubagentProfileSnapshot({
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
-      allowedTools: ['read', 'task', 'start_workflow']
+      allowedTools: ['read', 'task']
     }, 'code', { allowRecursion: true })
 
     expect(snapshot.toolNames).toEqual(['read', 'task'])
@@ -53,7 +53,7 @@ describe('resolveSubagentProfileSnapshot', () => {
       name: 'explore',
       description: 'inspect',
       prompt: 'read only',
-      allowedTools: ['read', 'edit', 'write', 'bash', 'task', 'start_workflow']
+      allowedTools: ['read', 'edit', 'write', 'bash', 'task']
     }, 'explore')
 
     expect(snapshot.permissionCeiling).toBe('read_only')

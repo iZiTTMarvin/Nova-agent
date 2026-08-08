@@ -20,7 +20,7 @@ export function buildSkillContext(skills: SkillManifest[]): string {
   ].join('\n')
 }
 
-/** 按当前 mode/profile 拼装普通技能上下文；编排元数据由 RouterContext 单独提供。 */
+/** 按当前 mode/profile 拼装普通技能上下文。 */
 export function buildSkillContextForMode(
   mode: Mode,
   listForContext: (profile?: string) => SkillManifest[]

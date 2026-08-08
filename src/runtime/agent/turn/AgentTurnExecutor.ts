@@ -85,7 +85,7 @@ export interface AgentTurnExecutorInput {
   readonly route: AgentTurnRoute
   readonly sessionId: string
   readonly workingDirectory: string
-  readonly isolation: 'shared' | 'readonly' | 'worktree'
+  readonly isolation: 'shared' | 'readonly'
   readonly invocationRef?: ToolInvocationRef
   readonly profile?: SubagentProfileSnapshot
   readonly runId?: string

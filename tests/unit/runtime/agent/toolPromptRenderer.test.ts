@@ -63,29 +63,6 @@ describe('toolPromptRenderer', () => {
     expect(out).not.toContain('<invoke name="task">')
   })
 
-  it('start_workflow 只进入 compose 模式的模型工具目录', () => {
-    const workflowTool: ToolDefinition = {
-      name: 'start_workflow',
-      description: '启动一个已注册的多阶段工作流',
-      parameters: {
-        type: 'object',
-        properties: {
-          workflow: { type: 'string' },
-          startStage: { type: 'string' },
-          reason: { type: 'string' }
-        },
-        required: ['workflow', 'startStage', 'reason']
-      }
-    }
-
-    expect(renderModeToolInventory('compose', [workflowTool], { dialect: 'native' }))
-      .toContain('start_workflow')
-    expect(renderModeToolInventory('default', [workflowTool], { dialect: 'native' }))
-      .not.toContain('start_workflow')
-    expect(renderModeToolInventory('plan', [workflowTool], { dialect: 'native' }))
-      .not.toContain('start_workflow')
-  })
-
   it('stage_transition 在 XML 方言目录中仅 compose 可见（与 native 同源）', () => {
     const stageTool: ToolDefinition = {
       name: 'stage_transition',

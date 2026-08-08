@@ -19,10 +19,8 @@ import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
-import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import type { ToolAvailability } from '../../../runtime/tools/availability'
-import type { WorkflowOrchestrator } from '../../../runtime/workflow'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { MemoryService } from '../../../runtime/memory/MemoryService'
@@ -35,8 +33,6 @@ export interface BuiltinToolRegistrationDeps {
   getAgentLoop: () => AgentLoop | null
   getMemoryService: () => MemoryService | null
   loadSettings: () => NovaSettings
-  /** 惰性获取主进程唯一编排器，工具执行时才读取。 */
-  getWorkflowOrchestrator?: () => WorkflowOrchestrator | undefined
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
   /** load_tools 写入的会话级工具可用性 Owner */
@@ -78,12 +74,6 @@ export function registerBuiltinTools(
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
   toolRegistry.register(stageTransitionTool)
-  toolRegistry.register(
-    createStartWorkflowTool({
-      getOrchestrator: deps.getWorkflowOrchestrator ?? (() => undefined),
-      getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
-    })
-  )
   toolRegistry.register(
     createInvokeSkillTool({
       skillRegistry: deps.skillRegistry,

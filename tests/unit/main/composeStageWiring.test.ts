@@ -120,14 +120,6 @@ describe('createComposeStageToolPolicy', () => {
     expect(terminal('write', {}).allowed).toBe(true)
   })
 
-  it('任何阶段都物理拦截已废弃的 start_workflow', () => {
-    const { store } = mockSessionStore(stagesWithInProgress('implement'))
-    const policy = createComposeStageToolPolicy(store, 'sess_1')
-    const denial = policy('start_workflow', {})
-    expect(denial.allowed).toBe(false)
-    expect(denial.reason).toContain('stage_transition')
-  })
-
   it('overlay 在 compose auto 语义下仍拒绝：优先于 PermissionManager 基础判定', async () => {
     const events: unknown[] = []
     const coordinator = new PermissionCoordinator({

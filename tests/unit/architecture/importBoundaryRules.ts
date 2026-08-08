@@ -35,23 +35,6 @@ export const FORBIDDEN_LAYER_EDGES: Readonly<Record<SrcLayer, readonly SrcLayer[
   preload: ['main', 'runtime', 'renderer']
 }
 
-export const RULE_RUNTIME_RUN_WORKFLOW = 'runtime-run-cannot-import-workflow'
-
-/**
- * 编排内部分层：依赖只能朝 orchestrator → definitions → host → {scheduling, effects, state} 流动。
- * effects/ 与 scheduling/ 是依赖图叶子，state/ 不感知宿主能力与具体 workflow。
- */
-export const RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS =
-  'workflow-host-cannot-import-definitions'
-export const RULE_WORKFLOW_DEFINITIONS_CANNOT_IMPORT_ORCHESTRATOR =
-  'workflow-definitions-cannot-import-orchestrator'
-export const RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW =
-  'workflow-effects-cannot-import-workflow'
-export const RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW =
-  'workflow-scheduling-cannot-import-workflow'
-export const RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS =
-  'workflow-state-cannot-import-host-or-definitions'
-
 export const RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC = 'main-services-cannot-import-ipc'
 export const RULE_MAIN_AGENT_CANNOT_IMPORT_IPC = 'main-agent-cannot-import-ipc'
 export const RULE_AGENT_LOOP_CANNOT_IMPORT_PRODUCT_EXECUTORS =
@@ -101,42 +84,6 @@ export function layerOf(repoRelativePosix: string): SrcLayer | null {
   const normalized = toRepoPosixPath(repoRelativePosix)
   const match = /^src\/(shared|runtime|renderer|main|preload)(?:\/|$)/.exec(normalized)
   return match ? (match[1] as SrcLayer) : null
-}
-
-export function isRuntimeRunPath(repoRelativePosix: string): boolean {
-  return toRepoPosixPath(repoRelativePosix).startsWith('src/runtime/run/')
-}
-
-export function isRuntimeWorkflowPath(repoRelativePosix: string): boolean {
-  return toRepoPosixPath(repoRelativePosix).startsWith('src/runtime/workflow/')
-}
-
-/** 编排内部分层子目录 */
-export const WORKFLOW_LAYERS = [
-  'orchestrator',
-  'definitions',
-  'host',
-  'router',
-  'scheduling',
-  'effects',
-  'state'
-] as const
-export type WorkflowLayer = (typeof WORKFLOW_LAYERS)[number]
-
-/** 落在 src/runtime/workflow/<layer>/ 下则返回该层，否则 null */
-export function workflowLayerOf(repoRelativePosix: string): WorkflowLayer | null {
-  const normalized = toRepoPosixPath(repoRelativePosix)
-  const match = /^src\/runtime\/workflow\/([^/]+)\//.exec(normalized)
-  if (!match) return null
-  const candidate = match[1] as WorkflowLayer
-  return WORKFLOW_LAYERS.includes(candidate) ? candidate : null
-}
-
-export function isWorkflowLayerPath(
-  repoRelativePosix: string,
-  layer: WorkflowLayer
-): boolean {
-  return workflowLayerOf(repoRelativePosix) === layer
 }
 
 export function isAgentLoopPath(repoRelativePosix: string): boolean {
@@ -193,11 +140,7 @@ export function isRendererComponentPath(repoRelativePosix: string): boolean {
 
 /** 产品执行器子树：AgentLoop 只能经 TurnDispatcher 间接使用，不得直接依赖 */
 export function isProductExecutorPath(repoRelativePosix: string): boolean {
-  const normalized = toRepoPosixPath(repoRelativePosix)
-  return (
-    normalized.startsWith('src/runtime/skills/') ||
-    normalized.startsWith('src/runtime/workflow/')
-  )
+  return toRepoPosixPath(repoRelativePosix).startsWith('src/runtime/skills/')
 }
 
 /** 路由解析和产品执行器都属于 kernel 外的产品控制面。 */
@@ -209,47 +152,13 @@ export function isProductRoutingPath(repoRelativePosix: string): boolean {
   )
 }
 
-/**
- * 编排内部五条禁止方向。
- * effects/ 与 scheduling/ 只允许 import 自身层与 workflow 之外的模块；
- * 同层内部 import 一律放行，跨层才判定。
- */
-export function workflowInternalRules(fromFile: string, toFile: string): string[] {
-  const from = toRepoPosixPath(fromFile)
-  const to = toRepoPosixPath(toFile)
-  const fromLayer = workflowLayerOf(from)
-  if (!fromLayer) return []
-
-  const rules: string[] = []
-  const toIsWorkflow = isRuntimeWorkflowPath(to)
-  const toLayer = workflowLayerOf(to)
-  const sameLayer = toLayer !== null && toLayer === fromLayer
-
-  if (fromLayer === 'host' && toLayer === 'definitions') {
-    rules.push(RULE_WORKFLOW_HOST_CANNOT_IMPORT_DEFINITIONS)
-  }
-  if (fromLayer === 'definitions' && toLayer === 'orchestrator') {
-    rules.push(RULE_WORKFLOW_DEFINITIONS_CANNOT_IMPORT_ORCHESTRATOR)
-  }
-  if (fromLayer === 'effects' && toIsWorkflow && !sameLayer) {
-    rules.push(RULE_WORKFLOW_EFFECTS_CANNOT_IMPORT_WORKFLOW)
-  }
-  if (fromLayer === 'scheduling' && toIsWorkflow && !sameLayer) {
-    rules.push(RULE_WORKFLOW_SCHEDULING_CANNOT_IMPORT_WORKFLOW)
-  }
-  if (fromLayer === 'state' && (toLayer === 'host' || toLayer === 'definitions')) {
-    rules.push(RULE_WORKFLOW_STATE_CANNOT_IMPORT_HOST_OR_DEFINITIONS)
-  }
-  return rules
-}
-
 export function violationKey(edge: Pick<BoundaryViolation, 'from' | 'to' | 'rule'>): string {
   return `${edge.from}\0${edge.to}\0${edge.rule}`
 }
 
 /**
  * 根据已解析的 from/to 文件边计算命中的规则（可能为空）。
- * 同层边检查 runtime/run → runtime/workflow、main/services → main/ipc、main/agent → main/ipc。
+ * 同层边检查 main/services → main/ipc、main/agent → main/ipc。
  */
 export function rulesForResolvedEdge(fromFile: string, toFile: string): string[] {
   const from = toRepoPosixPath(fromFile)
@@ -262,10 +171,6 @@ export function rulesForResolvedEdge(fromFile: string, toFile: string): string[]
   if (FORBIDDEN_LAYER_EDGES[fromLayer].includes(toLayer)) {
     rules.push(layerCannotImportRule(fromLayer, toLayer))
   }
-  if (isRuntimeRunPath(from) && isRuntimeWorkflowPath(to)) {
-    rules.push(RULE_RUNTIME_RUN_WORKFLOW)
-  }
-  rules.push(...workflowInternalRules(from, to))
   if (isMainServicesPath(from) && isMainIpcPath(to)) {
     rules.push(RULE_MAIN_SERVICES_CANNOT_IMPORT_IPC)
   }

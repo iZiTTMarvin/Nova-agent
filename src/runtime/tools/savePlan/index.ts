@@ -262,10 +262,6 @@ export const savePlanTool: ToolExecutor = {
           assertSideEffectAllowed(context, 'checkpoint backup')
           context.checkpointManager.backupBeforeWrite(absolutePath, isNewFile)
         }
-        const effectToken = context.fileEffectRecorder?.prepareFileWrite(
-          absolutePath,
-          isNewFile ? 'create' : 'modify'
-        )
 
         const normalizedContent = `${content}\n`
         await writePlanAtomically(
@@ -275,9 +271,6 @@ export const savePlanTool: ToolExecutor = {
           normalizedContent
         )
         assertSideEffectAllowed(context, '保存计划')
-        if (effectToken) {
-          context.fileEffectRecorder!.commitFileWrite(effectToken, absolutePath)
-        }
 
         const written = await stat(absolutePath)
         context.readState.set(absolutePath, {

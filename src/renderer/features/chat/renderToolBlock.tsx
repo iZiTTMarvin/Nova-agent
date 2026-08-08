@@ -10,7 +10,6 @@ import { AskQuestionToolCard } from './AskQuestionToolCard'
 import { ToolTraceRow } from './ToolTraceRow'
 import type { RendererToolBlock } from '../../stores/types'
 import { SubagentToolRow } from '../subagents/SubagentActivityRow'
-import { WorkflowSubagentRows } from '../subagents/WorkflowSubagentRows'
 
 export function renderToolBlock(
   block: RendererToolBlock,
@@ -50,20 +49,6 @@ export function renderToolBlock(
   if (block.toolName === 'task') {
     return (
       <SubagentToolRow
-        key={block.toolCallId}
-        toolCallId={block.toolCallId}
-        name={block.toolName}
-        args={block.arguments}
-        status={block.status}
-        result={block.result}
-        isLiveStreaming={isLive}
-      />
-    )
-  }
-
-  if (block.toolName === 'start_workflow') {
-    return (
-      <WorkflowSubagentRows
         key={block.toolCallId}
         toolCallId={block.toolCallId}
         name={block.toolName}

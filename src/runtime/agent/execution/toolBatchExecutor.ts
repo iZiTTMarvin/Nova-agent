@@ -5,7 +5,7 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { EventBus } from '../EventBus'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent, ToolInvocationRef, ToolTruncationMeta, FileEffectRecorder, ToolControlSignal } from '../../tools/types'
+import type { ToolContext, ToolExecutor, ImageContent, ToolInvocationRef, ToolTruncationMeta, ToolControlSignal } from '../../tools/types'
 import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
@@ -63,7 +63,6 @@ export interface ToolBatchExecutionOptions {
   mode: Mode
   supportsVision: boolean
   checkpointManager: CheckpointManager | null
-  fileEffectRecorder?: FileEffectRecorder | null
   abortSignal: AbortSignal | undefined
   checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string, toolCallId?: string) => Promise<{ allowed: boolean; reason: string; aborted?: boolean }>
   checkBatchPermission?: (
@@ -78,13 +77,13 @@ export interface ToolBatchExecutionOptions {
   sessionStore?: SessionStore | null
   /** 当前会话 ID（与 sessionStore 配套） */
   sessionId?: string | null
-  /** 当前轮次使用的模型客户端，供 start_workflow 装配 WorkflowHostDeps。 */
+  /** 当前轮次使用的模型客户端 */
   modelClient?: ToolContext['modelClient']
-  /** 当前轮次的工具解析入口，供 start_workflow 装配 WorkflowHostDeps。 */
+  /** 当前轮次的工具解析入口 */
   resolveTool?: ToolContext['resolveTool']
-  /** 当前模型上下文窗口，供 start_workflow 装配 WorkflowHostDeps。 */
+  /** 当前模型上下文窗口 */
   contextWindow?: number
-  /** 当前轮次是否启用全自动编排。 */
+  /** 当前轮次是否启用全自动推进。 */
   autoMode?: boolean
   /** 事件总线（供 todo_write 等向 renderer 推送事件） */
   eventBus?: EventBus | null
@@ -153,7 +152,6 @@ function buildToolContext(
       : {}),
     readState: options.readState,
     ...(options.checkpointManager ? { checkpointManager: options.checkpointManager } : {}),
-    ...(options.fileEffectRecorder ? { fileEffectRecorder: options.fileEffectRecorder } : {}),
     ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     supportsVision: options.supportsVision,
     ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),

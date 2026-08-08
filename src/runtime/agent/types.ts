@@ -12,19 +12,8 @@ import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { AskQuestionItem } from '../../shared/askQuestion/types'
 import type { HookEvent } from '../../shared/agent/types'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
-import type {
-  WorkflowProgressDetail,
-  WorkflowProgressStatus,
-  WorkflowRunStatus
-} from '../../shared/workflow/types'
 
 export type { HookEvent }
-
-/**
- * 编排进度语义与补充信息的唯一来源在 shared/workflow：
- * main 的 IPC 转发与 renderer 的进度块必须与本层看到同一套类型。
- */
-export type { WorkflowProgressStatus, WorkflowProgressDetail }
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
@@ -144,45 +133,6 @@ export type AgentEvent =
       /** askQuestion 用户回复事件，renderer 收到后清除 pending 状态 */
       type: 'ask_question_resolved'
       requestId: string
-    }
-  | {
-      /**
-       * 编排宿主 progress()：阶段流转与批次/任务进展。
-       * 本事件带 status + detail，用于聊天流中的进度块。
-       */
-      type: 'workflow_progress'
-      runId: string
-      sessionId?: string
-      phase: string
-      status: WorkflowProgressStatus
-      detail?: WorkflowProgressDetail
-    }
-  | {
-      /**
-       * 编排 run 状态变更（running → completed / failed / cancelled）。
-       * renderer 据此让输入框进入 / 退出运行态；状态真源仍在 orchestrator，本事件只是投影。
-       */
-      type: 'workflow_run_state'
-      runId: string
-      sessionId?: string
-      workflow: string
-      status: WorkflowRunStatus
-      phase: string
-      error?: string
-    }
-  | {
-      /** 编排脚本 log()：脚本日志行 */
-      type: 'workflow_log'
-      runId: string
-      sessionId?: string
-      message: string
-    }
-  | {
-      /** 编排 agent() 失败（超时/取消/错误），仅可观测，不中断脚本 */
-      type: 'workflow_agent_failed'
-      runId: string
-      sessionId?: string
-      reason: string
     }
 
 /** 事件监听回调 */

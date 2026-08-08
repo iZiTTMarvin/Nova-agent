@@ -37,7 +37,7 @@ import { preferredToolDialect, type ToolDialect } from '../model/dialect'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
-import type { ExecutionIdentity, FileEffectRecorder, ToolContext } from '../tools/types'
+import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 
 import { TurnDispatcher } from './turn'
@@ -66,7 +66,6 @@ export class AgentLoop {
 
   /** checkpoint 管理器（可选） */
   private checkpointManager: CheckpointManager | null = null
-  private fileEffectRecorder: FileEffectRecorder | null = null
   /** 权限交互协调器：规则判定委托 PermissionManager，pending resolver 的唯一 owner */
   private readonly permissionCoordinator: PermissionCoordinator
 
@@ -440,11 +439,6 @@ export class AgentLoop {
     this.permissionCoordinator.setPermissionManager(manager)
   }
 
-  /** 注入写工具使用的持久化副作用协议。 */
-  setFileEffectRecorder(recorder: FileEffectRecorder | null): void {
-    this.fileEffectRecorder = recorder
-  }
-
   /**
    * 叠加在基础 PermissionManager 之前的运行时权限策略。
    * 用于阶段工作流等更窄的能力边界；拒绝项不会再弹基础权限确认。
@@ -463,7 +457,7 @@ export class AgentLoop {
     this.ctx.sessionId = sessionId
   }
 
-  /** 设置当前轮次的编排自动化快照，供 start_workflow 工具读取。 */
+  /** 设置当前轮次是否启用全自动推进。 */
   setAutoMode(autoMode: boolean): void {
     this.autoMode = autoMode
   }
@@ -736,7 +730,6 @@ export class AgentLoop {
         binDirs: this.ctx.binDirs,
         supportsVision: this.config.supportsVision ?? true,
         checkpointManager: this.checkpointManager,
-        fileEffectRecorder: this.fileEffectRecorder,
         abortSignal: this.abortController?.signal,
         checkPermission: (toolName, args, msgId, toolCallId) =>
           this.permissionCoordinator.checkPermission(toolName, args, msgId, toolCallId),

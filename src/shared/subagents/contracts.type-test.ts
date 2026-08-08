@@ -1,10 +1,8 @@
 import type {
-  JsonSchema,
   SessionKind,
   SpawnSubagentCommand,
   SubagentActivityProjection,
   SubagentActivityStatus,
-  SubagentBatchProjection,
   SubagentExecutionResult,
   SubagentLineage,
   SubagentOrigin,
@@ -37,17 +35,14 @@ type PublicContractsRemainExplicit = [
   Assert<IsNotAny<SpawnSubagentCommand>>,
   Assert<IsNotAny<SubagentExecutionResult>>,
   Assert<IsNotAny<SubagentActivityProjection>>,
-  Assert<IsNotAny<SubagentBatchProjection>>,
   Assert<Equal<SessionKind, 'primary' | 'subagent'>>,
   Assert<Equal<Extract<SubagentOrigin, { kind: 'task_tool' }>['parentToolCallId'], string>>,
   Assert<Equal<Extract<SubagentOrigin, { kind: 'workflow' }>['workflowRunId'], string>>,
   Assert<Equal<'systemPrompt' extends keyof SubagentActivityProjection ? true : false, false>>,
   Assert<Equal<Exclude<RunStatus, SubagentActivityStatus>, never>>,
   Assert<Equal<'record_missing' extends SubagentActivityStatus ? true : false, true>>,
-  Assert<Equal<JsonSchema extends boolean | object ? true : false, true>>,
   Assert<IsNotAny<SubagentLineage['origin']>>,
   Assert<IsNotAny<SubagentProfileSnapshot['toolNames'][number]>>,
-  Assert<IsNotAny<NonNullable<SpawnSubagentCommand['resultSchema']>>>,
   Assert<IsNotAny<SubagentActivityProjection['profile']>>,
   Assert<Equal<
     SubagentProfileSnapshot extends SubagentActivityProjection['profile'] ? true : false,
@@ -58,7 +53,7 @@ type PublicContractsRemainExplicit = [
   Assert<Equal<IsLooseUnknownRecord<SpawnSubagentCommand>, false>>,
   Assert<Equal<IsLooseUnknownRecord<SubagentExecutionResult>, false>>,
   Assert<Equal<IsLooseUnknownRecord<SubagentActivityProjection>, false>>,
-  Assert<Equal<IsLooseUnknownRecord<SubagentBatchProjection>, false>>
+  Assert<Equal<SpawnSubagentCommand['isolation'], 'shared' | 'readonly'>>
 ]
 
 export type SubagentContractTypeAssertions = PublicContractsRemainExplicit

@@ -1,13 +1,4 @@
 export type {
-  JsonSchema,
-  JsonSchemaArray,
-  JsonSchemaBoolean,
-  JsonSchemaInteger,
-  JsonSchemaNull,
-  JsonSchemaNumber,
-  JsonSchemaObject,
-  JsonSchemaString,
-  JsonValue,
   SessionKind,
   SpawnSubagentCommand,
   SubagentExecutionFailure,
@@ -23,9 +14,6 @@ export type {
 export type {
   SubagentActivityProjection,
   SubagentActivityStatus,
-  SubagentBatchMemberProjection,
-  SubagentBatchProjection,
-  SubagentBatchStatus,
   SubagentFileChange,
   SubagentProfileProjection,
   SubagentSessionListMetadata

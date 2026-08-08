@@ -49,17 +49,6 @@ export function createComposeStageToolPolicy(
   sessionId: string
 ): ToolAuthorizationPolicy {
   return (toolName) => {
-    // 编排引擎已废弃：物理拦截旧入口，否则开发起的阶段里模型仍可能调通
-    // 旧流水线，与亲自推进的生命周期相互冲突。
-    // 删除条件：编排引擎与 start_workflow 工具从代码库移除时，本拦截一并删除；
-    // 保护测试：composeStageWiring 的 start_workflow 拦截用例。
-    if (toolName === 'start_workflow') {
-      return {
-        allowed: false,
-        reason:
-          'start_workflow 已废弃：compose 模式由你亲自按阶段推进，阶段转换请调用 stage_transition。'
-      }
-    }
     const stageId = currentStageId(sessionStore, sessionId)
     if (!stageId) {
       return { allowed: true, reason: '' }

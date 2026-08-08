@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type {
-  JsonSchema,
   SpawnSubagentCommand,
   SubagentActivityProjection,
-  SubagentBatchProjection,
   SubagentProfileSnapshot,
   SubagentSessionMetadata
 } from '../../../../src/shared/subagents'
@@ -37,18 +35,7 @@ const metadata: SubagentSessionMetadata = {
 }
 
 describe('shared subagent contracts', () => {
-  it('barrel supports explicit command/schema contracts without a loose payload', () => {
-    const resultSchema: JsonSchema = {
-      type: 'object',
-      properties: {
-        findings: {
-          type: 'array',
-          items: { type: 'string' }
-        }
-      },
-      required: ['findings'],
-      additionalProperties: false
-    }
+  it('barrel supports explicit spawn command contracts without a loose payload', () => {
     const command: SpawnSubagentCommand = {
       parentSessionId: metadata.lineage.parentSessionId,
       parentRunId: metadata.lineage.parentRunId,
@@ -56,15 +43,14 @@ describe('shared subagent contracts', () => {
       profileId: profile.profileId,
       task: 'Inspect persistence boundaries',
       workingDirectory: 'D:/workspace',
-      isolation: 'readonly',
-      resultSchema
+      isolation: 'readonly'
     }
 
-    expect(command.resultSchema).toEqual(resultSchema)
+    expect(command.isolation).toBe('readonly')
     expect(command.invocation).toEqual(metadata.lineage.origin)
   })
 
-  it('activity and batch projections expose only render-safe, derived fields', () => {
+  it('activity projection exposes only render-safe, derived fields', () => {
     const activity: SubagentActivityProjection = {
       childSessionId: 'sess_child',
       childRunId: metadata.lineage.spawnRunId,
@@ -83,25 +69,9 @@ describe('shared subagent contracts', () => {
       summary: 'Found the durable owner.',
       artifactCount: 0
     }
-    const batch: SubagentBatchProjection = {
-      batchId: 'batch-1',
-      parentSessionId: metadata.lineage.parentSessionId,
-      status: 'completed',
-      members: [{
-        childSessionId: activity.childSessionId,
-        childRunId: activity.childRunId,
-        profileName: activity.profile.name,
-        status: activity.status
-      }]
-    }
 
     expect(activity).not.toHaveProperty('systemPrompt')
     expect(activity.profile).not.toHaveProperty('systemPrompt')
-    expect(batch.members).toEqual([{
-      childSessionId: 'sess_child',
-      childRunId: 'run_child',
-      profileName: 'Explore',
-      status: 'completed'
-    }])
+    expect(activity.parentToolCallId).toBe('tc_parent')
   })
 })

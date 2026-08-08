@@ -57,6 +57,11 @@ export interface SubagentActivityProjection {
   readonly childRunId: string
   readonly parentSessionId: string
   readonly parentToolCallId?: string
+  /**
+   * 历史编排子代理的只读溯源字段。
+   * 删除条件：同 SubagentOrigin.kind=workflow。
+   * 保护：仅由投影从已持久化 lineage 填充，执行层不得再写入。
+   */
   readonly workflow?: {
     readonly workflowRunId: string
     readonly phase: string
@@ -87,27 +92,4 @@ export interface SubagentActivityProjection {
    * 只读子代理无写入工具，恒缺省；UI 据此不渲染 diff 卡。
    */
   readonly fileChanges?: readonly SubagentFileChange[]
-}
-
-export type SubagentBatchStatus =
-  | 'running'
-  | 'completed'
-  | 'partial'
-  | 'failed'
-  | 'cancelled'
-
-/** Compact batch member shape for the parallel activity row. */
-export interface SubagentBatchMemberProjection {
-  readonly childSessionId: string
-  readonly childRunId: string
-  readonly profileName: string
-  readonly status: SubagentActivityStatus
-}
-
-/** Derived aggregate for a parallel group; member runs remain the status owners. */
-export interface SubagentBatchProjection {
-  readonly batchId: string
-  readonly parentSessionId: string
-  readonly status: SubagentBatchStatus
-  readonly members: readonly SubagentBatchMemberProjection[]
 }

@@ -7,7 +7,6 @@ export type ToolGroupId =
   | 'web'
   | 'memory'
   | 'orchestration'
-  | 'workflow'
   | 'browser'
   | 'computer-use'
 
@@ -15,7 +14,6 @@ export const LOADABLE_TOOL_GROUPS: readonly ToolGroupId[] = [
   'web',
   'memory',
   'orchestration',
-  'workflow',
   'browser',
   'computer-use'
 ] as const
@@ -25,7 +23,6 @@ export const TOOL_GROUP_MEMBERS: Readonly<Record<ToolGroupId, readonly string[]>
   web: ['web_search'],
   memory: ['memory_search'],
   orchestration: ['task', 'invoke_skill'],
-  workflow: ['start_workflow'],
   browser: [],
   'computer-use': []
 }

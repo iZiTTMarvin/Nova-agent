@@ -294,7 +294,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       runId: identity.spawnRunId,
       rootRunId: lineage.rootRunId,
       requestKey: identity.spawnKey,
-      wait: context.waitForPermit === true,
+      wait: false,
       ...(context.abortSignal ? { abortSignal: context.abortSignal } : {})
     })
     if (!permitResult.ok) {
@@ -528,8 +528,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     return projectSubagentExecutionResult({
       childSession: reloaded,
       runSnapshot: snapshot,
-      ...(failureCode ? { failureCode } : {}),
-      ...(command.resultSchema !== undefined ? { resultSchema: command.resultSchema } : {})
+      ...(failureCode ? { failureCode } : {})
     })
   }
 }
@@ -538,7 +537,9 @@ function assertInvocationIdentity(
   command: SpawnSubagentCommand,
   context: SpawnSubagentContext
 ): void {
-  if (command.invocation.kind === 'workflow') return
+  if (command.invocation.kind === 'workflow') {
+    throw new Error('workflow 子代理入口已移除，仅保留历史会话只读投影')
+  }
   if (
     command.invocation.kind === 'skill_fork' &&
     command.invocation.parentToolCallId === undefined
@@ -638,7 +639,6 @@ function validateWorkingDirectory(
     throw new Error('子代理 workingDirectory 必须是绝对路径')
   }
   if (
-    command.isolation !== 'worktree' &&
     path.resolve(command.workingDirectory) !== path.resolve(parentWorkspaceRoot)
   ) {
     throw new Error('shared/readonly 子代理必须使用父会话 workspaceRoot')

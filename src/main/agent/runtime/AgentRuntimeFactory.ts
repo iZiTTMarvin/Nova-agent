@@ -51,7 +51,6 @@ import type { RunCoordinator } from '../../../runtime/run/RunCoordinator'
 import { getSkillService } from '../../services/SkillServiceHost'
 import { getMemoryService } from '../../services/MemoryServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
-import { getWorkflowOrchestrator } from '../../services/WorkflowOrchestratorHost'
 import { activeStreams } from '../events'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
@@ -242,7 +241,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getAgentLoop: () => loop,
     getMemoryService,
     loadSettings: loadNovaSettings,
-    getWorkflowOrchestrator,
     getSpawnSubagentPort,
     getToolAvailability: () => toolAvailability
   })
@@ -432,7 +430,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   })
   agentLoop.setCheckpointManager(checkpointManager)
 
-  // fork skill 与 task/Workflow 共用 durable child 执行基座。
+  // fork skill 与 task 共用 durable child 执行基座。
   agentLoop.setTurnDispatcher(new TurnDispatcher({
     skillForkRunner: (request) =>
       runSkillFork(

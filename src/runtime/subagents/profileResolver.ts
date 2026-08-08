@@ -6,7 +6,6 @@ const MAX_DESCRIPTION_LENGTH = 4_096
 const MAX_SYSTEM_PROMPT_LENGTH = 65_536
 const MAX_TOOL_NAME_LENGTH = 128
 const MAX_TOOL_ROUNDS = 1_000
-const ALWAYS_UNSUPPORTED_CHILD_TOOLS = new Set(['start_workflow'])
 const WRITE_CAPABLE_TOOLS = new Set([
   'edit',
   'write',
@@ -64,7 +63,6 @@ export function resolveSubagentProfileSnapshot(
       ? 'read_only'
       : 'workspace_write'
   const toolNames = parsed.allowedTools.filter((name) => {
-    if (ALWAYS_UNSUPPORTED_CHILD_TOOLS.has(name)) return false
     if (name === 'task' && options.allowRecursion !== true) return false
     return (
       permissionCeiling !== 'read_only' ||

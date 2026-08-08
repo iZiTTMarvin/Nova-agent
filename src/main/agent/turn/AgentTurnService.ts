@@ -40,7 +40,6 @@ import {
   getRunExecutionRegistry,
   setActiveRunId
 } from '../../services/RunCoordinatorHost'
-import { getActiveWorkflowRunForSession } from '../../services/WorkflowOrchestratorHost'
 import {
   getReadStateForSession,
   isSessionTurnInProgress
@@ -48,7 +47,6 @@ import {
 import {
   accumulateStreamEvent,
   disposeTurnStreams,
-  emitWorkflowBusySignal,
   forwardEventToRenderer
 } from '../events'
 import {
@@ -157,7 +155,7 @@ export async function sendAgentMessage(
   // 并发模型：不同会话可同时跑，同一会话同时最多一个 turn。
   // 该会话已有占用 turn 的 run 时，按占用者决定处理方式：编排运行中直接拒绝并回运行态信号，
   // 其余情况推入 steering queue 等当前 turn 结束后处理；其它会话不受影响。
-  if (handleEntryLock(params, getMainWindow)) return
+  if (handleEntryLock(params)) return
 
   // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 本会话挂起的 askQuestion 请求，
   // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
@@ -224,7 +222,7 @@ export async function sendAgentMessage(
   // 可能同时通过入口检查。在装配 / 持久化 / startRun 前再查一次：若该 session 期间已被
   // 另一个 turn 占用，按同一套入口锁规则处理后直接返回，绝不产生同会话双 run。
   // 此处位于 try/finally 之前，return 不会触发任何清理副作用。
-  if (handleEntryLock(params, getMainWindow)) return
+  if (handleEntryLock(params)) return
 
   // session 持久化副作用留在 TurnService：factory 只装配，不写 session
   const promptCacheKey = sessionStore.ensureCacheRoutingKey(params.sessionId) ?? undefined
@@ -531,41 +529,13 @@ export async function sendAgentMessage(
  * 决策规则在 entryLock.ts（纯函数），本函数只负责执行副作用：
  * 排队、或向 renderer 发运行态信号。
  */
-function handleEntryLock(
-  params: SendAgentMessageParams,
-  getMainWindow: () => BrowserWindow | null
-): boolean {
+function handleEntryLock(params: SendAgentMessageParams): boolean {
   const action = resolveEntryLockAction({
-    turnInProgress: isSessionTurnInProgress(params.sessionId),
-    activeWorkflowRun: activeRunIsWorkflow(params.sessionId)
+    turnInProgress: isSessionTurnInProgress(params.sessionId)
   })
   if (action.kind === 'proceed') return false
-  if (action.kind === 'steer') {
-    enqueueSteeringMessage(params.sessionId, params)
-    return true
-  }
-  emitWorkflowBusySignal(getMainWindow(), {
-    sessionId: params.sessionId,
-    runId: action.run.runId,
-    workflow: action.run.workflow,
-    phase: action.run.phase
-  })
+  enqueueSteeringMessage(params.sessionId, params)
   return true
-}
-
-/**
- * 该会话占用 turn 的是否为编排 run。
- * 查询 orchestrator（run 状态唯一 Owner），不在本层缓存。
- */
-function activeRunIsWorkflow(
-  sessionId: string
-): { runId: string; workflow: string; phase: string } | null {
-  try {
-    return getActiveWorkflowRunForSession(sessionId)
-  } catch {
-    // orchestrator 尚未装配（旧路径 / 单测）时视为无编排运行
-    return null
-  }
 }
 
 /**

@@ -33,7 +33,7 @@ export interface ResolveTurnRouteInput {
 
 /**
  * 解析本轮的实际执行路由。
- * 复用 invokeSkill 做 slash 解析；编排意图由模型通过 start_workflow 工具表达。
+ * 复用 invokeSkill 做 slash 解析。
  * 执行能力（runner 是否装配）由 AgentLoop 在副作用前校验，不在此处镜像。
  */
 export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRoute {

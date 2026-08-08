@@ -6,5 +6,3 @@ export {
   accumulateStreamEvent
 } from './AgentEventAccumulator'
 export { forwardEventToRenderer } from './AgentEventForwarder'
-export { emitWorkflowBusySignal } from './WorkflowBusySignal'
-export type { WorkflowBusyPayload } from './WorkflowBusySignal'

@@ -418,7 +418,7 @@ export class WorkspaceService {
   setMode(params: {
     mode: Mode
     sessionId?: string
-    source?: 'user' | 'agent' | 'workflow'
+    source?: 'user' | 'agent'
   }): WorkspaceState {
     const store = this.deps.getSessionStore()
     const sessionId = params.sessionId ?? this.state.currentSessionId
@@ -438,8 +438,8 @@ export class WorkspaceService {
     }
 
     // 只有目标会话仍是当前会话时才改全局 currentMode。
-    // 编排 run（workflowRunner）会用发起时的 sessionId 调本方法，若用户此刻
-    // 已切到别的会话，全局模式不应被后台 run 篡改（否则 UI 模式随机跳变）。
+    // 后台 agent 可能用发起时的 sessionId 调本方法；若用户此刻已切到别的会话，
+    // 全局模式不应被后台 run 篡改（否则 UI 模式随机跳变）。
     const targetIsCurrent = !sessionId || sessionId === this.state.currentSessionId
     if (targetIsCurrent) {
       setCurrentMode(params.mode)

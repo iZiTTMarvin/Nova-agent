@@ -16,7 +16,6 @@ import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
-import { useWorkflowStore } from './features/workflow/useWorkflowStore'
 import { useRunStore } from './stores/useRunStore'
 import { useSubagentProjectionStore } from './features/subagents/projection'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
@@ -277,41 +276,6 @@ function App(): React.ReactNode {
       useChatStore.getState().handleAttemptFailed(data.messageId, data.attemptId)
     }))
 
-    // 编排进度块：写入当前生成中消息的 blocks，在聊天流里就地展示
-    const unsubWorkflowProgress = window.api.on('workflow:progress', (data) => {
-      const activeSessionId = useChatStore.getState().currentSessionId
-      if (data.sessionId && activeSessionId && data.sessionId !== activeSessionId) return
-      useChatStore.getState().handleWorkflowProgress({
-        runId: data.runId,
-        phase: data.phase,
-        status: data.status,
-        ...(data.detail ? { detail: data.detail } : {})
-      })
-    })
-
-    // 编排日志行：附着到当前阶段进度块的活动区，长阶段不再"静得像卡死"
-    const unsubWorkflowLog = window.api.on('workflow:log', (data) => {
-      const activeSessionId = useChatStore.getState().currentSessionId
-      if (data.sessionId && activeSessionId && data.sessionId !== activeSessionId) return
-      useChatStore.getState().handleWorkflowLog({ runId: data.runId, message: data.message })
-    })
-
-    // 编排 run 状态：输入框据此进入 / 退出运行态
-    const unsubWorkflowRunState = window.api.on('workflow:run-state', (data) => {
-      useWorkflowStore.getState().applyRunState(data)
-    })
-
-    // 运行态互斥：主进程已拒绝这条消息，提示用户是否中断
-    const unsubWorkflowBusy = window.api.on('workflow:busy', (data) => {
-      const activeSessionId = useChatStore.getState().currentSessionId
-      if (activeSessionId && data.sessionId !== activeSessionId) return
-      useWorkflowStore.getState().showBusyNotice({
-        runId: data.runId,
-        workflow: data.workflow,
-        phase: data.phase
-      })
-    })
-
     // 轮次归属改由 run:snapshot（useRunStore）投影到 handleTurnState；
     // agent:turn-state 裸广播已在阶段 6 移除。
 
@@ -355,10 +319,6 @@ function App(): React.ReactNode {
       unsubRecoveryHint()
       unsubRecoveryState()
       unsubAttemptFailed()
-      unsubWorkflowProgress()
-      unsubWorkflowLog()
-      unsubWorkflowRunState()
-      unsubWorkflowBusy()
       unsubUpdateDownloaded()
       buffer.flushNow()
       buffer.dispose()

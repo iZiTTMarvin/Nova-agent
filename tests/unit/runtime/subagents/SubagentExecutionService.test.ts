@@ -11,7 +11,6 @@ import {
 } from '../../../../src/runtime/run'
 import { SessionStore } from '../../../../src/runtime/sessions'
 import {
-  MAX_SUBAGENT_SUMMARY_CHARS,
   SubagentExecutionService,
   SubagentScheduler,
   createSpawnIdentity,
@@ -212,43 +211,6 @@ describe('SubagentExecutionService', () => {
     expect(child.subagent.profile.systemPrompt).toBe('inspect and summarize')
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
-  })
-
-  it('命令携带 resultSchema 时结果含完整结构化结果，摘要仍有界', async () => {
-    const plan = {
-      version: 1,
-      goal: '完成用户请求',
-      tasks: Array.from({ length: 120 }, (_, index) => ({
-        id: `task-${index}`,
-        title: `任务 ${index}`,
-        acceptance: ['x'.repeat(60)]
-      }))
-    }
-    const childFinalText = [
-      `已完成规划，共 ${plan.tasks.length} 个任务。`,
-      '```json',
-      JSON.stringify(plan, null, 2),
-      '```'
-    ].join('\n')
-    expect(childFinalText.length).toBeGreaterThan(MAX_SUBAGENT_SUMMARY_CHARS)
-    const { service } = createService({ childFinalText })
-
-    const execution = await service.spawn(
-      command({ resultSchema: { type: 'object', required: ['version', 'goal', 'tasks'] } }),
-      { invocationRef: invocationRef() }
-    )
-
-    expect(execution.status).toBe('completed')
-    expect(execution.structuredResult).toEqual(plan)
-    expect(execution.summary).toHaveLength(MAX_SUBAGENT_SUMMARY_CHARS)
-  })
-
-  it('命令未携带 resultSchema 时不产出结构化结果', async () => {
-    const { service } = createService({ childFinalText: '```json\n{"a":1}\n```' })
-
-    const execution = await service.spawn(command(), { invocationRef: invocationRef() })
-
-    expect(execution.structuredResult).toBeUndefined()
   })
 
   it('宿主有 archive_read 时 prepareTurn 收到含该工具的执行 profile', async () => {
@@ -769,5 +731,23 @@ describe('SubagentExecutionService', () => {
     release()
     await expect(first).resolves.toEqual(expect.objectContaining({ status: 'completed' }))
     expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('completed')
+  })
+
+  it('拒绝新的 workflow 子代理 spawn，只保留历史只读兼容', async () => {
+    const { service } = createService()
+    await expect(
+      service.spawn(
+        command({
+          invocation: {
+            kind: 'workflow',
+            workflowRunId: 'wf-1',
+            phase: 'research',
+            parentMessageId: 'msg-parent',
+            parentToolCallId: 'call-task'
+          }
+        }),
+        { invocationRef: invocationRef() }
+      )
+    ).rejects.toThrow(/workflow 子代理入口已移除/)
   })
 })

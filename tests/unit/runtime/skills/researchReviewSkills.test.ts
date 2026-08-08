@@ -5,11 +5,6 @@ import { join } from 'path'
 import { SkillLoader } from '../../../../src/runtime/skills/SkillLoader'
 import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { invokeSkill } from '../../../../src/runtime/skills/invokeSkill'
-import { listWorkflowMetadata } from '../../../../src/runtime/workflow/definitions'
-import {
-  buildRouterContext,
-  renderRouterContext
-} from '../../../../src/runtime/workflow/router'
 
 const builtinSkillsDir = join(process.cwd(), '.nova', 'skills')
 
@@ -122,18 +117,5 @@ describe('deep-research / code-review 内置 skill', () => {
     ]) {
       expect(body, `code-review 缺少语义：${token}`).toContain(token)
     }
-  })
-
-  it('workflow 注册表不再挂载二者，路由改指向 skill', () => {
-    const names = listWorkflowMetadata().map((workflow) => workflow.name)
-    expect(names).not.toContain('deep-research')
-    expect(names).not.toContain('code-review')
-    expect(names).toContain('compose')
-
-    const rendered = renderRouterContext(buildRouterContext({ workspaceRoot: process.cwd() }))
-    expect(rendered).toContain('invoke_skill')
-    expect(rendered).toContain('/deep-research')
-    expect(rendered).toContain('/code-review')
-    expect(rendered).not.toMatch(/查资料给结论走 deep-research/)
   })
 })

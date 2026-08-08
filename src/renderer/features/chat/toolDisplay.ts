@@ -39,8 +39,6 @@ export function getToolDisplayName(toolName: string): string {
       return '保存实施计划 (save_plan)'
     case 'switch_mode':
       return '切换运行模式 (switch_mode)'
-    case 'start_workflow':
-      return '启动工作流 (start_workflow)'
     case 'stage_transition':
       return '推进生命周期阶段 (stage_transition)'
     case 'load_tools':
@@ -168,17 +166,6 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
     case 'switch_mode': {
       const mode = typeof args.mode === 'string' ? args.mode : ''
       return mode ? `请求切换到 ${mode} 模式` : '请求切换运行模式'
-    }
-    case 'start_workflow': {
-      const workflow = typeof args.workflow === 'string' ? args.workflow : ''
-      const startStage = typeof args.startStage === 'string' ? args.startStage : ''
-      const reason = typeof args.reason === 'string' ? args.reason : ''
-      const display = reason.length > 50 ? `${reason.slice(0, 47)}...` : reason
-      if (workflow && startStage && display) {
-        return `启动 ${workflow}/${startStage}：${display}`
-      }
-      if (workflow && startStage) return `启动 ${workflow}/${startStage}`
-      return workflow ? `启动工作流 ${workflow}` : '启动工作流'
     }
     case 'stage_transition': {
       const action = typeof args.action === 'string' ? args.action : ''

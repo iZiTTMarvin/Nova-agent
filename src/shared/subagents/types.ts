@@ -6,90 +6,6 @@
  */
 import type { TurnTruncationReason } from '../run/types'
 
-/** JSON values accepted by the environment-neutral result-schema contract. */
-export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly JsonValue[]
-  | { readonly [propertyName: string]: JsonValue }
-
-interface JsonSchemaBase {
-  readonly $id?: string
-  readonly $ref?: string
-  readonly title?: string
-  readonly description?: string
-  readonly default?: JsonValue
-  readonly const?: JsonValue
-  readonly enum?: readonly JsonValue[]
-}
-
-export interface JsonSchemaNull extends JsonSchemaBase {
-  readonly type: 'null'
-}
-
-export interface JsonSchemaBoolean extends JsonSchemaBase {
-  readonly type: 'boolean'
-}
-
-export interface JsonSchemaNumber extends JsonSchemaBase {
-  readonly type: 'number'
-  readonly minimum?: number
-  readonly maximum?: number
-  readonly exclusiveMinimum?: number
-  readonly exclusiveMaximum?: number
-  readonly multipleOf?: number
-}
-
-export interface JsonSchemaInteger extends JsonSchemaBase {
-  readonly type: 'integer'
-  readonly minimum?: number
-  readonly maximum?: number
-  readonly exclusiveMinimum?: number
-  readonly exclusiveMaximum?: number
-  readonly multipleOf?: number
-}
-
-export interface JsonSchemaString extends JsonSchemaBase {
-  readonly type: 'string'
-  readonly minLength?: number
-  readonly maxLength?: number
-  readonly pattern?: string
-  readonly format?: string
-}
-
-export interface JsonSchemaArray extends JsonSchemaBase {
-  readonly type: 'array'
-  readonly items?: JsonSchema
-  readonly minItems?: number
-  readonly maxItems?: number
-  readonly uniqueItems?: boolean
-}
-
-export interface JsonSchemaObject extends JsonSchemaBase {
-  readonly type: 'object'
-  readonly properties?: { readonly [propertyName: string]: JsonSchema }
-  readonly required?: readonly string[]
-  readonly additionalProperties?: boolean | JsonSchema
-  readonly minProperties?: number
-  readonly maxProperties?: number
-}
-
-/**
- * A deliberately explicit recursive subset of JSON Schema suitable for
- * transport contracts. Boolean schemas remain valid JSON Schema values.
- */
-export type JsonSchema =
-  | boolean
-  | JsonSchemaNull
-  | JsonSchemaBoolean
-  | JsonSchemaNumber
-  | JsonSchemaInteger
-  | JsonSchemaString
-  | JsonSchemaArray
-  | JsonSchemaObject
-
 /** The caller category that gives a child execution its durable identity. */
 export type SubagentOrigin =
   | {
@@ -98,6 +14,11 @@ export type SubagentOrigin =
       readonly parentToolCallId: string
     }
   | {
+      /**
+       * 历史编排子代理身份（只读兼容）。
+       * 删除条件：仓库内不再存在任何 kind=workflow 的持久化子会话，且 migrations 不再需要解析该变体。
+       * 保护：新 spawn 必须被执行层拒绝；仅 load/migrate/投影可读。
+       */
       readonly kind: 'workflow'
       readonly workflowRunId: string
       readonly phase: string
@@ -163,8 +84,7 @@ export interface SpawnSubagentCommand {
   readonly profileId: string
   readonly task: string
   readonly workingDirectory: string
-  readonly isolation: 'shared' | 'readonly' | 'worktree'
-  readonly resultSchema?: JsonSchema
+  readonly isolation: 'shared' | 'readonly'
   readonly timeoutMs?: number
 }
 
@@ -195,11 +115,6 @@ export interface SubagentExecutionResult {
   readonly childRunId: string
   readonly status: SubagentExecutionStatus
   readonly summary: string
-  /**
-   * 命令携带 resultSchema 时，从子代理完整最终消息解析出的结构化结果。
-   * summary 有截断上限，结构化数据必须走本字段而不是重新解析 summary。
-   */
-  readonly structuredResult?: Record<string, unknown>
   readonly artifactIds: readonly string[]
   readonly startedAt: number
   readonly completedAt: number

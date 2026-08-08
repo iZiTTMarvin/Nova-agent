@@ -123,44 +123,13 @@ export function registerRunHandler(): void {
     }
 
     if (params.action === 'rollback') {
-      // 禁止假成功：无 FileEffectReceipt / checkpoint 绑定时明确失败
       const committed = (snap.toolCommits ?? []).filter(c => c.phase === 'committed')
-      try {
-        const { previewRollback, confirmRollback, listFileEffects } = await import(
-          '../../runtime/workflow/effects/fileEffect'
-        )
-        const workspaceRoot = snap.workspaceId
-        const effects = listFileEffects(workspaceRoot, params.runId)
-        if (effects.length === 0) {
-          return {
-            ok: false,
-            steps: committed,
-            message:
-              '无可回滚的文件副作用凭证。请使用会话消息回退 / 逐文件 checkpoint；未执行任何文件回滚。',
-            snapshot: snap
-          }
-        }
-        const preview = previewRollback(workspaceRoot, params.runId)
-        const result = confirmRollback(workspaceRoot, params.runId, {
-          previewToken: preview.previewToken
-        })
-        return {
-          ok: result.ok,
-          steps: committed,
-          message: result.ok
-            ? `已按 effect 凭证回滚：恢复 ${preview.willRestore.length}，删除 ${preview.willDelete.length}`
-            : `回滚未完全成功：冲突 ${preview.conflicts.length}，缺备份 ${preview.missingBackup.length}，损坏 ${preview.corrupt.length}`,
-          snapshot: snap,
-          preview,
-          results: result.results
-        }
-      } catch (err) {
-        return {
-          ok: false,
-          steps: committed,
-          message: err instanceof Error ? err.message : '回滚失败',
-          snapshot: snap
-        }
+      return {
+        ok: false,
+        steps: committed,
+        message:
+          '无可回滚的文件副作用凭证。请使用会话消息回退 / 逐文件 checkpoint；未执行任何文件回滚。',
+        snapshot: snap
       }
     }
 
