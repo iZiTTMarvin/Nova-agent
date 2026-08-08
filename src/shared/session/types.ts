@@ -2,6 +2,8 @@ import type {
   SubagentActivityProjection,
   SubagentSessionListMetadata
 } from '../subagents'
+import type { ComposePlanApproval, ComposeStageEntry } from '../composeLifecycle'
+import type { TodoItem } from '../todo/types'
 
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
 /**
@@ -153,4 +155,19 @@ export type SessionDetail = Session & {
   hasMoreMessagesAbove?: boolean
   /** 当前激活叶子 id；正常 UI 不依赖，调试与 Tier 1 上下文用 */
   currentLeafId?: string | null
+  /**
+   * compose 生命周期阶段表。仅 compose 会话由 stage_transition 工具写入；
+   * 旧会话缺省，renderer 按初始表投影纯显示，不回填落盘。
+   */
+  composeStages?: ComposeStageEntry[]
+  /**
+   * 计划阶段确认门状态。仅 compose 会话由 save_plan / stage_transition / 批准 IPC 写入；
+   * 旧会话缺省，renderer 视为 pending。
+   */
+  composePlanApproval?: ComposePlanApproval
+  /**
+   * 会话级待办清单随详情透出，renderer 水合 TodoPanel 与 compose 阶段条进度；
+   * 旧会话或从未写过待办的会话缺省。
+   */
+  todos?: TodoItem[]
 }

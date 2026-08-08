@@ -1,16 +1,25 @@
+/**
+ * SubagentActivityRow — 子代理紧凑活动行（三段式）
+ *
+ * 1. 紧凑行：状态点 + 名称 +（模型 · 思考强度）+ 状态与耗时
+ * 2. 次行：运行中显示当前动作（左→右呼吸微光），完成后翻转为结果摘要
+ * 3. 终态且有文件改动时，下方出现会话级 diff 卡
+ *
+ * 点击整行在原位置弹出悬浮详情（SubagentDetailPopover），不再跳转子会话。
+ */
 import React, { useEffect, useMemo, useState } from 'react'
-import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
-import { useChatStore } from '../../stores/useChatStore'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
 import {
   selectSubagentByParentToolCallId,
   useSubagentProjectionStore
 } from './projection'
+import { SubagentDetailPopover } from './SubagentDetailPopover'
+import { SubagentDiffCard } from './SubagentDiffCard'
+import { formatSubagentModelLine } from './modelLine'
 import './SubagentActivityRow.css'
 
 interface StatusPresentation {
-  icon: string
   label: string
   tone: 'running' | 'attention' | 'success' | 'error' | 'muted'
 }
@@ -18,25 +27,25 @@ interface StatusPresentation {
 function presentStatus(status: SubagentActivityProjection['status']): StatusPresentation {
   switch (status) {
     case 'queued':
-      return { icon: '○', label: '等待开始', tone: 'running' }
+      return { label: '等待开始', tone: 'running' }
     case 'running':
     case 'retrying':
     case 'resuming':
-      return { icon: '●', label: status === 'retrying' ? '正在重试' : '正在工作', tone: 'running' }
+      return { label: status === 'retrying' ? '正在重试' : '正在工作', tone: 'running' }
     case 'waiting_user':
-      return { icon: '!', label: '等待授权', tone: 'attention' }
+      return { label: '等待授权', tone: 'attention' }
     case 'cancelling':
-      return { icon: '◌', label: '正在停止', tone: 'running' }
+      return { label: '正在停止', tone: 'running' }
     case 'completed':
-      return { icon: '✓', label: '已完成', tone: 'success' }
+      return { label: '已完成', tone: 'success' }
     case 'failed':
-      return { icon: '×', label: '失败', tone: 'error' }
+      return { label: '失败', tone: 'error' }
     case 'cancelled':
-      return { icon: '■', label: '已取消', tone: 'muted' }
+      return { label: '已取消', tone: 'muted' }
     case 'interrupted':
-      return { icon: '◇', label: '已中断', tone: 'attention' }
+      return { label: '已中断', tone: 'attention' }
     case 'record_missing':
-      return { icon: '?', label: '记录不可用', tone: 'muted' }
+      return { label: '记录不可用', tone: 'muted' }
   }
 }
 
@@ -69,9 +78,12 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
   projection,
   fallbackResult
 }) => {
-  const selectSession = useChatStore((state) => state.selectSession)
   const active = isActive(projection.status)
+  const [open, setOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const containerRef = React.useRef<HTMLElement>(null)
+  /** 面板默认向上展开；行贴近消息流顶部时向下展开，避免被容器裁剪 */
+  const [panelDirection, setPanelDirection] = useState<'up' | 'down'>('up')
 
   useEffect(() => {
     if (!active || !projection.startedAt) return
@@ -84,46 +96,75 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     projection.startedAt,
     active ? now : projection.completedAt ?? projection.startedAt ?? now
   )
-  const summary = useMemo(() => {
+
+  /** 次行文案：运行态展示当前动作，终态翻转为结果/失败/回退文案。 */
+  const activityLine = useMemo(() => {
     if (projection.status === 'failed') {
       return projection.failure?.message ?? projection.summary ?? '子代理执行失败'
     }
     if (projection.status === 'record_missing') {
       return fallbackResult || '子代理运行记录不可用；父工具结果仍保留。'
     }
-    return projection.summary ?? projection.latestActivity
-  }, [fallbackResult, projection])
+    if (active) {
+      return projection.latestActivity || '正在准备工具与上下文…'
+    }
+    return projection.summary ?? projection.latestActivity ?? ''
+  }, [active, fallbackResult, projection])
+
+  const modelLine = formatSubagentModelLine(projection)
+
+  const visibleFileChanges = projection.fileChanges ?? []
+
+  const toggleOpen = (): void => {
+    if (!open && containerRef.current) {
+      const { top } = containerRef.current.getBoundingClientRect()
+      setPanelDirection(top < 500 ? 'down' : 'up')
+    }
+    setOpen((value) => !value)
+  }
 
   return (
-    <ClickableCard
-      label={`打开子代理 ${projection.profile.name}，${status.label}`}
-      variant="transparent"
-      padding={0}
-      width="100%"
+    <section
+      ref={containerRef}
       className={`subagent-activity-row subagent-activity-row--${status.tone}`}
-      onClick={() => void selectSession(projection.childSessionId)}
     >
-      <span className="subagent-activity-row__glyph" aria-hidden="true">{status.icon}</span>
-      <span className="subagent-activity-row__body">
-        <span className="subagent-activity-row__task" title={projection.taskLabel}>
-          {projection.taskLabel}
-        </span>
-        <span className="subagent-activity-row__headline">
+      <div className="subagent-activity-row__main">
+        <button
+          type="button"
+          className={`subagent-activity-row__trigger${open ? ' subagent-activity-row__trigger--open' : ''}`}
+          onClick={toggleOpen}
+          aria-expanded={open}
+          aria-label={`子代理 ${projection.profile.name}，${status.label}${elapsed ? `，耗时 ${elapsed}` : ''}`}
+        >
+          <span className="subagent-activity-row__dot" aria-hidden="true" />
           <span className="subagent-activity-row__agent">{projection.profile.name}</span>
+          {modelLine && <span className="subagent-activity-row__model">{modelLine}</span>}
           <span className="subagent-activity-row__status">
             {status.label}{elapsed ? ` · ${elapsed}` : ''}
           </span>
-        </span>
-        <span className="subagent-activity-row__meta">
-          {projection.profile.permissionCeiling === 'read_only' ? '只读' : '工作区写入'}
-          {summary ? <span className="subagent-activity-row__summary">{summary}</span> : null}
-        </span>
-        {projection.artifactCount > 0 ? (
-          <span className="subagent-activity-row__artifacts">{projection.artifactCount} 个产物</span>
-        ) : null}
-      </span>
-      <span className="subagent-activity-row__open" aria-hidden="true">打开 ›</span>
-    </ClickableCard>
+          <span className="subagent-activity-row__chevron" aria-hidden="true">
+            {open ? '▾' : '▸'}
+          </span>
+        </button>
+        <div
+          className={`subagent-activity-row__activity${active ? ' subagent-activity-row__activity--live' : ''}`}
+        >
+          {activityLine}
+        </div>
+      </div>
+
+      {!active && visibleFileChanges.length > 0 && (
+        <SubagentDiffCard projection={projection} />
+      )}
+
+      {open && (
+        <SubagentDetailPopover
+          projection={projection}
+          direction={panelDirection}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </section>
   )
 }
 

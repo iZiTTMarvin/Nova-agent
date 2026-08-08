@@ -2,9 +2,10 @@
 
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PlanReviewCard } from '../../../src/renderer/features/chat/PlanReviewCard'
+import { PlanReviewCard, type PlanReviewCardProps } from '../../../src/renderer/features/chat/PlanReviewCard'
 import { useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
+import type { ComposePlanApproval } from '../../../src/shared/composeLifecycle'
 import { act, renderDom, type DomRenderResult } from './renderDom'
 
 vi.mock('../../../src/renderer/features/chat/MarkdownRenderer', () => ({
@@ -47,6 +48,27 @@ async function renderSuccessCard(): Promise<DomRenderResult> {
       },
       result: '计划已保存到 ".nova/plans/2026-07-24-readable.md"',
       turnActive: false
+    })
+  )
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  return renderer
+}
+
+async function renderComposeCard(overrides: Partial<PlanReviewCardProps> = {}): Promise<DomRenderResult> {
+  const renderer = renderDom(
+    React.createElement(PlanReviewCard, {
+      sessionId: 'sess_plan',
+      currentMode: 'compose',
+      status: 'success',
+      args: { title: '可审阅计划', content: '# preview' },
+      result: '计划已保存到 ".nova/plans/2026-07-24-readable.md"',
+      turnActive: false,
+      composeStageId: 'plan',
+      composePlanApproval: null,
+      ...overrides
     })
   )
   await act(async () => {
@@ -144,5 +166,84 @@ describe('PlanReviewCard', () => {
 
     expect(useSettingsStore.getState().composerPrefill).toContain('继续完善当前计划')
     renderer.unmount()
+  })
+
+  describe('compose 模式：计划确认门', () => {
+    it('计划阶段未批准时可点击「批准并开始开发」，成功后调用 compose:approve-plan 并发送引导消息', async () => {
+      const originalSendMessage = useChatStore.getState().sendMessage
+      const sendMessage = vi.fn(async () => true)
+      useChatStore.setState({ sendMessage })
+      mockInvoke.mockImplementation((channel: string) => {
+        if (channel === 'compose:approve-plan') {
+          return Promise.resolve({
+            ok: true,
+            approval: { status: 'approved', approvedAt: 1, auto: false }
+          })
+        }
+        return Promise.resolve({
+          path: '.nova/plans/2026-07-24-readable.md',
+          title: '可审阅计划',
+          updatedAt: 123,
+          content: '# 完整计划'
+        })
+      })
+
+      let renderer: DomRenderResult | undefined
+      try {
+        renderer = await renderComposeCard()
+        const approveButton = findButton(renderer.container, '批准并开始开发')
+        expect(approveButton.disabled).toBe(false)
+
+        await act(async () => {
+          approveButton.click()
+          await Promise.resolve()
+          await Promise.resolve()
+        })
+
+        expect(mockInvoke).toHaveBeenCalledWith('compose:approve-plan', { sessionId: 'sess_plan' })
+        expect(sendMessage).toHaveBeenCalledWith(
+          expect.stringContaining('todo_write'),
+          []
+        )
+      } finally {
+        useChatStore.setState({ sendMessage: originalSendMessage })
+        renderer?.unmount()
+      }
+    })
+
+    it('已批准（用户手动）时展示徽标，不显示批准按钮', async () => {
+      const approval: ComposePlanApproval = { status: 'approved', approvedAt: 1, auto: false }
+      const renderer = await renderComposeCard({ composePlanApproval: approval })
+
+      expect(renderer.container.textContent).toContain('已批准')
+      expect(
+        Array.from(renderer.container.querySelectorAll('button')).some(btn =>
+          btn.textContent?.includes('批准并开始开发')
+        )
+      ).toBe(false)
+      renderer.unmount()
+    })
+
+    it('auto 模式自动批准时徽标能看出是自动批准', async () => {
+      const approval: ComposePlanApproval = { status: 'approved', approvedAt: 1, auto: true }
+      const renderer = await renderComposeCard({ composePlanApproval: approval })
+
+      expect(renderer.container.textContent).toContain('自动批准')
+      renderer.unmount()
+    })
+
+    it('非计划阶段（已推进到开发）不显示批准/继续完善按钮', async () => {
+      const renderer = await renderComposeCard({
+        composeStageId: 'implement',
+        composePlanApproval: { status: 'approved', approvedAt: 1, auto: false }
+      })
+
+      expect(
+        Array.from(renderer.container.querySelectorAll('button')).some(btn =>
+          btn.textContent?.includes('批准并开始开发') || btn.textContent?.includes('继续完善')
+        )
+      ).toBe(false)
+      renderer.unmount()
+    })
   })
 })

@@ -108,6 +108,18 @@ export function forwardEventToRenderer(
         view: event.view
       })
       break
+    case 'compose_stages_updated':
+      webContents.send('agent:compose-stages-updated', {
+        sessionId: event.sessionId,
+        stages: event.stages
+      })
+      break
+    case 'compose_plan_approval_updated':
+      webContents.send('agent:compose-plan-approval-updated', {
+        sessionId: event.sessionId,
+        approval: event.approval
+      })
+      break
     case 'ask_question_request':
       webContents.send('agent:ask-question-request', {
         requestId: event.requestId,

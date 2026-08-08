@@ -22,6 +22,7 @@ import {
 import { initSessionStoreHost, getSessionStore } from '../services/SessionStoreHost'
 import { rejectFile } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
+import { buildSessionDiffState } from '../../runtime/checkpoints/sessionDiffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
 import { setCurrentMode, setCurrentProjectPath, getMainWindow } from '../index'
 import type { SessionDetail, Message, BranchMeta } from '../../shared/session'
@@ -33,7 +34,7 @@ import {
 } from '../../runtime/sessions/types'
 import { getSessionActiveMessages, attachBranchMeta, ensureMessageParentChain, resolveCurrentLeafId } from '../../runtime/sessions/tree'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
-import { GET_MESSAGE_DIFFS } from '../../shared/ipc/channels'
+import { GET_MESSAGE_DIFFS, GET_SESSION_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
 import { calculateContextBreakdown } from '../../runtime/agent'
@@ -97,6 +98,12 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     messageCount: totalCount,
     hasMoreMessagesAbove: tailOnly ? totalCount > sourceMessages.length : undefined,
     currentLeafId,
+    // compose 阶段表随会话详情透出，renderer 水合阶段条；旧会话为 undefined
+    composeStages: data.composeStages,
+    // 计划确认门状态随详情水合，renderer 据此决定审阅卡是否已放行；旧会话为 undefined
+    composePlanApproval: data.composePlanApproval,
+    // 会话级待办随详情水合，renderer 恢复 TodoPanel 与 compose 阶段条进度；旧会话为 undefined
+    todos: data.todos,
     messages: withBranch.map(msg => ({
       ...toMessage(msg),
       sessionId: data.id
@@ -240,6 +247,22 @@ export function registerSessionHandler(): void {
       session.workspaceRoot,
       params.sessionId,
       params.messageId
+    )
+  })
+
+  handle(GET_SESSION_DIFFS, async (
+    _event,
+    params: { sessionId: string }
+  ) => {
+    const session = sessionStore.load(params.sessionId)
+    if (!session) {
+      throw new Error(`会话 ${params.sessionId} 不存在`)
+    }
+
+    return buildSessionDiffState(
+      sessionStore.getSessionsDir(),
+      session.workspaceRoot,
+      params.sessionId
     )
   })
 

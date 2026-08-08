@@ -25,7 +25,12 @@ export interface DiffViewerProps {
   diffs: DiffEntry[]
   reviews: Record<string, DiffReviewStatus>
   sessionId: string
-  messageId: string
+  /**
+   * 行点击打开 Inspector 审查所用的消息 id。
+   * 缺省时（如子代理会话级聚合视图，逐文件路由消息各不相同）
+   * 文件头不绑定点击，审查在调用方内联完成。
+   */
+  messageId?: string
   isLoading?: boolean
   /**
    * loading 阶段的占位文件列表。
@@ -56,10 +61,10 @@ const FileChangeStats: React.FC<{ entry: DiffEntry }> = ({ entry }) => {
   )
 }
 
-/** 单个文件的 diff 面板（行点击打开 Inspector 审查） */
+/** 单个文件的 diff 面板（有 messageId 时行点击打开 Inspector 审查） */
 const FileDiffPanel: React.FC<{
   entry: DiffEntry
-  messageId: string
+  messageId?: string
   reviewStatus: 'pending' | 'accepted' | 'rejected'
   onReject?: (filePath: string) => Promise<void>
   onAccept?: (filePath: string) => Promise<void>
@@ -71,9 +76,11 @@ const FileDiffPanel: React.FC<{
   const statusLabel = entry.status === 'added' ? '新建' : entry.status === 'deleted' ? '删除' : '修改'
   const statusClass = entry.status === 'added' ? 'diff-file--added' : entry.status === 'deleted' ? 'diff-file--deleted' : 'diff-file--modified'
 
-  const openInInspector = () => {
-    useLayoutStore.getState().openReview({ messageId, filePath: entry.filePath })
-  }
+  const openInInspector = messageId
+    ? () => {
+        useLayoutStore.getState().openReview({ messageId, filePath: entry.filePath })
+      }
+    : undefined
 
   const handleReject = async () => {
     setRejecting(true)
@@ -101,18 +108,20 @@ const FileDiffPanel: React.FC<{
     })()
   }
 
-  const headerProps = {
-    className: 'diff-file__header',
-    role: 'button' as const,
-    tabIndex: 0,
-    onClick: openInInspector,
-    onKeyDown: (event: React.KeyboardEvent) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        openInInspector()
+  const headerProps = openInInspector
+    ? {
+        className: 'diff-file__header',
+        role: 'button' as const,
+        tabIndex: 0,
+        onClick: openInInspector,
+        onKeyDown: (event: React.KeyboardEvent) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            openInInspector()
+          }
+        }
       }
-    }
-  }
+    : { className: 'diff-file__header diff-file__header--static' }
 
   // 已拒绝状态
   if (reviewStatus === 'rejected') {

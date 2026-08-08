@@ -21,6 +21,9 @@ import { registerFsHandler } from './fsHandler'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
 import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
+import { registerComposeStageHandler } from './composeStageHandler'
+import { registerComposePlanApprovalHandler } from './composePlanApprovalHandler'
+import { registerPlanFileHandler } from './planFileHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { getRunCoordinator, initRunCoordinatorHost } from '../services/RunCoordinatorHost'
 import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
@@ -70,6 +73,11 @@ export function registerIpcHandlers(): ImageStore {
   // 注册会话管理与回退操作 IPC（必须在 workspaceHandler 之前，初始化 SessionStore）
   registerSessionHandler()
 
+  // compose 阶段条手动推进/回退（依赖 SessionStore，须在 registerSessionHandler 之后）
+  registerComposeStageHandler()
+  // 计划审阅卡「批准」按钮（依赖 SessionStore，须在 registerSessionHandler 之后）
+  registerComposePlanApprovalHandler()
+
   // 注册技能管理 IPC
   registerSkillHandler(getMainWindow)
 
@@ -101,6 +109,8 @@ export function registerIpcHandlers(): ImageStore {
   })
   workspaceService.initOnStartup()
   registerWorkspaceHandler(getMainWindow)
+  // 打开 active plan 文件（复用 WorkspaceService 的路径边界校验）
+  registerPlanFileHandler()
 
   // 存储治理 IPC（WS3 后端）
   registerStorageHandler()

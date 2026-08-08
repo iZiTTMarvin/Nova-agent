@@ -86,6 +86,34 @@ describe('toolPromptRenderer', () => {
       .not.toContain('start_workflow')
   })
 
+  it('stage_transition 在 XML 方言目录中仅 compose 可见（与 native 同源）', () => {
+    const stageTool: ToolDefinition = {
+      name: 'stage_transition',
+      description: '推进生命周期阶段',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string' },
+          reason: { type: 'string' },
+          targetStage: { type: 'string' }
+        },
+        required: ['action']
+      }
+    }
+
+    expect(renderModeToolInventory('compose', [stageTool], { dialect: 'xml' }))
+      .toContain('stage_transition')
+    expect(renderModeToolInventory('default', [stageTool], { dialect: 'xml' }))
+      .not.toContain('stage_transition')
+    expect(renderModeToolInventory('plan', [stageTool], { dialect: 'xml' }))
+      .not.toContain('stage_transition')
+
+    expect(renderModeToolInventory('compose', [stageTool], { dialect: 'native' }))
+      .toContain('stage_transition')
+    expect(renderModeToolInventory('default', [stageTool], { dialect: 'native' }))
+      .not.toContain('stage_transition')
+  })
+
   it('renderWorkingDirectoryHint 返回工作区绝对路径', () => {
     const out = renderWorkingDirectoryHint('D:\\work\\project')
     expect(out).toContain('D:\\work\\project')

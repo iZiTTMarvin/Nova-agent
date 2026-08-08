@@ -15,6 +15,7 @@ import { InspectorPanel } from './features/inspector/InspectorPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { TitleBar } from './components/TitleBar'
 import { useTodoStore } from './features/todo/useTodoStore'
+import { useComposeStageStore } from './features/compose/useComposeStageStore'
 import { useWorkflowStore } from './features/workflow/useWorkflowStore'
 import { useRunStore } from './stores/useRunStore'
 import { useSubagentProjectionStore } from './features/subagents/projection'
@@ -65,6 +66,11 @@ function App(): React.ReactNode {
 
   // todo: 由事件总线独立维护，订阅 IPC 即可
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
+
+  // compose 阶段表：阶段条唯一推送源，订阅 IPC 写入独立 store
+  const applyComposeStageUpdate = useComposeStageStore(state => state.applyUpdate)
+  // compose 计划确认门：审阅卡与阶段条共用同一份批准状态缓存
+  const applyComposePlanApprovalUpdate = useComposeStageStore(state => state.applyPlanApprovalUpdate)
 
   // 1. 初始化时加载持久化的配置和会话列表
   //    会话列表改为由 workspace:get 统一拉取（单一事实源），
@@ -202,6 +208,16 @@ function App(): React.ReactNode {
       applyTodoUpdate({ sessionId: data.sessionId, todos: data.todos, view: data.view })
     })
 
+    // 监听：compose 阶段表更新（工具与手动兜底共用同一事件，阶段条据此刷新）
+    const unsubComposeStagesUpdated = window.api.on('agent:compose-stages-updated', (data) => {
+      applyComposeStageUpdate({ sessionId: data.sessionId, stages: data.stages })
+    })
+
+    // 监听：计划确认门批准状态更新（手动批准 IPC 与 auto 模式自动放行共用同一事件）
+    const unsubComposePlanApprovalUpdated = window.api.on('agent:compose-plan-approval-updated', (data) => {
+      applyComposePlanApprovalUpdate({ sessionId: data.sessionId, approval: data.approval })
+    })
+
     // 监听：Agent 本轮思考和应答全部完成 → 强制 flush
     const unsubMessageEnd = window.api.on('agent:message-end', gateAgentEvent('message-end', (data) => {
       buffer.flushNow()
@@ -329,6 +345,8 @@ function App(): React.ReactNode {
       unsubRunSnapshot()
       unsubSubagentLinked()
       unsubTodosUpdated()
+      unsubComposeStagesUpdated()
+      unsubComposePlanApprovalUpdated()
       unsubMessageEnd()
       unsubUsage()
       unsubCacheDiagnostic()
@@ -356,6 +374,8 @@ function App(): React.ReactNode {
     handleAskQuestionRequest,
     clearAskQuestionRequest,
     applyTodoUpdate,
+    applyComposeStageUpdate,
+    applyComposePlanApprovalUpdate,
     handleMessageEnd,
     handleUsage,
     setContextBreakdown

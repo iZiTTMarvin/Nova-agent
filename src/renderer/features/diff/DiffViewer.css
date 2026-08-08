@@ -108,6 +108,13 @@
 .diff-file__header:hover {
   background-color: var(--bg-sand);
 }
+/* 无 Inspector 入口的静态表头（会话级聚合视图）：去掉交互暗示 */
+.diff-file__header--static {
+  cursor: default;
+}
+.diff-file__header--static:hover {
+  background-color: var(--bg-card);
+}
 
 .diff-file__name {
   font-family: var(--font-mono);

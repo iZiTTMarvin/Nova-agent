@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import type { Mode } from '../../../shared/session/types'
 import type { ActivePlanDocument } from '../../../shared/workspace/types'
+import type { ComposePlanApproval, ComposeStageId } from '../../../shared/composeLifecycle'
 import { isContentSummary, type ContentSummary } from '../../../shared/tool-input-sanitizer'
 import { CheckIcon, ChevronIcon, PlanIcon, SpinnerIcon } from '../../components/Icons'
 import { useChatStore } from '../../stores/useChatStore'
@@ -16,6 +17,10 @@ export interface PlanReviewCardProps {
   args: Record<string, unknown>
   result?: string
   turnActive: boolean
+  /** 仅 compose 模式：当前生命周期阶段，用于判断计划确认门是否生效 */
+  composeStageId?: ComposeStageId | null
+  /** 仅 compose 模式：计划确认门状态，null/undefined 视为 pending */
+  composePlanApproval?: ComposePlanApproval | null
 }
 
 function previewFromArgs(content: unknown): string {
@@ -36,7 +41,9 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
   status,
   args,
   result,
-  turnActive
+  turnActive,
+  composeStageId = null,
+  composePlanApproval = null
 }) {
   const title = typeof args.title === 'string' && args.title.trim()
     ? args.title.trim()
@@ -84,11 +91,11 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
   const content = document?.content ?? preview
   const planPath = document?.path ?? resultPath
   const canApprove =
-    status === 'success' &&
-    !turnActive &&
-    currentMode === 'plan' &&
-    document !== null &&
-    !submitting
+    status !== 'success' || turnActive || document === null || submitting
+      ? false
+      : currentMode === 'compose'
+        ? composeStageId === 'plan' && composePlanApproval?.status !== 'approved'
+        : currentMode === 'plan'
   const statusLabel = status === 'running'
     ? '正在生成计划'
     : status === 'error'
@@ -96,7 +103,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
       : '计划待审阅'
 
   const startImplementation = async () => {
-    if (!canApprove) return
+    if (!canApprove || currentMode !== 'plan') return
     setSubmitting(true)
     setActionError(null)
     try {
@@ -107,6 +114,30 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
       )
       if (!sent) {
         setActionError('实施指令未能发出（Agent 可能仍在运行），请稍后手动发送。')
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const approveComposePlan = async () => {
+    if (!canApprove || currentMode !== 'compose') return
+    setSubmitting(true)
+    setActionError(null)
+    try {
+      const approval = await window.api.invoke('compose:approve-plan', { sessionId })
+      if (!approval.ok) {
+        setActionError(approval.error)
+        return
+      }
+      const sent = await useChatStore.getState().sendMessage(
+        '计划已批准，请先调用 todo_write 把计划任务清单导入为待办，再调用 stage_transition 进入「开发」阶段。',
+        []
+      )
+      if (!sent) {
+        setActionError('批准已生效，但引导指令未能发出（Agent 可能仍在运行），请稍后手动发送。')
       }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error))
@@ -164,6 +195,33 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
               <CheckIcon size={14} />
               已进入默认模式
             </span>
+          ) : currentMode === 'compose' ? (
+            composePlanApproval?.status === 'approved' ? (
+              <span className="plan-review-card__implemented">
+                <CheckIcon size={14} />
+                {composePlanApproval.auto ? '已自动批准（auto 模式）' : '已批准，进入「开发」阶段'}
+              </span>
+            ) : composeStageId === 'plan' ? (
+              <>
+                <span className="plan-review-card__prompt">确认计划后再允许编辑项目文件</span>
+                <Button
+                  label="继续完善"
+                  variant="secondary"
+                  size="sm"
+                  className="plan-review-card__secondary"
+                  onClick={continuePlanning}
+                  isDisabled={submitting || turnActive}
+                />
+                <Button
+                  label={submitting ? '正在批准…' : turnActive ? '等待回复完成' : '批准并开始开发'}
+                  variant="primary"
+                  size="sm"
+                  className="plan-review-card__primary"
+                  onClick={() => void approveComposePlan()}
+                  isDisabled={!canApprove}
+                />
+              </>
+            ) : null
           ) : (
             <>
               <span className="plan-review-card__prompt">确认计划后再允许编辑项目文件</span>

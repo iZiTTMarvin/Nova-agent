@@ -41,6 +41,8 @@ export function getToolDisplayName(toolName: string): string {
       return '切换运行模式 (switch_mode)'
     case 'start_workflow':
       return '启动工作流 (start_workflow)'
+    case 'stage_transition':
+      return '推进生命周期阶段 (stage_transition)'
     case 'load_tools':
       return '加载工具组 (load_tools)'
     default:
@@ -177,6 +179,13 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       }
       if (workflow && startStage) return `启动 ${workflow}/${startStage}`
       return workflow ? `启动工作流 ${workflow}` : '启动工作流'
+    }
+    case 'stage_transition': {
+      const action = typeof args.action === 'string' ? args.action : ''
+      if (action === 'complete') return '正在完成当前生命周期阶段'
+      if (action === 'skip') return '正在跳过当前生命周期阶段'
+      if (action === 'return') return '正在回退生命周期阶段'
+      return '正在推进生命周期阶段'
     }
     default:
       return ''

@@ -179,3 +179,22 @@ export function computeFileDiff(
     hunks: toHunks(dLines)
   }
 }
+
+/**
+ * 统计单文件 diff 的增删行数。
+ * 与 renderer FileChangeStats 同一口径：'+/'-' 前缀行计数。
+ */
+export function countEntryChanges(entry: DiffEntry): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+
+  for (const hunk of entry.hunks) {
+    if (!hunk.content) continue
+    for (const line of hunk.content.split('\n')) {
+      if (line.startsWith('+')) additions++
+      else if (line.startsWith('-')) deletions++
+    }
+  }
+
+  return { additions, deletions }
+}

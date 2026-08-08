@@ -1,0 +1,389 @@
+/* ComposeStageBar — compose 会话顶部生命周期阶段条
+   视觉语言：低饱和、细线串联、状态切换 240ms 柔和过渡；
+   颜色全部走既有主题变量（color-mix 派生呼吸光晕，深浅色自适应）。 */
+
+.compose-stage-bar {
+  position: relative;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--border-cream);
+  font-family: var(--font-sans);
+}
+
+.compose-stage-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compose-stage-bar__track {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compose-stage-bar__item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.compose-stage-bar__connector {
+  width: 14px;
+  height: 1px;
+  margin: 0 2px;
+  background: var(--border-warm);
+  transition: background-color 240ms ease;
+}
+
+.compose-stage-bar__connector--done {
+  background: var(--color-success);
+  opacity: 0.6;
+}
+
+.compose-stage-bar__node {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
+  cursor: default;
+  transition: color 240ms ease, background-color 240ms ease;
+}
+
+button.compose-stage-bar__node {
+  cursor: pointer;
+}
+
+button.compose-stage-bar__node:hover,
+.compose-stage-bar__node--expanded {
+  background: var(--bg-sand);
+}
+
+.compose-stage-bar__glyph {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  font-size: 9px;
+  line-height: 1;
+  transition: background-color 240ms ease, color 240ms ease, border-color 240ms ease;
+}
+
+/* 待办：空心灰环 */
+.compose-stage-bar__node--pending .compose-stage-bar__glyph {
+  border: 1px solid var(--text-muted);
+  opacity: 0.55;
+}
+
+/* 进行中：品牌色实心点 + 约 2s 呼吸光晕 */
+.compose-stage-bar__node--in_progress {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.compose-stage-bar__node--in_progress .compose-stage-bar__glyph {
+  background: var(--color-brand);
+  animation: compose-stage-pulse 2s ease-in-out infinite;
+}
+
+@keyframes compose-stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 32%, transparent); }
+  50% { box-shadow: 0 0 0 5px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compose-stage-bar__node--in_progress .compose-stage-bar__glyph {
+    animation: none;
+  }
+}
+
+/* 已完成：莫兰迪绿实心 + 勾；勾色取卡片底色，深浅色都有对比 */
+.compose-stage-bar__node--completed {
+  color: var(--text-secondary);
+}
+
+.compose-stage-bar__node--completed .compose-stage-bar__glyph {
+  background: var(--color-success);
+  color: var(--bg-card);
+}
+
+/* 已跳过：灰底 ⊘ */
+.compose-stage-bar__node--skipped .compose-stage-bar__glyph {
+  background: var(--bg-sand);
+  border: 1px solid var(--border-warm);
+  color: var(--text-muted);
+}
+
+.compose-stage-bar__menu-trigger {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.compose-stage-bar__menu-trigger:hover:not(:disabled) {
+  background: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.compose-stage-bar__menu-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 浮层背板：点击空白处收起菜单/表单 */
+.compose-stage-bar__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+
+.compose-stage-bar__menu,
+.compose-stage-bar__form {
+  position: absolute;
+  right: 16px;
+  top: calc(100% - 2px);
+  z-index: 31;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popup);
+}
+
+.compose-stage-bar__menu {
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+}
+
+.compose-stage-bar__menu-item {
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.compose-stage-bar__menu-item:hover:not(:disabled) {
+  background: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.compose-stage-bar__menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.compose-stage-bar__form {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.compose-stage-bar__form-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.compose-stage-bar__form-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.compose-stage-bar__form-target {
+  border: 1px solid var(--border-warm);
+  background: transparent;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.compose-stage-bar__form-target--selected {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  background: var(--color-brand-dim);
+}
+
+.compose-stage-bar__form-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 160ms ease;
+}
+
+.compose-stage-bar__form-input:focus {
+  border-color: var(--color-brand);
+}
+
+.compose-stage-bar__form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.compose-stage-bar__form-btn {
+  border: 1px solid var(--border-warm);
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.compose-stage-bar__form-btn:hover:not(:disabled) {
+  background: var(--bg-sand);
+}
+
+.compose-stage-bar__form-btn--primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
+
+.compose-stage-bar__form-btn--primary:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+}
+
+.compose-stage-bar__form-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.compose-stage-bar__error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-error);
+}
+
+/* 节点详情小面板 */
+.compose-stage-bar__detail {
+  margin-top: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.compose-stage-bar__detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.compose-stage-bar__detail-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.compose-stage-bar__detail-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.compose-stage-bar__detail-close:hover {
+  color: var(--text-primary);
+}
+
+.compose-stage-bar__detail-note {
+  margin: 0;
+}
+
+.compose-stage-bar__detail-time {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.compose-stage-bar__plan {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-cream);
+}
+
+.compose-stage-bar__plan-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.compose-stage-bar__plan-path {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.compose-stage-bar__plan-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.compose-stage-bar__plan-error {
+  color: var(--color-error);
+  font-size: 11px;
+}
+
+/* 开发节点展开的任务勾选明细：与计划产物区同一分隔语言 */
+.compose-stage-bar__todos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-cream);
+}

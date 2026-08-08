@@ -17,6 +17,7 @@ import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
+import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createStartWorkflowTool } from '../../../runtime/tools/startWorkflow'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
@@ -76,6 +77,7 @@ export function registerBuiltinTools(
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
+  toolRegistry.register(stageTransitionTool)
   toolRegistry.register(
     createStartWorkflowTool({
       getOrchestrator: deps.getWorkflowOrchestrator ?? (() => undefined),

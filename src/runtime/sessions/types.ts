@@ -9,11 +9,13 @@ import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   SessionKind,
   SubagentLineage,
+  SubagentModelSnapshot,
   SubagentProfileProjection,
   SubagentSessionListMetadata,
   SubagentSessionMetadata
 } from '../../shared/subagents'
 import type { TodoItem } from '../../shared/todo/types'
+import type { ComposeStageEntry, ComposePlanApproval } from '../../shared/composeLifecycle'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ChatMessage } from '../model/types'
 import type { ActivePlanRef } from '../plans'
@@ -37,6 +39,11 @@ interface SessionSummaryBase {
   messageCount: number
   title?: string
   titleSource?: SessionTitleSource
+  /**
+   * 会话级思考强度覆盖（与 SessionData.reasoningEffortOverride 同源）。
+   * 子代理投影读取父会话此项，保证显示与运行时一致。
+   */
+  reasoningEffortOverride?: ReasoningEffort
 }
 
 /** 普通会话列表项不携带 child metadata。 */
@@ -60,7 +67,10 @@ export type InternalSessionSummary =
   | (Omit<SubagentSessionSummary, 'subagent'> & {
       subagent: {
         lineage: SubagentLineage
-        profile: SubagentProfileProjection
+        profile: Omit<SubagentProfileProjection, 'model'> & {
+          /** profile 显式覆盖的模型（不进入对外 SubagentProfileProjection）。 */
+          readonly model?: SubagentModelSnapshot
+        }
       }
     })
 
@@ -96,6 +106,18 @@ interface SessionDataBase {
    * 旧会话没有此字段，反序列化后视为空数组。
    */
   todos?: TodoItem[]
+  /**
+   * compose 生命周期阶段表。
+   * 由 stage_transition 工具维护；旧会话无此字段时按原行为运行，不强制进入阶段流程。
+   */
+  composeStages?: ComposeStageEntry[]
+  /** 审查回退开发的循环计数（代码兜底上限，旧会话缺省视为 0） */
+  composeReviewLoops?: number
+  /**
+   * 计划阶段的确认门状态。缺省视为 pending——批准前 stage_transition
+   * 无法把「计划」阶段 complete 掉。save_plan 每次成功写入都会重置为 pending。
+   */
+  composePlanApproval?: ComposePlanApproval
   /** 侧边栏展示的会话标题 */
   title?: string
   /** 标题来源，用于覆盖保护（manual 后不再被自动逻辑改写） */

@@ -4,7 +4,12 @@
  */
 import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
 import type { ModelConfig, LlmRegistry } from '../config'
-import type { DiffEntry, DiffReviewStatus, MessageDiffsState } from '../diff'
+import type {
+  DiffEntry,
+  DiffReviewStatus,
+  MessageDiffsState,
+  SessionMessageDiffsState
+} from '../diff'
 import type { NormalizedUsage } from '../model/types'
 import type { HookEvent } from '../agent/types'
 import type {
@@ -14,6 +19,7 @@ import type {
 } from '../workflow/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
+import type { ComposePlanApproval, ComposeStageAction, ComposeStageEntry } from '../composeLifecycle'
 import type {
   SkillSummary,
   SkillCreateInput,
@@ -212,6 +218,10 @@ export interface IpcCommands {
     params: { sessionId: string; messageId: string }
     result: MessageDiffsState
   }
+  'get-session-diffs': {
+    params: { sessionId: string }
+    result: SessionMessageDiffsState
+  }
   'reject-file': {
     params: { sessionId: string; messageId: string; filePath: string }
     result: void
@@ -400,6 +410,18 @@ export interface IpcCommands {
   'workspace:read-active-plan': {
     params: ReadActivePlanParams
     result: ActivePlanDocument | null
+  }
+  'workspace:open-active-plan': {
+    params: { sessionId: string }
+    result: void
+  }
+  'compose:apply-stage-transition': {
+    params: { sessionId: string; action: ComposeStageAction }
+    result: { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string }
+  }
+  'compose:approve-plan': {
+    params: { sessionId: string }
+    result: { ok: true; approval: ComposePlanApproval } | { ok: false; error: string }
   }
   'workspace:regenerate': {
     params: { sessionId: string; messageId: string }
@@ -609,6 +631,14 @@ export interface IpcEvents {
     sessionId: string
     todos: TodoItem[]
     view: TodoViewInfo
+  }
+  'agent:compose-stages-updated': {
+    sessionId: string
+    stages: ComposeStageEntry[]
+  }
+  'agent:compose-plan-approval-updated': {
+    sessionId: string
+    approval: ComposePlanApproval
   }
   'agent:error': {
     messageId: string

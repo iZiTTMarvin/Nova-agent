@@ -44,6 +44,7 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'askQuestion',
   'save_plan',
   'switch_mode',
+  'stage_transition',
   'load_tools'
 ])
 

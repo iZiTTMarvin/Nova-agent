@@ -104,7 +104,8 @@ describe('import boundary module resolution', () => {
     'src/renderer/c.tsx',
     'src/renderer/styles.css',
     'src/renderer/styles/theme.js',
-    'src/runtime/config.json'
+    'src/runtime/config.json',
+    'src/runtime/guide.md'
   ])
   const exists = virtualExists(files)
 
@@ -161,6 +162,13 @@ describe('import boundary module resolution', () => {
       exists
     })
     expectOnlyRule(crossLayer.violations, layerCannotImportRule('shared', 'renderer'))
+  })
+
+  it('Vite 查询后缀（?raw 等）剥离后解析到底层真实文件', () => {
+    expect(resolveModuleSpecifier('src/shared/a.ts', '../runtime/guide.md?raw', exists)).toEqual({
+      kind: 'resolved',
+      path: 'src/runtime/guide.md'
+    })
   })
 })
 

@@ -267,6 +267,8 @@ export async function sendAgentMessage(
         sessionStore.ensureCacheRoutingKey(input.childSession.id) ?? undefined
       const childPrepared = prepareSubagentRuntime({
         ...input,
+        // 子代理继承父会话思考强度覆盖，保证投影显示与实际运行一致
+        reasoningEffort: session.reasoningEffortOverride,
         modelClient,
         resolveTool: (name) => prepared.toolRegistry.getTool(name),
         sessionStore,

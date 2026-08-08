@@ -8,7 +8,7 @@ import type { SubAgentSpec } from '../../../shared/settings/types'
 
 export type { SubAgentSpec }
 
-/** 内置 explore / code 子代理 */
+/** 内置 explore / code / review 子代理 */
 export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     name: 'explore',
@@ -25,6 +25,15 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     prompt: `你是一个受限编程助手。在指定工作区内读、写、执行命令完成任务。
 写操作遵守安全边界。完成后返回结构化摘要（改了什么、关键结论）。`,
     maxToolRounds: 30
+  },
+  {
+    name: 'review',
+    description: '独立审查：只读检查改动的正确性、范围、架构边界与安全，产出 markdown 审查报告。',
+    allowedTools: ['ls', 'read', 'grep', 'find'],
+    prompt: `你是独立代码审查助手。你不修改任何文件。
+根据父 agent 提供的 brief（需求背景、计划位置、改动清单、验证证据）独立审查：正确性、是否严守范围、架构边界与依赖方向、安全与可维护性。
+产出 markdown 审查报告：总体结论（通过/不通过）、按严重度分级的问题清单（每条含文件位置与理由）、改进建议。`,
+    maxToolRounds: 20
   }
 ]
 

@@ -14,6 +14,17 @@ describe('SubAgentConfig', () => {
     expect(spec?.allowedTools).toContain('bash')
   })
 
+  it('内置 review 子代理为只读审查 profile', () => {
+    const spec = getSubAgentSpec('review')
+    expect(spec?.description).toContain('审查')
+    expect(spec?.allowedTools).toEqual(['ls', 'read', 'grep', 'find'])
+    expect(spec?.allowedTools.some(t => t === 'edit' || t === 'write' || t === 'bash')).toBe(false)
+    expect(spec?.maxToolRounds).toBe(20)
+    expect(spec?.prompt).toBeTruthy()
+    expect(spec?.prompt).toMatch(/审查/)
+    expect(spec?.prompt).toContain('不修改任何文件')
+  })
+
   it('未知类型返回 undefined', () => {
     expect(getSubAgentSpec('unknown')).toBeUndefined()
   })
@@ -22,9 +33,10 @@ describe('SubAgentConfig', () => {
     const names = listSubAgents().map(s => s.name)
     expect(names).toContain('explore')
     expect(names).toContain('code')
+    expect(names).toContain('review')
   })
 
-  it('BUILTIN_SUBAGENTS 至少 2 个', () => {
-    expect(BUILTIN_SUBAGENTS.length).toBeGreaterThanOrEqual(2)
+  it('BUILTIN_SUBAGENTS 至少 3 个', () => {
+    expect(BUILTIN_SUBAGENTS.length).toBeGreaterThanOrEqual(3)
   })
 })

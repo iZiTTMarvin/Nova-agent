@@ -34,3 +34,12 @@ export interface MessageDiffsState {
   /** 因过大等原因未生成 snapshot 的文件 */
   skippedFiles: SkippedFileInfo[]
 }
+
+/**
+ * 会话级 diff 状态：跨消息合并后的净变化。
+ * messageIdByFile 记录每个文件最早出现（或备份实际可用）的 messageId，
+ * 供 accept/reject 路由到正确的消息级 checkpoint。
+ */
+export interface SessionMessageDiffsState extends MessageDiffsState {
+  messageIdByFile: Record<string, string>
+}

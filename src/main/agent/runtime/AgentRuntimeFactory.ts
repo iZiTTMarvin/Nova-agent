@@ -17,7 +17,6 @@ import {
 import { projectEffectiveToolDefinitions } from '../../../runtime/agent/core/AgentContext'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
-import { buildRouterContext, renderRouterContext } from '../../../runtime/workflow'
 import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
 import { preferredToolDialect } from '../../../runtime/model/dialect'
@@ -56,6 +55,10 @@ import { getWorkflowOrchestrator } from '../../services/WorkflowOrchestratorHost
 import { activeStreams } from '../events'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
+import {
+  createComposeModeInstructionProvider,
+  createComposeStageToolPolicy
+} from './composeStageWiring'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
@@ -268,13 +271,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     { dialect: toolDialect }
   )
 
-  const modeInstruction = session.mode === 'compose'
-    ? renderRouterContext(buildRouterContext({
-        workspaceRoot: projectPath,
-        activePlan: session.activePlan
-      }))
-    : ''
-
   const frozenPrompt = buildStableSystemPrompt({
     workingDir: projectPath
   })
@@ -286,7 +282,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       projectRules,
       memoryContext,
       skillContext,
-      modeInstruction,
       toolSummary
     },
     skillsTokenEstimate,
@@ -315,6 +310,14 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setPermissionManager(permissionManager)
   agentLoop.setMode(session.mode)
   agentLoop.setAutoMode(autoMode)
+  // compose：模式指令与阶段指南挂 user 消息尾部（每轮实时读取阶段表），
+  // 阶段工具门禁作为 overlay 在基础权限判定之前生效
+  if (session.mode === 'compose') {
+    agentLoop.setModeInstructionProvider(
+      createComposeModeInstructionProvider(sessionStore, sessionId, autoMode)
+    )
+    agentLoop.setToolAuthorizationPolicy(createComposeStageToolPolicy(sessionStore, sessionId))
+  }
   agentLoop.restoreSkillRoots(session.grantedSkillRoots)
   agentLoop.setOnSkillRootAdded((dir) => {
     sessionStore.addGrantedSkillRoot(sessionId, dir)

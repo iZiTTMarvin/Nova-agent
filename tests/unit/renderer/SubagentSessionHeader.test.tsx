@@ -70,9 +70,14 @@ describe('SubagentSessionHeader', () => {
     expect(output).toContain('inspect the durable session history')
     expect(output).toContain('只读')
 
+    const backButton = Array.from(renderer.container.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('返回父任务'))
+    const stopButton = renderer.container.querySelector<HTMLButtonElement>('button[aria-label="停止子代理 Explore"]')
+    expect(backButton).toBeDefined()
+    expect(stopButton).not.toBeNull()
     act(() => {
-      renderer.container.querySelector<HTMLButtonElement>('button[aria-label="返回父任务"]')?.click()
-      renderer.container.querySelector<HTMLButtonElement>('button[aria-label="停止子代理 Explore"]')?.click()
+      backButton!.click()
+      stopButton!.click()
     })
     expect(selectSession).toHaveBeenCalledWith('parent-session')
     expect(cancelExecution).toHaveBeenCalledWith('child-run')

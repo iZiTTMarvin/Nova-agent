@@ -55,7 +55,7 @@ describe('task tool spawn adapter', () => {
     expect(tool.parameters).toEqual({
       type: 'object',
       properties: {
-        subagent_type: { type: 'string', description: '子代理类型，如 explore / code' },
+        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review' },
         task: { type: 'string', description: '子任务描述' }
       },
       required: ['subagent_type', 'task']

@@ -34,6 +34,10 @@ describe('toolVisibility', () => {
       expect(getToolCapability('todo_write')).toBe('readonly')
     })
 
+    it('stage_transition 归为 readonly（会话级元数据，不动文件系统）', () => {
+      expect(getToolCapability('stage_transition')).toBe('readonly')
+    })
+
     it('askQuestion 归为 readonly（用户交互工具，无副作用，所有模式放行且 plan 可见）', () => {
       // 回归保护：曾因未分类落到 unknown→被权限层当 bash 处理，default 模式误弹"执行前确认"
       expect(getToolCapability('askQuestion')).toBe('readonly')
@@ -62,6 +66,23 @@ describe('toolVisibility', () => {
       expect(isToolVisibleInMode('default', 'start_workflow')).toBe(false)
       expect(isToolVisibleInMode('compose', 'start_workflow')).toBe(true)
       expect(isToolVisibleInMode('plan', 'start_workflow')).toBe(false)
+    })
+
+    it('stage_transition 仅 compose 可见', () => {
+      expect(isToolVisibleInMode('compose', 'stage_transition')).toBe(true)
+      expect(isToolVisibleInMode('default', 'stage_transition')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'stage_transition')).toBe(false)
+    })
+
+    it('getModeVisibleTools 过滤掉非 compose 下的 stage_transition', () => {
+      const tools = ['read', 'stage_transition', 'write'].map(name => ({ name }))
+      expect(getModeVisibleTools('compose', tools).map(t => t.name)).toEqual([
+        'read',
+        'stage_transition',
+        'write'
+      ])
+      expect(getModeVisibleTools('default', tools).map(t => t.name)).toEqual(['read', 'write'])
+      expect(getModeVisibleTools('plan', tools).map(t => t.name)).toEqual(['read'])
     })
 
     it('plan 模式下 todo_write 可见', () => {

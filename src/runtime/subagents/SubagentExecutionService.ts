@@ -25,6 +25,7 @@ import type {
 import { isTerminalRunStatus, type RunSnapshot } from '../../shared/run/types'
 import type { ToolInvocationRef } from '../tools/types'
 import type { Mode } from '../../shared/session'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
 import {
   applyHostArchiveReadCapability,
@@ -45,6 +46,8 @@ export interface PrepareSubagentTurnInput {
   readonly childSession: SubagentSessionData
   readonly parentRunId: string
   readonly rootRunId: string
+  /** 父会话思考强度覆盖；由宿主从父会话读取，与主会话同一传法。 */
+  readonly reasoningEffort?: ReasoningEffort
 }
 
 export interface PreparedSubagentTurn {

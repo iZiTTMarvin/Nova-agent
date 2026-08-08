@@ -26,6 +26,12 @@ import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
 import { PlanReviewCard } from './PlanReviewCard'
 import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
+import { getComposeStageCursor, createInitialStageTable } from '../../../shared/composeLifecycle'
+import {
+  selectSessionComposePlanApproval,
+  selectSessionComposeStages,
+  useComposeStageStore
+} from '../compose/useComposeStageStore'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock, MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
@@ -325,6 +331,16 @@ function MessageItemInner({
     [isAssistant, msg.blocks]
   )
 
+  // compose 模式的计划确认门：阶段 id 与批准状态都来自阶段条共用的同一份缓存
+  const composeStages = useComposeStageStore(state => selectSessionComposeStages(state, currentSessionId))
+  const composePlanApproval = useComposeStageStore(state =>
+    selectSessionComposePlanApproval(state, currentSessionId)
+  )
+  const composeStageId =
+    currentMode === 'compose'
+      ? getComposeStageCursor(composeStages ?? createInitialStageTable()).currentStageId
+      : null
+
   const unitRenderCtx = {
     msg,
     isTurnActiveForThisMsg,
@@ -443,6 +459,8 @@ function MessageItemInner({
                 args={savedPlanBlock.arguments}
                 result={savedPlanBlock.result}
                 turnActive={isTurnActiveForThisMsg}
+                composeStageId={composeStageId}
+                composePlanApproval={composePlanApproval}
               />
             )}
           </>

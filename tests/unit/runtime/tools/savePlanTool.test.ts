@@ -128,6 +128,71 @@ describe('save_plan', () => {
     expect(fs.readFileSync(outsideLink, 'utf8')).toBe('# original\n')
   })
 
+  it('compose 模式下计划阶段重新保存计划会清空已有批准，逼用户重新走确认门', async () => {
+    const composeSessionId = store.create(workspace, 'compose').id
+    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 构思 → 计划
+    store.approveComposePlan(composeSessionId, { auto: false })
+    expect(store.getComposePlanApproval(composeSessionId)).toMatchObject({ status: 'approved' })
+
+    await savePlanTool.execute(
+      { title: '修订计划', content: '# v2' },
+      { ...context(), sessionId: composeSessionId }
+    )
+
+    expect(store.getComposePlanApproval(composeSessionId)).toEqual({ status: 'pending' })
+  })
+
+  it('compose 模式下开发阶段修订计划同样清空批准，回退计划阶段后必须重新获批', async () => {
+    const composeSessionId = store.create(workspace, 'compose').id
+    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 构思 → 计划
+    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 计划 → 开发
+    store.approveComposePlan(composeSessionId, { auto: false })
+
+    await savePlanTool.execute(
+      { title: '开发中修订计划', content: '# v3' },
+      { ...context(), sessionId: composeSessionId }
+    )
+
+    expect(store.getComposePlanApproval(composeSessionId)).toEqual({ status: 'pending' })
+  })
+
+  it('compose 模式重新保存清空已有批准时推送确认门事件，renderer 得以同步回 pending', async () => {
+    const composeSessionId = store.create(workspace, 'compose').id
+    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 构思 → 计划
+    store.approveComposePlan(composeSessionId, { auto: false })
+    const events: unknown[] = []
+
+    await savePlanTool.execute(
+      { title: '修订计划', content: '# v2' },
+      { ...context(), sessionId: composeSessionId, eventBus: { emit: (e: unknown) => events.push(e) } as never }
+    )
+
+    expect(events).toEqual([
+      {
+        type: 'compose_plan_approval_updated',
+        sessionId: composeSessionId,
+        approval: { status: 'pending' }
+      }
+    ])
+  })
+
+  it('compose 模式保存时本就未批准，不重复推送确认门事件', async () => {
+    const composeSessionId = store.create(workspace, 'compose').id
+    const events: unknown[] = []
+
+    await savePlanTool.execute(
+      { title: '初版计划', content: '# v1' },
+      { ...context(), sessionId: composeSessionId, eventBus: { emit: (e: unknown) => events.push(e) } as never }
+    )
+
+    expect(events).toEqual([])
+  })
+
+  it('非 compose 模式保存计划不触碰计划确认门', async () => {
+    await savePlanTool.execute({ title: 'Plan Mode', content: '# v1' }, context())
+    expect(store.getComposePlanApproval(sessionId)).toEqual({ status: 'pending' })
+  })
+
   it('文件名清理非法字符、控制长度并为纯标点标题提供回退名', () => {
     expect(toReadablePlanFilenamePart('  Plan: Auth / OAuth?  ')).toBe('Plan-Auth-OAuth')
     expect(toReadablePlanFilenamePart('***')).toBe('implementation-plan')

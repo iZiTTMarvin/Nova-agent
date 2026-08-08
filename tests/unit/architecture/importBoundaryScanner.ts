@@ -152,7 +152,9 @@ function getImportTypeLiteral(node: ts.ImportTypeNode): string | null {
 }
 
 export function normalizeSpecifier(specifier: string): string {
-  return specifier.replace(/\\/g, '/')
+  // Vite 查询后缀（?raw / ?url 等）不改变目标文件，解析前剥离，
+  // 否则 `./guide.md?raw` 会被当作未知扩展名报 unresolved。
+  return specifier.replace(/\\/g, '/').replace(/\?.*$/, '')
 }
 
 export function isAssetSpecifier(specifier: string): boolean {
