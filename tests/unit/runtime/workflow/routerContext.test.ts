@@ -31,34 +31,28 @@ describe('workflow router context', () => {
     expect(context.hasActivePlan).toBe(true)
     expect(context.planPath).toBe('.nova/plans/login.md')
     expect(context.planSummary).toContain('# 登录计划')
-    expect(context.availableWorkflows.map(workflow => workflow.name)).toContain('compose')
+    expect(context.availableWorkflows.map(workflow => workflow.name)).toEqual(['compose'])
     expect(renderRouterContext(context)).toContain('start_workflow')
   })
 
-  it('注册表里的三条 workflow 及其匹配信号都进入路由提示', () => {
+  it('注册表只保留 compose，调研与审查改由 skill 入口提示', () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'nova-router-context-'))
     roots.push(workspaceRoot)
 
     const context = buildRouterContext({ workspaceRoot })
-    expect(context.availableWorkflows.map(workflow => workflow.name)).toEqual([
-      'compose',
-      'deep-research',
-      'code-review'
-    ])
+    expect(context.availableWorkflows.map(workflow => workflow.name)).toEqual(['compose'])
 
-    // 起始阶段必须如实反映各 workflow 声明的入口，否则模型会传入 orchestrator 会拒绝的 startStage
     const byName = new Map(context.availableWorkflows.map(workflow => [workflow.name, workflow]))
-    expect(byName.get('deep-research')?.stages).toEqual(['brief'])
-    expect(byName.get('code-review')?.stages).toEqual(['review'])
+    expect(byName.get('compose')?.stages.length).toBeGreaterThan(0)
+    expect(byName.get('compose')?.matchHints.length).toBeGreaterThan(0)
 
-    // matchHints 是模型区分三类请求的唯一细粒度信号，必须被渲染而不是停在类型里
     const rendered = renderRouterContext(context)
-    for (const workflow of context.availableWorkflows) {
-      expect(workflow.matchHints.length).toBeGreaterThan(0)
-      for (const hint of workflow.matchHints) expect(rendered).toContain(hint)
+    for (const hint of byName.get('compose')!.matchHints) {
+      expect(rendered).toContain(hint)
     }
-    expect(rendered).toContain('deep-research')
-    expect(rendered).toContain('code-review')
+    expect(rendered).toContain('invoke_skill')
+    expect(rendered).toContain('/deep-research')
+    expect(rendered).toContain('/code-review')
   })
 
   it('active plan 不可读取时不伪造计划上下文', () => {
@@ -75,4 +69,3 @@ describe('workflow router context', () => {
     expect(context.planSummary).toBeNull()
   })
 })
-

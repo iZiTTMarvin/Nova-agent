@@ -5,6 +5,11 @@ import { join } from 'path'
 import { SkillLoader } from '../../../../src/runtime/skills/SkillLoader'
 import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { invokeSkill } from '../../../../src/runtime/skills/invokeSkill'
+import { listWorkflowMetadata } from '../../../../src/runtime/workflow/definitions'
+import {
+  buildRouterContext,
+  renderRouterContext
+} from '../../../../src/runtime/workflow/router'
 
 const builtinSkillsDir = join(process.cwd(), '.nova', 'skills')
 
@@ -34,8 +39,10 @@ describe('deep-research / code-review 内置 skill', () => {
       expect(skill!.userInvocable).toBe(true)
       expect(skill!.modelInvocable).toBe(true)
       expect(skill!.hidden).toBeFalsy()
-      expect(skill!.description.trim().length).toBeGreaterThan(0)
     }
+
+    expect(loader.get('deep-research')!.description).toMatch(/调研|检索|结论/)
+    expect(loader.get('code-review')!.description).toMatch(/审查|改动|git/)
 
     const userNames = loader.listUserInvocable().map((s) => s.name)
     const modelNames = loader.listForContext().map((s) => s.name)
@@ -49,25 +56,41 @@ describe('deep-research / code-review 内置 skill', () => {
       globalDir: join(builtinSkillsDir, '__no-global__')
     })
 
-    for (const name of ['deep-research', 'code-review'] as const) {
-      const result = invokeSkill({
-        input: `/${name} 示例请求`,
-        registry,
-        templateContext: { workspacePath: 'D:/ws' }
-      })
-      expect(result.kind).toBe('inject')
-      if (result.kind !== 'inject') return
-      expect(result.assistantContent.length).toBeGreaterThan(100)
-      expect(result.assistantContent).toContain('D:/ws')
-      expect(result.userContent).toContain('请按上述')
-      expect(result.userContent).toContain('示例请求')
-      expect(result.skillDirectory).toContain(name)
+    const deep = invokeSkill({
+      input: '/deep-research 对比向量数据库选型',
+      registry,
+      templateContext: { workspacePath: 'D:/ws' }
+    })
+    expect(deep.kind).toBe('inject')
+    if (deep.kind === 'inject') {
+      expect(deep.assistantContent).toContain('D:/ws')
+      expect(deep.assistantContent).toContain('brief')
+      expect(deep.assistantContent).toContain('task')
+      expect(deep.assistantContent).toContain('.nova/reports')
+      expect(deep.userContent).toContain('请按上述')
+      expect(deep.userContent).toContain('对比向量数据库选型')
+      expect(deep.skillDirectory).toContain('deep-research')
+    }
+
+    const review = invokeSkill({
+      input: '/code-review 关注权限边界',
+      registry,
+      templateContext: { workspacePath: 'D:/ws' }
+    })
+    expect(review.kind).toBe('inject')
+    if (review.kind === 'inject') {
+      expect(review.assistantContent).toContain('D:/ws')
+      expect(review.assistantContent).toContain('git')
+      expect(review.assistantContent).toContain('verdict')
+      expect(review.assistantContent).toContain('.nova/reports')
+      expect(review.userContent).toContain('关注权限边界')
+      expect(review.skillDirectory).toContain('code-review')
     }
   })
 
   it('deep-research 指南覆盖规划、并行检索、汇总、复核与落盘语义', () => {
     const body = skillBody('deep-research')
-    const required = [
+    for (const token of [
       'brief',
       'research',
       'synthesize',
@@ -78,15 +101,14 @@ describe('deep-research / code-review 内置 skill', () => {
       '来源',
       '不修改',
       '.nova/reports'
-    ]
-    for (const token of required) {
+    ]) {
       expect(body, `deep-research 缺少语义：${token}`).toContain(token)
     }
   })
 
   it('code-review 指南覆盖范围收集、只读审查、报告组织与落盘语义', () => {
     const body = skillBody('code-review')
-    const required = [
+    for (const token of [
       'git',
       'diff',
       '只读',
@@ -97,9 +119,21 @@ describe('deep-research / code-review 内置 skill', () => {
       'findings',
       '不修改',
       '.nova/reports'
-    ]
-    for (const token of required) {
+    ]) {
       expect(body, `code-review 缺少语义：${token}`).toContain(token)
     }
+  })
+
+  it('workflow 注册表不再挂载二者，路由改指向 skill', () => {
+    const names = listWorkflowMetadata().map((workflow) => workflow.name)
+    expect(names).not.toContain('deep-research')
+    expect(names).not.toContain('code-review')
+    expect(names).toContain('compose')
+
+    const rendered = renderRouterContext(buildRouterContext({ workspaceRoot: process.cwd() }))
+    expect(rendered).toContain('invoke_skill')
+    expect(rendered).toContain('/deep-research')
+    expect(rendered).toContain('/code-review')
+    expect(rendered).not.toMatch(/查资料给结论走 deep-research/)
   })
 })

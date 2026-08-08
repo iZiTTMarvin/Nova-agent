@@ -6,14 +6,12 @@
  */
 import type { WorkflowDefinition } from './types'
 import { composeWorkflow } from './compose'
-import { deepResearchWorkflow } from './deep-research'
-import { codeReviewWorkflow } from './code-review'
 
 /**
  * 注入 system prompt 的 workflow 元数据。
  *
- * matchHints 必须在这里出现：模型是靠它区分"改代码"、"查资料"和"审代码"三类请求的，
- * 只给 description 会让语义相近的 workflow 难以分辨。
+ * deep-research / code-review 由内置 skill 承担，不在本注册表。
+ * 仍注册的 workflow 须带 matchHints，供模型区分适用场景。
  */
 export interface WorkflowDefinitionMetadata {
   name: string
@@ -23,11 +21,7 @@ export interface WorkflowDefinitionMetadata {
   stages: string[]
 }
 
-const definitions: readonly WorkflowDefinition[] = [
-  composeWorkflow,
-  deepResearchWorkflow,
-  codeReviewWorkflow
-]
+const definitions: readonly WorkflowDefinition[] = [composeWorkflow]
 
 export function resolveWorkflowDefinition(name: string): WorkflowDefinition | undefined {
   return definitions.find(definition => definition.name === name)
