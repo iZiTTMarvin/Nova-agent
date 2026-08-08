@@ -133,8 +133,10 @@ describe('Sidebar 子代理会话退出列表', () => {
     const renderer = renderDom(<SubagentActivityRow projection={projection} />)
     const output = renderer.container.textContent ?? ''
     expect(useChatStore.getState().sessions.some((session) => session.kind === 'subagent')).toBe(true)
-    expect(output).toContain('Inspect runtime boundaries')
+    // 紧凑行展示 profile 名与运行态，不再把 taskLabel 放在主行
+    expect(output).toContain('Explore')
     expect(output).toContain('正在工作')
+    expect(renderer.container.querySelector('.subagent-activity-row--running')).not.toBeNull()
     renderer.unmount()
   })
 })
