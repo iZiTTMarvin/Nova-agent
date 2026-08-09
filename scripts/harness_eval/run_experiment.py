@@ -20,6 +20,13 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+try:
+    from scripts.harness_eval.harbor_egress import ensure_harbor_egress_compatibility
+except ModuleNotFoundError as error:
+    if error.name != "scripts":
+        raise
+    from harbor_egress import ensure_harbor_egress_compatibility
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path(__file__).with_name("experiment.json")
@@ -27,6 +34,7 @@ HARNESS_SOURCE_FILES = (
     "scripts/harness_eval/run_experiment.py",
     "scripts/harness_eval/nova_agent.py",
     "scripts/harness_eval/install_network.py",
+    "scripts/harness_eval/harbor_egress.py",
     "scripts/harness_eval/report.py",
     "scripts/harness_eval/experiment.json",
 )
@@ -318,6 +326,7 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if config.get("task_attempts") != 1:
         raise RuntimeError("paired pass@1 requires task_attempts=1")
     validate_execution_shape(config)
+    harbor_egress_policy = ensure_harbor_egress_compatibility()
     paths.run.mkdir(parents=True, exist_ok=True)
     if not paths.dataset.exists():
         paths.dataset.parent.mkdir(parents=True, exist_ok=True)
@@ -380,6 +389,7 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         "harness_sha256": {
             relative: file_sha256(ROOT / relative) for relative in HARNESS_SOURCE_FILES
         },
+        "harbor_egress_policy": harbor_egress_policy,
         "versions": {
             "python": sys.version.split()[0],
             "node": command_version(["node", "--version"]),
@@ -414,6 +424,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Execution order: `{config['task_order']}`；只改变运行先后，不改变题目、预算或判分。
 - Agent setup timeout × {config['agent_setup_timeout_multiplier']}；只作用于 harness 安装，不改变解题时间。
 - Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型请求使用容器代理 `{config['install_network']['proxy_url']}`。
+- Network isolation: Harbor no-network sidecar 使用 loopback-only 本地豁免，policy SHA256 `{config['harbor_egress_policy']['policy_sha256']}`。
 - Concurrency: {config['pair_concurrency']} task cell；arms_parallel={str(config['arms_parallel']).lower()}。多臂模式按题号轮换顺序。
 - Retry: 模型失败、任务超时、budget exhaustion 不重试；只对预注册的 infrastructure-invalid cell 最多重试 {config['infra_retry_limit']} 次，保留全部 admission。
 - Verifier: 仅以官方 verifier reward 判定 pass/fail。
@@ -1110,6 +1121,12 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
         prepare(config, paths)
     frozen = read_json(frozen_path)
     config = frozen
+    harbor_egress_policy = ensure_harbor_egress_compatibility()
+    if (
+        harbor_egress_policy["policy_sha256"]
+        != frozen["harbor_egress_policy"]["policy_sha256"]
+    ):
+        raise RuntimeError("Harbor egress policy changed after setup was frozen")
     bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
     prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
     if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != frozen["nova_bundle_sha256"]:

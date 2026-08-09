@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from scripts.harness_eval.report import exact_mcnemar_p, generate
 from scripts.harness_eval.install_network import prepare_command, proxy_environment
+from scripts.harness_eval.harbor_egress import apply_loopback_only_local_exemption
 from scripts.harness_eval.run_experiment import (
     CSV_FIELDS,
     Paths,
@@ -37,6 +38,25 @@ from scripts.harness_eval.run_experiment import (
 
 
 class HarnessEvalTests(unittest.TestCase):
+    def test_harbor_egress_compatibility_is_stricter_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "network-policy"
+            policy.write_bytes(
+                b"meta mark 1 return\n"
+                b"    fib daddr type local return\n"
+                b"meta mark 1 accept\n"
+                b"    fib daddr type local accept\n"
+                b"meta l4proto != tcp reject\n"
+            )
+
+            self.assertTrue(apply_loopback_only_local_exemption(policy))
+            patched = policy.read_text(encoding="utf-8")
+            self.assertNotIn("fib daddr", patched)
+            self.assertIn("ip daddr 127.0.0.0/8 return", patched)
+            self.assertIn("ip6 daddr ::1 accept", patched)
+            self.assertIn("meta l4proto != tcp reject", patched)
+            self.assertFalse(apply_loopback_only_local_exemption(policy))
+
     def test_single_agent_tasks_allow_bounded_parallelism(self) -> None:
         config = {
             "pair_concurrency": 2,
@@ -97,6 +117,7 @@ class HarnessEvalTests(unittest.TestCase):
                 "nova_bundle_sha256": hashlib.sha256(b"bundle").hexdigest(),
                 "nova_prompt_sha256": hashlib.sha256(b"prompt").hexdigest(),
                 "harness_sha256": {},
+                "harbor_egress_policy": {"policy_sha256": "fixture-policy"},
                 "node_runtime": {
                     "archive_path": str(node_archive),
                     "archive_sha256": hashlib.sha256(b"node").hexdigest(),
@@ -146,6 +167,10 @@ class HarnessEvalTests(unittest.TestCase):
             with (
                 patch("scripts.harness_eval.run_experiment.ROOT", source),
                 patch("scripts.harness_eval.run_experiment.ensure_preflight"),
+                patch(
+                    "scripts.harness_eval.run_experiment.ensure_harbor_egress_compatibility",
+                    return_value={"policy_sha256": "fixture-policy"},
+                ),
                 patch(
                     "scripts.harness_eval.run_experiment.run_cell_admissions",
                     side_effect=fake_run_cell_admissions,
