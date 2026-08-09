@@ -7,6 +7,7 @@ import {
   ACTIVE_TOOL_RESULT_MAX_TOKENS,
   isArchivedPlaceholder,
   buildArchiveContentPreview,
+  createRequestProjectionArchiveCache,
   resolveRequestProjectionPolicy,
   DISABLED_PRUNE_POLICY,
   type ArchivedToolResultPlaceholder
@@ -24,6 +25,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(isArchivedPlaceholder(result.messages[0].content as string)).toBe(true)
@@ -39,6 +41,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 0,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(result.messages).toEqual(messages)
@@ -54,6 +57,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     expect(result.messages[0].content).toBe(messages[0].content)
@@ -61,22 +65,31 @@ describe('projectRequestMessages archiving', () => {
     expect(result.diagnostics.prunedCount).toBe(0)
   })
 
-  it('连续两次投影结果一致（幂等）', async () => {
+  it('同一 turn 重投影权威原文时复用稳定占位符', async () => {
     const messages: ChatMessage[] = [
       { role: 'tool', content: 'x'.repeat(18 * 1024), toolCallId: 'tc1' }
     ]
     let archiveCallCount = 0
+    const archiveCache = createRequestProjectionArchiveCache()
     const first = await projectRequestMessages({
       messages,
       toolRound: 1,
       policy: { enabled: true },
-      archive: async () => { archiveCallCount++; return { artifactId: 'art1' } }
+      archiveCache,
+      archive: async () => {
+        archiveCallCount++
+        return { artifactId: `art${archiveCallCount}` }
+      }
     })
     const second = await projectRequestMessages({
-      messages: first.messages,
-      toolRound: 1,
+      messages,
+      toolRound: 2,
       policy: { enabled: true },
-      archive: async () => { archiveCallCount++; return { artifactId: 'art1' } }
+      archiveCache,
+      archive: async () => {
+        archiveCallCount++
+        return { artifactId: `art${archiveCallCount}` }
+      }
     })
     expect(second.messages).toEqual(first.messages)
     expect(archiveCallCount).toBe(1)
@@ -90,6 +103,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(result.messages[0].content).toBe('x'.repeat(100))
@@ -106,6 +120,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     const parsed = JSON.parse(result.messages[0].content as string) as ArchivedToolResultPlaceholder
@@ -146,6 +161,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: resolveRequestProjectionPolicy(false),
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => {
         archiveCalls++
         return { artifactId: 'art1' }
@@ -166,6 +182,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(result.messages[0]).toEqual(messages[0])

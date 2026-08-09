@@ -5,7 +5,10 @@
  * 归档逻辑启用后，这些测试仍然成立。
  */
 import { describe, it, expect } from 'vitest'
-import { projectRequestMessages } from '../../../../src/runtime/agent/core/projectRequestMessages'
+import {
+  createRequestProjectionArchiveCache,
+  projectRequestMessages
+} from '../../../../src/runtime/agent/core/projectRequestMessages'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 
 describe('projectRequestMessages', () => {
@@ -19,6 +22,7 @@ describe('projectRequestMessages', () => {
       messages,
       toolRound: 1,
       policy: { enabled: false },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     expect(result.messages).toEqual(messages)
@@ -34,6 +38,7 @@ describe('projectRequestMessages', () => {
       messages,
       toolRound: 1,
       policy: { enabled: false },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     expect(JSON.parse(JSON.stringify(messages))).toEqual(snapshot)
@@ -47,12 +52,14 @@ describe('projectRequestMessages', () => {
       messages,
       toolRound: 1,
       policy: { enabled: false },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     const second = await projectRequestMessages({
       messages: first.messages,
       toolRound: 1,
       policy: { enabled: false },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     expect(second.messages).toEqual(first.messages)
@@ -64,6 +71,7 @@ describe('projectRequestMessages', () => {
       messages: [{ role: 'user', content: 'hi' }],
       toolRound: 1,
       policy: { enabled: false },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => { called = true; return null }
     })
     expect(called).toBe(false)

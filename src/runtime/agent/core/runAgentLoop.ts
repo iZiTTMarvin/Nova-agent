@@ -16,7 +16,11 @@ import { getEffectiveToolDefinitions } from './AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
-import { projectRequestMessages, DISABLED_PRUNE_POLICY } from './projectRequestMessages'
+import {
+  createRequestProjectionArchiveCache,
+  projectRequestMessages,
+  DISABLED_PRUNE_POLICY
+} from './projectRequestMessages'
 import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
@@ -97,6 +101,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   let toolRound = 0
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
+  const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
 
   try {
     while (toolRound < config.maxToolRounds) {
@@ -160,6 +165,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         messages: chatMessages,
         toolRound,
         policy: config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY,
+        archiveCache: requestProjectionArchiveCache,
         archive: async (candidate) => {
           if (!context.artifactStore || !context.sessionId) return null
           try {
