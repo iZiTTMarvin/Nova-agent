@@ -14,6 +14,7 @@ from scripts.harness_eval.run_experiment import (
     CSV_FIELDS,
     Paths,
     agent_command,
+    build_row,
     classify_failure,
     estimated_cost,
     ensure_node_runtime_archive,
@@ -208,6 +209,7 @@ class HarnessEvalTests(unittest.TestCase):
                 "timeout_multiplier": 1.0,
                 "agent_setup_timeout_multiplier": 3.0,
                 "model": "deepseek-v4-flash",
+                "base_url": "https://provider.example/v1",
                 "reasoning_effort": "max",
                 "max_tool_rounds": 100,
                 "agent_deadline_grace_seconds": 15,
@@ -224,10 +226,54 @@ class HarnessEvalTests(unittest.TestCase):
             command, _ = agent_command("nova", "fixture", 1, config, paths)
 
             self.assertIn("deadline_seconds=885", command)
+            self.assertIn("base_url=https://provider.example/v1", command)
             self.assertIn(
                 f"node_archive_path={root / 'cache' / 'node-runtime.tar.gz'}",
                 command,
             )
+
+    def test_deepswe_non_binary_reward_is_verifier_infrastructure(self) -> None:
+        config = {
+            "run_id": "fixture",
+            "dataset": {"slug": "deep-swe"},
+            "pricing_usd_per_million": {
+                "uncached_input": 0.14,
+                "cached_input": 0.0028,
+                "cache_write": 0.0,
+                "output": 0.28,
+                "multiplier": 1.0,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result_path = Path(directory) / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "task_name": "deep-swe/fixture",
+                        "agent_info": {"name": "nova-headless"},
+                        "finished_at": "2026-08-03T00:00:00Z",
+                        "verifier_result": {"rewards": {"reward": -1}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            row = build_row(
+                config,
+                "fixture",
+                "nova",
+                1,
+                selected=False,
+                recovered=False,
+                result_path=result_path,
+                elapsed=1.0,
+            )
+
+        self.assertEqual(row["reward"], "")
+        self.assertEqual(row["passed"], "")
+        self.assertEqual(row["failure_class"], "verifier_infra")
+        self.assertEqual(row["exception_type"], "VerifierInvalidRewardError")
+        self.assertTrue(is_retryable(row))
 
     def test_pinned_node_runtime_uses_verified_local_cache(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

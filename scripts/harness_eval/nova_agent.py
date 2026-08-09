@@ -25,6 +25,7 @@ class NovaHeadless(BaseInstalledAgent):
         bundle_path: str,
         prompt_path: str,
         node_archive_path: str,
+        base_url: str,
         reasoning_effort: str = "max",
         max_tool_rounds: int = 100,
         deadline_seconds: float | None = None,
@@ -35,6 +36,7 @@ class NovaHeadless(BaseInstalledAgent):
         self._bundle_path = Path(bundle_path).resolve()
         self._prompt_path = Path(prompt_path).resolve()
         self._node_archive_path = Path(node_archive_path).resolve()
+        self._base_url = base_url.rstrip("/")
         self._reasoning_effort = reasoning_effort
         self._max_tool_rounds = max_tool_rounds
         self._deadline_seconds = deadline_seconds
@@ -117,6 +119,7 @@ class NovaHeadless(BaseInstalledAgent):
             "/opt/node/bin/node /opt/nova/nova-headless.cjs "
             "--workdir /app --logs-dir /logs/agent "
             f"--model {shlex.quote(model)} "
+            f"--base-url {shlex.quote(self._base_url)} "
             f"--reasoning-effort {shlex.quote(self._reasoning_effort)} "
             f"--max-tool-rounds {int(self._max_tool_rounds)} "
             f"{deadline_arg}"

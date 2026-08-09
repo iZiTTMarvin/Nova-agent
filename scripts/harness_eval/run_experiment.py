@@ -64,6 +64,7 @@ INFRA_RETRYABLE = {
     "NetworkConnectionError",
     "SandboxBuildFailedError",
     "VerifierTimeoutError",
+    "VerifierInvalidRewardError",
     "HarborProcessError",
     "HarborIncompleteResultError",
     "HarborMissingResultError",
@@ -382,7 +383,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Dataset: {config['dataset'].get('label', 'Terminal-Bench 2.1')} {config['dataset']['task_count']} 题，revision `{config['dataset']['revision']}`。
 - Task tree SHA256: `{config['dataset']['task_tree_sha256']}`。
 - Active arms: {agents}；每题每臂一次有效 model attempt，{design}。
-- Model: `{config['model']}`；reasoning effort: `{config['reasoning_effort']}`。
+- Model: `{config['model']}`；provider endpoint: `{config['base_url']}`；reasoning effort: `{config['reasoning_effort']}`。
 - Agent budget: {config['max_tool_rounds']} turns/steps；task-native timeout × {config['timeout_multiplier']}；外层安全上限 {config['outer_timeout_seconds']} 秒。
 - Execution order: `{config['task_order']}`；只改变运行先后，不改变题目、预算或判分。
 - Agent setup timeout × {config['agent_setup_timeout_multiplier']}；只作用于 harness 安装，不改变解题时间。
@@ -539,6 +540,8 @@ def agent_command(
                 f"prompt_path={ROOT / 'out' / 'headless' / 'prompts' / 'base-rules.md'}",
                 "--ak",
                 f"node_archive_path={config['node_runtime'].get('archive_path') or node_runtime_archive_path(config, paths)}",
+                "--ak",
+                f"base_url={config['base_url']}",
                 "--ak",
                 f"reasoning_effort={effort}",
                 "--ak",
@@ -810,6 +813,18 @@ def build_row(
     if runner_exception:
         trial["exception_info"] = {"exception_type": exception_type, "exception_message": exception_message}
     reward = reward_value(trial)
+    if (
+        reward is not None
+        and config.get("dataset", {}).get("slug") == "deep-swe"
+        and reward not in {0.0, 1.0}
+    ):
+        exception_type = "VerifierInvalidRewardError"
+        exception_message = f"DeepSWE verifier returned non-binary reward: {reward:g}"
+        trial["exception_info"] = {
+            "exception_type": exception_type,
+            "exception_message": exception_message,
+        }
+        reward = None
     budget = (
         exception_type == "RunnerOuterTimeoutError"
         or (scan_budget_exhaustion(result_path.parent, trial) if result_path else False)
