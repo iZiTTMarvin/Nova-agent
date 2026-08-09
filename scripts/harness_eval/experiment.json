@@ -24,7 +24,7 @@
     "ubuntu_archive_mirror": "http://free.nchc.org.tw/ubuntu"
   },
   "outer_timeout_seconds": 14400,
-  "pair_concurrency": 1,
+  "pair_concurrency": 2,
   "arms_parallel": false,
   "infra_retry_limit": 1,
   "max_total_estimated_cost_usd": 15.0,

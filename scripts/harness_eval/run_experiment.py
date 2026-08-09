@@ -13,9 +13,11 @@ import time
 import tomllib
 import urllib.error
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 
@@ -75,6 +77,8 @@ BUDGET_PATTERNS = re.compile(
     r"reached the maximum|agent timed out",
     re.IGNORECASE,
 )
+
+_APPEND_LOCK = Lock()
 
 
 def utc_now() -> str:
@@ -163,11 +167,12 @@ def ensure_node_runtime_archive(config: dict[str, Any], paths: Paths) -> Path:
 
 
 def append_jsonl(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    with _APPEND_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def log_progress(paths: Paths, event: str, **fields: Any) -> None:
@@ -253,6 +258,28 @@ class Paths:
     admissions_csv: Path
 
 
+@dataclass(frozen=True)
+class PendingCell:
+    task: str
+    agent: str
+    next_admission: int
+    max_admissions: int
+
+
+def validate_execution_shape(config: dict[str, Any]) -> int:
+    concurrency = config.get("pair_concurrency")
+    if type(concurrency) is not int or not 1 <= concurrency <= 16:
+        raise RuntimeError("pair_concurrency must be an integer between 1 and 16")
+    if config.get("arms_parallel") is not False:
+        raise RuntimeError("arms_parallel must remain false for paired pass@1")
+    agents = list(config.get("active_agents") or config.get("agents", {}).keys())
+    if concurrency > 1 and len(agents) != 1:
+        raise RuntimeError(
+            "pair_concurrency > 1 requires exactly one active agent; paired arms stay sequential"
+        )
+    return concurrency
+
+
 def resolve_paths(config: dict[str, Any], eval_root: Path) -> Paths:
     run = eval_root / config["run_id"]
     revision = config["dataset"]["revision"]
@@ -290,8 +317,7 @@ def ordered_task_names(tasks_dir: Path, selected_ids: list[str] | None = None) -
 def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if config.get("task_attempts") != 1:
         raise RuntimeError("paired pass@1 requires task_attempts=1")
-    if config.get("pair_concurrency") != 1 or config.get("arms_parallel") is not False:
-        raise RuntimeError("this runner implements one sequential task pair with rotated arm order")
+    validate_execution_shape(config)
     paths.run.mkdir(parents=True, exist_ok=True)
     if not paths.dataset.exists():
         paths.dataset.parent.mkdir(parents=True, exist_ok=True)
@@ -1053,6 +1079,30 @@ def run_cell(config: dict[str, Any], paths: Paths, task: str, agent: str, admiss
     return row
 
 
+def run_cell_admissions(
+    config: dict[str, Any],
+    paths: Paths,
+    cell: PendingCell,
+) -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = []
+    for admission in range(cell.next_admission, cell.max_admissions + 1):
+        row = run_cell(config, paths, cell.task, cell.agent, admission)
+        attempts.append(row)
+        if not is_retryable(row):
+            break
+        log_progress(
+            paths,
+            "infrastructure_retry",
+            task=cell.task,
+            agent=cell.agent,
+            completed_admission=admission,
+            next_admission=admission + 1,
+            failure_class=row["failure_class"],
+            exception_type=row["exception_type"],
+        )
+    return attempts
+
+
 def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> None:
     ensure_preflight()
     frozen_path = paths.run / "frozen_setup.json"
@@ -1088,6 +1138,7 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
     unknown_agents = set(agents) - set(config["agents"])
     if not agents or unknown_agents:
         raise RuntimeError(f"invalid active_agents: {agents}")
+    concurrency = validate_execution_shape(config)
     total_cells = len(tasks) * len(agents)
     write_progress_snapshot(paths, selected, total_cells)
     log_progress(
@@ -1099,9 +1150,12 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
         task_limit=task_limit,
     )
 
+    cell_order: list[tuple[str, str]] = []
+    pending_cells: list[PendingCell] = []
     for index, task in enumerate(tasks):
         order = agents[index % len(agents):] + agents[:index % len(agents)]
         for agent in order:
+            cell_order.append((task, agent))
             key = (task, agent)
             max_admissions = 1 + int(config["infra_retry_limit"])
             next_admission = next_admission_for_cell(
@@ -1113,60 +1167,103 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
             )
             if next_admission is None:
                 continue
-            if spent >= float(config["max_total_estimated_cost_usd"]):
-                raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
-            attempts: list[dict[str, Any]] = []
-            for admission in range(next_admission, max_admissions + 1):
-                row = run_cell(config, paths, task, agent, admission)
-                attempts.append(row)
-                admissions.append(row)
-                spent += float(row["estimated_cost_usd"])
-                write_csv(paths.admissions_csv, admissions)
-                if not is_retryable(row):
-                    break
-                log_progress(
-                    paths,
-                    "infrastructure_retry",
+            pending_cells.append(
+                PendingCell(
                     task=task,
                     agent=agent,
-                    completed_admission=admission,
-                    next_admission=admission + 1,
-                    failure_class=row["failure_class"],
-                    exception_type=row["exception_type"],
+                    next_admission=next_admission,
+                    max_admissions=max_admissions,
                 )
+            )
 
-            chosen = dict(attempts[-1])
-            chosen["selected"] = True
-            chosen["recovered"] = chosen["admission"] > 1 and not is_retryable(chosen)
-            selected = [row for row in selected if (row["task"], row["agent"]) != key]
-            selected.append(chosen)
-            selected_by_key[key] = chosen
-            write_csv(paths.selected_csv, selected)
-            write_progress_snapshot(paths, selected, total_cells)
+    cell_rank = {key: index for index, key in enumerate(cell_order)}
+
+    def row_order(row: dict[str, Any]) -> tuple[int, int]:
+        key = (str(row["task"]), str(row["agent"]))
+        return cell_rank.get(key, len(cell_rank)), int(row["admission"])
+
+    def record_attempts(cell: PendingCell, attempts: list[dict[str, Any]]) -> None:
+        nonlocal admissions, selected, spent
+        if not attempts:
+            raise RuntimeError(f"cell returned no admissions: {cell.task}/{cell.agent}")
+        admissions.extend(attempts)
+        admissions.sort(key=row_order)
+        spent += sum(float(row["estimated_cost_usd"]) for row in attempts)
+        write_csv(paths.admissions_csv, admissions)
+
+        key = (cell.task, cell.agent)
+        chosen = dict(attempts[-1])
+        chosen["selected"] = True
+        chosen["recovered"] = chosen["admission"] > 1 and not is_retryable(chosen)
+        selected = [row for row in selected if (row["task"], row["agent"]) != key]
+        selected.append(chosen)
+        selected.sort(key=row_order)
+        selected_by_key[key] = chosen
+        write_csv(paths.selected_csv, selected)
+        write_progress_snapshot(paths, selected, total_cells)
+        try:
             try:
-                try:
-                    from scripts.harness_eval.report import generate
-                except ModuleNotFoundError as error:
-                    if error.name != "scripts":
-                        raise
-                    from report import generate
+                from scripts.harness_eval.report import generate
+            except ModuleNotFoundError as error:
+                if error.name != "scripts":
+                    raise
+                from report import generate
 
-                generate(paths.run)
-                log_progress(
-                    paths,
-                    "report_updated",
-                    completed_cells=len(selected),
-                    total_cells=total_cells,
-                    report_path=str(paths.run / "report.md"),
-                )
-            except Exception as error:
-                log_progress(
-                    paths,
-                    "report_update_failed",
-                    completed_cells=len(selected),
-                    error_type=type(error).__name__,
-                    error_message=str(error),
-                )
+            generate(paths.run)
+            log_progress(
+                paths,
+                "report_updated",
+                completed_cells=len(selected),
+                total_cells=total_cells,
+                report_path=str(paths.run / "report.md"),
+            )
+        except Exception as error:
+            log_progress(
+                paths,
+                "report_update_failed",
+                completed_cells=len(selected),
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+
+    cost_limit = float(config["max_total_estimated_cost_usd"])
+    if concurrency == 1:
+        for cell in pending_cells:
+            if spent >= cost_limit:
+                raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
+            record_attempts(cell, run_cell_admissions(config, paths, cell))
+    else:
+        next_cell = 0
+        futures: dict[Future[list[dict[str, Any]]], PendingCell] = {}
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            while (
+                next_cell < len(pending_cells)
+                and len(futures) < concurrency
+                and spent < cost_limit
+            ):
+                cell = pending_cells[next_cell]
+                next_cell += 1
+                futures[executor.submit(run_cell_admissions, config, paths, cell)] = cell
+
+            while futures:
+                completed, _pending = wait(tuple(futures), return_when=FIRST_COMPLETED)
+                for future in sorted(
+                    completed,
+                    key=lambda item: cell_rank[(futures[item].task, futures[item].agent)],
+                ):
+                    cell = futures.pop(future)
+                    record_attempts(cell, future.result())
+                while (
+                    next_cell < len(pending_cells)
+                    and len(futures) < concurrency
+                    and spent < cost_limit
+                ):
+                    cell = pending_cells[next_cell]
+                    next_cell += 1
+                    futures[executor.submit(run_cell_admissions, config, paths, cell)] = cell
+
+        if next_cell < len(pending_cells):
+            raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
     log_progress(
         paths,
         "run_completed",

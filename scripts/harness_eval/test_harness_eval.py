@@ -6,7 +6,10 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.harness_eval.report import exact_mcnemar_p, generate
 from scripts.harness_eval.install_network import prepare_command, proxy_environment
@@ -18,6 +21,7 @@ from scripts.harness_eval.run_experiment import (
     classify_failure,
     estimated_cost,
     ensure_node_runtime_archive,
+    execute,
     harbor_environment,
     is_retryable,
     newest_result,
@@ -27,11 +31,134 @@ from scripts.harness_eval.run_experiment import (
     resolve_dataset_config,
     result_is_complete,
     token_fields,
+    validate_execution_shape,
     write_progress_snapshot,
 )
 
 
 class HarnessEvalTests(unittest.TestCase):
+    def test_single_agent_tasks_allow_bounded_parallelism(self) -> None:
+        config = {
+            "pair_concurrency": 2,
+            "arms_parallel": False,
+            "active_agents": ["nova"],
+            "agents": {"nova": {}},
+        }
+        self.assertEqual(validate_execution_shape(config), 2)
+
+        config["active_agents"] = ["nova", "opencode"]
+        config["agents"]["opencode"] = {}
+        with self.assertRaisesRegex(RuntimeError, "exactly one active agent"):
+            validate_execution_shape(config)
+
+    def test_execute_never_exceeds_configured_task_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            bundle = source / "out" / "headless" / "nova-headless.cjs"
+            prompt = source / "out" / "headless" / "prompts" / "base-rules.md"
+            prompt.parent.mkdir(parents=True)
+            bundle.write_bytes(b"bundle")
+            prompt.write_bytes(b"prompt")
+            node_archive = root / "node.tar.gz"
+            node_archive.write_bytes(b"node")
+
+            dataset = root / "dataset"
+            task_names = ["task-a", "task-b", "task-c"]
+            for task_name in task_names:
+                task = dataset / "tasks" / task_name
+                task.mkdir(parents=True)
+                (task / "task.toml").write_text(
+                    "[agent]\ntimeout_sec = 900.0\n",
+                    encoding="utf-8",
+                )
+
+            run = root / "run"
+            run.mkdir()
+            paths = Paths(
+                root=root,
+                run=run,
+                dataset=dataset,
+                jobs=run / "jobs",
+                ledger=run / "admissions.jsonl",
+                selected_csv=run / "results.csv",
+                admissions_csv=run / "admissions.csv",
+            )
+            frozen = {
+                "run_id": "parallel-fixture",
+                "tasks": task_names,
+                "agents": {"nova": {}},
+                "active_agents": ["nova"],
+                "pair_concurrency": 2,
+                "arms_parallel": False,
+                "infra_retry_limit": 0,
+                "max_total_estimated_cost_usd": 10.0,
+                "dataset": {"slug": "deep-swe"},
+                "nova_bundle_sha256": hashlib.sha256(b"bundle").hexdigest(),
+                "nova_prompt_sha256": hashlib.sha256(b"prompt").hexdigest(),
+                "harness_sha256": {},
+                "node_runtime": {
+                    "archive_path": str(node_archive),
+                    "archive_sha256": hashlib.sha256(b"node").hexdigest(),
+                },
+            }
+            (run / "frozen_setup.json").write_text(
+                json.dumps(frozen),
+                encoding="utf-8",
+            )
+
+            active = 0
+            max_active = 0
+            guard = threading.Lock()
+
+            def fake_run_cell_admissions(_config, _paths, cell):
+                nonlocal active, max_active
+                with guard:
+                    active += 1
+                    max_active = max(max_active, active)
+                try:
+                    time.sleep(0.08 if cell.task == "task-a" else 0.02)
+                    row = {field: "" for field in CSV_FIELDS}
+                    row.update(
+                        {
+                            "run_id": "parallel-fixture",
+                            "task": cell.task,
+                            "difficulty": "unknown",
+                            "agent": cell.agent,
+                            "admission": cell.next_admission,
+                            "selected": False,
+                            "recovered": False,
+                            "passed": True,
+                            "reward": 1.0,
+                            "failure_class": "pass",
+                            "budget_exhausted": False,
+                            "estimated_cost_usd": 0.01,
+                            "exception_type": "",
+                            "exception_message": "",
+                            "job_path": str(root / cell.task),
+                        }
+                    )
+                    return [row]
+                finally:
+                    with guard:
+                        active -= 1
+
+            with (
+                patch("scripts.harness_eval.run_experiment.ROOT", source),
+                patch("scripts.harness_eval.run_experiment.ensure_preflight"),
+                patch(
+                    "scripts.harness_eval.run_experiment.run_cell_admissions",
+                    side_effect=fake_run_cell_admissions,
+                ),
+                patch("scripts.harness_eval.report.generate"),
+            ):
+                execute({}, paths, task_limit=None)
+
+            self.assertEqual(max_active, 2)
+            with paths.selected_csv.open(encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([row["task"] for row in rows], task_names)
+
     def test_exact_mcnemar_matches_reference_case(self) -> None:
         self.assertAlmostEqual(exact_mcnemar_p(16, 4), 0.01181793212890625)
 
