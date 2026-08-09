@@ -1,13 +1,29 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, statSync, utimesSync } from 'fs'
 import { join } from 'path'
-import { editTool, createReadState } from '../../../../src/runtime/tools/editTool'
+import {
+  editTool,
+  createReadState,
+  writeEditedFile,
+  type EditOperations,
+  type ReadForEditResult
+} from '../../../../src/runtime/tools/editTool'
 import { readTool } from '../../../../src/runtime/tools/readTool'
 import { writeTool } from '../../../../src/runtime/tools/writeTool'
 import { encodeFile } from '../../../../src/runtime/tools/editDiff'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 
 const TMP = join(process.cwd(), '.test-workspace-edit')
+
+function readResult(original: string): ReadForEditResult {
+  return {
+    originalBuffer: Buffer.from(original),
+    encoding: 'utf-8',
+    bom: '',
+    lineEnding: 'LF',
+    normalized: original
+  }
+}
 
 /**
  * 测试用 readState：单文件作用域，beforeEach 中重建。
@@ -482,5 +498,59 @@ describe('editTool 集成测试', () => {
     } finally {
       rmSync(skillDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('editTool 写入校验', () => {
+  beforeEach(() => {
+    mkdirSync(TMP, { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(TMP, { recursive: true, force: true })
+  })
+
+  it('落盘字节与目标内容一致才返回成功', async () => {
+    let persisted = Buffer.from('before')
+    let reads = 0
+    const operations: EditOperations = {
+      access: async () => undefined,
+      stat: async () => ({ mtimeMs: 0, size: persisted.length }),
+      writeFile: async (_path, content) => {
+        persisted = Buffer.from(content)
+      },
+      readFile: async () => {
+        reads += 1
+        return Buffer.from(persisted)
+      }
+    }
+
+    await expect(
+      writeEditedFile(operations, join(TMP, 'verified.ts'), 'after', readResult('before'))
+    ).resolves.toBeUndefined()
+    expect(persisted.toString()).toBe('after')
+    expect(reads).toBe(1)
+  })
+
+  it('落盘字节不一致时恢复原始字节并返回可诊断失败', async () => {
+    let persisted = Buffer.from('before')
+    let reads = 0
+    const operations: EditOperations = {
+      access: async () => undefined,
+      stat: async () => ({ mtimeMs: 0, size: persisted.length }),
+      writeFile: async (_path, content) => {
+        persisted = Buffer.from(content)
+      },
+      readFile: async () => {
+        reads += 1
+        return reads === 1 ? Buffer.from('corrupted') : Buffer.from(persisted)
+      }
+    }
+
+    await expect(
+      writeEditedFile(operations, join(TMP, 'mismatch.ts'), 'after', readResult('before'))
+    ).rejects.toThrow('Write failed, file restored to original')
+    expect(persisted.toString()).toBe('before')
+    expect(reads).toBe(2)
   })
 })

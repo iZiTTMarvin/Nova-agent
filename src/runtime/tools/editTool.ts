@@ -579,7 +579,7 @@ export function resolveEdits(
 
 // ── editTool 主体 ─────────────────────────────────────────────────────────────
 
-interface ReadForEditResult {
+export interface ReadForEditResult {
   originalBuffer: Buffer
   encoding: FileEncoding
   bom: string
@@ -666,7 +666,7 @@ function applyResolvedEdits(original: string, resolved: ResolvedEdit[]): string 
   return result
 }
 
-async function safeWrite(
+export async function writeEditedFile(
   ops: EditOperations,
   path: string,
   newContent: string,
@@ -678,11 +678,17 @@ async function safeWrite(
   try {
     mkdirSync(dirname(path), { recursive: true })
     await ops.writeFile(path, finalBuffer)
+    const persisted = await ops.readFile(path)
+    if (!persisted.equals(finalBuffer)) {
+      throw new Error('Persisted bytes do not match the requested edit')
+    }
   } catch (writeErr) {
     try {
-      const originalRestored = restoreLineEndings(readResult.normalized, readResult.lineEnding)
-      const originalBuffer = encodeFile(originalRestored, readResult.encoding)
-      await ops.writeFile(path, originalBuffer)
+      await ops.writeFile(path, readResult.originalBuffer)
+      const restored = await ops.readFile(path)
+      if (!restored.equals(readResult.originalBuffer)) {
+        throw new Error('Persisted bytes do not match the original file')
+      }
     } catch (rollbackErr) {
       throw new Error(
         `Write failed: ${(writeErr as Error).message}. Rollback also failed: ${(rollbackErr as Error).message}. File may be inconsistent.`
@@ -816,7 +822,7 @@ export const editTool: ToolExecutor = {
           context.checkpointManager.backupBeforeWrite(absolutePath, false)
         }
 
-        await safeWrite(ops, absolutePath, newContent, readResult)
+        await writeEditedFile(ops, absolutePath, newContent, readResult)
         throwIfAborted()
 
         const newStat = await ops.stat(absolutePath)
