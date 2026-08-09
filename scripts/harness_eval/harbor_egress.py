@@ -9,37 +9,51 @@ from pathlib import Path
 from typing import Any
 
 
-_ORIGINAL_RULES = {
-    b"    fib daddr type local return": (
-        b"    ip daddr 127.0.0.0/8 return\n"
-        b"    ip6 daddr ::1 return"
-    ),
-    b"    fib daddr type local accept": (
-        b"    ip daddr 127.0.0.0/8 accept\n"
-        b"    ip6 daddr ::1 accept"
-    ),
-    b"    ip6 nexthdr icmpv6 accept\n    meta l4proto != tcp reject": (
-        b"    ip6 nexthdr icmpv6 accept\n"
-        b"    udp dport 53 accept\n"
-        b"    meta l4proto != tcp reject"
-    ),
-}
+_ORIGINAL_LOCAL_RETURN = b"    fib daddr type local return"
+_LOOPBACK_LOCAL_RETURN = (
+    b"    ip daddr 127.0.0.0/8 return\n"
+    b"    ip6 daddr ::1 return"
+)
+_ORIGINAL_LOCAL_ACCEPT = b"    fib daddr type local accept"
+_LOOPBACK_LOCAL_ACCEPT = (
+    b"    ip daddr 127.0.0.0/8 accept\n"
+    b"    ip6 daddr ::1 accept"
+)
+_ORIGINAL_NON_TCP_REJECT = (
+    b"    ip6 nexthdr icmpv6 accept\n"
+    b"    meta l4proto != tcp reject"
+)
+_LEGACY_UNBOUNDED_DNS = (
+    b"    ip6 nexthdr icmpv6 accept\n"
+    b"    udp dport 53 accept\n"
+    b"    meta l4proto != tcp reject"
+)
+_DOCKER_DNS_ONLY = (
+    b"    ip6 nexthdr icmpv6 accept\n"
+    b"    ip daddr 127.0.0.11 udp dport 53 accept\n"
+    b"    meta l4proto != tcp reject"
+)
+_COMPATIBLE_RULES = (
+    ((_ORIGINAL_LOCAL_RETURN,), _LOOPBACK_LOCAL_RETURN),
+    ((_ORIGINAL_LOCAL_ACCEPT,), _LOOPBACK_LOCAL_ACCEPT),
+    ((_ORIGINAL_NON_TCP_REJECT, _LEGACY_UNBOUNDED_DNS), _DOCKER_DNS_ONLY),
+)
 
 
 def apply_loopback_only_local_exemption(policy_path: Path) -> bool:
     original = policy_path.read_bytes()
     compatible = original
     modified = False
-    for source, target in _ORIGINAL_RULES.items():
-        if source in compatible:
-            compatible = compatible.replace(source, target, 1)
-            modified = True
-        elif target in compatible:
+    for sources, target in _COMPATIBLE_RULES:
+        if target in compatible:
             continue
-        else:
+        source = next((candidate for candidate in sources if candidate in compatible), None)
+        if source is None:
             raise RuntimeError(
                 f"unsupported Harbor egress policy layout: {policy_path}"
             )
+        compatible = compatible.replace(source, target, 1)
+        modified = True
     if not modified:
         return False
 

@@ -296,8 +296,12 @@ def provider_hostname(base_url: str) -> str:
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
+        or bool(parsed.query)
+        or bool(parsed.fragment)
     ):
-        raise RuntimeError("base_url must be an HTTPS URL without embedded credentials")
+        raise RuntimeError(
+            "base_url must be an HTTPS URL without embedded credentials, query, or fragment"
+        )
     return parsed.hostname
 
 

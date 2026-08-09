@@ -56,8 +56,28 @@ class HarnessEvalTests(unittest.TestCase):
             self.assertNotIn("fib daddr", patched)
             self.assertIn("ip daddr 127.0.0.0/8 return", patched)
             self.assertIn("ip6 daddr ::1 accept", patched)
-            self.assertIn("udp dport 53 accept", patched)
+            self.assertIn("ip daddr 127.0.0.11 udp dport 53 accept", patched)
+            self.assertNotIn("\n    udp dport 53 accept", patched)
             self.assertIn("meta l4proto != tcp reject", patched)
+            self.assertFalse(apply_loopback_only_local_exemption(policy))
+
+    def test_harbor_egress_compatibility_replaces_legacy_unbounded_dns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "network-policy"
+            policy.write_bytes(
+                b"    ip daddr 127.0.0.0/8 return\n"
+                b"    ip6 daddr ::1 return\n"
+                b"    ip daddr 127.0.0.0/8 accept\n"
+                b"    ip6 daddr ::1 accept\n"
+                b"    ip6 nexthdr icmpv6 accept\n"
+                b"    udp dport 53 accept\n"
+                b"    meta l4proto != tcp reject\n"
+            )
+
+            self.assertTrue(apply_loopback_only_local_exemption(policy))
+            patched = policy.read_text(encoding="utf-8")
+            self.assertIn("ip daddr 127.0.0.11 udp dport 53 accept", patched)
+            self.assertNotIn("\n    udp dport 53 accept", patched)
             self.assertFalse(apply_loopback_only_local_exemption(policy))
 
     def test_provider_host_is_https_and_credential_free(self) -> None:
@@ -68,6 +88,8 @@ class HarnessEvalTests(unittest.TestCase):
         for invalid in (
             "http://opencode.ai/v1",
             "https://token@opencode.ai/v1",
+            "https://opencode.ai/v1?token=secret",
+            "https://opencode.ai/v1#token=secret",
             "not-a-url",
         ):
             with self.assertRaisesRegex(RuntimeError, "HTTPS URL"):
