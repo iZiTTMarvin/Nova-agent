@@ -14,6 +14,19 @@ describe('buildStableSystemPrompt', () => {
     expect(prompt).toContain('default')
     expect(prompt).toContain('compose')
   })
+
+  it('headless 运行面不注入交互模式与编排说明', () => {
+    const prompt = buildStableSystemPrompt({
+      workingDir: '/workspace',
+      surface: 'headless'
+    })
+
+    expect(prompt).toContain('/workspace')
+    expect(prompt).toContain('无界面 coding task')
+    expect(prompt).not.toContain('plan 模式')
+    expect(prompt).not.toContain('default 模式')
+    expect(prompt).not.toContain('compose 模式')
+  })
 })
 
 describe('getStableSystemPrompt', () => {

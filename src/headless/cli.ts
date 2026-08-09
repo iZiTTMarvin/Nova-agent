@@ -6,6 +6,7 @@ import { agentRoute } from '../runtime/agent/turn'
 import {
   buildStableSystemPrompt,
   discoverProjectRules,
+  getHeadlessExecutionInstruction,
   renderBaseRules,
   renderModeToolInventory,
   resolveTaskPolicy
@@ -244,7 +245,10 @@ async function main(): Promise<void> {
   })
   const loop = new AgentLoop(modelClient, eventBus, {
     systemPromptLayers: {
-      agentRole: buildStableSystemPrompt({ workingDir: options.workdir }),
+      agentRole: buildStableSystemPrompt({
+        workingDir: options.workdir,
+        surface: 'headless'
+      }),
       baseRules: renderBaseRules(),
       projectRules: discoverProjectRules(options.workdir)?.text ?? '',
       modeInstruction: '',
@@ -266,6 +270,7 @@ async function main(): Promise<void> {
   loop.setWorkspaceRoot(options.workdir)
   loop.setRunRef(runId)
   loop.setMode('default')
+  loop.setModeInstructionProvider(getHeadlessExecutionInstruction)
 
   let error: string | undefined
   const deadlineTimer = options.deadlineSeconds === undefined
