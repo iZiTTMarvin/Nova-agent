@@ -194,6 +194,7 @@ async function main(): Promise<void> {
   if (!instruction) throw new Error('任务指令为空')
 
   const apiKey = process.env.DEEPSEEK_API_KEY
+  delete process.env.DEEPSEEK_API_KEY
   if (!apiKey) throw new Error('缺少 DEEPSEEK_API_KEY 环境变量')
 
   const taskPolicy = resolveTaskPolicy({

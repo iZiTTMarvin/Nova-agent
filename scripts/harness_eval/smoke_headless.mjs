@@ -12,6 +12,9 @@ let toolCallsMode = false
 let artifactPruningMode = false
 let artifactPruningStep = 0
 let archivedToolResult
+let environmentScrubMode = false
+let environmentScrubStep = 0
+let environmentToolResult
 
 const server = createServer((request, response) => {
   const chunks = []
@@ -30,6 +33,24 @@ const server = createServer((request, response) => {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache'
     })
+    if (environmentScrubMode) {
+      if (environmentScrubStep === 0) {
+        environmentScrubStep += 1
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'environment-tc', type: 'function', function: { name: 'bash', arguments: '{"command":"env"}' } }] }, finish_reason: null }] })}\n\n`)
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+        response.end('data: [DONE]\n\n')
+        return
+      }
+
+      const toolMessage = requestBody.messages?.find(
+        message => message.role === 'tool' && message.tool_call_id === 'environment-tc'
+      )
+      environmentToolResult = toolMessage?.content
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'environment scrub complete' }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+      response.end('data: [DONE]\n\n')
+      return
+    }
     if (artifactPruningMode) {
       if (artifactPruningStep === 0) {
         artifactPruningStep += 1
@@ -120,6 +141,31 @@ try {
   if (requestBody?.reasoning_effort !== 'max') throw new Error('max effort was not forwarded')
   if (!Array.isArray(requestBody?.tools) || requestBody.tools.length !== 8) {
     throw new Error('coding tool registry was not forwarded')
+  }
+
+  environmentScrubMode = true
+  const environmentLogs = join(workspace, 'environment-logs')
+  const environment = await runHeadless(
+    [
+      '--workdir', workspace,
+      '--logs-dir', environmentLogs,
+      '--base-url', `http://127.0.0.1:${address.port}`,
+      '--model', 'deepseek-v4-flash',
+      '--reasoning-effort', 'max',
+      '--max-tool-rounds', '2'
+    ],
+    'Inspect the environment once, then stop.'
+  )
+  environmentScrubMode = false
+  if (environment.exitCode !== 0) {
+    throw new Error(`environment run exited ${environment.exitCode}: ${environment.stderr || environment.stdout}`)
+  }
+  if (
+    typeof environmentToolResult !== 'string' ||
+    environmentToolResult.includes('DEEPSEEK_API_KEY=') ||
+    environmentToolResult.includes('smoke-only-placeholder')
+  ) {
+    throw new Error('headless tools inherited the provider credential')
   }
 
   holdResponse = true
