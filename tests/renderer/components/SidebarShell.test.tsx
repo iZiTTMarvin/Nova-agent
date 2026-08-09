@@ -16,13 +16,8 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
   FolderIcon: () => null,
   SettingsIcon: () => null,
-  PlusIcon: () => null,
-  ChevronIcon: () => null,
-  TrashIcon: () => null,
-  EditIcon: () => null
+  PlusIcon: () => null
 }))
-
-vi.mock('framer-motion', () => import('../../unit/renderer/_framerMotionMock'))
 
 vi.mock('@astryxdesign/core/SideNav', () => ({
   SideNav: ({ children }: { children?: React.ReactNode }) => (

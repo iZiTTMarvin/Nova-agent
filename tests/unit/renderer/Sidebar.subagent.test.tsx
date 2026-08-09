@@ -16,12 +16,15 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
   FolderIcon: () => null,
   SettingsIcon: () => null,
-  PlusIcon: () => null,
-  ChevronIcon: () => null,
-  TrashIcon: () => null,
-  EditIcon: () => null
+  PlusIcon: () => null
 }))
-vi.mock('framer-motion', () => import('./_framerMotionMock'))
+
+function findSessionButton(container: HTMLElement, title: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button')).find((button) => {
+    const text = button.textContent ?? ''
+    return text.includes(title) && !text.includes('个任务')
+  })
+}
 
 const parent: Session = {
   id: 'parent-session',
@@ -89,17 +92,11 @@ describe('Sidebar 子代理会话退出列表', () => {
     expect(text).toContain('Parent task')
     expect(text).not.toContain('Inspect runtime boundaries')
     expect(text).toContain('1 个任务')
-    expect(
-      renderer.container.querySelector('button[aria-label="打开会话 Inspect runtime boundaries，运行中"]')
-    ).toBeNull()
-    expect(
-      renderer.container.querySelector('button[aria-label="打开会话 Parent task"]')
-    ).not.toBeNull()
+    expect(findSessionButton(renderer.container, 'Inspect runtime boundaries')).toBeUndefined()
+    expect(findSessionButton(renderer.container, 'Parent task')).toBeTruthy()
 
     act(() => {
-      renderer.container.querySelector<HTMLButtonElement>(
-        'button[aria-label="打开会话 Parent task"]'
-      )?.click()
+      findSessionButton(renderer.container, 'Parent task')?.click()
     })
     expect(selectSession).toHaveBeenCalledWith(parent.id)
     expect(selectSession).not.toHaveBeenCalledWith(child.id)
@@ -115,9 +112,7 @@ describe('Sidebar 子代理会话退出列表', () => {
     useSettingsStore.setState({ currentProject: 'D:/workspace' })
 
     const renderer = renderDom(<Sidebar />)
-    const parentButton = renderer.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="打开会话 Parent task"]'
-    )
+    const parentButton = findSessionButton(renderer.container, 'Parent task')
     expect(parentButton?.getAttribute('aria-current')).toBe('page')
     expect(renderer.container.textContent ?? '').not.toContain('Inspect runtime boundaries')
     renderer.unmount()

@@ -34,6 +34,16 @@ describe('壳结构契约（AppShell + SideNav 权威）', () => {
     expect(sidebarSource).not.toMatch(/<aside/)
   })
 
+  it('侧栏会话行走 SideNavItem 选中态，不以自绘白卡片承载选中', () => {
+    expect(sidebarSource).toMatch(/isSelected=\{isActive\}/)
+    expect(sidebarSource).not.toMatch(/bg-white shadow-sm border border-border-warm/)
+    expect(sidebarSource).not.toMatch(/from 'framer-motion'/)
+    // 这些深入口在 Vite 预构建下会拉裂 React，侧栏禁用
+    expect(sidebarSource).not.toContain("from '@astryxdesign/core/Kbd'")
+    expect(sidebarSource).not.toContain("from '@astryxdesign/core/StatusDot'")
+    expect(sidebarSource).not.toContain("from '@astryxdesign/core/MoreMenu'")
+  })
+
   it('App.css 只保留 Tailwind 生成入口', () => {
     expect(appCss).toContain('@tailwind utilities;')
   })
