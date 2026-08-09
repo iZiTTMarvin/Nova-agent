@@ -110,6 +110,13 @@ describe('accumulateRepairTotals', () => {
         toolCallId: 'tc2',
         toolName: 'bash'
       },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'control_character',
+        toolCallId: 'tc3',
+        toolName: 'bash'
+      },
       { type: 'tool_call', messageId: 'm1', toolCallId: 'tc2', toolName: 'bash', args: {} }
     ]
 
@@ -118,6 +125,7 @@ describe('accumulateRepairTotals', () => {
       empty_args_from_content: 1,
       unclosed_parameter: 0,
       type_coercion: 1,
+      control_character: 1,
       tool_name_case: 0
     })
   })
@@ -128,6 +136,7 @@ describe('accumulateRepairTotals', () => {
       empty_args_from_content: 0,
       unclosed_parameter: 0,
       type_coercion: 0,
+      control_character: 0,
       tool_name_case: 0
     })
   })
@@ -267,6 +276,7 @@ describe('accumulateRepairOutcomes', () => {
     expect(outcomes.empty_args_from_content).toEqual({ success: 0, failure: 0 })
     expect(outcomes.unclosed_parameter).toEqual({ success: 0, failure: 0 })
     expect(outcomes.type_coercion).toEqual({ success: 0, failure: 0 })
+    expect(outcomes.control_character).toEqual({ success: 0, failure: 0 })
     expect(outcomes.tool_name_case).toEqual({ success: 0, failure: 0 })
   })
 

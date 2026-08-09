@@ -47,18 +47,87 @@ const VALID_KEY = /^[a-zA-Z_][a-zA-Z0-9_]*$/
  * - empty_args_from_content：arguments 为空，从 assistant 正文同名调用补参
  * - unclosed_parameter：修复时补全了未闭合的 <parameter> 标签
  * - type_coercion：把字符串值还原为 number/boolean/JSON（offset → 10 等）
+ * - control_character：转义 function.arguments 字符串内的原始控制字符
  */
 export type RepairKind =
   | 'native_xml'
   | 'empty_args_from_content'
   | 'unclosed_parameter'
   | 'type_coercion'
+  | 'control_character'
 
 /** 单次修复诊断（headless 汇总写入 summary） */
 export interface RepairDiagnostic {
   kind: RepairKind
   toolCallId: string
   toolName: string
+}
+
+export interface ParsedNativeArguments {
+  args: Record<string, unknown>
+  repairKind?: 'control_character'
+}
+
+/**
+ * OpenAI-compatible gateways occasionally leave raw control characters inside
+ * function.arguments strings. Repair only that invalid JSON shape; every other
+ * malformed payload remains an empty object for the normal tool error path.
+ */
+export function parseNativeArguments(argumentsStr: string): ParsedNativeArguments {
+  const raw = argumentsStr || '{}'
+  try {
+    return { args: asArgumentRecord(JSON.parse(raw) as unknown) }
+  } catch {
+    const repaired = escapeUnescapedControlCharacters(raw)
+    if (repaired === raw) return { args: {} }
+    try {
+      return {
+        args: asArgumentRecord(JSON.parse(repaired) as unknown),
+        repairKind: 'control_character'
+      }
+    } catch {
+      return { args: {} }
+    }
+  }
+}
+
+function asArgumentRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function escapeUnescapedControlCharacters(raw: string): string {
+  let inString = false
+  let escaped = false
+  let changed = false
+  let result = ''
+
+  for (const char of raw) {
+    if (inString && escaped) {
+      result += char
+      escaped = false
+      continue
+    }
+    if (inString && char === '\\') {
+      result += char
+      escaped = true
+      continue
+    }
+    if (char === '"') {
+      result += char
+      inString = !inString
+      continue
+    }
+    if (inString && char.charCodeAt(0) <= 0x1f) {
+      result += JSON.stringify(char).slice(1, -1)
+      changed = true
+      continue
+    }
+    result += char
+  }
+
+  return changed ? result : raw
 }
 
 /**

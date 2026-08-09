@@ -113,6 +113,47 @@ describe('T2-1 StreamProcessor：reasoningContent 累积', () => {
     )
   })
 
+  it('字符串内原始控制字符不会中断工具轮，并规范化后交给执行层', async () => {
+    const client = new MockModelClient()
+    const malformedArguments = `{"command":"first
+second\tline"}`
+    client.addResponse({
+      events: [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc_control', name: 'bash', arguments: malformedArguments }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    const { processor, emitted } = createProcessor(client)
+    const result = await runOnce(processor)
+
+    expect(result.kind).toBe('assistant')
+    if (result.kind !== 'assistant') return
+    expect(result.toolCalls).toEqual([
+      {
+        id: 'tc_control',
+        name: 'bash',
+        arguments: JSON.stringify({ command: 'first\nsecond\tline' })
+      }
+    ])
+    expect(emitted).toContainEqual({
+      type: 'repair_diagnostic',
+      messageId: 'msg_r',
+      kind: 'control_character',
+      toolCallId: 'tc_control',
+      toolName: 'bash'
+    })
+    expect(emitted).toContainEqual({
+      type: 'tool_call',
+      messageId: 'msg_r',
+      toolCallId: 'tc_control',
+      toolName: 'bash',
+      args: { command: 'first\nsecond\tline' }
+    })
+  })
+
   it('capability_downgrade：bumpEpoch 一次并产出诊断', async () => {
     const client = new MockModelClient()
     client.addResponse({

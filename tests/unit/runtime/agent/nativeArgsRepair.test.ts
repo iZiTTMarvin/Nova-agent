@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { needsRepair, repairNativeArguments, repairEmptyArgsFromContent } from '../../../../src/runtime/agent/stream/nativeArgsRepair'
+import {
+  needsRepair,
+  parseNativeArguments,
+  repairNativeArguments,
+  repairEmptyArgsFromContent
+} from '../../../../src/runtime/agent/stream/nativeArgsRepair'
 
 /**
  * Native 工具调用参数修复层测试。
@@ -16,6 +21,29 @@ function tryParse(raw: string): Record<string, unknown> {
     return {}
   }
 }
+
+describe('parseNativeArguments', () => {
+  it('修复 JSON 字符串内未转义的换行、制表和空字符', () => {
+    const raw = `{"command":"first
+second\t\u0000"}`
+    const parsed = parseNativeArguments(raw)
+
+    expect(parsed).toEqual({
+      args: { command: 'first\nsecond\t\0' },
+      repairKind: 'control_character'
+    })
+  })
+
+  it('保持已经正确转义的参数不变', () => {
+    expect(parseNativeArguments('{"command":"first\\nsecond\\t"}')).toEqual({
+      args: { command: 'first\nsecond\t' }
+    })
+  })
+
+  it('不把其他畸形 JSON 伪装修复成功', () => {
+    expect(parseNativeArguments('{"command":')).toEqual({ args: {} })
+  })
+})
 
 describe('needsRepair —— 坏数据识别', () => {
   it('整段 XML 被塞进 arguments：命中', () => {
