@@ -29,6 +29,7 @@ from scripts.harness_eval.run_experiment import (
     next_admission_for_cell,
     node_runtime_archive_path,
     ordered_task_names,
+    provider_hostname,
     resolve_dataset_config,
     result_is_complete,
     token_fields,
@@ -46,7 +47,8 @@ class HarnessEvalTests(unittest.TestCase):
                 b"    fib daddr type local return\n"
                 b"meta mark 1 accept\n"
                 b"    fib daddr type local accept\n"
-                b"meta l4proto != tcp reject\n"
+                b"    ip6 nexthdr icmpv6 accept\n"
+                b"    meta l4proto != tcp reject\n"
             )
 
             self.assertTrue(apply_loopback_only_local_exemption(policy))
@@ -54,8 +56,22 @@ class HarnessEvalTests(unittest.TestCase):
             self.assertNotIn("fib daddr", patched)
             self.assertIn("ip daddr 127.0.0.0/8 return", patched)
             self.assertIn("ip6 daddr ::1 accept", patched)
+            self.assertIn("udp dport 53 accept", patched)
             self.assertIn("meta l4proto != tcp reject", patched)
             self.assertFalse(apply_loopback_only_local_exemption(policy))
+
+    def test_provider_host_is_https_and_credential_free(self) -> None:
+        self.assertEqual(
+            provider_hostname("https://opencode.ai/zen/go/v1"),
+            "opencode.ai",
+        )
+        for invalid in (
+            "http://opencode.ai/v1",
+            "https://token@opencode.ai/v1",
+            "not-a-url",
+        ):
+            with self.assertRaisesRegex(RuntimeError, "HTTPS URL"):
+                provider_hostname(invalid)
 
     def test_single_agent_tasks_allow_bounded_parallelism(self) -> None:
         config = {
@@ -379,6 +395,8 @@ class HarnessEvalTests(unittest.TestCase):
 
             self.assertIn("deadline_seconds=885", command)
             self.assertIn("base_url=https://provider.example/v1", command)
+            host_index = command.index("--allow-agent-host")
+            self.assertEqual(command[host_index + 1], "provider.example")
             self.assertIn(
                 f"node_archive_path={root / 'cache' / 'node-runtime.tar.gz'}",
                 command,

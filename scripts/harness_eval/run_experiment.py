@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from urllib.parse import urlsplit
 
 try:
     from scripts.harness_eval.harbor_egress import ensure_harbor_egress_compatibility
@@ -288,6 +289,18 @@ def validate_execution_shape(config: dict[str, Any]) -> int:
     return concurrency
 
 
+def provider_hostname(base_url: str) -> str:
+    parsed = urlsplit(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise RuntimeError("base_url must be an HTTPS URL without embedded credentials")
+    return parsed.hostname
+
+
 def resolve_paths(config: dict[str, Any], eval_root: Path) -> Paths:
     run = eval_root / config["run_id"]
     revision = config["dataset"]["revision"]
@@ -326,6 +339,7 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if config.get("task_attempts") != 1:
         raise RuntimeError("paired pass@1 requires task_attempts=1")
     validate_execution_shape(config)
+    provider_hostname(config["base_url"])
     harbor_egress_policy = ensure_harbor_egress_compatibility()
     paths.run.mkdir(parents=True, exist_ok=True)
     if not paths.dataset.exists():
@@ -543,6 +557,8 @@ def agent_command(
         str(job_dir),
         "--job-name",
         f"{task}-{agent}-a{admission}",
+        "--allow-agent-host",
+        provider_hostname(config["base_url"]),
         "--quiet",
     ]
     model = config["model"]

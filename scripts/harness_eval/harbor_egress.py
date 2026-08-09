@@ -18,28 +18,30 @@ _ORIGINAL_RULES = {
         b"    ip daddr 127.0.0.0/8 accept\n"
         b"    ip6 daddr ::1 accept"
     ),
+    b"    ip6 nexthdr icmpv6 accept\n    meta l4proto != tcp reject": (
+        b"    ip6 nexthdr icmpv6 accept\n"
+        b"    udp dport 53 accept\n"
+        b"    meta l4proto != tcp reject"
+    ),
 }
 
 
 def apply_loopback_only_local_exemption(policy_path: Path) -> bool:
     original = policy_path.read_bytes()
     compatible = original
-    replacements = 0
-    already_compatible = 0
+    modified = False
     for source, target in _ORIGINAL_RULES.items():
         if source in compatible:
             compatible = compatible.replace(source, target, 1)
-            replacements += 1
+            modified = True
         elif target in compatible:
-            already_compatible += 1
+            continue
         else:
             raise RuntimeError(
                 f"unsupported Harbor egress policy layout: {policy_path}"
             )
-    if replacements == 0 and already_compatible == len(_ORIGINAL_RULES):
+    if not modified:
         return False
-    if replacements != len(_ORIGINAL_RULES) or already_compatible:
-        raise RuntimeError(f"partially patched Harbor egress policy: {policy_path}")
 
     temporary = policy_path.with_name(f".{policy_path.name}.nova.tmp")
     temporary.write_bytes(compatible)
