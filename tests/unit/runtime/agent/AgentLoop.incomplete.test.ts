@@ -90,9 +90,9 @@ describe('终态诚实：max_rounds', () => {
 })
 
 describe('终态诚实：breaker', () => {
-  it('相同调用连续失败 3 次熔断 → incomplete/breaker', async () => {
+  it('相同调用在恢复提示后仍被重复 → incomplete/breaker', async () => {
     const client = new MockModelClient()
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 4; i += 1) {
       client.addResponse(toolCallResponse(`t${i}`, 'ls', '{"path":"."}'))
     }
     const registry = new ToolRegistry()

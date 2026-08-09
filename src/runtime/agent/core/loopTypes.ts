@@ -32,12 +32,20 @@ import type { StopPolicyReason as StopReason } from '../../../shared/run/types'
  */
 export type { StopPolicyReason as StopReason } from '../../../shared/run/types'
 
-/** shouldStopAfterTurn 返回：停止原因 + 提示文案（文案由调用方 emit） */
-export interface StopDecision {
-  stop: true
-  reason: StopReason
-  notice: string
-}
+/** shouldStopAfterTurn 返回：终止当前轮次，或向下一次模型请求注入恢复指令。 */
+export type StopDecision =
+  | {
+      stop: true
+      reason: StopReason
+      notice: string
+      instruction?: never
+    }
+  | {
+      stop: false
+      instruction: string
+      reason?: never
+      notice?: never
+    }
 
 export interface AgentLoopConfig {
   /** 轮数上限 */
@@ -48,8 +56,8 @@ export interface AgentLoopConfig {
   supportsVision: boolean
 
   /**
-   * 每轮结束后判定是否停止。返回 stop 原因或 undefined。
-   * 停止提示由 kernel 在 break 前发射。
+   * 每轮结束后判定是否停止或注入恢复指令。
+   * 停止提示由 kernel 在 break 前发射；恢复指令只进入下一次模型请求。
    */
   shouldStopAfterTurn?: (args: ShouldStopArgs) => Promise<StopDecision | void>
 

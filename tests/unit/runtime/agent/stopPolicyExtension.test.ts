@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import {
   StopPolicyExtension,
-  EMPTY_ARGS_LIMIT
+  EMPTY_ARGS_LIMIT,
+  REPEATED_FAILURE_LIMIT
 } from '../../../../src/runtime/agent/extensions/stopPolicyExtension'
 import type { ShouldStopArgs } from '../../../../src/runtime/agent/core/loopTypes'
 
@@ -157,5 +158,63 @@ describe('StopPolicyExtension — 连续空参护栏', () => {
     }))
 
     expect(result).toBeUndefined()
+  })
+})
+
+describe('StopPolicyExtension — 重复失败恢复', () => {
+  let policy: StopPolicyExtension
+
+  beforeEach(() => {
+    policy = new StopPolicyExtension()
+  })
+
+  const failedRound = (args: Record<string, unknown>) => ({
+    toolCallsThisRound: [{ name: 'read', args }],
+    outcomes: [{
+      toolCall: { id: 'tc', name: 'read' },
+      args,
+      resultText: 'not found',
+      failed: true
+    }]
+  })
+
+  it(`连续 ${REPEATED_FAILURE_LIMIT} 次等价失败先要求改变路径，再重复才停止`, async () => {
+    const firstArgs = { path: 'missing.ts', options: { offset: 1, limit: 20 } }
+    const reorderedArgs = { options: { limit: 20, offset: 1 }, path: 'missing.ts' }
+
+    await policy.shouldStopAfterTurn(makeArgs(failedRound(firstArgs)))
+    await policy.shouldStopAfterTurn(makeArgs(failedRound(reorderedArgs)))
+    const recovery = await policy.shouldStopAfterTurn(makeArgs(failedRound(firstArgs)))
+
+    expect(recovery).toMatchObject({ stop: false })
+    expect(recovery?.instruction).toContain('different approach')
+
+    const stopped = await policy.shouldStopAfterTurn(makeArgs(failedRound(reorderedArgs)))
+    expect(stopped).toMatchObject({ stop: true, reason: 'breaker' })
+  })
+
+  it('改用不同调用会重置连续失败，不误伤正在迭代的模型', async () => {
+    const first = failedRound({ path: 'first.ts' })
+    const second = failedRound({ path: 'second.ts' })
+
+    await policy.shouldStopAfterTurn(makeArgs(first))
+    await policy.shouldStopAfterTurn(makeArgs(first))
+    await policy.shouldStopAfterTurn(makeArgs(second))
+    await policy.shouldStopAfterTurn(makeArgs(first))
+    const result = await policy.shouldStopAfterTurn(makeArgs(first))
+
+    expect(result).toBeUndefined()
+  })
+
+  it('恢复提示不会越过工具轮数硬上限', async () => {
+    const round = failedRound({ path: 'missing.ts' })
+
+    await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 1, maxToolRounds: 3 }))
+    await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 2, maxToolRounds: 3 }))
+    const result = await policy.shouldStopAfterTurn(
+      makeArgs({ ...round, toolRound: 3, maxToolRounds: 3 })
+    )
+
+    expect(result).toMatchObject({ stop: true, reason: 'max_rounds' })
   })
 })

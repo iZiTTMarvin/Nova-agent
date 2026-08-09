@@ -1173,8 +1173,8 @@ describe('AgentLoop', () => {
 
   /**
    * 回归：对「完全相同的工具调用」反复失败时应触发熔断，
-   * 在达到 REPEATED_FAILURE_LIMIT(3) 次失败后停止本轮循环，
-   * 而不是空转烧满 maxToolRounds 并向渲染进程灌入海量事件（卡顿 / OOM 根因之一）。
+   * 达到失败阈值后先要求改变路径；模型忽略提示时停止本轮循环，
+   * 避免空转烧满 maxToolRounds 并向渲染进程灌入海量事件。
    */
   it('同一工具调用连续失败达上限时熔断，停止继续调用模型', async () => {
     const client = new MockModelClient()
@@ -1211,8 +1211,8 @@ describe('AgentLoop', () => {
 
     await loop.sendMessage('反复触发同一失败调用', agentRoute())
 
-    // 第 3 次失败后熔断：模型只应被调用 3 次（而非 maxToolRounds=20 次）
-    expect(client.getCalls()).toHaveLength(3)
+    // 第 3 次失败后注入恢复提示，第 4 次仍重复才熔断。
+    expect(client.getCalls()).toHaveLength(4)
 
     // 应发出包含「已自动中断」的提示文本
     const noticed = events.some(
@@ -1252,8 +1252,8 @@ describe('AgentLoop', () => {
 
     await loop.sendMessage('反复调用不存在的工具', agentRoute())
 
-    // 第 3 次失败后熔断：模型只应被调用 3 次
-    expect(client.getCalls()).toHaveLength(3)
+    // 第 3 次失败后注入恢复提示，第 4 次仍重复才熔断。
+    expect(client.getCalls()).toHaveLength(4)
     const noticed = events.some(
       (e) => e.type === 'text_delta' && typeof e.delta === 'string' && e.delta.includes('已自动中断')
     )

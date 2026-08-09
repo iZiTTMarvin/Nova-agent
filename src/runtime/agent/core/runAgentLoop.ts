@@ -329,6 +329,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           emit({ type: 'text_delta', messageId, delta: stopDecision.notice })
           break
         }
+        if (stopDecision) {
+          context.messages.push({ role: 'user', content: stopDecision.instruction })
+          p.updateTokenEstimate()
+        }
       }
 
       // 继续下一轮（带着工具结果）
