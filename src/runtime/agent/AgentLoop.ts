@@ -454,6 +454,11 @@ export class AgentLoop {
    */
   setSessionContext(sessionStore: SessionStore, sessionId: string): void {
     this.ctx.sessionStore = sessionStore
+    this.setSessionId(sessionId)
+  }
+
+  /** 设置当前运行的会话命名空间；不要求装配 SessionStore。 */
+  setSessionId(sessionId: string): void {
     this.ctx.sessionId = sessionId
   }
 

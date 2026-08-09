@@ -17,6 +17,7 @@ import { ToolRegistry } from '../runtime/tools/ToolRegistry'
 import { ToolAvailability } from '../runtime/tools/availability'
 import { createLoadToolsTool } from '../runtime/tools/loadTools'
 import { projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
+import { ArtifactStore } from '../runtime/artifacts/ArtifactStore'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
 import { createGrepTool } from '../runtime/tools/grepTool'
@@ -259,6 +260,8 @@ async function main(): Promise<void> {
   })
   loop.setToolRegistry(registry)
   loop.setToolAvailability(toolAvailability)
+  loop.setArtifactStore(new ArtifactStore(options.logsDir))
+  loop.setSessionId(runId)
   loop.setWorkingDir(options.workdir)
   loop.setWorkspaceRoot(options.workdir)
   loop.setRunRef(runId)

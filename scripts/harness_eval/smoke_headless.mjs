@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -9,6 +9,9 @@ const logs = join(workspace, 'logs')
 let requestBody
 let holdResponse = false
 let toolCallsMode = false
+let artifactPruningMode = false
+let artifactPruningStep = 0
+let archivedToolResult
 
 const server = createServer((request, response) => {
   const chunks = []
@@ -27,6 +30,26 @@ const server = createServer((request, response) => {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache'
     })
+    if (artifactPruningMode) {
+      if (artifactPruningStep === 0) {
+        artifactPruningStep += 1
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'artifact-tc', type: 'function', function: { name: 'read', arguments: '{"path":"large-output.txt"}' } }] }, finish_reason: null }] })}\n\n`)
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+        response.end('data: [DONE]\n\n')
+        return
+      }
+
+      const toolMessage = requestBody.messages?.find(
+        message => message.role === 'tool' && message.tool_call_id === 'artifact-tc'
+      )
+      archivedToolResult = typeof toolMessage?.content === 'string'
+        ? JSON.parse(toolMessage.content)
+        : undefined
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'artifact pruning complete' }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+      response.end('data: [DONE]\n\n')
+      return
+    }
     if (toolCallsMode) {
       response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'smoke-tc', type: 'function', function: { name: 'ls', arguments: '{"path":"."}' } }] }, finish_reason: null }] })}\n\n`)
       response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
@@ -167,6 +190,48 @@ try {
     summary.repair_outcome?.native_xml?.failure !== 0
   ) {
     throw new Error(`repair outcome mismatch: ${JSON.stringify(summary.repair_outcome)}`)
+  }
+
+  toolCallsMode = false
+  artifactPruningMode = true
+  const artifactLogs = join(workspace, 'artifact-logs')
+  const largeOutput = Array.from(
+    { length: 2000 },
+    (_, index) => `line-${index + 1} contains enough content to exercise request projection`
+  ).join('\n')
+  writeFileSync(join(workspace, 'large-output.txt'), largeOutput, 'utf8')
+  const artifactRun = await runHeadless(
+    [
+      '--workdir', workspace,
+      '--logs-dir', artifactLogs,
+      '--base-url', `http://127.0.0.1:${address.port}`,
+      '--model', 'deepseek-v4-flash',
+      '--reasoning-effort', 'max',
+      '--max-tool-rounds', '2'
+    ],
+    'Read the large fixture and then finish.'
+  )
+  if (artifactRun.exitCode !== 0) {
+    throw new Error(`artifact run exited ${artifactRun.exitCode}: ${artifactRun.stderr || artifactRun.stdout}`)
+  }
+  if (archivedToolResult?.kind !== 'nova.archived_tool_result') {
+    throw new Error(`large tool result was not projected: ${JSON.stringify(archivedToolResult)}`)
+  }
+  const runDirectories = readdirSync(artifactLogs, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+  if (runDirectories.length !== 1) {
+    throw new Error(`unexpected artifact namespaces: ${JSON.stringify(runDirectories)}`)
+  }
+  const archivedContent = readFileSync(
+    join(artifactLogs, runDirectories[0], 'artifacts', archivedToolResult.artifactId),
+    'utf8'
+  )
+  if (
+    !archivedContent.includes('line-1 contains enough content') ||
+    Buffer.byteLength(archivedContent, 'utf8') !== archivedToolResult.originalBytes
+  ) {
+    throw new Error('archived tool result is incomplete')
   }
   process.stdout.write('headless smoke passed\n')
 } finally {
