@@ -253,7 +253,7 @@ class HarnessEvalTests(unittest.TestCase):
                 "pair_concurrency": 2,
                 "arms_parallel": False,
                 "infra_retry_limit": 0,
-                "max_total_estimated_cost_usd": 10.0,
+                "max_total_estimated_cost_usd": None,
                 "dataset": {"slug": "deep-swe"},
                 "nova_bundle_sha256": hashlib.sha256(b"bundle").hexdigest(),
                 "nova_prompt_sha256": hashlib.sha256(b"prompt").hexdigest(),

@@ -317,6 +317,16 @@ def executor_binary(config: dict[str, Any]) -> str:
     return override or executor
 
 
+def configured_cost_limit(config: dict[str, Any]) -> float | None:
+    raw_limit = config.get("max_total_estimated_cost_usd")
+    if raw_limit is None:
+        return None
+    limit = float(raw_limit)
+    if limit <= 0:
+        raise RuntimeError("max_total_estimated_cost_usd must be positive or null")
+    return limit
+
+
 def prepare_runner_isolation(config: dict[str, Any]) -> dict[str, Any]:
     executor = executor_name(config)
     if executor == "harbor":
@@ -577,6 +587,12 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
         else "Harbor loopback-only egress policy "
         f"{isolation['harbor_egress_policy']['policy_sha256']}"
     )
+    cost_limit = configured_cost_limit(config)
+    cost_limit_text = (
+        "disabled; every admitted task runs to an official terminal result"
+        if cost_limit is None
+        else f"stop admitting new cells after ${cost_limit:.2f}"
+    )
     text = f"""# Coding agent harness 实验设计
 
 ## Frozen setup
@@ -593,7 +609,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Concurrency: {config['pair_concurrency']} task cell；arms_parallel={str(config['arms_parallel']).lower()}。多臂模式按题号轮换顺序。
 - Retry: 模型失败、任务超时、budget exhaustion 不重试；只对预注册的 infrastructure-invalid cell 最多重试 {config['infra_retry_limit']} 次，保留全部 admission。
 - Verifier: 仅以官方 verifier reward 判定 pass/fail。
-- Cost circuit breaker: 累计统一估算超过 ${config['max_total_estimated_cost_usd']:.2f} 时停止新 cell。
+- Cost circuit breaker: {cost_limit_text}。
 
 ## Failure taxonomy
 
@@ -1468,10 +1484,10 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
                 error_message=str(error),
             )
 
-    cost_limit = float(config["max_total_estimated_cost_usd"])
+    cost_limit = configured_cost_limit(config)
     if concurrency == 1:
         for cell in pending_cells:
-            if spent >= cost_limit:
+            if cost_limit is not None and spent >= cost_limit:
                 raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
             record_attempts(cell, run_cell_admissions(config, paths, cell))
     else:
@@ -1481,7 +1497,7 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
             while (
                 next_cell < len(pending_cells)
                 and len(futures) < concurrency
-                and spent < cost_limit
+                and (cost_limit is None or spent < cost_limit)
             ):
                 cell = pending_cells[next_cell]
                 next_cell += 1
@@ -1498,13 +1514,13 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
                 while (
                     next_cell < len(pending_cells)
                     and len(futures) < concurrency
-                    and spent < cost_limit
+                    and (cost_limit is None or spent < cost_limit)
                 ):
                     cell = pending_cells[next_cell]
                     next_cell += 1
                     futures[executor.submit(run_cell_admissions, config, paths, cell)] = cell
 
-        if next_cell < len(pending_cells):
+        if cost_limit is not None and next_cell < len(pending_cells):
             raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
     log_progress(
         paths,

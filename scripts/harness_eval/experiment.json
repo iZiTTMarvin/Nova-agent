@@ -28,7 +28,7 @@
   "pair_concurrency": 2,
   "arms_parallel": false,
   "infra_retry_limit": 1,
-  "max_total_estimated_cost_usd": 15.0,
+  "max_total_estimated_cost_usd": null,
   "agents": {
     "nova": { "version": "workspace" },
     "opencode": { "version": "1.17.11" },
