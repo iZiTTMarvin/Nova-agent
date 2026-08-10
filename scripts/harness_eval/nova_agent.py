@@ -166,6 +166,8 @@ class NovaHeadless(BaseInstalledAgent):
             instruction_var: instruction,
             "NOVA_VERSION": self.version() or "workspace",
             "NOVA_WIRE_DUMP_DIR": "/logs/agent/wire",
+            # 代理传输诊断开关（宿主编透传），输出经 tee 落入 nova-headless.txt
+            "NOVA_PROXY_DEBUG": os.environ.get("NOVA_PROXY_DEBUG", "0"),
         }
         model = self.model_name.split("/", 1)[-1]
         deadline_arg = (
