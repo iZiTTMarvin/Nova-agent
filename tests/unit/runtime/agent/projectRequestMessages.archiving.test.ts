@@ -14,6 +14,10 @@ import {
 } from '../../../../src/runtime/agent/core/projectRequestMessages'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { createHash } from 'crypto'
+import { mkdtempSync, readdirSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 
 describe('projectRequestMessages archiving', () => {
   it('18KB 的工具输出经投影后变为占位符，原消息未被 mutate', async () => {
@@ -93,6 +97,43 @@ describe('projectRequestMessages archiving', () => {
     })
     expect(second.messages).toEqual(first.messages)
     expect(archiveCallCount).toBe(1)
+  })
+
+  it('跨 turn 使用新投影缓存时仍复用同一可回读占位符', async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-projection-artifact-'))
+    const store = new ArtifactStore(sessionsDir)
+    const sessionId = 'projection-session'
+    const messages: ChatMessage[] = [
+      { role: 'tool', content: 'x'.repeat(18 * 1024), toolCallId: 'tc1' }
+    ]
+    const archive = async (candidate: { body: string; toolName: string }) => {
+      const meta = await store.writeContentAddressed(sessionId, candidate.body, {
+        toolName: candidate.toolName
+      })
+      return { artifactId: meta.id }
+    }
+
+    try {
+      const first = await projectRequestMessages({
+        messages,
+        toolRound: 1,
+        policy: { enabled: true },
+        archiveCache: createRequestProjectionArchiveCache(),
+        archive
+      })
+      const second = await projectRequestMessages({
+        messages,
+        toolRound: 1,
+        policy: { enabled: true },
+        archiveCache: createRequestProjectionArchiveCache(),
+        archive
+      })
+
+      expect(second.messages).toEqual(first.messages)
+      expect(readdirSync(store.getArtifactsDir(sessionId))).toHaveLength(1)
+    } finally {
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
   })
 
   it('阈值以下的输出不归档', async () => {

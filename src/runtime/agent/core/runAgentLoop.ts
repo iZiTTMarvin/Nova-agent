@@ -169,7 +169,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         archive: async (candidate) => {
           if (!context.artifactStore || !context.sessionId) return null
           try {
-            const meta = await context.artifactStore.write(
+            const meta = await context.artifactStore.writeContentAddressed(
               context.sessionId,
               candidate.body,
               { toolName: candidate.toolName }
