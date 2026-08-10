@@ -25,10 +25,12 @@ from urllib.parse import urlsplit
 
 try:
     from scripts.harness_eval.harbor_egress import ensure_harbor_egress_compatibility
+    from scripts.harness_eval.pier_compat import ensure_pier_proxy_compatibility
 except ModuleNotFoundError as error:
     if error.name != "scripts":
         raise
     from harbor_egress import ensure_harbor_egress_compatibility
+    from pier_compat import ensure_pier_proxy_compatibility
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +40,7 @@ HARNESS_SOURCE_FILES = (
     "scripts/harness_eval/harness_compat.py",
     "scripts/harness_eval/nova_agent.py",
     "scripts/harness_eval/pier_patch_canary.py",
+    "scripts/harness_eval/pier_compat.py",
     "scripts/harness_eval/install_network.py",
     "scripts/harness_eval/harbor_egress.py",
     "scripts/harness_eval/report.py",
@@ -338,6 +341,9 @@ def prepare_runner_isolation(config: dict[str, Any]) -> dict[str, Any]:
         "executor": executor,
         "network_policy": "adapter_network_allowlist",
         "artifact_hook": "task_pre_artifacts",
+        "pier_proxy_compatibility": ensure_pier_proxy_compatibility(
+            executor_binary(config)
+        ),
     }
 
 
@@ -582,7 +588,8 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
     )
     isolation = config["runner_isolation"]
     network_text = (
-        "Pier task hook + adapter network allowlist"
+        "Pier task hook + adapter network allowlist + Windows LF proxy shim "
+        f"{isolation['pier_proxy_compatibility']['source_sha256']}"
         if isolation["executor"] == "pier"
         else "Harbor loopback-only egress policy "
         f"{isolation['harbor_egress_policy']['policy_sha256']}"
@@ -1368,6 +1375,15 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
             != isolation["harbor_egress_policy"]["policy_sha256"]
         ):
             raise RuntimeError("Harbor egress policy changed after setup was frozen")
+    else:
+        pier_proxy_compatibility = ensure_pier_proxy_compatibility(
+            executor_binary(frozen)
+        )
+        if (
+            pier_proxy_compatibility["source_sha256"]
+            != isolation["pier_proxy_compatibility"]["source_sha256"]
+        ):
+            raise RuntimeError("Pier proxy compatibility changed after setup was frozen")
     bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
     prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
     if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != frozen["nova_bundle_sha256"]:

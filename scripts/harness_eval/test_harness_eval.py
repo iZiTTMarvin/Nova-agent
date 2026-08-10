@@ -15,6 +15,7 @@ from unittest.mock import patch
 from scripts.harness_eval.report import exact_mcnemar_p, generate
 from scripts.harness_eval.install_network import prepare_command, proxy_environment
 from scripts.harness_eval.harbor_egress import apply_loopback_only_local_exemption
+from scripts.harness_eval.pier_compat import apply_lf_proxy_script_write
 from scripts.harness_eval.nova_agent import _provider_host_entries
 from scripts.harness_eval.run_experiment import (
     CSV_FIELDS,
@@ -44,6 +45,29 @@ from scripts.harness_eval.run_experiment import (
 
 
 class HarnessEvalTests(unittest.TestCase):
+    def test_pier_proxy_script_writer_forces_lf_on_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "agent_setup.py"
+            source.write_bytes(
+                b"before\r\n"
+                b'    (proxy_dir / "start-squid.sh").write_text('
+                b"squid_bootstrap_command())\r\n"
+                b"after\r\n"
+            )
+
+            self.assertTrue(apply_lf_proxy_script_write(source))
+            patched = source.read_bytes()
+            self.assertIn(b'squid_bootstrap_command(), newline="\\n"', patched)
+            self.assertFalse(apply_lf_proxy_script_write(source))
+
+    def test_pier_proxy_script_writer_rejects_unknown_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "agent_setup.py"
+            source.write_text("unknown layout", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "unsupported Pier proxy writer"):
+                apply_lf_proxy_script_write(source)
+
     def test_dataset_checkout_restores_unix_line_endings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory) / "dataset"
@@ -262,6 +286,9 @@ class HarnessEvalTests(unittest.TestCase):
                     "executor": "pier",
                     "network_policy": "adapter_network_allowlist",
                     "artifact_hook": "task_pre_artifacts",
+                    "pier_proxy_compatibility": {
+                        "source_sha256": "fixture-pier-policy"
+                    },
                 },
                 "node_runtime": {
                     "archive_path": str(node_archive),
@@ -315,6 +342,10 @@ class HarnessEvalTests(unittest.TestCase):
                 patch(
                     "scripts.harness_eval.run_experiment.ensure_harbor_egress_compatibility",
                     return_value={"policy_sha256": "fixture-policy"},
+                ),
+                patch(
+                    "scripts.harness_eval.run_experiment.ensure_pier_proxy_compatibility",
+                    return_value={"source_sha256": "fixture-pier-policy"},
                 ),
                 patch(
                     "scripts.harness_eval.run_experiment.run_cell_admissions",
