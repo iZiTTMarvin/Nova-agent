@@ -193,17 +193,91 @@ describe('StopPolicyExtension — 重复失败恢复', () => {
     expect(stopped).toMatchObject({ stop: true, reason: 'breaker' })
   })
 
-  it('改用不同调用会重置连续失败，不误伤正在迭代的模型', async () => {
+  it('不同失败签名独立累计，切换调用不会抹掉既有失败证据', async () => {
     const first = failedRound({ path: 'first.ts' })
     const second = failedRound({ path: 'second.ts' })
 
     await policy.shouldStopAfterTurn(makeArgs(first))
     await policy.shouldStopAfterTurn(makeArgs(first))
     await policy.shouldStopAfterTurn(makeArgs(second))
-    await policy.shouldStopAfterTurn(makeArgs(first))
-    const result = await policy.shouldStopAfterTurn(makeArgs(first))
+    const recovery = await policy.shouldStopAfterTurn(makeArgs(first))
+    const stopped = await policy.shouldStopAfterTurn(makeArgs(first))
 
+    expect(recovery).toMatchObject({ stop: false })
+    expect(stopped).toMatchObject({ stop: true, reason: 'breaker' })
+  })
+
+  it('同批次的无关成功调用不会重置失败签名', async () => {
+    const mixedRound = {
+      toolCallsThisRound: [
+        { name: 'read', args: { path: 'missing.ts' } },
+        { name: 'ls', args: { path: '.' } }
+      ],
+      outcomes: [
+        {
+          toolCall: { id: 'read-tc', name: 'read' },
+          args: { path: 'missing.ts' },
+          resultText: 'not found',
+          failed: true
+        },
+        {
+          toolCall: { id: 'ls-tc', name: 'ls' },
+          args: { path: '.' },
+          resultText: 'ok',
+          failed: false
+        }
+      ]
+    }
+
+    await policy.shouldStopAfterTurn(makeArgs(mixedRound))
+    await policy.shouldStopAfterTurn(makeArgs(mixedRound))
+    const recovery = await policy.shouldStopAfterTurn(makeArgs(mixedRound))
+    const stopped = await policy.shouldStopAfterTurn(makeArgs(mixedRound))
+
+    expect(recovery).toMatchObject({ stop: false })
+    expect(stopped).toMatchObject({ stop: true, reason: 'breaker' })
+  })
+
+  it('同一签名成功后清空该签名的失败计数', async () => {
+    const round = failedRound({ path: 'eventually-present.ts' })
+    await policy.shouldStopAfterTurn(makeArgs(round))
+    await policy.shouldStopAfterTurn(makeArgs(round))
+
+    await policy.shouldStopAfterTurn(makeArgs({
+      toolCallsThisRound: [{ name: 'read', args: { path: 'eventually-present.ts' } }],
+      outcomes: [{
+        toolCall: { id: 'success-tc', name: 'read' },
+        args: { path: 'eventually-present.ts' },
+        resultText: 'ok',
+        failed: false
+      }]
+    }))
+
+    await policy.shouldStopAfterTurn(makeArgs(round))
+    const result = await policy.shouldStopAfterTurn(makeArgs(round))
     expect(result).toBeUndefined()
+  })
+
+  it('同批次多次命中阈值时仍先给模型一次恢复机会', async () => {
+    const args = { path: 'missing.ts' }
+    const round = failedRound(args)
+    await policy.shouldStopAfterTurn(makeArgs(round))
+    await policy.shouldStopAfterTurn(makeArgs(round))
+
+    const recovery = await policy.shouldStopAfterTurn(makeArgs({
+      toolCallsThisRound: [
+        { name: 'read', args },
+        { name: 'read', args }
+      ],
+      outcomes: [
+        { ...round.outcomes[0], toolCall: { id: 'tc-a', name: 'read' } },
+        { ...round.outcomes[0], toolCall: { id: 'tc-b', name: 'read' } }
+      ]
+    }))
+    const stopped = await policy.shouldStopAfterTurn(makeArgs(round))
+
+    expect(recovery).toMatchObject({ stop: false })
+    expect(stopped).toMatchObject({ stop: true, reason: 'breaker' })
   })
 
   it('恢复提示不会越过工具轮数硬上限', async () => {

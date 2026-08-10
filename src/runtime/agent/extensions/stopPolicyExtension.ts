@@ -6,26 +6,25 @@
 import { createHash } from 'crypto'
 import type { ShouldStopArgs, StopDecision } from '../core/loopTypes'
 
-/** 同一签名工具调用连续失败达到该次数时注入恢复指令。 */
+/** 同一签名工具调用累计失败达到该次数时注入恢复指令。 */
 export const REPEATED_FAILURE_LIMIT = 3
 
 /** 连续全空参轮次达到该次数即中断，避免 native 弱实现空转 */
 export const EMPTY_ARGS_LIMIT = 2
 
-/** 停止策略扩展。持有当前连续失败与空参轮次状态。 */
+/** 停止策略扩展。持有当前失败签名与空参轮次状态。 */
 export class StopPolicyExtension {
-  private repeatedFailure: {
-    signature: string
+  private readonly repeatedFailures = new Map<string, {
     toolName: string
     count: number
     recoveryIssued: boolean
-  } | null = null
+  }>()
   /** 连续「本轮所有 tool_calls 参数均为空」的轮次计数 */
   private emptyArgsRoundCount = 0
 
   /** 每条用户消息开始时清空轮次级计数。 */
   clear(): void {
-    this.repeatedFailure = null
+    this.repeatedFailures.clear()
     this.emptyArgsRoundCount = 0
   }
 
@@ -95,7 +94,7 @@ export class StopPolicyExtension {
   }
 
   /**
-   * 只跟踪连续、语义等价的失败调用。达到阈值时先给模型一次改变路径的机会；
+   * 按签名跟踪语义等价的失败调用。达到阈值时先给模型一次改变路径的机会；
    * 若下一轮仍提交同一失败调用，再终止当前轮次。
    */
   private trackRepeatedFailures(
@@ -107,34 +106,53 @@ export class StopPolicyExtension {
       skippedByAbort?: boolean
     }>
   ): { toolName: string; action: 'recover' | 'stop' } | null {
-    if (outcomes.some(outcome => !outcome.skippedByAbort && outcome.failed !== true)) {
-      this.repeatedFailure = null
-      return null
-    }
+    const decisions = new Map<string, { toolName: string; action: 'recover' | 'stop' }>()
+    const failureOrder: string[] = []
+    const recoveredBeforeRound = new Set(
+      [...this.repeatedFailures.entries()]
+        .filter(([, state]) => state.recoveryIssued)
+        .map(([signature]) => signature)
+    )
 
     for (const outcome of outcomes) {
       if (outcome.skippedByAbort) continue
-      if (outcome.failed !== true) continue
 
       const signature = buildFailureSignature(outcome.toolCall.name, outcome.args)
-      if (this.repeatedFailure?.signature !== signature) {
-        this.repeatedFailure = {
-          signature,
+      if (outcome.failed !== true) {
+        this.repeatedFailures.delete(signature)
+        decisions.delete(signature)
+        continue
+      }
+
+      if (!failureOrder.includes(signature)) failureOrder.push(signature)
+      let repeatedFailure = this.repeatedFailures.get(signature)
+      if (!repeatedFailure) {
+        repeatedFailure = {
           toolName: outcome.toolCall.name,
           count: 1,
           recoveryIssued: false
         }
+        this.repeatedFailures.set(signature, repeatedFailure)
         continue
       }
 
-      this.repeatedFailure.count += 1
-      if (this.repeatedFailure.recoveryIssued) {
-        return { toolName: outcome.toolCall.name, action: 'stop' }
+      repeatedFailure.count += 1
+      if (repeatedFailure.recoveryIssued) {
+        decisions.set(signature, {
+          toolName: outcome.toolCall.name,
+          action: recoveredBeforeRound.has(signature) ? 'stop' : 'recover'
+        })
+        continue
       }
-      if (this.repeatedFailure.count >= REPEATED_FAILURE_LIMIT) {
-        this.repeatedFailure.recoveryIssued = true
-        return { toolName: outcome.toolCall.name, action: 'recover' }
+      if (repeatedFailure.count >= REPEATED_FAILURE_LIMIT) {
+        repeatedFailure.recoveryIssued = true
+        decisions.set(signature, { toolName: outcome.toolCall.name, action: 'recover' })
       }
+    }
+
+    for (const signature of failureOrder) {
+      const decision = decisions.get(signature)
+      if (decision) return decision
     }
     return null
   }
