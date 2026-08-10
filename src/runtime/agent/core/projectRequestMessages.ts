@@ -121,10 +121,19 @@ export interface ArchiveCandidate {
   bodySha256: string
 }
 
+/** 同一 Agent turn 内复用归档占位符，避免历史请求前缀随随机 artifact ID 漂移。 */
+export type RequestProjectionArchiveCache = Map<string, string>
+
+export function createRequestProjectionArchiveCache(): RequestProjectionArchiveCache {
+  return new Map<string, string>()
+}
+
 export interface RequestProjectionInput {
   messages: ChatMessage[]
   toolRound: number
   policy: ActiveToolResultPrunePolicy
+  /** 由本次 Agent turn 持有，跨模型轮次复用，turn 结束后随循环释放。 */
+  archiveCache: RequestProjectionArchiveCache
   /**
    * 写入 artifact。返回 null 表示写入失败（调用方保留原文并计入诊断）。
    * 契约：实现方不得抛异常，所有失败都必须表达为 null。
@@ -176,7 +185,6 @@ export async function projectRequestMessages(
   }
 
   const maxChars = maxTokens * CHARS_PER_TOKEN
-  const cache = new Map<string, string>()
   let prunedCount = 0
   let archiveFailures = 0
   let estimatedTokensSaved = 0
@@ -211,7 +219,7 @@ export async function projectRequestMessages(
     const cacheKey = `${msg.toolCallId}:${bodySha256}`
 
     // 缓存命中则复用占位符
-    const cachedPlaceholder = cache.get(cacheKey)
+    const cachedPlaceholder = input.archiveCache.get(cacheKey)
     if (cachedPlaceholder !== undefined) {
       projected.push({ ...msg, content: cachedPlaceholder })
       prunedCount++
@@ -239,7 +247,7 @@ export async function projectRequestMessages(
       text,
       bodySha256
     )
-    cache.set(cacheKey, placeholder)
+    input.archiveCache.set(cacheKey, placeholder)
     projected.push({ ...msg, content: placeholder })
     prunedCount++
     estimatedTokensSaved += Math.ceil((text.length - placeholder.length) / CHARS_PER_TOKEN)

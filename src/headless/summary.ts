@@ -49,7 +49,15 @@ export function deriveHeadlessSummary(
 }
 
 /** 修复分型汇总（repair.native_xml 等，写入 headless summary） */
-export type RepairTotals = Record<'native_xml' | 'empty_args_from_content' | 'unclosed_parameter' | 'type_coercion' | 'tool_name_case', number>
+export type RepairTotals = Record<
+  | 'native_xml'
+  | 'empty_args_from_content'
+  | 'unclosed_parameter'
+  | 'type_coercion'
+  | 'control_character'
+  | 'tool_name_case',
+  number
+>
 
 /** 修复后执行结果（每分型：成功 / 失败计数，用于发现"错误修复"反向伤害） */
 export interface RepairOutcomeTotals {
@@ -57,6 +65,7 @@ export interface RepairOutcomeTotals {
   empty_args_from_content: { success: number; failure: number }
   unclosed_parameter: { success: number; failure: number }
   type_coercion: { success: number; failure: number }
+  control_character: { success: number; failure: number }
   tool_name_case: { success: number; failure: number }
 }
 
@@ -67,6 +76,7 @@ export function accumulateRepairTotals(events: AgentEvent[]): RepairTotals {
     empty_args_from_content: 0,
     unclosed_parameter: 0,
     type_coercion: 0,
+    control_character: 0,
     tool_name_case: 0
   }
   for (const event of events) {
@@ -89,6 +99,7 @@ export function accumulateRepairOutcomes(events: AgentEvent[]): RepairOutcomeTot
     empty_args_from_content: { ...empty },
     unclosed_parameter: { ...empty },
     type_coercion: { ...empty },
+    control_character: { ...empty },
     tool_name_case: { ...empty }
   }
 

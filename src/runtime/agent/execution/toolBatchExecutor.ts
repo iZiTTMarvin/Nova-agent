@@ -11,7 +11,11 @@ import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import { sanitizeToolOutput } from '../../../shared/tool-input-sanitizer'
-import { needsRepair, repairNativeArguments } from '../stream/nativeArgsRepair'
+import {
+  needsRepair,
+  parseNativeArguments,
+  repairNativeArguments
+} from '../stream/nativeArgsRepair'
 
 export interface ToolExecutionOutcome {
   index: number
@@ -132,11 +136,7 @@ interface ToolRunResult {
 }
 
 function parseArgs(argsStr: string): Record<string, unknown> {
-  try {
-    return JSON.parse(argsStr || '{}')
-  } catch {
-    return {}
-  }
+  return parseNativeArguments(argsStr).args
 }
 
 function buildToolContext(
@@ -525,7 +525,17 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     }
 
     const toolCall = options.toolCalls[index]
-    let args = parseArgs(toolCall.arguments)
+    const parsedArguments = parseNativeArguments(toolCall.arguments)
+    let args = parsedArguments.args
+    if (parsedArguments.repairKind) {
+      options.emit({
+        type: 'repair_diagnostic',
+        messageId: options.messageId,
+        kind: parsedArguments.repairKind,
+        toolCallId: toolCall.id,
+        toolName: toolCall.name
+      })
+    }
     if (needsRepair(toolCall.arguments, args)) {
       args = repairNativeArguments(
         toolCall.name,

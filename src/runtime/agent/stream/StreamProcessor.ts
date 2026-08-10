@@ -28,7 +28,7 @@ import { resolveCacheProfile } from '../../model/cacheProfile'
 import { recordMetric } from '../../../shared/diagnostics/metrics'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
-import { repairEmptyArgsFromContent } from './nativeArgsRepair'
+import { parseNativeArguments, repairEmptyArgsFromContent } from './nativeArgsRepair'
 import { AttemptController } from '../recovery/AttemptController'
 import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
@@ -274,8 +274,29 @@ export class StreamProcessor {
 
           case 'tool_call':
             finishReason = 'tool_calls'
-            toolCalls.push(event.toolCall)
-            this.emit({ type: 'tool_call', messageId, toolCallId: event.toolCall.id, toolName: event.toolCall.name, args: JSON.parse(event.toolCall.arguments || '{}') })
+            {
+              const parsed = parseNativeArguments(event.toolCall.arguments)
+              const toolCall = parsed.repairKind
+                ? { ...event.toolCall, arguments: JSON.stringify(parsed.args) }
+                : event.toolCall
+              toolCalls.push(toolCall)
+              if (parsed.repairKind) {
+                this.emit({
+                  type: 'repair_diagnostic',
+                  messageId,
+                  kind: parsed.repairKind,
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name
+                })
+              }
+              this.emit({
+                type: 'tool_call',
+                messageId,
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+                args: parsed.args
+              })
+            }
             break
 
           case 'prompt_cache_key_stripped':

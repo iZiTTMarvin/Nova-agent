@@ -1,17 +1,19 @@
 {
+  "executor": "pier",
   "run_id": "deepseek-v4-flash-nova-deepswe-subset30-20260805",
   "dataset": {
     "manifest": "deepswe_subset30.json",
     "task_count": 30
   },
   "model": "deepseek-v4-flash",
+  "base_url": "https://opencode.ai/zen/go/v1",
   "reasoning_effort": "max",
-  "max_tool_rounds": 100,
+  "max_tool_rounds": null,
   "agent_deadline_grace_seconds": 15,
   "task_attempts": 1,
   "task_order": "agent_timeout_ascending_then_name",
   "timeout_multiplier": 1.0,
-  "agent_setup_timeout_multiplier": 3.0,
+  "agent_setup_timeout_multiplier": 1.0,
   "node_runtime": {
     "version": "22.23.2",
     "archive_url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.gz",
@@ -23,10 +25,10 @@
     "ubuntu_archive_mirror": "http://free.nchc.org.tw/ubuntu"
   },
   "outer_timeout_seconds": 14400,
-  "pair_concurrency": 1,
+  "pair_concurrency": 2,
   "arms_parallel": false,
   "infra_retry_limit": 1,
-  "max_total_estimated_cost_usd": 15.0,
+  "max_total_estimated_cost_usd": null,
   "agents": {
     "nova": { "version": "workspace" },
     "opencode": { "version": "1.17.11" },

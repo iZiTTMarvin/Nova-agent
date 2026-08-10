@@ -6,6 +6,7 @@ import { agentRoute } from '../runtime/agent/turn'
 import {
   buildStableSystemPrompt,
   discoverProjectRules,
+  getHeadlessExecutionInstruction,
   renderBaseRules,
   renderModeToolInventory,
   resolveTaskPolicy
@@ -17,6 +18,7 @@ import { ToolRegistry } from '../runtime/tools/ToolRegistry'
 import { ToolAvailability } from '../runtime/tools/availability'
 import { createLoadToolsTool } from '../runtime/tools/loadTools'
 import { projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
+import { ArtifactStore } from '../runtime/artifacts/ArtifactStore'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
 import { createGrepTool } from '../runtime/tools/grepTool'
@@ -34,6 +36,8 @@ import {
   type HeadlessTurnReport
 } from './summary'
 import { buildAtifTrajectory } from './atif'
+import { resolveHeadlessMaxToolRounds } from './roundBudget'
+import { headlessAssistantCompletionPolicy } from './completionPolicy'
 
 interface CliOptions {
   workdir: string
@@ -106,15 +110,15 @@ function parseArgs(argv: string[]): CliOptions {
   if (!['low', 'medium', 'high', 'max'].includes(effort)) {
     throw new Error(`不支持的 reasoning effort: ${effort}`)
   }
-  const maxToolRounds = Number(values.get('max-tool-rounds') ?? '100')
-  if (!Number.isInteger(maxToolRounds) || maxToolRounds < 1) {
-    throw new Error('--max-tool-rounds 必须是正整数')
-  }
   const deadlineValue = values.get('deadline-seconds')
   const deadlineSeconds = deadlineValue === undefined ? undefined : Number(deadlineValue)
   if (deadlineSeconds !== undefined && (!Number.isFinite(deadlineSeconds) || deadlineSeconds <= 0)) {
     throw new Error('--deadline-seconds 必须是正数')
   }
+  const maxToolRounds = resolveHeadlessMaxToolRounds(
+    values.get('max-tool-rounds'),
+    deadlineSeconds
+  )
   const contextWindowValue = values.get('context-window')
   const contextWindow = contextWindowValue === undefined ? undefined : Number(contextWindowValue)
   if (contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0)) {
@@ -192,6 +196,7 @@ async function main(): Promise<void> {
   if (!instruction) throw new Error('任务指令为空')
 
   const apiKey = process.env.DEEPSEEK_API_KEY
+  delete process.env.DEEPSEEK_API_KEY
   if (!apiKey) throw new Error('缺少 DEEPSEEK_API_KEY 环境变量')
 
   const taskPolicy = resolveTaskPolicy({
@@ -243,7 +248,10 @@ async function main(): Promise<void> {
   })
   const loop = new AgentLoop(modelClient, eventBus, {
     systemPromptLayers: {
-      agentRole: buildStableSystemPrompt({ workingDir: options.workdir }),
+      agentRole: buildStableSystemPrompt({
+        workingDir: options.workdir,
+        surface: 'headless'
+      }),
       baseRules: renderBaseRules(),
       projectRules: discoverProjectRules(options.workdir)?.text ?? '',
       modeInstruction: '',
@@ -259,10 +267,16 @@ async function main(): Promise<void> {
   })
   loop.setToolRegistry(registry)
   loop.setToolAvailability(toolAvailability)
+  loop.setArtifactStore(new ArtifactStore(options.logsDir))
+  loop.setSessionId(runId)
   loop.setWorkingDir(options.workdir)
   loop.setWorkspaceRoot(options.workdir)
   loop.setRunRef(runId)
   loop.setMode('default')
+  loop.setModeInstructionProvider(getHeadlessExecutionInstruction)
+  if (options.deadlineSeconds !== undefined) {
+    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
+  }
 
   let error: string | undefined
   const deadlineTimer = options.deadlineSeconds === undefined
@@ -327,6 +341,9 @@ async function main(): Promise<void> {
     run_id: runId,
     model: options.model,
     reasoning_effort: options.reasoningEffort,
+    max_tool_rounds: Number.isFinite(options.maxToolRounds)
+      ? options.maxToolRounds
+      : null,
     deadline_seconds: options.deadlineSeconds,
     deadline_reached: deadlineReached,
     status: report.status,

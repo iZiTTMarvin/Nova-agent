@@ -723,11 +723,11 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
 })
 
 // ============================================================
-// 场景 13：重复失败熔断
-// 期望：相同签名失败 3 次 → text_delta("[已自动中断]...") + break
+// 场景 13：重复失败恢复
+// 期望：相同签名失败 3 次 → 注入恢复指令 → 模型改变路径并完成
 // ============================================================
-describe('黄金测试 §9.13 重复失败熔断', () => {
-  it('同一工具调用连续失败 3 次 → 熔断提示 + 停止', async () => {
+describe('黄金测试 §9.13 重复失败恢复', () => {
+  it('同一工具调用连续失败 3 次 → 模型收到恢复指令并改变路径', async () => {
     const client = new MockModelClient()
     // 连续 3 轮，每轮模型都发起完全相同的、必然失败的工具调用
     const failCall = (i: string) => ({
@@ -741,21 +741,40 @@ describe('黄金测试 §9.13 重复失败熔断', () => {
     client.addResponse(failCall('f1'))
     client.addResponse(failCall('f2'))
     client.addResponse(failCall('f3'))
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'tool_call_start', toolCallId: 'recover', toolName: 'ls', index: 0 },
+        { type: 'tool_call', toolCall: { id: 'recover', name: 'ls', arguments: '{"path":"."}' } },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '已改用其他路径完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
 
     const registry = new ToolRegistry()
     // read 工具恒失败（固定签名：read + {path:nonexistent}）
     registerTool(registry, 'read', () => ({ success: false, output: '工具执行失败: 文件不存在', error: 'not found' }))
+    registerTool(registry, 'ls', () => ({ success: true, output: 'README.md' }))
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
     loop.setToolRegistry(registry)
 
     const events = await runAndCollect(loop, eventBus, '读')
 
-    // 第 3 次失败后熔断，应有"[已自动中断]"提示
+    const recoveryRequest = client.getCalls()[3]
+    expect(recoveryRequest.messages.some(
+      message => message.role === 'user' && String(message.content).includes('[Runtime guard]')
+    )).toBe(true)
+
     const textDeltas = events.filter(e => e.type === 'text_delta') as Array<Extract<AgentEvent, { type: 'text_delta' }>>
     const merged = textDeltas.map(d => d.delta).join('')
-    expect(merged).toContain('[已自动中断]')
-    expect(merged).toContain('read')
-    // message_end 正常结束（熔断 break 走 finishMessageRound）
+    expect(merged).not.toContain('[已自动中断]')
+    expect(merged).toContain('已改用其他路径完成')
     expect(events.some(e => e.type === 'message_end')).toBe(true)
   })
 })

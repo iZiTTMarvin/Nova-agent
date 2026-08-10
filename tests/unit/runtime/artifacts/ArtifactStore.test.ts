@@ -47,6 +47,29 @@ describe('ArtifactStore', () => {
     expect(a.id).not.toBe(b.id)
   })
 
+  it('writeContentAddressed 对相同正文复用 ID 与文件', async () => {
+    const first = await store.writeContentAddressed(sessionId, 'stable body', {
+      toolName: 'read'
+    })
+    const second = await store.writeContentAddressed(sessionId, 'stable body', {
+      toolName: 'read'
+    })
+
+    expect(second.id).toBe(first.id)
+    expect(readFileSync(store.resolvePath(sessionId, first.id), 'utf8')).toBe('stable body')
+  })
+
+  it('writeContentAddressed 对不同正文生成不同 ID', async () => {
+    const first = await store.writeContentAddressed(sessionId, 'body one', {
+      toolName: 'read'
+    })
+    const second = await store.writeContentAddressed(sessionId, 'body two', {
+      toolName: 'read'
+    })
+
+    expect(second.id).not.toBe(first.id)
+  })
+
   it('resolvePath 返回路径位于会话 artifacts 目录下', () => {
     const id = 'abc123'
     const resolved = store.resolvePath(sessionId, id)

@@ -3,28 +3,46 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
 import tomllib
 import urllib.error
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
+from urllib.parse import urlsplit
+
+try:
+    from scripts.harness_eval.harbor_egress import ensure_harbor_egress_compatibility
+    from scripts.harness_eval.pier_compat import ensure_pier_proxy_compatibility
+except ModuleNotFoundError as error:
+    if error.name != "scripts":
+        raise
+    from harbor_egress import ensure_harbor_egress_compatibility
+    from pier_compat import ensure_pier_proxy_compatibility
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path(__file__).with_name("experiment.json")
 HARNESS_SOURCE_FILES = (
     "scripts/harness_eval/run_experiment.py",
+    "scripts/harness_eval/harness_compat.py",
     "scripts/harness_eval/nova_agent.py",
+    "scripts/harness_eval/pier_patch_canary.py",
+    "scripts/harness_eval/pier_compat.py",
     "scripts/harness_eval/install_network.py",
+    "scripts/harness_eval/harbor_egress.py",
     "scripts/harness_eval/report.py",
     "scripts/harness_eval/experiment.json",
 )
@@ -64,9 +82,13 @@ INFRA_RETRYABLE = {
     "NetworkConnectionError",
     "SandboxBuildFailedError",
     "VerifierTimeoutError",
+    "VerifierInvalidRewardError",
     "HarborProcessError",
     "HarborIncompleteResultError",
     "HarborMissingResultError",
+    "RunnerProcessError",
+    "RunnerIncompleteResultError",
+    "RunnerMissingResultError",
 }
 
 BUDGET_PATTERNS = re.compile(
@@ -74,6 +96,8 @@ BUDGET_PATTERNS = re.compile(
     r"reached the maximum|agent timed out",
     re.IGNORECASE,
 )
+
+_APPEND_LOCK = Lock()
 
 
 def utc_now() -> str:
@@ -162,11 +186,12 @@ def ensure_node_runtime_archive(config: dict[str, Any], paths: Paths) -> Path:
 
 
 def append_jsonl(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    with _APPEND_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def log_progress(paths: Paths, event: str, **fields: Any) -> None:
@@ -252,6 +277,130 @@ class Paths:
     admissions_csv: Path
 
 
+@dataclass(frozen=True)
+class PendingCell:
+    task: str
+    agent: str
+    next_admission: int
+    max_admissions: int
+
+
+def validate_execution_shape(config: dict[str, Any]) -> int:
+    concurrency = config.get("pair_concurrency")
+    if type(concurrency) is not int or not 1 <= concurrency <= 16:
+        raise RuntimeError("pair_concurrency must be an integer between 1 and 16")
+    if config.get("arms_parallel") is not False:
+        raise RuntimeError("arms_parallel must remain false for paired pass@1")
+    agents = list(config.get("active_agents") or config.get("agents", {}).keys())
+    executor = executor_name(config)
+    if config.get("dataset", {}).get("slug") == "deep-swe" and executor != "pier":
+        raise RuntimeError("DeepSWE requires executor=pier so task artifact hooks run")
+    if executor == "pier" and agents != ["nova"]:
+        raise RuntimeError("Pier evaluation currently supports the Nova arm only")
+    if concurrency > 1 and len(agents) != 1:
+        raise RuntimeError(
+            "pair_concurrency > 1 requires exactly one active agent; paired arms stay sequential"
+        )
+    return concurrency
+
+
+def executor_name(config: dict[str, Any]) -> str:
+    executor = str(config.get("executor") or "harbor").strip().lower()
+    if executor not in {"harbor", "pier"}:
+        raise RuntimeError(f"unsupported executor: {executor}")
+    return executor
+
+
+def executor_binary(config: dict[str, Any]) -> str:
+    frozen = config.get("executor_binary")
+    if frozen:
+        return str(frozen)
+    executor = executor_name(config)
+    override = os.environ.get(f"NOVA_{executor.upper()}_BIN")
+    return override or executor
+
+
+def configured_cost_limit(config: dict[str, Any]) -> float | None:
+    raw_limit = config.get("max_total_estimated_cost_usd")
+    if raw_limit is None:
+        return None
+    limit = float(raw_limit)
+    if limit <= 0:
+        raise RuntimeError("max_total_estimated_cost_usd must be positive or null")
+    return limit
+
+
+def prepare_runner_isolation(config: dict[str, Any]) -> dict[str, Any]:
+    executor = executor_name(config)
+    if executor == "harbor":
+        return {
+            "executor": executor,
+            "harbor_egress_policy": ensure_harbor_egress_compatibility(),
+        }
+    return {
+        "executor": executor,
+        "network_policy": "adapter_network_allowlist",
+        "artifact_hook": "task_pre_artifacts",
+        "pier_proxy_compatibility": ensure_pier_proxy_compatibility(
+            executor_binary(config)
+        ),
+    }
+
+
+def provider_hostname(base_url: str) -> str:
+    parsed = urlsplit(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or bool(parsed.query)
+        or bool(parsed.fragment)
+    ):
+        raise RuntimeError(
+            "base_url must be an HTTPS URL without embedded credentials, query, or fragment"
+        )
+    return parsed.hostname
+
+
+def resolve_provider_ipv4_addresses(base_url: str) -> list[str]:
+    hostname = provider_hostname(base_url)
+    try:
+        records = socket.getaddrinfo(
+            hostname,
+            443,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as error:
+        raise RuntimeError(f"cannot resolve model provider host: {hostname}") from error
+    addresses = sorted({str(ipaddress.ip_address(record[4][0])) for record in records})
+    if not addresses or any(not ipaddress.ip_address(value).is_global for value in addresses):
+        raise RuntimeError("model provider must resolve only to public IPv4 addresses")
+    return addresses
+
+
+def frozen_provider_network(config: dict[str, Any]) -> tuple[str, list[str]]:
+    hostname = provider_hostname(config["base_url"])
+    network = config.get("provider_network")
+    if not isinstance(network, dict) or network.get("hostname") != hostname:
+        raise RuntimeError("frozen provider network does not match base_url")
+    raw_addresses = network.get("ipv4_addresses")
+    if not isinstance(raw_addresses, list) or not raw_addresses:
+        raise RuntimeError("frozen provider network requires public IPv4 addresses")
+    try:
+        addresses = sorted({str(ipaddress.ip_address(value)) for value in raw_addresses})
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("frozen provider network requires public IPv4 addresses") from error
+    if any(
+        ipaddress.ip_address(value).version != 4
+        or not ipaddress.ip_address(value).is_global
+        for value in addresses
+    ):
+        raise RuntimeError("frozen provider network requires public IPv4 addresses")
+    return hostname, addresses
+
+
 def resolve_paths(config: dict[str, Any], eval_root: Path) -> Paths:
     run = eval_root / config["run_id"]
     revision = config["dataset"]["revision"]
@@ -286,22 +435,70 @@ def ordered_task_names(tasks_dir: Path, selected_ids: list[str] | None = None) -
     return [name for _timeout, name in sorted(tasks)]
 
 
+def checkout_dataset_revision(dataset: Path, revision: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(dataset), "config", "core.autocrlf", "false"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(dataset), "config", "core.eol", "lf"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(dataset), "checkout", "--detach", "--force", revision],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(dataset), "checkout-index", "--all", "--force"],
+        check=True,
+    )
+
+
+def validate_deepswe_verifier_entrypoints(tasks_dir: Path, task_names: list[str]) -> None:
+    invalid: list[str] = []
+    for task_name in task_names:
+        entrypoint = tasks_dir / task_name / "tests" / "test.sh"
+        if not entrypoint.is_file():
+            invalid.append(f"{task_name} (missing tests/test.sh)")
+            continue
+        with entrypoint.open("rb") as stream:
+            first_line = stream.readline()
+        if not first_line.startswith(b"#!") or b"\r" in first_line:
+            invalid.append(task_name)
+    if invalid:
+        raise RuntimeError(
+            "DeepSWE verifier entrypoints must use Unix line endings: "
+            + ", ".join(invalid)
+        )
+
+
 def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if config.get("task_attempts") != 1:
         raise RuntimeError("paired pass@1 requires task_attempts=1")
-    if config.get("pair_concurrency") != 1 or config.get("arms_parallel") is not False:
-        raise RuntimeError("this runner implements one sequential task pair with rotated arm order")
+    validate_execution_shape(config)
+    provider_host = provider_hostname(config["base_url"])
+    provider_addresses = resolve_provider_ipv4_addresses(config["base_url"])
+    runner_isolation = prepare_runner_isolation(config)
+    runner_bin = executor_binary(config)
+    resolved_runner_bin = shutil.which(runner_bin) or runner_bin
     paths.run.mkdir(parents=True, exist_ok=True)
     if not paths.dataset.exists():
         paths.dataset.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["git", "clone", "--filter=blob:none", config["dataset"]["repo"], str(paths.dataset)],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.eol=lf",
+                "clone",
+                "--filter=blob:none",
+                config["dataset"]["repo"],
+                str(paths.dataset),
+            ],
             check=True,
         )
-    subprocess.run(
-        ["git", "-C", str(paths.dataset), "checkout", "--detach", config["dataset"]["revision"]],
-        check=True,
-    )
+    checkout_dataset_revision(paths.dataset, config["dataset"]["revision"])
     actual_revision = subprocess.run(
         ["git", "-C", str(paths.dataset), "rev-parse", "HEAD"],
         capture_output=True,
@@ -319,6 +516,8 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     task_names = ordered_task_names(tasks_dir, selected_ids)
     if len(task_names) != int(config["dataset"]["task_count"]):
         raise RuntimeError(f"expected {config['dataset']['task_count']} tasks, found {len(task_names)}")
+    if config["dataset"].get("slug") == "deep-swe":
+        validate_deepswe_verifier_entrypoints(tasks_dir, task_names)
 
     tree_hash = sha256_git_tree(paths.dataset, actual_revision, "tasks")
     expected_hash = config["dataset"].get("task_tree_sha256")
@@ -341,6 +540,10 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         "actual_task_tree_sha256": tree_hash,
         "task_tree_hash_status": hash_status,
         "tasks": task_names,
+        "provider_network": {
+            "hostname": provider_host,
+            "ipv4_addresses": provider_addresses,
+        },
         "source_revision": command_version(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
         "source_dirty": bool(command_version(["git", "-C", str(ROOT), "status", "--porcelain"])),
         "nova_bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
@@ -353,10 +556,12 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         "harness_sha256": {
             relative: file_sha256(ROOT / relative) for relative in HARNESS_SOURCE_FILES
         },
+        "executor_binary": str(Path(resolved_runner_bin).resolve()),
+        "runner_isolation": runner_isolation,
         "versions": {
             "python": sys.version.split()[0],
             "node": command_version(["node", "--version"]),
-            "harbor": command_version(["harbor", "--version"]),
+            "executor": command_version([runner_bin, "--version"]),
             "docker": command_version(["docker", "--version"]),
             "opencode_pin": config["agents"]["opencode"]["version"],
             "claude_code_pin": config["agents"]["claude_code"]["version"],
@@ -375,6 +580,26 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
     active_agents = list(config.get("active_agents") or config["agents"].keys())
     agents = ", ".join(active_agents)
     design = "paired pass@1" if len(active_agents) > 1 else "single-agent pass@1"
+    round_budget = config.get("max_tool_rounds")
+    round_budget_text = (
+        "no additional turn/step limit"
+        if round_budget is None
+        else f"{round_budget} turns/steps"
+    )
+    isolation = config["runner_isolation"]
+    network_text = (
+        "Pier task hook + adapter network allowlist + Windows LF proxy shim "
+        f"{isolation['pier_proxy_compatibility']['source_sha256']}"
+        if isolation["executor"] == "pier"
+        else "Harbor loopback-only egress policy "
+        f"{isolation['harbor_egress_policy']['policy_sha256']}"
+    )
+    cost_limit = configured_cost_limit(config)
+    cost_limit_text = (
+        "disabled; every admitted task runs to an official terminal result"
+        if cost_limit is None
+        else f"stop admitting new cells after ${cost_limit:.2f}"
+    )
     text = f"""# Coding agent harness 实验设计
 
 ## Frozen setup
@@ -382,15 +607,16 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Dataset: {config['dataset'].get('label', 'Terminal-Bench 2.1')} {config['dataset']['task_count']} 题，revision `{config['dataset']['revision']}`。
 - Task tree SHA256: `{config['dataset']['task_tree_sha256']}`。
 - Active arms: {agents}；每题每臂一次有效 model attempt，{design}。
-- Model: `{config['model']}`；reasoning effort: `{config['reasoning_effort']}`。
-- Agent budget: {config['max_tool_rounds']} turns/steps；task-native timeout × {config['timeout_multiplier']}；外层安全上限 {config['outer_timeout_seconds']} 秒。
+- Model: `{config['model']}`；provider endpoint: `{config['base_url']}`；reasoning effort: `{config['reasoning_effort']}`。
+- Agent budget: {round_budget_text}；task-native timeout × {config['timeout_multiplier']}；外层安全上限 {config['outer_timeout_seconds']} 秒。
 - Execution order: `{config['task_order']}`；只改变运行先后，不改变题目、预算或判分。
 - Agent setup timeout × {config['agent_setup_timeout_multiplier']}；只作用于 harness 安装，不改变解题时间。
-- Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型请求使用容器代理 `{config['install_network']['proxy_url']}`。
+- Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型入口 `{config['provider_network']['hostname']}` 的公网 IPv4 在 prepare 时冻结并写入任务 hosts，仅在 agent phase 放行。
+- Executor: `{config['executor']}`；network/artifact isolation: {network_text}。
 - Concurrency: {config['pair_concurrency']} task cell；arms_parallel={str(config['arms_parallel']).lower()}。多臂模式按题号轮换顺序。
 - Retry: 模型失败、任务超时、budget exhaustion 不重试；只对预注册的 infrastructure-invalid cell 最多重试 {config['infra_retry_limit']} 次，保留全部 admission。
 - Verifier: 仅以官方 verifier reward 判定 pass/fail。
-- Cost circuit breaker: 累计统一估算超过 ${config['max_total_estimated_cost_usd']:.2f} 时停止新 cell。
+- Cost circuit breaker: {cost_limit_text}。
 
 ## Failure taxonomy
 
@@ -418,13 +644,18 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 
 def render_reproduction_document(config: dict[str, Any], output: Path) -> None:
     run_id = config["run_id"]
+    executor_dependency = (
+        "Datacurve Pier 0.3.0: `uv tool install datacurve-pier==0.3.0`."
+        if config["executor"] == "pier"
+        else "Harbor 0.20.0: `uv tool install harbor==0.20.0`."
+    )
     text = f"""# Reproducing the harness comparison
 
 ## Dependencies
 
 - Git, Python 3.12+, Node.js 22+, npm, uv, Docker with a running Linux daemon.
-- Harbor 0.20.0: `uv tool install harbor==0.20.0`.
-- Nova bundle and a SHA256-pinned Node.js runtime are injected into each Harbor task container; per-task package installation is not required.
+- {executor_dependency}
+- Nova bundle and a SHA256-pinned Node.js runtime are injected into each task container; per-task package installation is not required.
 - DeepSeek API access. Never put the key in a command argument or tracked file.
 
 ## Commands (PowerShell)
@@ -458,11 +689,12 @@ The frozen setup also records the dataset revision, stable git-tree SHA256, tool
     output.write_text(text, encoding="utf-8")
 
 
-def ensure_preflight() -> None:
+def ensure_preflight(config: dict[str, Any]) -> None:
     if not os.environ.get("DEEPSEEK_API_KEY"):
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
-    if not shutil.which("harbor"):
-        raise RuntimeError("harbor is not installed")
+    runner = executor_binary(config)
+    if not Path(runner).is_file() and not shutil.which(runner):
+        raise RuntimeError(f"{executor_name(config)} is not installed: {runner}")
     if not shutil.which("docker"):
         raise RuntimeError("docker is not installed")
     try:
@@ -484,32 +716,75 @@ def agent_command(
 ) -> tuple[list[str], Path]:
     job_dir = paths.jobs / task / agent / f"admission-{admission}"
     job_dir.mkdir(parents=True, exist_ok=True)
-    common = [
-        "harbor",
-        "run",
-        "-p",
-        str(paths.dataset / "tasks"),
-        "-i",
-        task,
-        "-n",
-        "1",
-        "-k",
-        "1",
-        "-r",
-        "0",
-        "--timeout-multiplier",
-        str(config["timeout_multiplier"]),
-        "--agent-setup-timeout-multiplier",
-        str(config["agent_setup_timeout_multiplier"]),
-        "--jobs-dir",
-        str(job_dir),
-        "--job-name",
-        f"{task}-{agent}-a{admission}",
-        "--quiet",
-    ]
+    provider_host, provider_addresses = frozen_provider_network(config)
+    executor = executor_name(config)
+    if executor == "pier":
+        if agent != "nova":
+            raise RuntimeError("Pier evaluation currently supports the Nova arm only")
+        common = [
+            executor_binary(config),
+            "run",
+            "--agent-import-path",
+            "scripts.harness_eval.nova_agent:NovaHeadless",
+            "-m",
+            f"deepseek/{config['model']}",
+            "-p",
+            str(paths.dataset / "tasks" / task),
+            "-o",
+            str(job_dir),
+            "--job-name",
+            f"{task}-{agent}-a{admission}",
+            "-k",
+            "1",
+            "-n",
+            "1",
+            "-r",
+            "0",
+            "--timeout-multiplier",
+            str(config["timeout_multiplier"]),
+            "-e",
+            "docker",
+            "--yes",
+            "--quiet",
+        ]
+    else:
+        common = [
+            executor_binary(config),
+            "run",
+            "-p",
+            str(paths.dataset / "tasks"),
+            "-i",
+            task,
+            "-n",
+            "1",
+            "-k",
+            "1",
+            "-r",
+            "0",
+            "--timeout-multiplier",
+            str(config["timeout_multiplier"]),
+            "--agent-setup-timeout-multiplier",
+            str(config["agent_setup_timeout_multiplier"]),
+            "--jobs-dir",
+            str(job_dir),
+            "--job-name",
+            f"{task}-{agent}-a{admission}",
+            "--allow-agent-host",
+            provider_host,
+        ]
+        for address in provider_addresses:
+            common.extend(["--allow-agent-host", address])
+        common.append("--quiet")
     model = config["model"]
     effort = config["reasoning_effort"]
-    rounds = str(config["max_tool_rounds"])
+    round_limit = config.get("max_tool_rounds")
+    if round_limit is not None:
+        if (
+            isinstance(round_limit, bool)
+            or not isinstance(round_limit, int)
+            or round_limit < 1
+        ):
+            raise RuntimeError("max_tool_rounds must be null or a positive integer")
     install_network = config["install_network"]
     install_kwargs = [
         "--ak",
@@ -526,34 +801,43 @@ def agent_command(
         deadline_seconds = scaled_timeout - float(config["agent_deadline_grace_seconds"])
         if deadline_seconds <= 0:
             raise RuntimeError(f"Nova deadline is not positive for task {task}")
-        return (
-            common
-            + [
-                "-a",
-                "scripts.harness_eval.nova_agent:NovaHeadless",
-                "-m",
-                f"deepseek/{model}",
-                "--ak",
-                f"bundle_path={ROOT / 'out' / 'headless' / 'nova-headless.cjs'}",
-                "--ak",
-                f"prompt_path={ROOT / 'out' / 'headless' / 'prompts' / 'base-rules.md'}",
-                "--ak",
-                f"node_archive_path={config['node_runtime'].get('archive_path') or node_runtime_archive_path(config, paths)}",
-                "--ak",
-                f"reasoning_effort={effort}",
-                "--ak",
-                f"max_tool_rounds={rounds}",
+        nova_adapter = [] if executor == "pier" else [
+            "-a",
+            "scripts.harness_eval.nova_agent:NovaHeadless",
+            "-m",
+            f"deepseek/{model}",
+        ]
+        nova_command = common + nova_adapter + [
+            "--ak",
+            f"bundle_path={ROOT / 'out' / 'headless' / 'nova-headless.cjs'}",
+            "--ak",
+            f"prompt_path={ROOT / 'out' / 'headless' / 'prompts' / 'base-rules.md'}",
+            "--ak",
+            f"node_archive_path={config['node_runtime'].get('archive_path') or node_runtime_archive_path(config, paths)}",
+            "--ak",
+            f"base_url={config['base_url']}",
+            "--ak",
+            "provider_addresses="
+            + json.dumps(provider_addresses, separators=(",", ":")),
+            "--ak",
+            f"reasoning_effort={effort}",
+        ]
+        if round_limit is not None:
+            nova_command.extend(["--ak", f"max_tool_rounds={round_limit}"])
+        nova_command.extend(
+            [
                 "--ak",
                 f"deadline_seconds={deadline_seconds:g}",
                 "--ak",
                 f"version={config['agents']['nova']['version']}",
-                "--ak",
-                f"install_proxy_url={install_network['proxy_url']}",
-            ],
-            job_dir,
+            ]
         )
+        return nova_command, job_dir
     if agent == "opencode":
-        opencode_config = json.dumps({"agent": {"build": {"steps": int(rounds)}}}, separators=(",", ":"))
+        build_config = {} if round_limit is None else {"steps": round_limit}
+        opencode_config = json.dumps(
+            {"agent": {"build": build_config}}, separators=(",", ":")
+        )
         return (
             common
             + [
@@ -572,23 +856,19 @@ def agent_command(
             job_dir,
         )
     if agent == "claude_code":
-        return (
-            common
-            + [
-                "-a",
-                "scripts.harness_eval.comparison_agents:ClaudeCodeComparison",
-                "-m",
-                model,
-                "--ak",
-                f"version={config['agents']['claude_code']['version']}",
-                "--ak",
-                f"reasoning_effort={effort}",
-                "--ak",
-                f"max_turns={rounds}",
-            ]
-            + install_kwargs,
-            job_dir,
-        )
+        claude_command = common + [
+            "-a",
+            "scripts.harness_eval.comparison_agents:ClaudeCodeComparison",
+            "-m",
+            model,
+            "--ak",
+            f"version={config['agents']['claude_code']['version']}",
+            "--ak",
+            f"reasoning_effort={effort}",
+        ]
+        if round_limit is not None:
+            claude_command.extend(["--ak", f"max_turns={round_limit}"])
+        return claude_command + install_kwargs, job_dir
     raise ValueError(f"unknown agent: {agent}")
 
 
@@ -810,6 +1090,18 @@ def build_row(
     if runner_exception:
         trial["exception_info"] = {"exception_type": exception_type, "exception_message": exception_message}
     reward = reward_value(trial)
+    if (
+        reward is not None
+        and config.get("dataset", {}).get("slug") == "deep-swe"
+        and reward not in {0.0, 1.0}
+    ):
+        exception_type = "VerifierInvalidRewardError"
+        exception_message = f"DeepSWE verifier returned non-binary reward: {reward:g}"
+        trial["exception_info"] = {
+            "exception_type": exception_type,
+            "exception_message": exception_message,
+        }
+        reward = None
     budget = (
         exception_type == "RunnerOuterTimeoutError"
         or (scan_budget_exhaustion(result_path.parent, trial) if result_path else False)
@@ -962,11 +1254,12 @@ def run_cell(config: dict[str, Any], paths: Paths, task: str, agent: str, admiss
         job_path=str(job_dir),
     )
     env = harbor_environment(agent, config)
+    executor = executor_name(config)
     started = time.monotonic()
     runner_exception: tuple[str, str] | None = None
     try:
-        with (job_dir / "harbor.stdout.log").open("w", encoding="utf-8", errors="replace") as stdout, (
-            job_dir / "harbor.stderr.log"
+        with (job_dir / f"{executor}.stdout.log").open("w", encoding="utf-8", errors="replace") as stdout, (
+            job_dir / f"{executor}.stderr.log"
         ).open("w", encoding="utf-8", errors="replace") as stderr:
             process = subprocess.Popen(
                 command,
@@ -996,11 +1289,14 @@ def run_cell(config: dict[str, Any], paths: Paths, task: str, agent: str, admiss
                     )
         result_path = newest_result(job_dir)
         if process.returncode != 0:
-            runner_exception = ("HarborProcessError", f"harbor exited with {process.returncode}")
+            runner_exception = ("RunnerProcessError", f"{executor} exited with {process.returncode}")
         elif result_path is None:
-            runner_exception = ("HarborMissingResultError", "harbor exited without a result")
+            runner_exception = ("RunnerMissingResultError", f"{executor} exited without a result")
         elif not result_is_complete(result_path):
-            runner_exception = ("HarborIncompleteResultError", "harbor exited with an incomplete result")
+            runner_exception = (
+                "RunnerIncompleteResultError",
+                f"{executor} exited with an incomplete result",
+            )
     except subprocess.TimeoutExpired:
         runner_exception = ("RunnerOuterTimeoutError", "runner outer timeout expired")
     elapsed = time.monotonic() - started
@@ -1038,13 +1334,56 @@ def run_cell(config: dict[str, Any], paths: Paths, task: str, agent: str, admiss
     return row
 
 
+def run_cell_admissions(
+    config: dict[str, Any],
+    paths: Paths,
+    cell: PendingCell,
+) -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = []
+    for admission in range(cell.next_admission, cell.max_admissions + 1):
+        row = run_cell(config, paths, cell.task, cell.agent, admission)
+        attempts.append(row)
+        if not is_retryable(row):
+            break
+        log_progress(
+            paths,
+            "infrastructure_retry",
+            task=cell.task,
+            agent=cell.agent,
+            completed_admission=admission,
+            next_admission=admission + 1,
+            failure_class=row["failure_class"],
+            exception_type=row["exception_type"],
+        )
+    return attempts
+
+
 def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> None:
-    ensure_preflight()
+    ensure_preflight(config)
     frozen_path = paths.run / "frozen_setup.json"
     if not frozen_path.is_file():
         prepare(config, paths)
     frozen = read_json(frozen_path)
     config = frozen
+    isolation = frozen["runner_isolation"]
+    if isolation["executor"] != executor_name(frozen):
+        raise RuntimeError("Executor isolation changed after setup was frozen")
+    if isolation["executor"] == "harbor":
+        harbor_egress_policy = ensure_harbor_egress_compatibility()
+        if (
+            harbor_egress_policy["policy_sha256"]
+            != isolation["harbor_egress_policy"]["policy_sha256"]
+        ):
+            raise RuntimeError("Harbor egress policy changed after setup was frozen")
+    else:
+        pier_proxy_compatibility = ensure_pier_proxy_compatibility(
+            executor_binary(frozen)
+        )
+        if (
+            pier_proxy_compatibility["source_sha256"]
+            != isolation["pier_proxy_compatibility"]["source_sha256"]
+        ):
+            raise RuntimeError("Pier proxy compatibility changed after setup was frozen")
     bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
     prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
     if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != frozen["nova_bundle_sha256"]:
@@ -1073,6 +1412,7 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
     unknown_agents = set(agents) - set(config["agents"])
     if not agents or unknown_agents:
         raise RuntimeError(f"invalid active_agents: {agents}")
+    concurrency = validate_execution_shape(config)
     total_cells = len(tasks) * len(agents)
     write_progress_snapshot(paths, selected, total_cells)
     log_progress(
@@ -1084,9 +1424,12 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
         task_limit=task_limit,
     )
 
+    cell_order: list[tuple[str, str]] = []
+    pending_cells: list[PendingCell] = []
     for index, task in enumerate(tasks):
         order = agents[index % len(agents):] + agents[:index % len(agents)]
         for agent in order:
+            cell_order.append((task, agent))
             key = (task, agent)
             max_admissions = 1 + int(config["infra_retry_limit"])
             next_admission = next_admission_for_cell(
@@ -1098,60 +1441,103 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
             )
             if next_admission is None:
                 continue
-            if spent >= float(config["max_total_estimated_cost_usd"]):
-                raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
-            attempts: list[dict[str, Any]] = []
-            for admission in range(next_admission, max_admissions + 1):
-                row = run_cell(config, paths, task, agent, admission)
-                attempts.append(row)
-                admissions.append(row)
-                spent += float(row["estimated_cost_usd"])
-                write_csv(paths.admissions_csv, admissions)
-                if not is_retryable(row):
-                    break
-                log_progress(
-                    paths,
-                    "infrastructure_retry",
+            pending_cells.append(
+                PendingCell(
                     task=task,
                     agent=agent,
-                    completed_admission=admission,
-                    next_admission=admission + 1,
-                    failure_class=row["failure_class"],
-                    exception_type=row["exception_type"],
+                    next_admission=next_admission,
+                    max_admissions=max_admissions,
                 )
+            )
 
-            chosen = dict(attempts[-1])
-            chosen["selected"] = True
-            chosen["recovered"] = chosen["admission"] > 1 and not is_retryable(chosen)
-            selected = [row for row in selected if (row["task"], row["agent"]) != key]
-            selected.append(chosen)
-            selected_by_key[key] = chosen
-            write_csv(paths.selected_csv, selected)
-            write_progress_snapshot(paths, selected, total_cells)
+    cell_rank = {key: index for index, key in enumerate(cell_order)}
+
+    def row_order(row: dict[str, Any]) -> tuple[int, int]:
+        key = (str(row["task"]), str(row["agent"]))
+        return cell_rank.get(key, len(cell_rank)), int(row["admission"])
+
+    def record_attempts(cell: PendingCell, attempts: list[dict[str, Any]]) -> None:
+        nonlocal admissions, selected, spent
+        if not attempts:
+            raise RuntimeError(f"cell returned no admissions: {cell.task}/{cell.agent}")
+        admissions.extend(attempts)
+        admissions.sort(key=row_order)
+        spent += sum(float(row["estimated_cost_usd"]) for row in attempts)
+        write_csv(paths.admissions_csv, admissions)
+
+        key = (cell.task, cell.agent)
+        chosen = dict(attempts[-1])
+        chosen["selected"] = True
+        chosen["recovered"] = chosen["admission"] > 1 and not is_retryable(chosen)
+        selected = [row for row in selected if (row["task"], row["agent"]) != key]
+        selected.append(chosen)
+        selected.sort(key=row_order)
+        selected_by_key[key] = chosen
+        write_csv(paths.selected_csv, selected)
+        write_progress_snapshot(paths, selected, total_cells)
+        try:
             try:
-                try:
-                    from scripts.harness_eval.report import generate
-                except ModuleNotFoundError as error:
-                    if error.name != "scripts":
-                        raise
-                    from report import generate
+                from scripts.harness_eval.report import generate
+            except ModuleNotFoundError as error:
+                if error.name != "scripts":
+                    raise
+                from report import generate
 
-                generate(paths.run)
-                log_progress(
-                    paths,
-                    "report_updated",
-                    completed_cells=len(selected),
-                    total_cells=total_cells,
-                    report_path=str(paths.run / "report.md"),
-                )
-            except Exception as error:
-                log_progress(
-                    paths,
-                    "report_update_failed",
-                    completed_cells=len(selected),
-                    error_type=type(error).__name__,
-                    error_message=str(error),
-                )
+            generate(paths.run)
+            log_progress(
+                paths,
+                "report_updated",
+                completed_cells=len(selected),
+                total_cells=total_cells,
+                report_path=str(paths.run / "report.md"),
+            )
+        except Exception as error:
+            log_progress(
+                paths,
+                "report_update_failed",
+                completed_cells=len(selected),
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+
+    cost_limit = configured_cost_limit(config)
+    if concurrency == 1:
+        for cell in pending_cells:
+            if cost_limit is not None and spent >= cost_limit:
+                raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
+            record_attempts(cell, run_cell_admissions(config, paths, cell))
+    else:
+        next_cell = 0
+        futures: dict[Future[list[dict[str, Any]]], PendingCell] = {}
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            while (
+                next_cell < len(pending_cells)
+                and len(futures) < concurrency
+                and (cost_limit is None or spent < cost_limit)
+            ):
+                cell = pending_cells[next_cell]
+                next_cell += 1
+                futures[executor.submit(run_cell_admissions, config, paths, cell)] = cell
+
+            while futures:
+                completed, _pending = wait(tuple(futures), return_when=FIRST_COMPLETED)
+                for future in sorted(
+                    completed,
+                    key=lambda item: cell_rank[(futures[item].task, futures[item].agent)],
+                ):
+                    cell = futures.pop(future)
+                    record_attempts(cell, future.result())
+                while (
+                    next_cell < len(pending_cells)
+                    and len(futures) < concurrency
+                    and (cost_limit is None or spent < cost_limit)
+                ):
+                    cell = pending_cells[next_cell]
+                    next_cell += 1
+                    futures[executor.submit(run_cell_admissions, config, paths, cell)] = cell
+
+        if cost_limit is not None and next_cell < len(pending_cells):
+            raise RuntimeError(f"cost circuit breaker reached: ${spent:.4f}")
     log_progress(
         paths,
         "run_completed",

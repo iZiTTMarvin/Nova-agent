@@ -11,6 +11,7 @@ import { renderWorkingDirectoryHint } from './toolPromptRenderer'
 export interface BuildStableSystemPromptOptions {
   /** 工作区绝对路径 */
   workingDir?: string
+  surface?: 'interactive' | 'headless'
 }
 
 const STABLE_SYSTEM_PROMPT: BuildStableSystemPromptOptions = {}
@@ -24,15 +25,19 @@ export function buildStableSystemPrompt(options: BuildStableSystemPromptOptions)
     parts.push('', renderWorkingDirectoryHint(options.workingDir))
   }
 
-  parts.push(
-    '',
-    'Nova 有三种运行模式，当前激活的模式会在每轮对话中告知你：',
-    '- plan 模式：只读规划。你只能读取和分析项目，不能编辑、写入或执行命令。',
-    '- default 模式：默认模式。你可以读取、修改和验证工作区；工具批准策略由用户设置决定。',
-    '- compose 模式：编排模式。开发流程由编排脚本强制推进，子 agent 按阶段执行任务。',
-    '',
-    '请严格遵守当前模式的约束。如果在 plan 模式下被要求写入，请说明需要切换模式。'
-  )
+  if (options.surface === 'headless') {
+    parts.push('', '当前为无界面 coding task；直接使用工作区工具完成并验证任务。')
+  } else {
+    parts.push(
+      '',
+      'Nova 有三种运行模式，当前激活的模式会在每轮对话中告知你：',
+      '- plan 模式：只读规划。你只能读取和分析项目，不能编辑、写入或执行命令。',
+      '- default 模式：默认模式。你可以读取、修改和验证工作区；工具批准策略由用户设置决定。',
+      '- compose 模式：编排模式。开发流程由编排脚本强制推进，子 agent 按阶段执行任务。',
+      '',
+      '请严格遵守当前模式的约束。如果在 plan 模式下被要求写入，请说明需要切换模式。'
+    )
+  }
 
   return parts.join('\n')
 }

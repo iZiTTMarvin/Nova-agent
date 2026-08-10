@@ -6,6 +6,7 @@ export type { AgentEvent, AgentEventCallback, AgentState, AgentLoopConfig } from
 // 渲染进程不消费本 barrel（含运行时值会破坏 renderer bundle tree-shaking）。
 export { renderModeToolInventory, renderToolInventory } from './promptBuilder/toolPromptRenderer'
 export { buildStableSystemPrompt, normalizeFrozenSystemPrompt, getStableSystemPrompt } from './promptBuilder/modePrompt'
+export { getHeadlessExecutionInstruction } from './promptBuilder/modeInstruction'
 export type { RecoveryState } from './recovery/RecoveryStateMachine'
 export {
   buildSkillContext,

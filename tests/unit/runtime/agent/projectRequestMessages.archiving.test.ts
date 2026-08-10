@@ -7,12 +7,17 @@ import {
   ACTIVE_TOOL_RESULT_MAX_TOKENS,
   isArchivedPlaceholder,
   buildArchiveContentPreview,
+  createRequestProjectionArchiveCache,
   resolveRequestProjectionPolicy,
   DISABLED_PRUNE_POLICY,
   type ArchivedToolResultPlaceholder
 } from '../../../../src/runtime/agent/core/projectRequestMessages'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { createHash } from 'crypto'
+import { mkdtempSync, readdirSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 
 describe('projectRequestMessages archiving', () => {
   it('18KB 的工具输出经投影后变为占位符，原消息未被 mutate', async () => {
@@ -24,6 +29,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(isArchivedPlaceholder(result.messages[0].content as string)).toBe(true)
@@ -39,6 +45,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 0,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(result.messages).toEqual(messages)
@@ -54,6 +61,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     expect(result.messages[0].content).toBe(messages[0].content)
@@ -61,25 +69,71 @@ describe('projectRequestMessages archiving', () => {
     expect(result.diagnostics.prunedCount).toBe(0)
   })
 
-  it('连续两次投影结果一致（幂等）', async () => {
+  it('同一 turn 重投影权威原文时复用稳定占位符', async () => {
     const messages: ChatMessage[] = [
       { role: 'tool', content: 'x'.repeat(18 * 1024), toolCallId: 'tc1' }
     ]
     let archiveCallCount = 0
+    const archiveCache = createRequestProjectionArchiveCache()
     const first = await projectRequestMessages({
       messages,
       toolRound: 1,
       policy: { enabled: true },
-      archive: async () => { archiveCallCount++; return { artifactId: 'art1' } }
+      archiveCache,
+      archive: async () => {
+        archiveCallCount++
+        return { artifactId: `art${archiveCallCount}` }
+      }
     })
     const second = await projectRequestMessages({
-      messages: first.messages,
-      toolRound: 1,
+      messages,
+      toolRound: 2,
       policy: { enabled: true },
-      archive: async () => { archiveCallCount++; return { artifactId: 'art1' } }
+      archiveCache,
+      archive: async () => {
+        archiveCallCount++
+        return { artifactId: `art${archiveCallCount}` }
+      }
     })
     expect(second.messages).toEqual(first.messages)
     expect(archiveCallCount).toBe(1)
+  })
+
+  it('跨 turn 使用新投影缓存时仍复用同一可回读占位符', async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-projection-artifact-'))
+    const store = new ArtifactStore(sessionsDir)
+    const sessionId = 'projection-session'
+    const messages: ChatMessage[] = [
+      { role: 'tool', content: 'x'.repeat(18 * 1024), toolCallId: 'tc1' }
+    ]
+    const archive = async (candidate: { body: string; toolName: string }) => {
+      const meta = await store.writeContentAddressed(sessionId, candidate.body, {
+        toolName: candidate.toolName
+      })
+      return { artifactId: meta.id }
+    }
+
+    try {
+      const first = await projectRequestMessages({
+        messages,
+        toolRound: 1,
+        policy: { enabled: true },
+        archiveCache: createRequestProjectionArchiveCache(),
+        archive
+      })
+      const second = await projectRequestMessages({
+        messages,
+        toolRound: 1,
+        policy: { enabled: true },
+        archiveCache: createRequestProjectionArchiveCache(),
+        archive
+      })
+
+      expect(second.messages).toEqual(first.messages)
+      expect(readdirSync(store.getArtifactsDir(sessionId))).toHaveLength(1)
+    } finally {
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
   })
 
   it('阈值以下的输出不归档', async () => {
@@ -90,6 +144,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(result.messages[0].content).toBe('x'.repeat(100))
@@ -106,6 +161,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     const parsed = JSON.parse(result.messages[0].content as string) as ArchivedToolResultPlaceholder
@@ -146,6 +202,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: resolveRequestProjectionPolicy(false),
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => {
         archiveCalls++
         return { artifactId: 'art1' }
@@ -166,6 +223,7 @@ describe('projectRequestMessages archiving', () => {
       messages,
       toolRound: 1,
       policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
     expect(result.messages[0]).toEqual(messages[0])

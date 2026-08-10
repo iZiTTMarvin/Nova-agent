@@ -7,7 +7,7 @@
 import { copyFile, mkdir, readFile, rename, unlink, writeFile, access, stat } from 'fs/promises'
 import { constants } from 'fs'
 import { join } from 'path'
-import { randomBytes } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 
 export interface ArtifactMeta {
   id: string
@@ -29,6 +29,10 @@ function assertSafeSegment(label: string, value: string): void {
 /** 生成会话内唯一的短 artifact ID */
 function generateArtifactId(): string {
   return randomBytes(6).toString('hex')
+}
+
+function contentAddressedArtifactId(content: string): string {
+  return `sha256-${createHash('sha256').update(content, 'utf8').digest('hex')}`
 }
 
 /** 统计文本行数（空字符串为 0 行，与 split 口径一致） */
@@ -59,12 +63,38 @@ export class ArtifactStore {
     content: string,
     meta: { toolName: string; truncated?: boolean }
   ): Promise<ArtifactMeta> {
+    return this.writeAtId(sessionId, generateArtifactId(), content, meta)
+  }
+
+  /** 同一会话内按正文复用稳定 ID，供可重复生成的请求投影使用。 */
+  async writeContentAddressed(
+    sessionId: string,
+    content: string,
+    meta: { toolName: string; truncated?: boolean }
+  ): Promise<ArtifactMeta> {
+    return this.writeAtId(sessionId, contentAddressedArtifactId(content), content, meta)
+  }
+
+  private async writeAtId(
+    sessionId: string,
+    id: string,
+    content: string,
+    meta: { toolName: string; truncated?: boolean }
+  ): Promise<ArtifactMeta> {
     assertSafeSegment('sessionId', sessionId)
-    const id = generateArtifactId()
+    assertSafeSegment('artifactId', id)
     const dir = this.getArtifactsDir(sessionId)
     await mkdir(dir, { recursive: true })
     const filePath = join(dir, id)
-    await writeFile(filePath, content, 'utf8')
+    try {
+      const existing = await readFile(filePath, 'utf8')
+      if (existing !== content) {
+        throw new Error(`artifact 内容寻址冲突: ${id}`)
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      await writeFile(filePath, content, 'utf8')
+    }
     return {
       id,
       sessionId,

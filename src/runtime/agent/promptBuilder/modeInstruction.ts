@@ -66,6 +66,15 @@ function buildComposeInstruction(opts?: ModeInstructionOptions): string {
   return lines.join('\n')
 }
 
+export function getHeadlessExecutionInstruction(): string {
+  return [
+    '[执行环境: headless coding task]',
+    '直接在当前工作区完成任务；这里没有交互式模式切换或工具批准流程，不要等待用户确认，也不要请求切换模式。',
+    '先用工具定位根因，实施最小且完整的修改，再运行与改动匹配的测试或检查。',
+    '只有任务完成，或工具证据表明确有无法自行解决的阻塞时，才停止执行。'
+  ].join('\n')
+}
+
 /** 获取当前模式的约束指令文本，附加到 user 消息尾部 */
 export function getModeInstruction(mode: Mode, opts?: ModeInstructionOptions): string {
   switch (mode) {

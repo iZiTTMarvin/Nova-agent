@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { getModeInstruction } from '../../../../src/runtime/agent/promptBuilder/modeInstruction'
+import {
+  getHeadlessExecutionInstruction,
+  getModeInstruction
+} from '../../../../src/runtime/agent/promptBuilder/modeInstruction'
 
 describe('modeInstruction', () => {
+  it('headless 只要求直接实施与验证，不引导交互式切换', () => {
+    const instruction = getHeadlessExecutionInstruction()
+
+    expect(instruction).toContain('headless coding task')
+    expect(instruction).toContain('运行与改动匹配的测试或检查')
+    expect(instruction).not.toContain('switch_mode')
+    expect(instruction).not.toContain('用户设置')
+  })
+
   it('Plan 明确受限计划产物与确认后切换契约', () => {
     const instruction = getModeInstruction('plan')
     expect(instruction).toContain('save_plan')

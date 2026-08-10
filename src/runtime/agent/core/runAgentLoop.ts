@@ -16,7 +16,11 @@ import { getEffectiveToolDefinitions } from './AgentContext'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
-import { projectRequestMessages, DISABLED_PRUNE_POLICY } from './projectRequestMessages'
+import {
+  createRequestProjectionArchiveCache,
+  projectRequestMessages,
+  DISABLED_PRUNE_POLICY
+} from './projectRequestMessages'
 import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
@@ -97,6 +101,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   let toolRound = 0
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
+  const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
 
   try {
     while (toolRound < config.maxToolRounds) {
@@ -160,10 +165,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         messages: chatMessages,
         toolRound,
         policy: config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY,
+        archiveCache: requestProjectionArchiveCache,
         archive: async (candidate) => {
           if (!context.artifactStore || !context.sessionId) return null
           try {
-            const meta = await context.artifactStore.write(
+            const meta = await context.artifactStore.writeContentAddressed(
               context.sessionId,
               candidate.body,
               { toolName: candidate.toolName }
@@ -209,7 +215,14 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         p.recordRequestAnchor(turnResult.promptTokens, requestPayloadChars)
       }
 
-      const { assistantContent, toolCalls, sawUsage, reasoningContent, reasoningProviderId } =
+      const {
+        assistantContent,
+        toolCalls,
+        finishReason,
+        sawUsage,
+        reasoningContent,
+        reasoningProviderId
+      } =
         turnResult
 
       const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent }
@@ -228,8 +241,20 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
 
       await hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
 
-      // 没有工具调用时，本轮正常结束。
-      if (toolCalls.length === 0) break
+      if (toolCalls.length === 0) {
+        const continuation = await config.assistantCompletionPolicy?.({
+          messageId,
+          toolRound,
+          finishReason,
+          assistantContent,
+          ...(reasoningContent ? { reasoningContent } : {})
+        })
+        const instruction = continuation?.instruction.trim()
+        if (!instruction) break
+        context.messages.push({ role: 'user', content: instruction })
+        p.updateTokenEstimate()
+        continue
+      }
 
       // 尝试从正文恢复 native 工具调用的空参数。
       const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent, diagnostic => {
@@ -328,6 +353,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           stopReason = stopDecision.reason
           emit({ type: 'text_delta', messageId, delta: stopDecision.notice })
           break
+        }
+        if (stopDecision) {
+          context.messages.push({ role: 'user', content: stopDecision.instruction })
+          p.updateTokenEstimate()
         }
       }
 
