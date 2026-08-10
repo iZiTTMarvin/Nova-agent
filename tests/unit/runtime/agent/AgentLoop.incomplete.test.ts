@@ -13,6 +13,10 @@ import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import type { AgentLoopConfig } from '../../../../src/runtime/agent/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import {
+  HEADLESS_CONTINUATION_INSTRUCTION,
+  headlessAssistantCompletionPolicy
+} from '../../../../src/headless/completionPolicy'
 
 const loops: AgentLoop[] = []
 
@@ -139,6 +143,114 @@ describe('终态诚实：自然收工与后续轮次', () => {
     const outcome = await loop.sendMessage('你好', agentRoute())
 
     expect(outcome).toEqual({ status: 'completed' })
+  })
+
+  it('未注入 completion policy 时保持仅 reasoning 的交互终态语义', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'thinking_delta', delta: '内部推理' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { loop } = createLoop(client)
+
+    const outcome = await loop.sendMessage('你好', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(client.getCalls()).toHaveLength(1)
+  })
+
+  it('headless completion policy 可让仅 reasoning 的停顿继续同一次任务', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'thinking_delta', delta: '还需要继续实现' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '已完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { loop } = createLoop(client)
+    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
+
+    const outcome = await loop.sendMessage('完成编码任务', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(client.getCalls()).toHaveLength(2)
+    expect(client.getCalls()[1].messages).toContainEqual({
+      role: 'user',
+      content: HEADLESS_CONTINUATION_INSTRUCTION
+    })
+  })
+
+  it('headless completion policy 保持正常最终正文只调用一次', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'thinking_delta', delta: '已经完成' },
+        { type: 'text_delta', delta: '任务已完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { loop } = createLoop(client)
+    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
+
+    const outcome = await loop.sendMessage('完成编码任务', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(client.getCalls()).toHaveLength(1)
+  })
+
+  it('headless completion policy 在输出长度耗尽后继续同一次任务', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '尚未完成的输出' },
+        { type: 'message_end', finishReason: 'length' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '任务已完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { loop } = createLoop(client)
+    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
+
+    const outcome = await loop.sendMessage('完成编码任务', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(client.getCalls()).toHaveLength(2)
+  })
+
+  it('headless completion policy 不把内容过滤误当作可续跑的长度耗尽', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'thinking_delta', delta: '响应受限' },
+        { type: 'message_end', finishReason: 'content_filter' }
+      ]
+    })
+    const { loop } = createLoop(client)
+    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
+
+    const outcome = await loop.sendMessage('完成编码任务', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(client.getCalls()).toHaveLength(1)
   })
 
   it('incomplete 轮次后下一轮可继续执行并正常完成', async () => {

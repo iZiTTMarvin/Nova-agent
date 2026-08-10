@@ -215,7 +215,14 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         p.recordRequestAnchor(turnResult.promptTokens, requestPayloadChars)
       }
 
-      const { assistantContent, toolCalls, sawUsage, reasoningContent, reasoningProviderId } =
+      const {
+        assistantContent,
+        toolCalls,
+        finishReason,
+        sawUsage,
+        reasoningContent,
+        reasoningProviderId
+      } =
         turnResult
 
       const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent }
@@ -234,8 +241,20 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
 
       await hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
 
-      // 没有工具调用时，本轮正常结束。
-      if (toolCalls.length === 0) break
+      if (toolCalls.length === 0) {
+        const continuation = await config.assistantCompletionPolicy?.({
+          messageId,
+          toolRound,
+          finishReason,
+          assistantContent,
+          ...(reasoningContent ? { reasoningContent } : {})
+        })
+        const instruction = continuation?.instruction.trim()
+        if (!instruction) break
+        context.messages.push({ role: 'user', content: instruction })
+        p.updateTokenEstimate()
+        continue
+      }
 
       // 尝试从正文恢复 native 工具调用的空参数。
       const repairedIds = repairEmptyArgsFromContent(toolCalls, assistantContent, diagnostic => {

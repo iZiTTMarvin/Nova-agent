@@ -37,6 +37,7 @@ import {
 } from './summary'
 import { buildAtifTrajectory } from './atif'
 import { resolveHeadlessMaxToolRounds } from './roundBudget'
+import { headlessAssistantCompletionPolicy } from './completionPolicy'
 
 interface CliOptions {
   workdir: string
@@ -273,6 +274,9 @@ async function main(): Promise<void> {
   loop.setRunRef(runId)
   loop.setMode('default')
   loop.setModeInstructionProvider(getHeadlessExecutionInstruction)
+  if (options.deadlineSeconds !== undefined) {
+    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
+  }
 
   let error: string | undefined
   const deadlineTimer = options.deadlineSeconds === undefined

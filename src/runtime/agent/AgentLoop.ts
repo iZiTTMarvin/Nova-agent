@@ -49,7 +49,10 @@ import { StreamProcessor } from './stream/StreamProcessor'
 import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { CompactionService } from './compaction/CompactionService'
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
-import type { AgentLoopConfig as LoopConfig } from './core/loopTypes'
+import type {
+  AgentLoopConfig as LoopConfig,
+  AssistantCompletionPolicy
+} from './core/loopTypes'
 
 export class AgentLoop {
   /** 模型客户端池，统一包装成 ModelClientPool（即使无 fallback 也包一层，对外接口不变） */
@@ -134,6 +137,7 @@ export class AgentLoop {
    * 实例态持有熔断计数 Map，每条用户消息开始时 clear()。
    */
   private readonly stopPolicy = new StopPolicyExtension()
+  private assistantCompletionPolicy: AssistantCompletionPolicy | null = null
 
   /** 错误恢复状态机 */
   private recovery = new RecoveryStateMachine()
@@ -382,6 +386,10 @@ export class AgentLoop {
 
   setModeInstructionProvider(provider: (() => string) | null): void {
     this.modeInstructionProvider = provider
+  }
+
+  setAssistantCompletionPolicy(policy: AssistantCompletionPolicy | null): void {
+    this.assistantCompletionPolicy = policy
   }
 
   /** 设置工作区路径（工具执行时的边界目录） */
@@ -774,6 +782,9 @@ export class AgentLoop {
       maxParallelToolCalls: this.config.maxParallelToolCalls ?? 4,
       supportsVision: this.config.supportsVision ?? true,
       shouldStopAfterTurn: (args) => this.stopPolicy.shouldStopAfterTurn(args),
+      ...(this.assistantCompletionPolicy
+        ? { assistantCompletionPolicy: this.assistantCompletionPolicy }
+        : {}),
       getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
       enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
       runOverflowCompaction: (mode) =>

@@ -47,6 +47,23 @@ export type StopDecision =
       notice?: never
     }
 
+/** 模型未调用工具时，完成策略判断是否需要继续当前任务。 */
+export interface AssistantCompletionArgs {
+  messageId: string
+  toolRound: number
+  finishReason: string
+  assistantContent: string
+  reasoningContent?: string
+}
+
+export interface AssistantContinuationDecision {
+  instruction: string
+}
+
+export type AssistantCompletionPolicy = (
+  args: AssistantCompletionArgs
+) => AssistantContinuationDecision | void | Promise<AssistantContinuationDecision | void>
+
 export interface AgentLoopConfig {
   /** 轮数上限 */
   maxToolRounds: number
@@ -60,6 +77,9 @@ export interface AgentLoopConfig {
    * 停止提示由 kernel 在 break 前发射；恢复指令只进入下一次模型请求。
    */
   shouldStopAfterTurn?: (args: ShouldStopArgs) => Promise<StopDecision | void>
+
+  /** 模型未调用工具时，允许宿主注入继续当前任务的窄策略。 */
+  assistantCompletionPolicy?: AssistantCompletionPolicy
 
   /**
    * 模式切换成功后生成最新模式约束。循环会把它作为内部 user 控制消息追加到
