@@ -35,7 +35,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path(__file__).with_name("experiment.json")
 HARNESS_SOURCE_FILES = (
     "scripts/harness_eval/run_experiment.py",
+    "scripts/harness_eval/harness_compat.py",
     "scripts/harness_eval/nova_agent.py",
+    "scripts/harness_eval/pier_patch_canary.py",
     "scripts/harness_eval/install_network.py",
     "scripts/harness_eval/harbor_egress.py",
     "scripts/harness_eval/report.py",
@@ -81,6 +83,9 @@ INFRA_RETRYABLE = {
     "HarborProcessError",
     "HarborIncompleteResultError",
     "HarborMissingResultError",
+    "RunnerProcessError",
+    "RunnerIncompleteResultError",
+    "RunnerMissingResultError",
 }
 
 BUDGET_PATTERNS = re.compile(
@@ -284,11 +289,46 @@ def validate_execution_shape(config: dict[str, Any]) -> int:
     if config.get("arms_parallel") is not False:
         raise RuntimeError("arms_parallel must remain false for paired pass@1")
     agents = list(config.get("active_agents") or config.get("agents", {}).keys())
+    executor = executor_name(config)
+    if config.get("dataset", {}).get("slug") == "deep-swe" and executor != "pier":
+        raise RuntimeError("DeepSWE requires executor=pier so task artifact hooks run")
+    if executor == "pier" and agents != ["nova"]:
+        raise RuntimeError("Pier evaluation currently supports the Nova arm only")
     if concurrency > 1 and len(agents) != 1:
         raise RuntimeError(
             "pair_concurrency > 1 requires exactly one active agent; paired arms stay sequential"
         )
     return concurrency
+
+
+def executor_name(config: dict[str, Any]) -> str:
+    executor = str(config.get("executor") or "harbor").strip().lower()
+    if executor not in {"harbor", "pier"}:
+        raise RuntimeError(f"unsupported executor: {executor}")
+    return executor
+
+
+def executor_binary(config: dict[str, Any]) -> str:
+    frozen = config.get("executor_binary")
+    if frozen:
+        return str(frozen)
+    executor = executor_name(config)
+    override = os.environ.get(f"NOVA_{executor.upper()}_BIN")
+    return override or executor
+
+
+def prepare_runner_isolation(config: dict[str, Any]) -> dict[str, Any]:
+    executor = executor_name(config)
+    if executor == "harbor":
+        return {
+            "executor": executor,
+            "harbor_egress_policy": ensure_harbor_egress_compatibility(),
+        }
+    return {
+        "executor": executor,
+        "network_policy": "adapter_network_allowlist",
+        "artifact_hook": "task_pre_artifacts",
+    }
 
 
 def provider_hostname(base_url: str) -> str:
@@ -422,7 +462,9 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     validate_execution_shape(config)
     provider_host = provider_hostname(config["base_url"])
     provider_addresses = resolve_provider_ipv4_addresses(config["base_url"])
-    harbor_egress_policy = ensure_harbor_egress_compatibility()
+    runner_isolation = prepare_runner_isolation(config)
+    runner_bin = executor_binary(config)
+    resolved_runner_bin = shutil.which(runner_bin) or runner_bin
     paths.run.mkdir(parents=True, exist_ok=True)
     if not paths.dataset.exists():
         paths.dataset.parent.mkdir(parents=True, exist_ok=True)
@@ -498,11 +540,12 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         "harness_sha256": {
             relative: file_sha256(ROOT / relative) for relative in HARNESS_SOURCE_FILES
         },
-        "harbor_egress_policy": harbor_egress_policy,
+        "executor_binary": str(Path(resolved_runner_bin).resolve()),
+        "runner_isolation": runner_isolation,
         "versions": {
             "python": sys.version.split()[0],
             "node": command_version(["node", "--version"]),
-            "harbor": command_version(["harbor", "--version"]),
+            "executor": command_version([runner_bin, "--version"]),
             "docker": command_version(["docker", "--version"]),
             "opencode_pin": config["agents"]["opencode"]["version"],
             "claude_code_pin": config["agents"]["claude_code"]["version"],
@@ -527,6 +570,13 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
         if round_budget is None
         else f"{round_budget} turns/steps"
     )
+    isolation = config["runner_isolation"]
+    network_text = (
+        "Pier task hook + adapter network allowlist"
+        if isolation["executor"] == "pier"
+        else "Harbor loopback-only egress policy "
+        f"{isolation['harbor_egress_policy']['policy_sha256']}"
+    )
     text = f"""# Coding agent harness 实验设计
 
 ## Frozen setup
@@ -539,7 +589,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Execution order: `{config['task_order']}`；只改变运行先后，不改变题目、预算或判分。
 - Agent setup timeout × {config['agent_setup_timeout_multiplier']}；只作用于 harness 安装，不改变解题时间。
 - Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型入口 `{config['provider_network']['hostname']}` 的公网 IPv4 在 prepare 时冻结并写入任务 hosts，仅在 agent phase 放行。
-- Network isolation: Harbor no-network sidecar 使用 loopback-only 本地豁免，policy SHA256 `{config['harbor_egress_policy']['policy_sha256']}`。
+- Executor: `{config['executor']}`；network/artifact isolation: {network_text}。
 - Concurrency: {config['pair_concurrency']} task cell；arms_parallel={str(config['arms_parallel']).lower()}。多臂模式按题号轮换顺序。
 - Retry: 模型失败、任务超时、budget exhaustion 不重试；只对预注册的 infrastructure-invalid cell 最多重试 {config['infra_retry_limit']} 次，保留全部 admission。
 - Verifier: 仅以官方 verifier reward 判定 pass/fail。
@@ -571,13 +621,18 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 
 def render_reproduction_document(config: dict[str, Any], output: Path) -> None:
     run_id = config["run_id"]
+    executor_dependency = (
+        "Datacurve Pier 0.3.0: `uv tool install datacurve-pier==0.3.0`."
+        if config["executor"] == "pier"
+        else "Harbor 0.20.0: `uv tool install harbor==0.20.0`."
+    )
     text = f"""# Reproducing the harness comparison
 
 ## Dependencies
 
 - Git, Python 3.12+, Node.js 22+, npm, uv, Docker with a running Linux daemon.
-- Harbor 0.20.0: `uv tool install harbor==0.20.0`.
-- Nova bundle and a SHA256-pinned Node.js runtime are injected into each Harbor task container; per-task package installation is not required.
+- {executor_dependency}
+- Nova bundle and a SHA256-pinned Node.js runtime are injected into each task container; per-task package installation is not required.
 - DeepSeek API access. Never put the key in a command argument or tracked file.
 
 ## Commands (PowerShell)
@@ -611,11 +666,12 @@ The frozen setup also records the dataset revision, stable git-tree SHA256, tool
     output.write_text(text, encoding="utf-8")
 
 
-def ensure_preflight() -> None:
+def ensure_preflight(config: dict[str, Any]) -> None:
     if not os.environ.get("DEEPSEEK_API_KEY"):
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
-    if not shutil.which("harbor"):
-        raise RuntimeError("harbor is not installed")
+    runner = executor_binary(config)
+    if not Path(runner).is_file() and not shutil.which(runner):
+        raise RuntimeError(f"{executor_name(config)} is not installed: {runner}")
     if not shutil.which("docker"):
         raise RuntimeError("docker is not installed")
     try:
@@ -638,33 +694,64 @@ def agent_command(
     job_dir = paths.jobs / task / agent / f"admission-{admission}"
     job_dir.mkdir(parents=True, exist_ok=True)
     provider_host, provider_addresses = frozen_provider_network(config)
-    common = [
-        "harbor",
-        "run",
-        "-p",
-        str(paths.dataset / "tasks"),
-        "-i",
-        task,
-        "-n",
-        "1",
-        "-k",
-        "1",
-        "-r",
-        "0",
-        "--timeout-multiplier",
-        str(config["timeout_multiplier"]),
-        "--agent-setup-timeout-multiplier",
-        str(config["agent_setup_timeout_multiplier"]),
-        "--jobs-dir",
-        str(job_dir),
-        "--job-name",
-        f"{task}-{agent}-a{admission}",
-        "--allow-agent-host",
-        provider_host,
-    ]
-    for address in provider_addresses:
-        common.extend(["--allow-agent-host", address])
-    common.append("--quiet")
+    executor = executor_name(config)
+    if executor == "pier":
+        if agent != "nova":
+            raise RuntimeError("Pier evaluation currently supports the Nova arm only")
+        common = [
+            executor_binary(config),
+            "run",
+            "--agent-import-path",
+            "scripts.harness_eval.nova_agent:NovaHeadless",
+            "-m",
+            f"deepseek/{config['model']}",
+            "-p",
+            str(paths.dataset / "tasks" / task),
+            "-o",
+            str(job_dir),
+            "--job-name",
+            f"{task}-{agent}-a{admission}",
+            "-k",
+            "1",
+            "-n",
+            "1",
+            "-r",
+            "0",
+            "--timeout-multiplier",
+            str(config["timeout_multiplier"]),
+            "-e",
+            "docker",
+            "--yes",
+            "--quiet",
+        ]
+    else:
+        common = [
+            executor_binary(config),
+            "run",
+            "-p",
+            str(paths.dataset / "tasks"),
+            "-i",
+            task,
+            "-n",
+            "1",
+            "-k",
+            "1",
+            "-r",
+            "0",
+            "--timeout-multiplier",
+            str(config["timeout_multiplier"]),
+            "--agent-setup-timeout-multiplier",
+            str(config["agent_setup_timeout_multiplier"]),
+            "--jobs-dir",
+            str(job_dir),
+            "--job-name",
+            f"{task}-{agent}-a{admission}",
+            "--allow-agent-host",
+            provider_host,
+        ]
+        for address in provider_addresses:
+            common.extend(["--allow-agent-host", address])
+        common.append("--quiet")
     model = config["model"]
     effort = config["reasoning_effort"]
     round_limit = config.get("max_tool_rounds")
@@ -691,11 +778,13 @@ def agent_command(
         deadline_seconds = scaled_timeout - float(config["agent_deadline_grace_seconds"])
         if deadline_seconds <= 0:
             raise RuntimeError(f"Nova deadline is not positive for task {task}")
-        nova_command = common + [
+        nova_adapter = [] if executor == "pier" else [
             "-a",
             "scripts.harness_eval.nova_agent:NovaHeadless",
             "-m",
             f"deepseek/{model}",
+        ]
+        nova_command = common + nova_adapter + [
             "--ak",
             f"bundle_path={ROOT / 'out' / 'headless' / 'nova-headless.cjs'}",
             "--ak",
@@ -1142,11 +1231,12 @@ def run_cell(config: dict[str, Any], paths: Paths, task: str, agent: str, admiss
         job_path=str(job_dir),
     )
     env = harbor_environment(agent, config)
+    executor = executor_name(config)
     started = time.monotonic()
     runner_exception: tuple[str, str] | None = None
     try:
-        with (job_dir / "harbor.stdout.log").open("w", encoding="utf-8", errors="replace") as stdout, (
-            job_dir / "harbor.stderr.log"
+        with (job_dir / f"{executor}.stdout.log").open("w", encoding="utf-8", errors="replace") as stdout, (
+            job_dir / f"{executor}.stderr.log"
         ).open("w", encoding="utf-8", errors="replace") as stderr:
             process = subprocess.Popen(
                 command,
@@ -1176,11 +1266,14 @@ def run_cell(config: dict[str, Any], paths: Paths, task: str, agent: str, admiss
                     )
         result_path = newest_result(job_dir)
         if process.returncode != 0:
-            runner_exception = ("HarborProcessError", f"harbor exited with {process.returncode}")
+            runner_exception = ("RunnerProcessError", f"{executor} exited with {process.returncode}")
         elif result_path is None:
-            runner_exception = ("HarborMissingResultError", "harbor exited without a result")
+            runner_exception = ("RunnerMissingResultError", f"{executor} exited without a result")
         elif not result_is_complete(result_path):
-            runner_exception = ("HarborIncompleteResultError", "harbor exited with an incomplete result")
+            runner_exception = (
+                "RunnerIncompleteResultError",
+                f"{executor} exited with an incomplete result",
+            )
     except subprocess.TimeoutExpired:
         runner_exception = ("RunnerOuterTimeoutError", "runner outer timeout expired")
     elapsed = time.monotonic() - started
@@ -1243,18 +1336,22 @@ def run_cell_admissions(
 
 
 def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> None:
-    ensure_preflight()
+    ensure_preflight(config)
     frozen_path = paths.run / "frozen_setup.json"
     if not frozen_path.is_file():
         prepare(config, paths)
     frozen = read_json(frozen_path)
     config = frozen
-    harbor_egress_policy = ensure_harbor_egress_compatibility()
-    if (
-        harbor_egress_policy["policy_sha256"]
-        != frozen["harbor_egress_policy"]["policy_sha256"]
-    ):
-        raise RuntimeError("Harbor egress policy changed after setup was frozen")
+    isolation = frozen["runner_isolation"]
+    if isolation["executor"] != executor_name(frozen):
+        raise RuntimeError("Executor isolation changed after setup was frozen")
+    if isolation["executor"] == "harbor":
+        harbor_egress_policy = ensure_harbor_egress_compatibility()
+        if (
+            harbor_egress_policy["policy_sha256"]
+            != isolation["harbor_egress_policy"]["policy_sha256"]
+        ):
+            raise RuntimeError("Harbor egress policy changed after setup was frozen")
     bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
     prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
     if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != frozen["nova_bundle_sha256"]:

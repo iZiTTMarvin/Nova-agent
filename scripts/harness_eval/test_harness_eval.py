@@ -245,6 +245,7 @@ class HarnessEvalTests(unittest.TestCase):
                 admissions_csv=run / "admissions.csv",
             )
             frozen = {
+                "executor": "pier",
                 "run_id": "parallel-fixture",
                 "tasks": task_names,
                 "agents": {"nova": {}},
@@ -257,7 +258,11 @@ class HarnessEvalTests(unittest.TestCase):
                 "nova_bundle_sha256": hashlib.sha256(b"bundle").hexdigest(),
                 "nova_prompt_sha256": hashlib.sha256(b"prompt").hexdigest(),
                 "harness_sha256": {},
-                "harbor_egress_policy": {"policy_sha256": "fixture-policy"},
+                "runner_isolation": {
+                    "executor": "pier",
+                    "network_policy": "adapter_network_allowlist",
+                    "artifact_hook": "task_pre_artifacts",
+                },
                 "node_runtime": {
                     "archive_path": str(node_archive),
                     "archive_sha256": hashlib.sha256(b"node").hexdigest(),
@@ -498,8 +503,9 @@ class HarnessEvalTests(unittest.TestCase):
                 admissions_csv=root / "run" / "admissions.csv",
             )
             config = {
+                "executor": "pier",
                 "timeout_multiplier": 1.0,
-                "agent_setup_timeout_multiplier": 3.0,
+                "agent_setup_timeout_multiplier": 1.0,
                 "model": "deepseek-v4-flash",
                 "base_url": "https://provider.example/v1",
                 "provider_network": {
@@ -521,6 +527,13 @@ class HarnessEvalTests(unittest.TestCase):
 
             command, _ = agent_command("nova", "fixture", 1, config, paths)
 
+            self.assertEqual(command[:2], ["pier", "run"])
+            self.assertIn("--agent-import-path", command)
+            self.assertEqual(
+                command[command.index("-p") + 1],
+                str(task_dir),
+            )
+            self.assertIn("--yes", command)
             self.assertIn("deadline_seconds=885", command)
             self.assertFalse(
                 any(value.startswith("max_tool_rounds=") for value in command)
@@ -529,16 +542,7 @@ class HarnessEvalTests(unittest.TestCase):
             self.assertFalse(
                 any(value.startswith("install_proxy_url=") for value in command)
             )
-            host_index = command.index("--allow-agent-host")
-            self.assertEqual(command[host_index + 1], "provider.example")
-            self.assertEqual(
-                [
-                    command[index + 1]
-                    for index, value in enumerate(command)
-                    if value == "--allow-agent-host"
-                ],
-                ["provider.example", "198.20.0.64", "198.20.0.65"],
-            )
+            self.assertNotIn("--allow-agent-host", command)
             self.assertIn(
                 'provider_addresses=["198.20.0.64","198.20.0.65"]',
                 command,
@@ -551,6 +555,19 @@ class HarnessEvalTests(unittest.TestCase):
             config["max_tool_rounds"] = 250
             capped_command, _ = agent_command("nova", "fixture", 1, config, paths)
             self.assertIn("max_tool_rounds=250", capped_command)
+
+    def test_deepswe_rejects_harbor_executor(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "DeepSWE requires executor=pier"):
+            validate_execution_shape(
+                {
+                    "dataset": {"slug": "deep-swe"},
+                    "executor": "harbor",
+                    "pair_concurrency": 1,
+                    "arms_parallel": False,
+                    "active_agents": ["nova"],
+                    "agents": {"nova": {"version": "workspace"}},
+                }
+            )
 
     def test_deepswe_non_binary_reward_is_verifier_infrastructure(self) -> None:
         config = {

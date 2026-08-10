@@ -9,9 +9,13 @@ from pathlib import Path
 from typing import override
 from urllib.parse import urlsplit
 
-from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
-from harbor.environments.base import BaseEnvironment
-from harbor.models.agent.context import AgentContext
+from scripts.harness_eval.harness_compat import (
+    AgentContext,
+    BaseEnvironment,
+    BaseInstalledAgent,
+    NetworkAllowlist,
+    with_prompt_template,
+)
 
 
 def _provider_host_entries(
@@ -89,6 +93,15 @@ class NovaHeadless(BaseInstalledAgent):
     @override
     def name() -> str:
         return "nova-headless"
+
+    def install_spec(self) -> None:
+        return None
+
+    def network_allowlist(self):
+        if NetworkAllowlist is None:
+            return None
+        hostname = urlsplit(self._base_url).hostname
+        return NetworkAllowlist(domains=[hostname])
 
     @override
     def get_version_command(self) -> str | None:
