@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -305,6 +307,44 @@ def provider_hostname(base_url: str) -> str:
     return parsed.hostname
 
 
+def resolve_provider_ipv4_addresses(base_url: str) -> list[str]:
+    hostname = provider_hostname(base_url)
+    try:
+        records = socket.getaddrinfo(
+            hostname,
+            443,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as error:
+        raise RuntimeError(f"cannot resolve model provider host: {hostname}") from error
+    addresses = sorted({str(ipaddress.ip_address(record[4][0])) for record in records})
+    if not addresses or any(not ipaddress.ip_address(value).is_global for value in addresses):
+        raise RuntimeError("model provider must resolve only to public IPv4 addresses")
+    return addresses
+
+
+def frozen_provider_network(config: dict[str, Any]) -> tuple[str, list[str]]:
+    hostname = provider_hostname(config["base_url"])
+    network = config.get("provider_network")
+    if not isinstance(network, dict) or network.get("hostname") != hostname:
+        raise RuntimeError("frozen provider network does not match base_url")
+    raw_addresses = network.get("ipv4_addresses")
+    if not isinstance(raw_addresses, list) or not raw_addresses:
+        raise RuntimeError("frozen provider network requires public IPv4 addresses")
+    try:
+        addresses = sorted({str(ipaddress.ip_address(value)) for value in raw_addresses})
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("frozen provider network requires public IPv4 addresses") from error
+    if any(
+        ipaddress.ip_address(value).version != 4
+        or not ipaddress.ip_address(value).is_global
+        for value in addresses
+    ):
+        raise RuntimeError("frozen provider network requires public IPv4 addresses")
+    return hostname, addresses
+
+
 def resolve_paths(config: dict[str, Any], eval_root: Path) -> Paths:
     run = eval_root / config["run_id"]
     revision = config["dataset"]["revision"]
@@ -343,7 +383,8 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if config.get("task_attempts") != 1:
         raise RuntimeError("paired pass@1 requires task_attempts=1")
     validate_execution_shape(config)
-    provider_hostname(config["base_url"])
+    provider_host = provider_hostname(config["base_url"])
+    provider_addresses = resolve_provider_ipv4_addresses(config["base_url"])
     harbor_egress_policy = ensure_harbor_egress_compatibility()
     paths.run.mkdir(parents=True, exist_ok=True)
     if not paths.dataset.exists():
@@ -395,6 +436,10 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         "actual_task_tree_sha256": tree_hash,
         "task_tree_hash_status": hash_status,
         "tasks": task_names,
+        "provider_network": {
+            "hostname": provider_host,
+            "ipv4_addresses": provider_addresses,
+        },
         "source_revision": command_version(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
         "source_dirty": bool(command_version(["git", "-C", str(ROOT), "status", "--porcelain"])),
         "nova_bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
@@ -441,7 +486,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Agent budget: {config['max_tool_rounds']} turns/steps；task-native timeout × {config['timeout_multiplier']}；外层安全上限 {config['outer_timeout_seconds']} 秒。
 - Execution order: `{config['task_order']}`；只改变运行先后，不改变题目、预算或判分。
 - Agent setup timeout × {config['agent_setup_timeout_multiplier']}；只作用于 harness 安装，不改变解题时间。
-- Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型请求使用容器代理 `{config['install_network']['proxy_url']}`。
+- Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型入口 `{config['provider_network']['hostname']}` 的公网 IPv4 在 prepare 时冻结并写入任务 hosts，仅在 agent phase 放行。
 - Network isolation: Harbor no-network sidecar 使用 loopback-only 本地豁免，policy SHA256 `{config['harbor_egress_policy']['policy_sha256']}`。
 - Concurrency: {config['pair_concurrency']} task cell；arms_parallel={str(config['arms_parallel']).lower()}。多臂模式按题号轮换顺序。
 - Retry: 模型失败、任务超时、budget exhaustion 不重试；只对预注册的 infrastructure-invalid cell 最多重试 {config['infra_retry_limit']} 次，保留全部 admission。
@@ -540,6 +585,7 @@ def agent_command(
 ) -> tuple[list[str], Path]:
     job_dir = paths.jobs / task / agent / f"admission-{admission}"
     job_dir.mkdir(parents=True, exist_ok=True)
+    provider_host, provider_addresses = frozen_provider_network(config)
     common = [
         "harbor",
         "run",
@@ -562,9 +608,11 @@ def agent_command(
         "--job-name",
         f"{task}-{agent}-a{admission}",
         "--allow-agent-host",
-        provider_hostname(config["base_url"]),
-        "--quiet",
+        provider_host,
     ]
+    for address in provider_addresses:
+        common.extend(["--allow-agent-host", address])
+    common.append("--quiet")
     model = config["model"]
     effort = config["reasoning_effort"]
     rounds = str(config["max_tool_rounds"])
@@ -599,6 +647,9 @@ def agent_command(
                 f"node_archive_path={config['node_runtime'].get('archive_path') or node_runtime_archive_path(config, paths)}",
                 "--ak",
                 f"base_url={config['base_url']}",
+                "--ak",
+                "provider_addresses="
+                + json.dumps(provider_addresses, separators=(",", ":")),
                 "--ak",
                 f"reasoning_effort={effort}",
                 "--ak",

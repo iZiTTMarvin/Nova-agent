@@ -1,15 +1,48 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import shlex
 import uuid
 from pathlib import Path
 from typing import override
+from urllib.parse import urlsplit
 
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+
+def _provider_host_entries(base_url: str, encoded_addresses: str) -> tuple[str, ...]:
+    parsed = urlsplit(base_url)
+    try:
+        raw_addresses = json.loads(encoded_addresses)
+    except json.JSONDecodeError as error:
+        raise ValueError("provider_addresses must contain public IPv4 addresses") from error
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or bool(parsed.query)
+        or bool(parsed.fragment)
+        or not isinstance(raw_addresses, list)
+        or not raw_addresses
+    ):
+        raise ValueError("provider_addresses must contain public IPv4 addresses")
+    try:
+        addresses = sorted({str(ipaddress.ip_address(value)) for value in raw_addresses})
+    except (TypeError, ValueError) as error:
+        raise ValueError("provider_addresses must contain public IPv4 addresses") from error
+    if any(
+        ipaddress.ip_address(value).version != 4
+        or not ipaddress.ip_address(value).is_global
+        for value in addresses
+    ):
+        raise ValueError("provider_addresses must contain public IPv4 addresses")
+    return tuple(f"{address} {parsed.hostname}" for address in addresses)
+
 
 class NovaHeadless(BaseInstalledAgent):
     """Run Nova's production AgentLoop without Electron or renderer state."""
@@ -23,6 +56,7 @@ class NovaHeadless(BaseInstalledAgent):
         prompt_path: str,
         node_archive_path: str,
         base_url: str,
+        provider_addresses: str,
         reasoning_effort: str = "max",
         max_tool_rounds: int = 100,
         deadline_seconds: float | None = None,
@@ -33,6 +67,9 @@ class NovaHeadless(BaseInstalledAgent):
         self._prompt_path = Path(prompt_path).resolve()
         self._node_archive_path = Path(node_archive_path).resolve()
         self._base_url = base_url.rstrip("/")
+        self._provider_host_entries = _provider_host_entries(
+            base_url, provider_addresses
+        )
         self._reasoning_effort = reasoning_effort
         self._max_tool_rounds = max_tool_rounds
         self._deadline_seconds = deadline_seconds
@@ -78,6 +115,11 @@ class NovaHeadless(BaseInstalledAgent):
                 "-C /opt/node --strip-components=1; "
                 "/opt/node/bin/node --version"
             ),
+        )
+        entries = " ".join(shlex.quote(value) for value in self._provider_host_entries)
+        await self.exec_as_root(
+            environment,
+            command=f"printf '%s\\n' {entries} >> /etc/hosts",
         )
 
     @override

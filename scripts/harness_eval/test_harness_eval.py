@@ -14,6 +14,7 @@ from unittest.mock import patch
 from scripts.harness_eval.report import exact_mcnemar_p, generate
 from scripts.harness_eval.install_network import prepare_command, proxy_environment
 from scripts.harness_eval.harbor_egress import apply_loopback_only_local_exemption
+from scripts.harness_eval.nova_agent import _provider_host_entries
 from scripts.harness_eval.run_experiment import (
     CSV_FIELDS,
     Paths,
@@ -30,6 +31,7 @@ from scripts.harness_eval.run_experiment import (
     node_runtime_archive_path,
     ordered_task_names,
     provider_hostname,
+    resolve_provider_ipv4_addresses,
     resolve_dataset_config,
     result_is_complete,
     token_fields,
@@ -94,6 +96,42 @@ class HarnessEvalTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "HTTPS URL"):
                 provider_hostname(invalid)
+
+    def test_provider_addresses_are_frozen_to_public_ipv4(self) -> None:
+        records = [
+            (2, 1, 6, "", ("198.20.0.64", 443)),
+            (2, 1, 6, "", ("198.20.0.64", 443)),
+            (2, 1, 6, "", ("198.20.0.65", 443)),
+        ]
+        with patch(
+            "scripts.harness_eval.run_experiment.socket.getaddrinfo",
+            return_value=records,
+        ):
+            self.assertEqual(
+                resolve_provider_ipv4_addresses("https://opencode.ai/zen/go/v1"),
+                ["198.20.0.64", "198.20.0.65"],
+            )
+
+        private_record = [(2, 1, 6, "", ("192.168.65.7", 443))]
+        with (
+            patch(
+                "scripts.harness_eval.run_experiment.socket.getaddrinfo",
+                return_value=private_record,
+            ),
+            self.assertRaisesRegex(RuntimeError, "public IPv4"),
+        ):
+            resolve_provider_ipv4_addresses("https://opencode.ai/zen/go/v1")
+
+    def test_nova_provider_hosts_require_matching_public_addresses(self) -> None:
+        self.assertEqual(
+            _provider_host_entries(
+                "https://opencode.ai/zen/go/v1", '["198.20.0.65","198.20.0.64"]'
+            ),
+            ("198.20.0.64 opencode.ai", "198.20.0.65 opencode.ai"),
+        )
+        for addresses in ('["127.0.0.1"]', '["192.168.65.7"]', '[]', '"198.20.0.64"'):
+            with self.assertRaisesRegex(ValueError, "public IPv4"):
+                _provider_host_entries("https://opencode.ai/zen/go/v1", addresses)
 
     def test_single_agent_tasks_allow_bounded_parallelism(self) -> None:
         config = {
@@ -400,6 +438,10 @@ class HarnessEvalTests(unittest.TestCase):
                 "agent_setup_timeout_multiplier": 3.0,
                 "model": "deepseek-v4-flash",
                 "base_url": "https://provider.example/v1",
+                "provider_network": {
+                    "hostname": "provider.example",
+                    "ipv4_addresses": ["198.20.0.64", "198.20.0.65"],
+                },
                 "reasoning_effort": "max",
                 "max_tool_rounds": 100,
                 "agent_deadline_grace_seconds": 15,
@@ -422,6 +464,18 @@ class HarnessEvalTests(unittest.TestCase):
             )
             host_index = command.index("--allow-agent-host")
             self.assertEqual(command[host_index + 1], "provider.example")
+            self.assertEqual(
+                [
+                    command[index + 1]
+                    for index, value in enumerate(command)
+                    if value == "--allow-agent-host"
+                ],
+                ["provider.example", "198.20.0.64", "198.20.0.65"],
+            )
+            self.assertIn(
+                'provider_addresses=["198.20.0.64","198.20.0.65"]',
+                command,
+            )
             self.assertIn(
                 f"node_archive_path={root / 'cache' / 'node-runtime.tar.gz'}",
                 command,
