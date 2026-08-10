@@ -19,7 +19,8 @@ class PierPatchCanary(BaseInstalledAgent):
     def network_allowlist(self):
         if NetworkAllowlist is None:
             return None
-        return NetworkAllowlist()
+        # 空白名单会让 Pier 跳过 egress proxy，canary 必须走与正式评测相同的代理路径
+        return NetworkAllowlist(domains=["opencode.ai"])
 
     async def install(self, environment: BaseEnvironment) -> None:
         return None
