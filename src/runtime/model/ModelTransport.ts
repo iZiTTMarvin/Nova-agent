@@ -9,7 +9,7 @@
  *
  * 禁止：只在 fetch 外层套固定总时长 Promise.race（无法区分正常长回复与真空闲）。
  */
-import type { ChatEvent } from './types'
+import type { ChatEvent, TransportFetchImpl } from './types'
 import type { ModelFailure, ModelFailureKind } from './failureTypes'
 
 /** 规范化错误类别（写入 ChatEvent.error 文本，供 Recovery 匹配） */
@@ -52,6 +52,8 @@ export interface TransportFetchInit {
   /** 用户取消信号（与 attempt 信号合并） */
   userSignal?: AbortSignal
   timeouts?: Partial<ModelTransportTimeouts>
+  /** 自定义传输实现（headless 代理注入）；缺省使用全局 fetch */
+  fetchImpl?: TransportFetchImpl
 }
 
 /** 单次 read 结果 */
@@ -180,8 +182,9 @@ export async function transportFetch(init: TransportFetchInit): Promise<Transpor
   const attempt = new TransportAttempt(init.userSignal, timeouts.totalMs)
 
   try {
+    const doFetch = init.fetchImpl ?? fetch
     const response = await withTimeout(
-      fetch(init.url, {
+      doFetch(init.url, {
         method: init.method ?? 'POST',
         headers: init.headers,
         body: init.body,

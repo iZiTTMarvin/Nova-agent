@@ -12,6 +12,7 @@ import {
   resolveTaskPolicy
 } from '../runtime/agent'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
+import { createEnvProxyFetch, describeEnvProxy } from './envProxyFetch'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { resolveContextWindow } from '../shared/config'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
@@ -244,8 +245,12 @@ async function main(): Promise<void> {
     modelId: options.model,
     cacheProfile: resolveCacheProfile(options.baseUrl, options.model).id,
     reasoningEffort: options.reasoningEffort,
-    supportsVision: false
+    supportsVision: false,
+    // 隔离评测 / 企业内网只放行代理出网；无代理环境变量时返回 undefined，行为不变
+    fetchImpl: createEnvProxyFetch()
   })
+  // 传输路径写入汇总，便于隔离环境网络问题的现场诊断（不含代理凭据）
+  const proxyTransport = describeEnvProxy()
   const loop = new AgentLoop(modelClient, eventBus, {
     systemPromptLayers: {
       agentRole: buildStableSystemPrompt({
@@ -341,6 +346,7 @@ async function main(): Promise<void> {
     run_id: runId,
     model: options.model,
     reasoning_effort: options.reasoningEffort,
+    proxy_transport: proxyTransport,
     max_tool_rounds: Number.isFinite(options.maxToolRounds)
       ? options.maxToolRounds
       : null,

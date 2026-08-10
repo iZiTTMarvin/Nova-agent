@@ -228,7 +228,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
         },
         body: wireBody,
         userSignal: options?.abortSignal,
-        timeouts: options?.transportTimeouts
+        timeouts: options?.transportTimeouts,
+        fetchImpl: this.config.fetchImpl
       })
     }
 

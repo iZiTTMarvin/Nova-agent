@@ -92,6 +92,21 @@ export interface ToolDefinition {
 // ── 模型配置 ─────────────────────────────────────────────
 
 /** 创建 ModelClient 实例所需的配置 */
+/**
+ * transportFetch 使用的 fetch 子集签名。
+ * headless 在只放行代理出网的环境（隔离评测容器、企业内网）注入代理实现；
+ * 缺省使用全局 fetch，Electron 等既有调用方行为不变。
+ */
+export type TransportFetchImpl = (
+  url: string,
+  init: {
+    method?: string
+    headers?: Record<string, string>
+    body?: string
+    signal?: AbortSignal
+  }
+) => Promise<Response>
+
 export interface ModelClientConfig {
   baseUrl: string
   apiKey: string
@@ -116,6 +131,8 @@ export interface ModelClientConfig {
    * 用于 API 层视觉投影（剥离 / provider 适配），与 UI 门控共用同一语义。
    */
   supportsVision?: boolean
+  /** 自定义传输实现；缺省走全局 fetch。见 TransportFetchImpl。 */
+  fetchImpl?: TransportFetchImpl
 }
 
 // ── 流式事件 ─────────────────────────────────────────────
