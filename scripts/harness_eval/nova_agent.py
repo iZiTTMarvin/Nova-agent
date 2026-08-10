@@ -11,9 +11,6 @@ from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_templat
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-from scripts.harness_eval.install_network import proxy_environment
-
-
 class NovaHeadless(BaseInstalledAgent):
     """Run Nova's production AgentLoop without Electron or renderer state."""
 
@@ -29,7 +26,6 @@ class NovaHeadless(BaseInstalledAgent):
         reasoning_effort: str = "max",
         max_tool_rounds: int = 100,
         deadline_seconds: float | None = None,
-        install_proxy_url: str,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -40,7 +36,6 @@ class NovaHeadless(BaseInstalledAgent):
         self._reasoning_effort = reasoning_effort
         self._max_tool_rounds = max_tool_rounds
         self._deadline_seconds = deadline_seconds
-        self._install_proxy_url = install_proxy_url
 
     @staticmethod
     @override
@@ -105,7 +100,6 @@ class NovaHeadless(BaseInstalledAgent):
             instruction_var: instruction,
             "NOVA_VERSION": self.version() or "workspace",
             "NOVA_WIRE_DUMP_DIR": "/logs/agent/wire",
-            **proxy_environment(self._install_proxy_url),
         }
         model = self.model_name.split("/", 1)[-1]
         deadline_arg = (

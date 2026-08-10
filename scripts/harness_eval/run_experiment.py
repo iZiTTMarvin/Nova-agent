@@ -607,8 +607,6 @@ def agent_command(
                 f"deadline_seconds={deadline_seconds:g}",
                 "--ak",
                 f"version={config['agents']['nova']['version']}",
-                "--ak",
-                f"install_proxy_url={install_network['proxy_url']}",
             ],
             job_dir,
         )

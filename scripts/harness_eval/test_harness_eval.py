@@ -417,6 +417,9 @@ class HarnessEvalTests(unittest.TestCase):
 
             self.assertIn("deadline_seconds=885", command)
             self.assertIn("base_url=https://provider.example/v1", command)
+            self.assertFalse(
+                any(value.startswith("install_proxy_url=") for value in command)
+            )
             host_index = command.index("--allow-agent-host")
             self.assertEqual(command[host_index + 1], "provider.example")
             self.assertIn(
