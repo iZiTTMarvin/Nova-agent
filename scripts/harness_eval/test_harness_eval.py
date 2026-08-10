@@ -507,7 +507,7 @@ class HarnessEvalTests(unittest.TestCase):
                     "ipv4_addresses": ["198.20.0.64", "198.20.0.65"],
                 },
                 "reasoning_effort": "max",
-                "max_tool_rounds": 100,
+                "max_tool_rounds": None,
                 "agent_deadline_grace_seconds": 15,
                 "install_network": {
                     "proxy_url": "http://proxy",
@@ -522,6 +522,9 @@ class HarnessEvalTests(unittest.TestCase):
             command, _ = agent_command("nova", "fixture", 1, config, paths)
 
             self.assertIn("deadline_seconds=885", command)
+            self.assertFalse(
+                any(value.startswith("max_tool_rounds=") for value in command)
+            )
             self.assertIn("base_url=https://provider.example/v1", command)
             self.assertFalse(
                 any(value.startswith("install_proxy_url=") for value in command)
@@ -544,6 +547,10 @@ class HarnessEvalTests(unittest.TestCase):
                 f"node_archive_path={root / 'cache' / 'node-runtime.tar.gz'}",
                 command,
             )
+
+            config["max_tool_rounds"] = 250
+            capped_command, _ = agent_command("nova", "fixture", 1, config, paths)
+            self.assertIn("max_tool_rounds=250", capped_command)
 
     def test_deepswe_non_binary_reward_is_verifier_infrastructure(self) -> None:
         config = {

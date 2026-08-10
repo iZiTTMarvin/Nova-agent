@@ -65,7 +65,7 @@ class NovaHeadless(BaseInstalledAgent):
         base_url: str,
         provider_addresses: str | list[str],
         reasoning_effort: str = "max",
-        max_tool_rounds: int = 100,
+        max_tool_rounds: int | None = None,
         deadline_seconds: float | None = None,
         **kwargs,
     ) -> None:
@@ -78,7 +78,11 @@ class NovaHeadless(BaseInstalledAgent):
             base_url, provider_addresses
         )
         self._reasoning_effort = reasoning_effort
-        self._max_tool_rounds = max_tool_rounds
+        if max_tool_rounds is not None and int(max_tool_rounds) < 1:
+            raise ValueError("max_tool_rounds must be positive when provided")
+        self._max_tool_rounds = (
+            None if max_tool_rounds is None else int(max_tool_rounds)
+        )
         self._deadline_seconds = deadline_seconds
 
     @staticmethod
@@ -156,6 +160,11 @@ class NovaHeadless(BaseInstalledAgent):
             if self._deadline_seconds is not None
             else ""
         )
+        round_limit_arg = (
+            f"--max-tool-rounds {self._max_tool_rounds} "
+            if self._max_tool_rounds is not None
+            else ""
+        )
         command = (
             "set -euo pipefail; "
             f'printf "%s" "${{{instruction_var}}}" | '
@@ -164,7 +173,7 @@ class NovaHeadless(BaseInstalledAgent):
             f"--model {shlex.quote(model)} "
             f"--base-url {shlex.quote(self._base_url)} "
             f"--reasoning-effort {shlex.quote(self._reasoning_effort)} "
-            f"--max-tool-rounds {int(self._max_tool_rounds)} "
+            f"{round_limit_arg}"
             f"{deadline_arg}"
             "2>&1 | tee /logs/agent/nova-headless.txt"
         )

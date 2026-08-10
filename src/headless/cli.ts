@@ -36,6 +36,7 @@ import {
   type HeadlessTurnReport
 } from './summary'
 import { buildAtifTrajectory } from './atif'
+import { resolveHeadlessMaxToolRounds } from './roundBudget'
 
 interface CliOptions {
   workdir: string
@@ -108,15 +109,15 @@ function parseArgs(argv: string[]): CliOptions {
   if (!['low', 'medium', 'high', 'max'].includes(effort)) {
     throw new Error(`不支持的 reasoning effort: ${effort}`)
   }
-  const maxToolRounds = Number(values.get('max-tool-rounds') ?? '100')
-  if (!Number.isInteger(maxToolRounds) || maxToolRounds < 1) {
-    throw new Error('--max-tool-rounds 必须是正整数')
-  }
   const deadlineValue = values.get('deadline-seconds')
   const deadlineSeconds = deadlineValue === undefined ? undefined : Number(deadlineValue)
   if (deadlineSeconds !== undefined && (!Number.isFinite(deadlineSeconds) || deadlineSeconds <= 0)) {
     throw new Error('--deadline-seconds 必须是正数')
   }
+  const maxToolRounds = resolveHeadlessMaxToolRounds(
+    values.get('max-tool-rounds'),
+    deadlineSeconds
+  )
   const contextWindowValue = values.get('context-window')
   const contextWindow = contextWindowValue === undefined ? undefined : Number(contextWindowValue)
   if (contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0)) {
@@ -336,6 +337,9 @@ async function main(): Promise<void> {
     run_id: runId,
     model: options.model,
     reasoning_effort: options.reasoningEffort,
+    max_tool_rounds: Number.isFinite(options.maxToolRounds)
+      ? options.maxToolRounds
+      : null,
     deadline_seconds: options.deadlineSeconds,
     deadline_reached: deadlineReached,
     status: report.status,

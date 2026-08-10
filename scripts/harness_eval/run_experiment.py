@@ -521,6 +521,12 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
     active_agents = list(config.get("active_agents") or config["agents"].keys())
     agents = ", ".join(active_agents)
     design = "paired pass@1" if len(active_agents) > 1 else "single-agent pass@1"
+    round_budget = config.get("max_tool_rounds")
+    round_budget_text = (
+        "no additional turn/step limit"
+        if round_budget is None
+        else f"{round_budget} turns/steps"
+    )
     text = f"""# Coding agent harness 实验设计
 
 ## Frozen setup
@@ -529,7 +535,7 @@ def render_design_document(config: dict[str, Any], output: Path) -> None:
 - Task tree SHA256: `{config['dataset']['task_tree_sha256']}`。
 - Active arms: {agents}；每题每臂一次有效 model attempt，{design}。
 - Model: `{config['model']}`；provider endpoint: `{config['base_url']}`；reasoning effort: `{config['reasoning_effort']}`。
-- Agent budget: {config['max_tool_rounds']} turns/steps；task-native timeout × {config['timeout_multiplier']}；外层安全上限 {config['outer_timeout_seconds']} 秒。
+- Agent budget: {round_budget_text}；task-native timeout × {config['timeout_multiplier']}；外层安全上限 {config['outer_timeout_seconds']} 秒。
 - Execution order: `{config['task_order']}`；只改变运行先后，不改变题目、预算或判分。
 - Agent setup timeout × {config['agent_setup_timeout_multiplier']}；只作用于 harness 安装，不改变解题时间。
 - Runtime: Node.js `{config['node_runtime']['version']}` 从宿主机缓存的固定归档注入容器，SHA256 `{config['node_runtime']['archive_sha256']}`；每题不再联网安装 Node 或 sharp。模型入口 `{config['provider_network']['hostname']}` 的公网 IPv4 在 prepare 时冻结并写入任务 hosts，仅在 agent phase 放行。
@@ -661,7 +667,14 @@ def agent_command(
     common.append("--quiet")
     model = config["model"]
     effort = config["reasoning_effort"]
-    rounds = str(config["max_tool_rounds"])
+    round_limit = config.get("max_tool_rounds")
+    if round_limit is not None:
+        if (
+            isinstance(round_limit, bool)
+            or not isinstance(round_limit, int)
+            or round_limit < 1
+        ):
+            raise RuntimeError("max_tool_rounds must be null or a positive integer")
     install_network = config["install_network"]
     install_kwargs = [
         "--ak",
@@ -678,37 +691,41 @@ def agent_command(
         deadline_seconds = scaled_timeout - float(config["agent_deadline_grace_seconds"])
         if deadline_seconds <= 0:
             raise RuntimeError(f"Nova deadline is not positive for task {task}")
-        return (
-            common
-            + [
-                "-a",
-                "scripts.harness_eval.nova_agent:NovaHeadless",
-                "-m",
-                f"deepseek/{model}",
-                "--ak",
-                f"bundle_path={ROOT / 'out' / 'headless' / 'nova-headless.cjs'}",
-                "--ak",
-                f"prompt_path={ROOT / 'out' / 'headless' / 'prompts' / 'base-rules.md'}",
-                "--ak",
-                f"node_archive_path={config['node_runtime'].get('archive_path') or node_runtime_archive_path(config, paths)}",
-                "--ak",
-                f"base_url={config['base_url']}",
-                "--ak",
-                "provider_addresses="
-                + json.dumps(provider_addresses, separators=(",", ":")),
-                "--ak",
-                f"reasoning_effort={effort}",
-                "--ak",
-                f"max_tool_rounds={rounds}",
+        nova_command = common + [
+            "-a",
+            "scripts.harness_eval.nova_agent:NovaHeadless",
+            "-m",
+            f"deepseek/{model}",
+            "--ak",
+            f"bundle_path={ROOT / 'out' / 'headless' / 'nova-headless.cjs'}",
+            "--ak",
+            f"prompt_path={ROOT / 'out' / 'headless' / 'prompts' / 'base-rules.md'}",
+            "--ak",
+            f"node_archive_path={config['node_runtime'].get('archive_path') or node_runtime_archive_path(config, paths)}",
+            "--ak",
+            f"base_url={config['base_url']}",
+            "--ak",
+            "provider_addresses="
+            + json.dumps(provider_addresses, separators=(",", ":")),
+            "--ak",
+            f"reasoning_effort={effort}",
+        ]
+        if round_limit is not None:
+            nova_command.extend(["--ak", f"max_tool_rounds={round_limit}"])
+        nova_command.extend(
+            [
                 "--ak",
                 f"deadline_seconds={deadline_seconds:g}",
                 "--ak",
                 f"version={config['agents']['nova']['version']}",
-            ],
-            job_dir,
+            ]
         )
+        return nova_command, job_dir
     if agent == "opencode":
-        opencode_config = json.dumps({"agent": {"build": {"steps": int(rounds)}}}, separators=(",", ":"))
+        build_config = {} if round_limit is None else {"steps": round_limit}
+        opencode_config = json.dumps(
+            {"agent": {"build": build_config}}, separators=(",", ":")
+        )
         return (
             common
             + [
@@ -727,23 +744,19 @@ def agent_command(
             job_dir,
         )
     if agent == "claude_code":
-        return (
-            common
-            + [
-                "-a",
-                "scripts.harness_eval.comparison_agents:ClaudeCodeComparison",
-                "-m",
-                model,
-                "--ak",
-                f"version={config['agents']['claude_code']['version']}",
-                "--ak",
-                f"reasoning_effort={effort}",
-                "--ak",
-                f"max_turns={rounds}",
-            ]
-            + install_kwargs,
-            job_dir,
-        )
+        claude_command = common + [
+            "-a",
+            "scripts.harness_eval.comparison_agents:ClaudeCodeComparison",
+            "-m",
+            model,
+            "--ak",
+            f"version={config['agents']['claude_code']['version']}",
+            "--ak",
+            f"reasoning_effort={effort}",
+        ]
+        if round_limit is not None:
+            claude_command.extend(["--ak", f"max_turns={round_limit}"])
+        return claude_command + install_kwargs, job_dir
     raise ValueError(f"unknown agent: {agent}")
 
 

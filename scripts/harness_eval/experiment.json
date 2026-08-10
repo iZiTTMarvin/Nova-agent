@@ -7,7 +7,7 @@
   "model": "deepseek-v4-flash",
   "base_url": "https://opencode.ai/zen/go/v1",
   "reasoning_effort": "max",
-  "max_tool_rounds": 1000,
+  "max_tool_rounds": null,
   "agent_deadline_grace_seconds": 15,
   "task_attempts": 1,
   "task_order": "agent_timeout_ascending_then_name",
