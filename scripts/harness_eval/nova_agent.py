@@ -14,12 +14,19 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
 
-def _provider_host_entries(base_url: str, encoded_addresses: str) -> tuple[str, ...]:
+def _provider_host_entries(
+    base_url: str, encoded_addresses: str | list[str]
+) -> tuple[str, ...]:
     parsed = urlsplit(base_url)
-    try:
-        raw_addresses = json.loads(encoded_addresses)
-    except json.JSONDecodeError as error:
-        raise ValueError("provider_addresses must contain public IPv4 addresses") from error
+    if isinstance(encoded_addresses, str):
+        try:
+            raw_addresses = json.loads(encoded_addresses)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                "provider_addresses must contain public IPv4 addresses"
+            ) from error
+    else:
+        raw_addresses = encoded_addresses
     if (
         parsed.scheme != "https"
         or not parsed.hostname
@@ -56,7 +63,7 @@ class NovaHeadless(BaseInstalledAgent):
         prompt_path: str,
         node_archive_path: str,
         base_url: str,
-        provider_addresses: str,
+        provider_addresses: str | list[str],
         reasoning_effort: str = "max",
         max_tool_rounds: int = 100,
         deadline_seconds: float | None = None,

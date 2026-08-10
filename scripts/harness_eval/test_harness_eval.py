@@ -129,6 +129,12 @@ class HarnessEvalTests(unittest.TestCase):
             ),
             ("198.20.0.64 opencode.ai", "198.20.0.65 opencode.ai"),
         )
+        self.assertEqual(
+            _provider_host_entries(
+                "https://opencode.ai/zen/go/v1", ["198.20.0.64"]
+            ),
+            ("198.20.0.64 opencode.ai",),
+        )
         for addresses in ('["127.0.0.1"]', '["192.168.65.7"]', '[]', '"198.20.0.64"'):
             with self.assertRaisesRegex(ValueError, "public IPv4"):
                 _provider_host_entries("https://opencode.ai/zen/go/v1", addresses)
