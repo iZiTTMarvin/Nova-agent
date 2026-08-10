@@ -379,6 +379,43 @@ def ordered_task_names(tasks_dir: Path, selected_ids: list[str] | None = None) -
     return [name for _timeout, name in sorted(tasks)]
 
 
+def checkout_dataset_revision(dataset: Path, revision: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(dataset), "config", "core.autocrlf", "false"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(dataset), "config", "core.eol", "lf"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(dataset), "checkout", "--detach", "--force", revision],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(dataset), "checkout-index", "--all", "--force"],
+        check=True,
+    )
+
+
+def validate_deepswe_verifier_entrypoints(tasks_dir: Path, task_names: list[str]) -> None:
+    invalid: list[str] = []
+    for task_name in task_names:
+        entrypoint = tasks_dir / task_name / "tests" / "test.sh"
+        if not entrypoint.is_file():
+            invalid.append(f"{task_name} (missing tests/test.sh)")
+            continue
+        with entrypoint.open("rb") as stream:
+            first_line = stream.readline()
+        if not first_line.startswith(b"#!") or b"\r" in first_line:
+            invalid.append(task_name)
+    if invalid:
+        raise RuntimeError(
+            "DeepSWE verifier entrypoints must use Unix line endings: "
+            + ", ".join(invalid)
+        )
+
+
 def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if config.get("task_attempts") != 1:
         raise RuntimeError("paired pass@1 requires task_attempts=1")
@@ -390,13 +427,20 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     if not paths.dataset.exists():
         paths.dataset.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["git", "clone", "--filter=blob:none", config["dataset"]["repo"], str(paths.dataset)],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.eol=lf",
+                "clone",
+                "--filter=blob:none",
+                config["dataset"]["repo"],
+                str(paths.dataset),
+            ],
             check=True,
         )
-    subprocess.run(
-        ["git", "-C", str(paths.dataset), "checkout", "--detach", config["dataset"]["revision"]],
-        check=True,
-    )
+    checkout_dataset_revision(paths.dataset, config["dataset"]["revision"])
     actual_revision = subprocess.run(
         ["git", "-C", str(paths.dataset), "rev-parse", "HEAD"],
         capture_output=True,
@@ -414,6 +458,8 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     task_names = ordered_task_names(tasks_dir, selected_ids)
     if len(task_names) != int(config["dataset"]["task_count"]):
         raise RuntimeError(f"expected {config['dataset']['task_count']} tasks, found {len(task_names)}")
+    if config["dataset"].get("slug") == "deep-swe":
+        validate_deepswe_verifier_entrypoints(tasks_dir, task_names)
 
     tree_hash = sha256_git_tree(paths.dataset, actual_revision, "tasks")
     expected_hash = config["dataset"].get("task_tree_sha256")

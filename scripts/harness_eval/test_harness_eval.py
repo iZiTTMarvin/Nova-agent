@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -21,6 +22,7 @@ from scripts.harness_eval.run_experiment import (
     agent_command,
     build_row,
     classify_failure,
+    checkout_dataset_revision,
     estimated_cost,
     ensure_node_runtime_archive,
     execute,
@@ -36,11 +38,67 @@ from scripts.harness_eval.run_experiment import (
     result_is_complete,
     token_fields,
     validate_execution_shape,
+    validate_deepswe_verifier_entrypoints,
     write_progress_snapshot,
 )
 
 
 class HarnessEvalTests(unittest.TestCase):
+    def test_dataset_checkout_restores_unix_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "dataset"
+            subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "config", "user.email", "eval@example.invalid"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repository), "config", "user.name", "Harness Eval"],
+                check=True,
+            )
+            script = repository / "tasks" / "task-a" / "tests" / "test.sh"
+            script.parent.mkdir(parents=True)
+            script.write_bytes(b"#!/bin/bash\necho ok\n")
+            subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "commit", "-m", "fixture"],
+                check=True,
+                capture_output=True,
+            )
+            revision = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            script.write_bytes(b"#!/bin/bash\r\necho ok\r\n")
+
+            checkout_dataset_revision(repository, revision)
+
+            self.assertEqual(script.read_bytes(), b"#!/bin/bash\necho ok\n")
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(repository), "config", "--get", "core.autocrlf"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+                "false",
+            )
+
+    def test_deepswe_verifier_preflight_rejects_crlf_shebang(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tasks = Path(directory) / "tasks"
+            script = tasks / "task-a" / "tests" / "test.sh"
+            script.parent.mkdir(parents=True)
+            script.write_bytes(b"#!/bin/bash\r\necho broken\r\n")
+
+            with self.assertRaisesRegex(RuntimeError, "Unix line endings.*task-a"):
+                validate_deepswe_verifier_entrypoints(tasks, ["task-a"])
+
+            script.write_bytes(b"#!/bin/bash\necho ok\n")
+            validate_deepswe_verifier_entrypoints(tasks, ["task-a"])
+
     def test_harbor_egress_compatibility_is_stricter_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             policy = Path(directory) / "network-policy"
