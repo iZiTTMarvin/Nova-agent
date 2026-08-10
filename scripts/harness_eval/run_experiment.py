@@ -526,7 +526,8 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         raise RuntimeError(f"task tree fingerprint mismatch: expected {expected_hash}, got {tree_hash}")
 
     node_archive = ensure_node_runtime_archive(config, paths)
-    subprocess.run(["npm", "run", "build:headless"], cwd=ROOT, check=True)
+    # Windows 上 PATH 里通常只有 npm.cmd，CreateProcess 只补 .exe，必须经 shell 解析
+    subprocess.run(["npm", "run", "build:headless"], cwd=ROOT, check=True, shell=(os.name == "nt"))
     bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
     prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
     if not bundle.is_file() or not prompt.is_file():
