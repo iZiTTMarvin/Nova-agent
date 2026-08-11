@@ -13,6 +13,7 @@ import {
 } from '../runtime/agent'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
 import { createEnvProxyFetch, describeEnvProxy } from './envProxyFetch'
+import { writeAndExit } from './writeAndExit'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { resolveContextWindow } from '../shared/config'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
@@ -371,11 +372,12 @@ async function main(): Promise<void> {
     }
   }
   writeJson(summaryPath, summary)
-  process.stdout.write(`${JSON.stringify(summary)}\n`)
-  if (summaryDerivation.exitNonZero) process.exitCode = 1
+  // 摘要是进程的最后输出：写完立即退出，不等待事件循环排空。
+  // 任务可能遗留 nohup 后台进程继承工具管道等句柄，靠事件循环自然退出
+  // 会永远挂住，把外部调用方（评测 harness）卡死。
+  writeAndExit(process.stdout, `${JSON.stringify(summary)}\n`, summaryDerivation.exitNonZero ? 1 : 0)
 }
 
 main().catch(error => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-  process.exitCode = 1
+  writeAndExit(process.stderr, `${error instanceof Error ? error.message : String(error)}\n`, 1)
 })
