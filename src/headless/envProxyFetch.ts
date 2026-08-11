@@ -30,6 +30,23 @@ function proxyDebug(message: string): void {
 }
 
 /**
+ * 一次性 Agent：让 https 请求复用已建立的 TLS 隧道 socket。
+ * 必须用「子类覆盖 createConnection」而不是构造函数选项——Node 22 的 Agent
+ * 构造参数不会生效（选项只在未使用 agent 时才被尊重，agent:false 也会新建默认
+ * Agent 并直连），实测会静默退回直连。
+ */
+class TunnelHttpsAgent extends HttpsAgent {
+  constructor(private readonly tunnelSocket: Duplex) {
+    super({ keepAlive: false })
+  }
+
+  override createConnection(): Duplex {
+    proxyDebug('tunnel agent createConnection called')
+    return this.tunnelSocket
+  }
+}
+
+/**
  * 从环境变量构建代理感知 fetch；未配置代理时返回 undefined（走全局 fetch）。
  * 读取顺序遵循常见约定：HTTPS_PROXY/https_proxy 优先，HTTP_PROXY 兜底。
  */
@@ -101,22 +118,14 @@ async function proxiedFetch(
   }
   if (url.protocol === 'https:') {
     const socket = await openConnectTunnel(config, url, init.signal)
-    // HTTPS 请求复用已建立的 TLS 隧道 socket。注意：createConnection 选项只在
-    // 「使用 agent」时才被尊重（agent:false 会新建默认 Agent 并丢弃该选项），
-    // 因此必须注入一个携带 createConnection 的一次性 HttpsAgent。
-    const tunnelAgent = new HttpsAgent({
-      keepAlive: false,
-      // @types/node 的 AgentOptions 未声明 createConnection，但 https.Agent
-      // 运行时支持该选项（其默认值就是 tls.connect），此处返回已就绪的隧道 socket
-      createConnection: () => socket
-    } as ConstructorParameters<typeof HttpsAgent>[0] & { createConnection: () => Duplex })
+    // HTTPS 请求复用已建立的 TLS 隧道 socket，不再新建任何连接
     return issueRequest(
       httpsRequest,
       {
         host: url.hostname,
         port: url.port ? Number(url.port) : 443,
         path: url.pathname + url.search,
-        agent: tunnelAgent
+        agent: new TunnelHttpsAgent(socket)
       },
       url,
       init,
@@ -198,8 +207,14 @@ function openConnectTunnel(
         }
       }
       signal?.addEventListener('abort', onTlsAbort, { once: true })
-      tls.once('secureConnect', () => done())
-      tls.once('error', error => done(error))
+      tls.once('secureConnect', () => {
+        proxyDebug(`TLS established, authorized=${tls.authorized}`)
+        done()
+      })
+      tls.once('error', error => {
+        proxyDebug(`TLS error: ${error.message}`)
+        done(error)
+      })
     })
     req.end()
   })
@@ -238,6 +253,7 @@ function issueRequest(
       resolve(toWebResponse(res))
     })
     req.on('error', error => {
+      proxyDebug(`request error: ${error.message}`)
       init.signal?.removeEventListener('abort', onAbort)
       reject(error)
     })
