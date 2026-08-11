@@ -59,13 +59,13 @@ export const SessionBreadcrumb: React.FC = () => {
         aria-haspopup="menu"
         onClick={() => setOpen(v => !v)}
       >
-        <FolderIcon size={13} className="chat-session-breadcrumb__folder" />
+        <FolderIcon size={16} className="chat-session-breadcrumb__folder" />
         <span className="chat-session-breadcrumb__project">{projectDisplayName(currentProject)}</span>
         <span className="chat-session-breadcrumb__sep" aria-hidden>/</span>
         <span className="chat-session-breadcrumb__session">
           {displaySession.title || SESSION_PLACEHOLDER_TITLE}
         </span>
-        <ChevronIcon size={10} direction="down" className="chat-session-breadcrumb__chevron" />
+        <ChevronIcon size={14} direction="down" className="chat-session-breadcrumb__chevron" />
       </button>
       {open && (
         <div className="chat-session-breadcrumb__panel" role="menu">

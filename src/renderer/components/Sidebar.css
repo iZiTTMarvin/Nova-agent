@@ -36,16 +36,16 @@
 .sidebar-topbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 6px 0 12px;
+  gap: 10px;
+  height: 44px;
+  padding: 0 8px 0 14px;
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
 }
 
 .sidebar-topbar__title {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -53,6 +53,8 @@
 .sidebar-topbar__toggle {
   margin-left: auto;
   -webkit-app-region: no-drag;
+  width: 32px;
+  height: 32px;
 }
 
 /* 顶行之外的剩余高度全部给导航区 */
@@ -129,6 +131,7 @@
  */
 .sidebar-session-row {
   position: relative;
+  padding-block: 4px;
   border-radius: var(--radius-element, 6px);
 }
 
@@ -213,4 +216,15 @@
 
 .sidebar-session-menu__item--danger {
   color: var(--nova-status-error, #b53333);
+}
+
+/*
+ * 会话列表随项目展开变长时，Astryx SideNav 的滚动容器会因滚动条显隐导致
+ * 右端内容（时间、⋯ 菜单）左右跳动。通过保留滚动条占位 + 收窄右侧内边距，
+ * 让滚动条始终落在预留的 8px 区域内，不挤压会话行内容。
+ */
+.sidebar-astryx-nav > div:nth-of-type(2) {
+  box-sizing: border-box;
+  padding-inline-end: 8px;
+  scrollbar-gutter: stable;
 }

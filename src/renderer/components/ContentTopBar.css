@@ -3,7 +3,7 @@
  * 无贯穿顶栏后，本行与侧边栏顶行各自承担所在栏的窗口拖拽区职责。
  */
 .content-topbar {
-  height: 40px;
+  height: 44px;
   background-color: var(--bg-app);
   display: flex;
   align-items: center;
@@ -48,8 +48,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 40px;
+  width: 48px;
+  height: 44px;
   background: transparent;
   color: var(--text-muted);
   transition: all var(--transition-fast);
@@ -76,7 +76,7 @@
 
 /* 侧栏展开入口（仅折叠时出现）：不用窗口按钮的 46px 宽，贴近面包屑 */
 .content-topbar__btn--sidebar {
-  width: 28px;
+  width: 32px;
 }
 
 /* 会话 ⋯ 菜单浮层观感对齐侧边栏会话菜单 */
@@ -132,7 +132,7 @@
   align-items: center;
   justify-content: center;
   width: 1em;
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.02em;

@@ -16,7 +16,9 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
   FolderIcon: () => null,
   SettingsIcon: () => null,
-  PlusIcon: () => null
+  PlusIcon: () => null,
+  PinIcon: () => null,
+  PanelLeftIcon: () => null
 }))
 
 vi.mock('@astryxdesign/core/SideNav', () => ({

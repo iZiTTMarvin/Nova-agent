@@ -373,13 +373,13 @@ const SidebarSessions = React.memo(function SidebarSessions() {
 
   return (
     <SideNav
-      className="bg-[var(--bg-sidebar)] select-none"
+      className="bg-[var(--bg-sidebar)] select-none sidebar-astryx-nav"
       style={{ width: '100%' }}
       topContent={(
         <>
           <SideNavItem
             label="新对话"
-            icon={<PlusIcon size={14} />}
+            icon={<PlusIcon size={16} />}
             onClick={() => createNewSession(currentProject || undefined)}
             endContent={(
               <span className="text-[11px] text-text-muted tabular-nums">
@@ -389,7 +389,7 @@ const SidebarSessions = React.memo(function SidebarSessions() {
           />
           <SideNavItem
             label="添加工作区"
-            icon={<FolderIcon size={14} />}
+            icon={<FolderIcon size={16} />}
             onClick={selectProject}
           />
         </>
@@ -397,14 +397,14 @@ const SidebarSessions = React.memo(function SidebarSessions() {
       footer={(
         <SideNavItem
           label="设置"
-          icon={<SettingsIcon size={16} />}
+          icon={<SettingsIcon size={18} />}
           onClick={() => setConfigModalOpen(true)}
         />
       )}
     >
       {pinnedSessions.length > 0 && (
         <SideNavSection title="置顶">
-          {pinnedSessions.map((session) => renderSessionRow(session, <PinIcon size={14} />))}
+          {pinnedSessions.map((session) => renderSessionRow(session, <PinIcon size={16} />))}
         </SideNavSection>
       )}
       <SideNavSection title="会话">
@@ -429,7 +429,7 @@ const SidebarSessions = React.memo(function SidebarSessions() {
               <div className="flex-1 min-w-0">
                 <SideNavItem
                   label={getProjectName(projectPath)}
-                  icon={<FolderIcon size={14} />}
+                  icon={<FolderIcon size={16} />}
                   size="sm"
                   collapsible={{
                     isCollapsed: !isExpanded,
@@ -465,7 +465,7 @@ const SidebarSessions = React.memo(function SidebarSessions() {
               </div>
               <IconButton
                 label="在此项目下新建会话"
-                icon={<PlusIcon size={12} />}
+                icon={<PlusIcon size={16} />}
                 variant="ghost"
                 size="sm"
                 className="opacity-0 group-hover:opacity-100 shrink-0 mt-0.5"
@@ -565,11 +565,11 @@ export const Sidebar: React.FC = () => {
       >
         {/* 侧栏自己的顶行：品牌 + 折叠开关；无贯穿顶栏后兼作本栏的窗口拖拽区 */}
         <div className="sidebar-topbar">
-          <NovaLogo size={14} />
+          <NovaLogo size={18} />
           <span className="sidebar-topbar__title">Nova Agent</span>
           <IconButton
             label="折叠会话导航"
-            icon={<PanelLeftIcon size={12} />}
+            icon={<PanelLeftIcon size={16} />}
             variant="ghost"
             size="sm"
             className="sidebar-topbar__toggle"

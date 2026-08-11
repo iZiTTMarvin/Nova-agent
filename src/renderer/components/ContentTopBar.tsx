@@ -55,7 +55,7 @@ const WindowControls: React.FC = () => {
     <>
       <IconButton
         label="最小化"
-        icon={<MinimizeIcon size={12} />}
+        icon={<MinimizeIcon size={14} />}
         variant="ghost"
         size="sm"
         className="content-topbar__btn content-topbar__btn--minimize"
@@ -64,7 +64,7 @@ const WindowControls: React.FC = () => {
       />
       <IconButton
         label={isMaximized ? '向下还原' : '最大化'}
-        icon={isMaximized ? <RestoreIcon size={12} /> : <MaximizeIcon size={12} />}
+        icon={isMaximized ? <RestoreIcon size={14} /> : <MaximizeIcon size={14} />}
         variant="ghost"
         size="sm"
         className="content-topbar__btn content-topbar__btn--maximize"
@@ -73,7 +73,7 @@ const WindowControls: React.FC = () => {
       />
       <IconButton
         label="关闭"
-        icon={<CloseIcon size={12} />}
+        icon={<CloseIcon size={14} />}
         variant="ghost"
         size="sm"
         className="content-topbar__btn content-topbar__btn--close"
@@ -165,7 +165,7 @@ export const ContentTopBar: React.FC = () => {
         {sidebarCollapsed && (
           <IconButton
             label="展开会话导航"
-            icon={<PanelLeftIcon size={12} />}
+            icon={<PanelLeftIcon size={16} />}
             variant="ghost"
             size="sm"
             className="content-topbar__btn content-topbar__btn--sidebar"
@@ -178,7 +178,7 @@ export const ContentTopBar: React.FC = () => {
       <div className="content-topbar__right">
         <IconButton
           label="审查与文件面板"
-          icon={<PanelRightIcon size={12} />}
+          icon={<PanelRightIcon size={16} />}
           variant="ghost"
           size="sm"
           className={`content-topbar__btn${inspectorOpen ? ' content-topbar__btn--active' : ''}`}
