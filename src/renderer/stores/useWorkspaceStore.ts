@@ -40,6 +40,8 @@ export interface WorkspaceStoreState {
   deleteSession: (sessionId: string) => Promise<void>
   /** 重命名会话标题 */
   renameSession: (sessionId: string, title: string) => Promise<void>
+  /** 设置会话置顶标记（侧边栏置顶分区） */
+  setSessionPinned: (sessionId: string, pinned: boolean) => Promise<void>
   /** 切换会话 */
   selectSession: (sessionId: string) => Promise<void>
   /** 切换模式 */
@@ -114,6 +116,16 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
     } catch (err) {
       console.error('[useWorkspaceStore] 重命名会话失败:', err)
       throw err
+    }
+  },
+
+  setSessionPinned: async (sessionId: string, pinned: boolean) => {
+    try {
+      const state = await window.api.invoke('workspace:set-session-pinned', { sessionId, pinned })
+      const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+      dispatchWorkspaceChange(state)
+    } catch (err) {
+      console.error('[useWorkspaceStore] 设置置顶失败:', err)
     }
   },
 

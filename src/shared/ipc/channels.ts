@@ -81,6 +81,8 @@ export const WORKSPACE_CREATE_SESSION = 'workspace:create-session' as const
 export const WORKSPACE_DELETE_SESSION = 'workspace:delete-session' as const
 /** 重命名会话标题 */
 export const WORKSPACE_RENAME_SESSION = 'workspace:rename-session' as const
+/** 设置会话置顶标记（侧边栏置顶分区） */
+export const WORKSPACE_SET_SESSION_PINNED = 'workspace:set-session-pinned' as const
 /** 切换当前会话 */
 export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
 /** 切换运行模式 */

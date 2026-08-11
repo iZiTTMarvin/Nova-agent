@@ -441,6 +441,7 @@ export class SessionStore {
           messageCount,
           title: data.title,
           titleSource: data.titleSource,
+          ...(data.pinned ? { pinned: true } : {}),
           ...(data.reasoningEffortOverride
             ? { reasoningEffortOverride: data.reasoningEffortOverride }
             : {})
@@ -879,6 +880,20 @@ export class SessionStore {
     session.title = title
     session.titleSource = source
     session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /**
+   * 设置会话置顶标记（只写 session.json 元数据）。
+   * 故意不刷新 updatedAt：置顶是展示组织行为，不应改变会话的最近活跃排序，
+   * 否则取消置顶后会话会跳到列表顶部。
+   */
+  updatePinned(sessionId: string, pinned: boolean): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    session.pinned = pinned
     this.saveMetadata(session)
     return session
   }

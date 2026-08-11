@@ -390,6 +390,10 @@ export interface IpcCommands {
     params: { sessionId: string; title: string }
     result: WorkspaceState
   }
+  'workspace:set-session-pinned': {
+    params: { sessionId: string; pinned: boolean }
+    result: WorkspaceState
+  }
   'workspace:select-session': {
     params: { sessionId: string }
     result: WorkspaceState

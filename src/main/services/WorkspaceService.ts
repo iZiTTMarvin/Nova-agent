@@ -377,6 +377,16 @@ export class WorkspaceService {
     return this.getState()
   }
 
+  /** 设置会话置顶标记，刷新侧边栏列表并广播。 */
+  setSessionPinned(params: { sessionId: string; pinned: boolean }): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    store.updatePinned(params.sessionId, params.pinned)
+
+    this.state = { ...this.state, availableSessions: store.list() }
+    this.broadcast()
+    return this.getState()
+  }
+
   /**
    * 刷新侧边栏会话列表并广播（自动生成标题后调用，不走 messagesRevision）。
    */

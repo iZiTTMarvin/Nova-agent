@@ -6,6 +6,14 @@ export function listSidebarRootSessions(sessions: readonly Session[]): PrimarySe
 }
 
 /**
+ * 置顶分区投影：用户级会话中 pinned 的子集。
+ * 顺序沿用 store 列表（主进程已按 updatedAt 降序），置顶不单独再排序。
+ */
+export function listPinnedSessions(sessions: readonly Session[]): PrimarySession[] {
+  return listSidebarRootSessions(sessions).filter(session => session.pinned === true)
+}
+
+/**
  * 当前焦点若是子代理会话，侧栏高亮其父会话，避免「仅改展示」后选中态丢失。
  */
 export function resolveSidebarActiveSessionId(

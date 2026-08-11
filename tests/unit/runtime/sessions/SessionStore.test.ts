@@ -473,6 +473,54 @@ describe('SessionStore', () => {
     })
   })
 
+  describe('updatePinned', () => {
+    it('置顶写入并持久化', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      const updated = store.updatePinned(session.id, true)
+
+      expect(updated!.pinned).toBe(true)
+      expect(store.load(session.id)!.pinned).toBe(true)
+    })
+
+    it('取消置顶后落盘为 false', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.updatePinned(session.id, true)
+
+      store.updatePinned(session.id, false)
+
+      expect(store.load(session.id)!.pinned).toBe(false)
+    })
+
+    it('置顶不刷新 updatedAt（不改变最近活跃排序）', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const before = store.load(session.id)!.updatedAt
+
+      const updated = store.updatePinned(session.id, true)
+
+      expect(updated!.updatedAt).toBe(before)
+    })
+
+    it('置顶不存在的会话返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      expect(store.updatePinned('missing-session', true)).toBeNull()
+    })
+
+    it('list 摘要透传 pinned，未置顶会话不携带该字段', () => {
+      const store = new SessionStore(tmpDir)
+      const pinned = store.create('/project/root')
+      const normal = store.create('/project/root')
+      store.updatePinned(pinned.id, true)
+
+      const summaries = store.list()
+      expect(summaries.find(s => s.id === pinned.id)?.pinned).toBe(true)
+      expect(summaries.find(s => s.id === normal.id)?.pinned).toBeUndefined()
+    })
+  })
+
   describe('save', () => {
     it('保存覆盖已有数据', () => {
       const store = new SessionStore(tmpDir)

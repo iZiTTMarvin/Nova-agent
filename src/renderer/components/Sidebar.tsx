@@ -2,20 +2,20 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useChatStore } from '../stores/useChatStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useLayoutStore, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX } from '../stores/useLayoutStore'
-import type { Session } from '../../shared/session/types'
+import type { PrimarySession, Session } from '../../shared/session/types'
 import {
   SESSION_PLACEHOLDER_TITLE,
   SESSION_TITLE_MAX_LENGTH,
   clampSessionTitle
 } from '../../shared/session/title'
-import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon } from './Icons'
+import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, PinIcon } from './Icons'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
 import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
-import { listSidebarRootSessions, resolveSidebarActiveSessionId } from '../features/subagents/sidebarSessions'
+import { listPinnedSessions, listSidebarRootSessions, resolveSidebarActiveSessionId } from '../features/subagents/sidebarSessions'
 import './Sidebar.css'
 
 /** 每个项目下默认展示的最新会话数 */
@@ -64,6 +64,7 @@ const SidebarSessions = React.memo(function SidebarSessions() {
   const selectSession = useChatStore(state => state.selectSession)
   const deleteSession = useChatStore(state => state.deleteSession)
   const renameSession = useChatStore(state => state.renameSession)
+  const setSessionPinned = useChatStore(state => state.setSessionPinned)
   const currentProject = useSettingsStore(state => state.currentProject)
   const selectProject = useSettingsStore(state => state.selectProject)
   const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
@@ -222,6 +223,154 @@ const SidebarSessions = React.memo(function SidebarSessions() {
     }
   }
 
+  /** 置顶分区的会话子集（顺序沿用 store 列表） */
+  const pinnedSessions = listPinnedSessions(sessions)
+
+  const togglePin = (session: PrimarySession) => {
+    setOpenMenuSessionId(null)
+    void setSessionPinned(session.id, !session.pinned)
+  }
+
+  /** 单条会话行：置顶分区与项目分组共用同一渲染，避免两套行实现各自漂移 */
+  const renderSessionRow = (session: PrimarySession, leadingIcon?: React.ReactNode) => {
+    const isActive = session.id === sidebarActiveSessionId
+    const isEditing = editingId === session.id
+    const displayTitle = getDisplayTitle(session)
+    const waitingBadge = waitingSessions.find(w => w.sessionId === session.id)
+    const showWaiting = !!waitingBadge && !isActive
+    const runningBadge = runningSessions.find(r => r.sessionId === session.id)
+    const showRunning = !!runningBadge && !isActive
+    const detailTitle = `${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`
+
+    return (
+      <div
+        key={session.id}
+        className={[
+          'sidebar-session-row',
+          isActive ? 'sidebar-session-row--active' : '',
+          openMenuSessionId === session.id ? 'sidebar-session-row--menu-open' : ''
+        ].filter(Boolean).join(' ')}
+        title={showWaiting ? '等待你处理' : detailTitle}
+      >
+        {isEditing ? (
+          <TextInput
+            ref={editInputRef}
+            label="重命名会话"
+            isLabelHidden
+            size="sm"
+            width="100%"
+            className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
+            value={editValue}
+            onChange={(value) => setEditValue(value.slice(0, SESSION_TITLE_MAX_LENGTH))}
+            onKeyDown={(e) => handleEditKeyDown(e, session.id)}
+            onBlur={() => void submitRename(session.id)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <SideNavItem
+            label={displayTitle}
+            icon={leadingIcon}
+            size="sm"
+            isSelected={isActive}
+            onClick={() => {
+              void selectSession(session.id)
+            }}
+            endContent={(
+              <>
+                {showWaiting && (
+                  <SessionStatusDot tone="warning" label="等待你处理" isPulsing />
+                )}
+                {showRunning && (
+                  <SessionStatusDot tone="accent" label="运行中" isPulsing />
+                )}
+                {!showWaiting && !showRunning && (
+                  <span className="sidebar-session-row__meta text-[11px] text-text-muted shrink-0">
+                    {formatRelativeTime(session.updatedAt)}
+                  </span>
+                )}
+              </>
+            )}
+          />
+        )}
+        {!isEditing && (
+          <div
+            className="sidebar-session-row__actions"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <IconButton
+              label="会话操作"
+              icon={<span className="sidebar-session-menu__ellipsis" aria-hidden>⋯</span>}
+              variant="ghost"
+              size="sm"
+              tooltip="会话操作"
+              aria-expanded={openMenuSessionId === session.id}
+              aria-haspopup="menu"
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpenMenuSessionId((current) =>
+                  current === session.id ? null : session.id
+                )
+              }}
+            />
+            {openMenuSessionId === session.id && (
+              <div className="sidebar-session-menu__panel" role="menu">
+                {showWaiting || showRunning ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="sidebar-session-menu__item"
+                    onClick={() => {
+                      setOpenMenuSessionId(null)
+                      void cancelExecution(
+                        showWaiting ? waitingBadge?.runId : runningBadge?.runId
+                      )
+                    }}
+                  >
+                    停止运行
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sidebar-session-menu__item"
+                      onClick={() => togglePin(session)}
+                    >
+                      {session.pinned ? '取消置顶' : '置顶'}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sidebar-session-menu__item"
+                      onClick={() => {
+                        setOpenMenuSessionId(null)
+                        startEditing(session)
+                      }}
+                    >
+                      重命名
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sidebar-session-menu__item sidebar-session-menu__item--danger"
+                      onClick={() => {
+                        setOpenMenuSessionId(null)
+                        void handleDelete(session.id)
+                      }}
+                    >
+                      删除
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <SideNav
       className="bg-[var(--bg-sidebar)] select-none"
@@ -256,6 +405,11 @@ const SidebarSessions = React.memo(function SidebarSessions() {
         />
       )}
     >
+      {pinnedSessions.length > 0 && (
+        <SideNavSection title="置顶">
+          {pinnedSessions.map((session) => renderSessionRow(session, <PinIcon size={14} />))}
+        </SideNavSection>
+      )}
       <SideNavSection title="会话">
         {Object.entries(projectGroups).map(([projectPath, projectSessions]) => {
           const isExpanded = expandedProjects[projectPath] !== false
@@ -292,135 +446,7 @@ const SidebarSessions = React.memo(function SidebarSessions() {
                     </span>
                   )}
                 >
-                  {visibleSessions.map((session) => {
-                    const isActive = session.id === sidebarActiveSessionId
-                    const isEditing = editingId === session.id
-                    const displayTitle = getDisplayTitle(session)
-                    const waitingBadge = waitingSessions.find(w => w.sessionId === session.id)
-                    const showWaiting = !!waitingBadge && !isActive
-                    const runningBadge = runningSessions.find(r => r.sessionId === session.id)
-                    const showRunning = !!runningBadge && !isActive
-                    const detailTitle = `${displayTitle}\n${formatTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`
-
-                    return (
-                      <div
-                        key={session.id}
-                        className={[
-                          'sidebar-session-row',
-                          isActive ? 'sidebar-session-row--active' : '',
-                          openMenuSessionId === session.id ? 'sidebar-session-row--menu-open' : ''
-                        ].filter(Boolean).join(' ')}
-                        title={showWaiting ? '等待你处理' : detailTitle}
-                      >
-                        {isEditing ? (
-                          <TextInput
-                            ref={editInputRef}
-                            label="重命名会话"
-                            isLabelHidden
-                            size="sm"
-                            width="100%"
-                            className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
-                            value={editValue}
-                            onChange={(value) => setEditValue(value.slice(0, SESSION_TITLE_MAX_LENGTH))}
-                            onKeyDown={(e) => handleEditKeyDown(e, session.id)}
-                            onBlur={() => void submitRename(session.id)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <SideNavItem
-                            label={displayTitle}
-                            size="sm"
-                            isSelected={isActive}
-                            onClick={() => {
-                              void selectSession(session.id)
-                            }}
-                            endContent={(
-                              <>
-                                {showWaiting && (
-                                  <SessionStatusDot tone="warning" label="等待你处理" isPulsing />
-                                )}
-                                {showRunning && (
-                                  <SessionStatusDot tone="accent" label="运行中" isPulsing />
-                                )}
-                                {!showWaiting && !showRunning && (
-                                  <span className="sidebar-session-row__meta text-[11px] text-text-muted shrink-0">
-                                    {formatRelativeTime(session.updatedAt)}
-                                  </span>
-                                )}
-                              </>
-                            )}
-                          />
-                        )}
-                        {!isEditing && (
-                          <div
-                            className="sidebar-session-row__actions"
-                            onClick={(e) => e.stopPropagation()}
-                            onMouseDown={(e) => e.stopPropagation()}
-                          >
-                            <IconButton
-                              label="会话操作"
-                              icon={<span className="sidebar-session-menu__ellipsis" aria-hidden>⋯</span>}
-                              variant="ghost"
-                              size="sm"
-                              tooltip="会话操作"
-                              aria-expanded={openMenuSessionId === session.id}
-                              aria-haspopup="menu"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setOpenMenuSessionId((current) =>
-                                  current === session.id ? null : session.id
-                                )
-                              }}
-                            />
-                            {openMenuSessionId === session.id && (
-                              <div className="sidebar-session-menu__panel" role="menu">
-                                {showWaiting || showRunning ? (
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="sidebar-session-menu__item"
-                                    onClick={() => {
-                                      setOpenMenuSessionId(null)
-                                      void cancelExecution(
-                                        showWaiting ? waitingBadge?.runId : runningBadge?.runId
-                                      )
-                                    }}
-                                  >
-                                    停止运行
-                                  </button>
-                                ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      role="menuitem"
-                                      className="sidebar-session-menu__item"
-                                      onClick={() => {
-                                        setOpenMenuSessionId(null)
-                                        startEditing(session)
-                                      }}
-                                    >
-                                      重命名
-                                    </button>
-                                    <button
-                                      type="button"
-                                      role="menuitem"
-                                      className="sidebar-session-menu__item sidebar-session-menu__item--danger"
-                                      onClick={() => {
-                                        setOpenMenuSessionId(null)
-                                        void handleDelete(session.id)
-                                      }}
-                                    >
-                                      删除
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {visibleSessions.map((session) => renderSessionRow(session))}
                   {showMoreToggle && (
                     <Button
                       label={isSessionListExpanded ? '收起' : '显示更多'}

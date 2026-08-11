@@ -12,6 +12,7 @@ import {
   WORKSPACE_CREATE_SESSION,
   WORKSPACE_DELETE_SESSION,
   WORKSPACE_RENAME_SESSION,
+  WORKSPACE_SET_SESSION_PINNED,
   WORKSPACE_SELECT_SESSION,
   WORKSPACE_SET_MODE,
   WORKSPACE_SET_REASONING_EFFORT,
@@ -55,6 +56,10 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
 
   handle(WORKSPACE_RENAME_SESSION, async (_event, params: { sessionId: string; title: string }) => {
     return service.renameSession(params)
+  })
+
+  handle(WORKSPACE_SET_SESSION_PINNED, async (_event, params: { sessionId: string; pinned: boolean }) => {
+    return service.setSessionPinned(params)
   })
 
   handle(WORKSPACE_SELECT_SESSION, async (_event, params: { sessionId: string }) => {

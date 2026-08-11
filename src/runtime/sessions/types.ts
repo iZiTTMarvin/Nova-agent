@@ -39,6 +39,8 @@ interface SessionSummaryBase {
   messageCount: number
   title?: string
   titleSource?: SessionTitleSource
+  /** 置顶标记（与 SessionData.pinned 同源），供侧边栏置顶分区展示 */
+  pinned?: boolean
   /**
    * 会话级思考强度覆盖（与 SessionData.reasoningEffortOverride 同源）。
    * 子代理投影读取父会话此项，保证显示与运行时一致。
@@ -122,6 +124,10 @@ interface SessionDataBase {
   title?: string
   /** 标题来源，用于覆盖保护（manual 后不再被自动逻辑改写） */
   titleSource?: SessionTitleSource
+  /**
+   * 置顶标记（侧边栏置顶分区）。可选字段：旧会话缺省视为未置顶，无需迁移。
+   */
+  pinned?: boolean
   /**
    * 当前激活路径上的消息条数（侧边栏 list 缓存）。
    * 磁盘上旧会话可能缺失；load/list/migrate/saveMetadata 会在写盘前补全。

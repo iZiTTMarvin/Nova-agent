@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { listSidebarRootSessions, resolveSidebarActiveSessionId } from '../../../src/renderer/features/subagents/sidebarSessions'
+import { listPinnedSessions, listSidebarRootSessions, resolveSidebarActiveSessionId } from '../../../src/renderer/features/subagents/sidebarSessions'
 import type { Session } from '../../../src/shared/session/types'
 
 const parent: Session = {
@@ -56,5 +56,21 @@ describe('resolveSidebarActiveSessionId', () => {
 
   it('焦点为 primary 时原样返回', () => {
     expect(resolveSidebarActiveSessionId([parent, child], parent.id)).toBe(parent.id)
+  })
+})
+
+describe('listPinnedSessions', () => {
+  it('只返回 pinned 的 primary 会话，保持传入顺序', () => {
+    const pinnedA: Session = { ...parent, id: 'pinned-a', pinned: true }
+    const pinnedB: Session = { ...parent, id: 'pinned-b', pinned: true }
+    const pinnedChild: Session = { ...child, pinned: true }
+
+    expect(
+      listPinnedSessions([pinnedA, parent, pinnedChild, pinnedB]).map((session) => session.id)
+    ).toEqual(['pinned-a', 'pinned-b'])
+  })
+
+  it('无置顶会话时返回空数组', () => {
+    expect(listPinnedSessions([parent, child])).toEqual([])
   })
 })

@@ -124,6 +124,8 @@ interface SessionBase {
   messageCount: number
   /** 侧边栏展示的会话标题 */
   title?: string
+  /** 置顶标记：置顶会话在侧边栏独立分区展示；旧会话缺省视为未置顶 */
+  pinned?: boolean
 }
 
 /** 普通会话摘要不携带 child lineage。 */

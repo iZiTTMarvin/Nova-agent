@@ -145,6 +145,8 @@ export interface SessionSliceState {
   deleteSession: (sessionId: string) => Promise<void>
   /** 重命名会话标题 */
   renameSession: (sessionId: string, title: string) => Promise<void>
+  /** 设置会话置顶标记（侧边栏置顶分区） */
+  setSessionPinned: (sessionId: string, pinned: boolean) => Promise<void>
   /** 创建新会话 */
   createNewSession: (workspaceRoot?: string) => Promise<void>
 }

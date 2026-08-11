@@ -49,6 +49,11 @@ export const createSessionSlice: ChatSliceCreator<SessionSliceState> = (set) => 
     await useWorkspaceStore.getState().renameSession(sessionId, title)
   },
 
+  setSessionPinned: async (sessionId: string, pinned: boolean) => {
+    const { useWorkspaceStore } = await import('../../useWorkspaceStore')
+    await useWorkspaceStore.getState().setSessionPinned(sessionId, pinned)
+  },
+
   /**
    * 创建新会话（用当前项目工作区，或显式传入 workspaceRoot），
    * 统一转发到 workspace store，由主进程创建并广播。
