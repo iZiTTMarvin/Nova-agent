@@ -35,8 +35,8 @@ vi.mock('../../../src/renderer/features/settings/SettingsModal', () => ({
   SettingsModal: () => null
 }))
 
-vi.mock('../../../src/renderer/components/TitleBar', () => ({
-  TitleBar: () => null
+vi.mock('../../../src/renderer/components/ContentTopBar', () => ({
+  ContentTopBar: () => null
 }))
 
 vi.mock('../../../src/renderer/components/Icons', () => ({

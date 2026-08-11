@@ -10,7 +10,14 @@
 
 .app-workspace {
   display: flex;
+  flex-direction: column;
   height: 100%;
+  min-height: 0;
+}
+
+.app-workspace__body {
+  display: flex;
+  flex: 1;
   min-height: 0;
 }
 

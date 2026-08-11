@@ -8,11 +8,11 @@ import {
   SESSION_TITLE_MAX_LENGTH,
   clampSessionTitle
 } from '../../shared/session/title'
-import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, PinIcon } from './Icons'
+import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, PinIcon, PanelLeftIcon } from './Icons'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
+import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
 import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
 import { listPinnedSessions, listSidebarRootSessions, resolveSidebarActiveSessionId } from '../features/subagents/sidebarSessions'
@@ -375,9 +375,6 @@ const SidebarSessions = React.memo(function SidebarSessions() {
     <SideNav
       className="bg-[var(--bg-sidebar)] select-none"
       style={{ width: '100%' }}
-      header={(
-        <SideNavHeading heading="Nova Agent" icon={<NovaLogo size={20} />} />
-      )}
       topContent={(
         <>
           <SideNavItem
@@ -566,7 +563,24 @@ export const Sidebar: React.FC = () => {
           transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)'
         }}
       >
-        <SidebarSessions />
+        {/* 侧栏自己的顶行：品牌 + 折叠开关；无贯穿顶栏后兼作本栏的窗口拖拽区 */}
+        <div className="sidebar-topbar">
+          <NovaLogo size={14} />
+          <span className="sidebar-topbar__title">Nova Agent</span>
+          <IconButton
+            label="折叠会话导航"
+            icon={<PanelLeftIcon size={12} />}
+            variant="ghost"
+            size="sm"
+            className="sidebar-topbar__toggle"
+            tooltip="折叠会话导航"
+            onClick={() => useLayoutStore.getState().toggleSidebar()}
+          />
+        </div>
+        {/* 顶行占位 40px，导航区占剩余高度 */}
+        <div className="sidebar-shell__nav">
+          <SidebarSessions />
+        </div>
       </div>
       {!sidebarCollapsed && (
         <div

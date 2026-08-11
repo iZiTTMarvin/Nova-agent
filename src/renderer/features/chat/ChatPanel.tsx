@@ -55,7 +55,6 @@ import { createComposerSkillTrigger } from '../skills/composerSkillTrigger'
 import { useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
-import { SessionBreadcrumb } from './SessionBreadcrumb'
 import { ComposeStageBar } from '../compose/ComposeStageBar'
 import { shouldShowComposeStageBar } from '../compose/stageBarProjection'
 import '../todo/TodoPanel.css'
@@ -633,8 +632,6 @@ export const ChatPanel: React.FC = () => {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* 会话路径面包屑：工作区 / 当前会话，无会话时组件自返回 null 不占位 */}
-      <SessionBreadcrumb />
       {currentSession?.kind === 'subagent' ? (
         <SubagentSessionHeader originalTask={currentSubagentTask} />
       ) : null}

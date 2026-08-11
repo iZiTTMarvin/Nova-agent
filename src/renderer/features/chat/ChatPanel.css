@@ -6,37 +6,35 @@
   background-color: var(--bg-app);
 }
 
-/* ── 会话路径面包屑（对话区顶部） ─────────────────────────── */
+/* ── 会话路径面包屑（内容区顶行，靠分界线一侧） ─────────────── */
 .chat-session-breadcrumb {
   position: relative;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 10px 24px 0;
+  min-width: 0;
   user-select: none;
 }
 
-/* 文件夹路径式触发钮：带边框的小胶囊，对齐参考产品的「工作区 / 会话」观感 */
+/* 无边框路径式触发钮：纯文字 + 文件夹图标，hover 才露出底色 */
 .chat-session-breadcrumb__trigger {
   display: flex;
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  padding: 4px 10px;
-  border: 1px solid var(--border-warm);
-  border-radius: 8px;
-  background: var(--bg-card);
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+  transition: background-color var(--transition-fast);
 }
 
 .chat-session-breadcrumb__trigger:hover,
 .chat-session-breadcrumb__trigger[aria-expanded='true'] {
-  background: var(--bg-sand);
-  border-color: var(--text-muted);
+  background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
   color: var(--text-primary);
 }
 
@@ -77,7 +75,7 @@
 .chat-session-breadcrumb__panel {
   position: absolute;
   top: calc(100% + 4px);
-  left: 24px;
+  left: 0;
   z-index: 30;
   min-width: 200px;
   max-width: 320px;

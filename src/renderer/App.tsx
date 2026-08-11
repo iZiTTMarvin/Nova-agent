@@ -13,7 +13,7 @@ import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './features/chat/ChatPanel'
 import { InspectorPanel } from './features/inspector/InspectorPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
-import { TitleBar } from './components/TitleBar'
+import { ContentTopBar } from './components/ContentTopBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
 import { useRunStore } from './stores/useRunStore'
@@ -344,25 +344,28 @@ function App(): React.ReactNode {
   return (
     <Theme theme={parchmentTheme} mode={theme}>
       {/*
-        壳结构由 AppShell 拥有：topNav=TitleBar、sideNav=Sidebar；
-        content 为「对话 + 右侧 inspector」flex 行（AppShell 无右侧槽）。
+        壳结构由 AppShell 拥有：sideNav=Sidebar；无贯穿顶栏（topNav 缺省），
+        左右两栏各自通顶——侧栏顶行在 Sidebar 内，内容区顶行是 ContentTopBar。
+        content 为「顶行 + 对话/inspector 行」纵向堆叠（AppShell 无右侧槽）。
         height="fill" → 100dvh 内部滚动；contentPadding=0 → 对话区边到边；
         mobileNav=false → Electron 桌面端无移动断点抽屉。
         variant="section" 提供 nav 与内容间的分隔线（替代手写 border）。
       */}
       <AppShell
         variant="section"
-        topNav={<TitleBar />}
         sideNav={<Sidebar />}
         contentPadding={0}
         height="fill"
         mobileNav={false}
       >
         <div className="app-workspace">
-          <div className="app-workspace__main">
-            <ChatPanel />
+          <ContentTopBar />
+          <div className="app-workspace__body">
+            <div className="app-workspace__main">
+              <ChatPanel />
+            </div>
+            <InspectorPanel />
           </div>
-          <InspectorPanel />
         </div>
 
         {/* 模型参数配置模态窗 */}

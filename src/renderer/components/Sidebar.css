@@ -25,9 +25,47 @@
 
 .sidebar-shell__inner {
   height: 100%;
+  display: flex;
+  flex-direction: column;
   /* 折叠滑出的合成器动画；宽度由父壳裁剪 */
   transition: transform var(--transition-normal);
   will-change: transform;
+}
+
+/* 侧栏顶行：与内容区顶行同高，整行可拖拽移动窗口 */
+.sidebar-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 6px 0 12px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.sidebar-topbar__title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.sidebar-topbar__toggle {
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+/* 顶行之外的剩余高度全部给导航区 */
+.sidebar-shell__nav {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-shell__nav > * {
+  flex: 1;
+  min-height: 0;
 }
 
 .sidebar-shell__resize-handle {

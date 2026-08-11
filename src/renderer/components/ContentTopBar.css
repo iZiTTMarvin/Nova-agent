@@ -1,10 +1,10 @@
 /*
- * TitleBar 位于 AppShell topNav slot：外层布局（高度堆叠、分隔线）由 AppShell 负责。
- * 本文件只保留 Nova 特有职责：拖拽区（-webkit-app-region）、标题字号、窗口按钮 hover。
+ * 内容区顶行：右栏自己的顶栏（面包屑 + 面板/会话操作 + 窗口控制）。
+ * 无贯穿顶栏后，本行与侧边栏顶行各自承担所在栏的窗口拖拽区职责。
  */
-.title-bar {
-  height: 32px;
-  background-color: var(--bg-sidebar);
+.content-topbar {
+  height: 40px;
+  background-color: var(--bg-app);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -13,8 +13,8 @@
   flex-shrink: 0;
 }
 
-/* 整个标题栏背景上，除了按钮和Logo，都是可拖拽区域 */
-.title-bar__drag-area {
+/* 整行背景可拖拽（移动窗口），按钮与面包屑自行恢复交互 */
+.content-topbar__drag-area {
   position: absolute;
   top: 0;
   left: 0;
@@ -24,73 +24,69 @@
   z-index: 0;
 }
 
-.title-bar__left {
+.content-topbar__left {
   display: flex;
   align-items: center;
-  padding-left: 4px;
-  gap: 8px;
+  gap: 4px;
+  padding-left: 12px;
   position: relative;
   z-index: 1;
-  pointer-events: none; /* 让它不阻挡拖动；布局按钮自行恢复交互 */
-}
-
-.title-bar__logo {
-  border-radius: 3px;
-}
-
-/* 左侧布局开关：穿透 left 的 pointer-events:none，且不抢窗口拖拽 */
-.title-bar__btn--layout {
-  pointer-events: auto;
   -webkit-app-region: no-drag;
+  min-width: 0;
 }
 
-.title-bar__btn--layout-active {
-  background-color: var(--color-brand-dim);
-  color: var(--text-primary);
-}
-
-.title-bar__title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.title-bar__right {
+.content-topbar__right {
   display: flex;
   align-items: center;
   position: relative;
   z-index: 1;
-  -webkit-app-region: no-drag; /* 按钮区域不能被拖拽，否则点击无效 */
+  -webkit-app-region: no-drag;
   height: 100%;
 }
 
-.title-bar__btn {
+.content-topbar__btn {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 46px;
-  height: 32px;
+  height: 40px;
   background: transparent;
   color: var(--text-muted);
   transition: all var(--transition-fast);
 }
 
-.title-bar__btn:hover {
+.content-topbar__btn:hover {
   background-color: var(--border-warm);
   color: var(--text-primary);
 }
 
-.title-bar__btn--close:hover {
+.content-topbar__btn--active {
+  background-color: var(--color-brand-dim);
+  color: var(--text-primary);
+}
+
+.content-topbar__btn--close:hover {
   background-color: var(--color-error) !important;
   color: #ffffff !important;
 }
 
-.title-bar__btn:active {
+.content-topbar__btn:active {
   opacity: 0.8;
 }
 
+/* 侧栏展开入口（仅折叠时出现）：不用窗口按钮的 46px 宽，贴近面包屑 */
+.content-topbar__btn--sidebar {
+  width: 28px;
+}
+
 /* 会话 ⋯ 菜单浮层观感对齐侧边栏会话菜单 */
-.title-bar-session-menu__panel {
+.content-topbar__session-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.content-topbar__menu-panel {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
@@ -106,7 +102,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
-.title-bar-session-menu__item {
+.content-topbar__menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -123,21 +119,15 @@
   cursor: pointer;
 }
 
-.title-bar-session-menu__item:hover {
+.content-topbar__menu-item:hover {
   background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
 }
 
-.title-bar-session-menu {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.title-bar-session-menu__item--danger {
+.content-topbar__menu-item--danger {
   color: var(--nova-status-error, #b53333);
 }
 
-.title-bar-session-menu__ellipsis {
+.content-topbar__menu-ellipsis {
   display: inline-flex;
   align-items: center;
   justify-content: center;

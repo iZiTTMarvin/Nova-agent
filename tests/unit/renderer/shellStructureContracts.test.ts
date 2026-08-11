@@ -15,10 +15,12 @@ const appCss = readFileSync(
 )
 
 describe('壳结构契约（AppShell + SideNav 权威）', () => {
-  it('App 根布局由 AppShell 拥有：topNav/sideNav slot 装配 TitleBar 与 Sidebar', () => {
+  it('App 根布局由 AppShell 拥有：无贯穿 topNav，左右两栏各自通顶', () => {
     expect(appSource).toContain("from '@astryxdesign/core/AppShell'")
-    expect(appSource).toMatch(/<AppShell[\s\S]*?topNav=\{<TitleBar/)
     expect(appSource).toMatch(/<AppShell[\s\S]*?sideNav=\{<Sidebar/)
+    // 两栏通顶布局：AppShell 不再装 topNav；内容区顶行由 ContentTopBar 承担
+    expect(appSource).not.toMatch(/topNav=/)
+    expect(appSource).toMatch(/<ContentTopBar/)
   })
 
   it('手写壳类名已清零：不得再有 app-wrapper/app-layout/app-main 根结构', () => {
@@ -26,9 +28,10 @@ describe('壳结构契约（AppShell + SideNav 权威）', () => {
     expect(appCss).not.toMatch(/\.app-(?:wrapper|layout|main|sidebar)/)
   })
 
-  it('Sidebar 根结构由 SideNav 拥有：header/topContent/footer 分区，无手写 aside 壳', () => {
+  it('Sidebar 根结构由 SideNav 拥有：自有顶行 + topContent/footer 分区，无手写 aside 壳', () => {
     expect(sidebarSource).toContain("from '@astryxdesign/core/SideNav'")
-    expect(sidebarSource).toMatch(/<SideNav[\s\S]*?header=/)
+    // 侧栏自己的顶行（品牌 + 折叠开关），兼作本栏窗口拖拽区
+    expect(sidebarSource).toContain('sidebar-topbar')
     expect(sidebarSource).toMatch(/topContent=/)
     expect(sidebarSource).toMatch(/footer=/)
     expect(sidebarSource).not.toMatch(/<aside/)
