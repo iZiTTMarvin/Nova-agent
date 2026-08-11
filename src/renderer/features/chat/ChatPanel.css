@@ -6,6 +6,117 @@
   background-color: var(--bg-app);
 }
 
+/* ── 会话路径面包屑（对话区顶部） ─────────────────────────── */
+.chat-session-breadcrumb {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 10px 24px 0;
+  user-select: none;
+}
+
+/* 文件夹路径式触发钮：带边框的小胶囊，对齐参考产品的「工作区 / 会话」观感 */
+.chat-session-breadcrumb__trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--border-warm);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-session-breadcrumb__trigger:hover,
+.chat-session-breadcrumb__trigger[aria-expanded='true'] {
+  background: var(--bg-sand);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.chat-session-breadcrumb__folder {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.chat-session-breadcrumb__project,
+.chat-session-breadcrumb__session {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-session-breadcrumb__project {
+  color: var(--text-muted);
+  max-width: 180px;
+}
+
+.chat-session-breadcrumb__sep {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chat-session-breadcrumb__session {
+  font-weight: 500;
+  color: var(--text-primary);
+  max-width: 260px;
+}
+
+.chat-session-breadcrumb__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* 下拉浮层观感对齐侧边栏会话菜单 */
+.chat-session-breadcrumb__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 24px;
+  z-index: 30;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-warm);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-popup);
+}
+
+.chat-session-breadcrumb__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-session-breadcrumb__item:hover {
+  background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
+}
+
+.chat-session-breadcrumb__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 
 
 /* ──────────────────────────────────────────────────────────

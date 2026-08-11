@@ -6,23 +6,12 @@ import {
   CloseIcon,
   NovaLogo,
   PanelLeftIcon,
-  PanelRightIcon,
-  ChevronIcon,
-  CheckIcon
+  PanelRightIcon
 } from './Icons'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { useLayoutStore } from '../stores/useLayoutStore'
 import { useChatStore } from '../stores/useChatStore'
-import { useSettingsStore } from '../stores/useSettingsStore'
-import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
-import { listSidebarRootSessions, resolveSidebarActiveSessionId } from '../features/subagents/sidebarSessions'
 import './TitleBar.css'
-
-/** 工作区路径取末段作为展示名（与侧边栏项目分组同名规则） */
-function projectDisplayName(pathStr: string): string {
-  const parts = pathStr.split(/[\\/]/)
-  return parts[parts.length - 1] || pathStr
-}
 
 /** 菜单打开期间：点击外部或 Escape 关闭（与侧边栏会话菜单同一交互约定） */
 function useDismissOnOutsideInteraction(open: boolean, onDismiss: () => void, excludeSelector: string): void {
@@ -44,68 +33,6 @@ function useDismissOnOutsideInteraction(open: boolean, onDismiss: () => void, ex
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [open, onDismiss, excludeSelector])
-}
-
-/**
- * 中部面包屑：当前工作区 / 当前会话标题。
- * 点击展开当前工作区下的会话列表用于快速切换；焦点在子代理会话时显示其父会话，
- * 与侧边栏高亮规则一致。
- */
-const TitleBarBreadcrumb: React.FC = () => {
-  const currentProject = useSettingsStore(state => state.currentProject)
-  const sessions = useChatStore(state => state.sessions)
-  const currentSessionId = useChatStore(state => state.currentSessionId)
-  const selectSession = useChatStore(state => state.selectSession)
-  const [open, setOpen] = useState(false)
-  useDismissOnOutsideInteraction(open, () => setOpen(false), '.title-bar__center')
-
-  const displaySessionId = resolveSidebarActiveSessionId(sessions, currentSessionId)
-  const displaySession = sessions.find(s => s.id === displaySessionId)
-  if (!currentProject || !displaySession) return null
-
-  const projectSessions = listSidebarRootSessions(sessions).filter(
-    s => s.workspaceRoot === currentProject
-  )
-
-  return (
-    <div className="title-bar__center">
-      <button
-        type="button"
-        className="title-bar-breadcrumb"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen(v => !v)}
-      >
-        <span className="title-bar-breadcrumb__project">{projectDisplayName(currentProject)}</span>
-        <span className="title-bar-breadcrumb__sep" aria-hidden>/</span>
-        <span className="title-bar-breadcrumb__session">
-          {displaySession.title || SESSION_PLACEHOLDER_TITLE}
-        </span>
-        <ChevronIcon size={10} direction="down" className="title-bar-breadcrumb__chevron" />
-      </button>
-      {open && (
-        <div className="title-bar-breadcrumb__panel" role="menu">
-          {projectSessions.map(s => (
-            <button
-              key={s.id}
-              type="button"
-              role="menuitem"
-              className="title-bar-breadcrumb__item"
-              onClick={() => {
-                setOpen(false)
-                void selectSession(s.id)
-              }}
-            >
-              <span className="title-bar-breadcrumb__item-label">
-                {s.title || SESSION_PLACEHOLDER_TITLE}
-              </span>
-              {s.id === displaySessionId && <CheckIcon size={12} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 /** 右侧当前会话 ⋯ 菜单：置顶/取消置顶、删除。仅普通会话可用（子会话由父会话管理）。 */
@@ -217,7 +144,6 @@ export const TitleBar: React.FC = () => {
         <NovaLogo size={14} className="title-bar__logo" />
         <span className="title-bar__title">Nova Agent</span>
       </div>
-      <TitleBarBreadcrumb />
       <div className="title-bar__right">
         <TitleBarSessionMenu />
         <IconButton

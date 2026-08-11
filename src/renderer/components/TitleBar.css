@@ -89,72 +89,13 @@
   opacity: 0.8;
 }
 
-/* 中部面包屑：绝对居中于标题栏，不参与左右两组的 flex 布局 */
-.title-bar__center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1;
-  -webkit-app-region: no-drag;
-  max-width: 42%;
-}
-
-.title-bar-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 100%;
-  padding: 3px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
-}
-
-.title-bar-breadcrumb:hover,
-.title-bar-breadcrumb[aria-expanded='true'] {
-  background-color: var(--border-warm);
-  color: var(--text-primary);
-}
-
-.title-bar-breadcrumb__project,
-.title-bar-breadcrumb__session {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.title-bar-breadcrumb__project {
-  color: var(--text-muted);
-  max-width: 140px;
-}
-
-.title-bar-breadcrumb__sep {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.title-bar-breadcrumb__session {
-  font-weight: 500;
-  max-width: 200px;
-}
-
-.title-bar-breadcrumb__chevron {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-/* 面包屑下拉与会话 ⋯ 菜单共用同一套浮层观感（对齐侧边栏会话菜单） */
-.title-bar-breadcrumb__panel,
+/* 会话 ⋯ 菜单浮层观感对齐侧边栏会话菜单 */
 .title-bar-session-menu__panel {
   position: absolute;
   top: calc(100% + 4px);
+  right: 0;
   z-index: 20;
-  min-width: 180px;
+  min-width: 132px;
   max-width: 280px;
   max-height: 320px;
   overflow-y: auto;
@@ -165,12 +106,6 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
-.title-bar-breadcrumb__panel {
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.title-bar-breadcrumb__item,
 .title-bar-session-menu__item {
   display: flex;
   align-items: center;
@@ -188,26 +123,14 @@
   cursor: pointer;
 }
 
-.title-bar-breadcrumb__item:hover,
 .title-bar-session-menu__item:hover {
   background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
-}
-
-.title-bar-breadcrumb__item-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .title-bar-session-menu {
   position: relative;
   display: flex;
   align-items: center;
-}
-
-.title-bar-session-menu__panel {
-  right: 0;
-  min-width: 132px;
 }
 
 .title-bar-session-menu__item--danger {
