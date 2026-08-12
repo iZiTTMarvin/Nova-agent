@@ -2,10 +2,10 @@
  * lsTool — 列出目录内容
  * 显示指定目录下的文件和子目录，限制在工作区内
  *
- * T2 异步化：readdirSync/statSync → readdir({withFileTypes}) + Dirent。
+ * 异步化：readdirSync/statSync → readdir({withFileTypes}) + Dirent。
  * 单层列目录不接入 isPathSkipped 过滤——ls 应照常显示 target/ 这类目录条目
  * （让模型知道它存在），只是 ls 天然不递归，不会进入其内部。find 的递归遍历
- * 才用 isPathSkipped 排除构建产物。这是文档 T5.2 钉死的边界差异。
+ * 才用 isPathSkipped 排除构建产物。这是钉死的边界差异。
  */
 import { readdir } from 'fs/promises'
 import { join, relative } from 'path'

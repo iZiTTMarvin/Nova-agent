@@ -1,5 +1,5 @@
 /**
- * P1-A2/A4：FTS 检索与 reconcile 集成（better-sqlite3 @ Node ABI）
+ * FTS 检索与 reconcile 集成（better-sqlite3 @ Node ABI）
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
@@ -9,7 +9,7 @@ import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { getMemoryRoot, computeWorkspaceHash } from '@runtime/memory/MemoryPaths'
 import { MemoryService } from '@runtime/memory/MemoryService'
 
-describe('MemoryService FTS 集成（P1-A2/A4）', () => {
+describe('MemoryService FTS 集成', () => {
   let tempDir: string | null = null
   let service: MemoryService | null = null
 

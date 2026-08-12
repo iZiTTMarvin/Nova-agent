@@ -124,7 +124,7 @@ export function registerIpcHandlers(): ImageStore {
   initSubagentProjectionServiceHost()
   registerSubagentProjectionHandler()
 
-  // 跨会话记忆浏览/编辑 IPC（P2-1）
+  // 跨会话记忆浏览/编辑 IPC
   registerMemoryHandler()
 
   // 当前项目只读文件浏览（Inspector 文件 tab）

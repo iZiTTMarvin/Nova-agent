@@ -1,5 +1,5 @@
 /**
- * 消息 block 单一事实源 — projection 与兼容序列化（T5-4 / T6-4）
+ * 消息 block 单一事实源 — projection 与兼容序列化
  *
  * 新版本（SessionData.schemaVersion >= 8）消息以有序 blocks 为唯一事实源；
  * content / toolCalls 仅作为加载时 projection 或兼容序列化字段，不在内存双向可写。

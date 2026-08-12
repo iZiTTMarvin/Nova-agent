@@ -485,7 +485,7 @@ export interface IpcCommands {
     params: { snapshotRetentionDays?: number }
     result: StorageCleanupResult
   }
-  // ── 跨会话记忆（P2-1 可观测/可编辑）──
+  // ── 跨会话记忆（可观测/可编辑）──
   'memory:list-files': {
     params: void
     result: MemoryScopeFileEntry[]
@@ -602,7 +602,7 @@ export interface IpcEvents {
   'agent:ask-question-request': {
     requestId: string
     questions: AskQuestionItem[]
-    /** 可选归属字段（阶段 2）；旧事件可能缺失 */
+    /** 可选归属字段；旧事件可能缺失 */
     sessionId?: string
     messageId?: string
     runId?: string
@@ -646,7 +646,7 @@ export interface IpcEvents {
   'agent:message-end': {
     messageId: string
     /**
-     * Phase 3：true 表示本轮 message-end 是由 cancel 触发的（用户主动中断），
+     * true 表示本轮 message-end 是由 cancel 触发的（用户主动中断），
      * renderer 据此把消息标记为 interrupted 状态。
      * 正常完成的消息不写此字段。
      */
@@ -746,7 +746,7 @@ export interface IpcEvents {
     state: WorkspaceState
   }
   /**
-   * @deprecated 阶段 6 起不再广播。轮次归属请订阅 `run:snapshot`。
+   * @deprecated 不再广播。轮次归属请订阅 `run:snapshot`。
    * 类型保留一版，避免旧 preload 监听方类型报错。
    */
   'agent:turn-state': {

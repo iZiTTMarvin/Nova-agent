@@ -86,7 +86,7 @@ function getStats(values: number[]) {
 describe('长对话流式渲染性能回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // T06：MessageItem mount 时会调 get-message-diffs，需要提供默认 mock 返回
+    // MessageItem mount 时会调 get-message-diffs，需要提供默认 mock 返回
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'get-message-diffs') {
         return Promise.resolve({ diffs: [], reviews: {} })

@@ -509,7 +509,7 @@ describe('AgentLoop XML 流式工具调用', () => {
     expect(parsed.content).toBe('if (a < b && c > d) { return "ok"; }')
   })
 
-  // ==================== P0 守护：entity 跨 chunk 切分时执行数据正确 ====================
+  // ==================== 守护：entity 跨 chunk 切分时执行数据正确 ====================
 
   it('entity 跨 chunk 切分时，工具执行依据（ChatToolCall.arguments）正确还原，不被流式累积的字面值污染', async () => {
     // 关键：把 &lt; 切在 chunk 边界（&l | t;），模拟真实 SSE token 边界切开 entity。
@@ -550,7 +550,7 @@ describe('AgentLoop XML 流式工具调用', () => {
     })
 
     // 2. ChatToolCall.arguments（executeToolBatch 的执行依据）解析后必须正确
-    //    —— 这是 P0 的核心：写入文件的内容不能含字面 &lt;
+    //    —— 这是核心：写入文件的内容不能含字面 &lt;
     const context = loop.getContext()
     const assistantWithTool = context.find(
       m => m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.length > 0

@@ -31,7 +31,7 @@ export interface ToolCall {
   arguments: Record<string, unknown>
 }
 
-// ── 顺序消息块类型 (S13) ──────────────────────────────────
+// ── 顺序消息块类型 ──────────────────────────────────
 
 /** 思考块 */
 export interface ThinkingBlock {
@@ -105,7 +105,7 @@ export interface Message {
   /** 单条消息 schema 子版本；1 = blocks 为事实源 */
   messageSchemaVersion?: number
   /**
-   * Phase 3：true 表示本条消息是 cancel 中断产生的。
+   * true 表示本条消息是 cancel 中断产生的。
    * 持久化层在 saveAssistantMessage 时根据 message_end.interrupted 写入，
    * 历史会话加载后 UI 据此显示「已中断」标识。
    */

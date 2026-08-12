@@ -1,5 +1,5 @@
 /**
- * T2-5：前缀缓存稳定性黑盒 + 预期变化不误报
+ * 前缀缓存稳定性黑盒 + 预期变化不误报
  *
  * 本文件是「请求形状结构守卫」（mock fetch，验证连续请求的可复用前缀逐字节一致），
  * 不是 DeepSeek 服务端 KV cache 的真实命中率指标；真实命中率观测见 deepseekLiveProbe.test.ts。
@@ -97,7 +97,7 @@ function reusablePrefixJson(body: Record<string, unknown>): string {
   })
 }
 
-describe('T2-5 前缀稳定性黑盒', () => {
+describe('前缀稳定性黑盒', () => {
   let interceptor: ReturnType<typeof interceptFetchBodies> | null = null
 
   afterEach(() => {

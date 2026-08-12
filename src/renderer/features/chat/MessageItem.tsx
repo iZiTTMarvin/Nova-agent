@@ -80,7 +80,7 @@ export interface MessageItemProps {
   diffCache?: MessageDiffCache
   isDiffLoading: boolean
   diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
-  /** T06：按需加载 diff 的回调，MessageItem 挂载时调用 */
+  /** 按需加载 diff 的回调，MessageItem 挂载时调用 */
   onLoadDiffs?: (sessionId: string, messageId: string) => void
 }
 
@@ -257,7 +257,7 @@ function MessageItemInner({
   // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停；static 行强制关闭。
   const streamingActive = isGenerating && !isPausedForInput && !isStaticRow
 
-  // T06：assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
+  // assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
   useEffect(() => {
     if (isAssistant && currentSessionId && onLoadDiffs && !diffCache && !isDiffLoading) {
       onLoadDiffs(currentSessionId, msg.id)

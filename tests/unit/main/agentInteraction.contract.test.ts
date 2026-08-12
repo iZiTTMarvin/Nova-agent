@@ -1,5 +1,5 @@
 /**
- * T5 交互契约：permission/askQuestion 身份错配拒绝。
+ * 交互契约：permission/askQuestion 身份错配拒绝。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 

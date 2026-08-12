@@ -100,7 +100,7 @@ export interface EventStallDetectorOptions {
 /**
  * 创建一个事件流 stall 检测器。
  *
- * 阶段 6：不再用 USER_WAIT_EVENTS 白名单猜「等用户」。
+ * 不再用 USER_WAIT_EVENTS 白名单猜「等用户」。
  * 权威规则：仅当 RunCoordinator 报告 expectHeartbeat（status===running）
  * 且相邻 markEvent 间隔超过阈值时打印 [STALL]。
  * waiting_user / retrying / cancelling / 终态 → 静默并清空计时基准。

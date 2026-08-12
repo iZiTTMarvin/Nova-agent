@@ -9,7 +9,7 @@ import { interruptAgentTurnAfterFailure } from '../../../src/runtime/agent/turn'
 const TURN_SERVICE = join(__dirname, '../../../src/main/agent/turn/AgentTurnService.ts')
 const TURN_EXECUTOR = join(__dirname, '../../../src/runtime/agent/turn/AgentTurnExecutor.ts')
 
-describe('P0-3 preflight 不得留下 active run', () => {
+describe('preflight 不得留下 active run', () => {
   it(
     'AgentTurnService：startRun 必须位于图片/regenerate 校验之后（源码顺序护栏）',
     () => {

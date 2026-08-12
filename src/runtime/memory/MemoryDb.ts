@@ -10,7 +10,7 @@ export interface MemoryDbStatement {
   all<T = unknown>(...params: unknown[]): T[]
 }
 
-/** 记忆索引底层存储端口（Spike S0 骨架，业务方法在 P1 补齐） */
+/** 记忆索引底层存储端口（骨架，业务方法待补齐） */
 export interface MemoryDb {
   /** 执行 DDL / 无参 SQL */
   exec(sql: string): void

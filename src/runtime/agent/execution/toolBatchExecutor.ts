@@ -384,7 +384,7 @@ async function executePreparedToolCall(
     messageId: options.messageId,
     toolCallId: item.toolCall.id,
     toolName: item.toolCall.name,
-    // T02：在主进程 emit 前对工具输出做截断，防止大 result 撑爆渲染端 heap
+    // 在主进程 emit 前对工具输出做截断，防止大 result 撑爆渲染端 heap
     result: sanitizeToolOutput(item.toolCall.name, resultText, failed),
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {})
@@ -496,7 +496,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     return { outcomes: [], aborted: false }
   }
 
-  // ── 阶段 1：参数预处理 ──
+  // ── 参数预处理 ──
   // 解析 arguments、修复 native 协议，并优先运行 preToolUse hook，
   // 从而在任何权限校验之前拿到经过 hook 修改后的“最终参数”
   const preparedCalls: Array<{
@@ -643,7 +643,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     })
   }
 
-  // ── 阶段 2：扫描连续且未被前置拦截的 bash 组进行批量校验 ──
+  // ── 扫描连续且未被前置拦截的 bash 组进行批量校验 ──
   const bashGroups: Array<Array<{ index: number; toolCall: ChatToolCall; args: Record<string, unknown> }>> = []
   let currentGroup: Array<{ index: number; toolCall: ChatToolCall; args: Record<string, unknown> }> = []
 
@@ -683,7 +683,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     }
   }
 
-  // ── 阶段 3：分发前置拦截、校验最终权限并入队待执行项 ──
+  // ── 分发前置拦截、校验最终权限并入队待执行项 ──
   const precheckOutcomes: ToolExecutionOutcome[] = []
   const executionCandidates: PreparedToolCall[] = []
 

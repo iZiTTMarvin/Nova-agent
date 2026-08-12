@@ -1,12 +1,12 @@
 /**
- * CacheProfile — provider 缓存能力的唯一判定来源（T1-1）
+ * CacheProfile — provider 缓存能力的唯一判定来源
  *
  * 由 baseUrl + modelId + 用户显式覆盖解析有效档案。
  * 本轮只接线 marker（驱动 cache_control 注入）；其余字段类型已定义，
  * 供后续阶段消费：
- * - promptCacheKey → T1-4 会话路由 key
- * - reasoningReplay → T2 reasoning 回放
- * - idlePolicy / minCacheableTokens → T3 压缩与空闲策略
+ * - promptCacheKey → 会话路由 key
+ * - reasoningReplay → 历史 reasoning 回放
+ * - idlePolicy / minCacheableTokens → 压缩与空闲策略
  *
  * 判定风格对齐 dialect.ts 的 preferredToolDialect（域名片段 + modelId 分词）。
  */
@@ -20,9 +20,9 @@ export type CacheMarker = 'cache_control' | 'none'
 export interface CacheProfile {
   id: CacheProfileId
   marker: CacheMarker
-  /** T1-4 接线：是否在请求体携带会话级 prompt_cache_key */
+  /** 接线：是否在请求体携带会话级 prompt_cache_key */
   promptCacheKey: 'never' | 'session'
-  /** T2 接线：历史 reasoning_content 回放范围 */
+  /** 历史 reasoning_content 回放范围 */
   reasoningReplay: 'none' | 'tool-call-history' | 'all-history'
   /**
    * reasoning 回放载体：
@@ -39,9 +39,9 @@ export interface CacheProfile {
    * 不跨进程持久化。
    */
   reasoningWireObservable?: boolean
-  /** T3 接线：低于此 token 数时不指望前缀缓存收益 */
+  /** 低于此 token 数时不指望前缀缓存收益 */
   minCacheableTokens?: number
-  /** T3 接线：空闲压缩 / TTL 相关策略 */
+  /** 空闲压缩 / TTL 相关策略 */
   idlePolicy: 'anthropic-short-ttl' | 'provider-managed' | 'unknown'
 }
 

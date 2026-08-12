@@ -236,7 +236,7 @@ export interface SessionMessage {
   /** 工具消息关联的 toolCallId */
   toolCallId?: string
   /**
-   * Phase 3：true 表示本条消息是 cancel 中断产生的（由主进程 message-end 事件携带的
+   * true 表示本条消息是 cancel 中断产生的（由主进程 message-end 事件携带的
    * interrupted 字段写入）。下次加载会话时 UI 仍能区分"已中断"和"已完成"。
    * 普通完成的消息不写此字段，UI 视为未设置即可。
    */

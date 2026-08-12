@@ -3,7 +3,7 @@ import { buildConversationContext } from '../../../src/runtime/agent/context/con
 import type { SessionData } from '../../../src/runtime/sessions/types'
 
 /**
- * S14 回归测试
+ * 回归测试
  *
  * 验证主链路：
  * 1. 多轮对话上下文恢复
@@ -21,7 +21,7 @@ function makeSession(messages: SessionData['messages']): SessionData {
   }
 }
 
-describe('S14 回归测试', () => {
+describe('回归测试', () => {
   describe('多轮对话上下文恢复', () => {
     it('模拟真实的两轮对话：第一轮只读 → 第二轮追问', () => {
       // 第一轮：用户问项目结构 → agent 读文件

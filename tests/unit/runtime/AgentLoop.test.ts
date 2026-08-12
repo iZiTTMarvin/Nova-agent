@@ -215,7 +215,7 @@ describe('AgentLoop', () => {
     expect(loop.getState()).toBe('idle')
   })
 
-  // ── 工具调度测试（S4） ──────────────────────────────────
+  // ── 工具调度测试 ──────────────────────────────────
 
   it('模型调用工具时，执行工具并将结果回传模型', async () => {
     const client = new MockModelClient()
@@ -811,7 +811,7 @@ describe('AgentLoop', () => {
   })
 
   /**
-   * T3 回归：用户在权限确认期间点取消（cancel）时，
+   * 回归：用户在权限确认期间点取消（cancel）时，
    * 不应再产生"权限拒绝"的 tool_result，也不应把该工具调用 push 到 context。
    * 历史回放因此不会出现莫名其妙的"权限拒绝"卡片。
    */
@@ -1594,9 +1594,9 @@ describe('AgentLoop', () => {
     rmSync(workDir, { recursive: true, force: true })
   })
 
-  // ── S1 回归：error / overflow 路径不应启动 idleTimer ────────
+  // ── 回归：error / overflow 路径不应启动 idleTimer ────────
 
-  it('S1: 模型 error 后不启动 idleTimer', async () => {
+  it('模型 error 后不启动 idleTimer', async () => {
     const startSpy = vi.spyOn(IdleCompressionTimer.prototype, 'start')
     const cancelSpy = vi.spyOn(IdleCompressionTimer.prototype, 'cancel')
 
@@ -1613,14 +1613,14 @@ describe('AgentLoop', () => {
 
     // 模型 error 后最终态为 error
     expect(loop.getState()).toBe('error')
-    // idleTimer.start 必须未被调用（S1 关键断言）
+    // idleTimer.start 必须未被调用（关键断言）
     expect(startSpy).not.toHaveBeenCalled()
 
     startSpy.mockRestore()
     cancelSpy.mockRestore()
   })
 
-  it('S1: context_overflow 最终失败后不启动 idleTimer', async () => {
+  it('context_overflow 最终失败后不启动 idleTimer', async () => {
     const startSpy = vi.spyOn(IdleCompressionTimer.prototype, 'start')
     const cancelSpy = vi.spyOn(IdleCompressionTimer.prototype, 'cancel')
 
@@ -1665,7 +1665,7 @@ describe('AgentLoop', () => {
     cancelSpy.mockRestore()
   })
 
-  it('S1: 正常完成后仍然启动 idleTimer（基线，防止误改正常路径）', async () => {
+  it('正常完成后仍然启动 idleTimer（基线，防止误改正常路径）', async () => {
     const startSpy = vi.spyOn(IdleCompressionTimer.prototype, 'start')
 
     const client = new MockModelClient()

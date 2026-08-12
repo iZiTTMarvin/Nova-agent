@@ -28,7 +28,7 @@ describe('RecoveryStateMachine', () => {
   })
 
   it('超过 maxAttempts 进入 failed（上限 10）', () => {
-    // maxAttempts 已从 3 提到 10（阶段四安全重试，对齐 maka）
+    // maxAttempts 已从 3 提到 10（安全重试，对齐 maka）
     expect(rsm.classify('timeout', 10).kind).toBe('failed')
     // 未达上限仍可重试
     expect(rsm.classify('timeout', 9).kind).toBe('retrying')

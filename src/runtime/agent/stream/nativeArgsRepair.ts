@@ -13,7 +13,7 @@
  *
  * 此时 `args.filePath` / `args.path` 全是 undefined，工具报「缺少 path 参数」。
  *
- * 之前只在 XML inband 方言路径（xmlToolScanner）做过适配；native 路径从 S3 至今
+ * 之前只在 XML inband 方言路径（xmlToolScanner）做过适配；native 路径此前
  * 从未加固，这是本模块要治本的缺口。
  *
  * 修复策略：复用 XmlToolScanner 增量状态机（它对未闭合标签、entity 跨 chunk、

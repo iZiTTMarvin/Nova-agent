@@ -15,7 +15,7 @@ function file(relPath: string, body: string, fp: string): ScannedMemoryFile {
   }
 }
 
-describe('MemoryReconciler diff（P1-A3 纯逻辑）', () => {
+describe('MemoryReconciler diff（纯逻辑）', () => {
   it('fingerprint = size-mtimeMs', () => {
     expect(computeFingerprint(120, 999)).toBe('120-999')
   })

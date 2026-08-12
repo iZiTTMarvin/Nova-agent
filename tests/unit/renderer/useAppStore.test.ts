@@ -215,7 +215,7 @@ describe('useAppStore Zustand Store', () => {
 
     await useAppStore.getState().respondPermissionRequest('allow')
 
-    // T2-6：回答携带 commandId（幂等）；其余字段与旧契约兼容
+    // 回答携带 commandId（幂等）；其余字段与旧契约兼容
     expect(mockInvoke).toHaveBeenCalledWith(
       'respond-permission',
       expect.objectContaining({
@@ -260,7 +260,7 @@ describe('useAppStore Zustand Store', () => {
         ]
       })
 
-    // T06：selectSession 不再自动调 loadMessageDiffs，无需 mock get-message-diffs
+    // selectSession 不再自动调 loadMessageDiffs，无需 mock get-message-diffs
 
     await useAppStore.getState().selectSession('sess_1')
     // 等待 syncFromWorkspace 内部异步 load-session 完成
@@ -296,7 +296,7 @@ describe('useAppStore Zustand Store', () => {
         ]
       })
 
-    // T06：selectSession 不再自动调 loadMessageDiffs
+    // selectSession 不再自动调 loadMessageDiffs
 
     await useAppStore.getState().selectSession('sess_blocks')
     await new Promise(resolve => setTimeout(resolve, 0))
@@ -329,7 +329,7 @@ describe('useAppStore Zustand Store', () => {
         ]
       })
 
-    // T06：selectSession 不再自动调 loadMessageDiffs
+    // selectSession 不再自动调 loadMessageDiffs
 
     await useAppStore.getState().selectSession('sess_legacy')
     await new Promise(resolve => setTimeout(resolve, 0))
@@ -775,10 +775,10 @@ describe('useAppStore Zustand Store', () => {
   })
 
   /**
-   * T1 回归：tool_result → diff_update(live) → message_end → loadMessageDiffs(final)
+   * 回归：tool_result → diff_update(live) → message_end → loadMessageDiffs(final)
    * 断言中间任何时刻都不会出现"+0 -0"语义（即不会出现 hunks 为空但被当作完整数据的 messageDiffs 条目）。
    */
-  it('T1 回归：流式期间不应出现 hunks 为空的 messageDiffs 中间态', async () => {
+  it('流式期间不应出现 hunks 为空的 messageDiffs 中间态', async () => {
     const messageId = 'msg_t1_regression'
     const sessionId = 'sess_t1'
 
@@ -837,12 +837,12 @@ describe('useAppStore Zustand Store', () => {
   })
 
   /**
-   * T1 竞态回归：final 已经写入 messageDiffs 后，迟到的 live 事件不能把真实数据压回骨架。
+   * 竞态回归：final 已经写入 messageDiffs 后，迟到的 live 事件不能把真实数据压回骨架。
    *
    * 触发场景：tool_result 被 setImmediate 异步调度的 live emit 排队中，message_end 已经
    * 同步走完，loadMessageDiffs 拿到 final 数据，最后 live 才被事件循环消费。
    */
-  it('T1 竞态：late live 不应覆盖已存在的最终 diff 数据', () => {
+  it('竞态：late live 不应覆盖已存在的最终 diff 数据', () => {
     const messageId = 'msg_late_live'
 
     // 1. 模拟 final 已经先到（loadMessageDiffs 完成）
@@ -877,9 +877,9 @@ describe('useAppStore Zustand Store', () => {
   })
 
   /**
-   * T5 回归：messageIndexById 索引在 delta 处理中应与 messages 数组保持一致
+   * 回归：messageIndexById 索引在 delta 处理中应与 messages 数组保持一致
    */
-  describe('T5: messageIndexById 索引与 delta 优化', () => {
+  describe('messageIndexById 索引与 delta 优化', () => {
     it('handleMessageStart 应同步维护 messageIndexById', () => {
       useAppStore.getState().handleMessageStart('msg_idx_1')
       const state = useAppStore.getState()

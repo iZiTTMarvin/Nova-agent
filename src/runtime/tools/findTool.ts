@@ -2,7 +2,7 @@
  * findTool — 按 glob 模式查找文件
  * 在工作区内递归搜索匹配指定 glob 模式的文件
  *
- * T3 异步化与加固（见 tasks/2026-06-25-只读工具异步化与构建产物排除治理.md）：
+ * 异步化与加固：
  * 1. readdirSync/statSync → readdir({withFileTypes}) 异步，每层 await 让出事件循环，
  *    即使误入大目录也只"慢"不"死"（防 Electron 主线程假死）。
  * 2. 排除清单接入 pathExclusions.BUILD_SKIP_DIRS，消除 target/ 等构建产物的同步遍历

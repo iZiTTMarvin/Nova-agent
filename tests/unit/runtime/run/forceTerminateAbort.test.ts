@@ -1,9 +1,9 @@
 /**
- * 阶段 0 护栏：强制终止必须真正 abort 执行句柄，不能只写 cancelled 快照。
+ * 阶段护栏：强制终止必须真正 abort 执行句柄，不能只写 cancelled 快照。
  *
- * 当前缺陷（专家 P0-2）：runHandler.force-terminate 只 commitTerminal，
+ * 当前缺陷（专家）：runHandler.force-terminate 只 commitTerminal，
  * 不 abort AgentLoop / TaskScope；Renderer 随后直接复位 UI。
- * 本测试在 RunExecutionRegistry 落地前以契约形式固定期望；阶段 1 实现后转绿。
+ * 本测试在 RunExecutionRegistry 落地前以契约形式固定期望；阶段实现后转绿。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
@@ -11,7 +11,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { createRunCoordinator } from '../../../../src/runtime/run'
 
-describe('P0-2 force-terminate 必须 abort 执行句柄', () => {
+describe('force-terminate 必须 abort 执行句柄', () => {
   let tmp: string
 
   beforeEach(() => {

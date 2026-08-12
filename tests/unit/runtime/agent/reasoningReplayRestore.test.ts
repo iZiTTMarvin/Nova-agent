@@ -135,7 +135,7 @@ function thinkingToolTurnMessages(): SessionData['messages'] {
   ]
 }
 
-describe('T2-2 deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
+describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
   it('deepseek profile：thinking→toolA→thinking→toolB→final 恢复为正确子轮序列', () => {
     const session = makeSession(thinkingToolTurnMessages())
     const recovered = buildConversationContext(session, 'default', {

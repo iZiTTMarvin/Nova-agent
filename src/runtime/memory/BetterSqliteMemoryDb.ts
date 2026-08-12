@@ -26,7 +26,7 @@ class BetterSqliteStatement implements MemoryDbStatement {
 
 /**
  * MemoryDb 的 better-sqlite3 实现。
- * P1 记忆业务通过 MemoryIndexer / MemoryService 访问，勿在单测默认套件 import 本文件。
+ * 记忆业务通过 MemoryIndexer / MemoryService 访问，勿在单测默认套件 import 本文件。
  */
 export class BetterSqliteMemoryDb implements MemoryDb {
   private readonly db: Database.Database

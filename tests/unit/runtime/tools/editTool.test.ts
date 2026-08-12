@@ -331,7 +331,7 @@ describe('editTool 集成测试', () => {
     )
     expect(result.success).toBe(false)
     expect(result.error).toContain('modified externally')
-    // P2.3：外部修改升级为结构化冲突结果，output 带 WORKSPACE_CONFLICT 前缀供 agent 重规划
+    // 外部修改升级为结构化冲突结果，output 带 WORKSPACE_CONFLICT 前缀供 agent 重规划
     expect(result.output.startsWith('WORKSPACE_CONFLICT')).toBe(true)
   })
 
@@ -370,7 +370,7 @@ describe('editTool 集成测试', () => {
     }
   )
 
-  // ── I1 回归：readState 实例隔离 ──────────────────────────────
+  // ── 回归：readState 实例隔离 ──────────────────────────────
 
   it('两个独立 readState 互不污染（A 读不影响 B 的 edit 校验）', async () => {
     writeFileSync(join(TMP, 'iso_a.txt'), 'content A\n')

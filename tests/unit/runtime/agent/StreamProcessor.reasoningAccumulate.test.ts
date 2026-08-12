@@ -1,5 +1,5 @@
 /**
- * T2-1：StreamProcessor 运行时累积 reasoningContent
+ * StreamProcessor 运行时累积 reasoningContent
  *
  * 验收：单个工具轮、并行工具轮、retry、cancel、文本终态都能正确累积或清理。
  * UI thinking_delta 仍透传；reasoning 只进 TurnStreamResult，不改 thinking block 行为。
@@ -82,7 +82,7 @@ async function runOnce(
   })
 }
 
-describe('T2-1 StreamProcessor：reasoningContent 累积', () => {
+describe('StreamProcessor：reasoningContent 累积', () => {
   it('单个工具轮：thinking_delta 聚合进 TurnStreamResult.reasoningContent，并透传 UI', async () => {
     const client = new MockModelClient()
     client.addResponse({
@@ -269,7 +269,7 @@ second\tline"}`
   })
 
   it('retry：无可观察输出的失败 attempt 不残留 reasoning，成功 attempt 独立拼接', async () => {
-    // I4 安全重试：只有未产生任何可观察输出（含 reasoning）的失败才允许重试。
+    // 安全重试：只有未产生任何可观察输出（含 reasoning）的失败才允许重试。
     // 因此失败 attempt 必须在首个 thinking/text 前报错。
     const client = new MockModelClient()
     // 第一次：首字节前网络错误 → retry（无可观察输出）
@@ -296,7 +296,7 @@ second\tline"}`
     expect(second.assistantContent).toBe('ok')
   })
 
-  it('I4：已产生 reasoning 后的错误不重试（走终态失败）', async () => {
+  it('已产生 reasoning 后的错误不重试（走终态失败）', async () => {
     // thinking_delta 已落地 → reasoning 非空 → hasNoObservableOutput=false → 不重试
     const client = new MockModelClient()
     client.addResponse({
@@ -337,7 +337,7 @@ second\tline"}`
   })
 })
 
-describe('T2-1 AgentLoop：reasoningContent 进入 runtime context', () => {
+describe('AgentLoop：reasoningContent 进入 runtime context', () => {
   it('工具子轮 + 终态子轮均把 reasoningContent 写入 getContext()', async () => {
     const client = new MockModelClient()
     // 子轮 1：thinking + tool

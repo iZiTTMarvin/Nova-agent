@@ -11,7 +11,7 @@ import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 const WORKSPACE = process.cwd()
 const checkpointSpy = vi.spyOn(CheckpointManager.prototype, 'recordBashChange')
 
-/** 测试用 readState：bash 不写入 readState，但 ToolContext 要求该字段（I1） */
+/** 测试用 readState：bash 不写入 readState，但 ToolContext 要求该字段 */
 function createContext(): ToolContext {
   return { workingDir: WORKSPACE, readState: createReadState() }
 }

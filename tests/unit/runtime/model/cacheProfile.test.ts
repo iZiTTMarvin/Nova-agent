@@ -1,5 +1,5 @@
 /**
- * T1-1：CacheProfile 判定与旧配置兼容
+ * CacheProfile 判定与旧配置兼容
  */
 import { describe, expect, it } from 'vitest'
 import {

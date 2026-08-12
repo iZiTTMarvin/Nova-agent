@@ -1,8 +1,8 @@
 /**
- * AgentLoop 黄金测试（Phase 0 行为基线护栏）
+ * AgentLoop 黄金测试（行为基线护栏）
  *
  * 目的：在 AgentLoop 重构（Pipeline 化）开始前，以"输入 → EventBus 事件序列"为
- * 唯一断言对象，把现状行为固化为快照。重构的每个阶段（Phase 1-4）都必须让本文件
+ * 唯一断言对象，把现状行为固化为快照。重构的每个阶段都必须让本文件
  * 全绿，且事件序列与本次基线逐项相等（PRD §3 C1 / §9）。
  *
  * 覆盖 PRD §9 全部 18 个场景：
@@ -986,7 +986,7 @@ describe('黄金测试 §9.18 context_breakdown 兜底', () => {
 // ============================================================
 // 场景 19：runAgentLoop catch 路径（异常兜底，堵盲区）
 // 期望：循环内任意 await 抛出未捕获异常 → onError hook + 恰好一个 error 事件
-//       + state='error' + 无 message_end（S1：不经 finishMessageRound）。
+//       + state='error' + 无 message_end（不经 finishMessageRound）。
 // 触发方式：让模型的流迭代器直接 throw（模拟真实连接层崩溃，非 yield error 事件）。
 // 此前该 catch 路径零覆盖——曾因双重 emit error 导致 C1 违规，本场景专门锁定。
 // ============================================================
@@ -1019,7 +1019,7 @@ describe('黄金测试 §9.19 runAgentLoop 异常兜底（catch 路径）', () =
     // state=error（终态）
     expect(loop.getState()).toBe('error')
 
-    // 无 message_end（error 路径不经 finishMessageRound，S1）
+    // 无 message_end（error 路径不经 finishMessageRound）
     expect(events.some(e => e.type === 'message_end')).toBe(false)
   })
 })

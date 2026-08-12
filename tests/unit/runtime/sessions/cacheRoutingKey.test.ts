@@ -1,5 +1,5 @@
 /**
- * T1-4：会话 cacheRoutingKey 懒生成 / 持久化 / ChatOptions 透传
+ * 会话 cacheRoutingKey 懒生成 / 持久化 / ChatOptions 透传
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'

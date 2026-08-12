@@ -89,7 +89,7 @@ export type AgentEvent =
       messageId: string
       sessionId?: string
       /**
-       * Phase 3：true 表示本轮 message-end 是由 cancel 触发的（用户主动中断），
+       * true 表示本轮 message-end 是由 cancel 触发的（用户主动中断），
        * renderer 据此把消息标记为 interrupted 状态，避免后续操作误判。
        * 正常完成的消息不写此字段，UI 视为未设置即可。
        */

@@ -1,5 +1,5 @@
 /**
- * P2-3 闭环集成：采集 → consolidate → append episodic → FTS 召回
+ * 闭环集成：采集 → consolidate → append episodic → FTS 召回
  *
  * 使用真实 better-sqlite3（Node ABI），验证 append→reindex→search 主链路。
  */
@@ -23,7 +23,7 @@ import {
 /** episodic 块内可检索的独特标记（中文 trigram） */
 const EPISODIC_MARKER = '北极星验收短语'
 
-describe('episodic 巩固闭环集成（P2-3）', () => {
+describe('episodic 巩固闭环集成', () => {
   let tempDir: string | null = null
   let service: MemoryService | null = null
 

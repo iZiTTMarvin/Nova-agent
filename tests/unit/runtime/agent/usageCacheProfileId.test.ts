@@ -1,5 +1,5 @@
 /**
- * T1-3：usage 事件必须携带实际 active provider 的 cacheProfileId。
+ * usage 事件必须携带实际 active provider 的 cacheProfileId。
  * fallback 切换后归属新 provider，不能沿用主模型档案。
  */
 import { describe, it, expect, afterEach, vi } from 'vitest'

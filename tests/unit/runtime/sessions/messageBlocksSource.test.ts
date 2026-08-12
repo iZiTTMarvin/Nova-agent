@@ -1,5 +1,5 @@
 /**
- * T5-4 消息 block 单一事实源 + schema v8 迁移
+ * 消息 block 单一事实源 + schema v8 迁移
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -17,7 +17,7 @@ import {
 import type { SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { MessageBlock } from '../../../../src/shared/session'
 
-describe('T5-4 消息 block 单一事实源', () => {
+describe('消息 block 单一事实源', () => {
   it('schema 升级到当前版本（含 v8 blocks 源）', () => {
     const v7 = {
       schemaVersion: 7,

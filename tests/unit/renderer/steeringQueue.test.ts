@@ -14,7 +14,7 @@ global.window = {
   }
 } as unknown as Window & typeof globalThis
 
-describe('Steering Queue（Phase 6）', () => {
+describe('Steering Queue', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetChatStoreForTests()

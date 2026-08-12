@@ -10,7 +10,7 @@
  * - 主进程：toolBatchExecutor 在 emit 事件前调用（双保险）
  */
 
-// ── T01：write/edit 输入摘要化常量 ──────────────────────────
+// ── write/edit 输入摘要化常量 ──────────────────────────
 
 /** write 工具的 content 字段超过此阈值触发摘要化 */
 export const WRITE_TOOL_INLINE_LIMIT = 4 * 1024
@@ -23,7 +23,7 @@ export const EDIT_TOOL_PREVIEW_CHARS = 800
 /** 摘要保留的尾部字符数（write 和 edit 共用） */
 export const PREVIEW_TAIL_CHARS = 320
 
-// ── T02：工具输出截断常量 ──────────────────────────────────
+// ── 工具输出截断常量 ──────────────────────────────────
 
 /** 普通工具输出截断阈值 */
 export const MAX_TOOL_OUTPUT_TEXT_CHARS = 8_000
@@ -64,7 +64,7 @@ function countLines(text: string): number {
   return count
 }
 
-// ── T01：摘要化核心函数 ────────────────────────────────────
+// ── 摘要化核心函数 ────────────────────────────────────
 
 /** 摘要化后的大文本结构 */
 export interface ContentSummary {
@@ -163,7 +163,7 @@ export function sanitizeToolInput(
   return input
 }
 
-// ── T02：工具输出截断 ────────────────────────────────────────
+// ── 工具输出截断 ────────────────────────────────────────
 
 /**
  * 对工具输出（tool_result）做截断。

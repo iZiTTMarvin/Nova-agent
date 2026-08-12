@@ -78,7 +78,7 @@ export function isPathSkipped(name: string): boolean {
  * 这是简化版解析：不支持 `[abc]` 字符类、`\#` 转义、双星 `**` 的复杂路径匹配。
  * 覆盖 95%+ 常见 .gitignore 模式；fail-open（不识别就放行）保证不影响主流程。
  *
- * 实现从 grepTool.ts:553 原样搬运，行为零变化（T4 让 grep 改为 import 本函数）。
+ * 实现从 grepTool.ts 原样搬运，行为零变化，grep 改为 import 本函数。
  */
 export async function loadIgnoreMatcher(workspaceRoot: string): Promise<IgnoreMatcher> {
   interface CompiledRule {

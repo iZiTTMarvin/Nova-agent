@@ -1,5 +1,5 @@
 /**
- * 折叠壳：条件 mount 门控（P5 硬性要求）。
+ * 折叠壳：条件 mount 门控（硬性要求）。
  *
  * 不使用 framer-motion 高度动画——Electron 下 measure + height:auto 易留下
  * 「有高度无内容」的空白区（嵌套 L1/L2 时尤其明显）。

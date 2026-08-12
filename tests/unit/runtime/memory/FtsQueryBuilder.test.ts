@@ -10,7 +10,7 @@ import {
 } from '../../../../src/runtime/memory/FtsQueryBuilder'
 import type { MemorySearchHit } from '../../../../src/runtime/memory/types'
 
-describe('FtsQueryBuilder（P1-A2 纯逻辑）', () => {
+describe('FtsQueryBuilder（纯逻辑）', () => {
   describe('trigram 路径', () => {
     it('中文整串清洗后返回 MATCH 串', () => {
       const q = buildTrigramMatchQuery('  中文检索  ')

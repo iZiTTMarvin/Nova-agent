@@ -179,7 +179,7 @@ describe('streamDeltaBuffer', () => {
     ])
   })
 
-  it('Phase 2 切换点：第一次 pushText 且最近 push 是 thinking，应立即 flushNow 把思考刷出去', () => {
+  it('切换点：第一次 pushText 且最近 push 是 thinking，应立即 flushNow 把思考刷出去', () => {
     const onFlush = vi.fn<(batch: StreamDeltaBatch) => void>()
     const buffer = createStreamDeltaBuffer(onFlush)
 

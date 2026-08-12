@@ -196,7 +196,7 @@ export interface RunSnapshot {
   terminalReason?: string
   /** status 为 completed 但轮次被停止策略截断时携带：任务未被声称完成 */
   incompleteReason?: TurnTruncationReason
-  /** 本轮工具对账（T2-5） */
+  /** 本轮工具对账 */
   toolCommits?: ToolCommitRecord[]
   /** turn_started 是否已原子落盘 */
   turnStartedAt?: number

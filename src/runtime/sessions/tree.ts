@@ -180,7 +180,7 @@ export function ensureMessageParentChain(messages: SessionMessage[]): SessionMes
   }))
 }
 
-/** 为 active path 上存在兄弟的节点附加 BranchMeta（阶段 3 UI 用，阶段 1 先实现供单测） */
+/** 为 active path 上存在兄弟的节点附加 BranchMeta（UI 用，先实现供单测） */
 export function attachBranchMeta(
   activePath: SessionMessage[],
   allMessages: SessionMessage[]

@@ -13,7 +13,7 @@ import {
   MAX_TOOL_ERROR_CHARS
 } from '../../../src/shared/tool-input-sanitizer'
 
-// ── T01：sanitizeToolInput ──────────────────────────────────
+// ── sanitizeToolInput ──────────────────────────────────
 
 describe('sanitizeToolInput', () => {
   it('小 content（<4KB）的 write 不截断', () => {
@@ -103,7 +103,7 @@ describe('sanitizeToolInput', () => {
   })
 })
 
-// ── T01：summarizeLargeText ──────────────────────────────────
+// ── summarizeLargeText ──────────────────────────────────
 
 describe('summarizeLargeText', () => {
   it('生成正确的摘要结构', () => {
@@ -126,7 +126,7 @@ describe('summarizeLargeText', () => {
   })
 })
 
-// ── T01：isContentSummary ──────────────────────────────────
+// ── isContentSummary ──────────────────────────────────
 
 describe('isContentSummary', () => {
   it('识别有效的摘要对象', () => {
@@ -147,7 +147,7 @@ describe('isContentSummary', () => {
   })
 })
 
-// ── T02：sanitizeToolOutput ──────────────────────────────────
+// ── sanitizeToolOutput ──────────────────────────────────
 
 describe('sanitizeToolOutput', () => {
   it('短输出不截断', () => {
@@ -192,7 +192,7 @@ describe('sanitizeToolOutput', () => {
   })
 })
 
-// ── T01：流式 partialArgs 摘要化集成验证 ─────────────────────
+// ── 流式 partialArgs 摘要化集成验证 ─────────────────────
 
 describe('sanitizeToolInput 集成：applyStreamDeltas 中的流式 partialArgs', () => {
   /**

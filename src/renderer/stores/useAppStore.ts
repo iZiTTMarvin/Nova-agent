@@ -1,5 +1,5 @@
 /**
- * useAppStore — 非 React 静态 facade（阶段 6 / T6-2）
+ * useAppStore — 非 React 静态 facade
  *
  * React 合并订阅已删除：当作 hook 调用会抛错。
  * 生产组件必须直接用 useChatStore / useAgentStore / useSettingsStore（带 selector）。
@@ -56,7 +56,7 @@ export interface AppState {
   pendingPermissionRequest: PendingPermissionRequest | null
   isSubmittingPermission: boolean
   permissionError: string | null
-  /** Phase 6：Steering Queue */
+  /**Steering Queue */
   pendingUserMessages: Array<{
     text: string
     images: import('../lib/image-attachments').ImageAttachment[]
@@ -84,7 +84,7 @@ export interface AppState {
   clearMessageDiffs: (messageId: string) => void
   handleMessageStart: (messageId: string) => void
   /**
-   * @deprecated 自 Phase 2 引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
+   * @deprecated 引入 streamDeltaBuffer + applyStreamDeltas 批量路径后，
    * 生产代码已不再直接调用此 handler。保留仅为向后兼容与单元测试。
    * 未来版本会移除；新代码请改用 `applyStreamDeltas`（buffer 在 App 端直接喂批量 delta）。
    */
@@ -116,17 +116,17 @@ export interface AppState {
   handleError: (messageId: string, error: string) => void
   handlePermissionRequest: (request: PendingPermissionRequest) => void
   respondPermissionRequest: (decision: PermissionDecision) => Promise<void>
-  /** Phase 2 批量 delta 入口（外部组件不直接调用，由 IPC listener 调用） */
+  /** 批量 delta 入口（外部组件不直接调用，由 IPC listener 调用） */
   applyStreamDeltas: (deltas: import('./useChatStore').StreamDeltaBatch) => void
-  /** Phase 6：入队一条挂起消息（Agent 运行期间用户输入） */
+  /**入队一条挂起消息（Agent 运行期间用户输入） */
   enqueuePendingMessage: (
     text: string,
     images: import('../lib/image-attachments').ImageAttachment[],
     autoMode?: boolean
   ) => void
-  /** Phase 6：移除一条挂起消息（按索引） */
+  /**移除一条挂起消息（按索引） */
   removePendingMessage: (index: number) => void
-  /** Phase 6：清空全部挂起消息 */
+  /**清空全部挂起消息 */
   clearPendingMessages: () => void
 }
 

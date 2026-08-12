@@ -1,5 +1,5 @@
 /**
- * T6-6：stall detector 只认 RunCoordinator「running + 心跳/事件超时」
+ * stall detector 只认 RunCoordinator「running + 心跳/事件超时」
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createEventStallDetector } from '../../../../src/shared/diagnostics/stallDetector'

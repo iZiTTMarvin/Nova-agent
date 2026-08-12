@@ -94,11 +94,11 @@ function App(): React.ReactNode {
 
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
   useEffect(() => {
-    // ── Phase 2 + Step 3：装配流式缓冲（直连 store，已移除 rAF 调度层） ──
+    // ── 装配流式缓冲（直连 store，已移除 rAF 调度层） ──
     //
     // 数据流：IPC delta → buffer(16ms 文本 / 300ms 工具参数 聚合) → store.applyStreamDeltas（一次 setState）
     //
-    // Step 3 之前 buffer → rAF scheduler → store 三层；
+    // 此前 buffer → rAF scheduler → store 三层；
     // 现在去掉中间 rAF 聚合层（与 useStreamingRenderPool 节奏叠加 1~2 帧，且冗余），
     // buffer 在 timer 到期时直接把 batch 同步喂给 applyStreamDeltas。
     // 节奏与 React commit 的关系更可控，少 1 帧延迟。
@@ -202,7 +202,7 @@ function App(): React.ReactNode {
       void useSubagentProjectionStore.getState().refreshParent(data.parentSessionId)
     })
 
-    // 监听：todo 列表更新（task 5 IPC 链路终点）
+    // 监听：todo 列表更新（IPC 链路终点）
     const unsubTodosUpdated = window.api.on('agent:todos-updated', (data) => {
       applyTodoUpdate({ sessionId: data.sessionId, todos: data.todos, view: data.view })
     })
@@ -277,7 +277,7 @@ function App(): React.ReactNode {
     }))
 
     // 轮次归属改由 run:snapshot（useRunStore）投影到 handleTurnState；
-    // agent:turn-state 裸广播已在阶段 6 移除。
+    // agent:turn-state 裸广播已移除。
 
     // 自动更新：下载完成后提示重启安装
     const unsubUpdateDownloaded = window.api.on('app:update-downloaded', (data) => {

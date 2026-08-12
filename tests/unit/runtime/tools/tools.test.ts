@@ -67,7 +67,7 @@ describe('只读工具', () => {
       expect(result.error).toContain('越界')
     })
 
-    // ── T5.2 边界：ls 是单层列目录，不递归，所以 target/ 目录条目本身应显示 ──
+    // ── 边界：ls 是单层列目录，不递归，所以 target/ 目录条目本身应显示 ──
     // （与 find 的递归排除语义不同：find 进入 target/ 内部才排除，ls 只列一层）
     it('单层列出时照常显示构建产物目录条目本身', async () => {
       mkdirSync(join(TMP, 'target'), { recursive: true })
@@ -200,7 +200,7 @@ describe('只读工具', () => {
       expect(result.error).toContain('越界')
     })
 
-    // ── T5 新增：构建产物排除（本次卡死根因的回归保护） ────────
+    // ── 构建产物排除（本次卡死根因的回归保护） ────────
 
     describe('构建产物目录排除', () => {
       // 在 TMP 下额外构造 target/ build/ node_modules/ 目录树，
@@ -246,7 +246,7 @@ describe('只读工具', () => {
       })
     })
 
-    // ── T5 新增：abortSignal 中断递归 ────────────────────────
+    // ── abortSignal 中断递归 ────────────────────────
 
     describe('取消信号', () => {
       it('abortSignal 触发时中断递归并返回取消提示', async () => {
@@ -261,7 +261,7 @@ describe('只读工具', () => {
       })
     })
 
-    // ── T5 新增：gitignore 生效 ──────────────────────────────
+    // ── gitignore 生效 ──────────────────────────────
 
     describe('gitignore 过滤', () => {
       it('尊重工作区 .gitignore 规则', async () => {

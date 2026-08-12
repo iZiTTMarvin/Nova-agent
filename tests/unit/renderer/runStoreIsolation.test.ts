@@ -1,7 +1,7 @@
 /**
- * 阶段 0 护栏：Renderer RunStore 必须按 runId 隔离，禁止跨会话覆盖。
+ * 护栏：Renderer RunStore 必须按 runId 隔离，禁止跨会话覆盖。
  *
- * 当前缺陷（专家 P0-4）：单一 snapshot/lastSequence 接收所有 run 广播。
+ * 当前缺陷：单一 snapshot/lastSequence 接收所有 run 广播。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -42,7 +42,7 @@ function makeSnap(
   }
 }
 
-describe('P0-4 Renderer 按 runId 隔离 snapshot', () => {
+describe('Renderer 按 runId 隔离 snapshot', () => {
   beforeEach(async () => {
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
     useRunStore.getState().resetForTests()

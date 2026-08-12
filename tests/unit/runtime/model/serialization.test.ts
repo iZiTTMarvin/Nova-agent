@@ -7,7 +7,7 @@ import type { ChatEvent } from '../../../../src/runtime/model/types'
  *
  * v2 修正背景：
  * 上一版错误地用 internal:true 标记 session context，导致它被 OpenAICompatibleModelClient
- * 的 filter(m => !m.internal) 整条移除，模型永远看不到。审查 P0 指出这个致命缺陷。
+ * 的 filter(m => !m.internal) 整条移除，模型永远看不到。审查指出这个致命缺陷。
  *
  * v2 合并方案：session context 拼到真实 user 消息的 content 前缀（不标 internal），
  * 它作为普通 user 消息的一部分正常进入 API。同时 internal 语义保持不变——仍用于
