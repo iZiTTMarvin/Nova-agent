@@ -25,19 +25,39 @@ describe('_revision bump', () => {
     expect(msg._revision).toBe(0)
   })
 
-  it('applyStreamDeltas 后 _revision 应单调递增', () => {
+  it('applyStreamDeltas 的纯 text/thinking delta 不再 bump _revision（活跃回合吸收，messages 引用稳定）', () => {
     useChatStore.getState().handleMessageStart('msg_1')
     expect(useChatStore.getState().messages[0]._revision).toBe(0)
+    const refBefore = useChatStore.getState().messages
 
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_1', delta: 'hello' }
     ])
-    expect(useChatStore.getState().messages[0]._revision).toBe(1)
+    // text 进入活跃回合，messages 不变 —— 这是顶层不再每帧重提交的关键
+    expect(useChatStore.getState().messages[0]._revision).toBe(0)
+    expect(useChatStore.getState().messages).toBe(refBefore)
+    expect(useChatStore.getState().liveTurn['msg_1']).toMatchObject({ type: 'text', content: 'hello' })
 
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_1', delta: ' world' }
     ])
-    expect(useChatStore.getState().messages[0]._revision).toBe(2)
+    expect(useChatStore.getState().messages[0]._revision).toBe(0)
+    expect(useChatStore.getState().messages).toBe(refBefore)
+    expect(useChatStore.getState().liveTurn['msg_1']).toMatchObject({ type: 'text', content: 'hello world' })
+  })
+
+  it('封存事件（handleToolCallStart）把活跃回合 fold 回 messages 时才 bump _revision', () => {
+    useChatStore.getState().handleMessageStart('msg_1')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'text', messageId: 'msg_1', delta: '前置说明' }
+    ])
+    expect(useChatStore.getState().messages[0]._revision).toBe(0)
+
+    useChatStore.getState().handleToolCallStart('msg_1', 'tc_1', 'bash')
+    // fold 回 messages 后 _revision 递增，活跃回合清空
+    expect(useChatStore.getState().messages[0]._revision).toBeGreaterThan(0)
+    expect(useChatStore.getState().liveTurn['msg_1']).toBeUndefined()
+    expect(useChatStore.getState().messages[0].content).toBe('前置说明')
   })
 
   it('handleToolCallStart 应 bump _revision', () => {

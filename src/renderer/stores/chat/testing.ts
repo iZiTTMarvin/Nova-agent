@@ -3,6 +3,7 @@ import type { ChatStoreApi } from './internal'
 import {
   initialBranchState,
   initialDiffState,
+  initialLiveTurnState,
   initialMessageState,
   initialPaginationState,
   invalidatePaginationGeneration,
@@ -22,6 +23,7 @@ export function resetChatStoreStateForTests(store: ChatStoreApi): void {
   store.setState({
     ...initialSessionState(),
     ...initialMessageState(),
+    ...initialLiveTurnState(),
     ...initialWorkspaceSyncState(),
     ...initialBranchState(),
     ...initialTurnLifecycleState(),

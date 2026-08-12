@@ -3,6 +3,7 @@
  * 不含 zustand，可单独单测；禁止 import slices/ 与组装入口。
  */
 export { buildMessageIndex, bumpRevision } from './messageIndex'
+export { appendLiveBlock, foldLiveTurnIntoMessages, removeLiveTurnEntry } from './liveTurn'
 export { commitMessageList, type CommitMessagesInput } from './commitMessages'
 export {
   applyMessageWindowTrim,

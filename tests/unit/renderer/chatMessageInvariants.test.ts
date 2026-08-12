@@ -284,7 +284,11 @@ describe('chat message invariants baseline', () => {
       suspendHeadTrim: false
     })
 
-    useChatStore.getState().applyStreamDeltas([{ kind: 'text', messageId: 'msg_240', delta: 'tail' }])
+    // toolCall delta 写回 messages（经 commitMessageList 不跳过裁剪）→ 超 240 触发头部裁剪
+    useChatStore.getState().handleToolCallStart('msg_240', 'tc_trim', 'write')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'toolCall', messageId: 'msg_240', toolCallId: 'tc_trim', delta: '{"path":"a.ts"}' }
+    ])
     const state = useChatStore.getState()
     expect(state.messages).toHaveLength(240)
     expect(state.messages[0].id).toBe('msg_1')
@@ -304,7 +308,10 @@ describe('chat message invariants baseline', () => {
       suspendHeadTrim: true
     })
 
-    useChatStore.getState().applyStreamDeltas([{ kind: 'text', messageId: 'msg_240', delta: 'tail' }])
+    useChatStore.getState().handleToolCallStart('msg_240', 'tc_suspend', 'write')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'toolCall', messageId: 'msg_240', toolCallId: 'tc_suspend', delta: '{"path":"a.ts"}' }
+    ])
     expect(useChatStore.getState().messages).toHaveLength(241)
     assertMessageIndexConsistent()
   })
@@ -322,7 +329,10 @@ describe('chat message invariants baseline', () => {
       hasMoreMessagesAbove: false
     })
 
-    useChatStore.getState().applyStreamDeltas([{ kind: 'text', messageId: 'msg_240', delta: 'tail' }])
+    useChatStore.getState().handleToolCallStart('msg_240', 'tc_cursor', 'write')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'toolCall', messageId: 'msg_240', toolCallId: 'tc_cursor', delta: '{"path":"a.ts"}' }
+    ])
     const state = useChatStore.getState()
     expect(state.oldestLoadedMessageId).toBe('msg_1')
     expect(state.hasMoreMessagesAbove).toBe(true)

@@ -27,6 +27,15 @@ export type RendererMessageBlock =
   | RendererToolBlock
   | ImageBlock
 
+/**
+ * 流式「活跃回合」的未封存尾部块：text 或 thinking 之一。只活在 liveTurn 瞬态里，
+ * 边界事件时 fold 回 messages。不持久化、不参与 IPC。
+ */
+export interface LiveBlock {
+  type: 'text' | 'thinking'
+  content: string
+}
+
 /** 渲染器专用 ToolCall：携带执行状态、结果、原始 JSON */
 export interface ExtendedToolCall extends ToolCall {
   result?: string

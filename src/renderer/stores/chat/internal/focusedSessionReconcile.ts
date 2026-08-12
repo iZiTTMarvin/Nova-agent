@@ -1,5 +1,6 @@
 import type { Session, SessionDetail } from '../../../../shared/session/types'
 import { mergeFocusedSessionMessages } from '../../../lib/focusedSessionRecovery'
+import { foldLiveTurnIntoMessages } from './liveTurn'
 import { commitMessageList } from './commitMessages'
 import { restoreSessionMessages } from './restoreMessages'
 import type { ChatStoreApi } from './storeApi'
@@ -22,6 +23,9 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
 /**
  * 轮次终态回 SessionStore 按 id 对账焦点会话消息：
  * 已持久化消息优先，正在生成的实时消息仍被保留。
+ *
+ * 对账前先把活跃回合（liveTurn）的未封存内容 fold 进对应消息，否则 merge 只能看到
+ * messages 里的空壳，迟到的 load-session 会用旧持久化内容覆盖实时流式文本。
  */
 export async function reconcileFocusedSession(api: ChatStoreApi, sessionId: string): Promise<void> {
   const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
@@ -30,16 +34,21 @@ export async function reconcileFocusedSession(api: ChatStoreApi, sessionId: stri
   const restored = restoreSessionMessages(detail.messages)
   api.setState(state => {
     if (state.currentSessionId !== sessionId) return state
+    const { messages: messagesForMerge, hasLive } = foldLiveTurnIntoMessages(
+      state.messages,
+      state.liveTurn
+    )
     const messages = mergeFocusedSessionMessages(
       restored,
-      state.messages,
+      messagesForMerge,
       state.currentGeneratingMessageId,
       null
     )
     return {
       ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
       currentSubagentTask: detail.kind === 'subagent' ? detail.subagentTask ?? null : null,
-      sessions: upsertSessionSummary(state.sessions, detail)
+      sessions: upsertSessionSummary(state.sessions, detail),
+      ...(hasLive ? { liveTurn: {} } : {})
     }
   })
 }

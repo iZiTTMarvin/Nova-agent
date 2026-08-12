@@ -20,6 +20,7 @@ import { ToolCallGroup } from './ToolCallGroup'
 import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
+import { useEffectiveMessage } from './useEffectiveMessage'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
@@ -217,7 +218,7 @@ function renderMessageUnit(
 // ── 组件主体 ─────────────────────────────────────────────────
 
 function MessageItemInner({
-  msg,
+  msg: msgProp,
   renderMode = 'live',
   isGenerating,
   isPausedForInput = false,
@@ -242,6 +243,9 @@ function MessageItemInner({
   diffPlaceholders,
   onLoadDiffs
 }: MessageItemProps) {
+  // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
+  // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
+  const msg = useEffectiveMessage(msgProp)
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user'
   const isStaticRow = renderMode === 'static'

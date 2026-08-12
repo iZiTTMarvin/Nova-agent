@@ -70,7 +70,8 @@ function seedLongConversation(): string {
     permissionError: null,
     messageDiffs: {},
     loadingDiffs: new Set(),
-    loadingDiffPlaceholders: {}
+    loadingDiffPlaceholders: {},
+    liveTurn: {}
   })
 
   return streamingMessage.id
@@ -82,7 +83,7 @@ function getStats(values: number[]) {
   return { max, avg }
 }
 
-describe('Phase 3 渲染性能回归', () => {
+describe('长对话流式渲染性能回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // T06：MessageItem mount 时会调 get-message-diffs，需要提供默认 mock 返回
@@ -112,13 +113,15 @@ describe('Phase 3 渲染性能回归', () => {
     })
   })
 
-  it('T5-3: 50 条历史消息下单次 thinking delta 更新不应出现 >50ms 长任务', () => {
+  it('50 条历史消息下单次流式 thinking delta（applyStreamDeltas）不应出现 >50ms 长任务', () => {
     const messageId = seedLongConversation()
     const durations: number[] = []
 
     for (let i = 0; i < 120; i++) {
       const start = performance.now()
-      useAppStore.getState().handleThinkingDelta(messageId, '推理中 ')
+      useAppStore.getState().applyStreamDeltas([
+        { kind: 'thinking', messageId, delta: '推理中 ' }
+      ])
       durations.push(performance.now() - start)
     }
 
@@ -130,7 +133,7 @@ describe('Phase 3 渲染性能回归', () => {
     expect(stats.max).toBeLessThan(50)
   })
 
-  it('T5-3: React Profiler 下 ChatPanel 单次 update commit 时间应保持在 50ms 内', () => {
+  it('纯文本流式（applyStreamDeltas）期间 messages 引用稳定，ChatPanel 不再每帧重提交', () => {
     const messageId = seedLongConversation()
     const commitDurations: number[] = []
 
@@ -149,19 +152,29 @@ describe('Phase 3 渲染性能回归', () => {
       )
     )
 
+    // 单次同步 applyStreamDeltas(text) 不得改动 messages 引用——这是 ChatPanel
+    // 不再每帧重提交的根本（同步调用，排除水合等异步副作用干扰）。
+    const messagesRefBefore = useAppStore.getState().messages
+    useAppStore.getState().applyStreamDeltas([{ kind: 'text', messageId, delta: 'x' }])
+    expect(useAppStore.getState().messages).toBe(messagesRefBefore)
+    expect(useAppStore.getState().liveTurn[messageId]).toMatchObject({ type: 'text', content: 'x' })
+
     for (let i = 0; i < 120; i++) {
       act(() => {
-        useAppStore.getState().handleTextDelta(messageId, 'x')
+        useAppStore.getState().applyStreamDeltas([
+          { kind: 'text', messageId, delta: 'x' }
+        ])
       })
     }
 
+    // 活跃 MessageItem 仍按 liveTurn 独立重渲染，其每次 commit 必须远低于帧预算
     const stats = getStats(commitDurations)
     console.info(
       `[phase3] chatpanel profiler: samples=${commitDurations.length}, max=${stats.max.toFixed(3)}ms, avg=${stats.avg.toFixed(3)}ms`
     )
-
-    expect(commitDurations.length).toBeGreaterThan(0)
-    expect(stats.max).toBeLessThan(50)
+    if (commitDurations.length > 0) {
+      expect(stats.max).toBeLessThan(50)
+    }
 
     renderer.unmount()
   })

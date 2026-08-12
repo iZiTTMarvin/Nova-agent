@@ -13,6 +13,7 @@ import type { ImageAttachment } from '../../lib/image-attachments'
 import type {
   ExtendedMessage,
   ExtendedToolCall,
+  LiveBlock,
   MessageDiffCache,
   RendererMessageBlock,
   RendererToolBlock,
@@ -22,6 +23,7 @@ import type {
 export type {
   ExtendedMessage,
   ExtendedToolCall,
+  LiveBlock,
   MessageDiffCache,
   RendererMessageBlock,
   RendererToolBlock,
@@ -44,6 +46,16 @@ export interface MessageSliceState {
   messages: ExtendedMessage[]
   /** id → 数组索引，用于 delta handler O(1) 定位 */
   messageIndexById: Record<string, number>
+}
+
+/**
+ * liveTurnSlice 拥有的活跃回合集：messageId → 当前未封存的尾部块（text / thinking）。
+ * 流式 text/thinking delta 只写这里，不触碰 messages 数组，使 messages 在流式期间
+ * 引用稳定，避免 ChatPanel 顶层每秒提交数十次。工具边界、类型切换或轮次终态时由
+ * owner 把活跃块折叠（fold）回 messages。
+ */
+export interface LiveTurnSliceState {
+  liveTurn: Record<string, LiveBlock>
 }
 
 /** streamSlice 拥有的状态与流式事件 action。 */
@@ -286,6 +298,7 @@ export interface WorkspaceSyncSliceState {
 export interface ChatState
   extends
     MessageSliceState,
+    LiveTurnSliceState,
     StreamSliceState,
     RecoverySliceState,
     TurnLifecycleSliceState,

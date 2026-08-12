@@ -307,8 +307,10 @@ describe('useChatStore 消息分页', () => {
       currentGeneratingMessageId: 'msg_240'
     })
 
+    useChatStore.getState().handleToolCallStart('msg_240', 'tc_trim', 'write')
+    // toolCall delta 写回 messages（经 commitMessageList 不跳过裁剪）→ 超 240 触发头部裁剪
     useChatStore.getState().applyStreamDeltas([
-      { kind: 'text', messageId: 'msg_240', delta: 'tail' }
+      { kind: 'toolCall', messageId: 'msg_240', toolCallId: 'tc_trim', delta: '{"path":"a.ts"}' }
     ])
 
     const state = useChatStore.getState()

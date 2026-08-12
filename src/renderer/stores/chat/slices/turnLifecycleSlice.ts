@@ -1,12 +1,14 @@
 import { appendTerminalErrorToBlocks } from '../../../../shared/session/terminalErrorBlocks'
-import type { ExtendedMessage, RendererToolBlock } from '../types'
+import type { ChatState, ExtendedMessage, RendererToolBlock } from '../types'
 import {
+  appendLiveBlock,
   bumpRevision,
   commitMessageList,
   dispatchNextPendingMessage,
   emptyStreamTransientState,
   omitRecoveryFieldsForMessage,
-  reconcileFocusedSession
+  reconcileFocusedSession,
+  removeLiveTurnEntry
 } from '../internal'
 import type { ChatSliceCreator, TurnLifecycleSliceState } from '../types'
 
@@ -39,19 +41,21 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
     set(state => {
       const nextMessages = state.messages.slice()
       const idx = state.messageIndexById[messageId]
+      // 轮次终态前先回收未封存的活跃文本/思考，避免内容停留在活跃回合里。
+      const live = state.liveTurn[messageId]
       if (idx !== undefined && nextMessages[idx]) {
-        const msg = nextMessages[idx]
+        const base = live ? appendLiveBlock(nextMessages[idx]!, live) : nextMessages[idx]!
         if (interrupted) {
           // 取消中断结束时，把该消息的 running tool 块标记为 error
           // 并清空 argumentsRaw、附上 "用户取消执行" 结果。同时标记消息 interrupted。
-          const blocks = msg.blocks?.map(b => {
+          const blocks = base.blocks?.map(b => {
             if (b.type === 'tool' && b.status === 'running') {
               const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
               return { ...restBlock, type: 'tool' as const, status: 'error' as const, result: '用户取消执行' }
             }
             return b
           })
-          const toolCalls = msg.toolCalls?.map(tc => {
+          const toolCalls = base.toolCalls?.map(tc => {
             if (tc.status === 'running') {
               const { argumentsRaw: _tcDrop, ...restTc } = tc
               return { ...restTc, status: 'error' as const, result: '用户取消执行' }
@@ -59,7 +63,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
             return tc
           })
           nextMessages[idx] = bumpRevision({
-            ...msg,
+            ...base,
             interrupted: true,
             blocks,
             toolCalls,
@@ -67,12 +71,12 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           })
         } else {
           nextMessages[idx] = bumpRevision({
-            ...msg,
+            ...base,
             turnEndedAt: Date.now()
           })
         }
       }
-      return {
+      const patch: Partial<ChatState> = {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         isGenerating: false,
         currentGeneratingMessageId: null,
@@ -83,6 +87,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         // 中断时清空所有流式工具参数累积
         ...(interrupted ? emptyStreamTransientState() : {})
       }
+      if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      return patch
     })
 
     // 后台启动的回复可能缺少早期流式片段；终态始终回到 SessionStore
@@ -125,6 +131,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
 
     set(state => {
       const idx = state.messageIndexById[messageId]
+      const live = state.liveTurn[messageId]
       const commonFields = {
         isGenerating: false,
         currentGeneratingMessageId: null,
@@ -132,11 +139,15 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         // error 路径不发射 message-end，此处同步清理恢复状态，避免残留
         ...omitRecoveryFieldsForMessage(state, messageId)
       }
+      const livePatch: Partial<ChatState> = live
+        ? { liveTurn: removeLiveTurnEntry(state.liveTurn, messageId) }
+        : {}
 
       if (idx !== undefined && state.messages[idx]) {
-        // 消息已存在：保留已流式产出的 blocks/thinking/toolCalls，仅附加错误标记与文案。
+        // 消息已存在：先把未封存的活跃文本/思考回收，再附加错误标记与文案。
         // 禁止清空 blocks（否则用户看到「保护把正常回复弄没了」）。
-        const prev = state.messages[idx]!
+        const prev0 = state.messages[idx]!
+        const prev = live ? appendLiveBlock(prev0, live) : prev0
         const hasBlocks = !!(prev.blocks && prev.blocks.length > 0)
         const nextBlocks = hasBlocks
           ? appendTerminalErrorToBlocks(prev.blocks!, error)
@@ -154,7 +165,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         })
         return {
           ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-          ...commonFields
+          ...commonFields,
+          ...livePatch
         }
       }
 
@@ -176,7 +188,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           nextIndex: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
           skipWindowTrim: true
         }),
-        ...commonFields
+        ...commonFields,
+        ...livePatch
       }
     })
 
@@ -196,10 +209,13 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
   markRunningAsCancelled: async () => {
     set(state => {
       const nextMessages = state.messages.map(msg => {
-        if (!msg.blocks && !msg.toolCalls) return msg
-        let changed = false
+        // 取消兜底也是 turn boundary：把未封存的活跃文本/思考回收进消息，保留部分回答。
+        const live = state.liveTurn[msg.id]
+        const base = live ? appendLiveBlock(msg, live) : msg
+        if (!base.blocks && !base.toolCalls && !live) return msg
+        let changed = !!live
 
-        const blocks = msg.blocks?.map(b => {
+        const blocks = base.blocks?.map(b => {
           if (b.type === 'tool' && b.status === 'running') {
             changed = true
             const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
@@ -208,7 +224,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           return b
         })
 
-        const toolCalls = msg.toolCalls?.map(tc => {
+        const toolCalls = base.toolCalls?.map(tc => {
           if (tc.status === 'running') {
             changed = true
             const { argumentsRaw: _tcDrop, ...restTc } = tc
@@ -217,13 +233,14 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           return tc
         })
 
-        return changed ? bumpRevision({ ...msg, blocks, toolCalls }) : msg
+        return changed ? bumpRevision({ ...base, blocks, toolCalls }) : msg
       })
 
       return {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         isGenerating: false,
         currentGeneratingMessageId: null,
+        liveTurn: {},
         ...emptyStreamTransientState()
       }
     })

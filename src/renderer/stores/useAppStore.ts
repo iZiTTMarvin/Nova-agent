@@ -51,6 +51,7 @@ export interface AppState {
   loadingDiffs: Set<string>
   loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
   streamingToolArgs: Record<string, string>
+  liveTurn: Record<string, import('./types').LiveBlock>
   // ── agent ──
   pendingPermissionRequest: PendingPermissionRequest | null
   isSubmittingPermission: boolean
@@ -155,6 +156,7 @@ function mergeState(
     loadingDiffs: chat.loadingDiffs,
     loadingDiffPlaceholders: chat.loadingDiffPlaceholders,
     streamingToolArgs: chat.streamingToolArgs,
+    liveTurn: chat.liveTurn,
     // agent
     pendingPermissionRequest: agent.pendingPermissionRequest,
     isSubmittingPermission: agent.isSubmittingPermission,
@@ -221,6 +223,7 @@ const KEY_OWNERSHIP: Record<keyof AppState, Owner> = {
   loadingDiffs: 'chat',
   loadingDiffPlaceholders: 'chat',
   streamingToolArgs: 'chat',
+  liveTurn: 'chat',
   pendingPermissionRequest: 'agent',
   isSubmittingPermission: 'agent',
   permissionError: 'agent',

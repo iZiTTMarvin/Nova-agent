@@ -45,6 +45,7 @@ describe('chat workspace sync reset ownership', () => {
       sendInFlight: true,
       pendingUserMessages: [{ text: 'queued', images: [] }],
       streamingToolArgs: { tool: '{"path":' },
+      liveTurn: { 'message-a': { type: 'text', content: 'streaming tail' } },
       messageDiffs: { 'message-a': { diffs: [], reviews: {} } },
       loadingDiffs,
       loadingDiffPlaceholders: { 'message-a': [{ filePath: 'a.ts', status: 'modified' }] },
@@ -85,6 +86,7 @@ describe('chat workspace sync reset ownership', () => {
     expect(state.sendInFlight).toBe(false)
     expect(state.pendingUserMessages).toEqual([])
     expect(state.streamingToolArgs).toEqual({})
+    expect(state.liveTurn).toEqual({})
     expect(state.messageDiffs).toEqual({})
     expect(state.loadingDiffs.size).toBe(0)
     expect(state.loadingDiffs).not.toBe(loadingDiffs)
