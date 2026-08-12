@@ -55,7 +55,9 @@ describe('useChatStore.applyStreamDeltas', () => {
     const msg = useChatStore.getState().messages[0]
     // thinking 因类型切换被封存进 messages
     expect(msg.thinking).toBe('让我想想...')
-    expect(msg.blocks).toEqual([{ type: 'thinking', content: '让我想想...' }])
+    expect(msg.blocks).toEqual([
+      { type: 'thinking', content: '让我想想...', durationMs: expect.any(Number) }
+    ])
     // text 仍在活跃回合（尚未到边界）
     expect(msg.content).toBe('')
     expect(useChatStore.getState().liveTurn['msg_2']).toEqual({ type: 'text', content: '结果' })
@@ -127,7 +129,9 @@ describe('useChatStore.applyStreamDeltas', () => {
 
     const msg = useChatStore.getState().messages[0]
     // text 到来触发类型切换：thinking 封存进 messages，text 进入活跃回合
-    expect(msg.blocks).toEqual([{ type: 'thinking', content: '思考1思考2' }])
+    expect(msg.blocks).toEqual([
+      { type: 'thinking', content: '思考1思考2', durationMs: expect.any(Number) }
+    ])
     expect(msg.thinking).toBe('思考1思考2')
     expect(useChatStore.getState().liveTurn['msg_seq']).toEqual({ type: 'text', content: '开始正文' })
   })

@@ -115,3 +115,19 @@
 .md-code-block .diff-token--keyword { color: var(--code-token-keyword); font-weight: 600; }
 .md-code-block .diff-token--operator { color: var(--code-token-operator); }
 .md-code-block .diff-token--property { color: var(--code-token-property); }
+
+/* ── 流式 sealed 段落：逐段淡入（仅 chunkFade 场景，如思考块）── */
+.md-sealed-chunk--fade {
+  animation: md-sealed-fade-in var(--transition-normal) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes md-sealed-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-sealed-chunk--fade {
+    animation: none;
+  }
+}

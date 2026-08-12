@@ -18,6 +18,8 @@ export interface StreamAccumulator {
   executionGeneration: number
   sessionId: string
   messageId: string
+  /** 当前未封存思考块的开始时刻；封存时写入 durationMs */
+  thinkingStartedAt?: number
 }
 
 /**

@@ -3,10 +3,15 @@ import {
   resetChatStoreForTests,
   useChatStore
 } from '../../../../../src/renderer/stores/useChatStore'
+import {
+  readThinkingElapsedSec,
+  resetThinkingTimingMemory
+} from '../../../../../src/renderer/lib/thinkingTimingMemory'
 
 describe('streamSlice', () => {
   beforeEach(() => {
     resetChatStoreForTests()
+    resetThinkingTimingMemory()
   })
 
   it('applyStreamDeltas 一次调用只产生一次 Store 订阅通知', () => {
@@ -23,6 +28,25 @@ describe('streamSlice', () => {
 
     expect(subscriber).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+
+  it('thinking→text 封存时写入思考耗时，可供 ThinkingBlock remount 后读取', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    useChatStore.getState().handleMessageStart('msg_timing')
+
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'thinking', messageId: 'msg_timing', delta: '先分析' }
+    ])
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.700Z'))
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'text', messageId: 'msg_timing', delta: '结论' }
+    ])
+
+    expect(readThinkingElapsedSec('msg_timing', 0)).toBeCloseTo(1.7, 5)
+    const thinking = useChatStore.getState().messages[0]?.blocks?.find(b => b.type === 'thinking')
+    expect(thinking).toMatchObject({ type: 'thinking', durationMs: 1700 })
+    vi.useRealTimers()
   })
 
   it('纯 text/thinking delta 只写活跃回合：messages 引用稳定，liveTurn 累积', () => {

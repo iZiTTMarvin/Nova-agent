@@ -136,3 +136,30 @@ describe('MarkdownRenderer 链接安全（isSafeMarkdownHref 语义保留）', (
     tree.unmount()
   })
 })
+
+describe('MarkdownRenderer chunkFade（sealed 段逐段淡入）', () => {
+  it('chunkFade 开启时，流式增量封口的每个 sealed 段裹 fade wrapper', () => {
+    let content = '第一段内容。\n\n'
+    const tree = renderDom(<MarkdownRenderer content={content} isStreaming={true} chunkFade />)
+    content += '第二段内容。\n\n'
+    tree.render(<MarkdownRenderer content={content} isStreaming={true} chunkFade />)
+    content += '第三段正在写'
+    tree.render(<MarkdownRenderer content={content} isStreaming={true} chunkFade />)
+    // 前两段被空行逐步封口为 sealed，各裹 fade；尾段「第三段正在写」是 active tail，不裹
+    const fadeWrappers = tree.container.querySelectorAll('.md-sealed-chunk--fade')
+    expect(fadeWrappers.length).toBeGreaterThanOrEqual(2)
+    tree.unmount()
+  })
+
+  it('默认不传 chunkFade 时，sealed 段用普通 wrapper，无 fade class', () => {
+    let content = '第一段内容。\n\n'
+    const tree = renderDom(<MarkdownRenderer content={content} isStreaming={true} />)
+    content += '第二段内容。\n\n'
+    tree.render(<MarkdownRenderer content={content} isStreaming={true} />)
+    content += '第三段正在写'
+    tree.render(<MarkdownRenderer content={content} isStreaming={true} />)
+    expect(tree.container.querySelector('.md-sealed-chunk--fade')).toBeNull()
+    expect(tree.container.querySelectorAll('.md-sealed-chunk').length).toBeGreaterThan(0)
+    tree.unmount()
+  })
+})

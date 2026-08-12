@@ -166,6 +166,9 @@ function renderMessageUnit(
           <ThinkingBlock
             key={`thinking-${index}`}
             thinking={block.content}
+            messageId={msg.id}
+            blockIndex={index >= 0 ? index : 0}
+            durationMs={block.type === 'thinking' ? block.durationMs : undefined}
             active={isActiveThinkingBlock(
               msg.blocks ?? [],
               index >= 0 ? index : (msg.blocks?.length ?? 1) - 1,
@@ -491,7 +494,12 @@ function MessageItemInner({
             ) : (
               <>
                 {thinkingContent && (
-                  <ThinkingBlock thinking={thinkingContent} active={isThinkingActive} />
+                  <ThinkingBlock
+                    thinking={thinkingContent}
+                    active={isThinkingActive}
+                    messageId={msg.id}
+                    blockIndex={0}
+                  />
                 )}
                 {textContent && !(isUser && isEditing) && (
                   <MarkdownRenderer content={textContent} isStreaming={isTurnActiveForThisMsg} />

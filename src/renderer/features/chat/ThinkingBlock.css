@@ -1,40 +1,36 @@
 /**
- * 思考过程：Cursor 风轻量折叠行，无边框/无底色卡片壳
+ * 思考过程：标题行 + 左侧竖线内容区
+ * 流式动效：shimmer 标题、grid 折叠、超长钉底滚动。
  */
+
 .thinking-block {
-  margin: 6px 0 8px;
+  margin: 6px 0 10px;
   border: 0;
   background: transparent;
   overflow: visible;
 }
 
+/* 标题按钮：重置原生 button，表现为轻量文字行 */
 .thinking-block__summary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 2px 0;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  font-size: 12.5px;
-  line-height: 1.4;
-  color: var(--text-muted, #8a857d);
-  font-weight: 400;
+  border: 0;
+  background: transparent;
+  appearance: none;
   font-family: var(--font-sans, system-ui, sans-serif);
-}
-
-.thinking-block__summary::-webkit-details-marker {
-  display: none;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text-muted, #87867f);
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
 }
 
 .thinking-block__summary:hover {
-  color: var(--text-secondary, #6b6760);
-}
-
-.thinking-block__header-content {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  color: var(--text-secondary, #5e5d59);
 }
 
 .thinking-block__title {
@@ -43,7 +39,30 @@
 }
 
 .thinking-block--active .thinking-block__title {
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary, #5e5d59);
+}
+
+/* shimmer：thinking 中标题文字的亮度扫光（background-clip:text，无 filter） */
+.thinking-block__title--shimmer {
+  color: var(--text-muted, #87867f);
+  background: linear-gradient(
+    90deg,
+    var(--text-muted, #87867f) 0%,
+    var(--text-muted, #87867f) 35%,
+    var(--text-primary, #141413) 50%,
+    var(--text-muted, #87867f) 65%,
+    var(--text-muted, #87867f) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-shine 2.2s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+
+@keyframes thinking-shine {
+  0%, 18% { background-position: 100% 0; }
+  82%, 100% { background-position: 0% 0; }
 }
 
 .thinking-block__arrow {
@@ -52,32 +71,71 @@
   opacity: 0.7;
 }
 
-.thinking-block__content {
-  margin: 2px 0 4px 0;
-  padding: 0 0 0 2px;
-  border: 0;
+/* grid 折叠：1fr ↔ 0fr + opacity 平滑过渡（内容始终挂载，保证流式 ref 稳定） */
+.thinking-block__collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows var(--transition-normal, 240ms) cubic-bezier(0.22, 1, 0.36, 1),
+    opacity var(--transition-normal, 240ms) ease;
 }
 
+.thinking-block__collapsible--collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 内容壳：仅左侧竖线；底色保持透明，只调字色 */
+.thinking-block__content {
+  min-height: 0;
+  overflow: hidden;
+  margin: 4px 0 2px;
+  padding: 0;
+  border-left: 2px solid color-mix(in srgb, var(--text-muted, #87867f) 38%, transparent);
+  background: transparent;
+}
+
+/* 视窗：固定高度上限 + 可见细滚动条。
+   思考是次级内容：把 Astryx 正文主色 token 在本子树重定义为 muted，
+   Markdown 根元素与标题的 stylex 规则 color: var(--color-text-primary)
+   会随之解析为浅灰——改 token 而非逐元素覆盖，不受 stylex 原子类优先级影响。 */
 .thinking-block__markdown {
+  --color-text-primary: var(--text-muted, #87867f);
   word-break: break-word;
   font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 12.5px;
   line-height: 1.55;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted, #87867f);
   max-height: 220px;
   overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 10px 10px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted, #87867f) 40%, transparent) transparent;
+}
+
+.thinking-block__markdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thinking-block__markdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thinking-block__markdown::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted, #87867f) 45%, transparent);
+  border-radius: 3px;
+}
+
+.thinking-block__markdown::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted, #87867f) 65%, transparent);
 }
 
 .thinking-block__markdown .markdown-body {
   gap: 6px;
   font-size: inherit;
   line-height: inherit;
-  color: inherit;
-}
-
-.thinking-block__markdown .markdown-body strong {
-  color: var(--text-secondary, #6b6760);
-  font-weight: 600;
 }
 
 .thinking-block__markdown .markdown-body h1,
@@ -88,6 +146,17 @@
 .thinking-block__markdown .markdown-body h6 {
   font-family: inherit;
   font-size: inherit;
-  color: var(--text-secondary, #6b6760);
   margin: 2px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-block__title--shimmer {
+    color: var(--text-muted, #87867f);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    animation: none;
+  }
+  .thinking-block__collapsible {
+    transition: none;
+  }
 }

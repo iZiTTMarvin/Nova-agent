@@ -30,7 +30,10 @@ function parseTurnDraftBlock(value: Record<string, unknown>): MessageBlock | nul
     return {
       type: 'thinking',
       content: value.content,
-      ...(typeof value.providerId === 'string' ? { providerId: value.providerId } : {})
+      ...(typeof value.providerId === 'string' ? { providerId: value.providerId } : {}),
+      ...(typeof value.durationMs === 'number' && Number.isFinite(value.durationMs)
+        ? { durationMs: value.durationMs }
+        : {})
     }
   }
   if (

@@ -42,6 +42,10 @@ export interface ThinkingBlock {
    * 用于跨模型回放门控；旧数据缺省时视为与当前档案兼容。
    */
   providerId?: string
+  /**
+   * 本段思考耗时（毫秒）。流式封存时写入并随消息持久化；旧数据缺省。
+   */
+  durationMs?: number
 }
 
 /** 正文块 */
