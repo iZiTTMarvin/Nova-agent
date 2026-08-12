@@ -22,8 +22,6 @@ export function pickNonRepeatingWorkingMessage(
   previous: string | null,
   random: () => number = Math.random
 ): string {
-  if (NOVA_WORKING_MESSAGES.length === 1) return NOVA_WORKING_MESSAGES[0]
-
   const previousIndex = previous === null
     ? -1
     : NOVA_WORKING_MESSAGES.indexOf(previous as typeof NOVA_WORKING_MESSAGES[number])
