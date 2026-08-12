@@ -13,11 +13,15 @@ import { resolveAndValidatePath } from './ToolRegistry'
 import { resolveToolArg } from './toolArgResolver'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
+/** 单层 ls 的最大展示条目数；超出只展示前 N 条并给出收窄建议，避免扁平大目录全量内联进上下文 */
+export const LS_MAX_ENTRIES = 500
+
 export const lsTool: ToolExecutor = {
   name: 'ls',
   description: '列出指定目录下的文件和子目录。返回目录条目列表，区分文件和目录。',
   executionMode: 'parallel',
   isConcurrencySafe: () => true,
+  maxResultSizeChars: 100_000,
   parameters: {
     type: 'object',
     properties: {
@@ -56,8 +60,29 @@ export const lsTool: ToolExecutor = {
       // 成功路径（含空目录）：在最前面加工作区绝对路径标头（session context 双保险），
       // 让模型即便不读 [Session context] 也能从工具结果拿到绝对路径锚点。
       // 失败 / 错误路径不加，避免污染错误诊断。
-      const body = lines.length === 0 ? '(空目录)' : lines.join('\n')
-      return { success: true, output: `[workspace: ${context.workingDir}]\n${body}` }
+      if (lines.length === 0) {
+        return { success: true, output: `[workspace: ${context.workingDir}]\n(空目录)` }
+      }
+
+      // 大目录控量：条目超过上限时只展示前 N 条并附收窄建议，与 find/grep 的大输出截断
+      // 语义一致（条目级封顶 + maxResultSizeChars 字符级兜底）。totalBytes/totalLines
+      // 按未截断的完整 body 计算，shownLines 为封顶后的展示条数。
+      if (lines.length > LS_MAX_ENTRIES) {
+        const fullBody = lines.join('\n')
+        const body = `${lines.slice(0, LS_MAX_ENTRIES).join('\n')}\n...[共 ${lines.length} 个条目，已显示前 ${LS_MAX_ENTRIES} 个。目录过大，建议用 find 按 glob 模式（如 "src/**/*.ts"）或 grep 按内容缩小范围]`
+        return {
+          success: true,
+          output: `[workspace: ${context.workingDir}]\n${body}`,
+          truncationMeta: {
+            totalBytes: Buffer.byteLength(fullBody, 'utf-8'),
+            totalLines: lines.length,
+            shownLines: LS_MAX_ENTRIES,
+            truncated: true
+          }
+        }
+      }
+
+      return { success: true, output: `[workspace: ${context.workingDir}]\n${lines.join('\n')}` }
     } catch (err) {
       return { success: false, output: '', error: `无法读取目录: ${(err as Error).message}` }
     }
