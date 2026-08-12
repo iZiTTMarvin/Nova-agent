@@ -14,7 +14,7 @@ import { Thumbnail } from '@astryxdesign/core/Thumbnail'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { DiffViewer } from '../diff/DiffViewer'
-import { isActiveThinkingBlock, shouldRenderToolBlock } from './renderingPolicy'
+import { isActiveThinkingBlock } from './renderingPolicy'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ToolCallGroup } from './ToolCallGroup'
 import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
@@ -33,7 +33,7 @@ import {
   useComposeStageStore
 } from '../compose/useComposeStageStore'
 import type { Mode } from '../../../shared/session/types'
-import type { ExtendedMessage, ExtendedToolCall, RendererMessageBlock, MessageDiffCache } from '../../stores/types'
+import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageRenderMode } from './messageRenderTier'
 
@@ -82,24 +82,6 @@ export interface MessageItemProps {
   diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
   /** 按需加载 diff 的回调，MessageItem 挂载时调用 */
   onLoadDiffs?: (sessionId: string, messageId: string) => void
-}
-
-// ── 模块级辅助函数（从 ChatPanel.tsx 搬入） ──────────────────────
-
-function hasVisibleToolCalls(toolCalls: ExtendedToolCall[] | undefined, mode: Mode): boolean {
-  return !!toolCalls?.some(toolCall => shouldRenderToolBlock(mode, toolCall.name))
-}
-
-function hasVisibleBlocks(blocks: RendererMessageBlock[] | undefined, mode: Mode): boolean {
-  return !!blocks?.some(block => {
-    if (block.type === 'thinking' || block.type === 'text') {
-      return block.content.trim().length > 0
-    }
-    if (block.type === 'image') {
-      return true
-    }
-    return shouldRenderToolBlock(mode, block.toolName)
-  })
 }
 
 type ThinkingParseSource = Pick<ExtendedMessage, 'id'> & {
@@ -218,8 +200,6 @@ function renderMessageUnit(
   return null
 }
 
-// ── 组件主体 ─────────────────────────────────────────────────
-
 function MessageItemInner({
   msg: msgProp,
   renderMode = 'live',
@@ -281,11 +261,6 @@ function MessageItemInner({
   // 高亮（每行炸出大量 token span），在权限弹窗瞬间造成同步重排卡死。
   const isTurnActiveForThisMsg =
     isAssistant && isGenerating && msg.id === currentGeneratingMessageId && !isStaticRow
-  const hasVisibleContent = hasBlocks
-    ? hasVisibleBlocks(msg.blocks, currentMode)
-    : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
-  const shouldShowPending = isCurrentAssistantGenerating && !hasVisibleContent
-  const shouldShowWorkingTail = isCurrentAssistantGenerating && hasVisibleContent
   const handleRenderPoolTick = isStaticRow ? undefined : onRenderPoolTick
 
   const turnPhase = resolveTurnPhase(msg.id, currentGeneratingMessageId, isGenerating)
@@ -421,8 +396,6 @@ function MessageItemInner({
 
   const messageBody = (
     <>
-        {shouldShowPending && <AssistantPendingIndicator />}
-
         {hasBlocks && isAssistant && turnModel ? (
           /* assistant blocks：过程树 → 结论（含 ask 卡片） */
           <>
@@ -605,7 +578,9 @@ function MessageItemInner({
           />
         )}
 
-        {shouldShowWorkingTail && <AssistantPendingIndicator />}
+        {isCurrentAssistantGenerating && (
+          <AssistantPendingIndicator key="assistant-working-status" />
+        )}
     </>
   )
 
