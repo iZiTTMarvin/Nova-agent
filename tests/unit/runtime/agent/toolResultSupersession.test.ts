@@ -106,7 +106,7 @@ describe('planToolResultSupersession', () => {
     expect(plan.size).toBe(0)
   })
 
-  it('exact_duplicate 优先：两次完全相同的 git status，第一次标记为 exact_duplicate', () => {
+  it('bash 重复调用走 idempotent_snapshot：两次完全相同的 git status，第一次被标记', () => {
     const messages: ChatMessage[] = [
       asst('b1', 'bash', bashArgs('git status')),
       tool('b1', 'status 1'),
@@ -114,7 +114,7 @@ describe('planToolResultSupersession', () => {
       tool('b2', 'status 2')
     ]
     const plan = planToolResultSupersession(messages)
-    expect(plan.get('b1')).toBe('exact_duplicate')
+    expect(plan.get('b1')).toBe('idempotent_snapshot')
     expect(plan.has('b2')).toBe(false)
   })
 
@@ -162,11 +162,11 @@ describe('planToolResultSupersession', () => {
       tool('b2', 'combined again')
     ]
     const plan = planToolResultSupersession(messages)
-    // 复合命令不进入 idempotent；但 args 完全一致会被 exact_duplicate 命中
-    expect(plan.get('b1')).toBe('exact_duplicate')
+    // bash 不参与 exact_duplicate，复合命令也不进 idempotent 白名单
+    expect(plan.size).toBe(0)
   })
 
-  it('复合命令即便等效也不走 idempotent_snapshot（仅 exact_duplicate）', () => {
+  it('复合命令即便等效也不走 idempotent_snapshot', () => {
     const messages: ChatMessage[] = [
       asst('b1', 'bash', bashArgs('git status; echo done')),
       tool('b1', 'a'),
@@ -183,6 +183,63 @@ describe('planToolResultSupersession', () => {
       tool('r1', 'real content'),
       asst('r2', 'read', readArgs()),
       tool('r2', '工具执行失败: 读取失败')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('权限拒绝结果不作为覆盖者：较晚的权限拒绝不覆盖成功的较早 read', () => {
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', readArgs()),
+      tool('r1', 'real content'),
+      asst('r2', 'read', readArgs()),
+      tool('r2', '权限拒绝: 当前模式不允许读取该路径')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('权限拒绝的 bash 不作为覆盖者：成功的较早 git status 不被权限拒绝覆盖', () => {
+    const messages: ChatMessage[] = [
+      asst('b1', 'bash', bashArgs('git status')),
+      tool('b1', 'status snapshot'),
+      asst('b2', 'bash', bashArgs('git status')),
+      tool('b2', '权限拒绝: plan 模式不允许执行命令')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('写工具不参与 exact_duplicate：两次相同 edit 均不归档', () => {
+    const messages: ChatMessage[] = [
+      asst('e1', 'edit', JSON.stringify({ path: 'a.ts', old: 'x', new: 'y' })),
+      tool('e1', '已修改文件'),
+      asst('e2', 'edit', JSON.stringify({ path: 'a.ts', old: 'x', new: 'y' })),
+      tool('e2', '已修改文件')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('write 不参与 exact_duplicate：两次相同 write 均不归档', () => {
+    const messages: ChatMessage[] = [
+      asst('w1', 'write', JSON.stringify({ path: 'a.ts', content: 'hello' })),
+      tool('w1', '已创建文件 "a.ts"'),
+      asst('w2', 'write', JSON.stringify({ path: 'a.ts', content: 'hello' })),
+      tool('w2', '已覆盖文件 "a.ts"')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('limit=0 语义与 readTool 对齐：表示读到末尾', () => {
+    // readTool 把 limit<1 归一为读到 EOF，判定也必须如此；
+    // 较晚的有限读取不应覆盖较早的「读到末尾」读取
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', readArgs({ limit: 0 })),
+      tool('r1', 'full from start'),
+      asst('r2', 'read', readArgs({ offset: 0, limit: 100 })),
+      tool('r2', 'partial')
     ]
     const plan = planToolResultSupersession(messages)
     expect(plan.size).toBe(0)

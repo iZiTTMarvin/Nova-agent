@@ -5,6 +5,9 @@
  * 保守原则贯穿全模块：任何解析或判定不确定一律不计入，保留原文交由调用方处理。
  */
 import type { ChatMessage } from '../../model/types'
+import { extractTextFromContent } from '../../model/types'
+import { isToolFailureText } from '../../../shared/toolResultStatus'
+import { resolveToolArg } from '../../tools/toolArgResolver'
 
 export type SupersessionReason =
   | 'exact_duplicate'
@@ -14,21 +17,27 @@ export type SupersessionReason =
 /** toolCallId → 被覆盖的原因 */
 export type SupersessionPlan = ReadonlyMap<string, SupersessionReason>
 
-/** 工具失败回写前缀，与 toolBatchExecutor 的失败口径一致。 */
-const TOOL_FAILURE_PREFIX = '工具执行失败:'
+/**
+ * exact_duplicate 仅对纯读取工具生效；bash 的重复调用由
+ * idempotent_snapshot 白名单单独判定，写工具与交互工具一律不触碰。
+ */
+const EXACT_DUPLICATE_TOOLS = new Set([
+  'read',
+  'ls',
+  'grep',
+  'find',
+  'archive_read',
+  'memory_search',
+  'web_search'
+])
 
 interface ToolResultEntry {
   toolCallId: string
   toolName: string
   args: string
   argRecord: Record<string, unknown> | undefined
-  contentText: string
   success: boolean
   index: number
-}
-
-function asText(content: ChatMessage['content']): string {
-  return typeof content === 'string' ? content : ''
 }
 
 /** 解析工具参数 JSON；非对象/数组/解析失败一律返回 undefined。 */
@@ -68,13 +77,13 @@ function buildToolResultEntries(
     if (msg.role !== 'tool' || !msg.toolCallId) continue
     const meta = callMeta.get(msg.toolCallId)
     if (!meta) continue
+    const contentText = extractTextFromContent(msg.content)
     entries.push({
       toolCallId: msg.toolCallId,
       toolName: meta.toolName,
       args: meta.args,
       argRecord: parseArgsRecord(meta.args),
-      contentText: asText(msg.content),
-      success: !asText(msg.content).startsWith(TOOL_FAILURE_PREFIX),
+      success: !isToolFailureText(contentText),
       index: i
     })
   }
@@ -104,6 +113,7 @@ function applyExactDuplicate(
 ): void {
   const groups = new Map<string, ToolResultEntry[]>()
   for (const e of entries) {
+    if (!EXACT_DUPLICATE_TOOLS.has(e.toolName)) continue
     const key = duplicateKey(e)
     const g = groups.get(key) ?? []
     g.push(e)
@@ -125,23 +135,16 @@ function applyExactDuplicate(
 
 // ── read_range_covered ───────────────────────────────────────────────────────
 
-const READ_PATH_KEYS = ['file_path', 'path', 'filePath', 'file', 'filename']
-
-function readFilePath(rec: Record<string, unknown> | undefined): string | undefined {
-  if (!rec) return undefined
-  for (const k of READ_PATH_KEYS) {
-    const v = rec[k]
-    if (typeof v === 'string' && v.length > 0) return v
-  }
-  return undefined
-}
-
 interface ReadRange {
   offset: number
   limit: number
 }
 
-/** offset 默认 0、limit 默认 Infinity；非有限非负数视为非法 → 返回 undefined。 */
+/**
+ * 解析 read 的 offset/limit，语义与 readTool 对齐：
+ * offset 默认 0；limit 缺省或 <1 都表示「读到文件末尾」（Infinity）；
+ * 非法数值返回 undefined（不参与判定）。
+ */
 function readRange(rec: Record<string, unknown> | undefined): ReadRange | undefined {
   if (!rec) return undefined
   const rawOffset = rec.offset
@@ -157,8 +160,10 @@ function readRange(rec: Record<string, unknown> | undefined): ReadRange | undefi
   let limit: number
   if (rawLimit === undefined || rawLimit === null) {
     limit = Infinity
-  } else if (typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit >= 0) {
+  } else if (typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit >= 1) {
     limit = rawLimit
+  } else if (typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit < 1) {
+    limit = Infinity
   } else {
     return undefined
   }
@@ -184,7 +189,8 @@ function applyReadRangeCovered(
   const groups = new Map<string, ReadItem[]>()
   for (const e of entries) {
     if (e.toolName !== 'read') continue
-    const filePath = readFilePath(e.argRecord)
+    // 路径别名与 readTool 同源（toolArgResolver），避免两份清单漂移
+    const filePath = resolveToolArg(e.argRecord ?? {}, 'path')
     const range = readRange(e.argRecord)
     if (!filePath || !range) continue
     const g = groups.get(filePath) ?? []
@@ -241,8 +247,8 @@ function applyIdempotentSnapshot(
   const groups = new Map<string, ToolResultEntry[]>()
   for (const e of entries) {
     if (e.toolName !== 'bash') continue
-    const rec = e.argRecord
-    const command = rec && typeof rec.command === 'string' ? rec.command : ''
+    // 命令参数别名与 bashTool 同源（toolArgResolver），避免手写取参漂移
+    const command = resolveToolArg(e.argRecord ?? {}, 'command') ?? ''
     if (!isIdempotentBashCommand(command)) continue
     const key = normalizeCommand(command)
     const g = groups.get(key) ?? []

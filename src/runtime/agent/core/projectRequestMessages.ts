@@ -66,11 +66,6 @@ export function isArchivedPlaceholder(text: string): boolean {
   }
 }
 
-/** 从 content 中提取纯文本（content 可能是 string 或多模态块数组） */
-function asText(content: ChatMessage['content']): string {
-  return typeof content === 'string' ? content : ''
-}
-
 /** 头尾预览：行数不足时退回全文，避免重复中间省略。 */
 export function buildArchiveContentPreview(body: string): string {
   const lines = body.split('\n')
@@ -204,7 +199,9 @@ export async function projectRequestMessages(
       continue
     }
 
-    const text = asText(msg.content)
+    // 仅归档纯文本结果：多模态块（如 read 返回的图片）不可归档——
+    // 占位符只承载文本，会把图片块丢失；保守跳过。
+    const text = typeof msg.content === 'string' ? msg.content : ''
     if (!text) {
       projected.push(msg)
       continue

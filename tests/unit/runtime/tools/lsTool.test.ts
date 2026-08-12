@@ -107,6 +107,23 @@ describe('lsTool 控量', () => {
     expect(result.truncationMeta).toBeUndefined()
   })
 
+  it('条目按名称排序，保证大目录截断的确定性', async () => {
+    // readdir 顺序无保证；乱序 mock 输入下输出必须稳定排序
+    mockedReaddir.mockResolvedValue([
+      dirent('zeta.txt', false),
+      dirent('alpha.txt', false),
+      dirent('Beta.txt', false)
+    ])
+
+    const result = await lsTool.execute({ path: '.' }, ctx())
+
+    expect(result.success).toBe(true)
+    const lines = result.output!.split('\n')
+    expect(lines[1]).toBe('alpha.txt')
+    expect(lines[2]).toBe('Beta.txt')
+    expect(lines[3]).toBe('zeta.txt')
+  })
+
   it('越界路径返回错误，不读取目录', async () => {
     const result = await lsTool.execute({ path: '../../etc' }, ctx())
 

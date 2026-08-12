@@ -10,6 +10,7 @@
 import type { MessageBlock, ToolCall } from '../../shared/session'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from './types'
 import { extractTextFromSerializableContent } from './types'
+import { isToolFailureText } from '../../shared/toolResultStatus'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
 export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 1
@@ -92,7 +93,7 @@ export function buildBlocksFromLegacyFields(message: {
         toolName: tc.name,
         arguments: args,
         status: tc.result !== undefined
-          ? (String(tc.result).startsWith('工具执行失败') || String(tc.result).startsWith('权限拒绝:')
+          ? (isToolFailureText(String(tc.result))
             ? 'error'
             : 'success')
           : 'running',

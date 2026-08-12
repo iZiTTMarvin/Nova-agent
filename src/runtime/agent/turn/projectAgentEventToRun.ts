@@ -1,6 +1,7 @@
 import type { AgentEvent } from '../types'
 import type { RunCoordinator } from '../../run/RunCoordinator'
 import { writerLeaseRegistry } from '../../workspace'
+import { isToolFailureText } from '../../../shared/toolResultStatus'
 
 export interface AgentEventRunProjectionContext {
   readonly runCoordinator: RunCoordinator
@@ -41,9 +42,7 @@ export function projectAgentEventToRun(
       break
     }
     case 'tool_result': {
-      const isError =
-        event.result.startsWith('工具执行失败') ||
-        event.result.startsWith('权限拒绝:')
+      const isError = isToolFailureText(event.result)
       runCoordinator.recordToolPhase(
         runId,
         event.toolCallId,

@@ -47,7 +47,9 @@ export const lsTool: ToolExecutor = {
       const entries = await readdir(validated.path, { withFileTypes: true })
       const lines: string[] = []
 
-      for (const entry of entries) {
+      // 排序保证截断确定性：readdir 顺序不保证，不排序时「前 N 条」每次运行可能不同
+      const sorted = entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
+      for (const entry of sorted) {
         const rel = relative(context.workingDir, join(validated.path, entry.name)).replace(/\\/g, '/')
         //Dirent.isDirectory() 免 statSync；不可读条目（符号链接断裂等）走 catch 跳过
         try {
