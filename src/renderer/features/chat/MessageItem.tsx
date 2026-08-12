@@ -282,6 +282,7 @@ function MessageItemInner({
     ? hasVisibleBlocks(msg.blocks, currentMode)
     : !!thinkingContent.trim() || !!textContent.trim() || hasVisibleToolCalls(msg.toolCalls, currentMode)
   const shouldShowPending = isCurrentAssistantGenerating && !hasVisibleContent
+  const shouldShowWorkingTail = isCurrentAssistantGenerating && hasVisibleContent
   const handleRenderPoolTick = isStaticRow ? undefined : onRenderPoolTick
 
   const turnPhase = resolveTurnPhase(msg.id, currentGeneratingMessageId, isGenerating)
@@ -595,6 +596,9 @@ function MessageItemInner({
             {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
           />
         )}
+
+        {/* 已经出现 thinking/tool/text 后仍保留在轮次尾部，明确告诉用户 Agent 还在继续工作。 */}
+        {shouldShowWorkingTail && <AssistantPendingIndicator />}
     </>
   )
 
