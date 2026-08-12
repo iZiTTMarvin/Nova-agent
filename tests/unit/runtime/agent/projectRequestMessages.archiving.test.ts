@@ -5,6 +5,8 @@ import { describe, it, expect } from 'vitest'
 import {
   projectRequestMessages,
   ACTIVE_TOOL_RESULT_MAX_TOKENS,
+  SUPERSEDED_MIN_ESTIMATED_TOKENS,
+  CHARS_PER_TOKEN,
   isArchivedPlaceholder,
   buildArchiveContentPreview,
   createRequestProjectionArchiveCache,
@@ -230,5 +232,117 @@ describe('projectRequestMessages archiving', () => {
     expect(result.messages[1]).toEqual(messages[1])
     expect(isArchivedPlaceholder(result.messages[2].content as string)).toBe(true)
     expect(result.diagnostics.prunedCount).toBe(1)
+  })
+})
+
+describe('projectRequestMessages supersession 集成', () => {
+  function asst(id: string, name: string, args: string): ChatMessage {
+    return { role: 'assistant', content: '', toolCalls: [{ id, name, arguments: args }] }
+  }
+
+  // 多行长正文：preview（头 3 + 尾 2 行）远小于全文，确保占位符净节省 token。
+  function multilineBig(lines = 80): string {
+    return Array.from({ length: lines }, (_, i) => `${i + 1}: ${'y'.repeat(50)}`).join('\n')
+  }
+
+  it('两次相同大 read：第一次变占位符(superseded)，第二次保留原文，输入未被 mutate', async () => {
+    const big = multilineBig()
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      toolRound: 1,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(isArchivedPlaceholder(result.messages[1].content as string)).toBe(true)
+    const parsed = JSON.parse(result.messages[1].content as string) as ArchivedToolResultPlaceholder
+    expect(parsed.reason).toBe('superseded_by_newer_result')
+    expect(result.messages[3].content).toBe(big)
+    expect(result.diagnostics.prunedCount).toBe(1)
+    expect(result.diagnostics.estimatedTokensSaved).toBeGreaterThan(0)
+    // 权威原文未被 mutate
+    expect(messages[1].content).toBe(big)
+    expect(messages[3].content).toBe(big)
+  })
+
+  it('supersession 候选但原文不足阈值时不归档（占位符可能更大）', async () => {
+    const small = 'x'.repeat(SUPERSEDED_MIN_ESTIMATED_TOKENS * CHARS_PER_TOKEN - 4)
+    expect(small.length).toBeLessThan(SUPERSEDED_MIN_ESTIMATED_TOKENS * CHARS_PER_TOKEN)
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: small, toolCallId: 'r1' },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: small, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      toolRound: 1,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(result.messages[1].content).toBe(small)
+    expect(result.messages[3].content).toBe(small)
+    expect(result.diagnostics.prunedCount).toBe(0)
+    expect(result.diagnostics.archiveFailures).toBe(0)
+  })
+
+  it('archive 回调失败时 supersession 候选保留原文、不抛异常', async () => {
+    const big = multilineBig()
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      toolRound: 1,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => null
+    })
+    expect(result.messages[1].content).toBe(big)
+    expect(result.messages[3].content).toBe(big)
+    expect(result.diagnostics.archiveFailures).toBe(1)
+    expect(result.diagnostics.prunedCount).toBe(0)
+  })
+
+  it('幂等：对已含占位符的消息再投影，不二次归档', async () => {
+    const big = multilineBig()
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    let archiveCalls = 0
+    const cache = createRequestProjectionArchiveCache()
+    const archive = async () => {
+      archiveCalls++
+      return { artifactId: `art${archiveCalls}` }
+    }
+    const first = await projectRequestMessages({
+      messages,
+      toolRound: 1,
+      policy: { enabled: true },
+      archiveCache: cache,
+      archive
+    })
+    const second = await projectRequestMessages({
+      messages: first.messages,
+      toolRound: 2,
+      policy: { enabled: true },
+      archiveCache: cache,
+      archive
+    })
+    expect(second.messages).toEqual(first.messages)
+    expect(archiveCalls).toBe(1)
   })
 })

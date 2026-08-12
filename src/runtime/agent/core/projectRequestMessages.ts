@@ -8,13 +8,16 @@
  */
 import type { ChatMessage } from '../../model/types'
 import { buildArtifactRef, sha256Hex } from '../../artifacts/artifactRef'
+import { planToolResultSupersession } from './toolResultSupersession'
 
 /** 当轮归档阈值：超过此估算 token 的工具结果替换为占位符 */
 export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
 /** 起始归档轮次（第 0 轮不归档，保留首轮上下文完整） */
 export const ACTIVE_PRUNE_MIN_TOOL_ROUND = 1
 /** 字符/token 估算系数，与 estimateContextSize 的 JSON 字节 / 4 口径一致 */
-const CHARS_PER_TOKEN = 4
+export const CHARS_PER_TOKEN = 4
+/** 被覆盖结果的最低归档阈值：低于此体积不归档，避免占位符比原文还大 */
+export const SUPERSEDED_MIN_ESTIMATED_TOKENS = 256
 /** 占位符预览：正文前 N 行 */
 const PREVIEW_HEAD_LINES = 3
 /** 占位符预览：正文后 N 行 */
@@ -39,7 +42,7 @@ export interface ArchivedToolResultPlaceholder {
   originalEstimatedTokens: number
   /** 正文头尾预览，供模型多数情况下免回读决策 */
   preview: string
-  reason: 'active_current_turn_pruned'
+  reason: 'active_current_turn_pruned' | 'superseded_by_newer_result'
   readInstructions: string
 }
 
@@ -83,7 +86,8 @@ function buildPlaceholder(
   artifactId: string,
   toolCallId: string,
   body: string,
-  bodySha256: string
+  bodySha256: string,
+  reason: ArchivedToolResultPlaceholder['reason'] = 'active_current_turn_pruned'
 ): string {
   const originalBytes = Buffer.byteLength(body, 'utf8')
   const placeholder: ArchivedToolResultPlaceholder = {
@@ -97,7 +101,7 @@ function buildPlaceholder(
     originalBytes,
     originalEstimatedTokens: Math.ceil(body.length / CHARS_PER_TOKEN),
     preview: buildArchiveContentPreview(body),
-    reason: 'active_current_turn_pruned',
+    reason,
     readInstructions: 'This result is archived but still readable. Call archive_read with this ref: operation "inspect" for structure, "search" with keyword to locate content, "read" with offset/limit for a bounded page.'
   }
   return JSON.stringify(placeholder)
@@ -185,6 +189,9 @@ export async function projectRequestMessages(
   }
 
   const maxChars = maxTokens * CHARS_PER_TOKEN
+  const supersededMinChars = SUPERSEDED_MIN_ESTIMATED_TOKENS * CHARS_PER_TOKEN
+  // 被更新结果覆盖的旧证据计划：算一次，逐条遍历时复用。
+  const supersessionPlan = planToolResultSupersession(input.messages)
   let prunedCount = 0
   let archiveFailures = 0
   let estimatedTokensSaved = 0
@@ -209,11 +216,16 @@ export async function projectRequestMessages(
       continue
     }
 
-    // 阈值判定
-    if (text.length <= maxChars) {
+    // 两种归档触发：被更新结果覆盖（且原文足够大），或单纯超过体积阈值。
+    const superseded = supersessionPlan.has(msg.toolCallId)
+      && text.length >= supersededMinChars
+    if (!superseded && text.length <= maxChars) {
       projected.push(msg)
       continue
     }
+    const reason: ArchivedToolResultPlaceholder['reason'] = superseded
+      ? 'superseded_by_newer_result'
+      : 'active_current_turn_pruned'
 
     const bodySha256 = sha256Hex(text)
     const cacheKey = `${msg.toolCallId}:${bodySha256}`
@@ -245,7 +257,8 @@ export async function projectRequestMessages(
       archived.artifactId,
       msg.toolCallId,
       text,
-      bodySha256
+      bodySha256,
+      reason
     )
     input.archiveCache.set(cacheKey, placeholder)
     projected.push({ ...msg, content: placeholder })

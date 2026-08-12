@@ -1,0 +1,279 @@
+/**
+ * toolResultSupersession — 识别历史中「已被更新结果覆盖」的工具结果。
+ *
+ * 纯函数：只读输入，不写 artifact、不 mutate。
+ * 保守原则贯穿全模块：任何解析或判定不确定一律不计入，保留原文交由调用方处理。
+ */
+import type { ChatMessage } from '../../model/types'
+
+export type SupersessionReason =
+  | 'exact_duplicate'
+  | 'read_range_covered'
+  | 'idempotent_snapshot'
+
+/** toolCallId → 被覆盖的原因 */
+export type SupersessionPlan = ReadonlyMap<string, SupersessionReason>
+
+/** 工具失败回写前缀，与 toolBatchExecutor 的失败口径一致。 */
+const TOOL_FAILURE_PREFIX = '工具执行失败:'
+
+interface ToolResultEntry {
+  toolCallId: string
+  toolName: string
+  args: string
+  argRecord: Record<string, unknown> | undefined
+  contentText: string
+  success: boolean
+  index: number
+}
+
+function asText(content: ChatMessage['content']): string {
+  return typeof content === 'string' ? content : ''
+}
+
+/** 解析工具参数 JSON；非对象/数组/解析失败一律返回 undefined。 */
+function parseArgsRecord(args: string): Record<string, unknown> | undefined {
+  if (!args) return undefined
+  try {
+    const parsed = JSON.parse(args) as unknown
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 配对 assistant.toolCalls 与 role:'tool' 结果，建立可判定条目表。
+ * 无配对声明的孤儿结果跳过（不参与也不被覆盖）。
+ */
+function buildToolResultEntries(
+  messages: readonly ChatMessage[]
+): ToolResultEntry[] {
+  const callMeta = new Map<string, { toolName: string; args: string }>()
+  for (const msg of messages) {
+    if (msg.role !== 'assistant' || !msg.toolCalls) continue
+    for (const tc of msg.toolCalls) {
+      if (tc && tc.id && !callMeta.has(tc.id)) {
+        callMeta.set(tc.id, { toolName: tc.name, args: tc.arguments })
+      }
+    }
+  }
+
+  const entries: ToolResultEntry[] = []
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+    if (msg.role !== 'tool' || !msg.toolCallId) continue
+    const meta = callMeta.get(msg.toolCallId)
+    if (!meta) continue
+    entries.push({
+      toolCallId: msg.toolCallId,
+      toolName: meta.toolName,
+      args: meta.args,
+      argRecord: parseArgsRecord(meta.args),
+      contentText: asText(msg.content),
+      success: !asText(msg.content).startsWith(TOOL_FAILURE_PREFIX),
+      index: i
+    })
+  }
+  return entries
+}
+
+// ── exact_duplicate ──────────────────────────────────────────────────────────
+
+/** 同工具+同参数的规范化键；解析失败时退回原始 args 文本。 */
+function duplicateKey(entry: ToolResultEntry): string {
+  const rec = entry.argRecord
+  if (rec === undefined) {
+    return `${entry.toolName}\u0000${entry.args}`
+  }
+  const sorted: Record<string, unknown> = {}
+  for (const k of Object.keys(rec).sort()) sorted[k] = rec[k]
+  return `${entry.toolName}\u0000${JSON.stringify(sorted)}`
+}
+
+/**
+ * 「组内保留最新成功结果，其余较旧的标记 exact_duplicate」。
+ * 失败结果不作为覆盖者：只有成功结果能覆盖；被覆盖者自身成败不限。
+ */
+function applyExactDuplicate(
+  entries: ToolResultEntry[],
+  plan: Map<string, SupersessionReason>
+): void {
+  const groups = new Map<string, ToolResultEntry[]>()
+  for (const e of entries) {
+    const key = duplicateKey(e)
+    const g = groups.get(key) ?? []
+    g.push(e)
+    groups.set(key, g)
+  }
+  for (const g of groups.values()) {
+    if (g.length < 2) continue
+    g.sort((a, b) => a.index - b.index)
+    let coverer: ToolResultEntry | undefined
+    for (const e of g) if (e.success) coverer = e
+    if (!coverer) continue
+    for (const e of g) {
+      if (e.index < coverer.index && !plan.has(e.toolCallId)) {
+        plan.set(e.toolCallId, 'exact_duplicate')
+      }
+    }
+  }
+}
+
+// ── read_range_covered ───────────────────────────────────────────────────────
+
+const READ_PATH_KEYS = ['file_path', 'path', 'filePath', 'file', 'filename']
+
+function readFilePath(rec: Record<string, unknown> | undefined): string | undefined {
+  if (!rec) return undefined
+  for (const k of READ_PATH_KEYS) {
+    const v = rec[k]
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return undefined
+}
+
+interface ReadRange {
+  offset: number
+  limit: number
+}
+
+/** offset 默认 0、limit 默认 Infinity；非有限非负数视为非法 → 返回 undefined。 */
+function readRange(rec: Record<string, unknown> | undefined): ReadRange | undefined {
+  if (!rec) return undefined
+  const rawOffset = rec.offset
+  let offset: number
+  if (rawOffset === undefined || rawOffset === null) {
+    offset = 0
+  } else if (typeof rawOffset === 'number' && Number.isFinite(rawOffset) && rawOffset >= 0) {
+    offset = rawOffset
+  } else {
+    return undefined
+  }
+  const rawLimit = rec.limit
+  let limit: number
+  if (rawLimit === undefined || rawLimit === null) {
+    limit = Infinity
+  } else if (typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit >= 0) {
+    limit = rawLimit
+  } else {
+    return undefined
+  }
+  return { offset, limit }
+}
+
+/** j 的读取范围是否完全包含 i 的范围。 */
+function rangeCovers(j: ReadRange, i: ReadRange): boolean {
+  if (j.offset > i.offset) return false
+  if (j.limit === Infinity) return true
+  if (i.limit === Infinity) return false
+  return j.offset + j.limit >= i.offset + i.limit
+}
+
+function applyReadRangeCovered(
+  entries: ToolResultEntry[],
+  plan: Map<string, SupersessionReason>
+): void {
+  interface ReadItem {
+    entry: ToolResultEntry
+    range: ReadRange
+  }
+  const groups = new Map<string, ReadItem[]>()
+  for (const e of entries) {
+    if (e.toolName !== 'read') continue
+    const filePath = readFilePath(e.argRecord)
+    const range = readRange(e.argRecord)
+    if (!filePath || !range) continue
+    const g = groups.get(filePath) ?? []
+    g.push({ entry: e, range })
+    groups.set(filePath, g)
+  }
+  for (const g of groups.values()) {
+    for (const iItem of g) {
+      for (const jItem of g) {
+        if (jItem.entry.index <= iItem.entry.index) continue
+        if (!jItem.entry.success) continue
+        if (rangeCovers(jItem.range, iItem.range)) {
+          if (!plan.has(iItem.entry.toolCallId)) {
+            plan.set(iItem.entry.toolCallId, 'read_range_covered')
+          }
+          break
+        }
+      }
+    }
+  }
+}
+
+// ── idempotent_snapshot ──────────────────────────────────────────────────────
+
+/** 只读幂等命令白名单；命令名后必须接空白或行尾，避免误匹配（如 ls2 命中 ls）。 */
+const IDEMPOTENT_BASH_RE =
+  /^git (?:status|diff|log|branch|show|reflog|ls-files|blame|remote -v|config --get)(?:\s|$)|^(?:ls|pwd|cat|head|tail|wc|file|stat|find)(?:\s|$)/i
+
+/** 即便命中白名单，含这些副作用/flaky 词的命令也不归档。 */
+const BASH_EXCLUDE_TOKENS = new Set([
+  'test', 'build', 'run', 'pytest', 'jest', 'make', 'cargo', 'pnpm'
+])
+
+function isIdempotentBashCommand(command: string): boolean {
+  const trimmed = command.trim()
+  if (trimmed === '') return false
+  // 复合命令（&&、||、;、|、换行）一律不判定，避免误覆盖。
+  if (/(&&|\|\||;|\||\n)/.test(trimmed)) return false
+  if (!IDEMPOTENT_BASH_RE.test(trimmed)) return false
+  for (const tok of trimmed.split(/\s+/)) {
+    if (BASH_EXCLUDE_TOKENS.has(tok.toLowerCase())) return false
+  }
+  return true
+}
+
+function normalizeCommand(command: string): string {
+  return command.trim().replace(/\s+/g, ' ')
+}
+
+function applyIdempotentSnapshot(
+  entries: ToolResultEntry[],
+  plan: Map<string, SupersessionReason>
+): void {
+  const groups = new Map<string, ToolResultEntry[]>()
+  for (const e of entries) {
+    if (e.toolName !== 'bash') continue
+    const rec = e.argRecord
+    const command = rec && typeof rec.command === 'string' ? rec.command : ''
+    if (!isIdempotentBashCommand(command)) continue
+    const key = normalizeCommand(command)
+    const g = groups.get(key) ?? []
+    g.push(e)
+    groups.set(key, g)
+  }
+  for (const g of groups.values()) {
+    if (g.length < 2) continue
+    g.sort((a, b) => a.index - b.index)
+    let coverer: ToolResultEntry | undefined
+    for (const e of g) if (e.success) coverer = e
+    if (!coverer) continue
+    for (const e of g) {
+      if (e.index < coverer.index && !plan.has(e.toolCallId)) {
+        plan.set(e.toolCallId, 'idempotent_snapshot')
+      }
+    }
+  }
+}
+
+/**
+ * 扫描消息序列，判定哪些 tool 结果已被更新结果覆盖。
+ * 仅识别明确、安全的覆盖模式；任何不确定一律不计入。
+ */
+export function planToolResultSupersession(
+  messages: readonly ChatMessage[]
+): SupersessionPlan {
+  const entries = buildToolResultEntries(messages)
+  const plan = new Map<string, SupersessionReason>()
+  applyExactDuplicate(entries, plan)
+  applyReadRangeCovered(entries, plan)
+  applyIdempotentSnapshot(entries, plan)
+  return plan
+}
