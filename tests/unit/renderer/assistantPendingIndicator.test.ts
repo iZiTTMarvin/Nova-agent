@@ -1,0 +1,37 @@
+// @vitest-environment jsdom
+
+import React from 'react'
+import { describe, expect, it } from 'vitest'
+import {
+  AssistantPendingIndicator,
+  NOVA_WORKING_MESSAGES,
+  pickNonRepeatingWorkingMessage
+} from '../../../src/renderer/features/chat/AssistantPendingIndicator'
+import { NOVA_WORKING_ORB_DOT_COUNT } from '../../../src/renderer/features/chat/NovaWorkingOrb'
+import { renderDom } from './renderDom'
+
+describe('AssistantPendingIndicator', () => {
+  it('工作文案保持 10 条，并保证下一条不会和上一条重复', () => {
+    expect(NOVA_WORKING_MESSAGES).toHaveLength(10)
+
+    for (const previous of NOVA_WORKING_MESSAGES) {
+      expect(pickNonRepeatingWorkingMessage(previous, () => 0)).not.toBe(previous)
+      expect(pickNonRepeatingWorkingMessage(previous, () => 0.999999)).not.toBe(previous)
+    }
+  })
+
+  it('渲染 Nova N/O/V/A 点阵工作态和随机文案', () => {
+    const renderer = renderDom(React.createElement(AssistantPendingIndicator))
+    const pending = renderer.container.querySelector('.assistant-pending')
+    const orb = renderer.container.querySelector('.nova-working-orb')
+    const copy = renderer.container.querySelector('.nova-working-indicator__copy')
+
+    expect(pending).not.toBeNull()
+    expect(orb?.getAttribute('data-shape')).toBe('N')
+    expect(orb?.querySelectorAll('.nova-working-orb__dot')).toHaveLength(NOVA_WORKING_ORB_DOT_COUNT)
+    expect(NOVA_WORKING_MESSAGES).toContain(copy?.textContent as typeof NOVA_WORKING_MESSAGES[number])
+    expect(pending?.querySelector('.assistant-pending__label')?.textContent).toBe('正在思考')
+
+    renderer.unmount()
+  })
+})
