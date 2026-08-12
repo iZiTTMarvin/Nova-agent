@@ -1,4 +1,5 @@
 import { appendTerminalErrorToBlocks } from '../../../../shared/session/terminalErrorBlocks'
+import { markThinkingEndedForMessage } from '../../../lib/thinkingTimingMemory'
 import type { ChatState, ExtendedMessage, RendererToolBlock } from '../types'
 import {
   appendLiveBlock,
@@ -43,8 +44,22 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       const idx = state.messageIndexById[messageId]
       // 轮次终态前先回收未封存的活跃文本/思考，避免内容停留在活跃回合里。
       const live = state.liveTurn[messageId]
+      const endedThinkingMs =
+        live?.type === 'thinking' ? markThinkingEndedForMessage(messageId) : null
       if (idx !== undefined && nextMessages[idx]) {
-        const base = live ? appendLiveBlock(nextMessages[idx]!, live) : nextMessages[idx]!
+        let base = live ? appendLiveBlock(nextMessages[idx]!, live) : nextMessages[idx]!
+        if (endedThinkingMs != null && base.blocks && base.blocks.length > 0) {
+          const blocks = [...base.blocks]
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            const block = blocks[i]
+            if (block.type !== 'thinking') continue
+            if (block.durationMs == null) {
+              blocks[i] = { ...block, durationMs: endedThinkingMs }
+              base = { ...base, blocks }
+            }
+            break
+          }
+        }
         if (interrupted) {
           // 取消中断结束时，把该消息的 running tool 块标记为 error
           // 并清空 argumentsRaw、附上 "用户取消执行" 结果。同时标记消息 interrupted。

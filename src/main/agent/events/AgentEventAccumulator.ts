@@ -78,6 +78,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         if (last && last.type === 'thinking') {
           last.content += event.delta
         } else {
+          stream.thinkingStartedAt = Date.now()
           stream.blocks.push({
             type: 'thinking',
             content: event.delta,
@@ -94,6 +95,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         if (last && last.type === 'text') {
           last.content += event.delta
         } else {
+          stampThinkingDuration(stream)
           stream.blocks.push({ type: 'text', content: event.delta })
         }
       }
@@ -102,6 +104,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
     case 'tool_call': {
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
+        stampThinkingDuration(stream)
         stream.blocks.push({
           type: 'tool',
           toolCallId: event.toolCallId,
@@ -138,6 +141,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
     case 'message_end': {
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
+        stampThinkingDuration(stream)
         activeStreams.delete(event.messageId)
 
         // cancel 期间残留的"权限拒绝"工具块不应进入持久化历史
@@ -170,6 +174,8 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       // 禁止只存 error 字符串并丢掉 blocks（用户会感觉「保护把回复弄没了」）。
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
+        // 错误也是封存边界：未收口的思考块同样要写入耗时，否则落盘后显示 0s
+        stampThinkingDuration(stream)
         activeStreams.delete(event.messageId)
         let blocks = stream.cancelled
           ? dropPermissionDeniedResidualBlocks(stream.blocks)
@@ -211,6 +217,26 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       break
     }
   }
+}
+
+/**
+ * 将当前未封存思考块写入 durationMs，并清除 thinkingStartedAt。
+ * 在 text / tool / message_end 边界调用，保证落盘后重启仍能显示耗时。
+ */
+function stampThinkingDuration(stream: StreamAccumulator, now: number = Date.now()): void {
+  if (stream.thinkingStartedAt == null) return
+  for (let i = stream.blocks.length - 1; i >= 0; i--) {
+    const block = stream.blocks[i]
+    if (block.type !== 'thinking') continue
+    if (block.durationMs == null) {
+      stream.blocks[i] = {
+        ...block,
+        durationMs: Math.max(0, now - stream.thinkingStartedAt)
+      }
+    }
+    break
+  }
+  stream.thinkingStartedAt = undefined
 }
 
 /**

@@ -15,16 +15,17 @@ export const NOVA_WORKING_MESSAGES = [
   'Nova正在让这段代码听话一点...'
 ] as const
 
+export type NovaWorkingMessage = (typeof NOVA_WORKING_MESSAGES)[number]
+
 const MESSAGE_INTERVAL_MS = 4600
-let lastWorkingMessage: string | null = null
 
 export function pickNonRepeatingWorkingMessage(
-  previous: string | null,
+  previous: NovaWorkingMessage | null,
   random: () => number = Math.random
-): string {
+): NovaWorkingMessage {
   const previousIndex = previous === null
     ? -1
-    : NOVA_WORKING_MESSAGES.indexOf(previous as typeof NOVA_WORKING_MESSAGES[number])
+    : NOVA_WORKING_MESSAGES.indexOf(previous)
   const candidateCount = previousIndex >= 0
     ? NOVA_WORKING_MESSAGES.length - 1
     : NOVA_WORKING_MESSAGES.length
@@ -44,15 +45,11 @@ function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-/** 当前 assistant 轮次仍在运行时，给用户明确的 Nova 工作中反馈。 */
+/** 当前 assistant 轮次仍在运行时展示 Nova 工作状态。 */
 export const AssistantPendingIndicator: React.FC = () => {
-  const [workingMessage, setWorkingMessage] = useState(() =>
-    pickNonRepeatingWorkingMessage(lastWorkingMessage)
+  const [workingMessage, setWorkingMessage] = useState<NovaWorkingMessage>(() =>
+    pickNonRepeatingWorkingMessage(null)
   )
-
-  useEffect(() => {
-    lastWorkingMessage = workingMessage
-  }, [workingMessage])
 
   useEffect(() => {
     if (prefersReducedMotion()) return undefined

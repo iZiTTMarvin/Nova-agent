@@ -1,6 +1,11 @@
 import { sanitizeToolInput, sanitizeToolOutput } from '../../../../shared/tool-input-sanitizer'
 import { parsePartialToolArgs } from '../../../lib/partialJsonArgs'
 import { createAssistantMessage } from '../../../lib/focusedSessionRecovery'
+import {
+  clearThinkingTimingForMessage,
+  markThinkingEndedForMessage,
+  markThinkingStarted
+} from '../../../lib/thinkingTimingMemory'
 import type {
   ExtendedToolCall,
   RendererMessageBlock,
@@ -88,6 +93,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       if (state.liveTurn[messageId]) {
         patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
       }
+      clearThinkingTimingForMessage(messageId)
       return patch
     })
   },
@@ -105,8 +111,10 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const last = blocks[blocks.length - 1]
       if (last && last.type === 'thinking') {
         blocks[blocks.length - 1] = { ...last, content: last.content + delta }
+        markThinkingStarted(messageId, blocks.length - 1)
       } else {
         blocks.push({ type: 'thinking', content: delta })
+        markThinkingStarted(messageId, blocks.length - 1)
       }
       const nextMessages = state.messages.slice()
       nextMessages[idx] = bumpRevision({ ...base, thinking: (base.thinking ?? '') + delta, blocks })
@@ -129,6 +137,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       if (last && last.type === 'text') {
         blocks[blocks.length - 1] = { ...last, content: last.content + delta }
       } else {
+        markThinkingEndedForMessage(messageId)
         blocks.push({ type: 'text', content: delta })
       }
       const nextMessages = state.messages.slice()
@@ -398,9 +407,18 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         const sealOpen = () => {
           if (!open) return
           if (sealedBlocks === undefined) sealedBlocks = msg.blocks ? [...msg.blocks] : []
-          sealedBlocks.push({ type: open.type, content: open.content })
-          if (open.type === 'text') workingContent += open.content
-          else workingThinking += open.content
+          if (open.type === 'thinking') {
+            const durationMs = markThinkingEndedForMessage(messageId)
+            sealedBlocks.push({
+              type: 'thinking',
+              content: open.content,
+              ...(durationMs != null ? { durationMs } : {})
+            })
+            workingThinking += open.content
+          } else {
+            sealedBlocks.push({ type: 'text', content: open.content })
+            workingContent += open.content
+          }
           open = undefined
           messageSealed = true
         }
@@ -413,6 +431,12 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
             }
             if (!open) {
               open = { type: blockType, content: delta.delta }
+              if (blockType === 'thinking') {
+                const nextIndex = (sealedBlocks ?? msg.blocks)?.length ?? 0
+                markThinkingStarted(messageId, nextIndex)
+              } else {
+                markThinkingEndedForMessage(messageId)
+              }
             } else {
               open.content += delta.delta
             }

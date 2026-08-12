@@ -112,6 +112,12 @@ interface MarkdownRendererProps {
    * - 代码块跳过语法高亮
    */
   isStreaming?: boolean
+  /**
+   * 流式期间是否给每个新封口的 sealed 段落挂一次性淡入。
+   * 仅影响 sealed 段的 wrapper；active tail 与终态单段不淡入。
+   * 默认关闭，只有「逐段浮现」场景（思考块）开启。
+   */
+  chunkFade?: boolean
 }
 
 /** 单块 Markdown 渲染单元；content 不变时 React.memo 短路，不重建 AST */
@@ -148,7 +154,8 @@ interface SealedCache {
 
 export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function MarkdownRenderer({
   content,
-  isStreaming = false
+  isStreaming = false,
+  chunkFade = false
 }) {
   // components 随 isStreaming 重建：保证流式/终态切换时高亮门控立即生效
   const components = useMemo<MarkdownComponents>(
@@ -252,7 +259,12 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   return (
     <div className="markdown-body">
       {sealedParts.map((part, idx) => (
-        <MarkdownChunk key={`sealed-${idx}`} content={part} components={components} />
+        <div
+          key={`sealed-${idx}`}
+          className={chunkFade ? 'md-sealed-chunk md-sealed-chunk--fade' : 'md-sealed-chunk'}
+        >
+          <MarkdownChunk content={part} components={components} />
+        </div>
       ))}
       {activeTail ? (
         <MarkdownChunk key="active-tail" content={activeTail} components={components} />

@@ -50,6 +50,9 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
               <ThinkingBlock
                 key={segmentKey(segment, idx)}
                 thinking={block.content}
+                messageId={messageId}
+                blockIndex={index >= 0 ? index : 0}
+                durationMs={block.type === 'thinking' ? block.durationMs : undefined}
                 active={isActiveThinkingBlock(
                   blocks,
                   index >= 0 ? index : blocks.length - 1,

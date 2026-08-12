@@ -109,7 +109,9 @@ describe('liveTurn 活跃回合', () => {
 
     const msg = useChatStore.getState().messages[0]
     expect(msg.thinking).toBe('思考')
-    expect(msg.blocks).toEqual([{ type: 'thinking', content: '思考' }])
+    expect(msg.blocks).toEqual([
+      { type: 'thinking', content: '思考', durationMs: expect.any(Number) }
+    ])
     expect(useChatStore.getState().liveTurn['m1']).toEqual({ type: 'text', content: '正文' })
   })
 

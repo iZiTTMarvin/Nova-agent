@@ -117,12 +117,12 @@ describe('聊天体验回归', () => {
   it('思考块结束后自动收起为 Thought 行（Cursor 风）', () => {
     const renderer = renderDom(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: true }))
 
-    expect(renderer.container.querySelector<HTMLDetailsElement>('details')?.open).toBe(true)
+    expect(renderer.container.querySelector('.thinking-block__summary')?.getAttribute('aria-expanded')).toBe('true')
 
     renderer.render(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: false }))
 
     // 结束后默认折叠，只留 Thought for Xs 一行
-    expect(renderer.container.querySelector<HTMLDetailsElement>('details')?.open).toBe(false)
+    expect(renderer.container.querySelector('.thinking-block__summary')?.getAttribute('aria-expanded')).toBe('false')
     const title = renderer.container.querySelector('.thinking-block__title')
     expect(title?.textContent ?? '').toMatch(/^Thought/)
 
