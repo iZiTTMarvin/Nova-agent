@@ -1,16 +1,24 @@
 // @vitest-environment jsdom
 
 import React from 'react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AssistantPendingIndicator,
   NOVA_WORKING_MESSAGES,
   pickNonRepeatingWorkingMessage
 } from '../../../src/renderer/features/chat/AssistantPendingIndicator'
 import { NOVA_WORKING_ORB_DOT_COUNT } from '../../../src/renderer/features/chat/NovaWorkingOrb'
-import { renderDom } from './renderDom'
+import { act, renderDom } from './renderDom'
 
 describe('AssistantPendingIndicator', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('工作文案保持 10 条，并保证下一条不会和上一条重复', () => {
     expect(NOVA_WORKING_MESSAGES).toHaveLength(10)
 
@@ -31,6 +39,13 @@ describe('AssistantPendingIndicator', () => {
     expect(orb?.querySelectorAll('.nova-working-orb__dot')).toHaveLength(NOVA_WORKING_ORB_DOT_COUNT)
     expect(NOVA_WORKING_MESSAGES).toContain(copy?.textContent as typeof NOVA_WORKING_MESSAGES[number])
     expect(pending?.querySelector('.assistant-pending__label')?.textContent).toBe('正在思考')
+
+    act(() => vi.advanceTimersByTime(1500))
+    expect(orb?.getAttribute('data-shape')).toBe('O')
+    act(() => vi.advanceTimersByTime(1500))
+    expect(orb?.getAttribute('data-shape')).toBe('V')
+    act(() => vi.advanceTimersByTime(1500))
+    expect(orb?.getAttribute('data-shape')).toBe('A')
 
     renderer.unmount()
   })
