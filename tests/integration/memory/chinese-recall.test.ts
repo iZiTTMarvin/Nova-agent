@@ -1,5 +1,5 @@
 /**
- * P1-B5 关键回归：中文 MEMORY.md + extractUserIntent 长串 query → trigram 召回（集成层）
+ * 关键回归：中文 MEMORY.md + extractUserIntent 长串 query → trigram 召回（集成层）
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
@@ -10,7 +10,7 @@ import { getMemoryRoot, computeWorkspaceHash } from '@runtime/memory/MemoryPaths
 import { MemoryService } from '@runtime/memory/MemoryService'
 import { extractUserIntent, buildSearchQueryFromIntent, buildL2TailBlock } from '@runtime/memory/MemoryTailInjector'
 
-describe('中文记忆召回（P1-B5 集成）', () => {
+describe('中文记忆召回（集成）', () => {
   let tempDir: string | null = null
   let service: MemoryService | null = null
 

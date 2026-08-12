@@ -7,6 +7,7 @@ import {
 import { useRunStore } from '../../useRunStore'
 import {
   commitMessageList,
+  foldLiveTurnIntoMessages,
   invalidateDiffGeneration,
   isHydrationEpochCurrent,
   nextHydrationEpoch,
@@ -107,9 +108,13 @@ export function createWorkspaceSyncSlice(
               ) {
                 return state
               }
+              const { messages: liveFolded, hasLive } = foldLiveTurnIntoMessages(
+                state.messages,
+                state.liveTurn
+              )
               const messages = mergeFocusedSessionMessages(
                 [],
-                state.messages,
+                liveFolded,
                 targetRunning ? snapshot?.messageId ?? null : null,
                 draft
               )
@@ -117,7 +122,8 @@ export function createWorkspaceSyncSlice(
                 ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
                 isGenerating: targetRunning,
                 currentGeneratingMessageId: targetRunning ? snapshot?.messageId ?? null : null,
-                activeAgentSessionId: targetRunning ? targetSessionId : null
+                activeAgentSessionId: targetRunning ? targetSessionId : null,
+                ...(hasLive ? { liveTurn: {} } : {})
               }
             })
           }
@@ -138,9 +144,13 @@ export function createWorkspaceSyncSlice(
             ) {
               return state
             }
+            const { messages: liveFolded, hasLive } = foldLiveTurnIntoMessages(
+              state.messages,
+              state.liveTurn
+            )
             const messages = mergeFocusedSessionMessages(
               restored,
-              state.messages,
+              liveFolded,
               sessionChanged
                 ? targetRunning ? snapshot?.messageId ?? null : null
                 : state.currentGeneratingMessageId,
@@ -152,7 +162,8 @@ export function createWorkspaceSyncSlice(
               hasMoreMessagesAbove: detail.hasMoreMessagesAbove ?? false,
               oldestLoadedMessageId: messages[0]?.id ?? null,
               isLoadingOlderMessages: false,
-              suspendHeadTrim: false
+              suspendHeadTrim: false,
+              ...(hasLive ? { liveTurn: {} } : {})
             }
           })
         } catch (err) {

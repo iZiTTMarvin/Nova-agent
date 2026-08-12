@@ -1,5 +1,5 @@
 /**
- * contextBuilder 图片 URL 转换单测（P0 修复回归）
+ * contextBuilder 图片 URL 转换单测（修复回归）
  *
  * 验证：历史消息里的 nova-image:// URL 经 resolveImageUrl 回调转回 base64 data URL，
  * 确保多轮对话中模型能看到历史图片（模型 API 不认识自定义协议）。

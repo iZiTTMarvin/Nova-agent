@@ -20,7 +20,7 @@ import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
 
 /**
- * 阶段二集成测试：快照优先恢复 + 增量补齐 + 回退路径。
+ * 集成测试：快照优先恢复 + 增量补齐 + 回退路径。
  * 使用与 agentHandler 相同的 contextSnapshot 模块，避免镜像漂移。
  */
 
@@ -48,7 +48,7 @@ function injectCompactionTriggerHistory(loop: AgentLoop): void {
   loop.injectHistory(history)
 }
 
-describe('阶段二：上下文快照恢复', () => {
+describe('上下文快照恢复', () => {
   let tmpDir: string
   let store: SessionStore
 
@@ -61,7 +61,7 @@ describe('阶段二：上下文快照恢复', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('压缩 → 写快照 → 追加消息 → 快照优先恢复无重复无丢失（I3）', async () => {
+  it('压缩 → 写快照 → 追加消息 → 快照优先恢复无重复无丢失', async () => {
     const session = store.create('/tmp/project', 'default')
     for (let i = 0; i < 6; i++) {
       store.appendMessage(session.id, {
@@ -211,7 +211,7 @@ describe('阶段二：上下文快照恢复', () => {
     expect(extractTextFromContent(loop.getContext()[0].content)).toContain('对齐摘要')
   })
 
-  it('无快照或锚点失效时回退全量重建（I2、I4）', () => {
+  it('无快照或锚点失效时回退全量重建', () => {
     const session = store.create('/tmp/project', 'default')
     store.appendMessage(session.id, {
       id: 'u1', role: 'user', content: '问题一', timestamp: 1
@@ -260,7 +260,7 @@ describe('阶段二：上下文快照恢复', () => {
     expect(usersStale).not.toContain('仅快照内消息')
   })
 
-  it('截断历史后快照被清除，下次 restoreOrInjectHistory 走全量重建（T2.8）', () => {
+  it('截断历史后快照被清除，下次 restoreOrInjectHistory 走全量重建', () => {
     const session = store.create('/tmp/project', 'default')
     store.appendMessage(session.id, { id: 'u0', role: 'user', content: '问题0', timestamp: 1 })
     store.appendMessage(session.id, { id: 'a0', role: 'assistant', content: '回复0', timestamp: 2 })

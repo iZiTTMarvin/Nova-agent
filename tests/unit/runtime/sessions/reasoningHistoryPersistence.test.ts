@@ -1,5 +1,5 @@
 /**
- * T0-2（会话持久化侧）：thinking→tool→thinking→tool→final 落盘后恢复基线
+ * 会话持久化侧：thinking→tool→thinking→tool→final 落盘后恢复基线
  *
  * 与 agent/reasoningReplayBaseline.test.ts 互补：本文件聚焦 SessionStore
  * 落盘、context snapshot、分支切换与应用重启后的扁平恢复现状。

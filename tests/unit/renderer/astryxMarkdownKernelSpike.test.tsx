@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * P3 S0 Spike：Astryx Markdown 内核迁移评估（结论 = 迁内核、保流式算法）
+ * Astryx Markdown 内核迁移评估（结论 = 迁内核、保流式算法）
  *
  * 评估并锁定 Nova 迁移到 Astryx `<Markdown>` 引擎后依赖的行为：
  * 1. GFM 能力覆盖（Nova 依赖：标题/粗斜体/删除线/内联代码/链接/表格/任务列表/围栏代码）
@@ -11,7 +11,7 @@
  * 4. 增量 vs 每帧全量重解析的基准（reparse accounting + wall clock）
  * 5. 代码高亮兼容性（components.code 覆盖可注入 Nova CodeBlock + highlightLine）
  *
- * 跨引擎（react-markdown vs Astryx）对比数字记录在 tasks/astryx-markdown-spike.md。
+ * 跨引擎（react-markdown vs Astryx）对比数字另行记录。
  * 本文件沉淀为「Nova 依赖的 Astryx parser/组件行为」消费者契约测试：
  * 若 Astryx 升级破坏这些行为，迁移后的渲染会立刻失真。
  */
@@ -189,7 +189,7 @@ describe('spike：<Markdown isStreaming> 伪影裁剪', () => {
   })
 
   it('行尾未闭合反引号被裁剪；行中未闭合反引号仍为字面（与 Nova 同等，非回退）', () => {
-    // Spike 事实：trimStreamingArtifacts 只裁剪「尾部即标记」的情形。
+    // 事实：trimStreamingArtifacts 只裁剪「尾部即标记」的情形。
     // 行中未闭合 `x 仍显示字面反引号——Nova react-markdown 同样如此，
     // 二者行为对齐，不构成迁移回退。
     const trimmed = renderStreaming('句子。\n\n调用 `')
@@ -228,7 +228,7 @@ describe('spike：增量解析的 sealed 稳定性', () => {
   })
 
   it('settled 前缀不变时复用缓存块；增长时首块结构稳定', () => {
-    // Spike 事实：Astryx 只在 settledText 逐字不变时复用块引用；
+    // 事实：Astryx 只在 settledText 逐字不变时复用块引用；
     // settled 增长（新块封口）会重建数组。与 Nova MarkdownChunk 的
     // React.memo 引用稳定不同——迁移时需以 <Markdown> 自身的增量渲染为准，
     // 不能假设 sealed 块引用跨帧不变。

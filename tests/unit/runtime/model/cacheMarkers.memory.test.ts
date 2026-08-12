@@ -1,5 +1,5 @@
 /**
- * P1-C 缓存回归：L2 尾部记忆消息带 skipCacheMarker，不参与断点选择，
+ * 缓存回归：L2 尾部记忆消息带 skipCacheMarker，不参与断点选择，
  * 稳定消息的 cache_control 位置与无 L2 基线逐字节一致。
  */
 import { describe, it, expect } from 'vitest'
@@ -29,7 +29,7 @@ function cacheMarkerIndices(messages: Record<string, unknown>[]): number[] {
     .filter((idx) => idx >= 0)
 }
 
-describe('applyCacheMarkers — L2 skipCacheMarker 隔离（P1-C）', () => {
+describe('applyCacheMarkers — L2 skipCacheMarker 隔离', () => {
   const history = [
     { role: 'user', content: 'msg1' },
     { role: 'assistant', content: 'msg2' }

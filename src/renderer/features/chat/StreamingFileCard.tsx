@@ -7,7 +7,7 @@
  * 3. running 时自动展开并滚动到底部，完成后保持当前展开状态，避免页面突然塌陷
  * 4. 复用 DiffViewer 视觉语言：圆角边框、header 行高字体、状态徽章颜色
  *
- * 性能要点（Step 2）：
+ * 性能要点：
  * - props 接 argumentsRaw（字符串）而非已解析的 args 对象。
  *   字符串是 primitive，React.memo 浅比较天然稳定，
  *   上游 applyStreamDeltas 重建 block 时不会让本组件的 memo 失效。
@@ -27,7 +27,7 @@ import { isContentSummary } from '../../../shared/tool-input-sanitizer'
 import type { ContentSummary } from '../../../shared/tool-input-sanitizer'
 import './StreamingFileCard.css'
 
-/** T03：大文件预览行数上限，超过时截断展示 */
+/** 大文件预览行数上限，超过时截断展示 */
 const PREVIEW_LINE_LIMIT = 240
 
 /** StreamingFileCard 的公共字段（两条通道共享） */
@@ -53,7 +53,7 @@ export type StreamingFileCardProps =
   | (StreamingFileCardBaseProps & { argumentsRaw: string; args?: never })
   | (StreamingFileCardBaseProps & { argumentsRaw?: never; args: Record<string, unknown> })
 
-/** 从可能是 ContentSummary 的值中提取预览文本（T03 兼容 T01 摘要化） */
+/** 从可能是 ContentSummary 的值中提取预览文本（兼容摘要化） */
 function extractTextFromSummary(value: unknown): string {
   if (typeof value === 'string') return value
   if (isContentSummary(value)) {
@@ -105,14 +105,14 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
   args: argsProp,
   result
 }) {
-  // T03：默认折叠。running 时由 useEffect 自动展开；完成后自动折叠（除非用户手动操作过）
+  // 默认折叠。running 时由 useEffect 自动展开；完成后自动折叠（除非用户手动操作过）
   const [isOpen, setIsOpen] = useState(false)
   const userToggledRef = useRef(false)
-  // T03：大文件行数截断控制
+  // 大文件行数截断控制
   const [showFull, setShowFull] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const frameIdRef = useRef<number | null>(null)
-  // T03：追踪上一次 status，用于检测 running → 完成态切换
+  // 追踪上一次 status，用于检测 running → 完成态切换
   const prevStatusRef = useRef(status)
 
   // 优先用 argumentsRaw 自行 parsePartialToolArgs；
@@ -131,7 +131,7 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
   const lineCount = countLines(previewContent)
   const summary = getToolSummary(toolName, args)
 
-  // T03：running 时自动展开；running → 完成态时自动折叠（除非用户手动展开过）
+  // running 时自动展开；running → 完成态时自动折叠（除非用户手动展开过）
   useEffect(() => {
     const prev = prevStatusRef.current
     prevStatusRef.current = status
@@ -184,7 +184,7 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
   // split('\n') 在每帧重新执行都是一次 O(n) 字符串扫描+数组分配，
   // 用 useMemo 缓存；previewContent 引用未变时直接复用上一次的 lines 数组。
   const lines = useMemo(() => previewContent.split('\n'), [previewContent])
-  // T03：大文件截断，只渲染前 PREVIEW_LINE_LIMIT 行
+  // 大文件截断，只渲染前 PREVIEW_LINE_LIMIT 行
   const needsTruncation = lines.length > PREVIEW_LINE_LIMIT
   const displayLines = showFull ? lines : lines.slice(0, PREVIEW_LINE_LIMIT)
   // running 阶段不高亮：每帧少 N 次正则匹配（CSS 大文件 200+ 行常见）。
@@ -251,7 +251,7 @@ export const StreamingFileCard: React.FC<StreamingFileCardProps> = React.memo(fu
             )
           })}
 
-          {/* T03：截断提示行 */}
+          {/* 截断提示行 */}
           {needsTruncation && !showFull && (
             <Button
               label={`还有 ${lines.length - PREVIEW_LINE_LIMIT} 行未显示，点击展开全部`}

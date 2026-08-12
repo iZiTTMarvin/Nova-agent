@@ -62,7 +62,7 @@ export interface ToolContext {
    *
    * 每个 AgentLoop 实例持有独立的 readState，由 toolBatchExecutor 注入。
    * 主 agent 与 sub agent 之间通过 clone 实现隔离，避免 sub agent 读过的文件
-   * 污染主 agent 的校验逻辑（I1）。
+   * 污染主 agent 的校验逻辑。
    */
   readState: ReadState
   /** checkpoint 管理器（写入类工具需要通过它做写前备份） */

@@ -413,8 +413,8 @@ export class StreamProcessor {
           }
 
           case 'error': {
-            // AttemptController 原子决定 retry / fallback / fail（修复 P0-2）
-            // 安全重试门闩（I4）：已产生可观察输出的失败不得重试。
+            // AttemptController 原子决定 retry / fallback / fail
+            // 安全重试门闩：已产生可观察输出的失败不得重试。
             // hasNoObservableOutput 只看 toolCalls / 正文 / reasoning，不看 usage。
             const hasNoObservableOutput =
               toolCalls.length === 0 &&

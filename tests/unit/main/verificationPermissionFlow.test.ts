@@ -207,7 +207,7 @@ describe('agentHandler 真实入口测试', () => {
     })
 
     /**
-     * T3-4：cancel 兜底过滤
+     * cancel 兜底过滤
      * 即使 runtime 层意外漏发了"权限拒绝: 用户拒绝"的 tool_result，
      * 只要在累积期间被 markActiveStreamsCancelled 标记过，message_end 时
      * 也会把这种残留剔除，避免落盘到 session 历史。

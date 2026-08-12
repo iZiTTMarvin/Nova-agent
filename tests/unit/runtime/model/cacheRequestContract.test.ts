@@ -1,10 +1,10 @@
 /**
- * T0-1 / T2-3：多 provider 请求体契约快照
+ * 多 provider 请求体契约快照
  *
  * 通过 mock fetch 捕获最终 JSON body，固化：
  * - cacheStrategy='anthropic' 时 cache_control 只在现有 marker 位置
  * - generic + cacheStrategy='auto' 时绝不出现 cache_control / prompt_cache_key / reasoning_content
- * - deepseek/kimi profile 按 reasoningReplay 规则输出 reasoning_content（T2-3）
+ * - deepseek/kimi profile 按 reasoningReplay 规则输出 reasoning_content
  * - tools 数组顺序与参数 JSON 键序在相同输入下逐字节稳定
  *
  * 覆盖：普通文本、多工具并行、图片投影、压缩内部请求、取消前半完成工具调用。
@@ -146,7 +146,7 @@ const IMG_BLOCK = {
   image_url: { url: 'data:image/png;base64,abc123' }
 }
 
-describe('T0-1 请求体契约快照（改造前基线）', () => {
+describe('请求体契约快照（改造前基线）', () => {
   let interceptor: ReturnType<typeof interceptFetch> | null = null
 
   afterEach(() => {
@@ -325,7 +325,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
   })
 
-  describe('T2-3 reasoning_content 按 profile 白名单序列化', () => {
+  describe('reasoning_content 按 profile 白名单序列化', () => {
     /** thinking → tool → final 的典型多子轮历史 */
     const REASONING_HISTORY: ChatMessage[] = [
       { role: 'user', content: '分析并修复' },
@@ -485,7 +485,7 @@ describe('T0-1 请求体契约快照（改造前基线）', () => {
     })
   })
 
-  describe('T2-4 prompt_cache_key 白名单注入', () => {
+  describe('prompt_cache_key 白名单注入', () => {
     const SESSION_KEY = 'sess-route-key-abc'
 
     it('kimi + 有 promptCacheKey → body 出现 prompt_cache_key', async () => {

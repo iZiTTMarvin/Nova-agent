@@ -1,5 +1,5 @@
 /**
- * turnProcessModel 分区单测（T1~T10）
+ * turnProcessModel 分区单测
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -25,7 +25,7 @@ function toolBlock(
 }
 
 describe('buildTurnRenderModel', () => {
-  it('T1: 无 tool，仅 text → hasProcess=false，全进 answer', () => {
+  it('无 tool，仅 text → hasProcess=false，全进 answer', () => {
     const blocks: RendererMessageBlock[] = [{ type: 'text', content: '结论全文' }]
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
     expect(model.hasProcess).toBe(false)
@@ -34,7 +34,7 @@ describe('buildTurnRenderModel', () => {
     expect(model.answerUnits[0].kind).toBe('block')
   })
 
-  it('T2: text → tool → text，最后 text 在 answer；前 text 在 process', () => {
+  it('text → tool → text，最后 text 在 answer；前 text 在 process', () => {
     const blocks: RendererMessageBlock[] = [
       { type: 'text', content: '中间说明' },
       toolBlock('1', 'read', { path: 'a.ts' }),
@@ -53,7 +53,7 @@ describe('buildTurnRenderModel', () => {
     }
   })
 
-  it('T3: tool → text → tool → text，仅最后 text 在 answer', () => {
+  it('tool → text → tool → text，仅最后 text 在 answer', () => {
     const blocks: RendererMessageBlock[] = [
       toolBlock('1', 'bash', { command: 'npm test' }),
       { type: 'text', content: '中间' },
@@ -67,7 +67,7 @@ describe('buildTurnRenderModel', () => {
     }
   })
 
-  it('T4: todo_write 由顶部面板统一展示，不进 bubble 也不进 process', () => {
+  it('todo_write 由顶部面板统一展示，不进 bubble 也不进 process', () => {
     const blocks: RendererMessageBlock[] = [
       toolBlock('t1', 'todo_write', { todos: [] }),
       toolBlock('1', 'read', { path: 'a.ts' }),
@@ -159,7 +159,7 @@ describe('buildTurnRenderModel', () => {
     expect(model.answerUnits.filter(u => u.kind === 'tool')).toHaveLength(0)
   })
 
-  it('T6: 连续 read×3 → process timeline 含 toolGroup', () => {
+  it('连续 read×3 → process timeline 含 toolGroup', () => {
     const blocks: RendererMessageBlock[] = [
       toolBlock('1', 'read', { path: 'a.ts' }),
       toolBlock('2', 'read', { path: 'b.ts' }),
@@ -170,7 +170,7 @@ describe('buildTurnRenderModel', () => {
     expect(model.processTimeline.some(s => s.kind === 'toolGroup')).toBe(true)
   })
 
-  it('T7: plan 模式隐藏 write → write 不影响 lastToolIndex，且不进 answerUnits', () => {
+  it('plan 模式隐藏 write → write 不影响 lastToolIndex，且不进 answerUnits', () => {
     const blocks: RendererMessageBlock[] = [
       toolBlock('r1', 'read', { path: 'a.ts' }),
       toolBlock('w1', 'write', { path: 'hidden.ts', content: 'x' }),
@@ -187,7 +187,7 @@ describe('buildTurnRenderModel', () => {
     }
   })
 
-  it('T9: 无 blocks，有 toolCalls → 降级路径正确', () => {
+  it('无 blocks，有 toolCalls → 降级路径正确', () => {
     const toolCalls: ExtendedToolCall[] = [
       { id: '1', name: 'read', arguments: { path: 'a.ts' }, status: 'success' }
     ]
@@ -204,7 +204,7 @@ describe('buildTurnRenderModel', () => {
     expect(model.answerUnits.some(u => u.kind === 'block')).toBe(true)
   })
 
-  it('T10: 仅 thinking + tools → answer 为空，hasProcess=true', () => {
+  it('仅 thinking + tools → answer 为空，hasProcess=true', () => {
     const blocks: RendererMessageBlock[] = [
       { type: 'thinking', content: '分析中' },
       toolBlock('1', 'bash', { command: 'npm test' })

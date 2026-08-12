@@ -1,7 +1,7 @@
 /**
  * ObservationCapture — 工具轨迹采集（纯逻辑，零 LLM，内存 working buffer）
  *
- * 默认由 memoryCaptureEnabled 门控；P2-2 仅缓冲不落盘。
+ * 默认由 memoryCaptureEnabled 门控；仅缓冲不落盘。
  */
 import { createHash } from 'node:crypto'
 import { resolveToolArg } from '../tools/toolArgResolver'
@@ -287,7 +287,7 @@ export class ObservationCapture {
     this.appendToBuffer(params.sessionId, observation)
   }
 
-  /** message_end：轮次结束清理孤儿 pending，缓冲保留供 P2-3 drain */
+  /** message_end：轮次结束清理孤儿 pending，缓冲保留供 drain */
   onMessageEnd(sessionId: string): void {
     this.pruneExpiredFingerprints()
     this.pruneOrphanPendingForSession(sessionId)
@@ -298,7 +298,7 @@ export class ObservationCapture {
     return this.buffers.get(sessionId) ?? []
   }
 
-  /** P2-3 巩固时取出并清空 */
+  /** 巩固时取出并清空 */
   drainWorkingBuffer(sessionId: string): MemoryObservation[] {
     const items = this.buffers.get(sessionId) ?? []
     this.buffers.delete(sessionId)

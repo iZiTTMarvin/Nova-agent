@@ -135,7 +135,7 @@ describe('运行中会话切回恢复', () => {
     })
   })
 
-  it('错过 message_start 时首个 delta 自动创建 assistant 消息壳', () => {
+  it('错过 message_start 时首个 delta 自动创建 assistant 消息壳（文本进活跃回合）', () => {
     useChatStore.setState({
       currentSessionId: sessionId,
       messages: [userMessage],
@@ -148,13 +148,16 @@ describe('运行中会话切回恢复', () => {
       { kind: 'text', messageId, delta: '继续输出' }
     ])
 
-    const assistant = useChatStore.getState().messages.find(message => message.id === messageId)
+    const state = useChatStore.getState()
+    const assistant = state.messages.find(message => message.id === messageId)
+    // 消息壳被自动补建；流式文本进入活跃回合（messages 内容仍为空）
     expect(assistant).toMatchObject({
       id: messageId,
       sessionId,
-      role: 'assistant',
-      content: '继续输出'
+      role: 'assistant'
     })
+    expect(assistant?.content).toBe('')
+    expect(state.liveTurn[messageId]).toEqual({ type: 'text', content: '继续输出' })
   })
 
   it('迟到的 load-session 不能覆盖切回后已经收到的实时内容', async () => {

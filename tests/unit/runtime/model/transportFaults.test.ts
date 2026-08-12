@@ -1,5 +1,5 @@
 /**
- * ModelTransport 故障注入（T0-2 → T1-1 转绿）
+ * ModelTransport 故障注入（转绿）
  *
  * 四种故障形态：永不返回响应头 / 有头无首 token / 输出一半后永久静默 / body 抛 ECONNRESET。
  * 通过 ChatOptions.transportTimeouts 把窗口压到秒级，避免单测等待默认 30–90s。
@@ -50,7 +50,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('ModelTransport 故障注入（T1-1）', () => {
+describe('ModelTransport 故障注入', () => {
   it('永不返回响应头 → 在 connect timeout 窗口内结束 attempt', async () => {
     vi.stubGlobal(
       'fetch',
@@ -202,7 +202,7 @@ describe('ModelTransport 故障注入（T1-1）', () => {
     const next = iter.next()
     setTimeout(() => controller.abort(), 20)
     const result = await next
-    // T2-5：成功路径先 yield wire_snapshot，再 message_start
+    // 成功路径先 yield wire_snapshot，再 message_start
     expect(result.value.type).toBe('wire_snapshot')
     const startEvent = await iter.next()
     expect(startEvent.value.type).toBe('message_start')

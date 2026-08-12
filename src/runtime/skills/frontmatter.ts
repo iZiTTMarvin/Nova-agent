@@ -195,7 +195,7 @@ export function parseSkillMarkdown(content: string, opts: ParseSkillOptions): Sk
 
   for (const key of UNIMPLEMENTED_FIELDS) {
     if (hasYamlField(data, key)) {
-      // S5：仅在 dev 环境下提示，避免生产环境向用户暴露内部实现细节（这些字段
+      // 仅在 dev 环境下提示，避免生产环境向用户暴露内部实现细节（这些字段
       // 当前是 silently ignored，对用户无感）。开发期可借助 NODE_ENV !== production
       // 提示技能作者该字段未实现；生产环境直接静默忽略。
       if (process.env.NODE_ENV !== 'production') {

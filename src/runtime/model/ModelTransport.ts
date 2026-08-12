@@ -1,5 +1,5 @@
 /**
- * ModelTransport — 模型 HTTP/SSE 传输边界（长任务阶段 1）
+ * ModelTransport — 模型 HTTP/SSE 传输边界（长任务）
  *
  * 职责：
  * - 组合用户取消信号 + attempt 级 AbortController

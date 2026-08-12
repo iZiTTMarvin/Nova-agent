@@ -1,5 +1,5 @@
 /**
- * P0-2：lingering handle / generation fencing 契约
+ * lingering handle / generation fencing 契约
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'

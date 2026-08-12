@@ -29,6 +29,7 @@ SPEC.md
 TASKS.md
 docs/*
 !docs/nova-harness-token-efficiency-audit.md
+!docs/perf-long-conversation-research.md
 .claude
 .commandcode
 .kilo

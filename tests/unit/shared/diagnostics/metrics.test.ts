@@ -1,5 +1,5 @@
 /**
- * T0-4 metrics 单元测试：默认关闭、开启后可记录 attempt/TTFT/append/readState
+ * metrics 单元测试：默认关闭、开启后可记录 attempt/TTFT/append/readState
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
@@ -15,7 +15,7 @@ import {
   registerMetricSink
 } from '../../../../src/shared/diagnostics/metrics'
 
-describe('T0-4 结构化指标埋点', () => {
+describe('结构化指标埋点', () => {
   const prev = process.env.NOVA_METRICS
 
   beforeEach(() => {

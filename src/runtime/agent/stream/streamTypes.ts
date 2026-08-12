@@ -1,7 +1,7 @@
 /**
  * streamTypes — StreamProcessor 输入/输出契约（PRD §6.3）
  *
- * 本阶段（Phase 1）只定义类型。Phase 2 才实现 StreamProcessor 类，把
+ * 本阶段只定义类型，StreamProcessor 在后续实现，把
  * sendMessage 中 modelPool.chat 起、到兜底解析结束的整段搬入。
  *
  * 设计理念（PRD §0 / 附录 A）：解析下沉到 StreamProcessor——loop 永远只拿
@@ -74,14 +74,14 @@ export interface StreamRunParams {
 /**
  * StreamProcessor 契约（PRD §6.3）。
  *
- * Phase 2 实现：内部封装 dialect 策略选择、scanner 生命周期、三层兜底解析、
+ * 实现：内部封装 dialect 策略选择、scanner 生命周期、三层兜底解析、
  * RecoveryStateMachine 重试、FallbackDecider 降级、context_overflow 压缩重试。
  * 所有流式事件由内部经 deps.emit 发射，时机与现状 §4.2 一致。
  *
  * 关键约定（PRD §6.3）：run 返回 retry 等价于现状的 shouldRetryChat=true; continue；
  * 返回 error 等价于现状在流内 return 的终态；返回 assistant 后由 runAgentLoop 接管。
  *
- * 本阶段（Phase 1）仅为类型占位，StreamProcessor 类在 Phase 2 创建。
+ * 本阶段仅为类型占位，StreamProcessor 类在后续创建。
  */
 export interface StreamProcessorLike {
   run(params: StreamRunParams): Promise<TurnStreamResult>

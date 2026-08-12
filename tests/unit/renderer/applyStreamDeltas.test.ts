@@ -19,8 +19,9 @@ describe('useChatStore.applyStreamDeltas', () => {
     resetChatStoreForTests()
   })
 
-  it('单次 batch 含多个 text delta 应只产生一次 setState（合并到同一消息）', () => {
+  it('单次 batch 含多个 text delta 合并到活跃回合，messages 引用不变', () => {
     useChatStore.getState().handleMessageStart('msg_1')
+    const messagesRefBefore = useChatStore.getState().messages
 
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_1', delta: '你' },
@@ -29,12 +30,20 @@ describe('useChatStore.applyStreamDeltas', () => {
       { kind: 'text', messageId: 'msg_1', delta: 'Nova' }
     ])
 
-    const msg = useChatStore.getState().messages[0]
-    expect(msg.content).toBe('你好，Nova')
-    expect(msg.blocks).toEqual([{ type: 'text', content: '你好，Nova' }])
+    // text 只进活跃回合，messages 不动
+    expect(useChatStore.getState().messages).toBe(messagesRefBefore)
+    expect(useChatStore.getState().messages[0].content).toBe('')
+    expect(useChatStore.getState().liveTurn['msg_1']).toEqual({ type: 'text', content: '你好，Nova' })
+
+    // 轮次终态 fold 后内容逐字落到 messages
+    useChatStore.getState().handleToolCallStart('msg_1', 'tc_fold', 'read')
+    const folded = useChatStore.getState().messages[0]
+    expect(folded.content).toBe('你好，Nova')
+    expect(folded.blocks?.[0]).toMatchObject({ type: 'text', content: '你好，Nova' })
+    expect(useChatStore.getState().liveTurn['msg_1']).toBeUndefined()
   })
 
-  it('同一 batch 内的 thinking 与 text 应分别累加到对应 block', () => {
+  it('同一 batch 内 thinking→text 类型切换：thinking 封存进 messages，text 留活跃回合', () => {
     useChatStore.getState().handleMessageStart('msg_2')
 
     useChatStore.getState().applyStreamDeltas([
@@ -44,15 +53,15 @@ describe('useChatStore.applyStreamDeltas', () => {
     ])
 
     const msg = useChatStore.getState().messages[0]
+    // thinking 因类型切换被封存进 messages
     expect(msg.thinking).toBe('让我想想...')
-    expect(msg.content).toBe('结果')
-    expect(msg.blocks).toEqual([
-      { type: 'thinking', content: '让我想想...' },
-      { type: 'text', content: '结果' }
-    ])
+    expect(msg.blocks).toEqual([{ type: 'thinking', content: '让我想想...' }])
+    // text 仍在活跃回合（尚未到边界）
+    expect(msg.content).toBe('')
+    expect(useChatStore.getState().liveTurn['msg_2']).toEqual({ type: 'text', content: '结果' })
   })
 
-  it('不同 messageId 的 delta 应分别更新到对应消息，互不污染', () => {
+  it('不同 messageId 的 text delta 应分别累积到各自活跃回合，互不污染', () => {
     useChatStore.getState().handleMessageStart('msg_a')
     useChatStore.getState().handleMessageStart('msg_b')
 
@@ -62,9 +71,9 @@ describe('useChatStore.applyStreamDeltas', () => {
       { kind: 'text', messageId: 'msg_a', delta: 'A2' }
     ])
 
-    const messages = useChatStore.getState().messages
-    expect(messages[0].content).toBe('A1A2')
-    expect(messages[1].content).toBe('B1')
+    const liveTurn = useChatStore.getState().liveTurn
+    expect(liveTurn['msg_a']).toEqual({ type: 'text', content: 'A1A2' })
+    expect(liveTurn['msg_b']).toEqual({ type: 'text', content: 'B1' })
   })
 
   it('toolCall delta 应累积 argumentsRaw 并 partial 解析', () => {
@@ -102,23 +111,25 @@ describe('useChatStore.applyStreamDeltas', () => {
     expect(useChatStore.getState().messages).toEqual([])
   })
 
-  it('thinking 与 text 顺序正确：先全部 thinking，再切到 text 块', () => {
+  it('thinking 与 text 顺序正确：先全部 thinking 进活跃回合，text 到来时封存 thinking', () => {
     useChatStore.getState().handleMessageStart('msg_seq')
 
     useChatStore.getState().applyStreamDeltas([
       { kind: 'thinking', messageId: 'msg_seq', delta: '思考1' },
       { kind: 'thinking', messageId: 'msg_seq', delta: '思考2' }
     ])
+    // thinking 先入活跃回合
+    expect(useChatStore.getState().liveTurn['msg_seq']).toEqual({ type: 'thinking', content: '思考1思考2' })
 
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_seq', delta: '开始正文' }
     ])
 
     const msg = useChatStore.getState().messages[0]
-    expect(msg.blocks).toEqual([
-      { type: 'thinking', content: '思考1思考2' },
-      { type: 'text', content: '开始正文' }
-    ])
+    // text 到来触发类型切换：thinking 封存进 messages，text 进入活跃回合
+    expect(msg.blocks).toEqual([{ type: 'thinking', content: '思考1思考2' }])
+    expect(msg.thinking).toBe('思考1思考2')
+    expect(useChatStore.getState().liveTurn['msg_seq']).toEqual({ type: 'text', content: '开始正文' })
   })
 
   it('partial JSON 渐进解析：write 工具的 path/content 字段随参数累积逐步可见', () => {
@@ -160,10 +171,9 @@ describe('useChatStore.applyStreamDeltas', () => {
     })
   })
 
-  it('applyStreamDeltas 不应为同消息的 N 个 delta 创建 N 个数组拷贝（消息引用稳定）', () => {
+  it('纯 text delta 不创建 messages 数组拷贝（messages 引用严格稳定）', () => {
     useChatStore.getState().handleMessageStart('msg_ref')
 
-    // 5 个 text delta
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_ref', delta: 'a' },
       { kind: 'text', messageId: 'msg_ref', delta: 'b' },
@@ -172,20 +182,18 @@ describe('useChatStore.applyStreamDeltas', () => {
       { kind: 'text', messageId: 'msg_ref', delta: 'e' }
     ])
 
-    const msg = useChatStore.getState().messages[0]
-    expect(msg.content).toBe('abcde')
+    // 活跃回合累积；messages 完全不变
+    expect(useChatStore.getState().liveTurn['msg_ref']).toMatchObject({ type: 'text', content: 'abcde' })
+    expect(useChatStore.getState().messages[0].content).toBe('')
 
-    // 关键：所有其他消息引用保持不变（messages 数组只有索引 0 变更）
-    // 没法直接验证数组拷贝次数，但可以验证"其他消息没被错误影响"
-    // 把指针记录下来
     const refBefore = useChatStore.getState().messages
-    // 再发一次 delta
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_ref', delta: 'f' }
     ])
     const refAfter = useChatStore.getState().messages
-    // 数组长度不变
-    expect(refAfter.length).toBe(refBefore.length)
+    // 关键：流式 text 期间 messages 数组引用严格不变（Object.is），ChatPanel 不会重提交
+    expect(refAfter).toBe(refBefore)
+    expect(useChatStore.getState().liveTurn['msg_ref']).toMatchObject({ type: 'text', content: 'abcdef' })
   })
 
   it('混合 batch：同一 batch 内同时含多 messageId 的 text + toolCall delta，应在一次 setState 中各自正确合并', () => {
@@ -208,14 +216,15 @@ describe('useChatStore.applyStreamDeltas', () => {
     const a = state.messages[0]
     const b = state.messages[1]
 
-    // msg_a: 文本累积
-    expect(a.content).toBe('AA2')
-    expect(a.blocks).toEqual([{ type: 'text', content: 'AA2' }])
+    // msg_a: 纯文本 → 活跃回合（messages 未动）
+    expect(a.content).toBe('')
+    expect(state.liveTurn['msg_a']).toEqual({ type: 'text', content: 'AA2' })
     // msg_a 的 toolCalls 由 handleMessageStart 初始化为 []（不是 undefined）
     expect(a.toolCalls).toEqual([])
 
-    // msg_b: 文本 + toolCall partial 解析
+    // msg_b: 文本被随后的 toolCall 封存进 messages + toolCall partial 解析
     expect(b.content).toBe('B')
+    expect(b.blocks?.map(block => block.type)).toEqual(['tool', 'text'])
     expect(b.toolCalls).toBeDefined()
     expect(b.toolCalls![0].arguments).toEqual({ path: 'a.ts' })
     expect(state.streamingToolArgs['tc_b1']).toBe('{"path":"a.ts"}')
@@ -313,14 +322,17 @@ describe('useChatStore.applyStreamDeltas', () => {
     expect(ordered.blocks?.map(b => b.type)).toEqual(['text', 'tool'])
     expect(ordered.blocks?.[0]).toMatchObject({ type: 'text', content: '调用前先说明' })
 
-    // 反例：若 tool 块先占位、text 后 flush，会把旁白错挂到 tool 之后
+    // 反例对照：tool 块先占位、text 后到 → text 进入活跃回合（挂在 tool 之后），
+    // 与第一段「text 在 tool 之前 → 封存为 [text, tool]」形成顺序对照。
     useChatStore.getState().handleMessageStart('msg_wrong')
     useChatStore.getState().handleToolCallStart('msg_wrong', 'tc_wrong', 'read')
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_wrong', delta: '本应在前面的旁白' }
     ])
     const wrong = useChatStore.getState().messages.find(m => m.id === 'msg_wrong')
-    expect(wrong?.blocks?.map(b => b.type)).toEqual(['tool', 'text'])
+    // text 尚未封存，messages 只有 tool 块；活跃回合保留 text（投影时位于 tool 之后）
+    expect(wrong?.blocks?.map(b => b.type)).toEqual(['tool'])
+    expect(useChatStore.getState().liveTurn['msg_wrong']).toEqual({ type: 'text', content: '本应在前面的旁白' })
   })
 
   it('handleToolCall 会剥掉正文末尾的伪工具调用 JSON，避免和真实工具卡片重复展示', () => {

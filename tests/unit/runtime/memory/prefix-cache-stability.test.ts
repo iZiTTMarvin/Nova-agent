@@ -1,5 +1,5 @@
 /**
- * P1-B4 关键回归：连续两条不同 user 消息时 system prompt 前缀逐字节稳定；
+ * 关键回归：连续两条不同 user 消息时 system prompt 前缀逐字节稳定；
  * L2 自动注入已停用，检索改由 memory_search 工具承担。
  */
 import { describe, it, expect } from 'vitest'
@@ -27,7 +27,7 @@ function createMemoryLoop(client: MockModelClient): AgentLoop {
   })
 }
 
-describe('prefix-cache-stability（P1-B4）', () => {
+describe('prefix-cache-stability', () => {
   it('连续两条不同 user 消息 system prompt 逐字节一致，且无 L2 尾部块', async () => {
     const client = new MockModelClient()
     client.addResponse({

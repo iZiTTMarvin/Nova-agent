@@ -1,7 +1,7 @@
 /**
- * MemorySettingsPanel — 跨会话记忆可观测/可编辑（P2-1）
+ * MemorySettingsPanel — 跨会话记忆可观测/可编辑
  *
- * 提供：打开记忆目录、scope 信息、文件列表编辑、采集开关（逻辑 P2-2 才接）。
+ * 提供：打开记忆目录、scope 信息、文件列表编辑、采集开关（逻辑才接）。
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'

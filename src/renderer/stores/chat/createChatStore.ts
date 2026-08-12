@@ -1,9 +1,11 @@
 import { create } from 'zustand'
+import { subscribeWithSelector } from 'zustand/middleware'
 import type { ChatState } from './types'
 import type { SessionDetail } from '../../../shared/session/types'
 import {
   createBranchSlice,
   createDiffSlice,
+  createLiveTurnSlice,
   createMessageSlice,
   createPaginationSlice,
   createRecoverySlice,
@@ -16,6 +18,7 @@ import {
   initialDiffState,
   initialPaginationState,
   resetBranchForkOnSessionSwitch,
+  resetLiveTurnOnSessionSwitch,
   resetMessageOnSessionSwitch,
   resetSendOnSessionSwitch,
   resetStreamOnSessionSwitch,
@@ -32,6 +35,7 @@ export function createChatStore(deps: ChatStoreCompositionDeps) {
     onSessionDetailHydrated: deps.onSessionDetailHydrated,
     buildSessionChangePatch: () => ({
       ...resetMessageOnSessionSwitch(),
+      ...resetLiveTurnOnSessionSwitch(),
       ...resetTurnLifecycleOnSessionSwitch(),
       ...resetSendOnSessionSwitch(),
       ...resetBranchForkOnSessionSwitch(),
@@ -46,16 +50,21 @@ export function createChatStore(deps: ChatStoreCompositionDeps) {
     }
   })
 
-  return create<ChatState>((set, get, api) => ({
-    ...createMessageSlice(set, get, api),
-    ...createStreamSlice(set, get, api),
-    ...createRecoverySlice(set, get, api),
-    ...createTurnLifecycleSlice(set, get, api),
-    ...createSessionSlice(set, get, api),
-    ...createSendSlice(set, get, api),
-    ...createBranchSlice(set, get, api),
-    ...createDiffSlice(set, get, api),
-    ...createPaginationSlice(set, get, api),
-    ...createWorkspaceSync(set, get, api)
-  }))
+  // subscribeWithSelector 不改变现有 selector hook 行为，仅为 transient 订阅铺路：
+  // 后续可让活跃项直接订阅 liveTurn 字节，彻底绕开 React 重渲染层级。
+  return create<ChatState>()(
+    subscribeWithSelector((set, get, api) => ({
+      ...createMessageSlice(set, get, api),
+      ...createLiveTurnSlice(set, get, api),
+      ...createStreamSlice(set, get, api),
+      ...createRecoverySlice(set, get, api),
+      ...createTurnLifecycleSlice(set, get, api),
+      ...createSessionSlice(set, get, api),
+      ...createSendSlice(set, get, api),
+      ...createBranchSlice(set, get, api),
+      ...createDiffSlice(set, get, api),
+      ...createPaginationSlice(set, get, api),
+      ...createWorkspaceSync(set, get, api)
+    }))
+  )
 }

@@ -63,7 +63,7 @@ export interface AskQuestionResult {
 export interface AskQuestionRequest {
   requestId: string
   questions: AskQuestionItem[]
-  /** 会话归属（阶段 2）；旧事件可能缺失，snapshot-first 路径必有 */
+  /** 会话归属；旧事件可能缺失，snapshot-first 路径必有 */
   sessionId?: string
   /** 当前 assistant 消息 id */
   messageId?: string

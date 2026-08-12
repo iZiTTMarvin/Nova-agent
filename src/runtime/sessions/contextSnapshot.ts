@@ -1,5 +1,5 @@
 /**
- * 上下文快照装配逻辑（T2.6 / T2.7 共享实现）
+ * 上下文快照装配逻辑（共享实现）
  *
  * agentHandler 与单测共用本模块，避免测试镜像与生产闭包漂移。
  * 约束：只读写 context-snapshot.json，不修改 session.messages。

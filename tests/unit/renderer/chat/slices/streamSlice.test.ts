@@ -25,28 +25,30 @@ describe('streamSlice', () => {
     unsubscribe()
   })
 
-  it('连续 text 与 thinking delta 保持最后一个 block 对象引用不变', () => {
+  it('纯 text/thinking delta 只写活跃回合：messages 引用稳定，liveTurn 累积', () => {
     useChatStore.getState().handleMessageStart('msg_text')
     useChatStore.getState().handleMessageStart('msg_thinking')
+    const messagesRefBefore = useChatStore.getState().messages
+
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_text', delta: 'a' },
       { kind: 'thinking', messageId: 'msg_thinking', delta: 'x' }
     ])
-
-    const textBlock = useChatStore.getState().messages.find(message => message.id === 'msg_text')?.blocks?.at(-1)
-    const thinkingBlock = useChatStore.getState().messages.find(message => message.id === 'msg_thinking')?.blocks?.at(-1)
+    // messages 完全没动 —— 顶层不再因流式文本每帧重提交
+    expect(useChatStore.getState().messages).toBe(messagesRefBefore)
+    expect(useChatStore.getState().liveTurn['msg_text']).toMatchObject({ type: 'text', content: 'a' })
+    expect(useChatStore.getState().liveTurn['msg_thinking']).toMatchObject({ type: 'thinking', content: 'x' })
+    const liveTextRef = useChatStore.getState().liveTurn['msg_text']
 
     useChatStore.getState().applyStreamDeltas([
       { kind: 'text', messageId: 'msg_text', delta: 'b' },
       { kind: 'thinking', messageId: 'msg_thinking', delta: 'y' }
     ])
-
-    const nextTextBlock = useChatStore.getState().messages.find(message => message.id === 'msg_text')?.blocks?.at(-1)
-    const nextThinkingBlock = useChatStore.getState().messages.find(message => message.id === 'msg_thinking')?.blocks?.at(-1)
-    expect(nextTextBlock).toBe(textBlock)
-    expect(nextTextBlock).toMatchObject({ type: 'text', content: 'ab' })
-    expect(nextThinkingBlock).toBe(thinkingBlock)
-    expect(nextThinkingBlock).toMatchObject({ type: 'thinking', content: 'xy' })
+    expect(useChatStore.getState().messages).toBe(messagesRefBefore)
+    expect(useChatStore.getState().liveTurn['msg_text']).toMatchObject({ type: 'text', content: 'ab' })
+    expect(useChatStore.getState().liveTurn['msg_thinking']).toMatchObject({ type: 'thinking', content: 'xy' })
+    // 活跃块每批是新引用，订阅才能感知并驱动活跃 MessageItem 重渲染
+    expect(useChatStore.getState().liveTurn['msg_text']).not.toBe(liveTextRef)
   })
 
   it('迟到 partial delta 不覆盖已 finalize 的完整 arguments', () => {

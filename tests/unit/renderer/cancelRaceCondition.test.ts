@@ -1,5 +1,5 @@
 /**
- * T2-4：取消由 RunCoordinator 确认终态
+ * 取消由 RunCoordinator 确认终态
  *
  * 旧行为：5s 本地兜底强制复位 isGenerating（会造成「界面说停了，后台还在跑」）。
  * 新行为：立即 cancelling；等 run:snapshot 终态或 force-terminate 后才 idle。
@@ -20,7 +20,7 @@ beforeEach(() => {
   } as unknown as Window & typeof globalThis
 })
 
-describe('T2-4 cancel 由 RunCoordinator 确认终态', () => {
+describe('cancel 由 RunCoordinator 确认终态', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     const { resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')

@@ -92,7 +92,7 @@ describe('ContextIndicator', () => {
       vi.advanceTimersByTime(100)
     })
 
-    // T1-3：无 usage 必须显示「未报告」，不得伪装成 0 命中
+    // 无 usage 必须显示「未报告」，不得伪装成 0 命中
     expect(renderer.container.querySelector('.context-usage__summary')?.textContent).toBe('未报告')
     expect(renderer.container.querySelector('.context-usage__hint')?.textContent ?? '').toContain('不会把未知显示为 0')
 

@@ -30,9 +30,9 @@ import { extractTextFromContent } from './types'
  *
  * 因此在发送边界（仅 OpenAI 兼容客户端知道自己走严格协议）做一次规整，是适配器的职责，
  * 而非临时补丁。规整后保证：
- *   I1：每个 role:'tool' 必须存在“出现在它之前、且声明了同一 toolCallId”的 assistant.tool_calls，
+ *   每个 role:'tool' 必须存在“出现在它之前、且声明了同一 toolCallId”的 assistant.tool_calls，
  *       否则视为孤立消息丢弃。
- *   I2：assistant.tool_calls 中无对应 tool 响应的项被剥离；若整条 assistant 的 tool_calls 全被剥离
+ *   assistant.tool_calls 中无对应 tool 响应的项被剥离；若整条 assistant 的 tool_calls 全被剥离
  *       且正文为空，则整条丢弃（该轮工具调用从未完成，保留无意义且会触发 400）。
  *
  * 返回新数组，不修改入参。

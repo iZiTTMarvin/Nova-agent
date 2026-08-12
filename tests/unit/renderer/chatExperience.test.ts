@@ -52,7 +52,7 @@ function resetStore(messages: ExtendedMessage[] = []) {
 describe('聊天体验回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // T06：MessageItem mount 时会调 get-message-diffs，需要提供默认 mock
+    // MessageItem mount 时会调 get-message-diffs，需要提供默认 mock
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'get-message-diffs') {
         return Promise.resolve({ diffs: [], reviews: {} })
@@ -146,7 +146,7 @@ describe('聊天体验回归', () => {
     renderer.unmount()
   })
 
-  it('T03：流式文件卡片完成后自动折叠，减少大段代码占用的视口', () => {
+  it('流式文件卡片完成后自动折叠，减少大段代码占用的视口', () => {
     const args = {
       path: 'src/example.ts',
       content: 'export const value = 1\nexport const next = 2'
@@ -168,7 +168,7 @@ describe('聊天体验回归', () => {
       args
     }))
 
-    // T03：完成后自动折叠，不再保持展开
+    // 完成后自动折叠，不再保持展开
     expect(renderer.container.querySelectorAll('.streaming-card__body')).toHaveLength(0)
 
     renderer.unmount()

@@ -231,6 +231,19 @@ describe('renderer chat store boundaries', () => {
           'slices/paginationSlice.ts',
           'slices/workspaceSyncSlice.ts'
         ])
+      },
+      {
+        // liveTurn 是流式瞬态累加器：拥有者负责初值/重置，流式与各边界 handler 在各自单次
+        // set 内写回或清空。匹配两种写形式：对象字面量键 `liveTurn:` 与赋值 `.liveTurn =`。
+        fields: /\bliveTurn\s*[:=]/,
+        allowed: new Set([
+          'slices/liveTurnSlice.ts',
+          'slices/streamSlice.ts',
+          'slices/turnLifecycleSlice.ts',
+          'slices/workspaceSyncSlice.ts',
+          'internal/focusedSessionReconcile.ts',
+          'internal/liveTurn.ts'
+        ])
       }
     ]
 

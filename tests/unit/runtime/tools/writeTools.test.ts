@@ -12,7 +12,7 @@ const CHECKPOINT_ROOT = join(process.cwd(), '.test-writetools-checkpoints')
 const SESSION_ID = 'test-session'
 const MESSAGE_ID = 'msg-001'
 
-/** 测试用 readState：beforeEach 中重建，确保测试间互不影响（与 I1 行为对齐） */
+/** 测试用 readState：beforeEach 中重建，确保测试间互不影响 */
 let testReadState = createReadState()
 
 function createContext(

@@ -1,12 +1,12 @@
 /**
- * T6-2 / T4-1：React 合并订阅已删除；hook 调用必须抛错。
+ * React 合并订阅已删除；hook 调用必须抛错。
  * 静态 getState/setState 仍可用（测试兼容），新测试请直接用子 store。
  */
 import { describe, expect, it } from 'vitest'
 import { useAppStore } from '../../../src/renderer/stores/useAppStore'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 
-describe('useAppStore 非 React facade（T6-2）', () => {
+describe('useAppStore 非 React facade', () => {
   it('误当作 React hook 调用时抛错，强制改用子 store', () => {
     expect(() => {
       useAppStore()

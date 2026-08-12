@@ -1,5 +1,5 @@
 /**
- * P1-C 回归：memoryEnabled:false 时无 L1/L2 记忆层；L2 带 skipCacheMarker。
+ * 回归：memoryEnabled:false 时无 L1/L2 记忆层；L2 带 skipCacheMarker。
  */
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
@@ -15,7 +15,7 @@ import { SystemPromptBuilder } from '../../../../src/runtime/agent/promptBuilder
 
 import type { MemorySearchHit } from '../../../../src/runtime/memory/types'
 
-describe('memory-disabled 回归（P1-C）', () => {
+describe('memory-disabled 回归', () => {
   it('memoryEnabled:false 时不构建 L1 memoryContext 与 L2 尾部', () => {
     const settings = { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: false }
     expect(settings.memoryEnabled).toBe(false)
@@ -73,7 +73,7 @@ describe('采集门控由 memoryEnabled 一键统控', () => {
   })
 })
 
-describe('L2 skipCacheMarker（P1-C）', () => {
+describe('L2 skipCacheMarker', () => {
   it('buildL2ContextMessage 返回 user 消息且带 skipCacheMarker', () => {
     const msg = buildL2ContextMessage('=== Relevant Memory ===\n片段')
     expect(msg).not.toBeNull()

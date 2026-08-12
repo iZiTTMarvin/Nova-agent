@@ -17,14 +17,14 @@ import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
 
 /**
- * 阶段一止血测试：压缩触发后 session.messages 不得被截断。
+ * 止血测试：压缩触发后 session.messages 不得被截断。
  *
- * 说明：agentHandler 里的 onCompaction 是 IPC 内联闭包，阶段一删成 no-op 后
+ * 说明：agentHandler 里的 onCompaction 是 IPC 内联闭包，删成 no-op 后
  * 无法直接单测 handler 本体。本文件用两层护栏：
  * 1. legacyOnCompactionOverwrite —— 复刻已删除的旧版落盘逻辑，证明「覆盖会截断」可被测出；
  * 2. 真实 AgentLoop 压缩 + 不落盘回调 —— 对照 capturedContext，断言 Store 未被改写。
  *
- * 阶段二将改为单测 SessionStore.saveContextSnapshot（只写快照、不碰 messages）。
+ * 后续将改为单测 SessionStore.saveContextSnapshot（只写快照、不碰 messages）。
  */
 
 function createTestRegistry(): ToolRegistry {
@@ -44,7 +44,7 @@ function createTestRegistry(): ToolRegistry {
 }
 
 /**
- * 复刻阶段一之前 agentHandler.onCompaction 的落盘逻辑（仅用于测试对照）。
+ * 复刻此前 agentHandler.onCompaction 的落盘逻辑（仅用于测试对照）。
  * 生产代码已删除；若有人把同等逻辑接回 handler，本 helper 的断言模式应能抓出回归。
  */
 function legacyOnCompactionOverwrite(
@@ -139,7 +139,7 @@ function injectCompactionTriggerHistory(loop: AgentLoop): void {
   loop.injectHistory(history)
 }
 
-describe('阶段一：压缩不截断 session.messages', () => {
+describe('压缩不截断 session.messages', () => {
   let tmpDir: string
   let store: SessionStore
 
@@ -173,7 +173,7 @@ describe('阶段一：压缩不截断 session.messages', () => {
     expect(after.messages.some(m => m.id === 'user_0')).toBe(false)
   })
 
-  it('阶段一：真实压缩触发后 onCompaction 不落盘，SessionStore 历史完整保留', async () => {
+  it('真实压缩触发后 onCompaction 不落盘，SessionStore 历史完整保留', async () => {
     const session = makeLongSession(store)
     const originalMessages = structuredClone(session.messages)
     const sessionId = session.id
@@ -197,13 +197,13 @@ describe('阶段一：压缩不截断 session.messages', () => {
     const eventBus = new EventBus()
     let capturedContext: ChatMessage[] | null = null
 
-    // 阶段一 agentHandler 行为：不传落盘逻辑（此处用空回调捕获 compactedContext 做对照）
+    // agentHandler 行为：不传落盘逻辑（此处用空回调捕获 compactedContext 做对照）
     const loop = new AgentLoop(client, eventBus, {
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
       onCompaction: (compactedContext, _meta) => {
         capturedContext = compactedContext
-        // 阶段二：写快照，不写 session.messages（与 agentHandler 一致）
+        // 写快照，不写 session.messages（与 agentHandler 一致）
       }
     })
     loop.setToolRegistry(createTestRegistry())
@@ -231,7 +231,7 @@ describe('阶段一：压缩不截断 session.messages', () => {
     rmSync(shadowDir, { recursive: true, force: true })
   })
 
-  it('压缩后仍可通过 buildConversationContext + injectHistory 恢复完整历史（T1.2）', async () => {
+  it('压缩后仍可通过 buildConversationContext + injectHistory 恢复完整历史', async () => {
     const session = makeLongSession(store)
 
     const client = new MockModelClient()

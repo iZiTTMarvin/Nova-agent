@@ -15,7 +15,7 @@ global.window = {
 } as unknown as Window & typeof globalThis
 
 /**
- * S2 流式工具调用 store 行为单测
+ * 流式工具调用 store 行为单测
  *
  * 核心验证点：
  * 1. handleToolCallStart → 创建 running 占位卡片 + 初始化 streamingToolArgs
@@ -25,7 +25,7 @@ global.window = {
  * 5. 无 start 的 handleToolCall 仍然正常创建新块（向后兼容）
  * 6. argumentsRaw 只存在于 renderer 层，不污染 shared 类型
  */
-describe('S2 流式工具调用 store 行为', () => {
+describe('流式工具调用 store 行为', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useAppStore.setState({
@@ -165,7 +165,7 @@ describe('S2 流式工具调用 store 行为', () => {
       expect(block.status).toBe('running')
     }
 
-    // Phase 3：取消只发 IPC，不动本地 messages
+    // 取消只发 IPC，不动本地 messages
     mockInvoke.mockResolvedValue(undefined)
     await useAppStore.getState().cancelExecution()
 

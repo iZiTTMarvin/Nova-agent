@@ -1,5 +1,5 @@
 /**
- * T0-3 → T2-3：切会话后交互入口应通过 snapshot-first 恢复
+ * 切会话后交互入口应通过 snapshot-first 恢复
  *
  * 修好后行为：
  * - 切走时 resetAgentRuntime 清空本地投影（避免串会话）
@@ -124,7 +124,7 @@ const permissionRequest: PendingPermissionRequest = {
   version: 1
 }
 
-describe('T2-3 切会话交互恢复（snapshot-first）', () => {
+describe('切会话交互恢复（snapshot-first）', () => {
   beforeEach(() => {
     resetAgentStoreForTests()
     resetWorkspaceDispatcherForTests()

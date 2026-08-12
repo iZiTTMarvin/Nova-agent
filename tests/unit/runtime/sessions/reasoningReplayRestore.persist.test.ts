@@ -1,7 +1,7 @@
 /**
- * T2-2（会话持久化侧）：deepseek profile 下落盘重启 / 快照 / 分支恢复 reasoning
+ * 会话持久化侧：deepseek profile 下落盘重启 / 快照 / 分支恢复 reasoning
  *
- * T0-2 的扁平断言保持不变（默认无 reasoningReplay）；本文件专测 provider-aware 路径。
+ * 扁平断言保持不变（默认无 reasoningReplay）；本文件专测 provider-aware 路径。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as fs from 'fs'
@@ -100,7 +100,7 @@ function nonSystemContext(loop: AgentLoop): ChatMessage[] {
   return loop.getContext().filter(m => m.role !== 'system')
 }
 
-describe('T2-2 会话持久化：deepseek reasoning 恢复', () => {
+describe('会话持久化：deepseek reasoning 恢复', () => {
   let tmpDir: string
 
   beforeEach(() => {

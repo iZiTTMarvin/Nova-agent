@@ -1,5 +1,5 @@
 /**
- * P1-A1：memory_fts trigram schema 集成验证（better-sqlite3 @ Node ABI）
+ * memory_fts trigram schema 集成验证（better-sqlite3 @ Node ABI）
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
@@ -9,7 +9,7 @@ import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { MEMORY_FILES_SCOPE_PATH_IDX, listMemorySchemaObjects } from '@runtime/memory/MemorySchema'
 import { upsertIndexedFile, searchIndexed } from '@runtime/memory/MemoryIndexer'
 
-describe('memory schema 集成（P1-A1）', () => {
+describe('memory schema 集成', () => {
   let tempDir: string | null = null
   let db: ReturnType<typeof openBetterSqliteMemoryDb> | null = null
 

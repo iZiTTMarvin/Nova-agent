@@ -527,7 +527,7 @@ export class RunCoordinator {
     }
   }
 
-  // ── 工具对账（T2-5） ─────────────────────────────────────
+  // ── 工具对账 ─────────────────────────────────────
 
   recordToolPhase(
     runId: string,

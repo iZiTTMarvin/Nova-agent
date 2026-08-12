@@ -8,7 +8,7 @@ import {
 import type { AgentEvent } from '../../../src/runtime/agent/types'
 
 /**
- * T1 主进程侧回归：emitLiveDiffUpdate 应只发 phase: 'live' 占位事件，
+ * 主进程侧回归：emitLiveDiffUpdate 应只发 phase: 'live' 占位事件，
  * 且不再调用 buildMessageDiffState 计算 LCS（否则会阻塞事件循环）。
  */
 
@@ -63,7 +63,7 @@ function makeCtx(eventBus: EventBus): MessageContext {
   }
 }
 
-describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
+describe('emitLiveDiffUpdate（主进程侧回归）', () => {
   beforeEach(() => {
     activeStreams.clear()
     buildMessageDiffStateSpy.mockClear()
@@ -163,7 +163,7 @@ describe('emitLiveDiffUpdate（T1 主进程侧回归）', () => {
   })
 
   /**
-   * T1 竞态：tool_result 排队的 setImmediate 还没执行，message_end 就先到了。
+   * 竞态：tool_result 排队的 setImmediate 还没执行，message_end 就先到了。
    * 此时累积器已被删除，late live 不应再 emit diff_update（否则会把已写入
    * messageDiffs 的最终数据压回 loading 骨架，且没有后续 final 来清掉）。
    */

@@ -22,7 +22,7 @@ function createNoopSearchDb(): MemoryDb {
   }
 }
 
-describe('MemoryService 索引行为（P1-A4 单测 mock）', () => {
+describe('MemoryService 索引行为（单测 mock）', () => {
   let tempDir: string
   let memoryRoot: string
   let scopeId: string

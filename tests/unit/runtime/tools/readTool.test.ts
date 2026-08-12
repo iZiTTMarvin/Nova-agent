@@ -33,7 +33,7 @@ function stripWorkspaceHeader(output: string): string {
   return output.startsWith(prefix) ? output.slice(prefix.length) : output
 }
 
-/** 测试用 readState：beforeEach 中重建（与 I1 行为对齐） */
+/** 测试用 readState：beforeEach 中重建 */
 let testReadState = createReadState()
 
 function createContext(overrides?: Partial<ToolContext>): ToolContext {

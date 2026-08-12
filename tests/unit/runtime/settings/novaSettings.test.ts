@@ -121,7 +121,7 @@ describe('novaSettings', () => {
     expect(s.memoryAutoMergeEnabled).toBe(false)
   })
 
-  it('P2 采集设置可保存并读回', async () => {
+  it('采集设置可保存并读回', async () => {
     const { loadNovaSettings, saveNovaSettings } = await import(
       '../../../../src/runtime/settings/novaSettings'
     )

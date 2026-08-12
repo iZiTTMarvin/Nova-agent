@@ -27,6 +27,15 @@ export type RendererMessageBlock =
   | RendererToolBlock
   | ImageBlock
 
+/**
+ * 流式「活跃回合」的未封存尾部块：text 或 thinking 之一。只活在 liveTurn 瞬态里，
+ * 边界事件时 fold 回 messages。不持久化、不参与 IPC。
+ */
+export interface LiveBlock {
+  type: 'text' | 'thinking'
+  content: string
+}
+
 /** 渲染器专用 ToolCall：携带执行状态、结果、原始 JSON */
 export interface ExtendedToolCall extends ToolCall {
   result?: string
@@ -47,7 +56,7 @@ export interface ExtendedMessage {
   blocks?: RendererMessageBlock[]
   /**
    * true 表示本条消息是 cancel 中断产生的（由主进程 message-end 事件携带的
-   * interrupted 字段写入，前端在 Phase 3 用于 UI 区分"已中断"和"已完成"）。
+   * interrupted 字段写入，前端用于 UI 区分"已中断"和"已完成"）。
    * 普通完成的消息不写此字段，UI 视为未设置即可。
    */
   interrupted?: boolean
@@ -77,7 +86,7 @@ export interface PendingPermissionRequest {
   commands?: string[]
   /** 本次请求对应的工具卡片 id 列表，内联放行据此锚定到具体卡片（锚点取末尾一张） */
   toolCallIds?: string[]
-  /** InteractionInbox 归属（阶段 2，可选兼容旧事件） */
+  /** InteractionInbox 归属（可选兼容旧事件） */
   interactionId?: string
   runId?: string
   sessionId?: string

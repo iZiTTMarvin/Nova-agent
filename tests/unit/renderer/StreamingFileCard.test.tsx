@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * StreamingFileCard — Step 2 性能优化行为测试
+ * StreamingFileCard — 性能优化行为测试
  *
  * 覆盖：
  * 1. running 阶段不调用 highlightLine（纯文本），success 阶段才高亮
@@ -35,7 +35,7 @@ function renderCard(props: StreamingFileCardProps) {
   return renderDom(<StreamingFileCard {...props} />)
 }
 
-describe('StreamingFileCard Step 2 优化', () => {
+describe('StreamingFileCard 优化', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))

@@ -1,5 +1,5 @@
 /**
- * T5-1 SessionStore O(1) 热追加 / patch / 索引
+ * SessionStore O(1) 热追加 / patch / 索引
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
@@ -30,7 +30,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe('T5-1 SessionStore O(1) 热追加', () => {
+describe('SessionStore O(1) 热追加', () => {
   it('appendMessageFast：messageCount = previousActiveCount + 1，不依赖全图扫描结果', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/ws')

@@ -20,6 +20,7 @@ import { ToolCallGroup } from './ToolCallGroup'
 import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
+import { useEffectiveMessage } from './useEffectiveMessage'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
@@ -79,7 +80,7 @@ export interface MessageItemProps {
   diffCache?: MessageDiffCache
   isDiffLoading: boolean
   diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
-  /** T06：按需加载 diff 的回调，MessageItem 挂载时调用 */
+  /** 按需加载 diff 的回调，MessageItem 挂载时调用 */
   onLoadDiffs?: (sessionId: string, messageId: string) => void
 }
 
@@ -217,7 +218,7 @@ function renderMessageUnit(
 // ── 组件主体 ─────────────────────────────────────────────────
 
 function MessageItemInner({
-  msg,
+  msg: msgProp,
   renderMode = 'live',
   isGenerating,
   isPausedForInput = false,
@@ -242,6 +243,9 @@ function MessageItemInner({
   diffPlaceholders,
   onLoadDiffs
 }: MessageItemProps) {
+  // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
+  // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
+  const msg = useEffectiveMessage(msgProp)
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user'
   const isStaticRow = renderMode === 'static'
@@ -253,7 +257,7 @@ function MessageItemInner({
   // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停；static 行强制关闭。
   const streamingActive = isGenerating && !isPausedForInput && !isStaticRow
 
-  // T06：assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
+  // assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
   useEffect(() => {
     if (isAssistant && currentSessionId && onLoadDiffs && !diffCache && !isDiffLoading) {
       onLoadDiffs(currentSessionId, msg.id)

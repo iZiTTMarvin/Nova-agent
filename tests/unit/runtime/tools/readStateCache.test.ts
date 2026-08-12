@@ -1,5 +1,5 @@
 /**
- * T5-2 ReadStateCache 字节预算
+ * ReadStateCache 字节预算
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
@@ -12,7 +12,7 @@ import {
   metricReadStateStats
 } from '../../../../src/shared/diagnostics/metrics'
 
-describe('T5-2 ReadStateCache 字节预算', () => {
+describe('ReadStateCache 字节预算', () => {
   const prev = process.env.NOVA_METRICS
 
   beforeEach(() => {

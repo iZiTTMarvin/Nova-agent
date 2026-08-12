@@ -7,14 +7,17 @@ import type {
   RendererToolBlock
 } from '../types'
 import {
+  appendLiveBlock,
   bumpRevision,
   commitMessageList,
   emptyStreamTransientState,
+  removeLiveTurnEntry,
   stripInlinePseudoToolCalls
 } from '../internal'
 import type {
   ChatSliceCreator,
   ChatState,
+  LiveBlock,
   StreamDelta,
   StreamDeltaBatch,
   StreamSliceState
@@ -67,7 +70,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const msg = state.messages[idx]
       if (!msg) return state
       // 失败 attempt 的临时流式内容不能和下一次重试混合；已成功落盘的 tool_result
-      // 也不属于这次失败 attempt，因此一起清空并保留原消息壳。
+      // 也不属于这次失败 attempt，因此一起清空并保留原消息壳。活跃回合内容一并丢弃。
       const next = [...state.messages]
       next[idx] = {
         ...msg,
@@ -77,7 +80,15 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         blocks: [],
         _revision: (msg._revision ?? 0) + 1
       }
-      return commitMessageList(state, { nextMessages: next, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      const patch: Partial<ChatState> = commitMessageList(state, {
+        nextMessages: next,
+        nextIndex: state.messageIndexById,
+        skipWindowTrim: true
+      })
+      if (state.liveTurn[messageId]) {
+        patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      }
+      return patch
     })
   },
 
@@ -87,7 +98,10 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       if (idx === undefined) return state
       const msg = state.messages[idx]
       if (!msg) return state
-      const blocks = msg.blocks ? [...msg.blocks] : []
+      // @deprecated 路径仍可能与 applyStreamDeltas 混用：先 fold 活跃回合，避免 liveTurn 与 messages 分裂。
+      const live = state.liveTurn[messageId]
+      const base = live ? appendLiveBlock(msg, live) : msg
+      const blocks = base.blocks ? [...base.blocks] : []
       const last = blocks[blocks.length - 1]
       if (last && last.type === 'thinking') {
         blocks[blocks.length - 1] = { ...last, content: last.content + delta }
@@ -95,8 +109,10 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         blocks.push({ type: 'thinking', content: delta })
       }
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, thinking: (msg.thinking ?? '') + delta, blocks })
-      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      nextMessages[idx] = bumpRevision({ ...base, thinking: (base.thinking ?? '') + delta, blocks })
+      const patch: Partial<ChatState> = commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      return patch
     })
   },
 
@@ -106,7 +122,9 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       if (idx === undefined) return state
       const msg = state.messages[idx]
       if (!msg) return state
-      const blocks = msg.blocks ? [...msg.blocks] : []
+      const live = state.liveTurn[messageId]
+      const base = live ? appendLiveBlock(msg, live) : msg
+      const blocks = base.blocks ? [...base.blocks] : []
       const last = blocks[blocks.length - 1]
       if (last && last.type === 'text') {
         blocks[blocks.length - 1] = { ...last, content: last.content + delta }
@@ -114,8 +132,10 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         blocks.push({ type: 'text', content: delta })
       }
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, content: msg.content + delta, blocks })
-      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      nextMessages[idx] = bumpRevision({ ...base, content: base.content + delta, blocks })
+      const patch: Partial<ChatState> = commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      return patch
     })
   },
 
@@ -134,7 +154,11 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const msg = state.messages[idx]
       if (!msg) return state
 
-      const cleanedMessage = stripInlinePseudoToolCalls(msg.content, msg.blocks ? [...msg.blocks] : [])
+      // 工具调用前若仍有未封存的活跃文本/思考，先回收到 messages，再剥伪工具 JSON。
+      const live = state.liveTurn[messageId]
+      const base = live ? appendLiveBlock(msg, live) : msg
+
+      const cleanedMessage = stripInlinePseudoToolCalls(base.content, base.blocks ? [...base.blocks] : [])
       const blocks = cleanedMessage.blocks
       const existingBlockIdx = blocks.findIndex(
         b => b.type === 'tool' && b.toolCallId === toolCallId
@@ -163,7 +187,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         })
       }
 
-      const toolCalls = msg.toolCalls ? [...msg.toolCalls] : []
+      const toolCalls = base.toolCalls ? [...base.toolCalls] : []
       const tcIdx = toolCalls.findIndex(tc => tc.id === toolCallId)
       if (tcIdx !== -1) {
         const { argumentsRaw: _tcDrop, ...restTc } = toolCalls[tcIdx]
@@ -173,12 +197,14 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       }
 
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, content: cleanedMessage.content, toolCalls, blocks })
+      nextMessages[idx] = bumpRevision({ ...base, content: cleanedMessage.content, toolCalls, blocks })
       const { [toolCallId]: _drop2, ...restStreaming } = state.streamingToolArgs
-      return {
+      const patch: Partial<ChatState> = {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         streamingToolArgs: restStreaming
       }
+      if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      return patch
     })
   },
 
@@ -196,7 +222,11 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const msg = state.messages[idx]
       if (!msg) return state
 
-      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
+      // 工具调用前的文本/思考须先封存为终态块，避免错落到 tool 块之后。
+      const live = state.liveTurn[messageId]
+      const base = live ? appendLiveBlock(msg, live) : msg
+
+      const blocks: RendererMessageBlock[] = base.blocks ? [...base.blocks] : []
       blocks.push({
         type: 'tool',
         toolCallId,
@@ -206,14 +236,16 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         argumentsRaw: ''
       })
 
-      const toolCalls = msg.toolCalls ? [...msg.toolCalls, placeholder] : [placeholder]
+      const toolCalls = base.toolCalls ? [...base.toolCalls, placeholder] : [placeholder]
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, toolCalls, blocks })
+      nextMessages[idx] = bumpRevision({ ...base, toolCalls, blocks })
 
-      return {
+      const patch: Partial<ChatState> = {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: '' }
       }
+      if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      return patch
     })
   },
 
@@ -224,15 +256,18 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const msg = state.messages[idx]
       if (!msg) return state
 
+      const live = state.liveTurn[messageId]
+      const base = live ? appendLiveBlock(msg, live) : msg
+
       const prevRaw = state.streamingToolArgs[toolCallId] ?? ''
       const nextRaw = prevRaw + argumentsDelta
-      const existingBlock = msg.blocks?.find(
+      const existingBlock = base.blocks?.find(
         b => b.type === 'tool' && b.toolCallId === toolCallId
       )
       const toolName = existingBlock?.type === 'tool' ? existingBlock.toolName : ''
       const partialArgs = parsePartialToolArgs(toolName, nextRaw)
 
-      const blocks: RendererMessageBlock[] = msg.blocks ? [...msg.blocks] : []
+      const blocks: RendererMessageBlock[] = base.blocks ? [...base.blocks] : []
       const blockIdx = blocks.findIndex(
         b => b.type === 'tool' && b.toolCallId === toolCallId
       )
@@ -244,18 +279,20 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         } as RendererToolBlock
       }
 
-      const toolCalls = msg.toolCalls ? msg.toolCalls.map(tc =>
+      const toolCalls = base.toolCalls ? base.toolCalls.map(tc =>
         tc.id === toolCallId
           ? { ...tc, arguments: partialArgs, argumentsRaw: nextRaw }
           : tc
-      ) : msg.toolCalls
+      ) : base.toolCalls
 
       const nextMessages = state.messages.slice()
-      nextMessages[idx] = bumpRevision({ ...msg, blocks, toolCalls })
-      return {
+      nextMessages[idx] = bumpRevision({ ...base, blocks, toolCalls })
+      const patch: Partial<ChatState> = {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: nextRaw }
       }
+      if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
+      return patch
     })
   },
 
@@ -292,6 +329,9 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     if (deltas.length === 0) return
 
     // 同一帧内的所有 delta 必须在一次 set 中提交，避免每个片段各自触发订阅更新。
+    // text/thinking 只写活跃回合（liveTurn），不触碰 messages —— 流式期间 messages
+    // 引用稳定，ChatPanel 不再每帧重提交。仅当本批触发封存（类型切换 / 工具 delta）
+    // 或补建缺失消息壳时才写回 messages。
     set(state => {
       let nextMessages = state.messages
       let nextMessageIndex = state.messageIndexById
@@ -326,12 +366,19 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         arr.push(delta)
       }
 
-      if (!addedMissingMessage) {
-        nextMessages = state.messages.slice()
-      }
       const nextStreaming: Record<string, string> = { ...state.streamingToolArgs }
-      let messagesChanged = false
+      let nextLiveTurn = state.liveTurn
+      let messagesChanged = addedMissingMessage
+      let messagesCloned = addedMissingMessage
       let streamingChanged = false
+      let liveTurnChanged = false
+
+      const ensureMessagesCloned = () => {
+        if (!messagesCloned) {
+          nextMessages = state.messages.slice()
+          messagesCloned = true
+        }
+      }
 
       for (const [messageId, messageDeltas] of byMessageId) {
         const idx = nextMessageIndex[messageId]
@@ -339,41 +386,45 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         const msg = nextMessages[idx]
         if (!msg) continue
 
-        let workingBlocks: RendererMessageBlock[] | undefined = msg.blocks ? [...msg.blocks] : undefined
+        // 活跃尾部块跨 batch 续接：从上一帧的 liveTurn 继续累积。
+        const existingLive = state.liveTurn[messageId]
+        let open: LiveBlock | undefined = existingLive ? { ...existingLive } : undefined
+        let sealedBlocks: RendererMessageBlock[] | undefined
         let workingToolCalls = msg.toolCalls
         let workingContent = msg.content
         let workingThinking = msg.thinking ?? ''
+        let messageSealed = false
+
+        const sealOpen = () => {
+          if (!open) return
+          if (sealedBlocks === undefined) sealedBlocks = msg.blocks ? [...msg.blocks] : []
+          sealedBlocks.push({ type: open.type, content: open.content })
+          if (open.type === 'text') workingContent += open.content
+          else workingThinking += open.content
+          open = undefined
+          messageSealed = true
+        }
 
         for (const delta of messageDeltas) {
-          if (delta.kind === 'thinking') {
-            const blocks = workingBlocks ?? []
-            const last = blocks[blocks.length - 1]
-            if (last && last.type === 'thinking') {
-              // 高频流式路径保留最后一个 block 的引用，避免每段内容都创建短生命周期对象。
-              ;(last as { content: string }).content += delta.delta
-            } else {
-              blocks.push({ type: 'thinking', content: delta.delta })
+          if (delta.kind === 'thinking' || delta.kind === 'text') {
+            const blockType: 'thinking' | 'text' = delta.kind === 'thinking' ? 'thinking' : 'text'
+            if (open && open.type !== blockType) {
+              sealOpen()
             }
-            workingBlocks = blocks
-            workingThinking += delta.delta
-          } else if (delta.kind === 'text') {
-            const blocks = workingBlocks ?? []
-            const last = blocks[blocks.length - 1]
-            if (last && last.type === 'text') {
-              // 与 thinking 同理，原地累加是流式渲染的 GC 预算约束。
-              ;(last as { content: string }).content += delta.delta
+            if (!open) {
+              open = { type: blockType, content: delta.delta }
             } else {
-              blocks.push({ type: 'text', content: delta.delta })
+              open.content += delta.delta
             }
-            workingBlocks = blocks
-            workingContent += delta.delta
           } else {
-            const blocks = workingBlocks ?? []
-            const blockIdx = blocks.findIndex(
+            // 工具 partial delta：先封存活跃块（工具前的文本/思考须落盘），再更新工具块。
+            sealOpen()
+            const sourceBlocks = sealedBlocks ?? msg.blocks ?? []
+            const blockIdx = sourceBlocks.findIndex(
               b => b.type === 'tool' && b.toolCallId === delta.toolCallId
             )
-            const toolBlock = blockIdx !== -1 && blocks[blockIdx].type === 'tool'
-              ? blocks[blockIdx]
+            const toolBlock = blockIdx !== -1 && sourceBlocks[blockIdx].type === 'tool'
+              ? sourceBlocks[blockIdx]
               : null
             // 最终 tool_call 会删除 argumentsRaw；此后缓冲区迟到的 partial 只能丢弃，
             // 否则残缺解析结果会覆盖已确认的完整 arguments。
@@ -384,6 +435,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
             nextStreaming[delta.toolCallId] = nextRaw
             streamingChanged = true
 
+            if (sealedBlocks === undefined) sealedBlocks = msg.blocks ? [...msg.blocks] : []
             const partialArgs = toolBlock
               ? parsePartialToolArgs(toolBlock.toolName, nextRaw)
               : null
@@ -392,12 +444,11 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
               : partialArgs
 
             if (toolBlock && sanitizedPartialArgs !== null) {
-              blocks[blockIdx] = {
+              sealedBlocks[blockIdx] = {
                 ...toolBlock,
                 arguments: sanitizedPartialArgs,
                 argumentsRaw: nextRaw
               } as RendererToolBlock
-              workingBlocks = blocks
             }
 
             if (workingToolCalls && toolBlock && sanitizedPartialArgs !== null) {
@@ -414,32 +465,43 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
                   : tc
               )
             }
+            messageSealed = true
           }
         }
 
-        nextMessages[idx] = bumpRevision({
-          ...msg,
-          content: workingContent,
-          thinking: workingThinking,
-          blocks: workingBlocks,
-          toolCalls: workingToolCalls
-        })
-        messagesChanged = true
+        if (messageSealed) {
+          ensureMessagesCloned()
+          nextMessages[idx] = bumpRevision({
+            ...msg,
+            content: workingContent,
+            thinking: workingThinking,
+            blocks: sealedBlocks ?? msg.blocks,
+            toolCalls: workingToolCalls
+          })
+          messagesChanged = true
+        }
+
+        if (open) {
+          if (nextLiveTurn === state.liveTurn) nextLiveTurn = { ...state.liveTurn }
+          nextLiveTurn[messageId] = open
+          liveTurnChanged = true
+        } else if (existingLive) {
+          if (nextLiveTurn === state.liveTurn) nextLiveTurn = { ...state.liveTurn }
+          delete nextLiveTurn[messageId]
+          liveTurnChanged = true
+        }
       }
 
-      let finalResult: Partial<ChatState>
+      const patch: Partial<ChatState> = {}
       if (messagesChanged) {
-        finalResult = {
-          ...commitMessageList(state, { nextMessages, nextIndex: nextMessageIndex }),
-          ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
-        }
-      } else {
-        finalResult = {
-          ...(streamingChanged ? { streamingToolArgs: nextStreaming } : {})
-        }
+        // 仅封存/补壳/工具 delta 才写 messages（并经 commitMessageList 走窗口裁剪）；
+        // 纯 text/thinking 不写 messages，故裁剪顺延到下一次写 messages 的边界——
+        // 生成中的消息本就必须留在视窗内，短暂超过 240 上限无害。
+        Object.assign(patch, commitMessageList(state, { nextMessages, nextIndex: nextMessageIndex }))
       }
-
-      return finalResult
+      if (streamingChanged) patch.streamingToolArgs = nextStreaming
+      if (liveTurnChanged) patch.liveTurn = nextLiveTurn
+      return patch
     })
   }
 })

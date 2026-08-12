@@ -1,7 +1,7 @@
 /**
- * 阶段四（I4 安全重试）单测。
+ * 安全重试单测。
  *
- * 覆盖对齐计划阶段四验收标准：
+ * 覆盖安全重试验收标准：
  * - 已产生 tool call / 正文 / reasoning 后的流式错误 → 不重试，走终态失败
  * - 首字节前的网络错误 → 重试，退避序列符合 maka（base 1s，max 32s，jitter 上界 0.25）
  * - Retry-After: <秒数> → 用该值，忽略指数退避
@@ -156,7 +156,7 @@ describe('RecoveryStateMachine：结构化 failure 是决策真源', () => {
   })
 })
 
-// ── AttemptController：安全重试门闩（I4 核心） ───────────
+// ── AttemptController：安全重试门闩 ───────────
 
 /** 构造一个注入确定性随机源（始终取 0）的 AttemptController，便于断言退避序列 */
 function createController(opts: {
@@ -196,7 +196,7 @@ function createController(opts: {
   return { controller, pool }
 }
 
-describe('AttemptController 安全重试门闩（I4）', () => {
+describe('AttemptController 安全重试门闩', () => {
   const rateLimitFailure: ModelFailure = {
     kind: 'rate_limit',
     retryable: true,
@@ -424,7 +424,7 @@ async function runOnce(processor: StreamProcessor): Promise<{ kind: string }> {
   })
 }
 
-describe('StreamProcessor 安全重试门闩（I4 集成）', () => {
+describe('StreamProcessor 安全重试门闩', () => {
   it('已产生正文后的 429 → 不重试（返回 error）', async () => {
     const { processor, emitted } = createProcessor(clientTextThenError())
     const result = await runOnce(processor)
