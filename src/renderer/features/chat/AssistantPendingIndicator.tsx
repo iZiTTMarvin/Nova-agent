@@ -44,7 +44,7 @@ function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-/** 模型接管但尚未产出可见消息块时，给用户明确的 Nova 工作中反馈。 */
+/** 当前 assistant 轮次仍在运行时，给用户明确的 Nova 工作中反馈。 */
 export const AssistantPendingIndicator: React.FC = () => {
   const [workingMessage, setWorkingMessage] = useState(() =>
     pickNonRepeatingWorkingMessage(lastWorkingMessage)
