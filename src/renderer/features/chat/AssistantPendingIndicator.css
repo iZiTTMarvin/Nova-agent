@@ -7,6 +7,10 @@
   color: var(--text-secondary);
 }
 
+.chat-msg--assistant .nova-working-indicator:not(:first-child) {
+  margin-top: 12px;
+}
+
 .nova-working-orb {
   position: relative;
   display: inline-block;
