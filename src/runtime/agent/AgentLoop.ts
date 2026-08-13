@@ -235,7 +235,6 @@ export class AgentLoop {
       contextBudgetManager: this.contextBudgetManager,
       cacheDiagnostics: this.cacheDiagnostics,
       contextWindow: this.config.contextWindow ?? 200_000,
-      promptCacheKey: this.config.promptCacheKey,
       onCompaction: this.config.onCompaction,
       getIdleCacheProfile: () => {
         const provider = this.modelPool.getActiveProvider()

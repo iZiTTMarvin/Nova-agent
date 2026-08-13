@@ -34,7 +34,6 @@ function createService(options?: {
   context?: AgentContext
   client?: Pick<MockModelClient, 'chat' | 'getCalls'>
   contextWindow?: number
-  promptCacheKey?: string
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
 }): {
   service: CompactionService
@@ -51,7 +50,6 @@ function createService(options?: {
     contextBudgetManager: defaultContextBudgetManager,
     cacheDiagnostics,
     contextWindow: options?.contextWindow ?? 100,
-    promptCacheKey: options?.promptCacheKey,
     onCompaction: options?.onCompaction,
     getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' })
   })
@@ -88,7 +86,6 @@ describe('CompactionService', () => {
     const { service, cacheDiagnostics } = createService({
       context,
       client,
-      promptCacheKey: 'session-cache-key',
       onCompaction
     })
 
@@ -109,9 +106,11 @@ describe('CompactionService', () => {
     const [summaryCall] = client.getCalls()
     expect(summaryCall.options).toMatchObject({
       includeInternalMessages: true,
-      expectedCacheMiss: true,
-      promptCacheKey: 'session-cache-key'
+      expectedCacheMiss: true
     })
+    // 摘要是一次性旁路请求：不携带会话缓存路由 key，
+    // 避免产生永不复用的缓存写入、挤占主对话的路由亲和
+    expect(summaryCall.options?.promptCacheKey).toBeUndefined()
     expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(false)
   })
 

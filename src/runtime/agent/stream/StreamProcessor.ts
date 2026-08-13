@@ -58,7 +58,8 @@ export interface StreamProcessorOptions extends StreamProcessorDeps {
    */
   syncToolDialect?: (context: AgentContext) => void
   /**
-   * 会话级 promptCacheKey；透传到每次 modelPool.chat，本阶段不写 body。
+   * 会话级 promptCacheKey；透传到每次 modelPool.chat。
+   * 主对话 / 子代理轮次请求是会话缓存路由 key 的唯一消费者。
    */
   promptCacheKey?: string
   /**
@@ -79,7 +80,7 @@ export class StreamProcessor {
   /** 统一 retry/fallback attempt 所有权 */
   private attemptController: AttemptController
   private syncToolDialect: StreamProcessorOptions['syncToolDialect']
-  /** 会话路由 key，注入 ChatOptions（不写 API body） */
+  /** 会话路由 key，注入 ChatOptions；由客户端按档案决定是否写入请求体 */
   private promptCacheKey: string | undefined
   /** 会话思考强度覆盖，注入主对话 ChatOptions */
   private reasoningEffort: ReasoningEffort | undefined

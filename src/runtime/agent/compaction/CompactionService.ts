@@ -40,7 +40,6 @@ export interface CompactionServiceOptions {
   contextBudgetManager: Pick<ContextBudgetManager, 'enforceInline'>
   cacheDiagnostics: Pick<CacheDiagnostics, 'bumpEpoch' | 'recordWireSnapshot'>
   contextWindow: number
-  promptCacheKey?: string
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   getIdleCacheProfile: () => Pick<CacheProfile, 'idlePolicy'> | null
 }
@@ -59,6 +58,10 @@ interface CompactionParts {
  * active turn 与 idle compaction 使用物理隔离的 AbortController；新消息通过 idle
  * generation 使晚到摘要失去写回资格，不依赖共享数组回滚。
  * mid-turn 复用同一压缩管线，仅新增触发时机；失败时 fail-open，不终止 turn。
+ *
+ * 摘要请求是一次性旁路调用：不携带会话缓存路由 key。其前缀在压缩完成后即被丢弃，
+ * 永远不会再被请求；挂在会话路由槽位上只会产生无法复用的缓存写入，并挤占主对话
+ * 的路由亲和。主对话 / 子代理轮次的路由 key 由 StreamProcessor 独占消费。
  */
 export class CompactionService {
   private readonly context: AgentContext
@@ -66,7 +69,6 @@ export class CompactionService {
   private readonly contextBudgetManager: Pick<ContextBudgetManager, 'enforceInline'>
   private readonly cacheDiagnostics: Pick<CacheDiagnostics, 'bumpEpoch' | 'recordWireSnapshot'>
   private readonly contextWindow: number
-  private readonly promptCacheKey?: string
   private readonly onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
   private readonly idleTimer: IdleCompressionTimer
@@ -87,7 +89,6 @@ export class CompactionService {
     this.contextBudgetManager = options.contextBudgetManager
     this.cacheDiagnostics = options.cacheDiagnostics
     this.contextWindow = options.contextWindow
-    this.promptCacheKey = options.promptCacheKey
     this.onCompaction = options.onCompaction
     this.getIdleCacheProfile = options.getIdleCacheProfile
     this.idleTimer = new IdleCompressionTimer(() => {
@@ -391,8 +392,7 @@ export class CompactionService {
       const stream = this.modelClient.chat(compactionContext, undefined, {
         abortSignal,
         includeInternalMessages: true,
-        expectedCacheMiss: true,
-        ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
+        expectedCacheMiss: true
       })
       for await (const event of stream) {
         if (abortSignal?.aborted) return null

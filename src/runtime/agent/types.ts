@@ -196,8 +196,8 @@ export interface AgentLoopConfig {
    */
   toolDialectOverride?: 'auto' | 'native' | 'xml'
   /**
-   * 会话级缓存路由 key，透传到每次 modelPool.chat 的 ChatOptions.promptCacheKey。
-   * 主对话 / 压缩 / 工具子轮共用；本阶段不写 API body。
+   * 会话级缓存路由 key，透传到主对话 / 子代理轮次 modelPool.chat 的
+   * ChatOptions.promptCacheKey。压缩等一次性内部调用不跟随（见 CONTEXT.md 术语边界）。
    */
   promptCacheKey?: string
   /**
