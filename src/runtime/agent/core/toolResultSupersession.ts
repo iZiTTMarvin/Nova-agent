@@ -215,25 +215,16 @@ function applyReadRangeCovered(
 
 // ── idempotent_snapshot ──────────────────────────────────────────────────────
 
-/** 只读幂等命令白名单；命令名后必须接空白或行尾，避免误匹配（如 ls2 命中 ls）。 */
+/** 只读 git 观察视为当前仓库视图，较新优先；cat/head/find 等不参与。子命令后须接空白或行尾。 */
 const IDEMPOTENT_BASH_RE =
-  /^git (?:status|diff|log|branch|show|reflog|ls-files|blame|remote -v|config --get)(?:\s|$)|^(?:ls|pwd|cat|head|tail|wc|file|stat|find)(?:\s|$)/i
-
-/** 即便命中白名单，含这些副作用/flaky 词的命令也不归档。 */
-const BASH_EXCLUDE_TOKENS = new Set([
-  'test', 'build', 'run', 'pytest', 'jest', 'make', 'cargo', 'pnpm'
-])
+  /^git(?:\s+-C\s+\S+)?\s+(?:status|diff|log|branch|show|reflog|ls-files|blame|remote -v|config --get|rev-parse)(?:\s|$)/i
 
 function isIdempotentBashCommand(command: string): boolean {
   const trimmed = command.trim()
   if (trimmed === '') return false
-  // 复合命令（&&、||、;、|、换行）一律不判定，避免误覆盖。
-  if (/(&&|\|\||;|\||\n)/.test(trimmed)) return false
-  if (!IDEMPOTENT_BASH_RE.test(trimmed)) return false
-  for (const tok of trimmed.split(/\s+/)) {
-    if (BASH_EXCLUDE_TOKENS.has(tok.toLowerCase())) return false
-  }
-  return true
+  // 复合、重定向、命令替换不是单纯的仓库视图观察，一律不判定。
+  if (/[;&|<>`\n\r]/.test(trimmed) || trimmed.includes('$(')) return false
+  return IDEMPOTENT_BASH_RE.test(trimmed)
 }
 
 function normalizeCommand(command: string): string {

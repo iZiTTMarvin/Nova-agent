@@ -142,8 +142,7 @@ describe('planToolResultSupersession', () => {
     expect(plan.size).toBe(0)
   })
 
-  it('idempotent_snapshot：npm test 不参与（白名单外且含排除词）', () => {
-    // 仅空格差异避免 exact_duplicate 命中，纯粹检验白名单/排除词
+  it('idempotent_snapshot：npm test 不参与（git 白名单外）', () => {
     const messages: ChatMessage[] = [
       asst('b1', 'bash', bashArgs('npm test')),
       tool('b1', 'tests 1'),
@@ -278,6 +277,99 @@ describe('planToolResultSupersession', () => {
     expect(() => planToolResultSupersession(messages)).not.toThrow()
     const plan = planToolResultSupersession(messages)
     expect(plan.size).toBe(0)
+  })
+
+  it('bash cat 不走 idempotent_snapshot：两次相同参数均不覆盖', () => {
+    const messages: ChatMessage[] = [
+      asst('b1', 'bash', bashArgs('cat src/foo.ts')),
+      tool('b1', 'before edit'),
+      asst('b2', 'bash', bashArgs('cat src/foo.ts')),
+      tool('b2', 'after edit')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('bash head / find 不走 idempotent_snapshot', () => {
+    const headMessages: ChatMessage[] = [
+      asst('h1', 'bash', bashArgs('head -n 20 src/foo.ts')),
+      tool('h1', 'head 1'),
+      asst('h2', 'bash', bashArgs('head -n 20 src/foo.ts')),
+      tool('h2', 'head 2')
+    ]
+    expect(planToolResultSupersession(headMessages).size).toBe(0)
+
+    const findMessages: ChatMessage[] = [
+      asst('f1', 'bash', bashArgs('find src -name *.ts')),
+      tool('f1', 'find 1'),
+      asst('f2', 'bash', bashArgs('find src -name *.ts')),
+      tool('f2', 'find 2')
+    ]
+    expect(planToolResultSupersession(findMessages).size).toBe(0)
+  })
+
+  it('bash ls 不走 idempotent_snapshot（一等 ls 工具不在本用例）', () => {
+    const messages: ChatMessage[] = [
+      asst('b1', 'bash', bashArgs('ls src')),
+      tool('b1', 'listing 1'),
+      asst('b2', 'bash', bashArgs('ls src')),
+      tool('b2', 'listing 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('git -C 路径的 status 仍走 idempotent_snapshot', () => {
+    const messages: ChatMessage[] = [
+      asst('b1', 'bash', bashArgs('git -C some/path status')),
+      tool('b1', 'status 1'),
+      asst('b2', 'bash', bashArgs('git -C some/path status')),
+      tool('b2', 'status 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.get('b1')).toBe('idempotent_snapshot')
+    expect(plan.has('b2')).toBe(false)
+  })
+
+  it('git diff test 仍走 idempotent_snapshot（路径 token 含 test 不误伤）', () => {
+    const messages: ChatMessage[] = [
+      asst('b1', 'bash', bashArgs('git diff test')),
+      tool('b1', 'diff 1'),
+      asst('b2', 'bash', bashArgs('git diff test')),
+      tool('b2', 'diff 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.get('b1')).toBe('idempotent_snapshot')
+    expect(plan.has('b2')).toBe(false)
+  })
+
+  it('git status 重定向不走 idempotent_snapshot', () => {
+    const messages: ChatMessage[] = [
+      asst('b1', 'bash', bashArgs('git status > out')),
+      tool('b1', 'status 1'),
+      asst('b2', 'bash', bashArgs('git status > out')),
+      tool('b2', 'status 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('git status 命令替换不走 idempotent_snapshot', () => {
+    const subMessages: ChatMessage[] = [
+      asst('s1', 'bash', bashArgs('git status $(echo x)')),
+      tool('s1', 'status 1'),
+      asst('s2', 'bash', bashArgs('git status $(echo x)')),
+      tool('s2', 'status 2')
+    ]
+    expect(planToolResultSupersession(subMessages).size).toBe(0)
+
+    const tickMessages: ChatMessage[] = [
+      asst('t1', 'bash', bashArgs('git status `echo x`')),
+      tool('t1', 'status 1'),
+      asst('t2', 'bash', bashArgs('git status `echo x`')),
+      tool('t2', 'status 2')
+    ]
+    expect(planToolResultSupersession(tickMessages).size).toBe(0)
   })
 
   it('offset 为负数或非有限数的 read 不参与覆盖判定', () => {
