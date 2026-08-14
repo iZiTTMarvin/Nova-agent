@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures/nova'
 
-test('启动后真实 preload 与 workspace IPC 可用', async ({ nova }) => {
+test('会话准备完成后，preload 与 workspace IPC 指向本次隔离工作区', async ({ nova }) => {
   const workspace = await nova.getWorkspace()
 
   expect(workspace.currentProjectPath).toBe(nova.workspacePath)

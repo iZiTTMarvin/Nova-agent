@@ -39,9 +39,9 @@ Nova 不要求严格执行 Red → Green → Refactor，也不要求 Coding Agen
 | --- | --- | --- |
 | `unit` | 纯规则、状态机、小范围边界、确定性回归 | Electron 真实生命周期、真实 IPC 链路 |
 | `integration` | 多个真实模块之间的契约和持久化往返 | 最终桌面用户体验 |
-| `e2e/smoke` | 启动、聊天、工具调用等核心用户链路 | 极端时序和故障恢复 |
-| `e2e/lifecycle` | cancel、切会话、reload、remount 等生命周期 | 大规模故障组合 |
-| `e2e/fault` | 延迟、重复、乱序、provider 失败、压力运行 | 每次本地编辑后的快速反馈 |
+| `e2e/smoke` | 冷启动、已准备会话后的聊天与工具调用 | 极端时序和故障恢复 |
+| `e2e/lifecycle` | cancel、切会话、reload、重复 reload 后的 listener 重绑定 | 大规模故障组合 |
+| `e2e/fault` | 延迟流、provider 失败、压力；以及 Renderer 对重复/过期/缺口 snapshot 投影的防御 | 每次本地编辑后的快速反馈；RunCoordinator Owner 的完整乱序协议 |
 | `e2e/packaged` | 真正打包产物的启动与完整链路 | 日常开发循环 |
 
 Renderer 的“用户点着点着卡死”“runtime 已结束但 UI 仍 running”“切会话后旧事件污染新会话”等问题，优先在真实 Electron E2E 中验证，不用大量 mock 的组件测试代替。
@@ -55,6 +55,10 @@ E2E 使用 Playwright 启动真实 Electron。测试从 Renderer 经过 preload�
 系统文件选择框等原生 UI 不作为常规 E2E 的操作入口。需要准备工作区时直接走现有类型化 IPC，用户主路径仍通过真实 UI 操作。
 
 每个测试使用隔离的 Electron profile 和临时 workspace，不能读取或污染开发者真实配置与会话。
+
+通用 `nova` fixture 会先写入模型配置并选中临时 workspace，再 reload 一次。这覆盖“已准备会话后的主路径”，不覆盖干净 profile 的首次启动。干净 profile 的窗口、preload 与基础 UI 由 `smoke/cold-start.spec.ts` 验证。
+
+`fault` 里对重复、过期、sequence 缺口 snapshot 的用例，通过已有 `run:snapshot` 事件把载荷送到 Renderer，只检验投影层防御。它们不替换 RunCoordinator，也不给生产 runtime 增加测试后门，因此不能当作 Owner 完整乱序协议测试。
 
 ## 5. 开发时怎么跑
 
@@ -108,6 +112,7 @@ tests/e2e/
 │  ├─ fake-runtime.ts       # 确定性的 OpenAI-compatible HTTP fake
 │  └─ nova.ts               # Electron 启动、隔离 profile、诊断与公共操作
 ├─ smoke/
+│  ├─ cold-start.spec.ts
 │  ├─ startup.spec.ts
 │  ├─ chat.spec.ts
 │  └─ tool-call.spec.ts
@@ -115,7 +120,7 @@ tests/e2e/
 │  ├─ abort.spec.ts
 │  ├─ session-switch.spec.ts
 │  ├─ renderer-reload.spec.ts
-│  └─ remount.spec.ts
+│  └─ renderer-reload-rebind.spec.ts
 ├─ fault/
 │  ├─ delayed-events.spec.ts
 │  ├─ duplicate-events.spec.ts

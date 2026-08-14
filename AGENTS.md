@@ -106,7 +106,7 @@ feat(chat): 接入官方 Composer，并打磨技能菜单与代码块观感
    - **不要默认给每个改动新增测试，也不强制机械执行 TDD。** 新测试必须能说明它在防止什么真实回归；优先扩展或复用现有测试。
    - 禁止重复 assertion、只断言非空、只断言 mock 被调用、过度 mock 状态 Owner、放宽断言或吞错来制造假绿。没有独立保护价值的测试应合并或删除。
    - 开发循环只运行受影响的最小测试集合；当前行为完成后运行相关回归。不得每编辑一行就机械跑全量测试；完整 suite、fault/stress 和打包门禁交给 CI / nightly / release。
-   - Renderer 的卡死、跨会话污染、reload/remount、IPC 生命周期等真实用户体验问题，优先使用真实 Electron E2E 验证，不能用全 mock 的组件测试冒充完整链路。
+   - Renderer 的卡死、跨会话污染、reload、重复 reload 后的 listener 重绑定、IPC 生命周期等真实用户体验问题，优先使用真实 Electron E2E 验证，不能用全 mock 的组件测试冒充完整链路。
    - 源码变更至少运行相关测试和 `npm run typecheck`；执行与风险直接相关的 lint/build/架构门禁。若所需门禁尚未配置或无法执行，必须明确报告，不能声称验证完成。
 
 8. **保护工作区与安全边界**

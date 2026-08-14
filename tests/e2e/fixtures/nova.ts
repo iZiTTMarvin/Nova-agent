@@ -18,23 +18,19 @@ import {
   WORKSPACE_SELECT_PROJECT,
   WORKSPACE_SELECT_SESSION
 } from '../../../src/shared/ipc/channels'
-import type { RunSnapshot } from '../../../src/shared/run/types'
-import type { WorkspaceState } from '../../../src/shared/workspace/types'
+import type { IpcCommandChannel, IpcCommands, IpcEvents } from '../../../src/shared/ipc/types'
+import { isTerminalRunStatus, type RunSnapshot } from '../../../src/shared/run/types'
 import { startFakeRuntime, type FakeRuntime } from './fake-runtime'
 
 const repoRoot = path.resolve(__dirname, '../../..')
 
-interface SnapshotResponse {
-  snapshot: RunSnapshot | null
-  waitingSessions: Array<{
-    sessionId: string
-    runId: string
-    pendingCount: number
-  }>
-}
+type IpcInvokeArgs<C extends IpcCommandChannel> = IpcCommands[C]['params'] extends void
+  ? []
+  : [IpcCommands[C]['params']]
 
 interface LaunchOptions {
   executablePath?: string
+  skipWorkspaceSetup?: boolean
 }
 
 export interface NovaHarness {
@@ -45,36 +41,41 @@ export interface NovaHarness {
   pageErrors: string[]
   rendererConsole: string[]
   mainConsole: string[]
-  invoke: <T>(channel: string, ...args: unknown[]) => Promise<T>
-  getWorkspace: () => Promise<WorkspaceState>
+  invoke: <C extends IpcCommandChannel>(
+    channel: C,
+    ...args: IpcInvokeArgs<C>
+  ) => Promise<IpcCommands[C]['result']>
+  getWorkspace: () => Promise<IpcCommands['workspace:get']['result']>
   getRunSnapshot: (sessionId?: string) => Promise<RunSnapshot | null>
-  createSession: () => Promise<WorkspaceState>
-  selectSession: (sessionId: string) => Promise<WorkspaceState>
+  createSession: () => Promise<IpcCommands['workspace:create-session']['result']>
+  selectSession: (sessionId: string) => Promise<IpcCommands['workspace:select-session']['result']>
   sendPrompt: (text: string) => Promise<void>
   waitUntilIdle: () => Promise<void>
-  emitRunSnapshot: (
-    snapshot: RunSnapshot,
-    event?: { sequence: number; type: string; at: number }
-  ) => Promise<void>
+  runTurnToCompletion: (opts: { text: string; prompt: string }) => Promise<RunSnapshot>
+  emitRunSnapshot: (payload: IpcEvents['run:snapshot']) => Promise<void>
   cleanup: () => Promise<void>
 }
 
-async function rendererInvoke<T>(
+async function rendererInvoke<C extends IpcCommandChannel>(
   page: Page,
-  channel: string,
-  ...args: unknown[]
-): Promise<T> {
-  return page.evaluate(
+  channel: C,
+  ...args: IpcInvokeArgs<C>
+): Promise<IpcCommands[C]['result']> {
+  const result: unknown = await page.evaluate(
     async ({ ipcChannel, ipcArgs }) => {
       const api = (window as typeof window & {
-        api: {
-          invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+        api?: {
+          invoke: (channel: string, ...invokeArgs: unknown[]) => Promise<unknown>
         }
       }).api
-      return (await api.invoke(ipcChannel, ...ipcArgs)) as T
+      if (!api) {
+        throw new Error('window.api is not available')
+      }
+      return api.invoke(ipcChannel, ...ipcArgs)
     },
     { ipcChannel: channel, ipcArgs: args }
   )
+  return result as IpcCommands[C]['result']
 }
 
 async function prepareWorkspace(): Promise<string> {
@@ -118,25 +119,31 @@ export async function launchNova(
   const provider = await startFakeRuntime()
   const workspacePath = await prepareWorkspace()
   const profileRoot = await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-profile-'))
+  const userDataDir = path.join(profileRoot, 'userData')
   await Promise.all([
     mkdir(path.join(profileRoot, 'appdata'), { recursive: true }),
     mkdir(path.join(profileRoot, 'xdg'), { recursive: true }),
-    mkdir(path.join(profileRoot, 'home'), { recursive: true })
+    mkdir(path.join(profileRoot, 'home'), { recursive: true }),
+    mkdir(userDataDir, { recursive: true })
   ])
 
   const pageErrors: string[] = []
   const rendererConsole: string[] = []
   const mainConsole: string[] = []
 
+  const launchEnv = isolatedElectronEnv(profileRoot)
+  // Windows 上 APPDATA 不会改 Electron userData，必须传 Chromium 开关才能隔离 profile 与单实例锁。
+  const userDataArg = `--user-data-dir=${userDataDir}`
   const app = options.executablePath
     ? await electron.launch({
         executablePath: options.executablePath,
-        env: isolatedElectronEnv(profileRoot)
+        args: [userDataArg],
+        env: launchEnv
       })
     : await electron.launch({
-        args: [repoRoot],
+        args: [userDataArg, repoRoot],
         cwd: repoRoot,
-        env: isolatedElectronEnv(profileRoot)
+        env: launchEnv
       })
   app.on('console', message => {
     mainConsole.push(`[${message.type()}] ${message.text()}`)
@@ -162,33 +169,69 @@ export async function launchNova(
 
   let cleaned = false
 
-  const invoke = <T>(channel: string, ...args: unknown[]) =>
-    rendererInvoke<T>(page, channel, ...args)
+  const invoke = <C extends IpcCommandChannel>(channel: C, ...args: IpcInvokeArgs<C>) =>
+    rendererInvoke(page, channel, ...args)
 
-  await invoke<void>(SAVE_MODEL_CONFIG, {
-    baseUrl: provider.baseUrl,
-    apiKey: 'nova-e2e-key',
-    modelId: 'nova-e2e-model',
-    cacheProfile: 'generic',
-    toolDialect: 'native'
-  })
-  await invoke<WorkspaceState>(WORKSPACE_SELECT_PROJECT, { path: workspacePath })
+  if (!options.skipWorkspaceSetup) {
+    await invoke(SAVE_MODEL_CONFIG, {
+      baseUrl: provider.baseUrl,
+      apiKey: 'nova-e2e-key',
+      modelId: 'nova-e2e-model',
+      cacheProfile: 'generic',
+      toolDialect: 'native'
+    })
+    await invoke(WORKSPACE_SELECT_PROJECT, { path: workspacePath })
 
-  // Renderer 启动时会读取模型与 workspace；setup 后重载一次，让后续路径等同正常启动。
-  await page.reload()
-  await page.waitForFunction(() => Boolean((window as typeof window & { api?: unknown }).api))
+    // Renderer 启动时会读取模型与 workspace；setup 后重载一次，让后续路径等同正常启动。
+    await page.reload()
+    await page.waitForFunction(() => Boolean((window as typeof window & { api?: unknown }).api))
+  }
+
   await expect(page.getByLabel('消息输入')).toBeVisible()
 
-  const getWorkspace = () => invoke<WorkspaceState>(WORKSPACE_GET)
+  const getWorkspace = () => invoke(WORKSPACE_GET)
 
   const getRunSnapshot = async (sessionId?: string): Promise<RunSnapshot | null> => {
     const workspace = sessionId ? null : await getWorkspace()
     const targetSessionId = sessionId ?? workspace?.currentSessionId
     if (!targetSessionId) return null
-    const result = await invoke<SnapshotResponse>(RUN_GET_SNAPSHOT, {
+    const result = await invoke(RUN_GET_SNAPSHOT, {
       sessionId: targetSessionId
     })
     return result.snapshot
+  }
+
+  const sendPrompt = async (text: string): Promise<void> => {
+    const input = page.getByLabel('消息输入')
+    await expect(input).toBeVisible()
+    await input.fill(text)
+    await page.getByRole('button', { name: '发送' }).click()
+  }
+
+  const waitUntilIdle = async (): Promise<void> => {
+    await expect.poll(async () => {
+      const snapshot = await getRunSnapshot()
+      return snapshot == null || isTerminalRunStatus(snapshot.status)
+    }).toBe(true)
+    await expect(
+      page.getByRole('button', { name: /^(中断生成|正在停止|强制终止)$/ })
+    ).toHaveCount(0)
+    await expect(page.getByLabel('消息输入')).toBeEditable()
+  }
+
+  // 跑一轮对话到权威终态并返回该快照，供异常注入用例作公共前置。
+  const runTurnToCompletion = async (opts: {
+    text: string
+    prompt: string
+  }): Promise<RunSnapshot> => {
+    provider.enqueue({ kind: 'text', text: opts.text })
+    await sendPrompt(opts.prompt)
+    await expect(page.getByText(opts.text, { exact: false })).toBeVisible()
+    await waitUntilIdle()
+    const completed = await getRunSnapshot()
+    if (!completed) throw new Error('completed run snapshot missing')
+    expect(completed.status).toBe('completed')
+    return completed
   }
 
   const harness: NovaHarness = {
@@ -203,39 +246,20 @@ export async function launchNova(
     getWorkspace,
     getRunSnapshot,
     createSession: () =>
-      invoke<WorkspaceState>(WORKSPACE_CREATE_SESSION, {
+      invoke(WORKSPACE_CREATE_SESSION, {
         workspaceRoot: workspacePath
       }),
     selectSession: (sessionId: string) =>
-      invoke<WorkspaceState>(WORKSPACE_SELECT_SESSION, { sessionId }),
-    sendPrompt: async (text: string) => {
-      const input = page.getByLabel('消息输入')
-      await expect(input).toBeVisible()
-      await input.fill(text)
-      await page.getByRole('button', { name: '发送' }).click()
-    },
-    waitUntilIdle: async () => {
-      await expect(page.getByRole('button', { name: '中断生成' })).toHaveCount(0)
-      await expect(page.getByLabel('消息输入')).toBeEditable()
-    },
-    emitRunSnapshot: async (snapshot, event) => {
-      const payload = {
-        snapshot,
-        event: event ?? {
-          sequence: snapshot.sequence,
-          type: 'e2e_injected_snapshot',
-          at: Date.now()
-        },
-        channel: RUN_SNAPSHOT
-      }
+      invoke(WORKSPACE_SELECT_SESSION, { sessionId }),
+    sendPrompt,
+    waitUntilIdle,
+    runTurnToCompletion,
+    emitRunSnapshot: async payload => {
       await app.evaluate(({ BrowserWindow }, data) => {
         const window = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed())
         if (!window) throw new Error('Nova BrowserWindow not found')
-        window.webContents.send(data.channel, {
-          snapshot: data.snapshot,
-          event: data.event
-        })
-      }, payload)
+        window.webContents.send(data.channel, data.payload)
+      }, { channel: RUN_SNAPSHOT, payload })
     },
     cleanup: async () => {
       if (cleaned) return

@@ -24,25 +24,33 @@ test('@stress 固定 seed 的连续发送、reload 与 cancel 后始终能回到
       nova.provider.enqueue({ kind: 'hold', id: holdId, text: `STRESS_ABORT_SHOULD_NOT_RENDER_${index}` })
       await nova.sendPrompt(`stress abort ${index}; seed=${seed}`)
       await expect(nova.page.getByRole('button', { name: '中断生成' })).toBeVisible()
+      const abortedBefore = nova.provider.requests.filter(request => request.aborted).length
       await nova.page.getByRole('button', { name: '中断生成' }).click()
+      await nova.provider.waitForAbortCount(abortedBefore + 1, 10_000)
+      await expect.poll(async () => (await nova.getRunSnapshot())?.status).toBe('cancelled')
       await nova.waitUntilIdle()
       continue
     }
 
     const marker = `NOVA_E2E_STRESS_${index}`
-    nova.provider.enqueue({
-      kind: 'text',
-      text: marker,
-      chunks: ['NOVA_E2E_', `STRESS_${index}`],
-      chunkDelayMs: value < 0.45 ? 30 : undefined
-    })
 
-    await nova.sendPrompt(`stress normal ${index}; seed=${seed}`)
-
-    if (value >= 0.2 && value < 0.35) {
+    if (value < 0.35) {
+      const holdId = `stress-reload-${index}`
+      nova.provider.enqueue({ kind: 'hold', id: holdId, text: marker })
+      await nova.sendPrompt(`stress normal ${index}; seed=${seed}`)
       await expect(nova.page.getByRole('button', { name: '中断生成' })).toBeVisible()
       await nova.page.reload()
       await expect(nova.page.getByLabel('消息输入')).toBeVisible()
+      await expect(nova.page.getByRole('button', { name: '中断生成' })).toBeVisible()
+      nova.provider.release(holdId)
+    } else {
+      nova.provider.enqueue({
+        kind: 'text',
+        text: marker,
+        chunks: ['NOVA_E2E_', `STRESS_${index}`],
+        chunkDelayMs: value < 0.45 ? 30 : undefined
+      })
+      await nova.sendPrompt(`stress normal ${index}; seed=${seed}`)
     }
 
     await expect(nova.page.getByText(marker, { exact: false })).toBeVisible()
