@@ -130,4 +130,32 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
     // A 的事实仍保留在分桶中，但不得抹掉 B
     expect(state.snapshotsByRunId!['runA']?.sessionId).toBe('sessA')
   })
+
+  it('活动 runId 尚未投影时，当前会话终态 snapshot 仍能结束 cancelling', async () => {
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
+    resetChatStoreForTests()
+    useChatStore.setState({
+      currentSessionId: 'sessA',
+      isGenerating: true,
+      currentGeneratingMessageId: 'msg_runA'
+    })
+
+    useRunStore.getState().beginLocalCancel(null)
+    expect(useRunStore.getState().cancelling).toBe(true)
+
+    useRunStore.getState().handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'cancelled'), {
+      sequence: 2,
+      type: 'cancelled',
+      at: Date.now()
+    })
+
+    await vi.waitFor(() => {
+      expect(useRunStore.getState().cancelling).toBe(false)
+      expect(useChatStore.getState().isGenerating).toBe(false)
+    })
+
+    useRunStore.getState().beginLocalCancel('runA')
+    expect(useRunStore.getState().cancelling).toBe(false)
+  })
 })
