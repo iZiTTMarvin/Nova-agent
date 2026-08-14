@@ -1,0 +1,42 @@
+name: Packaged Electron Gate
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packaged:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CI: true
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install app dependencies
+        run: npm ci
+      - name: Install Electron E2E harness
+        run: npm run test:e2e:install
+      - name: Pack and verify Electron app
+        run: npm run test:e2e:packaged
+      - name: Upload packaged E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-electron-e2e-diagnostics
+          path: |
+            test-results/e2e
+            playwright-report/e2e
+          if-no-files-found: ignore
+          retention-days: 7
