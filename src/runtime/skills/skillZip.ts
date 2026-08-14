@@ -1,5 +1,7 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
-import { rm as rmAsync } from 'fs/promises'
+/**
+ * Skill zip 解压与目录发现（Task 8）
+ */
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join, normalize, sep } from 'path'
 import { tmpdir } from 'os'
 import * as yauzl from 'yauzl'
@@ -31,15 +33,13 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
     const fail = (err: Error): void => {
       if (rejected) return
       rejected = true
-      // Windows 可能在流刚关闭时短暂占用目标文件，等待清理结束再向调用方报告失败。
-      void rmAsync(destDir, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 50
-      })
-        .catch(() => undefined)
-        .finally(() => reject(err))
+      // 解压失败时清理半成品，避免污染目标目录
+      try {
+        rmSync(destDir, { recursive: true, force: true })
+      } catch {
+        // 清理失败不影响错误传递
+      }
+      reject(err)
     }
 
     yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
@@ -58,8 +58,8 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
 
         fileCount++
         if (fileCount > MAX_EXTRACTED_FILE_COUNT) {
-          zipfile.close()
           fail(new Error(`解压文件数超过上限 ${MAX_EXTRACTED_FILE_COUNT}，疑似 zip bomb`))
+          zipfile.close()
           return
         }
 
@@ -79,8 +79,8 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
 
         // 单文件大小预检（yauzl 提供 uncompressedSize）
         if (entry.uncompressedSize > MAX_EXTRACTED_TOTAL_SIZE) {
-          zipfile.close()
           fail(new Error(`单文件过大：${entry.fileName} (${entry.uncompressedSize} bytes)`))
+          zipfile.close()
           return
         }
 
@@ -94,15 +94,16 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
           }
 
           const writeStream = createWriteStream(fullPath)
+          let entrySize = 0
 
           readStream.on('data', (chunk: Buffer | string) => {
+            entrySize += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
             totalSize += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
             if (totalSize > MAX_EXTRACTED_TOTAL_SIZE) {
-              // 先释放 Windows 文件句柄，再启动带重试的目录清理。
+              fail(new Error(`解压总大小超过上限 ${MAX_EXTRACTED_TOTAL_SIZE} bytes，疑似 zip bomb`))
               writeStream.destroy()
               readStream.destroy()
               zipfile.close()
-              fail(new Error(`解压总大小超过上限 ${MAX_EXTRACTED_TOTAL_SIZE} bytes，疑似 zip bomb`))
             }
           })
 
