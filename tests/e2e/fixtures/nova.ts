@@ -87,9 +87,12 @@ async function prepareWorkspace(): Promise<string> {
   return workspacePath
 }
 
-function isolatedElectronEnv(profileRoot: string): NodeJS.ProcessEnv {
+function isolatedElectronEnv(profileRoot: string): Record<string, string> {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  )
   return {
-    ...process.env,
+    ...inherited,
     NODE_ENV: 'production',
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
     APPDATA: path.join(profileRoot, 'appdata'),
