@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearThinkingTimingForMessage,
+  markThinkingEnded,
   markThinkingEndedForMessage,
   markThinkingStarted,
   readThinkingElapsedSec,
@@ -42,5 +43,19 @@ describe('thinkingTimingMemory', () => {
     clearThinkingTimingForMessage('msg_1')
     expect(readThinkingElapsedSec('msg_1', 0)).toBeNull()
     expect(readThinkingElapsedSec('msg_1', 2)).toBeNull()
+  })
+
+  it('按 blockIndex 封存不会误伤后一段正在计时的思考', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    markThinkingStarted('msg_multi', 0)
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.600Z'))
+    expect(markThinkingEnded('msg_multi', 0)).toBe(1600)
+
+    markThinkingStarted('msg_multi', 2)
+    vi.setSystemTime(new Date('2026-01-01T00:00:02.200Z'))
+    expect(markThinkingEnded('msg_multi', 0)).toBe(1600)
+    expect(readThinkingElapsedSec('msg_multi', 2)).toBeCloseTo(0.6, 5)
+    expect(markThinkingEndedForMessage('msg_multi')).toBe(600)
   })
 })

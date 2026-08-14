@@ -91,6 +91,8 @@ export class StreamProcessor {
    */
   private contextOverflowRetryAttempted = false
   private contextOverflowRetryCount = 0
+  /** 上一 attempt 已向 UI 发出 retrying；下次 run 开始时收回横幅 */
+  private resumeAfterRetry = false
 
   private static readonly MAX_CONTEXT_OVERFLOW_RETRIES = 3
 
@@ -119,6 +121,7 @@ export class StreamProcessor {
     this.attemptController.reset()
     this.contextOverflowRetryAttempted = false
     this.contextOverflowRetryCount = 0
+    this.resumeAfterRetry = false
   }
 
   /**
@@ -140,6 +143,10 @@ export class StreamProcessor {
     const attemptStartedAt = Date.now()
     let ttftRecorded = false
     metricAttemptStart(attemptId)
+    if (this.resumeAfterRetry) {
+      this.resumeAfterRetry = false
+      this.emit({ type: 'recovery_state', messageId, state: { kind: 'continuing' } })
+    }
   
     const finish = <T extends TurnStreamResult>(result: T): T => {
       metricAttemptEnd(attemptId, Date.now() - attemptStartedAt, result.kind)
@@ -423,11 +430,14 @@ export class StreamProcessor {
               rawContent.length === 0 &&
               reasoningContent.length === 0
             const errState = this.attemptController.classifyForEmit(event.error, event.failure)
-            this.emit({ type: 'recovery_state', messageId, state: errState })
             await this.hookManager.trigger({ event: 'onError', messageId, error: event.error })
 
             const decision = this.attemptController.onError(event.error, event.failure, hasNoObservableOutput)
-            if (decision.action === 'retry' || decision.action === 'fallback') {
+            const willRetry = decision.action === 'retry' || decision.action === 'fallback'
+            if (willRetry) {
+              if (decision.action === 'retry') {
+                this.emit({ type: 'recovery_state', messageId, state: errState })
+              }
               // 丢弃本 attempt 临时输出，避免与下一次 attempt 文本重复
               this.emit({
                 type: 'attempt_failed',
@@ -435,6 +445,7 @@ export class StreamProcessor {
                 attemptId,
                 error: event.error
               })
+              this.resumeAfterRetry = true
               assistantContent = ''
               rawContent = ''
               reasoningContent = ''
@@ -534,15 +545,20 @@ export class StreamProcessor {
         rawContent.length === 0 &&
         reasoningContent.length === 0
       const errState = this.attemptController.classifyForEmit(errMsg)
-      this.emit({ type: 'recovery_state', messageId, state: errState })
       await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-      this.emit({ type: 'attempt_failed', messageId, attemptId, error: errMsg })
-      assistantContent = ''
-      rawContent = ''
-      reasoningContent = ''
-      toolCalls.length = 0
-
       const decision = this.attemptController.onError(errMsg, undefined, hasNoObservableOutput)
+      const willRetry = decision.action === 'retry' || decision.action === 'fallback'
+      if (willRetry) {
+        if (decision.action === 'retry') {
+          this.emit({ type: 'recovery_state', messageId, state: errState })
+        }
+        this.emit({ type: 'attempt_failed', messageId, attemptId, error: errMsg })
+        this.resumeAfterRetry = true
+        assistantContent = ''
+        rawContent = ''
+        reasoningContent = ''
+        toolCalls.length = 0
+      }
       switch (decision.action) {
         case 'retry': {
           this.emit({

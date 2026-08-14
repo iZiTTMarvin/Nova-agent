@@ -35,9 +35,10 @@ describe('formatWorkedHeader', () => {
     expect(formatWorkedHeader({ phase: 'completed' })).toBe('已工作')
   })
 
-  it('interrupted 追加已停止', () => {
+  it('interrupted 以已停止为主状态', () => {
     expect(formatWorkedHeader({ phase: 'completed', durationMs: 10_000, interrupted: true })).toBe(
-      '已工作 10 秒 · 已停止'
+      '已停止 · 工作了 10 秒'
     )
+    expect(formatWorkedHeader({ phase: 'completed', interrupted: true })).toBe('已停止')
   })
 })

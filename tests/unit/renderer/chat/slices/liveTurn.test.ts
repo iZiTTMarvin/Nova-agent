@@ -102,6 +102,24 @@ describe('liveTurn 活跃回合', () => {
     expect(useChatStore.getState().liveTurn['m_att']).toBeUndefined()
   })
 
+  it('handleAttemptFailed：保留已完成工具，只丢掉末尾临时思考', () => {
+    useChatStore.getState().handleMessageStart('m_keep')
+    useChatStore.getState().handleToolCallStart('m_keep', 'tc1', 'ls')
+    useChatStore.getState().handleToolCall('m_keep', 'tc1', 'ls', { path: '.' })
+    useChatStore.getState().handleToolResult('m_keep', 'tc1', 'ls', 'ok')
+    useChatStore.getState().applyStreamDeltas([
+      { kind: 'thinking', messageId: 'm_keep', delta: '失败 attempt 的思考' }
+    ])
+
+    useChatStore.getState().handleAttemptFailed('m_keep', 'att_2')
+
+    const msg = useChatStore.getState().messages[0]
+    expect(msg.blocks?.map(b => b.type)).toEqual(['tool'])
+    expect(msg.blocks?.[0]).toMatchObject({ type: 'tool', toolCallId: 'tc1', status: 'success' })
+    expect(msg.toolCalls?.some(tc => tc.id === 'tc1')).toBe(true)
+    expect(useChatStore.getState().liveTurn['m_keep']).toBeUndefined()
+  })
+
   it('连续 text 与 thinking 跨 batch 切换：thinking 封存、text 进活跃', () => {
     useChatStore.getState().handleMessageStart('m1')
     useChatStore.getState().applyStreamDeltas([{ kind: 'thinking', messageId: 'm1', delta: '思考' }])

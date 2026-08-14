@@ -74,8 +74,7 @@ export interface StreamSliceState {
   applyStreamDeltas: (deltas: StreamDeltaBatch) => void
   handleMessageStart: (messageId: string) => void
   /**
-   * 某次模型 attempt 失败：清空该消息的临时流式内容，
-   * 保留消息气泡，供下一次 attempt 重新写入，避免 UI 重复文本。
+   * 某次模型 attempt 失败：丢掉末尾未完成输出，保留已完成工具轮次。
    */
   handleAttemptFailed: (messageId: string, attemptId: string) => void
   /**

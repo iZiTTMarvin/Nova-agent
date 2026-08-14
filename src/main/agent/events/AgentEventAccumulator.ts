@@ -4,6 +4,7 @@ import type { SessionMessageAppend, AppendMessageResult } from '../../../runtime
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../../runtime/sessions/messageProjection'
 import type { MessageBlock } from '../../../shared/session/types'
 import { appendTerminalErrorToBlocks } from '../../../shared/session/terminalErrorBlocks'
+import { retainCommittedBlocksForRetry } from '../../../shared/session/retainCommittedBlocksForRetry'
 import { getSessionStore } from '../../services/SessionStoreHost'
 import { getRunCoordinator } from '../../services/RunCoordinatorHost'
 import type { MessageContext, StreamAccumulator } from './types'
@@ -237,25 +238,6 @@ function stampThinkingDuration(stream: StreamAccumulator, now: number = Date.now
     break
   }
   stream.thinkingStartedAt = undefined
-}
-
-/**
- * 重试前保留已提交的工具轮次（含其前序 thinking/text）。
- * 丢掉末尾 running 工具与其后的临时 text/thinking，避免与下一 attempt 重复。
- */
-function retainCommittedBlocksForRetry(blocks: MessageBlock[]): MessageBlock[] {
-  let lastCommittedTool = -1
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i]
-    if (b.type === 'tool' && b.status !== 'running') {
-      lastCommittedTool = i
-    }
-  }
-  if (lastCommittedTool >= 0) {
-    return blocks.slice(0, lastCommittedTool + 1)
-  }
-  // 尚无完成的工具：整段都是本 attempt 临时输出，可清空
-  return []
 }
 
 /**

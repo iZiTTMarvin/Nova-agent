@@ -337,6 +337,77 @@ second\tline"}`
   })
 })
 
+describe('StreamProcessor：重试横幅与 attempt_failed 门闩', () => {
+  it('无可观察输出的流读取失败才发出 retrying 与 attempt_failed', async () => {
+    const client = new MockModelClient()
+    client.chat = async function* () {
+      throw new Error('fetch failed')
+    }
+    const { processor, emitted } = createProcessor(client)
+    const result = await runOnce(processor)
+
+    expect(result.kind).toBe('retry')
+    expect(emitted.some(e => e.type === 'attempt_failed')).toBe(true)
+    expect(
+      emitted.some(e => e.type === 'recovery_state' && e.state.kind === 'retrying')
+    ).toBe(true)
+  })
+
+  it('已有思考后的流读取失败不重试，也不发出 attempt_failed / retrying', async () => {
+    const client = new MockModelClient()
+    const origChat = client.chat.bind(client)
+    client.addResponse({
+      events: [{ type: 'thinking_delta', delta: '半截思考' }]
+    })
+    client.chat = async function* (...args) {
+      const iter = origChat(...args)
+      for await (const ev of iter) {
+        yield ev
+        if (ev.type === 'thinking_delta') {
+          throw new Error('fetch failed')
+        }
+      }
+    }
+    const { processor, emitted } = createProcessor(client)
+    const result = await runOnce(processor)
+
+    expect(result.kind).toBe('error')
+    expect(emitted.some(e => e.type === 'attempt_failed')).toBe(false)
+    expect(
+      emitted.some(e => e.type === 'recovery_state' && e.state.kind === 'retrying')
+    ).toBe(false)
+  })
+
+  it('重试成功后的下一次 run 发出 continuing，收回重试横幅', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [{ type: 'error', error: 'network_reset: connection reset' }]
+    })
+    client.addResponse({
+      events: [
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { processor, emitted } = createProcessor(client)
+
+    const first = await runOnce(processor)
+    expect(first.kind).toBe('retry')
+    expect(
+      emitted.some(e => e.type === 'recovery_state' && e.state.kind === 'retrying')
+    ).toBe(true)
+
+    const second = await runOnce(processor)
+    expect(second.kind).toBe('assistant')
+    const continuingIdx = emitted.findIndex(
+      e => e.type === 'recovery_state' && e.state.kind === 'continuing'
+    )
+    const textIdx = emitted.findIndex(e => e.type === 'text_delta')
+    expect(continuingIdx).toBeGreaterThanOrEqual(0)
+    expect(continuingIdx).toBeLessThan(textIdx)
+  })
+})
+
 describe('AgentLoop：reasoningContent 进入 runtime context', () => {
   it('工具子轮 + 终态子轮均把 reasoningContent 写入 getContext()', async () => {
     const client = new MockModelClient()

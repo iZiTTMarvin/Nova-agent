@@ -1,4 +1,5 @@
 import { sanitizeToolInput, sanitizeToolOutput } from '../../../../shared/tool-input-sanitizer'
+import { retainCommittedBlocksForRetry } from '../../../../shared/session/retainCommittedBlocksForRetry'
 import { parsePartialToolArgs } from '../../../lib/partialJsonArgs'
 import { createAssistantMessage } from '../../../lib/focusedSessionRecovery'
 import {
@@ -74,17 +75,27 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       if (idx === undefined) return state
       const msg = state.messages[idx]
       if (!msg) return state
-      // 失败 attempt 的临时流式内容不能和下一次重试混合；已成功落盘的 tool_result
-      // 也不属于这次失败 attempt，因此一起清空并保留原消息壳。活跃回合内容一并丢弃。
-      const next = [...state.messages]
-      next[idx] = {
-        ...msg,
-        content: '',
-        thinking: '',
-        toolCalls: [],
-        blocks: [],
-        _revision: (msg._revision ?? 0) + 1
+      // 失败 attempt 只丢掉本段未完成输出；已完成工具轮次与主进程累积器同一套保留规则。
+      const blocksBefore = msg.blocks ?? []
+      const retained = retainCommittedBlocksForRetry(blocksBefore)
+      const retainedToolIds = new Set(
+        retained.flatMap(b => (b.type === 'tool' ? [b.toolCallId] : []))
+      )
+      let thinking = ''
+      let content = ''
+      for (const block of retained) {
+        if (block.type === 'thinking') thinking += block.content
+        if (block.type === 'text') content += block.content
       }
+      const toolCalls = (msg.toolCalls ?? []).filter(tc => retainedToolIds.has(tc.id))
+      const next = [...state.messages]
+      next[idx] = bumpRevision({
+        ...msg,
+        content,
+        thinking,
+        toolCalls,
+        blocks: retained
+      })
       const patch: Partial<ChatState> = commitMessageList(state, {
         nextMessages: next,
         nextIndex: state.messageIndexById,

@@ -18,7 +18,7 @@ export interface WorkedHeaderOptions {
   interrupted?: boolean
 }
 
-/** 折叠头标题：正在工作… / 已工作 X 分 X 秒（无时间戳时降级「已工作」） */
+/** 折叠头标题：正在工作… / 已工作 X 分 X 秒；用户中断时以「已停止」为主状态 */
 export function formatWorkedHeader(options: WorkedHeaderOptions): string {
   const { phase, durationMs, elapsedMs, interrupted } = options
 
@@ -30,10 +30,16 @@ export function formatWorkedHeader(options: WorkedHeaderOptions): string {
     return '正在工作…'
   }
 
-  if (durationMs !== undefined && durationMs > 0) {
-    const base = `已工作 ${formatDurationMs(durationMs)}`
-    return interrupted ? `${base} · 已停止` : base
+  if (interrupted) {
+    if (durationMs !== undefined && durationMs > 0) {
+      return `已停止 · 工作了 ${formatDurationMs(durationMs)}`
+    }
+    return '已停止'
   }
 
-  return interrupted ? '已工作 · 已停止' : '已工作'
+  if (durationMs !== undefined && durationMs > 0) {
+    return `已工作 ${formatDurationMs(durationMs)}`
+  }
+
+  return '已工作'
 }

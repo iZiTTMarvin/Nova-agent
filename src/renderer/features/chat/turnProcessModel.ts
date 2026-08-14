@@ -211,8 +211,15 @@ export function buildProcessTimeline(
   return segments
 }
 
-function blocksToRenderUnits(blocks: RendererMessageBlock[], mode: Mode): RenderUnit[] {
-  return buildBlockRenderUnits(blocks, mode)
+function blocksToRenderUnits(
+  items: Array<{ block: RendererMessageBlock; index: number }>,
+  mode: Mode
+): RenderUnit[] {
+  return buildBlockRenderUnits(
+    items.map(item => item.block),
+    mode,
+    offset => items[offset]!.index
+  )
 }
 
 function resolveDurationMs(
@@ -265,19 +272,19 @@ export function buildTurnRenderModel(input: {
     const lastToolIndex = findLastVisibleToolIndex(blocks, mode)
     const hasProcess = lastToolIndex >= 0
 
-    const answerBlocks: RendererMessageBlock[] = []
+    const answerItems: Array<{ block: RendererMessageBlock; index: number }> = []
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]
       if (!hasProcess) {
-        answerBlocks.push(block)
+        answerItems.push({ block, index: i })
         continue
       }
       if (i > lastToolIndex) {
         if (block.type === 'tool' && !shouldRenderToolBlock(mode, block.toolName)) {
           continue
         }
-        answerBlocks.push(block)
+        answerItems.push({ block, index: i })
       }
     }
 
@@ -287,7 +294,7 @@ export function buildTurnRenderModel(input: {
       durationMs,
       bubbleUnits: [],
       processTimeline: hasProcess ? buildProcessTimeline(blocks, lastToolIndex, mode) : [],
-      answerUnits: blocksToRenderUnits(answerBlocks, mode)
+      answerUnits: blocksToRenderUnits(answerItems, mode)
     }
   }
 

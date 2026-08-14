@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { ChevronIcon } from '../../components/Icons'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import {
-  markThinkingEndedForMessage,
+  markThinkingEnded,
   markThinkingStarted,
   readThinkingElapsedSec
 } from '../../lib/thinkingTimingMemory'
@@ -74,7 +74,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     if (active) {
       markThinkingStarted(messageId, blockIndex)
     } else {
-      markThinkingEndedForMessage(messageId)
+      markThinkingEnded(messageId, blockIndex)
     }
   }, [active, messageId, blockIndex])
 

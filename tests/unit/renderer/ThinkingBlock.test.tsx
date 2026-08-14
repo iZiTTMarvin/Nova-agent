@@ -11,6 +11,7 @@ import { ThinkingBlock } from '../../../src/renderer/features/chat/ThinkingBlock
 import {
   markThinkingEndedForMessage,
   markThinkingStarted,
+  readThinkingElapsedSec,
   resetThinkingTimingMemory
 } from '../../../src/renderer/lib/thinkingTimingMemory'
 import { act, renderDom } from './renderDom'
@@ -103,6 +104,21 @@ describe('ThinkingBlock 状态与计时', () => {
       <ThinkingBlock thinking="已完成" active={false} messageId="msg_remount" blockIndex={0} />
     )
     expect(r.container.querySelector('.thinking-block__title')?.textContent).toBe('Thought for 2.5s')
+    r.unmount()
+  })
+
+  it('非 active 的前一段思考不会把后一段正在计时的耗时打成 0', () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    markThinkingStarted('msg_two', 0)
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.600Z'))
+    markThinkingEndedForMessage('msg_two')
+    markThinkingStarted('msg_two', 2)
+    vi.setSystemTime(new Date('2026-01-01T00:00:02.200Z'))
+
+    const r = renderDom(
+      <ThinkingBlock thinking="第一段" active={false} messageId="msg_two" blockIndex={0} />
+    )
+    expect(readThinkingElapsedSec('msg_two', 2)).toBeCloseTo(0.6, 5)
     r.unmount()
   })
 

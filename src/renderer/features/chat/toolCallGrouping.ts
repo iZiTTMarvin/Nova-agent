@@ -47,7 +47,8 @@ function toToolBlock(tc: ExtendedToolCall): RendererToolBlock {
  */
 export function buildBlockRenderUnits(
   blocks: RendererMessageBlock[] | undefined,
-  mode: Mode
+  mode: Mode,
+  getIndex: (offset: number) => number = offset => offset
 ): RenderUnit[] {
   if (!blocks || blocks.length === 0) {
     return []
@@ -70,8 +71,9 @@ export function buildBlockRenderUnits(
     buffer = []
   }
 
-  for (let index = 0; index < blocks.length; index++) {
-    const block = blocks[index]
+  for (let offset = 0; offset < blocks.length; offset++) {
+    const block = blocks[offset]
+    const index = getIndex(offset)
 
     // 非 tool 块（thinking / text / image / 编排进度）一律打断 tool 连续段并按原序输出
     if (block.type !== 'tool') {

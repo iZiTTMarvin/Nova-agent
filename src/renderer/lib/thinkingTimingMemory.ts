@@ -25,9 +25,25 @@ export function markThinkingStarted(
   if (!byKey.has(key)) {
     byKey.set(key, { startedAt: now })
   }
-  if (!openKeyByMessage.has(messageId)) {
-    openKeyByMessage.set(messageId, key)
+  openKeyByMessage.set(messageId, key)
+}
+
+/** 只封存指定思考块，不误伤同一消息里后一段正在计时的思考 */
+export function markThinkingEnded(
+  messageId: string,
+  blockIndex: number,
+  now: number = Date.now()
+): number | null {
+  const key = thinkingTimingKey(messageId, blockIndex)
+  const entry = byKey.get(key)
+  if (!entry) return null
+  if (entry.endedAt === undefined) {
+    entry.endedAt = Math.max(now, entry.startedAt)
   }
+  if (openKeyByMessage.get(messageId) === key) {
+    openKeyByMessage.delete(messageId)
+  }
+  return Math.max(0, entry.endedAt - entry.startedAt)
 }
 
 export function markThinkingEndedForMessage(

@@ -32,3 +32,8 @@ export {
   appendTerminalErrorToBlocks,
   type TerminalErrorBlockLike
 } from './terminalErrorBlocks'
+
+export {
+  retainCommittedBlocksForRetry,
+  type RetryRetainableBlock
+} from './retainCommittedBlocksForRetry'

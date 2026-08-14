@@ -213,6 +213,18 @@ describe('buildTurnRenderModel', () => {
     expect(model.hasProcess).toBe(true)
     expect(model.answerUnits).toHaveLength(0)
   })
+
+  it('工具之后的思考块保留原始 index，才能判定为仍在思考', () => {
+    const blocks: RendererMessageBlock[] = [
+      { type: 'thinking', content: '第一段' },
+      toolBlock('1', 'ls', { path: '.' }),
+      { type: 'thinking', content: '第二段' }
+    ]
+    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'live' })
+    expect(model.hasProcess).toBe(true)
+    expect(model.answerUnits).toHaveLength(1)
+    expect(model.answerUnits[0]).toMatchObject({ kind: 'block', index: 2 })
+  })
 })
 
 describe('normalizeThinkingForDisplay', () => {

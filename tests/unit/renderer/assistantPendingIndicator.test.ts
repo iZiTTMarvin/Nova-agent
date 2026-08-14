@@ -22,6 +22,7 @@ describe('AssistantPendingIndicator', () => {
 
   it('工作文案保持 10 条，并保证下一条不会和上一条重复', () => {
     expect(NOVA_WORKING_MESSAGES).toHaveLength(10)
+    expect(NOVA_WORKING_MESSAGES.join('\n')).not.toMatch(/进程已暂停/)
 
     for (const previous of NOVA_WORKING_MESSAGES) {
       expect(pickNonRepeatingWorkingMessage(previous, () => 0)).not.toBe(previous)
