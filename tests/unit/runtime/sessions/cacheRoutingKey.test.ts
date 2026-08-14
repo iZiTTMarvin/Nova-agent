@@ -153,8 +153,10 @@ describe('ChatOptions.promptCacheKey 透传', () => {
     await loop.sendMessage('hi', agentRoute())
     loop.dispose()
 
-    expect(captured.length).toBeGreaterThanOrEqual(1)
-    expect(captured.every(o => o.promptCacheKey === 'route-key-abc')).toBe(true)
+    // 本场景仅产生一次主对话模型调用；压缩等一次性内部调用不携带路由 key，
+    // 不在本断言范围（见 CompactionService 测试）
+    expect(captured).toHaveLength(1)
+    expect(captured[0].promptCacheKey).toBe('route-key-abc')
   })
 })
 

@@ -130,6 +130,10 @@ describe('CompactionService', () => {
     expect(context.messages.slice(1)).toEqual(original.slice(-21))
     expect(extractTextFromContent(context.messages[0].content)).toContain('overflow summary')
     expect(service.isCompressingForOverflow()).toBe(false)
+
+    // overflow 与 threshold 共用同一摘要调用点，同样不携带会话缓存路由 key
+    const [summaryCall] = client.getCalls()
+    expect(summaryCall.options?.promptCacheKey).toBeUndefined()
   })
 
   it('overflow 组合层不会拆散 recent 与 pulled-back 边界上的工具调用组', async () => {

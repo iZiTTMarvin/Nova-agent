@@ -1,12 +1,12 @@
 /**
  * CacheProfile — provider 缓存能力的唯一判定来源
  *
- * 由 baseUrl + modelId + 用户显式覆盖解析有效档案。
- * 本轮只接线 marker（驱动 cache_control 注入）；其余字段类型已定义，
- * 供后续阶段消费：
- * - promptCacheKey → 会话路由 key
- * - reasoningReplay → 历史 reasoning 回放
- * - idlePolicy / minCacheableTokens → 压缩与空闲策略
+ * 由 baseUrl + modelId + 用户显式覆盖解析有效档案。各字段消费方：
+ * - marker → cache_control 注入（messageFormat）
+ * - promptCacheKey → 会话缓存路由 key 注入（OpenAICompatibleModelClient）
+ * - reasoningReplay / reasoningWire → 历史 reasoning 回放（toApiMessage）
+ * - idlePolicy → 空闲压缩资格（shouldScheduleIdleCompaction）
+ * - minCacheableTokens 暂无消费方，预留
  *
  * 判定风格对齐 dialect.ts 的 preferredToolDialect（域名片段 + modelId 分词）。
  */
