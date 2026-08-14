@@ -59,7 +59,7 @@ export interface RunViewState {
   /** 刷新等待徽标 */
   refreshWaitingBadges: () => Promise<void>
   /** 开始取消（本地 cancelling，等终态） */
-  beginLocalCancel: (runId: string) => void
+  beginLocalCancel: (runId?: string | null) => void
   /** 强制终止 */
   forceTerminate: () => Promise<void>
   /** interrupted 恢复动作 */
@@ -70,6 +70,7 @@ export interface RunViewState {
 
 const CANCEL_GRACE_MS = 8_000
 let cancelGraceTimer: ReturnType<typeof setTimeout> | null = null
+const pullInFlightBySession = new Map<string, Promise<void>>()
 
 function clearCancelGraceTimer(): void {
   if (cancelGraceTimer !== null) {
@@ -155,73 +156,87 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   interruptedRunId: null,
   interruptedSteps: [],
 
-  pullSnapshot: async (sessionId: string) => {
-    // 会话尚不知道 runId 时，以稳定的 session key 作为拉取令牌。
-    const pullKey = `session:${sessionId}`
-    const token = (get().pullTokenByRunId[pullKey] ?? 0) + 1
-    set({
-      selectedSessionId: sessionId,
-      pullTokenByRunId: { ...get().pullTokenByRunId, [pullKey]: token }
-    })
-    try {
-      const result = await window.api.invoke('run:get-snapshot', { sessionId })
-      // 防御：测试 mock / 旧主进程可能返回 undefined
-      const snap = result?.snapshot ?? null
-      // 同一会话更新后的旧响应不能覆盖新事实。
-      if (get().pullTokenByRunId[pullKey] !== token) return
-      const snapshotsByRunId = snap
-        ? { ...get().snapshotsByRunId, [snap.runId]: snap }
-        : get().snapshotsByRunId
-      const activeRunIdBySessionId = { ...get().activeRunIdBySessionId }
-      if (snap) {
-        activeRunIdBySessionId[sessionId] = snap.runId
-      } else {
-        // pull 返回 null：清理该 session 的陈旧 activeRunId
-        delete activeRunIdBySessionId[sessionId]
-      }
-      const isSelected = get().selectedSessionId === sessionId
+  pullSnapshot: (sessionId: string) => {
+    const existing = pullInFlightBySession.get(sessionId)
+    if (existing) return existing
+
+    // 同会话进行中的 pull 合并为一次 IPC，避免后发请求抬高 token 使水合读到空快照。
+    let promise: Promise<void>
+    promise = (async () => {
+      // 会话尚不知道 runId 时，以稳定的 session key 作为拉取令牌。
+      const pullKey = `session:${sessionId}`
+      const token = (get().pullTokenByRunId[pullKey] ?? 0) + 1
       set({
-        snapshot: isSelected ? snap : get().snapshot,
-        lastSequence: isSelected ? (snap?.sequence ?? 0) : get().lastSequence,
-        snapshotsByRunId,
-        activeRunIdBySessionId,
-        lastSequenceByRunId: snap
-          ? { ...get().lastSequenceByRunId, [snap.runId]: snap.sequence }
-          : get().lastSequenceByRunId,
-        pullTokenByRunId: snap
-          ? { ...get().pullTokenByRunId, [snap.runId]: token }
-          : get().pullTokenByRunId,
-        waitingSessions: result?.waitingSessions ?? [],
-        interruptedRunId: snap?.status === 'interrupted' ? snap.runId : get().interruptedRunId,
-        interruptedSteps:
-          snap?.status === 'interrupted'
-            ? (snap.toolCommits ?? []).map(c => ({
-                toolCallId: c.toolCallId,
-                toolName: c.toolName,
-                phase: c.phase
-              }))
-            : get().interruptedSteps
+        selectedSessionId: sessionId,
+        pullTokenByRunId: { ...get().pullTokenByRunId, [pullKey]: token }
       })
-
-      // 投影交互到 agent store
-      const { useChatStore } = await import('./useChatStore')
-      const currentSessionId = useChatStore.getState().currentSessionId
-      projectInteractionsToAgentStore(snap, currentSessionId)
-
-      // 终态确认取消
-      if (snap && isTerminalStatus(snap.status) && get().cancelling) {
-        clearCancelGraceTimer()
+      try {
+        const result = await window.api.invoke('run:get-snapshot', { sessionId })
+        // 防御：测试 mock / 旧主进程可能返回 undefined
+        const snap = result?.snapshot ?? null
+        // 同一会话更新后的旧响应不能覆盖新事实。
+        if (get().pullTokenByRunId[pullKey] !== token) return
+        const snapshotsByRunId = snap
+          ? { ...get().snapshotsByRunId, [snap.runId]: snap }
+          : get().snapshotsByRunId
+        const activeRunIdBySessionId = { ...get().activeRunIdBySessionId }
+        if (snap) {
+          activeRunIdBySessionId[sessionId] = snap.runId
+        } else {
+          // pull 返回 null：清理该 session 的陈旧 activeRunId
+          delete activeRunIdBySessionId[sessionId]
+        }
+        const isSelected = get().selectedSessionId === sessionId
         set({
-          cancelling: false,
-          cancelGraceExceeded: false,
-          forceTerminateRunId: null
+          snapshot: isSelected ? snap : get().snapshot,
+          lastSequence: isSelected ? (snap?.sequence ?? 0) : get().lastSequence,
+          snapshotsByRunId,
+          activeRunIdBySessionId,
+          lastSequenceByRunId: snap
+            ? { ...get().lastSequenceByRunId, [snap.runId]: snap.sequence }
+            : get().lastSequenceByRunId,
+          pullTokenByRunId: snap
+            ? { ...get().pullTokenByRunId, [snap.runId]: token }
+            : get().pullTokenByRunId,
+          waitingSessions: result?.waitingSessions ?? [],
+          interruptedRunId: snap?.status === 'interrupted' ? snap.runId : get().interruptedRunId,
+          interruptedSteps:
+            snap?.status === 'interrupted'
+              ? (snap.toolCommits ?? []).map(c => ({
+                  toolCallId: c.toolCallId,
+                  toolName: c.toolName,
+                  phase: c.phase
+                }))
+              : get().interruptedSteps
         })
-        // 同步 chat isGenerating
-        useChatStore.getState().markRunningAsCancelled()
+
+        // 投影交互到 agent store
+        const { useChatStore } = await import('./useChatStore')
+        const currentSessionId = useChatStore.getState().currentSessionId
+        projectInteractionsToAgentStore(snap, currentSessionId)
+
+        // 终态确认取消
+        if (snap && isTerminalStatus(snap.status) && get().cancelling) {
+          clearCancelGraceTimer()
+          set({
+            cancelling: false,
+            cancelGraceExceeded: false,
+            forceTerminateRunId: null
+          })
+          // 同步 chat isGenerating
+          useChatStore.getState().markRunningAsCancelled()
+        }
+      } catch (err) {
+        console.error('[useRunStore] pullSnapshot 失败:', err)
       }
-    } catch (err) {
-      console.error('[useRunStore] pullSnapshot 失败:', err)
-    }
+    })().finally(() => {
+      if (pullInFlightBySession.get(sessionId) === promise) {
+        pullInFlightBySession.delete(sessionId)
+      }
+    })
+
+    pullInFlightBySession.set(sessionId, promise)
+    return promise
   },
 
   handleSnapshotEvent: (snapshot, event) => {
@@ -272,9 +287,14 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       // 刷新徽标
       void get().refreshWaitingBadges()
 
-      const cancellingThisRun = get().cancelling &&
-        (get().forceTerminateRunId === null || get().forceTerminateRunId === snapshot.runId)
-      if (cancellingThisRun && isTerminalStatus(snapshot.status)) {
+      const targetRunId = get().forceTerminateRunId
+      const cancellingThisRun =
+        get().cancelling &&
+        // 会话未水合（null）时无从比对，与上方投影的空选中语义一致：放行终态确认。
+        (currentSessionId == null || snapshot.sessionId === currentSessionId) &&
+        isTerminalStatus(snapshot.status) &&
+        (targetRunId == null || targetRunId === snapshot.runId)
+      if (cancellingThisRun) {
         clearCancelGraceTimer()
         set({
           cancelling: false,
@@ -295,12 +315,19 @@ export const useRunStore = create<RunViewState>((set, get) => ({
     }
   },
 
-  beginLocalCancel: (runId: string) => {
+  beginLocalCancel: (runId?: string | null) => {
+    const target = runId ?? null
+    if (target) {
+      const existing =
+        get().snapshotsByRunId[target]
+        ?? (get().snapshot?.runId === target ? get().snapshot : null)
+      if (existing && isTerminalStatus(existing.status)) return
+    }
     clearCancelGraceTimer()
     set({
       cancelling: true,
       cancelGraceExceeded: false,
-      forceTerminateRunId: runId
+      forceTerminateRunId: target
     })
     cancelGraceTimer = setTimeout(() => {
       cancelGraceTimer = null
@@ -376,6 +403,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
 
   resetForTests: () => {
     clearCancelGraceTimer()
+    pullInFlightBySession.clear()
     set({
       snapshot: null,
       lastSequence: 0,

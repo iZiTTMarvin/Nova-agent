@@ -65,3 +65,7 @@ cursor-helper/**/review/reports/files/
 # - cursor-helper/**/review/reports/summary/** （总结性评审报告）
 # - cursor-helper/**/fix/fix_report.md （修复报告）
 # - cursor-helper/**/organize-rules/** （规则整理报告）
+
+# Electron E2E 诊断产物
+test-results/
+playwright-report/

@@ -77,13 +77,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       const { useRunStore } = await import('./useRunStore')
       const runState = useRunStore.getState()
       // 停止按钮只针对当前选中会话的活动 run，不能误取消后台其他会话。
-      const runId = targetRunId ??
-        (runState.selectedSessionId
+      const runId = targetRunId
+        ?? (runState.selectedSessionId
           ? runState.activeRunIdBySessionId[runState.selectedSessionId]
-          : runState.snapshot?.runId)
+          : undefined)
+        ?? runState.snapshot?.runId
+        ?? null
 
       // 本地立即进入 cancelling，不清 isGenerating（等 snapshot 终态）
-      useRunStore.getState().beginLocalCancel(runId ?? 'unknown')
+      useRunStore.getState().beginLocalCancel(runId)
 
       // 本地清空弹窗，避免卡在已取消的交互上
       set({

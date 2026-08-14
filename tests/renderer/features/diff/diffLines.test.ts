@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from 'vitest'
 import {
   LARGE_PATCH_CHAR_THRESHOLD,

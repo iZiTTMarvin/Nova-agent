@@ -1,0 +1,67 @@
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev, main]
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install app dependencies
+        run: npm ci
+      - name: Install Electron E2E harness
+        run: npm run test:e2e:install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Typecheck Electron E2E harness
+        run: npm run test:e2e:typecheck
+      - name: Vitest regression
+        run: npm test
+      - name: Production build
+        run: npm run build
+      - name: Electron smoke
+        if: github.event_name == 'pull_request'
+        run: npm --prefix tests/e2e run test:smoke
+      - name: Electron smoke and lifecycle
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: npm --prefix tests/e2e run test:main
+      - name: Electron fault injection
+        if: github.event_name == 'schedule'
+        run: npm --prefix tests/e2e run test:fault
+      - name: Electron lifecycle stress
+        if: github.event_name == 'schedule'
+        run: npm --prefix tests/e2e run test:stress
+      - name: Upload E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-e2e-diagnostics
+          path: |
+            test-results/e2e
+            playwright-report/e2e
+          if-no-files-found: ignore
+          retention-days: 7

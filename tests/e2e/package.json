@@ -1,0 +1,15 @@
+{
+  "name": "nova-electron-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test:smoke": "playwright test smoke",
+    "test:main": "playwright test smoke lifecycle",
+    "test:fault": "playwright test fault --grep-invert @stress",
+    "test:stress": "playwright test fault/stress.spec.ts",
+    "test:packaged": "playwright test packaged"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

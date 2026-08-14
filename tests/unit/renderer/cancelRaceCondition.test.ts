@@ -91,6 +91,53 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     })
   })
 
+  it('其他会话的终态不确认取消，当前会话的终态才复位', async () => {
+    const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
+    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+
+    useChatStore.getState().handleMessageStart('msg_session_cancel')
+    useChatStore.setState({
+      isGenerating: true,
+      currentGeneratingMessageId: 'msg_session_cancel',
+      currentSessionId: 's2'
+    })
+
+    mockInvoke.mockResolvedValue({ runId: 'run_1', status: 'cancelling' })
+    await useAgentStore.getState().cancelExecution()
+    expect(useRunStore.getState().cancelling).toBe(true)
+
+    const terminal = {
+      kind: 'agent',
+      workspaceId: '/ws',
+      messageId: 'msg_session_cancel',
+      status: 'cancelled',
+      pendingInteractions: [],
+      currentAttempt: null,
+      progress: null,
+      lastHeartbeatAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    } as const
+
+    useRunStore.getState().handleSnapshotEvent(
+      { ...terminal, runId: 'run_other', sessionId: 's1', sequence: 5 },
+      { sequence: 5, type: 'terminal', at: Date.now() }
+    )
+    // 事件投影是异步的，等一个宏任务再确认取消态未被其他会话打断
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(useRunStore.getState().cancelling).toBe(true)
+
+    useRunStore.getState().handleSnapshotEvent(
+      { ...terminal, runId: 'run_1', sessionId: 's2', sequence: 5 },
+      { sequence: 5, type: 'terminal', at: Date.now() }
+    )
+    await vi.waitFor(() => {
+      expect(useRunStore.getState().cancelling).toBe(false)
+      expect(useChatStore.getState().isGenerating).toBe(false)
+    })
+  })
+
   it('超 grace 显示 cancelGraceExceeded，可 forceTerminate', async () => {
     vi.useFakeTimers()
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')

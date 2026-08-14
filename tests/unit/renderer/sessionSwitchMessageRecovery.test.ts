@@ -135,6 +135,47 @@ describe('运行中会话切回恢复', () => {
     })
   })
 
+  it('同会话并发二次 pull 不得让水合丢失运行态', async () => {
+    let releaseSnapshot!: () => void
+    const snapshotGate = new Promise<void>(resolve => {
+      releaseSnapshot = resolve
+    })
+    let getSnapshotCalls = 0
+
+    global.window = {
+      ...global.window,
+      api: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === 'run:get-snapshot') {
+            getSnapshotCalls += 1
+            await snapshotGate
+            return { snapshot: runningSnapshot, waitingSessions: [] }
+          }
+          if (channel === 'load-session') {
+            return sessionDetail([userMessage])
+          }
+          if (channel === 'run:list-waiting') return []
+          return undefined
+        }),
+        on: vi.fn(),
+        removeAllListeners: vi.fn()
+      }
+    } as unknown as Window & typeof globalThis
+
+    dispatchWorkspaceChange(workspaceState())
+    const extraPull = useRunStore.getState().pullSnapshot(sessionId)
+    expect(getSnapshotCalls).toBe(1)
+
+    releaseSnapshot()
+    await extraPull
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().isGenerating).toBe(true)
+      expect(useChatStore.getState().currentGeneratingMessageId).toBe(messageId)
+    })
+    expect(getSnapshotCalls).toBe(1)
+  })
+
   it('错过 message_start 时首个 delta 自动创建 assistant 消息壳（文本进活跃回合）', () => {
     useChatStore.setState({
       currentSessionId: sessionId,

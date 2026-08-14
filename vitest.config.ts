@@ -18,7 +18,7 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
-    // 集成测试加载 better-sqlite3 原生模块，仅由 test:memory-integration 执行
-    exclude: ['tests/integration/**']
+    // 集成测试加载 better-sqlite3 原生模块，仅由 test:memory-integration 执行；Electron E2E 由 Playwright 独立执行。
+    exclude: ['tests/integration/**', 'tests/e2e/**']
   }
 })

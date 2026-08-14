@@ -82,9 +82,7 @@ function App(): React.ReactNode {
     const stopDispatcher = startWorkspaceDispatcher()
     // 拉取初始工作区状态（会触发首次 dispatch，加载会话列表 + 选中最近会话）
     void useWorkspaceStore.getState().init().then(() => {
-      // snapshot-first：首屏会话就绪后拉权威 run 快照
-      const sid = useChatStore.getState().currentSessionId
-      if (sid) void useRunStore.getState().pullSnapshot(sid)
+      // 运行态由 chat hydration 拉权威 snapshot；这里只刷新等待徽标。
       void useRunStore.getState().refreshWaitingBadges()
     })
     return () => {
