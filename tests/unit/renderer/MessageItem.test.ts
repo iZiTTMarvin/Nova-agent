@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from 'vitest'
 import { areEqual } from '../../../src/renderer/features/chat/MessageItem'
 import type { MessageItemProps } from '../../../src/renderer/features/chat/MessageItem'
