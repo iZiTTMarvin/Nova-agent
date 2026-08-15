@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { TextInput } from '@astryxdesign/core/TextInput'
+import { SettingsActions, SettingsField, SettingsPage, SettingsSection } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 
 export const WebSearchSettingsPanel: React.FC = () => {
@@ -56,66 +57,65 @@ export const WebSearchSettingsPanel: React.FC = () => {
   if (!settings) {
     return (
       <div className="settings-panel">
-        <header className="settings-panel__header">
-          <h3 className="settings-panel__title">联网搜索</h3>
-        </header>
-        <div className="settings-panel__scroll">加载中…</div>
+        <div className="settings-panel__scroll">
+          <p className="settings-panel__muted">加载中…</p>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="settings-panel">
-      <header className="settings-panel__header">
-        <h3 className="settings-panel__title">联网搜索</h3>
-        <p className="settings-panel__desc">
-          无需配置 API Key 也可通过 Bing / DuckDuckGo 联网搜索。填写 Tavily API Key 可在爬虫失败时作为质量增强兜底。
-        </p>
-      </header>
-
-      <div className="settings-modal__form settings-panel__scroll">
-        <div className="settings-modal__field">
-          <TextInput
-            label="Tavily API Key（可选）"
-            type="password"
-            placeholder="tvly-xxxxxxxxxxxxxxxx"
-            value={draftKey}
-            onChange={value => setDraftKey(value)}
-            onBlur={() => void saveApiKey()}
-            isDisabled={saving}
-            width="100%"
-          />
-          <span className="settings-modal__help">
-            不填也能搜索；填写后可提升搜索质量，并在爬虫失败时自动兜底。Key 仅保存在本机。
-            {' '}
-            <a
-              href="https://app.tavily.com"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              获取 Tavily API Key →
-            </a>
-          </span>
-        </div>
-
-        <div className="settings-modal__field">
-          <Button
-            label={saving ? '保存中…' : '保存'}
-            variant="primary"
-            size="sm"
-            isDisabled={saving}
-            onClick={() => void saveApiKey()}
+      <div className="settings-panel__scroll">
+        <SettingsPage>
+          <SettingsSection
+            title="Tavily"
+            description="默认通过 Bing / DuckDuckGo 爬虫搜索；Tavily 用于质量增强与失败兜底。"
           >
-            {saving ? '保存中…' : '保存'}
-          </Button>
-        </div>
-
-        {error && <div className="settings-modal__error">{error}</div>}
-        {saved && !error && (
-          <div className="settings-modal__help" style={{ color: 'var(--color-success, #2da44e)' }}>
-            已保存
-          </div>
-        )}
+            <SettingsField>
+              <TextInput
+                label="Tavily API Key（可选）"
+                type="password"
+                placeholder="tvly-xxxxxxxxxxxxxxxx"
+                value={draftKey}
+                onChange={value => setDraftKey(value)}
+                onBlur={() => void saveApiKey()}
+                isDisabled={saving}
+                width="100%"
+              />
+              <span className="settings-help">
+                不填也能搜索；填写后可提升搜索质量，并在爬虫失败时自动兜底。Key 仅保存在本机。
+                {' '}
+                <a
+                  href="https://app.tavily.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  获取 Tavily API Key →
+                </a>
+              </span>
+            </SettingsField>
+            <SettingsActions>
+              <Button
+                label={saving ? '保存中…' : '保存'}
+                variant="primary"
+                size="sm"
+                isDisabled={saving}
+                onClick={() => void saveApiKey()}
+              >
+                {saving ? '保存中…' : '保存'}
+              </Button>
+              {saved && !error && (
+                <span className="settings-status settings-status--ok">已保存</span>
+              )}
+            </SettingsActions>
+            {error && (
+              <SettingsField>
+                <span className="settings-status settings-status--error">{error}</span>
+              </SettingsField>
+            )}
+          </SettingsSection>
+        </SettingsPage>
       </div>
     </div>
   )

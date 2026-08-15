@@ -18,7 +18,7 @@ export const AutoModeToggle: React.FC<AutoModeToggleProps> = ({ enabled, onChang
     >
       <span
         aria-hidden="true"
-        className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-emerald-300' : 'bg-gray-300'}`}
+        className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-[var(--nova-status-success)]' : 'bg-[var(--text-muted)]'}`}
       />
       全自动
     </ToggleButton>

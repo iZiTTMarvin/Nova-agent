@@ -220,34 +220,26 @@ export const MemorySettingsPanel: React.FC = () => {
         className="settings-panel__warning-banner"
       />
 
-      <header className="settings-panel__header settings-panel__header--row memory-settings-panel__header">
-        <div>
-          <h3 className="settings-panel__title">记忆</h3>
-          <p className="settings-panel__desc">
-            查看与编辑当前工作区的跨会话记忆文件（按工作区哈希隔离）。
-          </p>
-        </div>
-        <div className="settings-panel__header-actions">
-          <Button
-            label="重建索引"
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleReconcile()}
-            isDisabled={!currentProject || loading}
-          >
-            重建索引
-          </Button>
-          <Button
-            label="打开记忆目录"
-            variant="primary"
-            size="sm"
-            onClick={() => void handleOpenDir()}
-            isDisabled={!currentProject}
-          >
-            打开记忆目录
-          </Button>
-        </div>
-      </header>
+      <div className="settings-panel__toolbar">
+        <Button
+          label="重建索引"
+          variant="secondary"
+          size="sm"
+          onClick={() => void handleReconcile()}
+          isDisabled={!currentProject || loading}
+        >
+          重建索引
+        </Button>
+        <Button
+          label="打开记忆目录"
+          variant="primary"
+          size="sm"
+          onClick={() => void handleOpenDir()}
+          isDisabled={!currentProject}
+        >
+          打开记忆目录
+        </Button>
+      </div>
 
       {!currentProject && (
         <p className="settings-panel__muted memory-settings-panel__empty-hint">
@@ -334,7 +326,7 @@ export const MemorySettingsPanel: React.FC = () => {
       )}
 
       {error && (
-        <div className="settings-modal__error memory-settings-panel__error">{error}</div>
+        <div className="settings-status settings-status--error memory-settings-panel__error">{error}</div>
       )}
 
       <div className="memory-settings-panel__workspace">

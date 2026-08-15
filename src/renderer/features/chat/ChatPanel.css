@@ -1064,6 +1064,35 @@
   justify-content: center;
 }
 
+/* composer 卡片与子会话只读提示：表面/边框/投影全部走主题变量，深浅色一致 */
+.chat-composer-box {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-cream);
+  border-radius: 16px;
+  box-shadow: var(--shadow-whisper);
+  backdrop-filter: blur(24px);
+  transition:
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.chat-composer-box:hover {
+  box-shadow: var(--shadow-card);
+}
+
+.chat-composer-box--dragover {
+  border-color: var(--color-focus, #3898ec);
+  box-shadow: 0 0 0 2px rgba(56, 152, 236, 0.2);
+}
+
+.chat-subagent-note {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-cream);
+  border-radius: 16px;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-whisper);
+}
+
 .chat-panel__composer-inner {
   position: relative;
   width: 100%;

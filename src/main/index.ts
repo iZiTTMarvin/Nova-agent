@@ -182,10 +182,17 @@ function createMainWindow(): void {
   })
 
   contents.on('will-navigate', (event, navigationUrl) => {
-    if (navigationUrl.startsWith('http://') || navigationUrl.startsWith('https://')) {
-      event.preventDefault()
-      void shell.openExternal(navigationUrl)
+    if (!navigationUrl.startsWith('http://') && !navigationUrl.startsWith('https://')) {
+      return
     }
+    // dev 下 vite 依赖重新优化会触发同源整页 reload，属于应用自身导航，必须放行；
+    // 否则 reload 被当外链劫持到系统浏览器（无 preload 的页面会直接崩溃）。
+    const devRoot = process.env.ELECTRON_RENDERER_URL
+    if (devRoot && navigationUrl.startsWith(devRoot)) {
+      return
+    }
+    event.preventDefault()
+    void shell.openExternal(navigationUrl)
   })
 
   // 渲染进程崩溃自愈：记日志 + reload（带上限防循环）

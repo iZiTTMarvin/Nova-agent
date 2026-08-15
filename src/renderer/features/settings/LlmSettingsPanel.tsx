@@ -9,6 +9,7 @@ import { NumberInput } from '@astryxdesign/core/NumberInput'
 import { Selector } from '@astryxdesign/core/Selector'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore, getDefaultLlmRegistry } from '../../stores/useSettingsStore'
+import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
 import {
   type LlmRegistry,
   type ProviderConfig,
@@ -52,18 +53,12 @@ export const LlmSettingsPanel: React.FC = () => {
   }, [llmRegistry])
 
   /**
-   * 选中某个服务商时，确保它在 draft.providers 中存在一个稳定实例：
-   * - 预设服务商：首次选中即落进 draft（enabled:false、空模型列表、稳定占位 id），
-   *   避免后续 editingProvider 每次重算丢掉刷新拉取的真实模型。
-   * - 自定义服务商：已由 handleAddCustomProvider 落进 draft，无需重复创建。
-   *
-   * 注意：落进 draft 只是草稿态，不写盘；只有 handleSave 才会真正持久化。
-   * 用户取消时 draft 被丢弃，自然回退到磁盘真相。
+   * 选中某服务商时确保 draft 中存在稳定实例：预设首次选中落占位（enabled:false），
+   * 避免 editingProvider 重算丢掉刷新拉取的真实模型。落 draft 只是草稿态，不写盘。
    */
   useEffect(() => {
     setDraft(prev => {
       if (selection.kind === 'preset') {
-        // 预设已在 draft 中 → 无需处理
         if (findProviderByPreset(prev, selection.presetId)) return prev
         const meta = PRESET_PROVIDERS[selection.presetId]
         const placeholder: ProviderConfig = {
@@ -77,7 +72,6 @@ export const LlmSettingsPanel: React.FC = () => {
         }
         return { ...prev, providers: [...prev.providers, placeholder] }
       }
-      // 自定义：若不存在则补一个空壳（理论上 handleAddCustomProvider 已处理）
       if (!prev.providers.some(p => p.id === selection.providerId)) {
         const created = createCustomProvider('自定义服务商', 'http://localhost:11434/v1')
         created.id = selection.providerId
@@ -248,8 +242,7 @@ export const LlmSettingsPanel: React.FC = () => {
       nextProviders.push(toSave)
     }
 
-    // 计算 activeModel：当前 active 失效（首次配置为空 / 引用的 provider 不存在）
-    // 或正指向本次保存的服务商时，锚定到 toSave；否则保持不变。
+    // 计算 activeModel：当前 active 失效或正指向本次保存的服务商时锚定到 toSave；否则保持不变。
     const activeModel = resolveActiveModelAfterSave(draft.activeModel, toSave, nextProviders)
 
     const nextRegistry: LlmRegistry = {
@@ -277,27 +270,17 @@ export const LlmSettingsPanel: React.FC = () => {
   if (!editingProvider) {
     return (
       <div className="settings-panel">
-        <header className="settings-panel__header">
-          <h3 className="settings-panel__title">LLM 配置</h3>
-        </header>
-        <div className="settings-panel__scroll">加载中…</div>
+        <div className="settings-panel__scroll">
+          <p className="settings-panel__muted">加载中…</p>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="settings-panel">
-      <header className="settings-panel__header settings-panel__header--row">
-        <div>
-          <h3 className="settings-panel__title">LLM 配置</h3>
-          <p className="settings-panel__desc">
-            按服务商管理 API Key 与模型，可在对话框底部快速切换。
-          </p>
-        </div>
-      </header>
-
-      <div className="settings-split llm-settings-split">
-        {/* 左侧：服务商列表（与规则/子代理面板同款列表样式） */}
+      <div className="settings-split">
+        {/* 左侧：服务商列表 */}
         <div className="settings-split__list llm-provider-list">
           <div className="llm-provider-list__section-title">预设服务商</div>
           {PRESET_PROVIDER_IDS.map(presetId => {
@@ -370,163 +353,181 @@ export const LlmSettingsPanel: React.FC = () => {
         {/* 右侧：服务商详情 */}
         <div className="settings-split__editor llm-provider-detail">
           <div className="llm-provider-detail__scroll">
-            {selection.kind === 'custom' && (
-              <div className="llm-provider-detail__toolbar">
-                <div className="settings-modal__field llm-provider-detail__name-field">
+            <SettingsPage>
+              <SettingsSection title="连接">
+                {selection.kind === 'custom' && (
+                  <SettingsField>
+                    <div className="llm-provider-detail__toolbar">
+                      <div className="llm-provider-detail__name-field">
+                        <TextInput
+                          label="服务商名称"
+                          value={editingProvider.name}
+                          onChange={value =>
+                            updateProviderInDraft({ ...editingProvider, name: value })
+                          }
+                          isDisabled={saving}
+                          width="100%"
+                        />
+                      </div>
+                      <Button
+                        label="删除服务商"
+                        variant="destructive"
+                        size="sm"
+                        className="llm-provider-detail__remove"
+                        onClick={() => handleRemoveCustomProvider(editingProvider.id)}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </SettingsField>
+                )}
+
+                <SettingsField>
                   <TextInput
-                    label="服务商名称"
-                    value={editingProvider.name}
+                    label="接口地址 (Base URL)"
+                    value={editingProvider.baseUrl}
                     onChange={value =>
-                      updateProviderInDraft({ ...editingProvider, name: value })
+                      updateProviderInDraft({ ...editingProvider, baseUrl: value })
                     }
-                    isDisabled={saving}
+                    isDisabled={saving || Boolean(editingProvider.presetId)}
                     width="100%"
                   />
-                </div>
-                <Button
-                  label="删除服务商"
-                  variant="destructive"
-                  size="sm"
-                  className="llm-provider-detail__remove"
-                  onClick={() => handleRemoveCustomProvider(editingProvider.id)}
-                >
-                  删除
-                </Button>
-              </div>
-            )}
+                  {editingProvider.presetId && (
+                    <span className="settings-help">预设服务商地址不可修改。</span>
+                  )}
+                </SettingsField>
 
-            <div className="settings-modal__field">
-            <TextInput
-              label="接口地址 (Base URL)"
-              value={editingProvider.baseUrl}
-              onChange={value =>
-                updateProviderInDraft({ ...editingProvider, baseUrl: value })
-              }
-              isDisabled={saving || Boolean(editingProvider.presetId)}
-              width="100%"
-            />
-            {editingProvider.presetId && (
-              <span className="settings-modal__help">预设服务商地址不可修改。</span>
-            )}
-          </div>
+                <SettingsField>
+                  <div className="settings-input-affix">
+                    <TextInput
+                      label="API Key"
+                      type={showKey ? 'text' : 'password'}
+                      value={editingProvider.apiKey}
+                      onChange={value =>
+                        updateProviderInDraft({ ...editingProvider, apiKey: value })
+                      }
+                      placeholder="填写后保存即可使用"
+                      isDisabled={saving}
+                      width="100%"
+                    />
+                    <Button
+                      label={showKey ? '隐藏 API Key' : '显示 API Key'}
+                      variant="ghost"
+                      size="sm"
+                      className="settings-input-affix__action"
+                      onClick={() => setShowKey(!showKey)}
+                    >
+                      {showKey ? '隐藏' : '显示'}
+                    </Button>
+                  </div>
+                </SettingsField>
 
-          <div className="settings-modal__field">
-            <div className="settings-modal__input-wrapper">
-              <TextInput
-                label="API Key"
-                type={showKey ? 'text' : 'password'}
-                value={editingProvider.apiKey}
-                onChange={value =>
-                  updateProviderInDraft({ ...editingProvider, apiKey: value })
-                }
-                placeholder="填写后保存即可使用"
-                isDisabled={saving}
-                width="100%"
-              />
-              <Button
-                label={showKey ? '隐藏 API Key' : '显示 API Key'}
-                variant="ghost"
-                size="sm"
-                className="settings-modal__toggle-pwd"
-                onClick={() => setShowKey(!showKey)}
-              >
-                {showKey ? '隐藏' : '显示'}
-              </Button>
-            </div>
-          </div>
-
-          <div className="settings-modal__field">
-            <Selector
-              label="工具调用方式"
-              width="100%"
-              options={[
-                { value: 'auto', label: '自动（推荐）' },
-                { value: 'native', label: '原生函数调用' },
-                { value: 'xml', label: 'XML 兼容模式' }
-              ]}
-              value={editingProvider.toolDialect ?? 'auto'}
-              onChange={value =>
-                updateProviderInDraft({
-                  ...editingProvider,
-                  toolDialect: value as 'auto' | 'native' | 'xml'
-                })
-              }
-              isDisabled={saving}
-            />
-          </div>
-
-          <div className="settings-modal__field">
-            <div className="llm-model-list__toolbar">
-              <label className="settings-modal__label">模型列表</label>
-              <Button
-                label={refreshing ? '刷新中…' : '刷新模型列表'}
-                variant="secondary"
-                size="sm"
-                className="llm-model-refresh"
-                onClick={() => void handleRefreshModels()}
-                isDisabled={saving || refreshing || !editingProvider.apiKey.trim()}
-                tooltip={
-                  editingProvider.apiKey.trim()
-                    ? '从服务商拉取可用模型'
-                    : '请先填写 API Key'
-                }
-              >刷新模型列表</Button>
-            </div>
-            {refreshMessage && (
-              <span className="settings-modal__help">{refreshMessage}</span>
-            )}
-
-            <ul className="llm-model-list">
-              {editingProvider.models.map(entry => (
-                <ModelEntryRow
-                  key={entry.id}
-                  entry={entry}
-                  disabled={saving}
-                  onUpdate={patch => handleUpdateModel(entry.id, patch)}
-                  onRemove={() => handleRemoveModel(entry.id)}
-                />
-              ))}
-              {editingProvider.models.length === 0 && (
-                <li className="llm-model-list__empty">
-                  {editingProvider.apiKey.trim()
-                    ? '暂无模型，请点击「刷新模型列表」获取，或手动添加'
-                    : '请先填写 API Key，再点击「刷新模型列表」获取可用模型'}
-                </li>
-              )}
-            </ul>
-
-            <div className="llm-model-add">
-              <TextInput
-                label="手动输入模型 ID"
-                isLabelHidden
-                value={newModelId}
-                onChange={value => setNewModelId(value)}
-                placeholder="手动输入模型 ID"
-                isDisabled={saving}
-                width="100%"
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleAddModel()
+                <SettingsRow
+                  label="工具调用方式"
+                  description="auto 按模型能力自动选择。"
+                  end={
+                    <Selector
+                      label="工具调用方式"
+                      isLabelHidden
+                      options={[
+                        { value: 'auto', label: '自动（推荐）' },
+                        { value: 'native', label: '原生函数调用' },
+                        { value: 'xml', label: 'XML 兼容模式' }
+                      ]}
+                      value={editingProvider.toolDialect ?? 'auto'}
+                      onChange={value =>
+                        updateProviderInDraft({
+                          ...editingProvider,
+                          toolDialect: value as 'auto' | 'native' | 'xml'
+                        })
+                      }
+                      isDisabled={saving}
+                      width={180}
+                    />
                   }
-                }}
-              />
-              <Button
-                label="添加模型"
-                variant="secondary"
-                size="sm"
-                onClick={handleAddModel}
-                isDisabled={saving || !newModelId.trim()}
+                />
+              </SettingsSection>
+
+              <SettingsSection
+                title="模型"
+                action={
+                  <Button
+                    label={refreshing ? '刷新中…' : '刷新模型列表'}
+                    variant="secondary"
+                    size="sm"
+                    className="llm-model-refresh"
+                    onClick={() => void handleRefreshModels()}
+                    isDisabled={saving || refreshing || !editingProvider.apiKey.trim()}
+                    tooltip={
+                      editingProvider.apiKey.trim()
+                        ? '从服务商拉取可用模型'
+                        : '请先填写 API Key'
+                    }
+                  >刷新模型列表</Button>
+                }
               >
-                添加
-              </Button>
-            </div>
+                {refreshMessage && (
+                  <SettingsField>
+                    <span className="settings-help">{refreshMessage}</span>
+                  </SettingsField>
+                )}
+
+                <SettingsField>
+                  <ul className="llm-model-list">
+                    {editingProvider.models.map(entry => (
+                      <ModelEntryRow
+                        key={entry.id}
+                        entry={entry}
+                        disabled={saving}
+                        onUpdate={patch => handleUpdateModel(entry.id, patch)}
+                        onRemove={() => handleRemoveModel(entry.id)}
+                      />
+                    ))}
+                    {editingProvider.models.length === 0 && (
+                      <li className="llm-model-list__empty">
+                        {editingProvider.apiKey.trim()
+                          ? '暂无模型，请点击「刷新模型列表」获取，或手动添加'
+                          : '请先填写 API Key，再点击「刷新模型列表」获取可用模型'}
+                      </li>
+                    )}
+                  </ul>
+
+                  <div className="llm-model-add">
+                    <TextInput
+                      label="手动输入模型 ID"
+                      isLabelHidden
+                      value={newModelId}
+                      onChange={value => setNewModelId(value)}
+                      placeholder="手动输入模型 ID"
+                      isDisabled={saving}
+                      width="100%"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          handleAddModel()
+                        }
+                      }}
+                    />
+                    <Button
+                      label="添加模型"
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleAddModel}
+                      isDisabled={saving || !newModelId.trim()}
+                    >
+                      添加
+                    </Button>
+                  </div>
+                </SettingsField>
+              </SettingsSection>
+
+              {submitError && (
+                <div className="settings-status settings-status--error">{submitError}</div>
+              )}
+            </SettingsPage>
           </div>
 
-          {submitError && <div className="settings-modal__error">{submitError}</div>}
-          </div>
-
-          <div className="settings-modal__actions llm-provider-detail__actions">
+          <div className="settings-panel__footer">
             <Button
               label="取消"
               variant="secondary"
@@ -575,7 +576,6 @@ const ModelEntryRow: React.FC<{
           )}
         </div>
         <div className="llm-model-list__actions">
-          {/* 高级标记：已配置过高级项时给出视觉提示 */}
           {advancedOpen && (
             <span className="llm-model-list__badge" title="已展开高级配置">高级</span>
           )}
@@ -605,79 +605,70 @@ const ModelEntryRow: React.FC<{
 
       {advancedOpen && (
         <div className="llm-model-list__advanced">
-          <div className="settings-modal__field">
-            <TextInput
-              label="显示名"
-              value={entry.displayName ?? ''}
-              onChange={value =>
-                onUpdate(value.trim() ? { displayName: value } : { displayName: undefined })
-              }
-              placeholder="默认用模型 ID"
-              isDisabled={disabled}
-              width="100%"
-            />
-          </div>
+          <TextInput
+            label="显示名"
+            value={entry.displayName ?? ''}
+            onChange={value =>
+              onUpdate(value.trim() ? { displayName: value } : { displayName: undefined })
+            }
+            placeholder="默认用模型 ID"
+            isDisabled={disabled}
+            width="100%"
+          />
 
-          <div className="settings-modal__field">
-            <NumberInput
-              label="上下文窗口（tokens）"
-              value={entry.contextWindow ?? null}
-              onChange={value => onUpdate({ contextWindow: value ?? undefined })}
-              placeholder="留空则自动推断"
-              min={1024}
-              hasClear
-              isDisabled={disabled}
-              width="100%"
-            />
-            <span className="settings-modal__help">如 128000；留空时按模型 ID 猜测。</span>
-          </div>
+          <NumberInput
+            label="上下文窗口（tokens）"
+            value={entry.contextWindow ?? null}
+            onChange={value => onUpdate({ contextWindow: value ?? undefined })}
+            placeholder="留空则自动推断"
+            min={1024}
+            hasClear
+            isDisabled={disabled}
+            width="100%"
+          />
+          <span className="settings-help">如 128000；留空时按模型 ID 猜测。</span>
 
-          <div className="settings-modal__field">
-            <Selector
-              label="思考强度"
-              width="100%"
-              options={[
-                { value: 'auto', label: '自动（推荐，不发送参数）' },
-                { value: 'low', label: '低' },
-                { value: 'medium', label: '中' },
-                { value: 'high', label: '高' },
-                { value: 'max', label: '最高' }
-              ]}
-              value={entry.reasoningEffort ?? 'auto'}
-              onChange={value =>
-                onUpdate({ reasoningEffort: value as ReasoningEffort })
-              }
-              isDisabled={disabled}
-            >
-            </Selector>
-            <span className="settings-modal__help">控制推理深度；auto 不影响现有行为。</span>
-          </div>
+          <Selector
+            label="思考强度"
+            options={[
+              { value: 'auto', label: '自动（推荐，不发送参数）' },
+              { value: 'low', label: '低' },
+              { value: 'medium', label: '中' },
+              { value: 'high', label: '高' },
+              { value: 'max', label: '最高' }
+            ]}
+            value={entry.reasoningEffort ?? 'auto'}
+            onChange={value =>
+              onUpdate({ reasoningEffort: value as ReasoningEffort })
+            }
+            isDisabled={disabled}
+            width="100%"
+          />
+          <span className="settings-help">控制推理深度；auto 不影响现有行为。</span>
 
-          <div className="settings-modal__field">
-            <Selector
-              label="支持图片"
-              width="100%"
-              options={[
-                { value: 'auto', label: '自动（留空）' },
-                { value: 'yes', label: '是' },
-                { value: 'no', label: '否' }
-              ]}
-              value={
-                entry.supportsVision === undefined
-                  ? 'auto'
-                  : entry.supportsVision
-                    ? 'yes'
-                    : 'no'
-              }
-              onChange={value => {
-                const v = value
-                onUpdate({
-                  supportsVision: v === 'auto' ? undefined : v === 'yes'
-                })
-              }}
-              isDisabled={disabled}
-            />
-          </div>
+          <Selector
+            label="支持图片"
+            options={[
+              { value: 'auto', label: '自动（留空）' },
+              { value: 'yes', label: '是' },
+              { value: 'no', label: '否' }
+            ]}
+            value={
+              entry.supportsVision === undefined
+                ? 'auto'
+                : entry.supportsVision
+                  ? 'yes'
+                  : 'no'
+            }
+            onChange={value => {
+              const v = value
+              onUpdate({
+                supportsVision: v === 'auto' ? undefined : v === 'yes'
+              })
+            }}
+            isDisabled={disabled}
+            width="100%"
+          />
         </div>
       )}
     </li>

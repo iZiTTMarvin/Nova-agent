@@ -1,5 +1,5 @@
 /**
- * StorageSettingsPanel — 存储与数据管理面板（WS3.3）
+ * StorageSettingsPanel — 存储与数据管理面板
  *
  * 展示各会话磁盘占用明细，并提供清理入口：
  * - 清理单个会话的 checkpoint 快照
@@ -9,6 +9,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
+import { SettingsField, SettingsPage, SettingsSection } from './settingsKit'
 import type { StorageUsageReport, StorageCleanupResult, SessionStorageBreakdown } from '../../../shared/storage/types'
 
 function formatBytes(bytes: number): string {
@@ -104,90 +105,92 @@ export const StorageSettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel">
-      <header className="settings-panel__header settings-panel__header--row">
-        <div>
-          <h3 className="settings-panel__title">存储与数据管理</h3>
-          <p className="settings-panel__desc">
-            查看会话磁盘占用，并清理 checkpoint 快照或彻底删除不再需要的会话。
-          </p>
-        </div>
-        <Button
-          label={loading ? '刷新中…' : '刷新'}
-          variant="secondary"
-          size="sm"
-          onClick={() => void load()}
-          isDisabled={loading}
-        >
-          {loading ? '刷新中…' : '刷新'}
-        </Button>
-      </header>
-
       <div className="settings-panel__scroll">
-        {error && <div className="settings-modal__error">{error}</div>}
-
-        {lastResult && lastResult.freedBytes > 0 && (
-          <div className="storage-result">
-            已释放 {formatBytes(lastResult.freedBytes)}，涉及 {lastResult.affectedSessions} 个会话
-          </div>
-        )}
-        {lastResult && lastResult.freedBytes === 0 && (
-          <div className="storage-result storage-result--empty">没有可清理的内容</div>
-        )}
-
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">全局操作</label>
-          <div className="storage-actions">
-            <Button
-              label="清理全部过期 checkpoint"
-              variant="secondary"
-              size="sm"
-              onClick={handlePruneAll}
-              isDisabled={actionId !== null}
-            >
-              清理全部过期 checkpoint
-            </Button>
-            <Button
-              label="立即运行 GC"
-              variant="secondary"
-              size="sm"
-              onClick={handleRunGc}
-              isDisabled={actionId !== null}
-            >
-              立即运行 GC
-            </Button>
-          </div>
-          <span className="settings-modal__help">
-            总占用：{report ? formatBytes(report.totalBytes) : '-'}
-            {report && report.orphanBytes > 0 && `（零散数据 ${formatBytes(report.orphanBytes)}）`}
-          </span>
-        </div>
-
-        <div className="settings-modal__field">
-          <label className="settings-modal__label">会话占用明细</label>
-          {sessionRows.length === 0 ? (
-            <div className="settings-modal__help">暂无可显示的会话数据。</div>
-          ) : (
-            <div className="storage-table">
-              <div className="storage-table__header">
-                <span className="storage-table__cell">会话 ID</span>
-                <span className="storage-table__cell storage-table__cell--right">消息历史</span>
-                <span className="storage-table__cell storage-table__cell--right">Checkpoint</span>
-                <span className="storage-table__cell storage-table__cell--right">产物</span>
-                <span className="storage-table__cell storage-table__cell--right">合计</span>
-                <span className="storage-table__cell storage-table__cell--actions">操作</span>
+        <SettingsPage>
+          <SettingsSection
+            title="全局操作"
+            description={`总占用：${report ? formatBytes(report.totalBytes) : '-'}${
+              report && report.orphanBytes > 0 ? `（零散数据 ${formatBytes(report.orphanBytes)}）` : ''
+            }`}
+          >
+            <SettingsField>
+              <div className="storage-actions">
+                <Button
+                  label="清理全部过期 checkpoint"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handlePruneAll}
+                  isDisabled={actionId !== null}
+                >
+                  清理全部过期 checkpoint
+                </Button>
+                <Button
+                  label="立即运行 GC"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRunGc}
+                  isDisabled={actionId !== null}
+                >
+                  立即运行 GC
+                </Button>
               </div>
-              {sessionRows.map(row => (
-                <SessionStorageRow
-                  key={row.sessionId}
-                  row={row}
-                  isBusy={actionId !== null}
-                  onPrune={() => handlePruneSession(row.sessionId)}
-                  onDelete={() => handleDeleteSession(row.sessionId)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+              {lastResult && lastResult.freedBytes > 0 && (
+                <div className="storage-result">
+                  已释放 {formatBytes(lastResult.freedBytes)}，涉及 {lastResult.affectedSessions} 个会话
+                </div>
+              )}
+              {lastResult && lastResult.freedBytes === 0 && (
+                <div className="storage-result storage-result--empty">没有可清理的内容</div>
+              )}
+            </SettingsField>
+          </SettingsSection>
+
+          <SettingsSection
+            title="会话占用明细"
+            action={
+              <Button
+                label={loading ? '刷新中…' : '刷新'}
+                variant="secondary"
+                size="sm"
+                onClick={() => void load()}
+                isDisabled={loading}
+              >
+                {loading ? '刷新中…' : '刷新'}
+              </Button>
+            }
+          >
+            {error && (
+              <SettingsField>
+                <span className="settings-status settings-status--error">{error}</span>
+              </SettingsField>
+            )}
+            <SettingsField>
+              {sessionRows.length === 0 ? (
+                <span className="settings-help">暂无可显示的会话数据。</span>
+              ) : (
+                <div className="storage-table">
+                  <div className="storage-table__header">
+                    <span className="storage-table__cell">会话 ID</span>
+                    <span className="storage-table__cell storage-table__cell--right">消息历史</span>
+                    <span className="storage-table__cell storage-table__cell--right">Checkpoint</span>
+                    <span className="storage-table__cell storage-table__cell--right">产物</span>
+                    <span className="storage-table__cell storage-table__cell--right">合计</span>
+                    <span className="storage-table__cell storage-table__cell--actions">操作</span>
+                  </div>
+                  {sessionRows.map(row => (
+                    <SessionStorageRow
+                      key={row.sessionId}
+                      row={row}
+                      isBusy={actionId !== null}
+                      onPrune={() => handlePruneSession(row.sessionId)}
+                      onDelete={() => handleDeleteSession(row.sessionId)}
+                    />
+                  ))}
+                </div>
+              )}
+            </SettingsField>
+          </SettingsSection>
+        </SettingsPage>
       </div>
     </div>
   )

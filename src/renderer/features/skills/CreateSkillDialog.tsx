@@ -158,7 +158,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
         </header>
 
         <form className="skill-dialog__form" onSubmit={e => void handleSubmit(e)}>
-          <div className="settings-modal__field">
+          <div className="skill-dialog__field">
             <TextInput
               id="skill-name"
               label={skillsI18n.createNameLabel}
@@ -171,7 +171,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             />
           </div>
 
-          <div className="settings-modal__field">
+          <div className="skill-dialog__field">
             <TextArea
               id="skill-desc"
               className="settings-editor skill-dialog__textarea--sm"
@@ -183,8 +183,8 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             />
           </div>
 
-          <div className="settings-modal__field">
-            <span className="settings-modal__label">{skillsI18n.createTemplateLabel}</span>
+          <div className="skill-dialog__field">
+            <span className="skill-dialog__label">{skillsI18n.createTemplateLabel}</span>
             <div className="skill-dialog__template-row">
               {(['blank', 'new', 'onboard'] as SkillTemplateId[]).map(id => (
                 <Button
@@ -201,8 +201,8 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             </div>
           </div>
 
-          <div className="settings-modal__field">
-            <span className="settings-modal__label">{skillsI18n.createLocationLabel}</span>
+          <div className="skill-dialog__field">
+            <span className="skill-dialog__label">{skillsI18n.createLocationLabel}</span>
             <div className="skill-dialog__template-row">
               <Button
                 label={skillsI18n.createLocationGlobal}
@@ -227,7 +227,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             </div>
           </div>
 
-          <div className="settings-modal__field skill-dialog__body-field">
+          <div className="skill-dialog__field skill-dialog__body-field">
             <TextArea
               id="skill-body"
               className="settings-editor"
@@ -238,9 +238,9 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             />
           </div>
 
-          {error && <p className="settings-modal__error">{error}</p>}
+          {error && <p className="skill-dialog__error">{error}</p>}
 
-          <div className="settings-modal__actions">
+          <div className="skill-dialog__actions">
             <Button
               label={skillsI18n.createCancel}
               variant="ghost"

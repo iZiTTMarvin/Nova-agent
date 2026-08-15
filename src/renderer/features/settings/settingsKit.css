@@ -1,0 +1,104 @@
+/* 设置页原语样式：页面栈、分组、行组、行右槽。
+   行组为边到边开放行：hairline 分隔、无卡片壳，仅首尾行带外圆角。 */
+
+.settings-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 32px;
+}
+
+.settings-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
+}
+
+.settings-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-section__title-stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-section__action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  container: settings-rows / inline-size;
+}
+
+.settings-rows > * + * {
+  border-block-start: 1px solid var(--border-cream);
+}
+
+/* Item 默认带圆角卡片观感；行组内拉直，hairline 才能读成一条直线 */
+.settings-rows > .astryx-item {
+  border-radius: 0;
+}
+
+/* 只对首尾行还外圆角：不用 overflow 裁剪，避免切掉焦点环 */
+.settings-rows > *:first-child {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
+}
+
+.settings-rows > *:last-child {
+  border-end-start-radius: var(--radius-md);
+  border-end-end-radius: var(--radius-md);
+}
+
+.settings-rows > .settings-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding-block: 12px;
+}
+
+.settings-rows > .settings-field.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-section__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 12px;
+}
+
+/* 行右槽：右对齐、可换行、固定限宽。
+   不能用百分比限宽：父级（Item endContent）是 auto 宽，百分比会按控件自身
+   宽度折算，把 SegmentedControl 压到换行竖排。 */
+.settings-row-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-width: 440px;
+}
+
+@container settings-rows (max-width: 520px) {
+  .settings-row-end {
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+}

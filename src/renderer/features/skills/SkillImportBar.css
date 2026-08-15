@@ -44,7 +44,7 @@
   align-items: stretch;
 }
 
-.skill-import-bar__url .settings-modal__input {
+.skill-import-bar__url .skill-dialog__input {
   flex: 1;
   min-width: 0;
 }

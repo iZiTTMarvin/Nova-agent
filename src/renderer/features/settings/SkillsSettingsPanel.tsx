@@ -11,6 +11,7 @@ import { SkillCard } from '../skills/SkillCard'
 import { CreateSkillDialog } from '../skills/CreateSkillDialog'
 import { SkillImportBar } from '../skills/SkillImportBar'
 import { skillsI18n } from '../skills/i18n'
+import { SettingsPage, SettingsSection } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 
 const COLLAPSE_LIMIT = 5
@@ -104,68 +105,75 @@ export const SkillsSettingsPanel: React.FC = () => {
         />
       )}
 
-      <header className="settings-panel__header settings-panel__header--row">
-        <div>
-          <h3 className="settings-panel__title">{skillsI18n.panelTitle}</h3>
-          <p className="settings-panel__desc">{skillsI18n.panelDesc}</p>
-        </div>
-        <div className="settings-panel__header-actions">
-          <Button
-            label={importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
-            variant="secondary"
-            size="sm"
-            onClick={() => setImportOpen(v => !v)}
+      <div className="settings-panel__scroll">
+        <SettingsPage>
+          <SettingsSection title="第三方技能" variant="bare">
+            <CheckboxInput
+              label={skillsI18n.loadThirdParty}
+              description={skillsI18n.loadThirdPartyHint}
+              value={settings?.loadThirdPartySkills ?? true}
+              onChange={checked => void handleThirdPartyToggle(checked)}
+              width="100%"
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title="技能列表"
+            variant="bare"
+            action={
+              <>
+                <Button
+                  label={importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setImportOpen(v => !v)}
+                >
+                  {importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
+                </Button>
+                <Button
+                  label={skillsI18n.create}
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setCreateOpen(true)}
+                >
+                  {skillsI18n.create}
+                </Button>
+              </>
+            }
           >
-            {importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
-          </Button>
-          <Button
-            label={skillsI18n.create}
-            variant="primary"
-            size="sm"
-            onClick={() => setCreateOpen(true)}
-          >
-            {skillsI18n.create}
-          </Button>
-        </div>
-      </header>
+            {importOpen && (
+              <SkillImportBar hasProject={Boolean(currentProject)} onImported={handleImported} />
+            )}
 
-      <CheckboxInput
-        label={skillsI18n.loadThirdParty}
-        description={skillsI18n.loadThirdPartyHint}
-        value={settings?.loadThirdPartySkills ?? true}
-        onChange={checked => void handleThirdPartyToggle(checked)}
-        className="settings-toggle-row"
-        width="100%"
-      />
+            {visible.length === 0 && <p className="settings-panel__muted">{skillsI18n.empty}</p>}
+            {visible.length > 0 && (
+              <div className="skill-card-list">
+                {visible.map(skill => (
+                  <SkillCard
+                    key={`${skill.source}:${skill.name}`}
+                    skill={skill}
+                    onToggle={handleToggle}
+                    onUse={handleUse}
+                    onDelete={handleDelete}
+                  />
+                ))}
+              </div>
+            )}
 
-      {importOpen && (
-        <SkillImportBar hasProject={Boolean(currentProject)} onImported={handleImported} />
-      )}
-
-      <div className="settings-panel__scroll skill-card-list">
-        {visible.length === 0 && <p className="settings-panel__muted">{skillsI18n.empty}</p>}
-        {visible.map(skill => (
-          <SkillCard
-            key={`${skill.source}:${skill.name}`}
-            skill={skill}
-            onToggle={handleToggle}
-            onUse={handleUse}
-            onDelete={handleDelete}
-          />
-        ))}
+            {sorted.length > COLLAPSE_LIMIT && (
+              <Button
+                label={expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
+                variant="ghost"
+                size="sm"
+                className="settings-panel__link-btn"
+                onClick={() => setExpanded(v => !v)}
+              >
+                {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
+              </Button>
+            )}
+          </SettingsSection>
+        </SettingsPage>
       </div>
-
-      {sorted.length > COLLAPSE_LIMIT && (
-        <Button
-          label={expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
-          variant="ghost"
-          size="sm"
-          className="settings-panel__link-btn"
-          onClick={() => setExpanded(v => !v)}
-        >
-          {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
-        </Button>
-      )}
 
       <CreateSkillDialog
         open={createOpen}

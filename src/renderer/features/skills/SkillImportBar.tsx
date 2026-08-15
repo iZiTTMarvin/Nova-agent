@@ -83,7 +83,7 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
   return (
     <section className="skill-import-bar">
       <div className="skill-import-bar__location">
-        <span className="settings-modal__label">{skillsI18n.importLocationLabel}</span>
+        <span className="skill-dialog__label">{skillsI18n.importLocationLabel}</span>
         <div className="skill-dialog__template-row">
           <Button
             label={skillsI18n.createLocationGlobal}
@@ -132,7 +132,7 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
         {/* Astryx TextInput has no URL input type; keep native URL validation for this transport field. */}
         <input
           type="url"
-          className="settings-modal__input"
+          className="skill-dialog__input"
           placeholder={skillsI18n.importUrlPlaceholder}
           value={url}
           onChange={e => setUrl(e.target.value)}

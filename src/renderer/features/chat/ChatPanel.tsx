@@ -627,7 +627,7 @@ export const ChatPanel: React.FC = () => {
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
     <div
-      className="chat-panel relative flex flex-col h-full bg-white"
+      className="chat-panel relative flex flex-col h-full"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -852,7 +852,7 @@ export const ChatPanel: React.FC = () => {
             {/* Child Session 是 durable 执行记录；继续/恢复必须回到统一子代理执行服务。 */}
             {currentSession?.kind === 'subagent' ? (
               <div
-                className="w-full rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm text-gray-500 shadow-[0_8px_30px_rgb(0,0,0,0.04)]"
+                className="chat-subagent-note w-full px-4 py-3 text-sm"
                 role="note"
               >
                 子会话为只读执行记录。请从父会话的子任务行继续、授权或重试。
@@ -861,8 +861,8 @@ export const ChatPanel: React.FC = () => {
               /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */
               <div
               ref={composerBoxRef}
-              className={`w-full bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border backdrop-blur-xl flex flex-col p-3 transition-shadow hover:shadow-[0_8px_30px_rgb(0,0,0,0.1)] ${
-                isDragOver ? 'border-[#3898ec] ring-2 ring-[rgba(56,152,236,0.2)]' : 'border-gray-100/80'
+              className={`chat-composer-box w-full flex flex-col p-3 ${
+                isDragOver ? 'chat-composer-box--dragover' : ''
               }`}
             >
               {/* 图片预览条 */}
@@ -901,7 +901,7 @@ export const ChatPanel: React.FC = () => {
                 pasteAsToken={false}
                 maxRows={14}
               />
-              <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50/50">
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-border-cream">
                 <div className="flex items-center gap-2">
                   <ModeSwitch
                     supportsVision={supportsVision}

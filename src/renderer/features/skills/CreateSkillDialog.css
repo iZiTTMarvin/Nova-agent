@@ -1,4 +1,4 @@
-/* 技能创建/导入弹窗 — 沿用 Nova 暖色设置弹窗语义 */
+/* 技能创建/导入弹窗 */
 .skill-dialog {
   width: min(520px, 96vw);
   max-height: min(88vh, 680px);
@@ -65,4 +65,44 @@
 
 .skill-dialog__template-btn {
   min-width: 92px;
+}
+
+.skill-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-dialog__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.skill-dialog__input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-warm);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.skill-dialog__error {
+  font-size: 0.8rem;
+  color: var(--color-error);
+  background-color: color-mix(in srgb, var(--color-error) 6%, transparent);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--color-error) 15%, transparent);
+}
+
+.skill-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
 }

@@ -259,7 +259,7 @@ const SidebarSessions = React.memo(function SidebarSessions() {
             isLabelHidden
             size="sm"
             width="100%"
-            className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-white outline-none focus:border-gray-400"
+            className="flex-1 min-w-0 text-sm px-1 py-0.5 rounded border border-border-warm text-text-primary bg-bg-card outline-none focus:border-text-muted"
             value={editValue}
             onChange={(value) => setEditValue(value.slice(0, SESSION_TITLE_MAX_LENGTH))}
             onKeyDown={(e) => handleEditKeyDown(e, session.id)}

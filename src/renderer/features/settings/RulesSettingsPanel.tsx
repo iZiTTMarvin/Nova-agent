@@ -106,16 +106,12 @@ export const RulesSettingsPanel: React.FC = () => {
   }
 
   return (
-    <div className="settings-panel settings-panel--split">
-      <header className="settings-panel__header settings-panel__header--row">
-        <div>
-          <h3 className="settings-panel__title">{rulesI18n.panelTitle}</h3>
-          <p className="settings-panel__desc">{rulesI18n.panelDesc}</p>
-        </div>
+    <div className="settings-panel">
+      <div className="settings-panel__toolbar">
         <Button label={rulesI18n.create} variant="primary" size="sm" onClick={handleCreate}>
           {rulesI18n.create}
         </Button>
-      </header>
+      </div>
 
       <div className="settings-split">
         <aside className="settings-split__list">

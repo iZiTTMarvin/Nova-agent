@@ -8,6 +8,7 @@ module.exports = {
     extend: {
       colors: {
         'bg-app': 'var(--bg-app)',
+        'bg-card': 'var(--bg-card)',
         'border-warm': 'var(--border-warm)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
