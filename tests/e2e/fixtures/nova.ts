@@ -20,6 +20,7 @@ import {
 } from '../../../src/shared/ipc/channels'
 import type { IpcCommandChannel, IpcCommands, IpcEvents } from '../../../src/shared/ipc/types'
 import { isTerminalRunStatus, type RunSnapshot } from '../../../src/shared/run/types'
+import type { Mode } from '../../../src/shared/session/types'
 import { startFakeRuntime, type FakeRuntime } from './fake-runtime'
 
 const repoRoot = path.resolve(__dirname, '../../..')
@@ -47,7 +48,7 @@ export interface NovaHarness {
   ) => Promise<IpcCommands[C]['result']>
   getWorkspace: () => Promise<IpcCommands['workspace:get']['result']>
   getRunSnapshot: (sessionId?: string) => Promise<RunSnapshot | null>
-  createSession: () => Promise<IpcCommands['workspace:create-session']['result']>
+  createSession: (mode?: Mode) => Promise<IpcCommands['workspace:create-session']['result']>
   selectSession: (sessionId: string) => Promise<IpcCommands['workspace:select-session']['result']>
   sendPrompt: (text: string) => Promise<void>
   waitUntilIdle: () => Promise<void>
@@ -245,9 +246,10 @@ export async function launchNova(
     invoke,
     getWorkspace,
     getRunSnapshot,
-    createSession: () =>
+    createSession: (mode?: Mode) =>
       invoke(WORKSPACE_CREATE_SESSION, {
-        workspaceRoot: workspacePath
+        workspaceRoot: workspacePath,
+        ...(mode ? { mode } : {})
       }),
     selectSession: (sessionId: string) =>
       invoke(WORKSPACE_SELECT_SESSION, { sessionId }),
