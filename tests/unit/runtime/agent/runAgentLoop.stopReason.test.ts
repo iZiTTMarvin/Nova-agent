@@ -115,7 +115,7 @@ async function runKernel(
     signal,
     abortSignal: () => undefined,
     executeBatch,
-    runCompactionIfThreshold: async () => {},
+    runCompactionIfThreshold: async () => false,
     updateTokenEstimate: () => {},
     sleep: () => Promise.resolve(),
     onTerminalError: () => {}

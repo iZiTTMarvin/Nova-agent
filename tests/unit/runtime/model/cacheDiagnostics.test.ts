@@ -167,15 +167,15 @@ describe('CacheDiagnostics wire 级 first-diff', () => {
     expect(result.firstDiffIndex).toBe(2)
   })
 
-  it('expectedMiss 不告警', () => {
+  it('purpose 标记不豁免告警：摘要请求前缀回归同样触发，标记仅识别来源', () => {
     const diag = new CacheDiagnostics()
     diag.recordWireSnapshot(makeSnapshot({ messageKeys: ['h1', 'h2'] }))
     const result = diag.recordWireSnapshot(
       makeSnapshot({ messageKeys: ['totally', 'different'], exactBodyHash: 'x' }),
-      { expectedMiss: true }
+      { purpose: 'compaction-summary' }
     )
-    expect(result.cacheBreakDetected).toBe(false)
-    expect(result.prefixDiff?.expectedMiss).toBe(true)
+    expect(result.cacheBreakDetected).toBe(true)
+    expect(result.prefixDiff?.purpose).toBe('compaction-summary')
   })
 })
 

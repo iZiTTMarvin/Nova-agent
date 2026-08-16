@@ -9,6 +9,7 @@
  */
 import type { WireSnapshot, MessageSegmentFingerprint } from './requestFingerprint'
 import { isLegacyWireSnapshot, upgradeLegacyWireSnapshot } from './requestFingerprint'
+import type { ChatRequestPurpose } from './ModelClient'
 
 /** 分段差分命中的字段名 */
 export type PrefixDiffPart =
@@ -35,8 +36,8 @@ export interface PrefixDiffDiagnostic {
   actualCacheReadTokens?: number
   /** 公共前缀估算 token（~bytes/4） */
   expectedReuseTokens: number
-  /** 压缩摘要请求等已知预期 miss */
-  expectedMiss: boolean
+  /** 请求用途标记（压缩摘要等受控内部调用）；仅识别来源，不豁免告警 */
+  purpose?: ChatRequestPurpose
 }
 
 /** 缓存诊断结果 */
@@ -97,8 +98,8 @@ export interface DiagnosticPersistState {
 }
 
 export interface RecordWireSnapshotOptions {
-  /** 压缩摘要请求等：必然全量 miss，不记作 cacheBreak */
-  expectedMiss?: boolean
+  /** 受控内部调用（压缩摘要等）的用途标记；只做来源识别，不改变告警判定 */
+  purpose?: ChatRequestPurpose
 }
 
 /**
@@ -159,20 +160,21 @@ export class CacheDiagnostics {
 
   /**
    * 记录本次请求的 WireSnapshot 并计算分段 first-diff。
-   * expectedMiss（压缩摘要）时标记但不告警。
+   * 摘要请求按普通请求参与校验：携带 purpose 仅用于识别来源，
+   * 前缀回归同样触发告警，不被豁免。
    */
   recordWireSnapshot(
     snapshot: WireSnapshot,
     options?: RecordWireSnapshotOptions
   ): CacheDiagnosticResult {
     this.currentSnapshot = snapshot
-    const expectedMiss = options?.expectedMiss === true
+    const purpose = options?.purpose
 
     let result: CacheDiagnosticResult
     if (!this.hasSnapshotInEpoch || !this.previousSnapshot) {
       this.hasSnapshotInEpoch = true
       this.previousSnapshot = snapshot
-      const prefixDiff = emptyPrefixDiff(this.epochId, snapshot, expectedMiss)
+      const prefixDiff = emptyPrefixDiff(this.epochId, snapshot, purpose)
       this.lastPrefixDiff = prefixDiff
       result = {
         cacheBreakDetected: false,
@@ -185,12 +187,12 @@ export class CacheDiagnostics {
     } else {
       const prefixDiff = computePrefixDiff(this.previousSnapshot, snapshot, {
         epochId: this.epochId,
-        expectedMiss
+        purpose
       })
       this.previousSnapshot = snapshot
       this.lastPrefixDiff = prefixDiff
 
-      if (expectedMiss || prefixDiff.firstDiffIndex === null) {
+      if (prefixDiff.firstDiffIndex === null) {
         result = {
           cacheBreakDetected: false,
           firstDiffIndex: prefixDiff.firstDiffIndex,
@@ -258,7 +260,7 @@ export class CacheDiagnostics {
    */
   correlateUsage(actualCacheReadTokens: number): CacheDiagnosticResult {
     const prefixDiff = this.lastPrefixDiff
-    if (!prefixDiff || prefixDiff.expectedMiss) {
+    if (!prefixDiff) {
       return { cacheBreakDetected: false, epochId: this.epochId }
     }
 
@@ -333,7 +335,7 @@ function normalizePersistedSnapshot(raw: WireSnapshot | null | unknown): WireSna
 function emptyPrefixDiff(
   epochId: string,
   current: WireSnapshot,
-  expectedMiss: boolean
+  purpose?: ChatRequestPurpose
 ): PrefixDiffDiagnostic {
   const prefixBytes = sumMessageBytes(current.messages)
   return {
@@ -346,7 +348,7 @@ function emptyPrefixDiff(
     invalidatedSuffixBytes: 0,
     estimatedInvalidatedTokens: 0,
     expectedReuseTokens: bytesToTokens(prefixBytes),
-    expectedMiss
+    ...(purpose ? { purpose } : {})
   }
 }
 
@@ -358,14 +360,14 @@ function emptyPrefixDiff(
 export function computePrefixDiff(
   prev: WireSnapshot,
   curr: WireSnapshot,
-  opts: { epochId: string; expectedMiss?: boolean }
+  opts: { epochId: string; purpose?: ChatRequestPurpose }
 ): PrefixDiffDiagnostic {
-  const expectedMiss = opts.expectedMiss === true
+  const purpose = opts.purpose
   const base = {
     epochId: opts.epochId,
     previousMessageCount: prev.messages.length,
     currentMessageCount: curr.messages.length,
-    expectedMiss
+    ...(purpose ? { purpose } : {})
   }
 
   if (prev.model !== curr.model) {

@@ -1,7 +1,7 @@
 /** Agent kernel 真实消费的运行时回调契约。 */
 import type { ChatMessage } from '../../model/types'
 import type { InlineBudgetResult } from '../ContextBudgetManager'
-import type { ActiveToolResultPrunePolicy } from './projectRequestMessages'
+import type { ActiveToolResultPrunePolicy, SummaryProjection } from './projectRequestMessages'
 import type { ToolControlSignal } from '../../tools/types'
 
 /** shouldStopAfterTurn 回调入参 */
@@ -96,8 +96,12 @@ export interface AgentLoopConfig {
   /**
    * 溢出压缩回调，由门面提供。
    * 返回 true 表示压缩成功，应回到循环顶重新校验。
+   * 摘要投影由调用方传入，保证摘要请求回放主请求前缀。
    */
-  runOverflowCompaction?: (mode: 'standard' | 'aggressive') => Promise<boolean>
+  runOverflowCompaction?: (
+    mode: 'standard' | 'aggressive',
+    projection: SummaryProjection
+  ) => Promise<boolean>
 
   /**
    * 当轮工具结果归档策略；未设置时投影关闭。

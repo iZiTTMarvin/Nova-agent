@@ -11,6 +11,7 @@
 import type { ChatMessage, ChatToolCall, ToolDefinition } from '../../model/types'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
+import type { SummaryProjection } from '../core/projectRequestMessages'
 import type { ModelClientPool } from '../../model/ModelClientPool'
 import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
@@ -53,8 +54,14 @@ export interface StreamProcessorDeps {
   cacheDiagnostics: CacheDiagnostics
   emit: (event: AgentEvent) => void
   emitContextBreakdown: (messageId: string, promptTokens: number) => void
-  /** 溢出压缩回调（由 Facade/compaction 提供，复用 runOverflowCompaction 逻辑） */
-  runOverflowCompaction: (mode: 'standard' | 'aggressive') => Promise<boolean>
+  /**
+   * 溢出压缩回调（由 Facade/compaction 提供，复用 runOverflowCompaction 逻辑）。
+   * 摘要投影由调用方传入，保证摘要请求回放主请求前缀。
+   */
+  runOverflowCompaction: (
+    mode: 'standard' | 'aggressive',
+    projection: SummaryProjection
+  ) => Promise<boolean>
 }
 
 /**
@@ -69,6 +76,8 @@ export interface StreamRunParams {
   nativeTools: ToolDefinition[] | undefined
   context: AgentContext
   signal: AbortSignal | undefined
+  /** 本轮摘要投影；溢出压缩恢复时回放主请求前缀使用 */
+  summaryProjection: SummaryProjection
 }
 
 /**

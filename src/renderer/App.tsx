@@ -241,7 +241,7 @@ function App(): React.ReactNode {
         estimatedInvalidatedTokens: data.diagnostic.prefixDiff?.estimatedInvalidatedTokens,
         expectedReuseTokens: data.diagnostic.expectedReuseTokens,
         actualCacheReadTokens: data.diagnostic.actualCacheReadTokens,
-        expectedMiss: data.diagnostic.prefixDiff?.expectedMiss
+        purpose: data.diagnostic.prefixDiff?.purpose
       })
     }))
 

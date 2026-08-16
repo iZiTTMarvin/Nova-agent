@@ -286,22 +286,6 @@ export function rebuildWithCompression(
 }
 
 /**
- * 剥离 ChatMessage.reasoningContent，供压缩摘要请求使用。
- * 摘要文本本身不应携带思考正文；recentMessages / snapshot 仍保留原始 reasoning。
- * 无 reasoningContent 时返回原数组引用，避免无谓的对象复制。
- */
-export function stripReasoningContent(messages: ChatMessage[]): ChatMessage[] {
-  let changed = false
-  const next = messages.map(m => {
-    if (m.reasoningContent === undefined) return m
-    changed = true
-    const { reasoningContent: _stripped, ...rest } = m
-    return rest
-  })
-  return changed ? next : messages
-}
-
-/**
  * 将上下文回滚到指定索引之前
  * 参考 OpenClacky message_history.rb rollback_before
  *

@@ -10,7 +10,7 @@ import {
   createEmptyRegistry
 } from '../../shared/config/llmRegistry'
 import { resolveContextWindow } from '../../shared/config/types'
-import type { NormalizedUsage } from '../../shared/model/types'
+import type { ChatRequestPurpose, NormalizedUsage } from '../../shared/model/types'
 import { computeCacheHitRate } from '../../shared/model/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 import type { SessionUsageStats } from './types'
@@ -85,7 +85,8 @@ export interface CacheDiagnosticUi {
   estimatedInvalidatedTokens?: number
   expectedReuseTokens?: number
   actualCacheReadTokens?: number
-  expectedMiss?: boolean
+  /** 请求用途标记（压缩摘要等受控内部调用）；主对话为 undefined */
+  purpose?: ChatRequestPurpose
 }
 
 const EMPTY_USAGE: SessionUsageStats = {

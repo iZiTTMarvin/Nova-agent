@@ -100,6 +100,9 @@ npm run test:e2e:stress
 
 # Windows 打包产物
 npm run test:e2e:packaged
+
+# 真实 API 缓存门禁（key 门控、会花钱；无 key 的 provider 自动跳过）
+LIVE_CACHE_DEEPSEEK_API_KEY=sk-... npm run test:live-cache
 ```
 
 全量 Vitest、完整 Electron E2E、fault/stress 和 packaged gate 由 CI / nightly / release 承担。任务完成前仍要运行与本次影响范围直接相关的回归，不能用“CI 会跑”跳过必要验证。
@@ -130,6 +133,18 @@ tests/e2e/
 └─ packaged/
    └─ release.spec.ts
 ```
+
+另有一个独立于上述目录的真实 API 门禁：
+
+```text
+tests/live/
+├─ gate.ts                   # provider 矩阵、捕获型客户端、AgentLoop 装配
+├─ prefixCache.spec.ts       # 主请求前缀命中（多步工具 turn + 追问）
+├─ compactionCache.spec.ts   # 压缩摘要调用与压缩后主请求命中
+└─ README.md                 # 环境变量与运行方式
+```
+
+`tests/live` 用 headless 运行时驱动真实 AgentLoop 与真实模型 API，验证服务端前缀缓存命中；key 门控（无 key 跳过）、显式运行（`npm run test:live-cache`）、会花钱，默认套件与 CI 必跑项均不包含。
 
 `smoke` 必须快且稳定。`lifecycle` 验证真实桌面状态恢复。`fault` 可以更重，但故障必须可重复，随机测试要固定 seed 并在失败时输出 seed。`packaged` 只验证构建产物特有风险，不复制整套 smoke。
 

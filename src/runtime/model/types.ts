@@ -167,10 +167,8 @@ export type ChatEvent =
     }
   /**
    * 最终请求体语义快照（仅哈希，无明文）。StreamProcessor 写入 CacheDiagnostics。
-   * expectedMiss：压缩摘要等已知必然 miss 的请求。
    */
   | {
       type: 'wire_snapshot'
       snapshot: import('./requestFingerprint').WireSnapshot
-      expectedMiss?: boolean
     }

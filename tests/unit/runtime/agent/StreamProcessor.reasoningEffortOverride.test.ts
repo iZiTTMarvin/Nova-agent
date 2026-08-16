@@ -9,6 +9,7 @@ import { RecoveryStateMachine } from '../../../../src/runtime/agent/recovery/Rec
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import { HookManager } from '../../../../src/runtime/agent/core/HookManager'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import type { AgentContext } from '../../../../src/runtime/agent/core/AgentContext'
 import type { ModelConfig } from '../../../../src/shared/config'
@@ -67,6 +68,7 @@ async function runOnceAndCaptureOptions(
     nativeTools: undefined,
     context: createNativeContext(),
     signal: undefined,
+    summaryProjection: identitySummaryProjection,
     isCancelled: () => false,
     sleep: () => Promise.resolve()
   })

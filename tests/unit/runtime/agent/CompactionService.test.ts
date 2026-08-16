@@ -11,6 +11,10 @@ import {
 import type { CompactionMeta } from '../../../../src/runtime/agent/types'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
+
+/** 恒等投影：单测里摘要输入与权威消息逐条一致，便于断言服务侧行为 */
+
 
 function createMessages(count = 30): ChatMessage[] {
   return [
@@ -35,6 +39,7 @@ function createService(options?: {
   client?: Pick<MockModelClient, 'chat' | 'getCalls'>
   contextWindow?: number
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
+  promptCacheKey?: string
 }): {
   service: CompactionService
   context: AgentContext
@@ -51,7 +56,9 @@ function createService(options?: {
     cacheDiagnostics,
     contextWindow: options?.contextWindow ?? 100,
     onCompaction: options?.onCompaction,
-    getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' })
+    getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' }),
+    idleProjection: identitySummaryProjection,
+    ...(options?.promptCacheKey ? { promptCacheKey: options.promptCacheKey } : {})
   })
   return { service, context, client, cacheDiagnostics }
 }
@@ -65,7 +72,7 @@ describe('CompactionService', () => {
     const context = createContext(messages)
     const { service, client } = createService({ context, contextWindow: 200_000 })
 
-    await expect(service.runThresholdCompaction()).resolves.toBe(false)
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(false)
 
     expect(client.getCalls()).toHaveLength(0)
     expect(context.messages).toBe(messages)
@@ -86,10 +93,11 @@ describe('CompactionService', () => {
     const { service, cacheDiagnostics } = createService({
       context,
       client,
-      onCompaction
+      onCompaction,
+      promptCacheKey: 'routing-key-1'
     })
 
-    await expect(service.runThresholdCompaction()).resolves.toBe(true)
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
     expect(extractTextFromContent(context.messages[0].content)).toContain('compacted summary')
     expect(context.messages.slice(1)).toEqual(original.slice(-20))
@@ -106,12 +114,13 @@ describe('CompactionService', () => {
     const [summaryCall] = client.getCalls()
     expect(summaryCall.options).toMatchObject({
       includeInternalMessages: true,
-      expectedCacheMiss: true
+      purpose: 'compaction-summary'
     })
-    // 摘要是一次性旁路请求：不携带会话缓存路由 key，
-    // 避免产生永不复用的缓存写入、挤占主对话的路由亲和
-    expect(summaryCall.options?.promptCacheKey).toBeUndefined()
-    expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(false)
+    // 摘要请求携带会话缓存路由 key：会话亲和档案上与主对话同槽位路由，
+    // 前缀对齐才能命中；非亲和档案由客户端白名单忽略
+    expect(summaryCall.options?.promptCacheKey).toBe('routing-key-1')
+    // reasoning 不因压缩剥离：由模型客户端按档案回放策略序列化，与主请求一致
+    expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(true)
   })
 
   it('standard overflow 成功时保留最近消息与 pulled-back 消息的原始顺序', async () => {
@@ -125,15 +134,16 @@ describe('CompactionService', () => {
     })
     const { service } = createService({ context, client })
 
-    await expect(service.runOverflowCompaction('standard')).resolves.toBe(true)
+    await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(true)
 
     expect(context.messages.slice(1)).toEqual(original.slice(-21))
     expect(extractTextFromContent(context.messages[0].content)).toContain('overflow summary')
     expect(service.isCompressingForOverflow()).toBe(false)
 
-    // overflow 与 threshold 共用同一摘要调用点，同样不携带会话缓存路由 key
+    // overflow 与 threshold 共用同一摘要调用点：无路由 key 的会话同样不携带
     const [summaryCall] = client.getCalls()
     expect(summaryCall.options?.promptCacheKey).toBeUndefined()
+    expect(summaryCall.options?.purpose).toBe('compaction-summary')
   })
 
   it('overflow 组合层不会拆散 recent 与 pulled-back 边界上的工具调用组', async () => {
@@ -169,7 +179,7 @@ describe('CompactionService', () => {
     })
     const { service } = createService({ context, client })
 
-    await expect(service.runOverflowCompaction('standard')).resolves.toBe(true)
+    await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(true)
 
     const assistantIndex = context.messages.findIndex(message =>
       message.role === 'assistant' && message.toolCalls?.[0]?.id === 'call-1'
@@ -196,10 +206,10 @@ describe('CompactionService', () => {
       })
     const { service } = createService({ context, client })
 
-    await expect(service.runOverflowCompaction('standard')).resolves.toBe(false)
+    await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(false)
     expect(context.messages).toEqual(originalSnapshot)
 
-    await expect(service.runOverflowCompaction('aggressive')).resolves.toBe(true)
+    await expect(service.runOverflowCompaction('aggressive', identitySummaryProjection)).resolves.toBe(true)
     expect(extractTextFromContent(context.messages[0].content)).toContain('aggressive summary')
     expect(context.messages.at(-1)).toEqual(originalSnapshot.at(-1))
   })
@@ -217,8 +227,8 @@ describe('CompactionService', () => {
     const onCompaction = vi.fn()
     const { service, cacheDiagnostics } = createService({ context, client, onCompaction })
 
-    await expect(service.runOverflowCompaction('standard')).resolves.toBe(false)
-    await expect(service.runOverflowCompaction('aggressive')).resolves.toBe(false)
+    await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(false)
+    await expect(service.runOverflowCompaction('aggressive', identitySummaryProjection)).resolves.toBe(false)
 
     expect(context.messages).toEqual(snapshot)
     expect(context.compactionLevel).toBe(2)
@@ -243,7 +253,7 @@ describe('CompactionService', () => {
     }
     const { service } = createService({ context, client, onCompaction })
 
-    await expect(service.runThresholdCompaction(abortController.signal)).resolves.toBe(false)
+    await expect(service.runThresholdCompaction(identitySummaryProjection, abortController.signal)).resolves.toBe(false)
 
     expect(context.messages).toBe(original)
     expect(context.compactionLevel).toBe(0)

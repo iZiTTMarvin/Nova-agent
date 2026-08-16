@@ -17,7 +17,7 @@ import type { ChatEvent, ChatMessage, ToolDefinition } from '../../../../src/run
 import type { AgentContext } from '../../../../src/runtime/agent/core/AgentContext'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ModelClient, ChatOptions } from '../../../../src/runtime/model/ModelClient'
-import type { ModelConfig } from '../../../../src/shared/config'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 
 /** 产出持续 context_overflow 事件的 mock ModelClient */
 function createAlwaysOverflowClient(): ModelClient {
@@ -89,6 +89,7 @@ async function runOnce(processor: StreamProcessor): Promise<{ kind: string; erro
     nativeTools: undefined,
     context: createNativeContext(),
     signal: undefined,
+    summaryProjection: identitySummaryProjection,
     isCancelled: () => false,
     sleep: () => Promise.resolve()
   })

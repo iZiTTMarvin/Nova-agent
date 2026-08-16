@@ -1,15 +1,12 @@
-import type { ModelClient } from '../../model/ModelClient'
+import type { ModelClient, ChatOptions } from '../../model/ModelClient'
 import type { ChatMessage } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
-import {
-  compactAtBoundary,
-  ContextBudgetExceededError,
-  resolveProductionBudgetLimits
-} from '../ContextBudgetManager'
+import { ContextBudgetExceededError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import type { AgentContext } from '../core/AgentContext'
+import type { SummaryProjection } from '../core/projectRequestMessages'
 import type { CompactionMeta } from '../types'
 import { CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
@@ -27,8 +24,7 @@ import {
   rebuildWithCompression,
   shouldScheduleIdleCompaction,
   shouldCompact,
-  splitForCompaction,
-  stripReasoningContent
+  splitForCompaction
 } from './compaction'
 
 type CompactionTrigger = CompactionMeta['trigger']
@@ -42,6 +38,16 @@ export interface CompactionServiceOptions {
   contextWindow: number
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   getIdleCacheProfile: () => Pick<CacheProfile, 'idlePolicy'> | null
+  /**
+   * 空闲压缩的摘要投影：独立缓存投影（取舍见 SummaryProjection 契约——
+   * 内容寻址 ID 保证占位符逐字节一致，代价是幂等重写一次 artifact）。
+   */
+  idleProjection: SummaryProjection
+  /**
+   * 会话缓存路由 key：会话亲和档案（kimi/openai）上摘要调用与主对话
+   * 落在同一路由槽位，前缀对齐才能命中；非亲和档案由客户端白名单忽略。
+   */
+  promptCacheKey?: string
 }
 
 interface CompactionParts {
@@ -59,9 +65,9 @@ interface CompactionParts {
  * generation 使晚到摘要失去写回资格，不依赖共享数组回滚。
  * mid-turn 复用同一压缩管线，仅新增触发时机；失败时 fail-open，不终止 turn。
  *
- * 摘要请求是一次性旁路调用：不携带会话缓存路由 key。其前缀在压缩完成后即被丢弃，
- * 永远不会再被请求；挂在会话路由槽位上只会产生无法复用的缓存写入，并挤占主对话
- * 的路由亲和。主对话 / 子代理轮次的路由 key 由 StreamProcessor 独占消费。
+ * 摘要请求回放主对话前缀：输入是调用方传入的投影视图切片（活跃轮次复用主请求
+ * 同一归档缓存实例），reasoning 不剥离、由客户端按档案回放策略序列化，会话亲和
+ * 档案携带 Cache Routing Key——摘要调用从全价 cache miss 变为服务端前缀命中。
  */
 export class CompactionService {
   private readonly context: AgentContext
@@ -71,6 +77,8 @@ export class CompactionService {
   private readonly contextWindow: number
   private readonly onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
+  private readonly idleProjection: SummaryProjection
+  private readonly promptCacheKey: string | undefined
   private readonly idleTimer: IdleCompressionTimer
   private compressingForOverflow = false
   private idleAbortController: AbortController | null = null
@@ -91,6 +99,8 @@ export class CompactionService {
     this.contextWindow = options.contextWindow
     this.onCompaction = options.onCompaction
     this.getIdleCacheProfile = options.getIdleCacheProfile
+    this.idleProjection = options.idleProjection
+    this.promptCacheKey = options.promptCacheKey
     this.idleTimer = new IdleCompressionTimer(() => {
       void this.runScheduledIdleCompaction()
     })
@@ -134,7 +144,10 @@ export class CompactionService {
     this.cacheDiagnostics.bumpEpoch('compaction')
   }
 
-  async runThresholdCompaction(abortSignal?: AbortSignal): Promise<boolean> {
+  async runThresholdCompaction(
+    projection: SummaryProjection,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
     if (this.compressingForOverflow || abortSignal?.aborted) return false
 
     const threshold = getCompactionThreshold(this.contextWindow)
@@ -149,14 +162,17 @@ export class CompactionService {
       return false
     }
 
-    return this.runCompaction('threshold', abortSignal)
+    return this.runCompaction('threshold', projection, abortSignal)
   }
 
   /**
    * 工具结果写回后、下一次模型请求前：估算 → 超高水位则压缩。
    * 返回 true 表示已压缩；skip / fail-open 均返回 false，调用方继续原投影。
    */
-  async runMidTurnCompaction(abortSignal?: AbortSignal): Promise<boolean> {
+  async runMidTurnCompaction(
+    projection: SummaryProjection,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
     if (this.compressingForOverflow || abortSignal?.aborted || this.disposed) return false
 
     const { highWaterTokens } = resolveProductionBudgetLimits({
@@ -193,7 +209,7 @@ export class CompactionService {
     }
 
     try {
-      const summary = await this.requestSummary(parts, abortSignal)
+      const summary = await this.requestSummary(parts, projection, abortSignal)
       if (!summary || abortSignal?.aborted) return false
 
       if (!this.applyCompactionResult(parts, summary)) return false
@@ -233,6 +249,7 @@ export class CompactionService {
 
   async runOverflowCompaction(
     mode: OverflowMode,
+    projection: SummaryProjection,
     abortSignal?: AbortSignal
   ): Promise<boolean> {
     if (this.compressingForOverflow || abortSignal?.aborted) return false
@@ -248,7 +265,7 @@ export class CompactionService {
       const parts = this.splitOverflowContext(pullBack)
       if (parts.oldMessages.length === 0) return false
 
-      const summary = await this.requestSummary(parts, abortSignal)
+      const summary = await this.requestSummary(parts, projection, abortSignal)
       if (!summary || abortSignal?.aborted) return false
 
       if (!this.applyCompactionResult(parts, summary)) return false
@@ -264,6 +281,7 @@ export class CompactionService {
 
   private async runCompaction(
     trigger: Extract<CompactionTrigger, 'threshold' | 'idle'>,
+    projection: SummaryProjection,
     abortSignal?: AbortSignal,
     canApply: () => boolean = () => true
   ): Promise<boolean> {
@@ -272,7 +290,7 @@ export class CompactionService {
     const parts = this.splitThresholdContext()
     if (parts.oldMessages.length === 0) return false
 
-    const summary = await this.requestSummary(parts, abortSignal)
+    const summary = await this.requestSummary(parts, projection, abortSignal)
     if (!summary || abortSignal?.aborted || !canApply()) return false
 
     if (!this.applyCompactionResult(parts, summary)) return false
@@ -317,6 +335,7 @@ export class CompactionService {
     try {
       await this.runCompaction(
         'idle',
+        this.idleProjection,
         controller.signal,
         () => (
           !this.disposed
@@ -367,39 +386,55 @@ export class CompactionService {
     }
   }
 
+  /**
+   * 构造并发出摘要请求。
+   *
+   * 摘要输入回放主对话前缀（契约见 SummaryProjection）：对完整权威消息投影后
+   * 按切点截取被压缩区域，reasoning 不剥离，压缩指令仅作尾部追加。
+   * 摘要调用按普通请求参与缓存诊断，前缀回归触发既有告警。
+   */
   private async requestSummary(
     parts: CompactionParts,
+    projection: SummaryProjection,
     abortSignal?: AbortSignal
   ): Promise<string | null> {
     if (abortSignal?.aborted) return null
 
     const systemMessage = this.context.messages.find(message => message.role === 'system')
-    const { messages: governedOld } = compactAtBoundary(parts.oldMessages)
+    const projectedAll = await projection.project(this.context.messages)
+    const projectedOld = projectedAll
+      .filter(message => message.role !== 'system')
+      .slice(0, parts.oldMessages.length)
     // 二次及以后压缩时 system 尾部已含前序摘要，显式注入压缩输入要求增量更新
     const priorSummary = extractPriorSummary(extractTextFromContent(systemMessage?.content ?? ''))
     const compactionContext: ChatMessage[] = [
       ...(systemMessage ? [systemMessage] : []),
-      ...stripReasoningContent(governedOld),
+      ...projectedOld,
       ...buildCompactionRequestTail(
-        governedOld[governedOld.length - 1]?.role,
+        projectedOld[projectedOld.length - 1]?.role,
         parts.recentMessages.length,
         priorSummary
       )
     ]
 
+    const chatOptions: ChatOptions = {
+      abortSignal,
+      includeInternalMessages: true,
+      purpose: 'compaction-summary',
+      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
+    }
+
     let summary = ''
     try {
-      const stream = this.modelClient.chat(compactionContext, undefined, {
-        abortSignal,
-        includeInternalMessages: true,
-        expectedCacheMiss: true
-      })
+      const stream = this.modelClient.chat(compactionContext, undefined, chatOptions)
       for await (const event of stream) {
         if (abortSignal?.aborted) return null
         if (event.type === 'text_delta') {
           summary += event.delta
         } else if (event.type === 'wire_snapshot') {
-          this.cacheDiagnostics.recordWireSnapshot(event.snapshot, { expectedMiss: true })
+          this.cacheDiagnostics.recordWireSnapshot(event.snapshot, {
+            purpose: 'compaction-summary'
+          })
         } else if (
           event.type === 'context_overflow'
           || event.type === 'error'

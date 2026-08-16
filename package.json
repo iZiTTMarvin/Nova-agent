@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:live-cache": "vitest run --config vitest.live-cache.config.ts",
     "test:perf": "node scripts/run-perf-gate.mjs",
     "test:headless-smoke": "npm run build:headless && node scripts/harness_eval/smoke_headless.mjs",
     "test:memory-integration": "node scripts/run-memory-integration-test.mjs",

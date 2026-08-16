@@ -75,7 +75,7 @@ export class StreamProcessor {
   private cacheDiagnostics: CacheDiagnostics
   private emit: (event: AgentEvent) => void
   private emitContextBreakdown: (messageId: string, promptTokens: number) => void
-  private runOverflowCompaction: (mode: 'standard' | 'aggressive') => Promise<boolean>
+  private runOverflowCompaction: StreamProcessorDeps['runOverflowCompaction']
   private hookManager: HookManager
   /** 统一 retry/fallback attempt 所有权 */
   private attemptController: AttemptController
@@ -348,9 +348,7 @@ export class StreamProcessor {
           case 'wire_snapshot':
             {
               // 语义快照写入诊断层并做分段 first-diff 比较
-              const snapshotDiag = this.cacheDiagnostics.recordWireSnapshot(event.snapshot, {
-                expectedMiss: event.expectedMiss === true
-              })
+              const snapshotDiag = this.cacheDiagnostics.recordWireSnapshot(event.snapshot)
               recordMetric(
                 'cache.first_diff',
                 {
@@ -362,17 +360,12 @@ export class StreamProcessor {
                 {
                   id: messageId,
                   tags: {
-                    part: snapshotDiag.firstDiffPart ?? 'none',
-                    expectedMiss: event.expectedMiss ? '1' : '0'
+                    part: snapshotDiag.firstDiffPart ?? 'none'
                   }
                 }
               )
-              // 预期 miss 也推送诊断（UI 可区分）；非 break 仅在有 firstDiff 信息时推送
-              if (
-                snapshotDiag.cacheBreakDetected ||
-                event.expectedMiss ||
-                snapshotDiag.prefixDiff?.firstDiffPart
-              ) {
+              // 非 break 仅在有 firstDiff 信息时推送
+              if (snapshotDiag.cacheBreakDetected || snapshotDiag.prefixDiff?.firstDiffPart) {
                 this.emit({ type: 'cache_diagnostic', messageId, diagnostic: snapshotDiag })
               }
             }
@@ -407,12 +400,12 @@ export class StreamProcessor {
               })
             }
 
-            const standardOk = await this.runOverflowCompaction('standard')
+            const standardOk = await this.runOverflowCompaction('standard', params.summaryProjection)
             if (standardOk) {
               shouldRetryChat = true
               break
             }
-            const aggressiveOk = await this.runOverflowCompaction('aggressive')
+            const aggressiveOk = await this.runOverflowCompaction('aggressive', params.summaryProjection)
             if (aggressiveOk) {
               shouldRetryChat = true
               break

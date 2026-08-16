@@ -4,6 +4,9 @@
  */
 import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from './types'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { ChatRequestPurpose } from '../../shared/model/types'
+
+export type { ChatRequestPurpose } from '../../shared/model/types'
 
 /** 模型调用时的可选参数 */
 export interface ChatOptions {
@@ -27,13 +30,14 @@ export interface ChatOptions {
   /**
    * 会话级 prompt 缓存路由 key（来自 SessionData.cacheRoutingKey）。
    * 仅当 CacheProfile.promptCacheKey === 'session'（kimi/openai）时写入 body.prompt_cache_key。
+   * 压缩摘要请求同样携带：会话亲和档案上摘要前缀要与主对话落在同一路由槽位才能命中。
    */
   promptCacheKey?: string
   /**
-   * 压缩摘要等受控请求：最终 body 与正常对话前缀必然不同，
-   * wire_snapshot 诊断应标记为预期 miss，避免污染命中率解读。
+   * 中性请求用途标记：主对话缺省；受控内部调用（当前仅压缩摘要）显式声明。
+   * 仅用于诊断与测试区分请求来源，不影响请求构造，也不豁免缓存告警。
    */
-  expectedCacheMiss?: boolean
+  purpose?: ChatRequestPurpose
   /**
    * 请求级思考强度覆盖（会话级覆盖经此下发）。
    * 缺省时回落到 client config 的模型默认思考强度。

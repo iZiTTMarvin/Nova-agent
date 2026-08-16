@@ -11,7 +11,7 @@ import {
   buildConversationContext,
   projectAssistantWithReasoningReplay
 } from '../../../../src/runtime/agent/context/contextBuilder'
-import { stripReasoningContent, rebuildWithCompression } from '../../../../src/runtime/agent/compaction/compaction'
+import { rebuildWithCompression } from '../../../../src/runtime/agent/compaction/compaction'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { restoreOrInjectHistory, buildSnapshotFromCompaction } from '../../../../src/runtime/sessions/contextSnapshot'
 import type { SessionData, SessionMessage } from '../../../../src/runtime/sessions/types'
@@ -395,7 +395,7 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     expect(loop.getContext().filter(m => m.role !== 'system')).toEqual(DEEPSEEK_RECOVERY)
   })
 
-  it('压缩：stripReasoningContent 剥离摘要请求侧；rebuild 的 recent 保留 reasoning', () => {
+  it('压缩：rebuild 的 recent 保留 reasoning（摘要请求侧不再剥离，由前缀回放协议测试保护）', () => {
     const withReasoning: ChatMessage[] = [
       {
         role: 'assistant',
@@ -405,9 +405,6 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
       },
       { role: 'tool', content: 'ok', toolCallId: 't1' }
     ]
-    const stripped = stripReasoningContent(withReasoning)
-    expect(stripped[0].reasoningContent).toBeUndefined()
-    expect(withReasoning[0].reasoningContent).toBe('思考中') // stripReasoningContent 返回新数组，不修改入参
 
     const rebuilt = rebuildWithCompression('sys', '摘要不含思考', withReasoning)
     expect(rebuilt.find(m => m.role === 'system')!.content).toContain('摘要不含思考')

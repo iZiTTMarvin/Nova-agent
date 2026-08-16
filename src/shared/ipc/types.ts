@@ -10,7 +10,7 @@ import type {
   MessageDiffsState,
   SessionMessageDiffsState
 } from '../diff'
-import type { NormalizedUsage } from '../model/types'
+import type { ChatRequestPurpose, NormalizedUsage } from '../model/types'
 import type { HookEvent } from '../agent/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
@@ -684,7 +684,8 @@ export interface IpcEvents {
         invalidatedSuffixBytes: number
         estimatedInvalidatedTokens: number
         expectedReuseTokens: number
-        expectedMiss: boolean
+        /** 请求用途标记（压缩摘要等受控内部调用）；主对话为 undefined */
+        purpose?: ChatRequestPurpose
         actualCacheReadTokens?: number
       }
     }

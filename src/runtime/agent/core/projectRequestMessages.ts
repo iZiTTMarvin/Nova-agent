@@ -127,6 +127,17 @@ export function createRequestProjectionArchiveCache(): RequestProjectionArchiveC
   return new Map<string, string>()
 }
 
+/**
+ * 压缩摘要输入的投影契约：对完整权威消息做与主请求一致的投影，返回投影视图。
+ *
+ * 调用方（活跃轮次）必须传入复用主请求同一 archiveCache 实例的实现——占位符
+ * artifact 指纹跨步骤不漂移是摘要请求与主请求字节前缀恒等的前提，不能改为
+ * 独立投影。投影保持逐条 1:1 对齐且不改写 role，调用方按切点切片即可。
+ */
+export interface SummaryProjection {
+  project: (messages: ChatMessage[]) => Promise<ChatMessage[]>
+}
+
 export interface RequestProjectionInput {
   messages: ChatMessage[]
   toolRound: number

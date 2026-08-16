@@ -4,6 +4,12 @@
  */
 export type UsageDialect = 'openai' | 'deepseek' | 'anthropic' | 'unknown'
 
+/**
+ * 受控内部调用的请求用途（唯一类型来源；主对话不携带）。
+ * 用于诊断与测试识别请求来源，不影响请求构造，也不豁免缓存告警。
+ */
+export type ChatRequestPurpose = 'compaction-summary'
+
 export interface NormalizedUsage {
   /** 未命中缓存的输入 */
   uncachedInputTokens: number

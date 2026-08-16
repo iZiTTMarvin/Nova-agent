@@ -17,8 +17,13 @@ import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
 import {
+  ACTIVE_PRUNE_MIN_TOOL_ROUND,
   createRequestProjectionArchiveCache,
   projectRequestMessages,
+  type ActiveToolResultPrunePolicy,
+  type ArchiveCandidate,
+  type RequestProjectionArchiveCache,
+  type SummaryProjection,
   DISABLED_PRUNE_POLICY
 } from './projectRequestMessages'
 import type { StreamProcessor } from '../stream/StreamProcessor'
@@ -64,13 +69,16 @@ export interface RunAgentLoopParams {
   abortSignal: () => AbortSignal | undefined
   /** 执行工具批次；门面负责注入权限与截断策略。 */
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
-  /** 主动阈值压缩（stream 前调用） */
-  runCompactionIfThreshold: () => Promise<void>
+  /**
+   * 主动阈值压缩（请求投影之后调用，摘要输入回放主请求前缀）。
+   * 返回 true 表示已压缩，循环应回到顶部重新投影。
+   */
+  runCompactionIfThreshold: (projection: SummaryProjection) => Promise<boolean>
   /**
    * 工具写回后、下一轮模型请求前的 mid-turn 主动压缩。
    * 编排层保证 fail-open：即便本回调抛错也不终止 turn。
    */
-  runMidTurnCompaction?: () => Promise<void>
+  runMidTurnCompaction?: (projection: SummaryProjection) => Promise<void>
   /** 记录本轮发出请求的 usage 锚点（input tokens + 当时 payload 字符） */
   recordRequestAnchor?: (inputTokens: number, payloadChars: number) => void
   /** 上下文变化后更新压缩 token 簿记 */
@@ -85,6 +93,56 @@ export interface RunAgentLoopParams {
 
 /** 循环结束原因，供门面执行终态收尾。 */
 export type LoopEndReason = 'normal' | 'error'
+
+/**
+ * 把权威上下文中的工具结果正文写入内容寻址 artifact。
+ * 失败契约：表达为 null，不得抛异常（调用方保留原文并计诊断）。
+ */
+export function createArchiveWriter(
+  context: AgentContext
+): (candidate: ArchiveCandidate) => Promise<{ artifactId: string } | null> {
+  return async (candidate) => {
+    if (!context.artifactStore || !context.sessionId) return null
+    try {
+      const meta = await context.artifactStore.writeContentAddressed(
+        context.sessionId,
+        candidate.body,
+        { toolName: candidate.toolName }
+      )
+      return { artifactId: meta.id }
+    } catch {
+      return null
+    }
+  }
+}
+
+/**
+ * 压缩摘要投影（契约见 SummaryProjection）：与主请求共用同一策略与归档回调，
+ * 活跃轮次传入主请求的 archiveCache 实例；缺省时独立建缓存（空闲压缩路径）。
+ *
+ * 投影固定按起始归档轮次语义执行：摘要前缀对齐的是最近一次带归档的主请求，
+ * 不随当前轮次在第 0 轮退化为恒等投影——主请求第 0 轮以全文发送属既有行为，
+ * 摘要跟随它只会丢掉存储侧占位符形态的更长前缀。
+ */
+export function createSummaryProjection(options: {
+  context: AgentContext
+  policy: ActiveToolResultPrunePolicy | (() => ActiveToolResultPrunePolicy)
+  archiveCache?: RequestProjectionArchiveCache
+}): SummaryProjection {
+  const archive = createArchiveWriter(options.context)
+  return {
+    project: async messages => {
+      const result = await projectRequestMessages({
+        messages,
+        toolRound: ACTIVE_PRUNE_MIN_TOOL_ROUND,
+        policy: typeof options.policy === 'function' ? options.policy() : options.policy,
+        archiveCache: options.archiveCache ?? createRequestProjectionArchiveCache(),
+        archive
+      })
+      return result.messages
+    }
+  }
+}
 
 /** cancelled=true 时，门面按 interrupted 完成轮次收尾。 */
 export interface LoopEndResult {
@@ -102,6 +160,13 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
   const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
+  const archiveWriter = createArchiveWriter(context)
+  const requestProjectionPolicy = config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY
+  const summaryProjection = createSummaryProjection({
+    context,
+    policy: requestProjectionPolicy,
+    archiveCache: requestProjectionArchiveCache
+  })
 
   try {
     while (toolRound < config.maxToolRounds) {
@@ -123,24 +188,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         }
       }
 
-      // ── 主动阈值压缩（Service 内部持有 overflow 守卫）──
-      await p.runCompactionIfThreshold()
-
-      // 轮内预算校验：只估算不改写，超预算走压缩恢复链
-      if (config.enforceInlineBudget) {
-        const budget = config.enforceInlineBudget(context.messages)
-        if (budget.status === 'requires_compaction') {
-          const ok = config.runOverflowCompaction
-            && (await config.runOverflowCompaction('standard')
-              || await config.runOverflowCompaction('aggressive'))
-          if (!ok) {
-            throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
-          }
-          continue
-        }
-      }
-      p.updateTokenEstimate()
-
+      // ── 请求投影（先于压缩检查：摘要输入回放主请求前缀的前提）──
       const tools = getEffectiveToolDefinitions(context)
 
       // context / preChat 只改写本次请求，不直接替换持久上下文。
@@ -159,28 +207,35 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       chatMessages = preChatHook?.messages ?? chatMessages
       // 请求投影：把本次模型请求看到的消息与权威上下文分离。
       // 投影结果只赋给 chatMessages，绝不写回 context.messages（权威事实保留全文）。
-      // 上方 enforceInlineBudget 恢复成功后的 continue 会回到循环顶重新执行投影，
+      // enforceInlineBudget 恢复成功后的 continue 会回到循环顶重新执行投影，
       // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
       const projection = await projectRequestMessages({
         messages: chatMessages,
         toolRound,
-        policy: config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY,
+        policy: requestProjectionPolicy,
         archiveCache: requestProjectionArchiveCache,
-        archive: async (candidate) => {
-          if (!context.artifactStore || !context.sessionId) return null
-          try {
-            const meta = await context.artifactStore.writeContentAddressed(
-              context.sessionId,
-              candidate.body,
-              { toolName: candidate.toolName }
-            )
-            return { artifactId: meta.id }
-          } catch {
-            return null
-          }
-        }
+        archive: archiveWriter
       })
       chatMessages = projection.messages
+
+      // ── 主动阈值压缩（Service 内部持有 overflow 守卫）──
+      // 发生在请求投影之后：摘要输入回放主请求前缀；压缩成功回到循环顶重投影。
+      if (await p.runCompactionIfThreshold(summaryProjection)) continue
+
+      // 轮内预算校验：只估算不改写，超预算走压缩恢复链
+      if (config.enforceInlineBudget) {
+        const budget = config.enforceInlineBudget(context.messages)
+        if (budget.status === 'requires_compaction') {
+          const ok = config.runOverflowCompaction
+            && (await config.runOverflowCompaction('standard', summaryProjection)
+              || await config.runOverflowCompaction('aggressive', summaryProjection))
+          if (!ok) {
+            throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
+          }
+          continue
+        }
+      }
+      p.updateTokenEstimate()
 
       // native 为默认主路径：向 API 下发 tools，由服务端解析各家原生格式（DSML 等）。
       // xml 为兜底路径（用户 override 或 ollama 等本地推理）：不传 tools，
@@ -193,6 +248,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         chatMessages,
         nativeTools,
         context,
+        summaryProjection,
         signal: p.abortSignal(),
         isCancelled: () => p.signal(),
         sleep: (ms: number) => p.sleep(ms)
@@ -294,7 +350,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         // fail-open 由编排层兜底：端口拒绝不得终止 turn，交给后续溢出恢复。
         if (p.runMidTurnCompaction) {
           try {
-            await p.runMidTurnCompaction()
+            await p.runMidTurnCompaction(summaryProjection)
           } catch {
             // mid-turn 只做预防性整形，任何失败都保持原投影继续。
           }
@@ -304,8 +360,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           const budget = config.enforceInlineBudget(context.messages)
           if (budget.status === 'requires_compaction') {
             const ok = config.runOverflowCompaction
-              && (await config.runOverflowCompaction('standard')
-                || await config.runOverflowCompaction('aggressive'))
+              && (await config.runOverflowCompaction('standard', summaryProjection)
+                || await config.runOverflowCompaction('aggressive', summaryProjection))
             if (!ok) {
               throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
             }

@@ -46,7 +46,7 @@ import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
 import { resolveRequestProjectionPolicy } from './core/projectRequestMessages'
 import { StreamProcessor } from './stream/StreamProcessor'
-import { runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
+import { createSummaryProjection, runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { CompactionService } from './compaction/CompactionService'
 import { StopPolicyExtension } from './extensions/stopPolicyExtension'
 import type {
@@ -104,8 +104,8 @@ export class AgentLoop {
         cacheDiagnostics: this.cacheDiagnostics,
         emit: (event) => this.eventBus.emit(event),
         emitContextBreakdown: (messageId, promptTokens) => this.emitContextBreakdown(messageId, promptTokens),
-        runOverflowCompaction: (mode) =>
-          this.compactionService.runOverflowCompaction(mode, this.abortController?.signal),
+        runOverflowCompaction: (mode, projection) =>
+          this.compactionService.runOverflowCompaction(mode, projection, this.abortController?.signal),
         hookManager: this.hookManager,
         promptCacheKey: this.config.promptCacheKey,
         reasoningEffort: this.config.reasoningEffort,
@@ -242,7 +242,13 @@ export class AgentLoop {
           cacheProfile: provider.cacheProfile,
           cacheStrategy: provider.cacheStrategy
         })
-      }
+      },
+      // 空闲压缩没有活跃轮次可借用缓存：独立缓存投影，取舍见 SummaryProjection 契约
+      idleProjection: createSummaryProjection({
+        context: this.ctx,
+        policy: () => this.currentRequestProjectionPolicy()
+      }),
+      promptCacheKey: this.config.promptCacheKey
     })
     this.hookManager = new HookManager(eventBus)
     this.ctx.systemPrompt = this.buildFrozenSystemPrompt()
@@ -254,6 +260,13 @@ export class AgentLoop {
       })
     }
   }
+  /** 当前应使用的投影归档策略：仅当模型具备 archive_read 时启用（含摘要投影） */
+  private currentRequestProjectionPolicy() {
+    return resolveRequestProjectionPolicy(
+      getEffectiveToolDefinitions(this.ctx).some(tool => tool.name === 'archive_read')
+    )
+  }
+
   /** 从配置构建冻结 system prompt（根据模型方言注入工具目录格式） */
   private buildFrozenSystemPrompt(): string {
     const layers = this.config.systemPromptLayers
@@ -772,9 +785,6 @@ export class AgentLoop {
           : {})
       })
 
-    const hasArchiveRead = getEffectiveToolDefinitions(this.ctx).some(
-      (tool) => tool.name === 'archive_read'
-    )
     const loopConfig: LoopConfig = {
       maxToolRounds: this.maxToolRounds,
       toolExecution: this.config.toolExecution ?? 'parallel',
@@ -786,9 +796,9 @@ export class AgentLoop {
         : {}),
       getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
       enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
-      runOverflowCompaction: (mode) =>
-        this.compactionService.runOverflowCompaction(mode, this.abortController?.signal),
-      requestProjectionPolicy: resolveRequestProjectionPolicy(hasArchiveRead),
+      runOverflowCompaction: (mode, projection) =>
+        this.compactionService.runOverflowCompaction(mode, projection, this.abortController?.signal),
+      requestProjectionPolicy: this.currentRequestProjectionPolicy(),
     }
 
     // 模型终态错误只在此记录；错误事件与全部收尾由 finalizeTurn 统一执行，
@@ -807,11 +817,11 @@ export class AgentLoop {
       signal: () => this.cancelled,
       abortSignal: () => this.abortController?.signal,
       executeBatch,
-      runCompactionIfThreshold: async () => {
-        await this.compactionService.runThresholdCompaction(this.abortController?.signal)
+      runCompactionIfThreshold: async (projection) => {
+        return this.compactionService.runThresholdCompaction(projection, this.abortController?.signal)
       },
-      runMidTurnCompaction: async () => {
-        await this.compactionService.runMidTurnCompaction(this.abortController?.signal)
+      runMidTurnCompaction: async (projection) => {
+        await this.compactionService.runMidTurnCompaction(projection, this.abortController?.signal)
       },
       recordRequestAnchor: (inputTokens, payloadChars) => {
         this.compactionService.recordRequestAnchor(inputTokens, payloadChars)

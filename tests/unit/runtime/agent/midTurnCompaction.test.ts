@@ -18,6 +18,7 @@ import { HookManager } from '../../../../src/runtime/agent/core/HookManager'
 import type { CompactionMeta } from '../../../../src/runtime/agent/types'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import type { TurnStreamResult } from '../../../../src/runtime/agent/stream/streamTypes'
 import type { ToolBatchExecutionResult } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 
@@ -55,7 +56,8 @@ function createService(options?: {
     cacheDiagnostics: new CacheDiagnostics(),
     contextWindow,
     onCompaction: options?.onCompaction,
-    getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' })
+    getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' }),
+    idleProjection: identitySummaryProjection
   })
   return { service, context, client }
 }
@@ -102,7 +104,7 @@ describe('CompactionService mid-turn', () => {
     const priorPayload = measureRequestPayloadChars(messages.slice(0, 3))
     service.recordRequestAnchor(highWaterTokens - 10, priorPayload)
 
-    await expect(service.runMidTurnCompaction()).resolves.toBe(true)
+    await expect(service.runMidTurnCompaction(identitySummaryProjection)).resolves.toBe(true)
 
     expect(onCompaction).toHaveBeenCalledWith(
       context.messages,
@@ -134,7 +136,7 @@ describe('CompactionService mid-turn', () => {
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: 8_000 })
     service.recordRequestAnchor(highWaterTokens + 100, 100)
 
-    await expect(service.runMidTurnCompaction()).resolves.toBe(false)
+    await expect(service.runMidTurnCompaction(identitySummaryProjection)).resolves.toBe(false)
     expect(context.messages).toEqual(original)
     expect(context.compactionLevel).toBe(0)
   })
@@ -157,7 +159,7 @@ describe('CompactionService mid-turn', () => {
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: 8_000 })
     service.recordRequestAnchor(highWaterTokens + 50, 10)
 
-    await expect(service.runMidTurnCompaction()).resolves.toBe(false)
+    await expect(service.runMidTurnCompaction(identitySummaryProjection)).resolves.toBe(false)
     expect(context.messages).toHaveLength(3)
   })
 })
@@ -227,7 +229,7 @@ describe('runAgentLoop mid-turn integration', () => {
       signal: () => false,
       abortSignal: () => undefined,
       executeBatch,
-      runCompactionIfThreshold: async () => {},
+      runCompactionIfThreshold: async () => false,
       runMidTurnCompaction: midTurn,
       recordRequestAnchor: recordAnchor,
       updateTokenEstimate: () => {},
@@ -301,7 +303,7 @@ describe('runAgentLoop mid-turn integration', () => {
           failed: false
         }]
       }),
-      runCompactionIfThreshold: async () => {},
+      runCompactionIfThreshold: async () => false,
       runMidTurnCompaction: midTurn,
       updateTokenEstimate: () => {},
       sleep: async () => {},

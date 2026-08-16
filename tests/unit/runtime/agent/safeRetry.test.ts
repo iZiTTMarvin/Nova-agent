@@ -9,6 +9,7 @@
  * - 结构化 ModelFailure 是重试决策的真源，不再依赖字符串正则
  */
 import { describe, it, expect } from 'vitest'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import {
   parseRetryAfter,
   httpStatusToFailure,
@@ -419,6 +420,7 @@ async function runOnce(processor: StreamProcessor): Promise<{ kind: string }> {
     nativeTools: undefined,
     context: nativeContext(),
     signal: undefined,
+    summaryProjection: identitySummaryProjection,
     isCancelled: () => false,
     sleep: () => Promise.resolve()
   })

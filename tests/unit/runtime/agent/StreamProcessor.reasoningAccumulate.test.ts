@@ -11,6 +11,7 @@ import { RecoveryStateMachine } from '../../../../src/runtime/agent/recovery/Rec
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import { HookManager } from '../../../../src/runtime/agent/core/HookManager'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
@@ -77,6 +78,7 @@ async function runOnce(
     nativeTools: undefined,
     context: createNativeContext(),
     signal: undefined,
+    summaryProjection: identitySummaryProjection,
     isCancelled: opts?.isCancelled ?? (() => false),
     sleep: () => Promise.resolve()
   })
@@ -193,6 +195,7 @@ second\tline"}`
       nativeTools: undefined,
       context: createNativeContext(),
       signal: undefined,
+      summaryProjection: identitySummaryProjection,
       isCancelled: () => false,
       sleep: () => Promise.resolve()
     })

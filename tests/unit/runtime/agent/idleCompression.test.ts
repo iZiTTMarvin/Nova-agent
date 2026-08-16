@@ -12,6 +12,7 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { ChatEvent, ChatMessage, ModelClientConfig, ToolDefinition } from '../../../../src/runtime/model/types'
 import type { ChatOptions, ModelClient } from '../../../../src/runtime/model/ModelClient'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
@@ -192,7 +193,8 @@ function createIdleService(
     onCompaction: options?.onCompaction,
     getIdleCacheProfile: () => ({
       idlePolicy: options?.idlePolicy ?? 'anthropic-short-ttl'
-    })
+    }),
+    idleProjection: identitySummaryProjection
   })
   return { service, context }
 }
