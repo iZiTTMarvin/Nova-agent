@@ -24,38 +24,55 @@ describe('StopPolicyExtension — 连续空参护栏', () => {
     policy = new StopPolicyExtension()
   })
 
-  it(`连续 ${EMPTY_ARGS_LIMIT} 轮全空参 → 返回 empty_args 停止`, async () => {
-    const round = {
-      toolCallsThisRound: [{ name: 'grep', args: {} }],
-      outcomes: [{
-        toolCall: { id: 'tc1', name: 'grep' },
-        args: {},
-        resultText: '错误',
-        failed: true
-      }]
-    }
+  const emptyFailedRound = (toolName = 'grep') => ({
+    toolCallsThisRound: [{ name: toolName, args: {} }],
+    outcomes: [{
+      toolCall: { id: 'tc1', name: toolName },
+      args: {},
+      resultText: '错误',
+      failed: true
+    }]
+  })
 
-    const first = await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 1 }))
+  it(`连续 ${EMPTY_ARGS_LIMIT} 轮全空参先注入恢复指令，引导后仍空参才停止`, async () => {
+    const first = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 1 }))
     expect(first).toBeUndefined()
 
-    const second = await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 2 }))
-    expect(second?.stop).toBe(true)
-    expect(second?.reason).toBe('empty_args')
-    expect(second?.notice).toContain('XML 兼容模式')
+    const guidance = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 2 }))
+    expect(guidance).toMatchObject({ stop: false })
+    expect(guidance?.instruction).toContain('empty arguments')
+
+    const stopped = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 3 }))
+    expect(stopped).toMatchObject({ stop: true, reason: 'empty_args' })
+    expect(stopped?.notice).toContain('XML 兼容模式')
+  })
+
+  it('引导后模型补全参数 → 不中断，引导状态一并复位', async () => {
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound('grep'), toolRound: 1 }))
+    const guidance = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound('grep'), toolRound: 2 }))
+    expect(guidance).toMatchObject({ stop: false })
+
+    const recoveredRound = {
+      toolCallsThisRound: [{ name: 'grep', args: { pattern: 'foo' } }],
+      outcomes: [{
+        toolCall: { id: 'tc2', name: 'grep' },
+        args: { pattern: 'foo' },
+        resultText: 'ok',
+        failed: false
+      }]
+    }
+    const recovered = await policy.shouldStopAfterTurn(makeArgs({ ...recoveredRound, toolRound: 3 }))
+    expect(recovered).toBeUndefined()
+
+    // 复位后重新累计：再次两轮空参开启新的引导周期，而不是直接熔断。
+    // 换工具避免同签名重复失败熔断先行介入，此处只验证空参护栏自身语义。
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound('find'), toolRound: 4 }))
+    const secondCycle = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound('find'), toolRound: 5 }))
+    expect(secondCycle).toMatchObject({ stop: false })
   })
 
   it('中间出现非空参 → 计数清零，不触发', async () => {
-    const emptyRound = {
-      toolCallsThisRound: [{ name: 'grep', args: {} }],
-      outcomes: [{
-        toolCall: { id: 'tc1', name: 'grep' },
-        args: {},
-        resultText: '错误',
-        failed: true
-      }]
-    }
-
-    await policy.shouldStopAfterTurn(makeArgs({ ...emptyRound, toolRound: 1 }))
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 1 }))
 
     const nonEmptyRound = {
       toolCallsThisRound: [{ name: 'grep', args: { pattern: 'foo' } }],
@@ -68,22 +85,12 @@ describe('StopPolicyExtension — 连续空参护栏', () => {
     }
     await policy.shouldStopAfterTurn(makeArgs({ ...nonEmptyRound, toolRound: 2 }))
 
-    const third = await policy.shouldStopAfterTurn(makeArgs({ ...emptyRound, toolRound: 3 }))
+    const third = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 3 }))
     expect(third).toBeUndefined()
   })
 
   it('中间出现成功执行 → 计数清零', async () => {
-    const emptyRound = {
-      toolCallsThisRound: [{ name: 'grep', args: {} }],
-      outcomes: [{
-        toolCall: { id: 'tc1', name: 'grep' },
-        args: {},
-        resultText: '错误',
-        failed: true
-      }]
-    }
-
-    await policy.shouldStopAfterTurn(makeArgs({ ...emptyRound, toolRound: 1 }))
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 1 }))
 
     const successRound = {
       toolCallsThisRound: [{ name: 'grep', args: {} }],
@@ -96,26 +103,32 @@ describe('StopPolicyExtension — 连续空参护栏', () => {
     }
     await policy.shouldStopAfterTurn(makeArgs({ ...successRound, toolRound: 2 }))
 
-    const third = await policy.shouldStopAfterTurn(makeArgs({ ...emptyRound, toolRound: 3 }))
+    const third = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 3 }))
     expect(third).toBeUndefined()
   })
 
-  it('clear() 重置空参计数', async () => {
-    const round = {
-      toolCallsThisRound: [{ name: 'read', args: {} }],
-      outcomes: [{
-        toolCall: { id: 'tc1', name: 'read' },
-        args: {},
-        resultText: '错误',
-        failed: true
-      }]
-    }
+  it('clear() 重置空参计数与引导状态', async () => {
+    const round = emptyFailedRound('read')
 
     await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 1 }))
+    const guidance = await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 2 }))
+    expect(guidance).toMatchObject({ stop: false })
+
     policy.clear()
 
     const again = await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 1 }))
     expect(again).toBeUndefined()
+    const reGuided = await policy.shouldStopAfterTurn(makeArgs({ ...round, toolRound: 2 }))
+    expect(reGuided).toMatchObject({ stop: false })
+  })
+
+  it('空参引导不越过工具轮数硬上限', async () => {
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound(), toolRound: 1, maxToolRounds: 2 }))
+    const result = await policy.shouldStopAfterTurn(
+      makeArgs({ ...emptyFailedRound(), toolRound: 2, maxToolRounds: 2 })
+    )
+
+    expect(result).toMatchObject({ stop: true, reason: 'max_rounds' })
   })
 
   it('成功进入 default 后不结束任务，由 AgentLoop 按新模式继续', async () => {

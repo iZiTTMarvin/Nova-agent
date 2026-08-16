@@ -112,10 +112,11 @@ describe('终态诚实：breaker', () => {
 })
 
 describe('终态诚实：empty_args', () => {
-  it('连续两轮空参且工具未成功 → incomplete/empty_args', async () => {
+  it('空参恢复提示后仍连续空参 → incomplete/empty_args', async () => {
     const client = new MockModelClient()
     client.addResponse(toolCallResponse('e0', 'ls', '{}'))
     client.addResponse(toolCallResponse('e1', 'ls', '{}'))
+    client.addResponse(toolCallResponse('e2', 'ls', '{}'))
     const registry = new ToolRegistry()
     registerTool(registry, 'ls', () => ({ success: false, output: '', error: 'boom' }))
     const { loop, events } = createLoop(client, { maxToolRounds: 10 })

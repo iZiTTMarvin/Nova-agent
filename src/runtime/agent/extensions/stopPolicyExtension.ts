@@ -1,6 +1,9 @@
 /**
  * 单轮停止策略：重复失败熔断、工具轮数上限和连续空参保护。
  *
+ * 空参与重复失败共用「先引导、后熔断」语义：达到阈值先注入恢复指令给模型
+ * 一次自愈机会，引导后仍重犯才中断，避免弱实现一次抖动就打断任务。
+ *
  * 失败状态在整个 batch 完成后按调用源顺序更新，避免并行完成时序改变连续性判定。
  */
 import { createHash } from 'crypto'
@@ -9,7 +12,7 @@ import type { ShouldStopArgs, StopDecision } from '../core/loopTypes'
 /** 同一签名工具调用累计失败达到该次数时注入恢复指令。 */
 export const REPEATED_FAILURE_LIMIT = 3
 
-/** 连续全空参轮次达到该次数即中断，避免 native 弱实现空转 */
+/** 连续全空参轮次达到该次数时注入恢复指令；引导后下一轮仍全空参才中断 */
 export const EMPTY_ARGS_LIMIT = 2
 
 /** 停止策略扩展。持有当前失败签名与空参轮次状态。 */
@@ -21,17 +24,20 @@ export class StopPolicyExtension {
   }>()
   /** 连续「本轮所有 tool_calls 参数均为空」的轮次计数 */
   private emptyArgsRoundCount = 0
+  /** 空参恢复指令已注入；其后首个再犯轮次熔断 */
+  private emptyArgsRecoveryIssued = false
 
   /** 每条用户消息开始时清空轮次级计数。 */
   clear(): void {
     this.repeatedFailures.clear()
     this.emptyArgsRoundCount = 0
+    this.emptyArgsRecoveryIssued = false
   }
 
   /** 返回停止决定；没有命中保护条件时继续下一轮。 */
   async shouldStopAfterTurn(args: ShouldStopArgs): Promise<StopDecision | void> {
-    const emptyArgsStop = this.trackEmptyArgsRounds(args)
-    if (emptyArgsStop) return emptyArgsStop
+    const emptyArgsDecision = this.trackEmptyArgsRounds(args)
+    if (emptyArgsDecision?.stop) return emptyArgsDecision
 
     const repeatedFailure = this.trackRepeatedFailures(args.outcomes)
     if (repeatedFailure?.action === 'stop') {
@@ -49,6 +55,8 @@ export class StopPolicyExtension {
         `发送「继续」可接着执行；如长任务频繁触发，可在「设置 → 通用 → 最大工具调用轮数」中调大该上限。`
       return { stop: true, reason: 'max_rounds', notice }
     }
+    // 空参引导比通用重复失败引导更具体，同轮同时命中时优先下发。
+    if (emptyArgsDecision) return emptyArgsDecision
     if (repeatedFailure?.action === 'recover') {
       return {
         stop: false,
@@ -63,7 +71,8 @@ export class StopPolicyExtension {
 
   /**
    * 统计连续「本轮所有 tool_calls 在 repair 后仍为空参」的轮次。
-   * 中间出现非空参或任一工具成功执行则清零。
+   * 中间出现非空参或任一工具成功执行则连同引导状态一起清零。
+   * 达到阈值先注入恢复指令给模型一次补参机会；引导后仍全空参才中断。
    */
   private trackEmptyArgsRounds(args: ShouldStopArgs): StopDecision | null {
     const roundCalls = args.toolCallsThisRound ?? []
@@ -73,24 +82,31 @@ export class StopPolicyExtension {
     const hasSuccess = args.outcomes.some(
       o => !o.skippedByAbort && o.failed !== true
     )
-    if (hasSuccess) {
+    if (hasSuccess || !roundCalls.every(tc => isEmptyArgsRecord(tc.args))) {
       this.emptyArgsRoundCount = 0
-      return null
-    }
-
-    const allEmpty = roundCalls.every(tc => isEmptyArgsRecord(tc.args))
-    if (!allEmpty) {
-      this.emptyArgsRoundCount = 0
+      this.emptyArgsRecoveryIssued = false
       return null
     }
 
     this.emptyArgsRoundCount++
     if (this.emptyArgsRoundCount < EMPTY_ARGS_LIMIT) return null
 
-    const notice =
-      `\n\n[已自动中断] 模型连续多轮返回空工具参数，已停止本轮以避免空转。` +
-      `可在「设置 → LLM 配置 → 工具调用方式」改为 XML 兼容模式后重试。`
-    return { stop: true, reason: 'empty_args', notice }
+    if (this.emptyArgsRecoveryIssued) {
+      const notice =
+        `\n\n[已自动中断] 模型在空参恢复提示后仍返回空工具参数，已停止本轮以避免空转。` +
+        `可在「设置 → LLM 配置 → 工具调用方式」改为 XML 兼容模式后重试。`
+      return { stop: true, reason: 'empty_args', notice }
+    }
+
+    this.emptyArgsRecoveryIssued = true
+    return {
+      stop: false,
+      instruction:
+        `[Runtime guard] Your tool calls in the last round had empty arguments, ` +
+        `so every call failed. Do not resubmit them with empty arguments. Re-read ` +
+        `each tool's parameter schema and provide the complete arguments as valid ` +
+        `JSON in your next tool call.`
+    }
   }
 
   /**
