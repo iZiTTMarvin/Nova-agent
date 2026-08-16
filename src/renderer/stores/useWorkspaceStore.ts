@@ -28,8 +28,12 @@ export interface WorkspaceStoreState {
   availableSessions: Session[]
   /** 启动时是否已完成首次 workspace:get 拉取 */
   initialized: boolean
+  /** 会话切换或水合加载状态 */
+  isSessionLoading: boolean
 
   // ── Actions（只转发 IPC） ──
+  /** 设置会话加载等待状态 */
+  setSessionLoading: (loading: boolean) => void
   /** 启动时拉取初始状态（App 顶层调用一次，内部会 dispatch） */
   init: () => Promise<void>
   /** 选择项目（弹对话框），成功后自动建会话 */
@@ -65,6 +69,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   reasoningEffortOverride: null,
   availableSessions: [],
   initialized: false,
+  isSessionLoading: false,
+
+  setSessionLoading: (loading: boolean) => useWorkspaceStore.setState({ isSessionLoading: loading }),
 
   init: async () => {
     try {
@@ -130,12 +137,16 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   },
 
   selectSession: async (sessionId: string) => {
+    if (useWorkspaceStore.getState().currentSessionId !== sessionId) {
+      useWorkspaceStore.setState({ isSessionLoading: true })
+    }
     try {
       const state = await window.api.invoke('workspace:select-session', { sessionId })
       const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 切换会话失败:', err)
+      useWorkspaceStore.setState({ isSessionLoading: false })
     }
   },
 
@@ -194,6 +205,7 @@ export function resetWorkspaceStoreForTests(): void {
     currentMode: 'default',
     reasoningEffortOverride: null,
     availableSessions: [],
-    initialized: false
+    initialized: false,
+    isSessionLoading: false
   })
 }

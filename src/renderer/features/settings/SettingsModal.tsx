@@ -191,7 +191,7 @@ export const SettingsModal: React.FC = () => {
             <h2 className="settings-shell__title">{active.label}</h2>
             <p className="settings-shell__desc">{active.description}</p>
           </header>
-          <div className="settings-shell__content">
+          <div key={section} className="settings-shell__content">
             {section === 'general' && <GeneralSettingsPanel />}
             {section === 'llm' && <LlmSettingsPanel />}
             {section === 'websearch' && <WebSearchSettingsPanel />}

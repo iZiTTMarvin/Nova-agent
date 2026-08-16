@@ -10,6 +10,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useRunStore } from '../../stores/useRunStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { selectSupportsVisionFromConfig } from '../../stores/selectors'
 import {
   SendIcon,
@@ -91,6 +92,7 @@ export const ChatPanel: React.FC = () => {
   const selectProject = useSettingsStore(state => state.selectProject)
   const composerPrefill = useSettingsStore(state => state.composerPrefill)
   const clearComposerPrefill = useSettingsStore(state => state.clearComposerPrefill)
+  const isSessionLoading = useWorkspaceStore(state => state.isSessionLoading)
 
   // Vision 门控：当前模型是否支持图片输入
   const supportsVision = selectSupportsVisionFromConfig(modelConfig)
@@ -622,7 +624,7 @@ export const ChatPanel: React.FC = () => {
   }, [])
 
   // ── 空状态引导界面 ─────────────────────────────────────────
-  const isEmptyState = messages.length === 0
+  const isEmptyState = messages.length === 0 && !isSessionLoading
 
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
@@ -646,8 +648,13 @@ export const ChatPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 消息流区域，只有非空状态时才显示并占据空间 */}
-      {!isEmptyState && (
+      {/* 会话切换加载中等待状态 */}
+      {isSessionLoading ? (
+        <div className="chat-session-loading" role="status" aria-live="polite">
+          <div className="chat-session-loading__spinner" aria-hidden="true" />
+          <span className="chat-session-loading__text">加载中...</span>
+        </div>
+      ) : !isEmptyState ? (
         <div
           className="chat-messages flex-1 overflow-y-auto pt-6 px-4"
           ref={bindScrollContainer}
@@ -733,7 +740,7 @@ export const ChatPanel: React.FC = () => {
         )}
         </MaybeProfiler>
       </div>
-      )}
+      ) : null}
 
       {/* 底部输入框 / 空状态中央输入框 */}
       <div
@@ -901,7 +908,7 @@ export const ChatPanel: React.FC = () => {
                 pasteAsToken={false}
                 maxRows={14}
               />
-              <div className="flex items-center justify-between mt-2 pt-2 border-t border-border-cream">
+              <div className="flex items-center justify-between mt-2 pt-1">
                 <div className="flex items-center gap-2">
                   <ModeSwitch
                     supportsVision={supportsVision}

@@ -86,6 +86,8 @@
   border: 1px solid var(--border-warm);
   background: var(--bg-card);
   box-shadow: var(--shadow-popup);
+  transform-origin: top left;
+  animation: popup-scale-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .chat-session-breadcrumb__item {
@@ -170,13 +172,19 @@
   background: var(--bg-card);
   color: var(--text-primary);
   box-shadow: var(--shadow-popup);
-  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  animation: scroll-to-bottom-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
 .chat-scroll-to-bottom:hover {
   background: var(--bg-sand);
   border-color: var(--text-muted);
   color: var(--text-primary);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.chat-scroll-to-bottom:active {
+  transform: translateX(-50%) scale(0.92);
 }
 
 .chat-scroll-to-bottom:focus-visible {
@@ -199,6 +207,35 @@
   background-color: var(--bg-sand);
   border: 1px dashed var(--border-warm);
   user-select: none;
+}
+
+/* ── 会话切换等待指示器 ─────────────────────────────── */
+.chat-session-loading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  user-select: none;
+  animation: fade-slide-up-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.chat-session-loading__spinner {
+  width: 26px;
+  height: 26px;
+  border: 2.5px solid var(--border-warm);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.chat-session-loading__text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 /* 消息行对齐/头像 slot 由 Astryx ChatMessage 拥有；用户气泡几何
@@ -744,6 +781,7 @@
   font-size: 12px;
   color: var(--text-primary);
   user-select: none;
+  animation: popup-scale-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* 根据 context ring 在 composer 中的位置自动向左/右展开,避免遮挡回到底部按钮 */
@@ -1343,5 +1381,13 @@
   }
   .ask-question-tool-card__glyph--running {
     animation: none;
+  }
+  .chat-session-breadcrumb__panel,
+  .context-popover,
+  .chat-scroll-to-bottom,
+  .chat-session-loading,
+  .chat-session-loading__spinner {
+    animation: none;
+    transition: none;
   }
 }

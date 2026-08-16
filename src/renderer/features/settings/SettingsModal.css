@@ -5,6 +5,7 @@
   /* 无框窗口的拖拽区不会自动给覆盖层让路；设置全屏期间整壳声明 no-drag，
      否则顶部 44px 拖拽条会吞掉返回按钮等点击 */
   -webkit-app-region: no-drag;
+  animation: settings-backdrop-in 180ms ease-out both;
 }
 
 .settings-shell__layout {
@@ -26,6 +27,11 @@
   align-self: flex-start;
   margin-bottom: 12px;
   flex-shrink: 0;
+  transition: transform var(--transition-fast), background-color var(--transition-fast);
+}
+
+.settings-shell__back:hover {
+  transform: translateX(-2px);
 }
 
 .settings-shell__nav {
@@ -47,6 +53,7 @@
   background: var(--bg-card);
   box-shadow: var(--shadow-whisper);
   overflow: hidden;
+  animation: settings-pane-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .settings-shell__header {
@@ -78,6 +85,7 @@
   flex-direction: column;
   padding: 18px 32px 28px;
   overflow: hidden;
+  animation: settings-tab-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* ── 面板基础 ── */
@@ -958,5 +966,16 @@
 
   .memory-settings-panel__meta-path {
     max-width: 160px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-shell,
+  .settings-shell__pane,
+  .settings-shell__content {
+    animation: none;
+  }
+  .settings-shell__back {
+    transition: none;
   }
 }

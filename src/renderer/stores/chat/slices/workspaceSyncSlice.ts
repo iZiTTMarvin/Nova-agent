@@ -70,6 +70,10 @@ export function createWorkspaceSyncSlice(
       if (!targetSessionId) return
 
       void (async () => {
+        const { useWorkspaceStore } = await import('../../useWorkspaceStore')
+        if (sessionChanged) {
+          useWorkspaceStore.getState().setSessionLoading(true)
+        }
         try {
           // load-session 与 run snapshot 并行启动；应用时先消费 snapshot，
           // 再合并持久化历史，避免运行中切回会话时撕裂覆盖草稿。
@@ -168,6 +172,10 @@ export function createWorkspaceSyncSlice(
           })
         } catch (err) {
           console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)
+        } finally {
+          if (isHydrationEpochCurrent(hydrationEpoch)) {
+            useWorkspaceStore.getState().setSessionLoading(false)
+          }
         }
       })()
     }
