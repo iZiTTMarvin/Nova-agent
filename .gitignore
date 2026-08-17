@@ -27,7 +27,7 @@ tasks/*
 !tasks/phase3-validation.md
 SPEC.md
 TASKS.md
-docs/*
+docs/Local_Docs
 !docs/nova-harness-token-efficiency-audit.md
 !docs/perf-long-conversation-research.md
 .claude
