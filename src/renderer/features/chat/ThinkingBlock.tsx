@@ -1,12 +1,11 @@
 /**
- * ThinkingBlock — 「Thought for Xs」轻量折叠行
+ * ThinkingBlock — 「Think · 摘要」轻量单行折叠行
  *
- * 进行中默认展开，结束后自动收起（用户手动点过则尊重其选择）。
- * 耗时优先读块上持久化的 durationMs，其次 thinkingTimingMemory，最后本地计时兜底；
- * 三者皆无（如重启前的旧消息）视为未知，标题不显示耗时。
+ * 运行中保持单行在行内流式吐字（不展开大卡片），结束后显示首行/耗时摘要；
+ * 用户点击整行或箭头时展开完整 Markdown 思考内容。
  */
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { ChevronIcon } from '../../components/Icons'
+import { ChevronIcon, ThinkIcon } from '../../components/Icons'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import {
   markThinkingEnded,
@@ -49,6 +48,18 @@ function resolveDisplayElapsedSec(options: {
   return localElapsed
 }
 
+function firstLine(text: string): string {
+  const visible = text.trim()
+  const newline = visible.indexOf('\n')
+  return newline === -1 ? visible : visible.slice(0, newline).trim()
+}
+
+function latestLine(text: string): string {
+  const visible = text.trimEnd()
+  const newline = visible.lastIndexOf('\n')
+  return newline === -1 ? visible : visible.slice(newline + 1).trimStart()
+}
+
 export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function ThinkingBlock({
   thinking,
   active = false,
@@ -56,13 +67,12 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
   blockIndex,
   durationMs
 }) {
-  const [isOpen, setIsOpen] = useState(active)
-  // null 表示耗时未知（如重启后加载的旧消息无 durationMs），标题不应伪造 0s
+  const [isOpen, setIsOpen] = useState(false)
   const [elapsed, setElapsed] = useState<number | null>(null)
   const startTimeRef = useRef<number | null>(null)
-  const userToggledRef = useRef(false)
-  const prevActiveRef = useRef(active)
+  const summaryRef = useRef<HTMLSpanElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+
   const displayThinking = useMemo(
     () => normalizeThinkingForDisplay(thinking),
     [thinking]
@@ -78,7 +88,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     }
   }, [active, messageId, blockIndex])
 
-  // 本地计时兜底（无 messageId / durationMs 的单测路径）
+  // 本地计时兜底
   useEffect(() => {
     if (active) {
       if (startTimeRef.current === null) {
@@ -98,26 +108,21 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     }
   }, [active])
 
-  // 展开策略：进行中自动展开；结束自动收起（未手动操作时）
+  // 运行中单行文本自动横向跟随最新流式字
   useEffect(() => {
-    const wasActive = prevActiveRef.current
-    prevActiveRef.current = active
-
-    if (userToggledRef.current) return
-
-    if (active) {
-      setIsOpen(true)
-    } else if (wasActive && !active) {
-      setIsOpen(false)
+    if (!active) return
+    const el = summaryRef.current
+    if (el) {
+      el.scrollLeft = el.scrollWidth - el.clientWidth
     }
-  }, [active])
+  }, [displayThinking, active])
 
-  // 思考进行中且展开时，把视窗钉到底部，让最新内容入屏
+  // 展开状态下将完整 Markdown 内容钉在底部（流式追加时）
   useEffect(() => {
-    if (!active || !isOpen) return
+    if (!isOpen) return
     const el = viewportRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [displayThinking, active, isOpen])
+  }, [displayThinking, isOpen])
 
   if (!thinking) return null
 
@@ -128,27 +133,29 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     localElapsed: elapsed
   })
 
-  const headerTitle = active
-    ? 'Thinking…'
-    : displayElapsed !== null
-      ? `Thought for ${formatElapsed(displayElapsed)}`
-      : 'Thought'
+  // 单行摘要文本：流式运行中取最新一行；完成后取首行/总览
+  const summaryText = active
+    ? latestLine(displayThinking) || 'Thinking…'
+    : firstLine(displayThinking) || (displayElapsed !== null ? `Thought for ${formatElapsed(displayElapsed)}` : 'Thought')
 
   return (
-    <div className={`thinking-block ${active ? 'thinking-block--active' : ''}`}>
+    <div className={`thinking-block ${active ? 'thinking-block--active' : ''} ${isOpen ? 'thinking-block--open' : ''}`}>
       <button
         type="button"
         className="thinking-block__summary"
         aria-expanded={isOpen}
-        onClick={() => {
-          userToggledRef.current = true
-          setIsOpen(v => !v)
-        }}
+        onClick={() => setIsOpen(v => !v)}
       >
+        <ThinkIcon size={14} className="thinking-block__icon" />
+        <span className="thinking-block__title">
+          Think
+        </span>
+        <span className="thinking-block__sep" aria-hidden="true">·</span>
         <span
-          className={`thinking-block__title ${active ? 'thinking-block__title--shimmer' : ''}`}
+          ref={summaryRef}
+          className={`thinking-block__line-text ${active ? 'thinking-block__line-text--active' : ''}`}
         >
-          {headerTitle}
+          {summaryText}
         </span>
         <ChevronIcon
           size={12}
@@ -156,15 +163,16 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
           className="thinking-block__arrow"
         />
       </button>
-      <div
-        className={`thinking-block__collapsible ${isOpen ? '' : 'thinking-block__collapsible--collapsed'}`}
-      >
-        <div className="thinking-block__content">
-          <div className="thinking-block__markdown" ref={viewportRef}>
-            <MarkdownRenderer content={displayThinking} isStreaming={active} chunkFade />
+
+      {isOpen && (
+        <div className="thinking-block__collapsible">
+          <div className="thinking-block__content">
+            <div className="thinking-block__markdown" ref={viewportRef}>
+              <MarkdownRenderer content={displayThinking} isStreaming={active} chunkFade />
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 })

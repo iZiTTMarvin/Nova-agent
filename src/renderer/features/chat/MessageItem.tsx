@@ -21,7 +21,6 @@ import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
-import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
 import { PlanReviewCard } from './PlanReviewCard'
@@ -576,10 +575,6 @@ function MessageItemInner({
             {...(onAcceptAllFiles && !tier1DiffStale ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
             {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
           />
-        )}
-
-        {isCurrentAssistantGenerating && (
-          <AssistantPendingIndicator key="assistant-working-status" />
         )}
     </>
   )

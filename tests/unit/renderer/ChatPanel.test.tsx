@@ -272,3 +272,75 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     renderer.unmount()
   })
 })
+
+describe('ChatPanel → 流尾状态指示器接线', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetChatStoreForTests()
+    resetSettingsStoreForTests()
+    resetAgentStoreForTests()
+    mockInvoke.mockResolvedValue(undefined)
+    Object.assign(window, {
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
+    })
+  })
+
+  it('isGenerating=true 且无暂停时，在消息流尾部渲染状态指示器', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        isGenerating: true,
+        currentGeneratingMessageId: 'msg_1',
+        messages: [makeAssistantMessage('msg_1')]
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const tailStatus = renderer.container.querySelector('.chat-messages__tail-status')
+    expect(tailStatus).not.toBeNull()
+    expect(tailStatus?.querySelector('.assistant-pending')).not.toBeNull()
+
+    renderer.unmount()
+  })
+
+  it('isPausedForUserInput=true 时，流尾状态指示器不渲染', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        isGenerating: true,
+        currentGeneratingMessageId: 'msg_1',
+        messages: [makeAssistantMessage('msg_1')]
+      })
+      useAgentStore.setState({
+        pendingAskQuestion: {
+          requestId: 'req_1',
+          questions: [{ question: '请选择', options: [{ label: 'A' }] }]
+        }
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const tailStatus = renderer.container.querySelector('.chat-messages__tail-status')
+    expect(tailStatus).toBeNull()
+
+    renderer.unmount()
+  })
+
+  it('isGenerating=false 时，流尾状态指示器不渲染', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        isGenerating: false,
+        currentGeneratingMessageId: null,
+        messages: [makeAssistantMessage('msg_1')]
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const tailStatus = renderer.container.querySelector('.chat-messages__tail-status')
+    expect(tailStatus).toBeNull()
+
+    renderer.unmount()
+  })
+})

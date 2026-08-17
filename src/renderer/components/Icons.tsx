@@ -51,6 +51,14 @@ export const TerminalIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   </svg>
 )
 
+/** 思考/推理图标 - Think 折叠行 */
+export const ThinkIcon: React.FC<IconProps> = ({ size = 14, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z" />
+    <path d="M9 21h6" />
+  </svg>
+)
+
 /** 折叠指示器图标 - 工具结果展开与折叠 */
 export const ChevronIcon: React.FC<IconProps & { direction?: 'up' | 'down' | 'right' }> = ({ size = 16, direction = 'down', ...props }) => {
   const getRotation = () => {

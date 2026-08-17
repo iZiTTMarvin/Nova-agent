@@ -2,10 +2,14 @@
  * TurnProcessTree 样式：醒目的单层折叠头 + 与正文一致的过程时间线
  */
 .turn-process-tree {
-  margin: 2px 0 8px;
+  margin: 0;
   /* 避免父级 chat-msg__static-body 的 content-visibility 导致展开后子树不绘制 */
   content-visibility: visible;
   contain: none;
+}
+
+.turn-process-tree--live {
+  margin: 0;
 }
 
 .turn-process-tree__header {

@@ -19,9 +19,9 @@ import { MessageItem } from './MessageItem'
 import { resolveMessageRenderMode } from './messageRenderTier'
 
 /** 单条消息预估高度（含间距）；真实高度由 measureElement 校正 */
-const ESTIMATED_MESSAGE_HEIGHT_PX = 140
+const ESTIMATED_MESSAGE_HEIGHT_PX = 120
 /** 消息间距（替代 flex gap，绝对定位下需手动留白） */
-const MESSAGE_GAP_PX = 24
+const MESSAGE_GAP_PX = 14
 /** 视口外额外挂载条数 */
 const OVERSCAN = 6
 
@@ -128,7 +128,7 @@ function renderMessageRow(
 }
 
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => {
-  const { messages, scrollElement } = props
+  const { messages, scrollElement, isGenerating } = props
   const [viewportReady, setViewportReady] = useState(false)
   const [turnProcessOpenByMessageId, setTurnProcessOpenByMessageId] = useState<Record<string, boolean>>({})
 
@@ -160,10 +160,27 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
     return () => ro.disconnect()
   }, [scrollElement])
 
+  const estimateMessageSize = useCallback(
+    (index: number): number => {
+      const msg = messages[index]
+      if (!msg) return 40 + MESSAGE_GAP_PX
+      if (msg.role === 'user') return 38 + MESSAGE_GAP_PX
+      // 正在生成中的尾部消息或简短单行步骤：初始精准预估 32px，杜绝 140px 导致的剧烈高度抖动
+      if (index === messages.length - 1 && isGenerating) {
+        return 32 + MESSAGE_GAP_PX
+      }
+      if (msg.blocks && msg.blocks.length <= 2 && (!msg.content || msg.content.length < 60)) {
+        return 36 + MESSAGE_GAP_PX
+      }
+      return ESTIMATED_MESSAGE_HEIGHT_PX + MESSAGE_GAP_PX
+    },
+    [messages, isGenerating]
+  )
+
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollElement,
-    estimateSize: () => ESTIMATED_MESSAGE_HEIGHT_PX + MESSAGE_GAP_PX,
+    estimateSize: estimateMessageSize,
     overscan: OVERSCAN,
     getItemKey: useCallback((index: number) => messages[index]?.id ?? index, [messages]),
     enabled: viewportReady && messages.length > 0

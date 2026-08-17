@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { NovaWorkingOrb } from './NovaWorkingOrb'
+import { formatDurationMs } from './turnSummaryDisplay'
 import './AssistantPendingIndicator.css'
 
 export const NOVA_WORKING_MESSAGES = [
@@ -45,11 +46,30 @@ function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-/** 当前 assistant 轮次仍在运行时展示 Nova 工作状态。 */
-export const AssistantPendingIndicator: React.FC = () => {
+export interface AssistantPendingIndicatorProps {
+  /** 轮次起始时间戳（毫秒）；用于平滑展示运行时钟 */
+  turnStartedAt?: number
+}
+
+/** 流尾状态指示器：在 Agent 运行时稳稳挂在整个消息流最下方。 */
+export const AssistantPendingIndicator: React.FC<AssistantPendingIndicatorProps> = ({
+  turnStartedAt
+}) => {
+  const [mountedAt] = useState(() => Date.now())
+  const anchor = turnStartedAt ?? mountedAt
+  const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - anchor))
   const [workingMessage, setWorkingMessage] = useState<NovaWorkingMessage>(() =>
     pickNonRepeatingWorkingMessage(null)
   )
+
+  useEffect(() => {
+    const tick = () => {
+      setElapsedMs(Math.max(0, Date.now() - anchor))
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [anchor])
 
   useEffect(() => {
     if (prefersReducedMotion()) return undefined
@@ -61,13 +81,15 @@ export const AssistantPendingIndicator: React.FC = () => {
     return () => window.clearInterval(timer)
   }, [])
 
+  const showClock = elapsedMs >= 15_000
+
   return (
     <div
       className="assistant-pending nova-working-indicator"
       role="status"
       aria-live="polite"
     >
-      <NovaWorkingOrb size={28} />
+      <NovaWorkingOrb size={26} />
       <span className="assistant-pending__label">正在思考</span>
       <span
         key={workingMessage}
@@ -76,6 +98,11 @@ export const AssistantPendingIndicator: React.FC = () => {
       >
         {workingMessage}
       </span>
+      {showClock && (
+        <span className="nova-working-indicator__clock" aria-hidden="true">
+          {formatDurationMs(elapsedMs)}
+        </span>
+      )}
     </div>
   )
 }

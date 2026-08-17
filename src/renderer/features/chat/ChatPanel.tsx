@@ -43,6 +43,7 @@ import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { useTodoStore } from '../todo/useTodoStore'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
+import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
@@ -151,6 +152,12 @@ export const ChatPanel: React.FC = () => {
     !!pendingAskQuestion ||
     !!pendingPermissionRequest
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+
+  const currentGeneratingTurnStartedAt = useMemo(() => {
+    if (!currentGeneratingMessageId) return undefined
+    const generatingMsg = messages.find(m => m.id === currentGeneratingMessageId)
+    return generatingMsg?.turnStartedAt ?? generatingMsg?.timestamp
+  }, [messages, currentGeneratingMessageId])
 
   // 新轮发起（isGenerating false→true）时清 turnTouched，避免 dock 秒弹上一轮残留 todo
   const prevGeneratingRef = useRef(isGenerating)
@@ -319,6 +326,34 @@ export const ChatPanel: React.FC = () => {
     scrollHeightBeforePrependRef.current = container.scrollHeight
     void loadOlderMessages()
   }, [hasMoreMessagesAbove, isLoadingOlderMessages, loadOlderMessages])
+
+  const messagesContentRef = useRef<HTMLDivElement | null>(null)
+
+  const followBottomInstant = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container || autoScrollModeRef.current === 'off') return
+    markProgrammaticScroll(programmaticScrollUntilRef)
+    scrollContainerToBottom(container)
+  }, [])
+
+  const followRef = useRef(followBottomInstant)
+  followRef.current = followBottomInstant
+
+  useEffect(() => {
+    const content = messagesContentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      followRef.current?.()
+    })
+    observer.observe(content)
+    return () => {
+      observer.disconnect()
+    }
+  }, [scrollElement])
+
+  useLayoutEffect(() => {
+    followRef.current?.()
+  }, [messages, isGenerating])
 
   useEffect(() => {
     const controller = createStreamAutoScrollController(
@@ -687,6 +722,7 @@ export const ChatPanel: React.FC = () => {
           )}
 
         <MaybeProfiler enabled={isStreamingPerfEnabled()} id="ChatPanel-messages" onRender={handleChatProfilerRender}>
+        <div ref={messagesContentRef} className="chat-messages__flow-inner">
         <VirtualMessageList
           messages={messages}
           scrollElement={scrollElement}
@@ -711,6 +747,13 @@ export const ChatPanel: React.FC = () => {
           loadingDiffPlaceholders={loadingDiffPlaceholders}
           onLoadDiffs={loadMessageDiffs}
         />
+
+        {/* 流尾状态指示器：在 Agent 运行时稳稳挂在消息流最底部（零抖动） */}
+        {isGenerating && !isPausedForUserInput && (
+          <div className="chat-messages__tail-status">
+            <AssistantPendingIndicator turnStartedAt={currentGeneratingTurnStartedAt} />
+          </div>
+        )}
 
         {/* Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
         {pendingUserMessages.length > 0 && (
@@ -738,6 +781,7 @@ export const ChatPanel: React.FC = () => {
             </div>
           </div>
         )}
+        </div>
         </MaybeProfiler>
       </div>
       ) : null}

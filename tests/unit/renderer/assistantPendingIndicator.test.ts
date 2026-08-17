@@ -66,4 +66,29 @@ describe('AssistantPendingIndicator', () => {
 
     renderer.unmount()
   })
+
+  it('超过 15 秒后展示运行时钟', () => {
+    const now = Date.now()
+    const renderer = renderDom(
+      React.createElement(AssistantPendingIndicator, { turnStartedAt: now - 16_000 })
+    )
+
+    const clock = renderer.container.querySelector('.nova-working-indicator__clock')
+    expect(clock).not.toBeNull()
+    expect(clock?.textContent).toMatch(/16 秒/)
+
+    renderer.unmount()
+  })
+
+  it('运行未满 15 秒时不展示运行时钟', () => {
+    const now = Date.now()
+    const renderer = renderDom(
+      React.createElement(AssistantPendingIndicator, { turnStartedAt: now - 5_000 })
+    )
+
+    const clock = renderer.container.querySelector('.nova-working-indicator__clock')
+    expect(clock).toBeNull()
+
+    renderer.unmount()
+  })
 })

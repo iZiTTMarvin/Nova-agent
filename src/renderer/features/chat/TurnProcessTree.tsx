@@ -110,9 +110,26 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
     interrupted
   })
 
+  // live 运行期间直接平铺渲染步骤，去除冗余的「正在工作…」外层折叠头（对齐 DeepSeek-Harness）
+  if (isLive) {
+    return (
+      <div className="turn-process-tree turn-process-tree--live" data-testid="turn-process-tree">
+        <ProcessTraceList
+          segments={model.processTimeline}
+          messageId={messageId}
+          blocks={blocks}
+          isTurnActiveForThisMsg={isTurnActiveForThisMsg}
+          isPausedForInput={isPausedForInput}
+          isCurrentAssistantGenerating={isCurrentAssistantGenerating}
+          onRenderPoolTick={onRenderPoolTick}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="turn-process-tree" data-testid="turn-process-tree">
-      {/* 原生 disclosure 头：Astryx Button 内容居中，不适合全宽折叠头 */}
+      {/* 任务完成后的原生 disclosure 折叠头 */}
       <button
         type="button"
         className="turn-process-tree__header"
