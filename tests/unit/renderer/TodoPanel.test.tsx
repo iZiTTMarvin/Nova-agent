@@ -23,9 +23,9 @@ function treeText(renderer: DomRenderResult | null): string {
   return renderer?.container.textContent ?? ''
 }
 
-/** 展开态会渲染 todo-panel__body / todo-row */
+/** 展开态具有 data-expanded="true" */
 function isExpanded(renderer: DomRenderResult | null): boolean {
-  return renderer?.container.querySelector('.todo-panel__body') !== null
+  return renderer?.container.querySelector('.todo-panel[data-expanded="true"]') !== null
 }
 
 describe('TodoPanel 细条状态机', () => {
@@ -38,7 +38,7 @@ describe('TodoPanel 细条状态机', () => {
     vi.useRealTimers()
   })
 
-  it('有 todo 且 turnTouched 时渲染；5s 后回到细条', () => {
+  it('有 todo 且 turnTouched 时渲染；1.8s 后回到细条', () => {
     useTodoStore.getState().applyUpdate({ sessionId: 's1', ...TODO_DATA })
 
     const renderer = renderDom(<TodoPanel sessionId="s1" />)
@@ -50,7 +50,7 @@ describe('TodoPanel 细条状态机', () => {
     expect(isExpanded(renderer)).toBe(true)
 
     act(() => {
-      vi.advanceTimersByTime(5000)
+      vi.advanceTimersByTime(1800)
     })
     expect(isExpanded(renderer)).toBe(false)
     expect(treeText(renderer)).toContain('当前计划')
@@ -58,13 +58,13 @@ describe('TodoPanel 细条状态机', () => {
     renderer.unmount()
   })
 
-  it('5s 内再次 applyUpdate 会重置计时，仍保持展开', () => {
+  it('1.8s 内再次 applyUpdate 会重置计时，仍保持展开', () => {
     useTodoStore.getState().applyUpdate({ sessionId: 's1', ...TODO_DATA })
 
     const renderer = renderDom(<TodoPanel sessionId="s1" />)
 
     act(() => {
-      vi.advanceTimersByTime(3000)
+      vi.advanceTimersByTime(1000)
     })
     expect(isExpanded(renderer)).toBe(true)
 
@@ -91,13 +91,13 @@ describe('TodoPanel 细条状态机', () => {
     })
 
     act(() => {
-      vi.advanceTimersByTime(3000)
+      vi.advanceTimersByTime(1000)
     })
-    // 距上次更新仅 3s，应仍展开
+    // 距上次更新仅 1s，应仍展开
     expect(isExpanded(renderer)).toBe(true)
 
     act(() => {
-      vi.advanceTimersByTime(2000)
+      vi.advanceTimersByTime(800)
     })
     expect(isExpanded(renderer)).toBe(false)
 

@@ -108,12 +108,14 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     }
   }, [active])
 
-  // 运行中单行文本自动横向跟随最新流式字
+  // 运行中单行文本自动横向跟随最新流式字；结束后复位为 0，保证完整从头展示首行摘要
   useEffect(() => {
-    if (!active) return
     const el = summaryRef.current
-    if (el) {
+    if (!el) return
+    if (active) {
       el.scrollLeft = el.scrollWidth - el.clientWidth
+    } else {
+      el.scrollLeft = 0
     }
   }, [displayThinking, active])
 

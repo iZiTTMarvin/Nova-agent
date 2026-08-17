@@ -19,7 +19,7 @@ interface TodoPanelProps {
 }
 
 /** todo 更新后自动展开，无新更新则收回细条 */
-const AUTO_COLLAPSE_MS = 5000
+const AUTO_COLLAPSE_MS = 1800
 
 interface RangeLineProps {
   hiddenBefore: number
@@ -94,7 +94,7 @@ export const TodoPanel: React.FC<TodoPanelProps> = ({
     }
   }, [priorityDockOccupied])
 
-  // todo 更新：自动展开并在 5s 后收回（优先 dock 期间跳过）
+  // todo 更新：自动展开并在 1.8s 后收回（优先 dock 期间跳过）
   useEffect(() => {
     if (updatedAt == null) return
     if (priorityRef.current) return
@@ -107,14 +107,8 @@ export const TodoPanel: React.FC<TodoPanelProps> = ({
   useEffect(() => () => clearCollapseTimer(), [])
 
   const handleHeaderClick = () => {
-    setExpanded(prev => {
-      if (prev) {
-        clearCollapseTimer()
-        return false
-      }
-      // 手动展开：不启动自动收回，直到用户再收起或优先 dock
-      return true
-    })
+    clearCollapseTimer()
+    setExpanded(prev => !prev)
   }
 
   const visibleItems: TodoViewItem[] = useMemo(
@@ -136,10 +130,10 @@ export const TodoPanel: React.FC<TodoPanelProps> = ({
         <motion.div
           key={`todo-dock-${sessionId}`}
           className="todo-dock"
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 16 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          exit={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="todo-panel" data-mode={view.mode} data-expanded={expanded}>
             <Button
@@ -156,30 +150,36 @@ export const TodoPanel: React.FC<TodoPanelProps> = ({
               </span>}
             />
 
-            {expanded && (
-              <div className="todo-panel__body">
-                {isCompact && (
-                  <CompactRangeLine
-                    hiddenBefore={view.hiddenBefore}
-                    shownStart={shownStart}
-                    shownEnd={shownEnd}
-                    shownCount={visibleItems.length}
-                    hiddenAfter={view.hiddenAfter}
-                    total={total}
-                  />
-                )}
-                <div className="todo-panel__items">
-                  {visibleItems.map((todo, idx) => (
-                    <TodoItemRow
-                      // 用全局索引作 key：compact 窗口滑动时同一条保持稳定，保留 flash 动画
-                      key={`todo-${view.hiddenBefore + idx}`}
-                      todo={todo}
-                      changed={Boolean(todo.changed)}
+            <div
+              className="todo-panel__expandable"
+              data-expanded={expanded}
+              aria-hidden={!expanded}
+            >
+              <div className="todo-panel__expandable-inner">
+                <div className="todo-panel__body">
+                  {isCompact && (
+                    <CompactRangeLine
+                      hiddenBefore={view.hiddenBefore}
+                      shownStart={shownStart}
+                      shownEnd={shownEnd}
+                      shownCount={visibleItems.length}
+                      hiddenAfter={view.hiddenAfter}
+                      total={total}
                     />
-                  ))}
+                  )}
+                  <div className="todo-panel__items">
+                    {visibleItems.map((todo, idx) => (
+                      <TodoItemRow
+                        // 用全局索引作 key：compact 窗口滑动时同一条保持稳定，保留 flash 动画
+                        key={`todo-${view.hiddenBefore + idx}`}
+                        todo={todo}
+                        changed={Boolean(todo.changed)}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </motion.div>
       )}

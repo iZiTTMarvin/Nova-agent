@@ -278,6 +278,9 @@ export const ChatPanel: React.FC = () => {
   // 隐藏的文件上传 input
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // 悬浮输入区高度动态监测（保证消息流滚动到底部时刚好避让输入框与 Todo 卡片）
+  const composerAreaRef = useRef<HTMLDivElement | null>(null)
+
   const canAutoScroll = useCallback(() => {
     return canFollowAutoScroll(autoScrollModeRef.current)
   }, [])
@@ -661,6 +664,30 @@ export const ChatPanel: React.FC = () => {
   // ── 空状态引导界面 ─────────────────────────────────────────
   const isEmptyState = messages.length === 0 && !isSessionLoading
 
+  // 悬浮输入区高度动态监测：通过 rAF 直接同步 DOM paddingBottom，避免在动画期间每帧触发 React 重渲染
+  useEffect(() => {
+    const composerEl = composerAreaRef.current
+    if (!composerEl || typeof ResizeObserver === 'undefined') return
+    let rafId: number | null = null
+    const update = (entries: ResizeObserverEntry[]) => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        for (const entry of entries) {
+          const h = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height)
+          if (h > 0 && scrollContainerRef.current) {
+            scrollContainerRef.current.style.paddingBottom = `${h + 16}px`
+          }
+        }
+      })
+    }
+    const ro = new ResizeObserver(update)
+    ro.observe(composerEl)
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      ro.disconnect()
+    }
+  }, [isEmptyState])
+
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
     <div
@@ -694,7 +721,10 @@ export const ChatPanel: React.FC = () => {
           className="chat-messages flex-1 overflow-y-auto pt-6 px-4"
           ref={bindScrollContainer}
           onScroll={handleScroll}
-          style={{ overflowAnchor: 'none' }}
+          style={{
+            overflowAnchor: 'none',
+            paddingBottom: '156px'
+          }}
         >
           {tier1BranchContext && (
             <div className="chat-tier1-notice" role="status">
@@ -788,6 +818,7 @@ export const ChatPanel: React.FC = () => {
 
       {/* 底部输入框 / 空状态中央输入框 */}
       <div
+        ref={composerAreaRef}
         className={`chat-panel__composer-area ${
           isEmptyState ? 'chat-panel__composer-area--empty' : ''
         }`}
@@ -875,7 +906,7 @@ export const ChatPanel: React.FC = () => {
             composer 不需要布局补间动画，改为普通 div。
           */}
           <div
-            className="w-full flex flex-col items-center pointer-events-auto"
+            className="w-full flex flex-col items-center pointer-events-none"
           >
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
@@ -883,7 +914,7 @@ export const ChatPanel: React.FC = () => {
             {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条。
                 compose 模式下任务清单收进阶段条「开发」节点展开面板，不再重复展示这条独立 dock。 */}
             {currentMode !== 'compose' && (
-              <div className="w-full px-3 pointer-events-auto">
+              <div className="w-full pointer-events-auto">
                 <TodoPanel
                   sessionId={currentSessionId}
                   priorityDockOccupied={!!pendingAskQuestion}

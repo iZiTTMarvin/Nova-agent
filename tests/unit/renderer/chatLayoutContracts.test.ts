@@ -12,18 +12,22 @@ function rule(selector: string): string {
 }
 
 describe('chat panel layout contracts', () => {
-  it('keeps messages and composer in one flex column', () => {
+  it('keeps messages stream in full-height flex container with floating composer overlay', () => {
     expect(rule('.chat-panel')).toMatch(/display:\s*flex/)
     expect(rule('.chat-panel')).toMatch(/flex-direction:\s*column/)
     expect(rule('.chat-messages')).toMatch(/flex:\s*1/)
-    expect(rule('.chat-panel__composer-area')).toMatch(/flex:\s*0\s+0\s+auto/)
+    const composerRule = rule('.chat-panel__composer-area')
+    expect(composerRule).toMatch(/position:\s*absolute/)
+    expect(composerRule).toMatch(/bottom:\s*0/)
+    expect(composerRule).toMatch(/background:\s*transparent/)
+    expect(composerRule).toMatch(/pointer-events:\s*none/)
   })
 
-  it('does not overlay the composer on message content', () => {
-    const composerRule = rule('.chat-panel__composer-area')
-    expect(composerRule).toMatch(/position:\s*relative/)
-    expect(composerRule).not.toMatch(/position:\s*(?:absolute|fixed)/)
-    expect(composerRule).not.toMatch(/\bbottom\s*:/)
+  it('keeps empty state composer centered in document flow', () => {
+    const emptyComposerRule = rule('.chat-panel__composer-area--empty')
+    expect(emptyComposerRule).toMatch(/position:\s*relative/)
+    expect(emptyComposerRule).toMatch(/flex:\s*1\s+1\s+auto/)
+    expect(emptyComposerRule).toMatch(/justify-content:\s*center/)
   })
 
   it('scroll-to-bottom floats above composer without claiming document flow', () => {
@@ -33,5 +37,6 @@ describe('chat panel layout contracts', () => {
     expect(scrollRule).toMatch(/background:\s*var\(--bg-card\)/)
     expect(scrollRule).toMatch(/box-shadow:/)
     expect(rule('.chat-panel__composer-inner')).toMatch(/position:\s*relative/)
+    expect(rule('.chat-panel__composer-inner')).toMatch(/pointer-events:\s*none/)
   })
 })
