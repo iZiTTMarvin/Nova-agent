@@ -4,17 +4,14 @@
  * stat 抛错按类别分流：文件不存在（ENOENT）判失效；其余（权限/占用等）视为无法验证，
  * 不误杀记录；状态写回失败同样不阻塞检索，下次仍会重新校验。
  */
-import { statSync } from 'fs'
-import { resolve, sep } from 'path'
-import { computeFingerprint } from '../FtsQueryBuilder'
 import type { MemoryRepository } from '../repository/MemoryRepository'
-
-export interface MemorySourceStat {
-  size: number
-  mtimeMs: number
-}
-
-export type MemorySourceStatFn = (absolutePath: string) => MemorySourceStat
+import {
+  defaultMemorySourceStat,
+  fingerprintMemorySourceStat,
+  resolveMemorySourcePath,
+  type MemorySourceStat,
+  type MemorySourceStatFn
+} from './MemorySourceBinding'
 
 export type MemoryVerifyOutcome = 'verified' | 'stale' | 'unverifiable'
 
@@ -28,7 +25,7 @@ export class MemoryVerifier {
   private readonly statFn: MemorySourceStatFn
 
   constructor(private readonly deps: MemoryVerifierDeps) {
-    this.statFn = deps.stat ?? defaultStat
+    this.statFn = deps.stat ?? defaultMemorySourceStat
   }
 
   /**
@@ -42,7 +39,7 @@ export class MemoryVerifier {
     if (!workspaceRoot || !record.source) {
       return 'unverifiable'
     }
-    const absolutePath = resolveWithinWorkspace(workspaceRoot, record.source.path)
+    const absolutePath = resolveMemorySourcePath(workspaceRoot, record.source.path)
     if (absolutePath === null) {
       return 'unverifiable'
     }
@@ -57,7 +54,7 @@ export class MemoryVerifier {
       return 'unverifiable'
     }
 
-    const fingerprint = computeFingerprint(stat.size, Math.floor(stat.mtimeMs))
+    const fingerprint = fingerprintMemorySourceStat(stat)
     if (fingerprint !== record.source.fingerprint) {
       return this.markStale(record.id)
     }
@@ -74,38 +71,10 @@ export class MemoryVerifier {
   }
 }
 
-function defaultStat(absolutePath: string): MemorySourceStat {
-  const stat = statSync(absolutePath)
-  return { size: stat.size, mtimeMs: stat.mtimeMs }
-}
-
 function isFileNotFound(err: unknown): boolean {
   return (
     typeof err === 'object' &&
     err !== null &&
     (err as { code?: unknown }).code === 'ENOENT'
   )
-}
-
-/** sourcePath 只允许是工作区内的相对路径；越界视为无法验证 */
-function resolveWithinWorkspace(workspaceRoot: string, sourcePath: string): string | null {
-  const normalized = sourcePath.replace(/\\/g, '/')
-  if (
-    normalized.length === 0 ||
-    normalized.startsWith('/') ||
-    /^[a-zA-Z]:/.test(normalized) ||
-    normalized.split('/').some((segment) => segment === '..')
-  ) {
-    return null
-  }
-  const absRoot = resolve(workspaceRoot)
-  const absTarget = resolve(absRoot, ...normalized.split('/'))
-  const rootPrefix = absRoot.endsWith(sep) ? absRoot : absRoot + sep
-  if (
-    absTarget.toLowerCase() !== absRoot.toLowerCase() &&
-    !absTarget.toLowerCase().startsWith(rootPrefix.toLowerCase())
-  ) {
-    return null
-  }
-  return absTarget
 }

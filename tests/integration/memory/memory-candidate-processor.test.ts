@@ -4,13 +4,14 @@
  * ADD 缓行、MERGE 计数与晋升、SUPERSEDE 链、RETRACT 软删除与防复活、scope 纠偏、keyless 等价、单条失败 fail-soft。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { SqliteMemoryRepository } from '@runtime/memory/repository/SqliteMemoryRepository'
 import type { MemoryRepository } from '@runtime/memory/repository/MemoryRepository'
 import { MemoryCandidateProcessor } from '@runtime/memory/policy/MemoryCandidateProcessor'
+import { computeFingerprint } from '@runtime/memory/FtsQueryBuilder'
 import type { MemoryCandidate } from '@runtime/memory/types'
 
 describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => {
@@ -51,6 +52,24 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
   const PROJECT_A = { scopeKind: 'project' as const, scopeId: 'a'.repeat(16) }
   const PROJECT_B = { scopeKind: 'project' as const, scopeId: 'b'.repeat(16) }
   const GLOBAL = { scopeKind: 'global' as const, scopeId: 'user' }
+
+  function writeWorkspaceFile(
+    relPath: string,
+    body: string
+  ): { workspaceRoot: string; fingerprint: string } {
+    if (!tempDir) {
+      throw new Error('setup() must run before writeWorkspaceFile')
+    }
+    const workspaceRoot = join(tempDir, 'workspace')
+    mkdirSync(workspaceRoot, { recursive: true })
+    const fullPath = join(workspaceRoot, relPath)
+    writeFileSync(fullPath, body)
+    const stat = statSync(fullPath)
+    return {
+      workspaceRoot,
+      fingerprint: computeFingerprint(stat.size, Math.floor(stat.mtimeMs))
+    }
+  }
 
   function candidate(overrides: Partial<MemoryCandidate> = {}): MemoryCandidate {
     return {
@@ -130,10 +149,12 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
 
   it('SUPERSEDE 链：旧记录 superseded+validTo，新记录 active+supersedesId，默认检索只见新', () => {
     setup()
+    const source = writeWorkspaceFile('package.json', '{"dependencies":{"pg":"latest"}}')
 
     processor.process({
       sessionId: 'sess-1',
       projectScopeId: PROJECT_A.scopeId,
+      workspaceRoot: source.workspaceRoot,
       candidates: [
         candidate({
           kind: 'project_fact',
@@ -150,6 +171,7 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
     const counts = processor.process({
       sessionId: 'sess-1',
       projectScopeId: PROJECT_A.scopeId,
+      workspaceRoot: source.workspaceRoot,
       candidates: [
         candidate({
           kind: 'project_fact',
@@ -168,6 +190,7 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
     expect(oldRow?.validTo).toBe(NOW + 1000)
     expect(newRow?.supersedesId).toBe(oldRow?.id)
     expect(newRow?.sourcePath).toBe('package.json')
+    expect(newRow?.sourceFingerprint).toBe(source.fingerprint)
 
     const activeHits = repo.searchFts('主数据库')
     expect(activeHits.map((h) => h.record.id)).toEqual([newRow?.id])

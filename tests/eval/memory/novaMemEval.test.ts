@@ -1,7 +1,7 @@
 /**
  * NovaMemEval — Nova 自有记忆评测门禁（真 SQLite / FTS5 / 组合检索全链路）。
  *
- * 正确性门槛（见 PRD）：
+ * 正确性门槛：
  * - Recall@5 ≥ 0.90
  * - 默认检索过期记忆率（Stale）= 0
  * - 跨项目泄漏率（Scope Leakage）= 0

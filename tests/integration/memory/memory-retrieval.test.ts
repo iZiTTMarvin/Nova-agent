@@ -133,10 +133,10 @@ describe('检索层（MemoryRetrievalService + 真 SQLite）', () => {
     setup()
     repo.insertRecord(draft({ id: 'mem_old', content: '项目主数据库为 SQLite' }))
     clock += 1000
-    repo.insertRecord(
-      draft({ id: 'mem_new', content: '项目主数据库为 PostgreSQL', supersedesId: 'mem_old' })
+    repo.supersedeWithInsert(
+      'mem_old',
+      draft({ id: 'mem_new', content: '项目主数据库为 PostgreSQL' })
     )
-    repo.markSuperseded('mem_old', 'mem_new')
 
     const byDefault = await retrieval.search({ query: '主数据库', projectScopeId: scopeA })
     expect(byDefault.map((r) => r.id)).toEqual(['mem_new'])

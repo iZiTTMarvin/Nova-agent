@@ -142,8 +142,7 @@ export type {
   MemoryEvidenceMergeInput,
   MemoryFtsSearchOptions,
   MemoryFtsStatusFilter,
-  MemoryRecordFtsHit,
-  MemorySupersedeResult
+  MemoryRecordFtsHit
 } from './repository/MemoryRepository'
 export type {
   MemoryHistoricalNote,
@@ -177,11 +176,20 @@ export {
 } from './retrieval/memoryRanking'
 export { MemoryVerifier } from './lifecycle/MemoryVerifier'
 export type {
-  MemorySourceStat,
-  MemorySourceStatFn,
   MemoryVerifyOutcome,
   MemoryVerifierDeps
 } from './lifecycle/MemoryVerifier'
+export {
+  computeMemorySourceFingerprint,
+  fingerprintMemorySourceStat,
+  defaultMemorySourceStat,
+  resolveMemorySourcePath
+} from './lifecycle/MemorySourceBinding'
+export type {
+  MemorySourceFingerprintFn,
+  MemorySourceStat,
+  MemorySourceStatFn
+} from './lifecycle/MemorySourceBinding'
 export type {
   ScopeKind,
   MemoryKind,

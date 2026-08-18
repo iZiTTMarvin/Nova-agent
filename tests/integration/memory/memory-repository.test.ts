@@ -174,22 +174,20 @@ describe('结构化记忆仓储（SqliteMemoryRepository）', () => {
     expect(repo.searchFts('中文注释', { scope: SCOPE_B })).toEqual([])
   })
 
-  it('状态转移：markSuperseded 后默认 FTS 只回 active，历史检索可回 superseded', () => {
+  it('状态转移：supersedeWithInsert 后默认 FTS 只回 active，历史检索可回 superseded', () => {
     const repo = openRepo()
 
     repo.insertRecord(draft({ id: 'mem_old', content: '项目主数据库为 SQLite' }))
     clock += 1000
-    repo.insertRecord(
-      draft({ id: 'mem_new', content: '项目主数据库为 PostgreSQL', supersedesId: 'mem_old' })
+    const saved = repo.supersedeWithInsert(
+      'mem_old',
+      draft({ id: 'mem_new', content: '项目主数据库为 PostgreSQL' })
     )
-    clock += 1000
-
-    const result = repo.markSuperseded('mem_old', 'mem_new')
-    expect(result).toEqual({ oldMarked: 1, newLinked: 1 })
+    expect(saved.id).toBe('mem_new')
 
     const old = repo.findById('mem_old')
     expect(old?.status).toBe('superseded')
-    expect(old?.validTo).toBe(NOW + 2000)
+    expect(old?.validTo).toBe(NOW + 1000)
     const fresh = repo.findById('mem_new')
     expect(fresh?.status).toBe('active')
     expect(fresh?.supersedesId).toBe('mem_old')
@@ -202,6 +200,40 @@ describe('结构化记忆仓储（SqliteMemoryRepository）', () => {
 
     expect(repo.findActiveByKey(SCOPE_A, 'decision', 'database.primary')?.id).toBe('mem_new')
     expect(repo.countActiveByKey(SCOPE_A, 'decision', 'database.primary')).toBe(1)
+  })
+
+  it('supersedeWithInsert：插入失败或旧目标非 live 时整体回滚', () => {
+    const repo = openRepo()
+
+    repo.insertRecord(draft({ id: 'mem_old', content: '项目主数据库为 SQLite' }))
+    clock += 1000
+    expect(() =>
+      repo.supersedeWithInsert(
+        'mem_old',
+        draft({
+          id: 'mem_new',
+          content: '项目主数据库为 PostgreSQL',
+          evidence: [
+            { id: 'dup_ev', evidenceType: 'workspace' },
+            { id: 'dup_ev', evidenceType: 'tool_result' }
+          ]
+        })
+      )
+    ).toThrow()
+    expect(repo.findById('mem_new')).toBeNull()
+    expect(repo.findById('mem_old')?.status).toBe('active')
+    expect(repo.countActiveByKey(SCOPE_A, 'decision', 'database.primary')).toBe(1)
+
+    repo.retract('mem_old')
+    clock += 1000
+    expect(() =>
+      repo.supersedeWithInsert(
+        'mem_old',
+        draft({ id: 'mem_rejected', content: '项目主数据库为 PostgreSQL' })
+      )
+    ).toThrow()
+    expect(repo.findById('mem_rejected')).toBeNull()
+    expect(repo.findById('mem_old')?.status).toBe('retracted')
   })
 
   it('retract：撤回后默认检索不再返回，重复撤回状态保持不变', () => {

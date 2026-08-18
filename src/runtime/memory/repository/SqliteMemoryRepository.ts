@@ -28,8 +28,7 @@ import type {
   MemoryRecordFtsHit,
   MemoryRecordListOptions,
   MemoryRepository,
-  MemoryStatusUpdateOptions,
-  MemorySupersedeResult
+  MemoryStatusUpdateOptions
 } from './MemoryRepository'
 import { DEFAULT_RECORD_LIST_LIMIT } from './MemoryRepository'
 
@@ -98,37 +97,9 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
     const now = this.nowFn()
     const createdAt = now
-    const metadataJson = serializeMetadata(draft.metadata)
-    const evidence = draft.evidence ?? []
 
     this.inTransaction(() => {
-      this.stmt(INSERT_RECORD_SQL).run(
-        draft.id,
-        draft.scope.scopeKind,
-        draft.scope.scopeId,
-        draft.kind,
-        draft.memoryKey,
-        draft.content,
-        draft.status,
-        draft.confidence,
-        draft.explicitness,
-        draft.sourceType,
-        draft.validFrom ?? now,
-        draft.validTo ?? null,
-        draft.supersedesId ?? null,
-        evidence.length,
-        draft.distinctSessionCount ?? 1,
-        draft.distinctProjectCount ?? 1,
-        draft.sourcePath ?? null,
-        draft.sourceFingerprint ?? null,
-        createdAt,
-        createdAt,
-        draft.lastSeenAt ?? createdAt,
-        metadataJson
-      )
-      for (const item of evidence) {
-        this.insertEvidenceRow(item, draft.id, createdAt)
-      }
+      this.insertRecordRows(draft, now, createdAt)
     })
 
     const saved = this.findById(draft.id)
@@ -213,17 +184,31 @@ export class SqliteMemoryRepository implements MemoryRepository {
     return changes > 0
   }
 
-  markSuperseded(oldId: string, newId: string): MemorySupersedeResult {
+  supersedeWithInsert(oldId: string, draft: MemoryRecordDraft): MemoryRecord {
+    assertNonEmpty(oldId, 'oldId')
+    assertNonEmpty(draft.id, 'id')
+    assertNonEmpty(draft.scope.scopeId, 'scopeId')
+    assertNonEmpty(draft.content, 'content')
+
     const now = this.nowFn()
-    return this.inTransaction(() => {
+    const createdAt = now
+    this.inTransaction(() => {
       const oldMarked = this.stmt(
-        `UPDATE memory_records SET status = 'superseded', valid_to = ?, updated_at = ? WHERE id = ?`
+        `UPDATE memory_records
+         SET status = 'superseded', valid_to = ?, updated_at = ?
+         WHERE id = ? AND status IN ('active', 'pending')`
       ).run(now, now, oldId).changes
-      const newLinked = this.stmt(
-        `UPDATE memory_records SET supersedes_id = ?, updated_at = ? WHERE id = ?`
-      ).run(oldId, now, newId).changes
-      return { oldMarked, newLinked }
+      if (oldMarked !== 1) {
+        throw new Error(`无法 supersede 非 live 记忆：${oldId}`)
+      }
+      this.insertRecordRows({ ...draft, supersedesId: oldId }, now, createdAt)
     })
+
+    const saved = this.findById(draft.id)
+    if (!saved) {
+      throw new Error(`memory_records supersede 写入后读取失败：${draft.id}`)
+    }
+    return saved
   }
 
   mergeEvidence(id: string, input: MemoryEvidenceMergeInput): boolean {
@@ -348,6 +333,38 @@ export class SqliteMemoryRepository implements MemoryRepository {
       item.excerpt ?? null,
       item.createdAt ?? fallbackCreatedAt
     )
+  }
+
+  private insertRecordRows(draft: MemoryRecordDraft, now: number, createdAt: number): void {
+    const metadataJson = serializeMetadata(draft.metadata)
+    const evidence = draft.evidence ?? []
+    this.stmt(INSERT_RECORD_SQL).run(
+      draft.id,
+      draft.scope.scopeKind,
+      draft.scope.scopeId,
+      draft.kind,
+      draft.memoryKey,
+      draft.content,
+      draft.status,
+      draft.confidence,
+      draft.explicitness,
+      draft.sourceType,
+      draft.validFrom ?? now,
+      draft.validTo ?? null,
+      draft.supersedesId ?? null,
+      evidence.length,
+      draft.distinctSessionCount ?? 1,
+      draft.distinctProjectCount ?? 1,
+      draft.sourcePath ?? null,
+      draft.sourceFingerprint ?? null,
+      createdAt,
+      createdAt,
+      draft.lastSeenAt ?? createdAt,
+      metadataJson
+    )
+    for (const item of evidence) {
+      this.insertEvidenceRow(item, draft.id, createdAt)
+    }
   }
 
   private inTransaction<T>(fn: () => T): T {

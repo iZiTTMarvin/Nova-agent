@@ -86,11 +86,6 @@ export interface MemoryRecordFtsHit {
   score: number
 }
 
-export interface MemorySupersedeResult {
-  oldMarked: number
-  newLinked: number
-}
-
 export const DEFAULT_RECORD_LIST_LIMIT = 200
 
 export interface MemoryRepository {
@@ -105,8 +100,8 @@ export interface MemoryRepository {
   listEvidence(memoryId: string): MemoryEvidence[]
   /** 通用状态写入；返回目标行是否存在 */
   updateStatus(id: string, status: MemoryStatus, options?: MemoryStatusUpdateOptions): boolean
-  /** old 标记 superseded（valid_to=now）并让 new.supersedes_id 指向 old（单事务） */
-  markSuperseded(oldId: string, newId: string): MemorySupersedeResult
+  /** 插入新记录并将旧 live 记录标记为 superseded（单事务；任一失败整体回滚） */
+  supersedeWithInsert(oldId: string, draft: MemoryRecordDraft): MemoryRecord
   /** 追加证据并同步计数（evidence_count 累加）、lastSeenAt 与可选置信度/去重计数（单事务） */
   mergeEvidence(id: string, input: MemoryEvidenceMergeInput): boolean
   /** FTS 检索；query 经 sanitize，默认只回 active */

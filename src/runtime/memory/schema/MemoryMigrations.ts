@@ -8,7 +8,7 @@
 import type { MemoryDb } from '../MemoryDb'
 import { initMemorySchema } from '../MemorySchema'
 
-export const MEMORY_SCHEMA_VERSION = 1
+export const MEMORY_SCHEMA_VERSION = 2
 
 export type MemoryMigrationFailureCode = 'newer-version' | 'step-failed'
 
@@ -120,8 +120,33 @@ END`,
 END`
 ]
 
+const ACTIVE_KEY_UNIQUE_INDEX = 'memory_records_active_key_uidx'
+
+const V2_STATEMENTS: readonly string[] = [
+  `WITH ranked AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY scope_kind, scope_id, kind, memory_key
+      ORDER BY updated_at DESC, last_seen_at DESC, created_at DESC, id ASC
+    ) AS rn
+  FROM memory_records
+  WHERE status = 'active' AND memory_key IS NOT NULL
+)
+UPDATE memory_records
+SET
+  status = 'needs_verification',
+  valid_to = COALESCE(valid_to, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+  updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
+WHERE id IN (SELECT id FROM ranked WHERE rn > 1)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS ${ACTIVE_KEY_UNIQUE_INDEX}
+  ON memory_records(scope_kind, scope_id, kind, memory_key)
+  WHERE status = 'active' AND memory_key IS NOT NULL`
+]
+
 const MIGRATION_STEPS: readonly MemoryMigrationStep[] = [
-  { version: 1, statements: V1_STATEMENTS }
+  { version: 1, statements: V1_STATEMENTS },
+  { version: 2, statements: V2_STATEMENTS }
 ]
 
 export function readMemorySchemaVersion(db: MemoryDb): number {

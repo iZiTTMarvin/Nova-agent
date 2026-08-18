@@ -149,7 +149,7 @@ export async function runMemoryExtract(
   const candidates = await extractor.extract({ sessionId, recentMessages, observations })
 
   if (candidates && candidates.length > 0) {
-    processCandidates(scopeId, sessionId, candidates)
+    processCandidates(scopeId, sessionId, workspaceRoot, candidates)
   }
   await persistFallback(scopeId, sessionId, capture, observations)
 }
@@ -158,12 +158,14 @@ export async function runMemoryExtract(
 function processCandidates(
   scopeId: string,
   sessionId: string,
+  workspaceRoot: string,
   candidates: readonly MemoryCandidate[]
 ): void {
   try {
     const counts = getMemoryCandidateProcessor().process({
       sessionId,
       projectScopeId: scopeId,
+      workspaceRoot,
       candidates
     })
     console.log(`[MemoryExtract] 候选落库 session=${sessionId} ${JSON.stringify(counts)}`)

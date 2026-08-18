@@ -16,11 +16,16 @@ import type {
   MemoryRecordDraft,
   MemoryRepository
 } from '../repository/MemoryRepository'
+import {
+  computeMemorySourceFingerprint,
+  type MemorySourceFingerprintFn
+} from '../lifecycle/MemorySourceBinding'
 import { decideMemoryPolicy, resolveCandidateScope } from './MemoryPolicy'
 
 export interface MemoryCandidateProcessInput {
   sessionId: string
   projectScopeId: string
+  workspaceRoot?: string | null
   candidates: readonly MemoryCandidate[]
 }
 
@@ -42,6 +47,8 @@ export interface MemoryCandidateProcessorDeps {
   now?: () => number
   /** 记录 id 生成器；测试注入确定性序列 */
   generateRecordId?: () => string
+  /** 文件来源指纹；测试注入 fake，默认读取工作区内真实文件 stat */
+  sourceFingerprint?: MemorySourceFingerprintFn
 }
 
 /** 每个候选最多带多少等价族记录进入 policy（防退化库拖慢提炼） */
@@ -50,10 +57,12 @@ const FAMILY_ENRICH_LIMIT = 8
 export class MemoryCandidateProcessor {
   private readonly nowFn: () => number
   private readonly generateRecordIdFn: () => string
+  private readonly sourceFingerprintFn: MemorySourceFingerprintFn
 
   constructor(private readonly deps: MemoryCandidateProcessorDeps) {
     this.nowFn = deps.now ?? Date.now
     this.generateRecordIdFn = deps.generateRecordId ?? (() => `mem_${randomUUID()}`)
+    this.sourceFingerprintFn = deps.sourceFingerprint ?? computeMemorySourceFingerprint
   }
 
   process(input: MemoryCandidateProcessInput): MemoryCandidateProcessCounts {
@@ -148,8 +157,10 @@ export class MemoryCandidateProcessor {
       }
       case 'SUPERSEDE': {
         const newId = this.generateRecordIdFn()
-        repo.insertRecord(this.buildRecordDraft(decision.draft, input, newId))
-        repo.markSuperseded(decision.targetId, newId)
+        repo.supersedeWithInsert(
+          decision.targetId,
+          this.buildRecordDraft(decision.draft, input, newId)
+        )
         counts.superseded += 1
         return
       }
@@ -180,8 +191,32 @@ export class MemoryCandidateProcessor {
       explicitness: draft.explicitness,
       sourceType: draft.sourceType,
       sourcePath: draft.sourcePath,
+      sourceFingerprint: this.resolveSourceFingerprint(draft, input),
       evidence: draft.evidence.map((evidence) => this.toEvidenceDraft(evidence, input))
     }
+  }
+
+  private resolveSourceFingerprint(
+    draft: MemoryPolicyRecordDraft,
+    input: MemoryCandidateProcessInput
+  ): string | null {
+    if (
+      !input.workspaceRoot ||
+      !draft.sourcePath ||
+      draft.kind !== 'project_fact' ||
+      draft.scope.scopeKind !== 'project' ||
+      draft.explicitness !== 'workspace_verified'
+    ) {
+      return null
+    }
+    const sourcePath = draft.sourcePath
+    const hasWorkspaceEvidence = draft.evidence.some(
+      (evidence) => evidence.type === 'workspace' && evidence.sourcePath === sourcePath
+    )
+    if (!hasWorkspaceEvidence) {
+      return null
+    }
+    return this.sourceFingerprintFn(input.workspaceRoot, sourcePath)
   }
 
   /** 证据行的项目归属是「证据发生时所在项目」，与记录最终落在 project/global scope 无关 */
