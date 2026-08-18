@@ -9,7 +9,6 @@ import type { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 const extractMock = vi.fn()
 const processMock = vi.fn()
 const appendEpisodicMock = vi.fn()
-const appendMemoryMdMock = vi.fn()
 const drainWorkingBufferMock = vi.fn()
 const loadNovaSettingsMock = vi.fn()
 
@@ -49,7 +48,6 @@ vi.mock('../../../src/runtime/memory/ObservationCapture', () => ({
 vi.mock('../../../src/main/services/MemoryServiceHost', () => ({
   getMemoryService: () => ({
     appendEpisodicSummary: appendEpisodicMock,
-    appendMemoryMd: appendMemoryMdMock
   }),
   getMemoryCandidateProcessor: () => ({ process: processMock })
 }))
@@ -112,8 +110,6 @@ describe('MemoryExtractHost 候选管线', () => {
     expect(appendEpisodicMock).toHaveBeenCalledTimes(1)
     expect(appendEpisodicMock.mock.calls[0][1]).toContain('edit src/a.ts')
     expect(drainWorkingBufferMock).toHaveBeenCalledWith('s1')
-    // autoMerge 消费分支已移除：任何情况下不再追加 MEMORY.md
-    expect(appendMemoryMdMock).not.toHaveBeenCalled()
   })
 
   it('提炼失败：只跳过结构化落库，episodic 降级路径不变', async () => {
@@ -127,7 +123,6 @@ describe('MemoryExtractHost 候选管线', () => {
     expect(processMock).not.toHaveBeenCalled()
     expect(appendEpisodicMock).toHaveBeenCalledTimes(1)
     expect(appendEpisodicMock.mock.calls[0][1]).toContain('edit src/a.ts')
-    expect(appendMemoryMdMock).not.toHaveBeenCalled()
   })
 
   it('候选落库异常不阻塞 episodic 落盘', async () => {

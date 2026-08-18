@@ -117,45 +117,6 @@ export class MemoryService {
   }
 
   /**
-   * 追加内容到 MEMORY.md（只追加，不覆盖既有正文）
-   */
-  appendMemoryMd(scopeId: string, markdownBlock: string): void {
-    if (!markdownBlock.trim()) {
-      return
-    }
-
-    const relPath = 'MEMORY.md'
-    const scopeDir = getProjectMemoryDir(this.memoryRoot, scopeId)
-    const absPath = resolveSafeScopeRelPath(scopeDir, relPath)
-
-    let existing = ''
-    if (existsSync(absPath)) {
-      existing = readFileSync(absPath, 'utf8')
-    }
-
-    const needsSep = existing.length > 0 && !existing.endsWith('\n')
-    const content = needsSep ? `${existing}\n${markdownBlock}` : `${existing}${markdownBlock}`
-
-    mkdirSync(dirname(absPath), { recursive: true })
-    writeFileSync(absPath, content, 'utf8')
-
-    if (!this.db || this.closed) {
-      return
-    }
-
-    const stat = statSync(absPath)
-    const mtimeMs = Math.floor(stat.mtimeMs)
-    const size = stat.size
-    upsertIndexedFile(this.db, scopeId, {
-      relPath,
-      body: content,
-      fingerprint: computeFingerprint(size, mtimeMs),
-      mtimeMs,
-      size
-    })
-  }
-
-  /**
    * 追加 episodic 摘要块到 episodic/summary.md（只追加，绝不覆盖 MEMORY.md）
    */
   appendEpisodicSummary(scopeId: string, markdownBlock: string): void {
