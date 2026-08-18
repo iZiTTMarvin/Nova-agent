@@ -233,7 +233,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryRetrievalService,
     loadSettings: loadNovaSettings,
     getSpawnSubagentPort,
-    getToolAvailability: () => toolAvailability
+    getToolAvailability: () => toolAvailability,
+    memoryEnabled: novaSettings.memoryEnabled
   })
 
   const modelPool = buildModelPoolWithFallbacks(modelClient)

@@ -76,13 +76,11 @@ export interface NovaSettingsDto {
   /** search 热路径是否触发 reconcile（默认 false，热路径只查索引） */
   memoryReconcileOnSearch: boolean
 
-  // ── 跨会话记忆采集（默认全关）──
+  // ── 跨会话记忆采集子开关（由 memoryEnabled 一键统控，UI 不单独暴露）──
   /** 是否自动采集工具/消息观察写入 working 记忆 */
   memoryCaptureEnabled: boolean
   /** 是否将会话结束摘要写入 episodic 记忆 */
   memoryEpisodicSummaryEnabled: boolean
-  /** 是否自动合并 working → episodic / MEMORY.md */
-  memoryAutoMergeEnabled: boolean
   /** 记忆 LLM 提炼开关（测试版，默认关） */
   memoryExtractEnabled: boolean
 }

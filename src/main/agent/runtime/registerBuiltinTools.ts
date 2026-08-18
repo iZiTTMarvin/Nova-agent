@@ -37,6 +37,11 @@ export interface BuiltinToolRegistrationDeps {
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
   /** load_tools 写入的会话级工具可用性 Owner */
   getToolAvailability?: () => ToolAvailability | null
+  /**
+   * 是否注册 memory_search。由装配方按本轮设置快照决定（与 memoryContext /
+   * prefetch 接线同源）；每轮装配重新注册，开关变化下一轮即生效。
+   */
+  memoryEnabled: boolean
 }
 
 /**
@@ -54,12 +59,14 @@ export function registerBuiltinTools(
   toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
   toolRegistry.register(findTool)
   toolRegistry.register(webSearchTool)
-  toolRegistry.register(
-    createMemorySearchTool({
-      getMemoryRetrievalService: deps.getMemoryRetrievalService,
-      loadSettings: deps.loadSettings
-    })
-  )
+  if (deps.memoryEnabled) {
+    toolRegistry.register(
+      createMemorySearchTool({
+        getMemoryRetrievalService: deps.getMemoryRetrievalService,
+        loadSettings: deps.loadSettings
+      })
+    )
+  }
   toolRegistry.register(editTool)
   toolRegistry.register(writeTool)
   toolRegistry.register(bashTool)

@@ -125,6 +125,9 @@ export const MEMORY_READ_FILE = 'memory:read-file' as const
 export const MEMORY_WRITE_FILE = 'memory:write-file' as const
 export const MEMORY_RECONCILE = 'memory:reconcile' as const
 export const MEMORY_STATS = 'memory:stats' as const
+/** 结构化长期记忆：按 scope 列举记录 / 忘记单条记录 */
+export const MEMORY_LIST_RECORDS = 'memory:list-records' as const
+export const MEMORY_RETRACT_RECORD = 'memory:retract-record' as const
 /** 在系统文件管理器中打开当前 scope 记忆目录 */
 export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
 /** 当前项目：单层目录列举（只读） */

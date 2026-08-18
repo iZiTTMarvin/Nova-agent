@@ -16,6 +16,7 @@ export interface ReconcilePlan {
 
 export type {
   MemoryScopeFileEntry,
+  MemoryDocumentStats,
   MemoryScopeStats,
   ReconcileStats
 } from '../../shared/memory/types'

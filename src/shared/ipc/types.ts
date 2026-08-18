@@ -63,6 +63,9 @@ import type {
   MemoryScopeStats,
   MemoryReadFileParams,
   MemoryWriteFileParams,
+  MemoryListRecordsParams,
+  MemoryRetractRecordParams,
+  MemoryRecordDto,
   ReconcileStats
 } from '../memory/types'
 import type {
@@ -505,6 +508,14 @@ export interface IpcCommands {
   'memory:stats': {
     params: void
     result: MemoryScopeStats
+  }
+  'memory:list-records': {
+    params: MemoryListRecordsParams
+    result: MemoryRecordDto[]
+  }
+  'memory:retract-record': {
+    params: MemoryRetractRecordParams
+    result: void
   }
   'memory:open-dir': {
     params: void

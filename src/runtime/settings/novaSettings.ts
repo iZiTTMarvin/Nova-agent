@@ -46,10 +46,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   // 不再要求用户逐个勾选。UI 不暴露这三个开关。
   memoryCaptureEnabled: true,
   memoryEpisodicSummaryEnabled: true,
-  memoryExtractEnabled: true,
-  // 自动合并到 MEMORY.md 会改写用户手写的权威语义记忆，
-  // 测试版阶段默认关；UI 仍保留这一个开关供用户主动开启。
-  memoryAutoMergeEnabled: false
+  memoryExtractEnabled: true
 }
 
 /** 返回 ~/.nova 目录路径 */
@@ -156,9 +153,8 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.memoryEpisodicSummaryEnabled === 'boolean') {
     result.memoryEpisodicSummaryEnabled = obj.memoryEpisodicSummaryEnabled
   }
-  if (typeof obj.memoryAutoMergeEnabled === 'boolean') {
-    result.memoryAutoMergeEnabled = obj.memoryAutoMergeEnabled
-  }
+  // memoryAutoMergeEnabled 已从 schema 移除；旧 settings.json 中的该字段
+  // 在此被显式忽略（migrateAndFill 只按已知字段名填充，未知字段自然丢弃）。
   if (typeof obj.memoryExtractEnabled === 'boolean') {
     result.memoryExtractEnabled = obj.memoryExtractEnabled
   }
@@ -264,11 +260,6 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   if ('memoryEpisodicSummaryEnabled' in patch && patch.memoryEpisodicSummaryEnabled !== undefined) {
     if (typeof patch.memoryEpisodicSummaryEnabled !== 'boolean') {
       errors.push('memoryEpisodicSummaryEnabled 必须是布尔值')
-    }
-  }
-  if ('memoryAutoMergeEnabled' in patch && patch.memoryAutoMergeEnabled !== undefined) {
-    if (typeof patch.memoryAutoMergeEnabled !== 'boolean') {
-      errors.push('memoryAutoMergeEnabled 必须是布尔值')
     }
   }
   if ('memoryExtractEnabled' in patch && patch.memoryExtractEnabled !== undefined) {

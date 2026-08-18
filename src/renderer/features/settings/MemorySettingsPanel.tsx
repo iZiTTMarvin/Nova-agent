@@ -1,7 +1,7 @@
 /**
  * MemorySettingsPanel — 跨会话记忆可观测/可编辑
  *
- * 提供：打开记忆目录、scope 信息、文件列表编辑、采集开关（逻辑才接）。
+ * 提供：记忆总开关、已学习记忆查看与忘记、记忆文件列表编辑、目录与索引维护。
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
@@ -11,7 +11,14 @@ import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
-import type { MemoryScopeFileEntry, MemoryScopeStats } from '../../../shared/memory/types'
+import type {
+  MemoryScopeFileEntry,
+  MemoryScopeStats,
+  MemoryRecordDto,
+  MemoryScopeKindDto,
+  MemoryKindDto,
+  MemoryExplicitnessDto
+} from '../../../shared/memory/types'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -27,6 +34,35 @@ function formatMtime(ms: number): string {
   }
 }
 
+/** 已学习记忆的类型标签（产品语言） */
+const RECORD_KIND_LABELS: Record<MemoryKindDto, string> = {
+  preference: '偏好',
+  convention: '约定',
+  project_fact: '项目事实',
+  decision: '决策',
+  workflow: '流程',
+  gotcha: '踩坑'
+}
+
+/** 记忆来源可信度标识 */
+const RECORD_EXPLICITNESS_LABELS: Record<MemoryExplicitnessDto, string> = {
+  user_explicit: '用户明确',
+  workspace_verified: '工作区确认',
+  observed: '行为观察',
+  inferred: '模型推断'
+}
+
+/** 来源摘要中原始来源类型的可读化；文件路径原样展示 */
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  user_message: '来自用户消息',
+  tool_result: '来自工具结果',
+  workspace: '来自工作区'
+}
+
+function formatSourceSummary(summary: string): string {
+  return SOURCE_TYPE_LABELS[summary] ?? `来自 ${summary}`
+}
+
 export const MemorySettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
@@ -40,6 +76,14 @@ export const MemorySettingsPanel: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // ── 已学习记忆查看器 ──
+  const [recordScope, setRecordScope] = useState<MemoryScopeKindDto>('project')
+  const [records, setRecords] = useState<MemoryRecordDto[]>([])
+  const [recordsLoading, setRecordsLoading] = useState(false)
+  const [recordsError, setRecordsError] = useState<string | null>(null)
+  /** 正在执行「忘记」的记录 id（防重复提交与禁用态） */
+  const [forgettingId, setForgettingId] = useState<string | null>(null)
 
   const isDirty = selectedPath !== null && content !== baselineContent
 
@@ -85,6 +129,52 @@ export const MemorySettingsPanel: React.FC = () => {
   useEffect(() => {
     void loadMemoryData()
   }, [loadMemoryData])
+
+  /** 拉取当前 scope 的有效（active）结构化记忆；project 视图需先打开工作区 */
+  const loadRecords = useCallback(async (scopeKind: MemoryScopeKindDto) => {
+    if (scopeKind === 'project' && !currentProject) {
+      setRecords([])
+      return
+    }
+    setRecordsLoading(true)
+    setRecordsError(null)
+    try {
+      const list = await window.api.invoke('memory:list-records', { scopeKind })
+      setRecords(list)
+    } catch (err) {
+      setRecordsError(err instanceof Error ? err.message : '加载已学习记忆失败')
+      setRecords([])
+    } finally {
+      setRecordsLoading(false)
+    }
+  }, [currentProject])
+
+  useEffect(() => {
+    void loadRecords(recordScope)
+  }, [loadRecords, recordScope])
+
+  const handleSwitchRecordScope = (scopeKind: MemoryScopeKindDto) => {
+    if (scopeKind === recordScope) return
+    setRecordScope(scopeKind)
+  }
+
+  const handleForgetRecord = async (record: MemoryRecordDto) => {
+    if (forgettingId !== null) return
+    setForgettingId(record.id)
+    setRecordsError(null)
+    try {
+      await window.api.invoke('memory:retract-record', {
+        id: record.id,
+        scopeKind: record.scopeKind
+      })
+      // 撤回成功后默认列表不会再返回该记录，直接从视图移除
+      setRecords(prev => prev.filter(r => r.id !== record.id))
+    } catch (err) {
+      setRecordsError(err instanceof Error ? err.message : '忘记失败')
+    } finally {
+      setForgettingId(null)
+    }
+  }
 
   /** files 变化时：当前选中仍合法则保持，否则自动选中首个 */
   useEffect(() => {
@@ -275,6 +365,7 @@ export const MemorySettingsPanel: React.FC = () => {
             <span className="memory-settings-panel__meta-label">统计</span>
             <span>
               {stats.fileCount} 文件 · 索引 {stats.indexCount} · 磁盘 {formatBytes(stats.diskBytes)}
+              {' · 已学习 '}{stats.records.active}
             </span>
           </div>
         </div>
@@ -290,7 +381,7 @@ export const MemorySettingsPanel: React.FC = () => {
                   启用跨会话记忆
                 </span>
                 <p className="memory-settings-panel__toggle-hint">
-                  一键开启全部能力：直读 MEMORY.md 注入 system prompt、工具轨迹自动采集、每 5 轮用 LLM 提炼为结论写入 episodic、模型可经 memory_search 工具主动检索。关闭后以上能力全部停止。
+                  一键开启全部能力：工具轨迹自动采集、低频提炼为结构化记忆、对话前自动召回相关记忆、模型可主动检索跨会话记忆。关闭后以上能力全部停止。
                 </p>
               </div>
               <CheckboxInput
@@ -301,29 +392,92 @@ export const MemorySettingsPanel: React.FC = () => {
                 onChange={checked => void updateSetting('memoryEnabled', checked)}
               />
             </div>
-
-            <div className="memory-settings-panel__toggle-row">
-              <div className="memory-settings-panel__toggle-copy">
-                <span className="memory-settings-panel__toggle-label">
-                  自动合并到 MEMORY.md
-                  <span className="memory-settings-panel__badge">默认关</span>
-                </span>
-                <p className="memory-settings-panel__toggle-hint">
-                  开启后，高分提炼结论会追加进 MEMORY.md（只追加、不覆盖）。由于这会改写你手写的项目长期记忆，测试版默认关闭；其余能力（采集 / 提炼 / episodic 落盘）不受影响。
-                </p>
-              </div>
-              <CheckboxInput
-                label="自动合并到 MEMORY.md"
-                isLabelHidden
-                className="memory-settings-panel__toggle-input"
-                value={settings.memoryAutoMergeEnabled}
-                onChange={checked => void updateSetting('memoryAutoMergeEnabled', checked)}
-                isDisabled={!settings.memoryEnabled}
-              />
-            </div>
           </div>
         </section>
       )}
+
+      <section className="memory-settings-panel__controls" aria-label="已学习的记忆">
+        <h4 className="memory-settings-panel__section-title">已学习的记忆</h4>
+        <p className="settings-panel__muted memory-settings-panel__records-hint">
+          Nova 从对话与工具使用中自动学习并确认的记忆。忘记某条记忆后，它将不再参与检索与回答。
+        </p>
+        <div className="memory-settings-panel__records-toolbar">
+          <Button
+            label="查看项目记忆"
+            variant={recordScope === 'project' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => handleSwitchRecordScope('project')}
+          >
+            项目
+          </Button>
+          <Button
+            label="查看全局记忆"
+            variant={recordScope === 'global' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => handleSwitchRecordScope('global')}
+          >
+            全局
+          </Button>
+        </div>
+
+        {recordsError && (
+          <div className="settings-status settings-status--error memory-settings-panel__error">
+            {recordsError}
+          </div>
+        )}
+
+        {recordsLoading && <p className="settings-panel__muted">加载中…</p>}
+
+        {!recordsLoading && recordScope === 'project' && !currentProject && (
+          <p className="settings-panel__muted">请先打开工作区项目以查看项目记忆。</p>
+        )}
+
+        {!recordsLoading && records.length === 0 && (recordScope === 'global' || currentProject) && (
+          <p className="settings-panel__muted">
+            {recordScope === 'project' ? '当前项目还没有已学习的记忆。' : '还没有已学习的全局记忆。'}
+          </p>
+        )}
+
+        <ul className="memory-settings-panel__record-list">
+          {records.map(record => (
+            <li key={record.id} className="memory-settings-panel__record-item">
+              <div className="memory-settings-panel__record-main">
+                <div className="memory-settings-panel__record-tags">
+                  <span className="memory-settings-panel__badge">
+                    {RECORD_KIND_LABELS[record.kind]}
+                  </span>
+                  <span
+                    className={`memory-settings-panel__badge${
+                      record.explicitness === 'observed' || record.explicitness === 'inferred'
+                        ? ' memory-settings-panel__badge--advisory'
+                        : ''
+                    }`}
+                  >
+                    {RECORD_EXPLICITNESS_LABELS[record.explicitness]}
+                  </span>
+                  {record.memoryKey && (
+                    <code className="memory-settings-panel__meta-code">{record.memoryKey}</code>
+                  )}
+                </div>
+                <p className="memory-settings-panel__record-content">{record.content}</p>
+                <span className="memory-settings-panel__file-meta">
+                  {formatSourceSummary(record.sourceSummary)} · 更新于 {formatMtime(record.updatedAt)}
+                </span>
+              </div>
+              <Button
+                label={forgettingId === record.id ? '忘记中…' : '忘记'}
+                variant="ghost"
+                size="sm"
+                className="memory-settings-panel__forget-btn"
+                onClick={() => void handleForgetRecord(record)}
+                isDisabled={forgettingId !== null}
+              >
+                {forgettingId === record.id ? '忘记中…' : '忘记'}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {error && (
         <div className="settings-status settings-status--error memory-settings-panel__error">{error}</div>

@@ -30,7 +30,7 @@ import type {
   MemorySearchHit,
   MemorySearchOptions,
   MemoryScopeFileEntry,
-  MemoryScopeStats,
+  MemoryDocumentStats,
   ReconcileStats
 } from './types'
 
@@ -203,7 +203,7 @@ export class MemoryService {
   }
 
   /** scope 统计：磁盘文件数、索引条数、占用字节 */
-  stats(scopeId: string): MemoryScopeStats {
+  stats(scopeId: string): MemoryDocumentStats {
     const scopeDir = getProjectMemoryDir(this.memoryRoot, scopeId)
     const files = listScopeMarkdownFileMeta(scopeDir)
     const diskBytes = files.reduce((sum, f) => sum + f.size, 0)

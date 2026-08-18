@@ -22,22 +22,29 @@ import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
 import { registerBuiltinTools } from '../../../../src/main/agent/runtime/registerBuiltinTools'
-import { getToolCapability } from '../../../../src/shared/session/toolVisibility'
+import type { BuiltinToolRegistrationDeps } from '../../../../src/main/agent/runtime/registerBuiltinTools'
+import { getToolCapability, getModeVisibleTools } from '../../../../src/shared/session/toolVisibility'
 import { getToolDisplayName } from '../../../../src/renderer/features/chat/toolDisplay'
 
 /**
  * 构造一个注册了「全部内置工具」的 ToolRegistry，镜像 AgentRuntimeFactory 的注册清单。
  * memory / invoke_skill / task 的构造体不在创建时解引用依赖，因此用最小 mock 即可。
  */
-function buildFullRegistry(): ToolRegistry {
+function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): ToolRegistry {
   const registry = new ToolRegistry()
   registerBuiltinTools(registry, {
     skillRegistry: {} as SkillRegistry,
     getAgentLoop: () => null,
-    getMemoryService: () => null,
-    loadSettings: () => DEFAULT_NOVA_SETTINGS
+    getMemoryRetrievalService: () => null,
+    loadSettings: () => DEFAULT_NOVA_SETTINGS,
+    memoryEnabled: true,
+    ...overrides
   })
   return registry
+}
+
+function buildFullRegistry(): ToolRegistry {
+  return buildRegistry()
 }
 
 describe('工具能力分类 / 显示名全覆盖守卫', () => {
@@ -75,5 +82,27 @@ describe('工具能力分类 / 显示名全覆盖守卫', () => {
       fallback,
       `以下已注册工具缺少 toolDisplay.getToolDisplayName 映射，UI 标题会显示成兜底文案：${fallback.join(', ')}`
     ).toEqual([])
+  })
+})
+
+describe('memory_search 注册裁剪', () => {
+  it('memoryEnabled=true：注册清单与模式可见清单都包含 memory_search', () => {
+    const registry = buildRegistry({ memoryEnabled: true })
+    const names = registry.getToolDefinitions().map(d => d.name)
+    expect(names).toContain('memory_search')
+    const visible = getModeVisibleTools('default', registry.getToolDefinitions()).map(d => d.name)
+    expect(visible).toContain('memory_search')
+  })
+
+  it('memoryEnabled=false：工具定义清单不含 memory_search（模型清单全链路不出现）', () => {
+    const registry = buildRegistry({ memoryEnabled: false })
+    const definitions = registry.getToolDefinitions()
+    expect(definitions.map(d => d.name)).not.toContain('memory_search')
+    // 可见性收窄与 XML/native 工具目录同源于注册清单：未注册即无处暴露
+    expect(getModeVisibleTools('default', definitions).map(d => d.name)).not.toContain('memory_search')
+    expect(getModeVisibleTools('plan', definitions).map(d => d.name)).not.toContain('memory_search')
+    // 其余核心工具不受影响
+    expect(definitions.map(d => d.name)).toContain('read')
+    expect(definitions.map(d => d.name)).toContain('bash')
   })
 })

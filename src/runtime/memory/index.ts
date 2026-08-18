@@ -84,6 +84,7 @@ export type {
   MemorySearchHit,
   MemorySearchOptions,
   MemoryScopeFileEntry,
+  MemoryDocumentStats,
   MemoryScopeStats,
   BuiltMatchQuery,
   FtsQueryPath
