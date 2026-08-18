@@ -101,4 +101,23 @@ describe('MemoryServiceHost reconcile 调度', () => {
     expect(() => getMemoryService()).toThrow(/rebuild:native:electron/)
     expect(() => getMemoryService()).not.toThrow()
   })
+
+  it('结构化仓储与候选处理器随服务单例装配，close 后一并释放', async () => {
+    const { getMemoryService, getMemoryRepository, getMemoryCandidateProcessor } = await import(
+      '../../../src/main/services/MemoryServiceHost'
+    )
+    getMemoryService()
+    const repo = getMemoryRepository()
+    const processor = getMemoryCandidateProcessor()
+    expect(getMemoryRepository()).toBe(repo)
+    expect(getMemoryCandidateProcessor()).toBe(processor)
+
+    const { resetMemoryServiceForTests } = await import(
+      '../../../src/main/services/MemoryServiceHost'
+    )
+    resetMemoryServiceForTests()
+    getMemoryService()
+    expect(getMemoryRepository()).not.toBe(repo)
+    expect(getMemoryCandidateProcessor()).not.toBe(processor)
+  })
 })

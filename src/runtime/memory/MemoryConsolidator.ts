@@ -1,9 +1,9 @@
 /**
- * MemoryConsolidator — working buffer / LLM 提炼 → episodic Markdown 块（纯逻辑）
+ * MemoryConsolidator — working buffer → episodic Markdown 块（零 LLM 纯逻辑）
  *
  * 按 fingerprint 去重合并，输出带日期与 sessionId 的摘要块，供 append-only 落盘。
+ * 它只负责用户可读历史；结构化长期记忆由候选管线（extraction → policy → repository）落库。
  */
-import type { ExtractedMemory } from './MemoryExtractor'
 import type { MemoryObservation } from './ObservationCapture'
 
 /** episodic 摘要相对路径（仅允许 append，禁止写 MEMORY.md） */
@@ -12,18 +12,6 @@ export const EPISODIC_SUMMARY_REL_PATH = 'episodic/summary.md'
 export interface ConsolidateOptions {
   /** 注入时钟（单测用） */
   now?: () => number
-}
-
-/** LLM 提炼落盘结果 */
-export interface ConsolidateExtractedResult {
-  episodicMarkdown: string
-  /** autoMerge 开启且命中高分规则时的 MEMORY.md 追加块 */
-  memoryAppendMarkdown: string
-}
-
-export interface ConsolidateExtractedOptions extends ConsolidateOptions {
-  /** 是否允许高分结论追加 MEMORY.md */
-  autoMergeEnabled?: boolean
 }
 
 interface MergedObservation {
@@ -128,67 +116,4 @@ export function consolidateFallback(
   options: ConsolidateOptions = {}
 ): string {
   return consolidateObservations(observations, options)
-}
-
-/**
- * 将 LLM 提炼的结构化字段格式化为 episodic Markdown；可选 autoMerge 块。
- */
-export function consolidateExtracted(
-  extracted: readonly ExtractedMemory[],
-  sessionId: string,
-  options: ConsolidateExtractedOptions = {}
-): ConsolidateExtractedResult {
-  if (extracted.length === 0) {
-    return { episodicMarkdown: '', memoryAppendMarkdown: '' }
-  }
-
-  const dateStr = formatDate(options.now?.() ?? Date.now())
-  const episodicLines: string[] = [`## ${dateStr} — session ${sessionId}`, '']
-  const mergeLines: string[] = []
-
-  for (const item of extracted) {
-    episodicLines.push(`- **需求**：${item.userNeed}`)
-    episodicLines.push(`  **方案**：${item.approach}`)
-    episodicLines.push(`  **结果**：${item.outcome}`)
-    if (item.whatFailed.trim()) {
-      episodicLines.push(`  ⚠️ 踩坑：${item.whatFailed}`)
-    }
-    if (item.whatWorked.trim()) {
-      episodicLines.push(`  ✅ 有效：${item.whatWorked}`)
-    }
-    if (item.tags.length > 0) {
-      episodicLines.push(`  标签：${item.tags.join(', ')}`)
-    }
-    episodicLines.push('')
-
-    if (options.autoMergeEnabled && shouldAutoMergeExtracted(item)) {
-      mergeLines.push(`- ${item.userNeed}（${item.outcome}）`)
-      if (item.whatFailed.trim()) {
-        mergeLines.push(`  踩坑：${item.whatFailed}`)
-      }
-      if (item.whatWorked.trim()) {
-        mergeLines.push(`  有效：${item.whatWorked}`)
-      }
-    }
-  }
-
-  episodicLines.push('---', '')
-
-  const memoryAppendMarkdown =
-    mergeLines.length > 0
-      ? [`\n## ${dateStr} 提炼摘要`, '', ...mergeLines, ''].join('\n')
-      : ''
-
-  return {
-    episodicMarkdown: episodicLines.join('\n'),
-    memoryAppendMarkdown
-  }
-}
-
-/** 高分规则：有踩坑记录，或结果含成功/完成 */
-export function shouldAutoMergeExtracted(item: ExtractedMemory): boolean {
-  if (item.whatFailed.trim()) {
-    return true
-  }
-  return /成功|完成/.test(item.outcome)
 }

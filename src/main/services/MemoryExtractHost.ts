@@ -1,8 +1,9 @@
 /**
- * MemoryExtractHost — LLM 提炼调度与落盘（主进程）
+ * MemoryExtractHost — LLM 候选提炼调度与落盘（主进程）
  *
- * 触发：每 5 个用户回合 + 会话退出。
- * 强降级：提炼失败回退零 LLM consolidateObservations，绝不影响主对话。
+ * 触发：每 N 个完成用户回合 + 会话退出。
+ * 管线：drain → extract(候选) → 确定性 policy 落库；episodic 历史始终走零 LLM 格式化，
+ * 提炼失败时结构化写入直接跳过、episodic 照常，绝不影响主对话。
  */
 import { app } from 'electron'
 import type { ChatMessage } from '../../runtime/model/types'
@@ -10,23 +11,26 @@ import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { ModelClientPool } from '../../runtime/model/ModelClientPool'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { loadModelConfig } from '../../runtime/model/config'
-import { MemoryExtractor, type MemoryExtractorDeps } from '../../runtime/memory/MemoryExtractor'
 import {
-  consolidateExtracted,
-  consolidateFallback
-} from '../../runtime/memory/MemoryConsolidator'
+  MemoryExtractor,
+  projectExtractionMessages,
+  type MemoryExtractorDeps
+} from '../../runtime/memory/extraction/MemoryExtractor'
+import { consolidateFallback } from '../../runtime/memory/MemoryConsolidator'
 import {
   getObservationCaptureForSession,
   type MemoryObservation
 } from '../../runtime/memory/ObservationCapture'
 import { computeWorkspaceHash } from '../../runtime/memory/MemoryPaths'
+import type { MemoryCandidate } from '../../runtime/memory/types'
+import {
+  MEMORY_EXTRACT_INTERVAL_TURNS,
+  MEMORY_EXTRACT_WINDOW_SIZE
+} from '../../runtime/memory/memoryConfig'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
-import { getMemoryService } from './MemoryServiceHost'
+import { getMemoryService, getMemoryCandidateProcessor } from './MemoryServiceHost'
 import { drainAndPersistSync } from './MemoryConsolidationHost'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
-
-/** 每 N 个用户回合触发一次提炼 */
-export const EXTRACT_INTERVAL_TURNS = 5
 
 /** sessionId → 自上次提炼以来的用户回合数 */
 const userTurnsSinceExtract = new Map<string, number>()
@@ -57,7 +61,7 @@ export function onUserTurnCompleteForExtract(
   }
 
   const next = (userTurnsSinceExtract.get(sessionId) ?? 0) + 1
-  if (next < EXTRACT_INTERVAL_TURNS) {
+  if (next < MEMORY_EXTRACT_INTERVAL_TURNS) {
     userTurnsSinceExtract.set(sessionId, next)
     return
   }
@@ -114,7 +118,8 @@ export function scheduleMemoryExtract(
 }
 
 /**
- * 执行一轮提炼：LLM → episodic / 可选 autoMerge；失败走零 LLM 降级。
+ * 执行一轮提炼：LLM 候选 → 确定性 policy 落库；episodic 历史始终零 LLM 落盘。
+ * 提炼失败（null/空候选）只跳过结构化写入，降级路径与成功路径共用 episodic 落盘。
  */
 export async function runMemoryExtract(
   sessionId: string,
@@ -130,7 +135,9 @@ export async function runMemoryExtract(
   // 进入提炼即视为本轮消费：无论后续成败，buffer 都已取出，避免下一轮重复处理同一批 observations。
   const observations = capture.drainForExtract(sessionId)
   const session = sessionStore.load(sessionId)
-  const recentMessages: ChatMessage[] = (session?.messages ?? []).slice(-50) as ChatMessage[]
+  const recentMessages = projectExtractionMessages(
+    (session?.messages ?? []).slice(-MEMORY_EXTRACT_WINDOW_SIZE) as ChatMessage[]
+  )
 
   if (recentMessages.length === 0 && observations.length === 0) {
     capture.drainWorkingBuffer(sessionId)
@@ -138,24 +145,31 @@ export async function runMemoryExtract(
   }
 
   const scopeId = computeWorkspaceHash(workspaceRoot)
-  const settings = loadNovaSettings()
   const extractor = new MemoryExtractor({ chat: createExtractChatFn(modelPool) })
+  const candidates = await extractor.extract({ sessionId, recentMessages, observations })
 
-  const extracted = await extractor.extract({ recentMessages, observations })
-
-  if (!extracted || extracted.length === 0) {
-    await persistFallback(scopeId, sessionId, capture, observations)
-    return
+  if (candidates && candidates.length > 0) {
+    processCandidates(scopeId, sessionId, candidates)
   }
+  await persistFallback(scopeId, sessionId, capture, observations)
+}
 
-  const { episodicMarkdown, memoryAppendMarkdown } = consolidateExtracted(
-    extracted,
-    sessionId,
-    { autoMergeEnabled: settings.memoryAutoMergeEnabled }
-  )
-
-  persistExtracted(scopeId, episodicMarkdown, memoryAppendMarkdown)
-  capture.drainWorkingBuffer(sessionId)
+/** 候选 → policy → 结构化落库；仅输出计数日志，失败不阻塞 episodic 落盘 */
+function processCandidates(
+  scopeId: string,
+  sessionId: string,
+  candidates: readonly MemoryCandidate[]
+): void {
+  try {
+    const counts = getMemoryCandidateProcessor().process({
+      sessionId,
+      projectScopeId: scopeId,
+      candidates
+    })
+    console.log(`[MemoryExtract] 候选落库 session=${sessionId} ${JSON.stringify(counts)}`)
+  } catch (err) {
+    console.error('[MemoryExtract] 候选落库失败（结构化记忆跳过，episodic 照常）：', err)
+  }
 }
 
 async function persistFallback(
@@ -176,24 +190,6 @@ async function persistFallback(
     capture.drainWorkingBuffer(sessionId)
   } catch (err) {
     console.error('[MemoryExtract] 降级落盘失败：', err)
-  }
-}
-
-function persistExtracted(
-  scopeId: string,
-  episodicMarkdown: string,
-  memoryAppendMarkdown: string
-): void {
-  try {
-    const memoryService = getMemoryService()
-    if (episodicMarkdown.trim()) {
-      memoryService.appendEpisodicSummary(scopeId, episodicMarkdown)
-    }
-    if (memoryAppendMarkdown.trim()) {
-      memoryService.appendMemoryMd(scopeId, memoryAppendMarkdown)
-    }
-  } catch (err) {
-    console.error('[MemoryExtract] 落盘失败：', err)
   }
 }
 

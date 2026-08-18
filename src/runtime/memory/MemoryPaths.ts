@@ -10,6 +10,9 @@ import { join, normalize, resolve, sep } from 'path'
 /** scope 目录名长度（sha256 十六进制前缀） */
 export const WORKSPACE_HASH_LENGTH = 16
 
+/** 全局用户 scope 的固定内部 ID；结构化 global 记忆只存 DB，不绑定 workspace hash */
+export const GLOBAL_SCOPE_ID = 'user'
+
 const SCOPE_ID_RE = /^[0-9a-f]{16}$/
 
 /**

@@ -16,6 +16,7 @@ export {
   parseScopeIdFromDirName,
   normalizeWorkspaceRoot,
   resolveSafeScopeRelPath,
+  GLOBAL_SCOPE_ID,
   WORKSPACE_HASH_LENGTH
 } from './MemoryPaths'
 export { MemoryService, DEFAULT_L1_MAX_CHARS } from './MemoryService'
@@ -78,12 +79,9 @@ export type { MemoryObservation, FilteredObservationTitle } from './ObservationC
 export { subscribeObservationCapture } from './MemoryObservationBridge'
 export {
   consolidateObservations,
-  consolidateExtracted,
   consolidateFallback,
-  shouldAutoMergeExtracted,
   EPISODIC_SUMMARY_REL_PATH
 } from './MemoryConsolidator'
-export type { ConsolidateExtractedResult, ConsolidateExtractedOptions } from './MemoryConsolidator'
 export { initMemorySchema, listMemorySchemaObjects, MEMORY_FILES_SCOPE_PATH_IDX } from './MemorySchema'
 export type {
   ScannedMemoryFile,
@@ -96,9 +94,35 @@ export type {
   BuiltMatchQuery,
   FtsQueryPath
 } from './types'
-export { MemoryExtractor, parseExtractedJson, EXTRACT_REASONING_EFFORT } from './MemoryExtractor'
-export type { ExtractedMemory, MemoryExtractorDeps } from './MemoryExtractor'
-export { EXTRACT_WINDOW_SIZE, buildExtractMessages } from './memoryPrompts'
+export { MemoryExtractor, EXTRACT_REASONING_EFFORT } from './extraction/MemoryExtractor'
+export type { MemoryExtractorDeps, MemoryExtractionInput } from './extraction/MemoryExtractor'
+export {
+  projectExtractionMessages,
+  buildEvidenceProvenance,
+  parseMemoryCandidateResponse
+} from './extraction/MemoryExtractor'
+export type { EvidenceProvenance, CandidateParseResult } from './extraction/MemoryExtractor'
+export { decideMemoryPolicy, resolveCandidateScope, contentSimilarity } from './policy/MemoryPolicy'
+export { MemoryCandidateProcessor } from './policy/MemoryCandidateProcessor'
+export type {
+  MemoryCandidateProcessInput,
+  MemoryCandidateProcessCounts,
+  MemoryCandidateProcessorDeps
+} from './policy/MemoryCandidateProcessor'
+export {
+  MEMORY_EXTRACT_INTERVAL_TURNS,
+  MEMORY_EXTRACT_WINDOW_SIZE,
+  MEMORY_EVIDENCE_EXCERPT_MAX_CHARS,
+  MEMORY_CANDIDATE_CONTENT_MAX_CHARS,
+  MEMORY_KEY_MAX_CHARS,
+  MEMORY_CONTENT_EQUIVALENCE_THRESHOLD,
+  MEMORY_CONFIDENCE_STEP,
+  MEMORY_CONFIDENCE_CAP,
+  MEMORY_PROMOTION_PROJECT_MIN_SESSIONS,
+  MEMORY_PROMOTION_GLOBAL_MIN_PROJECTS,
+  MEMORY_INFERRED_MIN_CONFIDENCE,
+  MEMORY_KEYLESS_RECALL_LIMIT
+} from './memoryConfig'
 export {
   migrateMemorySchema,
   readMemorySchemaVersion,
@@ -131,5 +155,15 @@ export type {
   MemoryScope,
   MemoryRecord,
   MemoryEvidence,
-  MemoryRecordStatsRow
+  MemoryRecordStatsRow,
+  ScopeHint,
+  MemoryCandidateIntent,
+  MemoryCandidateEvidence,
+  MemoryCandidate,
+  MemoryPolicyRelatedRecord,
+  MemoryPolicyContext,
+  MemoryPolicyOperation,
+  MemoryPolicyReason,
+  MemoryPolicyRecordDraft,
+  MemoryPolicyDecision
 } from './types'

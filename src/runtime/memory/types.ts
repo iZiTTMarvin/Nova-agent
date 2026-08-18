@@ -147,6 +147,110 @@ export interface MemoryRecordStatsRow {
   count: number
 }
 
+// ---------------------------------------------------------------------------
+// 候选记忆与确定性决策（extraction → policy → processor 管线）
+// LLM 只输出候选语义；ADD/MERGE/SUPERSEDE/RETRACT/IGNORE 全部由纯函数 policy 决定。
+// ---------------------------------------------------------------------------
+
+export type ScopeHint = 'project' | 'global'
+/** LLM 只表达「用户在否定/撤回某偏好」这一语义；最终操作仍由 policy 定 */
+export type MemoryCandidateIntent = 'assert' | 'negate'
+
+export const SCOPE_HINTS: readonly ScopeHint[] = ['project', 'global']
+export const MEMORY_CANDIDATE_INTENTS: readonly MemoryCandidateIntent[] = ['assert', 'negate']
+
+export interface MemoryCandidateEvidence {
+  type: MemoryEvidenceType
+  sessionId?: string
+  messageId?: string
+  excerpt: string
+  sourcePath?: string
+}
+
+export interface MemoryCandidate {
+  kind: MemoryKind
+  scopeHint: ScopeHint
+  /** 可空：gotcha 等自然语言经验无稳定身份 */
+  memoryKey: string | null
+  content: string
+  explicitness: Explicitness
+  /** [0,1]，边界校验时 clamp */
+  confidence: number
+  intent: MemoryCandidateIntent
+  /** 边界保证非空：无有效证据的候选在提炼层即被丢弃 */
+  evidence: readonly MemoryCandidateEvidence[]
+}
+
+/** processor 查询注入的等价族既有记录；证据去重集合用于确定性计数与晋升判定 */
+export interface MemoryPolicyRelatedRecord {
+  record: MemoryRecord
+  evidenceSessionIds: ReadonlySet<string>
+  evidenceProjectScopeIds: ReadonlySet<string>
+}
+
+export interface MemoryPolicyContext {
+  /** 决策确定性要求：时间由调用方注入，policy 内部禁止读时钟/随机源 */
+  now: number
+  sessionId: string
+  projectScopeId: string
+  relatedRecords: readonly MemoryPolicyRelatedRecord[]
+}
+
+export type MemoryPolicyOperation = 'ADD' | 'MERGE' | 'SUPERSEDE' | 'RETRACT' | 'IGNORE'
+
+export type MemoryPolicyReason =
+  | 'strong-evidence-active'
+  | 'observed-pending'
+  | 'inferred-pending'
+  | 'conflict-pending'
+  | 'equivalent-merge'
+  | 'equivalent-merge-promoted'
+  | 'mutable-fact-superseded'
+  | 'negate-retract'
+  | 'negate-replace'
+  | 'no-evidence'
+  | 'inferred-below-threshold'
+  | 'equivalent-retracted'
+  | 'negate-no-target'
+
+/** policy 产出的新记录形状；id 与时间戳由 processor 生成 */
+export interface MemoryPolicyRecordDraft {
+  scope: MemoryScope
+  kind: MemoryKind
+  memoryKey: string | null
+  content: string
+  status: 'active' | 'pending'
+  confidence: number
+  explicitness: Explicitness
+  sourceType: MemoryEvidenceType
+  sourcePath: string | null
+  evidence: readonly MemoryCandidateEvidence[]
+}
+
+/** discriminated union：每种操作携带 processor 无歧义执行所需的全部字段 */
+export type MemoryPolicyDecision =
+  | { operation: 'ADD'; reason: MemoryPolicyReason; draft: MemoryPolicyRecordDraft }
+  | {
+      operation: 'MERGE'
+      reason: MemoryPolicyReason
+      targetId: string
+      evidence: readonly MemoryCandidateEvidence[]
+      /** 合并后的目标置信度（温和上调，只升不降） */
+      confidence: number
+      distinctSessionCount: number
+      distinctProjectCount: number
+      /** 跨过晋升门槛时 pending → active */
+      promote: boolean
+    }
+  | {
+      operation: 'SUPERSEDE'
+      reason: MemoryPolicyReason
+      targetId: string
+      draft: MemoryPolicyRecordDraft
+    }
+  | { operation: 'RETRACT'; reason: MemoryPolicyReason; targetId: string }
+  | { operation: 'IGNORE'; reason: MemoryPolicyReason }
+
 // 行 → 领域对象的唯一权威转换：DB 行先按 unknown 接收，逐字段校验后产出。
 
 function asRow(row: unknown, source: string): Record<string, unknown> {

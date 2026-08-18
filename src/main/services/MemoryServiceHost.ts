@@ -9,15 +9,20 @@ import { getMemoryRoot, computeWorkspaceHash } from '../../runtime/memory/Memory
 import { MemoryService } from '../../runtime/memory/MemoryService'
 import { openBetterSqliteMemoryDb } from '../../runtime/memory/BetterSqliteMemoryDb'
 import type { BetterSqliteMemoryDb } from '../../runtime/memory/BetterSqliteMemoryDb'
+import { SqliteMemoryRepository } from '../../runtime/memory/repository/SqliteMemoryRepository'
+import type { MemoryRepository } from '../../runtime/memory/repository/MemoryRepository'
+import { MemoryCandidateProcessor } from '../../runtime/memory/policy/MemoryCandidateProcessor'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 let memoryService: MemoryService | null = null
+let memoryRepository: MemoryRepository | null = null
+let memoryCandidateProcessor: MemoryCandidateProcessor | null = null
 /** 已完成初始化 reconcile 的 scope（每个 scope 仅 reconcile 一次） */
 const initializedScopes = new Set<string>()
 /** 正在 reconcile 的 scope（防止同一 scope 并发重复） */
 const reconcilingScopes = new Set<string>()
 
-/** 获取或创建记忆服务单例（含 FTS 索引库） */
+/** 获取或创建记忆服务单例（含 FTS 索引库；同库一并装配结构化记忆仓储与候选处理器） */
 export function getMemoryService(): MemoryService {
   if (!memoryService) {
     const settings = loadNovaSettings()
@@ -42,8 +47,22 @@ export function getMemoryService(): MemoryService {
       searchLimit: settings.memorySearchLimit,
       scoreFloor: settings.memoryScoreFloor
     })
+    memoryRepository = new SqliteMemoryRepository(db)
+    memoryCandidateProcessor = new MemoryCandidateProcessor({ repository: memoryRepository })
   }
   return memoryService
+}
+
+/** 结构化记忆仓储单例（与 MemoryService 共用同一 DB 连接） */
+export function getMemoryRepository(): MemoryRepository {
+  getMemoryService()
+  return memoryRepository!
+}
+
+/** 候选落库处理器单例（端口注入，主进程实例化） */
+export function getMemoryCandidateProcessor(): MemoryCandidateProcessor {
+  getMemoryService()
+  return memoryCandidateProcessor!
 }
 
 /**
@@ -89,6 +108,8 @@ export function ensureMemoryScopeInitialized(scopeId: string): void {
 export function closeMemoryService(): void {
   memoryService?.close()
   memoryService = null
+  memoryRepository = null
+  memoryCandidateProcessor = null
   initializedScopes.clear()
   reconcilingScopes.clear()
 }
