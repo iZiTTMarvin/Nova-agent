@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { MemoryDb, MemoryDbStatement } from '../MemoryDb'
-import { buildMatchQuery, negateBm25, DEFAULT_SEARCH_LIMIT } from '../FtsQueryBuilder'
+import { buildMatchQuery, buildTrigramOrFallbackQuery, negateBm25, DEFAULT_SEARCH_LIMIT } from '../FtsQueryBuilder'
 import {
   parseMemoryEvidenceRow,
   parseMemoryRecordRow,
@@ -23,6 +23,7 @@ import type {
   MemoryEvidenceDraft,
   MemoryEvidenceMergeInput,
   MemoryFtsSearchOptions,
+  MemoryFtsStatusFilter,
   MemoryRecordDraft,
   MemoryRecordFtsHit,
   MemoryRecordListOptions,
@@ -261,8 +262,25 @@ export class SqliteMemoryRepository implements MemoryRepository {
 
     const status = options.status ?? 'active'
     const limit = options.limit ?? DEFAULT_SEARCH_LIMIT
+    const rows = built.query === null ? [] : this.runRecordMatch(built.query, status, options, limit)
+    // 自然语言提问极少是内容的确切子串：短语未命中时回退到 trigram OR 查询
+    if (rows.length === 0 && built.path === 'trigram') {
+      const fallback = buildTrigramOrFallbackQuery(query)
+      if (fallback) {
+        return this.runRecordMatch(fallback, status, options, limit)
+      }
+    }
+    return rows
+  }
+
+  private runRecordMatch(
+    matchQuery: string,
+    status: MemoryFtsStatusFilter,
+    options: MemoryFtsSearchOptions,
+    limit: number
+  ): MemoryRecordFtsHit[] {
     const conditions = ['memory_record_fts MATCH ?']
-    const params: unknown[] = [built.query]
+    const params: unknown[] = [matchQuery]
 
     if (status !== 'any') {
       conditions.push('memory_record_fts.status = ?')

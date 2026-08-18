@@ -12,6 +12,6 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['tests/integration/**/*.test.ts']
+    include: ['tests/integration/**/*.test.ts', 'tests/eval/memory/**/*.test.ts']
   }
 })

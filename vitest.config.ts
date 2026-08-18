@@ -18,8 +18,8 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
-    // 集成测试加载 better-sqlite3 原生模块，仅由 test:memory-integration 执行；Electron E2E 由 Playwright 独立执行；
+    // 集成测试与记忆评测加载 better-sqlite3 原生模块，仅由 test:memory-integration 执行；Electron E2E 由 Playwright 独立执行；
     // live 是 key 门控的真实 API 缓存门禁，仅由 test:live-cache 显式执行。
-    exclude: ['tests/integration/**', 'tests/e2e/**', 'tests/live/**']
+    exclude: ['tests/integration/**', 'tests/eval/**', 'tests/e2e/**', 'tests/live/**']
   }
 })

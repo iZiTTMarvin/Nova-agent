@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest'
 import {
   buildMatchQuery,
   buildTrigramMatchQuery,
+  buildTrigramOrFallbackQuery,
   buildUnicode61MatchQuery,
   applyScoreFloor,
   computeOverFetchLimit,
   sanitizeTrigramQuery,
-  TRIGRAM_MIN_QUERY_LEN
+  TRIGRAM_MIN_QUERY_LEN,
+  TRIGRAM_OR_FALLBACK_MAX_TERMS
 } from '../../../../src/runtime/memory/FtsQueryBuilder'
 import type { MemorySearchHit } from '../../../../src/runtime/memory/types'
 
@@ -58,6 +60,27 @@ describe('FtsQueryBuilder（纯逻辑）', () => {
       const { query } = buildMatchQuery('部署密令?是什么！')
       expect(query).not.toBeNull()
       expect(query!).not.toMatch(/[^\p{L}\p{N}\s]/u)
+    })
+  })
+
+  describe('trigram OR 回退', () => {
+    it('滑窗 trigram 引号包裹后 OR 连接，含空格窗口安全', () => {
+      const query = buildTrigramOrFallbackQuery('PR 标题格式约定怎么写')
+      expect(query).not.toBeNull()
+      const terms = query!.split(' OR ')
+      expect(terms[0]).toBe('"PR "')
+      expect(terms.every((t) => t.startsWith('"') && t.endsWith('"'))).toBe(true)
+    })
+
+    it('去重且封顶词项数', () => {
+      const long = 'abcdefghijklmnopqrstuvwxyz0123456789'
+      const query = buildTrigramOrFallbackQuery(long)!
+      expect(query.split(' OR ')).toHaveLength(TRIGRAM_OR_FALLBACK_MAX_TERMS)
+    })
+
+    it('不足一个完整 trigram 或仅一个词项时返回 null', () => {
+      expect(buildTrigramOrFallbackQuery('ab')).toBeNull()
+      expect(buildTrigramOrFallbackQuery('abc')).toBeNull()
     })
   })
 

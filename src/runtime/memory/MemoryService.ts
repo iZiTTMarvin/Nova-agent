@@ -19,6 +19,7 @@ import { EPISODIC_SUMMARY_REL_PATH } from './MemoryConsolidator'
 import {
   applyScoreFloor,
   buildMatchQuery,
+  buildTrigramOrFallbackQuery,
   computeFingerprint,
   computeOverFetchLimit,
   DEFAULT_SCORE_FLOOR,
@@ -69,15 +70,22 @@ export class MemoryService {
       this.reconcile(scopeId)
     }
 
-    const { query: matchQuery } = buildMatchQuery(query)
-    if (!matchQuery) {
+    const built = buildMatchQuery(query)
+    if (!built.query) {
       return []
     }
 
     const limit = options?.limit ?? this.searchLimit
     const floor = options?.scoreFloor ?? this.scoreFloor
     const fetchLimit = computeOverFetchLimit(limit)
-    const raw = searchIndexed(this.db, scopeId, matchQuery, fetchLimit)
+    let raw = searchIndexed(this.db, scopeId, built.query, fetchLimit)
+    // 与结构化检索一致：短语未命中时回退 trigram OR 查询，覆盖自然语言提问
+    if (raw.length === 0 && built.path === 'trigram') {
+      const fallback = buildTrigramOrFallbackQuery(query)
+      if (fallback) {
+        raw = searchIndexed(this.db, scopeId, fallback, fetchLimit)
+      }
+    }
     return applyScoreFloor(raw, limit, floor)
   }
 

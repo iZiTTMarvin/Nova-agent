@@ -54,6 +54,36 @@ export function buildTrigramMatchQuery(raw: string): string | null {
   return cleaned
 }
 
+/** OR 回退查询的 trigram 词项上限：限制 MATCH 串规模，长查询取前缀窗口 */
+export const TRIGRAM_OR_FALLBACK_MAX_TERMS = 24
+
+/**
+ * trigram 短语未命中时的 OR 回退：把查询切成滑窗 trigram 后 OR 连接。
+ * 整串短语要求查询是内容的确切子串，自然语言提问几乎不可能命中；
+ * 回退让「共享若干三字词元」的记录进入候选，再交给 BM25 与分数地板排序裁剪。
+ * 词项为 3 字符（trigram 分词器的最小词元），按出现顺序去重并截断。
+ */
+export function buildTrigramOrFallbackQuery(raw: string): string | null {
+  const cleaned = sanitizeTrigramQuery(raw)
+  if (cleaned.length < TRIGRAM_MIN_QUERY_LEN) {
+    return null
+  }
+  const terms: string[] = []
+  const seen = new Set<string>()
+  for (let i = 0; i + 3 <= cleaned.length && terms.length < TRIGRAM_OR_FALLBACK_MAX_TERMS; i += 1) {
+    const gram = cleaned.slice(i, i + 3)
+    if (!seen.has(gram)) {
+      seen.add(gram)
+      // 词项可能含空格（跨词窗口），必须引号包裹成短语，否则破坏 OR 语法
+      terms.push(`"${gram}"`)
+    }
+  }
+  if (terms.length < 2) {
+    return null
+  }
+  return terms.join(' OR ')
+}
+
 /**
  * unicode61 风格路径：分词后用 OR 连接；短语用双引号包裹
  */
