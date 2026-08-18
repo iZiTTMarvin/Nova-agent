@@ -99,3 +99,37 @@ export type {
 export { MemoryExtractor, parseExtractedJson, EXTRACT_REASONING_EFFORT } from './MemoryExtractor'
 export type { ExtractedMemory, MemoryExtractorDeps } from './MemoryExtractor'
 export { EXTRACT_WINDOW_SIZE, buildExtractMessages } from './memoryPrompts'
+export {
+  migrateMemorySchema,
+  readMemorySchemaVersion,
+  MEMORY_SCHEMA_VERSION,
+  MemoryMigrationError
+} from './schema/MemoryMigrations'
+export type {
+  MemoryMigrationResult,
+  MemoryMigrationDiagnostic,
+  MemoryMigrationFailureCode
+} from './schema/MemoryMigrations'
+export type { MemoryRepository } from './repository/MemoryRepository'
+export type {
+  MemoryRecordDraft,
+  MemoryEvidenceDraft,
+  MemoryRecordListOptions,
+  MemoryStatusUpdateOptions,
+  MemoryEvidenceMergeInput,
+  MemoryFtsSearchOptions,
+  MemoryFtsStatusFilter,
+  MemoryRecordFtsHit,
+  MemorySupersedeResult
+} from './repository/MemoryRepository'
+export type {
+  ScopeKind,
+  MemoryKind,
+  MemoryStatus,
+  Explicitness,
+  MemoryEvidenceType,
+  MemoryScope,
+  MemoryRecord,
+  MemoryEvidence,
+  MemoryRecordStatsRow
+} from './types'

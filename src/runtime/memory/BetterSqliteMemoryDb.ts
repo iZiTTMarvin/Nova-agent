@@ -4,7 +4,7 @@
 
 import Database from 'better-sqlite3'
 import type { MemoryDb, MemoryDbStatement } from './MemoryDb'
-import { initMemorySchema } from './MemorySchema'
+import { migrateMemorySchema } from './schema/MemoryMigrations'
 
 /** 将 better-sqlite3 Statement 适配为 MemoryDbStatement */
 class BetterSqliteStatement implements MemoryDbStatement {
@@ -54,11 +54,18 @@ export class BetterSqliteMemoryDb implements MemoryDb {
 }
 
 /**
- * 打开记忆库并初始化 schema（主进程 / 集成测试入口）
+ * 打开记忆库并迁移到当前 schema 版本（主进程 / 集成测试入口）。
+ * 迁移失败直接抛出；fail-soft（禁用记忆并继续运行）由宿主决定。
  * @param dbPath 通常为 {memoryRoot}/memory.db
  */
 export function openBetterSqliteMemoryDb(dbPath: string): BetterSqliteMemoryDb {
   const db = new BetterSqliteMemoryDb(dbPath)
-  initMemorySchema(db)
+  try {
+    migrateMemorySchema(db)
+  } catch (err) {
+    // 失败路径必须释放句柄，宿主拿不到实例无法自行 close
+    db.close()
+    throw err
+  }
   return db
 }
