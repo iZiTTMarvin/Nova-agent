@@ -4,10 +4,26 @@ import {
   applyL2Budget,
   DEFAULT_L1_MAX_CHARS,
   DEFAULT_L2_MAX_CHARS,
-  L2_HIT_SEPARATOR
+  L2_HIT_SEPARATOR,
+  MEMORY_PREFETCH_DOCUMENT_MAX_ITEMS,
+  MEMORY_PREFETCH_GLOBAL_MAX_ITEMS,
+  MEMORY_PREFETCH_PROJECT_STRUCTURED_MAX_ITEMS,
+  MEMORY_PREFETCH_SCORE_FLOOR,
+  MEMORY_PREFETCH_STRUCTURED_MAX_CHARS,
+  MEMORY_PREFETCH_TOTAL_MAX_CHARS
 } from '../../../../src/runtime/memory/MemoryBudget'
 
 describe('MemoryBudget', () => {
+  it('prefetch 预算常量与注入契约一致', () => {
+    expect(MEMORY_PREFETCH_TOTAL_MAX_CHARS).toBe(2400)
+    expect(MEMORY_PREFETCH_STRUCTURED_MAX_CHARS).toBe(320)
+    expect(MEMORY_PREFETCH_PROJECT_STRUCTURED_MAX_ITEMS).toBe(4)
+    expect(MEMORY_PREFETCH_GLOBAL_MAX_ITEMS).toBe(2)
+    expect(MEMORY_PREFETCH_DOCUMENT_MAX_ITEMS).toBe(2)
+    expect(MEMORY_PREFETCH_SCORE_FLOOR).toBeGreaterThan(0)
+    expect(MEMORY_PREFETCH_SCORE_FLOOR).toBeLessThan(1)
+  })
+
   it('applyL1Budget 未超限返回原文', () => {
     const text = '短文本'
     expect(applyL1Budget(text)).toBe(text)

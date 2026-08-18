@@ -102,15 +102,23 @@ describe('MemoryServiceHost reconcile 调度', () => {
     expect(() => getMemoryService()).not.toThrow()
   })
 
-  it('结构化仓储与候选处理器随服务单例装配，close 后一并释放', async () => {
-    const { getMemoryService, getMemoryRepository, getMemoryCandidateProcessor } = await import(
-      '../../../src/main/services/MemoryServiceHost'
-    )
+  it('结构化仓储、候选处理器与检索层随服务单例装配，close 后一并释放', async () => {
+    const {
+      getMemoryService,
+      getMemoryRepository,
+      getMemoryCandidateProcessor,
+      getMemoryRetrievalService,
+      getMemoryPrefetchService
+    } = await import('../../../src/main/services/MemoryServiceHost')
     getMemoryService()
     const repo = getMemoryRepository()
     const processor = getMemoryCandidateProcessor()
+    const retrieval = getMemoryRetrievalService()
+    const prefetch = getMemoryPrefetchService()
     expect(getMemoryRepository()).toBe(repo)
     expect(getMemoryCandidateProcessor()).toBe(processor)
+    expect(getMemoryRetrievalService()).toBe(retrieval)
+    expect(getMemoryPrefetchService()).toBe(prefetch)
 
     const { resetMemoryServiceForTests } = await import(
       '../../../src/main/services/MemoryServiceHost'
@@ -119,5 +127,7 @@ describe('MemoryServiceHost reconcile 调度', () => {
     getMemoryService()
     expect(getMemoryRepository()).not.toBe(repo)
     expect(getMemoryCandidateProcessor()).not.toBe(processor)
+    expect(getMemoryRetrievalService()).not.toBe(retrieval)
+    expect(getMemoryPrefetchService()).not.toBe(prefetch)
   })
 })

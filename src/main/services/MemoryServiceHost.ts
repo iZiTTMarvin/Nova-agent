@@ -12,17 +12,24 @@ import type { BetterSqliteMemoryDb } from '../../runtime/memory/BetterSqliteMemo
 import { SqliteMemoryRepository } from '../../runtime/memory/repository/SqliteMemoryRepository'
 import type { MemoryRepository } from '../../runtime/memory/repository/MemoryRepository'
 import { MemoryCandidateProcessor } from '../../runtime/memory/policy/MemoryCandidateProcessor'
+import { StructuredMemoryRetriever } from '../../runtime/memory/retrieval/StructuredMemoryRetriever'
+import { DocumentMemoryRetriever } from '../../runtime/memory/retrieval/DocumentMemoryRetriever'
+import { MemoryRetrievalService } from '../../runtime/memory/retrieval/MemoryRetrievalService'
+import { MemoryPrefetchService } from '../../runtime/memory/retrieval/MemoryPrefetchService'
+import { MemoryVerifier } from '../../runtime/memory/lifecycle/MemoryVerifier'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 let memoryService: MemoryService | null = null
 let memoryRepository: MemoryRepository | null = null
 let memoryCandidateProcessor: MemoryCandidateProcessor | null = null
+let memoryRetrievalService: MemoryRetrievalService | null = null
+let memoryPrefetchService: MemoryPrefetchService | null = null
 /** 已完成初始化 reconcile 的 scope（每个 scope 仅 reconcile 一次） */
 const initializedScopes = new Set<string>()
 /** 正在 reconcile 的 scope（防止同一 scope 并发重复） */
 const reconcilingScopes = new Set<string>()
 
-/** 获取或创建记忆服务单例（含 FTS 索引库；同库一并装配结构化记忆仓储与候选处理器） */
+/** 获取或创建记忆服务单例（含 FTS 索引库；同库一并装配结构化记忆仓储、候选处理器与检索层） */
 export function getMemoryService(): MemoryService {
   if (!memoryService) {
     const settings = loadNovaSettings()
@@ -49,6 +56,13 @@ export function getMemoryService(): MemoryService {
     })
     memoryRepository = new SqliteMemoryRepository(db)
     memoryCandidateProcessor = new MemoryCandidateProcessor({ repository: memoryRepository })
+    const verifier = new MemoryVerifier({ repository: memoryRepository })
+    memoryRetrievalService = new MemoryRetrievalService({
+      structuredRetriever: new StructuredMemoryRetriever(memoryRepository),
+      documentRetriever: new DocumentMemoryRetriever(memoryService),
+      verifier
+    })
+    memoryPrefetchService = new MemoryPrefetchService(memoryRetrievalService)
   }
   return memoryService
 }
@@ -63,6 +77,18 @@ export function getMemoryRepository(): MemoryRepository {
 export function getMemoryCandidateProcessor(): MemoryCandidateProcessor {
   getMemoryService()
   return memoryCandidateProcessor!
+}
+
+/** 组合检索单例（memory_search 工具与 prefetch 共用） */
+export function getMemoryRetrievalService(): MemoryRetrievalService {
+  getMemoryService()
+  return memoryRetrievalService!
+}
+
+/** prefetch 注入块构建单例（只构建字符串，接线由上层负责） */
+export function getMemoryPrefetchService(): MemoryPrefetchService {
+  getMemoryService()
+  return memoryPrefetchService!
 }
 
 /**
@@ -110,6 +136,8 @@ export function closeMemoryService(): void {
   memoryService = null
   memoryRepository = null
   memoryCandidateProcessor = null
+  memoryRetrievalService = null
+  memoryPrefetchService = null
   initializedScopes.clear()
   reconcilingScopes.clear()
 }

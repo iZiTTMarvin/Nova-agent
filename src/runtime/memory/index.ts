@@ -26,7 +26,14 @@ export {
   applyL2Budget,
   DEFAULT_L2_MAX_CHARS,
   DEFAULT_L2_SNIPPET_MAX_CHARS,
-  L2_HIT_SEPARATOR
+  L2_HIT_SEPARATOR,
+  MEMORY_PREFETCH_TOTAL_MAX_CHARS,
+  MEMORY_PREFETCH_STRUCTURED_MAX_CHARS,
+  MEMORY_PREFETCH_PROJECT_STRUCTURED_MAX_ITEMS,
+  MEMORY_PREFETCH_GLOBAL_MAX_ITEMS,
+  MEMORY_PREFETCH_DOCUMENT_MAX_ITEMS,
+  MEMORY_PREFETCH_CANDIDATE_LIMIT,
+  MEMORY_PREFETCH_SCORE_FLOOR
 } from './MemoryBudget'
 export { buildL1MemoryContext } from './MemoryInjector'
 export {
@@ -134,7 +141,9 @@ export type {
   MemoryMigrationDiagnostic,
   MemoryMigrationFailureCode
 } from './schema/MemoryMigrations'
-export type { MemoryRepository } from './repository/MemoryRepository'
+export type {
+  MemoryRepository
+} from './repository/MemoryRepository'
 export type {
   MemoryRecordDraft,
   MemoryEvidenceDraft,
@@ -146,6 +155,41 @@ export type {
   MemoryRecordFtsHit,
   MemorySupersedeResult
 } from './repository/MemoryRepository'
+export type {
+  MemoryHistoricalNote,
+  StructuredMemoryResult,
+  DocumentMemoryResult,
+  MemorySearchResult,
+  ScoredMemoryResult,
+  MemorySearchInput,
+  MemoryRetriever,
+  MemoryVectorProvider
+} from './retrieval/MemoryRetriever'
+export { stripLexicalScore } from './retrieval/MemoryRetriever'
+export { StructuredMemoryRetriever } from './retrieval/StructuredMemoryRetriever'
+export { DocumentMemoryRetriever } from './retrieval/DocumentMemoryRetriever'
+export type { DocumentMemorySearchPort } from './retrieval/DocumentMemoryRetriever'
+export { MemoryRetrievalService } from './retrieval/MemoryRetrievalService'
+export type { MemoryRetrievalServiceDeps } from './retrieval/MemoryRetrievalService'
+export { MemoryPrefetchService, MEMORY_PREFETCH_BLOCK_TITLE, MEMORY_PREFETCH_RULES } from './retrieval/MemoryPrefetchService'
+export type { MemoryPrefetchInput, MemoryPrefetchRetrievalPort } from './retrieval/MemoryPrefetchService'
+export {
+  rankMemoryResults,
+  computeMemoryRankScore,
+  scopeTierOf,
+  kindRelevanceScore,
+  freshnessScore,
+  isEpisodicDocument,
+  MEMORY_RANKING_WEIGHTS,
+  MEMORY_FRESHNESS_HALF_LIFE_DAYS
+} from './retrieval/memoryRanking'
+export { MemoryVerifier } from './lifecycle/MemoryVerifier'
+export type {
+  MemorySourceStat,
+  MemorySourceStatFn,
+  MemoryVerifyOutcome,
+  MemoryVerifierDeps
+} from './lifecycle/MemoryVerifier'
 export type {
   ScopeKind,
   MemoryKind,

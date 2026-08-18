@@ -23,7 +23,7 @@ import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import type { ToolAvailability } from '../../../runtime/tools/availability'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
-import type { MemoryService } from '../../../runtime/memory/MemoryService'
+import type { MemoryRetrievalService } from '../../../runtime/memory/retrieval/MemoryRetrievalService'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
@@ -31,7 +31,7 @@ export interface BuiltinToolRegistrationDeps {
   skillRegistry: SkillRegistry
   /** invoke_skill 执行时惰性读取；工具创建可早于 AgentLoop */
   getAgentLoop: () => AgentLoop | null
-  getMemoryService: () => MemoryService | null
+  getMemoryRetrievalService: () => MemoryRetrievalService | null
   loadSettings: () => NovaSettings
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
@@ -56,7 +56,7 @@ export function registerBuiltinTools(
   toolRegistry.register(webSearchTool)
   toolRegistry.register(
     createMemorySearchTool({
-      getMemoryService: deps.getMemoryService,
+      getMemoryRetrievalService: deps.getMemoryRetrievalService,
       loadSettings: deps.loadSettings
     })
   )

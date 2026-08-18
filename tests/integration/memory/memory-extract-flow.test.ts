@@ -22,6 +22,7 @@ import { consolidateObservations } from '@runtime/memory/MemoryConsolidator'
 import { SqliteMemoryRepository } from '@runtime/memory/repository/SqliteMemoryRepository'
 import { MemoryCandidateProcessor } from '@runtime/memory/policy/MemoryCandidateProcessor'
 import { formatMemorySearchResults } from '@runtime/tools/memorySearch'
+import type { MemorySearchResult } from '@runtime/memory/retrieval/MemoryRetriever'
 import type { ChatMessage } from '@runtime/model/types'
 
 const EPISODIC_MARKER = '北极星提炼验收短语'
@@ -135,7 +136,16 @@ describe('memory-extract-flow 集成', () => {
 
     const hits = service!.search(scopeId, EPISODIC_MARKER, { limit: 5, scoreFloor: 0.01 })
     expect(hits.length).toBeGreaterThan(0)
-    expect(formatMemorySearchResults(hits, EPISODIC_MARKER)).toContain(EPISODIC_MARKER)
+    const documentResults: MemorySearchResult[] = hits.map((hit) => ({
+      id: hit.relPath,
+      group: 'document',
+      kind: 'document',
+      relPath: hit.relPath,
+      body: hit.body,
+      advisory: false,
+      historicalNote: null
+    }))
+    expect(formatMemorySearchResults(documentResults, EPISODIC_MARKER)).toContain(EPISODIC_MARKER)
 
     const structured = repo!.searchFts('原生模块')
     expect(structured.map((h) => h.record.id)).toEqual([record!.id])

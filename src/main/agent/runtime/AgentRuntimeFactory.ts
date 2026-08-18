@@ -49,7 +49,7 @@ import {
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { RunCoordinator } from '../../../runtime/run/RunCoordinator'
 import { getSkillService } from '../../services/SkillServiceHost'
-import { getMemoryService } from '../../services/MemoryServiceHost'
+import { getMemoryService, getMemoryRetrievalService } from '../../services/MemoryServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { activeStreams } from '../events'
 import { resolveToDataUrl } from './imageResolve'
@@ -239,7 +239,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   registerBuiltinTools(toolRegistry, {
     skillRegistry,
     getAgentLoop: () => loop,
-    getMemoryService,
+    getMemoryRetrievalService,
     loadSettings: loadNovaSettings,
     getSpawnSubagentPort,
     getToolAvailability: () => toolAvailability
