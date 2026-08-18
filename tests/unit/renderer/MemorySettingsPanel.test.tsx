@@ -7,7 +7,7 @@
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemorySettingsPanel } from '../../../src/renderer/features/settings/MemorySettingsPanel'
-import type { MemoryRecordDto } from '../../../src/shared/memory/types'
+import type { MemoryRecordDto, MemoryScopeFileEntry } from '../../../src/shared/memory/types'
 import { renderDom, act } from './renderDom'
 
 const mockInvoke = vi.fn()
@@ -57,13 +57,19 @@ function flushAsync(): Promise<void> {
   })
 }
 
-function setupInvokeMock(options: { projectRecords?: MemoryRecordDto[]; globalRecords?: MemoryRecordDto[] } = {}) {
+function setupInvokeMock(options: {
+  files?: MemoryScopeFileEntry[]
+  projectRecords?: MemoryRecordDto[]
+  globalRecords?: MemoryRecordDto[]
+} = {}) {
+  const files = options.files ?? []
   const projectRecords = options.projectRecords ?? [recordDto()]
   const globalRecords = options.globalRecords ?? []
   mockInvoke.mockReset()
   mockInvoke.mockImplementation((channel: string, params?: { scopeKind?: string }) => {
     if (channel === 'settings:get') return Promise.resolve(settingsDto)
-    if (channel === 'memory:list-files') return Promise.resolve([])
+    if (channel === 'memory:list-files') return Promise.resolve(files)
+    if (channel === 'memory:read-file') return Promise.resolve('# Project memory')
     if (channel === 'memory:stats') {
       return Promise.resolve({
         scopeId: 'abc',
@@ -84,6 +90,36 @@ function setupInvokeMock(options: { projectRecords?: MemoryRecordDto[]; globalRe
 
 describe('MemorySettingsPanel 学习记忆查看器', () => {
   beforeEach(() => {
+    const escapeCss = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+    if (typeof CSS === 'undefined') {
+      Object.defineProperty(globalThis, 'CSS', {
+        configurable: true,
+        value: { escape: escapeCss }
+      })
+    } else {
+      Object.defineProperty(CSS, 'escape', {
+        configurable: true,
+        value: escapeCss
+      })
+    }
+    Object.defineProperty(window, 'scrollTo', {
+      configurable: true,
+      value: vi.fn()
+    })
+    if (typeof HTMLDialogElement !== 'undefined') {
+      Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+        configurable: true,
+        value() {
+          this.open = true
+        }
+      })
+      Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+        configurable: true,
+        value() {
+          this.open = false
+        }
+      })
+    }
     // 就地替换 bridge（与仓库其他 renderer 测试一致）
     global.window.api = {
       invoke: mockInvoke,
@@ -105,14 +141,15 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     expect(text).toContain('已学习的记忆')
     expect(text).toContain('决策')
     expect(text).toContain('项目当前主要数据库为 PostgreSQL')
-    expect(text).toContain('工作区确认')
-    expect(text).toContain('来自工作区')
+    expect(text).toContain('已由工作区确认')
+    expect(text).toContain('来源：工作区')
+    expect(text).toContain('技术信息')
     expect(text).toContain('database.primary')
     expect(renderer.container.querySelector('.memory-settings-panel__forget-btn')).not.toBeNull()
     renderer.unmount()
   })
 
-  it('observed 记忆带 advisory 样式标识', async () => {
+  it('observed 记忆显示可读学习来源', async () => {
     setupInvokeMock({
       projectRecords: [recordDto({ id: 'mem_obs', explicitness: 'observed', kind: 'preference', memoryKey: null })]
     })
@@ -123,8 +160,38 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     await flushAsync()
 
     const text = renderer.container.textContent ?? ''
-    expect(text).toContain('行为观察')
-    expect(renderer.container.querySelector('.memory-settings-panel__badge--advisory')).not.toBeNull()
+    expect(text).toContain('根据操作记录学习')
+    expect(renderer.container.querySelector('.memory-settings-panel__record-meta')).not.toBeNull()
+    renderer.unmount()
+  })
+
+  it('记忆文件在主页面折叠为摘要，点击后打开编辑浮窗', async () => {
+    setupInvokeMock({
+      files: [
+        { relPath: 'MEMORY.md', size: 1024, mtimeMs: 1_700_000_000_000 },
+        { relPath: 'episodic/summary.md', size: 2048, mtimeMs: 1_700_000_500_000 }
+      ]
+    })
+    const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
+    useSettingsStore.setState({ currentProject: '/tmp/project' })
+
+    const renderer = renderDom(<MemorySettingsPanel />)
+    await flushAsync()
+
+    expect(renderer.container.querySelector('.memory-file-dialog')).toBeNull()
+
+    const editButton = [...renderer.container.querySelectorAll('button')].find(
+      b => b.textContent === '编辑文件'
+    )
+    expect(editButton).toBeDefined()
+
+    await act(async () => {
+      editButton!.click()
+    })
+    await flushAsync()
+
+    expect(renderer.container.querySelector('.memory-file-dialog')).not.toBeNull()
+    expect(renderer.container.textContent ?? '').toContain('编辑记忆文件')
     renderer.unmount()
   })
 
