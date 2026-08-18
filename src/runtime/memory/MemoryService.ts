@@ -1,6 +1,6 @@
 /**
  * MemoryService — 跨会话记忆业务入口
- * L1：getProjectEssence 直读 MEMORY.md；L2 检索：search 只查 FTS 索引（热路径默认不 reconcile）
+ * 文档检索：search 只查 FTS 索引（热路径默认不 reconcile）；手写 .md 与 episodic 落盘走本服务。
  */
 import {
   existsSync,
@@ -12,12 +12,10 @@ import {
 import { dirname } from 'path'
 import type { MemoryDb } from './MemoryDb'
 import {
-  getMemoryMdPath,
   getProjectMemoryDir,
   resolveSafeScopeRelPath
 } from './MemoryPaths'
 import { EPISODIC_SUMMARY_REL_PATH } from './MemoryConsolidator'
-import { truncateAtLineOrHeaderBoundary } from './truncateEssence'
 import {
   applyScoreFloor,
   buildMatchQuery,
@@ -35,9 +33,6 @@ import type {
   MemoryScopeStats,
   ReconcileStats
 } from './types'
-import { DEFAULT_L1_MAX_CHARS } from './MemoryBudget'
-
-export { DEFAULT_L1_MAX_CHARS } from './MemoryBudget'
 
 export interface MemoryServiceOptions {
   /** 热路径默认 false：search 不触发 reconcile */
@@ -60,27 +55,6 @@ export class MemoryService {
     this.reconcileOnSearch = options.reconcileOnSearch ?? false
     this.searchLimit = options.searchLimit ?? DEFAULT_SEARCH_LIMIT
     this.scoreFloor = options.scoreFloor ?? DEFAULT_SCORE_FLOOR
-  }
-
-  /**
-   * 直读项目 MEMORY.md 作为 L1 精华；不调 LLM、不做 importance 排序。
-   */
-  getProjectEssence(scopeId: string, maxChars?: number): string {
-    const mdPath = getMemoryMdPath(this.memoryRoot, scopeId)
-    if (!existsSync(mdPath)) {
-      return ''
-    }
-
-    const raw = readFileSync(mdPath, 'utf8').trim()
-    if (!raw) {
-      return ''
-    }
-
-    if (maxChars === undefined || raw.length <= maxChars) {
-      return raw
-    }
-
-    return truncateAtLineOrHeaderBoundary(raw, maxChars)
   }
 
   /**

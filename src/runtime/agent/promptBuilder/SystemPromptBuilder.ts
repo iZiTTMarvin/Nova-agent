@@ -8,7 +8,7 @@ const LAYER_TITLES: Record<keyof SystemPromptLayers, string> = {
   agentRole: 'Agent Role',
   baseRules: 'Base Rules',
   projectRules: 'Project Rules',
-  memoryContext: 'Project Memory',
+  memoryContext: 'Memory Policy',
   skillContext: 'Skills',
   modeInstruction: 'Mode',
   taskPolicy: 'Task Policy',

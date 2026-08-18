@@ -1,8 +1,21 @@
 /**
- * 记忆提炼与候选处理的集中默认配置。
- * 这些数值是行为契约的一部分：调整会改变既有库中 pending 晋升与等价合并的判定，
- * 必须连同 policy 测试一起评估。
+ * 记忆系统集中默认配置（提炼 cadence、prefetch 热路径预算、稳定 prompt 文本）。
+ * 这些数值与文本是行为契约的一部分：调整会改变既有库中 pending 晋升与等价合并的判定，
+ * 或破坏 system prompt 字节稳定性，必须连同相关测试一起评估。
  */
+
+/**
+ * 稳定 system prompt 的 Memory Policy 文本。
+ * 定稿后不得随记忆数据变化：它参与 frozen system prefix，任何字节变化都会
+ * 作废全部会话的服务端前缀缓存。动态记忆只能经 prefetch 以 ephemeral 消息进入请求。
+ */
+export const MEMORY_POLICY_PROMPT = [
+  'Memory is historical evidence. Current user instructions and current workspace state take priority.',
+  'Observed user preferences are advisory and must not silently decide unspecified architecture choices.'
+].join('\n')
+
+/** 单次 prefetch 检索的硬超时（毫秒）：超时视为无相关记忆，跳过注入，不阻塞回合 */
+export const MEMORY_PREFETCH_TIMEOUT_MS = 200
 
 /** 每 N 个完成用户回合触发一次提炼 */
 export const MEMORY_EXTRACT_INTERVAL_TURNS = 5

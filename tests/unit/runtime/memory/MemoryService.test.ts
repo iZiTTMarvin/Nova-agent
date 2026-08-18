@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { MemoryService, DEFAULT_L1_MAX_CHARS } from '../../../../src/runtime/memory/MemoryService'
+import { MemoryService } from '../../../../src/runtime/memory/MemoryService'
 import { computeWorkspaceHash, getMemoryRoot, getProjectMemoryDir } from '../../../../src/runtime/memory/MemoryPaths'
 import { truncateAtLineOrHeaderBoundary } from '../../../../src/runtime/memory/truncateEssence'
 
@@ -34,62 +34,6 @@ describe('truncateAtLineOrHeaderBoundary', () => {
     const out = truncateAtLineOrHeaderBoundary(text, 15)
     expect(out).toBe('intro line')
     expect(out).not.toContain('Section B')
-  })
-})
-
-describe('MemoryService.getProjectEssence', () => {
-  let userData: string
-  let memoryRoot: string
-  let scopeId: string
-  let service: MemoryService
-
-  beforeEach(() => {
-    userData = mkdtempSync(join(tmpdir(), 'nova-mem-svc-'))
-    const workspace = join(userData, 'ws')
-    mkdirSync(workspace, { recursive: true })
-    memoryRoot = getMemoryRoot(userData)
-    scopeId = computeWorkspaceHash(workspace)
-    service = new MemoryService(memoryRoot)
-  })
-
-  afterEach(() => {
-    rmSync(userData, { recursive: true, force: true })
-  })
-
-  function writeMemory(body: string): void {
-    const dir = getProjectMemoryDir(memoryRoot, scopeId)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'MEMORY.md'), body, 'utf8')
-  }
-
-  it('文件不存在时返回空字符串', () => {
-    expect(service.getProjectEssence(scopeId)).toBe('')
-  })
-
-  it('未超限返回 MEMORY.md 全文', () => {
-    const body = '# 偏好\n\n注释用中文。'
-    writeMemory(body)
-    expect(service.getProjectEssence(scopeId)).toBe(body)
-  })
-
-  it('超限时按行/标题边界截断，不截句中', () => {
-    const lines = ['# 标题', '第一行内容', '第二行内容', '## 下一节', '更多内容']
-    const body = lines.join('\n')
-    writeMemory(body)
-    const maxChars = 4
-    const out = service.getProjectEssence(scopeId, maxChars)
-    expect(out.length).toBeLessThanOrEqual(maxChars)
-    expect(out).toBe('# 标题')
-    const originalLines = body.split('\n')
-    for (const part of out.split('\n')) {
-      expect(originalLines).toContain(part)
-    }
-  })
-
-  it('默认 maxChars 未传时不裁剪长文', () => {
-    const body = 'x'.repeat(DEFAULT_L1_MAX_CHARS + 100)
-    writeMemory(body)
-    expect(service.getProjectEssence(scopeId).length).toBe(body.length)
   })
 })
 
@@ -128,6 +72,6 @@ describe('MemoryService.appendEpisodicSummary', () => {
     const memoryBody = '# 用户手写精华'
     writeFileSync(join(dir, 'MEMORY.md'), memoryBody, 'utf8')
     service.appendEpisodicSummary(scopeId, '## episodic\n')
-    expect(service.getProjectEssence(scopeId)).toBe(memoryBody)
+    expect(service.readScopeFile(scopeId, 'MEMORY.md')).toBe(memoryBody)
   })
 })

@@ -1,49 +1,48 @@
 /**
- * 回归：memoryEnabled:false 时无 L1/L2 记忆层；L2 带 skipCacheMarker。
+ * 回归：memoryEnabled:false 时无记忆层文本、无 prefetch 接线产物；
+ * 开启时 system prompt 只含固定 Memory Policy，不含任何记忆数据。
  */
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
-import { buildL1MemoryContext } from '../../../../src/runtime/memory/MemoryInjector'
-import {
-  buildL2ContextMessage,
-  buildL2TailBlock,
-  L2_BLOCK_TITLE
-} from '../../../../src/runtime/memory/MemoryTailInjector'
+import { MEMORY_POLICY_PROMPT } from '../../../../src/runtime/memory/memoryConfig'
 import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
 import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { SystemPromptBuilder } from '../../../../src/runtime/agent/promptBuilder/SystemPromptBuilder'
 
-import type { MemorySearchHit } from '../../../../src/runtime/memory/types'
+function buildPrompt(memoryEnabled: boolean): string {
+  // 与 AgentRuntimeFactory 同构：关闭时 memoryContext 为 null，开启时为固定 policy 文本
+  return SystemPromptBuilder.build({
+    agentRole: buildStableSystemPrompt({ workingDir: '/tmp/p' }),
+    baseRules: renderBaseRules(),
+    projectRules: '',
+    memoryContext: memoryEnabled ? MEMORY_POLICY_PROMPT : null,
+    skillContext: '',
+    toolSummary: ''
+  })
+}
 
 describe('memory-disabled 回归', () => {
-  it('memoryEnabled:false 时不构建 L1 memoryContext 与 L2 尾部', () => {
+  it('memoryEnabled:false 时 system prompt 不含记忆层', () => {
     const settings = { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: false }
     expect(settings.memoryEnabled).toBe(false)
 
-    // 模拟 agentHandler：关闭时不读 essence、不 search
-    const memoryContext = settings.memoryEnabled ? buildL1MemoryContext('某精华') : null
-    expect(memoryContext).toBeNull()
-
-    const hits: MemorySearchHit[] = [
-      { scopeId: 's', relPath: 'MEMORY.md', body: '偏好中文注释', score: 1 }
-    ]
-    const l2Block = settings.memoryEnabled ? buildL2TailBlock(hits, '中文') : ''
-    const l2Message = settings.memoryEnabled ? buildL2ContextMessage(l2Block) : null
-    expect(l2Block).toBe('')
-    expect(l2Message).toBeNull()
+    const prompt = buildPrompt(false)
+    expect(prompt).not.toContain('Memory Policy')
+    expect(prompt).not.toContain('Relevant Memory')
+    expect(prompt).not.toContain(MEMORY_POLICY_PROMPT)
   })
 
-  it('memoryEnabled:false 时 system prompt 不含 Project Memory 层', () => {
-    const prompt = SystemPromptBuilder.build({
-      agentRole: buildStableSystemPrompt({ workingDir: '/tmp/p' }),
-      baseRules: renderBaseRules(),
-      projectRules: '',
-      memoryContext: null,
-      skillContext: '',
-      toolSummary: ''
-    })
-    expect(prompt).not.toContain('Project Memory')
-    expect(prompt).not.toContain(L2_BLOCK_TITLE)
+  it('memoryEnabled:true 时记忆层为固定 policy 文本，不含记忆数据占位', () => {
+    const prompt = buildPrompt(true)
+    expect(prompt).toContain('=== Memory Policy ===')
+    expect(prompt).toContain(MEMORY_POLICY_PROMPT)
+    expect(prompt).not.toContain('Relevant Memory')
+  })
+
+  it('policy 文本逐字节稳定（重复构建一致）', () => {
+    expect(buildPrompt(true)).toBe(buildPrompt(true))
+    expect(MEMORY_POLICY_PROMPT).toContain('historical evidence')
+    expect(MEMORY_POLICY_PROMPT).toContain('advisory')
   })
 })
 
@@ -62,23 +61,11 @@ describe('采集门控由 memoryEnabled 一键统控', () => {
     )
     resetObservationCapturesForTests()
 
-    // 采集门控现由 memoryEnabled 统控（agentHandler 不再单独检查 memoryCaptureEnabled）
     const settings = { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: false }
     expect(settings.memoryEnabled).toBe(false)
 
-    // 模拟门控：关闭时不调用 subscribe，buffer 无写入
     const capture = new ObservationCapture()
     expect(capture.getWorkingBuffer('sess')).toEqual([])
     expect(typeof subscribeObservationCapture).toBe('function')
-  })
-})
-
-describe('L2 skipCacheMarker', () => {
-  it('buildL2ContextMessage 返回 user 消息且带 skipCacheMarker', () => {
-    const msg = buildL2ContextMessage('=== Relevant Memory ===\n片段')
-    expect(msg).not.toBeNull()
-    expect(msg!.role).toBe('user')
-    expect(msg!.skipCacheMarker).toBe(true)
-    expect(msg!.internal).toBeUndefined()
   })
 })

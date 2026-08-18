@@ -20,7 +20,7 @@ import { agentRoute } from '../../../../src/runtime/agent/turn'
 import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
 import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
-import { L2_BLOCK_TITLE } from '../../../../src/runtime/memory/MemoryTailInjector'
+import { MEMORY_PREFETCH_BLOCK_TITLE } from '../../../../src/runtime/memory'
 
 const STABLE_TOOLS: ToolDefinition[] = [
   {
@@ -160,7 +160,7 @@ describe('前缀稳定性黑盒', () => {
     expect(prefix3.length).toBeGreaterThan(prefix2.length)
   })
 
-  it('动态 L2 不进入 system 前缀（与既有 prefix-cache-stability 对齐）', async () => {
+  it('动态记忆块不进入 system 前缀（与既有 prefix-cache-stability 对齐）', async () => {
     const client = new MockModelClient()
     client.addResponse({
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: 'ok' }, { type: 'message_end', finishReason: 'stop' }]
@@ -169,13 +169,13 @@ describe('前缀稳定性黑盒', () => {
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: 'ok' }, { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const L1 = '用户偏好：中文注释'
+    const memLayer = 'Memory is historical evidence.'
     const loop = new AgentLoop(client, new EventBus(), {
       systemPromptLayers: {
         agentRole: buildStableSystemPrompt({ workingDir: '/tmp/project' }),
         baseRules: renderBaseRules(),
         projectRules: '',
-        memoryContext: L1,
+        memoryContext: memLayer,
         skillContext: '',
         toolSummary: ''
       }
@@ -189,11 +189,11 @@ describe('前缀稳定性黑盒', () => {
     const sysA = extractTextFromContent(calls[0].messages.find(m => m.role === 'system')!.content)
     const sysB = extractTextFromContent(calls[1].messages.find(m => m.role === 'system')!.content)
     expect(sysB).toBe(sysA)
-    expect(sysA).toContain(L1)
-    expect(sysA).not.toContain(L2_BLOCK_TITLE)
+    expect(sysA).toContain(memLayer)
+    expect(sysA).not.toContain(MEMORY_PREFETCH_BLOCK_TITLE)
     for (const call of calls) {
       const texts = call.messages.map(m => extractTextFromContent(m.content))
-      expect(texts.some(t => t.includes(L2_BLOCK_TITLE))).toBe(false)
+      expect(texts.some(t => t.includes(MEMORY_PREFETCH_BLOCK_TITLE))).toBe(false)
     }
   })
 

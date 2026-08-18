@@ -44,12 +44,13 @@ import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import { loadNovaSettings } from '../../../runtime/settings/novaSettings'
 import {
   computeWorkspaceHash,
-  buildL1MemoryContext
+  createMemoryPrefetchWiring,
+  MEMORY_POLICY_PROMPT
 } from '../../../runtime/memory'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { RunCoordinator } from '../../../runtime/run/RunCoordinator'
 import { getSkillService } from '../../services/SkillServiceHost'
-import { getMemoryService, getMemoryRetrievalService } from '../../services/MemoryServiceHost'
+import { getMemoryPrefetchService, getMemoryRetrievalService } from '../../services/MemoryServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { activeStreams } from '../events'
 import { resolveToDataUrl } from './imageResolve'
@@ -208,19 +209,9 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
   const skillsTokenEstimate = estimateTokens(skillContext)
 
-  // L1 项目记忆：直读 MEMORY.md 注入 system prompt（不进 context hook / 不写 SessionStore）
-  const scopeId = computeWorkspaceHash(projectPath)
-  let memoryContext: string | null = null
-  if (novaSettings.memoryEnabled) {
-    try {
-      const memoryService = getMemoryService()
-      const essence = memoryService.getProjectEssence(scopeId)
-      memoryContext = buildL1MemoryContext(essence)
-    } catch (err) {
-      console.warn('[AgentRuntimeFactory] L1 记忆注入失败，本轮降级跳过:', err)
-      memoryContext = null
-    }
-  }
+  // 记忆层为固定 policy 文本：记忆数据变化不改变稳定 system prefix（缓存前缀契约）；
+  // 动态记忆由下方 prefetch 接线以 ephemeral 消息进入当次请求。
+  const memoryContext = novaSettings.memoryEnabled ? MEMORY_POLICY_PROMPT : null
 
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
@@ -315,6 +306,22 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       createComposeModeInstructionProvider(sessionStore, sessionId, autoMode)
     )
     agentLoop.setToolAuthorizationPolicy(createComposeStageToolPolicy(sessionStore, sessionId))
+  }
+  // 动态记忆 prefetch：turn 级 context hook，把检索块插入当次请求的用户消息之前。
+  // 注入不触碰 system prompt / 持久化路径；服务不可用（如原生模块缺失）时整体跳过。
+  if (novaSettings.memoryEnabled) {
+    try {
+      const wiring = createMemoryPrefetchWiring({
+        prefetch: getMemoryPrefetchService(),
+        projectScopeId: computeWorkspaceHash(projectPath),
+        workspaceRoot: projectPath
+      })
+      const hooks = agentLoop.getHookManager()
+      hooks.on('onMessageStart', wiring.onMessageStart)
+      hooks.on('context', wiring.context)
+    } catch (err) {
+      console.warn('[AgentRuntimeFactory] 记忆 prefetch 接线失败，本轮跳过动态记忆:', err)
+    }
   }
   agentLoop.restoreSkillRoots(session.grantedSkillRoots)
   agentLoop.setOnSkillRootAdded((dir) => {

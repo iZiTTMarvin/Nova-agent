@@ -12,7 +12,7 @@ import {
   MEMORY_PREFETCH_STRUCTURED_MAX_CHARS,
   MEMORY_PREFETCH_TOTAL_MAX_CHARS
 } from '../MemoryBudget'
-import { extractMemorySnippet } from '../MemoryTailInjector'
+import { extractMemorySnippet } from '../memorySnippet'
 import type { MemorySearchInput, MemorySearchResult } from './MemoryRetriever'
 
 export const MEMORY_PREFETCH_BLOCK_TITLE = 'Relevant Memory'

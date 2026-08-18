@@ -1,5 +1,5 @@
 /**
- * 关键回归：中文 MEMORY.md + extractUserIntent 长串 query → trigram 召回（集成层）
+ * 关键回归：中文 MEMORY.md → trigram 召回（集成层）
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
@@ -8,7 +8,6 @@ import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { getMemoryRoot, computeWorkspaceHash } from '@runtime/memory/MemoryPaths'
 import { MemoryService } from '@runtime/memory/MemoryService'
-import { extractUserIntent, buildSearchQueryFromIntent, buildL2TailBlock } from '@runtime/memory/MemoryTailInjector'
 
 describe('中文记忆召回（集成）', () => {
   let tempDir: string | null = null
@@ -35,7 +34,7 @@ describe('中文记忆召回（集成）', () => {
     return { scopeId }
   }
 
-  it('extractUserIntent 拼接串 + 中文子串 query 命中 MEMORY.md', () => {
+  it('长文档中的中文子串 query 命中 MEMORY.md', () => {
     const { scopeId } = setup()
     service!.upsertMarkdown(
       scopeId,
@@ -49,20 +48,10 @@ describe('中文记忆召回（集成）', () => {
       ].join('\n')
     )
 
-    const query = extractUserIntent({
-      sessionTitle: 'Nova 项目',
-      recentUserMessages: ['上次说过注释语言的事'],
-      currentUserText: '继续用中文写注释'
-    })
-    const searchQuery = buildSearchQueryFromIntent(query)
-
-    const hits = service!.search(scopeId, searchQuery)
+    const hits = service!.search(scopeId, '继续用中文写注释')
     expect(hits.length).toBeGreaterThan(0)
     expect(hits[0].relPath).toBe('MEMORY.md')
-
-    const l2 = buildL2TailBlock(hits, query)
-    expect(l2).toContain('用中文')
-    expect(l2).toContain('[MEMORY.md]')
+    expect(hits[0].body).toContain('用中文')
   })
 
   it('直接中文子串 query 可召回', () => {

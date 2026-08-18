@@ -2,7 +2,7 @@
  * memory_search — 主动检索跨会话记忆（组合检索：结构化 + 文档；可选历史追溯）
  */
 import { computeWorkspaceHash } from '../../memory/MemoryPaths'
-import { extractMemorySnippet } from '../../memory/MemoryTailInjector'
+import { extractMemorySnippet } from '../../memory/memorySnippet'
 import type { MemoryRetrievalService } from '../../memory/retrieval/MemoryRetrievalService'
 import type { MemoryHistoricalNote, MemorySearchResult } from '../../memory/retrieval/MemoryRetriever'
 import type { NovaSettings } from '../../settings/novaSettings'
