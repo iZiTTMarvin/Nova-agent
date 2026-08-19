@@ -66,4 +66,6 @@ export interface CodeRuntimeExecutionResult {
 
 export interface CodeRuntime {
   execute(input: CodeRuntimeExecutionInput): Promise<CodeRuntimeExecutionResult>
+  /** 释放承载资源（worker 线程等）；无资源者可不实现 */
+  dispose?(): void
 }

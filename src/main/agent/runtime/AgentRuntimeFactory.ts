@@ -235,6 +235,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     loadSettings: loadNovaSettings,
     getSpawnSubagentPort,
     getToolAvailability: () => toolAvailability,
+    // 构建产物 out/main/codeModeWorker.js；缺失时 run_code 回退进程内沙箱
+    codeModeWorkerPath: join(__dirname, 'codeModeWorker.js'),
     memoryEnabled: novaSettings.memoryEnabled
   })
 

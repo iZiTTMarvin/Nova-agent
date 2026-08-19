@@ -31,6 +31,8 @@ export function getToolDisplayName(toolName: string): string {
       return '联网搜索 (web_search)'
     case 'archive_read':
       return '读取归档内容 (archive_read)'
+    case 'run_code':
+      return '运行探索代码 (run_code)'
     case 'memory_search':
       return '检索记忆 (memory_search)'
     case 'askQuestion':
@@ -121,6 +123,12 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
     case 'todo_write': {
       const todos = Array.isArray(args.todos) ? args.todos : []
       return `正在更新任务列表（${todos.length} 项）`
+    }
+    case 'run_code': {
+      // 展示模型自述的探索目标，避免直接贴代码正文
+      const description = (args.description as string) || ''
+      const display = description.length > 60 ? description.slice(0, 57) + '...' : description
+      return display ? `运行探索代码：${display}` : '运行探索代码'
     }
     case 'task': {
       // 子代理调度：展示子代理类型 + 任务摘要，避免卡片头部空白

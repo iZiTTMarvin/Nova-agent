@@ -21,6 +21,13 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
     registration: 'conditional'
   },
   { name: 'archive_read', capability: 'archive', exposure: 'always', codeMode: 'direct-only' },
+  {
+    name: 'run_code',
+    capability: 'filesystem-read',
+    exposure: 'always',
+    codeMode: 'direct-only',
+    registration: 'conditional'
+  },
   { name: 'todo_write', capability: 'plan', exposure: 'always', codeMode: 'direct-only' },
   { name: 'askQuestion', capability: 'interaction', exposure: 'always', codeMode: 'direct-only' },
   { name: 'invoke_skill', capability: 'skill', exposure: 'always', codeMode: 'direct-only' },

@@ -20,7 +20,10 @@ import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
+import { createRunCodeTool } from '../../../runtime/tools/runCode'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
+import { QuickJsCodeRuntime, InProcessCodeRuntime } from '../../../runtime/code-mode'
+import { resolveToolPresentationMode } from '../../../runtime/code-mode/presentation'
 import type { ToolAvailability } from '../../../runtime/tools/availability'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -38,6 +41,8 @@ export interface BuiltinToolRegistrationDeps {
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
   /** load_tools 写入的会话级工具可用性 Owner */
   getToolAvailability?: () => ToolAvailability | null
+  /** run_code 的沙箱 Code Runtime 构建产物路径；缺省回退进程内执行 */
+  codeModeWorkerPath?: string
   /**
    * 是否注册 memory_search。由装配方按本轮设置快照决定（与 memoryContext /
    * prefetch 接线同源）；每轮装配重新注册，开关变化下一轮即生效。
@@ -97,6 +102,16 @@ export function registerBuiltinTools(
     createLoadToolsTool({
       getAvailability: deps.getToolAvailability ?? (() => null),
       registeredToolNames: toolRegistry.getToolDefinitions().map(def => def.name)
+    })
+  )
+  toolRegistry.register(
+    createRunCodeTool({
+      getToolAvailability: deps.getToolAvailability ?? (() => null),
+      getPresentationMode: resolveToolPresentationMode,
+      // 每次执行一个全新沙箱与 worker；direct 模式下工具执行层直接拒绝
+      createCodeRuntime: deps.codeModeWorkerPath
+        ? () => new QuickJsCodeRuntime({ workerPath: deps.codeModeWorkerPath! })
+        : () => new InProcessCodeRuntime()
     })
   )
 
