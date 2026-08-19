@@ -20,7 +20,7 @@ Tool Presentation（direct / code-readonly）
 ```
 
 - 呈现模式由内部环境变量 `NOVA_TOOL_PRESENTATION=code-readonly` 开启，进程级确定、会话内稳定（避免请求形态抖动破坏前缀缓存）。
-- SDK 绑定 = Catalog `codeMode=nestable-readonly` ∩ 当前激活集（§24 顺序：Mode → Availability → Nesting），未激活的 deferred 工具不会经 SDK 偷偷出现。
+- SDK 绑定 = Catalog `codeMode=nestable-readonly` ∩ 当前激活集（投影顺序：Mode → Availability → Nesting），未激活的 deferred 工具不会经 SDK 偷偷出现。
 
 ## 安全模型
 

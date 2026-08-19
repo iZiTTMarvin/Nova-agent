@@ -1,5 +1,5 @@
 /**
- * code-readonly 呈现模式投影与 SDK 生成测试（§23/§24/§36）：
+ * code-readonly 呈现模式投影与 SDK 生成测试：
  * direct 模式行为零变化；code-readonly 模式下四个只读工具改由 SDK 暴露且不重复出现；
  * SDK 声明字节级稳定；未激活 deferred 工具不进 SDK。
  */
@@ -56,7 +56,7 @@ describe('renderCodeModeSdkSection', () => {
     expect(a).toContain('Promise<{ output: string }>')
   })
 
-  it('economy on 时未激活组的 nestable 工具不进 SDK（§24 顺序）', () => {
+  it('economy on 时未激活组的 nestable 工具不进 SDK（投影顺序：Mode → Availability → Nesting）', () => {
     const availability = new ToolAvailability()
     availability.setEconomyMode('on')
     availability.bindRegisteredToolNames(['ls', 'read', 'grep', 'find', 'task'])

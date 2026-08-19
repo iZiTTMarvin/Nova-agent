@@ -1,5 +1,5 @@
 /**
- * Code Mode 集成测试（§57）：run_code → 嵌套 grep/read → return 全链路。
+ * Code Mode 集成测试：run_code → 嵌套 grep/read → return 全链路。
  * 真实 ToolRegistry（真实只读工具实现）+ 真实 QuickJS 沙箱 + 统一执行流水线，
  * 验证嵌套调用真实执行、父子关联可观测、嵌套结果不进入主上下文、
  * direct-only 与未激活 deferred 工具无法经 SDK 调用。

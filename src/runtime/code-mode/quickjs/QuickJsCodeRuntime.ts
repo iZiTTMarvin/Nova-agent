@@ -222,3 +222,14 @@ export class InProcessCodeRuntime implements CodeRuntime {
     return executeInQuickJsSandbox(await loadQuickJsModule(), input)
   }
 }
+
+let sharedWorkerRuntime: QuickJsCodeRuntime | null = null
+
+/**
+ * 进程级共享 worker runtime：worker 与 WASM 模块只初始化一次，执行串行复用。
+ * 随进程生命周期存活；worker 意外退出时下一次执行自动重建。
+ */
+export function getSharedQuickJsCodeRuntime(workerPath: string): QuickJsCodeRuntime {
+  sharedWorkerRuntime ??= new QuickJsCodeRuntime({ workerPath })
+  return sharedWorkerRuntime
+}

@@ -6,7 +6,7 @@
 
 import type { CodeRuntimeLimits } from './limits'
 
-/** run_code 失败分类：模型可见的错误语义（§33），内部诊断另留明细 */
+/** run_code 失败分类：模型可见的错误语义，内部诊断另留明细 */
 export type RunCodeFailureKind =
   | 'parse_error'
   | 'execution_error'
@@ -27,6 +27,8 @@ export interface CodeRuntimeToolCallResolution {
   readonly ok: boolean
   readonly resultJson?: string
   readonly errorMessage?: string
+  /** 失败为「工具不可用」时标记，沙箱内以 unknown_tool 形式抛出 */
+  readonly errorKind?: 'unknown_tool'
 }
 
 export interface CodeRuntimeExecutionInput {
@@ -66,6 +68,4 @@ export interface CodeRuntimeExecutionResult {
 
 export interface CodeRuntime {
   execute(input: CodeRuntimeExecutionInput): Promise<CodeRuntimeExecutionResult>
-  /** 释放承载资源（worker 线程等）；无资源者可不实现 */
-  dispose?(): void
 }

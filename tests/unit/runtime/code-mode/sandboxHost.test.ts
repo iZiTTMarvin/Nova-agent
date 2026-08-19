@@ -1,5 +1,5 @@
 /**
- * Code Runtime 沙箱宿主测试（§56）：
+ * Code Runtime 沙箱宿主测试：
  * 保护安全边界（无宿主 API 可达）、资源上限、中止/超时与工具桥契约。
  */
 import { describe, expect, it } from 'vitest'
@@ -194,6 +194,15 @@ describe('QuickJsSandboxHost', () => {
     expect(value.name).toBe('ToolCallError')
     expect(value.tool).toBe('edit')
     expect(value.hasTool).toBe(true)
+  })
+
+  it('顶层未捕获的未知工具调用归类 unknown_tool 而非 tool_failure', async () => {
+    const result = await run(`await tools.bash({ command: 'echo hi' })`, {
+      toolNames: ['ls', 'read']
+    })
+    expect(result.status).toBe('failed')
+    expect(result.kind).toBe('unknown_tool')
+    expect(result.message).toContain('bash')
   })
 
   it('宿主侧防御：请求未列出工具时回送错误而不是执行', async () => {

@@ -1,5 +1,5 @@
 /**
- * Code Mode SDK 绑定解析（§24 顺序：Mode Visibility → Availability → Nesting Filter）。
+ * Code Mode SDK 绑定解析（顺序：Mode Visibility → Availability → Nesting Filter）。
  * 只有同时满足「Catalog 标记 nestable-readonly」且「当前激活」的工具才进入 SDK；
  * 未激活的 deferred 工具不能通过 SDK 偷偷出现。输出按 Catalog 声明顺序稳定。
  */

@@ -18,12 +18,16 @@ import { createTaskTool } from '../../../runtime/tools/task'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
+import { existsSync } from 'fs'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import { createRunCodeTool } from '../../../runtime/tools/runCode'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
-import { QuickJsCodeRuntime, InProcessCodeRuntime } from '../../../runtime/code-mode'
-import { resolveToolPresentationMode } from '../../../runtime/code-mode/presentation'
+import {
+  InProcessCodeRuntime,
+  getProcessToolPresentationMode,
+  getSharedQuickJsCodeRuntime
+} from '../../../runtime/code-mode'
 import type { ToolAvailability } from '../../../runtime/tools/availability'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -107,11 +111,15 @@ export function registerBuiltinTools(
   toolRegistry.register(
     createRunCodeTool({
       getToolAvailability: deps.getToolAvailability ?? (() => null),
-      getPresentationMode: resolveToolPresentationMode,
-      // 每次执行一个全新沙箱与 worker；direct 模式下工具执行层直接拒绝
-      createCodeRuntime: deps.codeModeWorkerPath
-        ? () => new QuickJsCodeRuntime({ workerPath: deps.codeModeWorkerPath! })
-        : () => new InProcessCodeRuntime()
+      // 呈现模式进程级一次解析：与 prompt/SDK 冻结口径一致，direct 模式下执行层直接拒绝
+      getPresentationMode: getProcessToolPresentationMode,
+      // 共享 worker runtime（串行复用）；worker 产物缺失（如未构建的开发态）回退进程内沙箱
+      createCodeRuntime: () => {
+        const workerPath = deps.codeModeWorkerPath
+        return workerPath && existsSync(workerPath)
+          ? getSharedQuickJsCodeRuntime(workerPath)
+          : new InProcessCodeRuntime()
+      }
     })
   )
 

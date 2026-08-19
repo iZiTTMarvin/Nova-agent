@@ -7,8 +7,8 @@ import type { SessionStore } from '../../sessions/SessionStore'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
 import type { ToolAvailability } from '../../tools/availability'
-import type { ToolPresentationMode } from '../../code-mode/presentation'
-import { applyToolPresentation } from '../../code-mode/presentation'
+import type { ToolPresentationMode } from '../../code-mode'
+import { applyToolPresentation } from '../../code-mode'
 import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
 
 export interface AgentContext {

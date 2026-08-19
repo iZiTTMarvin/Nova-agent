@@ -1,6 +1,6 @@
 /**
- * Tool Presentation（§22/§36）：能力如何交给模型——原生直调 or run_code 沙箱。
- * 会话/进程内保持稳定，避免 direct↔code 反复切换造成请求形态抖动。
+ * Tool Presentation：能力如何交给模型——原生直调 or run_code 沙箱。
+ * 进程内只在首次装配时解析一次，避免运行中途翻转造成「schema 宣传与执行闸门」分裂；
  * 内部实验开关（默认 direct，行为与历史一致），不提供用户设置 UI。
  */
 import { getCatalogEntry } from '../tools/catalog'
@@ -18,8 +18,19 @@ export function resolveToolPresentationMode(
   return 'direct'
 }
 
+let processPresentation: ToolPresentationMode | null = null
+
 /**
- * 呈现层投影（§23/§24，位于 Mode → Availability 之后）：
+ * 进程级呈现模式：首次调用解析并缓存，此后整个进程生命周期不变。
+ * 装配层（prompt/SDK/工具注册/执行闸门）统一从这里取值，保证会话内形态稳定。
+ */
+export function getProcessToolPresentationMode(): ToolPresentationMode {
+  processPresentation ??= resolveToolPresentationMode()
+  return processPresentation
+}
+
+/**
+ * 呈现层投影（位于 Mode → Availability 之后，只改变调用形式不改变能力边界）：
  * - direct：run_code 不进模型可见面（无 SDK 时该工具无意义）
  * - code-readonly：nestable-readonly 工具不再作为直调 schema 出现，改由 SDK 暴露
  */

@@ -1,5 +1,5 @@
 /**
- * Code Mode 资源上限（§31）。数值可测试、可配置，普通用户无需感知。
+ * Code Mode 资源上限。数值可测试、可配置，普通用户无需感知。
  */
 
 export interface CodeRuntimeLimits {

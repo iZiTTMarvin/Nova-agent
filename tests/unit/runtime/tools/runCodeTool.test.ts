@@ -1,5 +1,5 @@
 /**
- * run_code 工具测试：绑定解析、呈现模式闸门、curated output 与失败语义（§33）。
+ * run_code 工具测试：绑定解析、呈现模式闸门、curated output 与失败语义。
  * 沙箱用进程内 Code Runtime；嵌套派发用可断言的 stub 验证桥接契约。
  */
 import { describe, expect, it } from 'vitest'

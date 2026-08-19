@@ -9,6 +9,7 @@ import {
 } from '../../../lib/thinkingTimingMemory'
 import type {
   ExtendedToolCall,
+  NestedToolActivity,
   RendererMessageBlock,
   RendererToolBlock
 } from '../types'
@@ -37,7 +38,37 @@ export function resetStreamOnSessionSwitch(): Pick<StreamSliceState, 'streamingT
   return initialStreamState()
 }
 
-export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) => ({
+export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) => {
+  /**
+   * 嵌套工具活动（run_code 沙箱内调用）更新：定位父工具块并重写其
+   * nestedActivities；无父块或更新函数返回 null 时不改动消息。
+   */
+  const updateNestedActivity = (
+    messageId: string,
+    parentToolCallId: string,
+    update: (activities: NestedToolActivity[]) => NestedToolActivity[] | null
+  ): void => {
+    set(state => {
+      const idx = state.messageIndexById[messageId]
+      if (idx === undefined) return state
+      const msg = state.messages[idx]
+      if (!msg || !msg.blocks) return state
+      let changed = false
+      const blocks = msg.blocks.map(b => {
+        if (b.type !== 'tool' || b.toolCallId !== parentToolCallId) return b
+        const next = update(b.nestedActivities ?? [])
+        if (!next) return b
+        changed = true
+        return { ...b, nestedActivities: next }
+      })
+      if (!changed) return state
+      const nextMessages = state.messages.slice()
+      nextMessages[idx] = bumpRevision({ ...msg, blocks })
+      return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+    })
+  }
+
+  return {
   ...initialStreamState(),
 
   handleMessageStart: (messageId: string) => {
@@ -170,28 +201,18 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
 
     // 嵌套调用：不创建顶级工具块，追加为父块的紧凑活动
     if (parentToolCallId) {
-      set(state => {
-        const idx = state.messageIndexById[messageId]
-        if (idx === undefined) return state
-        const msg = state.messages[idx]
-        if (!msg || !msg.blocks) return state
-        const blocks = msg.blocks.map(b => {
-          if (b.type !== 'tool' || b.toolCallId !== parentToolCallId) return b
-          const activities = [...(b.nestedActivities ?? [])]
-          const existing = activities.findIndex(a => a.toolCallId === toolCallId)
-          const entry = {
-            toolCallId,
-            toolName,
-            args: sanitizedArgs,
-            status: 'running' as const
-          }
-          if (existing === -1) activities.push(entry)
-          else activities[existing] = entry
-          return { ...b, nestedActivities: activities }
-        })
-        const nextMessages = state.messages.slice()
-        nextMessages[idx] = bumpRevision({ ...msg, blocks })
-        return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      updateNestedActivity(messageId, parentToolCallId, activities => {
+        const entry: NestedToolActivity = {
+          toolCallId,
+          toolName,
+          args: sanitizedArgs,
+          status: 'running'
+        }
+        const existing = activities.findIndex(a => a.toolCallId === toolCallId)
+        if (existing === -1) return [...activities, entry]
+        const next = [...activities]
+        next[existing] = entry
+        return next
       })
       return
     }
@@ -363,24 +384,13 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
 
     // 嵌套调用：只更新父块下的紧凑活动状态
     if (parentToolCallId) {
-      set(state => {
-        const idx = state.messageIndexById[messageId]
-        if (idx === undefined) return state
-        const msg = state.messages[idx]
-        if (!msg || !msg.blocks) return state
-        const blocks = msg.blocks.map(b => {
-          if (b.type !== 'tool' || b.toolCallId !== parentToolCallId) return b
-          if (!b.nestedActivities?.some(a => a.toolCallId === toolCallId)) return b
-          const activities = b.nestedActivities.map(a =>
-            a.toolCallId === toolCallId
-              ? { ...a, status: isError ? ('error' as const) : ('success' as const), result: sanitizedResult }
-              : a
-          )
-          return { ...b, nestedActivities: activities }
-        })
-        const nextMessages = state.messages.slice()
-        nextMessages[idx] = bumpRevision({ ...msg, blocks })
-        return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      updateNestedActivity(messageId, parentToolCallId, activities => {
+        if (!activities.some(a => a.toolCallId === toolCallId)) return null
+        return activities.map(a =>
+          a.toolCallId === toolCallId
+            ? { ...a, status: isError ? ('error' as const) : ('success' as const), result: sanitizedResult }
+            : a
+        )
       })
       return
     }
@@ -605,4 +615,5 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       return patch
     })
   }
-})
+  }
+}

@@ -2,24 +2,30 @@
  * run_code 工具：模型提交一段受限 JS，在 Code Runtime 沙箱中连续编排只读探索工具。
  * 嵌套调用经 ToolContext.dispatchNestedToolCall 重入统一执行流水线（权限/可用性/
  * 取消/截断全部生效）；中间结果留在沙箱内，只有 console 输出与 return 值作为
- * curated output 进入主上下文（§29/§30）。仅在 code-readonly 呈现模式下可用。
+ * curated output 进入主上下文。仅在 code-readonly 呈现模式下可用。
  */
 import type { ToolContext, ToolExecutor, ToolResult, NestedToolCallResult } from '../types'
 import type { ToolAvailability } from '../availability'
-import type { CodeRuntime, CodeRuntimeLimits, CodeRuntimeToolCallResolution } from '../../code-mode'
-import { DEFAULT_CODE_MODE_LIMITS, formatRunCodeFailure } from '../../code-mode'
-import { resolveCodeModeToolBindings } from '../../code-mode/toolBindings'
-import type { ToolPresentationMode } from '../../code-mode/presentation'
+import type {
+  CodeRuntime,
+  CodeRuntimeLimits,
+  CodeRuntimeToolCallResolution,
+  ToolPresentationMode
+} from '../../code-mode'
+import {
+  DEFAULT_CODE_MODE_LIMITS,
+  formatRunCodeFailure,
+  resolveCodeModeToolBindings,
+  truncateToByteBudget
+} from '../../code-mode'
 
 export interface RunCodeToolDeps {
   /** 工具可用性 Owner；绑定解析与嵌套执行闸门共用同一激活口径 */
   readonly getToolAvailability: () => ToolAvailability | null
   /** 当前呈现模式；direct 模式下 run_code 不进模型可见面，幻觉调用在此拒绝 */
   readonly getPresentationMode: () => ToolPresentationMode
-  /** 每次执行创建全新 Code Runtime（沙箱与 worker 不跨执行复用） */
+  /** 沙箱执行环境；生命周期由工厂方持有（共享 worker 或进程内），调用方不负责释放 */
   readonly createCodeRuntime: () => CodeRuntime
-  /** 可选上限覆盖（实验调参用） */
-  readonly getLimits?: () => CodeRuntimeLimits
 }
 
 export function createRunCodeTool(deps: RunCodeToolDeps): ToolExecutor {
@@ -70,24 +76,19 @@ export function createRunCodeTool(deps: RunCodeToolDeps): ToolExecutor {
         return failure('工具可用性 Owner 未装配，run_code 拒绝执行')
       }
 
-      const limits = deps.getLimits?.() ?? DEFAULT_CODE_MODE_LIMITS
+      const limits: CodeRuntimeLimits = DEFAULT_CODE_MODE_LIMITS
       const bindings = resolveCodeModeToolBindings(
         context.mode ?? 'default',
         new Set(availability.getActiveToolNames())
       )
       const runtime = deps.createCodeRuntime()
-      let result
-      try {
-        result = await runtime.execute({
-          source: code,
-          toolNames: bindings,
-          limits,
-          signal: context.abortSignal,
-          dispatchToolCall: request => bridgeToolCall(request, dispatch)
-        })
-      } finally {
-        runtime.dispose?.()
-      }
+      const result = await runtime.execute({
+        source: code,
+        toolNames: bindings,
+        limits,
+        signal: context.abortSignal,
+        dispatchToolCall: request => bridgeToolCall(request, dispatch)
+      })
 
       const curated = formatCuratedOutput(result.logs, result.valueJson ?? null, limits)
       if (result.status === 'failed') {
@@ -124,7 +125,7 @@ async function bridgeToolCall(
   return { ok: false, errorMessage: nested.error ?? '工具调用失败' }
 }
 
-/** curated output：console + return，按 maxModelOutputBytes 合计封顶（§30） */
+/** curated output：console + return，按 maxModelOutputBytes 合计封顶 */
 function formatCuratedOutput(
   logs: readonly string[],
   valueJson: string | null,
@@ -140,7 +141,11 @@ function formatCuratedOutput(
   if (sections.length === 0) {
     return '（代码未产生输出：请 console.log 或 return 与任务相关的结果）'
   }
-  return capOutputBytes(sections.join('\n\n'), limits.maxModelOutputBytes)
+  return truncateToByteBudget(
+    sections.join('\n\n'),
+    limits.maxModelOutputBytes,
+    `\n…[输出超过 ${limits.maxModelOutputBytes} 字节已截断，请缩小 return 内容]`
+  )
 }
 
 function prettyJson(valueJson: string): string {
@@ -149,17 +154,6 @@ function prettyJson(valueJson: string): string {
   } catch {
     return valueJson
   }
-}
-
-function capOutputBytes(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
-  const marker = `\n…[输出超过 ${maxBytes} 字节已截断，请缩小 return 内容]`
-  const budget = maxBytes - Buffer.byteLength(marker, 'utf8')
-  let end = text.length
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > budget) {
-    end = Math.floor(end / 2)
-  }
-  return text.slice(0, end) + marker
 }
 
 function failure(error: string): ToolResult {

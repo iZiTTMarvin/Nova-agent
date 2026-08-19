@@ -15,6 +15,7 @@ import type {
   ExtendedToolCall,
   LiveBlock,
   MessageDiffCache,
+  NestedToolActivity,
   RendererMessageBlock,
   RendererToolBlock,
   SessionMessagePayload
@@ -25,6 +26,7 @@ export type {
   ExtendedToolCall,
   LiveBlock,
   MessageDiffCache,
+  NestedToolActivity,
   RendererMessageBlock,
   RendererToolBlock,
   SessionMessagePayload

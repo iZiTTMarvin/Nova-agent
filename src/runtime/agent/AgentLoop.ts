@@ -380,7 +380,7 @@ export class AgentLoop {
    * 注入工具呈现模式（进程级实验配置）：direct 直调 / code-readonly 沙箱 SDK。
    * 只影响调用形式投影，能力边界仍由 mode 与 availability 决定。
    */
-  setToolPresentation(presentation: import('../code-mode/presentation').ToolPresentationMode): void {
+  setToolPresentation(presentation: import('../code-mode').ToolPresentationMode): void {
     this.ctx.toolPresentation = presentation
   }
 

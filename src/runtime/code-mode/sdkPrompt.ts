@@ -1,6 +1,6 @@
 /**
  * Code Mode SDK 声明生成：把进入沙箱的只读工具渲染为确定性 TypeScript 声明，
- * 注入 system prompt 的工具目录层（§23/§36）。
+ * 注入 system prompt 的工具目录层。
  * 字节级稳定：工具按名称排序、类型按 schema 声明顺序渲染、不嵌入运行时状态。
  */
 import type { ToolDefinition } from '../model/types'

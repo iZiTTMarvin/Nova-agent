@@ -12,6 +12,7 @@
  */
 import { isFail, isSuccess } from 'quickjs-emscripten-core'
 import type { QuickJSWASMModule } from 'quickjs-emscripten-core'
+import { byteLength, truncateToByteBudget } from '../textBytes'
 import type { CodeRuntimeLimits } from '../limits'
 import type {
   CodeRuntimeExecutionInput,
@@ -24,29 +25,30 @@ import type {
 /** 单条 console 日志的截断长度，防止日志本身撑爆沙箱内存 */
 const MAX_LOG_LINE_CHARS = 4000
 
-function byteLength(text: string): number {
-  return Buffer.byteLength(text, 'utf8')
+/** QuickJS 内存超限的报错特征（不同构建文案略有差异） */
+const MEMORY_LIMIT_PATTERN = /memory overflow|out of memory|INTERNAL_LIMIT/i
+
+function isMemoryLimitMessage(text: string): boolean {
+  return MEMORY_LIMIT_PATTERN.test(text)
 }
 
-function truncateUtf8(text: string, maxBytes: number): string {
-  if (byteLength(text) <= maxBytes) return text
-  // 粗截到字节上限内（指数回退避免逐字符扫描大字符串），不做多字节精确切分
-  let end = text.length
-  while (end > 0 && byteLength(text.slice(0, end)) > maxBytes - 64) {
-    end = Math.floor(end / 2)
-  }
-  return `${text.slice(0, end)}…[已截断，超过 ${maxBytes} 字节]`
+function sandboxTimeoutMessage(maxSandboxTimeMs: number): string {
+  return `沙箱执行超时（上限 ${maxSandboxTimeMs}ms）`
 }
+
+/** 中止后等待在途工具调用收敛的窗口：嵌套调用只读且受同一取消信号约束，应快速结束 */
+const ABORT_SETTLE_GRACE_MS = 2_000
 
 /** 沙箱预置 glue：tools Proxy / console / 结果回送。工具名单以字面量嵌入（名单来自 Catalog，受控输入）。 */
 function buildGlueSource(toolNames: readonly string[]): string {
   const allowList = JSON.stringify([...toolNames].sort())
   return `
 globalThis.ToolCallError = class ToolCallError extends Error {
-  constructor(toolName, message) {
+  constructor(toolName, message, kind) {
     super(message)
     this.name = 'ToolCallError'
     this.toolName = toolName
+    this.kind = kind || 'tool_failure'
   }
 }
 const __allowedTools = new Set(${allowList})
@@ -78,7 +80,7 @@ globalThis.console = {
 }
 const __callTool = (name, args) => new Promise((resolve, reject) => {
   if (!__allowedTools.has(name)) {
-    reject(new ToolCallError(name, '工具 ' + name + ' 不可用；可用工具：' + [...__allowedTools].join(', ')))
+    reject(new ToolCallError(name, '工具 ' + name + ' 不可用；可用工具：' + [...__allowedTools].join(', '), 'unknown_tool'))
     return
   }
   const id = ++__callSeq
@@ -97,7 +99,7 @@ globalThis.__deliverToolResult = (id, isErrorFlag, payloadJson) => {
   __pendingCalls.delete(id)
   if (isErrorFlag !== 0) {
     const err = JSON.parse(payloadJson)
-    pending.reject(new ToolCallError(err.toolName, err.message))
+    pending.reject(new ToolCallError(err.toolName, err.message, err.kind))
   } else {
     pending.resolve(JSON.parse(payloadJson))
   }
@@ -123,7 +125,8 @@ ${source}
   (e) => __hostSettle(1, __serializeValue({
     name: e && e.name ? e.name : 'Error',
     message: e && e.message ? e.message : String(e),
-    toolName: e && e.toolName ? e.toolName : undefined
+    toolName: e && e.toolName ? e.toolName : undefined,
+    kind: e && e.kind ? e.kind : undefined
   }))
 )
 `
@@ -137,7 +140,7 @@ interface SettledOutcome {
 /** QuickJS 异常 → 失败分类（内存超限归 limit_exceeded，其余执行错误） */
 function classifyRuntimeError(err: unknown): { kind: 'limit_exceeded' | 'execution_error'; message: string } {
   const message = err instanceof Error ? err.message : String(err)
-  if (/memory overflow|out of memory|INTERNAL_LIMIT/i.test(message)) {
+  if (isMemoryLimitMessage(message)) {
     return { kind: 'limit_exceeded', message: `沙箱内存超限（上限内无法完成计算）：${message}` }
   }
   return { kind: 'execution_error', message }
@@ -176,12 +179,12 @@ function describeSandboxFailure(
     return { kind: 'aborted', message: '执行已取消' }
   }
   if (ctx.timedOut()) {
-    return { kind: 'limit_exceeded', message: `沙箱执行超时（上限 ${ctx.maxSandboxTimeMs}ms）` }
+    return { kind: 'limit_exceeded', message: sandboxTimeoutMessage(ctx.maxSandboxTimeMs) }
   }
   if (name === 'SyntaxError') {
     return { kind: 'parse_error', message }
   }
-  if (/memory overflow|out of memory|INTERNAL_LIMIT/i.test(message) || /memory overflow/i.test(name)) {
+  if (isMemoryLimitMessage(message) || isMemoryLimitMessage(name)) {
     return { kind: 'limit_exceeded', message: `沙箱内存超限：${message}` }
   }
   return { kind: 'execution_error', message: name && name !== 'Error' ? `${name}: ${message}` : message }
@@ -269,12 +272,16 @@ export async function executeInQuickJsSandbox(
 
     const deliverHandle = failure ? null : context.getProp(context.global, '__deliverToolResult')
     try {
-    /** 把一次工具结果送回沙箱（resolve/reject 的后续反应由 executePendingJobs 推进） */
+      /** 把一次工具结果送回沙箱（resolve/reject 的后续反应由 executePendingJobs 推进） */
       const deliver = (request: CodeRuntimeToolCallRequest, resolution: CodeRuntimeToolCallResolution): void => {
         if (!deliverHandle || !deliverHandle.alive) return
         const isError = !resolution.ok
         const payload = isError
-          ? JSON.stringify({ toolName: request.toolName, message: resolution.errorMessage ?? '工具调用失败' })
+          ? JSON.stringify({
+              toolName: request.toolName,
+              message: resolution.errorMessage ?? '工具调用失败',
+              ...(resolution.errorKind ? { kind: resolution.errorKind } : {})
+            })
           : resolution.resultJson ?? 'null'
         const idArg = context.newNumber(request.callId)
         const flagArg = context.newNumber(isError ? 1 : 0)
@@ -304,7 +311,7 @@ export async function executeInQuickJsSandbox(
               return
             }
             if (timedOut()) {
-              failure = { kind: 'limit_exceeded', message: `沙箱执行超时（上限 ${limits.maxSandboxTimeMs}ms）` }
+              failure = { kind: 'limit_exceeded', message: sandboxTimeoutMessage(limits.maxSandboxTimeMs) }
               return
             }
             const request = batch[next++]
@@ -312,14 +319,15 @@ export async function executeInQuickJsSandbox(
               failure = { kind: 'limit_exceeded', message: `工具调用次数超过上限（${limits.maxToolCalls}）` }
               return
             }
-            if (!allowedTools.has(request.toolName)) {
-              issuedCalls++
-              deliver(request, {
-                ok: false,
-                errorMessage: `工具 ${request.toolName} 不在 code mode 可用清单中`
-              })
-              continue
-            }
+          if (!allowedTools.has(request.toolName)) {
+            issuedCalls++
+            deliver(request, {
+              ok: false,
+              errorMessage: `工具 ${request.toolName} 不在 code mode 可用清单中`,
+              errorKind: 'unknown_tool'
+            })
+            continue
+          }
             const argsBytes = byteLength(request.argsJson)
             if (argsBytes > limits.maxToolInputBytes) {
               issuedCalls++
@@ -358,7 +366,7 @@ export async function executeInQuickJsSandbox(
               break
             }
             if (timedOut()) {
-              failure = { kind: 'limit_exceeded', message: `沙箱执行超时（上限 ${limits.maxSandboxTimeMs}ms）` }
+              failure = { kind: 'limit_exceeded', message: sandboxTimeoutMessage(limits.maxSandboxTimeMs) }
               break
             }
             let executedJobs = 0
@@ -395,7 +403,7 @@ export async function executeInQuickJsSandbox(
         })()
 
         const signal = input.signal
-        const abortCleanup: { removeListener?: () => void } = {}
+        const abortCleanup: { removeListener?: () => void; settleTimer?: ReturnType<typeof setTimeout> } = {}
         let abortWait: Promise<void> | null = null
         if (signal) {
           // 中止提前结束宿主侧等待；阻塞中的沙箱执行由中断器切断，未 settle 的
@@ -411,8 +419,25 @@ export async function executeInQuickJsSandbox(
           }
         }
         try {
-          await (abortWait ? Promise.race([loopPromise, abortWait]) : loopPromise)
+          if (abortWait) {
+            const firstSettled = await Promise.race([
+              loopPromise.then(() => 'loop' as const),
+              abortWait.then(() => 'abort' as const)
+            ])
+            if (firstSettled === 'abort') {
+              // 中止后等待在途工具调用真正收敛（不留下脱离监督的执行）：
+              // drainQueue 检测到中止即停发新调用，在途调用只读且受同一取消
+              // 信号约束；收敛窗口耗尽即按中止返回
+              const settleWindow = new Promise<void>(resolve => {
+                abortCleanup.settleTimer = setTimeout(resolve, ABORT_SETTLE_GRACE_MS)
+              })
+              await Promise.race([loopPromise, settleWindow])
+            }
+          } else {
+            await loopPromise
+          }
         } finally {
+          if (abortCleanup.settleTimer) clearTimeout(abortCleanup.settleTimer)
           abortCleanup.removeListener?.()
         }
       }
@@ -444,7 +469,7 @@ export async function executeInQuickJsSandbox(
       }
       const settled = outcome.settled
       if (settled !== null && settled.isError) {
-        let parsed: { name?: string; message?: string; toolName?: string } = {}
+        let parsed: { name?: string; message?: string; toolName?: string; kind?: string } = {}
         try {
           parsed = JSON.parse(settled.payload) as typeof parsed
         } catch {
@@ -452,10 +477,16 @@ export async function executeInQuickJsSandbox(
         }
         const isToolError = parsed.name === 'ToolCallError' || typeof parsed.toolName === 'string'
         // async 包装会把同步阶段的异常转成 rejection：内存超限在这里同样要归类为资源上限
-        const isMemoryLimit = !isToolError && /memory overflow|out of memory|INTERNAL_LIMIT/i.test(parsed.message ?? '')
+        const isMemoryLimit = !isToolError && isMemoryLimitMessage(parsed.message ?? '')
         return {
           status: 'failed',
-          kind: isToolError ? 'tool_failure' : isMemoryLimit ? 'limit_exceeded' : 'execution_error',
+          kind: parsed.kind === 'unknown_tool'
+            ? 'unknown_tool'
+            : isToolError
+              ? 'tool_failure'
+              : isMemoryLimit
+                ? 'limit_exceeded'
+                : 'execution_error',
           message: isToolError
             ? `tools.${parsed.toolName ?? ''}: ${parsed.message ?? ''}`.trim()
             : `${parsed.name && parsed.name !== 'Error' ? `${parsed.name}: ` : ''}${parsed.message ?? ''}`,
@@ -465,7 +496,10 @@ export async function executeInQuickJsSandbox(
       }
       return {
         status: 'ok',
-        valueJson: settled !== null && settled.payload === 'undefined' ? null : truncateUtf8(settled.payload, limits.maxModelOutputBytes),
+        valueJson:
+          settled !== null && settled.payload === 'undefined'
+            ? null
+            : truncateToByteBudget(settled.payload, limits.maxModelOutputBytes, '…[已截断，超过 ' + limits.maxModelOutputBytes + ' 字节]'),
         logs,
         toolCallCount: issuedCalls
       }
