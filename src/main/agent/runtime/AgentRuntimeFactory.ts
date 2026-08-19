@@ -241,6 +241,26 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   toolAvailability.bindRegisteredToolNames(
     toolRegistry.getToolDefinitions().map(def => def.name)
   )
+  if (session.toolAvailability !== undefined) {
+    const { restoredGroups } = toolAvailability.restoreFromSessionState(session.toolAvailability)
+    if (restoredGroups.length > 0 && toolAvailability.getEconomyMode() !== 'off') {
+      console.log(
+        `[tool-economy] session-restore groups=${restoredGroups.join(',')} mode=${toolAvailability.getEconomyMode()}`
+      )
+    }
+  } else {
+    // 旧会话兼容：消息 marker 回填一次并落盘，此后不再依赖消息扫描
+    const { restoredGroups } = toolAvailability.backfillFromMessages(session.messages)
+    if (restoredGroups.length > 0) {
+      sessionStore.updateToolAvailability(sessionId, {
+        version: 1,
+        activatedGroups: [...restoredGroups]
+      })
+    }
+  }
+  toolAvailability.setPersistCallback(state => {
+    sessionStore.updateToolAvailability(sessionId, state)
+  })
 
   const modelPool = buildModelPoolWithFallbacks(modelClient)
   const activeProvider =

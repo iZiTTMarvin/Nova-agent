@@ -23,7 +23,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 14
+export const CURRENT_SESSION_SCHEMA_VERSION = 15
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -281,6 +281,19 @@ function migrateV13ToV14(data: unknown): SessionData {
   }
 }
 
+/**
+ * v14 → v15：引入可选 toolAvailability（会话级工具组激活态）。
+ * 旧会话无此字段时由消息 marker 回填；非法 / 未知版本字段在恢复入口被忽略，
+ * 因此迁移不做数据清洗，仅升级 schemaVersion。
+ */
+function migrateV14ToV15(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 15
+  }
+}
+
 type UnknownObject = { [propertyName: string]: unknown }
 
 function isPlainObject(value: unknown): value is UnknownObject {
@@ -442,7 +455,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV10ToV11, // v10 → v11
   migrateV11ToV12, // v11 → v12
   migrateV12ToV13, // v12 → v13
-  migrateV13ToV14 // v13 → v14
+  migrateV13ToV14, // v13 → v14
+  migrateV14ToV15 // v14 → v15
 ]
 
 /**

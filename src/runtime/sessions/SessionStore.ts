@@ -32,7 +32,8 @@ import type {
   SessionTitleSource,
   CreateChildSessionCommand,
   CreateChildSessionResult,
-  SubagentSessionData
+  SubagentSessionData,
+  SessionToolAvailabilityState
 } from './types'
 import {
   SESSION_DATA_FILE,
@@ -860,6 +861,27 @@ export class SessionStore {
     if (!session) return null
 
     session.activePlan = { ...plan }
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /**
+   * 更新会话级工具组激活态（只写 session.json 元数据）。
+   * state 为 null 时移除字段（无激活组的会话不携带空状态）。
+   */
+  updateToolAvailability(
+    sessionId: string,
+    state: SessionToolAvailabilityState | null
+  ): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    if (state === null) {
+      delete session.toolAvailability
+    } else {
+      session.toolAvailability = { version: 1, activatedGroups: [...state.activatedGroups] }
+    }
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return session
