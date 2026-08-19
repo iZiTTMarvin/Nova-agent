@@ -22,9 +22,12 @@ export function projectAgentEventToRun(
       if (!runCoordinator.getSnapshot(runId)?.turnStartedAt) {
         runCoordinator.markRunning(runId, event.messageId)
       }
+      // 子代理活动行的实时进度：首个事件到来前渲染层只能显示兜底文案
+      runCoordinator.heartbeat(runId, { label: '正在思考…' })
       break
     case 'tool_call': {
       const idempotent = isIdempotentToolName(event.toolName)
+      runCoordinator.heartbeat(runId, { label: `调用 ${event.toolName}` })
       runCoordinator.recordToolPhase(
         runId,
         event.toolCallId,
@@ -76,7 +79,7 @@ export function projectAgentEventToRun(
       break
     case 'message_end':
       runCoordinator.heartbeat(runId, {
-        label: event.interrupted ? 'interrupted' : 'message_end'
+        label: event.interrupted ? 'interrupted' : '完成一轮回复'
       })
       break
     default:

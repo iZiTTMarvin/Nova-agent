@@ -5,9 +5,10 @@
  * 2. 次行：运行中显示当前动作（左→右呼吸微光），完成后翻转为结果摘要
  * 3. 终态且有文件改动时，下方出现会话级 diff 卡
  *
- * 点击整行在原位置弹出悬浮详情（SubagentDetailPopover），不再跳转子会话。
+ * 点击整块在视口锚定的悬浮详情（SubagentDetailPopover）展开，不再跳转子会话。
  */
 import React, { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
 import {
@@ -69,6 +70,14 @@ function formatElapsed(startedAt: number | undefined, endedAt: number): string |
   return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`
 }
 
+/** 弹窗锚定的行几何（打开瞬间的视口坐标；面板用 fixed 定位避开滚动容器裁剪） */
+export interface PopoverAnchor {
+  top: number
+  bottom: number
+  left: number
+  width: number
+}
+
 export interface SubagentActivityRowProps {
   projection: SubagentActivityProjection
   fallbackResult?: string
@@ -80,10 +89,9 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
 }) => {
   const active = isActive(projection.status)
   const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState<PopoverAnchor | null>(null)
   const [now, setNow] = useState(Date.now())
   const containerRef = React.useRef<HTMLElement>(null)
-  /** 面板默认向上展开；行贴近消息流顶部时向下展开，避免被容器裁剪 */
-  const [panelDirection, setPanelDirection] = useState<'up' | 'down'>('up')
 
   useEffect(() => {
     if (!active || !projection.startedAt) return
@@ -117,8 +125,8 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
 
   const toggleOpen = (): void => {
     if (!open && containerRef.current) {
-      const { top } = containerRef.current.getBoundingClientRect()
-      setPanelDirection(top < 500 ? 'down' : 'up')
+      const rect = containerRef.current.getBoundingClientRect()
+      setAnchor({ top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width })
     }
     setOpen((value) => !value)
   }
@@ -136,33 +144,36 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
           aria-expanded={open}
           aria-label={`子代理 ${projection.profile.name}，${status.label}${elapsed ? `，耗时 ${elapsed}` : ''}`}
         >
-          <span className="subagent-activity-row__dot" aria-hidden="true" />
-          <span className="subagent-activity-row__agent">{projection.profile.name}</span>
-          {modelLine && <span className="subagent-activity-row__model">{modelLine}</span>}
-          <span className="subagent-activity-row__status">
-            {status.label}{elapsed ? ` · ${elapsed}` : ''}
+          <span className="subagent-activity-row__header">
+            <span className="subagent-activity-row__dot" aria-hidden="true" />
+            <span className="subagent-activity-row__agent">{projection.profile.name}</span>
+            {modelLine && <span className="subagent-activity-row__model">{modelLine}</span>}
+            <span className="subagent-activity-row__status">
+              {status.label}{elapsed ? ` · ${elapsed}` : ''}
+            </span>
+            <span className="subagent-activity-row__chevron" aria-hidden="true">
+              {open ? '▾' : '▸'}
+            </span>
           </span>
-          <span className="subagent-activity-row__chevron" aria-hidden="true">
-            {open ? '▾' : '▸'}
+          <span
+            className={`subagent-activity-row__activity${active ? ' subagent-activity-row__activity--live' : ''}`}
+          >
+            {activityLine}
           </span>
         </button>
-        <div
-          className={`subagent-activity-row__activity${active ? ' subagent-activity-row__activity--live' : ''}`}
-        >
-          {activityLine}
-        </div>
       </div>
 
       {!active && visibleFileChanges.length > 0 && (
         <SubagentDiffCard projection={projection} />
       )}
 
-      {open && (
+      {open && anchor && createPortal(
         <SubagentDetailPopover
           projection={projection}
-          direction={panelDirection}
+          anchor={anchor}
           onClose={() => setOpen(false)}
-        />
+        />,
+        document.body
       )}
     </section>
   )

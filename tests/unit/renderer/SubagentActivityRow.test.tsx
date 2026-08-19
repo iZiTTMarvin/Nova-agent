@@ -186,8 +186,11 @@ describe('SubagentActivityRow', () => {
     act(() => trigger!.click())
     await flushAsync()
 
-    expect(renderer.container.querySelector('.subagent-detail-popover')).not.toBeNull()
-    const popoverText = renderer.container.textContent ?? ''
+    // 面板 portal 到 body，脱离消息流滚动容器与虚拟行 transform，fixed 定位防裁剪
+    const popover = document.body.querySelector<HTMLElement>('.subagent-detail-popover')
+    expect(popover).not.toBeNull()
+    expect(popover?.style.position).toBe('fixed')
+    const popoverText = document.body.textContent ?? ''
     expect(popoverText).toContain('final report text')
     expect(popoverText).toContain('read')
     expect(popoverText).toContain('先看目录结构')
@@ -200,7 +203,7 @@ describe('SubagentActivityRow', () => {
     act(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
-    expect(renderer.container.querySelector('.subagent-detail-popover')).toBeNull()
+    expect(document.body.querySelector('.subagent-detail-popover')).toBeNull()
     renderer.unmount()
   })
 

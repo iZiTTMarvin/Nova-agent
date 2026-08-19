@@ -28,9 +28,9 @@
 }
 
 .subagent-activity-row__trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -46,6 +46,15 @@
 .subagent-activity-row__trigger:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 1px;
+}
+
+/* 头部行：状态点 + 名称 + 模型 + 状态 + 展开箭头 */
+.subagent-activity-row__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
 }
 
 .subagent-activity-row__dot {
@@ -182,7 +191,7 @@
   }
 }
 
-/* ── 悬浮详情面板（锚定活动行，向上展开） ─────────────────────── */
+/* ── 悬浮详情面板（portal 到 body，fixed 锚定行几何，几何由内联样式提供） ── */
 
 .subagent-detail-popover__backdrop {
   position: fixed;
@@ -190,22 +199,11 @@
   z-index: 40;
 }
 
-/* 行贴近消息流顶部时向下展开，避免面板被容器顶部裁剪 */
-.subagent-detail-popover--down {
-  bottom: auto;
-  top: calc(100% + 6px);
-}
-
 .subagent-detail-popover {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(100% + 6px);
-  z-index: 41;
   display: flex;
   flex-direction: column;
-  max-height: min(58vh, 480px);
   box-sizing: border-box;
+  z-index: 41;
   background: var(--bg-card);
   border: 1px solid var(--border-warm);
   border-radius: var(--radius-md);

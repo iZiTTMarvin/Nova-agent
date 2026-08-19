@@ -104,6 +104,38 @@ describe('终态协议：completed', () => {
   })
 })
 
+describe('模式指令拼接', () => {
+  it('空指令宿主（子代理）不向用户消息拼接任何尾部指令或空白', async () => {
+    const client = new MockModelClient()
+    textReply(client)
+    const { loop } = createLoop(client)
+    loop.setModeInstructionProvider(() => '')
+
+    await loop.sendMessage('探索并总结 README', agentRoute())
+
+    const userMessage = loop.getContext().find(m => m.role === 'user')
+    const content = String(userMessage?.content)
+    // 以任务文本结尾：无尾部指令，也无残留空白
+    expect(content.endsWith('探索并总结 README')).toBe(true)
+    expect(content).not.toContain('当前模式')
+    expect(content).not.toContain('save_plan')
+    expect(content).not.toContain('switch_mode')
+  })
+
+  it('默认宿主仍把模式指令拼接到用户消息尾部（现有行为保持）', async () => {
+    const client = new MockModelClient()
+    textReply(client)
+    const { loop } = createLoop(client)
+
+    await loop.sendMessage('你好', agentRoute())
+
+    const userMessage = loop.getContext().find(m => m.role === 'user')
+    const content = typeof userMessage?.content === 'string' ? userMessage.content : ''
+    expect(content).toContain('你好')
+    expect(content).toContain('[当前模式: default')
+  })
+})
+
 describe('终态协议：cancelled', () => {
   it('流式期间 cancel → outcome cancelled，message_end(interrupted)，checkpoint 关闭，不启动 idle timer', async () => {
     const idleStart = vi.spyOn(IdleCompressionTimer.prototype, 'start')

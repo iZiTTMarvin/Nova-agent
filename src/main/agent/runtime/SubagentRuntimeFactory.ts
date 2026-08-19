@@ -98,6 +98,10 @@ export function prepareSubagentRuntime(
       ? 'plan'
       : 'default'
   )
+  // 子代理的 mode 只是能力闸门（收窄工具与权限），不是主会话的计划/编排语义。
+  // 主会话模式指令会要求调用 save_plan / switch_mode、等待用户审批——子代理既没有
+  // 这些工具也没有真实用户，拼到任务尾部会被模型正确识别为角色不符的注入指令。
+  agentLoop.setModeInstructionProvider(() => '')
   agentLoop.setSessionContext(input.sessionStore, input.childSession.id)
   agentLoop.setReadState(input.readState)
   agentLoop.setArtifactStore(new ArtifactStore(input.sessionsDir))

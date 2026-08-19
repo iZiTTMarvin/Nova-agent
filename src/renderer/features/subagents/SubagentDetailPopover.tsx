@@ -11,6 +11,7 @@ import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { MarkdownRenderer } from '../chat/MarkdownRenderer'
 import { formatSubagentModelLine } from './modelLine'
 import { useSubagentProjectionStore } from './projection'
+import type { PopoverAnchor } from './SubagentActivityRow'
 
 /** 每页拉取的尾部消息条数；子代理为短会话，单页通常即可覆盖全部。 */
 const POPOVER_MESSAGE_PAGE_SIZE = 400
@@ -18,13 +19,37 @@ const MAX_POPOVER_PAGES = 20
 const MAX_TOOL_ROWS = 60
 const MAX_THINKING_CHARS = 600
 const MAX_TARGET_CHARS = 48
+/** 面板与锚定行、视口边缘的最小留白 */
+const POPOVER_VIEWPORT_MARGIN = 12
+const POPOVER_MAX_HEIGHT = 480
 
 const ARG_PREFERRED_KEYS = ['file_path', 'path', 'file', 'directory', 'skill', 'query']
 
+/** 依据锚定行在视口中的位置计算 fixed 面板几何：优先空间大的一侧，始终留在视口内 */
+function computePanelGeometry(anchor: PopoverAnchor, viewportHeight: number): {
+  style: React.CSSProperties
+} {
+  const spaceAbove = anchor.top - POPOVER_VIEWPORT_MARGIN
+  const spaceBelow = viewportHeight - anchor.bottom - POPOVER_VIEWPORT_MARGIN
+  const openUp = spaceAbove >= spaceBelow
+  const available = Math.max(160, openUp ? spaceAbove : spaceBelow)
+  return {
+    style: {
+      position: 'fixed',
+      left: anchor.left,
+      width: anchor.width,
+      maxHeight: Math.min(POPOVER_MAX_HEIGHT, available - 6),
+      ...(openUp
+        ? { bottom: viewportHeight - anchor.top + 6 }
+        : { top: anchor.bottom + 6 })
+    }
+  }
+}
+
 export interface SubagentDetailPopoverProps {
   projection: SubagentActivityProjection
-  /** 展开方向：默认向上（悬于 composer 上方）；行贴近顶部时由调用方改为向下 */
-  direction?: 'up' | 'down'
+  /** 打开瞬间锚定行的视口几何；面板 fixed 定位，随视口而非滚动内容 */
+  anchor: PopoverAnchor
   onClose: () => void
 }
 
@@ -107,11 +132,23 @@ function collectFinalReport(messages: readonly Message[]): string {
 
 export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
   projection,
-  direction = 'up',
+  anchor,
   onClose
 }) => {
   const [messages, setMessages] = useState<Message[] | null>(null)
   const [fetchTick, setFetchTick] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight)
+  const panel = useMemo(
+    () => computePanelGeometry(anchor, viewportHeight),
+    [anchor, viewportHeight]
+  )
+
+  // 视口尺寸变化时重算面板几何（窗口缩放 / 分栏调整）
+  useEffect(() => {
+    const onResize = (): void => setViewportHeight(window.innerHeight)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -185,9 +222,10 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
     <>
       <div className="subagent-detail-popover__backdrop" onClick={onClose} />
       <div
-        className={`subagent-detail-popover${direction === 'down' ? ' subagent-detail-popover--down' : ''}`}
+        className="subagent-detail-popover"
         role="dialog"
         aria-label={`${projection.profile.name} 工作流详情`}
+        style={panel.style}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="subagent-detail-popover__header">

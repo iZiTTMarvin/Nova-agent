@@ -729,15 +729,22 @@ export class AgentLoop {
     }
     userText = dispatched.userText
     if (typeof dispatched.userContent === 'string') {
+      // 空模式指令（子代理等宿主）不拼接，避免消息落盘时残留空尾
+      const contentWithInstruction = modeInstruction
+        ? `${dispatched.userContent}\n\n${modeInstruction}`
+        : dispatched.userContent
       this.ctx.messages.push({
         role: 'user',
-        content: withPrefix(`${dispatched.userContent}\n\n${modeInstruction}`)
+        content: withPrefix(contentWithInstruction)
       })
     } else {
       // ContentBlock[]（含图片）：sessionPrefix 作为首个 text block 插入最前面
       const blocks = sessionPrefix
-        ? [{ type: 'text' as const, text: sessionPrefix }, ...dispatched.userContent, { type: 'text' as const, text: modeInstruction }]
-        : [...dispatched.userContent, { type: 'text' as const, text: modeInstruction }]
+        ? [{ type: 'text' as const, text: sessionPrefix }, ...dispatched.userContent]
+        : [...dispatched.userContent]
+      if (modeInstruction) {
+        blocks.push({ type: 'text' as const, text: modeInstruction })
+      }
       this.ctx.messages.push({ role: 'user', content: blocks })
     }
 
