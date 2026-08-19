@@ -36,6 +36,26 @@ export interface ExecutionIdentity {
   readonly resourceOwnerRunId: string
 }
 
+/**
+ * 嵌套工具调用（如 run_code 沙箱内的 tools.read）的派发请求与结果。
+ * 派发必须重入统一 Tool Runtime 执行流水线（权限/可用性/截断/取消全部生效），
+ * 结果只回给发起方工具，不写入主对话历史。
+ */
+export interface NestedToolCallRequest {
+  readonly toolName: string
+  readonly args: Record<string, unknown>
+}
+
+export interface NestedToolCallResult {
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly success: boolean
+  /** 成功时的工具输出文本（已过流水线截断与 sanitize） */
+  readonly output: string
+  /** 失败原因（权限拒绝 / 组未激活 / 工具错误等，已含可读文案） */
+  readonly error?: string
+}
+
 /** 工具触发的 Runtime 控制信号，不依赖本地化后的输出文本做控制流判断。 */
 export type ToolControlSignal = {
   type: 'mode_transition'
@@ -145,6 +165,14 @@ export interface ToolContext {
    * generation 失效（grace 超时 / interrupted）后拒绝写文件与 checkpoint。
    */
   assertExecutionCurrent?: () => boolean
+  /**
+   * 嵌套工具派发入口（当前唯一消费方：run_code 沙箱工具桥）。
+   * 由批执行器从当前批次依赖派生：嵌套调用重入 executeToolBatch，
+   * 走与模型直调完全相同的可用性/权限/取消/截断工序；
+   * 嵌套调用自身不再携带该入口（禁止无限递归派发）。
+   * 调用方必须持有完整 invocationRef 身份（沙箱工具以此建立父子关联）。
+   */
+  dispatchNestedToolCall?: (request: NestedToolCallRequest) => Promise<NestedToolCallResult>
 }
 
 /** 副作用入口统一 fencing：abort + generation */

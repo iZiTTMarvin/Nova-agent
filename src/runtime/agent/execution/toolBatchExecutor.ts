@@ -5,7 +5,16 @@ import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { EventBus } from '../EventBus'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
-import type { ToolContext, ToolExecutor, ImageContent, ToolInvocationRef, ToolTruncationMeta, ToolControlSignal } from '../../tools/types'
+import type {
+  ToolContext,
+  ToolExecutor,
+  ImageContent,
+  ToolInvocationRef,
+  ToolTruncationMeta,
+  ToolControlSignal,
+  NestedToolCallRequest,
+  NestedToolCallResult
+} from '../../tools/types'
 import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
@@ -128,6 +137,11 @@ export interface ToolBatchExecutionOptions {
    * 由 AgentLoop 注入，绑定当前 runId/generation。
    */
   assertExecutionCurrent?: () => boolean
+  /**
+   * 是否允许本批次工具获得嵌套派发入口（run_code 工具桥）。
+   * 顶层批次默认允许；嵌套执行固定关闭，防止派发无限递归。
+   */
+  allowNestedToolDispatch?: boolean
 }
 
 interface ToolRunResult {
@@ -139,9 +153,69 @@ function parseArgs(argsStr: string): Record<string, unknown> {
   return parseNativeArguments(argsStr).args
 }
 
+/**
+ * 嵌套工具派发入口：重入 executeToolBatch（同批次的可用性闸门、权限、取消、
+ * 截断与 hook 全部生效），结果只回给调用方工具，不写主对话历史。
+ * 事件带上父调用标识供 UI 紧凑活动与诊断使用；嵌套执行自身关闭派发入口。
+ */
+function createNestedDispatcher(
+  options: ToolBatchExecutionOptions,
+  parentToolCallId: string
+): (request: NestedToolCallRequest) => Promise<NestedToolCallResult> {
+  let nestedSeq = 0
+  return async request => {
+    nestedSeq += 1
+    const nestedToolCallId = `${parentToolCallId}#nested-${nestedSeq}`
+    const emitNested = (event: AgentEvent): void => {
+      if (event.type === 'tool_call' || event.type === 'tool_result') {
+        options.emit({ ...event, parentToolCallId })
+        return
+      }
+      options.emit(event)
+    }
+    emitNested({
+      type: 'tool_call',
+      messageId: options.messageId,
+      toolCallId: nestedToolCallId,
+      toolName: request.toolName,
+      args: request.args
+    })
+    const { outcomes } = await executeToolBatch({
+      ...options,
+      toolCalls: [
+        {
+          id: nestedToolCallId,
+          name: request.toolName,
+          arguments: JSON.stringify(request.args)
+        }
+      ],
+      emit: emitNested,
+      allowNestedToolDispatch: false
+    })
+    const outcome = outcomes[0]
+    if (!outcome) {
+      return {
+        toolCallId: nestedToolCallId,
+        toolName: request.toolName,
+        success: false,
+        output: '',
+        error: '嵌套调用未产生结果'
+      }
+    }
+    return {
+      toolCallId: nestedToolCallId,
+      toolName: request.toolName,
+      success: !outcome.failed && !outcome.skippedByAbort,
+      output: outcome.resultText,
+      ...(outcome.failed || outcome.skippedByAbort ? { error: outcome.resultText || '执行被跳过' } : {})
+    }
+  }
+}
+
 function buildToolContext(
   options: ToolBatchExecutionOptions,
-  invocationRef?: ToolInvocationRef
+  invocationRef?: ToolInvocationRef,
+  nestedDispatch?: (request: NestedToolCallRequest) => Promise<NestedToolCallResult>
 ): ToolContext {
   return {
     workingDir: options.workingDir,
@@ -173,7 +247,8 @@ function buildToolContext(
       : {}),
     ...(options.assertExecutionCurrent
       ? { assertExecutionCurrent: options.assertExecutionCurrent }
-      : {})
+      : {}),
+    ...(nestedDispatch ? { dispatchNestedToolCall: nestedDispatch } : {})
   }
 }
 
@@ -316,7 +391,10 @@ async function executePreparedToolCall(
 
   const toolContext = buildToolContext(
     options,
-    buildToolInvocationRef(options, item.toolCall.id)
+    buildToolInvocationRef(options, item.toolCall.id),
+    options.allowNestedToolDispatch === true
+      ? createNestedDispatcher(options, item.toolCall.id)
+      : undefined
   )
   let resultText = ''
   let resultImages: ImageContent[] | undefined

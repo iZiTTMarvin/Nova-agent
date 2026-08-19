@@ -58,4 +58,17 @@ describe('projectAgentEventToRun 进度标签', () => {
     project({ type: 'message_end', messageId: 'm2', interrupted: true })
     expect(coord.getSnapshot(runId)?.progress?.label).toBe('interrupted')
   })
+
+  it('嵌套工具事件（run_code 沙箱内调用）不改变进度标签', () => {
+    project({ type: 'message_start', messageId: 'm3' })
+    project({
+      type: 'tool_call',
+      messageId: 'm3',
+      toolCallId: 'tc_run_code#nested-1',
+      toolName: 'read',
+      args: {},
+      parentToolCallId: 'tc_run_code'
+    })
+    expect(coord.getSnapshot(runId)?.progress?.label).toBe('正在思考…')
+  })
 })

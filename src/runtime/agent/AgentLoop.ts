@@ -795,6 +795,7 @@ export class AgentLoop {
         switchMode: this.switchModeHandler,
         // 本会话已触发的 skill 目录 → 只读工具的额外允许根
         extraAllowedRoots: [...this.skillRoots],
+        allowNestedToolDispatch: true,
         ...(this.assertExecutionCurrent
           ? { assertExecutionCurrent: this.assertExecutionCurrent }
           : {})

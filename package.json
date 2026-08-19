@@ -41,6 +41,7 @@
   "dependencies": {
     "@astryxdesign/core": "^0.2.0",
     "@astryxdesign/theme-neutral": "^0.2.0",
+    "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
     "@pierre/diffs": "1.2.12",
     "@tanstack/react-virtual": "^3.14.5",
     "@vscode/ripgrep": "^1.18.0",
@@ -50,6 +51,7 @@
     "framer-motion": "^12.40.0",
     "gray-matter": "^4.0.3",
     "iconv-lite": "^0.7.2",
+    "quickjs-emscripten-core": "^0.32.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sharp": "^0.34.5",

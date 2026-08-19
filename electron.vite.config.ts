@@ -45,6 +45,12 @@ export default defineConfig({
         '@shared': resolve('src/shared'),
         '@runtime': resolve('src/runtime')
       }
+    },
+    build: {
+      rollupOptions: {
+        // 第二入口：Code Mode 沙箱 worker（new Worker 按 out/main/codeModeWorker.js 加载）
+        input: ['src/main/index.ts', 'src/runtime/code-mode/quickjs/codeModeWorker.ts']
+      }
     }
   },
   preload: {

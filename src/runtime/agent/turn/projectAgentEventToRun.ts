@@ -26,6 +26,9 @@ export function projectAgentEventToRun(
       runCoordinator.heartbeat(runId, { label: '正在思考…' })
       break
     case 'tool_call': {
+      // 嵌套调用（run_code 沙箱内）不是模型发出的独立工具调用：
+      // 不记录 run 工具相位，仅作观测事件转发，避免污染 run 状态
+      if (event.parentToolCallId) break
       const idempotent = isIdempotentToolName(event.toolName)
       runCoordinator.heartbeat(runId, { label: `调用 ${event.toolName}` })
       runCoordinator.recordToolPhase(
@@ -45,6 +48,7 @@ export function projectAgentEventToRun(
       break
     }
     case 'tool_result': {
+      if (event.parentToolCallId) break
       const isError = isToolFailureText(event.result)
       runCoordinator.recordToolPhase(
         runId,
