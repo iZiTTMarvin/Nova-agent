@@ -131,3 +131,88 @@
     animation: none;
   }
 }
+
+/* ── GFM 任务列表（Task List / Checkbox）只读排版 ─────────── */
+/* 作用域严格限定在 .astryx-checkbox-list 内，绝不影响普通无序/有序列表 */
+.markdown-body .astryx-checkbox-list {
+  margin-inline: 0 !important;
+  margin-block: var(--spacing-2, 8px) var(--spacing-3, 12px) !important;
+}
+
+.markdown-body .astryx-checkbox-list .astryx-list {
+  margin-inline: 0 !important;
+  padding-left: 0 !important;
+  list-style: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+}
+
+/* 仅针对任务列表项：基线对齐、去除交互式 hover 变色与 pointer 手势 */
+.markdown-body .astryx-checkbox-list .astryx-list-item,
+.markdown-body .astryx-checkbox-list .astryx-item {
+  cursor: default !important;
+  background-color: transparent !important;
+  padding-inline: 0 !important;
+  padding-block: 2px !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+}
+
+.markdown-body .astryx-checkbox-list .astryx-list-item:hover,
+.markdown-body .astryx-checkbox-list .astryx-item:hover {
+  background-color: transparent !important;
+}
+
+/* 彻底禁用复选框内部的 pointer 事件，消除表单 hover 态、focus 环与浏览器 tooltip 标识 */
+.markdown-body .astryx-checkbox-list .astryx-checkbox-input,
+.markdown-body .astryx-checkbox-list input[type="checkbox"] {
+  pointer-events: none !important;
+  user-select: none !important;
+  cursor: default !important;
+}
+
+/* 复选框控件：14px 黄金比例，顶部微调精确对齐第一行文本中线 */
+.markdown-body .astryx-checkbox-list .astryx-checkbox-input {
+  display: inline-flex !important;
+  align-items: center !important;
+  margin-top: 3px !important;
+  flex-shrink: 0 !important;
+}
+
+.markdown-body .astryx-checkbox-list .astryx-checkbox-input > div {
+  gap: 0 !important;
+}
+
+.markdown-body .astryx-checkbox-list .astryx-checkbox {
+  width: 14px !important;
+  height: 14px !important;
+  min-width: 14px !important;
+  min-height: 14px !important;
+  border-radius: 3px !important;
+  border-width: 1.5px !important;
+  border-style: solid !important;
+  box-sizing: border-box !important;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast) !important;
+}
+
+/* 未勾选状态：精致暗色边框与半透明低调底色 */
+.markdown-body .astryx-checkbox-list .astryx-checkbox:not([data-checked="checked"]):not(.checked) {
+  border-color: var(--border-cream, rgba(255, 255, 255, 0.25)) !important;
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+/* 已勾选状态：品牌强调色背景 + 强调色边框 + 白色对勾 */
+.markdown-body .astryx-checkbox-list .astryx-checkbox[data-checked="checked"],
+.markdown-body .astryx-checkbox-list .astryx-checkbox.checked {
+  border-color: var(--color-brand) !important;
+  background-color: var(--color-brand) !important;
+}
+
+.markdown-body .astryx-checkbox-list .astryx-checkbox svg {
+  width: 10px !important;
+  height: 10px !important;
+  stroke: var(--color-on-accent, #ffffff) !important;
+}
+
+
