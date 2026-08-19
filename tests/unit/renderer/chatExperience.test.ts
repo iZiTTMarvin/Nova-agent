@@ -114,17 +114,17 @@ describe('聊天体验回归', () => {
     renderer.unmount()
   })
 
-  it('思考块结束后自动收起为 Thought 行（Cursor 风）', () => {
+  it('思考块运行中保持单行，结束后继续默认折叠', () => {
     const renderer = renderDom(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: true }))
 
-    expect(renderer.container.querySelector('.thinking-block__summary')?.getAttribute('aria-expanded')).toBe('true')
+    expect(renderer.container.querySelector('.thinking-block__summary')?.getAttribute('aria-expanded')).toBe('false')
 
     renderer.render(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: false }))
 
-    // 结束后默认折叠，只留 Thought for Xs 一行
+    // 结束后仍默认折叠，只显示 Think 与首行摘要
     expect(renderer.container.querySelector('.thinking-block__summary')?.getAttribute('aria-expanded')).toBe('false')
-    const title = renderer.container.querySelector('.thinking-block__title')
-    expect(title?.textContent ?? '').toMatch(/^Thought/)
+    expect(renderer.container.querySelector('.thinking-block__title')?.textContent).toBe('Think')
+    expect(renderer.container.querySelector('.thinking-block__line-text')?.textContent).toBe('先分析调用链')
 
     renderer.unmount()
   })
@@ -132,8 +132,13 @@ describe('聊天体验回归', () => {
   it('思考块将连续 Markdown 摘要渲染为独立标题，不暴露星号', () => {
     const renderer = renderDom(React.createElement(ThinkingBlock, {
       thinking: '**Planning initial repository inspection****Drafting detailed implementation plan**',
-      active: true
+      active: false
     }))
+
+    const summary = renderer.container.querySelector<HTMLButtonElement>('.thinking-block__summary')
+    expect(summary?.getAttribute('aria-expanded')).toBe('false')
+
+    act(() => summary?.click())
 
     const headings = renderer.container.querySelectorAll('strong')
     expect(headings).toHaveLength(2)

@@ -3,12 +3,13 @@
  * 旧库无损升级、幂等重放、失败整体回滚、高版本 fail-closed。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { BetterSqliteMemoryDb, openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { initMemorySchema } from '@runtime/memory/MemorySchema'
 import { upsertIndexedFile, searchIndexed } from '@runtime/memory/MemoryIndexer'
+import { MemoryService } from '@runtime/memory/MemoryService'
 import {
   migrateMemorySchema,
   readMemorySchemaVersion,
@@ -19,6 +20,8 @@ import {
 describe('memory schema 迁移', () => {
   let tempDir: string | null = null
   let db: BetterSqliteMemoryDb | null = null
+  const legacyScopeId = 'scopelegacy'
+  const legacyBody = '旧库中的既有记忆正文，迁移后必须原样可检索。'
 
   afterEach(() => {
     db?.close()
@@ -38,14 +41,21 @@ describe('memory schema 迁移', () => {
   function createLegacyDb(dbPath: string): void {
     const legacy = new BetterSqliteMemoryDb(dbPath)
     initMemorySchema(legacy)
-    upsertIndexedFile(legacy, 'scopelegacy', {
+    upsertIndexedFile(legacy, legacyScopeId, {
       relPath: 'MEMORY.md',
-      body: '旧库中的既有记忆正文，迁移后必须原样可检索。',
+      body: legacyBody,
       fingerprint: '10-1',
       mtimeMs: 1,
       size: 10
     })
     legacy.close()
+  }
+
+  function createLegacyMemoryFile(): string {
+    const filePath = join(tempDir!, 'memory', legacyScopeId, 'MEMORY.md')
+    mkdirSync(join(tempDir!, 'memory', legacyScopeId), { recursive: true })
+    writeFileSync(filePath, legacyBody, 'utf8')
+    return filePath
   }
 
   function schemaObjectNames(target: BetterSqliteMemoryDb): string[] {
@@ -79,6 +89,36 @@ describe('memory schema 迁移', () => {
     const hits = searchIndexed(db, 'scopelegacy', '既有记忆正文', 10)
     expect(hits).toHaveLength(1)
     expect(hits[0].relPath).toBe('MEMORY.md')
+  })
+
+  it('旧库迁移后工作区 reconcile 保留物理 MEMORY.md，并更新旧索引指纹', () => {
+    const dbPath = newTempDbPath()
+    const memoryFilePath = createLegacyMemoryFile()
+    createLegacyDb(dbPath)
+
+    db = openBetterSqliteMemoryDb(dbPath)
+    const service = new MemoryService(join(tempDir!, 'memory'), db)
+    const stats = service.reconcile(legacyScopeId)
+
+    expect(stats.removed).toBe(0)
+    expect(stats.updated).toBe(1)
+    expect(existsSync(memoryFilePath)).toBe(true)
+    expect(service.search(legacyScopeId, '既有记忆正文')[0]?.body).toBe(legacyBody)
+  })
+
+  it('迁移本身不依赖物理文件；文件确实缺失时 reconcile 只清理孤儿索引', () => {
+    const dbPath = newTempDbPath()
+    createLegacyDb(dbPath)
+
+    db = openBetterSqliteMemoryDb(dbPath)
+    expect(searchIndexed(db, legacyScopeId, '既有记忆正文', 10)).toHaveLength(1)
+
+    const service = new MemoryService(join(tempDir!, 'memory'), db)
+    const stats = service.reconcile(legacyScopeId)
+
+    expect(stats).toEqual({ added: 0, updated: 0, removed: 1, skipped: 0 })
+    expect(existsSync(join(tempDir!, 'memory', legacyScopeId, 'MEMORY.md'))).toBe(false)
+    expect(service.search(legacyScopeId, '既有记忆正文')).toEqual([])
   })
 
   it('全新库直接迁移到当前版本，重复迁移幂等（无版本步重复执行）', () => {
