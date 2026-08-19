@@ -156,7 +156,8 @@ export function forwardEventToRenderer(
         breakdown: event.breakdown,
         totalEstimated: event.totalEstimated,
         promptTokensActual: event.promptTokensActual,
-        capturedAt: event.capturedAt
+        capturedAt: event.capturedAt,
+        contextLimit: event.contextLimit
       })
       break
     case 'cache_diagnostic':

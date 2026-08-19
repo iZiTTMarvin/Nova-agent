@@ -505,7 +505,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     artifactStore,
     contextWindow,
     supportsVision,
-    frozenPrompt,
+    frozenPrompt: agentLoop.getFrozenSystemPrompt(),
     runRefs,
     setAskQuestionHandler: (handler) => agentLoop.setAskQuestionHandler(handler)
   }

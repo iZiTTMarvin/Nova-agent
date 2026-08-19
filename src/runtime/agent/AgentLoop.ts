@@ -285,6 +285,11 @@ export class AgentLoop {
     return this.config.systemPrompt ?? ''
   }
 
+  /** 构造时计算的完整 system prompt（含全部层），供主进程持久化到 session */
+  getFrozenSystemPrompt(): string {
+    return this.ctx.systemPrompt
+  }
+
   /** 返回当前应使用的工具调用方言 */
   getToolDialect(): ToolDialect {
     return this.ctx.dialect
