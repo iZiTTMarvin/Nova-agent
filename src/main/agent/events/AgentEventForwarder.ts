@@ -66,7 +66,14 @@ export function forwardEventToRenderer(
       webContents.send('agent:tool-call-delta', { messageId: event.messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta, sessionId: event.sessionId })
       break
     case 'tool_call':
-      webContents.send('agent:tool-call', { messageId: event.messageId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args, sessionId: event.sessionId })
+      webContents.send('agent:tool-call', {
+        messageId: event.messageId,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: event.args,
+        sessionId: event.sessionId,
+        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {})
+      })
       break
     case 'tool_result':
       webContents.send('agent:tool-result', {
@@ -76,7 +83,8 @@ export function forwardEventToRenderer(
         result: event.result,
         sessionId: event.sessionId,
         ...(event.artifactId ? { artifactId: event.artifactId } : {}),
-        ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
+        ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {}),
+        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {})
       })
       break
     case 'permission_request':

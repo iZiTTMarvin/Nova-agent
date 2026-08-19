@@ -7,6 +7,8 @@ import type { SessionStore } from '../../sessions/SessionStore'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
 import type { ToolAvailability } from '../../tools/availability'
+import type { ToolPresentationMode } from '../../code-mode/presentation'
+import { applyToolPresentation } from '../../code-mode/presentation'
 import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
 
 export interface AgentContext {
@@ -23,6 +25,11 @@ export interface AgentContext {
    * 与 mode 过滤正交；在 getEffectiveToolDefinitions 中于 mode 之后组合。
    */
   toolAvailability: ToolAvailability | null
+  /**
+   * 工具呈现模式（进程级实验配置，会话内稳定）：direct 直调 / code-readonly 沙箱 SDK。
+   * 在 Mode → Availability 之后做最后一层投影，只改变调用形式不改变能力边界。
+   */
+  toolPresentation: ToolPresentationMode
   /** 当前工具方言 */
   dialect: ToolDialect
   /** 运行模式 */
@@ -68,6 +75,7 @@ export function createAgentContext(initial: {
     toolRegistry: null,
     effectiveToolDefinitions: null,
     toolAvailability: null,
+    toolPresentation: 'direct',
     dialect: 'xml',
     mode: 'default',
     workingDir: null,
@@ -88,21 +96,29 @@ export function createAgentContext(initial: {
 }
 
 /**
- * 模型可见工具投影唯一出口：registry/provider → mode → group。
+ * 模型可见工具投影唯一出口：registry/provider → mode → group → presentation。
  * 装配层拼 toolSummary 时必须调用本函数，禁止平行过滤。
  */
 export function projectEffectiveToolDefinitions(
   mode: Mode,
   definitions: readonly ToolDefinition[],
-  availability: ToolAvailability | null | undefined
+  availability: ToolAvailability | null | undefined,
+  presentation: ToolPresentationMode = 'direct'
 ): ToolDefinition[] {
   const modeVisible = getModeVisibleTools(mode, definitions)
-  if (!availability) return modeVisible
-  return availability.filterDefinitions(modeVisible)
+  const availabilityVisible = availability
+    ? availability.filterDefinitions(modeVisible)
+    : modeVisible
+  return applyToolPresentation(presentation, availabilityVisible)
 }
 
 export function getEffectiveToolDefinitions(context: AgentContext): ToolDefinition[] {
   const definitions =
     context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
-  return projectEffectiveToolDefinitions(context.mode, definitions, context.toolAvailability)
+  return projectEffectiveToolDefinitions(
+    context.mode,
+    definitions,
+    context.toolAvailability,
+    context.toolPresentation
+  )
 }

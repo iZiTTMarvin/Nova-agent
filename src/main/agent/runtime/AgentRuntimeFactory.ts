@@ -25,6 +25,9 @@ import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompat
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { ToolAvailability, resolveToolEconomyMode } from '../../../runtime/tools/availability'
+import { resolveToolPresentationMode } from '../../../runtime/code-mode/presentation'
+import { resolveCodeModeToolBindings } from '../../../runtime/code-mode/toolBindings'
+import { renderCodeModeSdkSection } from '../../../runtime/code-mode/sdkPrompt'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
@@ -289,15 +292,26 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     activeProvider.baseUrl,
     persistedConfig?.toolDialect ?? activeProvider.toolDialect
   )
-  const toolSummary = renderModeToolInventory(
+  // 呈现模式进程级确定（会话内稳定，§36）：code-readonly 时只读探索工具改由 SDK 暴露
+  const toolPresentation = resolveToolPresentationMode()
+  const effectiveToolDefinitions = projectEffectiveToolDefinitions(
     session.mode,
-    projectEffectiveToolDefinitions(
+    toolRegistry.getToolDefinitions(),
+    toolAvailability,
+    toolPresentation
+  )
+  let toolSummary = renderModeToolInventory(session.mode, effectiveToolDefinitions, {
+    dialect: toolDialect
+  })
+  if (toolPresentation === 'code-readonly') {
+    const sandboxToolNames = new Set(resolveCodeModeToolBindings(session.mode, new Set(toolAvailability.getActiveToolNames())))
+    const sandboxToolDefinitions = projectEffectiveToolDefinitions(
       session.mode,
       toolRegistry.getToolDefinitions(),
       toolAvailability
-    ),
-    { dialect: toolDialect }
-  )
+    ).filter(def => sandboxToolNames.has(def.name))
+    toolSummary = `${toolSummary}\n\n${renderCodeModeSdkSection(sandboxToolDefinitions)}`
+  }
 
   const frozenPrompt = buildStableSystemPrompt({
     workingDir: projectPath
@@ -332,6 +346,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setWorkspaceRoot(projectPath)
   agentLoop.setToolRegistry(toolRegistry)
   agentLoop.setToolAvailability(toolAvailability)
+  agentLoop.setToolPresentation(toolPresentation)
   agentLoop.setBashEnvironment({
     binDirs: [join(projectPath, 'node_modules', '.bin')]
   })

@@ -1,0 +1,70 @@
+/**
+ * code-readonly 呈现模式投影与 SDK 生成测试（§23/§24/§36）：
+ * direct 模式行为零变化；code-readonly 模式下四个只读工具改由 SDK 暴露且不重复出现；
+ * SDK 声明字节级稳定；未激活 deferred 工具不进 SDK。
+ */
+import { describe, expect, it } from 'vitest'
+import { applyToolPresentation, resolveToolPresentationMode } from '@runtime/code-mode/presentation'
+import { renderCodeModeSdkSection } from '@runtime/code-mode/sdkPrompt'
+import { resolveCodeModeToolBindings } from '@runtime/code-mode/toolBindings'
+import { ToolAvailability } from '@runtime/tools/availability'
+import type { ToolDefinition } from '@runtime/model/types'
+
+function defs(names: string[]): ToolDefinition[] {
+  return names.map(name => ({
+    name,
+    description: `${name} tool`,
+    parameters: { type: 'object', properties: name === 'read' ? { path: { type: 'string' }, offset: { type: 'number' } } : { pattern: { type: 'string' } }, required: name === 'read' ? ['path'] : ['pattern'] }
+  }))
+}
+
+const ALL_TOOLS = defs(['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'run_code', 'task'])
+
+describe('resolveToolPresentationMode', () => {
+  it('默认 direct；NOVA_TOOL_PRESENTATION=code-readonly 开启实验；未知值回退 direct', () => {
+    expect(resolveToolPresentationMode({})).toBe('direct')
+    expect(resolveToolPresentationMode({ NOVA_TOOL_PRESENTATION: 'code-readonly' })).toBe('code-readonly')
+    expect(resolveToolPresentationMode({ NOVA_TOOL_PRESENTATION: 'direct' })).toBe('direct')
+    expect(resolveToolPresentationMode({ NOVA_TOOL_PRESENTATION: 'bogus' })).toBe('direct')
+  })
+})
+
+describe('applyToolPresentation', () => {
+  it('direct：run_code 不出现在模型可见面，其余不变（行为零变化）', () => {
+    const result = applyToolPresentation('direct', ALL_TOOLS)
+    expect(result.map(t => t.name)).toEqual(['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'task'])
+  })
+
+  it('code-readonly：只读探索工具从直调面移除，run_code 进入', () => {
+    const result = applyToolPresentation('code-readonly', ALL_TOOLS)
+    expect(result.map(t => t.name)).toEqual(['edit', 'write', 'bash', 'run_code', 'task'])
+  })
+
+  it('code-readonly 不隐藏未知工具（fail open 于 catalog 之外由清洁度守卫负责）', () => {
+    const result = applyToolPresentation('code-readonly', defs(['custom_tool']))
+    expect(result.map(t => t.name)).toEqual(['custom_tool'])
+  })
+})
+
+describe('renderCodeModeSdkSection', () => {
+  it('SDK 声明按名称排序且字节级稳定', () => {
+    const a = renderCodeModeSdkSection(defs(['find', 'read', 'grep', 'ls']))
+    const b = renderCodeModeSdkSection(defs(['ls', 'grep', 'find', 'read']))
+    expect(a).toBe(b)
+    expect(a).toContain('find(args:')
+    expect(a).toContain("path: string; offset?: number")
+    expect(a).toContain('Promise<{ output: string }>')
+  })
+
+  it('economy on 时未激活组的 nestable 工具不进 SDK（§24 顺序）', () => {
+    const availability = new ToolAvailability()
+    availability.setEconomyMode('on')
+    availability.bindRegisteredToolNames(['ls', 'read', 'grep', 'find', 'task'])
+    // task 为 direct-only 不进 SDK；全部核心只读工具激活
+    const bindings = resolveCodeModeToolBindings('default', new Set(availability.getActiveToolNames()))
+    expect(bindings).toEqual(['ls', 'read', 'grep', 'find'])
+    const section = renderCodeModeSdkSection(defs([...bindings]))
+    expect(section).toContain('tools')
+    expect(section).not.toContain('task(')
+  })
+})

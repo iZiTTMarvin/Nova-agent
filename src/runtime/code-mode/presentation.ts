@@ -3,6 +3,7 @@
  * 会话/进程内保持稳定，避免 direct↔code 反复切换造成请求形态抖动。
  * 内部实验开关（默认 direct，行为与历史一致），不提供用户设置 UI。
  */
+import { getCatalogEntry } from '../tools/catalog'
 
 export type ToolPresentationMode = 'direct' | 'code-readonly'
 
@@ -16,3 +17,19 @@ export function resolveToolPresentationMode(
   }
   return 'direct'
 }
+
+/**
+ * 呈现层投影（§23/§24，位于 Mode → Availability 之后）：
+ * - direct：run_code 不进模型可见面（无 SDK 时该工具无意义）
+ * - code-readonly：nestable-readonly 工具不再作为直调 schema 出现，改由 SDK 暴露
+ */
+export function applyToolPresentation<T extends { name: string }>(
+  presentation: ToolPresentationMode,
+  tools: readonly T[]
+): T[] {
+  if (presentation === 'code-readonly') {
+    return tools.filter(tool => getCatalogEntry(tool.name)?.codeMode !== 'nestable-readonly')
+  }
+  return tools.filter(tool => tool.name !== 'run_code')
+}
+

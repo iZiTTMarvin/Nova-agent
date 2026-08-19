@@ -75,8 +75,7 @@ describe('streamSlice', () => {
     expect(useChatStore.getState().liveTurn['msg_text']).not.toBe(liveTextRef)
   })
 
-  it('迟到 partial delta 不覆盖已 finalize 的完整 arguments', () => {
-    useChatStore.getState().handleMessageStart('msg_tool')
+  it('迟到 partial delta 不覆盖已 finalize 的完整 arguments', () => {    useChatStore.getState().handleMessageStart('msg_tool')
     useChatStore.getState().handleToolCallStart('msg_tool', 'tool_1', 'write')
     useChatStore.getState().applyStreamDeltas([
       {
@@ -112,5 +111,48 @@ describe('streamSlice', () => {
       path: 'index.html',
       content: 'complete'
     })
+  })
+
+  it('嵌套工具事件（run_code 沙箱内）不创建顶级工具块，只记入父块活动', () => {
+    useChatStore.getState().handleMessageStart('msg_code')
+    useChatStore.getState().handleToolCall('msg_code', 'tc_run_code', 'run_code', {
+      code: 'return 1',
+      description: '探索'
+    })
+    useChatStore.getState().handleToolCall(
+      'msg_code',
+      'tc_run_code#nested-1',
+      'read',
+      { path: 'a.ts' },
+      'tc_run_code'
+    )
+    useChatStore.getState().handleToolCall(
+      'msg_code',
+      'tc_run_code#nested-2',
+      'grep',
+      { pattern: 'todo' },
+      'tc_run_code'
+    )
+    useChatStore.getState().handleToolResult(
+      'msg_code',
+      'tc_run_code#nested-1',
+      'read',
+      '文件内容',
+      'tc_run_code'
+    )
+
+    const message = useChatStore.getState().messages[0]
+    const toolBlocks = (message.blocks ?? []).filter(b => b.type === 'tool')
+    // 只有父 run_code 块；嵌套调用不是顶级块
+    expect(toolBlocks).toHaveLength(1)
+
+    const parent = toolBlocks[0]
+    expect(parent).toMatchObject({ type: 'tool', toolCallId: 'tc_run_code', toolName: 'run_code' })
+    expect(parent.nestedActivities).toEqual([
+      { toolCallId: 'tc_run_code#nested-1', toolName: 'read', args: { path: 'a.ts' }, status: 'success', result: '文件内容' },
+      { toolCallId: 'tc_run_code#nested-2', toolName: 'grep', args: { pattern: 'todo' }, status: 'running' }
+    ])
+    // toolCalls 登记簿同样只含父调用
+    expect(message.toolCalls?.map(tc => tc.id)).toEqual(['tc_run_code'])
   })
 })

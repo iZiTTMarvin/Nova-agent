@@ -576,6 +576,8 @@ export interface IpcEvents {
     toolCallId: string
     toolName: string
     args: Record<string, unknown>
+    /** 嵌套工具调用（run_code 沙箱内）的父调用 ID；顶层调用不带 */
+    parentToolCallId?: string
   }
   'agent:tool-result': {
     messageId: string
@@ -586,6 +588,8 @@ export interface IpcEvents {
     artifactId?: string
     /** 截断元数据（共 N 行 / 展示 M 行），与 ToolResult.truncationMeta 对齐 */
     truncationMeta?: ToolTruncationMeta
+    /** 嵌套工具调用（run_code 沙箱内）的父调用 ID；顶层调用不带 */
+    parentToolCallId?: string
   }
   'agent:permission-request': {
     messageId: string

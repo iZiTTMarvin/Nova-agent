@@ -65,6 +65,8 @@ export function getToolTraceAction(toolName: string): string {
       return 'Planned'
     case 'switch_mode':
       return 'Mode'
+    case 'run_code':
+      return 'Explored'
     default:
       return toolName
   }
@@ -156,6 +158,10 @@ export function getToolTraceTarget(
     case 'switch_mode': {
       const mode = typeof args.mode === 'string' ? args.mode : ''
       return mode ? truncateTarget(mode) : 'mode'
+    }
+    case 'run_code': {
+      const description = typeof args.description === 'string' ? args.description : ''
+      return description ? truncateTarget(description) : 'with code'
     }
     default: {
       // 兜底：尝试常见 path / command 字段

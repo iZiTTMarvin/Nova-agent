@@ -376,6 +376,14 @@ export class AgentLoop {
     this.ctx.toolAvailability = availability
   }
 
+  /**
+   * 注入工具呈现模式（进程级实验配置）：direct 直调 / code-readonly 沙箱 SDK。
+   * 只影响调用形式投影，能力边界仍由 mode 与 availability 决定。
+   */
+  setToolPresentation(presentation: import('../code-mode/presentation').ToolPresentationMode): void {
+    this.ctx.toolPresentation = presentation
+  }
+
   /** 设置本轮实际暴露给模型、缓存诊断和上下文拆分的工具定义来源。 */
   setEffectiveToolDefinitionsProvider(provider: (() => ToolDefinition[]) | null): void {
     this.ctx.effectiveToolDefinitions = provider

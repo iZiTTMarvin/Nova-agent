@@ -103,6 +103,9 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       break
     }
     case 'tool_call': {
+      // 嵌套调用（run_code 沙箱内）不是模型发出的独立调用：不生成持久化工具块，
+      // 避免恢复会话时出现无父级上下文的孤儿卡片；实时活动经事件流直达 renderer
+      if (event.parentToolCallId) break
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
         stampThinkingDuration(stream)
@@ -119,6 +122,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       break
     }
     case 'tool_result': {
+      if (event.parentToolCallId) break
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
         const isError = event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')

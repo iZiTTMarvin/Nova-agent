@@ -159,8 +159,43 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     })
   },
 
-  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => {
+  handleToolCall: (
+    messageId: string,
+    toolCallId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    parentToolCallId?: string
+  ) => {
     const sanitizedArgs = sanitizeToolInput(toolName, args)
+
+    // 嵌套调用：不创建顶级工具块，追加为父块的紧凑活动
+    if (parentToolCallId) {
+      set(state => {
+        const idx = state.messageIndexById[messageId]
+        if (idx === undefined) return state
+        const msg = state.messages[idx]
+        if (!msg || !msg.blocks) return state
+        const blocks = msg.blocks.map(b => {
+          if (b.type !== 'tool' || b.toolCallId !== parentToolCallId) return b
+          const activities = [...(b.nestedActivities ?? [])]
+          const existing = activities.findIndex(a => a.toolCallId === toolCallId)
+          const entry = {
+            toolCallId,
+            toolName,
+            args: sanitizedArgs,
+            status: 'running' as const
+          }
+          if (existing === -1) activities.push(entry)
+          else activities[existing] = entry
+          return { ...b, nestedActivities: activities }
+        })
+        const nextMessages = state.messages.slice()
+        nextMessages[idx] = bumpRevision({ ...msg, blocks })
+        return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      })
+      return
+    }
+
     const newToolCall: ExtendedToolCall = {
       id: toolCallId,
       name: toolName,
@@ -316,9 +351,40 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     })
   },
 
-  handleToolResult: (messageId: string, toolCallId: string, _toolName: string, result: string) => {
+  handleToolResult: (
+    messageId: string,
+    toolCallId: string,
+    _toolName: string,
+    result: string,
+    parentToolCallId?: string
+  ) => {
     const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
     const sanitizedResult = sanitizeToolOutput(_toolName, result, isError)
+
+    // 嵌套调用：只更新父块下的紧凑活动状态
+    if (parentToolCallId) {
+      set(state => {
+        const idx = state.messageIndexById[messageId]
+        if (idx === undefined) return state
+        const msg = state.messages[idx]
+        if (!msg || !msg.blocks) return state
+        const blocks = msg.blocks.map(b => {
+          if (b.type !== 'tool' || b.toolCallId !== parentToolCallId) return b
+          if (!b.nestedActivities?.some(a => a.toolCallId === toolCallId)) return b
+          const activities = b.nestedActivities.map(a =>
+            a.toolCallId === toolCallId
+              ? { ...a, status: isError ? ('error' as const) : ('success' as const), result: sanitizedResult }
+              : a
+          )
+          return { ...b, nestedActivities: activities }
+        })
+        const nextMessages = state.messages.slice()
+        nextMessages[idx] = bumpRevision({ ...msg, blocks })
+        return commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true })
+      })
+      return
+    }
+
     set(state => {
       const idx = state.messageIndexById[messageId]
       if (idx === undefined) return state

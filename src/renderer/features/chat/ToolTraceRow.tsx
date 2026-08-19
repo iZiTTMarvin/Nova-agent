@@ -14,7 +14,7 @@ import { useAgentStore } from '../../stores/useAgentStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { WebSearchCard } from './WebSearchCard'
-import type { PendingPermissionRequest } from '../../stores/types'
+import type { NestedToolActivity, PendingPermissionRequest } from '../../stores/types'
 import './ToolTraceRow.css'
 
 export interface ToolTraceRowProps {
@@ -26,6 +26,8 @@ export interface ToolTraceRowProps {
   status: 'running' | 'success' | 'error'
   result?: string
   isLiveStreaming?: boolean
+  /** run_code 沙箱内的嵌套工具活动：行下紧凑展示，不占顶级轨道 */
+  nestedActivities?: NestedToolActivity[]
 }
 
 /** 兼容既有测试：流式入场已改为纯 CSS，常量仅作门控文档 */
@@ -129,7 +131,32 @@ function areTracePropsEqual(prev: ToolTraceRowProps, next: ToolTraceRowProps): b
     prev.isLiveStreaming === next.isLiveStreaming &&
     prev.argumentsRaw === next.argumentsRaw &&
     // args 引用稳定时跳过：store 只替换变更 block，其它行 args 同引用
-    prev.args === next.args
+    prev.args === next.args &&
+    prev.nestedActivities === next.nestedActivities
+  )
+}
+
+/** run_code 沙箱内嵌套工具的紧凑活动行（默认可见，不依赖 L4 展开） */
+function NestedActivityList({
+  activities,
+  workspaceRoot
+}: {
+  activities: NestedToolActivity[]
+  workspaceRoot?: string | null
+}) {
+  if (activities.length === 0) return null
+  return (
+    <div className="tool-trace-row__nested">
+      {activities.map(activity => (
+        <div key={activity.toolCallId} className="tool-trace-row__nested-row">
+          <StatusDot status={activity.status} />
+          <span className="tool-trace-row__action">{getToolTraceAction(activity.toolName)}</span>
+          <span className="tool-trace-row__target">
+            {getToolTraceTarget(activity.toolName, activity.args, workspaceRoot)}
+          </span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -140,7 +167,8 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   argumentsRaw,
   status,
   result,
-  isLiveStreaming = false
+  isLiveStreaming = false,
+  nestedActivities
 }) {
   const [isOpen, setIsOpen] = useState(false)
 
@@ -190,6 +218,10 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
       {/* L4：仅展开时挂载，避免默认渲染大段 result / 参数 DOM */}
       {isOpen && (
         <ToolTraceDetail name={name} args={args} status={status} result={result} />
+      )}
+
+      {nestedActivities && nestedActivities.length > 0 && (
+        <NestedActivityList activities={nestedActivities} workspaceRoot={workspaceRoot} />
       )}
 
       {anchoredRequest && (

@@ -141,12 +141,12 @@ function App(): React.ReactNode {
       // （UI 表现为「未命名文件」+ 空内容，但后端实际已用完整 args 写盘）。
       // 因此先把缓冲中该轮残留的 delta 同步刷入 store，再用完整 args 覆盖，保证顺序正确。
       buffer.flushNow()
-      handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args)
+      handleToolCall(data.messageId, data.toolCallId, data.toolName, data.args, data.parentToolCallId)
     }))
 
     // 监听：Agent 工具执行完毕拿到结果
     const unsubToolResult = window.api.on('agent:tool-result', gateAgentEvent('tool-result', (data) => {
-      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result)
+      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result, data.parentToolCallId)
     }))
 
     // 监听：Agent 请求用户确认权限

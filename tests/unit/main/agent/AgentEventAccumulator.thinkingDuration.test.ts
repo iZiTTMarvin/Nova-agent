@@ -102,6 +102,36 @@ describe('AgentEventAccumulator 思考耗时封存', () => {
     expect(thinking?.durationMs).toBe(1500)
   })
 
+  it('嵌套工具事件（run_code 沙箱内）不生成持久化工具块', () => {
+    const ctx = makeCtx()
+    const messageId = 'msg_nested'
+    const feed = (event: AgentEvent) => accumulateStreamEvent('sess_test', event, ctx)
+
+    feed({ type: 'message_start', messageId })
+    feed({ type: 'tool_call', messageId, toolCallId: 'tc_run_code', toolName: 'run_code', args: {} })
+    feed({
+      type: 'tool_call',
+      messageId,
+      toolCallId: 'tc_run_code#nested-1',
+      toolName: 'read',
+      args: { path: 'a.ts' },
+      parentToolCallId: 'tc_run_code'
+    })
+    feed({
+      type: 'tool_result',
+      messageId,
+      toolCallId: 'tc_run_code#nested-1',
+      toolName: 'read',
+      result: '文件内容',
+      parentToolCallId: 'tc_run_code'
+    })
+    feed({ type: 'tool_result', messageId, toolCallId: 'tc_run_code', toolName: 'run_code', result: '[return]\n{}' })
+    feed({ type: 'message_end', messageId })
+
+    const toolBlocks = persistedBlocks().filter(b => b.type === 'tool') as Array<{ toolCallId?: string }>
+    expect(toolBlocks.map(b => b.toolCallId)).toEqual(['tc_run_code'])
+  })
+
   it('thinking 后发生 error：错误终态落盘的 thinking 块也带 durationMs', () => {
     const ctx = makeCtx()
     const messageId = 'msg_think_error'

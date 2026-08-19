@@ -87,6 +87,7 @@ export function renderToolBlock(
       status={block.status}
       result={block.result}
       isLiveStreaming={isLive}
+      nestedActivities={block.nestedActivities}
     />
   )
 }

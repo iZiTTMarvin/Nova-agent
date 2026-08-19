@@ -175,3 +175,21 @@
     animation: none;
   }
 }
+
+/* run_code 沙箱内嵌套工具活动：缩进的紧凑行，不占顶级过程轨 */
+.tool-trace-row__nested {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 18px;
+}
+
+.tool-trace-row__nested-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.85;
+}

@@ -93,9 +93,23 @@ export interface StreamSliceState {
   /**
    * @deprecated 仍是主进程 tool_call 终态事件（不含 streaming）的合法处理入口；
    * 不是被 buffer/scheduler 替代的对象。保留为长期 API。
+   * 嵌套调用（run_code 沙箱内）携带 parentToolCallId：不创建顶级工具块，
+   * 只记入父工具块的紧凑活动列表。
    */
-  handleToolCall: (messageId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => void
-  handleToolResult: (messageId: string, toolCallId: string, toolName: string, result: string) => void
+  handleToolCall: (
+    messageId: string,
+    toolCallId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    parentToolCallId?: string
+  ) => void
+  handleToolResult: (
+    messageId: string,
+    toolCallId: string,
+    toolName: string,
+    result: string,
+    parentToolCallId?: string
+  ) => void
 }
 
 /** recoverySlice 拥有的恢复态簿记字段与事件 handler。 */

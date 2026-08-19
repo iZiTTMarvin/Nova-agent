@@ -17,8 +17,23 @@ import type {
 } from '../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../shared/diff/types'
 
-/** 流式增量阶段携带的额外字段：原始 JSON 字符串 */
-export type RendererToolBlock = ToolBlock & { argumentsRaw?: string }
+/**
+ * 嵌套工具活动（run_code 沙箱内的 tools.* 调用）：瞬态观测信息，
+ * 只挂在父工具块下紧凑展示，不持久化（主进程累加器不为嵌套调用建块）。
+ */
+export interface NestedToolActivity {
+  toolCallId: string
+  toolName: string
+  args: Record<string, unknown>
+  status: 'running' | 'success' | 'error'
+  result?: string
+}
+
+/** 流式增量阶段携带的额外字段：原始 JSON 字符串；嵌套活动仅 renderer 瞬态 */
+export type RendererToolBlock = ToolBlock & {
+  argumentsRaw?: string
+  nestedActivities?: NestedToolActivity[]
+}
 
 /** 顺序消息块：ToolBlock 使用携带 argumentsRaw 的 renderer 扩展版本 */
 export type RendererMessageBlock =
