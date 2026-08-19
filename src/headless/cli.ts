@@ -377,7 +377,8 @@ async function main(): Promise<void> {
       tier: taskPolicy.tier,
       matched_by: taskPolicy.matchedBy,
       tool_economy: toolEconomyEnabled
-    }
+    },
+    tool_economy: toolAvailability.getDiagnostics(registry.getToolDefinitions())
   }
   writeJson(summaryPath, summary)
   // 摘要是进程的最后输出：写完立即退出，不等待事件循环排空。

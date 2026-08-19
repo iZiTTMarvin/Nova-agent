@@ -741,7 +741,10 @@ export class AgentLoop {
     this.compactionService.recordUserTurn()
 
     // AgentLoop 装配 kernel 依赖，并在 kernel 返回后统一处理终态。
+    const activeToolCountBeforeBatch = (): number =>
+      this.ctx.toolAvailability ? this.ctx.toolAvailability.getActiveToolNames().length : 0
     const executeBatch = async (toolCalls: ChatToolCall[], mid: string) => {
+      const activeBefore = activeToolCountBeforeBatch()
       const result = await executeToolBatch({
         toolCalls,
         messageId: mid,
@@ -784,6 +787,11 @@ export class AgentLoop {
           ? { assertExecutionCurrent: this.assertExecutionCurrent }
           : {})
       })
+      // 激活扩张下一请求的工具面时显式切 epoch：这一次 shape 变化是可解释的，
+      // 不应作为前缀回归告警；单调扩张后 surface 重新稳定
+      if (activeToolCountBeforeBatch() > activeBefore) {
+        this.bumpCacheEpoch('toolset_change')
+      }
       return result
     }
 
