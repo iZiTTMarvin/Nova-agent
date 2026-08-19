@@ -7,10 +7,13 @@ import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import {
   LOAD_TOOLS_ACTIVATED_MARKER,
   formatToolEconomyActivationLog,
-  listGroupToolNames,
   type ToolAvailability
 } from '../availability'
-import { buildLoadToolsDescription, listLiveDeferredGroupIds } from '../catalog'
+import {
+  buildLoadToolsDescription,
+  listGroupToolNames,
+  listLiveDeferredGroupIds
+} from '../catalog'
 
 export interface LoadToolsDeps {
   getAvailability: () => ToolAvailability | null
@@ -31,7 +34,7 @@ export function createLoadToolsTool(deps: LoadToolsDeps): ToolExecutor {
         group: {
           type: 'string',
           enum: groupEnum,
-          description: `要激活的工具组名。可选值: ${groupEnum.join(', ')}`
+          description: `Capability group to load. Allowed values: ${groupEnum.join(', ')}`
         }
       },
       required: ['group'],

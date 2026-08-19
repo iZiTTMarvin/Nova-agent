@@ -17,6 +17,7 @@ import type {
 import type { TodoItem } from '../../shared/todo/types'
 import type { ComposeStageEntry, ComposePlanApproval } from '../../shared/composeLifecycle'
 import type { ToolTruncationMeta } from '../tools/types'
+import type { ToolAvailabilityPersistState } from '../tools/availability'
 import type { ChatMessage } from '../model/types'
 import type { ActivePlanRef } from '../plans'
 export {
@@ -164,11 +165,8 @@ interface SessionDataBase {
   toolAvailability?: SessionToolAvailabilityState
 }
 
-/** 会话持久化的工具组激活态（结构与 ToolAvailability 持久化快照对齐） */
-export interface SessionToolAvailabilityState {
-  version: 1
-  readonly activatedGroups: readonly string[]
-}
+/** 会话持久化的工具组激活态；形状由可用性 Owner 的持久化契约唯一决定 */
+export type SessionToolAvailabilityState = ToolAvailabilityPersistState
 
 /** 普通会话不携带任何 child-session metadata。 */
 export interface PrimarySessionData extends SessionDataBase {

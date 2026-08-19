@@ -67,6 +67,26 @@ export function validateCatalogIntegrity(): CatalogValidationResult {
 }
 
 /**
+ * 子集注册路径（如 headless 编码工具集）的 fail-closed 校验：
+ * 只要求注册项全部在 Catalog 中，不要求 Catalog 全部注册。
+ */
+export function validateRegisteredToolsAreCataloged(
+  registeredToolNames: Iterable<string>
+): CatalogValidationResult {
+  const issues: CatalogValidationIssue[] = []
+  const catalogNames = new Set(listCatalogEntries().map(entry => entry.name))
+  for (const name of registeredToolNames) {
+    if (!catalogNames.has(name)) {
+      issues.push({
+        kind: 'missing-catalog-entry',
+        detail: `工具 "${name}" 已注册但未登记进 Tool Catalog；请在 catalog/ToolCatalog.ts 补充条目`
+      })
+    }
+  }
+  return { ok: issues.length === 0, issues }
+}
+
+/**
  * 校验一份实际注册的工具名清单与 Catalog 的一致性：
  * - 注册工具必须在 Catalog 中（未登记 → fail closed，禁止静默成为 core）；
  * - Catalog 中 registration=always 的条目必须已注册（防注册清单静默丢工具）；

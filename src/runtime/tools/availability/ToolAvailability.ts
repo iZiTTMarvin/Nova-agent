@@ -148,7 +148,7 @@ export class ToolAvailability {
     if (!isLoadableToolGroup(normalized)) {
       return { ok: false, error: `工具组 "${normalized}" 为预留组，暂无可加载工具` }
     }
-    if (listLiveDeferredGroupIds(this.registeredToolNames).includes(normalized) === false) {
+    if (!this.getAvailableGroups().includes(normalized)) {
       return {
         ok: false,
         error: `工具组 "${normalized}" 当前没有已注册的工具。可加载组: ${this.getAvailableGroups().join(', ')}`
@@ -198,23 +198,25 @@ export class ToolAvailability {
   }
 
   /**
-   * 从会话持久化状态恢复（权威路径）。未知版本 / 损坏字段 → 忽略并回退消息回填。
+   * 从会话持久化状态恢复（权威路径）。
+   * 未知版本 / 损坏字段 → usable=false 且不占位 durable 态，由调用方回退消息回填并修复落盘。
    * 已删除的组（历史 web / memory）与预留空组安全忽略，不因历史状态重新出现。
    */
-  restoreFromSessionState(raw: unknown): { restoredGroups: readonly string[] } {
+  restoreFromSessionState(raw: unknown): { restoredGroups: readonly string[]; usable: boolean } {
     const parsed = parsePersistState(raw)
     this.activatedGroups.clear()
-    if (parsed) {
-      for (const group of parsed.activatedGroups) {
-        const normalized = normalizeGroupAlias(group)
-        if (!isLoadableToolGroup(normalized)) continue
-        if (this.activatedGroups.has(normalized)) continue
-        this.activatedGroups.add(normalized)
-        this.activations.push({ group: normalized, reason: 'restored', at: Date.now() })
-      }
+    if (!parsed) {
+      return { restoredGroups: [], usable: false }
+    }
+    for (const group of parsed.activatedGroups) {
+      const normalized = normalizeGroupAlias(group)
+      if (!isLoadableToolGroup(normalized)) continue
+      if (this.activatedGroups.has(normalized)) continue
+      this.activatedGroups.add(normalized)
+      this.activations.push({ group: normalized, reason: 'restored', at: Date.now() })
     }
     this.durableRestored = true
-    return { restoredGroups: [...this.activatedGroups].sort() }
+    return { restoredGroups: [...this.activatedGroups].sort(), usable: true }
   }
 
   /**
@@ -270,7 +272,11 @@ export class ToolAvailability {
 
   /** load_tools 连接器描述由 Catalog + 注册清单派生（见 catalog.buildLoadToolsDescription） */
 
-  /** 诊断快照：visible 按当前模式投影；would-be 指标按 economy=on 语义计算（shadow 评估用） */
+  /**
+   * 诊断快照。入参应为注册表全量定义（不含 mode 过滤）——本口径度量
+   * availability 单独造成的收缩；visible 按当前模式投影，would-be 指标
+   * 按 economy=on 语义计算（shadow 评估用）。
+   */
   getDiagnostics(fullDefinitions: readonly ToolDefinition[]): ToolAvailabilityDiagnostics {
     const visible = this.filterDefinitions(fullDefinitions)
     const visibleChars = sumSchemaChars(visible)

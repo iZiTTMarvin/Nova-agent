@@ -68,6 +68,8 @@ function collectToolRows(messages: readonly Message[]): ToolRow[] {
   for (const message of messages) {
     for (const block of message.blocks ?? []) {
       if (block.type !== 'tool' || seen.has(block.toolCallId)) continue
+      // load_tools 是 Harness 内部控制动作，与主消息流同样不在此展示
+      if (block.toolName === 'load_tools') continue
       seen.add(block.toolCallId)
       rows.push(toToolRow(block))
     }

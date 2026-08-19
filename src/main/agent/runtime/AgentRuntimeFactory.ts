@@ -242,10 +242,21 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     toolRegistry.getToolDefinitions().map(def => def.name)
   )
   if (session.toolAvailability !== undefined) {
-    const { restoredGroups } = toolAvailability.restoreFromSessionState(session.toolAvailability)
-    if (restoredGroups.length > 0 && toolAvailability.getEconomyMode() !== 'off') {
-      console.log(
-        `[tool-economy] session-restore groups=${restoredGroups.join(',')} mode=${toolAvailability.getEconomyMode()}`
+    const restored = toolAvailability.restoreFromSessionState(session.toolAvailability)
+    if (restored.usable) {
+      if (restored.restoredGroups.length > 0 && toolAvailability.getEconomyMode() !== 'off') {
+        console.log(
+          `[tool-economy] session-restore groups=${restored.restoredGroups.join(',')} mode=${toolAvailability.getEconomyMode()}`
+        )
+      }
+    } else {
+      // 字段损坏：视同缺失，回退消息回填并修复落盘
+      const backfill = toolAvailability.backfillFromMessages(session.messages)
+      sessionStore.updateToolAvailability(
+        sessionId,
+        backfill.restoredGroups.length > 0
+          ? { version: 1, activatedGroups: [...backfill.restoredGroups] }
+          : null
       )
     }
   } else {

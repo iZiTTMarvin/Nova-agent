@@ -17,7 +17,11 @@ import { writeAndExit } from './writeAndExit'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { resolveContextWindow } from '../shared/config'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
-import { ToolAvailability, listLiveDeferredGroupIds } from '../runtime/tools/availability'
+import {
+  ToolAvailability,
+  listLiveDeferredGroupIds
+} from '../runtime/tools/availability'
+import { validateRegisteredToolsAreCataloged } from '../runtime/tools/catalog'
 import { createLoadToolsTool } from '../runtime/tools/loadTools'
 import { projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
 import { ArtifactStore } from '../runtime/artifacts/ArtifactStore'
@@ -171,6 +175,15 @@ function createCodingTools(availability: ToolAvailability | null): ToolRegistry 
   registry.register(writeTool)
   registry.register(bashTool)
   registry.register(archiveReadTool)
+  // 子集注册路径同样 fail closed：注册项必须已登记 Catalog
+  const subsetCheck = validateRegisteredToolsAreCataloged(
+    registry.getToolDefinitions().map(def => def.name)
+  )
+  if (!subsetCheck.ok) {
+    throw new Error(
+      `编码工具注册与 Tool Catalog 不一致：\n${subsetCheck.issues.map(i => `- ${i.detail}`).join('\n')}`
+    )
+  }
   // 连接器只在存在 live deferred 组时下发；headless 编码工具集没有组成员，恒不注册
   if (availability) {
     const registeredToolNames = registry.getToolDefinitions().map(def => def.name)
@@ -378,7 +391,15 @@ async function main(): Promise<void> {
       matched_by: taskPolicy.matchedBy,
       tool_economy: toolEconomyEnabled
     },
-    tool_economy: toolAvailability.getDiagnostics(registry.getToolDefinitions())
+    tool_economy: {
+      ...toolAvailability.getDiagnostics(registry.getToolDefinitions()),
+      // 纯额外模型步：该步的全部工具调用都是 load_tools（首次进入能力域的往返成本）
+      load_tools_extra_model_steps: atif.steps.filter(
+        step =>
+          (step.tool_calls?.length ?? 0) > 0 &&
+          step.tool_calls!.every(call => call.function_name === 'load_tools')
+      ).length
+    }
   }
   writeJson(summaryPath, summary)
   // 摘要是进程的最后输出：写完立即退出，不等待事件循环排空。

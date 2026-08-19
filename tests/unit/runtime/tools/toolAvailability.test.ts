@@ -140,11 +140,30 @@ describe('激活态持久化与恢复', () => {
     expect(restoredGroups).toEqual(['agent'])
   })
 
-  it('损坏 / 未知版本的持久化字段被忽略（回退空态）', () => {
-    const availability = createAvailability('off')
-    expect(availability.restoreFromSessionState({ version: 2, activatedGroups: ['agent'] }).restoredGroups).toEqual([])
-    expect(availability.restoreFromSessionState('corrupt').restoredGroups).toEqual([])
-    expect(availability.restoreFromSessionState(null).restoredGroups).toEqual([])
+  it('损坏 / 未知版本的持久化字段被忽略，且不阻断后续消息回填', () => {
+    const availability = createAvailability('on')
+    const corrupt = availability.restoreFromSessionState({
+      version: 2,
+      activatedGroups: ['agent']
+    })
+    expect(corrupt.usable).toBe(false)
+    expect(corrupt.restoredGroups).toEqual([])
+    expect(availability.restoreFromSessionState('corrupt').usable).toBe(false)
+    expect(availability.restoreFromSessionState(null).usable).toBe(false)
+
+    // 损坏字段视同缺失：消息 marker 回填仍可接管
+    const backfill = availability.backfillFromMessages([
+      {
+        role: 'assistant',
+        toolCalls: [{ id: 'c1', name: 'load_tools', arguments: JSON.stringify({ group: 'agent' }) }]
+      },
+      {
+        role: 'tool',
+        toolCallId: 'c1',
+        content: `Activated\n${LOAD_TOOLS_ACTIVATED_MARKER}agent`
+      }
+    ])
+    expect(backfill.restoredGroups).toEqual(['agent'])
   })
 
   it('旧消息 marker 回填：只计成功激活，持久态恢复后不再重建', () => {

@@ -10,12 +10,4 @@ export {
   type ToolGroupMarkerMessage
 } from './ToolAvailability'
 export { resolveToolEconomyMode } from './economyPolicy'
-export {
-  getToolGroup,
-  isCoreTool,
-  isKnownToolGroup,
-  isLoadableToolGroup,
-  listGroupToolNames,
-  listLiveDeferredGroupIds,
-  normalizeGroupAlias
-} from '../catalog'
+export { listLiveDeferredGroupIds } from '../catalog'

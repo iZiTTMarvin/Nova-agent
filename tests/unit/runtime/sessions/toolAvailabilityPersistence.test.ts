@@ -118,7 +118,7 @@ describe('工具组激活态持久化', () => {
     expect(restoredGroups).toEqual(['agent'])
   })
 
-  it('磁盘上的损坏字段不阻断会话加载，恢复入口忽略', () => {
+  it('磁盘上的损坏字段不阻断会话加载，恢复入口按不可用处理', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/ws')
     const dataPath = path.join(sessionDir(session.id), SESSION_DATA_FILE)
@@ -129,7 +129,11 @@ describe('工具组激活态持久化', () => {
     const loaded = new SessionStore(tmpDir).load(session.id)
     expect(loaded).not.toBeNull()
     const availability = createAvailability()
-    expect(availability.restoreFromSessionState(loaded?.toolAvailability).restoredGroups).toEqual([])
+    const restored = availability.restoreFromSessionState(loaded?.toolAvailability)
+    expect(restored.usable).toBe(false)
+    expect(restored.restoredGroups).toEqual([])
+    // 视同缺失：损坏不占用 durable 态，消息 marker 回填可接管
+    expect(availability.backfillFromMessages([]).restoredGroups).toEqual([])
   })
 })
 

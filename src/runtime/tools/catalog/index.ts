@@ -22,6 +22,7 @@ export {
 export {
   validateCatalogIntegrity,
   validateRegistryAgainstCatalog,
+  validateRegisteredToolsAreCataloged,
   type CatalogValidationIssue,
   type CatalogValidationResult
 } from './validateToolCatalog'
