@@ -24,7 +24,7 @@ import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
 import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
-import { ToolAvailability } from '../../../runtime/tools/availability'
+import { ToolAvailability, resolveToolEconomyMode } from '../../../runtime/tools/availability'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
@@ -221,9 +221,10 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   permissionManager.setPermissionPolicy(novaSettings.permissionPolicy)
 
   const toolRegistry = new ToolRegistry()
-  // 交互默认关闭工具经济过滤（全量可见，回归无感）；Owner 仍注入以便 load_tools / 恢复路径可用。
+  // Tool Economy 三态由内部策略决定（默认 off = 全量工具面，行为与历史一致）；
+  // 激活态在注册完成后从会话持久化恢复，缺旧会话则回退消息 marker 回填。
   const toolAvailability = new ToolAvailability()
-  toolAvailability.setEnabled(false)
+  toolAvailability.setEconomyMode(resolveToolEconomyMode())
   // 两阶段局部持有：invoke_skill 创建早于 AgentLoop，执行时惰性读取
   let loop: AgentLoop | null = null
 
@@ -236,6 +237,10 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getToolAvailability: () => toolAvailability,
     memoryEnabled: novaSettings.memoryEnabled
   })
+
+  toolAvailability.bindRegisteredToolNames(
+    toolRegistry.getToolDefinitions().map(def => def.name)
+  )
 
   const modelPool = buildModelPoolWithFallbacks(modelClient)
   const activeProvider =

@@ -17,7 +17,7 @@ import { writeAndExit } from './writeAndExit'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { resolveContextWindow } from '../shared/config'
 import { ToolRegistry } from '../runtime/tools/ToolRegistry'
-import { ToolAvailability } from '../runtime/tools/availability'
+import { ToolAvailability, listLiveDeferredGroupIds } from '../runtime/tools/availability'
 import { createLoadToolsTool } from '../runtime/tools/loadTools'
 import { projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
 import { ArtifactStore } from '../runtime/artifacts/ArtifactStore'
@@ -171,11 +171,19 @@ function createCodingTools(availability: ToolAvailability | null): ToolRegistry 
   registry.register(writeTool)
   registry.register(bashTool)
   registry.register(archiveReadTool)
+  // 连接器只在存在 live deferred 组时下发；headless 编码工具集没有组成员，恒不注册
   if (availability) {
-    registry.register(
-      createLoadToolsTool({
-        getAvailability: () => availability
-      })
+    const registeredToolNames = registry.getToolDefinitions().map(def => def.name)
+    if (listLiveDeferredGroupIds(registeredToolNames).length > 0) {
+      registry.register(
+        createLoadToolsTool({
+          getAvailability: () => availability,
+          registeredToolNames
+        })
+      )
+    }
+    availability.bindRegisteredToolNames(
+      registry.getToolDefinitions().map(def => def.name)
     )
   }
   return registry
@@ -211,7 +219,7 @@ async function main(): Promise<void> {
   })
   const toolEconomyEnabled = taskPolicy.toolEconomy || options.toolEconomy === true
   const toolAvailability = new ToolAvailability()
-  toolAvailability.setEnabled(toolEconomyEnabled)
+  toolAvailability.setEconomyMode(toolEconomyEnabled ? 'on' : 'off')
 
   mkdirSync(options.logsDir, { recursive: true })
   const eventsPath = resolve(options.logsDir, 'events.jsonl')

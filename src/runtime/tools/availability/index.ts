@@ -1,15 +1,21 @@
 export {
-  type ToolGroupId,
-  LOADABLE_TOOL_GROUPS,
-  TOOL_GROUP_MEMBERS,
-  CORE_TOOL_NAMES,
+  ToolAvailability,
+  LOAD_TOOLS_ACTIVATED_MARKER,
+  formatToolEconomyActivationLog,
+  type ToolActivationReason,
+  type ToolAvailabilityDiagnostics,
+  type ToolAvailabilityPersistState,
+  type ToolEconomyActivationRecord,
+  type ToolEconomyMode,
+  type ToolGroupMarkerMessage
+} from './ToolAvailability'
+export { resolveToolEconomyMode } from './economyPolicy'
+export {
   getToolGroup,
   isCoreTool,
   isKnownToolGroup,
-  listLoadableGroups
-} from './toolGroups'
-export {
-  ToolAvailability,
-  LOAD_TOOLS_ACTIVATED_MARKER,
-  filterToolDefinitionsByAvailability
-} from './ToolAvailability'
+  isLoadableToolGroup,
+  listGroupToolNames,
+  listLiveDeferredGroupIds,
+  normalizeGroupAlias
+} from '../catalog'

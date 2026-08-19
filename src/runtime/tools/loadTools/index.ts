@@ -1,28 +1,37 @@
 /**
- * load_tools — 按需激活一个工具组；激活态由 ToolAvailability 拥有。
+ * load_tools — 按需激活一个 live deferred 组；激活态由 ToolAvailability 拥有。
+ * enum 与描述在创建时从 Catalog + 注册清单派生，字节级稳定；
+ * 全部组已加载后连接器保持在场并返回 already_loaded，避免 request shape 抖动。
  */
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import {
   LOAD_TOOLS_ACTIVATED_MARKER,
-  type ToolAvailability,
-  listLoadableGroups,
-  TOOL_GROUP_MEMBERS
+  formatToolEconomyActivationLog,
+  listGroupToolNames,
+  type ToolAvailability
 } from '../availability'
+import { buildLoadToolsDescription, listLiveDeferredGroupIds } from '../catalog'
 
 export interface LoadToolsDeps {
   getAvailability: () => ToolAvailability | null
+  /** 创建时已完成的注册清单；live 组 enum / 描述的唯一来源 */
+  registeredToolNames: readonly string[]
 }
 
 export function createLoadToolsTool(deps: LoadToolsDeps): ToolExecutor {
+  const groupEnum = [...listLiveDeferredGroupIds(deps.registeredToolNames)].sort()
+  const description = buildLoadToolsDescription(groupEnum)
+
   return {
     name: 'load_tools',
-    description: buildDescription(deps),
+    description,
     parameters: {
       type: 'object',
       properties: {
         group: {
           type: 'string',
-          description: `要激活的工具组名。可选值: ${listLoadableGroups().join(', ')}`
+          enum: groupEnum,
+          description: `要激活的工具组名。可选值: ${groupEnum.join(', ')}`
         }
       },
       required: ['group'],
@@ -38,40 +47,41 @@ export function createLoadToolsTool(deps: LoadToolsDeps): ToolExecutor {
 
       const availability = deps.getAvailability()
       if (!availability) {
-        return {
-          success: false,
-          output: '',
-          error: '工具分组未启用，无法激活工具组'
-        }
+        return { success: false, output: '', error: '工具经济未启用，无法激活工具组' }
       }
 
+      const previousActive = availability.getActiveToolNames().length
       const result = availability.activate(group)
       if (!result.ok) {
         return { success: false, output: '', error: result.error }
       }
 
-      const members = TOOL_GROUP_MEMBERS[result.group]
-      const memberText =
-        members.length > 0 ? members.join(', ') : '(reserved group, no member tools yet)'
-      const output = [
-        `Activated tool group "${result.group}".`,
-        `Members: ${memberText}`,
-        `These tools become available on the next model step.`,
-        `${LOAD_TOOLS_ACTIVATED_MARKER}${result.group}`
-      ].join('\n')
+      const members = listGroupToolNames(result.group)
+      const nextActive = availability.getActiveToolNames().length
+      console.log(
+        formatToolEconomyActivationLog({
+          group: result.group,
+          reason: 'model',
+          previousActive,
+          nextActive,
+          outcome: result.alreadyActive ? 'already_loaded' : 'success'
+        })
+      )
+
+      const output = result.alreadyActive
+        ? [
+            `Tool group "${result.group}" is already loaded.`,
+            `Members: ${members.join(', ')}`,
+            `${LOAD_TOOLS_ACTIVATED_MARKER}${result.group}`
+          ].join('\n')
+        : [
+            `Activated tool group "${result.group}".`,
+            `Members: ${members.join(', ')}`,
+            `These tools become available on the next model step.`,
+            `${LOAD_TOOLS_ACTIVATED_MARKER}${result.group}`
+          ].join('\n')
 
       return { success: true, output }
     }
   }
-}
-
-function buildDescription(deps: LoadToolsDeps): string {
-  const availability = deps.getAvailability()
-  if (availability) {
-    return availability.buildLoadToolsDescription()
-  }
-  return [
-    '按需激活一组高级工具。激活后下一轮模型请求即可使用该组工具。',
-    `可加载组: ${listLoadableGroups().join(', ')}`
-  ].join('\n')
 }

@@ -340,7 +340,7 @@ export class AgentLoop {
       ...this.ctx.messages,
       ...messages
     ]
-    this.ctx.toolAvailability?.restoreFromMessages(this.ctx.messages)
+    this.ctx.toolAvailability?.backfillFromMessages(this.ctx.messages)
     // 恢复历史后立即推送一次上下文占用，让 renderer 无需等待下一轮 LLM 调用即可显示
     this.emitContextBreakdown('', 0)
   }
@@ -354,7 +354,7 @@ export class AgentLoop {
    */
   restoreCompactedContext(summary: string, recentMessages: ChatMessage[], compactionLevel: number): void {
     this.compactionService.restoreCompactedContext(summary, recentMessages, compactionLevel)
-    this.ctx.toolAvailability?.restoreFromMessages(this.ctx.messages)
+    this.ctx.toolAvailability?.backfillFromMessages(this.ctx.messages)
     this.emitContextBreakdown('', 0)
   }
 
@@ -741,8 +741,8 @@ export class AgentLoop {
     this.compactionService.recordUserTurn()
 
     // AgentLoop 装配 kernel 依赖，并在 kernel 返回后统一处理终态。
-    const executeBatch = (toolCalls: ChatToolCall[], mid: string) =>
-      executeToolBatch({
+    const executeBatch = async (toolCalls: ChatToolCall[], mid: string) => {
+      const result = await executeToolBatch({
         toolCalls,
         messageId: mid,
         toolRegistry: this.ctx.toolRegistry,
@@ -784,6 +784,8 @@ export class AgentLoop {
           ? { assertExecutionCurrent: this.assertExecutionCurrent }
           : {})
       })
+      return result
+    }
 
     const loopConfig: LoopConfig = {
       maxToolRounds: this.maxToolRounds,

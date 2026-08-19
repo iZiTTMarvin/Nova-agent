@@ -4,6 +4,8 @@ import type { ToolContext, ToolExecutor, ToolResult } from '../../../../src/runt
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
+import { ToolAvailability } from '../../../../src/runtime/tools/availability'
+import { createLoadToolsTool } from '../../../../src/runtime/tools/loadTools'
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -882,6 +884,58 @@ describe('executeToolBatch', () => {
     expect(executed).toBe(false)
     expect(result.outcomes[0]?.failed).toBe(true)
     expect(result.outcomes[0]?.resultText).toContain('工具组未激活')
+  })
+
+  it('同批次 load_tools + deferred 调用：激活成功但同 step 调用仍被拒绝（next-step 激活）', async () => {
+    const availability = new ToolAvailability()
+    availability.setEconomyMode('on')
+    availability.bindRegisteredToolNames(['read', 'load_tools', 'task'])
+
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', async () => ({ success: true, output: 'ok' }))
+    registry.register(
+      createLoadToolsTool({
+        getAvailability: () => availability,
+        registeredToolNames: ['read', 'load_tools', 'task']
+      })
+    )
+    let taskExecuted = false
+    registerTool(registry, 'task', async () => {
+      taskExecuted = true
+      return { success: true, output: 'should-not-run-this-step' }
+    })
+
+    const result = await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_load', name: 'load_tools', arguments: JSON.stringify({ group: 'agent' }) },
+        { id: 'tc_task', name: 'task', arguments: '{}' }
+      ],
+      messageId: 'msg_same_step',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel',
+      isToolAvailable: name => availability.isToolAvailable(name),
+      readState: createReadState()
+    })
+
+    const loadOutcome = result.outcomes.find(o => o.toolCall.id === 'tc_load')
+    const taskOutcome = result.outcomes.find(o => o.toolCall.id === 'tc_task')
+    expect(loadOutcome?.failed).toBe(false)
+    expect(loadOutcome?.resultText).toContain('Activated tool group "agent"')
+    // 闸门在批次执行前快照：激活虽已提交，本 step 的 task 仍不可执行
+    expect(taskOutcome?.failed).toBe(true)
+    expect(taskOutcome?.resultText).toContain('工具组未激活')
+    expect(taskExecuted).toBe(false)
+    // 下一 model step：激活已生效
+    expect(availability.isToolAvailable('task')).toBe(true)
   })
 
   it('工具失败回传超过 4000 字符时保留尾部并如实标注省略字符数', async () => {

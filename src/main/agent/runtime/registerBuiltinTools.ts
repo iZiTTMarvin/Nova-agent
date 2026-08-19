@@ -20,6 +20,7 @@ import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
+import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
 import type { ToolAvailability } from '../../../runtime/tools/availability'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
@@ -46,9 +47,10 @@ export interface BuiltinToolRegistrationDeps {
 
 /**
  * 注册全部内置工具。新增工具时除了在此 register，还必须：
- * (1) 在 shared/session/toolVisibility.getToolCapability 登记能力分类；
- * (2) 在 renderer toolDisplay 补显示名。
- * 回归守卫见 tests/unit/runtime/tools/toolCapabilityCoverage.test.ts。
+ * (1) 在 runtime/tools/catalog/ToolCatalog.ts 登记 Catalog 条目；
+ * (2) 在 shared/session/toolVisibility.getToolCapability 登记能力分类；
+ * (3) 在 renderer toolDisplay 补显示名。
+ * 回归守卫见 tests/unit/runtime/tools/toolCatalog.test.ts 与 toolCapabilityCoverage.test.ts。
  */
 export function registerBuiltinTools(
   toolRegistry: ToolRegistry,
@@ -71,11 +73,6 @@ export function registerBuiltinTools(
   toolRegistry.register(writeTool)
   toolRegistry.register(bashTool)
   toolRegistry.register(archiveReadTool)
-  toolRegistry.register(
-    createLoadToolsTool({
-      getAvailability: deps.getToolAvailability ?? (() => null)
-    })
-  )
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)
@@ -95,4 +92,21 @@ export function registerBuiltinTools(
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
     })
   )
+  // load_tools 最后注册：其 enum / 描述需要完整注册清单来判定 live deferred 组
+  toolRegistry.register(
+    createLoadToolsTool({
+      getAvailability: deps.getToolAvailability ?? (() => null),
+      registeredToolNames: toolRegistry.getToolDefinitions().map(def => def.name)
+    })
+  )
+
+  // 清洁度 fail closed：注册清单与 Catalog 双向对账，未登记工具不得静默成为 core
+  const catalogCheck = validateRegistryAgainstCatalog(
+    toolRegistry.getToolDefinitions().map(def => def.name)
+  )
+  if (!catalogCheck.ok) {
+    throw new Error(
+      `内置工具注册与 Tool Catalog 不一致：\n${catalogCheck.issues.map(i => `- ${i.kind}: ${i.detail}`).join('\n')}`
+    )
+  }
 }
