@@ -56,6 +56,7 @@ src/runtime/code-mode/
 ├── presentation.ts        # 呈现模式解析 + 投影
 ├── toolBindings.ts        # SDK 绑定解析（Catalog ∩ 激活集）
 ├── sdkPrompt.ts           # SDK 声明生成（字节级稳定）
+├── textBytes.ts           # UTF-8 字节预算截断（沙箱回传与 curated output 共用）
 └── quickjs/
     ├── QuickJsSandboxHost.ts   # 沙箱宿主循环（可进程内测试）
     ├── QuickJsCodeRuntime.ts   # Worker 承载实现 + 进程内实现
