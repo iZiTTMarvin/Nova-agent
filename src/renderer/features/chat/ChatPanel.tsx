@@ -718,7 +718,7 @@ export const ChatPanel: React.FC = () => {
         </div>
       ) : !isEmptyState ? (
         <div
-          className="chat-messages flex-1 overflow-y-auto pt-6 px-4"
+          className="chat-messages flex-1 overflow-y-auto"
           ref={bindScrollContainer}
           onScroll={handleScroll}
           style={{
