@@ -26,8 +26,11 @@ export function isPermissionDeniedResult(result?: string): boolean {
   return Boolean(result?.startsWith('权限拒绝:'))
 }
 
-/** 不在消息流里渲染的工具：plan 模式隐藏写入类，以及由会话级面板统一展示的 todo_write */
+/** 不在消息流里渲染的工具：plan 模式隐藏写入类、会话级面板统一展示的 todo_write，以及 harness 内部控制动作 */
 export function shouldRenderToolBlock(mode: Mode, toolName: string): boolean {
   if (toolName === 'todo_write') return false
+  // load_tools 是 Harness 内部控制动作：不生成工具卡片、不展示参数与结果；
+  // 激活痕迹仅通过开发诊断日志观测
+  if (toolName === 'load_tools') return false
   return !isModeHiddenWriteTool(mode, toolName)
 }

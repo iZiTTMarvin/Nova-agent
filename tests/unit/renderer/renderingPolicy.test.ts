@@ -27,6 +27,12 @@ describe('renderingPolicy', () => {
     expect(shouldRenderToolBlock('compose', 'todo_write')).toBe(false)
   })
 
+  it('load_tools 是 Harness 内部控制动作，任何模式都不生成工具卡片', () => {
+    expect(shouldRenderToolBlock('default', 'load_tools')).toBe(false)
+    expect(shouldRenderToolBlock('plan', 'load_tools')).toBe(false)
+    expect(shouldRenderToolBlock('compose', 'load_tools')).toBe(false)
+  })
+
   it('权限拒绝结果应隐藏 arguments', () => {
     expect(isPermissionDeniedResult('权限拒绝: 当前为 plan 模式')).toBe(true)
     expect(isPermissionDeniedResult('工具执行失败: boom')).toBe(false)
