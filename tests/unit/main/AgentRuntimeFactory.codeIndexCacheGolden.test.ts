@@ -4,13 +4,13 @@ import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareAgentRuntime } from '../../../src/main/agent/runtime/AgentRuntimeFactory'
 import { agentRoute } from '../../../src/runtime/agent/turn'
+import { OpenAICompatibleModelClient } from '../../../src/runtime/model/OpenAICompatibleModelClient'
 import { computeWireSnapshot } from '../../../src/runtime/model/requestFingerprint'
 import { createRunCoordinator } from '../../../src/runtime/run'
 import { SessionStore } from '../../../src/runtime/sessions'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { ImageStore } from '../../../src/runtime/storage/ImageStore'
 import { createReadState } from '../../../src/runtime/tools/editTool'
-import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 
 vi.mock('electron', () => ({
   app: {
@@ -46,6 +46,10 @@ vi.mock('../../../src/main/services/SubagentSchedulerHost', () => ({
   getSubagentScheduler: () => ({ enqueue: vi.fn() })
 }))
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
 describe('AgentRuntimeFactory feature-off cache golden', () => {
   const roots: string[] = []
 
@@ -61,8 +65,37 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
     const workspaceRoot = '/nova-code-graph-cache-golden'
     const store = new SessionStore(sessionsDir)
     const session = store.create(workspaceRoot)
-    const modelClient = new MockModelClient().addResponse({
-      events: [{ type: 'message_end', finishReason: 'stop' }]
+    let wireBody: Record<string, unknown> | null = null
+    const modelClient = new OpenAICompatibleModelClient({
+      baseUrl: 'https://cache-golden.invalid/v1',
+      apiKey: 'test-key',
+      modelId: 'cache-golden',
+      cacheProfile: 'generic',
+      fetchImpl: async (_input, init) => {
+        if (typeof init?.body !== 'string') {
+          throw new Error('最终请求体不是 JSON 文本')
+        }
+        const parsed: unknown = JSON.parse(init.body)
+        if (!isRecord(parsed)) {
+          throw new Error('最终请求体不是对象')
+        }
+        wireBody = parsed
+
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n')
+            )
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            controller.close()
+          }
+        })
+        return new Response(stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      }
     })
     const prepared = prepareAgentRuntime({
       session,
@@ -80,21 +113,9 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
 
     try {
       await prepared.agentLoop.sendMessage('cache golden', agentRoute())
-      const call = modelClient.getCalls().at(-1)
-      if (!call) throw new Error('模型请求未发生')
-
-      const tools = (call.tools ?? []).map((tool) => ({
-        type: 'function',
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters
-        }
-      }))
-      const snapshot = computeWireSnapshot(
-        { model: 'cache-golden', messages: call.messages, tools },
-        'generic'
-      )
+      const body = wireBody
+      if (!body) throw new Error('模型请求未发生')
+      const snapshot = computeWireSnapshot(body, 'generic')
 
       expect({
         toolsHash: snapshot.toolsHash,
