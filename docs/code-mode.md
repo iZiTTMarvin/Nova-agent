@@ -26,7 +26,7 @@ Tool Presentation（direct / code-readonly）
 
 ```text
 Electron Main
-    ↓ worker_threads（每次 run_code 一个全新 worker）
+    ↓ worker_threads（进程级复用一个 worker，每次 run_code 创建全新 QuickJS context）
 QuickJS / WASM 沙箱（singlefile 内联 WASM，无外部 .wasm 依赖）
     ↓ 唯一能力入口：tools.<name>(args) / console.log / return
 Tool Bridge（消息协议 + SharedArrayBuffer 中止标志）
@@ -37,6 +37,7 @@ Tool Bridge（消息协议 + SharedArrayBuffer 中止标志）
 - 沙箱内只有 QuickJS 标准库；`require` / `process` / `fs` / `network` / `electron` 一律不可达，`new Function` 也无法触及宿主作用域。
 - 嵌套工具调用**必须**重入统一执行流水线（`ToolContext.dispatchNestedToolCall` → `executeToolBatch`），禁止直调 `tool.impl`；嵌套执行自身不再携带派发入口（防递归）。
 - 中止：主线程写 SharedArrayBuffer 原子标志，沙箱中断器同步读取，可打断阻塞中的同步循环；结果超时未回时强杀 worker。
+- worker 内执行串行排队，避免多个 WASM 堆同时占用主进程资源；因此当前实验不适合跨会话并发跑多个长 `run_code`，该限制必须纳入真实 A/B 的 latency 评估。
 - 资源上限（`src/runtime/code-mode/limits.ts`）：源码 64KB、整体 30s、工具调用 32 次、并发 4、单次入参/输出 512KB、回传模型 64KB、沙箱堆 128MB。
 
 ## 输出规则

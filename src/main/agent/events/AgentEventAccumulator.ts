@@ -125,7 +125,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       if (event.parentToolCallId) break
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
-        const isError = event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:')
+        const isError = event.failed ?? (event.result.startsWith('工具执行失败') || event.result.startsWith('权限拒绝:'))
         const blockIdx = stream.blocks.findIndex(b => b.type === 'tool' && b.toolCallId === event.toolCallId)
         if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
           const block = stream.blocks[blockIdx]

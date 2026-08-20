@@ -18,7 +18,6 @@ import { createTaskTool } from '../../../runtime/tools/task'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
-import { existsSync } from 'fs'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import { createRunCodeTool } from '../../../runtime/tools/runCode'
@@ -45,7 +44,7 @@ export interface BuiltinToolRegistrationDeps {
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
   /** load_tools 写入的会话级工具可用性 Owner */
   getToolAvailability?: () => ToolAvailability | null
-  /** run_code 的沙箱 Code Runtime 构建产物路径；缺省回退进程内执行 */
+  /** run_code 的沙箱 Code Runtime 构建产物路径；缺省仅用于测试的进程内执行 */
   codeModeWorkerPath?: string
   /**
    * 是否注册 memory_search。由装配方按本轮设置快照决定（与 memoryContext /
@@ -113,10 +112,10 @@ export function registerBuiltinTools(
       getToolAvailability: deps.getToolAvailability ?? (() => null),
       // 呈现模式进程级一次解析：与 prompt/SDK 冻结口径一致，direct 模式下执行层直接拒绝
       getPresentationMode: getProcessToolPresentationMode,
-      // 共享 worker runtime（串行复用）；worker 产物缺失（如未构建的开发态）回退进程内沙箱
+      // 生产装配只走 worker；路径缺失会显式失败，避免静默退回主线程阻塞 Electron
       createCodeRuntime: () => {
         const workerPath = deps.codeModeWorkerPath
-        return workerPath && existsSync(workerPath)
+        return workerPath
           ? getSharedQuickJsCodeRuntime(workerPath)
           : new InProcessCodeRuntime()
       }

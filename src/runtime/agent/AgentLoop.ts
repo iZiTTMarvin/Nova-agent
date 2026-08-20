@@ -39,6 +39,7 @@ import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
+import { isToolDirectlyPresented } from '../code-mode'
 
 import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
@@ -797,6 +798,8 @@ export class AgentLoop {
         hookManager: this.hookManager,
         isToolAvailable: (name) =>
           this.ctx.toolAvailability ? this.ctx.toolAvailability.isToolAvailable(name) : true,
+        isToolPresented: (name) =>
+          isToolDirectlyPresented(this.ctx.toolPresentation, name),
         readState: this.ctx.readState,
         artifactStore: this.ctx.artifactStore,
         askQuestion: this.askQuestionHandler,

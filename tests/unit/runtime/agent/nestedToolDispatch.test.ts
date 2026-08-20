@@ -12,6 +12,7 @@ import { createReadState } from '../../../../src/runtime/tools/editTool'
 interface HarnessOptions {
   checkPermission?: (toolName: string) => { allowed: boolean; reason: string }
   isToolAvailable?: (toolName: string) => boolean
+  isToolPresented?: (toolName: string) => boolean
   abortSignal?: AbortSignal
 }
 
@@ -70,6 +71,7 @@ async function runHarness(options: HarnessOptions = {}): Promise<{
     toolExecution: 'parallel',
     readState: createReadState(),
     ...(options.isToolAvailable ? { isToolAvailable: options.isToolAvailable } : {}),
+    ...(options.isToolPresented ? { isToolPresented: options.isToolPresented } : {}),
     allowNestedToolDispatch: true
   })
 
@@ -125,6 +127,45 @@ describe('嵌套工具派发 seam', () => {
     expect(outcome!.success).toBe(false)
     expect(outcome!.error).toContain('未激活')
     expect(outcome!.error).toContain('load_tools')
+  })
+
+  it('呈现闸门拦截模型隐藏工具，但不误伤沙箱白名单内的嵌套调用', async () => {
+    const nested = await runHarness({
+      isToolPresented: toolName => toolName === 'host'
+    })
+    expect(nested.hostOutcome?.success).toBe(true)
+
+    const registry = new ToolRegistry()
+    let executed = false
+    registry.register({
+      name: 'read',
+      description: 'read',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        executed = true
+        return { success: true, output: 'unexpected' }
+      }
+    })
+    const { outcomes } = await executeToolBatch({
+      toolCalls: [{ id: 'tc_hidden', name: 'read', arguments: '{}' }],
+      messageId: 'msg_hidden',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: () => {},
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel',
+      readState: createReadState(),
+      isToolPresented: () => false
+    })
+    expect(executed).toBe(false)
+    expect(outcomes[0]?.failed).toBe(true)
+    expect(outcomes[0]?.resultText).toContain('呈现模式未直接暴露')
   })
 
   it('批次未开启派发入口时工具拿不到嵌套派发能力', async () => {

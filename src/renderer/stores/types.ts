@@ -26,7 +26,6 @@ export interface NestedToolActivity {
   toolName: string
   args: Record<string, unknown>
   status: 'running' | 'success' | 'error'
-  result?: string
 }
 
 /** 流式增量阶段携带的额外字段：原始 JSON 字符串；嵌套活动仅 renderer 瞬态 */

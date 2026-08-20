@@ -103,22 +103,33 @@ export class QuickJsCodeRuntime implements CodeRuntime {
           return
         }
         if (message.kind === 'toolCall') {
-          void input
-            .dispatchToolCall({
-              callId: message.callId,
-              toolName: message.toolName,
-              argsJson: message.argsJson
-            })
-            .then(resolution => {
-              if (this.active === execution) {
+          void (async () => {
+            let resolution: CodeRuntimeToolCallResolution
+            try {
+              resolution = await input.dispatchToolCall({
+                callId: message.callId,
+                toolName: message.toolName,
+                argsJson: message.argsJson
+              })
+            } catch (err) {
+              resolution = {
+                ok: false,
+                errorMessage: err instanceof Error ? err.message : String(err)
+              }
+            }
+            if (this.active === execution) {
+              try {
                 worker.postMessage({
                   kind: 'resolveToolCall',
                   requestId,
                   callId: message.callId,
                   resolution
                 } satisfies CodeModeHostToWorkerMessage)
+              } catch (err) {
+                onError(err instanceof Error ? err : new Error(String(err)))
               }
-            })
+            }
+          })()
         }
       }
 

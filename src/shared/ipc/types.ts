@@ -584,6 +584,8 @@ export interface IpcEvents {
     toolCallId: string
     toolName: string
     result: string
+    /** 工具流水线给出的结构化终态；旧事件缺失时 renderer 才回退文案兼容。 */
+    failed?: boolean
     /** 大输出落盘后的 artifact ID，供 UI「查看完整输出」入口使用 */
     artifactId?: string
     /** 截断元数据（共 N 行 / 展示 M 行），与 ToolResult.truncationMeta 对齐 */

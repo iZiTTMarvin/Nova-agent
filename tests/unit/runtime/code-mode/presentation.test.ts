@@ -4,7 +4,11 @@
  * SDK 声明字节级稳定；未激活 deferred 工具不进 SDK。
  */
 import { describe, expect, it } from 'vitest'
-import { applyToolPresentation, resolveToolPresentationMode } from '@runtime/code-mode/presentation'
+import {
+  applyToolPresentation,
+  isToolDirectlyPresented,
+  resolveToolPresentationMode
+} from '@runtime/code-mode/presentation'
 import { renderCodeModeSdkSection } from '@runtime/code-mode/sdkPrompt'
 import { resolveCodeModeToolBindings } from '@runtime/code-mode/toolBindings'
 import { ToolAvailability } from '@runtime/tools/availability'
@@ -44,6 +48,14 @@ describe('applyToolPresentation', () => {
     const result = applyToolPresentation('code-readonly', defs(['custom_tool']))
     expect(result.map(t => t.name)).toEqual(['custom_tool'])
   })
+
+  it('direct/native 调用闸门只表达呈现形式', () => {
+    expect(isToolDirectlyPresented('direct', 'run_code')).toBe(false)
+    expect(isToolDirectlyPresented('direct', 'read')).toBe(true)
+    expect(isToolDirectlyPresented('code-readonly', 'run_code')).toBe(true)
+    expect(isToolDirectlyPresented('code-readonly', 'read')).toBe(false)
+    expect(isToolDirectlyPresented('code-readonly', 'write')).toBe(true)
+  })
 })
 
 describe('renderCodeModeSdkSection', () => {
@@ -54,6 +66,24 @@ describe('renderCodeModeSdkSection', () => {
     expect(a).toContain('find(args:')
     expect(a).toContain("path: string; offset?: number")
     expect(a).toContain('Promise<{ output: string }>')
+  })
+
+  it('SDK 对非标识符参数名加引号，生成合法 TypeScript 字段', () => {
+    const section = renderCodeModeSdkSection([{
+      name: 'grep',
+      description: 'grep tool',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: { type: 'string' },
+          '-A': { type: 'number' }
+        },
+        required: ['pattern']
+      }
+    }])
+    expect(section).toContain('pattern: string')
+    expect(section).toContain('"-A"?: number')
+    expect(section).not.toContain(' -A?: number')
   })
 
   it('economy on 时未激活组的 nestable 工具不进 SDK（投影顺序：Mode → Availability → Nesting）', () => {

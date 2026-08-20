@@ -377,10 +377,10 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     toolCallId: string,
     _toolName: string,
     result: string,
-    parentToolCallId?: string
+    parentToolCallId?: string,
+    failed?: boolean
   ) => {
-    const isError = result.startsWith('工具执行失败') || result.startsWith('权限拒绝:')
-    const sanitizedResult = sanitizeToolOutput(_toolName, result, isError)
+    const isError = failed ?? (result.startsWith('工具执行失败') || result.startsWith('权限拒绝:'))
 
     // 嵌套调用：只更新父块下的紧凑活动状态
     if (parentToolCallId) {
@@ -388,12 +388,14 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         if (!activities.some(a => a.toolCallId === toolCallId)) return null
         return activities.map(a =>
           a.toolCallId === toolCallId
-            ? { ...a, status: isError ? ('error' as const) : ('success' as const), result: sanitizedResult }
+            ? { ...a, status: isError ? ('error' as const) : ('success' as const) }
             : a
         )
       })
       return
     }
+
+    const sanitizedResult = sanitizeToolOutput(_toolName, result, isError)
 
     set(state => {
       const idx = state.messageIndexById[messageId]

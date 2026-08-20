@@ -40,6 +40,27 @@ suite('QuickJsCodeRuntime（真实 worker）', () => {
     }
   }, 20_000)
 
+  it('宿主工具桥异常会回结为工具失败，不等待 watchdog 超时', async () => {
+    const runtime = new QuickJsCodeRuntime({ workerPath })
+    try {
+      const startedAt = Date.now()
+      const result = await runtime.execute({
+        source: `await tools.read({ path: 'a.ts' })`,
+        toolNames: ['read'],
+        limits: { ...DEFAULT_CODE_MODE_LIMITS, maxSandboxTimeMs: 2_000 },
+        dispatchToolCall: async () => {
+          throw new Error('bridge exploded')
+        }
+      })
+      expect(result.status).toBe('failed')
+      expect(result.kind).toBe('tool_failure')
+      expect(result.message).toContain('bridge exploded')
+      expect(Date.now() - startedAt).toBeLessThan(2_000)
+    } finally {
+      runtime.dispose()
+    }
+  }, 10_000)
+
   it('外部中止经共享内存标志打断另一线程中阻塞的同步循环', async () => {
     const runtime = new QuickJsCodeRuntime({ workerPath })
     try {

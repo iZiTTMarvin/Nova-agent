@@ -13,6 +13,27 @@ import {
 } from '../internal'
 import type { ChatSliceCreator, TurnLifecycleSliceState } from '../types'
 
+function cancelToolBlock(block: RendererToolBlock): RendererToolBlock {
+  const nestedActivities = block.nestedActivities?.map(activity =>
+    activity.status === 'running'
+      ? { ...activity, status: 'error' as const }
+      : activity
+  )
+  const nestedChanged = nestedActivities?.some((activity, index) =>
+    activity !== block.nestedActivities?.[index]
+  ) === true
+  if (block.status !== 'running' && !nestedChanged) return block
+
+  const { argumentsRaw: _drop, ...restBlock } = block
+  return {
+    ...restBlock,
+    ...(block.status === 'running'
+      ? { status: 'error' as const, result: '用户取消执行' }
+      : {}),
+    ...(nestedActivities ? { nestedActivities } : {})
+  }
+}
+
 export function initialTurnLifecycleState(): Pick<
   TurnLifecycleSliceState,
   'isGenerating' | 'currentGeneratingMessageId' | 'activeAgentSessionId'
@@ -64,11 +85,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           // 取消中断结束时，把该消息的 running tool 块标记为 error
           // 并清空 argumentsRaw、附上 "用户取消执行" 结果。同时标记消息 interrupted。
           const blocks = base.blocks?.map(b => {
-            if (b.type === 'tool' && b.status === 'running') {
-              const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
-              return { ...restBlock, type: 'tool' as const, status: 'error' as const, result: '用户取消执行' }
-            }
-            return b
+            return b.type === 'tool' ? cancelToolBlock(b as RendererToolBlock) : b
           })
           const toolCalls = base.toolCalls?.map(tc => {
             if (tc.status === 'running') {
@@ -231,12 +248,10 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         let changed = !!live
 
         const blocks = base.blocks?.map(b => {
-          if (b.type === 'tool' && b.status === 'running') {
-            changed = true
-            const { argumentsRaw: _drop, ...restBlock } = b as RendererToolBlock
-            return { ...restBlock, type: 'tool' as const, status: 'error' as const, result: '用户取消执行' }
-          }
-          return b
+          if (b.type !== 'tool') return b
+          const cancelled = cancelToolBlock(b as RendererToolBlock)
+          if (cancelled !== b) changed = true
+          return cancelled
         })
 
         const toolCalls = base.toolCalls?.map(tc => {

@@ -11,7 +11,12 @@ export type { CodeRuntimeLimits } from './limits'
 export { formatRunCodeFailure } from './errors'
 export { QuickJsCodeRuntime, InProcessCodeRuntime, getSharedQuickJsCodeRuntime } from './quickjs/QuickJsCodeRuntime'
 export { loadQuickJsModule } from './quickjs/quickJsModule'
-export { applyToolPresentation, resolveToolPresentationMode, getProcessToolPresentationMode } from './presentation'
+export {
+  applyToolPresentation,
+  resolveToolPresentationMode,
+  getProcessToolPresentationMode,
+  isToolDirectlyPresented
+} from './presentation'
 export type { ToolPresentationMode } from './presentation'
 export { resolveCodeModeToolBindings } from './toolBindings'
 export { renderCodeModeSdkSection } from './sdkPrompt'

@@ -44,3 +44,10 @@ export function applyToolPresentation<T extends { name: string }>(
   return tools.filter(tool => tool.name !== 'run_code')
 }
 
+/** 只判断 direct/native 调用形式，不吸收 Mode 或 Availability 的授权语义。 */
+export function isToolDirectlyPresented(
+  presentation: ToolPresentationMode,
+  toolName: string
+): boolean {
+  return applyToolPresentation(presentation, [{ name: toolName }]).length === 1
+}

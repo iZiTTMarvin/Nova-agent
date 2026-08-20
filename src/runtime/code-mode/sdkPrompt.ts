@@ -36,7 +36,8 @@ function renderToolArgs(parameters: ToolDefinition['parameters']): string {
   const required = new Set(((parameters as { required?: string[] } | undefined)?.required) ?? [])
   const fields = Object.entries(props).map(([name, spec]) => {
     const marker = required.has(name) ? '' : '?'
-    return `${name}${marker}: ${schemaTypeToTs(spec)}`
+    const propertyName = /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name)
+    return `${propertyName}${marker}: ${schemaTypeToTs(spec)}`
   })
   return fields.length > 0 ? `{ ${fields.join('; ')} }` : '{}'
 }

@@ -138,7 +138,16 @@ describe('streamSlice', () => {
       'tc_run_code#nested-1',
       'read',
       '文件内容',
-      'tc_run_code'
+      'tc_run_code',
+      false
+    )
+    useChatStore.getState().handleToolResult(
+      'msg_code',
+      'tc_run_code#nested-2',
+      'grep',
+      '工具 "grep" 不可用：所属工具组未激活',
+      'tc_run_code',
+      true
     )
 
     const message = useChatStore.getState().messages[0]
@@ -149,10 +158,34 @@ describe('streamSlice', () => {
     const parent = toolBlocks[0]
     expect(parent).toMatchObject({ type: 'tool', toolCallId: 'tc_run_code', toolName: 'run_code' })
     expect(parent.nestedActivities).toEqual([
-      { toolCallId: 'tc_run_code#nested-1', toolName: 'read', args: { path: 'a.ts' }, status: 'success', result: '文件内容' },
-      { toolCallId: 'tc_run_code#nested-2', toolName: 'grep', args: { pattern: 'todo' }, status: 'running' }
+      { toolCallId: 'tc_run_code#nested-1', toolName: 'read', args: { path: 'a.ts' }, status: 'success' },
+      { toolCallId: 'tc_run_code#nested-2', toolName: 'grep', args: { pattern: 'todo' }, status: 'error' }
     ])
     // toolCalls 登记簿同样只含父调用
     expect(message.toolCalls?.map(tc => tc.id)).toEqual(['tc_run_code'])
+  })
+
+  it('取消会终结父工具下仍在运行的嵌套活动', async () => {
+    useChatStore.getState().handleMessageStart('msg_cancel_code')
+    useChatStore.getState().handleToolCall('msg_cancel_code', 'tc_run_code', 'run_code', {
+      code: 'await tools.read({ path: "slow.ts" })',
+      description: '探索'
+    })
+    useChatStore.getState().handleToolCall(
+      'msg_cancel_code',
+      'tc_run_code#nested-1',
+      'read',
+      { path: 'slow.ts' },
+      'tc_run_code'
+    )
+
+    await useChatStore.getState().markRunningAsCancelled()
+    const parent = useChatStore.getState().messages[0]?.blocks?.find(
+      block => block.type === 'tool' && block.toolCallId === 'tc_run_code'
+    )
+    expect(parent).toMatchObject({
+      status: 'error',
+      nestedActivities: [{ toolCallId: 'tc_run_code#nested-1', status: 'error' }]
+    })
   })
 })

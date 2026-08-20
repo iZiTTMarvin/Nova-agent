@@ -110,7 +110,8 @@ export interface StreamSliceState {
     toolCallId: string,
     toolName: string,
     result: string,
-    parentToolCallId?: string
+    parentToolCallId?: string,
+    failed?: boolean
   ) => void
 }
 

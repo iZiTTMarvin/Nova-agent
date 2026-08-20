@@ -49,7 +49,7 @@ export function projectAgentEventToRun(
     }
     case 'tool_result': {
       if (event.parentToolCallId) break
-      const isError = isToolFailureText(event.result)
+      const isError = event.failed ?? isToolFailureText(event.result)
       runCoordinator.recordToolPhase(
         runId,
         event.toolCallId,

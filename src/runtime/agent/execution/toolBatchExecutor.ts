@@ -113,6 +113,8 @@ export interface ToolBatchExecutionOptions {
    * 由 AgentLoop 在注入 ToolAvailability 时提供；测试可直接传入。
    */
   isToolAvailable?: (toolName: string) => boolean
+  /** 当前模型可见呈现面；只约束模型直调，嵌套调用由沙箱绑定清单约束。 */
+  isToolPresented?: (toolName: string) => boolean
   /**
    * read state：记录"模型已读过的文件 + 当时内容/mtime"。
    * edit/write 的"先读后改"校验依赖它。
@@ -190,6 +192,7 @@ function createNestedDispatcher(
         }
       ],
       emit: emitNested,
+      isToolPresented: undefined,
       allowNestedToolDispatch: false
     })
     const outcome = outcomes[0]
@@ -464,6 +467,7 @@ async function executePreparedToolCall(
     toolName: item.toolCall.name,
     // 在主进程 emit 前对工具输出做截断，防止大 result 撑爆渲染端 heap
     result: sanitizeToolOutput(item.toolCall.name, resultText, failed),
+    failed,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {})
   })
@@ -713,6 +717,23 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
       continue
     }
 
+    if (options.isToolPresented && !options.isToolPresented(resolvedToolCall.name)) {
+      const outcome = createErrorOutcome(
+        index,
+        resolvedToolCall,
+        args,
+        `工具 "${resolvedToolCall.name}" 不可用：当前工具呈现模式未直接暴露该工具`
+      )
+      preparedCalls.push({
+        index,
+        toolCall: resolvedToolCall,
+        args,
+        tool,
+        precheckOutcome: outcome
+      })
+      continue
+    }
+
     preparedCalls.push({
       index,
       toolCall: resolvedToolCall,
@@ -773,7 +794,8 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         messageId: options.messageId,
         toolCallId: item.toolCall.id,
         toolName: item.toolCall.name,
-        result: sanitizeToolOutput(item.toolCall.name, item.precheckOutcome.resultText, true)
+        result: sanitizeToolOutput(item.toolCall.name, item.precheckOutcome.resultText, true),
+        failed: true
       })
       continue
     }
@@ -813,7 +835,8 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         messageId: options.messageId,
         toolCallId: item.toolCall.id,
         toolName: item.toolCall.name,
-        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true)
+        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true),
+        failed: true
       })
       continue
     }
@@ -856,7 +879,8 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
             messageId: options.messageId,
             toolCallId: item.toolCall.id,
             toolName: item.toolCall.name,
-            result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true)
+            result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true),
+            failed: true
           })
         }
       }

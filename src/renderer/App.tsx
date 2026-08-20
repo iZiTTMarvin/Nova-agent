@@ -146,7 +146,7 @@ function App(): React.ReactNode {
 
     // 监听：Agent 工具执行完毕拿到结果
     const unsubToolResult = window.api.on('agent:tool-result', gateAgentEvent('tool-result', (data) => {
-      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result, data.parentToolCallId)
+      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result, data.parentToolCallId, data.failed)
     }))
 
     // 监听：Agent 请求用户确认权限
