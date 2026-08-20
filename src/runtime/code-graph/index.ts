@@ -3,6 +3,70 @@ export type {
   CodeIndexCoordinatorOptions,
   CodeIndexSnapshotListener
 } from './indexing/CodeIndexCoordinator'
+export {
+  CODE_INDEX_GIT_TIMEOUT_MS,
+  CODE_INDEX_MAX_SOURCE_BYTES,
+  FileDiscoveryCancelledError,
+  discoverCodeFiles,
+  listGitWorkspaceFiles
+} from './indexing/FileDiscovery'
+export type {
+  CodeFileDiscoveryStatus,
+  DiscoveredCodeFile,
+  FileDiscoveryDiagnostic,
+  FileDiscoveryDiagnosticReason,
+  FileDiscoveryOptions,
+  FileDiscoveryResult,
+  GitFileListRequest,
+  GitFileLister
+} from './indexing/FileDiscovery'
+export { ParserRegistry } from './parsing/ParserRegistry'
+export type {
+  ParsedCall,
+  ParsedExport,
+  ParsedImport,
+  ParsedImportBinding,
+  ParsedInheritance,
+  ParsedReference,
+  ParsedSourceFile,
+  ParsedSymbol,
+  StructuralParseInput,
+  StructuralParser
+} from './parsing/ParserRegistry'
+export {
+  TREE_SITTER_PARSER_SIGNATURE,
+  TreeSitterParser,
+  TreeSitterResourceError,
+  createTreeSitterParserRegistry
+} from './parsing/TreeSitterParser'
+export type {
+  TreeSitterGrammarPaths,
+  TreeSitterParserOptions
+} from './parsing/TreeSitterParser'
+export {
+  MODULE_PATH_RESOLVER_SIGNATURE,
+  ModulePathResolver
+} from './resolving/ModulePathResolver'
+export type {
+  AmbiguousModulePath,
+  ConfigFileReader,
+  ModulePathResolution,
+  ModulePathResolverOptions,
+  ResolvedModulePath,
+  UnresolvedModulePath
+} from './resolving/ModulePathResolver'
+export {
+  PYTHON_RESOLVER_SIGNATURE,
+  PythonResolver
+} from './resolving/PythonResolver'
+export {
+  STRUCTURAL_RESOLVER_SIGNATURE,
+  StructuralCodeGraphResolver
+} from './resolving/Resolver'
+export type {
+  CodeGraphResolveInput,
+  CodeGraphResolver
+} from './resolving/Resolver'
 export type {
   CodeGraphRepository,
   CodeGraphMetadata,
@@ -26,6 +90,7 @@ export type {
   CodeSymbolEdgeKind,
   CodeRelationResolver,
   CodeUnresolvedRelationKind,
+  CodeUnresolvedReason,
   CodeIndexCoverage,
   CodeIndexProgress,
   CodeIndexFailureCode,

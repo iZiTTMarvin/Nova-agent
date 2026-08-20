@@ -8,6 +8,7 @@ import type {
   CodeRelationResolver,
   CodeSymbolEdgeKind,
   CodeSymbolKind,
+  CodeUnresolvedReason,
   CodeUnresolvedRelationKind
 } from '../types'
 
@@ -79,7 +80,7 @@ export interface CodeGraphUnresolvedRelationInput {
   readonly rawTarget: string
   readonly moduleSpecifier: string | null
   readonly sourceLine: number
-  readonly reason: string
+  readonly reason: CodeUnresolvedReason
   readonly resolver: CodeRelationResolver
 }
 

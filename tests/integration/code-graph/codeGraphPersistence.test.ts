@@ -136,7 +136,7 @@ describe('Code Graph SQLite persistence', () => {
           rawTarget: 'externalCall',
           moduleSpecifier: 'external-package',
           sourceLine: 2,
-          reason: 'external package target is not indexed',
+          reason: 'external_module',
           resolver: 'relative-path'
         }
       ]

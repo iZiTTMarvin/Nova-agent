@@ -55,6 +55,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sharp": "^0.34.5",
+    "web-tree-sitter": "0.26.12",
     "yauzl": "^3.4.0",
     "zustand": "^4.5.5"
   },
@@ -66,6 +67,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/yauzl": "^3.3.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vscode/tree-sitter-wasm": "0.3.1",
     "autoprefixer": "^10.5.0",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",

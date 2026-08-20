@@ -57,6 +57,19 @@ export type CodeRelationResolver =
 
 export type CodeUnresolvedRelationKind = CodeFileEdgeKind | CodeSymbolEdgeKind
 
+export type CodeUnresolvedReason =
+  | 'external_module'
+  | 'no_matching_file'
+  | 'ambiguous_module'
+  | 'export_not_found'
+  | 'ambiguous_export'
+  | 'dynamic_dispatch'
+  | 'same_file_target_ambiguous'
+  | 'reexport_depth_exceeded'
+  | 'shadowed_import_binding'
+  | 'unsupported_project_reference'
+  | 'unsupported_conditional_export'
+
 export interface CodeIndexCoverage {
   readonly eligibleFiles: number
   readonly indexedFiles: number
