@@ -21,6 +21,13 @@ import { join } from 'path'
 /** base-rules.md 相对本模块目录的路径（开发 / 打包后均有效） */
 const BASE_RULES_FILE = join(__dirname, 'prompts', 'base-rules.md')
 
+/** minimal-engineering-policy.md 相对本模块目录的路径（开发 / 打包后均有效） */
+const MINIMAL_ENGINEERING_POLICY_FILE = join(
+  __dirname,
+  'prompts',
+  'minimal-engineering-policy.md'
+)
+
 /**
  * 读取并返回 base-rules 行为契约正文。
  * @param rulesFilePath 可选覆盖路径（仅测试用）；默认读取模块旁 prompts/base-rules.md
@@ -32,6 +39,24 @@ export function renderBaseRules(rulesFilePath: string = BASE_RULES_FILE): string
       return ''
     }
     return readFileSync(rulesFilePath, 'utf-8').trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 读取并返回最小工程策略正文。
+ * @param policyFilePath 可选覆盖路径（仅测试用）；默认读取模块旁 prompts/minimal-engineering-policy.md
+ * 文件缺失或读取失败时返回空字符串，不抛错。
+ */
+export function renderMinimalEngineeringPolicy(
+  policyFilePath: string = MINIMAL_ENGINEERING_POLICY_FILE
+): string {
+  try {
+    if (!existsSync(policyFilePath)) {
+      return ''
+    }
+    return readFileSync(policyFilePath, 'utf-8').trim()
   } catch {
     return ''
   }
