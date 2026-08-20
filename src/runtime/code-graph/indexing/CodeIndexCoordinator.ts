@@ -1,40 +1,65 @@
 import { randomUUID } from 'node:crypto'
-import type {
-  CodeGraphGenerationInput,
-  CodeGraphIncrementalUpdate,
-  CodeGraphMetadata,
-  CodeGraphRepository
-} from '../graph/CodeGraphRepository'
+import type { CodeGraphMetadata, CodeGraphStateReader } from '../graph/CodeGraphRepository'
 import {
-  CODE_INDEX_FAILURE_CODES,
   EMPTY_CODE_INDEX_COVERAGE,
   type CodeIndexFailure,
-  type CodeIndexFailureCode,
   type CodeIndexOperation,
   type CodeIndexProgress,
-  type CodeIndexSnapshot
+  type CodeIndexSnapshot,
+  type CodeIndexWorkerState
 } from '../types'
+import {
+  CODE_INDEX_WORKER_IDLE_TIMEOUT_MS,
+  CodeIndexWorkerMissingError,
+  CodeIndexWorkerRunError,
+  type CodeIndexWorkerPort,
+  type CodeIndexWorkerRunResult,
+  type CodeIndexWorkerWorkspace
+} from '../worker/protocol'
 
 export type CodeIndexSnapshotListener = (snapshot: CodeIndexSnapshot) => void
+export type CodeIndexWorkerFactory = () => CodeIndexWorkerPort
+
+/** 只读连接按需重取，以读取 Worker 首次建库或终止前的已提交状态。 */
+export interface CodeGraphStateReaderProvider {
+  getStateReader(): Promise<CodeGraphStateReader | null>
+}
 
 export interface CodeIndexCoordinatorOptions {
   readonly generateOperationId?: () => string
+  readonly createWorker?: CodeIndexWorkerFactory
+  readonly idleTimeoutMs?: number
 }
 
-/** 索引生命周期与可变状态的唯一 Owner；查询端不得写入这里的状态。 */
+interface WorkspaceContext {
+  readonly epoch: number
+  readonly workspace: CodeIndexWorkerWorkspace
+  readonly stateReaderProvider: CodeGraphStateReaderProvider
+}
+
+/** 索引生命周期与可变状态的唯一 Owner；所有写入工作只通过 Worker 端口调度。 */
 export class CodeIndexCoordinator {
-  private repository: CodeGraphRepository | null = null
+  private workspace: CodeIndexWorkerWorkspace | null = null
+  private stateReaderProvider: CodeGraphStateReaderProvider | null = null
+  private worker: CodeIndexWorkerPort | null = null
   private activeOperation: CodeIndexOperation | null = null
+  private activeRun: Promise<boolean> | null = null
   private workspaceEpoch = 0
   private nextGenerationFloor = 1
-  /** 串行签发 fence，避免并发 rebuild 让旧 operation 覆盖新 operation。 */
-  private operationClaimQueue: Promise<void> = Promise.resolve()
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
   private readonly listeners = new Set<CodeIndexSnapshotListener>()
   private readonly generateOperationId: () => string
+  private readonly createWorker: CodeIndexWorkerFactory | null
+  private readonly idleTimeoutMs: number
   private snapshot = createSnapshot({})
 
   constructor(options: CodeIndexCoordinatorOptions = {}) {
     this.generateOperationId = options.generateOperationId ?? randomUUID
+    this.createWorker = options.createWorker ?? null
+    this.idleTimeoutMs = options.idleTimeoutMs ?? CODE_INDEX_WORKER_IDLE_TIMEOUT_MS
+    if (!Number.isFinite(this.idleTimeoutMs) || this.idleTimeoutMs < 0) {
+      throw new Error('Code Index Worker 空闲阈值必须是非负数')
+    }
   }
 
   getSnapshot(): CodeIndexSnapshot {
@@ -47,33 +72,45 @@ export class CodeIndexCoordinator {
   }
 
   async openWorkspace(
-    workspaceIdentity: string,
-    repository: CodeGraphRepository
+    workspace: CodeIndexWorkerWorkspace,
+    stateReaderProvider: CodeGraphStateReaderProvider
   ): Promise<CodeIndexSnapshot> {
-    assertNonEmpty(workspaceIdentity, 'workspaceIdentity')
-    const previousRepository = this.repository
-    const previousOperation = this.activeOperation
+    assertWorkspace(workspace)
     const epoch = ++this.workspaceEpoch
-    this.repository = repository
-    this.activeOperation = null
+    this.workspace = null
+    this.stateReaderProvider = null
     this.nextGenerationFloor = 1
-    this.publish(createSnapshot({ workspaceIdentity }))
+    this.publish(createSnapshot({}))
+    await this.shutdownWorker()
+    if (epoch !== this.workspaceEpoch) return this.snapshot
+
+    this.workspace = Object.freeze({
+      ...workspace,
+      grammarWasmPaths: Object.freeze({ ...workspace.grammarWasmPaths })
+    })
+    this.stateReaderProvider = stateReaderProvider
+    this.publish(createSnapshot({ workspaceIdentity: workspace.workspaceIdentity }))
 
     try {
-      if (previousRepository && previousOperation) {
-        await previousRepository.releaseOperation(previousOperation)
+      const stateReader = await stateReaderProvider.getStateReader()
+      if (stateReader === null) return this.snapshot
+      const metadata = await stateReader.getMetadata()
+      if (!this.matchesWorkspace(epoch, workspace.workspaceIdentity, stateReaderProvider)) {
+        return this.snapshot
       }
-      const metadata = await repository.getMetadata()
-      if (!this.matchesWorkspace(epoch, workspaceIdentity, repository)) return this.snapshot
-      assertMetadataIdentity(metadata, workspaceIdentity)
-      const coverage = await repository.getCoverage(metadata.activeGeneration)
-      if (!this.matchesWorkspace(epoch, workspaceIdentity, repository)) return this.snapshot
-      this.publish(snapshotFromMetadata(metadata, coverage))
+      assertMetadataIdentity(metadata, workspace.workspaceIdentity)
+      const coverage = await stateReader.getCoverage(metadata.activeGeneration)
+      if (!this.matchesWorkspace(epoch, workspace.workspaceIdentity, stateReaderProvider)) {
+        return this.snapshot
+      }
+      this.publish(snapshotFromMetadata(metadata, coverage, 'stopped'))
       return this.snapshot
     } catch (error) {
-      if (!this.matchesWorkspace(epoch, workspaceIdentity, repository)) return this.snapshot
+      if (!this.matchesWorkspace(epoch, workspace.workspaceIdentity, stateReaderProvider)) {
+        return this.snapshot
+      }
       this.publish(createSnapshot({
-        workspaceIdentity,
+        workspaceIdentity: workspace.workspaceIdentity,
         status: 'unavailable',
         failure: failureFromError('storage_open_failed', error)
       }))
@@ -85,260 +122,405 @@ export class CodeIndexCoordinator {
     if (
       workspaceIdentity !== undefined &&
       this.snapshot.workspaceIdentity !== workspaceIdentity
-    ) {
-      return
-    }
-    const repository = this.repository
-    const operation = this.activeOperation
+    ) return
     this.workspaceEpoch += 1
-    this.repository = null
-    this.activeOperation = null
+    this.workspace = null
+    this.stateReaderProvider = null
     this.nextGenerationFloor = 1
     this.publish(createSnapshot({}))
-    // Repository 连接由 composition host 持有；Coordinator 只释放写 fence。
-    if (repository && operation) await repository.releaseOperation(operation)
+    await this.shutdownWorker()
   }
 
-  async beginFullRebuild(): Promise<CodeIndexOperation> {
-    const requestedContext = this.requireWorkspace()
-    return this.enqueueOperationClaim(async () => {
-      this.assertWorkspaceContext(requestedContext)
-      const context = requestedContext
-      const storedNextGeneration = await context.repository.nextGeneration()
-      this.assertWorkspaceContext(context)
-      const generation = Math.max(
-        storedNextGeneration,
-        (this.snapshot.activeGeneration ?? 0) + 1,
-        this.nextGenerationFloor
-      )
-      this.nextGenerationFloor = generation + 1
-
-      const operation = freezeOperation({
-        operationId: this.generateOperationId(),
-        kind: 'full-rebuild',
-        workspaceIdentity: context.workspaceIdentity,
-        generation,
-        baseGeneration: this.snapshot.activeGeneration,
-        baseRevision: this.snapshot.revision
-      })
-      await context.repository.claimOperation(operation)
-      if (!this.matchesWorkspace(
-        context.epoch,
-        context.workspaceIdentity,
-        context.repository
-      )) {
-        await context.repository.releaseOperation(operation)
-        throw new Error('Code Graph workspace 已切换')
-      }
-      this.activeOperation = operation
-      this.publish(createSnapshot({
-        ...this.snapshot,
-        status: this.snapshot.activeGeneration === null ? 'building' : 'updating',
-        progress: { completed: 0, total: 0 },
-        failure: null
-      }))
-      return operation
-    })
+  rebuild(): Promise<boolean> {
+    if (this.activeRun) return this.activeRun
+    const run = this.performFullRebuild()
+    this.activeRun = run
+    run.then(
+      () => this.clearActiveRun(run),
+      () => this.clearActiveRun(run)
+    )
+    return run
   }
 
-  async beginIncrementalUpdate(): Promise<CodeIndexOperation> {
-    const requestedContext = this.requireWorkspace()
-    return this.enqueueOperationClaim(async () => {
-      this.assertWorkspaceContext(requestedContext)
-      const context = requestedContext
-      if (this.snapshot.activeGeneration === null) {
-        throw new Error('没有 active generation，不能执行增量更新')
-      }
-
-      const operation = freezeOperation({
-        operationId: this.generateOperationId(),
-        kind: 'incremental-update',
-        workspaceIdentity: context.workspaceIdentity,
-        generation: this.snapshot.activeGeneration,
-        baseGeneration: this.snapshot.activeGeneration,
-        baseRevision: this.snapshot.revision
-      })
-      await context.repository.claimOperation(operation)
-      if (!this.matchesWorkspace(
-        context.epoch,
-        context.workspaceIdentity,
-        context.repository
-      )) {
-        await context.repository.releaseOperation(operation)
-        throw new Error('Code Graph workspace 已切换')
-      }
-      this.activeOperation = operation
-      this.publish(createSnapshot({
-        ...this.snapshot,
-        status: 'updating',
-        progress: null,
-        failure: null
-      }))
-      return operation
-    })
-  }
-
-  reportProgress(operation: CodeIndexOperation, progress: CodeIndexProgress): boolean {
-    if (!this.isCurrentOperation(operation)) return false
-    assertProgress(progress)
-    if (
-      this.snapshot.progress?.completed === progress.completed &&
-      this.snapshot.progress.total === progress.total
-    ) {
-      return true
-    }
-    this.publish(createSnapshot({ ...this.snapshot, progress }))
-    return true
-  }
-
-  async commitFullRebuild(
-    operation: CodeIndexOperation,
-    generation: CodeGraphGenerationInput,
-    completedAt: number
-  ): Promise<boolean> {
-    if (!this.isCurrentOperation(operation) || operation.kind !== 'full-rebuild') {
-      return false
-    }
-    assertGenerationMatchesOperation(generation, operation)
-    const repository = this.requireRepositoryFor(operation)
-
-    try {
-      await repository.stageGeneration(generation)
-      if (!this.isCurrentOperation(operation)) return false
-      const metadata = await repository.activateGeneration({
-        operationId: operation.operationId,
-        workspaceIdentity: operation.workspaceIdentity,
-        generation: operation.generation,
-        expectedActiveGeneration: operation.baseGeneration,
-        expectedRevision: operation.baseRevision,
-        completedAt
-      })
-      if (!this.isCurrentOperation(operation)) return false
-      assertCommittedMetadata(metadata, operation)
-      this.publishCommittedMetadata(metadata)
-      const coverage = await repository.getCoverage(metadata.activeGeneration)
-      if (!this.isCurrentOperation(operation)) return false
-      this.finishOperation(metadata, coverage)
-      return true
-    } catch (error) {
-      const failure = await releaseAfterFailure(repository, operation, error)
-      this.failIfCurrent(
-        operation,
-        failureFromError(this.commitFailureCode(operation), failure)
-      )
-      throw failure
-    }
-  }
-
-  async commitIncrementalUpdate(
-    operation: CodeIndexOperation,
-    update: CodeGraphIncrementalUpdate
-  ): Promise<boolean> {
-    if (!this.isCurrentOperation(operation) || operation.kind !== 'incremental-update') {
-      return false
-    }
-    assertIncrementalMatchesOperation(update, operation)
-    const repository = this.requireRepositoryFor(operation)
-
-    try {
-      const metadata = await repository.applyIncrementalUpdate(update)
-      if (!this.isCurrentOperation(operation)) return false
-      assertCommittedMetadata(metadata, operation)
-      this.publishCommittedMetadata(metadata)
-      const coverage = await repository.getCoverage(metadata.activeGeneration)
-      if (!this.isCurrentOperation(operation)) return false
-      this.finishOperation(metadata, coverage)
-      return true
-    } catch (error) {
-      const failure = await releaseAfterFailure(repository, operation, error)
-      this.failIfCurrent(
-        operation,
-        failureFromError(this.commitFailureCode(operation), failure)
-      )
-      throw failure
-    }
-  }
-
-  async failOperation(
-    operation: CodeIndexOperation,
-    failure: CodeIndexFailure
-  ): Promise<boolean> {
-    if (!this.isCurrentOperation(operation)) return false
-    this.failIfCurrent(operation, failure)
-    const repository = this.requireRepositoryFor(operation)
-    await repository.releaseOperation(operation)
-    return true
-  }
-
-  async cancelOperation(operation: CodeIndexOperation): Promise<boolean> {
-    if (!this.isCurrentOperation(operation)) return false
-    const repository = this.requireRepositoryFor(operation)
+  async cancelCurrentOperation(): Promise<boolean> {
+    const operation = this.activeOperation
+    const worker = this.worker
+    if (!operation || !worker) return false
+    const context = this.requireWorkspace()
     this.activeOperation = null
-    try {
-      await repository.releaseOperation(operation)
-    } catch (error) {
-      this.publish(createSnapshot({
-        ...this.snapshot,
-        status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
-        progress: null,
-        failure: failureFromError('fence_release_failed', error)
-      }))
-      throw error
-    }
     this.publish(createSnapshot({
       ...this.snapshot,
       status: this.snapshot.activeGeneration === null ? 'idle' : 'ready',
       progress: null,
-      failure: null
+      failure: null,
+      workerState: 'running'
     }))
-    return true
+    try {
+      await worker.cancel(operation.operationId)
+      if (this.worker === worker && this.activeOperation === null) {
+        this.publish(createSnapshot({ ...this.snapshot, workerState: 'idle' }))
+        this.scheduleIdleDispose(worker)
+      }
+      const workerFailure = this.worker === worker ? null : this.snapshot.failure
+      await this.reconcileCommittedOperation(
+        context,
+        operation,
+        workerFailure,
+        this.worker === worker ? 'idle' : 'failed'
+      )
+      return true
+    } catch (error) {
+      const failure = failureFromError('worker_crash', error)
+      if (this.worker === worker) {
+        this.worker = null
+        this.publish(createSnapshot({
+          ...this.snapshot,
+          status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
+          progress: null,
+          failure,
+          workerState: 'failed'
+        }))
+        void worker.dispose().catch(() => undefined)
+      }
+      await this.reconcileCommittedOperation(
+        context,
+        operation,
+        this.snapshot.failure ?? failure,
+        'failed'
+      )
+      return false
+    }
   }
 
-  async workerFailed(
-    operation: CodeIndexOperation,
-    failure: unknown
-  ): Promise<boolean> {
-    return this.failOperation(
-      operation,
-      normalizeCodeIndexFailure(failure, 'worker_crash')
-    )
-  }
+  private async performFullRebuild(): Promise<boolean> {
+    const context = this.requireWorkspace()
+    this.clearIdleTimer()
+    let nextGeneration: number
+    try {
+      const storedState = await this.readStoredState(context)
+      if (!this.matchesContext(context)) return false
+      if (storedState !== null) this.adoptStoredState(storedState, this.currentWorkerState())
+      const storedNext = storedState?.nextGeneration ?? 1
+      nextGeneration = Math.max(
+        storedNext,
+        (this.snapshot.activeGeneration ?? 0) + 1,
+        this.nextGenerationFloor
+      )
+    } catch (error) {
+      if (this.matchesContext(context)) {
+        this.publish(createSnapshot({
+          ...this.snapshot,
+          status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
+          failure: failureFromError('storage_read_failed', error)
+        }))
+      }
+      return false
+    }
 
-  private publishCommittedMetadata(metadata: CodeGraphMetadata): void {
+    this.nextGenerationFloor = nextGeneration + 1
+    const operation = freezeOperation({
+      operationId: this.generateOperationId(),
+      kind: 'full-rebuild',
+      workspaceIdentity: context.workspace.workspaceIdentity,
+      generation: nextGeneration,
+      baseGeneration: this.snapshot.activeGeneration,
+      baseRevision: this.snapshot.revision
+    })
+    this.activeOperation = operation
     this.publish(createSnapshot({
-      ...snapshotFromMetadata(metadata, this.snapshot.coverage),
-      status: 'updating'
+      ...this.snapshot,
+      status: this.snapshot.activeGeneration === null ? 'building' : 'updating',
+      progress: { completed: 0, total: 0 },
+      failure: null,
+      workerState: 'running'
     }))
+
+    let worker: CodeIndexWorkerPort
+    try {
+      worker = this.ensureWorker()
+    } catch (error) {
+      this.failCurrentOperation(operation, workerFailureDetails(error), 'failed')
+      return false
+    }
+
+    try {
+      const result = await worker.run({ operation, workspace: context.workspace }, {
+        onProgress: (progress) => this.reportProgress(operation, progress)
+      })
+      if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
+      assertWorkerResult(result, operation)
+      this.activeOperation = null
+      this.publish(snapshotFromMetadata(result.metadata, result.coverage, 'idle'))
+      this.scheduleIdleDispose(worker)
+      return true
+    } catch (error) {
+      if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
+      const details = workerFailureDetails(error)
+      const terminal = details.failure.code === 'worker_crash' ||
+        details.failure.code === 'worker_missing'
+      this.failCurrentOperation(operation, details, terminal ? 'failed' : 'idle')
+      if (terminal && this.worker === worker) {
+        this.worker = null
+        void worker.dispose().catch(() => undefined)
+      } else if (!terminal) {
+        this.scheduleIdleDispose(worker)
+      }
+      await this.reconcileCommittedOperation(
+        context,
+        operation,
+        details.failure,
+        terminal ? 'failed' : 'idle'
+      )
+      return false
+    }
   }
 
-  private commitFailureCode(operation: CodeIndexOperation): CodeIndexFailureCode {
-    return this.snapshot.activeGeneration === operation.generation &&
-      this.snapshot.revision === operation.baseRevision + 1
-      ? 'storage_read_failed'
-      : 'storage_commit_failed'
+  private reportProgress(operation: CodeIndexOperation, progress: CodeIndexProgress): void {
+    if (!this.isCurrentOperation(operation)) return
+    assertProgress(progress)
+    if (
+      this.snapshot.progress?.completed === progress.completed &&
+      this.snapshot.progress.total === progress.total
+    ) return
+    this.publish(createSnapshot({ ...this.snapshot, progress }))
   }
 
-  private finishOperation(
-    metadata: CodeGraphMetadata,
-    coverage: CodeIndexSnapshot['coverage']
-  ): void {
-    assertMetadataIdentity(metadata, this.snapshot.workspaceIdentity)
-    this.activeOperation = null
-    this.publish(snapshotFromMetadata(metadata, coverage))
-  }
-
-  private failIfCurrent(
+  private failCurrentOperation(
     operation: CodeIndexOperation,
-    failure: CodeIndexFailure
+    details: WorkerFailureDetails,
+    workerState: CodeIndexWorkerState
   ): void {
     if (!this.isCurrentOperation(operation)) return
+    const committedMetadata = details.committedMetadata &&
+      isCommittedMetadata(details.committedMetadata, operation)
+      ? details.committedMetadata
+      : null
+    const failure: CodeIndexFailure = details.committedMetadata && committedMetadata === null
+      ? Object.freeze({
+        code: 'worker_crash',
+        message: 'Code Index Worker 返回了不一致的已提交状态'
+      })
+      : details.failure
     this.activeOperation = null
+    if (committedMetadata) {
+      this.publish(createSnapshot({
+        ...snapshotFromMetadata(committedMetadata, this.snapshot.coverage, workerState),
+        status: 'degraded',
+        failure
+      }))
+      return
+    }
     this.publish(createSnapshot({
       ...this.snapshot,
       status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
       progress: null,
-      failure
+      failure,
+      workerState
     }))
+  }
+
+  private async readStoredState(
+    context: WorkspaceContext
+  ): Promise<StoredCodeGraphState | null> {
+    const stateReader = await context.stateReaderProvider.getStateReader()
+    if (stateReader === null) return null
+    const metadata = await stateReader.getMetadata()
+    assertMetadataIdentity(metadata, context.workspace.workspaceIdentity)
+    const coverage = await stateReader.getCoverage(metadata.activeGeneration)
+    const nextGeneration = await stateReader.nextGeneration()
+    return Object.freeze({ metadata, coverage, nextGeneration })
+  }
+
+  private adoptStoredState(
+    storedState: StoredCodeGraphState,
+    workerState: CodeIndexWorkerState
+  ): void {
+    const { metadata, coverage, nextGeneration } = storedState
+    this.nextGenerationFloor = Math.max(this.nextGenerationFloor, nextGeneration)
+    if (metadata.revision < this.snapshot.revision) return
+    if (
+      metadata.revision === this.snapshot.revision &&
+      metadata.activeGeneration !== this.snapshot.activeGeneration
+    ) {
+      throw new Error('Code Graph 持久化状态与 Coordinator revision 冲突')
+    }
+    this.publish(snapshotFromMetadata(metadata, coverage, workerState))
+  }
+
+  private async reconcileCommittedOperation(
+    context: WorkspaceContext,
+    operation: CodeIndexOperation,
+    failure: CodeIndexFailure | null,
+    workerState: CodeIndexWorkerState
+  ): Promise<void> {
+    try {
+      const storedState = await this.readStoredState(context)
+      if (
+        storedState === null ||
+        !this.matchesContext(context) ||
+        this.activeOperation !== null ||
+        // 只有精确命中本次 operation 的提交才能修正内存投影。
+        !isCommittedMetadata(storedState.metadata, operation) ||
+        storedState.metadata.revision < this.snapshot.revision
+      ) return
+
+      this.nextGenerationFloor = Math.max(
+        this.nextGenerationFloor,
+        storedState.nextGeneration,
+        operation.generation + 1
+      )
+      const committed = snapshotFromMetadata(
+        storedState.metadata,
+        storedState.coverage,
+        workerState === 'idle' ? this.currentWorkerState() : workerState
+      )
+      this.publish(createSnapshot({
+        ...committed,
+        status: failure === null ? committed.status : 'degraded',
+        failure
+      }))
+    } catch (error) {
+      if (
+        failure !== null ||
+        !this.matchesContext(context) ||
+        this.activeOperation !== null
+      ) return
+      this.publish(createSnapshot({
+        ...this.snapshot,
+        status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
+        progress: null,
+        failure: failureFromError('storage_read_failed', error),
+        workerState: workerState === 'idle' ? this.currentWorkerState() : workerState
+      }))
+    }
+  }
+
+  private currentWorkerState(): CodeIndexWorkerState {
+    if (this.worker !== null) return this.activeOperation === null ? 'idle' : 'running'
+    return this.snapshot.workerState === 'failed' ? 'failed' : 'stopped'
+  }
+
+  private ensureWorker(): CodeIndexWorkerPort {
+    if (this.worker) return this.worker
+    if (!this.createWorker) throw new CodeIndexWorkerMissingError('Code Index Worker 未装配')
+    const worker = this.createWorker()
+    this.worker = worker
+    worker.onTerminalFailure((failure) => this.handleWorkerTerminalFailure(worker, failure))
+    if (this.worker !== worker) {
+      throw new CodeIndexWorkerRunError({
+        code: 'worker_crash',
+        message: 'Code Index Worker 在装配期间已退出'
+      }, null)
+    }
+    return worker
+  }
+
+  private handleWorkerTerminalFailure(
+    worker: CodeIndexWorkerPort,
+    failure: CodeIndexFailure
+  ): void {
+    if (this.worker !== worker) return
+    const context = this.currentWorkspaceContext()
+    this.worker = null
+    this.clearIdleTimer()
+    const operation = this.activeOperation
+    if (operation) {
+      this.failCurrentOperation(operation, { failure, committedMetadata: null }, 'failed')
+      if (context) {
+        void this.reconcileCommittedOperation(
+          context,
+          operation,
+          failure,
+          'failed'
+        )
+      }
+      return
+    }
+    this.publish(createSnapshot({
+      ...this.snapshot,
+      status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
+      progress: null,
+      failure,
+      workerState: 'failed'
+    }))
+  }
+
+  private scheduleIdleDispose(worker: CodeIndexWorkerPort): void {
+    this.clearIdleTimer()
+    const epoch = this.workspaceEpoch
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null
+      if (
+        this.worker !== worker || this.activeOperation !== null ||
+        this.workspaceEpoch !== epoch
+      ) return
+      this.worker = null
+      this.publish(createSnapshot({ ...this.snapshot, workerState: 'stopped' }))
+      void worker.dispose().catch(() => undefined)
+    }, this.idleTimeoutMs)
+  }
+
+  private async shutdownWorker(): Promise<void> {
+    this.clearIdleTimer()
+    const worker = this.worker
+    const operation = this.activeOperation
+    this.worker = null
+    this.activeOperation = null
+    if (!worker) return
+    if (operation) {
+      try {
+        await worker.cancel(operation.operationId)
+      } catch {
+        // dispose 是最终清理边界，cancel 失败不能阻断 workspace 切换。
+      }
+    }
+    await worker.dispose()
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
+  }
+
+  private clearActiveRun(run: Promise<boolean>): void {
+    if (this.activeRun === run) this.activeRun = null
+  }
+
+  private requireWorkspace(): WorkspaceContext {
+    const context = this.currentWorkspaceContext()
+    if (!context) {
+      throw new Error('Code Graph 尚未绑定 workspace')
+    }
+    return context
+  }
+
+  private currentWorkspaceContext(): WorkspaceContext | null {
+    if (!this.workspace || !this.stateReaderProvider || this.snapshot.workspaceIdentity === null) {
+      return null
+    }
+    return {
+      epoch: this.workspaceEpoch,
+      workspace: this.workspace,
+      stateReaderProvider: this.stateReaderProvider
+    }
+  }
+
+  private matchesContext(context: WorkspaceContext): boolean {
+    return this.matchesWorkspace(
+      context.epoch,
+      context.workspace.workspaceIdentity,
+      context.stateReaderProvider
+    ) && this.workspace === context.workspace
+  }
+
+  private matchesWorkspace(
+    epoch: number,
+    workspaceIdentity: string,
+    stateReaderProvider: CodeGraphStateReaderProvider
+  ): boolean {
+    return this.workspaceEpoch === epoch &&
+      this.snapshot.workspaceIdentity === workspaceIdentity &&
+      this.stateReaderProvider === stateReaderProvider
   }
 
   private isCurrentOperation(operation: CodeIndexOperation): boolean {
@@ -346,64 +528,6 @@ export class CodeIndexCoordinator {
       this.activeOperation.workspaceIdentity === operation.workspaceIdentity &&
       this.activeOperation.generation === operation.generation &&
       this.snapshot.workspaceIdentity === operation.workspaceIdentity
-  }
-
-  private requireRepositoryFor(operation: CodeIndexOperation): CodeGraphRepository {
-    if (
-      !this.repository ||
-      this.snapshot.workspaceIdentity !== operation.workspaceIdentity
-    ) {
-      throw new Error('Code Graph operation workspace 已失效')
-    }
-    return this.repository
-  }
-
-  private requireWorkspace(): {
-    readonly epoch: number
-    readonly workspaceIdentity: string
-    readonly repository: CodeGraphRepository
-  } {
-    if (!this.repository || this.snapshot.workspaceIdentity === null) {
-      throw new Error('Code Graph 尚未绑定 workspace')
-    }
-    return {
-      epoch: this.workspaceEpoch,
-      workspaceIdentity: this.snapshot.workspaceIdentity,
-      repository: this.repository
-    }
-  }
-
-  private matchesWorkspace(
-    epoch: number,
-    workspaceIdentity: string,
-    repository: CodeGraphRepository
-  ): boolean {
-    return this.workspaceEpoch === epoch &&
-      this.snapshot.workspaceIdentity === workspaceIdentity &&
-      this.repository === repository
-  }
-
-  private assertWorkspaceContext(context: {
-    readonly epoch: number
-    readonly workspaceIdentity: string
-    readonly repository: CodeGraphRepository
-  }): void {
-    if (!this.matchesWorkspace(
-      context.epoch,
-      context.workspaceIdentity,
-      context.repository
-    )) {
-      throw new Error('Code Graph workspace 已切换')
-    }
-  }
-
-  private enqueueOperationClaim<T>(work: () => Promise<T>): Promise<T> {
-    const result = this.operationClaimQueue.then(work, work)
-    this.operationClaimQueue = result.then(
-      () => undefined,
-      () => undefined
-    )
-    return result
   }
 
   private publish(snapshot: CodeIndexSnapshot): void {
@@ -418,9 +542,21 @@ export class CodeIndexCoordinator {
   }
 }
 
+interface WorkerFailureDetails {
+  readonly failure: CodeIndexFailure
+  readonly committedMetadata: CodeGraphMetadata | null
+}
+
+interface StoredCodeGraphState {
+  readonly metadata: CodeGraphMetadata
+  readonly coverage: CodeIndexSnapshot['coverage']
+  readonly nextGeneration: number
+}
+
 function snapshotFromMetadata(
   metadata: CodeGraphMetadata,
-  coverage: CodeIndexSnapshot['coverage']
+  coverage: CodeIndexSnapshot['coverage'],
+  workerState: CodeIndexWorkerState
 ): CodeIndexSnapshot {
   return createSnapshot({
     workspaceIdentity: metadata.workspaceIdentity,
@@ -428,13 +564,12 @@ function snapshotFromMetadata(
     revision: metadata.revision,
     status: metadata.activeGeneration === null ? 'idle' : 'ready',
     coverage,
-    lastCompletedAt: metadata.lastCompletedAt
+    lastCompletedAt: metadata.lastCompletedAt,
+    workerState
   })
 }
 
-function createSnapshot(
-  input: Partial<CodeIndexSnapshot>
-): CodeIndexSnapshot {
+function createSnapshot(input: Partial<CodeIndexSnapshot>): CodeIndexSnapshot {
   const coverage = input.coverage ?? EMPTY_CODE_INDEX_COVERAGE
   const progress = input.progress === undefined || input.progress === null
     ? null
@@ -450,132 +585,80 @@ function createSnapshot(
     coverage: Object.freeze({ ...coverage }),
     progress,
     lastCompletedAt: input.lastCompletedAt ?? null,
-    failure
+    failure,
+    workerState: input.workerState ?? 'stopped'
   })
 }
 
-function freezeOperation(operation: CodeIndexOperation): CodeIndexOperation {
-  return Object.freeze({ ...operation })
-}
-
-function assertMetadataIdentity(
-  metadata: CodeGraphMetadata,
-  expectedIdentity: string | null
-): void {
-  if (metadata.workspaceIdentity !== expectedIdentity) {
-    throw new Error('Code Graph repository 返回了其他 workspace 的状态')
+function workerFailureDetails(error: unknown): WorkerFailureDetails {
+  if (error instanceof CodeIndexWorkerRunError) {
+    return Object.freeze({ failure: error.failure, committedMetadata: error.committedMetadata })
   }
+  if (error instanceof CodeIndexWorkerMissingError) {
+    return Object.freeze({ failure: error.failure, committedMetadata: null })
+  }
+  return Object.freeze({
+    failure: failureFromError('worker_crash', error),
+    committedMetadata: null
+  })
 }
 
-function assertGenerationMatchesOperation(
-  generation: CodeGraphGenerationInput,
+function assertWorkerResult(
+  result: CodeIndexWorkerRunResult,
   operation: CodeIndexOperation
 ): void {
   if (
-    generation.operationId !== operation.operationId ||
-    generation.generation !== operation.generation
-  ) {
-    throw new Error('Code Graph generation 与 operation 不匹配')
-  }
-}
-
-function assertIncrementalMatchesOperation(
-  update: CodeGraphIncrementalUpdate,
-  operation: CodeIndexOperation
-): void {
-  if (
-    update.operationId !== operation.operationId ||
-    update.workspaceIdentity !== operation.workspaceIdentity ||
-    update.generation !== operation.generation ||
-    update.expectedRevision !== operation.baseRevision
-  ) {
-    throw new Error('Code Graph 增量更新与 operation 不匹配')
-  }
+    result.operation.operationId !== operation.operationId ||
+    result.operation.workspaceIdentity !== operation.workspaceIdentity ||
+    result.operation.generation !== operation.generation
+  ) throw new Error('Code Index Worker 返回了 stale operation')
+  assertCommittedMetadata(result.metadata, operation)
 }
 
 function assertCommittedMetadata(
   metadata: CodeGraphMetadata,
   operation: CodeIndexOperation
 ): void {
-  if (
-    metadata.workspaceIdentity !== operation.workspaceIdentity ||
-    metadata.activeGeneration !== operation.generation ||
-    metadata.revision !== operation.baseRevision + 1
-  ) {
-    throw new Error('Code Graph repository 返回了不一致的提交结果')
+  if (!isCommittedMetadata(metadata, operation)) {
+    throw new Error('Code Index Worker 返回了不一致的提交结果')
+  }
+}
+
+function isCommittedMetadata(
+  metadata: CodeGraphMetadata,
+  operation: CodeIndexOperation
+): boolean {
+  return metadata.workspaceIdentity === operation.workspaceIdentity &&
+    metadata.activeGeneration === operation.generation &&
+    metadata.revision === operation.baseRevision + 1
+}
+
+function assertMetadataIdentity(metadata: CodeGraphMetadata, expected: string): void {
+  if (metadata.workspaceIdentity !== expected) {
+    throw new Error('Code Graph 状态读取器返回了其他 workspace')
   }
 }
 
 function assertProgress(progress: CodeIndexProgress): void {
   if (
-    !Number.isInteger(progress.completed) ||
-    !Number.isInteger(progress.total) ||
-    progress.completed < 0 ||
-    progress.total < 0 ||
-    progress.completed > progress.total
-  ) {
-    throw new Error('Code Graph progress 无效')
+    !Number.isInteger(progress.completed) || !Number.isInteger(progress.total) ||
+    progress.completed < 0 || progress.total < 0 || progress.completed > progress.total
+  ) throw new Error('Code Graph progress 无效')
+}
+
+function assertWorkspace(workspace: CodeIndexWorkerWorkspace): void {
+  if (!workspace.workspaceIdentity || !workspace.workspaceRoot || !workspace.dbPath) {
+    throw new Error('Code Graph workspace 契约不完整')
   }
 }
 
-function assertNonEmpty(value: string, field: string): void {
-  if (value.length === 0) throw new Error(`Code Graph 字段 ${field} 不能为空`)
+function freezeOperation(operation: CodeIndexOperation): CodeIndexOperation {
+  return Object.freeze({ ...operation })
 }
 
-function failureFromError(
-  code: CodeIndexFailureCode,
-  error: unknown
-): CodeIndexFailure {
+function failureFromError(code: CodeIndexFailure['code'], error: unknown): CodeIndexFailure {
   return Object.freeze({
     code,
     message: error instanceof Error ? error.message : String(error)
   })
-}
-
-function normalizeCodeIndexFailure(
-  value: unknown,
-  fallbackCode: CodeIndexFailureCode
-): CodeIndexFailure {
-  if (isRecord(value)) {
-    const code = Reflect.get(value, 'code')
-    const message = Reflect.get(value, 'message')
-    if (isCodeIndexFailureCode(code) && typeof message === 'string') {
-      return Object.freeze({ code, message })
-    }
-    if (typeof message === 'string') {
-      return Object.freeze({ code: fallbackCode, message })
-    }
-  }
-  return Object.freeze({
-    code: fallbackCode,
-    message: value instanceof Error ? value.message : String(value)
-  })
-}
-
-function isCodeIndexFailureCode(value: unknown): value is CodeIndexFailureCode {
-  return typeof value === 'string' && CODE_INDEX_FAILURE_CODE_SET.has(value)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-const CODE_INDEX_FAILURE_CODE_SET: ReadonlySet<string> = new Set(
-  CODE_INDEX_FAILURE_CODES
-)
-
-async function releaseAfterFailure(
-  repository: CodeGraphRepository,
-  operation: CodeIndexOperation,
-  originalError: unknown
-): Promise<unknown> {
-  try {
-    await repository.releaseOperation(operation)
-    return originalError
-  } catch (releaseError) {
-    return new AggregateError(
-      [originalError, releaseError],
-      'Code Graph operation 失败且 write fence 无法释放'
-    )
-  }
 }

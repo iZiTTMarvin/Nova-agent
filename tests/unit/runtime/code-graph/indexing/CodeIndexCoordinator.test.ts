@@ -1,17 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  CODE_INDEX_FAILURE_CODES,
-  CodeIndexCoordinator
-} from '@runtime/code-graph'
-import type {
-  CodeGraphFileRecord,
-  CodeGraphGenerationActivation,
-  CodeGraphGenerationInput,
-  CodeGraphIncrementalUpdate,
-  CodeGraphMetadata,
-  CodeGraphRepository,
-  CodeIndexCoverage,
-  CodeIndexOperation
+  CodeIndexCoordinator,
+  CodeIndexWorkerRunError,
+  STRUCTURAL_RESOLVER_SIGNATURE,
+  TREE_SITTER_PARSER_SIGNATURE,
+  type CodeGraphMetadata,
+  type CodeGraphStateReader,
+  type CodeGraphStateReaderProvider,
+  type CodeIndexCoverage,
+  type CodeIndexWorkerPort,
+  type CodeIndexWorkerRunOptions,
+  type CodeIndexWorkerRunRequest,
+  type CodeIndexWorkerRunResult,
+  type CodeIndexWorkerWorkspace
 } from '@runtime/code-graph'
 
 const EMPTY_COVERAGE: CodeIndexCoverage = {
@@ -23,121 +25,449 @@ const EMPTY_COVERAGE: CodeIndexCoverage = {
   unresolvedRelations: 0
 }
 
-class FakeCodeGraphRepository implements CodeGraphRepository {
-  readonly staged: CodeGraphGenerationInput[] = []
-  readonly incremental: CodeGraphIncrementalUpdate[] = []
-  incrementalCommitGate: Promise<void> | null = null
-  activationCommitGate: Promise<void> | null = null
-  activationAttempts = 0
-  coverageError: Error | null = null
-  private next = 1
-  private claimedOperation: CodeIndexOperation | null = null
-
+class FakeStateReader implements CodeGraphStateReader {
   constructor(
-    private metadata: CodeGraphMetadata,
-    private coverage: CodeIndexCoverage = EMPTY_COVERAGE
-  ) {
-    this.next = (metadata.activeGeneration ?? 0) + 1
-  }
+    private readonly metadata: CodeGraphMetadata,
+    private readonly coverage: CodeIndexCoverage = EMPTY_COVERAGE
+  ) {}
 
   async getMetadata(): Promise<CodeGraphMetadata> {
     return this.metadata
   }
 
   async nextGeneration(): Promise<number> {
-    return this.next++
-  }
-
-  async claimOperation(operation: CodeIndexOperation): Promise<void> {
-    if (
-      operation.workspaceIdentity !== this.metadata.workspaceIdentity ||
-      operation.baseGeneration !== this.metadata.activeGeneration ||
-      operation.baseRevision !== this.metadata.revision
-    ) {
-      throw new Error('stale operation claim')
-    }
-    this.claimedOperation = operation
-  }
-
-  async releaseOperation(operation: CodeIndexOperation): Promise<void> {
-    if (this.claimedOperation?.operationId === operation.operationId) {
-      this.claimedOperation = null
-    }
+    return (this.metadata.activeGeneration ?? 0) + 1
   }
 
   async getCoverage(): Promise<CodeIndexCoverage> {
-    if (this.coverageError) throw this.coverageError
     return this.coverage
   }
+}
 
-  async findActiveFile(): Promise<CodeGraphFileRecord | null> {
-    return null
+class MutableStateProvider implements CodeGraphStateReaderProvider {
+  constructor(private reader: CodeGraphStateReader | null) {}
+
+  setReader(reader: CodeGraphStateReader): void {
+    this.reader = reader
   }
 
-  async stageGeneration(input: CodeGraphGenerationInput): Promise<void> {
-    if (this.claimedOperation?.operationId !== input.operationId) {
-      throw new Error('write fence expired')
-    }
-    this.staged.push(input)
+  async getStateReader(): Promise<CodeGraphStateReader | null> {
+    return this.reader
+  }
+}
+
+class DeferredWorker implements CodeIndexWorkerPort {
+  readonly runCalls: CodeIndexWorkerRunRequest[] = []
+  readonly cancelled: string[] = []
+  disposeCalls = 0
+  private active: {
+    readonly request: CodeIndexWorkerRunRequest
+    readonly options: CodeIndexWorkerRunOptions
+    readonly resolve: (result: CodeIndexWorkerRunResult) => void
+    readonly reject: (error: CodeIndexWorkerRunError) => void
+  } | null = null
+  private terminalListener: ((failure: ConstructorParameters<typeof CodeIndexWorkerRunError>[0]) => void) | null = null
+
+  run(
+    request: CodeIndexWorkerRunRequest,
+    options: CodeIndexWorkerRunOptions = {}
+  ): Promise<CodeIndexWorkerRunResult> {
+    this.runCalls.push(request)
+    return new Promise((resolveRun, rejectRun) => {
+      this.active = {
+        request,
+        options,
+        resolve: resolveRun,
+        reject: rejectRun
+      }
+    })
   }
 
-  async activateGeneration(
-    input: CodeGraphGenerationActivation
-  ): Promise<CodeGraphMetadata> {
-    this.activationAttempts += 1
-    await this.activationCommitGate
-    if (this.claimedOperation?.operationId !== input.operationId) {
-      throw new Error('write fence expired')
-    }
-    if (
-      input.expectedActiveGeneration !== this.metadata.activeGeneration ||
-      input.expectedRevision !== this.metadata.revision
-    ) {
-      throw new Error('stale activation')
-    }
-    this.metadata = {
-      ...this.metadata,
-      activeGeneration: input.generation,
-      revision: input.expectedRevision + 1,
-      lastCompletedAt: input.completedAt
-    }
-    this.claimedOperation = null
-    return this.metadata
+  emitProgress(completed: number, total: number): void {
+    this.active?.options.onProgress?.({ completed, total })
   }
 
-  async applyIncrementalUpdate(
-    input: CodeGraphIncrementalUpdate
-  ): Promise<CodeGraphMetadata> {
-    this.incremental.push(input)
-    await this.incrementalCommitGate
-    if (this.claimedOperation?.operationId !== input.operationId) {
-      throw new Error('write fence expired')
-    }
-    if (
-      input.generation !== this.metadata.activeGeneration ||
-      input.expectedRevision !== this.metadata.revision
-    ) {
-      throw new Error('stale incremental update')
-    }
-    this.metadata = {
-      ...this.metadata,
-      revision: input.expectedRevision + 1,
-      lastCompletedAt: input.completedAt
-    }
-    this.claimedOperation = null
-    return this.metadata
+  complete(coverage: CodeIndexCoverage = EMPTY_COVERAGE): void {
+    const active = this.takeActive()
+    active.resolve(successResult(active.request, coverage))
   }
 
-  async deleteGeneration(): Promise<void> {}
-
-  async touchAccess(accessedAt: number): Promise<void> {
-    this.metadata = { ...this.metadata, lastAccessed: accessedAt }
+  fail(
+    code: ConstructorParameters<typeof CodeIndexWorkerRunError>[0]['code'],
+    message: string,
+    committedMetadata: CodeGraphMetadata | null = null
+  ): void {
+    const active = this.takeActive()
+    active.reject(new CodeIndexWorkerRunError({ code, message }, committedMetadata))
   }
 
-  async close(): Promise<void> {}
+  async cancel(operationId: string): Promise<void> {
+    this.cancelled.push(operationId)
+    if (this.active?.request.operation.operationId !== operationId) return
+    const active = this.takeActive()
+    active.reject(new CodeIndexWorkerRunError({
+      code: 'build_cancelled',
+      message: 'cancelled'
+    }, null))
+  }
 
-  setCoverage(coverage: CodeIndexCoverage): void {
-    this.coverage = coverage
+  async dispose(): Promise<void> {
+    this.disposeCalls += 1
+    if (this.active) {
+      const active = this.takeActive()
+      active.reject(new CodeIndexWorkerRunError({
+        code: 'build_cancelled',
+        message: 'disposed'
+      }, null))
+    }
+  }
+
+  onTerminalFailure(
+    listener: (failure: ConstructorParameters<typeof CodeIndexWorkerRunError>[0]) => void
+  ): () => void {
+    this.terminalListener = listener
+    return () => {
+      if (this.terminalListener === listener) this.terminalListener = null
+    }
+  }
+
+  emitTerminalFailure(message: string): void {
+    const active = this.active
+    this.terminalListener?.({ code: 'worker_crash', message })
+    if (active && this.active === active) {
+      this.active = null
+      active.reject(new CodeIndexWorkerRunError({ code: 'worker_crash', message }, null))
+    }
+  }
+
+  private takeActive() {
+    const active = this.active
+    if (!active) throw new Error('没有运行中的 Worker 请求')
+    this.active = null
+    return active
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('CodeIndexCoordinator Worker lifecycle', () => {
+  it('打开 workspace 不启 Worker，构建后只接受 Worker 提交结果', async () => {
+    const worker = new DeferredWorker()
+    const createWorker = vi.fn(() => worker)
+    const coordinator = new CodeIndexCoordinator({
+      createWorker,
+      generateOperationId: () => 'operation-1'
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a')))
+    )
+    expect(createWorker).not.toHaveBeenCalled()
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'idle',
+      workerState: 'stopped'
+    })
+
+    const rebuild = coordinator.rebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+    worker.emitProgress(1, 2)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'building',
+      workerState: 'running',
+      progress: { completed: 1, total: 2 }
+    })
+    const coverage = { ...EMPTY_COVERAGE, eligibleFiles: 2, indexedFiles: 2 }
+    worker.complete(coverage)
+    await expect(rebuild).resolves.toBe(true)
+
+    const snapshot = coordinator.getSnapshot()
+    expect(snapshot).toMatchObject({
+      status: 'ready',
+      activeGeneration: 1,
+      revision: 1,
+      coverage,
+      workerState: 'idle'
+    })
+    expect(Object.isFrozen(snapshot)).toBe(true)
+    expect(Object.isFrozen(snapshot.coverage)).toBe(true)
+  })
+
+  it('重复构建请求复用同一 in-flight operation', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      generateOperationId: () => 'operation-dedup'
+    })
+    await coordinator.openWorkspace(workspace('workspace-a'), stateProvider(null))
+
+    const first = coordinator.rebuild()
+    const second = coordinator.rebuild()
+    expect(second).toBe(first)
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+    worker.complete()
+    await expect(first).resolves.toBe(true)
+  })
+
+  it('空闲超时释放 Worker，查询端保留且新构建能冷启', async () => {
+    vi.useFakeTimers()
+    const workers = [new DeferredWorker(), new DeferredWorker()]
+    const createWorker = vi.fn(() => {
+      const next = workers.shift()
+      if (!next) throw new Error('缺少 fake Worker')
+      return next
+    })
+    const reader = new FakeStateReader(metadata('workspace-a', 1, 1))
+    const coordinator = new CodeIndexCoordinator({
+      createWorker,
+      idleTimeoutMs: 100,
+      generateOperationId: () => `operation-${createWorker.mock.calls.length + 1}`
+    })
+    await coordinator.openWorkspace(workspace('workspace-a'), stateProvider(reader))
+
+    const first = coordinator.rebuild()
+    await vi.advanceTimersByTimeAsync(0)
+    const firstWorker = createWorker.mock.results[0]?.value
+    if (!(firstWorker instanceof DeferredWorker)) throw new Error('未创建首个 Worker')
+    firstWorker.complete()
+    await first
+    expect(await reader.getMetadata()).toMatchObject({ revision: 1 })
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(firstWorker.disposeCalls).toBe(1)
+    expect(coordinator.getSnapshot().workerState).toBe('stopped')
+
+    const second = coordinator.rebuild()
+    await vi.advanceTimersByTimeAsync(0)
+    const secondWorker = createWorker.mock.results[1]?.value
+    if (!(secondWorker instanceof DeferredWorker)) throw new Error('未创建第二个 Worker')
+    secondWorker.complete()
+    await expect(second).resolves.toBe(true)
+    expect(createWorker).toHaveBeenCalledTimes(2)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'ready',
+      activeGeneration: 3,
+      revision: 3
+    })
+  })
+
+  it('取消会结束 building 且不推进 revision', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      generateOperationId: () => 'operation-cancel'
+    })
+    await coordinator.openWorkspace(workspace('workspace-a'), stateProvider(null))
+    const rebuild = coordinator.rebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+
+    await expect(coordinator.cancelCurrentOperation()).resolves.toBe(true)
+    await expect(rebuild).resolves.toBe(false)
+    expect(worker.cancelled).toEqual(['operation-cancel'])
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'idle',
+      revision: 0,
+      progress: null,
+      workerState: 'idle'
+    })
+  })
+
+  it('Worker terminal failure 保留 last-good 并允许后续显式重启', async () => {
+    const firstWorker = new DeferredWorker()
+    const secondWorker = new DeferredWorker()
+    const workers = [firstWorker, secondWorker]
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => {
+        const next = workers.shift()
+        if (!next) throw new Error('缺少 fake Worker')
+        return next
+      }
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 2, 4)))
+    )
+    const failed = coordinator.rebuild()
+    await vi.waitFor(() => expect(firstWorker.runCalls).toHaveLength(1))
+    firstWorker.emitTerminalFailure('worker exited')
+    await expect(failed).resolves.toBe(false)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'degraded',
+      activeGeneration: 2,
+      revision: 4,
+      workerState: 'failed',
+      failure: { code: 'worker_crash' }
+    })
+
+    const retry = coordinator.rebuild()
+    await vi.waitFor(() => expect(secondWorker.runCalls).toHaveLength(1))
+    secondWorker.complete()
+    await expect(retry).resolves.toBe(true)
+  })
+
+  it('Worker 提交后立即崩溃仍从只读状态恢复且下次基线正确', async () => {
+    const firstWorker = new DeferredWorker()
+    const secondWorker = new DeferredWorker()
+    const workers = [firstWorker, secondWorker]
+    const provider = new MutableStateProvider(null)
+    let operationSequence = 0
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => {
+        const next = workers.shift()
+        if (!next) throw new Error('缺少 fake Worker')
+        return next
+      },
+      generateOperationId: () => `operation-${++operationSequence}`
+    })
+    await coordinator.openWorkspace(workspace('workspace-a'), provider)
+    const failed = coordinator.rebuild()
+    await vi.waitFor(() => expect(firstWorker.runCalls).toHaveLength(1))
+
+    provider.setReader(new FakeStateReader(metadata('workspace-a', 1, 1)))
+    firstWorker.emitTerminalFailure('worker exited after commit')
+    await expect(failed).resolves.toBe(false)
+    await vi.waitFor(() => expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'degraded',
+      activeGeneration: 1,
+      revision: 1,
+      workerState: 'failed',
+      failure: { code: 'worker_crash' }
+    }))
+
+    const retry = coordinator.rebuild()
+    await vi.waitFor(() => expect(secondWorker.runCalls).toHaveLength(1))
+    expect(secondWorker.runCalls[0]?.operation).toMatchObject({
+      generation: 2,
+      baseGeneration: 1,
+      baseRevision: 1
+    })
+    secondWorker.complete()
+    await expect(retry).resolves.toBe(true)
+  })
+
+  it('取消与提交竞态不会丢失已生效的 generation', async () => {
+    const worker = new DeferredWorker()
+    const provider = new MutableStateProvider(null)
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      generateOperationId: () => 'operation-cancelled-after-commit'
+    })
+    await coordinator.openWorkspace(workspace('workspace-a'), provider)
+    const rebuild = coordinator.rebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+
+    provider.setReader(new FakeStateReader(metadata('workspace-a', 1, 1)))
+    await expect(coordinator.cancelCurrentOperation()).resolves.toBe(true)
+    await expect(rebuild).resolves.toBe(false)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'ready',
+      activeGeneration: 1,
+      revision: 1,
+      failure: null,
+      workerState: 'idle'
+    })
+  })
+
+  it('空闲 Worker 崩溃会立即更新唯一状态投影', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({ createWorker: () => worker })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 2, 4)))
+    )
+    const rebuild = coordinator.rebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+    worker.complete()
+    await rebuild
+
+    worker.emitTerminalFailure('idle worker exited')
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'degraded',
+      workerState: 'failed',
+      failure: { code: 'worker_crash', message: 'idle worker exited' }
+    })
+  })
+
+  it('workspace 切换会取消旧 Worker，旧结果不污染新状态', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      generateOperationId: () => 'operation-a'
+    })
+    await coordinator.openWorkspace(workspace('workspace-a'), stateProvider(null))
+    const stale = coordinator.rebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+
+    await coordinator.openWorkspace(
+      workspace('workspace-b'),
+      stateProvider(new FakeStateReader(metadata('workspace-b', 5, 9)))
+    )
+    await expect(stale).resolves.toBe(false)
+    expect(worker.cancelled).toEqual(['operation-a'])
+    expect(worker.disposeCalls).toBe(1)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      workspaceIdentity: 'workspace-b',
+      activeGeneration: 5,
+      revision: 9,
+      status: 'ready',
+      workerState: 'stopped'
+    })
+  })
+
+  it('Worker 未装配时显式 unavailable，不在主线程兜底', async () => {
+    const coordinator = new CodeIndexCoordinator()
+    await coordinator.openWorkspace(workspace('workspace-a'), stateProvider(null))
+    await expect(coordinator.rebuild()).resolves.toBe(false)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'unavailable',
+      workerState: 'failed',
+      failure: { code: 'worker_missing' }
+    })
+  })
+
+  it('已提交后 coverage 失败仍保留新 generation 与 revision', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({ createWorker: () => worker })
+    await coordinator.openWorkspace(workspace('workspace-a'), stateProvider(null))
+    const rebuild = coordinator.rebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+    worker.fail(
+      'storage_read_failed',
+      'coverage failed',
+      metadata('workspace-a', 1, 1)
+    )
+
+    await expect(rebuild).resolves.toBe(false)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'degraded',
+      activeGeneration: 1,
+      revision: 1,
+      failure: { code: 'storage_read_failed' }
+    })
+  })
+})
+
+function workspace(workspaceIdentity: string): CodeIndexWorkerWorkspace {
+  return {
+    workspaceIdentity,
+    workspaceRoot: resolve(`tmp/${workspaceIdentity}`),
+    dbPath: resolve(`tmp/${workspaceIdentity}/index.db`),
+    parserSignature: TREE_SITTER_PARSER_SIGNATURE,
+    resolverSignature: STRUCTURAL_RESOLVER_SIGNATURE,
+    coreWasmPath: resolve('node_modules/web-tree-sitter/web-tree-sitter.wasm'),
+    grammarWasmPaths: {
+      javascript: resolve('node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-javascript.wasm'),
+      typescript: resolve('node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-typescript.wasm'),
+      tsx: resolve('node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-tsx.wasm'),
+      python: resolve('node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm')
+    }
+  }
+}
+
+function stateProvider(reader: CodeGraphStateReader | null): CodeGraphStateReaderProvider {
+  return {
+    getStateReader: async () => reader
   }
 }
 
@@ -151,310 +481,25 @@ function metadata(
     workspaceIdentity,
     activeGeneration,
     revision,
-    parserSignature: 'parser-v1',
-    resolverSignature: 'resolver-v1',
+    parserSignature: TREE_SITTER_PARSER_SIGNATURE,
+    resolverSignature: STRUCTURAL_RESOLVER_SIGNATURE,
     lastCompletedAt: activeGeneration === null ? null : 100,
     lastAccessed: 100
   }
 }
 
-function generation(operation: CodeIndexOperation): CodeGraphGenerationInput {
+function successResult(
+  request: CodeIndexWorkerRunRequest,
+  coverage: CodeIndexCoverage
+): CodeIndexWorkerRunResult {
   return {
-    operationId: operation.operationId,
-    generation: operation.generation,
-    parserSignature: 'parser-v1',
-    resolverSignature: 'resolver-v1',
-    stagedAt: 101,
-    files: [],
-    symbols: [],
-    fileEdges: [],
-    symbolEdges: [],
-    unresolvedRelations: []
+    operation: request.operation,
+    metadata: metadata(
+      request.operation.workspaceIdentity,
+      request.operation.generation,
+      request.operation.baseRevision + 1
+    ),
+    coverage,
+    durationMs: 10
   }
 }
-
-function incrementalUpdate(
-  operation: CodeIndexOperation,
-  completedAt: number
-): CodeGraphIncrementalUpdate {
-  return {
-    operationId: operation.operationId,
-    workspaceIdentity: operation.workspaceIdentity,
-    generation: operation.generation,
-    expectedRevision: operation.baseRevision,
-    completedAt,
-    removedPaths: [],
-    files: [],
-    symbols: [],
-    fileEdges: [],
-    symbolEdges: [],
-    unresolvedRelations: []
-  }
-}
-
-describe('CodeIndexCoordinator', () => {
-  it('从空索引构建到 ready，并只发布不可变状态投影', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a'))
-    repository.setCoverage({ ...EMPTY_COVERAGE, eligibleFiles: 2, indexedFiles: 2 })
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => 'operation-1'
-    })
-    const listener = vi.fn(() => {
-      throw new Error('listener failure')
-    })
-    coordinator.subscribe(listener)
-
-    await coordinator.openWorkspace('workspace-a', repository)
-    const operation = await coordinator.beginFullRebuild()
-
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'building',
-      activeGeneration: null,
-      revision: 0
-    })
-    expect(coordinator.reportProgress(operation, { completed: 1, total: 2 })).toBe(true)
-    await expect(
-      coordinator.commitFullRebuild(operation, generation(operation), 200)
-    ).resolves.toBe(true)
-
-    const snapshot = coordinator.getSnapshot()
-    expect(snapshot).toMatchObject({
-      workspaceIdentity: 'workspace-a',
-      status: 'ready',
-      activeGeneration: 1,
-      revision: 1,
-      coverage: { eligibleFiles: 2, indexedFiles: 2 },
-      progress: null,
-      failure: null
-    })
-    expect(Object.isFrozen(snapshot)).toBe(true)
-    expect(Object.isFrozen(snapshot.coverage)).toBe(true)
-    expect(listener).toHaveBeenCalled()
-  })
-
-  it('对一批增量变更只推进一次 revision', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a', 3, 7))
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => 'incremental-1'
-    })
-    await coordinator.openWorkspace('workspace-a', repository)
-
-    const operation = await coordinator.beginIncrementalUpdate()
-    expect(coordinator.getSnapshot().status).toBe('updating')
-    await expect(
-      coordinator.commitIncrementalUpdate(operation, incrementalUpdate(operation, 300))
-    ).resolves.toBe(true)
-
-    expect(repository.incremental).toHaveLength(1)
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'ready',
-      activeGeneration: 3,
-      revision: 8,
-      lastCompletedAt: 300
-    })
-  })
-
-  it('失败与取消按是否存在 last-good index 收敛到唯一状态', async () => {
-    const emptyRepository = new FakeCodeGraphRepository(metadata('workspace-empty'))
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => 'operation-empty'
-    })
-    await coordinator.openWorkspace('workspace-empty', emptyRepository)
-    const initialBuild = await coordinator.beginFullRebuild()
-    await expect(coordinator.failOperation(initialBuild, {
-      code: 'grammar_missing',
-      message: 'grammar unavailable'
-    })).resolves.toBe(true)
-    expect(coordinator.getSnapshot().status).toBe('unavailable')
-
-    const readyRepository = new FakeCodeGraphRepository(metadata('workspace-ready', 2, 4))
-    await coordinator.openWorkspace('workspace-ready', readyRepository)
-    const update = await coordinator.beginIncrementalUpdate()
-    await expect(coordinator.cancelOperation(update)).resolves.toBe(true)
-    expect(coordinator.getSnapshot()).toMatchObject({ status: 'ready', revision: 4 })
-
-    const retry = await coordinator.beginIncrementalUpdate()
-    await expect(coordinator.failOperation(retry, {
-      code: 'parser_failure',
-      message: 'one batch failed'
-    })).resolves.toBe(true)
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'degraded',
-      activeGeneration: 2,
-      revision: 4
-    })
-  })
-
-  it('workspace 切换后拒绝旧 operation 的完成与重复事件', async () => {
-    const repositoryA = new FakeCodeGraphRepository(metadata('workspace-a'))
-    const repositoryB = new FakeCodeGraphRepository(metadata('workspace-b', 5, 9))
-    let operationNumber = 0
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => `operation-${++operationNumber}`
-    })
-    await coordinator.openWorkspace('workspace-a', repositoryA)
-    const stale = await coordinator.beginFullRebuild()
-
-    await coordinator.openWorkspace('workspace-b', repositoryB)
-    await expect(
-      coordinator.commitFullRebuild(stale, generation(stale), 400)
-    ).resolves.toBe(false)
-    await expect(coordinator.workerFailed(stale, {
-      code: 'worker_crash',
-      message: 'old worker exited'
-    })).resolves.toBe(false)
-    expect(coordinator.reportProgress(stale, { completed: 1, total: 1 })).toBe(false)
-    expect(repositoryA.staged).toHaveLength(0)
-    expect(coordinator.getSnapshot()).toMatchObject({
-      workspaceIdentity: 'workspace-b',
-      activeGeneration: 5,
-      revision: 9,
-      status: 'ready'
-    })
-  })
-
-  it('新的 rebuild operation 会分配新 generation 并 fence 掉旧结果', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a'))
-    repository.nextGeneration = vi.fn().mockResolvedValue(1)
-    let operationNumber = 0
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => `operation-${++operationNumber}`
-    })
-    await coordinator.openWorkspace('workspace-a', repository)
-    const stale = await coordinator.beginFullRebuild()
-    const current = await coordinator.beginFullRebuild()
-
-    expect([stale.generation, current.generation]).toEqual([1, 2])
-
-    await expect(
-      coordinator.commitFullRebuild(stale, generation(stale), 200)
-    ).resolves.toBe(false)
-    await expect(
-      coordinator.commitFullRebuild(current, generation(current), 201)
-    ).resolves.toBe(true)
-    expect(repository.staged.map((item) => item.operationId)).toEqual(['operation-2'])
-  })
-
-  it('worker terminal failure 保留 last-good revision，并关闭 workspace 后清空状态', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a', 2, 4))
-    const coordinator = new CodeIndexCoordinator()
-    await coordinator.openWorkspace('workspace-a', repository)
-    const operation = await coordinator.beginIncrementalUpdate()
-
-    await coordinator.workerFailed(
-      operation,
-      { code: 'untrusted-worker-code', message: 'worker exited' }
-    )
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'degraded',
-      activeGeneration: 2,
-      revision: 4,
-      failure: { code: 'worker_crash', message: 'worker exited' }
-    })
-    expect(Object.isFrozen(CODE_INDEX_FAILURE_CODES)).toBe(true)
-
-    await coordinator.closeWorkspace('workspace-a')
-    expect(coordinator.getSnapshot()).toEqual({
-      workspaceIdentity: null,
-      activeGeneration: null,
-      revision: 0,
-      status: 'idle',
-      coverage: EMPTY_COVERAGE,
-      progress: null,
-      lastCompletedAt: null,
-      failure: null
-    })
-  })
-
-  it('取消会在延迟增量写入前撤销 write fence，revision 不前进', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a', 3, 7))
-    let releaseCommit: (() => void) | null = null
-    repository.incrementalCommitGate = new Promise<void>((resolve) => {
-      releaseCommit = resolve
-    })
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => 'incremental-delayed'
-    })
-    await coordinator.openWorkspace('workspace-a', repository)
-    const operation = await coordinator.beginIncrementalUpdate()
-    const commit = coordinator.commitIncrementalUpdate(
-      operation,
-      incrementalUpdate(operation, 500)
-    )
-    await vi.waitFor(() => expect(repository.incremental).toHaveLength(1))
-
-    await expect(coordinator.cancelOperation(operation)).resolves.toBe(true)
-    releaseCommit?.()
-    await expect(commit).rejects.toThrow('write fence expired')
-
-    expect(await repository.getMetadata()).toMatchObject({
-      activeGeneration: 3,
-      revision: 7
-    })
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'ready',
-      activeGeneration: 3,
-      revision: 7
-    })
-  })
-
-  it('取消会阻止已延迟的 generation activation 成为 active', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a'))
-    let releaseActivation: (() => void) | null = null
-    repository.activationCommitGate = new Promise<void>((resolve) => {
-      releaseActivation = resolve
-    })
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => 'full-delayed'
-    })
-    await coordinator.openWorkspace('workspace-a', repository)
-    const operation = await coordinator.beginFullRebuild()
-    const commit = coordinator.commitFullRebuild(
-      operation,
-      generation(operation),
-      600
-    )
-    await vi.waitFor(() => expect(repository.activationAttempts).toBe(1))
-
-    await expect(coordinator.cancelOperation(operation)).resolves.toBe(true)
-    releaseActivation?.()
-    await expect(commit).rejects.toThrow('write fence expired')
-
-    expect(await repository.getMetadata()).toMatchObject({
-      activeGeneration: null,
-      revision: 0
-    })
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'idle',
-      activeGeneration: null,
-      revision: 0
-    })
-  })
-
-  it('提交后 coverage 读取失败仍保留已提交的 generation 与 revision', async () => {
-    const repository = new FakeCodeGraphRepository(metadata('workspace-a'))
-    const coordinator = new CodeIndexCoordinator({
-      generateOperationId: () => 'full-coverage-failure'
-    })
-    await coordinator.openWorkspace('workspace-a', repository)
-    const operation = await coordinator.beginFullRebuild()
-    repository.coverageError = new Error('coverage query failed')
-
-    await expect(coordinator.commitFullRebuild(
-      operation,
-      generation(operation),
-      700
-    )).rejects.toThrow('coverage query failed')
-
-    expect(await repository.getMetadata()).toMatchObject({
-      activeGeneration: 1,
-      revision: 1
-    })
-    expect(coordinator.getSnapshot()).toMatchObject({
-      status: 'degraded',
-      activeGeneration: 1,
-      revision: 1,
-      failure: { code: 'storage_read_failed' }
-    })
-  })
-})

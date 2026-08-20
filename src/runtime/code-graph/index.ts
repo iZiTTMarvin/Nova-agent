@@ -1,8 +1,34 @@
 export { CodeIndexCoordinator } from './indexing/CodeIndexCoordinator'
 export type {
   CodeIndexCoordinatorOptions,
-  CodeIndexSnapshotListener
+  CodeIndexSnapshotListener,
+  CodeIndexWorkerFactory,
+  CodeGraphStateReaderProvider
 } from './indexing/CodeIndexCoordinator'
+export {
+  CodeIndexWorkerClient,
+  CodeIndexWorkerMissingError,
+  CodeIndexWorkerRunError
+} from './worker/CodeIndexWorkerClient'
+export type {
+  CodeIndexWorkerClientOptions,
+  CodeIndexWorkerThread,
+  CodeIndexWorkerThreadFactory
+} from './worker/CodeIndexWorkerClient'
+export {
+  CODE_INDEX_WORKER_CANCEL_GRACE_MS,
+  CODE_INDEX_WORKER_IDLE_TIMEOUT_MS
+} from './worker/protocol'
+export type {
+  CodeIndexHostToWorkerMessage,
+  CodeIndexWorkerGrammarPaths,
+  CodeIndexWorkerPort,
+  CodeIndexWorkerRunOptions,
+  CodeIndexWorkerRunRequest,
+  CodeIndexWorkerRunResult,
+  CodeIndexWorkerToHostMessage,
+  CodeIndexWorkerWorkspace
+} from './worker/protocol'
 export {
   CODE_INDEX_GIT_TIMEOUT_MS,
   CODE_INDEX_MAX_SOURCE_BYTES,
@@ -99,11 +125,13 @@ export type {
   ContextPackBuilderOptions
 } from './context/ContextPackBuilder'
 export type {
+  CodeGraphResolveControl,
   CodeGraphResolveInput,
   CodeGraphResolver
 } from './resolving/Resolver'
 export type {
   CodeGraphRepository,
+  CodeGraphStateReader,
   CodeGraphMetadata,
   CodeGraphFileInput,
   CodeGraphFileRecord,
@@ -117,6 +145,7 @@ export type {
 } from './graph/CodeGraphRepository'
 export type {
   CodeIndexStatus,
+  CodeIndexWorkerState,
   CodeContextIntent,
   CodeContextRequestedIntent,
   CodeEvidenceConfidence,

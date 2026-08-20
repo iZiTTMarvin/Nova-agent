@@ -48,8 +48,12 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        // 第二入口：Code Mode 沙箱 worker（new Worker 按 out/main/codeModeWorker.js 加载）
-        input: ['src/main/index.ts', 'src/runtime/code-mode/quickjs/codeModeWorker.ts']
+        // 独立 Worker 都以真实入口构建，不与 Electron main 共用执行线程。
+        input: [
+          'src/main/index.ts',
+          'src/runtime/code-mode/quickjs/codeModeWorker.ts',
+          'src/runtime/code-graph/worker/codeGraphWorker.ts'
+        ]
       }
     }
   },

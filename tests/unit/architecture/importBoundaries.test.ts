@@ -20,8 +20,10 @@ import {
 } from './importBoundaryRules'
 import {
   collectViolationsFromSource,
+  createFsExists,
   extractModuleSpecifiers,
   findRepoRoot,
+  listSrcTypeScriptFiles,
   resolveModuleSpecifier,
   scanSourceTree,
   type FileExistsFn
@@ -427,5 +429,23 @@ describe('import boundary production gate', () => {
     expect(fs.existsSync(path.join(repoRoot, 'src/runtime/workflow'))).toBe(false)
     expect(fs.existsSync(path.join(repoRoot, 'src/shared/workflow'))).toBe(false)
     expect(fs.existsSync(path.join(repoRoot, 'src/runtime/tools/startWorkflow'))).toBe(false)
+  })
+
+  it('Code Graph 生产写连接只能由 Index Worker 构建路径打开', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const exists = createFsExists(repoRoot)
+    const callers = listSrcTypeScriptFiles(repoRoot).filter((file) => {
+      if (file === 'src/runtime/code-graph/graph/BetterSqliteCodeGraph.ts') return false
+      const source = fs.readFileSync(path.join(repoRoot, ...file.split('/')), 'utf8')
+      return extractModuleSpecifiers(source, file).specifiers.some((entry) => {
+        const resolved = resolveModuleSpecifier(file, entry.specifier, exists)
+        return resolved.kind === 'resolved' &&
+          resolved.path === 'src/runtime/code-graph/graph/BetterSqliteCodeGraph.ts'
+      })
+    })
+
+    expect(callers).toEqual([
+      'src/runtime/code-graph/worker/CodeIndexBuildRunner.ts'
+    ])
   })
 })

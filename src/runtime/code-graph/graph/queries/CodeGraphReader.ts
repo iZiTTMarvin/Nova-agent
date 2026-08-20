@@ -11,6 +11,11 @@ import type {
   CodeUnresolvedRelationKind
 } from '../../types'
 import { readCodeGraphCoverage } from '../CodeGraphCoverage'
+import {
+  readCodeGraphMetadata,
+  readNextCodeGraphGeneration
+} from '../CodeGraphStateProjection'
+import type { CodeGraphMetadata } from '../CodeGraphRepository'
 
 export const CODE_GRAPH_QUERY_CANDIDATE_LIMIT = 64
 export const CODE_CONTEXT_QUERY_MAX_CHARS = 512
@@ -160,17 +165,29 @@ export class BetterSqliteCodeGraphReader implements CodeGraphReader {
     }
   }
 
+  async getMetadata(): Promise<CodeGraphMetadata> {
+    return readCodeGraphMetadata(this.db)
+  }
+
+  async nextGeneration(): Promise<number> {
+    return readNextCodeGraphGeneration(this.db)
+  }
+
+  async getCoverage(generation?: number | null): Promise<CodeIndexCoverage> {
+    const target = generation === undefined
+      ? readCodeGraphMetadata(this.db).activeGeneration
+      : generation
+    return readCodeGraphCoverage(this.db, target)
+  }
+
   async close(): Promise<void> {
     this.db.close()
   }
 
   private readSnapshot(): CodeGraphReadSnapshot {
-    const metadata = this.db.prepare(
-      `SELECT active_generation AS activeGeneration, revision
-       FROM index_meta WHERE singleton = 1`
-    ).get()
-    const activeGeneration = readNullableNumber(metadata, 'activeGeneration')
-    const revision = readNumber(metadata, 'revision')
+    const metadata = readCodeGraphMetadata(this.db)
+    const activeGeneration = metadata.activeGeneration
+    const revision = metadata.revision
     return Object.freeze({
       activeGeneration,
       revision,

@@ -6,6 +6,8 @@ export type CodeIndexStatus =
   | 'degraded'
   | 'unavailable'
 
+export type CodeIndexWorkerState = 'stopped' | 'running' | 'idle' | 'failed'
+
 export type CodeContextIntent = 'locate' | 'understand' | 'impact'
 export type CodeContextRequestedIntent = CodeContextIntent | 'flow'
 
@@ -119,6 +121,7 @@ export interface CodeIndexSnapshot {
   readonly progress: CodeIndexProgress | null
   readonly lastCompletedAt: number | null
   readonly failure: CodeIndexFailure | null
+  readonly workerState: CodeIndexWorkerState
 }
 
 export type CodeIndexOperationKind = 'full-rebuild' | 'incremental-update'

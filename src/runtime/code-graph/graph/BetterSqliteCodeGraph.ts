@@ -20,6 +20,10 @@ import {
   migrateCodeGraphSchema
 } from './schema/CodeGraphMigrations'
 import { readCodeGraphCoverage } from './CodeGraphCoverage'
+import {
+  readCodeGraphMetadata,
+  readNextCodeGraphGeneration
+} from './CodeGraphStateProjection'
 
 export const CODE_GRAPH_DB_FILE = 'index.db'
 export const CODE_GRAPH_DOC_EXCERPT_MAX_CHARS = 512
@@ -91,12 +95,7 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
   }
 
   async nextGeneration(): Promise<number> {
-    const row = this.db.prepare(
-      `SELECT COALESCE(MAX(generation), 0) + 1 AS nextGeneration FROM generations`
-    ).get()
-    const next = readNumber(row, 'nextGeneration')
-    assertPositiveInteger(next, 'nextGeneration')
-    return next
+    return readNextCodeGraphGeneration(this.db)
   }
 
   async claimOperation(operation: CodeIndexOperation): Promise<void> {
@@ -352,19 +351,7 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
   }
 
   private readMetadata(): CodeGraphMetadata {
-    const row = this.db.prepare(
-      `SELECT
-        schema_version AS schemaVersion,
-        workspace_identity AS workspaceIdentity,
-        active_generation AS activeGeneration,
-        revision,
-        parser_signature AS parserSignature,
-        resolver_signature AS resolverSignature,
-        last_completed_at AS lastCompletedAt,
-        last_accessed AS lastAccessed
-       FROM index_meta WHERE singleton = 1`
-    ).get()
-    return parseMetadata(row)
+    return readCodeGraphMetadata(this.db)
   }
 
   private assertGenerationInput(input: CodeGraphGenerationInput): void {
@@ -641,19 +628,6 @@ export function openBetterSqliteCodeGraph(
   options: BetterSqliteCodeGraphOptions
 ): BetterSqliteCodeGraph {
   return BetterSqliteCodeGraph.open(options)
-}
-
-function parseMetadata(row: unknown): CodeGraphMetadata {
-  return Object.freeze({
-    schemaVersion: readNumber(row, 'schemaVersion'),
-    workspaceIdentity: readString(row, 'workspaceIdentity'),
-    activeGeneration: readNullableNumber(row, 'activeGeneration'),
-    revision: readNumber(row, 'revision'),
-    parserSignature: readString(row, 'parserSignature'),
-    resolverSignature: readString(row, 'resolverSignature'),
-    lastCompletedAt: readNullableNumber(row, 'lastCompletedAt'),
-    lastAccessed: readNumber(row, 'lastAccessed')
-  })
 }
 
 function parseFileRecord(row: unknown): CodeGraphFileRecord {

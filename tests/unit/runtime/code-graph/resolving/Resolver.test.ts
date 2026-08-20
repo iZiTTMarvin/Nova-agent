@@ -163,4 +163,31 @@ export class Service extends Base {
     const reverse = await resolver.resolve({ ...base, parsedFiles: [...parsedFiles].reverse() })
     expect(JSON.stringify(reverse)).toBe(JSON.stringify(forward))
   })
+
+  it('批量关系解析持续检查取消边界', async () => {
+    const [template] = await parseFixture()
+    if (!template) throw new Error('缺少 resolver fixture')
+    const parsedFiles = Array.from({ length: 40 }, (_, index) => ({
+      ...template,
+      path: `src/generated-${index}.ts`
+    }))
+    let checks = 0
+
+    await expect(new StructuralCodeGraphResolver().resolve({
+      workspaceRoot: '/workspace',
+      operationId: 'operation-cancel',
+      generation: 3,
+      parserSignature: registry.signature,
+      stagedAt: 300,
+      parsedFiles,
+      configFiles: [],
+      mtimeMsByPath: new Map(parsedFiles.map((file) => [file.path, 100]))
+    }, {
+      throwIfCancelled: () => {
+        checks += 1
+        if (checks >= 25) throw new Error('resolver cancelled')
+      }
+    })).rejects.toThrow('resolver cancelled')
+    expect(checks).toBeGreaterThanOrEqual(25)
+  })
 })

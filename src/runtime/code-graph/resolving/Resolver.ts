@@ -47,9 +47,16 @@ export interface CodeGraphResolveInput {
   readonly mtimeMsByPath: ReadonlyMap<string, number>
 }
 
+export interface CodeGraphResolveControl {
+  throwIfCancelled(): void
+}
+
 export interface CodeGraphResolver {
   readonly signature: string
-  resolve(input: CodeGraphResolveInput): Promise<CodeGraphGenerationInput>
+  resolve(
+    input: CodeGraphResolveInput,
+    control?: CodeGraphResolveControl
+  ): Promise<CodeGraphGenerationInput>
 }
 
 interface ResolvedImport {
@@ -74,7 +81,12 @@ type ExportResolution =
 export class StructuralCodeGraphResolver implements CodeGraphResolver {
   readonly signature = STRUCTURAL_RESOLVER_SIGNATURE
 
-  async resolve(input: CodeGraphResolveInput): Promise<CodeGraphGenerationInput> {
+  async resolve(
+    input: CodeGraphResolveInput,
+    control?: CodeGraphResolveControl
+  ): Promise<CodeGraphGenerationInput> {
+    const checkpoint = createResolveCheckpoint(control)
+    control?.throwIfCancelled()
     const parsedByPath = uniqueParsedFiles(input.parsedFiles)
     const graphFiles = buildGraphFiles(input, parsedByPath)
     const fileIndex = new WorkspaceModuleFileIndex(graphFiles.map((file) => file.path))
@@ -87,25 +99,37 @@ export class StructuralCodeGraphResolver implements CodeGraphResolver {
     const fileEdges: CodeGraphFileEdgeInput[] = []
     const symbolEdges: CodeGraphSymbolEdgeInput[] = []
     const unresolved: CodeGraphUnresolvedRelationInput[] = []
-    const symbols = [...parsedByPath.values()]
-      .flatMap((file) => file.parseStatus === 'parsed'
-        ? file.symbols.map((symbol) => toGraphSymbol(file.path, symbol))
-        : [])
+    const symbols: CodeGraphSymbolInput[] = []
+    for (const file of parsedByPath.values()) {
+      if (file.parseStatus !== 'parsed') continue
+      for (const symbol of file.symbols) {
+        control?.throwIfCancelled()
+        symbols.push(toGraphSymbol(file.path, symbol))
+      }
+    }
     const resolvedImports = new Map<string, readonly ResolvedImport[]>()
 
     for (const file of parsedByPath.values()) {
-      if (file.parseStatus !== 'parsed') continue
-      const imports = file.imports.map((parsed) => ({
-        parsed,
-        resolution: resolveModulePath(
-          moduleResolver,
-          pythonResolver,
-          file,
-          parsed.moduleSpecifier
-        )
-      }))
+      if (file.parseStatus !== 'parsed') {
+        await checkpoint()
+        continue
+      }
+      const imports: ResolvedImport[] = []
+      for (const parsed of file.imports) {
+        control?.throwIfCancelled()
+        imports.push({
+          parsed,
+          resolution: resolveModulePath(
+            moduleResolver,
+            pythonResolver,
+            file,
+            parsed.moduleSpecifier
+          )
+        })
+      }
       resolvedImports.set(file.path, Object.freeze(imports))
       for (const item of imports) {
+        control?.throwIfCancelled()
         const edgeKind = item.parsed.kind === 're_export' ? 're_exports' : 'imports'
         if (item.resolution.kind === 'resolved') {
           fileEdges.push(Object.freeze({
@@ -129,6 +153,7 @@ export class StructuralCodeGraphResolver implements CodeGraphResolver {
           }))
         }
       }
+      await checkpoint()
     }
 
     const context: ResolveContext = {
@@ -140,14 +165,26 @@ export class StructuralCodeGraphResolver implements CodeGraphResolver {
       unresolved
     }
     for (const file of parsedByPath.values()) {
-      if (file.parseStatus !== 'parsed') continue
-      for (const call of file.calls) resolveCall(context, file, call)
-      for (const reference of file.references) resolveReference(context, file, reference)
+      if (file.parseStatus !== 'parsed') {
+        await checkpoint()
+        continue
+      }
+      for (const call of file.calls) {
+        control?.throwIfCancelled()
+        resolveCall(context, file, call)
+      }
+      for (const reference of file.references) {
+        control?.throwIfCancelled()
+        resolveReference(context, file, reference)
+      }
       for (const inheritance of file.inheritance) {
+        control?.throwIfCancelled()
         resolveInheritance(context, file, inheritance)
       }
+      await checkpoint()
     }
-    fileEdges.push(...buildTestEdges(graphFiles, fileEdges))
+    fileEdges.push(...await buildTestEdges(graphFiles, fileEdges, checkpoint, control))
+    await yieldResolveControl(control)
 
     return Object.freeze({
       operationId: input.operationId,
@@ -539,10 +576,12 @@ function toGraphSymbol(filePath: string, symbol: ParsedSymbol): CodeGraphSymbolI
   })
 }
 
-function buildTestEdges(
+async function buildTestEdges(
   files: readonly CodeGraphFileInput[],
-  resolvedFileEdges: readonly CodeGraphFileEdgeInput[]
-): CodeGraphFileEdgeInput[] {
+  resolvedFileEdges: readonly CodeGraphFileEdgeInput[],
+  checkpoint: () => Promise<void>,
+  control: CodeGraphResolveControl | undefined
+): Promise<CodeGraphFileEdgeInput[]> {
   const paths = new Set(files.map((file) => file.path))
   const edges: CodeGraphFileEdgeInput[] = []
   for (const file of files) {
@@ -552,15 +591,40 @@ function buildTestEdges(
       edges.push(testEdge(file.path, candidate, 1))
       linkedTargets.add(candidate)
     }
-    if (!isTestPath(file.path)) continue
-    for (const imported of resolvedFileEdges) {
-      if (imported.kind !== 'imports' || imported.sourcePath !== file.path) continue
-      if (linkedTargets.has(imported.targetPath)) continue
-      edges.push(testEdge(file.path, imported.targetPath, imported.sourceLine))
-      linkedTargets.add(imported.targetPath)
+    if (isTestPath(file.path)) {
+      for (const imported of resolvedFileEdges) {
+        control?.throwIfCancelled()
+        if (imported.kind !== 'imports' || imported.sourcePath !== file.path) continue
+        if (linkedTargets.has(imported.targetPath)) continue
+        edges.push(testEdge(file.path, imported.targetPath, imported.sourceLine))
+        linkedTargets.add(imported.targetPath)
+      }
     }
+    await checkpoint()
   }
   return edges
+}
+
+const RESOLVE_BATCH_SIZE = 32
+
+function createResolveCheckpoint(
+  control: CodeGraphResolveControl | undefined
+): () => Promise<void> {
+  let completed = 0
+  return async () => {
+    control?.throwIfCancelled()
+    completed += 1
+    if (completed % RESOLVE_BATCH_SIZE !== 0) return
+    // 每批让出 Worker 事件循环，同时重查共享取消标志。
+    await yieldResolveControl(control)
+  }
+}
+
+async function yieldResolveControl(
+  control: CodeGraphResolveControl | undefined
+): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  control?.throwIfCancelled()
 }
 
 function conventionTestTarget(filePath: string): string | null {

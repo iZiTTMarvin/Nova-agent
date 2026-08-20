@@ -120,14 +120,18 @@ export interface CodeGraphIncrementalUpdate {
   readonly unresolvedRelations: readonly CodeGraphUnresolvedRelationInput[]
 }
 
-/** 代码图持久化端口；写入只接受 Coordinator 签发的 operation。 */
-export interface CodeGraphRepository {
+/** 主进程只读索引状态的最小端口，不暴露任何写方法。 */
+export interface CodeGraphStateReader {
   getMetadata(): Promise<CodeGraphMetadata>
   nextGeneration(): Promise<number>
+  getCoverage(generation?: number | null): Promise<CodeIndexCoverage>
+}
+
+/** 代码图持久化端口；写入只接受 Coordinator 签发的 operation。 */
+export interface CodeGraphRepository extends CodeGraphStateReader {
   /** 写入 fence 是数据库提交前的最终失效校验，不替代 Coordinator 状态。 */
   claimOperation(operation: CodeIndexOperation): Promise<void>
   releaseOperation(operation: CodeIndexOperation): Promise<void>
-  getCoverage(generation?: number | null): Promise<CodeIndexCoverage>
   findActiveFile(path: string): Promise<CodeGraphFileRecord | null>
   stageGeneration(input: CodeGraphGenerationInput): Promise<void>
   activateGeneration(input: CodeGraphGenerationActivation): Promise<CodeGraphMetadata>
