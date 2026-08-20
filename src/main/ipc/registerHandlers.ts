@@ -4,7 +4,6 @@ import { cleanupStaleAtomicTmpFiles } from '../../runtime/storage/atomicFile'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import { handle } from './secureIpc'
 import { PING } from '../../shared/ipc/channels'
-import { registerProjectHandler } from './projectHandler'
 import { registerConfigHandler } from './configHandler'
 import { registerModeHandler } from './modeHandler'
 import { registerSessionHandler } from './sessionHandler'
@@ -60,9 +59,6 @@ export function registerIpcHandlers(): ImageStore {
   registerDevDiagnosticsHandlers()
   // 注册异步对话框 IPC（替代阻塞的 window.confirm）
   registerDialogHandler()
-
-  // 注册项目目录选择 IPC
-  registerProjectHandler(getMainWindow)
 
   // 注册模型配置存取 IPC
   registerConfigHandler()

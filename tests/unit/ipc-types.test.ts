@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import type { IpcCommands, IpcCommandChannel, IpcEvents, IpcEventChannel } from '../../src/shared/ipc/types'
 import {
-  PING, SELECT_PROJECT, SEND_MESSAGE, CANCEL_EXECUTION,
+  PING, SEND_MESSAGE, CANCEL_EXECUTION,
   SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG, SET_MODE,
   ACCEPT_FILE, REJECT_FILE,
   RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION,
@@ -17,16 +17,16 @@ import {
 } from '../../src/shared/ipc/channels'
 
 describe('IPC channel 常量', () => {
-  it('定义了 13 个命令 channel', () => {
+  it('定义了 12 个命令 channel', () => {
     const commandChannels = [
-      PING, SELECT_PROJECT, SEND_MESSAGE, CANCEL_EXECUTION,
+      PING, SEND_MESSAGE, CANCEL_EXECUTION,
       SAVE_MODEL_CONFIG, LOAD_MODEL_CONFIG, SET_MODE,
       ACCEPT_FILE, REJECT_FILE,
       RESPOND_PERMISSION, LOAD_SESSIONS, LOAD_SESSION, CREATE_SESSION
     ]
-    expect(commandChannels).toHaveLength(13)
+    expect(commandChannels).toHaveLength(12)
     // 每个 channel 都是唯一的字符串
-    expect(new Set(commandChannels).size).toBe(13)
+    expect(new Set(commandChannels).size).toBe(12)
   })
 
   it('定义了 9 个事件 channel', () => {
@@ -46,14 +46,6 @@ describe('IpcCommands 类型完整性', () => {
     // 编译期类型检查：确认 ping 返回 string
     type PingResult = IpcCommands['ping']['result']
     const _assertString: PingResult = 'test-value'
-    expect(typeof _assertString).toBe('string')
-  })
-
-  it('select-project 命令返回 string | null 类型', () => {
-    type Result = IpcCommands['select-project']['result']
-    const _assertNull: Result = null
-    const _assertString: Result = '/some/path'
-    expect(_assertNull).toBeNull()
     expect(typeof _assertString).toBe('string')
   })
 

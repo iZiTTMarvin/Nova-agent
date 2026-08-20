@@ -31,6 +31,7 @@ vi.mock('../../../src/main/index', () => ({
 }))
 
 vi.mock('../../../src/main/services/SkillServiceHost', () => ({
+  reloadSkillsForWorkspace: vi.fn(),
   getSkillService: () => ({
     getWorkspaceRoot: () => '/workspace',
     load: vi.fn(),
@@ -108,21 +109,67 @@ describe('WorkspaceService workspace root changes', () => {
     ])
   })
 
-  it('单个订阅者失败不阻止其余订阅者收到事件', () => {
+  it('启动恢复、选择项目与显式创建会话都发布根路径变化', async () => {
+    const startupSession = store.create('/workspace/startup')
+    const startupService = createService()
+    const startupEvents: WorkspaceRootChange[] = []
+    startupService.subscribeWorkspaceRootChanges((change) => startupEvents.push(change))
+
+    startupService.initOnStartup()
+
+    expect(startupEvents).toEqual([
+      { previousRoot: null, nextRoot: startupSession.workspaceRoot }
+    ])
+
+    await startupService.selectProject({ path: '/workspace/selected' })
+    startupService.createSession({ workspaceRoot: '/workspace/created' })
+
+    expect(startupEvents).toEqual([
+      { previousRoot: null, nextRoot: startupSession.workspaceRoot },
+      { previousRoot: startupSession.workspaceRoot, nextRoot: '/workspace/selected' },
+      { previousRoot: '/workspace/selected', nextRoot: '/workspace/created' }
+    ])
+  })
+
+  it('删除当前会话并切到不同项目时发布前后根路径', () => {
+    const service = createService()
+    const events: WorkspaceRootChange[] = []
+    const current = store.create('/workspace/current')
+    const remaining = store.create('/workspace/remaining')
+    service.subscribeWorkspaceRootChanges((change) => events.push(change))
+    service.selectSession(current.id)
+    events.length = 0
+
+    service.deleteSession(current.id)
+
+    expect(service.getState().currentSessionId).toBe(remaining.id)
+    expect(events).toEqual([
+      { previousRoot: '/workspace/current', nextRoot: '/workspace/remaining' }
+    ])
+  })
+
+  it('冻结事件且单个订阅者失败不阻止其余订阅者', async () => {
     const service = createService()
     const listenerError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const survivingEvents: WorkspaceRootChange[] = []
-    service.subscribeWorkspaceRootChanges(() => {
+    let eventWasFrozen = false
+    service.subscribeWorkspaceRootChanges((change) => {
+      eventWasFrozen = Object.isFrozen(change)
       throw new Error('listener failed')
+    })
+    service.subscribeWorkspaceRootChanges(async () => {
+      throw new Error('async listener failed')
     })
     service.subscribeWorkspaceRootChanges((change) => survivingEvents.push(change))
     const session = store.create('/workspace/a')
 
     service.selectSession(session.id)
+    await Promise.resolve()
 
     expect(survivingEvents).toEqual([
       { previousRoot: null, nextRoot: '/workspace/a' }
     ])
-    expect(listenerError).toHaveBeenCalledOnce()
+    expect(eventWasFrozen).toBe(true)
+    expect(listenerError).toHaveBeenCalledTimes(2)
   })
 })

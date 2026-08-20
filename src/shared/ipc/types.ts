@@ -114,10 +114,6 @@ export interface IpcCommands {
     }
     result: number
   }
-  'select-project': {
-    params: void
-    result: string | null
-  }
   'send-message': {
     params: {
       sessionId: string

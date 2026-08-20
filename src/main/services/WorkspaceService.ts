@@ -87,11 +87,13 @@ export interface WorkspaceServiceDeps {
 }
 
 export interface WorkspaceRootChange {
-  previousRoot: string | null
-  nextRoot: string | null
+  readonly previousRoot: string | null
+  readonly nextRoot: string | null
 }
 
-export type WorkspaceRootChangeListener = (change: WorkspaceRootChange) => void
+export type WorkspaceRootChangeListener = (
+  change: WorkspaceRootChange
+) => void | Promise<void>
 
 export class WorkspaceService {
   /**
@@ -125,10 +127,15 @@ export class WorkspaceService {
   private notifyWorkspaceRootChanged(previousRoot: string | null, nextRoot: string | null): void {
     if (previousRoot === nextRoot) return
 
-    const change = { previousRoot, nextRoot }
+    const change = Object.freeze({ previousRoot, nextRoot })
     for (const listener of this.workspaceRootChangeListeners) {
       try {
-        listener(change)
+        const pending = listener(change)
+        if (pending !== undefined) {
+          void Promise.resolve(pending).catch((error) => {
+            console.error('[WorkspaceService] async workspace root listener failed:', error)
+          })
+        }
       } catch (error) {
         console.error('[WorkspaceService] workspace root listener failed:', error)
       }
