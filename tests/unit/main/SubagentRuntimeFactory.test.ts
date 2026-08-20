@@ -93,6 +93,13 @@ describe('SubagentRuntimeFactory', () => {
     )
     expect(history).toContain('此前的问题')
     expect(history).toContain('此前的分析结果')
+
+    // 子代理与主代理共用同一份 Task Policy：装配且无重复
+    const systemText = extractTextFromContent(
+      prepared.agentLoop.getContext().find((m) => m.role === 'system')!.content
+    )
+    expect(systemText.match(/=== Task Policy ===/g)).toHaveLength(1)
+
     expect(prepared.agentLoop.getSkillRoots()).toEqual([skillRoot])
     prepared.agentLoop.dispose()
   })

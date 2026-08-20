@@ -4,7 +4,7 @@ import { getModeInstruction } from '../../../../src/runtime/agent/promptBuilder/
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
-import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
+import { renderBaseRules, renderMinimalEngineeringPolicy } from '../../../../src/runtime/agent/promptRenderer'
 import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
 import type { Mode } from '../../../../src/shared/session/types'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
@@ -76,6 +76,45 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     expect(frozen).toContain('工具优先级')
     // 模式指令不进 system
     expect(frozen).not.toContain('[当前模式: plan')
+  })
+
+  it('Task Policy 层进入 frozen system prompt 一次且逐字节稳定，不进 user 尾部', async () => {
+    const layers = {
+      agentRole: buildStableSystemPrompt({ workingDir: '/tmp' }),
+      baseRules: renderBaseRules(),
+      projectRules: '',
+      skillContext: '',
+      taskPolicy: renderMinimalEngineeringPolicy(),
+      toolSummary: ''
+    }
+
+    const frozenOf = (loop: AgentLoop) =>
+      extractTextFromContent(loop.getContext().find(m => m.role === 'system')!.content)
+    const loop1 = new AgentLoop(new MockModelClient(), new EventBus(), { systemPromptLayers: layers })
+    const loop2 = new AgentLoop(new MockModelClient(), new EventBus(), { systemPromptLayers: layers })
+    const frozen1 = frozenOf(loop1)
+    expect(frozen1.match(/=== Task Policy ===/g)).toHaveLength(1)
+    // 同输入两次构建逐字节一致（缓存前缀契约）
+    expect(frozenOf(loop2)).toBe(frozen1)
+
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const loop = new AgentLoop(client, new EventBus(), { systemPromptLayers: layers })
+    loop.setMode('plan')
+    await loop.sendMessage('重构这个模块', agentRoute())
+
+    const lastChat = client.getCalls().at(-1)
+    const userText = extractTextFromContent(
+      lastChat?.messages?.find(m => m.role === 'user')?.content ?? ''
+    )
+    // 模式指令在 user 尾部，Task Policy 只在 system，不随轮次重复注入
+    expect(userText).toContain(getModeInstruction('plan'))
+    expect(userText).not.toContain('最小工程策略')
   })
 
   it('modeInstruction 出现在 user 消息末尾而非 system', async () => {

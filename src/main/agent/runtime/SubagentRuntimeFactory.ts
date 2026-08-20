@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { AgentLoop, EventBus } from '../../../runtime/agent'
+import { AgentLoop, EventBus, renderMinimalEngineeringPolicy } from '../../../runtime/agent'
 import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
@@ -55,6 +55,7 @@ export function prepareSubagentRuntime(
     projectRules: null,
     skillContext: '',
     modeInstruction: 'You are a sub-agent. Be concise. Return a structured summary.',
+    taskPolicy: renderMinimalEngineeringPolicy(),
     toolSummary
   })
 

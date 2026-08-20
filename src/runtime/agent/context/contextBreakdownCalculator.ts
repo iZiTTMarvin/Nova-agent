@@ -13,7 +13,7 @@ import { SystemPromptBuilder } from '../promptBuilder/SystemPromptBuilder'
 import { getStableSystemPrompt } from '../promptBuilder/modePrompt'
 import { buildSkillContext } from '../promptBuilder/buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
-import { renderBaseRules } from '../promptRenderer'
+import { renderBaseRules, renderMinimalEngineeringPolicy } from '../promptRenderer'
 import { buildConversationContext } from './contextBuilder'
 import type { SessionData } from '../../sessions/types'
 import type { SkillManifest } from '../../skills/types'
@@ -131,6 +131,7 @@ export function buildFrozenSystemPromptForSession(
     projectRules: discoverProjectRules(session.workspaceRoot)?.text ?? '',
     skillContext,
     modeInstruction: '',
+    taskPolicy: renderMinimalEngineeringPolicy(),
     toolSummary: ''
   })
 }
