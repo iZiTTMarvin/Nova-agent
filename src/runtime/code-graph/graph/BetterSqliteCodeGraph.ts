@@ -2,7 +2,6 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import Database from 'better-sqlite3'
 import {
-  EMPTY_CODE_INDEX_COVERAGE,
   type CodeIndexCoverage,
   type CodeIndexOperation
 } from '../types'
@@ -20,6 +19,7 @@ import {
   CODE_GRAPH_SCHEMA_VERSION,
   migrateCodeGraphSchema
 } from './schema/CodeGraphMigrations'
+import { readCodeGraphCoverage } from './CodeGraphCoverage'
 
 export const CODE_GRAPH_DB_FILE = 'index.db'
 export const CODE_GRAPH_DOC_EXCERPT_MAX_CHARS = 512
@@ -154,33 +154,7 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
     const targetGeneration = generation === undefined
       ? this.readMetadata().activeGeneration
       : generation
-    if (targetGeneration === null) return EMPTY_CODE_INDEX_COVERAGE
-    assertPositiveInteger(targetGeneration, 'generation')
-
-    const fileRow = this.db.prepare(
-      `SELECT
-        COUNT(*) AS totalFiles,
-        COALESCE(SUM(CASE WHEN parse_status = 'parsed' THEN 1 ELSE 0 END), 0) AS indexedFiles,
-        COALESCE(SUM(CASE WHEN parse_status = 'failed' THEN 1 ELSE 0 END), 0) AS parseFailures,
-        COALESCE(SUM(CASE WHEN parse_status = 'unsupported' THEN 1 ELSE 0 END), 0) AS unsupportedFiles,
-        COALESCE(SUM(CASE WHEN parse_status = 'skipped_too_large' THEN 1 ELSE 0 END), 0) AS oversizedFiles
-       FROM files WHERE generation = ?`
-    ).get(targetGeneration)
-    const unresolvedRow = this.db.prepare(
-      `SELECT COUNT(*) AS unresolvedRelations
-       FROM unresolved_relations WHERE generation = ?`
-    ).get(targetGeneration)
-
-    const unsupportedFiles = readNumber(fileRow, 'unsupportedFiles')
-    const totalFiles = readNumber(fileRow, 'totalFiles')
-    return Object.freeze({
-      eligibleFiles: totalFiles - unsupportedFiles,
-      indexedFiles: readNumber(fileRow, 'indexedFiles'),
-      parseFailures: readNumber(fileRow, 'parseFailures'),
-      unsupportedFiles,
-      oversizedFiles: readNumber(fileRow, 'oversizedFiles'),
-      unresolvedRelations: readNumber(unresolvedRow, 'unresolvedRelations')
-    })
+    return readCodeGraphCoverage(this.db, targetGeneration)
   }
 
   async findActiveFile(filePath: string): Promise<CodeGraphFileRecord | null> {

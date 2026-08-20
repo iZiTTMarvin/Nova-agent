@@ -12,6 +12,9 @@ import Database from 'better-sqlite3'
 import {
   discoverCodeFiles,
   createTreeSitterParserRegistry,
+  CODE_CONTEXT_QUERY_MAX_CHARS,
+  ContextPackBuilder,
+  openCodeGraphReader,
   StructuralCodeGraphResolver,
   type CodeIndexOperation
 } from '@runtime/code-graph'
@@ -388,5 +391,99 @@ def test_service():
     expect(generation.symbolEdges.every((edge) =>
       edge.resolver === 'structural' || edge.confidence === 'probable'
     )).toBe(true)
+
+    const reader = openCodeGraphReader({ dbPath })
+    try {
+      const context = new ContextPackBuilder({ reader })
+      const locate = await context.build({
+        query: 'Service',
+        intent: 'locate',
+        scope: 'src/ts',
+        status: 'ready'
+      })
+      const understand = await context.build({
+        query: 'run',
+        intent: 'understand',
+        scope: 'src/ts',
+        status: 'ready'
+      })
+      const impact = await context.build({
+        query: 'Service',
+        intent: 'impact',
+        scope: 'src/ts',
+        status: 'updating'
+      })
+      const tokenQuery = await context.build({
+        query: 'named_fn',
+        intent: 'locate',
+        scope: 'src/ts',
+        status: 'ready'
+      })
+
+      const locatePack: unknown = JSON.parse(locate)
+      const understandPack: unknown = JSON.parse(understand)
+      const impactPack: unknown = JSON.parse(impact)
+      const tokenPack: unknown = JSON.parse(tokenQuery)
+      expect(locatePack).toMatchObject({
+        status: 'ready',
+        revision: 1,
+        intent: 'locate',
+        anchors: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Service',
+            path: 'src/ts/service.ts',
+            score: 1
+          })
+        ])
+      })
+      expect(understandPack).toMatchObject({
+        relations: expect.arrayContaining([
+          expect.objectContaining({ type: 'calls', to: 'normalize' }),
+          expect.objectContaining({ type: 'calls', to: 'defaultFn' })
+        ])
+      })
+      expect(impactPack).toMatchObject({
+        status: 'updating',
+        summary: expect.stringContaining('二跳候选'),
+        relations: expect.arrayContaining([
+          expect.objectContaining({ type: 'test_of', to: 'src/ts/service.ts' }),
+          expect.objectContaining({ type: 'implements', to: 'Contract' })
+        ]),
+        warnings: expect.arrayContaining([
+          expect.stringContaining('最近一次已提交 revision'),
+          expect.stringContaining('不能据此判断无影响')
+        ])
+      })
+      expect(tokenPack).toMatchObject({
+        anchors: expect.arrayContaining([
+          expect.objectContaining({ name: 'namedFn' })
+        ])
+      })
+      expect(await context.build({
+        query: 'Service',
+        intent: 'impact',
+        scope: 'src/ts',
+        status: 'updating'
+      })).toBe(impact)
+      expect(impact).not.toContain('\n')
+      const oversizedQuery = 'x'.repeat(CODE_CONTEXT_QUERY_MAX_CHARS + 1)
+      await expect(reader.readEvidence({
+        query: { original: oversizedQuery, folded: oversizedQuery, tokens: ['x'] },
+        scope: null,
+        relationDepth: 0
+      })).rejects.toThrow('不得超过')
+      await expect(reader.readEvidence({
+        query: { original: 'Service', folded: 'service', tokens: ['service'] },
+        scope: 'src//ts',
+        relationDepth: 0
+      })).rejects.toThrow('规范化工作区相对路径')
+      await expect(reader.readEvidence({
+        query: { original: 'Service', folded: 'service', tokens: ['service'] },
+        scope: 'src/ts/',
+        relationDepth: 0
+      })).rejects.toThrow('规范化工作区相对路径')
+    } finally {
+      await reader.close()
+    }
   })
 })

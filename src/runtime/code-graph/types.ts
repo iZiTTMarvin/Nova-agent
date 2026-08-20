@@ -6,6 +6,9 @@ export type CodeIndexStatus =
   | 'degraded'
   | 'unavailable'
 
+export type CodeContextIntent = 'locate' | 'understand' | 'impact'
+export type CodeContextRequestedIntent = CodeContextIntent | 'flow'
+
 export type CodeEvidenceConfidence = 'confirmed' | 'probable' | 'heuristic'
 
 export type CodeGraphLanguage =
