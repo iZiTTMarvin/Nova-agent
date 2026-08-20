@@ -18,6 +18,8 @@ import {
 
 const mockHandle = vi.fn()
 const mockSend = vi.fn()
+const mockSelectSession = vi.fn()
+const mockCreateSession = vi.fn(() => ({ currentSessionId: 'sess_1' }))
 
 // 主窗口主 frame 伪造链：secureIpc 要求 event.sender === mainWindow.webContents
 const fakeMainFrame = {}
@@ -105,7 +107,10 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
   })
 }))
 vi.mock('../../../src/main/services/WorkspaceService', () => ({
-  getWorkspaceService: () => ({})
+  getWorkspaceService: () => ({
+    selectSession: mockSelectSession,
+    createSession: mockCreateSession
+  })
 }))
 vi.mock('../../../src/main/services/SubagentProjectionServiceHost', () => ({
   getSubagentProjectionService: () => ({ listByParentSessionId: () => [] })
@@ -258,6 +263,8 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
   beforeEach(() => {
     mockHandle.mockClear()
     mockSend.mockClear()
+    mockSelectSession.mockClear()
+    mockCreateSession.mockClear()
     sessionExists = true
     sessionComposeStages = undefined
     registerSessionHandler()
@@ -273,6 +280,7 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
 
     expect(detail.id).toBe('sess_1')
     expect(detail.composeStages).toEqual(sessionComposeStages)
+    expect(mockSelectSession).toHaveBeenCalledWith('sess_1')
   })
 
   it('旧会话无 composeStages 字段时透出 undefined，由 renderer 按初始表投影', async () => {
@@ -283,5 +291,18 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
     }
 
     expect(detail.composeStages).toBeUndefined()
+  })
+
+  it('创建会话经过 WorkspaceService 并保持默认模式语义', async () => {
+    const handler = registeredHandler('create-session')
+    const detail = await handler(makeTrustedEvent(), {
+      workspaceRoot: '/tmp/project'
+    }) as { id: string }
+
+    expect(detail.id).toBe('sess_1')
+    expect(mockCreateSession).toHaveBeenCalledWith({
+      workspaceRoot: '/tmp/project',
+      mode: 'default'
+    })
   })
 })

@@ -13,7 +13,6 @@ import {
   LOAD_SESSION,
   LOAD_SESSION_MESSAGES,
   CREATE_SESSION,
-  DELETE_SESSION,
   ACCEPT_FILE,
   REJECT_FILE,
   ACCEPT_ALL_FILES,
@@ -24,7 +23,6 @@ import { rejectFile } from '../../runtime/checkpoints/restore'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import { buildSessionDiffState } from '../../runtime/checkpoints/sessionDiffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
-import { setCurrentMode, setCurrentProjectPath, getMainWindow } from '../index'
 import type { SessionDetail, Message, BranchMeta } from '../../shared/session'
 import type { Mode } from '../../shared/session'
 import {
@@ -37,10 +35,6 @@ import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS, GET_SESSION_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
-import { calculateContextBreakdown } from '../../runtime/agent'
-import { getSkillService } from '../services/SkillServiceHost'
-import { loadModelConfig } from '../../runtime/model/config'
-import { resolveContextWindow } from '../../shared/config/types'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
 
@@ -48,33 +42,6 @@ import { getSubagentProjectionService } from '../services/SubagentProjectionServ
 function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
   const shared = toSharedMessage(msg)
   return msg.branch ? { ...shared, branch: msg.branch } : shared
-}
-
-/** 加载/切换会话时立即计算并推送上下文容量拆分 */
-function pushContextBreakdownForSession(session: SessionData): void {
-  const skillService = getSkillService()
-  if (skillService.getWorkspaceRoot() !== session.workspaceRoot) {
-    skillService.load(session.workspaceRoot)
-  }
-  const skills = skillService.getRegistry().listForContext()
-
-  const persistedConfig = loadModelConfig(app.getPath('userData'))
-  const contextLimit = resolveContextWindow(
-    persistedConfig?.modelId ?? '',
-    persistedConfig?.contextWindow
-  )
-
-  const { payload } = calculateContextBreakdown({
-    session,
-    skills,
-    toolDefinitions: [],
-    contextLimit
-  })
-
-  const win = getMainWindow()
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('agent:context-breakdown', payload)
-  }
 }
 
 /** 将持久化 SessionData 转换为共享 SessionDetail 格式（含消息历史） */
@@ -152,13 +119,7 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
-    // readState 已按会话隔离，加载时不清理：切到正在后台跑的会话若清空 readState，
-    // 会让该 turn 后续 edit 全部撞「File has not been read yet」。跨会话污染由隔离本身防止。
-    // 同步主进程的全局项目路径，确保后续操作使用正确的工作区
-    setCurrentProjectPath(data.workspaceRoot)
-    setCurrentMode(data.mode)
-    // 立即推送上下文容量拆分，renderer 无需等待 LLM 调用即可显示
-    pushContextBreakdownForSession(data)
+    getWorkspaceService().selectSession(data.id)
     return toSessionDetail(data, { tailOnly: true })
   })
 
@@ -188,12 +149,14 @@ export function registerSessionHandler(): void {
 
   // 创建新会话
   handle(CREATE_SESSION, async (_event, params: { workspaceRoot: string; mode?: Mode }) => {
-    const data = sessionStore.create(params.workspaceRoot, params.mode ?? 'default')
-    // 新会话尚无 readState，无需清理；readState 在首次 getReadStateForSession 时懒创建
-    // 同步主进程的全局项目路径，确保后续 send-message 等操作使用正确的工作区
-    setCurrentProjectPath(params.workspaceRoot)
-    setCurrentMode(data.mode)
-    pushContextBreakdownForSession(data)
+    const state = getWorkspaceService().createSession({
+      workspaceRoot: params.workspaceRoot,
+      mode: params.mode ?? 'default'
+    })
+    const data = state.currentSessionId ? sessionStore.load(state.currentSessionId) : null
+    if (!data) {
+      throw new Error('新会话创建后无法读取')
+    }
     return toSessionDetail(data)
   })
 

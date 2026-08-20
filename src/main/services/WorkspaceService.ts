@@ -77,8 +77,6 @@ export interface WorkspaceServiceDeps {
     RunCoordinator,
     'assertNoNonTerminalRunsForSessions' | 'deleteRunsForSessions'
   >
-  /** 工作区根路径变更时回调（如触发记忆索引 reconcile，勿阻塞） */
-  onWorkspaceRootChanged?: (workspaceRoot: string | null) => void
   /**
    * 离开会话前回调（切走/删除/新建前）：主进程 sync drain + fire-and-forget 落盘。
    * 须在 SessionStore 删除会话之前调用，以便拿到 workspaceRoot。
@@ -87,6 +85,13 @@ export interface WorkspaceServiceDeps {
   /** 会话采集收尾：清 pending/buffer 注册表 */
   onSessionCaptureCleanup?: (sessionId: string) => void
 }
+
+export interface WorkspaceRootChange {
+  previousRoot: string | null
+  nextRoot: string | null
+}
+
+export type WorkspaceRootChangeListener = (change: WorkspaceRootChange) => void
 
 export class WorkspaceService {
   /**
@@ -113,11 +118,21 @@ export class WorkspaceService {
   /** 广播回调：由 workspaceHandler 注入，负责把状态推给 renderer */
   private broadcaster: ((state: WorkspaceState) => void) | null = null
 
+  private readonly workspaceRootChangeListeners = new Set<WorkspaceRootChangeListener>()
+
   constructor(private readonly deps: WorkspaceServiceDeps) {}
 
-  /** 工作区根路径变更时触发外部回调（记忆 reconcile 等后台任务） */
-  private notifyWorkspaceRootChanged(workspaceRoot: string | null): void {
-    this.deps.onWorkspaceRootChanged?.(workspaceRoot)
+  private notifyWorkspaceRootChanged(previousRoot: string | null, nextRoot: string | null): void {
+    if (previousRoot === nextRoot) return
+
+    const change = { previousRoot, nextRoot }
+    for (const listener of this.workspaceRootChangeListeners) {
+      try {
+        listener(change)
+      } catch (error) {
+        console.error('[WorkspaceService] workspace root listener failed:', error)
+      }
+    }
   }
 
   /** 离开会话：drain 巩固 + 采集收尾 */
@@ -140,6 +155,13 @@ export class WorkspaceService {
   /** 注入广播函数（handler 层负责实际 webContents.send） */
   setBroadcaster(fn: (state: WorkspaceState) => void): void {
     this.broadcaster = fn
+  }
+
+  subscribeWorkspaceRootChanges(listener: WorkspaceRootChangeListener): () => void {
+    this.workspaceRootChangeListeners.add(listener)
+    return () => {
+      this.workspaceRootChangeListeners.delete(listener)
+    }
   }
 
   /** 主进程 Agent 轮次进行中时拒绝分叉类操作 */
@@ -187,6 +209,7 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     const sessions = store.list()
     const selected = sessions[0] ?? null
+    const previousRoot = this.state.currentProjectPath
     // 列表摘要不含会话级覆盖字段；启动选中态需读一次详情以恢复思考强度覆盖
     const selectedDetail = selected ? store.load(selected.id) : null
     this.state = {
@@ -201,7 +224,7 @@ export class WorkspaceService {
     if (selected) {
       reloadSkillsForWorkspace(selected.workspaceRoot)
     }
-    this.notifyWorkspaceRootChanged(selected?.workspaceRoot ?? null)
+    this.notifyWorkspaceRootChanged(previousRoot, selected?.workspaceRoot ?? null)
   }
 
   /**
@@ -212,6 +235,7 @@ export class WorkspaceService {
    */
   async selectProject(params?: { path?: string }): Promise<WorkspaceState> {
     const store = this.deps.getSessionStore()
+    const previousRoot = this.state.currentProjectPath
     let selectedPath = params?.path ?? null
 
     if (!selectedPath) {
@@ -230,7 +254,6 @@ export class WorkspaceService {
     // 同步主进程全局路径（供 AgentLoop 等模块使用 workingDir 边界）
     setCurrentProjectPath(selectedPath)
     reloadSkillsForWorkspace(selectedPath)
-    this.notifyWorkspaceRootChanged(selectedPath)
 
     // 创建新会话
     const data = store.create(selectedPath, this.state.currentMode)
@@ -242,6 +265,7 @@ export class WorkspaceService {
       reasoningEffortOverride: null,
       availableSessions: store.list()
     }
+    this.notifyWorkspaceRootChanged(previousRoot, selectedPath)
     this.broadcast()
     pushContextBreakdownForSession(data, this.deps.getMainWindow)
     return this.getState()
@@ -251,10 +275,10 @@ export class WorkspaceService {
   createSession(params: { workspaceRoot: string; mode?: Mode }): WorkspaceState {
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
+    const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store)
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode)
     setCurrentProjectPath(params.workspaceRoot)
-    this.notifyWorkspaceRootChanged(params.workspaceRoot)
     setCurrentMode(data.mode)
 
     this.state = {
@@ -264,6 +288,7 @@ export class WorkspaceService {
       reasoningEffortOverride: null,
       availableSessions: store.list()
     }
+    this.notifyWorkspaceRootChanged(previousRoot, params.workspaceRoot)
     this.broadcast()
     pushContextBreakdownForSession(data, this.deps.getMainWindow)
     return this.getState()
@@ -276,6 +301,7 @@ export class WorkspaceService {
   deleteSession(sessionId: string): WorkspaceState {
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
+    const previousRoot = this.state.currentProjectPath
     const summaries = store.listInternal()
     const requested = summaries.find((summary) => summary.id === sessionId)
     if (requested?.kind === 'subagent') {
@@ -330,7 +356,6 @@ export class WorkspaceService {
           // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
           setCurrentProjectPath(detail.workspaceRoot)
           setCurrentMode(detail.mode)
-          this.notifyWorkspaceRootChanged(detail.workspaceRoot)
           this.state = {
             currentSessionId: detail.id,
             currentProjectPath: detail.workspaceRoot,
@@ -356,6 +381,7 @@ export class WorkspaceService {
       this.state = { ...this.state, availableSessions: remaining }
     }
 
+    this.notifyWorkspaceRootChanged(previousRoot, this.state.currentProjectPath)
     this.broadcast()
     return this.getState()
   }
@@ -401,6 +427,7 @@ export class WorkspaceService {
   selectSession(sessionId: string): WorkspaceState {
     this.clearTier1BranchContext()
     const store = this.deps.getSessionStore()
+    const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store, sessionId)
     const detail = store.load(sessionId)
     if (!detail) {
@@ -411,7 +438,6 @@ export class WorkspaceService {
     // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
     setCurrentProjectPath(detail.workspaceRoot)
     setCurrentMode(detail.mode)
-    this.notifyWorkspaceRootChanged(detail.workspaceRoot)
 
     this.state = {
       currentSessionId: detail.id,
@@ -420,6 +446,7 @@ export class WorkspaceService {
       reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
       availableSessions: store.list()
     }
+    this.notifyWorkspaceRootChanged(previousRoot, detail.workspaceRoot)
     this.broadcast()
     pushContextBreakdownForSession(detail, this.deps.getMainWindow)
     return this.getState()

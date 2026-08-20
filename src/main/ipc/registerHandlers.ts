@@ -93,9 +93,6 @@ export function registerIpcHandlers(): ImageStore {
     getSessionStore,
     getMainWindow,
     getRunCoordinator,
-    onWorkspaceRootChanged: (workspaceRoot) => {
-      scheduleMemoryReconcileForWorkspace(workspaceRoot)
-    },
     onSessionLeaving: (sessionId, workspaceRoot) => {
       if (isMemoryExtractEnabled()) {
         extractOnSessionLeave(sessionId, workspaceRoot, getSessionStore())
@@ -106,6 +103,9 @@ export function registerIpcHandlers(): ImageStore {
     onSessionCaptureCleanup: (sessionId) => {
       cleanupObservationCaptureSession(sessionId)
     }
+  })
+  workspaceService.subscribeWorkspaceRootChanges(({ nextRoot }) => {
+    scheduleMemoryReconcileForWorkspace(nextRoot)
   })
   workspaceService.initOnStartup()
   registerWorkspaceHandler(getMainWindow)
