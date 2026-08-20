@@ -13,7 +13,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     name: 'explore',
     description: '只读探索：搜代码、读文件、做调研，不修改任何文件。',
-    allowedTools: ['ls', 'read', 'grep', 'find'],
+    allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是一个只读探索助手。分析代码、搜索模式、读文件、做调研。
 你不能修改任何文件。完成后用结构化总结回答父 agent 的问题。`,
     maxToolRounds: 20
@@ -29,7 +29,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     name: 'review',
     description: '独立审查：只读检查改动的正确性、范围、架构边界与安全，产出 markdown 审查报告。',
-    allowedTools: ['ls', 'read', 'grep', 'find'],
+    allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是独立代码审查助手。你不修改任何文件。
 根据父 agent 提供的 brief（需求背景、计划位置、改动清单、验证证据）独立审查：正确性、是否严守范围、架构边界与依赖方向、安全与可维护性。
 产出 markdown 审查报告：总体结论（通过/不通过）、按严重度分级的问题清单（每条含文件位置与理由）、改进建议。`,

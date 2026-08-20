@@ -189,8 +189,11 @@ describe('run_code 工具', () => {
 
 describe('resolveCodeModeToolBindings', () => {
   it('绑定 = nestable-readonly ∩ 激活集，按 Catalog 顺序稳定输出', () => {
-    const bindings = resolveCodeModeToolBindings('default', new Set(['ls', 'read', 'grep', 'find', 'edit', 'bash']))
-    expect(bindings).toEqual(['ls', 'read', 'grep', 'find'])
+    const bindings = resolveCodeModeToolBindings(
+      'default',
+      new Set(['ls', 'read', 'grep', 'find', 'code_context', 'edit', 'bash'])
+    )
+    expect(bindings).toEqual(['ls', 'read', 'grep', 'find', 'code_context'])
   })
 
   it('未激活的工具不进入 SDK（即使 Catalog 允许嵌套）', () => {

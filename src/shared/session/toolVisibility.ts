@@ -20,6 +20,7 @@ export function getToolCapability(toolName: string): ToolCapability {
     case 'web_search':
     case 'archive_read':
     case 'memory_search':
+    case 'code_context':
     case 'run_code':
       // run_code 只编排只读探索工具（嵌套调用各自再过权限），归 readonly：
       // plan 模式下可见可用，UI 不按危险操作渲染。

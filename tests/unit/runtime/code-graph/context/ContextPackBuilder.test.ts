@@ -63,6 +63,7 @@ describe('ContextPackBuilder', () => {
     const parsed: unknown = JSON.parse(text)
     if (!isPackShape(parsed)) throw new Error('Context Pack 结构无效')
 
+    expect(parsed.status).toBe('unavailable')
     expect(parsed.intent).toBe('flow')
     expect(parsed.relations).toEqual([])
     expect(parsed.warnings.join(' ')).toContain('flow 当前不可用')
@@ -191,6 +192,7 @@ function emptyCoverage() {
 }
 
 function isPackShape(value: unknown): value is {
+  status: string
   intent: string
   summary: string
   anchors: unknown[]
@@ -200,7 +202,8 @@ function isPackShape(value: unknown): value is {
 } {
   if (!isRecord(value)) return false
   const record = value
-  return typeof record.intent === 'string' &&
+  return typeof record.status === 'string' &&
+    typeof record.intent === 'string' &&
     typeof record.summary === 'string' &&
     Array.isArray(record.anchors) &&
     Array.isArray(record.relations) &&

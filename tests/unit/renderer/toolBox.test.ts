@@ -3,7 +3,7 @@ import { getToolDisplayName, getToolSummary } from '../../../src/renderer/featur
 
 describe('getToolDisplayName', () => {
   it('所有已知工具都有中文映射', () => {
-    const knownTools = ['ls', 'read', 'grep', 'find', 'write', 'edit', 'bash']
+    const knownTools = ['ls', 'read', 'grep', 'find', 'code_context', 'write', 'edit', 'bash']
     for (const tool of knownTools) {
       const name = getToolDisplayName(tool)
       // 中文名应包含中文字符
@@ -68,6 +68,11 @@ describe('getToolSummary', () => {
       .toBe('搜索 "TODO" 在 src/')
     expect(getToolSummary('grep', { pattern: 'FIXME' }))
       .toBe('搜索 "FIXME"')
+  })
+
+  it('code_context 与其他只读工具一样只显示查询摘要', () => {
+    expect(getToolSummary('code_context', { query: 'AgentRuntimeFactory' }))
+      .toBe('查询代码上下文：AgentRuntimeFactory')
   })
 
   it('未知工具返回空字符串', () => {

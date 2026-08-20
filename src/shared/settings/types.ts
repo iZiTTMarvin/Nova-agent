@@ -66,6 +66,10 @@ export interface NovaSettingsDto {
   /** Tavily API Key（本地明文存储，不上传） */
   webSearchTavilyApiKey?: string
 
+  // ── 本地代码智能 ──
+  /** 是否为新建会话启用本地代码索引 */
+  codeIndexEnabled: boolean
+
   // ── 跨会话记忆 ──
   /** 是否启用跨会话记忆（L1/L2 注入与 FTS 检索） */
   memoryEnabled: boolean

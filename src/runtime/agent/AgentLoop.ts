@@ -311,6 +311,7 @@ export class AgentLoop {
         frozenSystemPrompt: this.ctx.systemPrompt,
         schemaVersion: 2,
         kind: 'primary',
+        codeIndexEnabled: false,
         createdAt: Date.now(),
         updatedAt: Date.now()
       },

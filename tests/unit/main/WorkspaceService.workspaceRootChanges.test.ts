@@ -8,6 +8,10 @@ import {
 } from '../../../src/main/services/WorkspaceService'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 
+const { loadNovaSettingsMock } = vi.hoisted(() => ({
+  loadNovaSettingsMock: vi.fn()
+}))
+
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp/nova-test-userdata') },
   dialog: { showOpenDialog: vi.fn() },
@@ -41,6 +45,10 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
 
 vi.mock('../../../src/runtime/model/config', () => ({ loadModelConfig: () => null }))
 
+vi.mock('../../../src/runtime/settings/novaSettings', () => ({
+  loadNovaSettings: () => loadNovaSettingsMock()
+}))
+
 describe('WorkspaceService workspace root changes', () => {
   let tempRoot: string
   let store: SessionStore
@@ -48,6 +56,7 @@ describe('WorkspaceService workspace root changes', () => {
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-workspace-root-change-'))
     store = new SessionStore(tempRoot)
+    loadNovaSettingsMock.mockReturnValue({ codeIndexEnabled: false })
   })
 
   afterEach(() => {
@@ -129,6 +138,21 @@ describe('WorkspaceService workspace root changes', () => {
       { previousRoot: startupSession.workspaceRoot, nextRoot: '/workspace/selected' },
       { previousRoot: '/workspace/selected', nextRoot: '/workspace/created' }
     ])
+  })
+
+  it('设置开关只在创建新会话时写入工具面快照', () => {
+    const service = createService()
+    service.createSession({ workspaceRoot: '/workspace/disabled' })
+    const disabledId = service.getState().currentSessionId
+
+    loadNovaSettingsMock.mockReturnValue({ codeIndexEnabled: true })
+    service.createSession({ workspaceRoot: '/workspace/enabled' })
+    const enabledId = service.getState().currentSessionId
+
+    if (!disabledId || !enabledId) throw new Error('会话创建失败')
+    expect(store.load(disabledId)?.codeIndexEnabled).toBe(false)
+    expect(store.load(enabledId)?.codeIndexEnabled).toBe(true)
+    expect(store.load(disabledId)?.codeIndexEnabled).toBe(false)
   })
 
   it('删除当前会话并切到不同项目时发布前后根路径', () => {

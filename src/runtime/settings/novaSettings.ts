@@ -37,6 +37,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   lastProjectPath: null,
   snapshotRetentionDays: 30,
   webSearchTavilyApiKey: undefined,
+  codeIndexEnabled: false,
   memoryEnabled: false,
   memorySearchLimit: 10,
   memoryScoreFloor: 0.15,
@@ -126,6 +127,9 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   if (typeof obj.webSearchTavilyApiKey === 'string') {
     result.webSearchTavilyApiKey = obj.webSearchTavilyApiKey
+  }
+  if (typeof obj.codeIndexEnabled === 'boolean') {
+    result.codeIndexEnabled = obj.codeIndexEnabled
   }
   if (typeof obj.memoryEnabled === 'boolean') {
     result.memoryEnabled = obj.memoryEnabled
@@ -222,6 +226,11 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   if ('webSearchTavilyApiKey' in patch && patch.webSearchTavilyApiKey !== undefined) {
     if (typeof patch.webSearchTavilyApiKey !== 'string') {
       errors.push('webSearchTavilyApiKey 必须是字符串')
+    }
+  }
+  if ('codeIndexEnabled' in patch && patch.codeIndexEnabled !== undefined) {
+    if (typeof patch.codeIndexEnabled !== 'boolean') {
+      errors.push('codeIndexEnabled 必须是布尔值')
     }
   }
   if ('memoryEnabled' in patch && patch.memoryEnabled !== undefined) {

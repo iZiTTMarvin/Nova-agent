@@ -28,6 +28,10 @@ import { getRunCoordinator, initRunCoordinatorHost } from '../services/RunCoordi
 import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
 import {
+  closeCodeGraphForWorkspace,
+  ensureCodeGraphForWorkspace
+} from '../services/CodeGraphHost'
+import {
   drainAndSchedulePersist,
   cleanupObservationCaptureSession
 } from '../services/MemoryConsolidationHost'
@@ -100,8 +104,21 @@ export function registerIpcHandlers(): ImageStore {
       cleanupObservationCaptureSession(sessionId)
     }
   })
-  workspaceService.subscribeWorkspaceRootChanges(({ nextRoot }) => {
+  workspaceService.subscribeWorkspaceRootChanges(({ previousRoot, nextRoot }) => {
     scheduleMemoryReconcileForWorkspace(nextRoot)
+    if (previousRoot && previousRoot !== nextRoot) {
+      void closeCodeGraphForWorkspace(previousRoot).catch((error) => {
+        console.error('[CodeGraphHost] 旧工作区释放失败:', error)
+      })
+    }
+    if (!nextRoot) return
+    const currentSessionId = workspaceService.getState().currentSessionId
+    const currentSession = currentSessionId
+      ? getSessionStore().load(currentSessionId)
+      : null
+    if (currentSession?.codeIndexEnabled === true) {
+      ensureCodeGraphForWorkspace(nextRoot)
+    }
   })
   workspaceService.initOnStartup()
   registerWorkspaceHandler(getMainWindow)

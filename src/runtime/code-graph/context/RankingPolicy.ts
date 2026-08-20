@@ -72,14 +72,21 @@ export interface RecommendedReadRange {
   readonly endLine: number
 }
 
+export class CodeContextInputError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CodeContextInputError'
+  }
+}
+
 /** 所有检索权重与稳定 tie-break 的唯一 Owner。 */
 export class RankingPolicy {
   normalizeQuery(query: string): CodeGraphNormalizedQuery {
     if (query.length > CODE_CONTEXT_QUERY_MAX_CHARS) {
-      throw new Error(`代码查询不得超过 ${CODE_CONTEXT_QUERY_MAX_CHARS} 个字符`)
+      throw new CodeContextInputError(`代码查询不得超过 ${CODE_CONTEXT_QUERY_MAX_CHARS} 个字符`)
     }
     const original = query.trim()
-    if (!original) throw new Error('代码查询不能为空')
+    if (!original) throw new CodeContextInputError('代码查询不能为空')
     const tokens = identifierQueryTokens(original)
     return Object.freeze({
       original,
@@ -97,7 +104,7 @@ export class RankingPolicy {
       normalized.startsWith('../') || normalized.startsWith('/') ||
       /^[A-Za-z]:/.test(normalized)
     ) {
-      throw new Error('代码查询 scope 必须位于工作区内')
+      throw new CodeContextInputError('代码查询 scope 必须位于工作区内')
     }
     return normalized
   }

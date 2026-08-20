@@ -12,6 +12,7 @@ const READONLY_TOOLS = [
   'ls',
   'grep',
   'find',
+  'code_context',
   'web_search',
   'archive_read',
   'memory_search',

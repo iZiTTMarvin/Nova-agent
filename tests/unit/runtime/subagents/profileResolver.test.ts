@@ -116,7 +116,7 @@ describe('builtin review profile', () => {
     for (const writeTool of ['edit', 'write', 'bash', 'save_plan', 'switch_mode']) {
       expect(snapshot.toolNames).not.toContain(writeTool)
     }
-    expect(snapshot.toolNames).toEqual(['ls', 'read', 'grep', 'find'])
+    expect(snapshot.toolNames).toEqual(['ls', 'read', 'grep', 'find', 'code_context'])
     expect(snapshot.systemPrompt.length).toBeGreaterThan(0)
     expect(snapshot.systemPrompt).toMatch(/审查/)
   })

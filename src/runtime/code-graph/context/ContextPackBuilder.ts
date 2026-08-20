@@ -1,3 +1,4 @@
+import { EMPTY_CODE_INDEX_COVERAGE } from '../types'
 import type {
   CodeContextIntent,
   CodeContextRequestedIntent,
@@ -28,6 +29,13 @@ export interface CodeContextBuildRequest {
   readonly scope?: string
   readonly status: CodeIndexStatus
   readonly abortSignal?: AbortSignal
+}
+
+export type CodeContextQueryRequest = Omit<CodeContextBuildRequest, 'status'>
+
+/** Agent 工具只能查询当前快照，不暴露索引刷新或持久化能力。 */
+export interface CodeContextQueryPort {
+  query(request: CodeContextQueryRequest): Promise<CodeContextPack>
 }
 
 export interface CodeContextAnchor {
@@ -83,6 +91,10 @@ export class ContextPackBuilder {
   }
 
   async build(request: CodeContextBuildRequest): Promise<string> {
+    return serializeCodeContextPack(await this.buildPack(request))
+  }
+
+  async buildPack(request: CodeContextBuildRequest): Promise<CodeContextPack> {
     throwIfAborted(request.abortSignal)
     const intent = request.intent ?? 'locate'
     const query = this.rankingPolicy.normalizeQuery(request.query)
@@ -94,9 +106,20 @@ export class ContextPackBuilder {
     })
     throwIfAborted(request.abortSignal)
 
+    if (intent === 'flow') {
+      return createEmptyCodeContextPack({
+        status: 'unavailable',
+        revision: evidence.snapshot.revision,
+        intent,
+        summary: 'unavailable · flow · 当前版本不提供多跳代码流；建议改用 impact 或 grep',
+        coverage: evidence.snapshot.coverage,
+        warnings: ['flow 当前不可用；请改用 impact，跨层通道可继续用 grep 定位']
+      })
+    }
+
     const rankedAnchors = this.rankingPolicy.rankAnchors(evidence.anchors, query)
       .slice(0, CODE_CONTEXT_LIMITS.anchors)
-    const rankedRelations = intent === 'locate' || intent === 'flow'
+    const rankedRelations = intent === 'locate'
       ? []
       : this.rankingPolicy.rankRelations(evidence.relations, rankedAnchors, intent)
         .slice(0, CODE_CONTEXT_LIMITS.relations)
@@ -108,7 +131,7 @@ export class ContextPackBuilder {
       relevantUnresolved,
       rankedRelations
     )
-    const pack = createPack(
+    return fitPackToTarget(createPack(
       request.status,
       intent,
       evidence,
@@ -116,9 +139,33 @@ export class ContextPackBuilder {
       rankedRelations,
       warnings,
       this.rankingPolicy
-    )
-    return serializeWithinBudget(pack)
+    ))
   }
+}
+
+export function createEmptyCodeContextPack(input: {
+  readonly status: CodeIndexStatus
+  readonly revision?: number
+  readonly intent: CodeContextRequestedIntent
+  readonly summary: string
+  readonly coverage?: CodeIndexCoverage
+  readonly warnings: readonly string[]
+}): CodeContextPack {
+  return Object.freeze({
+    status: input.status,
+    revision: input.revision ?? 0,
+    summary: limitText(input.summary, 360),
+    intent: input.intent,
+    anchors: Object.freeze([]),
+    relations: Object.freeze([]),
+    recommendedReads: Object.freeze([]),
+    coverage: input.coverage ?? EMPTY_CODE_INDEX_COVERAGE,
+    warnings: Object.freeze(input.warnings.map((warning) => limitText(warning, 240)))
+  })
+}
+
+export function serializeCodeContextPack(pack: CodeContextPack): string {
+  return JSON.stringify(pack)
 }
 
 function createPack(
@@ -215,9 +262,6 @@ function buildWarnings(
   relations: readonly RankedCodeRelation[]
 ): string[] {
   const warnings: string[] = []
-  if (intent === 'flow') {
-    warnings.push('flow 当前不可用；请改用 impact，跨层通道可继续用 grep 定位')
-  }
   if (status === 'building' && evidence.snapshot.activeGeneration === null) {
     warnings.push('索引仍在首次构建；请继续使用 grep/read，稍后重试')
   } else if (status === 'updating') {
@@ -285,11 +329,11 @@ function buildSummary(
   )
 }
 
-function serializeWithinBudget(pack: CodeContextPack): string {
+/** 只收窄可选证据集合；超硬预算的最终文本统一交给 OutputSink。 */
+function fitPackToTarget(pack: CodeContextPack): CodeContextPack {
   const mutable = {
     status: pack.status,
     revision: pack.revision,
-    summary: limitText(pack.summary, 360),
     intent: pack.intent,
     anchors: [...pack.anchors],
     relations: [...pack.relations],
@@ -297,51 +341,36 @@ function serializeWithinBudget(pack: CodeContextPack): string {
     coverage: pack.coverage,
     warnings: pack.warnings.map((warning) => limitText(warning, 240))
   }
-  const stringify = (): string => {
-    mutable.summary = limitText(buildSummary(
+  const snapshot = (): CodeContextPack => Object.freeze({
+    status: mutable.status,
+    revision: mutable.revision,
+    summary: limitText(buildSummary(
       mutable.status,
       mutable.intent,
       mutable.anchors,
       mutable.relations,
       mutable.coverage
-    ), 360)
-    return JSON.stringify(mutable)
-  }
-  let text = stringify()
-  if (Buffer.byteLength(text, 'utf8') <= CODE_CONTEXT_LIMITS.targetBytes) return text
+    ), 360),
+    intent: mutable.intent,
+    anchors: Object.freeze([...mutable.anchors]),
+    relations: Object.freeze([...mutable.relations]),
+    recommendedReads: Object.freeze([...mutable.recommendedReads]),
+    coverage: mutable.coverage,
+    warnings: Object.freeze([...mutable.warnings])
+  })
+  const exceedsTarget = (): boolean =>
+    Buffer.byteLength(serializeCodeContextPack(snapshot()), 'utf8') >
+      CODE_CONTEXT_LIMITS.targetBytes
 
-  mutable.warnings.push('结果已按 6 KiB 目标预算确定性截断')
-  while (
-    Buffer.byteLength(stringify(), 'utf8') > CODE_CONTEXT_LIMITS.targetBytes &&
-    mutable.recommendedReads.length > 0
-  ) mutable.recommendedReads.pop()
-  while (
-    Buffer.byteLength(stringify(), 'utf8') > CODE_CONTEXT_LIMITS.targetBytes &&
-    mutable.relations.length > 0
-  ) mutable.relations.pop()
-  while (
-    Buffer.byteLength(stringify(), 'utf8') > CODE_CONTEXT_LIMITS.targetBytes &&
-    mutable.anchors.length > 1
-  ) mutable.anchors.pop()
-  text = stringify()
-  if (Buffer.byteLength(text, 'utf8') <= CODE_CONTEXT_LIMITS.hardBytes) return text
+  if (!exceedsTarget()) return snapshot()
 
-  const fallback = {
-    status: pack.status,
-    revision: pack.revision,
-    summary: limitText(`${pack.status} · ${pack.intent} · 证据超过输出预算，未内联锚点与关系`, 160),
-    intent: pack.intent,
-    anchors: [],
-    relations: [],
-    recommendedReads: [],
-    coverage: pack.coverage,
-    warnings: ['结果超过内部预算；请缩小 query 或 scope 后重试']
+  mutable.warnings.push('证据集合已按 6 KiB 目标预算确定性收窄')
+  while (exceedsTarget() && mutable.recommendedReads.length > 0) {
+    mutable.recommendedReads.pop()
   }
-  text = JSON.stringify(fallback)
-  if (Buffer.byteLength(text, 'utf8') > CODE_CONTEXT_LIMITS.hardBytes) {
-    throw new Error('代码上下文核心状态超过硬预算')
-  }
-  return text
+  while (exceedsTarget() && mutable.relations.length > 0) mutable.relations.pop()
+  while (exceedsTarget() && mutable.anchors.length > 0) mutable.anchors.pop()
+  return snapshot()
 }
 
 function limitText(value: string, maxCharacters: number): string {

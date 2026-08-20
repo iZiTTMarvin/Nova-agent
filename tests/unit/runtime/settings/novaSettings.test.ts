@@ -79,6 +79,15 @@ describe('novaSettings', () => {
     expect(s.memoryReconcileOnSearch).toBe(false)
   })
 
+  it('代码索引默认关闭且可持久化布尔开关', async () => {
+    const { loadNovaSettings, saveNovaSettings } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    expect(loadNovaSettings().codeIndexEnabled).toBe(false)
+    saveNovaSettings({ codeIndexEnabled: true })
+    expect(loadNovaSettings().codeIndexEnabled).toBe(true)
+  })
+
   it('memorySearchLimit 非法值被 saveNovaSettings 拒绝', async () => {
     const { saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     for (const bad of [0, -1, 1.5, 'abc' as unknown as number]) {

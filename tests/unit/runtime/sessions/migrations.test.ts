@@ -236,6 +236,7 @@ describe('migrateSessionData', () => {
       id: 'sess_child',
       workspaceRoot: '/ws',
       mode: 'default' as const,
+      codeIndexEnabled: false,
       messages: [],
       currentLeafId: null,
       createdAt: 1,
@@ -253,6 +254,7 @@ describe('migrateSessionData', () => {
       id: 'sess_skill_child',
       workspaceRoot: join(tmpdir(), 'workspace'),
       mode: 'plan' as const,
+      codeIndexEnabled: false,
       messages: [],
       currentLeafId: null,
       createdAt: 1,
@@ -417,6 +419,25 @@ describe('migrateSessionData', () => {
     const migrated = migrateSessionData(v13)
     expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.composePlanApproval).toBeUndefined()
+  })
+
+  it('旧会话迁移时固定关闭代码索引，当前会话保留已写入快照', () => {
+    const base = {
+      kind: 'primary',
+      id: 'sess_code_index_snapshot',
+      workspaceRoot: '/tmp/ws',
+      mode: 'default',
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    expect(migrateSessionData({ ...base, schemaVersion: 15 }).codeIndexEnabled).toBe(false)
+    expect(migrateSessionData({
+      ...base,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      codeIndexEnabled: true
+    }).codeIndexEnabled).toBe(true)
   })
 
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {

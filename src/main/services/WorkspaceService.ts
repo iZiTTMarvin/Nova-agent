@@ -40,6 +40,8 @@ import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
 import { readPlanDocumentInWorkspace } from '../../runtime/plans'
 import type { RunCoordinator } from '../../runtime/run'
+import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+
 /** 计算并直接推送某会话的上下文容量拆分给 renderer */
 function pushContextBreakdownForSession(session: SessionData, getMainWindow: () => BrowserWindow | null): void {
   const skillService = getSkillService()
@@ -263,7 +265,9 @@ export class WorkspaceService {
     reloadSkillsForWorkspace(selectedPath)
 
     // 创建新会话
-    const data = store.create(selectedPath, this.state.currentMode)
+    const data = store.create(selectedPath, this.state.currentMode, {
+      codeIndexEnabled: loadNovaSettings().codeIndexEnabled
+    })
 
     this.state = {
       currentSessionId: data.id,
@@ -284,7 +288,9 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store)
-    const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode)
+    const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode, {
+      codeIndexEnabled: loadNovaSettings().codeIndexEnabled
+    })
     setCurrentProjectPath(params.workspaceRoot)
     setCurrentMode(data.mode)
 

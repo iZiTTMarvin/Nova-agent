@@ -60,6 +60,20 @@ const stubAgentLoop = vi.hoisted(() => ({
 
 // 每个用例可替换的 skillRegistry（决定 slash 解析结果）
 const registryHolder = vi.hoisted(() => ({ current: null as any }))
+const preparedRuntimeInputs = vi.hoisted(() => [] as unknown[])
+const codeGraphHost = vi.hoisted(() => ({
+  port: { query: vi.fn() },
+  getQueryPort: vi.fn(),
+  ensure: vi.fn()
+}))
+const workspaceServiceMock = vi.hoisted(() => ({
+  refreshAvailableSessions: vi.fn(),
+  setMode: vi.fn(),
+  getState: vi.fn(() => ({
+    currentSessionId: 'sess-1',
+    currentProjectPath: '/tmp/ws'
+  }))
+}))
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp/nova-test-userdata') },
@@ -73,7 +87,12 @@ vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
 }))
 
 vi.mock('../../../src/main/services/WorkspaceService', () => ({
-  getWorkspaceService: () => ({ refreshAvailableSessions: vi.fn(), setMode: vi.fn() })
+  getWorkspaceService: () => workspaceServiceMock
+}))
+
+vi.mock('../../../src/main/services/CodeGraphHost', () => ({
+  getCodeContextQueryPort: codeGraphHost.getQueryPort,
+  ensureCodeGraphForWorkspace: codeGraphHost.ensure
 }))
 
 vi.mock('../../../src/main/services/MemoryConsolidationHost', () => ({
@@ -139,19 +158,22 @@ vi.mock('../../../src/main/agent/runtime', async (importOriginal) => {
   return {
     ...actual,
     resolveToDataUrl: vi.fn((_store: any, url: string) => url),
-    prepareAgentRuntime: vi.fn(() => ({
-      agentLoop: stubAgentLoop,
-      eventBus: {
-        on: vi.fn((listener: (event: any) => void) => {
-          eventPipeline.listeners.push(listener)
-          return vi.fn()
-        })
-      },
-      modelPool: {},
-      runRefs: { runId: '', resourceOwnerRunId: '', executionGeneration: 0 },
-      frozenPrompt: 'system',
-      skillRegistry: registryHolder.current
-    }))
+    prepareAgentRuntime: vi.fn((input: unknown) => {
+      preparedRuntimeInputs.push(input)
+      return {
+        agentLoop: stubAgentLoop,
+        eventBus: {
+          on: vi.fn((listener: (event: any) => void) => {
+            eventPipeline.listeners.push(listener)
+            return vi.fn()
+          })
+        },
+        modelPool: {},
+        runRefs: { runId: '', resourceOwnerRunId: '', executionGeneration: 0 },
+        frozenPrompt: 'system',
+        skillRegistry: registryHolder.current
+      }
+    })
   }
 })
 
@@ -183,7 +205,10 @@ function createRegistry(skills: Array<{ name: string }>): SkillRegistry {
   return SkillRegistry.load({ globalDir: skillsDir })
 }
 
-function makeSession(mode: 'default' | 'compose' = 'default') {
+function makeSession(
+  mode: 'default' | 'compose' = 'default',
+  codeIndexEnabled = false
+) {
   return {
     id: 'sess-1',
     mode,
@@ -193,6 +218,7 @@ function makeSession(mode: 'default' | 'compose' = 'default') {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     currentLeafId: null,
+    codeIndexEnabled,
     frozenSystemPrompt: ''
   }
 }
@@ -219,6 +245,12 @@ beforeEach(() => {
   sentRoutes.length = 0
   eventPipeline.listeners.length = 0
   registryHolder.current = null
+  preparedRuntimeInputs.length = 0
+  codeGraphHost.getQueryPort.mockReturnValue(codeGraphHost.port)
+  workspaceServiceMock.getState.mockReturnValue({
+    currentSessionId: 'sess-1',
+    currentProjectPath: '/tmp/ws'
+  })
   coordinator.listActiveRuns.mockReturnValue([])
   coordinator.getSnapshotForSession.mockReturnValue(null)
   coordinator.getSnapshot.mockReturnValue({
@@ -229,6 +261,22 @@ beforeEach(() => {
 })
 
 describe('sendAgentMessage 路由行为级集成', () => {
+  it('把当前会话的工作区查询端传入 Runtime 装配', async () => {
+    registryHolder.current = createRegistry([])
+    sessionStore.load.mockReturnValue(makeSession('default', true))
+
+    await sendAgentMessage({ sessionId: 'sess-1', content: '查看代码' }, deps)
+
+    const input = preparedRuntimeInputs.at(-1)
+    if (!input || typeof input !== 'object') throw new Error('Runtime 未装配')
+    const getter = Reflect.get(input, 'getCodeContextQueryPort')
+    expect(typeof getter).toBe('function')
+    if (typeof getter !== 'function') throw new Error('查询端 getter 缺失')
+    expect(getter()).toBe(codeGraphHost.port)
+    expect(codeGraphHost.ensure).toHaveBeenCalledWith('/tmp/ws')
+    expect(codeGraphHost.getQueryPort).toHaveBeenCalledWith('/tmp/ws')
+  })
+
   it('compose + 普通文本 → 创建 agent run，且 route 传给 sendMessage', async () => {
     registryHolder.current = createRegistry([])
     sessionStore.load.mockReturnValue(makeSession('compose'))

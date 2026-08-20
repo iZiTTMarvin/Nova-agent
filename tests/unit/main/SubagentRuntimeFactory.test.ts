@@ -4,6 +4,9 @@ import { join, resolve } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareSubagentRuntime } from '../../../src/main/agent/runtime/SubagentRuntimeFactory'
 import { extractTextFromContent } from '../../../src/runtime/model/types'
+import { agentRoute } from '../../../src/runtime/agent/turn'
+import { createEmptyCodeContextPack } from '../../../src/runtime/code-graph/context'
+import { createCodeContextTool } from '../../../src/runtime/tools/codeContext'
 import { SessionStore } from '../../../src/runtime/sessions'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
@@ -21,7 +24,7 @@ describe('SubagentRuntimeFactory', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
-  it('重建 interrupted Child AgentLoop 时回灌已持久化的完整会话历史', () => {
+  it('重建 interrupted Child AgentLoop 时回灌历史，并忽略未注册的 profile 工具', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-runtime-'))
     roots.push(sessionsDir)
     const workspace = resolve(sessionsDir, 'workspace')
@@ -50,7 +53,7 @@ describe('SubagentRuntimeFactory', () => {
           name: 'skill:inspect',
           description: 'read only',
           prompt: 'inspect',
-          allowedTools: [],
+          allowedTools: ['code_context'],
           skillRoots: [skillRoot]
         }, 'skill:inspect')
       }
@@ -94,6 +97,68 @@ describe('SubagentRuntimeFactory', () => {
     expect(history).toContain('此前的问题')
     expect(history).toContain('此前的分析结果')
     expect(prepared.agentLoop.getSkillRoots()).toEqual([skillRoot])
+    expect(prepared.agentLoop.getFrozenSystemPrompt()).not.toContain('code_context')
     prepared.agentLoop.dispose()
+
+    const client = new MockModelClient()
+      .addResponse({
+        events: [
+          { type: 'message_start' },
+          {
+            type: 'tool_call',
+            toolCall: {
+              id: 'tc_code_context',
+              name: 'code_context',
+              arguments: JSON.stringify({ query: 'verifyToken', intent: 'locate' })
+            }
+          },
+          { type: 'message_end', finishReason: 'tool_calls' }
+        ]
+      })
+      .addResponse({
+        events: [
+          { type: 'message_start' },
+          { type: 'text_delta', delta: '已完成查询' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+    const codeContextTool = createCodeContextTool({
+      getQueryPort: () => ({
+        query: async () => createEmptyCodeContextPack({
+          status: 'ready',
+          revision: 2,
+          intent: 'locate',
+          summary: 'ready · locate · verifyToken',
+          warnings: []
+        })
+      })
+    })
+    const enabled = prepareSubagentRuntime({
+      profile: reloaded.subagent.profile,
+      task: 'inspect',
+      workingDirectory: workspace,
+      isolation: 'readonly',
+      childSession: reloaded,
+      parentRunId: 'run-parent',
+      rootRunId: 'run-parent',
+      modelClient: client,
+      resolveTool: (name) => name === 'code_context' ? codeContextTool : undefined,
+      sessionStore: store,
+      sessionsDir,
+      novaSettings: DEFAULT_NOVA_SETTINGS,
+      readState: createReadState(),
+      contextWindow: 32_000,
+      supportsVision: false
+    })
+    enabled.agentLoop.setRunRef('run-child')
+
+    await enabled.agentLoop.sendMessage('inspect', agentRoute())
+
+    expect(client.getCalls()[0]?.tools?.map((tool) => tool.name)).toContain('code_context')
+    const secondCallText = client.getCalls()[1]?.messages
+      .map((message) => extractTextFromContent(message.content))
+      .join('\n') ?? ''
+    expect(secondCallText).toContain('"status":"ready"')
+    enabled.agentLoop.dispose()
   })
 })

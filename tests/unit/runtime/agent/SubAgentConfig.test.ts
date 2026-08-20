@@ -17,7 +17,7 @@ describe('SubAgentConfig', () => {
   it('内置 review 子代理为只读审查 profile', () => {
     const spec = getSubAgentSpec('review')
     expect(spec?.description).toContain('审查')
-    expect(spec?.allowedTools).toEqual(['ls', 'read', 'grep', 'find'])
+    expect(spec?.allowedTools).toEqual(['ls', 'read', 'grep', 'find', 'code_context'])
     expect(spec?.allowedTools.some(t => t === 'edit' || t === 'write' || t === 'bash')).toBe(false)
     expect(spec?.maxToolRounds).toBe(20)
     expect(spec?.prompt).toBeTruthy()

@@ -1,3 +1,10 @@
+export {
+  computeCodeGraphWorkspaceIdentity,
+  getCodeGraphDbPath,
+  getCodeGraphRoot,
+  getCodeGraphWorkspaceDir,
+  normalizeCodeGraphWorkspaceRoot
+} from './CodeGraphPaths'
 export { CodeIndexCoordinator } from './indexing/CodeIndexCoordinator'
 export type {
   CodeIndexCoordinatorOptions,
@@ -108,22 +115,27 @@ export type {
 } from './graph/queries/CodeGraphReader'
 export {
   CODE_CONTEXT_LIMITS,
-  RankingPolicy
-} from './context/RankingPolicy'
-export type {
-  RankedCodeAnchor,
-  RankedCodeRelation,
-  RecommendedReadRange
-} from './context/RankingPolicy'
-export { ContextPackBuilder } from './context/ContextPackBuilder'
+  CodeContextInputError,
+  ContextPackBuilder,
+  CodeGraphEngine,
+  RankingPolicy,
+  createEmptyCodeContextPack,
+  serializeCodeContextPack
+} from './context'
 export type {
   CodeContextAnchor,
   CodeContextBuildRequest,
+  CodeContextQueryPort,
+  CodeContextQueryRequest,
   CodeContextPack,
   CodeContextRecommendedRead,
   CodeContextRelation,
-  ContextPackBuilderOptions
-} from './context/ContextPackBuilder'
+  ContextPackBuilderOptions,
+  CodeGraphEngineOptions,
+  RankedCodeAnchor,
+  RankedCodeRelation,
+  RecommendedReadRange
+} from './context'
 export type {
   CodeGraphResolveControl,
   CodeGraphResolveInput,

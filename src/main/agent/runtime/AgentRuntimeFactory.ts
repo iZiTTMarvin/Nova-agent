@@ -67,6 +67,7 @@ import {
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
+import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 
 export interface AgentRuntimeRunRefs {
   runId: string
@@ -160,6 +161,8 @@ export interface PrepareAgentRuntimeInput {
   promptCacheKey?: string
   /** task 工具执行时读取；装配完成后由 TurnService 绑定本 turn 的执行服务。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
+  /** 只读索引查询端由 Main Host 按 workspace 提供；缺席时工具返回可恢复状态。 */
+  getCodeContextQueryPort?: () => CodeContextQueryPort | null
 }
 
 export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAgentRuntime {
@@ -177,7 +180,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     runCoordinator,
     autoMode = false,
     promptCacheKey,
-    getSpawnSubagentPort
+    getSpawnSubagentPort,
+    getCodeContextQueryPort
   } = input
 
   const runRefs: AgentRuntimeRunRefs = {
@@ -242,7 +246,9 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getToolAvailability: () => toolAvailability,
     // 构建产物 out/main/codeModeWorker.js；缺失时 run_code 回退进程内沙箱
     codeModeWorkerPath: join(__dirname, 'codeModeWorker.js'),
-    memoryEnabled: novaSettings.memoryEnabled
+    memoryEnabled: novaSettings.memoryEnabled,
+    codeIndexEnabled: session.codeIndexEnabled === true,
+    getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null)
   })
 
   toolAvailability.bindRegisteredToolNames(

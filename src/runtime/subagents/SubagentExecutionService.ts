@@ -212,6 +212,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
           ? 'plan'
           : 'default',
       task: command.task,
+      codeIndexEnabled: parentSession.codeIndexEnabled === true,
       subagent: { lineage, profile }
     })
     const childSession = childResult.session

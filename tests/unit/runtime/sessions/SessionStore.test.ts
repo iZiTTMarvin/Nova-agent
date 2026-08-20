@@ -145,8 +145,20 @@ describe('SessionStore', () => {
       expect(session.titleSource).toBe('placeholder')
       expect(session.createdAt).toBeGreaterThan(0)
       expect(session.updatedAt).toBe(session.createdAt)
+      expect(session.codeIndexEnabled).toBe(false)
       expect(fs.readFileSync(path.join(tmpDir, 'sessions', session.id, 'session.json'), 'utf-8'))
         .toContain('"kind": "primary"')
+    })
+
+    it('新会话只在创建时写入代码索引快照', () => {
+      const store = new SessionStore(tmpDir)
+      const enabled = store.create('/project/enabled', 'default', {
+        codeIndexEnabled: true
+      })
+      const disabled = store.create('/project/disabled')
+
+      expect(store.load(enabled.id)?.codeIndexEnabled).toBe(true)
+      expect(store.load(disabled.id)?.codeIndexEnabled).toBe(false)
     })
 
     it('创建会话时可以指定模式', () => {

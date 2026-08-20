@@ -67,6 +67,10 @@ import {
 import { resolveEntryLockAction } from './entryLock'
 import { SubagentExecutionHost } from '../subagents'
 import { getSubagentScheduler } from '../../services/SubagentSchedulerHost'
+import {
+  ensureCodeGraphForWorkspace,
+  getCodeContextQueryPort
+} from '../../services/CodeGraphHost'
 
 /**
  * 按 runId 注册的 AgentLoop：供 RunCoordinator terminal hook 触发 onCancel（exactly-once）。
@@ -230,6 +234,17 @@ export async function sendAgentMessage(
     session.cacheRoutingKey = promptCacheKey
   }
 
+  if (session.codeIndexEnabled) {
+    const workspaceState = getWorkspaceService().getState()
+    // 同根会话切换不会发 root-change；只允许当前会话启动，避免旧 turn 重开已关闭工作区。
+    if (
+      workspaceState.currentSessionId === params.sessionId &&
+      workspaceState.currentProjectPath === projectPath
+    ) {
+      ensureCodeGraphForWorkspace(projectPath)
+    }
+  }
+
   let spawnSubagentPort: SpawnSubagentPort | undefined
   const prepared = prepareAgentRuntime({
     session,
@@ -246,7 +261,8 @@ export async function sendAgentMessage(
     runCoordinator,
     autoMode: session.mode === 'compose' && params.autoMode === true,
     promptCacheKey,
-    getSpawnSubagentPort: () => spawnSubagentPort
+    getSpawnSubagentPort: () => spawnSubagentPort,
+    getCodeContextQueryPort: () => getCodeContextQueryPort(projectPath)
   })
   // 本 turn 专属 AgentLoop（局部变量，不污染模块级状态，并发 turn 各自独立）
   const loopForRun = prepared.agentLoop

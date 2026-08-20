@@ -31,6 +31,8 @@ function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): To
     getMemoryRetrievalService: () => null,
     loadSettings: () => DEFAULT_NOVA_SETTINGS,
     memoryEnabled: true,
+    codeIndexEnabled: true,
+    getCodeContextQueryPort: () => null,
     ...overrides
   })
   return registry
@@ -48,14 +50,16 @@ describe('Tool Catalog 清洁度', () => {
 
   it('全部内置注册工具都进入 Catalog（内存开启与关闭两种注册清单）', () => {
     for (const memoryEnabled of [true, false]) {
-      const names = buildRegistry({ memoryEnabled })
-        .getToolDefinitions()
-        .map(def => def.name)
-      const result = validateRegistryAgainstCatalog(names)
-      expect(
-        result.issues.filter(issue => issue.kind === 'missing-catalog-entry'),
-        `memoryEnabled=${memoryEnabled}`
-      ).toEqual([])
+      for (const codeIndexEnabled of [true, false]) {
+        const names = buildRegistry({ memoryEnabled, codeIndexEnabled })
+          .getToolDefinitions()
+          .map(def => def.name)
+        const result = validateRegistryAgainstCatalog(names)
+        expect(
+          result.issues.filter(issue => issue.kind === 'missing-catalog-entry'),
+          `memoryEnabled=${memoryEnabled}, codeIndexEnabled=${codeIndexEnabled}`
+        ).toEqual([])
+      }
     }
   })
 
@@ -81,6 +85,11 @@ describe('Tool Catalog 清洁度', () => {
     const withoutMemory = fullRegistryNames().filter(name => name !== 'memory_search')
     const result = validateRegistryAgainstCatalog(withoutMemory)
     expect(result.ok).toBe(true)
+  })
+
+  it('code_context 为 conditional 注册：功能关闭时双向对账仍通过', () => {
+    const withoutCodeContext = fullRegistryNames().filter(name => name !== 'code_context')
+    expect(validateRegistryAgainstCatalog(withoutCodeContext).ok).toBe(true)
   })
 
   it('live 组成员全部未注册 → 校验失败（空组绝不下发）', () => {
@@ -133,6 +142,7 @@ describe('Deferred 组暴露规则', () => {
       'archive_read',
       'web_search',
       'memory_search',
+      'code_context',
       'invoke_skill'
     ]
     for (const name of alwaysTools) {

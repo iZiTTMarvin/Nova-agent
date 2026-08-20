@@ -131,7 +131,11 @@ export class SessionStore {
   }
 
   /** 创建新会话，返回完整会话数据 */
-  create(workspaceRoot: string, mode: Mode = 'default'): SessionData {
+  create(
+    workspaceRoot: string,
+    mode: Mode = 'default',
+    options: { readonly codeIndexEnabled?: boolean } = {}
+  ): SessionData {
     const now = Date.now()
     const session: SessionData = {
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
@@ -145,7 +149,8 @@ export class SessionStore {
       updatedAt: now,
       title: SESSION_PLACEHOLDER_TITLE,
       titleSource: 'placeholder',
-      messageCount: 0
+      messageCount: 0,
+      codeIndexEnabled: options.codeIndexEnabled === true
     }
 
     this.save(session)
@@ -187,7 +192,8 @@ export class SessionStore {
       updatedAt: now,
       title: generateSessionTitleFromText(command.task),
       titleSource: 'generated',
-      messageCount: 1
+      messageCount: 1,
+      codeIndexEnabled: command.codeIndexEnabled === true
     }
 
     fs.mkdirSync(this.sessionsDir, { recursive: true })

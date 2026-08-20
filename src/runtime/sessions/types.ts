@@ -163,6 +163,8 @@ interface SessionDataBase {
    * 缺席时回退扫描旧消息 marker 并回填。无激活组的会话省略此字段。
    */
   toolAvailability?: SessionToolAvailabilityState
+  /** 会话创建时的代码索引功能快照；之后的设置变更不得改写。 */
+  codeIndexEnabled: boolean
 }
 
 /** 会话持久化的工具组激活态；形状由可用性 Owner 的持久化契约唯一决定 */
@@ -194,6 +196,8 @@ export interface CreateChildSessionCommand {
   readonly mode: Mode
   readonly task: string
   readonly subagent: SubagentSessionMetadata
+  /** Child Session 继承宿主会话快照，不重读当前设置。 */
+  readonly codeIndexEnabled: boolean
 }
 
 export interface CreateChildSessionResult {

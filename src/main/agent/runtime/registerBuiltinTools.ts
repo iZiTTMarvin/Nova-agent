@@ -8,6 +8,7 @@ import { createGrepTool } from '../../../runtime/tools/grepTool'
 import { findTool } from '../../../runtime/tools/findTool'
 import { webSearchTool } from '../../../runtime/tools/webSearch'
 import { createMemorySearchTool } from '../../../runtime/tools/memorySearch'
+import { createCodeContextTool } from '../../../runtime/tools/codeContext'
 import { editTool } from '../../../runtime/tools/editTool'
 import { writeTool } from '../../../runtime/tools/writeTool'
 import { bashTool } from '../../../runtime/tools/bashTool'
@@ -31,6 +32,7 @@ import type { ToolAvailability } from '../../../runtime/tools/availability'
 import type { AgentLoop } from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { MemoryRetrievalService } from '../../../runtime/memory/retrieval/MemoryRetrievalService'
+import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
 
@@ -51,6 +53,10 @@ export interface BuiltinToolRegistrationDeps {
    * prefetch 接线同源）；每轮装配重新注册，开关变化下一轮即生效。
    */
   memoryEnabled: boolean
+  /** 会话创建时的功能快照；会话存续期间不得重读设置。 */
+  codeIndexEnabled: boolean
+  /** 查询端可随 workspace 生命周期更换，不参与工具是否注册。 */
+  getCodeContextQueryPort: () => CodeContextQueryPort | null
 }
 
 /**
@@ -76,6 +82,11 @@ export function registerBuiltinTools(
         loadSettings: deps.loadSettings
       })
     )
+  }
+  if (deps.codeIndexEnabled) {
+    toolRegistry.register(createCodeContextTool({
+      getQueryPort: deps.getCodeContextQueryPort
+    }))
   }
   toolRegistry.register(editTool)
   toolRegistry.register(writeTool)

@@ -38,6 +38,8 @@ function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): To
     getMemoryRetrievalService: () => null,
     loadSettings: () => DEFAULT_NOVA_SETTINGS,
     memoryEnabled: true,
+    codeIndexEnabled: true,
+    getCodeContextQueryPort: () => null,
     ...overrides
   })
   return registry
@@ -104,5 +106,21 @@ describe('memory_search 注册裁剪', () => {
     // 其余核心工具不受影响
     expect(definitions.map(d => d.name)).toContain('read')
     expect(definitions.map(d => d.name)).toContain('bash')
+  })
+})
+
+describe('code_context 会话快照裁剪', () => {
+  it('开启快照在 default / plan 均作为只读工具可见', () => {
+    const registry = buildRegistry({ codeIndexEnabled: true })
+    const definitions = registry.getToolDefinitions()
+    expect(getModeVisibleTools('default', definitions).map(d => d.name)).toContain('code_context')
+    expect(getModeVisibleTools('plan', definitions).map(d => d.name)).toContain('code_context')
+  })
+
+  it('关闭快照时注册清单与模式投影均不含 code_context', () => {
+    const definitions = buildRegistry({ codeIndexEnabled: false }).getToolDefinitions()
+    expect(definitions.map(d => d.name)).not.toContain('code_context')
+    expect(getModeVisibleTools('default', definitions).map(d => d.name)).not.toContain('code_context')
+    expect(getModeVisibleTools('plan', definitions).map(d => d.name)).not.toContain('code_context')
   })
 })

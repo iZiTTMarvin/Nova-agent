@@ -19,6 +19,7 @@ describe('toolVisibility', () => {
       expect(getToolCapability('grep')).toBe('readonly')
       expect(getToolCapability('find')).toBe('readonly')
       expect(getToolCapability('web_search')).toBe('readonly')
+      expect(getToolCapability('code_context')).toBe('readonly')
     })
 
     it('写类工具归为 write', () => {

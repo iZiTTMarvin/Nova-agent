@@ -1,6 +1,6 @@
 /**
  * code-readonly 呈现模式投影与 SDK 生成测试：
- * direct 模式行为零变化；code-readonly 模式下四个只读工具改由 SDK 暴露且不重复出现；
+ * direct 模式行为零变化；code-readonly 模式下可嵌套只读工具改由 SDK 暴露且不重复出现；
  * SDK 声明字节级稳定；未激活 deferred 工具不进 SDK。
  */
 import { describe, expect, it } from 'vitest'
@@ -22,7 +22,18 @@ function defs(names: string[]): ToolDefinition[] {
   }))
 }
 
-const ALL_TOOLS = defs(['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'run_code', 'task'])
+const ALL_TOOLS = defs([
+  'ls',
+  'read',
+  'grep',
+  'find',
+  'code_context',
+  'edit',
+  'write',
+  'bash',
+  'run_code',
+  'task'
+])
 
 describe('resolveToolPresentationMode', () => {
   it('默认 direct；NOVA_TOOL_PRESENTATION=code-readonly 开启实验；未知值回退 direct', () => {
@@ -36,7 +47,17 @@ describe('resolveToolPresentationMode', () => {
 describe('applyToolPresentation', () => {
   it('direct：run_code 不出现在模型可见面，其余不变（行为零变化）', () => {
     const result = applyToolPresentation('direct', ALL_TOOLS)
-    expect(result.map(t => t.name)).toEqual(['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'task'])
+    expect(result.map(t => t.name)).toEqual([
+      'ls',
+      'read',
+      'grep',
+      'find',
+      'code_context',
+      'edit',
+      'write',
+      'bash',
+      'task'
+    ])
   })
 
   it('code-readonly：只读探索工具从直调面移除，run_code 进入', () => {
@@ -54,6 +75,7 @@ describe('applyToolPresentation', () => {
     expect(isToolDirectlyPresented('direct', 'read')).toBe(true)
     expect(isToolDirectlyPresented('code-readonly', 'run_code')).toBe(true)
     expect(isToolDirectlyPresented('code-readonly', 'read')).toBe(false)
+    expect(isToolDirectlyPresented('code-readonly', 'code_context')).toBe(false)
     expect(isToolDirectlyPresented('code-readonly', 'write')).toBe(true)
   })
 })
@@ -89,12 +111,13 @@ describe('renderCodeModeSdkSection', () => {
   it('economy on 时未激活组的 nestable 工具不进 SDK（投影顺序：Mode → Availability → Nesting）', () => {
     const availability = new ToolAvailability()
     availability.setEconomyMode('on')
-    availability.bindRegisteredToolNames(['ls', 'read', 'grep', 'find', 'task'])
+    availability.bindRegisteredToolNames(['ls', 'read', 'grep', 'find', 'code_context', 'task'])
     // task 为 direct-only 不进 SDK；全部核心只读工具激活
     const bindings = resolveCodeModeToolBindings('default', new Set(availability.getActiveToolNames()))
-    expect(bindings).toEqual(['ls', 'read', 'grep', 'find'])
+    expect(bindings).toEqual(['ls', 'read', 'grep', 'find', 'code_context'])
     const section = renderCodeModeSdkSection(defs([...bindings]))
     expect(section).toContain('tools')
+    expect(section).toContain('code_context(args:')
     expect(section).not.toContain('task(')
   })
 })

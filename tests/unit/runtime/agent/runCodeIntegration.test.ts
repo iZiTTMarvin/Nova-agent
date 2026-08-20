@@ -1,5 +1,5 @@
 /**
- * Code Mode 集成测试：run_code → 嵌套 grep/read → return 全链路。
+ * Code Mode 集成测试：run_code → 嵌套只读工具 → return 全链路。
  * 真实 ToolRegistry（真实只读工具实现）+ 真实 QuickJS 沙箱 + 统一执行流水线，
  * 验证嵌套调用真实执行、父子关联可观测、嵌套结果不进入主上下文、
  * direct-only 与未激活 deferred 工具无法经 SDK 调用。
@@ -9,6 +9,12 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
+import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
+import {
+  EMPTY_CODE_INDEX_COVERAGE,
+  type CodeContextPack
+} from '../../../../src/runtime/code-graph'
+import { createCodeContextTool } from '../../../../src/runtime/tools/codeContext'
 import { lsTool } from '../../../../src/runtime/tools/lsTool'
 import { readTool } from '../../../../src/runtime/tools/readTool'
 import { createGrepTool } from '../../../../src/runtime/tools/grepTool'
@@ -18,6 +24,7 @@ import { InProcessCodeRuntime } from '../../../../src/runtime/code-mode'
 import { ToolAvailability } from '../../../../src/runtime/tools/availability'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
+import type { ReadState } from '../../../../src/runtime/tools/editTool'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 
 describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
@@ -43,6 +50,7 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     run: (code: string, options?: { economy?: 'off' | 'on' }) => Promise<{
       outcome: { resultText: string; failed?: boolean }
       events: AgentEvent[]
+      readState: ReadState
     }>
   }
 
@@ -53,6 +61,36 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     registry.register(readTool)
     registry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
     registry.register(findTool)
+    const codeContextPack: CodeContextPack = Object.freeze({
+      status: 'ready',
+      revision: 3,
+      summary: 'ready · locate · verifyToken 定义于 auth.ts:1；另有 0 处相关锚点',
+      intent: 'locate',
+      anchors: Object.freeze([{
+        kind: 'function',
+        name: 'verifyToken',
+        path: 'auth.ts',
+        startLine: 1,
+        endLine: 3,
+        score: 1
+      }]),
+      relations: Object.freeze([]),
+      recommendedReads: Object.freeze([{
+        path: 'auth.ts',
+        startLine: 1,
+        endLine: 3,
+        reason: 'function 定义'
+      }]),
+      coverage: Object.freeze({
+        ...EMPTY_CODE_INDEX_COVERAGE,
+        eligibleFiles: 3,
+        indexedFiles: 3
+      }),
+      warnings: Object.freeze([])
+    })
+    registry.register(createCodeContextTool({
+      getQueryPort: () => ({ query: async () => codeContextPack })
+    }))
     registry.register(
       createRunCodeTool({
         getToolAvailability: () => availability,
@@ -63,6 +101,7 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     availability.bindRegisteredToolNames(registry.getToolDefinitions().map(def => def.name))
 
     const events: AgentEvent[] = []
+    const readState = createReadState()
     return {
       run: async (code, options) => {
         availability.setEconomyMode(options?.economy ?? 'off')
@@ -90,12 +129,13 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
           applyTruncation: output => output,
           maxParallelToolCalls: 4,
           toolExecution: 'parallel',
-          readState: createReadState(),
+          readState,
+          artifactStore: new ArtifactStore(workspace),
           isToolAvailable: name => availability.isToolAvailable(name),
           allowNestedToolDispatch: true
         })
         expect(outcomes).toHaveLength(1)
-        return { outcome: outcomes[0], events }
+        return { outcome: outcomes[0], events, readState }
       }
     }
   }
@@ -142,6 +182,38 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     expect(nestedReadResult.result).toContain('export function verifyToken')
     // 代码没有 log 文件正文，只 return 了行数与标记——正文不进入主上下文
     expect(outcome.resultText).not.toContain('export function verifyToken')
+  })
+
+  it('run_code → code_context → read：索引建议通过统一嵌套流水线读回源码', async () => {
+    const harness = createHarness()
+    const { outcome, events, readState } = await harness.run(`
+      const context = await tools.code_context({ query: 'verifyToken', intent: 'locate' })
+      const pack = JSON.parse(context.output)
+      const range = pack.recommendedReads[0]
+      const source = await tools.read({
+        path: range.path,
+        offset: range.startLine,
+        limit: range.endLine - range.startLine + 1
+      })
+      return {
+        status: pack.status,
+        revision: pack.revision,
+        confirmed: source.output.includes('return token.length > 0')
+      }
+    `)
+
+    expect(outcome.failed).toBeFalsy()
+    expect(outcome.resultText).toContain('"status": "ready"')
+    expect(outcome.resultText).toContain('"revision": 3')
+    expect(outcome.resultText).toContain('"confirmed": true')
+    const nestedResults = events.filter(
+      (event): event is Extract<AgentEvent, { type: 'tool_result' }> =>
+        event.type === 'tool_result' && event.toolCallId.startsWith('tc_run_code#nested-')
+    )
+    expect(nestedResults.map(event => event.toolName)).toEqual(['code_context', 'read'])
+    expect(nestedResults[0]?.result).not.toContain('\n')
+    expect(nestedResults.every(event => event.parentToolCallId === 'tc_run_code')).toBe(true)
+    expect(readState.has(join(workspace, 'auth.ts'))).toBe(true)
   })
 
   it('direct-only 工具无法通过 SDK 调用（edit 不可达）', async () => {

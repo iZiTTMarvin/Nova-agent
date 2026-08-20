@@ -17,6 +17,7 @@ import type { ModelClient } from '../runtime/model/ModelClient'
 import type { Mode } from '../shared/session'
 import { bindSkillServiceWindow, getSkillService } from './services/SkillServiceHost'
 import { closeMemoryService } from './services/MemoryServiceHost'
+import { closeAllCodeGraphs } from './services/CodeGraphHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
@@ -326,7 +327,12 @@ async function bootstrap(): Promise<void> {
     closeMemoryService()
     // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
     closeAllSessionIndexes()
-    app.exit(requestedExitCode)
+    // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
+    void closeAllCodeGraphs()
+      .catch((error) => {
+        console.error('[CodeGraphHost] 退出前释放失败:', error)
+      })
+      .finally(() => app.exit(requestedExitCode))
   })
 }
 

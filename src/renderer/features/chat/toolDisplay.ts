@@ -35,6 +35,8 @@ export function getToolDisplayName(toolName: string): string {
       return '运行探索代码 (run_code)'
     case 'memory_search':
       return '检索记忆 (memory_search)'
+    case 'code_context':
+      return '查询代码上下文 (code_context)'
     case 'askQuestion':
       return '询问用户 (askQuestion)'
     case 'save_plan':
@@ -129,6 +131,11 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const description = (args.description as string) || ''
       const display = description.length > 60 ? description.slice(0, 57) + '...' : description
       return display ? `运行探索代码：${display}` : '运行探索代码'
+    }
+    case 'code_context': {
+      const query = typeof args.query === 'string' ? args.query : ''
+      const display = query.length > 60 ? `${query.slice(0, 57)}...` : query
+      return display ? `查询代码上下文：${display}` : '查询代码上下文'
     }
     case 'task': {
       // 子代理调度：展示子代理类型 + 任务摘要，避免卡片头部空白

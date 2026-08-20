@@ -34,7 +34,7 @@ export type ToolCapabilityTag =
   | 'archive'
   | 'internal'
 
-/** Code Mode 嵌套策略：当前仅作元数据登记，Code Mode 未实现前不驱动任何运行时行为 */
+/** Code Mode 嵌套策略：决定工具是进入只读 SDK 还是仅允许模型直调。 */
 export type ToolCodeModeNesting = 'nestable-readonly' | 'direct-only'
 
 export interface ToolCatalogEntry {
@@ -47,7 +47,7 @@ export interface ToolCatalogEntry {
   readonly codeMode: ToolCodeModeNesting
   /**
    * 注册策略：conditional 表示该工具可按宿主配置合法缺席注册清单
-   * （当前仅 memory_search 随记忆开关裁剪）；缺省 always 必须注册。
+   * 缺省 always 的工具必须注册。
    */
   readonly registration?: 'always' | 'conditional'
 }

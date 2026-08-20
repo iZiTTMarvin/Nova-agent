@@ -23,7 +23,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 15
+export const CURRENT_SESSION_SCHEMA_VERSION = 16
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -51,6 +51,7 @@ function migrateV0ToV1(data: unknown): SessionData {
     mode: normalizeLegacyMode(raw.mode),
     messages,
     currentLeafId: messages.at(-1)?.id ?? null,
+    codeIndexEnabled: false,
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now()
   }
@@ -294,6 +295,16 @@ function migrateV14ToV15(data: unknown): SessionData {
   }
 }
 
+/** 旧会话不得因升级自动增加工具面，因此代码索引快照固定迁移为关闭。 */
+function migrateV15ToV16(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 16,
+    codeIndexEnabled: false
+  }
+}
+
 type UnknownObject = { [propertyName: string]: unknown }
 
 function isPlainObject(value: unknown): value is UnknownObject {
@@ -456,7 +467,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV11ToV12, // v11 → v12
   migrateV12ToV13, // v12 → v13
   migrateV13ToV14, // v13 → v14
-  migrateV14ToV15 // v14 → v15
+  migrateV14ToV15, // v14 → v15
+  migrateV15ToV16 // v15 → v16
 ]
 
 /**
@@ -488,7 +500,8 @@ export function migrateSessionData(data: unknown): SessionData {
       ...session,
       messages: withTree,
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
-      currentLeafId: session.currentLeafId ?? withTree.at(-1)?.id ?? null
+      currentLeafId: session.currentLeafId ?? withTree.at(-1)?.id ?? null,
+      codeIndexEnabled: session.codeIndexEnabled === true
     }
     assertValidSessionKind(result)
     return result
@@ -509,7 +522,8 @@ export function migrateSessionData(data: unknown): SessionData {
     ...migrated,
     schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
     messages,
-    currentLeafId: migrated.currentLeafId ?? messages.at(-1)?.id ?? null
+    currentLeafId: migrated.currentLeafId ?? messages.at(-1)?.id ?? null,
+    codeIndexEnabled: migrated.codeIndexEnabled === true
   }
   assertValidSessionKind(result)
   return result

@@ -38,7 +38,9 @@ describe('SubagentExecutionService', () => {
     tempRoot = mkdtempSync(join(tmpdir(), 'nova-subagent-service-'))
     workspace = resolve(tempRoot, 'workspace')
     sessionStore = new SessionStore(tempRoot)
-    parentSessionId = sessionStore.create(workspace).id
+    parentSessionId = sessionStore.create(workspace, 'default', {
+      codeIndexEnabled: true
+    }).id
     coordinator = createRunCoordinator(tempRoot)
     coordinator.startRun({
       kind: 'agent',
@@ -209,6 +211,7 @@ describe('SubagentExecutionService', () => {
       spawnRunId: expectedIdentity.spawnRunId
     }))
     expect(child.subagent.profile.systemPrompt).toBe('inspect and summarize')
+    expect(child.codeIndexEnabled).toBe(true)
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
   })
