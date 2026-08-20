@@ -1,12 +1,25 @@
-export type CodeIndexStatus =
-  | 'idle'
-  | 'building'
-  | 'ready'
-  | 'updating'
-  | 'degraded'
-  | 'unavailable'
+import {
+  CODE_INDEX_FAILURE_CODES,
+  EMPTY_CODE_INDEX_COVERAGE
+} from '../../shared/code-index'
+import type {
+  CodeIndexCoverage,
+  CodeIndexFailure,
+  CodeIndexFailureCode,
+  CodeIndexProgress,
+  CodeIndexStatus,
+  CodeIndexWorkerState
+} from '../../shared/code-index'
 
-export type CodeIndexWorkerState = 'stopped' | 'running' | 'idle' | 'failed'
+export { CODE_INDEX_FAILURE_CODES, EMPTY_CODE_INDEX_COVERAGE }
+export type {
+  CodeIndexCoverage,
+  CodeIndexFailure,
+  CodeIndexFailureCode,
+  CodeIndexProgress,
+  CodeIndexStatus,
+  CodeIndexWorkerState
+}
 
 export type CodeContextIntent = 'locate' | 'understand' | 'impact'
 export type CodeContextRequestedIntent = CodeContextIntent | 'flow'
@@ -75,44 +88,6 @@ export type CodeUnresolvedReason =
   | 'unsupported_project_reference'
   | 'unsupported_conditional_export'
 
-export interface CodeIndexCoverage {
-  readonly eligibleFiles: number
-  readonly indexedFiles: number
-  readonly parseFailures: number
-  readonly unsupportedFiles: number
-  readonly oversizedFiles: number
-  readonly unresolvedRelations: number
-}
-
-export interface CodeIndexProgress {
-  readonly completed: number
-  readonly total: number
-}
-
-export const CODE_INDEX_FAILURE_CODES = Object.freeze([
-  'worker_missing',
-  'grammar_missing',
-  'db_corrupt',
-  'parser_failure',
-  'resolver_timeout',
-  'build_cancelled',
-  'stale_result_rejected',
-  'bulk_change_rebuild',
-  'worker_crash',
-  'watcher_failed',
-  'storage_open_failed',
-  'storage_commit_failed',
-  'storage_read_failed',
-  'fence_release_failed'
-] as const)
-
-export type CodeIndexFailureCode = (typeof CODE_INDEX_FAILURE_CODES)[number]
-
-export interface CodeIndexFailure {
-  readonly code: CodeIndexFailureCode
-  readonly message: string
-}
-
 export interface CodeIndexSnapshot {
   readonly workspaceIdentity: string | null
   readonly activeGeneration: number | null
@@ -138,12 +113,3 @@ export interface CodeIndexOperation {
   readonly baseGeneration: number | null
   readonly baseRevision: number
 }
-
-export const EMPTY_CODE_INDEX_COVERAGE: CodeIndexCoverage = Object.freeze({
-  eligibleFiles: 0,
-  indexedFiles: 0,
-  parseFailures: 0,
-  unsupportedFiles: 0,
-  oversizedFiles: 0,
-  unresolvedRelations: 0
-})

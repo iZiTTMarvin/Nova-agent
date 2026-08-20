@@ -39,6 +39,7 @@ import {
 } from './autoScroll'
 import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
 import { ContextIndicator } from './ContextIndicator'
+import { CodeIndexStatusChip } from './CodeIndexStatusChip'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { useTodoStore } from '../todo/useTodoStore'
@@ -995,6 +996,7 @@ export const ChatPanel: React.FC = () => {
                   )}
                   <ModelSelector />
                   <ContextIndicator />
+                  <CodeIndexStatusChip />
                 </div>
                 <div>
                   {isGenerating || sendInFlight || cancelling ? (

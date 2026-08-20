@@ -59,6 +59,8 @@ export interface SettingsState {
   setConfigModalOpen: (isOpen: boolean) => void
   /** 打开设置并定位到 LLM 配置 Tab */
   openLlmSettings: () => void
+  /** 打开设置并定位到代码索引分区 */
+  openCodeIndexSettings: () => void
   selectProject: () => Promise<void>
   setMode: (mode: Mode) => Promise<void>
   /**
@@ -204,7 +206,7 @@ import type { ContextBreakdown } from '../../shared/agent/contextBreakdown'
 
 export type { ContextBreakdown }
 
-const LLM_SETTINGS_NAV_KEY = 'nova-settings-nav'
+const SETTINGS_NAV_KEY = 'nova-settings-nav'
 
 function deriveModelState(registry: LlmRegistry | null): {
   modelConfig: ModelConfig | null
@@ -324,9 +326,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   openLlmSettings: () => {
     try {
-      sessionStorage.setItem(LLM_SETTINGS_NAV_KEY, 'llm')
+      sessionStorage.setItem(SETTINGS_NAV_KEY, 'llm')
     } catch {
       // 忽略
+    }
+    set({ isConfigModalOpen: true })
+  },
+
+  openCodeIndexSettings: () => {
+    try {
+      sessionStorage.setItem(SETTINGS_NAV_KEY, 'codeindex')
+    } catch {
+      // sessionStorage 不可用时仍可打开设置壳层。
     }
     set({ isConfigModalOpen: true })
   },

@@ -18,6 +18,7 @@ import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
 import { useRunStore } from './stores/useRunStore'
 import { useSubagentProjectionStore } from './features/subagents/projection'
+import { useCodeIndexStore } from './stores/useCodeIndexStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
@@ -84,6 +85,7 @@ function App(): React.ReactNode {
     void useWorkspaceStore.getState().init().then(() => {
       // 运行态由 chat hydration 拉权威 snapshot；这里只刷新等待徽标。
       void useRunStore.getState().refreshWaitingBadges()
+      void useCodeIndexStore.getState().refreshStatus()
     })
     return () => {
       stopDispatcher()
@@ -196,6 +198,10 @@ function App(): React.ReactNode {
       useSubagentProjectionStore.getState().applyRunSnapshot(data.snapshot)
     })
 
+    const unsubCodeIndexStatus = window.api.on('codeindex:status', (data) => {
+      useCodeIndexStore.getState().handleStatusEvent(data)
+    })
+
     const unsubSubagentLinked = window.api.on('subagent:linked', (data) => {
       void useSubagentProjectionStore.getState().refreshParent(data.parentSessionId)
     })
@@ -305,6 +311,7 @@ function App(): React.ReactNode {
       unsubAskQuestionRequest()
       unsubAskQuestionResolved()
       unsubRunSnapshot()
+      unsubCodeIndexStatus()
       unsubSubagentLinked()
       unsubTodosUpdated()
       unsubComposeStagesUpdated()

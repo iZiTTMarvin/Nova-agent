@@ -18,6 +18,7 @@ import { PermissionsSettingsPanel } from './PermissionsSettingsPanel'
 import { StorageSettingsPanel } from './StorageSettingsPanel'
 import { WebSearchSettingsPanel } from './WebSearchSettingsPanel'
 import { MemorySettingsPanel } from './MemorySettingsPanel'
+import { CodeIndexSettingsPanel } from './CodeIndexSettingsPanel'
 import './SettingsModal.css'
 
 const NAV_STORAGE_KEY = 'nova-settings-nav'
@@ -27,6 +28,7 @@ export type SettingsSection =
   | 'llm'
   | 'websearch'
   | 'memory'
+  | 'codeindex'
   | 'rules'
   | 'skills'
   | 'subagents'
@@ -38,6 +40,7 @@ const SECTION_IDS: SettingsSection[] = [
   'llm',
   'websearch',
   'memory',
+  'codeindex',
   'rules',
   'skills',
   'subagents',
@@ -76,6 +79,11 @@ const NAV_GROUPS: { title: string; items: NavItemMeta[] }[] = [
         id: 'memory',
         label: '记忆',
         description: '查看与编辑当前工作区的跨会话记忆文件（按工作区哈希隔离）。'
+      },
+      {
+        id: 'codeindex',
+        label: '代码索引',
+        description: '管理当前工作区的本地代码结构索引、运行状态与重建操作。'
       },
       { id: 'rules', label: '规则', description: rulesI18n.panelDesc },
       { id: 'skills', label: '技能', description: skillsI18n.panelDesc },
@@ -196,6 +204,7 @@ export const SettingsModal: React.FC = () => {
             {section === 'llm' && <LlmSettingsPanel />}
             {section === 'websearch' && <WebSearchSettingsPanel />}
             {section === 'memory' && <MemorySettingsPanel />}
+            {section === 'codeindex' && <CodeIndexSettingsPanel />}
             {section === 'rules' && <RulesSettingsPanel />}
             {section === 'skills' && <SkillsSettingsPanel />}
             {section === 'subagents' && <SubagentsSettingsPanel />}

@@ -766,6 +766,44 @@
   border-radius: 50%;
 }
 
+.code-index-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-sand);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.code-index-status-chip svg {
+  flex-shrink: 0;
+}
+
+button.code-index-status-chip {
+  cursor: pointer;
+}
+
+button.code-index-status-chip:hover {
+  background: var(--bg-input);
+}
+
+.code-index-status-chip--warning {
+  color: var(--color-warning, #d97706);
+}
+
+.code-index-status-chip__warning-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .context-popover {
   position: absolute;
   bottom: 100%;

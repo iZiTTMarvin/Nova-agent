@@ -33,6 +33,7 @@ import type {
   SubagentsSaveParams,
   SubagentsDeleteParams
 } from '../settings/types'
+import type { CodeIndexStatusDto } from '../code-index'
 import type {
   WorkspaceState,
   SelectProjectParams,
@@ -99,6 +100,18 @@ export interface IpcCommands {
     result: MainLoopLagSnapshot
   }
   'dev:main-loop-lag-reset': {
+    params: void
+    result: void
+  }
+  'codeindex:get-status': {
+    params: void
+    result: CodeIndexStatusDto
+  }
+  'codeindex:rebuild': {
+    params: void
+    result: { accepted: boolean }
+  }
+  'codeindex:open-dir': {
     params: void
     result: void
   }
@@ -634,6 +647,7 @@ export interface IpcEvents {
       at: number
     }
   }
+  'codeindex:status': CodeIndexStatusDto
   /** 仅表示父子关系已变化；状态仍需从 projection IPC / run snapshot 读取。 */
   'subagent:linked': {
     parentSessionId: string

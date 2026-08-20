@@ -19,6 +19,7 @@ import { registerMemoryHandler } from './memoryHandler'
 import { registerFsHandler } from './fsHandler'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
+import { registerCodeIndexHandler } from './codeIndexHandler'
 import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
 import { registerComposeStageHandler } from './composeStageHandler'
 import { registerComposePlanApprovalHandler } from './composePlanApprovalHandler'
@@ -106,6 +107,7 @@ export function registerIpcHandlers(): ImageStore {
       cleanupObservationCaptureSession(sessionId)
     }
   })
+  registerCodeIndexHandler(workspaceService, getSessionStore, getMainWindow)
   workspaceService.subscribeWorkspaceRootChanges(({ previousRoot, nextRoot }) => {
     scheduleMemoryReconcileForWorkspace(nextRoot)
     if (previousRoot && previousRoot !== nextRoot) {

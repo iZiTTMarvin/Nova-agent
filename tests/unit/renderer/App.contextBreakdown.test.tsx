@@ -8,6 +8,10 @@ import { useSettingsStore, resetSettingsStoreForTests, type ContextBreakdown } f
 import { resetWorkspaceStoreForTests } from '../../../src/renderer/stores/useWorkspaceStore'
 import { resetWorkspaceDispatcherForTests } from '../../../src/renderer/stores/workspaceDispatcher'
 import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import {
+  resetCodeIndexStoreForTests,
+  useCodeIndexStore
+} from '../../../src/renderer/stores/useCodeIndexStore'
 import { act, renderDom } from './renderDom'
 
 const themeModeSpy = vi.hoisted(() => vi.fn())
@@ -89,6 +93,7 @@ describe('App agent:context-breakdown 监听', () => {
     resetWorkspaceStoreForTests()
     resetWorkspaceDispatcherForTests()
     resetAgentStoreForTests()
+    resetCodeIndexStoreForTests()
 
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'load-model-config') return Promise.resolve(null)
@@ -99,6 +104,29 @@ describe('App agent:context-breakdown 监听', () => {
           currentProjectPath: null,
           currentMode: 'default',
           availableSessions: []
+        })
+      }
+      if (channel === 'codeindex:get-status') {
+        return Promise.resolve({
+          workspaceRoot: null,
+          sequence: 1,
+          enabled: false,
+          status: 'idle',
+          activeGeneration: null,
+          revision: 0,
+          coverage: {
+            eligibleFiles: 0,
+            indexedFiles: 0,
+            parseFailures: 0,
+            unsupportedFiles: 0,
+            oversizedFiles: 0,
+            unresolvedRelations: 0
+          },
+          progress: null,
+          lastCompletedAt: null,
+          failure: null,
+          workerState: 'stopped',
+          databaseBytes: 0
         })
       }
       return Promise.resolve(undefined)
@@ -193,5 +221,20 @@ describe('App agent:context-breakdown 监听', () => {
 
     expect(themeModeSpy).toHaveBeenCalledWith('dark')
     renderer.unmount()
+  })
+
+  it('reload 挂载后拉取代码索引快照并订阅状态事件', async () => {
+    const renderer = renderDom(React.createElement(App))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockInvoke).toHaveBeenCalledWith('codeindex:get-status')
+    expect(eventHandlers.get('codeindex:status')).toBeTypeOf('function')
+    expect(useCodeIndexStore.getState().snapshotsByWorkspaceRoot['\0']?.enabled).toBe(false)
+
+    renderer.unmount()
+    expect(eventHandlers.has('codeindex:status')).toBe(false)
   })
 })

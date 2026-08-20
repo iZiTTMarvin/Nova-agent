@@ -105,6 +105,10 @@
   flex-shrink: 0;
 }
 
+.sidebar-status-dot--interactive {
+  cursor: pointer;
+}
+
 .sidebar-status-dot--pulse {
   animation: sidebar-status-pulse 2s ease-in-out infinite;
 }

@@ -4,9 +4,9 @@
  * 数据流（单向，无乐观更新）：
  *   UI action → useWorkspaceStore.selectXxx（转发 IPC）
  *     → 主进程 WorkspaceService 操作 → workspace:changed 广播
- *       → 本 dispatcher 把状态分发到 workspace / chat / settings / agent 四个 store
+ *       → 本 dispatcher 把状态分发到各自的可重建 Renderer 投影
  *
- * 这是消除 split-brain 的关键：四个子 store 不再互相反向 import，
+ * 这是消除 split-brain 的关键：各职责 store 不再互相反向 import，
  * 而是由本模块统一在工作区变更时做必要的派生同步。
  * workspace store 的 action 发起 IPC 后不做乐观更新，统一等广播回来再分发，
  * 保证只有一个数据流方向，无双重分发歧义。
@@ -17,6 +17,7 @@ import { useChatStore } from './useChatStore'
 import { useSettingsStore } from './useSettingsStore'
 import { useAgentStore } from './useAgentStore'
 import { useSubagentProjectionStore } from '../features/subagents/projection'
+import { useCodeIndexStore } from './useCodeIndexStore'
 
 /** 上一次处理的 currentSessionId，用于判断是否需要 resetAgentRuntime */
 let lastDispatchedSessionId: string | null | undefined = undefined
@@ -24,13 +25,19 @@ let unsubscribed = false
 let unsubscribe: (() => void) | null = null
 
 /**
- * 分发工作区状态变更到三个子 store。
+ * 分发工作区状态变更到各职责 store。
  * - workspace: 更新事实源（applyWorkspaceState）
  * - chat: 同步 sessions 列表 + currentSessionId，按需重载消息
  * - settings: 同步 currentProject/currentMode 镜像
+ * - code index: 切换当前工作区桶并补拉权威快照
  * - agent: 会话切换时清空挂起的权限弹窗
  */
 export function dispatchWorkspaceChange(state: WorkspaceState): void {
+  const wasInitialized = useWorkspaceStore.getState().initialized
+  const sessionChanged = lastDispatchedSessionId !== state.currentSessionId
+  const previousWorkspaceRoot = useCodeIndexStore.getState().currentWorkspaceRoot
+  const workspaceChanged = previousWorkspaceRoot !== state.currentProjectPath
+
   // 0. workspace store：更新事实源（幂等）
   useWorkspaceStore.setState({ ...state, initialized: true })
   useSubagentProjectionStore.getState().syncSessionList(state.availableSessions)
@@ -45,10 +52,14 @@ export function dispatchWorkspaceChange(state: WorkspaceState): void {
 
   // 2. settings store：同步镜像（currentProject / currentMode）
   useSettingsStore.getState().syncFromWorkspace(state.currentProjectPath, state.currentMode)
+  useCodeIndexStore.getState().syncWorkspace(state.currentProjectPath, {
+    resetForSessionChange: sessionChanged,
+    refreshStatus: wasInitialized && (sessionChanged || workspaceChanged)
+  })
 
   // 3. agent store：会话切换时清空挂起权限投影。
   // snapshot-first 恢复由 chat store 的单一 hydration 流程完成，避免重复拉取与顺序竞争。
-  if (lastDispatchedSessionId !== state.currentSessionId) {
+  if (sessionChanged) {
     useAgentStore.getState().resetAgentRuntime()
     useSettingsStore.getState().resetSessionUsage()
     lastDispatchedSessionId = state.currentSessionId

@@ -8,6 +8,7 @@ import { useSubagentProjectionStore } from '../../../src/renderer/features/subag
 import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { resetSettingsStoreForTests, useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
+import { resetCodeIndexStoreForTests, useCodeIndexStore } from '../../../src/renderer/stores/useCodeIndexStore'
 import type { Session } from '../../../src/shared/session/types'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
 import { act, renderDom } from './renderDom'
@@ -76,6 +77,7 @@ describe('Sidebar 子代理会话退出列表', () => {
     resetChatStoreForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
+    resetCodeIndexStoreForTests()
     useSubagentProjectionStore.getState().resetForTests()
   })
 
@@ -134,6 +136,51 @@ describe('Sidebar 子代理会话退出列表', () => {
     expect(output).toContain('Explore')
     expect(output).toContain('正在工作')
     expect(renderer.container.querySelector('.subagent-activity-row--running')).not.toBeNull()
+    renderer.unmount()
+  })
+
+  it('代码索引状态只挂在项目分组行，点击异常点进入设置', () => {
+    useChatStore.setState({ sessions: [parent], currentSessionId: parent.id })
+    useSettingsStore.setState({ currentProject: 'D:/workspace' })
+    useCodeIndexStore.setState({
+      currentWorkspaceRoot: 'D:/workspace',
+      snapshotsByWorkspaceRoot: {
+        'D:/workspace': {
+          workspaceRoot: 'D:/workspace',
+          sequence: 1,
+          enabled: true,
+          status: 'degraded',
+          activeGeneration: 1,
+          revision: 2,
+          coverage: {
+            eligibleFiles: 1,
+            indexedFiles: 1,
+            parseFailures: 0,
+            unsupportedFiles: 0,
+            oversizedFiles: 0,
+            unresolvedRelations: 0
+          },
+          progress: null,
+          lastCompletedAt: 1,
+          failure: { code: 'watcher_failed', message: 'watch failed' },
+          workerState: 'failed',
+          databaseBytes: 1
+        }
+      }
+    })
+
+    const renderer = renderDom(<Sidebar />)
+    const dots = renderer.container.querySelectorAll('[aria-label="代码索引不可用"]')
+    expect(dots).toHaveLength(1)
+    expect(dots[0].getAttribute('role')).toBe('button')
+    expect(dots[0].getAttribute('tabindex')).toBe('0')
+    expect(findSessionButton(renderer.container, 'Parent task')?.querySelector('[aria-label="代码索引不可用"]')).toBeNull()
+
+    act(() => {
+      dots[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(useSettingsStore.getState().isConfigModalOpen).toBe(true)
+    expect(sessionStorage.getItem('nova-settings-nav')).toBe('codeindex')
     renderer.unmount()
   })
 })

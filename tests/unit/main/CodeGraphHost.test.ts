@@ -6,9 +6,11 @@ import {
   codeGraphRuntimeCountForTests,
   closeCodeGraphForWorkspace,
   ensureCodeGraphForWorkspace,
+  getCodeGraphStatusForWorkspace,
   getCodeContextQueryPort,
   InitializedCodeGraphRuntime,
   resetCodeGraphHostForTests,
+  rebuildCodeGraphForWorkspace,
   scheduleCodeGraphStartupGc,
   setCodeGraphRuntimeFactoryForTests,
   setCodeGraphStartupGcRunnerForTests,
@@ -42,9 +44,11 @@ describe('CodeGraphHost', () => {
     const created: string[] = []
     const closed: string[] = []
     const accessed: number[] = []
+    const rebuilt: string[] = []
     setCodeGraphRuntimeFactoryForTests((workspaceRoot) => {
       created.push(workspaceRoot)
       const handle: CodeGraphRuntimeHandle = {
+        workspaceRoot,
         queryPort: {
           query: async () => createEmptyCodeContextPack({
             status: 'ready',
@@ -54,6 +58,15 @@ describe('CodeGraphHost', () => {
           })
         },
         start: async () => undefined,
+        getStatusSource: async () => ({
+          workspaceRoot,
+          databasePath: join(workspaceRoot, 'index.db'),
+          snapshot: readySnapshot()
+        }),
+        rebuild: async () => {
+          rebuilt.push(workspaceRoot)
+          return true
+        },
         touchAccess: async (accessedAt) => {
           accessed.push(accessedAt)
         },
@@ -73,6 +86,11 @@ describe('CodeGraphHost', () => {
     expect(created).toHaveLength(2)
     await vi.waitFor(() => expect(accessed).toHaveLength(2))
     expect(codeGraphRuntimeCountForTests()).toBe(2)
+    const projected = await getCodeGraphStatusForWorkspace(workspace)
+    expect(projected.workspaceRoot).toBe(created[0])
+    expect(projected.status).toBe('ready')
+    expect(await rebuildCodeGraphForWorkspace(workspace)).toBe(true)
+    expect(rebuilt).toEqual([created[0]])
 
     await closeCodeGraphForWorkspace(workspace)
     expect(closed).toEqual([created[0]])
@@ -228,6 +246,7 @@ class ControlledChangeSource implements WorkspaceChangeSource {
 }
 
 function coordinatorPort(snapshot: CodeIndexSnapshot) {
+  const listeners = new Set<(next: CodeIndexSnapshot) => void>()
   return {
     getSnapshot: vi.fn(() => snapshot),
     openWorkspace: vi.fn(async () => snapshot),
@@ -236,7 +255,11 @@ function coordinatorPort(snapshot: CodeIndexSnapshot) {
     checkDrift: vi.fn(async () => true),
     touchAccess: vi.fn(async () => true),
     notifyWorkspaceChange: vi.fn(),
-    reportChangeSourceFailure: vi.fn()
+    reportChangeSourceFailure: vi.fn(),
+    subscribe: vi.fn((listener: (next: CodeIndexSnapshot) => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    })
   }
 }
 

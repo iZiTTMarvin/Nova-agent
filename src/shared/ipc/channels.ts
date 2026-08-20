@@ -24,6 +24,10 @@ export const SKILL_PICK_IMPORT = 'skill:pick-import' as const
 /** 应用设置 */
 export const SETTINGS_GET = 'settings:get' as const
 export const SETTINGS_SET = 'settings:set' as const
+/** 代码索引状态与用户控制 */
+export const CODEINDEX_GET_STATUS = 'codeindex:get-status' as const
+export const CODEINDEX_REBUILD = 'codeindex:rebuild' as const
+export const CODEINDEX_OPEN_DIR = 'codeindex:open-dir' as const
 /** Rules 管理 */
 export const RULES_LIST = 'rules:list' as const
 export const RULES_READ = 'rules:read' as const
@@ -166,6 +170,8 @@ export const AGENT_MODEL_SWITCHED = 'agent:model-switched' as const
 export const AGENT_ATTEMPT_FAILED = 'agent:attempt-failed' as const
 /** RunCoordinator 权威快照推送（带 sequence） */
 export const RUN_SNAPSHOT = 'run:snapshot' as const
+/** 工作区代码索引状态投影（带单调 sequence） */
+export const CODEINDEX_STATUS = 'codeindex:status' as const
 /** Child relation 已持久化；renderer 收到后重拉权威投影。 */
 export const SUBAGENT_LINKED = 'subagent:linked' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const

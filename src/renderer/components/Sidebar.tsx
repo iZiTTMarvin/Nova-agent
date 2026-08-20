@@ -15,6 +15,7 @@ import { TextInput } from '@astryxdesign/core/TextInput'
 import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
 import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
+import { selectCurrentCodeIndexStatus, useCodeIndexStore } from '../stores/useCodeIndexStore'
 import { listPinnedSessions, listSidebarRootSessions, resolveSidebarActiveSessionId } from '../features/subagents/sidebarSessions'
 import './Sidebar.css'
 
@@ -34,24 +35,46 @@ function newSessionShortcutLabel(): string {
   return 'Ctrl+N'
 }
 
-/** 会话状态色点：不用 Astryx StatusDot/Kbd，避免 Vite 单独预构建入口拉裂 React */
-function SessionStatusDot({
+/** 侧栏状态色点：不用 Astryx StatusDot/Kbd，避免 Vite 单独预构建入口拉裂 React */
+function SidebarStatusDot({
   tone,
   label,
-  isPulsing = false
+  isPulsing = false,
+  onActivate
 }: {
   tone: 'warning' | 'accent'
   label: string
   isPulsing?: boolean
+  onActivate?: () => void
 }) {
   const color = tone === 'warning' ? 'var(--color-warning, #d97706)' : 'var(--color-accent, #3b82f6)'
+  const classes = [
+    'sidebar-status-dot',
+    isPulsing ? 'sidebar-status-dot--pulse' : '',
+    onActivate ? 'sidebar-status-dot--interactive' : ''
+  ].filter(Boolean).join(' ')
   return (
     <span
-      role="img"
+      role={onActivate ? 'button' : 'img'}
       aria-label={label}
       title={label}
-      className={isPulsing ? 'sidebar-status-dot sidebar-status-dot--pulse' : 'sidebar-status-dot'}
+      className={classes}
       style={{ backgroundColor: color }}
+      tabIndex={onActivate ? 0 : undefined}
+      onClick={onActivate
+        ? (event) => {
+            event.stopPropagation()
+            onActivate()
+          }
+        : undefined}
+      onKeyDown={onActivate
+        ? (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            event.stopPropagation()
+            onActivate()
+          }
+        : undefined}
     />
   )
 }
@@ -68,6 +91,8 @@ const SidebarSessions = React.memo(function SidebarSessions() {
   const currentProject = useSettingsStore(state => state.currentProject)
   const selectProject = useSettingsStore(state => state.selectProject)
   const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
+  const openCodeIndexSettings = useSettingsStore(state => state.openCodeIndexSettings)
+  const codeIndexSnapshot = useCodeIndexStore(selectCurrentCodeIndexStatus)
   const waitingSessions = useRunStore(state => state.waitingSessions)
   const snapshotsByRunId = useRunStore(state => state.snapshotsByRunId)
   const cancelExecution = useAgentStore(state => state.cancelExecution)
@@ -278,10 +303,10 @@ const SidebarSessions = React.memo(function SidebarSessions() {
             endContent={(
               <>
                 {showWaiting && (
-                  <SessionStatusDot tone="warning" label="等待你处理" isPulsing />
+                  <SidebarStatusDot tone="warning" label="等待你处理" isPulsing />
                 )}
                 {showRunning && (
-                  <SessionStatusDot tone="accent" label="运行中" isPulsing />
+                  <SidebarStatusDot tone="accent" label="运行中" isPulsing />
                 )}
                 {!showWaiting && !showRunning && (
                   <span className="sidebar-session-row__meta text-[11px] text-text-muted shrink-0">
@@ -419,6 +444,13 @@ const SidebarSessions = React.memo(function SidebarSessions() {
               ? projectSessions
               : projectSessions.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
           const showMoreToggle = projectSessions.length > SIDEBAR_SESSION_PREVIEW_COUNT
+          const projectIndexStatus = codeIndexSnapshot?.enabled === true &&
+            codeIndexSnapshot.workspaceRoot === projectPath &&
+            (codeIndexSnapshot.status === 'building' ||
+              codeIndexSnapshot.status === 'degraded' ||
+              codeIndexSnapshot.status === 'unavailable')
+              ? codeIndexSnapshot.status
+              : null
 
           /*
            * 项目「+」与 SideNavItem 为行级兄弟：endContent 在主按钮内部，
@@ -438,9 +470,20 @@ const SidebarSessions = React.memo(function SidebarSessions() {
                     }
                   }}
                   endContent={(
-                    <span className="text-[11px] text-text-muted group-hover:hidden">
-                      {projectSessions.length} 个任务
-                    </span>
+                    projectIndexStatus === null
+                      ? (
+                          <span className="text-[11px] text-text-muted group-hover:hidden">
+                            {projectSessions.length} 个任务
+                          </span>
+                        )
+                      : (
+                          <SidebarStatusDot
+                            tone={projectIndexStatus === 'building' ? 'accent' : 'warning'}
+                            label={projectIndexStatus === 'building' ? '正在建立代码索引' : '代码索引不可用'}
+                            isPulsing={projectIndexStatus === 'building'}
+                            onActivate={openCodeIndexSettings}
+                          />
+                        )
                   )}
                 >
                   {visibleSessions.map((session) => renderSessionRow(session))}
