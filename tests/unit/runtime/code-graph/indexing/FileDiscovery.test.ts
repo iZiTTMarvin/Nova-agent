@@ -52,7 +52,7 @@ describe('code graph file discovery', () => {
       ['src/tracked.ts', 'typescript', 'eligible'],
       ['src/untracked.py', 'python', 'eligible']
     ])
-    expect(result.configFiles).toEqual(['tsconfig.json'])
+    expect(result.configFiles).toEqual(['.gitignore', 'tsconfig.json'])
     expect(result.files.some((file) => file.path.includes('dist/'))).toBe(false)
     expect(result.files.some((file) => file.path === 'ignored.ts')).toBe(false)
   })
@@ -89,6 +89,7 @@ describe('code graph file discovery', () => {
       ['src/other.rs', 'unsupported']
     ].sort((left, right) => left[0].localeCompare(right[0], 'en')))
     expect(result.files.some((file) => file.path === 'src/notes.md')).toBe(false)
+    expect(result.configFiles).toEqual(['.gitignore'])
   })
 
   it('realpath 拒绝指向 workspace 外部的 junction 候选', async () => {

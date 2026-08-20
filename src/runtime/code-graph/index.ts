@@ -13,6 +13,31 @@ export type {
   CodeGraphStateReaderProvider
 } from './indexing/CodeIndexCoordinator'
 export {
+  CODE_INDEX_BULK_CHANGE_COUNT,
+  CODE_INDEX_BULK_CHANGE_RATIO,
+  CODE_INDEX_CHANGE_DEBOUNCE_MS,
+  isExpandedInvalidationPath,
+  mergeWorkspaceChanges,
+  planWorkspaceChanges,
+  shouldUseFullRebuild
+} from './indexing/ChangePlanner'
+export type { CodeIndexChangePlan } from './indexing/ChangePlanner'
+export {
+  compareDiscoveredCodeFile,
+  planCodeGraphDrift
+} from './indexing/CodeGraphDrift'
+export type {
+  CodeGraphContentHashReader,
+  CodeGraphDriftPlan,
+  CodeGraphFileComparison
+} from './indexing/CodeGraphDrift'
+export type {
+  WorkspaceChange,
+  WorkspaceChangeErrorListener,
+  WorkspaceChangeListener,
+  WorkspaceChangeSource
+} from './indexing/WorkspaceChangeSource'
+export {
   CodeIndexWorkerClient,
   CodeIndexWorkerMissingError,
   CodeIndexWorkerRunError
@@ -31,7 +56,9 @@ export type {
   CodeIndexWorkerGrammarPaths,
   CodeIndexWorkerPort,
   CodeIndexWorkerRunOptions,
+  CodeIndexWorkerRunOutcome,
   CodeIndexWorkerRunRequest,
+  CodeIndexWorkerRebuildReason,
   CodeIndexWorkerRunResult,
   CodeIndexWorkerToHostMessage,
   CodeIndexWorkerWorkspace
@@ -41,10 +68,12 @@ export {
   CODE_INDEX_MAX_SOURCE_BYTES,
   FileDiscoveryCancelledError,
   discoverCodeFiles,
+  inspectCodeFile,
   listGitWorkspaceFiles
 } from './indexing/FileDiscovery'
 export type {
   CodeFileDiscoveryStatus,
+  CodeFileInspectionOptions,
   DiscoveredCodeFile,
   FileDiscoveryDiagnostic,
   FileDiscoveryDiagnosticReason,
@@ -102,6 +131,15 @@ export {
   BetterSqliteCodeGraphReader,
   openCodeGraphReader
 } from './graph/queries/CodeGraphReader'
+export {
+  CODE_GRAPH_CACHE_MAX_BYTES,
+  CODE_GRAPH_CACHE_RETENTION_DAYS,
+  runCodeGraphCacheGc
+} from './graph/CodeGraphCacheGc'
+export type {
+  CodeGraphCacheGcOptions,
+  CodeGraphCacheGcResult
+} from './graph/CodeGraphCacheGc'
 export type {
   BetterSqliteCodeGraphReaderOptions,
   CodeGraphAnchorCandidate,
@@ -146,14 +184,18 @@ export type {
   CodeGraphStateReader,
   CodeGraphMetadata,
   CodeGraphFileInput,
+  CodeGraphFileMetadataUpdate,
   CodeGraphFileRecord,
+  CodeGraphFileRelationRecord,
+  CodeGraphConfigFileRecord,
   CodeGraphSymbolInput,
   CodeGraphFileEdgeInput,
   CodeGraphSymbolEdgeInput,
   CodeGraphUnresolvedRelationInput,
   CodeGraphGenerationInput,
   CodeGraphGenerationActivation,
-  CodeGraphIncrementalUpdate
+  CodeGraphIncrementalUpdate,
+  CodeGraphUnresolvedModuleRecord
 } from './graph/CodeGraphRepository'
 export type {
   CodeIndexStatus,

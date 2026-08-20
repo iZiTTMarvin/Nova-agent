@@ -176,11 +176,12 @@ describe('Code Graph SQLite persistence', () => {
       `SELECT name FROM sqlite_master
        WHERE name IN (
          'index_meta', 'generations', 'files', 'symbols', 'file_edges',
-         'symbol_edges', 'unresolved_relations', 'symbol_fts'
+         'symbol_edges', 'unresolved_relations', 'symbol_fts',
+         'generation_config_files'
        ) ORDER BY name`
     ).all()
     inspection.close()
-    expect(objects).toHaveLength(8)
+    expect(objects).toHaveLength(9)
 
     await opened.close()
     repository = null
@@ -194,6 +195,27 @@ describe('Code Graph SQLite persistence', () => {
     newer.close()
     expect(() => open(dbPath)).toThrow(CodeGraphMigrationError)
     repository = null
+  })
+
+  it('从既有 schema 原子升级并保留索引 metadata', async () => {
+    const dbPath = newDbPath()
+    const created = open(dbPath)
+    await created.close()
+    repository = null
+
+    const legacy = new Database(dbPath)
+    legacy.exec('DROP TABLE generation_config_files')
+    legacy.exec('UPDATE index_meta SET schema_version = 1')
+    legacy.pragma('user_version = 1')
+    legacy.close()
+
+    const migrated = open(dbPath)
+    expect(await migrated.getMetadata()).toMatchObject({
+      schemaVersion: CODE_GRAPH_SCHEMA_VERSION,
+      workspaceIdentity: 'workspace-a',
+      revision: 0
+    })
+    await expect(migrated.listActiveConfigFiles()).resolves.toEqual([])
   })
 
   it('full rebuild 只在 activation 事务后切换 generation，失败不污染 last-good', async () => {
@@ -293,6 +315,7 @@ describe('Code Graph SQLite persistence', () => {
       expectedRevision: 1,
       completedAt: 250,
       removedPaths: [],
+      metadataUpdates: [],
       files: [{
         path: 'src/a.ts',
         language: 'typescript',

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 
-export const CODE_GRAPH_SCHEMA_VERSION = 1
+export const CODE_GRAPH_SCHEMA_VERSION = 2
 
 export type CodeGraphMigrationFailureCode = 'newer-version' | 'step-failed'
 
@@ -145,8 +145,20 @@ const V1_STATEMENTS: readonly string[] = [
   `CREATE INDEX unresolved_generation_file_idx ON unresolved_relations(generation, file_id)`
 ]
 
+const V2_STATEMENTS: readonly string[] = [
+  `CREATE TABLE generation_config_files (
+  generation INTEGER NOT NULL REFERENCES generations(generation) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+  mtime_ms INTEGER NOT NULL,
+  PRIMARY KEY (generation, path)
+)`
+]
+
 const MIGRATION_STEPS: readonly CodeGraphMigrationStep[] = [
-  { version: 1, statements: V1_STATEMENTS }
+  { version: 1, statements: V1_STATEMENTS },
+  { version: 2, statements: V2_STATEMENTS }
 ]
 
 export function readCodeGraphSchemaVersion(db: Database.Database): number {

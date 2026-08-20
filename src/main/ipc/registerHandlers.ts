@@ -29,7 +29,8 @@ import { initSubagentProjectionServiceHost } from '../services/SubagentProjectio
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
 import {
   closeCodeGraphForWorkspace,
-  ensureCodeGraphForWorkspace
+  ensureCodeGraphForWorkspace,
+  scheduleCodeGraphStartupGc
 } from '../services/CodeGraphHost'
 import {
   drainAndSchedulePersist,
@@ -42,6 +43,7 @@ import {
 import { getSessionStore } from '../services/SessionStoreHost'
 import { getMainWindow } from '../index'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
+import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 /**
  * 注册所有主进程与渲染进程的 IPC 命令通信处理器
@@ -121,6 +123,15 @@ export function registerIpcHandlers(): ImageStore {
     }
   })
   workspaceService.initOnStartup()
+  const startupState = workspaceService.getState()
+  const startupSession = startupState.currentSessionId
+    ? getSessionStore().load(startupState.currentSessionId)
+    : null
+  // 全局设置只影响新会话；当前会话快照仍启用时也必须维护它正在使用的缓存。
+  scheduleCodeGraphStartupGc(
+    loadNovaSettings().codeIndexEnabled || startupSession?.codeIndexEnabled === true,
+    startupState.currentProjectPath
+  )
   registerWorkspaceHandler(getMainWindow)
   // 打开 active plan 文件（复用 WorkspaceService 的路径边界校验）
   registerPlanFileHandler()

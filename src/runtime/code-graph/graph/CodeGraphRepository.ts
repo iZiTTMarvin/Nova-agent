@@ -38,6 +38,31 @@ export interface CodeGraphFileRecord extends CodeGraphFileInput {
   readonly generation: number
 }
 
+export interface CodeGraphFileRelationRecord {
+  readonly sourcePath: string
+  readonly targetPath: string
+}
+
+export interface CodeGraphUnresolvedModuleRecord {
+  readonly filePath: string
+  readonly moduleSpecifier: string
+}
+
+export interface CodeGraphFileMetadataUpdate {
+  readonly path: string
+  readonly contentHash: string
+  readonly sizeBytes: number
+  readonly mtimeMs: number
+}
+
+export interface CodeGraphConfigFileRecord {
+  readonly path: string
+  readonly contentHash: string
+  readonly sizeBytes: number
+  readonly mtimeMs: number
+  readonly generation: number
+}
+
 export interface CodeGraphSymbolInput {
   readonly stableId: string
   readonly filePath: string
@@ -90,6 +115,7 @@ export interface CodeGraphGenerationInput {
   readonly parserSignature: string
   readonly resolverSignature: string
   readonly stagedAt: number
+  readonly configFileMetadata?: readonly Omit<CodeGraphConfigFileRecord, 'generation'>[]
   readonly files: readonly CodeGraphFileInput[]
   readonly symbols: readonly CodeGraphSymbolInput[]
   readonly fileEdges: readonly CodeGraphFileEdgeInput[]
@@ -113,6 +139,7 @@ export interface CodeGraphIncrementalUpdate {
   readonly expectedRevision: number
   readonly completedAt: number
   readonly removedPaths: readonly string[]
+  readonly metadataUpdates: readonly CodeGraphFileMetadataUpdate[]
   readonly files: readonly CodeGraphFileInput[]
   readonly symbols: readonly CodeGraphSymbolInput[]
   readonly fileEdges: readonly CodeGraphFileEdgeInput[]
@@ -133,6 +160,10 @@ export interface CodeGraphRepository extends CodeGraphStateReader {
   claimOperation(operation: CodeIndexOperation): Promise<void>
   releaseOperation(operation: CodeIndexOperation): Promise<void>
   findActiveFile(path: string): Promise<CodeGraphFileRecord | null>
+  listActiveFiles(): Promise<readonly CodeGraphFileRecord[]>
+  listActiveConfigFiles(): Promise<readonly CodeGraphConfigFileRecord[]>
+  listActiveFileRelations(): Promise<readonly CodeGraphFileRelationRecord[]>
+  listActiveUnresolvedModules(): Promise<readonly CodeGraphUnresolvedModuleRecord[]>
   stageGeneration(input: CodeGraphGenerationInput): Promise<void>
   activateGeneration(input: CodeGraphGenerationActivation): Promise<CodeGraphMetadata>
   applyIncrementalUpdate(input: CodeGraphIncrementalUpdate): Promise<CodeGraphMetadata>

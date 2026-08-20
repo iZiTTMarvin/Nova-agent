@@ -99,6 +99,7 @@ export const CODE_INDEX_FAILURE_CODES = Object.freeze([
   'stale_result_rejected',
   'bulk_change_rebuild',
   'worker_crash',
+  'watcher_failed',
   'storage_open_failed',
   'storage_commit_failed',
   'storage_read_failed',
@@ -124,7 +125,10 @@ export interface CodeIndexSnapshot {
   readonly workerState: CodeIndexWorkerState
 }
 
-export type CodeIndexOperationKind = 'full-rebuild' | 'incremental-update'
+export type CodeIndexOperationKind =
+  | 'full-rebuild'
+  | 'incremental-update'
+  | 'touch-access'
 
 export interface CodeIndexOperation {
   readonly operationId: string

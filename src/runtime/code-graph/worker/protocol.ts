@@ -1,6 +1,8 @@
 import type {
   CodeGraphMetadata
 } from '../graph/CodeGraphRepository'
+import { posix as posixPath } from 'node:path'
+import type { WorkspaceChange } from '../indexing/WorkspaceChangeSource'
 import {
   CODE_INDEX_FAILURE_CODES,
   type CodeIndexCoverage,
@@ -33,10 +35,19 @@ export interface CodeIndexWorkerWorkspace {
 export interface CodeIndexWorkerRunRequest {
   readonly operation: CodeIndexOperation
   readonly workspace: CodeIndexWorkerWorkspace
+  /** incremental-update 中 null 表示重开工作区后的 drift 检测。 */
+  readonly changeBatch?: readonly WorkspaceChange[] | null
+  /** 访问时间由 Host 的 ensure 采样，Worker 只负责串行写入。 */
+  readonly accessedAt?: number
 }
+
+export type CodeIndexWorkerRunOutcome = 'committed' | 'unchanged' | 'rebuild-required'
+export type CodeIndexWorkerRebuildReason = 'bulk-change' | 'incompatible-index'
 
 export interface CodeIndexWorkerRunResult {
   readonly operation: CodeIndexOperation
+  readonly outcome: CodeIndexWorkerRunOutcome
+  readonly rebuildReason: CodeIndexWorkerRebuildReason | null
   readonly metadata: CodeGraphMetadata
   readonly coverage: CodeIndexCoverage
   readonly durationMs: number
@@ -182,19 +193,85 @@ function parseRunRequest(value: unknown): CodeIndexWorkerRunRequest | null {
   const workspace = parseWorkspace(Reflect.get(value, 'workspace'))
   if (operation === null || workspace === null) return null
   if (operation.workspaceIdentity !== workspace.workspaceIdentity) return null
-  return Object.freeze({ operation, workspace })
+  const changeBatchValue = Reflect.get(value, 'changeBatch')
+  const hasChangeBatch = Object.prototype.hasOwnProperty.call(value, 'changeBatch')
+  const hasAccessedAt = Object.prototype.hasOwnProperty.call(value, 'accessedAt')
+  if (operation.kind === 'full-rebuild') {
+    if (hasChangeBatch || hasAccessedAt) return null
+    return Object.freeze({ operation, workspace })
+  }
+  if (operation.kind === 'touch-access') {
+    const accessedAt = readNonNegativeNumber(value, 'accessedAt')
+    if (hasChangeBatch || !hasAccessedAt || accessedAt === null) return null
+    return Object.freeze({ operation, workspace, accessedAt })
+  }
+  if (hasAccessedAt) return null
+  if (!hasChangeBatch) return null
+  const changeBatch = changeBatchValue === null
+    ? null
+    : parseWorkspaceChanges(changeBatchValue)
+  if (changeBatchValue !== null && changeBatch === null) return null
+  return Object.freeze({ operation, workspace, changeBatch })
 }
 
 function parseRunResult(value: unknown): CodeIndexWorkerRunResult | null {
   if (!isRecord(value)) return null
   const operation = parseOperation(Reflect.get(value, 'operation'))
+  const outcome = Reflect.get(value, 'outcome')
+  const rebuildReasonValue = Reflect.get(value, 'rebuildReason')
+  const rebuildReason = rebuildReasonValue === null
+    ? null
+    : parseRebuildReason(rebuildReasonValue)
   const metadata = parseMetadata(Reflect.get(value, 'metadata'))
   const coverage = parseCoverage(Reflect.get(value, 'coverage'))
   const durationMs = readNonNegativeNumber(value, 'durationMs')
-  if (operation === null || metadata === null || coverage === null || durationMs === null) {
+  if (
+    operation === null || !isRunOutcome(outcome) ||
+    (rebuildReasonValue !== null && rebuildReason === null) ||
+    metadata === null || coverage === null || durationMs === null ||
+    (outcome === 'rebuild-required') !== (rebuildReason !== null)
+  ) {
     return null
   }
-  return Object.freeze({ operation, metadata, coverage, durationMs })
+  return Object.freeze({
+    operation,
+    outcome,
+    rebuildReason,
+    metadata,
+    coverage,
+    durationMs
+  })
+}
+
+function parseWorkspaceChanges(value: unknown): readonly WorkspaceChange[] | null {
+  if (!Array.isArray(value)) return null
+  const changes: WorkspaceChange[] = []
+  for (const item of value) {
+    if (!isRecord(item)) return null
+    const type = Reflect.get(item, 'type')
+    const path = readNonEmptyString(item, 'path')
+    if ((type !== 'add' && type !== 'change' && type !== 'unlink') || path === null) {
+      return null
+    }
+    if (!isWorkspaceRelativePath(path)) return null
+    changes.push(Object.freeze({ type, path }))
+  }
+  return Object.freeze(changes)
+}
+
+function isWorkspaceRelativePath(value: string): boolean {
+  return !value.includes('\\') && !value.includes(':') &&
+    !value.startsWith('/') && value !== '.' &&
+    value !== '..' && !value.startsWith('../') && !value.includes('/../') &&
+    posixPath.normalize(value) === value
+}
+
+function isRunOutcome(value: unknown): value is CodeIndexWorkerRunOutcome {
+  return value === 'committed' || value === 'unchanged' || value === 'rebuild-required'
+}
+
+function parseRebuildReason(value: unknown): CodeIndexWorkerRebuildReason | null {
+  return value === 'bulk-change' || value === 'incompatible-index' ? value : null
 }
 
 function parseWorkspace(value: unknown): CodeIndexWorkerWorkspace | null {
@@ -247,7 +324,7 @@ function parseOperation(value: unknown): CodeIndexOperation | null {
   const baseRevision = readNonNegativeInteger(value, 'baseRevision')
   if (
     operationId === null ||
-    (kind !== 'full-rebuild' && kind !== 'incremental-update') ||
+    (kind !== 'full-rebuild' && kind !== 'incremental-update' && kind !== 'touch-access') ||
     workspaceIdentity === null || generation === null ||
     (baseGenerationValue !== null && baseGeneration === null) ||
     baseRevision === null

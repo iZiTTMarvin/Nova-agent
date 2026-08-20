@@ -16,6 +16,11 @@ import {
   type CodeIndexWorkerRunResult,
   type CodeIndexWorkerWorkspace
 } from '../worker/protocol'
+import {
+  CODE_INDEX_CHANGE_DEBOUNCE_MS,
+  mergeWorkspaceChanges
+} from './ChangePlanner'
+import type { WorkspaceChange } from './WorkspaceChangeSource'
 
 export type CodeIndexSnapshotListener = (snapshot: CodeIndexSnapshot) => void
 export type CodeIndexWorkerFactory = () => CodeIndexWorkerPort
@@ -29,6 +34,7 @@ export interface CodeIndexCoordinatorOptions {
   readonly generateOperationId?: () => string
   readonly createWorker?: CodeIndexWorkerFactory
   readonly idleTimeoutMs?: number
+  readonly changeDebounceMs?: number
 }
 
 interface WorkspaceContext {
@@ -47,18 +53,26 @@ export class CodeIndexCoordinator {
   private workspaceEpoch = 0
   private nextGenerationFloor = 1
   private idleTimer: ReturnType<typeof setTimeout> | null = null
+  private changeTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingChanges: WorkspaceChange[] = []
+  private changeSourceFailure: CodeIndexFailure | null = null
   private readonly listeners = new Set<CodeIndexSnapshotListener>()
   private readonly generateOperationId: () => string
   private readonly createWorker: CodeIndexWorkerFactory | null
   private readonly idleTimeoutMs: number
+  private readonly changeDebounceMs: number
   private snapshot = createSnapshot({})
 
   constructor(options: CodeIndexCoordinatorOptions = {}) {
     this.generateOperationId = options.generateOperationId ?? randomUUID
     this.createWorker = options.createWorker ?? null
     this.idleTimeoutMs = options.idleTimeoutMs ?? CODE_INDEX_WORKER_IDLE_TIMEOUT_MS
+    this.changeDebounceMs = options.changeDebounceMs ?? CODE_INDEX_CHANGE_DEBOUNCE_MS
     if (!Number.isFinite(this.idleTimeoutMs) || this.idleTimeoutMs < 0) {
       throw new Error('Code Index Worker 空闲阈值必须是非负数')
+    }
+    if (!Number.isFinite(this.changeDebounceMs) || this.changeDebounceMs < 0) {
+      throw new Error('Code Index 变更合并窗口必须是非负数')
     }
   }
 
@@ -80,6 +94,9 @@ export class CodeIndexCoordinator {
     this.workspace = null
     this.stateReaderProvider = null
     this.nextGenerationFloor = 1
+    this.pendingChanges = []
+    this.changeSourceFailure = null
+    this.clearChangeTimer()
     this.publish(createSnapshot({}))
     await this.shutdownWorker()
     if (epoch !== this.workspaceEpoch) return this.snapshot
@@ -127,19 +144,62 @@ export class CodeIndexCoordinator {
     this.workspace = null
     this.stateReaderProvider = null
     this.nextGenerationFloor = 1
+    this.pendingChanges = []
+    this.changeSourceFailure = null
+    this.clearChangeTimer()
     this.publish(createSnapshot({}))
     await this.shutdownWorker()
   }
 
   rebuild(): Promise<boolean> {
     if (this.activeRun) return this.activeRun
-    const run = this.performFullRebuild()
-    this.activeRun = run
-    run.then(
-      () => this.clearActiveRun(run),
-      () => this.clearActiveRun(run)
-    )
-    return run
+    return this.trackRun(this.performFullRebuild())
+  }
+
+  checkDrift(): Promise<boolean> {
+    if (this.activeRun) return this.activeRun
+    return this.trackRun(this.performIncrementalUpdate(null))
+  }
+
+  touchAccess(accessedAt: number): Promise<boolean> {
+    if (!Number.isFinite(accessedAt) || accessedAt < 0) {
+      return Promise.reject(new Error('Code Graph 访问时间必须是非负数'))
+    }
+    const context = this.currentWorkspaceContext()
+    if (!context) return Promise.resolve(false)
+    if (this.activeRun) {
+      const activeRun = this.activeRun
+      return activeRun.then(() => (
+        this.matchesContext(context) ? this.touchAccess(accessedAt) : false
+      ))
+    }
+    if (this.snapshot.activeGeneration === null) return Promise.resolve(false)
+    return this.trackRun(this.performAccessTouch(accessedAt))
+  }
+
+  notifyWorkspaceChange(change: WorkspaceChange): void {
+    if (!this.workspace) return
+    this.pendingChanges = [...mergeWorkspaceChanges([...this.pendingChanges, change])]
+    if (this.snapshot.activeGeneration !== null) {
+      this.publish(createSnapshot({
+        ...this.snapshot,
+        status: 'updating',
+        failure: this.changeSourceFailure
+      }))
+    }
+    this.scheduleChangeDrain()
+  }
+
+  reportChangeSourceFailure(error: unknown): void {
+    if (!this.workspace) return
+    this.changeSourceFailure = failureFromError('watcher_failed', error)
+    this.clearChangeTimer()
+    this.pendingChanges = []
+    this.publish(createSnapshot({
+      ...this.snapshot,
+      status: 'degraded',
+      failure: this.changeSourceFailure
+    }))
   }
 
   async cancelCurrentOperation(): Promise<boolean> {
@@ -231,7 +291,7 @@ export class CodeIndexCoordinator {
       ...this.snapshot,
       status: this.snapshot.activeGeneration === null ? 'building' : 'updating',
       progress: { completed: 0, total: 0 },
-      failure: null,
+      failure: this.changeSourceFailure,
       workerState: 'running'
     }))
 
@@ -250,7 +310,7 @@ export class CodeIndexCoordinator {
       if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
       assertWorkerResult(result, operation)
       this.activeOperation = null
-      this.publish(snapshotFromMetadata(result.metadata, result.coverage, 'idle'))
+      this.publish(this.snapshotFromCommitted(result.metadata, result.coverage, 'idle'))
       this.scheduleIdleDispose(worker)
       return true
     } catch (error) {
@@ -271,6 +331,157 @@ export class CodeIndexCoordinator {
         details.failure,
         terminal ? 'failed' : 'idle'
       )
+      return false
+    }
+  }
+
+  private async performIncrementalUpdate(
+    changeBatch: readonly WorkspaceChange[] | null
+  ): Promise<boolean> {
+    const context = this.requireWorkspace()
+    this.clearIdleTimer()
+    let storedState: StoredCodeGraphState | null
+    try {
+      storedState = await this.readStoredState(context)
+      if (!this.matchesContext(context)) return false
+      if (storedState !== null) this.adoptStoredState(storedState, this.currentWorkerState())
+    } catch (error) {
+      if (this.matchesContext(context)) {
+        this.publish(createSnapshot({
+          ...this.snapshot,
+          status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
+          failure: failureFromError('storage_read_failed', error)
+        }))
+      }
+      return false
+    }
+    if (this.snapshot.activeGeneration === null) return this.performFullRebuild()
+
+    const operation = freezeOperation({
+      operationId: this.generateOperationId(),
+      kind: 'incremental-update',
+      workspaceIdentity: context.workspace.workspaceIdentity,
+      generation: this.snapshot.activeGeneration,
+      baseGeneration: this.snapshot.activeGeneration,
+      baseRevision: this.snapshot.revision
+    })
+    this.activeOperation = operation
+    this.publish(createSnapshot({
+      ...this.snapshot,
+      status: changeBatch === null ? this.snapshot.status : 'updating',
+      progress: null,
+      failure: this.changeSourceFailure,
+      workerState: 'running'
+    }))
+
+    let worker: CodeIndexWorkerPort
+    try {
+      worker = this.ensureWorker()
+    } catch (error) {
+      this.failCurrentOperation(operation, workerFailureDetails(error), 'failed')
+      return false
+    }
+
+    try {
+      const result = await worker.run({
+        operation,
+        workspace: context.workspace,
+        changeBatch
+      })
+      if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
+      assertWorkerResult(result, operation)
+      this.activeOperation = null
+      if (result.outcome === 'rebuild-required') {
+        return this.performFullRebuild()
+      }
+      this.publish(this.snapshotFromCommitted(result.metadata, result.coverage, 'idle'))
+      this.scheduleIdleDispose(worker)
+      return true
+    } catch (error) {
+      if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
+      const details = workerFailureDetails(error)
+      const terminal = details.failure.code === 'worker_crash' ||
+        details.failure.code === 'worker_missing'
+      this.failCurrentOperation(operation, details, terminal ? 'failed' : 'idle')
+      if (terminal && this.worker === worker) {
+        this.worker = null
+        void worker.dispose().catch(() => undefined)
+      } else if (!terminal) {
+        this.scheduleIdleDispose(worker)
+      }
+      await this.reconcileCommittedOperation(
+        context,
+        operation,
+        details.failure,
+        terminal ? 'failed' : 'idle'
+      )
+      return false
+    }
+  }
+
+  private async performAccessTouch(accessedAt: number): Promise<boolean> {
+    const context = this.requireWorkspace()
+    this.clearIdleTimer()
+    let storedState: StoredCodeGraphState | null
+    try {
+      storedState = await this.readStoredState(context)
+      if (!this.matchesContext(context)) return false
+      if (storedState !== null) this.adoptStoredState(storedState, this.currentWorkerState())
+    } catch (error) {
+      if (this.matchesContext(context)) {
+        this.publish(createSnapshot({
+          ...this.snapshot,
+          status: this.snapshot.activeGeneration === null ? 'unavailable' : 'degraded',
+          failure: failureFromError('storage_read_failed', error)
+        }))
+      }
+      return false
+    }
+    if (this.snapshot.activeGeneration === null) return false
+
+    const operation = freezeOperation({
+      operationId: this.generateOperationId(),
+      kind: 'touch-access',
+      workspaceIdentity: context.workspace.workspaceIdentity,
+      generation: this.snapshot.activeGeneration,
+      baseGeneration: this.snapshot.activeGeneration,
+      baseRevision: this.snapshot.revision
+    })
+    this.activeOperation = operation
+    this.publish(createSnapshot({ ...this.snapshot, workerState: 'running' }))
+
+    let worker: CodeIndexWorkerPort
+    try {
+      worker = this.ensureWorker()
+    } catch (error) {
+      this.failCurrentOperation(operation, workerFailureDetails(error), 'failed')
+      return false
+    }
+
+    try {
+      const result = await worker.run({
+        operation,
+        workspace: context.workspace,
+        accessedAt
+      })
+      if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
+      assertWorkerResult(result, operation)
+      this.activeOperation = null
+      this.publish(this.snapshotFromCommitted(result.metadata, result.coverage, 'idle'))
+      this.scheduleIdleDispose(worker)
+      return true
+    } catch (error) {
+      if (!this.isCurrentOperation(operation) || !this.matchesContext(context)) return false
+      const details = workerFailureDetails(error)
+      const terminal = details.failure.code === 'worker_crash' ||
+        details.failure.code === 'worker_missing'
+      this.failCurrentOperation(operation, details, terminal ? 'failed' : 'idle')
+      if (terminal && this.worker === worker) {
+        this.worker = null
+        void worker.dispose().catch(() => undefined)
+      } else if (!terminal) {
+        this.scheduleIdleDispose(worker)
+      }
       return false
     }
   }
@@ -344,7 +555,7 @@ export class CodeIndexCoordinator {
     ) {
       throw new Error('Code Graph 持久化状态与 Coordinator revision 冲突')
     }
-    this.publish(snapshotFromMetadata(metadata, coverage, workerState))
+    this.publish(this.snapshotFromCommitted(metadata, coverage, workerState))
   }
 
   private async reconcileCommittedOperation(
@@ -460,6 +671,18 @@ export class CodeIndexCoordinator {
     }, this.idleTimeoutMs)
   }
 
+  private scheduleChangeDrain(): void {
+    if (this.changeSourceFailure || this.pendingChanges.length === 0) return
+    this.clearChangeTimer()
+    this.changeTimer = setTimeout(() => {
+      this.changeTimer = null
+      if (this.activeRun) return
+      const batch = this.pendingChanges
+      this.pendingChanges = []
+      this.trackRun(this.performIncrementalUpdate(batch))
+    }, this.changeDebounceMs)
+  }
+
   private async shutdownWorker(): Promise<void> {
     this.clearIdleTimer()
     const worker = this.worker
@@ -482,8 +705,38 @@ export class CodeIndexCoordinator {
     this.idleTimer = null
   }
 
+  private clearChangeTimer(): void {
+    if (this.changeTimer) clearTimeout(this.changeTimer)
+    this.changeTimer = null
+  }
+
+  private trackRun(run: Promise<boolean>): Promise<boolean> {
+    this.activeRun = run
+    run.then(
+      () => this.clearActiveRun(run),
+      () => this.clearActiveRun(run)
+    )
+    return run
+  }
+
   private clearActiveRun(run: Promise<boolean>): void {
-    if (this.activeRun === run) this.activeRun = null
+    if (this.activeRun !== run) return
+    this.activeRun = null
+    this.scheduleChangeDrain()
+  }
+
+  private snapshotFromCommitted(
+    metadata: CodeGraphMetadata,
+    coverage: CodeIndexSnapshot['coverage'],
+    workerState: CodeIndexWorkerState
+  ): CodeIndexSnapshot {
+    const committed = snapshotFromMetadata(metadata, coverage, workerState)
+    if (!this.changeSourceFailure) return committed
+    return createSnapshot({
+      ...committed,
+      status: 'degraded',
+      failure: this.changeSourceFailure
+    })
   }
 
   private requireWorkspace(): WorkspaceContext {
@@ -609,10 +862,21 @@ function assertWorkerResult(
 ): void {
   if (
     result.operation.operationId !== operation.operationId ||
+    result.operation.kind !== operation.kind ||
     result.operation.workspaceIdentity !== operation.workspaceIdentity ||
-    result.operation.generation !== operation.generation
+    result.operation.generation !== operation.generation ||
+    result.operation.baseGeneration !== operation.baseGeneration ||
+    result.operation.baseRevision !== operation.baseRevision
   ) throw new Error('Code Index Worker 返回了 stale operation')
-  assertCommittedMetadata(result.metadata, operation)
+  if (result.outcome === 'committed') {
+    assertCommittedMetadata(result.metadata, operation)
+    return
+  }
+  if (
+    result.metadata.workspaceIdentity !== operation.workspaceIdentity ||
+    result.metadata.activeGeneration !== operation.baseGeneration ||
+    result.metadata.revision !== operation.baseRevision
+  ) throw new Error('Code Index Worker 返回了不一致的未提交结果')
 }
 
 function assertCommittedMetadata(

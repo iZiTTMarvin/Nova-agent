@@ -227,6 +227,8 @@ function runRequest(): CodeIndexWorkerRunRequest {
 function successResult(request: CodeIndexWorkerRunRequest) {
   return {
     operation: request.operation,
+    outcome: 'committed',
+    rebuildReason: null,
     metadata: {
       schemaVersion: 1,
       workspaceIdentity: 'workspace-a',

@@ -3,6 +3,7 @@ import { readdir, realpath, stat } from 'node:fs/promises'
 import * as path from 'node:path'
 import { isPathSkipped, loadIgnoreMatcher } from '../../workspace'
 import type { CodeGraphLanguage } from '../types'
+import { isExpandedInvalidationPath } from './ChangePlanner'
 
 export const CODE_INDEX_MAX_SOURCE_BYTES = 2 * 1024 * 1024
 export const CODE_INDEX_GIT_TIMEOUT_MS = 15_000
@@ -27,12 +28,6 @@ const KNOWN_UNSUPPORTED_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
   '.java', '.jl', '.kt', '.kts', '.lua', '.m', '.mm', '.nim', '.php', '.pl',
   '.pm', '.ps1', '.psm1', '.r', '.rake', '.rb', '.rs', '.scala', '.sh', '.sol',
   '.sql', '.svelte', '.swift', '.vb', '.vbs', '.vue', '.zig'
-])
-
-const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
-  'tsconfig.json',
-  'jsconfig.json',
-  'package.json'
 ])
 
 export type CodeFileDiscoveryStatus =
@@ -83,6 +78,11 @@ export interface FileDiscoveryOptions {
   readonly listGitFiles?: GitFileLister
 }
 
+export interface CodeFileInspectionOptions {
+  readonly workspaceRoot: string
+  readonly path: string
+}
+
 export class FileDiscoveryCancelledError extends Error {
   constructor() {
     super('代码文件发现已取消')
@@ -114,6 +114,7 @@ export async function discoverCodeFiles(
     diagnostics.push({ path: null, reason: 'git_unavailable' })
     candidates = await scanWorkspaceFallback(workspaceRoot, options.abortSignal, diagnostics)
   }
+  candidates = Object.freeze([...candidates, '.gitignore'])
 
   const files: DiscoveredCodeFile[] = []
   const configFiles: string[] = []
@@ -125,17 +126,18 @@ export async function discoverCodeFiles(
       diagnostics.push({ path: candidate, reason: 'invalid_path' })
       continue
     }
-    if (normalized.split('/').some(isPathSkipped)) continue
+    if (normalized !== '.gitignore' && normalized.split('/').some(isPathSkipped)) continue
     if (seenPaths.has(normalized)) continue
     seenPaths.add(normalized)
 
-    const basename = path.posix.basename(normalized).toLowerCase()
-    const isConfigFile = CONFIG_FILE_NAMES.has(basename)
+    const isConfigFile = isExpandedInvalidationPath(normalized)
     const language = languageForPath(normalized)
     if (!isConfigFile && language === null) continue
     const validated = await validateCandidate(workspaceRoot, normalized)
     if (!validated.ok) {
-      diagnostics.push({ path: normalized, reason: validated.reason })
+      if (normalized !== '.gitignore') {
+        diagnostics.push({ path: normalized, reason: validated.reason })
+      }
       continue
     }
     if (isConfigFile) configFiles.push(normalized)
@@ -162,6 +164,30 @@ export async function discoverCodeFiles(
     files: Object.freeze(files),
     configFiles: Object.freeze(configFiles),
     diagnostics: Object.freeze(diagnostics.map((item) => Object.freeze(item)))
+  })
+}
+
+export async function inspectCodeFile(
+  options: CodeFileInspectionOptions
+): Promise<DiscoveredCodeFile | null> {
+  const normalized = normalizeCandidatePath(options.path)
+  if (normalized === null || normalized.split('/').some(isPathSkipped)) return null
+  const language = languageForPath(normalized)
+  if (language === null) return null
+  const workspaceRoot = await realpath(path.resolve(options.workspaceRoot))
+  const validated = await validateCandidate(workspaceRoot, normalized)
+  if (!validated.ok) return null
+  const status: CodeFileDiscoveryStatus = language === 'unsupported'
+    ? 'unsupported'
+    : validated.sizeBytes > CODE_INDEX_MAX_SOURCE_BYTES
+      ? 'skipped_too_large'
+      : 'eligible'
+  return Object.freeze({
+    path: normalized,
+    language,
+    sizeBytes: validated.sizeBytes,
+    mtimeMs: validated.mtimeMs,
+    status
   })
 }
 
@@ -255,10 +281,10 @@ async function scanWorkspaceFallback(
 
     for (const entry of entries) {
       throwIfAborted(abortSignal)
-      if (isPathSkipped(entry.name)) continue
       const relativePath = current.relativePath
         ? `${current.relativePath}/${entry.name}`
         : entry.name
+      if (relativePath !== '.gitignore' && isPathSkipped(entry.name)) continue
       if (entry.isDirectory()) {
         if (!ignore(relativePath, true)) {
           pending.push({

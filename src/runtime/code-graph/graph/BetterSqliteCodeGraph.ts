@@ -6,14 +6,18 @@ import {
   type CodeIndexOperation
 } from '../types'
 import type {
+  CodeGraphConfigFileRecord,
   CodeGraphFileInput,
+  CodeGraphFileMetadataUpdate,
   CodeGraphFileRecord,
+  CodeGraphFileRelationRecord,
   CodeGraphGenerationActivation,
   CodeGraphGenerationInput,
   CodeGraphIncrementalUpdate,
   CodeGraphMetadata,
   CodeGraphRepository,
-  CodeGraphSymbolInput
+  CodeGraphSymbolInput,
+  CodeGraphUnresolvedModuleRecord
 } from './CodeGraphRepository'
 import {
   CODE_GRAPH_SCHEMA_VERSION,
@@ -176,6 +180,70 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
     return row === undefined ? null : parseFileRecord(row)
   }
 
+  async listActiveFiles(): Promise<readonly CodeGraphFileRecord[]> {
+    const rows = this.db.prepare(
+      `SELECT
+        f.id, f.generation, f.path, f.language,
+        f.content_hash AS contentHash, f.size_bytes AS sizeBytes,
+        f.mtime_ms AS mtimeMs, f.line_count AS lineCount,
+        f.parse_status AS parseStatus
+       FROM files f
+       JOIN index_meta m ON m.singleton = 1 AND m.active_generation = f.generation
+       ORDER BY f.path`
+    ).all()
+    return Object.freeze(rows.map(parseFileRecord))
+  }
+
+  async listActiveConfigFiles(): Promise<readonly CodeGraphConfigFileRecord[]> {
+    const rows = this.db.prepare(
+      `SELECT config.path, config.content_hash AS contentHash,
+              config.size_bytes AS sizeBytes, config.mtime_ms AS mtimeMs,
+              config.generation
+       FROM generation_config_files config
+       JOIN index_meta meta
+         ON meta.singleton = 1 AND meta.active_generation = config.generation
+       ORDER BY config.path`
+    ).all()
+    return Object.freeze(rows.map((row) => Object.freeze({
+      path: readString(row, 'path'),
+      contentHash: readString(row, 'contentHash'),
+      sizeBytes: readNumber(row, 'sizeBytes'),
+      mtimeMs: readNumber(row, 'mtimeMs'),
+      generation: readNumber(row, 'generation')
+    })))
+  }
+
+  async listActiveFileRelations(): Promise<readonly CodeGraphFileRelationRecord[]> {
+    const rows = this.db.prepare(
+      `SELECT source.path AS sourcePath, target.path AS targetPath
+       FROM file_edges edge
+       JOIN index_meta meta ON meta.singleton = 1 AND meta.active_generation = edge.generation
+       JOIN files source ON source.id = edge.source_file_id
+       JOIN files target ON target.id = edge.target_file_id
+       ORDER BY source.path, target.path`
+    ).all()
+    return Object.freeze(rows.map((row) => Object.freeze({
+      sourcePath: readString(row, 'sourcePath'),
+      targetPath: readString(row, 'targetPath')
+    })))
+  }
+
+  async listActiveUnresolvedModules(): Promise<readonly CodeGraphUnresolvedModuleRecord[]> {
+    const rows = this.db.prepare(
+      `SELECT DISTINCT file.path AS filePath, relation.module_specifier AS moduleSpecifier
+       FROM unresolved_relations relation
+       JOIN index_meta meta
+         ON meta.singleton = 1 AND meta.active_generation = relation.generation
+       JOIN files file ON file.id = relation.file_id
+       WHERE relation.module_specifier IS NOT NULL
+       ORDER BY file.path, relation.module_specifier`
+    ).all()
+    return Object.freeze(rows.map((row) => Object.freeze({
+      filePath: readString(row, 'filePath'),
+      moduleSpecifier: readString(row, 'moduleSpecifier')
+    })))
+  }
+
   async stageGeneration(input: CodeGraphGenerationInput): Promise<void> {
     this.assertGenerationInput(input)
     const metadata = this.readMetadata()
@@ -202,6 +270,24 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
         input.resolverSignature,
         input.stagedAt
       )
+      const insertConfig = this.db.prepare(
+        `INSERT INTO generation_config_files (
+          generation, path, content_hash, size_bytes, mtime_ms
+        ) VALUES (?, ?, ?, ?, ?)`
+      )
+      for (const config of input.configFileMetadata ?? []) {
+        assertWorkspacePath(config.path)
+        assertNonEmpty(config.contentHash, 'configContentHash')
+        assertNonNegativeInteger(config.sizeBytes, 'configSizeBytes')
+        assertFiniteNumber(config.mtimeMs, 'configMtimeMs')
+        insertConfig.run(
+          input.generation,
+          config.path,
+          config.contentHash,
+          config.sizeBytes,
+          config.mtimeMs
+        )
+      }
       this.insertGraphRows(input.generation, input)
     })
   }
@@ -292,6 +378,28 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
       }
       for (const file of input.files) affectedPaths.add(file.path)
 
+      const updateMetadata = this.db.prepare(
+        `UPDATE files
+         SET content_hash = ?, size_bytes = ?, mtime_ms = ?
+         WHERE generation = ? AND path = ?`
+      )
+      for (const update of input.metadataUpdates) {
+        assertFileMetadataUpdate(update)
+        if (affectedPaths.has(update.path)) {
+          throw new Error(`Code Graph metadata update 与替换路径冲突：${update.path}`)
+        }
+        const result = updateMetadata.run(
+          update.contentHash,
+          update.sizeBytes,
+          update.mtimeMs,
+          input.generation,
+          update.path
+        )
+        if (result.changes !== 1) {
+          throw new Error(`Code Graph metadata update 路径不存在：${update.path}`)
+        }
+      }
+
       const deleteFts = this.db.prepare(
         `DELETE FROM symbol_fts WHERE generation = ? AND path = ?`
       )
@@ -338,7 +446,7 @@ export class BetterSqliteCodeGraph implements CodeGraphRepository {
   async touchAccess(accessedAt: number): Promise<void> {
     assertFiniteNumber(accessedAt, 'accessedAt')
     this.db.prepare(
-      `UPDATE index_meta SET last_accessed = ? WHERE singleton = 1`
+      `UPDATE index_meta SET last_accessed = MAX(last_accessed, ?) WHERE singleton = 1`
     ).run(accessedAt)
   }
 
@@ -696,6 +804,13 @@ function assertFiniteNumber(value: number, field: string): void {
   if (!Number.isFinite(value)) {
     throw new Error(`Code Graph 字段 ${field} 必须是有限数值`)
   }
+}
+
+function assertFileMetadataUpdate(update: CodeGraphFileMetadataUpdate): void {
+  assertWorkspacePath(update.path)
+  assertNonEmpty(update.contentHash, 'contentHash')
+  assertNonNegativeInteger(update.sizeBytes, 'sizeBytes')
+  assertFiniteNumber(update.mtimeMs, 'mtimeMs')
 }
 
 function normalizeRowId(value: number | bigint): number {

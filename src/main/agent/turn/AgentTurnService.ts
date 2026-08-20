@@ -239,7 +239,8 @@ export async function sendAgentMessage(
     // 同根会话切换不会发 root-change；只允许当前会话启动，避免旧 turn 重开已关闭工作区。
     if (
       workspaceState.currentSessionId === params.sessionId &&
-      workspaceState.currentProjectPath === projectPath
+      workspaceState.currentProjectPath === projectPath &&
+      getCodeContextQueryPort(projectPath) === null
     ) {
       ensureCodeGraphForWorkspace(projectPath)
     }

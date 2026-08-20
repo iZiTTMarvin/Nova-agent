@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import {
   CodeIndexWorkerBuildError,
-  runFullCodeIndexBuild
+  runCodeIndexWork
 } from './CodeIndexBuildRunner'
 import {
   parseCodeIndexHostMessage,
@@ -47,7 +47,7 @@ workerPort.on('message', (value: unknown) => {
 
 async function run(
   requestId: number,
-  request: Parameters<typeof runFullCodeIndexBuild>[0]
+  request: Parameters<typeof runCodeIndexWork>[0]
 ): Promise<void> {
   const abortController = new AbortController()
   active = {
@@ -56,7 +56,7 @@ async function run(
     abortController
   }
   try {
-    const result = await runFullCodeIndexBuild(request, {
+    const result = await runCodeIndexWork(request, {
       abortSignal: abortController.signal,
       isAborted: () => Atomics.load(sharedAbortFlag, 0) === 1,
       onProgress: (progress) => workerPort.postMessage({

@@ -92,6 +92,16 @@ class DeferredWorker implements CodeIndexWorkerPort {
     active.resolve(successResult(active.request, coverage))
   }
 
+  completeUnchanged(coverage: CodeIndexCoverage = EMPTY_COVERAGE): void {
+    const active = this.takeActive()
+    active.resolve(noCommitResult(active.request, coverage, null))
+  }
+
+  requireRebuild(coverage: CodeIndexCoverage = EMPTY_COVERAGE): void {
+    const active = this.takeActive()
+    active.resolve(noCommitResult(active.request, coverage, 'bulk-change'))
+  }
+
   fail(
     code: ConstructorParameters<typeof CodeIndexWorkerRunError>[0]['code'],
     message: string,
@@ -153,6 +163,34 @@ afterEach(() => {
 })
 
 describe('CodeIndexCoordinator Worker lifecycle', () => {
+  it('Host 访问时间经 Worker 单写路径更新，不改变 revision', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      generateOperationId: () => 'touch-access'
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 1, 4)))
+    )
+
+    const touch = coordinator.touchAccess(456)
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+    expect(worker.runCalls[0]).toMatchObject({
+      operation: { kind: 'touch-access', generation: 1, baseRevision: 4 },
+      accessedAt: 456
+    })
+    worker.completeUnchanged()
+
+    await expect(touch).resolves.toBe(true)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'ready',
+      activeGeneration: 1,
+      revision: 4,
+      workerState: 'idle'
+    })
+  })
+
   it('打开 workspace 不启 Worker，构建后只接受 Worker 提交结果', async () => {
     const worker = new DeferredWorker()
     const createWorker = vi.fn(() => worker)
@@ -426,6 +464,155 @@ describe('CodeIndexCoordinator Worker lifecycle', () => {
     })
   })
 
+  it('变更立即进入 updating，同路径删除优先且 debounce 后只提交一次', async () => {
+    vi.useFakeTimers()
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      changeDebounceMs: 250,
+      generateOperationId: () => 'incremental-1'
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 1, 4)))
+    )
+
+    coordinator.notifyWorkspaceChange({ type: 'change', path: 'src/a.ts' })
+    coordinator.notifyWorkspaceChange({ type: 'unlink', path: 'src/a.ts' })
+    expect(coordinator.getSnapshot()).toMatchObject({ status: 'updating', revision: 4 })
+    await vi.advanceTimersByTimeAsync(249)
+    expect(worker.runCalls).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(worker.runCalls).toHaveLength(1)
+    expect(worker.runCalls[0]).toMatchObject({
+      operation: { kind: 'incremental-update', generation: 1, baseRevision: 4 },
+      changeBatch: [{ type: 'unlink', path: 'src/a.ts' }]
+    })
+    worker.complete()
+    await vi.runAllTimersAsync()
+    expect(coordinator.getSnapshot()).toMatchObject({ status: 'ready', revision: 5 })
+  })
+
+  it('drift 无变化时查询保持 ready，批量结果则沿同一调度转 full rebuild', async () => {
+    const worker = new DeferredWorker()
+    let operationSequence = 0
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      generateOperationId: () => `operation-${++operationSequence}`
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 2, 4)))
+    )
+
+    const drift = coordinator.checkDrift()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+    expect(coordinator.getSnapshot()).toMatchObject({ status: 'ready', revision: 4 })
+    worker.completeUnchanged()
+    await expect(drift).resolves.toBe(true)
+
+    coordinator.notifyWorkspaceChange({ type: 'change', path: 'src/a.ts' })
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(2))
+    worker.requireRebuild()
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(3))
+    expect(worker.runCalls[2]?.operation.kind).toBe('full-rebuild')
+    worker.complete()
+    await vi.waitFor(() => expect(coordinator.getSnapshot().revision).toBe(5))
+  })
+
+  it('watcher 失败停止待处理增量并保留 last-good degraded', async () => {
+    vi.useFakeTimers()
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      changeDebounceMs: 50
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 1, 4)))
+    )
+    coordinator.notifyWorkspaceChange({ type: 'change', path: 'src/a.ts' })
+    coordinator.reportChangeSourceFailure(new Error('recursive watch failed'))
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(worker.runCalls).toHaveLength(0)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'degraded',
+      activeGeneration: 1,
+      revision: 4,
+      failure: { code: 'watcher_failed' }
+    })
+  })
+
+  it('空闲 dispose 后收到变更会冷启新 Worker 且 last-good 查询状态可用', async () => {
+    vi.useFakeTimers()
+    const workers = [new DeferredWorker(), new DeferredWorker()]
+    const createWorker = vi.fn(() => {
+      const worker = workers.shift()
+      if (!worker) throw new Error('缺少 fake Worker')
+      return worker
+    })
+    const coordinator = new CodeIndexCoordinator({
+      createWorker,
+      idleTimeoutMs: 50,
+      changeDebounceMs: 0
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 1, 4)))
+    )
+
+    const drift = coordinator.checkDrift()
+    await vi.advanceTimersByTimeAsync(0)
+    const first = createWorker.mock.results[0]?.value
+    if (!(first instanceof DeferredWorker)) throw new Error('未创建首个 Worker')
+    first.completeUnchanged()
+    await drift
+    await vi.advanceTimersByTimeAsync(50)
+    expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'ready',
+      revision: 4,
+      workerState: 'stopped'
+    })
+
+    coordinator.notifyWorkspaceChange({ type: 'change', path: 'src/a.ts' })
+    await vi.advanceTimersByTimeAsync(0)
+    const second = createWorker.mock.results[1]?.value
+    if (!(second instanceof DeferredWorker)) throw new Error('未创建第二个 Worker')
+    expect(second.runCalls[0]?.operation.kind).toBe('incremental-update')
+    second.complete()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(createWorker).toHaveBeenCalledTimes(2)
+    expect(coordinator.getSnapshot()).toMatchObject({ status: 'ready', revision: 5 })
+  })
+
+  it('增量提交后 coverage 失败仍对账到已推进的 revision', async () => {
+    const worker = new DeferredWorker()
+    const coordinator = new CodeIndexCoordinator({
+      createWorker: () => worker,
+      changeDebounceMs: 0,
+      generateOperationId: () => 'incremental-after-commit'
+    })
+    await coordinator.openWorkspace(
+      workspace('workspace-a'),
+      stateProvider(new FakeStateReader(metadata('workspace-a', 1, 4)))
+    )
+    coordinator.notifyWorkspaceChange({ type: 'change', path: 'src/a.ts' })
+    await vi.waitFor(() => expect(worker.runCalls).toHaveLength(1))
+
+    worker.fail(
+      'storage_read_failed',
+      'coverage failed',
+      metadata('workspace-a', 1, 5)
+    )
+    await vi.waitFor(() => expect(coordinator.getSnapshot()).toMatchObject({
+      status: 'degraded',
+      activeGeneration: 1,
+      revision: 5,
+      failure: { code: 'storage_read_failed' }
+    }))
+  })
+
   it('已提交后 coverage 失败仍保留新 generation 与 revision', async () => {
     const worker = new DeferredWorker()
     const coordinator = new CodeIndexCoordinator({ createWorker: () => worker })
@@ -494,10 +681,31 @@ function successResult(
 ): CodeIndexWorkerRunResult {
   return {
     operation: request.operation,
+    outcome: 'committed',
+    rebuildReason: null,
     metadata: metadata(
       request.operation.workspaceIdentity,
       request.operation.generation,
       request.operation.baseRevision + 1
+    ),
+    coverage,
+    durationMs: 10
+  }
+}
+
+function noCommitResult(
+  request: CodeIndexWorkerRunRequest,
+  coverage: CodeIndexCoverage,
+  rebuildReason: CodeIndexWorkerRunResult['rebuildReason']
+): CodeIndexWorkerRunResult {
+  return {
+    operation: request.operation,
+    outcome: rebuildReason === null ? 'unchanged' : 'rebuild-required',
+    rebuildReason,
+    metadata: metadata(
+      request.operation.workspaceIdentity,
+      request.operation.baseGeneration,
+      request.operation.baseRevision
     ),
     coverage,
     durationMs: 10

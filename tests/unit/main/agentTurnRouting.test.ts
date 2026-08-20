@@ -273,8 +273,19 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(typeof getter).toBe('function')
     if (typeof getter !== 'function') throw new Error('查询端 getter 缺失')
     expect(getter()).toBe(codeGraphHost.port)
-    expect(codeGraphHost.ensure).toHaveBeenCalledWith('/tmp/ws')
+    expect(codeGraphHost.ensure).not.toHaveBeenCalled()
     expect(codeGraphHost.getQueryPort).toHaveBeenCalledWith('/tmp/ws')
+  })
+
+  it('启用会话缺少工作区查询端时才重新确保 Runtime', async () => {
+    registryHolder.current = createRegistry([])
+    sessionStore.load.mockReturnValue(makeSession('default', true))
+    codeGraphHost.getQueryPort.mockReturnValue(null)
+
+    await sendAgentMessage({ sessionId: 'sess-1', content: '查看代码' }, deps)
+
+    expect(codeGraphHost.ensure).toHaveBeenCalledOnce()
+    expect(codeGraphHost.ensure).toHaveBeenCalledWith('/tmp/ws')
   })
 
   it('compose + 普通文本 → 创建 agent run，且 route 传给 sendMessage', async () => {
