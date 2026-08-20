@@ -16,7 +16,7 @@ import { readdir, stat } from 'fs/promises'
 import { relative } from 'path'
 import { resolveAndValidatePath } from './ToolRegistry'
 import { resolveToolArg } from './toolArgResolver'
-import { isPathSkipped, loadIgnoreMatcher } from './pathExclusions'
+import { isPathSkipped, loadIgnoreMatcher } from '../workspace'
 import { createTruncationPipeline } from './TruncationPipeline'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 

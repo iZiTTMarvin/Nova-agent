@@ -17,7 +17,7 @@
  */
 import { readdir, stat, readFile } from 'fs/promises'
 import { join, relative } from 'path'
-import { isPathSkipped, loadIgnoreMatcher, type IgnoreMatcher } from '../tools/pathExclusions'
+import { isPathSkipped, loadIgnoreMatcher, type IgnoreMatcher } from '../workspace'
 
 // ── 诊断打点（2026-06-25 卡顿定位）──────────────────────────────
 // 默认完全 no-op，仅当环境变量 NOVA_SNAPSHOT_DEBUG=1 时输出耗时统计到主进程终端。

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
-import { BUILD_SKIP_DIRS, isPathSkipped, loadIgnoreMatcher } from '../../../../src/runtime/tools/pathExclusions'
+import { BUILD_SKIP_DIRS, isPathSkipped, loadIgnoreMatcher } from '../../../../src/runtime/workspace'
 
 const TMP = join(process.cwd(), '.test-workspace-exclusions')
 

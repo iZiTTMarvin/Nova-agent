@@ -13,3 +13,9 @@ export {
   workspaceConflictResult,
   acquireWriterLeaseOrConflict
 } from './conflict'
+export {
+  BUILD_SKIP_DIRS,
+  isPathSkipped,
+  loadIgnoreMatcher,
+  type IgnoreMatcher
+} from './pathExclusions'

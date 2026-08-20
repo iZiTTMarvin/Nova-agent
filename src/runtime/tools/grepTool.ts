@@ -10,7 +10,7 @@ import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { resolveToolArg } from './toolArgResolver'
 import type { GrepInput, GrepOutputMode, GrepToolOptions } from './grep-types'
 // 目录排除清单与 gitignore 解析统一走共享模块，消除与 findTool 的重复。
-import { isPathSkipped, loadIgnoreMatcher, type IgnoreMatcher } from './pathExclusions'
+import { isPathSkipped, loadIgnoreMatcher, type IgnoreMatcher } from '../workspace'
 
 // picomatch 仅用于 glob 参数匹配（GlobMatcher）；gitignore 解析已移至 pathExclusions。
 // @ts-expect-error - picomatch is a transitive dep without @types/picomatch
