@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
+import {
+  useChatStore,
+  resetChatStoreForTests,
+  type ChatState
+} from '../../../src/renderer/stores/useChatStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 
 const mockInvoke = vi.fn()
@@ -119,5 +123,50 @@ describe('Steering Queue', () => {
     // 最早 5 条（msg-0..msg-4）被丢弃
     expect(queue[0].text).toBe('msg-5')
     expect(queue[19].text).toBe('msg-24')
+  })
+
+  it('dispatch 发送被守卫拒绝：消息放回队首，不丢失、不重复发送', async () => {
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.getState().handleMessageStart('msg_reject')
+    useChatStore.getState().enqueuePendingMessage('Q1', [])
+    useChatStore.getState().enqueuePendingMessage('Q2', [])
+
+    const originalSendMessage = useChatStore.getState().sendMessage
+    useChatStore.setState({
+      sendMessage: (async () => false) as unknown as ChatState['sendMessage']
+    })
+    try {
+      await useChatStore.getState().handleMessageEnd('msg_reject')
+    } finally {
+      useChatStore.setState({ sendMessage: originalSendMessage })
+    }
+
+    // 队首未发出：Q1 回队且顺序不变，等待下一个 turn boundary 重试
+    const queue = useChatStore.getState().pendingUserMessages.map(q => q.text)
+    expect(queue).toEqual(['Q1', 'Q2'])
+    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(0)
+  })
+
+  it('dispatch 发送抛错：消息放回队首等下次派发', async () => {
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.getState().handleMessageStart('msg_throw')
+    useChatStore.getState().enqueuePendingMessage('Q1', [])
+    useChatStore.getState().enqueuePendingMessage('Q2', [])
+
+    const originalSendMessage = useChatStore.getState().sendMessage
+    useChatStore.setState({
+      sendMessage: (async () => {
+        throw new Error('IPC 不可用')
+      }) as unknown as ChatState['sendMessage']
+    })
+    try {
+      await useChatStore.getState().handleMessageEnd('msg_throw')
+    } finally {
+      useChatStore.setState({ sendMessage: originalSendMessage })
+    }
+
+    const queue = useChatStore.getState().pendingUserMessages.map(q => q.text)
+    expect(queue).toEqual(['Q1', 'Q2'])
+    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(0)
   })
 })

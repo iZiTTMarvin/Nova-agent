@@ -21,6 +21,7 @@ import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
+import { useChatStore } from '../../stores/useChatStore'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
 import { PlanReviewCard } from './PlanReviewCard'
@@ -239,6 +240,11 @@ function MessageItemInner({
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState('')
 
+  // 分叉准备窗口（prepare → send 两段 IPC 之间）：隐藏/禁用全部分支操作，
+  // 防止并发点击产生视图与持久化错位。经 store 直接订阅，避免向 ChatPanel
+  // 增加一层透传 prop。
+  const branchForkInProgress = useChatStore(state => state.branchForkInProgress)
+
   // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停；static 行强制关闭。
   const streamingActive = isGenerating && !isPausedForInput && !isStaticRow
 
@@ -332,7 +338,7 @@ function MessageItemInner({
   /* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出。
      按钮几何全部交给 Astryx（IconButton size/variant），不再有 .astryx-* 几何覆盖。 */
   const actionsBar =
-    isAssistant && !isGenerating ? (
+    isAssistant && !isGenerating && !branchForkInProgress ? (
       <div className="chat-msg__actions">
         <IconButton
           label="重新生成此回答"
@@ -350,7 +356,7 @@ function MessageItemInner({
           }
         />
       </div>
-    ) : isUser && !isGenerating && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
+    ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
       /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
       <div className="chat-msg__actions">
         <IconButton
@@ -370,7 +376,7 @@ function MessageItemInner({
 
   /* 兄弟分支翻页器：‹ k/n › */
   const branchFlipper =
-    msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating ? (
+    msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating && !branchForkInProgress ? (
       <div className="chat-msg__branch-flipper">
         <IconButton
           label="上一条分支"
@@ -520,10 +526,10 @@ function MessageItemInner({
                     label="重发"
                     variant="primary"
                     size="sm"
-                    isDisabled={!editText.trim()}
+                    isDisabled={!editText.trim() || branchForkInProgress}
                     onClick={() => {
                       const t = editText.trim()
-                      if (t) {
+                      if (t && !branchForkInProgress) {
                         setIsEditing(false)
                         onEditResend?.(msg.id, t)
                       }

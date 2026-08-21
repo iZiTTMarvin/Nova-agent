@@ -23,7 +23,7 @@ function makeSnap(
   runId: string,
   sessionId: string,
   sequence: number,
-  status: 'running' | 'completed' | 'cancelled' = 'running'
+  status: 'running' | 'completed' | 'cancelled' | 'interrupted' = 'running'
 ) {
   return {
     runId,
@@ -157,5 +157,69 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
 
     useRunStore.getState().beginLocalCancel('runA')
     expect(useRunStore.getState().cancelling).toBe(false)
+  })
+
+  it('pull 到其他会话的终态不提前清空取消；本会话终态才收敛', async () => {
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
+    resetChatStoreForTests()
+    useChatStore.setState({ currentSessionId: 'sessA' })
+    useRunStore.setState({ selectedSessionId: 'sessA' })
+
+    useRunStore.getState().beginLocalCancel(null)
+    expect(useRunStore.getState().cancelling).toBe(true)
+    expect(useRunStore.getState().cancellingSessionId).toBe('sessA')
+
+    // B 的 pull 返回 B 的终态 run：不得提前清空 A 的取消
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') {
+        return { snapshot: makeSnap('runB', 'sessB', 9, 'completed'), waitingSessions: [] }
+      }
+      return { snapshot: null, waitingSessions: [] }
+    })
+    await useRunStore.getState().pullSnapshot('sessB')
+    expect(useRunStore.getState().cancelling).toBe(true)
+
+    // A 的 pull 返回 A 的取消终态：取消收敛
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'run:get-snapshot') {
+        return { snapshot: makeSnap('runA', 'sessA', 9, 'cancelled'), waitingSessions: [] }
+      }
+      return { snapshot: null, waitingSessions: [] }
+    })
+    await useRunStore.getState().pullSnapshot('sessA')
+    expect(useRunStore.getState().cancelling).toBe(false)
+    expect(useRunStore.getState().cancellingSessionId).toBeNull()
+  })
+
+  it('interrupted 归属会话：跨会话事件不覆盖，run 离开 interrupted 后清理', async () => {
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const store = useRunStore.getState()
+
+    store.handleSnapshotEvent(makeSnap('runA', 'sessA', 1, 'interrupted'), {
+      sequence: 1,
+      type: 'interrupted',
+      at: Date.now()
+    })
+    expect(useRunStore.getState().interruptedRunId).toBe('runA')
+    expect(useRunStore.getState().interruptedSessionId).toBe('sessA')
+
+    // B 的普通运行事件不动 A 的中断横幅归属
+    store.handleSnapshotEvent(makeSnap('runB', 'sessB', 1), {
+      sequence: 1,
+      type: 'running',
+      at: Date.now()
+    })
+    expect(useRunStore.getState().interruptedRunId).toBe('runA')
+    expect(useRunStore.getState().interruptedSessionId).toBe('sessA')
+
+    // runA 离开 interrupted（恢复/完成）→ 横幅连同归属一起清理
+    store.handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'completed'), {
+      sequence: 2,
+      type: 'terminal',
+      at: Date.now()
+    })
+    expect(useRunStore.getState().interruptedRunId).toBeNull()
+    expect(useRunStore.getState().interruptedSessionId).toBeNull()
   })
 })

@@ -111,7 +111,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
       const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
       dispatchWorkspaceChange(state)
     } catch (err) {
+      // 重新抛出（如会话正在运行时主进程拒绝）：让 UI 层能展示可见反馈
       console.error('[useWorkspaceStore] 删除会话失败:', err)
+      throw err
     }
   },
 

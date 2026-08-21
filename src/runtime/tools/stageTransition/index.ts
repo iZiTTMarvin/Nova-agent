@@ -2,7 +2,7 @@ import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import {
   COMPOSE_STAGE_IDS,
   COMPOSE_STAGE_LABELS,
-  getComposeStageCursor,
+  getPlanCompleteDenial,
   isComposeStageId,
   type ComposeStageAction,
   type ComposeStageEntry
@@ -10,40 +10,6 @@ import {
 
 function failed(error: string): ToolResult {
   return { success: false, output: '', error }
-}
-
-/**
- * 计划确认门：complete 动作把当前阶段推进到「计划」之外时，必须先有明确批准。
- * auto 模式下自动放行并留痕（approveComposePlan 记 auto: true，同时 emit 事件
- * 让审阅卡实时反映"自动批准"而非用户手动点击）；返回非空字符串表示应拒绝完成。
- */
-function ensurePlanApprovalForComplete(
-  context: ToolContext,
-  sessionStore: NonNullable<ToolContext['sessionStore']>,
-  sessionId: string
-): string | null {
-  const stages = sessionStore.getComposeStages(sessionId)
-  if (!stages) return null // 会话不存在或阶段表尚未创建，交由 apply 统一报错
-
-  const cursor = getComposeStageCursor(stages)
-  if (cursor.currentStageId !== 'plan') return null
-
-  const approval = sessionStore.getComposePlanApproval(sessionId)
-  if (approval?.status === 'approved') return null
-
-  if (context.autoMode) {
-    const approved = sessionStore.approveComposePlan(sessionId, { auto: true })
-    if (approved) {
-      context.eventBus?.emit({
-        type: 'compose_plan_approval_updated',
-        sessionId,
-        approval: approved
-      })
-    }
-    return null
-  }
-
-  return '计划尚未获得用户批准，无法完成「计划」阶段。请等待用户在计划审阅卡中点击批准。'
 }
 
 function parseAction(args: Record<string, unknown>): ComposeStageAction | string {
@@ -160,8 +126,28 @@ export const stageTransitionTool: ToolExecutor = {
     }
 
     if (parsed.type === 'complete') {
-      const denial = ensurePlanApprovalForComplete(context, sessionStore, sessionId)
-      if (denial) return failed(denial)
+      const stages = sessionStore.getComposeStages(sessionId)
+      const denial = getPlanCompleteDenial(
+        stages,
+        // 无阶段表时无需读批准状态，交由 apply 统一报错/建表
+        stages ? sessionStore.getComposePlanApproval(sessionId) : null
+      )
+      if (denial) {
+        // auto 模式自动放行并留痕（approveComposePlan 记 auto: true，同时 emit 事件
+        // 让审阅卡实时反映"自动批准"而非用户手动点击）
+        if (context.autoMode) {
+          const approved = sessionStore.approveComposePlan(sessionId, { auto: true })
+          if (approved) {
+            context.eventBus?.emit({
+              type: 'compose_plan_approval_updated',
+              sessionId,
+              approval: approved
+            })
+          }
+        } else {
+          return failed(denial)
+        }
+      }
     }
 
     const result = sessionStore.applyComposeStageTransition(sessionId, parsed)

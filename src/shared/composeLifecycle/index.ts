@@ -16,3 +16,4 @@ export {
   type ComposeStageCursor
 } from './transitions'
 export { getComposeStageToolDenial } from './stageToolGating'
+export { getPlanCompleteDenial } from './planApprovalGate'

@@ -33,7 +33,9 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
   ...initialBranchState(),
 
   regenerateAssistant: async (sessionId: string, messageId: string) => {
-    if (get().isGenerating) return
+    // 重生成/编辑/发送/切分支共用同一把入口锁：分叉准备窗口（prepare → send
+    // 两段 IPC 之间）的并发操作会覆盖乐观截断视图或漂移 regenerate 身份
+    if (get().isGenerating || get().branchForkInProgress || get().sendInFlight) return
 
     const { messages } = get()
     const assistantIdx = messages.findIndex(m => m.id === messageId)
@@ -132,7 +134,7 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
   },
 
   switchBranch: async (sessionId: string, targetMessageId: string) => {
-    if (get().isGenerating || get().branchForkInProgress) return
+    if (get().isGenerating || get().branchForkInProgress || get().sendInFlight) return
 
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
@@ -146,7 +148,7 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
   },
 
   editResend: async (sessionId: string, messageId: string, newContent: string) => {
-    if (get().isGenerating) return
+    if (get().isGenerating || get().branchForkInProgress || get().sendInFlight) return
 
     // 分叉准备 + 发送全程禁止翻页/切分支（prepare 与 send-message 是两段 IPC，中间须锁住）
     set({ branchForkInProgress: true })
@@ -188,10 +190,12 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
 
   finishBranchMetaRefresh: async () => {
     if (!get().pendingBranchMetaReload) return
-    set({ pendingBranchMetaReload: false })
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().bumpMessagesRevision()
+      // 刷新成功才清标记：失败时保留，下一次轮次结束（message_end / error）自动重试，
+      // 否则落盘的分叉分支信息（徽标/翻页器）会一直陈旧直到重开会话
+      set({ pendingBranchMetaReload: false })
     } catch (err) {
       console.error('[useChatStore] finishBranchMetaRefresh 失败:', err)
     }

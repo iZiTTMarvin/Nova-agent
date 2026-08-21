@@ -40,12 +40,16 @@ export interface RunViewState {
   waitingSessions: WaitingSessionBadge[]
   /** 取消中：等 snapshot 确认终态前保持 */
   cancelling: boolean
+  /** 取消动作归属的会话；其他会话视图不呈现取消态、不参与终态确认 */
+  cancellingSessionId: string | null
   /** 取消 grace 超时：部分任务未退出 */
   cancelGraceExceeded: boolean
   /** 强制终止目标 runId */
   forceTerminateRunId: string | null
   /** interrupted run 恢复入口可见时的 runId */
   interruptedRunId: string | null
+  /** interrupted banner 归属的会话；只在所属会话视图呈现与生效 */
+  interruptedSessionId: string | null
   interruptedSteps: Array<{
     toolCallId: string
     toolName: string
@@ -144,6 +148,22 @@ function isTerminalStatus(status: RunStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
 }
 
+/**
+ * 终态 snapshot 是否归属当前取消动作：
+ * - 明确了目标 runId 时按 runId 精确匹配（跨会话到达的终态同样确认取消，不受当前视图影响）；
+ * - runId 未知时按取消归属会话判定，归属未知才退回当前会话（水合前的兜底语义）。
+ */
+function snapshotResolvesCancelling(
+  state: RunViewState,
+  snapshot: RunSnapshot,
+  currentSessionId: string | null
+): boolean {
+  const targetRunId = state.forceTerminateRunId
+  if (targetRunId != null) return targetRunId === snapshot.runId
+  if (state.cancellingSessionId != null) return snapshot.sessionId === state.cancellingSessionId
+  return currentSessionId == null || snapshot.sessionId === currentSessionId
+}
+
 export const useRunStore = create<RunViewState>((set, get) => ({
   snapshot: null,
   lastSequence: 0,
@@ -154,9 +174,11 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   pullTokenByRunId: {},
   waitingSessions: [],
   cancelling: false,
+  cancellingSessionId: null,
   cancelGraceExceeded: false,
   forceTerminateRunId: null,
   interruptedRunId: null,
+  interruptedSessionId: null,
   interruptedSteps: [],
 
   pullSnapshot: (sessionId: string) => {
@@ -203,6 +225,8 @@ export const useRunStore = create<RunViewState>((set, get) => ({
             : get().pullTokenByRunId,
           waitingSessions: result?.waitingSessions ?? [],
           interruptedRunId: snap?.status === 'interrupted' ? snap.runId : get().interruptedRunId,
+          interruptedSessionId:
+            snap?.status === 'interrupted' ? snap.sessionId : get().interruptedSessionId,
           interruptedSteps:
             snap?.status === 'interrupted'
               ? (snap.toolCommits ?? []).map(c => ({
@@ -218,11 +242,17 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         const currentSessionId = useChatStore.getState().currentSessionId
         projectInteractionsToAgentStore(snap, currentSessionId)
 
-        // 终态确认取消
-        if (snap && isTerminalStatus(snap.status) && get().cancelling) {
+        // 终态确认取消（按取消归属校验，其他会话的终态 snapshot 不得提前清空）
+        if (
+          snap &&
+          isTerminalStatus(snap.status) &&
+          get().cancelling &&
+          snapshotResolvesCancelling(get(), snap, currentSessionId)
+        ) {
           clearCancelGraceTimer()
           set({
             cancelling: false,
+            cancellingSessionId: null,
             cancelGraceExceeded: false,
             forceTerminateRunId: null
           })
@@ -260,12 +290,15 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       [snapshot.sessionId]: snapshot.runId
     }
     const isSelected = state.selectedSessionId === null || state.selectedSessionId === snapshot.sessionId
-    // interrupted 恢复/完成后清理 interruptedRunId
+    // interrupted 恢复/完成后清理 interruptedRunId（连同归属会话一起清理）
     let interruptedRunId = state.interruptedRunId
+    let interruptedSessionId = state.interruptedSessionId
     if (snapshot.status === 'interrupted') {
       interruptedRunId = snapshot.runId
+      interruptedSessionId = snapshot.sessionId
     } else if (interruptedRunId === snapshot.runId) {
       interruptedRunId = null
+      interruptedSessionId = null
     }
     set({
       // 非当前会话事件只写自己的分桶，绝不篡改兼容 snapshot。
@@ -277,7 +310,8 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         ...state.lastSequenceByRunId,
         [snapshot.runId]: event.sequence
       },
-      interruptedRunId
+      interruptedRunId,
+      interruptedSessionId
     })
 
     void (async () => {
@@ -290,17 +324,13 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       // 刷新徽标
       void get().refreshWaitingBadges()
 
-      const targetRunId = get().forceTerminateRunId
       const cancellingThisRun =
-        get().cancelling &&
-        // 会话未水合（null）时无从比对，与上方投影的空选中语义一致：放行终态确认。
-        (currentSessionId == null || snapshot.sessionId === currentSessionId) &&
-        isTerminalStatus(snapshot.status) &&
-        (targetRunId == null || targetRunId === snapshot.runId)
+        get().cancelling && snapshotResolvesCancelling(get(), snapshot, currentSessionId)
       if (cancellingThisRun) {
         clearCancelGraceTimer()
         set({
           cancelling: false,
+          cancellingSessionId: null,
           cancelGraceExceeded: false,
           forceTerminateRunId: null
         })
@@ -326,9 +356,19 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         ?? (get().snapshot?.runId === target ? get().snapshot : null)
       if (existing && isTerminalStatus(existing.status)) return
     }
+    // 取消归属会话：优先从 run 快照反查；查不到时保持已有归属（IPC 回传的未知
+    // runId 不得覆盖侧边栏取消的会话归属），最后退回当前工作区会话。
+    const targetSnap = target
+      ? get().snapshotsByRunId[target]
+        ?? (get().snapshot?.runId === target ? get().snapshot : null)
+      : null
+    const cancellingSessionId =
+      targetSnap?.sessionId
+      ?? (get().cancelling ? get().cancellingSessionId : get().selectedSessionId)
     clearCancelGraceTimer()
     set({
       cancelling: true,
+      cancellingSessionId,
       cancelGraceExceeded: false,
       forceTerminateRunId: target
     })
@@ -341,6 +381,13 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   },
 
   forceTerminate: async () => {
+    // 强制终止入口只属于取消归属会话的视图；跨会话调用直接忽略，防止误杀其他会话的 run
+    const { useChatStore } = await import('./useChatStore')
+    const currentSessionId = useChatStore.getState().currentSessionId
+    const scopeSession = get().cancellingSessionId
+    if (scopeSession != null && currentSessionId != null && scopeSession !== currentSessionId) {
+      return
+    }
     const selectedSessionId = get().selectedSessionId
     const selectedRunId = selectedSessionId
       ? get().activeRunIdBySessionId[selectedSessionId]
@@ -361,10 +408,10 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         clearCancelGraceTimer()
         set({
           cancelling: false,
+          cancellingSessionId: null,
           cancelGraceExceeded: false,
           forceTerminateRunId: null
         })
-        const { useChatStore } = await import('./useChatStore')
         useChatStore.getState().markRunningAsCancelled()
       }
     } catch (err) {
@@ -373,13 +420,24 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   },
 
   interruptedAction: async (action) => {
+    // 中断横幅只在归属会话视图渲染；动作同样校验归属，避免在别的会话误操作旧 run
+    const { useChatStore } = await import('./useChatStore')
+    const currentSessionId = useChatStore.getState().currentSessionId
+    const interruptedScope = get().interruptedSessionId
+    if (
+      interruptedScope != null &&
+      currentSessionId != null &&
+      interruptedScope !== currentSessionId
+    ) {
+      return
+    }
+
     if (action === 'continue') {
       // 继续 = 代用户发一条新消息走正常消息链（新轮次新 run），成功后清除中断横幅。
       // 不能把旧 run 转 resuming：主 loop 没有 resuming 消费入口，转换会永久占用会话 turn。
-      const { useChatStore } = await import('./useChatStore')
       const sent = await useChatStore.getState().sendMessage(CONTINUE_AFTER_INTERRUPT_PROMPT)
       if (sent) {
-        set({ interruptedRunId: null, interruptedSteps: [] })
+        set({ interruptedRunId: null, interruptedSessionId: null, interruptedSteps: [] })
       }
       return
     }
@@ -399,7 +457,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       }
       // 不写回兼容 snapshot 槽位：interrupted run 是旧终态，可能覆盖会话更新 run 的投影
       if (action === 'rollback') {
-        set({ interruptedRunId: null })
+        set({ interruptedRunId: null, interruptedSessionId: null })
       }
     } catch (err) {
       console.error('[useRunStore] interruptedAction 失败:', err)
@@ -407,7 +465,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   },
 
   clearInterrupted: () => {
-    set({ interruptedRunId: null, interruptedSteps: [] })
+    set({ interruptedRunId: null, interruptedSessionId: null, interruptedSteps: [] })
   },
 
   resetForTests: () => {
@@ -423,9 +481,11 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       pullTokenByRunId: {},
       waitingSessions: [],
       cancelling: false,
+      cancellingSessionId: null,
       cancelGraceExceeded: false,
       forceTerminateRunId: null,
       interruptedRunId: null,
+      interruptedSessionId: null,
       interruptedSteps: []
     })
   }

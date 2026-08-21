@@ -202,8 +202,20 @@ const SidebarSessions = React.memo(function SidebarSessions() {
       message: '确定要删除这个会话吗？',
       detail: '删除后无法恢复。'
     })
-    if (response === 1) {
-      deleteSession(sessionId)
+    if (response !== 1) return
+    try {
+      await deleteSession(sessionId)
+    } catch (err) {
+      // 主进程拒绝（如会话正在运行）：给出可见反馈，不能静默关闭确认框
+      await window.api.invoke('dialog:confirm', {
+        type: 'error',
+        title: '无法删除会话',
+        message: err instanceof Error ? err.message : '删除会话失败',
+        detail: '请先停止该会话的任务，再重试删除。',
+        buttons: ['确定'],
+        defaultId: 0,
+        cancelId: 0
+      })
     }
   }
 

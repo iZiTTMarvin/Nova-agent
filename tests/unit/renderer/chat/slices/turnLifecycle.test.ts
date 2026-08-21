@@ -149,4 +149,18 @@ describe('turnLifecycleSlice', () => {
     expect(sendCalls).toHaveLength(1)
     expect(sendCalls[0][1]).toMatchObject({ content: '排队消息' })
   })
+
+  it('handleError 终态后 steering 队列被派发（error 也是 turn boundary）', async () => {
+    useChatStore.getState().handleMessageStart('msg_err')
+    useChatStore.getState().enqueuePendingMessage('error 后排队消息', [])
+    useChatStore.setState({ isGenerating: true })
+
+    await useChatStore.getState().handleError('msg_err', '模型连接失败')
+
+    const state = useChatStore.getState()
+    expect(state.pendingUserMessages).toHaveLength(0)
+    const sendCalls = mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')
+    expect(sendCalls).toHaveLength(1)
+    expect(sendCalls[0][1]).toMatchObject({ content: 'error 后排队消息' })
+  })
 })

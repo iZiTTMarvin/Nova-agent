@@ -4,13 +4,22 @@
  * 与 stage_transition 工具共用 SessionStore.applyComposeStageTransition 的校验与落盘，
  * 成功后向主窗口推送 agent:compose-stages-updated（payload 与工具事件一致），
  * renderer 阶段条只订阅这一个事件源，不出现第二条状态写入路径。
+ *
+ * 计划确认门判定与工具共用 shared 层的同一函数：手动「完成当前阶段」时，
+ * 用户本人就是批准人——写批准留痕（auto: false）并推送批准事件后再推进，
+ * 让审阅卡「已批准」徽标与门禁状态收敛一致；skip/return 与工具语义一致不写批准。
  */
 import { handle } from './secureIpc'
 import {
+  AGENT_COMPOSE_PLAN_APPROVAL_UPDATED,
   AGENT_COMPOSE_STAGES_UPDATED,
   COMPOSE_APPLY_STAGE_TRANSITION
 } from '../../shared/ipc/channels'
-import { isComposeStageId, type ComposeStageAction } from '../../shared/composeLifecycle'
+import {
+  getPlanCompleteDenial,
+  isComposeStageId,
+  type ComposeStageAction
+} from '../../shared/composeLifecycle'
 import { getSessionStore } from '../services/SessionStoreHost'
 import { getMainWindow } from '../mainWindowRef'
 
@@ -45,6 +54,25 @@ export function registerComposeStageHandler(): void {
     if (!session) return { ok: false as const, error: '会话不存在或已被删除' }
     if (session.mode !== 'compose' || session.kind !== 'primary') {
       return { ok: false as const, error: '仅 compose 主会话支持调整生命周期阶段' }
+    }
+
+    // 手动完成「计划」阶段 = 用户自行放行确认门：写批准留痕并推送事件后继续推进。
+    // 判定与 stage_transition 工具共用 shared 函数，工具非 auto 路径拒绝、此路径放行，
+    // 放行权差异只体现在这一处编排，不在两处复制校验。
+    if (action.type === 'complete') {
+      const stages = sessionStore.getComposeStages(sessionId)
+      const denial = getPlanCompleteDenial(
+        stages,
+        stages ? sessionStore.getComposePlanApproval(sessionId) : null
+      )
+      if (denial) {
+        const approval = sessionStore.approveComposePlan(sessionId, { auto: false })
+        if (!approval) return { ok: false as const, error: '会话不存在或已被删除' }
+        const win = getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(AGENT_COMPOSE_PLAN_APPROVAL_UPDATED, { sessionId, approval })
+        }
+      }
     }
 
     const result = sessionStore.applyComposeStageTransition(sessionId, action)

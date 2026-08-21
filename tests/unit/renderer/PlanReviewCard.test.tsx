@@ -376,6 +376,50 @@ describe('PlanReviewCard', () => {
       }
     })
 
+    it('批准已落盘但引导指令未发出：指令预填输入框并提示确认发送', async () => {
+      const originalSendMessage = useChatStore.getState().sendMessage
+      const originalRequestComposerPrefill = useSettingsStore.getState().requestComposerPrefill
+      const sendMessage = vi.fn(async () => false)
+      const requestComposerPrefill = vi.fn()
+      useChatStore.setState({ sendMessage })
+      useSettingsStore.setState({ requestComposerPrefill })
+      mockInvoke.mockImplementation((channel: string) => {
+        if (channel === 'compose:approve-plan') {
+          return Promise.resolve({
+            ok: true,
+            approval: { status: 'approved', approvedAt: 1, auto: false }
+          })
+        }
+        return Promise.resolve({
+          path: '.nova/plans/2026-07-24-readable.md',
+          title: '可审阅计划',
+          updatedAt: 123,
+          content: '# 完整计划'
+        })
+      })
+
+      let renderer: DomRenderResult | undefined
+      try {
+        renderer = await renderComposeCard()
+        await act(async () => {
+          findButton(renderer.container, '批准并开始开发').click()
+          await Promise.resolve()
+          await Promise.resolve()
+        })
+
+        expect(mockInvoke).toHaveBeenCalledWith('compose:approve-plan', { sessionId: 'sess_plan' })
+        expect(requestComposerPrefill).toHaveBeenCalledWith(
+          expect.stringContaining('todo_write')
+        )
+        expect(renderer.container.textContent).toContain('引导指令已放入输入框')
+        expect(renderer.container.textContent).toContain('请确认后发送')
+      } finally {
+        useChatStore.setState({ sendMessage: originalSendMessage })
+        useSettingsStore.setState({ requestComposerPrefill: originalRequestComposerPrefill })
+        renderer?.unmount()
+      }
+    })
+
     it('已批准（用户手动）时展示徽标，不显示批准按钮', async () => {
       const approval: ComposePlanApproval = { status: 'approved', approvedAt: 1, auto: false }
       const renderer = await renderComposeCard({ composePlanApproval: approval })

@@ -36,11 +36,13 @@ export const createSessionSlice: ChatSliceCreator<SessionSliceState> = (set) => 
   deleteSession: async (sessionId: string) => {
     // 删除会话统一走 workspace store。当前会话被删时由主进程自动切到下一条，
     // 广播 workspace:changed 后本 store 通过 dispatchWorkspaceChange 同步 messages / sessions。
+    // 错误不吞：重新抛出到组件层展示（如「会话正在运行，请先停止再删除」）。
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().deleteSession(sessionId)
     } catch (err) {
       console.error('删除会话出错:', err)
+      throw err
     }
   },
 

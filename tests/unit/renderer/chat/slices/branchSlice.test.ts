@@ -90,6 +90,49 @@ describe('branchSlice', () => {
     expect(wsSwitch).not.toHaveBeenCalled()
   })
 
+  it('分叉准备窗口内 regenerateAssistant 被拒绝，不进入 prepare 与截断', async () => {
+    const messages = seedMessages(4)
+    const prepare = vi.spyOn(useWorkspaceStore.getState(), 'prepareRegenerate').mockResolvedValue()
+    useChatStore.setState({ branchForkInProgress: true })
+
+    await useChatStore.getState().regenerateAssistant('sess-1', 'msg_3')
+
+    expect(prepare).not.toHaveBeenCalled()
+    expect(useChatStore.getState().messages).toEqual(messages)
+    expect(useChatStore.getState().isGenerating).toBe(false)
+  })
+
+  it('分叉准备窗口内 editResend 被拒绝，不进入 prepare', async () => {
+    const messages = seedMessages(4)
+    const prepare = vi.spyOn(useWorkspaceStore.getState(), 'prepareEditResend').mockResolvedValue()
+    useChatStore.setState({ branchForkInProgress: true })
+
+    await useChatStore.getState().editResend('sess-1', 'msg_2', '改写后的内容')
+
+    expect(prepare).not.toHaveBeenCalled()
+    expect(useChatStore.getState().messages).toEqual(messages)
+  })
+
+  it('分叉准备窗口内普通 sendMessage 被拒，editResend 延续发送（带 rollbackSnapshot）放行', async () => {
+    seedMessages(2)
+    useChatStore.setState({ branchForkInProgress: true })
+    mockInvoke.mockClear()
+
+    const rejected = await useChatStore.getState().sendMessage('窗口内发送', [])
+    expect(rejected).toBe(false)
+    expect(mockInvoke).not.toHaveBeenCalled()
+
+    mockInvoke.mockResolvedValue(undefined)
+    const allowed = await useChatStore.getState().sendMessage('延续发送', [], {
+      rollbackSnapshot: { messages: [], messageIndexById: {} }
+    })
+    expect(allowed).toBe(true)
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'send-message',
+      expect.objectContaining({ content: '延续发送', sessionId: 'sess-1' })
+    )
+  })
+
   it('editResend 发送失败时消息树恢复到截断前', async () => {
     const messages = seedMessages(4)
     vi.spyOn(useWorkspaceStore.getState(), 'prepareEditResend').mockResolvedValue()
@@ -118,6 +161,20 @@ describe('branchSlice', () => {
     await useChatStore.getState().finishBranchMetaRefresh()
 
     expect(bump).toHaveBeenCalledTimes(1)
+    expect(useChatStore.getState().pendingBranchMetaReload).toBe(false)
+  })
+
+  it('finishBranchMetaRefresh bump 失败时保留标记，下次调用重试、成功后清除', async () => {
+    const bump = vi.spyOn(useWorkspaceStore.getState(), 'bumpMessagesRevision')
+    bump.mockRejectedValueOnce(new Error('reload 失败'))
+    useChatStore.setState({ pendingBranchMetaReload: true })
+
+    await useChatStore.getState().finishBranchMetaRefresh()
+    expect(useChatStore.getState().pendingBranchMetaReload).toBe(true)
+
+    bump.mockResolvedValueOnce()
+    await useChatStore.getState().finishBranchMetaRefresh()
+    expect(bump).toHaveBeenCalledTimes(2)
     expect(useChatStore.getState().pendingBranchMetaReload).toBe(false)
   })
 })

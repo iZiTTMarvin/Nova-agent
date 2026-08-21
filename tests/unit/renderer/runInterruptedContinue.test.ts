@@ -78,6 +78,32 @@ describe('interruptedAction continue 恢复路径', () => {
     expect(useRunStore.getState().interruptedSteps).toHaveLength(1)
   })
 
+  it('中断横幅归属会话：非属主会话点击不动作，属主会话恢复生效', async () => {
+    useRunStore.setState({
+      interruptedRunId: 'runA',
+      interruptedSessionId: 'sessA',
+      interruptedSteps: [{ toolCallId: 'tc1', toolName: 'write', phase: 'committed' }]
+    })
+    useChatStore.setState({ currentSessionId: 'sessB' })
+    const sendMessage = stubSendMessage(true)
+
+    // 在 B 会话视图点击横幅：continue / rollback 都必须被归属校验拦下
+    await useRunStore.getState().interruptedAction('continue')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(useRunStore.getState().interruptedRunId).toBe('runA')
+
+    await useRunStore.getState().interruptedAction('rollback')
+    expect(mockInvoke).not.toHaveBeenCalled()
+
+    // 切回属主会话 A：continue 生效并清理横幅（含归属）
+    useChatStore.setState({ currentSessionId: 'sessA' })
+    await useRunStore.getState().interruptedAction('continue')
+    expect(sendMessage).toHaveBeenCalledWith(CONTINUE_AFTER_INTERRUPT_PROMPT)
+    expect(useRunStore.getState().interruptedRunId).toBeNull()
+    expect(useRunStore.getState().interruptedSessionId).toBeNull()
+    expect(useRunStore.getState().interruptedSteps).toEqual([])
+  })
+
   it('rollback / inspect 仍走 run:interrupted-action，且不写回兼容 snapshot 槽位', async () => {
     mockInvoke.mockImplementation(async (channel: string) => {
       if (channel === 'run:interrupted-action') {

@@ -139,9 +139,11 @@ export const ChatPanel: React.FC = () => {
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
   const cancelling = useRunStore(state => state.cancelling)
+  const cancellingSessionId = useRunStore(state => state.cancellingSessionId)
   const cancelGraceExceeded = useRunStore(state => state.cancelGraceExceeded)
   const forceTerminate = useRunStore(state => state.forceTerminate)
   const interruptedRunId = useRunStore(state => state.interruptedRunId)
+  const interruptedSessionId = useRunStore(state => state.interruptedSessionId)
   const interruptedAction = useRunStore(state => state.interruptedAction)
   const clearInterrupted = useRunStore(state => state.clearInterrupted)
   const interruptedSteps = useRunStore(state => state.interruptedSteps)
@@ -153,6 +155,14 @@ export const ChatPanel: React.FC = () => {
     !!pendingAskQuestion ||
     !!pendingPermissionRequest
   const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+
+  // 取消/中断都归属发起会话：其他会话的视图不呈现、不操作（归属未知时按旧语义放行当前会话）
+  const cancellingForCurrentSession =
+    cancelling && (cancellingSessionId == null || cancellingSessionId === currentSessionId)
+  const graceExceededForCurrentSession = cancelGraceExceeded && cancellingForCurrentSession
+  const interruptedForCurrentSession =
+    !!interruptedRunId &&
+    (interruptedSessionId == null || interruptedSessionId === currentSessionId)
 
   const currentGeneratingTurnStartedAt = useMemo(() => {
     if (!currentGeneratingMessageId) return undefined
@@ -838,7 +848,7 @@ export const ChatPanel: React.FC = () => {
           )}
 
           {/* 取消 grace 超时：部分任务未退出 + 强制终止 */}
-          {cancelGraceExceeded && (
+          {graceExceededForCurrentSession && (
             <div className="chat-cross-turn-notice" role="alert">
               <span className="chat-cross-turn-notice__text">部分任务未退出</span>
               <Button
@@ -852,7 +862,7 @@ export const ChatPanel: React.FC = () => {
           )}
 
           {/* interrupted run：继续分析 / 回滚本轮 / 查看已执行步骤 */}
-          {interruptedRunId && currentSession?.kind !== 'subagent' && (
+          {interruptedForCurrentSession && currentSession?.kind !== 'subagent' && (
             <div className="chat-cross-turn-notice" role="status">
               <span className="chat-cross-turn-notice__text">
                 上次任务异常中断
@@ -999,14 +1009,14 @@ export const ChatPanel: React.FC = () => {
                   <CodeIndexStatusChip />
                 </div>
                 <div>
-                  {isGenerating || sendInFlight || cancelling ? (
+                  {isGenerating || sendInFlight || cancellingForCurrentSession ? (
                     <IconButton
-                      label={cancelling ? '正在停止' : '中断生成'}
+                      label={cancellingForCurrentSession ? '正在停止' : '中断生成'}
                       icon={<StopIcon size={14} />}
                       variant="destructive"
                       size="md"
                       onClick={() => void cancelExecution()}
-                      isDisabled={cancelling && !cancelGraceExceeded}
+                      isDisabled={cancellingForCurrentSession && !cancelGraceExceeded}
                     />
                   ) : (
                     <IconButton

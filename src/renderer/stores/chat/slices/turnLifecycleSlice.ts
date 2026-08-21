@@ -233,6 +233,10 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       }
     }
 
+    // error 终态同样是 turn boundary：派发队列首条，防止「已排队 N 条」
+    // 滞留到用户手动发消息才触发（还会打乱 FIFO 顺序）
+    await dispatchNextPendingMessage({ getState: get, setState: set })
+
     if (get().pendingBranchMetaReload) {
       await get().finishBranchMetaRefresh()
     }

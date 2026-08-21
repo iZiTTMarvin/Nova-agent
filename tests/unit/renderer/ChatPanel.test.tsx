@@ -7,6 +7,7 @@ import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 import { resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
 import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import { useRunStore } from '../../../src/renderer/stores/useRunStore'
 import type { ExtendedMessage } from '../../../src/renderer/stores/types'
 
 /**
@@ -341,6 +342,115 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
     const tailStatus = renderer.container.querySelector('.chat-messages__tail-status')
     expect(tailStatus).toBeNull()
 
+    renderer.unmount()
+  })
+})
+
+/**
+ * 取消/中断状态归属会话的视图回归。
+ *
+ * 回归对象：useRunStore 的 cancelling / interruptedRunId 是全局字段，A 会话停止后
+ * 切到 B，A 的终态 snapshot 不再确认取消 → B 的停止按钮被 A 的取消态禁用、
+ * 8 秒后误显示「强制终止」；A 的 interrupted 横幅也出现在任意会话。
+ */
+describe('ChatPanel → 取消/中断状态归属会话', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    messageItemPropsByRender.length = 0
+    resetChatStoreForTests()
+    resetSettingsStoreForTests()
+    resetAgentStoreForTests()
+    useRunStore.getState().resetForTests()
+    mockInvoke.mockResolvedValue(undefined)
+    Object.assign(window, {
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
+    })
+  })
+
+  function primarySession(id: string) {
+    return {
+      id,
+      kind: 'primary' as const,
+      workspaceRoot: '/ws',
+      mode: 'default' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      messageCount: 0,
+      title: id,
+      pinned: false
+    }
+  }
+
+  it('A 会话的取消态不呈现到 B：停止按钮与「强制终止」横幅都不出现', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sessB',
+        isGenerating: false,
+        sessions: [primarySession('sessB')]
+      })
+      useRunStore.setState({
+        cancelling: true,
+        cancellingSessionId: 'sessA',
+        cancelGraceExceeded: true,
+        forceTerminateRunId: 'runA'
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    expect(renderer.container.querySelector('[aria-label="正在停止"]')).toBeNull()
+    expect(renderer.container.textContent ?? '').not.toContain('部分任务未退出')
+    // B 的发送按钮保持正常
+    expect(renderer.container.querySelector('[aria-label="发送"]')).not.toBeNull()
+    renderer.unmount()
+  })
+
+  it('取消归属当前会话时停止按钮呈现，grace 前禁用', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sessA',
+        isGenerating: true,
+        sessions: [primarySession('sessA')]
+      })
+      useRunStore.setState({
+        cancelling: true,
+        cancellingSessionId: 'sessA',
+        cancelGraceExceeded: false
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const stop = renderer.container.querySelector<HTMLButtonElement>('[aria-label="正在停止"]')
+    expect(stop).not.toBeNull()
+    expect(stop?.disabled).toBe(true)
+    renderer.unmount()
+  })
+
+  it('中断横幅只在归属会话渲染，不跨会话出现', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sessB',
+        sessions: [primarySession('sessB')]
+      })
+      useRunStore.setState({
+        interruptedRunId: 'runA',
+        interruptedSessionId: 'sessA',
+        interruptedSteps: []
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    expect(renderer.container.textContent ?? '').not.toContain('上次任务异常中断')
+
+    // 切回属主会话 A：横幅恢复
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sessA',
+        sessions: [primarySession('sessA')]
+      })
+    })
+    expect(renderer.container.textContent ?? '').toContain('上次任务异常中断')
+    expect(renderer.container.textContent ?? '').toContain('继续分析')
     renderer.unmount()
   })
 })

@@ -25,8 +25,11 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
     rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
     autoMode?: boolean
   }): Promise<boolean> => {
-    const { currentSessionId, isGenerating, sendInFlight } = get()
+    const { currentSessionId, isGenerating, sendInFlight, branchForkInProgress } = get()
     if (isGenerating || sendInFlight) return false
+    // 分叉准备窗口（prepare → send 两段 IPC 之间）锁住普通发送，避免乐观截断覆盖
+    // 刚追加的用户消息；editResend 自身的延续发送（带 rollbackSnapshot）在此窗口放行
+    if (branchForkInProgress && !options?.rollbackSnapshot) return false
 
     // 新发消息会改变工作区语义，退出 Tier 1「仅对话历史」视图
     set({ tier1BranchContext: null })

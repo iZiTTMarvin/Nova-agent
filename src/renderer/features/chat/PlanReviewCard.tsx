@@ -38,6 +38,10 @@ function pathFromResult(result: string | undefined): string | null {
   return match?.[1] ?? null
 }
 
+/** 批准后的引导指令：先入待办再推进阶段。发送失败时原样放入输入框，保证模型侧指令不丢 */
+const APPROVAL_GUIDANCE =
+  '计划已批准，请先调用 todo_write 把计划任务清单导入为待办，再调用 stage_transition 进入「开发」阶段。'
+
 /** 实施指令未发出时尽力把模式切回 plan，保证卡片留下重试入口；返回回滚是否成功 */
 async function rollbackToPlan(): Promise<boolean> {
   try {
@@ -190,6 +194,20 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     }
   }
 
+  /**
+   * 批准已落盘但引导指令未能发出时：把同一段指令经 prefill 放入输入框（复用
+   * 「继续完善」的机制），让用户确认后即可发送，而不是卡片显示已批准、模型却
+   * 收不到指令停在计划阶段。批准是事实不回滚，只做补救。
+   */
+  const prefillApprovalGuidance = (reason?: string) => {
+    useSettingsStore.getState().requestComposerPrefill(APPROVAL_GUIDANCE)
+    setActionError(
+      reason
+        ? `批准已生效，引导指令未能正常发出（${reason}），已放入输入框，请确认后发送。`
+        : '批准已生效，引导指令已放入输入框，请确认后发送。'
+    )
+  }
+
   const approveComposePlan = async () => {
     if (!canApprove || currentMode !== 'compose') return
     if (!ensureCurrentSession()) return
@@ -201,15 +219,18 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
         setActionError(approval.error)
         return
       }
-      const sent = await useChatStore.getState().sendMessage(
-        '计划已批准，请先调用 todo_write 把计划任务清单导入为待办，再调用 stage_transition 进入「开发」阶段。',
-        []
-      )
+    } catch (error) {
+      // 批准本身未落盘：不预填指令，避免把未批准的引导语发进对话
+      setActionError(error instanceof Error ? error.message : String(error))
+      return
+    }
+    try {
+      const sent = await useChatStore.getState().sendMessage(APPROVAL_GUIDANCE, [])
       if (!sent) {
-        setActionError('批准已生效，但引导指令未能发出（Agent 可能仍在运行），请稍后手动发送。')
+        prefillApprovalGuidance()
       }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
+      prefillApprovalGuidance(error instanceof Error ? error.message : String(error))
     } finally {
       setSubmitting(false)
     }

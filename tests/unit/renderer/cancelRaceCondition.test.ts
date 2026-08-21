@@ -200,4 +200,56 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
 
     expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'parked-run' })
   })
+
+  it('A 会话取消中切到 B：A 的终态到达后取消仍收敛，取消态不污染 B 视图', async () => {
+    const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
+    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+
+    const runASnap = {
+      runId: 'runA',
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 'sessA',
+      messageId: 'msg_a',
+      status: 'running',
+      sequence: 1,
+      pendingInteractions: [],
+      currentAttempt: null,
+      progress: null,
+      lastHeartbeatAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    useChatStore.setState({ currentSessionId: 'sessA', isGenerating: true })
+    useRunStore.setState({
+      selectedSessionId: 'sessA',
+      activeRunIdBySessionId: { sessA: 'runA' },
+      snapshotsByRunId: { runA: runASnap }
+    })
+
+    mockInvoke.mockResolvedValue({ runId: 'runA', status: 'cancelling' })
+    await useAgentStore.getState().cancelExecution()
+    expect(useRunStore.getState().cancelling).toBe(true)
+    expect(useRunStore.getState().cancellingSessionId).toBe('sessA')
+
+    // 切到 B：取消归属校验后不呈现给 B 视图（与 ChatPanel 渲染条件同语义）
+    useChatStore.setState({ currentSessionId: 'sessB' })
+    const runState = useRunStore.getState()
+    const appliesToB =
+      runState.cancelling &&
+      (runState.cancellingSessionId == null || runState.cancellingSessionId === 'sessB')
+    expect(appliesToB).toBe(false)
+
+    // A 的终态 snapshot 跨会话到达：取消正常收敛，不得残留全局 cancelling
+    useRunStore.getState().handleSnapshotEvent(
+      { ...runASnap, status: 'cancelled', sequence: 9 },
+      { sequence: 9, type: 'terminal', at: Date.now() }
+    )
+    await vi.waitFor(() => {
+      expect(useRunStore.getState().cancelling).toBe(false)
+      expect(useRunStore.getState().forceTerminateRunId).toBeNull()
+      expect(useRunStore.getState().cancellingSessionId).toBeNull()
+    })
+  })
 })
