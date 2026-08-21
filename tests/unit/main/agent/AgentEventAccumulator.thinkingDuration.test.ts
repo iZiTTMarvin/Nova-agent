@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent } from '../../../../src/runtime/agent'
 import type { MessageContext } from '../../../../src/main/agent/events/types'
 import type { SessionMessageAppend } from '../../../../src/runtime/sessions/types'
+import type { ToolBlock } from '../../../../src/shared/session/types'
 
 const appendMessageFast = vi.fn(
   (_sessionId: string, _message: SessionMessageAppend) =>
@@ -26,7 +27,7 @@ vi.mock('../../../../src/main/services/SessionStoreHost', () => ({
 
 const runCoordinatorStub = {
   isExecutionCurrent: () => true,
-  upsertTurnDraft: () => {},
+  upsertTurnDraft: vi.fn(),
   clearTurnDraft: () => {},
   commitTerminal: () => {},
   getSnapshot: () => undefined
@@ -162,5 +163,81 @@ describe('AgentEventAccumulator 思考耗时封存', () => {
 
     const thinkings = persistedBlocks().filter(b => b.type === 'thinking')
     expect(thinkings.map(b => b.durationMs)).toEqual([2000, 3000])
+  })
+})
+
+describe('AgentEventAccumulator 中断残态收敛', () => {
+  beforeEach(() => {
+    appendMessageFast.mockClear()
+    runCoordinatorStub.upsertTurnDraft.mockClear()
+    activeStreams.clear()
+  })
+  afterEach(() => {
+    activeStreams.clear()
+  })
+
+  function lastPersistedToolBlocks(): ToolBlock[] {
+    const call = appendMessageFast.mock.calls.at(-1)
+    expect(call).toBeDefined()
+    const message = call![1]
+    return (message.blocks ?? []).filter((b): b is ToolBlock => b.type === 'tool')
+  }
+
+  it('tool_call 后无 tool_end 直接 interrupted message_end：落盘无 running 残块', () => {
+    const ctx = makeCtx()
+    const messageId = 'msg_interrupted_tool'
+    const feed = (event: AgentEvent) => accumulateStreamEvent('sess_test', event, ctx)
+
+    feed({ type: 'message_start', messageId })
+    feed({
+      type: 'tool_call',
+      messageId,
+      toolCallId: 'tc_save_plan',
+      toolName: 'save_plan',
+      args: { title: '重构' }
+    })
+    feed({ type: 'message_end', messageId, interrupted: true })
+
+    // interrupted 消息标志语义保持不变（仍在附带终态消息上）
+    const message = appendMessageFast.mock.calls.at(-1)![1]
+    expect(message.interrupted).toBe(true)
+
+    // SessionStore 落盘：running 工具块必须收敛为 error，并带可读的中断说明
+    const toolBlocks = lastPersistedToolBlocks()
+    expect(toolBlocks.map(b => b.status)).toEqual(['error'])
+    expect(toolBlocks[0].result).toBe('工具执行被中断')
+
+    // turnDraft finalize receipt 与消息一致：不允许携带 running 残块
+    const drafts = runCoordinatorStub.upsertTurnDraft.mock.calls.map(call => call[1] as {
+      finalized?: boolean
+      blocks: Array<Record<string, unknown>>
+    })
+    expect(drafts.length).toBeGreaterThan(0)
+    const receipt = drafts[drafts.length - 1]
+    expect(receipt.finalized).toBe(true)
+    expect(
+      receipt.blocks
+        .filter(b => b.type === 'tool')
+        .map(b => b.status)
+    ).toEqual(['error'])
+  })
+
+  it('tool 执行中发生 error：终态落盘同样无 running 残块', () => {
+    const ctx = makeCtx()
+    const messageId = 'msg_error_tool'
+    const feed = (event: AgentEvent) => accumulateStreamEvent('sess_test', event, ctx)
+
+    feed({ type: 'message_start', messageId })
+    feed({
+      type: 'tool_call',
+      messageId,
+      toolCallId: 'tc_write',
+      toolName: 'write',
+      args: { path: 'a.ts' }
+    })
+    feed({ type: 'error', messageId, error: '上游超时' })
+
+    const toolBlocks = lastPersistedToolBlocks()
+    expect(toolBlocks.map(b => b.status)).toEqual(['error'])
   })
 })

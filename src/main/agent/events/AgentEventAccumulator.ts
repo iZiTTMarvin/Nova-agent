@@ -329,6 +329,17 @@ function saveAssistantMessage(
 }
 
 /**
+ * 终态前收敛残留 running 工具块：message_end / error 之后不会有该工具的结果事件，
+ * 原样落盘会让重启后的 UI 把「已中断」渲染成永久执行中（计划审阅卡一直转圈）。
+ */
+function settleRunningBlocksAsInterrupted(blocks: MessageBlock[]): MessageBlock[] {
+  return blocks.map((block): MessageBlock => {
+    if (block.type !== 'tool' || block.status !== 'running') return block
+    return { ...block, status: 'error', result: '工具执行被中断' }
+  })
+}
+
+/**
  * 所有权转移：SessionStore 成功后才标 finalized 并清草稿。
  * 失败时保留 draft，由调用方将 run 标为 interrupted。
  */
@@ -340,20 +351,23 @@ function finalizeAssistantTurn(
   interrupted?: boolean,
   executionGeneration?: number
 ): void {
+  // 终态统一收口：SessionStore 消息与 turnDraft receipt 都只写无 running 态的 blocks
+  const settledBlocks = settleRunningBlocksAsInterrupted(blocks)
+
   // 1) 确保草稿仍为 active（未 finalized）
   if (runId) {
-    persistTurnDraft(runId, messageId, blocks, false, executionGeneration)
+    persistTurnDraft(runId, messageId, settledBlocks, false, executionGeneration)
   }
 
   // 2) SessionStore 幂等追加
-  const appendResult = saveAssistantMessage(sessionId, messageId, blocks, interrupted)
+  const appendResult = saveAssistantMessage(sessionId, messageId, settledBlocks, interrupted)
   if (!appendResult.ok) {
     throw new Error(`SessionStore 追加失败: ${appendResult.error}`)
   }
 
   // 3) 写 message_finalized receipt（turnDraft.finalized=true）
   if (runId) {
-    persistTurnDraft(runId, messageId, blocks, true, executionGeneration)
+    persistTurnDraft(runId, messageId, settledBlocks, true, executionGeneration)
     // 4) 清除草稿
     getRunCoordinator().clearTurnDraft(runId)
   }
