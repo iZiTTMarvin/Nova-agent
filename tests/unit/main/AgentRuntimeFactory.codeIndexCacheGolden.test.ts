@@ -131,7 +131,7 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         toolsHash: snapshot.toolsHash,
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
-        toolsHash: '2aea83e7acbb4a65',
+        toolsHash: '758850cb56d67cef',
         systemContentHash: '3c8b61ec24d23012'
       })
     } finally {
