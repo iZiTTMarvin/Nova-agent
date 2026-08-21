@@ -99,10 +99,13 @@ export type WorkspaceRootChangeListener = (
 
 export class WorkspaceService {
   /**
-   * 内部状态不含 messagesRevision：revision 由独立计数器维护，
+   * 内部状态不含 messagesRevision / tier1 字段：revision 与 tier1 由独立成员维护，
    * 在 getState() / broadcast() 出口统一盖章，避免每处状态字面量都漏写。
    */
-  private state: Omit<WorkspaceState, 'messagesRevision' | 'tier1BranchContext'> = {
+  private state: Omit<
+    WorkspaceState,
+    'messagesRevision' | 'tier1BranchContext' | 'tier1StaleDiffMessageIds'
+  > = {
     currentSessionId: null,
     currentProjectPath: null,
     currentMode: 'default',
@@ -118,6 +121,13 @@ export class WorkspaceService {
 
   /** Tier 1 切分支提示上下文；随 workspace:changed 下发给 renderer */
   private tier1BranchContext: Tier1BranchContext | null = null
+
+  /**
+   * Tier 1/2 未重放消息的 diff 灰显标记（安全禁用 diff 卡裁决）。与横幅
+   * tier1BranchContext 分离：bumpMessagesRevision 只收横幅不收标记；标记只在
+   * switchBranch 按重放结果重写、或分叉/离开会话时清空。
+   */
+  private tier1StaleDiffMessageIds: string[] = []
 
   /** 广播回调：由 workspaceHandler 注入，负责把状态推给 renderer */
   private broadcaster: ((state: WorkspaceState) => void) | null = null
@@ -184,7 +194,9 @@ export class WorkspaceService {
    * 递增 messagesRevision 并广播。用于切分支、分叉轮次结束补 branch 元信息、desync 强制重拉。
    */
   bumpMessagesRevision(): WorkspaceState {
-    this.clearTier1BranchContext()
+    // 只收横幅，不收 diff 灰显标记：bump 只是元信息刷新（分叉轮次结束/desync），
+    // 工作区并未真正重放，未重放消息的 diff 卡必须继续保持安全禁用
+    this.tier1BranchContext = null
     this.messagesRevision++
     this.broadcast()
     return this.getState()
@@ -201,13 +213,15 @@ export class WorkspaceService {
     return {
       ...this.state,
       messagesRevision: this.messagesRevision,
-      tier1BranchContext: this.tier1BranchContext
+      tier1BranchContext: this.tier1BranchContext,
+      tier1StaleDiffMessageIds: this.tier1StaleDiffMessageIds
     }
   }
 
-  /** 分叉/切会话时清除 Tier 1 视图上下文 */
-  private clearTier1BranchContext(): void {
+  /** 分叉/切会话时清除 Tier 1 视图上下文与 diff 灰显标记（真正重放开始 / 离开会话） */
+  private clearTier1View(): void {
     this.tier1BranchContext = null
+    this.tier1StaleDiffMessageIds = []
   }
 
   /**
@@ -284,7 +298,7 @@ export class WorkspaceService {
 
   /** 显式创建新会话（使用给定 workspaceRoot，或沿用当前项目） */
   createSession(params: { workspaceRoot: string; mode?: Mode }): WorkspaceState {
-    this.clearTier1BranchContext()
+    this.clearTier1View()
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store)
@@ -312,7 +326,7 @@ export class WorkspaceService {
    * 删除的是当前会话时，自动切到剩余列表的第一条；没有剩余会话则清空工作区。
    */
   deleteSession(sessionId: string): WorkspaceState {
-    this.clearTier1BranchContext()
+    this.clearTier1View()
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     const summaries = store.listInternal()
@@ -438,7 +452,7 @@ export class WorkspaceService {
 
   /** 切换当前会话（并同步主进程项目路径/模式） */
   selectSession(sessionId: string): WorkspaceState {
-    this.clearTier1BranchContext()
+    this.clearTier1View()
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store, sessionId)
@@ -583,7 +597,7 @@ export class WorkspaceService {
    */
   prepareRegenerate(params: { sessionId: string; messageId: string }): WorkspaceState {
     this.assertNotAgentExecuting()
-    this.clearTier1BranchContext()
+    this.clearTier1View()
     const store = this.deps.getSessionStore()
     const { sessionId, messageId } = params
     const session = store.load(sessionId)
@@ -710,6 +724,9 @@ export class WorkspaceService {
       availableSessions: store.list()
     }
 
+    // 灰显标记随重放结果重写：未重放完成则列出对应消息，全额重放则清空
+    this.tier1StaleDiffMessageIds = incompleteForwardIds
+
     const refreshed = store.load(sessionId)
     if (refreshed) {
       const branchPos = getBranchPosition(allMessages, targetMessageId)
@@ -752,7 +769,7 @@ export class WorkspaceService {
    */
   prepareEditResend(params: { sessionId: string; messageId: string }): WorkspaceState {
     this.assertNotAgentExecuting()
-    this.clearTier1BranchContext()
+    this.clearTier1View()
     const store = this.deps.getSessionStore()
     const { sessionId, messageId } = params
     const session = store.load(sessionId)

@@ -958,6 +958,8 @@ export class SessionStore {
         session: SessionData
         stages: ComposeStageEntry[]
         previousStages: ComposeStageEntry[] | null
+        /** 修复-复审循环计数随结果透出，调用方经事件转发供 renderer 预禁用回退入口 */
+        reviewLoops: number
       }
     | { status: 'rejected'; error: string }
     | null {
@@ -983,7 +985,8 @@ export class SessionStore {
       status: 'applied',
       session,
       stages: result.stages,
-      previousStages
+      previousStages,
+      reviewLoops: result.reviewLoops
     }
   }
 

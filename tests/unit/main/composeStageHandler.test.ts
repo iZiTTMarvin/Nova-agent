@@ -76,7 +76,13 @@ const mockStore = {
     if (!result.ok) return { status: 'rejected' as const, error: result.error }
     const previousStages = currentStages
     currentStages = result.stages
-    return { status: 'applied' as const, session: {}, stages: result.stages, previousStages }
+    return {
+      status: 'applied' as const,
+      session: {},
+      stages: result.stages,
+      previousStages,
+      reviewLoops: result.reviewLoops
+    }
   })
 }
 
@@ -180,7 +186,8 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     // 推送 payload 与工具事件一致，renderer 阶段条只订阅这一个事件源
     expect(mockSend).toHaveBeenCalledWith('agent:compose-stages-updated', {
       sessionId: 'sess_1',
-      stages
+      stages,
+      reviewLoops: 0
     })
   })
 
@@ -274,7 +281,8 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     expect(stages[0]).toMatchObject({ status: 'skipped', note: '需求已澄清，无需构思' })
     expect(mockSend).toHaveBeenCalledWith('agent:compose-stages-updated', {
       sessionId: 'sess_1',
-      stages
+      stages,
+      reviewLoops: 0
     })
   })
 

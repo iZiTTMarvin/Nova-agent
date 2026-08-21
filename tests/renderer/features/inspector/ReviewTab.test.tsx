@@ -120,4 +120,45 @@ describe('ReviewTab', () => {
     expect(acceptFile).toHaveBeenCalledWith('sess_1', 'msg_1', 'src/app.ts')
     renderer.unmount()
   })
+
+  it('消息在 tier1StaleDiffMessageIds 中时评审操作禁用并显示未同步提示', async () => {
+    const acceptFile = vi.fn().mockResolvedValue(undefined)
+    const rejectFile = vi.fn().mockResolvedValue(undefined)
+    useChatStore.setState({
+      currentSessionId: 'sess_1',
+      // 横幅可被用户关闭，灰显标记才是安全禁用的权威来源：只种标记、不种横幅
+      tier1BranchContext: null,
+      tier1StaleDiffMessageIds: ['msg_1'],
+      messageDiffs: {
+        msg_1: {
+          diffs: [makeDiff()],
+          reviews: {}
+        }
+      },
+      acceptFile,
+      rejectFile
+    })
+    useLayoutStore.getState().openReview({ messageId: 'msg_1', filePath: 'src/app.ts' })
+
+    const renderer = renderDom(<ReviewTab />)
+    const keepBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('保留')
+    ) as HTMLButtonElement | undefined
+    const revertBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('回退')
+    ) as HTMLButtonElement | undefined
+    expect(keepBtn?.disabled).toBe(true)
+    expect(revertBtn?.disabled).toBe(true)
+    expect(renderer.container.textContent ?? '').toContain('工作区未同步，仅作历史参考')
+
+    // 即使绕过禁用直接触发，裁决动作也在组件层被 tier1Stale 守卫拦截，不落 IPC
+    await act(async () => {
+      keepBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(acceptFile).not.toHaveBeenCalled()
+    expect(rejectFile).not.toHaveBeenCalled()
+    renderer.unmount()
+  })
 })

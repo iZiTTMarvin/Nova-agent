@@ -1,0 +1,137 @@
+// @vitest-environment jsdom
+
+import React from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { InlinePermissionBar } from '../../../src/renderer/features/permissions/InlinePermissionBar'
+import {
+  resetAgentStoreForTests,
+  useAgentStore
+} from '../../../src/renderer/stores/useAgentStore'
+import {
+  resetChatStoreForTests,
+  useChatStore
+} from '../../../src/renderer/stores/useChatStore'
+import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
+import { PERMISSION_UPSERT } from '../../../src/shared/ipc/channels'
+import { act, renderDom } from './renderDom'
+import type { PendingPermissionRequest } from '../../../src/renderer/stores/types'
+
+const mockInvoke = vi.fn()
+
+const request: PendingPermissionRequest = {
+  messageId: 'msg_1',
+  requestId: 'req_1',
+  toolName: 'bash',
+  args: { command: 'npm install' },
+  riskLevel: 'medium',
+  reason: '安装依赖需要确认',
+  toolCallIds: ['tc_1'],
+  sessionId: 'sess_1',
+  version: 1
+}
+
+function click(el: Element): void {
+  act(() => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  })
+}
+
+describe('InlinePermissionBar', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetAgentStoreForTests()
+    resetChatStoreForTests()
+    useChatStore.setState({ currentSessionId: 'sess_1' })
+    useWorkspaceStore.setState({ currentProjectPath: '/ws' })
+    mockInvoke.mockResolvedValue(undefined)
+    Object.assign(window, {
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() }
+    })
+    useAgentStore.getState().handlePermissionRequest(request)
+
+    // Astryx DropdownMenu 用 Popover API 打开浮层；jsdom 未实现，按组件自带测试同款 polyfill
+    HTMLElement.prototype.showPopover = vi.fn(function (this: HTMLElement) {
+      this.setAttribute('popover-open', '')
+      const event = new Event('toggle', { bubbles: false })
+      Object.defineProperty(event, 'newState', { value: 'open' })
+      this.dispatchEvent(event)
+    })
+    HTMLElement.prototype.hidePopover = vi.fn(function (this: HTMLElement) {
+      this.removeAttribute('popover-open')
+      const event = new Event('toggle', { bubbles: false })
+      Object.defineProperty(event, 'newState', { value: 'closed' })
+      this.dispatchEvent(event)
+    })
+    const originalMatches = HTMLElement.prototype.matches
+    HTMLElement.prototype.matches = function (selector: string): boolean {
+      if (selector === ':popover-open') return this.hasAttribute('popover-open')
+      return originalMatches.call(this, selector)
+    }
+  })
+
+  it('「本项目永久允许」规则写入失败时不放行，出现错误提示并保留弹条', async () => {
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === PERMISSION_UPSERT) throw new Error('规则落盘失败')
+      return undefined
+    })
+
+    const renderer = renderDom(<InlinePermissionBar request={request} />)
+
+    click(renderer.container.querySelector('[aria-haspopup="menu"]')!)
+    const item = Array.from(renderer.container.querySelectorAll('[role="menuitem"]')).find(
+      el => (el.textContent ?? '').includes('本项目永久允许')
+    )
+    expect(item).toBeTruthy()
+    await act(async () => {
+      item!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 规则写入失败：不 proceed（respond-permission 未发出），pending 请求原样保留
+    const state = useAgentStore.getState()
+    expect(mockInvoke).toHaveBeenCalledWith(
+      PERMISSION_UPSERT,
+      expect.objectContaining({ scope: 'project', behavior: 'allow' })
+    )
+    const respondCalls = mockInvoke.mock.calls.filter(([c]) => c === 'respond-permission')
+    expect(respondCalls).toHaveLength(0)
+    expect(state.pendingPermissionRequest?.requestId).toBe('req_1')
+    expect(state.permissionError).toContain('保存持久化规则失败')
+    expect(renderer.container.querySelector('.inline-perm__error')?.textContent).toContain(
+      '保存持久化规则失败'
+    )
+    renderer.unmount()
+  })
+
+  it('「本会话允许」白名单写入失败时同样中止放行并提示', async () => {
+    const grantCall = vi.fn().mockRejectedValue(new Error('会话作用域写入失败'))
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'permission:grant-session-scope') return grantCall()
+      return undefined
+    })
+
+    const renderer = renderDom(<InlinePermissionBar request={request} />)
+
+    click(renderer.container.querySelector('[aria-haspopup="menu"]')!)
+    const item = Array.from(renderer.container.querySelectorAll('[role="menuitem"]')).find(
+      el => (el.textContent ?? '').includes('本会话允许')
+    )
+    expect(item).toBeTruthy()
+    await act(async () => {
+      item!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const state = useAgentStore.getState()
+    const respondCalls = mockInvoke.mock.calls.filter(([c]) => c === 'respond-permission')
+    expect(respondCalls).toHaveLength(0)
+    expect(state.pendingPermissionRequest?.requestId).toBe('req_1')
+    expect(state.permissionError).toContain('写入本会话白名单失败')
+    expect(renderer.container.querySelector('.inline-perm__error')?.textContent).toContain(
+      '写入本会话白名单失败'
+    )
+    renderer.unmount()
+  })
+})

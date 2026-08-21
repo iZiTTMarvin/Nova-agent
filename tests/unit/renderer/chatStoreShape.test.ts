@@ -3,7 +3,7 @@ import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stor
 
 const CHAT_STATE_KEYS = [
   'sessions', 'currentSessionId', 'currentSubagentTask', 'messages', 'messageIndexById', 'lastMessagesRevision',
-  'pendingBranchMetaReload', 'branchForkInProgress', 'tier1BranchContext', 'isGenerating',
+  'pendingBranchMetaReload', 'branchForkInProgress', 'tier1BranchContext', 'tier1StaleDiffMessageIds', 'isGenerating',
   'currentGeneratingMessageId', 'activeAgentSessionId', 'sendInFlight', 'streamingToolArgs',
   'messageDiffs', 'loadingDiffs', 'loadingDiffPlaceholders', 'pendingUserMessages',
   'recoveryState', 'recoveryHints', 'hookErrors', 'rollbackErrors', 'hasMoreMessagesAbove',
@@ -28,7 +28,7 @@ describe('chat store shape baseline', () => {
     const actual = Object.keys(useChatStore.getState()).sort()
     const expected = [...CHAT_STATE_KEYS].sort()
     expect(actual).toEqual(expected)
-    expect(actual).toHaveLength(66)
+    expect(actual).toHaveLength(67)
   })
 
   it('resetChatStoreForTests 恢复全部状态字段默认值', () => {
@@ -75,6 +75,7 @@ describe('chat store shape baseline', () => {
     expect(state.pendingBranchMetaReload).toBe(false)
     expect(state.branchForkInProgress).toBe(false)
     expect(state.tier1BranchContext).toBeNull()
+    expect(state.tier1StaleDiffMessageIds).toEqual([])
     expect(state.isGenerating).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
     expect(state.activeAgentSessionId).toBeNull()

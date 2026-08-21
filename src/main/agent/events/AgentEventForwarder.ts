@@ -121,7 +121,8 @@ export function forwardEventToRenderer(
     case 'compose_stages_updated':
       webContents.send('agent:compose-stages-updated', {
         sessionId: event.sessionId,
-        stages: event.stages
+        stages: event.stages,
+        reviewLoops: event.reviewLoops
       })
       break
     case 'compose_plan_approval_updated':

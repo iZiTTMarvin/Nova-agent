@@ -9,14 +9,16 @@
  *   统一走 compose:apply-stage-transition（与 stage_transition 工具同一套校验）；
  *   阶段表只由 main 推送的 agent:compose-stages-updated 更新，本地不做乐观写
  */
-import React, { useCallback, useEffect, useState } from 'react'
-import type {
-  ComposeStageAction,
-  ComposeStageId,
-  ComposeStageStatus
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  isComposeReviewReturnLimited,
+  type ComposeStageAction,
+  type ComposeStageId,
+  type ComposeStageStatus
 } from '../../../shared/composeLifecycle'
 import type { ActivePlanDocument } from '../../../shared/workspace/types'
 import {
+  selectSessionComposeReviewLoops,
   selectSessionComposeStages,
   useComposeStageStore
 } from './useComposeStageStore'
@@ -83,9 +85,15 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
   interactionLocked
 }) => {
   const stages = useComposeStageStore((state) => selectSessionComposeStages(state, sessionId))
+  const reviewLoops = useComposeStageStore((state) => selectSessionComposeReviewLoops(state, sessionId))
   const todoState = useTodoStore((state) => selectSessionTodoState(state, sessionId))
   const implementProgress = todoState ? { completed: todoState.completed, total: todoState.total } : undefined
   const projection = projectStageBar(stages, implementProgress)
+  // 审查阶段的回退受修复-复审循环上限约束：入口预禁用，后端兜底拒绝保持不变
+  const reviewReturnLimited = useMemo(
+    () => isComposeReviewReturnLimited(stages ?? [], reviewLoops),
+    [stages, reviewLoops]
+  )
 
   const [expandedStageId, setExpandedStageId] = useState<ComposeStageId | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -287,8 +295,10 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
             type="button"
             role="menuitem"
             className="compose-stage-bar__menu-item"
-            disabled={projection.returnTargets.length === 0}
-            title={projection.returnTargets.length > 0 ? '回退到之前的阶段（需填写原因）' : '当前没有可回退的阶段'}
+            disabled={projection.returnTargets.length === 0 || reviewReturnLimited}
+            title={reviewReturnLimited
+              ? '已达审阅修改上限'
+              : projection.returnTargets.length > 0 ? '回退到之前的阶段（需填写原因）' : '当前没有可回退的阶段'}
             onClick={() => {
               setMenuOpen(false)
               const first = projection.returnTargets[0]

@@ -51,7 +51,9 @@ export function createWorkspaceSyncSlice(
         currentSessionId: next.currentSessionId,
         currentSubagentTask: sessionChanged ? null : prev.currentSubagentTask,
         lastMessagesRevision: next.messagesRevision,
-        tier1BranchContext: sessionChanged ? null : next.tier1BranchContext
+        tier1BranchContext: sessionChanged ? null : next.tier1BranchContext,
+        // 灰显标记随会话投影一起处置：切会话即清空（旧会话语境），同会话则跟随主进程广播
+        tier1StaleDiffMessageIds: sessionChanged ? [] : next.tier1StaleDiffMessageIds
       }
 
       // 目标会话的运行态与草稿由 snapshot-first 水合恢复，不能沿用旧会话投影。
@@ -77,9 +79,15 @@ export function createWorkspaceSyncSlice(
         try {
           // load-session 与 run snapshot 并行启动；应用时先消费 snapshot，
           // 再合并持久化历史，避免运行中切回会话时撕裂覆盖草稿。
-          const detailPromise = window.api.invoke('load-session', {
+          const detailResult = window.api.invoke('load-session', {
             sessionId: targetSessionId
-          }) as Promise<SessionDetail>
+          })
+          // invoke 未注册/调用方返回非 Promise 时按加载失败处理，走既有 catch 路径；
+          // 否则对 undefined 调 .catch 会让水合 IIFE 静默死亡（分支元信息永不更新）
+          if (!detailResult || typeof (detailResult as PromiseLike<unknown>).then !== 'function') {
+            throw new Error('load-session 返回了非预期结果')
+          }
+          const detailPromise = detailResult as Promise<SessionDetail>
           // pullSnapshot 可能先 await；立即登记拒绝观察，避免并发 promise
           // 在稍后 await 原 promise 前被宿主判定为未处理，同时不改变原有 microtask 顺序。
           void detailPromise.catch(() => undefined)

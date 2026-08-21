@@ -344,3 +344,51 @@ describe('ComposeStageBar', () => {
     renderer.unmount()
   })
 })
+
+describe('ComposeStageBar 修复-复审循环上限', () => {
+  function reviewInProgressStages(): ComposeStageEntry[] {
+    return [
+      { id: 'brainstorm', status: 'completed', completedAt: 1 },
+      { id: 'plan', status: 'completed', completedAt: 2 },
+      { id: 'implement', status: 'completed', completedAt: 3 },
+      { id: 'verify', status: 'completed', completedAt: 4 },
+      { id: 'review', status: 'in_progress' },
+      { id: 'report', status: 'pending' }
+    ]
+  }
+
+  function openReturnItem(reviewLoops: number): { renderer: ReturnType<typeof renderDom>; item: HTMLButtonElement } {
+    seedStages(reviewInProgressStages())
+    useComposeStageStore.getState().setSessionReviewLoops('sess_1', reviewLoops)
+    const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
+    click(renderer.container.querySelector('.compose-stage-bar__menu-trigger')!)
+    const item = Array.from(
+      renderer.container.querySelectorAll('.compose-stage-bar__menu-item')
+    ).find(el => el.textContent === '回退到…')! as HTMLButtonElement
+    return { renderer, item }
+  }
+
+  it('审查阶段计数达上限时回退入口预禁用并提示', () => {
+    const { renderer, item } = openReturnItem(3)
+    expect(item.disabled).toBe(true)
+    expect(item.getAttribute('title')).toBe('已达审阅修改上限')
+    renderer.unmount()
+  })
+
+  it('未达上限时回退入口可用；非审查阶段不受计数影响', () => {
+    const below = openReturnItem(2)
+    expect(below.item.disabled).toBe(false)
+    below.renderer.unmount()
+
+    // 计数高但当前不是审查阶段（如开发进行中）：上限只约束审查阶段发起的回退
+    seedStages(midFlowStages())
+    useComposeStageStore.getState().setSessionReviewLoops('sess_1', 5)
+    const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
+    click(renderer.container.querySelector('.compose-stage-bar__menu-trigger')!)
+    const item = Array.from(
+      renderer.container.querySelectorAll('.compose-stage-bar__menu-item')
+    ).find(el => el.textContent === '回退到…')! as HTMLButtonElement
+    expect(item.disabled).toBe(false)
+    renderer.unmount()
+  })
+})

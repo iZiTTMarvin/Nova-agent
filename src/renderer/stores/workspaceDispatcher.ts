@@ -47,7 +47,8 @@ export function dispatchWorkspaceChange(state: WorkspaceState): void {
     currentSessionId: state.currentSessionId,
     availableSessions: state.availableSessions,
     messagesRevision: state.messagesRevision,
-    tier1BranchContext: state.tier1BranchContext
+    tier1BranchContext: state.tier1BranchContext,
+    tier1StaleDiffMessageIds: state.tier1StaleDiffMessageIds
   })
 
   // 2. settings store：同步镜像（currentProject / currentMode）

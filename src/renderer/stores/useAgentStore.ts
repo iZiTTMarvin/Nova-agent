@@ -87,14 +87,27 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       // 本地立即进入 cancelling，不清 isGenerating（等 snapshot 终态）
       useRunStore.getState().beginLocalCancel(runId)
 
-      // 本地清空弹窗，避免卡在已取消的交互上
-      set({
-        pendingPermissionRequest: null,
-        isSubmittingPermission: false,
-        permissionError: null,
-        pendingAskQuestion: null,
-        isSubmittingAskQuestion: false
-      })
+      // 本地清空弹窗，避免卡在已取消的交互上；但只清归属本次取消目标（run/会话）的请求。
+      // 子代理会话投影上来的 pending 请求（sessionId 指向后代会话）或明确属于其他 run 的
+      // 遗留请求不是本次 Stop 的目标，误清会让用户失去本次响应机会（子 run 不会因此终止）。
+      const pending = get().pendingPermissionRequest
+      const cancellingSessionId = useRunStore.getState().cancellingSessionId
+      const belongsToCancel =
+        pending == null ||
+        (runId != null && pending.runId != null
+          ? pending.runId === runId
+          : pending.sessionId == null ||
+            cancellingSessionId == null ||
+            pending.sessionId === cancellingSessionId)
+      if (belongsToCancel) {
+        set({
+          pendingPermissionRequest: null,
+          isSubmittingPermission: false,
+          permissionError: null,
+          pendingAskQuestion: null,
+          isSubmittingAskQuestion: false
+        })
+      }
 
       const result = runId
         ? await window.api.invoke('cancel-execution', { runId })

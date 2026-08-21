@@ -70,6 +70,16 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
   const hasPrefix = prefixArray.length > 0
   const commandPrefixText = prefixArray.join(', ')
 
+  /**
+   * 规则写入失败时提示并中止放行：继续放行会让用户误以为建立了永久/会话级规则，
+   * 下次同样命令还会再问一次，属「以为已授权」的错误预期。失败即给出可见错误并保留弹条。
+   */
+  const failRuleWrite = (label: string, err: unknown): void => {
+    console.error(`[InlinePermissionBar] ${label}失败:`, err)
+    useAgentStore.setState({ permissionError: `${label}失败，本次未放行，请重试` })
+    setShowDropdown(false)
+  }
+
   /** 创建持久化规则后给出本次决策 */
   const rememberAndRespond = async (scope: 'project' | 'global', behavior: PermissionDecision) => {
     const currentProject = useWorkspaceStore.getState().currentProjectPath
@@ -88,7 +98,8 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
         description: `${scope === 'project' ? '本项目' : '全局'} ${behavior === 'allow' ? '允许' : behavior === 'deny' ? '拒绝' : '询问'} ${request.toolName}${commandPrefix ? ' ' + commandPrefix : ''}`
       })
     } catch (err) {
-      console.error('[InlinePermissionBar] 创建持久化规则失败:', err)
+      failRuleWrite('保存持久化规则', err)
+      return
     }
 
     respondPermissionRequest(behavior)
@@ -106,7 +117,8 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
         })
       }
     } catch (err) {
-      console.error('[InlinePermissionBar] 授权临时白名单失败:', err)
+      failRuleWrite('写入本会话白名单', err)
+      return
     }
     respondPermissionRequest('allow')
     setShowDropdown(false)

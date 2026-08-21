@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   selectSessionComposePlanApproval,
+  selectSessionComposeReviewLoops,
   selectSessionComposeStages,
   useComposeStageStore
 } from '../../../src/renderer/features/compose/useComposeStageStore'
@@ -103,5 +104,30 @@ describe('useComposeStageStore', () => {
     })
     useComposeStageStore.getState().reset()
     expect(selectSessionComposePlanApproval(useComposeStageStore.getState(), 'sess_a')).toBeNull()
+  })
+
+  it('applyUpdate 携带的 reviewLoops 按 sessionId 缓存；缺省视为 0', () => {
+    useComposeStageStore.getState().applyUpdate({
+      sessionId: 'sess_a',
+      stages: createInitialStageTable(),
+      reviewLoops: 3
+    })
+    useComposeStageStore.getState().applyUpdate({
+      sessionId: 'sess_b',
+      stages: createInitialStageTable()
+    })
+
+    const state = useComposeStageStore.getState()
+    expect(selectSessionComposeReviewLoops(state, 'sess_a')).toBe(3)
+    expect(selectSessionComposeReviewLoops(state, 'sess_b')).toBe(0)
+    expect(selectSessionComposeReviewLoops(state, null)).toBe(0)
+  })
+
+  it('setSessionReviewLoops 水合持久化计数；reset 清空回退到 0', () => {
+    useComposeStageStore.getState().setSessionReviewLoops('sess_a', 2)
+    expect(selectSessionComposeReviewLoops(useComposeStageStore.getState(), 'sess_a')).toBe(2)
+
+    useComposeStageStore.getState().reset()
+    expect(selectSessionComposeReviewLoops(useComposeStageStore.getState(), 'sess_a')).toBe(0)
   })
 })

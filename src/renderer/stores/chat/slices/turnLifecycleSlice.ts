@@ -164,9 +164,12 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
     set(state => {
       const idx = state.messageIndexById[messageId]
       const live = state.liveTurn[messageId]
+      // 无条件清空与按会话判断等价：error 事件经 gateAgentEvent 只放行当前会话
       const commonFields = {
         isGenerating: false,
         currentGeneratingMessageId: null,
+        activeAgentSessionId: null,
+        sendInFlight: false,
         branchForkInProgress: false,
         // error 路径不发射 message-end，此处同步清理恢复状态，避免残留
         ...omitRecoveryFieldsForMessage(state, messageId)
@@ -274,6 +277,10 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
         isGenerating: false,
         currentGeneratingMessageId: null,
+        // 取消兜底不带会话参数，候选轮次必属当前会话，无条件清空即可
+        activeAgentSessionId: null,
+        sendInFlight: false,
+        branchForkInProgress: false,
         liveTurn: {},
         ...emptyStreamTransientState()
       }

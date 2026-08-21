@@ -5,9 +5,13 @@ import { act, renderDom } from './renderDom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
-import { resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
+import {
+  resetSettingsStoreForTests,
+  useSettingsStore
+} from '../../../src/renderer/stores/useSettingsStore'
 import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 import type { ExtendedMessage } from '../../../src/renderer/stores/types'
 
 /**
@@ -77,7 +81,8 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
       nova: {
         skill: {
           onChange: vi.fn(() => () => {}),
-          list: vi.fn(() => [])
+          list: vi.fn(() => []),
+          reload: vi.fn()
         }
       }
     })
@@ -198,7 +203,7 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     mockInvoke.mockResolvedValue(undefined)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
     })
     // rAF 桩成不回调，隔离出 setInterval 轮询路径
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
@@ -283,7 +288,7 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
     mockInvoke.mockResolvedValue(undefined)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
     })
   })
 
@@ -364,7 +369,7 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     mockInvoke.mockResolvedValue(undefined)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []) } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
     })
   })
 
@@ -451,6 +456,116 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     })
     expect(renderer.container.textContent ?? '').toContain('上次任务异常中断')
     expect(renderer.container.textContent ?? '').toContain('继续分析')
+    renderer.unmount()
+  })
+})
+
+/**
+ * 发送被守卫拒绝时草稿保留。
+ *
+ * 回归对象：handleSend 曾无条件 setInputVal('')——sendMessage 返回 false（分叉准备窗口、
+ * 缺工作区等）时用户输入凭空消失。Astryx ChatComposerInput 的 onSubmit 会无条件清空
+ * 编辑器，因此发送必须挂在产品层 onKeyDown/按钮路径，拒绝后不得触碰 inputVal。
+ */
+describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    messageItemPropsByRender.length = 0
+    resetChatStoreForTests()
+    resetSettingsStoreForTests()
+    resetAgentStoreForTests()
+    useRunStore.getState().resetForTests()
+    mockInvoke.mockResolvedValue(undefined)
+    Object.assign(window, {
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+    })
+    // jsdom 未实现 scrollTo；发送成功追加消息会触发自动滚动 effect
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      writable: true,
+      value: vi.fn()
+    })
+    act(() => {
+      useSettingsStore.setState({
+        // 最小可用模型配置：让 handleSend 越过「未配置模型」的 alert 拦截
+        modelConfig: { provider: 'openai', modelId: 'gpt-test', apiKey: 'test-key' } as never,
+        currentProject: '/ws'
+      })
+      useWorkspaceStore.setState({ currentProjectPath: '/ws' })
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        isGenerating: false,
+        sendInFlight: false
+      })
+    })
+  })
+
+  it('分叉准备窗口内发送被拒：草稿不被清空，未发 IPC', async () => {
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const editable = renderer.container.querySelector(
+      '[contenteditable="true"]'
+    ) as HTMLElement | null
+    expect(editable).not.toBeNull()
+
+    act(() => {
+      editable!.textContent = '被守卫拦下的草稿'
+      editable!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    // 分叉准备窗口锁住普通发送（sendMessage 返回 false）
+    act(() => {
+      useChatStore.setState({ branchForkInProgress: true })
+    })
+
+    const sendBtn = renderer.container.querySelector<HTMLElement>('[aria-label="发送"]')
+    expect(sendBtn).not.toBeNull()
+    await act(async () => {
+      sendBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(editable!.textContent).toContain('被守卫拦下的草稿')
+    const sendCalls = mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')
+    expect(sendCalls).toHaveLength(0)
+    renderer.unmount()
+  })
+
+  it('拒绝后解除分叉锁再次发送：同一草稿正常发出并清空', async () => {
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const editable = renderer.container.querySelector(
+      '[contenteditable="true"]'
+    ) as HTMLElement | null
+
+    act(() => {
+      editable!.textContent = '保留后成功发送的草稿'
+      editable!.dispatchEvent(new Event('input', { bubbles: true }))
+      useChatStore.setState({ branchForkInProgress: true })
+    })
+
+    const sendBtn = renderer.container.querySelector<HTMLElement>('[aria-label="发送"]')
+    await act(async () => {
+      sendBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    // 第一次被拒后草稿仍在
+    expect(editable!.textContent).toContain('保留后成功发送的草稿')
+
+    // 分叉窗口结束：同一份草稿再点发送应真正发出并清空编辑器
+    act(() => {
+      useChatStore.setState({ branchForkInProgress: false })
+    })
+    await act(async () => {
+      sendBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'send-message',
+      expect.objectContaining({ content: '保留后成功发送的草稿' })
+    )
+    expect(editable!.textContent ?? '').not.toContain('保留后成功发送的草稿')
     renderer.unmount()
   })
 })

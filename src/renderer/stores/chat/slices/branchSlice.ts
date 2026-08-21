@@ -9,24 +9,35 @@ import {
 
 export function initialBranchState(): Pick<
   BranchSliceState,
-  'pendingBranchMetaReload' | 'branchForkInProgress' | 'tier1BranchContext'
+  | 'pendingBranchMetaReload'
+  | 'branchForkInProgress'
+  | 'tier1BranchContext'
+  | 'tier1StaleDiffMessageIds'
 > {
   return {
     pendingBranchMetaReload: false,
     branchForkInProgress: false,
-    tier1BranchContext: null
+    tier1BranchContext: null,
+    tier1StaleDiffMessageIds: []
   }
 }
 
 /**
  * 切会话时丢弃分叉瞬态。tier1BranchContext 的跨会话取舍由
- * workspaceSyncSlice 按主进程广播决定，此处只提供分叉锁与刷新标记的清零。
+ * workspaceSyncSlice 按主进程广播决定，此处只提供分叉锁、刷新标记与
+ * 灰显标记的清零（灰显只属于旧会话语境，不得跨会话残留）。
  */
 export function resetBranchForkOnSessionSwitch(): Pick<
   BranchSliceState,
-  'branchForkInProgress'
+  | 'branchForkInProgress'
+  | 'pendingBranchMetaReload'
+  | 'tier1StaleDiffMessageIds'
 > {
-  return { branchForkInProgress: false }
+  return {
+    branchForkInProgress: false,
+    pendingBranchMetaReload: false,
+    tier1StaleDiffMessageIds: []
+  }
 }
 
 export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) => ({

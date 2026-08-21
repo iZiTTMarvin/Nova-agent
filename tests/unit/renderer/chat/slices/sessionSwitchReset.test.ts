@@ -3,6 +3,7 @@ import {
   resetChatStoreForTests,
   useChatStore
 } from '../../../../../src/renderer/stores/useChatStore'
+import { useWorkspaceStore } from '../../../../../src/renderer/stores/useWorkspaceStore'
 import { useRunStore } from '../../../../../src/renderer/stores/useRunStore'
 import type { RunSnapshot } from '../../../../../src/shared/run/types'
 
@@ -58,6 +59,7 @@ describe('chat workspace sync reset ownership', () => {
       pendingBranchMetaReload: true,
       branchForkInProgress: true,
       tier1BranchContext: { branchMessageId: 'message-a', branchType: 'tier1', siblingCount: 2, selectedSiblingIndex: 1 },
+      tier1StaleDiffMessageIds: ['message-a'],
       isGenerating: true,
       currentGeneratingMessageId: 'message-a',
       activeAgentSessionId: 'session-a',
@@ -86,7 +88,8 @@ describe('chat workspace sync reset ownership', () => {
       currentSessionId: 'session-b',
       availableSessions: [{ id: 'session-b', workspaceRoot: 'w', mode: 'default', createdAt: 2, updatedAt: 2, messageCount: 0 }],
       messagesRevision: 2,
-      tier1BranchContext: null
+      tier1BranchContext: null,
+      tier1StaleDiffMessageIds: ['message-b']
     })
     unsubscribe()
 
@@ -97,8 +100,10 @@ describe('chat workspace sync reset ownership', () => {
     expect(state.messages).toEqual([])
     expect(state.messageIndexById).toEqual({})
     expect(state.branchForkInProgress).toBe(false)
-    expect(state.pendingBranchMetaReload).toBe(true)
+    // 分叉刷新标记与灰显标记同属旧会话语境：切会话即清零，不能跨会话残留
+    expect(state.pendingBranchMetaReload).toBe(false)
     expect(state.tier1BranchContext).toBeNull()
+    expect(state.tier1StaleDiffMessageIds).toEqual([])
     expect(state.isGenerating).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
     expect(state.activeAgentSessionId).toBeNull()
@@ -141,14 +146,16 @@ describe('chat workspace sync reset ownership', () => {
       hasMoreMessagesAbove: true,
       isLoadingOlderMessages: true,
       oldestLoadedMessageId: 'message-a',
-      suspendHeadTrim: true
+      suspendHeadTrim: true,
+      tier1StaleDiffMessageIds: ['message-a']
     })
 
     useChatStore.getState().syncFromWorkspace({
       currentSessionId: 'session-a',
       availableSessions: [],
       messagesRevision: 2,
-      tier1BranchContext: null
+      tier1BranchContext: null,
+      tier1StaleDiffMessageIds: ['message-b-stale']
     })
 
     const state = useChatStore.getState()
@@ -160,6 +167,8 @@ describe('chat workspace sync reset ownership', () => {
     expect(state.sendInFlight).toBe(true)
     expect(state.pendingUserMessages).toEqual([{ text: 'queued', images: [] }])
     expect(state.branchForkInProgress).toBe(true)
+    // 同会话灰显标记跟随主进程广播（切分支重放结果），不被清理
+    expect(state.tier1StaleDiffMessageIds).toEqual(['message-b-stale'])
     expect(state.streamingToolArgs).toEqual({ tool: '{}' })
     expect(state.messageDiffs).toEqual({})
     expect(state.loadingDiffs.size).toBe(0)
@@ -191,7 +200,8 @@ describe('chat workspace sync reset ownership', () => {
       currentSessionId: null,
       availableSessions: [],
       messagesRevision: 2,
-      tier1BranchContext: null
+      tier1BranchContext: null,
+      tier1StaleDiffMessageIds: []
     })
     unsubscribe()
 
@@ -272,7 +282,8 @@ describe('chat workspace sync reset ownership', () => {
         { id: 'session-b', workspaceRoot: 'w', mode: 'default', createdAt: 2, updatedAt: 2, messageCount: 0 }
       ],
       messagesRevision: 2,
-      tier1BranchContext: null
+      tier1BranchContext: null,
+      tier1StaleDiffMessageIds: []
     })
 
     // pull 尚未返回：目标轮次先结束，renderer 已回到非生成态
@@ -328,5 +339,46 @@ describe('chat workspace sync reset ownership', () => {
     expect(useChatStore.getState().currentSessionId).toBe('session-b')
     expect(useChatStore.getState().messageDiffs).toEqual({})
     expect(useChatStore.getState().loadingDiffs.size).toBe(0)
+  })
+
+  it('load-session invoke 返回非 Promise 时按加载失败处理，不静默卡死', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(window.api.invoke).mockImplementation((channel: string) => {
+      if (channel === 'load-session') {
+        // 主进程未注册该通道/调用方返回非 Promise：不能停在半水合状态
+        return { id: 'session-b', workspaceRoot: 'w', mode: 'default' }
+      }
+      if (channel === 'run:get-snapshot') {
+        return Promise.resolve({ snapshot: null, waitingSessions: [] })
+      }
+      return Promise.resolve(undefined)
+    })
+    useChatStore.setState({
+      currentSessionId: 'session-a',
+      lastMessagesRevision: 1,
+      sessions: [{ id: 'session-a', workspaceRoot: 'w', mode: 'default', createdAt: 1, updatedAt: 1, messageCount: 1 }]
+    })
+
+    try {
+      useChatStore.getState().syncFromWorkspace({
+        currentSessionId: 'session-b',
+        availableSessions: [],
+        messagesRevision: 2,
+        tier1BranchContext: null,
+        tier1StaleDiffMessageIds: []
+      })
+      await vi.waitFor(() => {
+        expect(consoleError).toHaveBeenCalled()
+      })
+      expect(consoleError.mock.calls.at(-1)?.[0]).toMatch(/加载会话消息失败/)
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    // 走 catch 后不残留半水合状态：会话投影已就位，加载态收敛
+    expect(useChatStore.getState().currentSessionId).toBe('session-b')
+    expect(useChatStore.getState().lastMessagesRevision).toBe(2)
+    // 加载态由 workspace store 收敛，不允许卡在「正在加载会话」旋标
+    expect(useWorkspaceStore.getState().isSessionLoading).toBe(false)
   })
 })

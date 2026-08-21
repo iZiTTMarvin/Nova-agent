@@ -221,6 +221,11 @@ export interface BranchSliceState {
   branchForkInProgress: boolean
   /** Tier 1 切分支后的提示与 diff 灰显上下文（来自 WorkspaceState） */
   tier1BranchContext: Tier1BranchContext | null
+  /**
+   * Tier 1/2 未重放消息的 diff 灰显标记（安全禁用 diff 卡裁决）。
+   * 与可关闭的 tier1BranchContext 解耦：横幅关闭不解除灰显，避免用户对未重放内容误裁决。
+   */
+  tier1StaleDiffMessageIds: string[]
 
   /** 按消息回退到某条消息之前的状态 */
   regenerateAssistant: (sessionId: string, messageId: string) => Promise<void>
@@ -308,6 +313,8 @@ export interface WorkspaceSyncSliceState {
     /** 同会话内消息序列版本号；与上次不同则强制重拉消息（回退/切分支用，绕过 sessionChanged 守卫） */
     messagesRevision: number
     tier1BranchContext: Tier1BranchContext | null
+    /** 未重放消息的 diff 灰显标记；切会话时随投影一起清空 */
+    tier1StaleDiffMessageIds: string[]
   }) => void
 }
 

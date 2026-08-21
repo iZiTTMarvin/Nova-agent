@@ -213,7 +213,11 @@ function App(): React.ReactNode {
 
     // 监听：compose 阶段表更新（工具与手动兜底共用同一事件，阶段条据此刷新）
     const unsubComposeStagesUpdated = window.api.on('agent:compose-stages-updated', (data) => {
-      applyComposeStageUpdate({ sessionId: data.sessionId, stages: data.stages })
+      applyComposeStageUpdate({
+        sessionId: data.sessionId,
+        stages: data.stages,
+        reviewLoops: data.reviewLoops
+      })
     })
 
     // 监听：计划确认门批准状态更新（手动批准 IPC 与 auto 模式自动放行共用同一事件）

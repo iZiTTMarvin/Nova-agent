@@ -39,6 +39,12 @@ export interface WorkspaceState {
    * 非切分支操作为 null。
    */
   tier1BranchContext: Tier1BranchContext | null
+  /**
+   * Tier 1/2 切分支后未重放消息的 diff 灰显标记（安全禁用），与可关闭的横幅
+   * tier1BranchContext 解耦：横幅可被用户关闭或随 bump 隐式消失，灰显标记必须
+   * 保留到真正重放（成功切到全额重放的分支）或离开会话才清除。
+   */
+  tier1StaleDiffMessageIds: string[]
 }
 
 /** Tier 1 分支视图：磁盘未重放目标分支的文件改动 */

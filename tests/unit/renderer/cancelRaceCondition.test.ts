@@ -252,4 +252,88 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       expect(useRunStore.getState().cancellingSessionId).toBeNull()
     })
   })
+
+  it('取消只清归属本次取消目标（会话）的 pending 权限请求', async () => {
+    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const snapA = {
+      runId: 'runA',
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 'sessA',
+      messageId: 'msg_a',
+      status: 'running',
+      sequence: 1,
+      pendingInteractions: [],
+      currentAttempt: null,
+      progress: null,
+      lastHeartbeatAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    useRunStore.setState({
+      selectedSessionId: 'sessA',
+      activeRunIdBySessionId: { sessA: 'runA' },
+      snapshotsByRunId: { runA: snapA }
+    })
+    useAgentStore.getState().handlePermissionRequest({
+      messageId: 'msg_a',
+      requestId: 'perm_1',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+      riskLevel: 'medium',
+      reason: '需要确认',
+      toolCallIds: ['tc_1'],
+      sessionId: 'sessA'
+    })
+
+    mockInvoke.mockResolvedValue({ runId: 'runA', status: 'cancelling' })
+    await useAgentStore.getState().cancelExecution()
+
+    // pending 归属本次取消的会话：清空弹窗，避免卡在已取消的交互上
+    expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'runA' })
+  })
+
+  it('子代理后代会话的 pending 请求不是本次取消目标，保留等待响应', async () => {
+    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const snapA = {
+      runId: 'runA',
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 'sessA',
+      messageId: 'msg_a',
+      status: 'running',
+      sequence: 1,
+      pendingInteractions: [],
+      currentAttempt: null,
+      progress: null,
+      lastHeartbeatAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    useRunStore.setState({
+      selectedSessionId: 'sessA',
+      activeRunIdBySessionId: { sessA: 'runA' },
+      snapshotsByRunId: { runA: snapA }
+    })
+    // 子代理会话投影到父会话权限条的请求：sessionId 指向后代会话
+    useAgentStore.getState().handlePermissionRequest({
+      messageId: 'msg_child',
+      requestId: 'perm_child',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+      riskLevel: 'medium',
+      reason: '子任务需要确认',
+      sessionId: 'sess_child'
+    })
+
+    mockInvoke.mockResolvedValue({ runId: 'runA', status: 'cancelling' })
+    await useAgentStore.getState().cancelExecution()
+
+    // 子 run 不会因父会话取消而终止，误清会让用户失去这次响应机会
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm_child')
+    expect(useAgentStore.getState().pendingPermissionRequest?.sessionId).toBe('sess_child')
+  })
 })

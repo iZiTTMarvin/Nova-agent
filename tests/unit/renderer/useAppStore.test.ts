@@ -543,7 +543,6 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('finishBranchMetaRefresh 应在 pending 时 bump revision 并触发 load-session', async () => {
-    mockInvoke.mockReset()
     useWorkspaceStore.setState({
       currentSessionId: 'sess_branch',
       currentProjectPath: '/project/root',
@@ -559,15 +558,23 @@ describe('useAppStore Zustand Store', () => {
       messageIndexById: { u1: 0 }
     })
 
-    mockInvoke
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_branch', messagesRevision: 1 }))
-      .mockResolvedValueOnce({
-        id: 'sess_branch',
-        messages: [
-          { id: 'u1', sessionId: 'sess_branch', role: 'user', content: 'x', timestamp: 1, branch: { index: 1, total: 2, siblingIds: ['u1', 'u2'] } }
-        ],
-        hasMoreMessagesAbove: false
-      })
+    // 逐 channel 路由：dispatcher 还会发出 codeindex 等旁路拉取，once 队列会被其抢先消费
+    mockInvoke.mockReset()
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'workspace:bump-messages-revision') {
+        return makeWorkspaceState({ currentSessionId: 'sess_branch', messagesRevision: 1 })
+      }
+      if (channel === 'load-session') {
+        return {
+          id: 'sess_branch',
+          messages: [
+            { id: 'u1', sessionId: 'sess_branch', role: 'user', content: 'x', timestamp: 1, branch: { index: 1, total: 2, siblingIds: ['u1', 'u2'] } }
+          ],
+          hasMoreMessagesAbove: false
+        }
+      }
+      return undefined
+    })
 
     await useChatStore.getState().finishBranchMetaRefresh()
 

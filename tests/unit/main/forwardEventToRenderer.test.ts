@@ -141,14 +141,16 @@ describe('forwardEventToRenderer（recovery / hook IPC）', () => {
     const event: AgentEvent = {
       type: 'compose_stages_updated',
       sessionId: 'sess_1',
-      stages
+      stages,
+      reviewLoops: 2
     }
 
     forwardEventToRenderer(win as never, event)
 
     expect(win._send).toHaveBeenCalledWith('agent:compose-stages-updated', {
       sessionId: 'sess_1',
-      stages
+      stages,
+      reviewLoops: 2
     })
   })
 })

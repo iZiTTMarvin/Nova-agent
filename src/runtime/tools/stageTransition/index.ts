@@ -161,7 +161,8 @@ export const stageTransitionTool: ToolExecutor = {
     context.eventBus?.emit({
       type: 'compose_stages_updated',
       sessionId,
-      stages: result.stages
+      stages: result.stages,
+      reviewLoops: result.reviewLoops
     })
 
     return {

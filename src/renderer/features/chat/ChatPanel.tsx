@@ -131,9 +131,11 @@ export const ChatPanel: React.FC = () => {
   const loadOlderMessages = useChatStore(state => state.loadOlderMessages)
   const tier1BranchContext = useChatStore(state => state.tier1BranchContext)
   const dismissTier1BranchNotice = useChatStore(state => state.dismissTier1BranchNotice)
+  // 灰显标记与横幅解耦：关闭横幅不影响未重放 diff 卡的安全禁用
+  const tier1StaleDiffMessageIds = useChatStore(state => state.tier1StaleDiffMessageIds)
   const tier1StaleDiffSet = useMemo(
-    () => new Set(tier1BranchContext?.staleDiffMessageIds ?? []),
-    [tier1BranchContext]
+    () => new Set(tier1StaleDiffMessageIds),
+    [tier1StaleDiffMessageIds]
   )
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
@@ -513,15 +515,18 @@ export const ChatPanel: React.FC = () => {
     // Steering Queue：Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
     if (stillGenerating) {
       enqueuePendingMessage(text, images, currentMode === 'compose' ? autoMode : undefined)
-    } else {
-      // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列
-      if (currentMode === 'compose') {
-        sendMessage(text, images, { autoMode })
-      } else {
-        sendMessage(text, images)
-      }
+      setInputVal('')
+      setImageAttachments([])
+      return
     }
 
+    // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列。
+    // sendMessage 返回 false 表示被守卫拦截（如分叉准备窗口、缺工作区），
+    // 此时必须保留草稿，不能让用户刚输入的内容凭空消失。
+    const accepted = currentMode === 'compose'
+      ? await sendMessage(text, images, { autoMode })
+      : await sendMessage(text, images)
+    if (!accepted) return
     setInputVal('')
     setImageAttachments([])
   }

@@ -72,9 +72,8 @@ const ReviewContent: React.FC<{
   const acceptFile = useChatStore(s => s.acceptFile)
   const rejectFile = useChatStore(s => s.rejectFile)
   const loadMessageDiffs = useChatStore(s => s.loadMessageDiffs)
-  const tier1Stale = useChatStore(s =>
-    (s.tier1BranchContext?.staleDiffMessageIds ?? []).includes(messageId)
-  )
+  // stale 判定与消息卡片同一来源：灰显标记独立于可关闭的横幅，关闭横幅不解除安全禁用
+  const tier1Stale = useChatStore(s => s.tier1StaleDiffMessageIds.includes(messageId))
   const selectReviewFile = useLayoutStore(s => s.selectReviewFile)
 
   const [localFilePath, setLocalFilePath] = useState<string | null>(null)

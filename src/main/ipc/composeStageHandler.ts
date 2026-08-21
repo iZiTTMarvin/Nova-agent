@@ -81,7 +81,11 @@ export function registerComposeStageHandler(): void {
 
     const win = getMainWindow()
     if (win && !win.isDestroyed()) {
-      win.webContents.send(AGENT_COMPOSE_STAGES_UPDATED, { sessionId, stages: result.stages })
+      win.webContents.send(AGENT_COMPOSE_STAGES_UPDATED, {
+        sessionId,
+        stages: result.stages,
+        reviewLoops: result.reviewLoops
+      })
     }
     return { ok: true as const, stages: result.stages }
   })

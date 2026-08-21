@@ -167,6 +167,11 @@ export type SessionDetail = Session & {
    */
   composeStages?: ComposeStageEntry[]
   /**
+   * 修复-复审循环计数（审查阶段回退放行次数，代码兜底上限 3）。
+   * 随详情水合阶段条，用于预禁用已达上限的回退入口；旧会话缺省视为 0。
+   */
+  composeReviewLoops?: number
+  /**
    * 计划阶段确认门状态。仅 compose 会话由 save_plan / stage_transition / 批准 IPC 写入；
    * 旧会话缺省，renderer 视为 pending。
    */

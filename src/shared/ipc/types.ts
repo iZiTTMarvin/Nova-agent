@@ -666,6 +666,8 @@ export interface IpcEvents {
   'agent:compose-stages-updated': {
     sessionId: string
     stages: ComposeStageEntry[]
+    /** 修复-复审循环计数；renderer 据此预禁用已达上限的回退入口 */
+    reviewLoops: number
   }
   'agent:compose-plan-approval-updated': {
     sessionId: string

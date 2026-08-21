@@ -117,7 +117,12 @@ describe('turnLifecycleSlice', () => {
     useChatStore.getState().handleRecoveryState('msg_err', 'recovering')
     useChatStore.getState().handleRecoveryHint('msg_err', '重试中', 1)
     useChatStore.getState().handleHookError('msg_err', 'tool_before', 'hook 崩了')
-    useChatStore.setState({ isGenerating: true })
+    useChatStore.setState({
+      isGenerating: true,
+      activeAgentSessionId: 'sess-1',
+      sendInFlight: true,
+      branchForkInProgress: true
+    })
 
     await useChatStore.getState().handleError('msg_err', '模型连接失败')
 
@@ -130,9 +135,32 @@ describe('turnLifecycleSlice', () => {
     })
     expect(state.isGenerating).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
+    // error 事件只属于当前会话，运行态/发送锁/分叉锁必须无条件收敛，不能残留阻塞下次发送
+    expect(state.activeAgentSessionId).toBeNull()
+    expect(state.sendInFlight).toBe(false)
+    expect(state.branchForkInProgress).toBe(false)
     expect(state.recoveryState).toEqual({})
     expect(state.recoveryHints).toEqual({})
     expect(state.hookErrors).toEqual({})
+  })
+
+  it('markRunningAsCancelled 清空轮次运行态（含发送锁与分叉锁）', async () => {
+    useChatStore.setState({
+      isGenerating: true,
+      currentGeneratingMessageId: 'msg_cancel',
+      activeAgentSessionId: 'sess-1',
+      sendInFlight: true,
+      branchForkInProgress: true
+    })
+
+    await useChatStore.getState().markRunningAsCancelled()
+
+    const state = useChatStore.getState()
+    expect(state.isGenerating).toBe(false)
+    expect(state.currentGeneratingMessageId).toBeNull()
+    expect(state.activeAgentSessionId).toBeNull()
+    expect(state.sendInFlight).toBe(false)
+    expect(state.branchForkInProgress).toBe(false)
   })
 
   it('终态后 steering 队列恰好出队一次', async () => {

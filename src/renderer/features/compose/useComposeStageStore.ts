@@ -13,6 +13,8 @@ import type { ComposePlanApproval, ComposeStageEntry } from '../../../shared/com
 export interface ComposeStageUpdate {
   sessionId: string
   stages: ComposeStageEntry[]
+  /** 修复-复审循环计数；事件推送必有，缺省按 0 处理 */
+  reviewLoops?: number
 }
 
 export interface ComposePlanApprovalUpdate {
@@ -25,6 +27,8 @@ interface ComposeStageStoreState {
   bySession: Record<string, ComposeStageEntry[] | null>
   /** 按 sessionId 缓存的计划确认门状态；null = 已知该会话但尚无批准记录（视为 pending） */
   planApprovalBySession: Record<string, ComposePlanApproval | null>
+  /** 按 sessionId 缓存的修复-复审循环计数；缺省视为 0（旧会话） */
+  reviewLoopsBySession: Record<string, number>
 }
 
 interface ComposeStageStoreActions {
@@ -32,6 +36,8 @@ interface ComposeStageStoreActions {
   applyUpdate: (update: ComposeStageUpdate) => void
   /** 会话水合时写入持久化阶段表（磁盘为事实源，事件推送先于持久化不会发生） */
   setSessionStages: (sessionId: string, stages: ComposeStageEntry[] | null) => void
+  /** 会话水合时写入持久化的修复-复审循环计数 */
+  setSessionReviewLoops: (sessionId: string, loops: number) => void
   /** 处理来自 main 进程的计划确认门更新事件 */
   applyPlanApprovalUpdate: (update: ComposePlanApprovalUpdate) => void
   /** 会话水合时写入持久化的计划确认门状态 */
@@ -42,16 +48,24 @@ interface ComposeStageStoreActions {
 export const useComposeStageStore = create<ComposeStageStoreState & ComposeStageStoreActions>((set) => ({
   bySession: {},
   planApprovalBySession: {},
+  reviewLoopsBySession: {},
 
-  applyUpdate: ({ sessionId, stages }) => {
+  applyUpdate: ({ sessionId, stages, reviewLoops }) => {
     set((state) => ({
-      bySession: { ...state.bySession, [sessionId]: stages }
+      bySession: { ...state.bySession, [sessionId]: stages },
+      reviewLoopsBySession: { ...state.reviewLoopsBySession, [sessionId]: reviewLoops ?? 0 }
     }))
   },
 
   setSessionStages: (sessionId, stages) => {
     set((state) => ({
       bySession: { ...state.bySession, [sessionId]: stages }
+    }))
+  },
+
+  setSessionReviewLoops: (sessionId, loops) => {
+    set((state) => ({
+      reviewLoopsBySession: { ...state.reviewLoopsBySession, [sessionId]: loops }
     }))
   },
 
@@ -68,9 +82,18 @@ export const useComposeStageStore = create<ComposeStageStoreState & ComposeStage
   },
 
   reset: () => {
-    set({ bySession: {}, planApprovalBySession: {} })
+    set({ bySession: {}, planApprovalBySession: {}, reviewLoopsBySession: {} })
   }
 }))
+
+/** 选中某会话的修复-复审循环计数（缺省 0：旧会话无记录先于上限） */
+export function selectSessionComposeReviewLoops(
+  state: ComposeStageStoreState,
+  sessionId: string | null
+): number {
+  if (!sessionId) return 0
+  return state.reviewLoopsBySession[sessionId] ?? 0
+}
 
 /** 选中某会话的阶段表（不存在时返回 null，投影层据此回退初始表显示） */
 export function selectSessionComposeStages(

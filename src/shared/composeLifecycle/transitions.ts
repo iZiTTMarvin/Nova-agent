@@ -6,6 +6,9 @@ import {
   type ComposeStageId
 } from './types'
 
+/** 修复-复审循环上限：审查阶段发起的回退放行次数（与阶段指南口径一致，applyStageTransition 兜底拒绝） */
+export const COMPOSE_MAX_REVIEW_LOOPS = 3
+
 export interface ComposeStageCursor {
   /** 当前进行中阶段；终态或异常表为 null */
   currentStageId: ComposeStageId | null
@@ -149,12 +152,12 @@ export function applyStageTransition(
   }
 
   // 审查阶段发出的任何回退都计为一次修复-复审返工（不限于回退开发，
-  // 否则经回退计划等路径可绕开上限无限重审）：3 次后拒绝并让主 Agent 停住向用户说明
+  // 否则经回退计划等路径可绕开上限无限重审）：超上限拒绝并让主 Agent 停住向用户说明
   const isReviewReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'review'
-  if (isReviewReturn && loops >= 3) {
+  if (isReviewReturn && loops >= COMPOSE_MAX_REVIEW_LOOPS) {
     return {
       ok: false,
-      error: '修复-复审循环已达上限（3 次）。请向用户说明审查结论与阻塞点，停在审查阶段等待用户决定。'
+      error: `修复-复审循环已达上限（${COMPOSE_MAX_REVIEW_LOOPS} 次）。请向用户说明审查结论与阻塞点，停在审查阶段等待用户决定。`
     }
   }
 
@@ -168,4 +171,17 @@ export function applyStageTransition(
     note: reason
   }
   return { ok: true, stages, reviewLoops: isReviewReturn ? loops + 1 : loops }
+}
+
+/**
+ * 审查阶段发起的回退是否已达循环上限（仅当前阶段为 review 时可能受限）。
+ * 与 applyStageTransition 的兜底拒绝口径共用同一常量，UI 据此预禁用回退入口。
+ */
+export function isComposeReviewReturnLimited(
+  stages: ReadonlyArray<Pick<ComposeStageEntry, 'id' | 'status'>>,
+  reviewLoops?: number
+): boolean {
+  const inProgressIdx = stages.findIndex(entry => entry.status === 'in_progress')
+  const isReviewReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'review'
+  return isReviewReturn && (reviewLoops ?? 0) >= COMPOSE_MAX_REVIEW_LOOPS
 }
