@@ -100,6 +100,39 @@ def agent_metrics(rows: list[dict[str, str]]) -> dict[str, dict[str, Any]]:
             "cache_write": sum(as_int(row["cache_write_tokens"]) for row in values),
             "output": sum(as_int(row["output_tokens"]) for row in values),
             "duration": sum(as_float(row["duration_seconds"]) for row in values),
+            "read_calls": sum(as_int(row.get("read_calls")) for row in values),
+            "grep_calls": sum(as_int(row.get("grep_calls")) for row in values),
+            "find_calls": sum(as_int(row.get("find_calls")) for row in values),
+            "code_context_calls": sum(
+                as_int(row.get("code_context_calls")) for row in values
+            ),
+            "total_tool_calls": sum(
+                as_int(row.get("total_tool_calls")) for row in values
+            ),
+            "llm_request_count": sum(
+                as_int(row.get("llm_request_count")) for row in values
+            ),
+            "tool_result_bytes": sum(
+                as_int(row.get("tool_result_bytes")) for row in values
+            ),
+            "compaction_count": sum(
+                as_int(row.get("compaction_count")) for row in values
+            ),
+            "anchors_returned": sum(
+                as_int(row.get("anchors_returned")) for row in values
+            ),
+            "query_latency_ms": sum(
+                as_float(row.get("query_latency_ms")) for row in values
+            ),
+            "expected_reuse_tokens": sum(
+                as_int(row.get("expected_reuse_tokens")) for row in values
+            ),
+            "actual_cache_read_tokens": sum(
+                as_int(row.get("actual_cache_read_tokens")) for row in values
+            ),
+            "tools_first_diff_count": sum(
+                row.get("first_diff_part") == "tools" for row in values
+            ),
         }
     return metrics
 
@@ -373,6 +406,42 @@ def generate(run_dir: Path) -> None:
             for agent in agents
         ],
     )
+    code_graph_table = markdown_table(
+        [
+            "Agent",
+            "Read+grep+find",
+            "code_context",
+            "All tools",
+            "LLM calls",
+            "Anchors",
+            "Query ms",
+            "Tool result bytes",
+            "Compactions",
+            "Tools first-diff",
+            "Cache actual/expected",
+        ],
+        [
+            [
+                agent,
+                metrics[agent]["read_calls"]
+                + metrics[agent]["grep_calls"]
+                + metrics[agent]["find_calls"],
+                metrics[agent]["code_context_calls"],
+                metrics[agent]["total_tool_calls"],
+                metrics[agent]["llm_request_count"],
+                metrics[agent]["anchors_returned"],
+                f"{metrics[agent]['query_latency_ms']:.1f}",
+                metrics[agent]["tool_result_bytes"],
+                metrics[agent]["compaction_count"],
+                metrics[agent]["tools_first_diff_count"],
+                (
+                    f"{metrics[agent]['actual_cache_read_tokens']}/"
+                    f"{metrics[agent]['expected_reuse_tokens']}"
+                ),
+            ]
+            for agent in agents
+        ],
+    )
     failure_table = markdown_table(["Failure class", "Cells"], sorted(failures.items()))
 
     dataset_label = setup.get("dataset", {}).get("label", "Terminal-Bench 2.1")
@@ -403,6 +472,12 @@ Non-timeout excludes `budget_exhausted`, `agent_timeout`, and `runner_outer_time
 {cost_table}
 
 Cost is recomputed uniformly from the frozen DeepSeek price snapshot, not from harness-reported cost.
+
+## Code graph A/B
+
+{code_graph_table}
+
+`Tool result bytes` and `Compactions` are the release gate inputs for the context-cost invariant. Use `npm run code-graph:compare-ab -- --baseline ... --experiment ...` on each paired summary to reject regressions.
 
 ## Recovery and exceptions
 

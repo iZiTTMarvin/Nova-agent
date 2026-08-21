@@ -13,6 +13,7 @@ import {
   RUN_GET_SNAPSHOT,
   RUN_SNAPSHOT,
   SAVE_MODEL_CONFIG,
+  SETTINGS_SET,
   WORKSPACE_CREATE_SESSION,
   WORKSPACE_GET,
   WORKSPACE_SELECT_PROJECT,
@@ -32,6 +33,8 @@ type IpcInvokeArgs<C extends IpcCommandChannel> = IpcCommands[C]['params'] exten
 interface LaunchOptions {
   executablePath?: string
   skipWorkspaceSetup?: boolean
+  codeIndexEnabled?: boolean
+  codeFileCount?: number
 }
 
 export interface NovaHarness {
@@ -79,13 +82,24 @@ async function rendererInvoke<C extends IpcCommandChannel>(
   return result as IpcCommands[C]['result']
 }
 
-async function prepareWorkspace(): Promise<string> {
+async function prepareWorkspace(codeFileCount = 0): Promise<string> {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-workspace-'))
   await writeFile(
     path.join(workspacePath, 'e2e-marker.txt'),
     'Nova Electron E2E marker\n',
     'utf8'
   )
+  if (codeFileCount > 0) {
+    const sourceRoot = path.join(workspacePath, 'src')
+    await mkdir(sourceRoot, { recursive: true })
+    await Promise.all(Array.from({ length: codeFileCount }, (_, index) =>
+      writeFile(
+        path.join(sourceRoot, `module-${index}.ts`),
+        `export function indexedSymbol${index}(value: number): number {\n  return value + ${index}\n}\n`,
+        'utf8'
+      )
+    ))
+  }
   return workspacePath
 }
 
@@ -99,7 +113,8 @@ function isolatedElectronEnv(profileRoot: string): Record<string, string> {
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
     APPDATA: path.join(profileRoot, 'appdata'),
     XDG_CONFIG_HOME: path.join(profileRoot, 'xdg'),
-    HOME: path.join(profileRoot, 'home')
+    HOME: path.join(profileRoot, 'home'),
+    USERPROFILE: path.join(profileRoot, 'home')
   }
 }
 
@@ -118,7 +133,7 @@ export async function launchNova(
   options: LaunchOptions = {}
 ): Promise<NovaHarness> {
   const provider = await startFakeRuntime()
-  const workspacePath = await prepareWorkspace()
+  const workspacePath = await prepareWorkspace(options.codeFileCount)
   const profileRoot = await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-profile-'))
   const userDataDir = path.join(profileRoot, 'userData')
   await Promise.all([
@@ -181,6 +196,9 @@ export async function launchNova(
       cacheProfile: 'generic',
       toolDialect: 'native'
     })
+    if (options.codeIndexEnabled !== undefined) {
+      await invoke(SETTINGS_SET, { codeIndexEnabled: options.codeIndexEnabled })
+    }
     await invoke(WORKSPACE_SELECT_PROJECT, { path: workspacePath })
 
     // Renderer 启动时会读取模型与 workspace；setup 后重载一次，让后续路径等同正常启动。

@@ -97,6 +97,17 @@ export interface DiagnosticPersistState {
   lastCacheReadTokens: number
 }
 
+export interface CacheDiagnosticObservation {
+  epochId: string
+  epochReason: EpochReason
+  toolsBytes: number
+  firstDiffIndex: number | null
+  firstDiffPart: PrefixDiffPart | null
+  estimatedInvalidatedTokens: number
+  expectedReuseTokens: number
+  actualCacheReadTokens: number | null
+}
+
 export interface RecordWireSnapshotOptions {
   /** 受控内部调用（压缩摘要等）的用途标记；只做来源识别，不改变告警判定 */
   purpose?: ChatRequestPurpose
@@ -292,6 +303,19 @@ export class CacheDiagnostics {
       prefixDiff,
       expectedReuseTokens: expected,
       actualCacheReadTokens: actual
+    }
+  }
+
+  getObservation(): CacheDiagnosticObservation {
+    return {
+      epochId: this.epochId,
+      epochReason: this.epochReason,
+      toolsBytes: this.currentSnapshot?.toolsBytes ?? 0,
+      firstDiffIndex: this.lastPrefixDiff?.firstDiffIndex ?? null,
+      firstDiffPart: this.lastPrefixDiff?.firstDiffPart ?? null,
+      estimatedInvalidatedTokens: this.lastPrefixDiff?.estimatedInvalidatedTokens ?? 0,
+      expectedReuseTokens: this.lastPrefixDiff?.expectedReuseTokens ?? 0,
+      actualCacheReadTokens: this.lastPrefixDiff?.actualCacheReadTokens ?? null
     }
   }
 

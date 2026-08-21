@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 const workspace = mkdtempSync(join(tmpdir(), 'nova-headless-smoke-'))
 const logs = join(workspace, 'logs')
@@ -15,6 +15,9 @@ let archivedToolResult
 let environmentScrubMode = false
 let environmentScrubStep = 0
 let environmentToolResult
+let abToolName
+let abStep = 0
+let abToolResult
 
 const server = createServer((request, response) => {
   const chunks = []
@@ -33,6 +36,26 @@ const server = createServer((request, response) => {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache'
     })
+    if (abToolName) {
+      if (abStep === 0) {
+        abStep += 1
+        const argumentsJson = abToolName === 'grep'
+          ? '{"pattern":"commonSymbol","glob":"*.ts"}'
+          : '{"query":"commonSymbol","intent":"locate"}'
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'ab-tc', type: 'function', function: { name: abToolName, arguments: argumentsJson } }] }, finish_reason: null }] })}\n\n`)
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+        response.end('data: [DONE]\n\n')
+        return
+      }
+      const toolMessage = requestBody.messages?.find(
+        message => message.role === 'tool' && message.tool_call_id === 'ab-tc'
+      )
+      abToolResult = toolMessage?.content
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'A/B complete' }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
+      response.end('data: [DONE]\n\n')
+      return
+    }
     if (environmentScrubMode) {
       if (environmentScrubStep === 0) {
         environmentScrubStep += 1
@@ -133,9 +156,18 @@ try {
   }
 
   const summary = JSON.parse(readFileSync(join(logs, 'summary.json'), 'utf8'))
-  if (summary.status !== 'completed') throw new Error(`unexpected status: ${summary.status}`)
+  if (summary.schema_version !== 2 || summary.status !== 'completed') {
+    throw new Error(`unexpected summary contract: ${JSON.stringify(summary)}`)
+  }
   if (summary.usage.uncachedInputTokens !== 7 || summary.usage.cacheReadTokens !== 10) {
     throw new Error(`usage normalization mismatch: ${JSON.stringify(summary.usage)}`)
+  }
+  if (
+    summary.cache_diagnostics.actual_cache_read_tokens !== 10 ||
+    summary.cache_diagnostics.expected_reuse_tokens <= 0 ||
+    summary.cache_diagnostics.tools_bytes <= 0
+  ) {
+    throw new Error(`cache diagnostics mismatch: ${JSON.stringify(summary.cache_diagnostics)}`)
   }
   if (requestBody?.model !== 'deepseek-v4-flash') throw new Error('model ID was not forwarded')
   if (requestBody?.reasoning_effort !== 'max') throw new Error('max effort was not forwarded')
@@ -278,6 +310,62 @@ try {
     Buffer.byteLength(archivedContent, 'utf8') !== archivedToolResult.originalBytes
   ) {
     throw new Error('archived tool result is incomplete')
+  }
+
+  if (process.env.NOVA_TEST_CODE_GRAPH === '1') {
+    for (let index = 0; index < 120; index += 1) {
+      writeFileSync(
+        join(workspace, `ab-${index}.ts`),
+        `export function commonSymbol${index}(): string { return '${'x'.repeat(80)}' }\n`,
+        'utf8'
+      )
+    }
+    const runAbArm = async (toolName, armLogs, codeGraph) => {
+      abToolName = toolName
+      abStep = 0
+      abToolResult = undefined
+      const run = await runHeadless(
+        [
+          '--workdir', workspace,
+          '--logs-dir', armLogs,
+          '--base-url', `http://127.0.0.1:${address.port}`,
+          '--model', 'deepseek-v4-flash',
+          '--reasoning-effort', 'max',
+          '--max-tool-rounds', '2',
+          ...(codeGraph ? ['--code-graph'] : [])
+        ],
+        'Locate commonSymbol once and finish.'
+      )
+      abToolName = undefined
+      if (run.exitCode !== 0) {
+        throw new Error(`${toolName} A/B arm exited ${run.exitCode}: ${run.stderr || run.stdout}`)
+      }
+      if (typeof abToolResult !== 'string' || !abToolResult.includes('commonSymbol')) {
+        throw new Error(`${toolName} A/B arm did not return indexed evidence`)
+      }
+      return JSON.parse(readFileSync(join(armLogs, 'summary.json'), 'utf8'))
+    }
+
+    const baselineLogs = join(workspace, 'ab-baseline')
+    const experimentLogs = join(workspace, 'ab-experiment')
+    const baselineSummary = await runAbArm('grep', baselineLogs, false)
+    const experimentSummary = await runAbArm('code_context', experimentLogs, true)
+    if (
+      baselineSummary.code_graph?.enabled !== false ||
+      experimentSummary.code_graph?.index_status !== 'ready' ||
+      experimentSummary.code_graph?.call_count !== 1 ||
+      experimentSummary.code_graph?.anchors_returned < 1
+    ) {
+      throw new Error(`code graph diagnostics mismatch: ${JSON.stringify(experimentSummary.code_graph)}`)
+    }
+    const comparison = spawnSync(process.execPath, [
+      resolve('scripts/harness_eval/compare_code_graph_ab.mjs'),
+      '--baseline', join(baselineLogs, 'summary.json'),
+      '--experiment', join(experimentLogs, 'summary.json')
+    ], { encoding: 'utf8' })
+    if (comparison.status !== 0) {
+      throw new Error(`code graph context-cost comparison failed: ${comparison.stderr || comparison.stdout}`)
+    }
   }
   process.stdout.write('headless smoke passed\n')
 } finally {

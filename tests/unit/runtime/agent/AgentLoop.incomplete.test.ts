@@ -91,6 +91,24 @@ describe('终态诚实：max_rounds', () => {
     expect(loop.getState()).toBe('idle')
     expect(idleStart).toHaveBeenCalledTimes(1)
   })
+
+  it('工具结果观测收到写入模型上下文前的完整正文', async () => {
+    const client = new MockModelClient()
+    client.addResponse(toolCallResponse('t1', 'large', '{}'))
+    const registry = new ToolRegistry()
+    const output = 'x'.repeat(9_000)
+    const observed: unknown[] = []
+    registerTool(registry, 'large', () => ({ success: true, output }))
+    const { loop } = createLoop(client, {
+      maxToolRounds: 1,
+      onToolResultCommitted: (content) => observed.push(content)
+    })
+    loop.setToolRegistry(registry)
+
+    await loop.sendMessage('读取完整结果', agentRoute())
+
+    expect(observed).toEqual([output])
+  })
 })
 
 describe('终态诚实：breaker', () => {

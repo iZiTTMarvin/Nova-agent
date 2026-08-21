@@ -5,6 +5,7 @@ import csv
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import shutil
@@ -24,11 +25,16 @@ from typing import Any
 from urllib.parse import urlsplit
 
 try:
+    from scripts.harness_eval.code_graph_assets import (
+        HEADLESS_CODE_GRAPH_ARTIFACTS,
+        headless_runtime_chunks,
+    )
     from scripts.harness_eval.harbor_egress import ensure_harbor_egress_compatibility
     from scripts.harness_eval.pier_compat import ensure_pier_proxy_compatibility
 except ModuleNotFoundError as error:
     if error.name != "scripts":
         raise
+    from code_graph_assets import HEADLESS_CODE_GRAPH_ARTIFACTS, headless_runtime_chunks
     from harbor_egress import ensure_harbor_egress_compatibility
     from pier_compat import ensure_pier_proxy_compatibility
 
@@ -36,9 +42,12 @@ except ModuleNotFoundError as error:
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path(__file__).with_name("experiment.json")
 HARNESS_SOURCE_FILES = (
+    "scripts/build/codeGraphAssets.json",
     "scripts/harness_eval/run_experiment.py",
     "scripts/harness_eval/harness_compat.py",
+    "scripts/harness_eval/code_graph_assets.py",
     "scripts/harness_eval/nova_agent.py",
+    "scripts/harness_eval/compare_code_graph_ab.mjs",
     "scripts/harness_eval/pier_patch_canary.py",
     "scripts/harness_eval/pier_compat.py",
     "scripts/harness_eval/install_network.py",
@@ -65,6 +74,31 @@ CSV_FIELDS = [
     "estimated_cost_usd",
     "reported_cost_usd",
     "duration_seconds",
+    "headless_metrics_available",
+    "summary_schema_version",
+    "read_calls",
+    "grep_calls",
+    "find_calls",
+    "code_context_calls",
+    "total_tool_calls",
+    "llm_request_count",
+    "tool_result_bytes",
+    "compaction_count",
+    "code_graph_enabled",
+    "index_status",
+    "index_revision",
+    "query_latency_ms",
+    "query_latency_p50_ms",
+    "query_latency_p95_ms",
+    "anchors_returned",
+    "tools_bytes",
+    "expected_reuse_tokens",
+    "actual_cache_read_tokens",
+    "first_diff_part",
+    "first_diff_index",
+    "estimated_invalidated_tokens",
+    "cache_epoch_id",
+    "cache_epoch_reason",
     "exception_type",
     "exception_message",
     "job_path",
@@ -285,6 +319,16 @@ class PendingCell:
     max_admissions: int
 
 
+def agent_adapter(config: dict[str, Any], agent: str) -> str:
+    settings = (config.get("agents") or {}).get(agent)
+    if not isinstance(settings, dict):
+        raise RuntimeError(f"agent configuration is missing: {agent}")
+    adapter = settings.get("adapter")
+    if adapter not in {"nova", "opencode", "claude_code"}:
+        raise RuntimeError(f"unsupported agent adapter for {agent}: {adapter}")
+    return str(adapter)
+
+
 def validate_execution_shape(config: dict[str, Any]) -> int:
     concurrency = config.get("pair_concurrency")
     if type(concurrency) is not int or not 1 <= concurrency <= 16:
@@ -295,8 +339,9 @@ def validate_execution_shape(config: dict[str, Any]) -> int:
     executor = executor_name(config)
     if config.get("dataset", {}).get("slug") == "deep-swe" and executor != "pier":
         raise RuntimeError("DeepSWE requires executor=pier so task artifact hooks run")
-    if executor == "pier" and agents != ["nova"]:
-        raise RuntimeError("Pier evaluation currently supports the Nova arm only")
+    adapters = [agent_adapter(config, agent) for agent in agents]
+    if executor == "pier" and any(adapter != "nova" for adapter in adapters):
+        raise RuntimeError("Pier evaluation currently supports Nova adapter arms only")
     if concurrency > 1 and len(agents) != 1:
         raise RuntimeError(
             "pair_concurrency > 1 requires exactly one active agent; paired arms stay sequential"
@@ -528,10 +573,24 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
     node_archive = ensure_node_runtime_archive(config, paths)
     # Windows 上 PATH 里通常只有 npm.cmd，CreateProcess 只补 .exe，必须经 shell 解析
     subprocess.run(["npm", "run", "build:headless"], cwd=ROOT, check=True, shell=(os.name == "nt"))
-    bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
-    prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
+    output_root = ROOT / "out" / "headless"
+    bundle = output_root / "nova-headless.cjs"
+    prompt = output_root / "prompts" / "base-rules.md"
     if not bundle.is_file() or not prompt.is_file():
         raise RuntimeError("headless build did not produce the expected bundle and prompt")
+    runtime_chunks = headless_runtime_chunks(output_root)
+    if not runtime_chunks:
+        raise RuntimeError("headless build did not produce runtime chunks")
+    runtime_chunk_hashes = {
+        path.relative_to(output_root).as_posix(): file_sha256(path)
+        for path in runtime_chunks
+    }
+    code_graph_artifact_hashes: dict[str, str] = {}
+    for relative in HEADLESS_CODE_GRAPH_ARTIFACTS:
+        artifact = output_root / relative
+        if not artifact.is_file():
+            raise RuntimeError(f"headless build did not produce {relative}")
+        code_graph_artifact_hashes[relative] = file_sha256(artifact)
 
     frozen = {
         **config,
@@ -549,6 +608,8 @@ def prepare(config: dict[str, Any], paths: Paths) -> list[str]:
         "source_dirty": bool(command_version(["git", "-C", str(ROOT), "status", "--porcelain"])),
         "nova_bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
         "nova_prompt_sha256": hashlib.sha256(prompt.read_bytes()).hexdigest(),
+        "nova_runtime_chunk_sha256": runtime_chunk_hashes,
+        "nova_code_graph_artifact_sha256": code_graph_artifact_hashes,
         "node_runtime": {
             **config["node_runtime"],
             "archive_path": str(node_archive),
@@ -656,7 +717,7 @@ def render_reproduction_document(config: dict[str, Any], output: Path) -> None:
 
 - Git, Python 3.12+, Node.js 22+, npm, uv, Docker with a running Linux daemon.
 - {executor_dependency}
-- Nova bundle and a SHA256-pinned Node.js runtime are injected into each task container; per-task package installation is not required.
+- Nova bundle and a SHA256-pinned Node.js runtime are injected into each task container. Code-index arms install the pinned native SQLite module during isolated agent setup; other arms add no per-task package install.
 - DeepSeek API access. Never put the key in a command argument or tracked file.
 
 ## Commands (PowerShell)
@@ -719,9 +780,10 @@ def agent_command(
     job_dir.mkdir(parents=True, exist_ok=True)
     provider_host, provider_addresses = frozen_provider_network(config)
     executor = executor_name(config)
+    adapter = agent_adapter(config, agent)
     if executor == "pier":
-        if agent != "nova":
-            raise RuntimeError("Pier evaluation currently supports the Nova arm only")
+        if adapter != "nova":
+            raise RuntimeError("Pier evaluation currently supports Nova adapter arms only")
         common = [
             executor_binary(config),
             "run",
@@ -793,7 +855,7 @@ def agent_command(
         "--ak",
         f"ubuntu_archive_mirror={install_network['ubuntu_archive_mirror']}",
     ]
-    if agent == "nova":
+    if adapter == "nova":
         task_config = tomllib.loads(
             (paths.dataset / "tasks" / task / "task.toml").read_text(encoding="utf-8")
         )
@@ -802,6 +864,10 @@ def agent_command(
         deadline_seconds = scaled_timeout - float(config["agent_deadline_grace_seconds"])
         if deadline_seconds <= 0:
             raise RuntimeError(f"Nova deadline is not positive for task {task}")
+        code_graph_enabled = config["agents"][agent].get("code_graph", False)
+        if type(code_graph_enabled) is not bool:
+            raise RuntimeError(f"code_graph must be boolean for agent {agent}")
+        evaluation_case = f"{config['dataset']['revision']}:{task}"
         nova_adapter = [] if executor == "pier" else [
             "-a",
             "scripts.harness_eval.nova_agent:NovaHeadless",
@@ -830,11 +896,15 @@ def agent_command(
                 "--ak",
                 f"deadline_seconds={deadline_seconds:g}",
                 "--ak",
-                f"version={config['agents']['nova']['version']}",
+                f"version={config['agents'][agent]['version']}",
+                "--ak",
+                f"code_graph={str(code_graph_enabled).lower()}",
+                "--ak",
+                f"evaluation_case={evaluation_case}",
             ]
         )
         return nova_command, job_dir
-    if agent == "opencode":
+    if adapter == "opencode":
         build_config = {} if round_limit is None else {"steps": round_limit}
         opencode_config = json.dumps(
             {"agent": {"build": build_config}}, separators=(",", ":")
@@ -847,7 +917,7 @@ def agent_command(
                 "-m",
                 f"deepseek/{model}",
                 "--ak",
-                f"version={config['agents']['opencode']['version']}",
+                f"version={config['agents'][agent]['version']}",
                 "--ak",
                 f"variant={effort}",
                 "--ak",
@@ -856,21 +926,21 @@ def agent_command(
             + install_kwargs,
             job_dir,
         )
-    if agent == "claude_code":
+    if adapter == "claude_code":
         claude_command = common + [
             "-a",
             "scripts.harness_eval.comparison_agents:ClaudeCodeComparison",
             "-m",
             model,
             "--ak",
-            f"version={config['agents']['claude_code']['version']}",
+            f"version={config['agents'][agent]['version']}",
             "--ak",
             f"reasoning_effort={effort}",
         ]
         if round_limit is not None:
             claude_command.extend(["--ak", f"max_turns={round_limit}"])
         return claude_command + install_kwargs, job_dir
-    raise ValueError(f"unknown agent: {agent}")
+    raise ValueError(f"unknown agent adapter: {adapter}")
 
 
 def safe_command(command: list[str]) -> list[str]:
@@ -1026,6 +1096,104 @@ def event_usage(job_dir: Path) -> tuple[int, int, int, int]:
     return uncached, cached, cache_write, output
 
 
+def required_object(record: dict[str, Any], key: str, source: Path) -> dict[str, Any]:
+    value = record.get(key)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"invalid {key} in {source}")
+    return value
+
+
+def required_int(record: dict[str, Any], key: str, source: Path) -> int:
+    value = record.get(key)
+    if type(value) is not int or value < 0:
+        raise RuntimeError(f"invalid {key} in {source}")
+    return value
+
+
+def required_number(record: dict[str, Any], key: str, source: Path) -> float:
+    value = record.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise RuntimeError(f"invalid {key} in {source}")
+    return float(value)
+
+
+def required_string(record: dict[str, Any], key: str, source: Path) -> str:
+    value = record.get(key)
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"invalid {key} in {source}")
+    return value
+
+
+def required_bool(record: dict[str, Any], key: str, source: Path) -> bool:
+    value = record.get(key)
+    if type(value) is not bool:
+        raise RuntimeError(f"invalid {key} in {source}")
+    return value
+
+
+def nullable_int(record: dict[str, Any], key: str, source: Path) -> int | None:
+    value = record.get(key)
+    if value is None:
+        return None
+    if type(value) is not int or value < 0:
+        raise RuntimeError(f"invalid {key} in {source}")
+    return value
+
+
+def headless_summary_metrics(job_dir: Path | None) -> dict[str, Any]:
+    if job_dir is None:
+        return {"headless_metrics_available": False, "summary_schema_version": ""}
+    candidates = list(job_dir.rglob("summary.json"))
+    if not candidates:
+        return {"headless_metrics_available": False, "summary_schema_version": ""}
+    if len(candidates) != 1:
+        raise RuntimeError(f"expected one headless summary under {job_dir}, found {len(candidates)}")
+    source = candidates[0]
+    summary = read_json(source)
+    if not isinstance(summary, dict) or summary.get("schema_version") != 2:
+        raise RuntimeError(f"unsupported headless summary schema: {source}")
+    counts = required_object(summary, "tool_call_counts", source)
+    code_graph = required_object(summary, "code_graph", source)
+    latency = required_object(code_graph, "query_latency_ms", source)
+    cache = required_object(summary, "cache_diagnostics", source)
+    first_diff_part = cache.get("first_diff_part")
+    if first_diff_part is not None and not isinstance(first_diff_part, str):
+        raise RuntimeError(f"invalid first_diff_part in {source}")
+    actual_cache_read_tokens = nullable_int(cache, "actual_cache_read_tokens", source)
+    first_diff_index = nullable_int(cache, "first_diff_index", source)
+    return {
+        "headless_metrics_available": True,
+        "summary_schema_version": 2,
+        "read_calls": required_int(counts, "read", source),
+        "grep_calls": required_int(counts, "grep", source),
+        "find_calls": required_int(counts, "find", source),
+        "code_context_calls": required_int(counts, "code_context", source),
+        "total_tool_calls": required_int(summary, "tool_calls", source),
+        "llm_request_count": required_int(summary, "model_calls", source),
+        "tool_result_bytes": required_int(summary, "tool_result_bytes", source),
+        "compaction_count": required_int(summary, "compaction_count", source),
+        "code_graph_enabled": required_bool(code_graph, "enabled", source),
+        "index_status": required_string(code_graph, "index_status", source),
+        "index_revision": required_int(code_graph, "index_revision", source),
+        "query_latency_ms": required_number(latency, "total", source),
+        "query_latency_p50_ms": required_number(latency, "p50", source),
+        "query_latency_p95_ms": required_number(latency, "p95", source),
+        "anchors_returned": required_int(code_graph, "anchors_returned", source),
+        "tools_bytes": required_int(cache, "tools_bytes", source),
+        "expected_reuse_tokens": required_int(cache, "expected_reuse_tokens", source),
+        "actual_cache_read_tokens": (
+            "" if actual_cache_read_tokens is None else actual_cache_read_tokens
+        ),
+        "first_diff_part": first_diff_part or "",
+        "first_diff_index": "" if first_diff_index is None else first_diff_index,
+        "estimated_invalidated_tokens": required_int(
+            cache, "estimated_invalidated_tokens", source
+        ),
+        "cache_epoch_id": required_string(cache, "epoch_id", source),
+        "cache_epoch_reason": required_string(cache, "epoch_reason", source),
+    }
+
+
 def token_fields(
     trial: dict[str, Any],
     job_dir: Path | None = None,
@@ -1110,6 +1278,7 @@ def build_row(
     failure = classify_failure(trial, reward, budget)
     tokens = token_fields(trial, result_path.parent if result_path else None)
     uncached, cached, cache_write, output, reported = tokens
+    headless_metrics = headless_summary_metrics(result_path.parent if result_path else None)
     return {
         "run_id": config["run_id"],
         "task": task,
@@ -1129,6 +1298,7 @@ def build_row(
         "estimated_cost_usd": round(estimated_cost(tokens, config), 10),
         "reported_cost_usd": "" if reported is None else reported,
         "duration_seconds": round(duration_seconds(trial, elapsed), 3),
+        **headless_metrics,
         "exception_type": exception_type,
         "exception_message": exception_message,
         "job_path": str(result_path.parent if result_path else ""),
@@ -1385,12 +1555,25 @@ def execute(config: dict[str, Any], paths: Paths, task_limit: int | None) -> Non
             != isolation["pier_proxy_compatibility"]["source_sha256"]
         ):
             raise RuntimeError("Pier proxy compatibility changed after setup was frozen")
-    bundle = ROOT / "out" / "headless" / "nova-headless.cjs"
-    prompt = ROOT / "out" / "headless" / "prompts" / "base-rules.md"
+    output_root = ROOT / "out" / "headless"
+    bundle = output_root / "nova-headless.cjs"
+    prompt = output_root / "prompts" / "base-rules.md"
     if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != frozen["nova_bundle_sha256"]:
         raise RuntimeError("Nova headless bundle changed after setup was frozen; prepare a new run")
     if not prompt.is_file() or hashlib.sha256(prompt.read_bytes()).hexdigest() != frozen["nova_prompt_sha256"]:
         raise RuntimeError("Nova prompt changed after setup was frozen; prepare a new run")
+    for relative, expected in frozen["nova_runtime_chunk_sha256"].items():
+        artifact = output_root / relative
+        if not artifact.is_file() or file_sha256(artifact) != expected:
+            raise RuntimeError(
+                f"Nova runtime chunk changed after setup was frozen: {relative}"
+            )
+    for relative, expected in frozen["nova_code_graph_artifact_sha256"].items():
+        artifact = output_root / relative
+        if not artifact.is_file() or file_sha256(artifact) != expected:
+            raise RuntimeError(
+                f"Nova code graph artifact changed after setup was frozen: {relative}"
+            )
     for relative, expected in frozen.get("harness_sha256", {}).items():
         if file_sha256(ROOT / relative) != expected:
             raise RuntimeError(f"Harness source changed after setup was frozen: {relative}")

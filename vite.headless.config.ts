@@ -1,6 +1,7 @@
 import { cpSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import { defineConfig, type Plugin } from 'vite'
+import { copyCodeGraphAssets } from './scripts/build/codeGraphAssets'
 
 function copyAgentPrompts(): Plugin {
   return {
@@ -14,21 +15,23 @@ function copyAgentPrompts(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [copyAgentPrompts()],
+  plugins: [copyAgentPrompts(), copyCodeGraphAssets('out/headless')],
   build: {
     ssr: resolve('src/headless/cli.ts'),
     outDir: resolve('out/headless'),
     emptyOutDir: true,
     rollupOptions: {
-      external: ['sharp'],
+      external: ['sharp', 'better-sqlite3'],
       output: {
         format: 'cjs',
-        entryFileNames: 'nova-headless.cjs'
+        entryFileNames: 'nova-headless.cjs',
+        // 索引依赖保留为独立 chunk，默认关闭时不会加载原生 SQLite。
+        chunkFileNames: 'chunks/[name]-[hash].cjs'
       }
     }
   },
   ssr: {
     noExternal: true,
-    external: ['sharp']
+    external: ['sharp', 'better-sqlite3']
   }
 })

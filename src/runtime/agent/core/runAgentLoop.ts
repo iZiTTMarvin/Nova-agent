@@ -69,6 +69,7 @@ export interface RunAgentLoopParams {
   abortSignal: () => AbortSignal | undefined
   /** 执行工具批次；门面负责注入权限与截断策略。 */
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
+  onToolResultCommitted?: (content: ChatMessage['content']) => void
   /**
    * 主动阈值压缩（请求投影之后调用，摘要输入回放主请求前缀）。
    * 返回 true 表示已压缩，循环应回到顶部重新投影。
@@ -338,13 +339,15 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       if (!batchResult.aborted && !p.signal() && !p.abortSignal()?.aborted) {
         for (const outcome of batchResult.outcomes) {
           if (outcome.skippedByAbort) continue
+          const content = toToolContent(outcome.resultText, outcome.resultImages)
           context.messages.push({
             role: 'tool',
-            content: toToolContent(outcome.resultText, outcome.resultImages),
+            content,
             toolCallId: outcome.toolCall.id,
             ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
           })
+          p.onToolResultCommitted?.(content)
         }
         // 工具写回后、下一轮模型前：mid-turn 主动压缩。
         // fail-open 由编排层兜底：端口拒绝不得终止 turn，交给后续溢出恢复。

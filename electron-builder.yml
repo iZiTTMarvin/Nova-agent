@@ -12,6 +12,10 @@ directories:
 files:
   - out/**/*
   - package.json
+  - "!out/headless/**"
+  - "!out/main/code-graph/grammars/**"
+  - "!node_modules/web-tree-sitter/debug/**"
+  - "!node_modules/web-tree-sitter/**/*.map"
 
 asar: true
 asarUnpack:
@@ -26,12 +30,16 @@ asarUnpack:
   # Code Mode 沙箱 worker 由 worker_threads 按路径加载，需真实文件；
   # worker 入口与主进程共享的 rollup chunk 也必须真实落盘（worker 以相对路径 require）
   - "out/main/codeModeWorker.js"
+  - "out/main/codeGraphWorker.js"
   - "out/main/chunks/**"
 
 # 任务栏 / 窗口图标（开发态与打包后路径不同，见 src/main/appIcon.ts）
+# grammar WASM 只走 extraResources，避免 asar 与 unpacked 各存一份。
 extraResources:
   - from: build/icon.png
     to: icon.png
+  - from: out/main/code-graph/grammars
+    to: code-graph/grammars
 
 publish:
   provider: github

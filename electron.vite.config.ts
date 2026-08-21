@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { cpSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import type { Plugin } from 'vite'
+import { copyCodeGraphAssets } from './scripts/build/codeGraphAssets'
 
 /** 构建时将 .nova/skills 复制到 out/main，供 app.getAppPath()/.nova/skills 读取 */
 function copyNovaBuiltinSkills(): Plugin {
@@ -37,7 +38,8 @@ export default defineConfig({
     plugins: [
       externalizeDepsPlugin(),
       copyNovaBuiltinSkills(),
-      copyAgentPrompts()
+      copyAgentPrompts(),
+      copyCodeGraphAssets('out/main')
     ],
     resolve: {
       alias: {

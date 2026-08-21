@@ -1,0 +1,22 @@
+[
+  {
+    "source": "node_modules/web-tree-sitter/web-tree-sitter.wasm",
+    "fileName": "web-tree-sitter.wasm"
+  },
+  {
+    "source": "node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-javascript.wasm",
+    "fileName": "tree-sitter-javascript.wasm"
+  },
+  {
+    "source": "node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-typescript.wasm",
+    "fileName": "tree-sitter-typescript.wasm"
+  },
+  {
+    "source": "node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-tsx.wasm",
+    "fileName": "tree-sitter-tsx.wasm"
+  },
+  {
+    "source": "node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm",
+    "fileName": "tree-sitter-python.wasm"
+  }
+]

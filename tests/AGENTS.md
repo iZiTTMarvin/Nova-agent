@@ -41,6 +41,7 @@ Nova 不要求严格执行 Red → Green → Refactor，也不要求 Coding Agen
 | `integration` | 多个真实模块之间的契约和持久化往返 | 最终桌面用户体验 |
 | `e2e/smoke` | 冷启动、已准备会话后的聊天与工具调用 | 极端时序和故障恢复 |
 | `e2e/lifecycle` | cancel、切会话、reload、重复 reload 后的 listener 重绑定 | 大规模故障组合 |
+| `e2e/weight` | 代码索引稳态/峰值内存与空闲 CPU，需等待真实 Worker 释放 | 日常编辑反馈、普通生命周期 |
 | `e2e/fault` | 延迟流、provider 失败、压力；以及 Renderer 对重复/过期/缺口 snapshot 投影的防御 | 每次本地编辑后的快速反馈；RunCoordinator Owner 的完整乱序协议 |
 | `e2e/packaged` | 真正打包产物的启动与完整链路 | 日常开发循环 |
 
@@ -92,6 +93,9 @@ npm run test:e2e:install
 # smoke + lifecycle
 npm run test:e2e
 
+# 代码索引重量预算（真实 Worker 空闲释放，不纳入日常 smoke/lifecycle）
+npm run test:e2e:code-index-weight
+
 # 故障注入
 npm run test:e2e:fault
 
@@ -124,7 +128,10 @@ tests/e2e/
 │  ├─ abort.spec.ts
 │  ├─ session-switch.spec.ts
 │  ├─ renderer-reload.spec.ts
-│  └─ renderer-reload-rebind.spec.ts
+│  ├─ renderer-reload-rebind.spec.ts
+│  └─ code-index.spec.ts     # 首次构建不阻断聊天、切工作区、删最后会话
+├─ weight/
+│  └─ code-index-weight.spec.ts  # 稳态/峰值内存与空闲 CPU；需等待 Worker 释放
 ├─ fault/
 │  ├─ delayed-events.spec.ts
 │  ├─ duplicate-events.spec.ts

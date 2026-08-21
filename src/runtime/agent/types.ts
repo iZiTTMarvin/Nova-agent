@@ -190,6 +190,9 @@ export interface AgentLoopConfig {
     compactedContext: import('../model/types').ChatMessage[],
     meta: CompactionMeta
   ) => void
+  onToolResultCommitted?: (
+    content: import('../model/types').ChatMessage['content']
+  ) => void
   /**
    * 工具调用方言用户覆盖（来自 ModelConfig.toolDialect）。
    * 'auto'/未设置时走 preferredToolDialect 自动判定。

@@ -16,6 +16,21 @@ from scripts.harness_eval.harness_compat import (
     NetworkAllowlist,
     with_prompt_template,
 )
+from scripts.harness_eval.code_graph_assets import (
+    CODE_GRAPH_WASM_FILES,
+    headless_runtime_chunks,
+)
+
+
+def _as_bool(value: bool | str) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    raise ValueError("code_graph must be a boolean")
 
 
 def _provider_host_entries(
@@ -71,6 +86,8 @@ class NovaHeadless(BaseInstalledAgent):
         reasoning_effort: str = "max",
         max_tool_rounds: int | None = None,
         deadline_seconds: float | None = None,
+        code_graph: bool | str = False,
+        evaluation_case: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -88,6 +105,10 @@ class NovaHeadless(BaseInstalledAgent):
             None if max_tool_rounds is None else int(max_tool_rounds)
         )
         self._deadline_seconds = deadline_seconds
+        self._code_graph = _as_bool(code_graph)
+        if evaluation_case is not None and not 1 <= len(evaluation_case) <= 512:
+            raise ValueError("evaluation_case must contain 1 to 512 characters")
+        self._evaluation_case = evaluation_case
 
     @staticmethod
     @override
@@ -117,10 +138,27 @@ class NovaHeadless(BaseInstalledAgent):
             raise FileNotFoundError(
                 f"Pinned Node runtime archive not found: {self._node_archive_path}"
             )
+        runtime_chunks = headless_runtime_chunks(self._bundle_path.parent)
+        if not runtime_chunks:
+            raise FileNotFoundError("Nova headless runtime chunks not found")
+        code_graph_worker = self._bundle_path.parent / "codeGraphWorker.cjs"
+        grammar_root = self._bundle_path.parent / "code-graph" / "grammars"
+        if self._code_graph:
+            if not code_graph_worker.is_file():
+                raise FileNotFoundError(f"Nova code graph worker not found: {code_graph_worker}")
+            for file_name in CODE_GRAPH_WASM_FILES:
+                grammar_path = grammar_root / file_name
+                if not grammar_path.is_file():
+                    raise FileNotFoundError(
+                        f"Nova code graph grammar not found: {grammar_path}"
+                    )
 
         await self.exec_as_root(
             environment,
-            command="install -d -m 0755 /opt/node /opt/nova /opt/nova/prompts",
+            command=(
+                "install -d -m 0755 /opt/node /opt/nova /opt/nova/prompts "
+                "/opt/nova/chunks /opt/nova/code-graph/grammars"
+            ),
         )
         await environment.upload_file(
             str(self._node_archive_path), "/opt/nova/node-runtime.tar.gz"
@@ -128,9 +166,22 @@ class NovaHeadless(BaseInstalledAgent):
         await environment.upload_file(
             str(self._bundle_path), "/opt/nova/nova-headless.cjs"
         )
+        for chunk_path in runtime_chunks:
+            await environment.upload_file(
+                str(chunk_path), f"/opt/nova/chunks/{chunk_path.name}"
+            )
         await environment.upload_file(
             str(self._prompt_path), "/opt/nova/prompts/base-rules.md"
         )
+        if self._code_graph:
+            await environment.upload_file(
+                str(code_graph_worker), "/opt/nova/codeGraphWorker.cjs"
+            )
+            for file_name in CODE_GRAPH_WASM_FILES:
+                await environment.upload_file(
+                    str(grammar_root / file_name),
+                    f"/opt/nova/code-graph/grammars/{file_name}",
+                )
         await self.exec_as_root(
             environment,
             command=(
@@ -140,6 +191,16 @@ class NovaHeadless(BaseInstalledAgent):
                 "/opt/node/bin/node --version"
             ),
         )
+        if self._code_graph:
+            # 原生模块必须按评测容器的 Node ABI 安装，不能复用宿主 Electron 二进制。
+            await self.exec_as_root(
+                environment,
+                command=(
+                    "set -euo pipefail; "
+                    "/opt/node/bin/npm install --prefix /opt/nova --no-save "
+                    "--no-audit --no-fund better-sqlite3@11.10.0"
+                ),
+            )
         entries = " ".join(shlex.quote(value) for value in self._provider_host_entries)
         await self.exec_as_root(
             environment,
@@ -180,6 +241,12 @@ class NovaHeadless(BaseInstalledAgent):
             if self._max_tool_rounds is not None
             else ""
         )
+        code_graph_arg = "--code-graph " if self._code_graph else ""
+        evaluation_case_arg = (
+            f"--evaluation-case {shlex.quote(self._evaluation_case)} "
+            if self._evaluation_case is not None
+            else ""
+        )
         command = (
             "set -euo pipefail; "
             f'printf "%s" "${{{instruction_var}}}" | '
@@ -190,6 +257,8 @@ class NovaHeadless(BaseInstalledAgent):
             f"--reasoning-effort {shlex.quote(self._reasoning_effort)} "
             f"{round_limit_arg}"
             f"{deadline_arg}"
+            f"{code_graph_arg}"
+            f"{evaluation_case_arg}"
             "2>&1 | tee /logs/agent/nova-headless.txt"
         )
         await self.exec_as_agent(environment, command=command, env=env, cwd="/app")
@@ -220,4 +289,9 @@ class NovaHeadless(BaseInstalledAgent):
             "budget_exhausted": bool(summary.get("budget_exhausted")),
             "failure_class": summary.get("failure_class"),
             "cache_write_tokens": cache_write,
+            "code_graph": summary.get("code_graph"),
+            "tool_call_counts": summary.get("tool_call_counts"),
+            "tool_result_bytes": summary.get("tool_result_bytes"),
+            "compaction_count": summary.get("compaction_count"),
+            "cache_diagnostics": summary.get("cache_diagnostics"),
         }

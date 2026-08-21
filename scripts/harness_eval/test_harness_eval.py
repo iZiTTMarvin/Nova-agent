@@ -20,6 +20,7 @@ from scripts.harness_eval.nova_agent import _provider_host_entries
 from scripts.harness_eval.run_experiment import (
     CSV_FIELDS,
     Paths,
+    agent_adapter,
     agent_command,
     build_row,
     classify_failure,
@@ -28,6 +29,7 @@ from scripts.harness_eval.run_experiment import (
     ensure_node_runtime_archive,
     execute,
     harbor_environment,
+    headless_summary_metrics,
     is_retryable,
     newest_result,
     next_admission_for_cell,
@@ -226,14 +228,18 @@ class HarnessEvalTests(unittest.TestCase):
             "pair_concurrency": 2,
             "arms_parallel": False,
             "active_agents": ["nova"],
-            "agents": {"nova": {}},
+            "agents": {"nova": {"adapter": "nova"}},
         }
         self.assertEqual(validate_execution_shape(config), 2)
 
         config["active_agents"] = ["nova", "opencode"]
-        config["agents"]["opencode"] = {}
+        config["agents"]["opencode"] = {"adapter": "opencode"}
         with self.assertRaisesRegex(RuntimeError, "exactly one active agent"):
             validate_execution_shape(config)
+
+    def test_agent_adapter_requires_explicit_adapter(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "unsupported agent adapter"):
+            agent_adapter({"agents": {"nova": {"version": "workspace"}}}, "nova")
 
     def test_execute_never_exceeds_configured_task_concurrency(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -272,7 +278,7 @@ class HarnessEvalTests(unittest.TestCase):
                 "executor": "pier",
                 "run_id": "parallel-fixture",
                 "tasks": task_names,
-                "agents": {"nova": {}},
+                "agents": {"nova": {"adapter": "nova"}},
                 "active_agents": ["nova"],
                 "pair_concurrency": 2,
                 "arms_parallel": False,
@@ -281,6 +287,8 @@ class HarnessEvalTests(unittest.TestCase):
                 "dataset": {"slug": "deep-swe"},
                 "nova_bundle_sha256": hashlib.sha256(b"bundle").hexdigest(),
                 "nova_prompt_sha256": hashlib.sha256(b"prompt").hexdigest(),
+                "nova_runtime_chunk_sha256": {},
+                "nova_code_graph_artifact_sha256": {},
                 "harness_sha256": {},
                 "runner_isolation": {
                     "executor": "pier",
@@ -553,7 +561,19 @@ class HarnessEvalTests(unittest.TestCase):
                 "node_runtime": {
                     "archive_filename": "node-runtime.tar.gz",
                 },
-                "agents": {"nova": {"version": "workspace"}},
+                "dataset": {"revision": "abc123"},
+                "agents": {
+                    "nova": {
+                        "adapter": "nova",
+                        "version": "workspace",
+                        "code_graph": False,
+                    },
+                    "nova_code_index": {
+                        "adapter": "nova",
+                        "version": "workspace",
+                        "code_graph": True,
+                    },
+                },
             }
 
             command, _ = agent_command("nova", "fixture", 1, config, paths)
@@ -582,10 +602,103 @@ class HarnessEvalTests(unittest.TestCase):
                 f"node_archive_path={root / 'cache' / 'node-runtime.tar.gz'}",
                 command,
             )
+            self.assertIn("code_graph=false", command)
+            self.assertIn("evaluation_case=abc123:fixture", command)
 
             config["max_tool_rounds"] = 250
             capped_command, _ = agent_command("nova", "fixture", 1, config, paths)
             self.assertIn("max_tool_rounds=250", capped_command)
+
+            index_command, _ = agent_command(
+                "nova_code_index", "fixture", 1, config, paths
+            )
+            self.assertEqual(agent_adapter(config, "nova"), "nova")
+            self.assertEqual(agent_adapter(config, "nova_code_index"), "nova")
+            self.assertIn("code_graph=true", index_command)
+            self.assertIn("evaluation_case=abc123:fixture", index_command)
+            self.assertIn("scripts.harness_eval.nova_agent:NovaHeadless", index_command)
+
+    def test_two_nova_adapter_arms_require_sequential_pair_execution(self) -> None:
+        agents = {
+            "nova": {"adapter": "nova", "version": "workspace", "code_graph": False},
+            "nova_code_index": {
+                "adapter": "nova",
+                "version": "workspace",
+                "code_graph": True,
+            },
+        }
+        self.assertEqual(
+            validate_execution_shape(
+                {
+                    "executor": "pier",
+                    "pair_concurrency": 1,
+                    "arms_parallel": False,
+                    "active_agents": ["nova", "nova_code_index"],
+                    "agents": agents,
+                }
+            ),
+            1,
+        )
+        with self.assertRaisesRegex(RuntimeError, "exactly one active agent"):
+            validate_execution_shape(
+                {
+                    "executor": "pier",
+                    "pair_concurrency": 2,
+                    "arms_parallel": False,
+                    "active_agents": ["nova", "nova_code_index"],
+                    "agents": agents,
+                }
+            )
+
+    def test_headless_summary_metrics_reject_incomplete_code_graph_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            job_dir = Path(directory)
+            summary_path = job_dir / "summary.json"
+            complete = {
+                "schema_version": 2,
+                "tool_call_counts": {
+                    "read": 1,
+                    "grep": 0,
+                    "find": 0,
+                    "code_context": 0,
+                },
+                "tool_calls": 1,
+                "model_calls": 1,
+                "tool_result_bytes": 12,
+                "compaction_count": 0,
+                "code_graph": {
+                    "enabled": False,
+                    "anchors_returned": 0,
+                    "index_status": "disabled",
+                    "index_revision": 0,
+                    "query_latency_ms": {
+                        "total": 0,
+                        "p50": 0,
+                        "p95": 0,
+                    },
+                },
+                "cache_diagnostics": {
+                    "tools_bytes": 10,
+                    "expected_reuse_tokens": 0,
+                    "actual_cache_read_tokens": None,
+                    "first_diff_part": None,
+                    "first_diff_index": None,
+                    "estimated_invalidated_tokens": 0,
+                    "epoch_id": "epoch_0",
+                    "epoch_reason": "session_init",
+                },
+            }
+            summary_path.write_text(json.dumps(complete), encoding="utf-8")
+            metrics = headless_summary_metrics(job_dir)
+            self.assertTrue(metrics["headless_metrics_available"])
+            self.assertEqual(metrics["query_latency_p50_ms"], 0.0)
+            self.assertEqual(metrics["actual_cache_read_tokens"], "")
+
+            incomplete = dict(complete)
+            del incomplete["tool_result_bytes"]
+            summary_path.write_text(json.dumps(incomplete), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "invalid tool_result_bytes"):
+                headless_summary_metrics(job_dir)
 
     def test_deepswe_rejects_harbor_executor(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "DeepSWE requires executor=pier"):
@@ -596,7 +709,7 @@ class HarnessEvalTests(unittest.TestCase):
                     "pair_concurrency": 1,
                     "arms_parallel": False,
                     "active_agents": ["nova"],
-                    "agents": {"nova": {"version": "workspace"}},
+                    "agents": {"nova": {"adapter": "nova", "version": "workspace"}},
                 }
             )
 

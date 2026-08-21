@@ -5,6 +5,7 @@
   "scripts": {
     "test:smoke": "playwright test smoke",
     "test:main": "playwright test smoke lifecycle",
+    "test:weight": "playwright test weight",
     "test:fault": "playwright test fault --grep-invert @stress",
     "test:stress": "playwright test fault/stress.spec.ts",
     "test:packaged": "playwright test packaged"

@@ -5,15 +5,14 @@ import type {
   CodeContextPack,
   CodeContextQueryPort,
   CodeContextQueryRequest,
-  CodeGraphReader,
-  CodeGraphStateReader,
   CodeGraphCacheGcOptions,
   CodeGraphCacheGcResult,
   CodeIndexCoordinator,
   CodeIndexWorkerWorkspace,
   CodeGraphStateReaderProvider,
   CodeIndexSnapshot,
-  WorkspaceChangeSource
+  WorkspaceChangeSource,
+  CodeGraphRuntimeReaderProvider
 } from '../../runtime/code-graph'
 import type { CodeIndexStatusDto } from '../../shared/code-index'
 import {
@@ -51,10 +50,6 @@ type CodeGraphCoordinatorHostPort = Pick<
   | 'reportChangeSourceFailure'
   | 'subscribe'
 >
-
-interface CodeGraphRuntimeReaderProvider extends CodeGraphStateReaderProvider {
-  close(): Promise<void>
-}
 
 const runtimes = new Map<string, CodeGraphRuntimeHandle>()
 let runtimeFactory: CodeGraphRuntimeFactory | null = null
@@ -351,80 +346,39 @@ export class InitializedCodeGraphRuntime implements CodeGraphRuntimeHandle {
   }
 }
 
-class LazyCodeGraphReaderProvider {
-  private reader: (CodeGraphReader & CodeGraphStateReader) | null = null
-
-  constructor(
-    private readonly dbPath: string,
-    private readonly openReader: (dbPath: string) => CodeGraphReader & CodeGraphStateReader
-  ) {}
-
-  async getStateReader(): Promise<CodeGraphStateReader | null> {
-    return this.getReader()
-  }
-
-  async getReader(): Promise<(CodeGraphReader & CodeGraphStateReader) | null> {
-    if (this.reader) return this.reader
-    if (!existsSync(this.dbPath)) return null
-    this.reader = this.openReader(this.dbPath)
-    return this.reader
-  }
-
-  async close(): Promise<void> {
-    const reader = this.reader
-    this.reader = null
-    await reader?.close()
-  }
-}
-
 async function initializeProductionRuntime(
   workspaceRoot: string
 ): Promise<InitializedCodeGraphRuntime> {
   // 重量索引模块只在功能实际启用后加载，默认关闭时不打开 DB 或 Worker。
   const codeGraph = await import('../../runtime/code-graph')
   const { createCodeGraphWorkspaceWatcher } = await import('./CodeGraphWorkspaceWatcher')
-  const workspaceIdentity = codeGraph.computeCodeGraphWorkspaceIdentity(workspaceRoot)
-  const workspaceDir = codeGraph.getCodeGraphWorkspaceDir(
-    app.getPath('userData'),
-    workspaceIdentity
-  )
-  mkdirSync(workspaceDir, { recursive: true })
-  const dbPath = codeGraph.getCodeGraphDbPath(app.getPath('userData'), workspaceIdentity)
   const workerPath = join(__dirname, 'codeGraphWorker.js')
-  const grammarRoot = join(__dirname, 'code-graph', 'grammars')
-  const readerProvider = new LazyCodeGraphReaderProvider(
-    dbPath,
-    (path) => codeGraph.openCodeGraphReader({ dbPath: path })
-  )
-  const coordinator = new codeGraph.CodeIndexCoordinator({
-    createWorker: () => new codeGraph.CodeIndexWorkerClient({ workerPath })
-  })
-  const engine = new codeGraph.CodeGraphEngine({
-    getSnapshot: () => coordinator.getSnapshot(),
-    getReader: () => readerProvider.getReader()
-  })
-  const workspace = Object.freeze({
-    workspaceIdentity,
-    workspaceRoot: codeGraph.normalizeCodeGraphWorkspaceRoot(workspaceRoot),
-    dbPath,
-    parserSignature: codeGraph.TREE_SITTER_PARSER_SIGNATURE,
-    resolverSignature: codeGraph.STRUCTURAL_RESOLVER_SIGNATURE,
-    coreWasmPath: join(grammarRoot, 'web-tree-sitter.wasm'),
-    grammarWasmPaths: Object.freeze({
-      javascript: join(grammarRoot, 'tree-sitter-javascript.wasm'),
-      typescript: join(grammarRoot, 'tree-sitter-typescript.wasm'),
-      tsx: join(grammarRoot, 'tree-sitter-tsx.wasm'),
-      python: join(grammarRoot, 'tree-sitter-python.wasm')
-    })
+  const grammarRoot = resolveCodeGraphGrammarRoot()
+  const assembly = codeGraph.createCodeGraphRuntimeAssembly({
+    workspaceRoot,
+    appDataPath: app.getPath('userData'),
+    workerPath,
+    grammarRoot
   })
   return new InitializedCodeGraphRuntime(
-    coordinator,
-    workspace,
-    readerProvider,
-    () => createCodeGraphWorkspaceWatcher(workspace.workspaceRoot),
-    engine,
-    (snapshot) => statusProjection.observe(workspaceRoot, snapshot, dbPath)
+    assembly.coordinator,
+    assembly.workspace,
+    assembly.readerProvider,
+    () => createCodeGraphWorkspaceWatcher(assembly.workspace.workspaceRoot),
+    assembly.queryPort,
+    (snapshot) => statusProjection.observe(
+      workspaceRoot,
+      snapshot,
+      assembly.workspace.dbPath
+    )
   )
+}
+
+function resolveCodeGraphGrammarRoot(): string {
+  const nextToMain = join(__dirname, 'code-graph', 'grammars')
+  if (existsSync(join(nextToMain, 'web-tree-sitter.wasm'))) return nextToMain
+  // 安装包把 WASM 放在 extraResources，避免 asarUnpack 让安装包存两份。
+  return join(process.resourcesPath, 'code-graph', 'grammars')
 }
 
 function cacheKey(workspaceRoot: string): string {

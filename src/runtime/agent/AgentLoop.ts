@@ -217,6 +217,7 @@ export class AgentLoop {
       toolExecution: config?.toolExecution ?? 'parallel',
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
+      onToolResultCommitted: config?.onToolResultCommitted,
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
       promptCacheKey: config?.promptCacheKey,
@@ -394,6 +395,10 @@ export class AgentLoop {
   /** 外部触发 epoch 切换（例如工具集或运行阶段发生变化） */
   bumpCacheEpoch(reason: import('../model/cacheDiagnostics').EpochReason): void {
     this.cacheDiagnostics.bumpEpoch(reason)
+  }
+
+  getCacheDiagnosticObservation(): import('../model/cacheDiagnostics').CacheDiagnosticObservation {
+    return this.cacheDiagnostics.getObservation()
   }
 
   /** 导出缓存诊断状态（供跨回合持久化） */
@@ -852,6 +857,7 @@ export class AgentLoop {
       signal: () => this.cancelled,
       abortSignal: () => this.abortController?.signal,
       executeBatch,
+      onToolResultCommitted: this.config.onToolResultCommitted,
       runCompactionIfThreshold: async (projection) => {
         return this.compactionService.runThresholdCompaction(projection, this.abortController?.signal)
       },

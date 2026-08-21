@@ -177,6 +177,20 @@ describe('CacheDiagnostics wire 级 first-diff', () => {
     expect(result.cacheBreakDetected).toBe(true)
     expect(result.prefixDiff?.purpose).toBe('compaction-summary')
   })
+
+  it('正常复用也保留最后一次 expected 与 actual 观测', () => {
+    const diag = new CacheDiagnostics()
+    diag.recordWireSnapshot(makeSnapshot({ toolsBytes: 321 }))
+    diag.correlateUsage(123)
+
+    expect(diag.getObservation()).toMatchObject({
+      toolsBytes: 321,
+      firstDiffIndex: null,
+      firstDiffPart: null,
+      actualCacheReadTokens: 123
+    })
+    expect(diag.getObservation().expectedReuseTokens).toBeGreaterThan(0)
+  })
 })
 
 describe('CacheDiagnostics epoch 管理', () => {

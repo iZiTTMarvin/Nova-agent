@@ -30,9 +30,10 @@
   "infra_retry_limit": 1,
   "max_total_estimated_cost_usd": null,
   "agents": {
-    "nova": { "version": "workspace" },
-    "opencode": { "version": "1.17.11" },
-    "claude_code": { "version": "2.1.220" }
+    "nova": { "adapter": "nova", "version": "workspace", "code_graph": false },
+    "nova_code_index": { "adapter": "nova", "version": "workspace", "code_graph": true },
+    "opencode": { "adapter": "opencode", "version": "1.17.11" },
+    "claude_code": { "adapter": "claude_code", "version": "2.1.220" }
   },
   "active_agents": ["nova"],
   "pricing_usd_per_million": {

@@ -5,6 +5,12 @@ export {
   getCodeGraphWorkspaceDir,
   normalizeCodeGraphWorkspaceRoot
 } from './CodeGraphPaths'
+export { createCodeGraphRuntimeAssembly } from './CodeGraphRuntimeAssembly'
+export type {
+  CodeGraphRuntimeAssembly,
+  CodeGraphRuntimeAssemblyOptions,
+  CodeGraphRuntimeReaderProvider
+} from './CodeGraphRuntimeAssembly'
 export { CodeIndexCoordinator } from './indexing/CodeIndexCoordinator'
 export type {
   CodeIndexCoordinatorOptions,

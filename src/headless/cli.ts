@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs'
 import { resolve } from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { AgentLoop, EventBus } from '../runtime/agent'
 import { agentRoute } from '../runtime/agent/turn'
 import {
@@ -44,6 +44,12 @@ import {
 import { buildAtifTrajectory } from './atif'
 import { resolveHeadlessMaxToolRounds } from './roundBudget'
 import { headlessAssistantCompletionPolicy } from './completionPolicy'
+import {
+  disabledHeadlessCodeGraphDiagnostics,
+  startHeadlessCodeGraph,
+  type HeadlessCodeGraphController
+} from './codeGraph'
+import type { CodeContextQueryPort } from '../runtime/code-graph/context'
 
 interface CliOptions {
   workdir: string
@@ -62,6 +68,9 @@ interface CliOptions {
   taskTags?: string[]
   /** 强制开启工具分组过滤（即使任务分级不是 economy） */
   toolEconomy?: boolean
+  /** 显式启用本次运行的本地代码索引。 */
+  codeGraph?: boolean
+  evaluationCase?: string
 }
 
 interface UsageTotals {
@@ -86,12 +95,15 @@ function parseArgs(argv: string[]): CliOptions {
     'heavy-task-mode',
     'task-category',
     'task-tags',
-    'tool-economy'
+    'tool-economy',
+    'code-graph',
+    'evaluation-case'
   ])
   const flagOnly = new Set([
     'economy-task-mode',
     'heavy-task-mode',
-    'tool-economy'
+    'tool-economy',
+    'code-graph'
   ])
   const values = new Map<string, string>()
   const flags = new Set<string>()
@@ -130,6 +142,10 @@ function parseArgs(argv: string[]): CliOptions {
   if (contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0)) {
     throw new Error('--context-window 必须是正整数')
   }
+  const evaluationCase = values.get('evaluation-case')
+  if (evaluationCase !== undefined && (evaluationCase.trim().length === 0 || evaluationCase.length > 512)) {
+    throw new Error('--evaluation-case 必须是 1 到 512 个字符')
+  }
 
   const taskTagsRaw = values.get('task-tags')
   const taskTags = taskTagsRaw
@@ -152,7 +168,9 @@ function parseArgs(argv: string[]): CliOptions {
     ...(flags.has('heavy-task-mode') ? { heavyTaskMode: true } : {}),
     ...(values.get('task-category') ? { taskCategory: values.get('task-category') } : {}),
     ...(taskTags ? { taskTags } : {}),
-    ...(flags.has('tool-economy') ? { toolEconomy: true } : {})
+    ...(flags.has('tool-economy') ? { toolEconomy: true } : {}),
+    ...(flags.has('code-graph') ? { codeGraph: true } : {}),
+    ...(evaluationCase === undefined ? {} : { evaluationCase })
   }
 }
 
@@ -165,12 +183,19 @@ async function readInstruction(filePath?: string): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-function createCodingTools(availability: ToolAvailability | null): ToolRegistry {
+async function createCodingTools(
+  availability: ToolAvailability | null,
+  codeContextQueryPort: CodeContextQueryPort | null
+): Promise<ToolRegistry> {
   const registry = new ToolRegistry()
   registry.register(lsTool)
   registry.register(readTool)
   registry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
   registry.register(findTool)
+  if (codeContextQueryPort) {
+    const { createCodeContextTool } = await import('../runtime/tools/codeContext')
+    registry.register(createCodeContextTool({ getQueryPort: () => codeContextQueryPort }))
+  }
   registry.register(editTool)
   registry.register(writeTool)
   registry.register(bashTool)
@@ -248,8 +273,31 @@ async function main(): Promise<void> {
   }
   const events: AgentEvent[] = []
   let deadlineReached = false
+  let compactionCount = 0
+  let toolResultBytes = 0
+  let activeLoop: AgentLoop | null = null
+  const deadlineAbortController = new AbortController()
+  const deadlineTimer = options.deadlineSeconds === undefined
+    ? undefined
+    : setTimeout(() => {
+        deadlineReached = true
+        deadlineAbortController.abort()
+        activeLoop?.cancel()
+      }, options.deadlineSeconds * 1000)
 
-  const registry = createCodingTools(toolEconomyEnabled ? toolAvailability : null)
+  let codeGraphController: HeadlessCodeGraphController | null = null
+  if (options.codeGraph === true) {
+    codeGraphController = await startHeadlessCodeGraph({
+      workspaceRoot: options.workdir,
+      logsDir: options.logsDir,
+      runtimeRoot: __dirname,
+      abortSignal: deadlineAbortController.signal
+    })
+  }
+  const registry = await createCodingTools(
+    toolEconomyEnabled ? toolAvailability : null,
+    codeGraphController?.queryPort ?? null
+  )
   const definitions = projectEffectiveToolDefinitions(
     'default',
     registry.getToolDefinitions(),
@@ -261,6 +309,21 @@ async function main(): Promise<void> {
     appendFileSync(eventsPath, `${JSON.stringify(event)}\n`, 'utf8')
     if (event.type === 'usage') addUsage(usage, event.usage)
   })
+  const contextWindow = options.contextWindow ?? resolveContextWindow(options.model)
+  const stablePromptLayers = {
+    agentRole: buildStableSystemPrompt({
+      workingDir: options.workdir,
+      surface: 'headless'
+    }),
+    baseRules: renderBaseRules(),
+    projectRules: discoverProjectRules(options.workdir)?.text ?? '',
+    modeInstruction: '',
+    taskPolicy: taskPolicy.systemLayerText
+  }
+  const systemPromptLayers = {
+    ...stablePromptLayers,
+    toolSummary: renderModeToolInventory('default', definitions, { dialect: 'native' })
+  }
   const modelClient = new OpenAICompatibleModelClient({
     apiKey,
     baseUrl: options.baseUrl,
@@ -274,24 +337,22 @@ async function main(): Promise<void> {
   // 传输路径写入汇总，便于隔离环境网络问题的现场诊断（不含代理凭据）
   const proxyTransport = describeEnvProxy()
   const loop = new AgentLoop(modelClient, eventBus, {
-    systemPromptLayers: {
-      agentRole: buildStableSystemPrompt({
-        workingDir: options.workdir,
-        surface: 'headless'
-      }),
-      baseRules: renderBaseRules(),
-      projectRules: discoverProjectRules(options.workdir)?.text ?? '',
-      modeInstruction: '',
-      taskPolicy: taskPolicy.systemLayerText,
-      toolSummary: renderModeToolInventory('default', definitions, { dialect: 'native' })
-    },
+    systemPromptLayers,
     maxToolRounds: options.maxToolRounds,
     // 显式参数优先；缺省时由模型元数据解析（不再硬编码 1M，避免压缩阈值永不触发）
-    contextWindow: options.contextWindow ?? resolveContextWindow(options.model),
+    contextWindow,
     supportsVision: false,
     toolExecution: 'parallel',
-    maxParallelToolCalls: 4
+    maxParallelToolCalls: 4,
+    onCompaction: () => {
+      compactionCount += 1
+    },
+    onToolResultCommitted: (content) => {
+      const serialized = typeof content === 'string' ? content : JSON.stringify(content)
+      toolResultBytes += Buffer.byteLength(serialized, 'utf8')
+    }
   })
+  activeLoop = loop
   loop.setToolRegistry(registry)
   loop.setToolAvailability(toolAvailability)
   loop.setArtifactStore(new ArtifactStore(options.logsDir))
@@ -306,29 +367,29 @@ async function main(): Promise<void> {
   }
 
   let error: string | undefined
-  const deadlineTimer = options.deadlineSeconds === undefined
-    ? undefined
-    : setTimeout(() => {
-        deadlineReached = true
-        loop.cancel()
-      }, options.deadlineSeconds * 1000)
   let report: HeadlessTurnReport
   try {
-    const outcome = await loop.sendMessage(instruction, agentRoute())
-    if (outcome.status === 'incomplete') {
-      report = { status: 'incomplete', reason: outcome.reason, deadlineReached }
-    } else if (outcome.status === 'failed') {
-      report = { status: 'failed', deadlineReached }
-      error = outcome.error.message
+    if (deadlineReached) {
+      report = { status: 'cancelled', deadlineReached: true }
     } else {
-      report = { status: outcome.status, deadlineReached }
+      const outcome = await loop.sendMessage(instruction, agentRoute())
+      if (outcome.status === 'incomplete') {
+        report = { status: 'incomplete', reason: outcome.reason, deadlineReached }
+      } else if (outcome.status === 'failed') {
+        report = { status: 'failed', deadlineReached }
+        error = outcome.error.message
+      } else {
+        report = { status: outcome.status, deadlineReached }
+      }
     }
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause)
     report = { status: 'failed', deadlineReached }
   } finally {
     clearTimeout(deadlineTimer)
+    activeLoop = null
     loop.dispose()
+    await codeGraphController?.close()
   }
 
   const summaryDerivation = deriveHeadlessSummary(report)
@@ -340,6 +401,12 @@ async function main(): Promise<void> {
     finishedAt: finishedAt.toISOString(),
     events
   })
+  const toolCallCounts = countToolCalls(
+    atif.steps.flatMap((step) =>
+      step.tool_calls?.map((call) => call.function_name) ?? []
+    )
+  )
+  const cacheDiagnostic = loop.getCacheDiagnosticObservation()
 
   writeJson(trajectoryPath, {
     schema_version: 'ATIF-v1.7',
@@ -364,26 +431,54 @@ async function main(): Promise<void> {
   })
 
   const summary = {
-    schema_version: 1,
+    schema_version: 2,
     run_id: runId,
+    evaluation: {
+      case: options.evaluationCase ?? null,
+      instruction_sha256: sha256(instruction),
+      stable_prompt_sha256: sha256(JSON.stringify(stablePromptLayers)),
+      provider_sha256: sha256(options.baseUrl),
+      workspace_path_sha256: sha256(options.workdir),
+      context_window: contextWindow
+    },
     model: options.model,
     reasoning_effort: options.reasoningEffort,
     proxy_transport: proxyTransport,
     max_tool_rounds: Number.isFinite(options.maxToolRounds)
       ? options.maxToolRounds
       : null,
-    deadline_seconds: options.deadlineSeconds,
+    deadline_seconds: options.deadlineSeconds ?? null,
     deadline_reached: deadlineReached,
     status: report.status,
     budget_exhausted: summaryDerivation.budgetExhausted,
     failure_class: summaryDerivation.failureClass,
-    error,
+    error: error ?? null,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
     duration_seconds: (finishedAt.getTime() - startedAt.getTime()) / 1000,
     usage,
     tool_calls: atif.steps.reduce((sum, step) => sum + (step.tool_calls?.length ?? 0), 0),
     model_calls: atif.llmCallCount,
+    tool_call_counts: {
+      read: 0,
+      grep: 0,
+      find: 0,
+      code_context: 0,
+      ...toolCallCounts
+    },
+    tool_result_bytes: toolResultBytes,
+    compaction_count: compactionCount,
+    code_graph: codeGraphController?.getDiagnostics() ?? disabledHeadlessCodeGraphDiagnostics(),
+    cache_diagnostics: {
+      tools_bytes: cacheDiagnostic.toolsBytes,
+      epoch_id: cacheDiagnostic.epochId,
+      epoch_reason: cacheDiagnostic.epochReason,
+      first_diff_part: cacheDiagnostic.firstDiffPart,
+      first_diff_index: cacheDiagnostic.firstDiffIndex,
+      estimated_invalidated_tokens: cacheDiagnostic.estimatedInvalidatedTokens,
+      expected_reuse_tokens: cacheDiagnostic.expectedReuseTokens,
+      actual_cache_read_tokens: cacheDiagnostic.actualCacheReadTokens
+    },
     repair: accumulateRepairTotals(events),
     repair_outcome: accumulateRepairOutcomes(events),
     task_policy: {
@@ -406,6 +501,16 @@ async function main(): Promise<void> {
   // 任务可能遗留 nohup 后台进程继承工具管道等句柄，靠事件循环自然退出
   // 会永远挂住，把外部调用方（评测 harness）卡死。
   writeAndExit(process.stdout, `${JSON.stringify(summary)}\n`, summaryDerivation.exitNonZero ? 1 : 0)
+}
+
+function countToolCalls(names: readonly string[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const name of names) counts[name] = (counts[name] ?? 0) + 1
+  return counts
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
 }
 
 main().catch(error => {

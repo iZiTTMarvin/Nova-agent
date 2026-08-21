@@ -666,9 +666,21 @@ export class CodeIndexCoordinator {
         this.workspaceEpoch !== epoch
       ) return
       this.worker = null
-      this.publish(createSnapshot({ ...this.snapshot, workerState: 'stopped' }))
-      void worker.dispose().catch(() => undefined)
+      void this.releaseIdleWorker(worker, epoch)
     }, this.idleTimeoutMs)
+  }
+
+  private async releaseIdleWorker(
+    worker: CodeIndexWorkerPort,
+    epoch: number
+  ): Promise<void> {
+    try {
+      await worker.dispose()
+    } catch {
+      // Worker 已脱离调度；释放失败不能把索引状态写回 running。
+    }
+    if (this.workspaceEpoch !== epoch || this.worker !== null) return
+    this.publish(createSnapshot({ ...this.snapshot, workerState: 'stopped' }))
   }
 
   private scheduleChangeDrain(): void {
