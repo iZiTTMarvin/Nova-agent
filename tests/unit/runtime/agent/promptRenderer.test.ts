@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { estimateTokens } from '../../../../src/runtime/agent/tokenEstimator'
-import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
+import {
+  renderBaseRules,
+  renderMinimalEngineeringPolicy
+} from '../../../../src/runtime/agent/promptRenderer'
 
 describe('promptRenderer', () => {
   it('renderBaseRules() 返回非空字符串', () => {
@@ -51,5 +54,28 @@ describe('promptRenderer', () => {
     const raw = readFileSync(filePath, 'utf-8').trim()
     expect(raw.length).toBeGreaterThan(0)
     expect(estimateTokens(raw)).toBeLessThan(1000)
+  })
+})
+
+describe('renderMinimalEngineeringPolicy（最小工程策略）', () => {
+  it('返回非空文本且 token 数 < 450（上下文成本上限）', () => {
+    const text = renderMinimalEngineeringPolicy()
+    expect(text).toBeTruthy()
+    expect(estimateTokens(text)).toBeLessThan(450)
+  })
+
+  it('开头限定适用范围，非编码类子代理任务不受干扰', () => {
+    const text = renderMinimalEngineeringPolicy()
+    expect(text).toContain('仅在任务涉及代码实现')
+  })
+
+  it('同版本内每次调用逐字节相同（缓存前缀契约）', () => {
+    expect(renderMinimalEngineeringPolicy()).toBe(renderMinimalEngineeringPolicy())
+  })
+
+  it('文件不存在时返回空字符串且不抛错', () => {
+    expect(
+      renderMinimalEngineeringPolicy(join(__dirname, '__missing_policy__.md'))
+    ).toBe('')
   })
 })

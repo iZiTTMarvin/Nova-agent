@@ -14,7 +14,7 @@ export {
 } from './promptBuilder/buildSkillContext'
 export { estimateTokens, estimateContextTokens, estimateChatMessageTokens } from './tokenEstimator'
 export { discoverProjectRules, discoverProjectRulesFile } from './context/projectRulesDiscovery'
-export { renderBaseRules } from './promptRenderer'
+export { renderBaseRules, renderMinimalEngineeringPolicy } from './promptRenderer'
 export { calculateContextBreakdown } from './context/contextBreakdownCalculator'
 export {
   listRuleFiles,

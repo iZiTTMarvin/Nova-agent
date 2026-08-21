@@ -39,4 +39,20 @@ describe('chat panel layout contracts', () => {
     expect(rule('.chat-panel__composer-inner')).toMatch(/position:\s*relative/)
     expect(rule('.chat-panel__composer-inner')).toMatch(/pointer-events:\s*none/)
   })
+
+  it('locks message flow and composer to centered reading column with responsive gutters', () => {
+    const flowInner = rule('.chat-messages__flow-inner')
+    expect(flowInner).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+    expect(flowInner).toMatch(/margin-inline:\s*auto/)
+
+    const virtualList = rule('.chat-messages__virtual')
+    expect(virtualList).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+    expect(virtualList).toMatch(/margin-inline:\s*auto/)
+
+    const composerInner = rule('.chat-panel__composer-inner')
+    expect(composerInner).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+
+    const tier1Notice = rule('.chat-tier1-notice')
+    expect(tier1Notice).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+  })
 })

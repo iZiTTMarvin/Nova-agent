@@ -12,7 +12,8 @@ import {
   buildSkillContextForMode,
   estimateTokens,
   discoverProjectRules,
-  renderBaseRules
+  renderBaseRules,
+  renderMinimalEngineeringPolicy
 } from '../../../runtime/agent'
 import { projectEffectiveToolDefinitions } from '../../../runtime/agent/core/AgentContext'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
@@ -332,6 +333,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       projectRules,
       memoryContext,
       skillContext,
+      taskPolicy: renderMinimalEngineeringPolicy(),
       toolSummary
     },
     skillsTokenEstimate,

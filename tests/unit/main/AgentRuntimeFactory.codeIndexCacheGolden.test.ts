@@ -132,7 +132,7 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
         toolsHash: '2aea83e7acbb4a65',
-        systemContentHash: '613ccd91d6820acc'
+        systemContentHash: '3c8b61ec24d23012'
       })
     } finally {
       prepared.agentLoop.dispose()

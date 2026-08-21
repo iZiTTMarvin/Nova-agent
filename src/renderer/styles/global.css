@@ -58,6 +58,9 @@
   --radius-lg: 12px;  /* 输入框/主按钮 */
   --radius-xl: 16px;  /* 卡片/面板 */
   
+  /* 对话流阅读中轴宽度（对齐主流 Desktop Agent 黄金阅读行宽） */
+  --chat-content-max-width: 48rem;
+  
   /* 阴影效果（弱投影与环形投影组合） */
   --ring-shadow-subtle: 0 0 0 1px var(--border-cream);
   --ring-shadow-warm: 0 0 0 1px var(--border-warm);

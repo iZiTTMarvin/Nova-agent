@@ -4,12 +4,22 @@
 
 .compose-stage-bar {
   position: relative;
-  padding: 6px 24px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--border-cream);
   font-family: var(--font-sans);
+  display: flex;
+  justify-content: center;
+}
+
+@media (min-width: 768px) {
+  .compose-stage-bar {
+    padding-inline: 24px;
+  }
 }
 
 .compose-stage-bar__row {
+  width: 100%;
+  max-width: var(--chat-content-max-width, 48rem);
   display: flex;
   align-items: center;
   gap: 8px;

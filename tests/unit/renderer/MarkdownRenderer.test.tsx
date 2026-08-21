@@ -114,11 +114,39 @@ describe('MarkdownRenderer GFM 全文渲染（Astryx 内核接管后）', () => 
     const tree = renderDom(<MarkdownRenderer content={GFM_DOC} />)
     expect(tree.container.querySelector('h2')).not.toBeNull()
     expect(tree.container.querySelector('table')).not.toBeNull()
-    expect(tree.container.querySelectorAll('input[type="checkbox"]').length).toBe(2)
+    const checkboxes = tree.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+    expect(checkboxes.length).toBe(2)
+    expect(checkboxes[0]?.checked).toBe(true)
+    expect(checkboxes[1]?.checked).toBe(false)
     expect(tree.container.querySelector('blockquote')).not.toBeNull()
     expect(tree.container.querySelector('.md-code-block__pre')).not.toBeNull()
     // 终态代码高亮不变量
     expect(tree.container.querySelectorAll('.diff-token').length).toBeGreaterThan(0)
+    tree.unmount()
+  })
+
+  it('普通无序列表与 Task List 任务列表共存时结构互不干扰', () => {
+    const doc = [
+      '### 任务列表',
+      '- [x] 任务A',
+      '- [ ] 任务B',
+      '',
+      '### 普通列表',
+      '- 普通项1',
+      '- 普通项2'
+    ].join('\n')
+    const tree = renderDom(<MarkdownRenderer content={doc} />)
+    // 任务列表应落在 .astryx-checkbox-list 下
+    const checkboxList = tree.container.querySelector('.astryx-checkbox-list')
+    expect(checkboxList).not.toBeNull()
+    expect(checkboxList?.querySelectorAll('input[type="checkbox"]').length).toBe(2)
+
+    // 普通无序列表应落在独立的 .astryx-list (非 checkbox list) 下
+    const regularLists = Array.from(tree.container.querySelectorAll('.astryx-list')).filter(
+      el => !el.closest('.astryx-checkbox-list')
+    )
+    expect(regularLists.length).toBe(1)
+    expect(regularLists[0]?.querySelectorAll('.astryx-list-item').length).toBe(2)
     tree.unmount()
   })
 })
