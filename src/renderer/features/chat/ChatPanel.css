@@ -727,6 +727,8 @@
   font-size: 0.82rem;
   color: var(--text-secondary, #5c5c5c);
   box-sizing: border-box;
+  /* 容器链 pointer-events: none，交互子元素需各自恢复 */
+  pointer-events: auto;
 }
 
 .chat-cross-turn-notice__text {

@@ -91,11 +91,7 @@ test('运行中退出重启后按中断终态恢复，「继续分析」代发�
 
     // 「继续分析」代发新消息开新轮次
     resumed.provider.enqueue({ kind: 'text', text: 'NOVA_E2E_RECOVERED' })
-    // 中断横幅位于 pointer-events: none 的 composer 容器内，鼠标事件会穿透到消息滚动区
-    // （产品缺陷，见报告）；测试以键盘等价的方式激活按钮验证恢复逻辑
-    await resumed.page
-      .getByRole('button', { name: '继续分析' })
-      .evaluate((el: HTMLElement) => el.click())
+    await resumed.page.getByRole('button', { name: '继续分析' }).click()
 
     await resumed.provider.waitForRequestCount(3)
     await expect(resumed.page.getByText(CONTINUE_PROMPT, { exact: false })).toBeVisible()
@@ -156,11 +152,9 @@ test('挂起权限请求在重启对账后收敛为已取消，不残留「等�
     await expect(resumed.page.getByLabel('等待你处理')).toHaveCount(0)
     await resumed.selectSession(sessionId)
 
-    // 继续分析仍可开新轮次（横幅按钮 pointer-events 穿透问题同前，键盘等价激活）
+    // 继续分析仍可开新轮次
     resumed.provider.enqueue({ kind: 'text', text: 'NOVA_E2E_RECOVERED_AFTER_PERM' })
-    await resumed.page
-      .getByRole('button', { name: '继续分析' })
-      .evaluate((el: HTMLElement) => el.click())
+    await resumed.page.getByRole('button', { name: '继续分析' }).click()
 
     await resumed.provider.waitForRequestCount(2)
     await expect(resumed.page.getByText('NOVA_E2E_RECOVERED_AFTER_PERM', { exact: false })).toBeVisible()
