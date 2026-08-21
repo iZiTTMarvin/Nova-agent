@@ -18,6 +18,8 @@ export interface PlanReviewCardProps {
   args: Record<string, unknown>
   result?: string
   turnActive: boolean
+  /** 是否消息流中最后一张成功保存的计划卡；历史/旧轮次卡片只读，防止对旧计划内容重复实施 */
+  isLatestPlan?: boolean
   /** 仅 compose 模式：当前生命周期阶段，用于判断计划确认门是否生效 */
   composeStageId?: ComposeStageId | null
   /** 仅 compose 模式：计划确认门状态，null/undefined 视为 pending */
@@ -36,6 +38,24 @@ function pathFromResult(result: string | undefined): string | null {
   return match?.[1] ?? null
 }
 
+/** 实施指令未发出时尽力把模式切回 plan，保证卡片留下重试入口；返回回滚是否成功 */
+async function rollbackToPlan(): Promise<boolean> {
+  try {
+    await useSettingsStore.getState().setMode('plan')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 实施指令未发出时的统一文案：回滚成功提示可重试，失败则提示手动切回 */
+function sendFailureMessage(detail: string | null, rolledBack: boolean): string {
+  const prefix = detail ? `实施指令未能发出（${detail}）` : '实施指令未能发出'
+  return rolledBack
+    ? `${prefix}，已切回计划模式，请重试`
+    : `${prefix}，且无法自动切回计划模式，请手动切换后重试`
+}
+
 export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function PlanReviewCard({
   sessionId,
   currentMode,
@@ -43,6 +63,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
   args,
   result,
   turnActive,
+  isLatestPlan = true,
   composeStageId = null,
   composePlanApproval = null
 }) {
@@ -93,7 +114,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
   const content = document?.content ?? preview
   const planPath = document?.path ?? resultPath
   const canApprove =
-    status !== 'success' || turnActive || document === null || submitting
+    status !== 'success' || turnActive || document === null || submitting || !isLatestPlan
       ? false
       : currentMode === 'compose'
         ? composeStageId === 'plan' && composePlanApproval?.status !== 'approved'
@@ -104,21 +125,37 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
       ? '计划生成失败'
       : '计划待审阅'
 
+  /** 卡片动作绑定卡片所属会话；切走后点击旧卡片必须拒绝，避免两步异步间指令发进错误会话 */
+  const ensureCurrentSession = (): boolean => {
+    if (useChatStore.getState().currentSessionId === sessionId) return true
+    setActionError('页面已切换到其他会话，请回到该计划所属会话操作')
+    return false
+  }
+
   const startImplementation = async () => {
     if (!canApprove || currentMode !== 'plan') return
+    if (!ensureCurrentSession()) return
     setSubmitting(true)
     setActionError(null)
+    let modeSwitched = false
     try {
       await useSettingsStore.getState().setMode('default')
+      modeSwitched = true
       const sent = await useChatStore.getState().sendMessage(
         '请读取当前 active plan，结合最新仓库状态开始实施，并在完成后运行相关验证。',
         []
       )
-      if (!sent) {
-        setActionError('实施指令未能发出（Agent 可能仍在运行），请稍后手动发送。')
-      }
+      if (sent) return
+      // 守卫拒绝（Agent 忙/缺项目路径）：模式已切走，回滚到 plan 保住卡片重试入口
+      setActionError(sendFailureMessage(null, await rollbackToPlan()))
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
+      const detail = error instanceof Error ? error.message : String(error)
+      setActionError(
+        modeSwitched
+          ? sendFailureMessage(detail, await rollbackToPlan())
+          // setMode 自身失败：模式从未切走，无需回滚
+          : `切换模式失败：${detail}`
+      )
     } finally {
       setSubmitting(false)
     }
@@ -135,6 +172,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
    */
   const requestCorrection = async () => {
     if (!canApprove || currentMode !== 'plan') return
+    if (!ensureCurrentSession()) return
     setSubmitting(true)
     setActionError(null)
     try {
@@ -154,6 +192,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
 
   const approveComposePlan = async () => {
     if (!canApprove || currentMode !== 'compose') return
+    if (!ensureCurrentSession()) return
     setSubmitting(true)
     setActionError(null)
     try {
@@ -248,7 +287,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
                 />
               </>
             ) : null
-          ) : (
+          ) : isLatestPlan ? (
             <>
               <span className="plan-review-card__prompt">确认计划后再允许编辑项目文件</span>
               <div className="plan-review-card__decision">
@@ -294,6 +333,11 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
                 </DropdownMenu>
               </div>
             </>
+          ) : (
+            /* 历史/旧轮次计划卡：内容仍可展开阅读，但不提供决策，避免对旧计划内容重复实施 */
+            <span className="plan-review-card__outdated">
+              已有更新的计划版本，请以最新的计划卡片为准
+            </span>
           )}
         </div>
       )}

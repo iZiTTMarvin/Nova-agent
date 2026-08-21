@@ -56,6 +56,8 @@ export interface MessageItemProps {
   currentGeneratingMessageId: string | null
   currentMode: Mode
   currentSessionId: string | null
+  /** 是否为消息流中最后一张成功保存的计划卡；历史/旧轮次计划卡只读，不提供决策 */
+  isLatestPlan: boolean
   /** Tier 1：工作区未重放此分支文件改动，diff 仅作历史展示 */
   tier1DiffStale?: boolean
   onRegenerate: (messageId: string) => void
@@ -207,6 +209,7 @@ function MessageItemInner({
   currentGeneratingMessageId,
   currentMode,
   currentSessionId,
+  isLatestPlan,
   onRegenerate,
   regenerateBlocked = false,
   tier1DiffStale = false,
@@ -423,6 +426,7 @@ function MessageItemInner({
                 args={savedPlanBlock.arguments}
                 result={savedPlanBlock.result}
                 turnActive={isTurnActiveForThisMsg}
+                isLatestPlan={isLatestPlan}
                 composeStageId={composeStageId}
                 composePlanApproval={composePlanApproval}
               />
@@ -624,6 +628,7 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.currentGeneratingMessageId === next.currentGeneratingMessageId &&
     prev.currentMode === next.currentMode &&
     prev.currentSessionId === next.currentSessionId &&
+    prev.isLatestPlan === next.isLatestPlan &&
     prev.onRegenerate === next.onRegenerate &&
     prev.regenerateBlocked === next.regenerateBlocked &&
     prev.tier1DiffStale === next.tier1DiffStale &&

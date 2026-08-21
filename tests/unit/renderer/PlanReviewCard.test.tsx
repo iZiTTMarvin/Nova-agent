@@ -83,6 +83,8 @@ async function renderComposeCard(overrides: Partial<PlanReviewCardProps> = {}): 
 describe('PlanReviewCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 卡片动作绑定卡片所属会话：默认让全局当前会话与 props.sessionId 一致
+    useChatStore.setState({ currentSessionId: 'sess_plan' })
     mockInvoke.mockResolvedValue({
       path: '.nova/plans/2026-07-24-readable.md',
       title: '可审阅计划',
@@ -189,6 +191,146 @@ describe('PlanReviewCard', () => {
       useChatStore.setState({ sendMessage: originalSendMessage })
       renderer?.unmount()
     }
+  })
+
+  it('实施指令被守卫拒绝时切回计划模式并提示可重试', async () => {
+    const originalSetMode = useSettingsStore.getState().setMode
+    const originalSendMessage = useChatStore.getState().sendMessage
+    const setMode = vi.fn(async () => {})
+    const sendMessage = vi.fn(async () => false)
+    useSettingsStore.setState({ setMode })
+    useChatStore.setState({ sendMessage })
+
+    let renderer: DomRenderResult | undefined
+    try {
+      renderer = await renderSuccessCard()
+      await act(async () => {
+        findButton(renderer.container, '执行').click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(setMode).toHaveBeenNthCalledWith(1, 'default')
+      expect(setMode).toHaveBeenNthCalledWith(2, 'plan')
+      expect(sendMessage).toHaveBeenCalledTimes(1)
+      expect(renderer.container.textContent).toContain('已切回计划模式')
+      expect(renderer.container.textContent).toContain('请重试')
+      // 回滚后卡片仍留在 plan 分支，执行按钮可再次点击
+      expect(findButton(renderer.container, '执行').disabled).toBe(false)
+    } finally {
+      useSettingsStore.setState({ setMode: originalSetMode })
+      useChatStore.setState({ sendMessage: originalSendMessage })
+      renderer?.unmount()
+    }
+  })
+
+  it('切换模式失败时不发送指令、也不回滚', async () => {
+    const originalSetMode = useSettingsStore.getState().setMode
+    const originalSendMessage = useChatStore.getState().sendMessage
+    const setMode = vi.fn(async () => {
+      throw new Error('模式切换被拒绝')
+    })
+    const sendMessage = vi.fn(async () => true)
+    useSettingsStore.setState({ setMode })
+    useChatStore.setState({ sendMessage })
+
+    let renderer: DomRenderResult | undefined
+    try {
+      renderer = await renderSuccessCard()
+      await act(async () => {
+        findButton(renderer.container, '执行').click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(setMode).toHaveBeenCalledTimes(1)
+      expect(setMode).toHaveBeenCalledWith('default')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(renderer.container.textContent).toContain('切换模式失败')
+    } finally {
+      useSettingsStore.setState({ setMode: originalSetMode })
+      useChatStore.setState({ sendMessage: originalSendMessage })
+      renderer?.unmount()
+    }
+  })
+
+  it('页面切换到其他会话时三个动作都不产生副作用', async () => {
+    const originalSetMode = useSettingsStore.getState().setMode
+    const originalSendMessage = useChatStore.getState().sendMessage
+    const setMode = vi.fn(async () => {})
+    const sendMessage = vi.fn(async () => true)
+    useChatStore.setState({ currentSessionId: 'sess_other', setMode, sendMessage })
+    mockInvoke.mockClear()
+
+    let renderer: DomRenderResult | undefined
+    try {
+      renderer = await renderSuccessCard()
+      await act(async () => {
+        findButton(renderer.container, '执行').click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(setMode).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(renderer.container.textContent).toContain('切换到其他会话')
+      renderer.unmount()
+
+      renderer = await renderSuccessCard()
+      await act(async () => {
+        renderer.container.querySelector<HTMLButtonElement>('[aria-label="更多计划决策"]')?.click()
+        await Promise.resolve()
+      })
+      await act(async () => {
+        findButton(renderer.container, '需要更正').click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(sendMessage).not.toHaveBeenCalled()
+      renderer.unmount()
+
+      renderer = await renderComposeCard()
+      await act(async () => {
+        findButton(renderer.container, '批准并开始开发').click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(mockInvoke).not.toHaveBeenCalledWith('compose:approve-plan', { sessionId: 'sess_plan' })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(renderer.container.textContent).toContain('切换到其他会话')
+    } finally {
+      useSettingsStore.setState({
+        currentSessionId: 'sess_plan',
+        setMode: originalSetMode,
+        sendMessage: originalSendMessage
+      })
+      renderer?.unmount()
+    }
+  })
+
+  it('非最新计划卡只读：不渲染决策按钮，展示只读提示', async () => {
+    const renderer = renderDom(
+      React.createElement(PlanReviewCard, {
+        sessionId: 'sess_plan',
+        currentMode: 'plan',
+        status: 'success',
+        args: { title: '旧轮次计划', content: '# preview' },
+        result: '计划已保存到 ".nova/plans/old.md"',
+        turnActive: false,
+        isLatestPlan: false
+      })
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const buttons = Array.from(renderer.container.querySelectorAll('button'))
+    expect(buttons.some(btn => btn.textContent?.includes('执行'))).toBe(false)
+    expect(buttons.some(btn => btn.getAttribute('aria-label') === '更多计划决策')).toBe(false)
+    expect(renderer.container.textContent).toContain('已有更新的计划版本')
+    // 内容仍可展开阅读
+    expect(renderer.container.querySelector('.markdown-test')).not.toBeNull()
+    renderer.unmount()
   })
 
   describe('compose 模式：计划确认门', () => {
