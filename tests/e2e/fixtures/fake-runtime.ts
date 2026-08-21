@@ -103,6 +103,7 @@ export class FakeRuntime {
   private readonly server = createServer((req, res) => {
     void this.handle(req, res)
   })
+  private closed = false
 
   private constructor() {
     this.server.on('connection', socket => {
@@ -156,6 +157,9 @@ export class FakeRuntime {
   }
 
   async close(): Promise<void> {
+    // E2E 内跨多次 Electron 启动共享同一实例：close 幂等，避免二次关闭报错。
+    if (this.closed) return
+    this.closed = true
     for (const gate of this.holds.values()) {
       gate.resolve()
     }

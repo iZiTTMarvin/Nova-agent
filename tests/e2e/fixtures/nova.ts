@@ -37,11 +37,19 @@ interface LaunchOptions {
   codeFileCount?: number
 }
 
+/** 复用既有 profile/workspace/fake 服务的再次启动上下文（用于中断崩溃恢复类用例） */
+export interface ResumeContext {
+  profileRoot: string
+  workspacePath: string
+  provider: FakeRuntime
+}
+
 export interface NovaHarness {
   app: ElectronApplication
   page: Page
   provider: FakeRuntime
   workspacePath: string
+  profileRoot: string
   pageErrors: string[]
   rendererConsole: string[]
   mainConsole: string[]
@@ -130,18 +138,23 @@ export function packagedExecutablePath(): string {
 
 export async function launchNova(
   testInfo: TestInfo,
-  options: LaunchOptions = {}
+  options: LaunchOptions = {},
+  resume?: ResumeContext
 ): Promise<NovaHarness> {
-  const provider = await startFakeRuntime()
-  const workspacePath = await prepareWorkspace(options.codeFileCount)
-  const profileRoot = await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-profile-'))
+  // resume：复用既有 profile / workspace / fake 服务，基础配置已在首次启动写入并持久化。
+  const provider = resume?.provider ?? await startFakeRuntime()
+  const workspacePath = resume?.workspacePath ?? await prepareWorkspace(options.codeFileCount)
+  const profileRoot = resume?.profileRoot ?? await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-profile-'))
   const userDataDir = path.join(profileRoot, 'userData')
-  await Promise.all([
-    mkdir(path.join(profileRoot, 'appdata'), { recursive: true }),
-    mkdir(path.join(profileRoot, 'xdg'), { recursive: true }),
-    mkdir(path.join(profileRoot, 'home'), { recursive: true }),
-    mkdir(userDataDir, { recursive: true })
-  ])
+  if (!resume) {
+    await Promise.all([
+      mkdir(path.join(profileRoot, 'appdata'), { recursive: true }),
+      mkdir(path.join(profileRoot, 'xdg'), { recursive: true }),
+      mkdir(path.join(profileRoot, 'home'), { recursive: true }),
+      mkdir(userDataDir, { recursive: true })
+    ])
+  }
+  await mkdir(userDataDir, { recursive: true })
 
   const pageErrors: string[] = []
   const rendererConsole: string[] = []
@@ -258,6 +271,7 @@ export async function launchNova(
     page,
     provider,
     workspacePath,
+    profileRoot,
     pageErrors,
     rendererConsole,
     mainConsole,
