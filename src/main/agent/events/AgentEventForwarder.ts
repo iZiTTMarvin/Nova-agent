@@ -98,7 +98,8 @@ export function forwardEventToRenderer(
         reason: event.reason,
         commands: event.commands,
         toolCallIds: event.toolCallIds,
-        sessionId: event.sessionId
+        sessionId: event.sessionId,
+        ...(event.parentSessionId ? { parentSessionId: event.parentSessionId } : {})
       })
       break
     case 'diff_update':

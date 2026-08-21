@@ -11,6 +11,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
+import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
+import { useAgentStore } from '../../stores/useAgentStore'
 import {
   selectSubagentByParentToolCallId,
   useSubagentProjectionStore
@@ -123,6 +125,13 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
 
   const visibleFileChanges = projection.fileChanges ?? []
 
+  // 子代理权限请求在父会话视图中回应：权限条锚定到对应子代理活动行，
+  // 按 pendingPermissionRequest.sessionId 与本行子会话 id 匹配。
+  const anchoredPermissionRequest = useAgentStore((state) => {
+    const request = state.pendingPermissionRequest
+    return request && request.sessionId === projection.childSessionId ? request : null
+  })
+
   const toggleOpen = (): void => {
     if (!open && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect()
@@ -162,6 +171,13 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
           </span>
         </button>
       </div>
+
+      {anchoredPermissionRequest && (
+        <div className="subagent-activity-row__permission">
+          <div className="subagent-activity-row__permission-label">子代理请求权限</div>
+          <InlinePermissionBar request={anchoredPermissionRequest} />
+        </div>
+      )}
 
       {!active && visibleFileChanges.length > 0 && (
         <SubagentDiffCard projection={projection} />

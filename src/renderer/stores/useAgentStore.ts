@@ -252,3 +252,62 @@ export function resetAgentStoreForTests(): void {
     isSubmittingAskQuestion: false
   })
 }
+
+/**
+ * 从当前会话的后代会话（子代理）恢复待处理权限请求到权限条。
+ *
+ * 子代理运行在独立会话，运行期请求靠事件推送；重启或切回后事件不重放，
+ * durable 的 pending interaction 只存在于子 run 的 snapshot 里，需要重新投影。
+ * 只填空位（父会话自身请求优先），且不触发 pullSnapshot——拉取会改写
+ * selectedSessionId，重启后的 reconcile 广播已把子 run snapshot 投递到缓存。
+ */
+export async function projectDescendantPendingPermissions(currentSessionId: string): Promise<void> {
+  const { useChatStore } = await import('./useChatStore')
+  const { useRunStore } = await import('./useRunStore')
+  const { isDescendantSessionOf } = await import('../lib/agentEventGate')
+  if (!currentSessionId) return
+
+  const { sessions } = useChatStore.getState()
+  const descendantIds: string[] = []
+  for (const session of sessions) {
+    if (session.kind !== 'subagent') continue
+    if (isDescendantSessionOf(session.id, currentSessionId)) descendantIds.push(session.id)
+  }
+  if (descendantIds.length === 0) return
+  if (useAgentStore.getState().pendingPermissionRequest) return
+
+  const { activeRunIdBySessionId, snapshotsByRunId } = useRunStore.getState()
+  for (const childSessionId of descendantIds) {
+    const childRunId = activeRunIdBySessionId[childSessionId]
+    if (!childRunId) continue
+    const snapshot = snapshotsByRunId[childRunId]
+    if (!snapshot) continue
+    const interaction = snapshot.pendingInteractions.find(
+      item => item.type === 'permission' && (item.status === 'pending' || item.status === 'submitting')
+    )
+    if (!interaction) continue
+
+    const payload = interaction.payload ?? {}
+    useAgentStore.getState().handlePermissionRequest({
+      messageId: interaction.messageId,
+      requestId: typeof payload.requestId === 'string' ? payload.requestId : interaction.interactionId,
+      toolName: typeof payload.toolName === 'string' ? payload.toolName : '未知工具',
+      args: payload.args && typeof payload.args === 'object' ? payload.args as Record<string, unknown> : {},
+      riskLevel: payload.riskLevel === 'low' || payload.riskLevel === 'medium' || payload.riskLevel === 'high'
+        ? payload.riskLevel
+        : 'medium',
+      reason: typeof payload.reason === 'string' ? payload.reason : '',
+      commands: Array.isArray(payload.commands)
+        ? payload.commands.filter((item): item is string => typeof item === 'string')
+        : undefined,
+      toolCallIds: Array.isArray(payload.toolCallIds)
+        ? payload.toolCallIds.filter((item): item is string => typeof item === 'string')
+        : undefined,
+      interactionId: interaction.interactionId,
+      sessionId: childSessionId,
+      version: interaction.version
+    })
+    // 权限条单槽，一次只投影一个后代请求
+    return
+  }
+}

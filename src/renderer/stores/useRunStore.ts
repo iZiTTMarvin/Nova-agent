@@ -18,6 +18,9 @@ export interface WaitingSessionBadge {
   pendingCount: number
 }
 
+/** 「继续分析」按钮代发的继续指令；走正常消息链在新 run 中继续 */
+export const CONTINUE_AFTER_INTERRUPT_PROMPT = '请从中断处继续完成刚才的任务。'
+
 export interface RunViewState {
   /** 当前 selectedSession 的 active run 快照（兼容现有 UI 调用方） */
   snapshot: RunSnapshot | null
@@ -370,6 +373,17 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   },
 
   interruptedAction: async (action) => {
+    if (action === 'continue') {
+      // 继续 = 代用户发一条新消息走正常消息链（新轮次新 run），成功后清除中断横幅。
+      // 不能把旧 run 转 resuming：主 loop 没有 resuming 消费入口，转换会永久占用会话 turn。
+      const { useChatStore } = await import('./useChatStore')
+      const sent = await useChatStore.getState().sendMessage(CONTINUE_AFTER_INTERRUPT_PROMPT)
+      if (sent) {
+        set({ interruptedRunId: null, interruptedSteps: [] })
+      }
+      return
+    }
+
     const runId = get().interruptedRunId ?? get().snapshot?.runId
     if (!runId) return
     try {
@@ -383,14 +397,9 @@ export const useRunStore = create<RunViewState>((set, get) => ({
           }))
         })
       }
-      if (result.snapshot) {
-        set({ snapshot: result.snapshot })
-      }
-      if (action === 'continue' || action === 'rollback') {
-        // 保留 inspect 结果；continue 后清 interrupted 标记由用户发消息衔接
-        if (action === 'rollback') {
-          set({ interruptedRunId: null })
-        }
+      // 不写回兼容 snapshot 槽位：interrupted run 是旧终态，可能覆盖会话更新 run 的投影
+      if (action === 'rollback') {
+        set({ interruptedRunId: null })
       }
     } catch (err) {
       console.error('[useRunStore] interruptedAction 失败:', err)

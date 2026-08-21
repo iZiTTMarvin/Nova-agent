@@ -3,9 +3,28 @@ import {
   resetChatStoreForTests,
   useChatStore
 } from '../../../../../src/renderer/stores/useChatStore'
+import { useRunStore } from '../../../../../src/renderer/stores/useRunStore'
+import type { RunSnapshot } from '../../../../../src/shared/run/types'
 
 function unresolved<T>(): Promise<T> {
   return new Promise<T>(() => {})
+}
+
+function snap(
+  partial: Partial<RunSnapshot> & Pick<RunSnapshot, 'runId' | 'sessionId' | 'sequence' | 'status'>
+): RunSnapshot {
+  return {
+    kind: 'agent',
+    workspaceId: '/ws',
+    messageId: 'm',
+    pendingInteractions: [],
+    currentAttempt: null,
+    progress: null,
+    lastHeartbeatAt: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    ...partial
+  }
 }
 
 describe('chat workspace sync reset ownership', () => {
@@ -186,6 +205,94 @@ describe('chat workspace sync reset ownership', () => {
       oldestLoadedMessageId: null
     })
     expect(useChatStore.getState().loadingDiffs.size).toBe(0)
+  })
+
+  it('切到收尾会话：message-end 先到而 pull 快照过期时，水合不复活 isGenerating', async () => {
+    const runningSnapshot = snap({
+      runId: 'run-b',
+      sessionId: 'session-b',
+      sequence: 10,
+      status: 'running',
+      messageId: 'message-b'
+    })
+    const terminalSnapshot = snap({
+      runId: 'run-b',
+      sessionId: 'session-b',
+      sequence: 12,
+      status: 'completed',
+      messageId: 'message-b'
+    })
+
+    let resolvePull!: (value: { snapshot: RunSnapshot; waitingSessions: unknown[] }) => void
+    const pendingPull = new Promise<{ snapshot: RunSnapshot; waitingSessions: unknown[] }>(
+      (resolve) => {
+        resolvePull = resolve
+      }
+    )
+    const snapshotCalls: Array<string | undefined> = []
+
+    vi.mocked(window.api.invoke).mockImplementation((channel: string, params: unknown) => {
+      const p = params as { sessionId?: string } | undefined
+      if (channel === 'load-session') {
+        return Promise.resolve({
+          id: 'session-b',
+          workspaceRoot: 'w',
+          mode: 'default',
+          createdAt: 2,
+          updatedAt: 2,
+          messageCount: 0,
+          kind: 'primary',
+          messages: []
+        })
+      }
+      if (channel === 'run:get-snapshot') {
+        snapshotCalls.push(p?.sessionId)
+        // 第一次调用是 pullSnapshot：挂起，模拟响应晚于 terminal 事件；
+        // 第二次是水合前的终态复核。
+        if (snapshotCalls.length === 1) return pendingPull
+        return Promise.resolve({ snapshot: terminalSnapshot, waitingSessions: [] })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    useRunStore.getState().resetForTests()
+    useChatStore.setState({
+      sessions: [
+        { id: 'session-a', workspaceRoot: 'w', mode: 'default', createdAt: 1, updatedAt: 1, messageCount: 1 }
+      ],
+      currentSessionId: 'session-a',
+      lastMessagesRevision: 1,
+      messages: [],
+      messageIndexById: {}
+    })
+
+    useChatStore.getState().syncFromWorkspace({
+      currentSessionId: 'session-b',
+      availableSessions: [
+        { id: 'session-b', workspaceRoot: 'w', mode: 'default', createdAt: 2, updatedAt: 2, messageCount: 0 }
+      ],
+      messagesRevision: 2,
+      tier1BranchContext: null
+    })
+
+    // pull 尚未返回：目标轮次先结束，renderer 已回到非生成态
+    await useChatStore.getState().handleMessageEnd('message-b')
+    expect(useChatStore.getState().isGenerating).toBe(false)
+
+    // 过期的 running 快照此时才到达
+    resolvePull({ snapshot: runningSnapshot, waitingSessions: [] })
+
+    // 先等水合完成：终态复核（第二次 run:get-snapshot）已发出，
+    // 再断言生成态未被过期的 running 快照复活
+    await vi.waitFor(() => {
+      expect(snapshotCalls.length).toBeGreaterThanOrEqual(2)
+    })
+    expect(snapshotCalls).toEqual(['session-b', 'session-b'])
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().isGenerating).toBe(false)
+    })
+    expect(useChatStore.getState().currentGeneratingMessageId).toBeNull()
+    expect(useChatStore.getState().activeAgentSessionId).toBeNull()
   })
 
   it('load-session 失败时保留已完成的 session/reset 状态且不产生未处理拒绝', async () => {

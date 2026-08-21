@@ -205,7 +205,7 @@ describe('RunCoordinator', () => {
     expect(tc1?.phase).toBe('committed')
   })
 
-  it('启动对账保留 pending interaction，供 interrupted child 在恢复前回答', () => {
+  it('启动对账把未决交互收敛为终态，不残留「等待你处理」状态', () => {
     const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 'child' })
     coord.markRunning(snap.runId, 'msg-child')
     coord.inbox.enqueue({
@@ -216,15 +216,50 @@ describe('RunCoordinator', () => {
       interactionId: 'permission-child',
       payload: { requestId: 'permission-child', toolName: 'bash' }
     })
+    coord.updateInteraction(snap.runId, 'permission-child', {
+      status: 'submitting',
+      version: 2
+    })
 
     const coord2 = new RunCoordinator({ store })
     const [interrupted] = coord2.reconcileOnStartup()
 
     expect(interrupted.status).toBe('interrupted')
-    expect(interrupted.pendingInteractions).toEqual([
-      expect.objectContaining({ interactionId: 'permission-child', status: 'pending' })
-    ])
-    expect(coord2.inbox.listPendingForSession('child')).toHaveLength(1)
+    expect(interrupted.pendingInteractions.map(i => i.status)).toEqual(['cancelled'])
+    expect(interrupted.pendingInteractions[0]?.version).toBe(3)
+    // 落盘与内存一致：重启后不再有「等待你处理」残留
+    expect(store.loadSnapshot(snap.runId)?.pendingInteractions[0]?.status).toBe('cancelled')
+    expect(coord2.inbox.listPendingForSession('child')).toHaveLength(0)
+    expect(coord2.listWaitingSessions()).toEqual([])
+  })
+
+  it('waiting_user + pending 交互重启后：run interrupted、交互终态、不计入等待徽标', () => {
+    const snap = coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's1',
+      messageId: 'm1'
+    })
+    coord.markRunning(snap.runId, 'm1')
+    coord.inbox.enqueue({
+      runId: snap.runId,
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'askQuestion',
+      interactionId: 'ask_1',
+      payload: { requestId: 'ask_1', questions: [] }
+    })
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('waiting_user')
+    expect(coord.listWaitingSessions()).toHaveLength(1)
+
+    const coord2 = new RunCoordinator({ store })
+    const [reconciled] = coord2.reconcileOnStartup()
+
+    expect(reconciled.status).toBe('interrupted')
+    expect(reconciled.pendingInteractions.every(i => i.status === 'cancelled')).toBe(true)
+    expect(coord2.listWaitingSessions()).toEqual([])
+    // interrupted 不占用 turn：新消息可正常开新轮次
+    expect(coord2.hasActiveRunForSession('s1')).toBe(false)
   })
 
   it('cancel 流程：beginCancel → cancelling，commitTerminal → cancelled', () => {

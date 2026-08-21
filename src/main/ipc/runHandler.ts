@@ -105,7 +105,7 @@ export function registerRunHandler(): void {
 
   handle(RUN_INTERRUPTED_ACTION, async (_event, params: {
     runId: string
-    action: 'continue' | 'rollback' | 'inspect'
+    action: 'rollback' | 'inspect'
   }) => {
     const coord = getRunCoordinator()
     const snap = coord.getSnapshot(params.runId)
@@ -133,20 +133,13 @@ export function registerRunHandler(): void {
       }
     }
 
-    if (snap.status !== 'interrupted') {
-      return {
-        ok: false,
-        message: `当前状态 ${snap.status} 不可 continue`,
-        snapshot: snap
-      }
-    }
-    // interrupted → resuming：统一 commit 保证 sequence 单调，避免 Renderer 丢事件
-    const next = coord.transition(params.runId, 'resuming', 'user_continue')
+    // 没有 continue 分支：继续必须由 renderer 代发新消息开新轮次。
+    // interrupted → resuming 只保留给子代理恢复路径（SubagentExecutionService），
+    // 主 run 无 resuming 消费入口，转换后入场锁会被永久占用。
     return {
-      ok: true,
-      message: '已标记为可继续；请发送「继续」让 Agent 基于已提交步骤继续分析（不会自动重放未提交的非幂等工具）',
-      steps: snap.toolCommits ?? [],
-      snapshot: next
+      ok: false,
+      message: `未知动作 ${params.action}`,
+      snapshot: snap
     }
   })
 }

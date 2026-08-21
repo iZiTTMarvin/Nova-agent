@@ -7,6 +7,10 @@ import {
   SubagentToolRow
 } from '../../../src/renderer/features/subagents/SubagentActivityRow'
 import { useSubagentProjectionStore } from '../../../src/renderer/features/subagents/projection'
+import {
+  resetAgentStoreForTests,
+  useAgentStore
+} from '../../../src/renderer/stores/useAgentStore'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
 import { renderDom, act } from './renderDom'
 
@@ -45,6 +49,7 @@ function flushAsync(): Promise<void> {
 describe('SubagentActivityRow', () => {
   beforeEach(() => {
     useSubagentProjectionStore.getState().resetForTests()
+    resetAgentStoreForTests()
     mockInvoke.mockReset()
     mockOn.mockReset()
     // 就地替换 bridge（不重建 window，避免丢失 jsdom 原型上的 matchMedia）
@@ -302,6 +307,66 @@ describe('SubagentActivityRow', () => {
       messageId: 'msg-early',
       filePath: 'src/a.ts'
     })
+    renderer.unmount()
+  })
+
+  it('子代理权限请求锚定到父会话视图的对应活动行，可拒绝并送达子 run', async () => {
+    useAgentStore.getState().handlePermissionRequest({
+      messageId: 'msg-child',
+      requestId: 'perm-child',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+      riskLevel: 'medium',
+      reason: '运行测试命令',
+      sessionId: 'sess-child',
+      interactionId: 'perm-child',
+      version: 1
+    })
+
+    const renderer = renderDom(
+      <SubagentActivityRow projection={baseProjection({ status: 'waiting_user' })} />
+    )
+    const bar = renderer.container.querySelector('.subagent-activity-row__permission')
+    expect(bar).not.toBeNull()
+    expect(
+      renderer.container.querySelector('.subagent-activity-row__permission-label')?.textContent
+    ).toContain('子代理')
+    expect(bar?.textContent ?? '').toContain('运行测试命令')
+
+    const deny = renderer.container.querySelector<HTMLButtonElement>(
+      '.inline-perm__btn--deny'
+    )
+    expect(deny).not.toBeNull()
+    act(() => deny!.click())
+    await flushAsync()
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'respond-permission',
+      expect.objectContaining({
+        requestId: 'perm-child',
+        decision: 'deny',
+        interactionId: 'perm-child',
+        expectedVersion: 1
+      })
+    )
+    expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
+    renderer.unmount()
+  })
+
+  it('其他会话的权限请求不锚定到本行', () => {
+    useAgentStore.getState().handlePermissionRequest({
+      messageId: 'msg-x',
+      requestId: 'perm-x',
+      toolName: 'bash',
+      args: {},
+      riskLevel: 'low',
+      reason: '',
+      sessionId: 'sess-other'
+    })
+    const renderer = renderDom(
+      <SubagentActivityRow projection={baseProjection({ status: 'waiting_user' })} />
+    )
+    expect(renderer.container.querySelector('.subagent-activity-row__permission')).toBeNull()
     renderer.unmount()
   })
 

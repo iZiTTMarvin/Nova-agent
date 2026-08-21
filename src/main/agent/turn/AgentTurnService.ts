@@ -333,6 +333,7 @@ export async function sendAgentMessage(
         runId: context.runId,
         executionGeneration: context.executionGeneration,
         sessionId: context.childSessionId,
+        parentSessionId: context.parentSessionId,
         mode: context.mode,
         permissionPolicy: capturedPermissionPolicy,
         workspaceRoot: context.workspaceRoot,
@@ -606,10 +607,22 @@ function stampSessionId(event: AgentEvent, sessionId: string): void {
   ;(event as { sessionId?: string }).sessionId = sessionId
 }
 
+/**
+ * 子代理事件携带直接父会话归属：renderer 的会话门控据此把关键交互
+ * （如权限请求）路由到父会话视图，不依赖 renderer 侧子会话列表的时序。
+ */
+function stampParentSessionId(event: AgentEvent, parentSessionId: string): void {
+  if (event.type === 'permission_request') {
+    event.parentSessionId = parentSessionId
+  }
+}
+
 interface ForwardAgentEventContext {
   readonly runId: string
   readonly executionGeneration: number
   readonly sessionId: string
+  /** 子代理事件携带直接父会话归属；主会话事件不设置 */
+  readonly parentSessionId?: string
   readonly mode: Mode
   readonly permissionPolicy: PermissionPolicy
   readonly workspaceRoot: string
@@ -652,6 +665,7 @@ function forwardAgentEvent(
 ): void {
   context.stallMark?.(event.type)
   stampSessionId(event, context.sessionId)
+  if (context.parentSessionId) stampParentSessionId(event, context.parentSessionId)
   forwardEventToRenderer(context.getMainWindow(), event)
   accumulateStreamEvent(context.sessionId, event, {
     mode: context.mode,

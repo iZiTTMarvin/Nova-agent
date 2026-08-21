@@ -164,6 +164,7 @@ describe('运行中会话切回恢复', () => {
 
     dispatchWorkspaceChange(workspaceState())
     const extraPull = useRunStore.getState().pullSnapshot(sessionId)
+    // 并发二次 pull 仍合并为同一次 IPC
     expect(getSnapshotCalls).toBe(1)
 
     releaseSnapshot()
@@ -173,7 +174,9 @@ describe('运行中会话切回恢复', () => {
       expect(useChatStore.getState().isGenerating).toBe(true)
       expect(useChatStore.getState().currentGeneratingMessageId).toBe(messageId)
     })
-    expect(getSnapshotCalls).toBe(1)
+    // 第二次 IPC 是水合前的终态复核：pull 响应可能截于终态提交之前，
+    // 提交 isGenerating 前向主进程复核一次权威快照（本测试返回同一 running 快照）
+    expect(getSnapshotCalls).toBe(2)
   })
 
   it('错过 message_start 时首个 delta 自动创建 assistant 消息壳（文本进活跃回合）', () => {

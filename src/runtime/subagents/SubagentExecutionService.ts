@@ -57,6 +57,8 @@ export interface PreparedSubagentTurn {
 
 export interface SubagentEventContext extends AgentTurnRunRefs {
   readonly parentRunId: string
+  /** 直接父会话归属；renderer 据此把权限请求等关键事件路由到父会话视图 */
+  readonly parentSessionId: string
   readonly childSessionId: string
   readonly mode: Mode
   readonly workspaceRoot: string
@@ -392,6 +394,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     const eventContext = (): SubagentEventContext => ({
       ...runRefs,
       parentRunId: command.parentRunId,
+      parentSessionId: command.parentSessionId,
       childSessionId: childSession.id,
       mode: childSession.mode,
       workspaceRoot: childSession.workspaceRoot,

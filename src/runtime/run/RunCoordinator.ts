@@ -667,9 +667,12 @@ export class RunCoordinator {
       snap.terminalReason = 'process_exit'
       snap.terminalTransitionId = transitionId
       snap.executionGeneration = 0
+      // 进程已退出，挂起交互不再有回答方：收敛为终态（version 递增），
+      // 防止「等待你处理」徽标与子代理恢复门禁被残留 pending 永久卡住。
+      // 该收敛只在启动对账发生：will-quit 时间受限且对账幂等，两处并存属于重复路径。
       for (const inter of snap.pendingInteractions) {
-        if (inter.status === 'submitting') {
-          inter.status = 'pending'
+        if (inter.status === 'pending' || inter.status === 'submitting') {
+          inter.status = 'cancelled'
           inter.version += 1
         }
       }

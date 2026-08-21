@@ -1,4 +1,4 @@
-import type { RunStatus } from '../../../../shared/run/types'
+import type { RunSnapshot, RunStatus } from '../../../../shared/run/types'
 import type { SessionDetail } from '../../../../shared/session/types'
 import {
   mergeFocusedSessionMessages,
@@ -94,9 +94,26 @@ export function createWorkspaceSyncSlice(
           }
 
           const targetRunId = useRunStore.getState().activeRunIdBySessionId[targetSessionId]
-          const snapshot = sessionChanged && targetRunId
+          let snapshot = sessionChanged && targetRunId
             ? useRunStore.getState().snapshotsByRunId[targetRunId] ?? null
             : null
+
+          // 水合前终态复核：pull 快照可能截于轮次终态提交之前（收尾会话的
+          // message-end 与 pull 响应竞态），直接采用会把已结束轮次复活成
+          // isGenerating=true。向主进程复核一次权威快照：同一 run 已终态则以终态为准。
+          if (sessionChanged && targetRunId && snapshot && !isTerminalRunStatus(snapshot.status)) {
+            try {
+              const verified = (await window.api.invoke('run:get-snapshot', {
+                sessionId: targetSessionId
+              })) as { snapshot?: RunSnapshot | null } | null
+              if (verified?.snapshot && verified.snapshot.runId === targetRunId) {
+                snapshot = verified.snapshot
+              }
+            } catch {
+              // 复核失败沿用 pull 快照，不阻塞水合
+            }
+          }
+
           const targetRunning = sessionChanged
             ? !!snapshot && !isTerminalRunStatus(snapshot.status)
             : get().isGenerating
@@ -170,6 +187,13 @@ export function createWorkspaceSyncSlice(
               ...(hasLive ? { liveTurn: {} } : {})
             }
           })
+
+          // 切会话后该项目仍在场：子代理 pending 权限请求不随事件重放
+          // （重启/切回），从后代 run snapshot 恢复投影到父会话权限条
+          if (sessionChanged && get().currentSessionId === targetSessionId) {
+            const { projectDescendantPendingPermissions } = await import('../../useAgentStore')
+            await projectDescendantPendingPermissions(targetSessionId)
+          }
         } catch (err) {
           console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)
         } finally {

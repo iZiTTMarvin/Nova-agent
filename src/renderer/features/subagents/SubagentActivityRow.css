@@ -179,6 +179,23 @@
   100% { background-position: 0% 0; }
 }
 
+/* 子代理权限请求条：锚定在父会话视图的活动行内部 */
+.subagent-activity-row__permission {
+  margin: 3px 2px 1px;
+  padding: 5px 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+}
+
+.subagent-activity-row__permission-label {
+  margin: 0 0 3px 1px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .subagent-activity-row--running .subagent-activity-row__dot,
   .subagent-activity-row__activity--live {

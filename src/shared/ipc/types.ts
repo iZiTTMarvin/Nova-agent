@@ -179,11 +179,12 @@ export interface IpcCommands {
   'run:interrupted-action': {
     params: {
       runId: string
-      action: 'continue' | 'rollback' | 'inspect'
+      /** 继续走 renderer 正常消息链，不经过本通道 */
+      action: 'rollback' | 'inspect'
     }
     result: {
       ok: boolean
-      /** inspect：已执行工具步骤；continue/rollback：操作结果说明 */
+      /** inspect：已执行工具步骤；rollback：操作结果说明 */
       steps?: ToolCommitRecord[]
       message?: string
       snapshot?: RunSnapshot | null
@@ -612,6 +613,10 @@ export interface IpcEvents {
     commands?: string[]
     /** 本次请求对应的工具卡片 id 列表，渲染层据此把放行卡片内联到消息流（锚点取末尾一张） */
     toolCallIds?: string[]
+    /** 归属会话；子代理请求为 child session id */
+    sessionId?: string
+    /** 子代理请求的直接父会话归属；renderer 会话门控据此放行到父会话视图 */
+    parentSessionId?: string
   }
   'agent:diff-update': {
     messageId: string

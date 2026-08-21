@@ -44,7 +44,7 @@ export const RUN_GET_SNAPSHOT = 'run:get-snapshot' as const
 export const RUN_LIST_WAITING = 'run:list-waiting' as const
 /** 强制终止仍未退出的 run（grace 超时后） */
 export const RUN_FORCE_TERMINATE = 'run:force-terminate' as const
-/** interrupted run：继续分析 / 回滚本轮 / 查看已执行步骤 */
+/** interrupted run：回滚本轮 / 查看已执行步骤（继续由 renderer 走正常消息链） */
 export const RUN_INTERRUPTED_ACTION = 'run:interrupted-action' as const
 export const SAVE_MODEL_CONFIG = 'save-model-config' as const
 export const LOAD_MODEL_CONFIG = 'load-model-config' as const
