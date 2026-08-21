@@ -13,6 +13,8 @@ vi.mock('../../../src/renderer/features/chat/MarkdownRenderer', () => ({
     React.createElement('pre', { className: 'markdown-test' }, content)
 }))
 
+vi.mock('framer-motion', () => import('./_framerMotionMock'))
+
 const mockInvoke = vi.fn()
 
 Object.assign(window, {
@@ -98,11 +100,11 @@ describe('PlanReviewCard', () => {
     })
     expect(renderer.container.querySelector('.markdown-test')?.textContent ?? '')
       .toContain('从项目文件加载的正文')
-    expect(findButton(renderer.container, '开始实施').disabled).toBe(false)
+    expect(findButton(renderer.container, '执行').disabled).toBe(false)
     renderer.unmount()
   })
 
-  it('开始实施先切 Default，再发起新的实施轮次', async () => {
+  it('执行先切 Default，再发起新的实施轮次', async () => {
     const originalSetMode = useSettingsStore.getState().setMode
     const originalSendMessage = useChatStore.getState().sendMessage
     const calls: string[] = []
@@ -120,7 +122,7 @@ describe('PlanReviewCard', () => {
     try {
       renderer = await renderSuccessCard()
       await act(async () => {
-        findButton(renderer.container, '开始实施').click()
+        findButton(renderer.container, '执行').click()
         await Promise.resolve()
         await Promise.resolve()
       })
@@ -157,15 +159,36 @@ describe('PlanReviewCard', () => {
     renderer.unmount()
   })
 
-  it('继续完善只把修订提示送入输入框，不切换模式', async () => {
-    const renderer = await renderSuccessCard()
+  it('需要更正停留在 plan 模式，并把更正意图发给模型追问', async () => {
+    const originalSetMode = useSettingsStore.getState().setMode
+    const originalSendMessage = useChatStore.getState().sendMessage
+    const setMode = vi.fn(async () => {})
+    const sendMessage = vi.fn(async () => true)
+    useSettingsStore.setState({ setMode })
+    useChatStore.setState({ sendMessage })
 
-    act(() => {
-      findButton(renderer.container, '继续完善').click()
-    })
+    let renderer: DomRenderResult | undefined
+    try {
+      renderer = await renderSuccessCard()
+      await act(async () => {
+        renderer.container
+          .querySelector<HTMLButtonElement>('[aria-label="更多计划决策"]')
+          ?.click()
+        await Promise.resolve()
+      })
+      await act(async () => {
+        findButton(renderer.container, '需要更正').click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
 
-    expect(useSettingsStore.getState().composerPrefill).toContain('继续完善当前计划')
-    renderer.unmount()
+      expect(setMode).not.toHaveBeenCalled()
+      expect(sendMessage).toHaveBeenCalledWith(expect.stringContaining('需要更正'), [])
+    } finally {
+      useSettingsStore.setState({ setMode: originalSetMode })
+      useChatStore.setState({ sendMessage: originalSendMessage })
+      renderer?.unmount()
+    }
   })
 
   describe('compose 模式：计划确认门', () => {

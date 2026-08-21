@@ -311,7 +311,7 @@ export const savePlanTool: ToolExecutor = {
           success: true,
           output:
             `计划已保存到 "${relativePath}"，并登记为当前会话的 active plan。` +
-            '用户确认后可使用 switch_mode 切换到 default，实施前先读取该文件。'
+            '计划已展示在计划审阅卡中。请结束本轮并等待用户选择「执行」或「需要更正」，不要自行调用 switch_mode 切换模式。'
         }
       })
     } catch (error) {

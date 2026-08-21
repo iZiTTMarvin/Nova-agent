@@ -103,6 +103,22 @@
   font-weight: 600;
 }
 
+/* 「执行 + 更多决策」列表按钮：主按钮与下拉触发器融合为一个控件 */
+.plan-review-card__decision {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.plan-review-card__decision .plan-review-card__primary {
+  border-radius: 8px 2px 2px 8px;
+}
+
+.plan-review-card__decision-menu > button {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 2px 8px 8px 2px;
+}
+
 .plan-review-card__implemented {
   display: inline-flex;
   align-items: center;

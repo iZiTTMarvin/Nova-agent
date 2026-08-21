@@ -14,15 +14,23 @@ describe('modeInstruction', () => {
     expect(instruction).not.toContain('用户设置')
   })
 
-  it('Plan 明确受限计划产物与确认后切换契约', () => {
+  it('Plan 明确受限计划产物与审阅卡决策契约', () => {
     const instruction = getModeInstruction('plan')
     expect(instruction).toContain('save_plan')
     expect(instruction).toContain('.nova/plans/')
     expect(instruction).toContain('switch_mode')
     expect(instruction).toContain('计划审阅卡')
-    expect(instruction).toContain('开始实施')
-    expect(instruction).toContain('继续完善')
+    expect(instruction).toContain('执行')
+    expect(instruction).toContain('需要更正')
+    expect(instruction).toContain('结束本轮')
     expect(instruction).toContain('禁止修改业务文件')
+  })
+
+  it('Plan 禁止模型保存计划后自行切模式或用 askQuestion 做审批', () => {
+    const instruction = getModeInstruction('plan')
+    expect(instruction).toContain('不要自行调用 switch_mode')
+    expect(instruction).toContain('askQuestion')
+    expect(instruction).toContain('文字回复中明确批准')
   })
 
   it('Default 只在存在合法 active plan 时注入实施指针', () => {

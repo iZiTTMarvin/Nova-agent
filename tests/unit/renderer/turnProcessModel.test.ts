@@ -187,6 +187,27 @@ describe('buildTurnRenderModel', () => {
     }
   })
 
+  it('save_plan 是硬边界：其后的工具行与收尾文本按原序进入 answer，不卷进过程树', () => {
+    const blocks: RendererMessageBlock[] = [
+      toolBlock('1', 'read', { path: 'a.ts' }),
+      toolBlock('p1', 'save_plan', { title: '计划', content: '正文' }),
+      toolBlock('m1', 'switch_mode', { mode: 'default', reason: '用户已批准' }),
+      { type: 'text', content: '收尾' }
+    ]
+    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
+    expect(model.hasProcess).toBe(true)
+    expect(
+      model.processTimeline.some(s => s.kind === 'tool' && s.block.toolName === 'switch_mode')
+    ).toBe(false)
+    expect(model.answerUnits.map(u => u.kind)).toEqual(['tool', 'block'])
+    if (model.answerUnits[0].kind === 'tool') {
+      expect(model.answerUnits[0].block.toolName).toBe('switch_mode')
+    }
+    if (model.answerUnits[1].kind === 'block') {
+      expect((model.answerUnits[1].block as { content: string }).content).toBe('收尾')
+    }
+  })
+
   it('无 blocks，有 toolCalls → 降级路径正确', () => {
     const toolCalls: ExtendedToolCall[] = [
       { id: '1', name: 'read', arguments: { path: 'a.ts' }, status: 'success' }

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu'
 import type { Mode } from '../../../shared/session/types'
 import type { ActivePlanDocument } from '../../../shared/workspace/types'
 import type { ComposePlanApproval, ComposeStageId } from '../../../shared/composeLifecycle'
@@ -56,6 +57,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
   const [expanded, setExpanded] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [decisionMenuOpen, setDecisionMenuOpen] = useState(false)
 
   useEffect(() => {
     if (status !== 'success') {
@@ -122,6 +124,34 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     }
   }
 
+  /** compose 阶段的「继续完善」：只把修订提示送入输入框，模式与阶段由确认门管理 */
+  const continuePlanning = () => {
+    useSettingsStore.getState().requestComposerPrefill('请按以下要求继续完善当前计划：\n')
+  }
+
+  /**
+   * 需要更正：停留在 plan 模式，把「用户不批准、要求更正」作为用户消息发给模型；
+   * 模型正常追问要改什么后结束本轮，等待用户回复，不复用 askQuestion 做审批交互。
+   */
+  const requestCorrection = async () => {
+    if (!canApprove || currentMode !== 'plan') return
+    setSubmitting(true)
+    setActionError(null)
+    try {
+      const sent = await useChatStore.getState().sendMessage(
+        '这份计划需要更正，暂不执行。请询问我希望调整哪些部分，然后等待我的回复。',
+        []
+      )
+      if (!sent) {
+        setActionError('更正请求未能发出（Agent 可能仍在运行），请稍后手动发送。')
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const approveComposePlan = async () => {
     if (!canApprove || currentMode !== 'compose') return
     setSubmitting(true)
@@ -144,10 +174,6 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     } finally {
       setSubmitting(false)
     }
-  }
-
-  const continuePlanning = () => {
-    useSettingsStore.getState().requestComposerPrefill('请按以下要求继续完善当前计划：\n')
   }
 
   return (
@@ -225,22 +251,48 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
           ) : (
             <>
               <span className="plan-review-card__prompt">确认计划后再允许编辑项目文件</span>
-              <Button
-                label="继续完善"
-                variant="secondary"
-                size="sm"
-                className="plan-review-card__secondary"
-                onClick={continuePlanning}
-                isDisabled={submitting || turnActive}
-              />
-              <Button
-                label={submitting ? '正在切换…' : turnActive ? '等待回复完成' : '开始实施'}
-                variant="primary"
-                size="sm"
-                className="plan-review-card__primary"
-                onClick={() => void startImplementation()}
-                isDisabled={!canApprove}
-              />
+              <div className="plan-review-card__decision">
+                <Button
+                  label={submitting ? '正在切换…' : turnActive ? '等待回复完成' : '执行'}
+                  variant="primary"
+                  size="sm"
+                  className="plan-review-card__primary"
+                  onClick={() => void startImplementation()}
+                  isDisabled={!canApprove}
+                />
+                <DropdownMenu
+                  className="plan-review-card__decision-menu"
+                  placement="above"
+                  menuWidth={176}
+                  isMenuOpen={decisionMenuOpen}
+                  onOpenChange={setDecisionMenuOpen}
+                  button={{
+                    label: '更多计划决策',
+                    variant: 'primary',
+                    size: 'sm',
+                    isIconOnly: true,
+                    icon: <ChevronIcon size={14} direction="down" />,
+                    tooltip: '更多计划决策',
+                    isDisabled: !canApprove
+                  }}
+                >
+                  {/* Button 承载菜单行，与 ModeSwitch 一致保持在 Astryx 焦点路径上 */}
+                  <Button
+                    label="需要更正"
+                    variant="ghost"
+                    size="sm"
+                    width="100%"
+                    role="menuitem"
+                    tabIndex={-1}
+                    className="plan-review-card__decision-item"
+                    onClick={() => {
+                      setDecisionMenuOpen(false)
+                      void requestCorrection()
+                    }}
+                    isDisabled={!canApprove}
+                  />
+                </DropdownMenu>
+              </div>
             </>
           )}
         </div>

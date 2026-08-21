@@ -51,6 +51,21 @@ function findLastVisibleToolIndex(blocks: RendererMessageBlock[], mode: Mode): n
   return -1
 }
 
+/**
+ * save_plan 是过程/结论的硬边界：计划审阅卡原位渲染在过程树与结论之间，
+ * 其后的块（如 switch_mode 行、收尾文案）按 append-only 顺序落在卡片之后。
+ * 不能把卡片钉到整条消息末尾，否则顺序会与真实调用链颠倒。
+ */
+function findLastSavePlanIndex(blocks: RendererMessageBlock[]): number {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i]
+    if (block.type === 'tool' && block.toolName === 'save_plan') {
+      return i
+    }
+  }
+  return -1
+}
+
 interface MarkdownFence {
   marker: '`' | '~'
   length: number
@@ -270,7 +285,9 @@ export function buildTurnRenderModel(input: {
   // ── blocks 路径（优先） ──
   if (blocks && blocks.length > 0) {
     const lastToolIndex = findLastVisibleToolIndex(blocks, mode)
-    const hasProcess = lastToolIndex >= 0
+    const lastSavePlanIndex = findLastSavePlanIndex(blocks)
+    const boundaryIndex = lastSavePlanIndex >= 0 ? lastSavePlanIndex : lastToolIndex
+    const hasProcess = boundaryIndex >= 0
 
     const answerItems: Array<{ block: RendererMessageBlock; index: number }> = []
 
@@ -280,7 +297,7 @@ export function buildTurnRenderModel(input: {
         answerItems.push({ block, index: i })
         continue
       }
-      if (i > lastToolIndex) {
+      if (i > boundaryIndex) {
         if (block.type === 'tool' && !shouldRenderToolBlock(mode, block.toolName)) {
           continue
         }
@@ -293,7 +310,7 @@ export function buildTurnRenderModel(input: {
       hasProcess,
       durationMs,
       bubbleUnits: [],
-      processTimeline: hasProcess ? buildProcessTimeline(blocks, lastToolIndex, mode) : [],
+      processTimeline: hasProcess ? buildProcessTimeline(blocks, boundaryIndex, mode) : [],
       answerUnits: blocksToRenderUnits(answerItems, mode)
     }
   }

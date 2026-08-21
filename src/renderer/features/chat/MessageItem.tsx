@@ -414,11 +414,7 @@ function MessageItemInner({
                 onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
               />
             )}
-            {turnModel.answerUnits.map((unit, i) => (
-              <React.Fragment key={`answer-${i}`}>
-                {renderMessageUnit(unit, unitRenderCtx)}
-              </React.Fragment>
-            ))}
+            {/* save_plan 是过程/结论硬边界：审阅卡原位插入，其后的块仍在卡片之后 */}
             {savedPlanBlock?.type === 'tool' && currentSessionId && (
               <PlanReviewCard
                 sessionId={currentSessionId}
@@ -431,6 +427,11 @@ function MessageItemInner({
                 composePlanApproval={composePlanApproval}
               />
             )}
+            {turnModel.answerUnits.map((unit, i) => (
+              <React.Fragment key={`answer-${i}`}>
+                {renderMessageUnit(unit, unitRenderCtx)}
+              </React.Fragment>
+            ))}
           </>
         ) : hasBlocks ? (
           /* 非 assistant 的 blocks 路径（用户消息等） */
