@@ -14,7 +14,7 @@ export const switchModeTool: ToolExecutor = {
       mode: {
         type: 'string',
         enum: ['plan', 'default'],
-        description: '目标模式。完成计划并准备实施时使用 default。'
+        description: '目标模式。用户明确批准计划并准备实施时使用 default。'
       },
       reason: {
         type: 'string',
