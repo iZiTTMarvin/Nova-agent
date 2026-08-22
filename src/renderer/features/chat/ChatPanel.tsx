@@ -1009,11 +1009,11 @@ export const ChatPanel: React.FC = () => {
                   {currentMode === 'compose' && (
                     <AutoModeToggle enabled={autoMode} onChange={setAutoMode} />
                   )}
-                  <ModelSelector />
-                  <ContextIndicator />
                   <CodeIndexStatusChip />
                 </div>
-                <div>
+                <div className="flex items-center gap-2">
+                  <ContextIndicator />
+                  <ModelSelector />
                   {isGenerating || sendInFlight || cancellingForCurrentSession ? (
                     <IconButton
                       label={cancellingForCurrentSession ? '正在停止' : '中断生成'}
