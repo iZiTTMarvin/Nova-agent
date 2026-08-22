@@ -31,7 +31,6 @@ import {
   isAgentTurnInProgress,
   isSessionTurnInProgress
 } from '../agent/state'
-import { setCurrentProjectPath, setCurrentMode } from '../index'
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
 import { disposeIdleLoopForSession } from '../agent/turn'
 import { clearSteeringQueue } from '../agent/turn/SteeringQueue'
@@ -242,8 +241,6 @@ export class WorkspaceService {
       reasoningEffortOverride: selectedDetail?.reasoningEffortOverride ?? null,
       availableSessions: sessions
     }
-    setCurrentProjectPath(selected?.workspaceRoot ?? null)
-    setCurrentMode(selected?.mode ?? 'default')
     if (selected) {
       reloadSkillsForWorkspace(selected.workspaceRoot)
     }
@@ -274,8 +271,6 @@ export class WorkspaceService {
       selectedPath = result.filePaths[0]
     }
 
-    // 同步主进程全局路径（供 AgentLoop 等模块使用 workingDir 边界）
-    setCurrentProjectPath(selectedPath)
     reloadSkillsForWorkspace(selectedPath)
 
     // 创建新会话
@@ -305,9 +300,6 @@ export class WorkspaceService {
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode, {
       codeIndexEnabled: loadNovaSettings().codeIndexEnabled
     })
-    setCurrentProjectPath(params.workspaceRoot)
-    setCurrentMode(data.mode)
-
     this.state = {
       currentSessionId: data.id,
       currentProjectPath: params.workspaceRoot,
@@ -381,8 +373,6 @@ export class WorkspaceService {
         if (detail) {
           // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
           // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
-          setCurrentProjectPath(detail.workspaceRoot)
-          setCurrentMode(detail.mode)
           this.state = {
             currentSessionId: detail.id,
             currentProjectPath: detail.workspaceRoot,
@@ -395,7 +385,6 @@ export class WorkspaceService {
           this.state = { ...this.state, availableSessions: remaining }
         }
       } else {
-        setCurrentProjectPath(null)
         this.state = {
           currentSessionId: null,
           currentProjectPath: null,
@@ -463,9 +452,6 @@ export class WorkspaceService {
 
     // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
     // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
-    setCurrentProjectPath(detail.workspaceRoot)
-    setCurrentMode(detail.mode)
-
     this.state = {
       currentSessionId: detail.id,
       currentProjectPath: detail.workspaceRoot,
@@ -506,7 +492,6 @@ export class WorkspaceService {
     // 全局模式不应被后台 run 篡改（否则 UI 模式随机跳变）。
     const targetIsCurrent = !sessionId || sessionId === this.state.currentSessionId
     if (targetIsCurrent) {
-      setCurrentMode(params.mode)
       this.state = { ...this.state, currentMode: params.mode }
     }
     this.broadcast()

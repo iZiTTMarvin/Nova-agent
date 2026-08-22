@@ -23,7 +23,7 @@ import {
 } from '../../runtime/model/config'
 import { fetchProviderModels } from '../../runtime/model/fetchProviderModels'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
-import { getModelClient, setModelClient } from '../index'
+import { getModelClient, setModelClient } from '../services/ModelClientHost'
 import { quitAndInstallUpdate } from '../updater'
 
 /** 返回渲染层前掩码所有 provider 的 apiKey */

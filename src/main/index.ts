@@ -13,9 +13,8 @@ import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
 import { resolveActiveModelConfig } from '../shared/config/llmRegistry'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
-import type { ModelClient } from '../runtime/model/ModelClient'
-import type { Mode } from '../shared/session'
 import { bindSkillServiceWindow, getSkillService } from './services/SkillServiceHost'
+import { getModelClient, setModelClient } from './services/ModelClientHost'
 import { closeMemoryService } from './services/MemoryServiceHost'
 import { closeAllCodeGraphs } from './services/CodeGraphHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
@@ -38,51 +37,12 @@ let requestedExitCode = 0
 const MAX_RENDER_RELOAD_ATTEMPTS = 3
 let renderReloadAttempts = 0
 
-/** 模型客户端实例，运行时通过配置初始化 */
-let modelClient: ModelClient | null = null
-
-/** 当前选择的本地项目目录绝对路径 */
-let currentProjectPath: string | null = null
-
-/** 当前运行模式，默认协作模式 */
-let currentMode: Mode = 'default'
-
 /** 获取主窗口实例 */
 export { getMainWindow } from './mainWindowRef'
 
 // 注册 nova-image:// scheme 属性。必须在 app.whenReady 之前执行，
 // 否则 registerSchemesAsPrivileged 静默失败，<img src="nova-image://..."> 无法加载。
 registerNovaImageScheme()
-
-/** 获取模型客户端 */
-export function getModelClient(): ModelClient | null {
-  return modelClient
-}
-
-/** 设置模型客户端 */
-export function setModelClient(client: ModelClient | null): void {
-  modelClient = client
-}
-
-/** 获取当前工作区路径 */
-export function getCurrentProjectPath(): string | null {
-  return currentProjectPath
-}
-
-/** 设置当前工作区路径 */
-export function setCurrentProjectPath(path: string | null): void {
-  currentProjectPath = path
-}
-
-/** 获取当前模式 */
-export function getCurrentMode(): Mode {
-  return currentMode
-}
-
-/** 设置当前模式 */
-export function setCurrentMode(mode: Mode): void {
-  currentMode = mode
-}
 
 /**
  * 启动时自动载入持久化的模型配置以提供免配直接运行体验
@@ -98,7 +58,7 @@ function loadModelConfigOnStartup(): void {
         cacheStrategy: config.cacheStrategy
       })
       client.setCacheStrategy(profile.marker === 'cache_control' ? 'anthropic' : 'auto')
-      modelClient = client
+      setModelClient(client)
       return
     }
     // 无活跃模型时尝试加载注册表（可能全部未配置 key）
@@ -112,7 +72,7 @@ function loadModelConfigOnStartup(): void {
           cacheStrategy: active.cacheStrategy
         })
         client.setCacheStrategy(profile.marker === 'cache_control' ? 'anthropic' : 'auto')
-        modelClient = client
+        setModelClient(client)
       }
     }
   } catch (err) {

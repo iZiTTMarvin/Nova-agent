@@ -22,7 +22,11 @@ import type {
   PermissionUpsertParams,
   PermissionDeleteParams
 } from '../../shared/permissions/types'
-import { getCurrentProjectPath } from '../index'
+import { getWorkspaceService } from '../services/WorkspaceService'
+
+function getCurrentProjectPath(): string | null {
+  return getWorkspaceService().getState().currentProjectPath
+}
 
 /** runtime PermissionRule → IPC dto */
 function toDto(rule: PermissionRule): PermissionRuleDto {

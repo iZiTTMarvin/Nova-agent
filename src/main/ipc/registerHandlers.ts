@@ -42,7 +42,7 @@ import {
   isMemoryExtractEnabled
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
-import { getMainWindow } from '../index'
+import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 

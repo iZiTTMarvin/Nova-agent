@@ -431,6 +431,21 @@ describe('import boundary production gate', () => {
     expect(fs.existsSync(path.join(repoRoot, 'src/runtime/tools/startWorkflow'))).toBe(false)
   })
 
+  it('主进程入口不被其他源码导入', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const exists = createFsExists(repoRoot)
+    const callers = listSrcTypeScriptFiles(repoRoot).filter((file) => {
+      if (file === 'src/main/index.ts') return false
+      const source = fs.readFileSync(path.join(repoRoot, ...file.split('/')), 'utf8')
+      return extractModuleSpecifiers(source, file).specifiers.some((entry) => {
+        const resolved = resolveModuleSpecifier(file, entry.specifier, exists)
+        return resolved.kind === 'resolved' && resolved.path === 'src/main/index.ts'
+      })
+    })
+
+    expect(callers).toEqual([])
+  })
+
   it('Code Graph 生产写连接只能由 Index Worker 构建路径打开', () => {
     const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
     const exists = createFsExists(repoRoot)
