@@ -8,14 +8,15 @@
  * 4. 审查状态持久化：pending / accepted / rejected
  * 5. 批量审阅（全部接受 / 全部拒绝 / 只看未审阅 / 按目录折叠）
  */
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../../shared/diff/types'
 import { ChevronIcon, CheckIcon, UndoIcon } from '../../components/Icons'
 import { useLayoutStore } from '../../stores/useLayoutStore'
-import { countEntryChanges } from './diffLines'
+import { useFileTreeStore } from '../inspector/useFileTreeStore'
+import { HunkView, countEntryChanges } from './diffLines'
 import './DiffViewer.css'
 
 /** 合并卡片文件列表默认展示行数，超出折叠到「再显示 N 个文件」 */
@@ -72,15 +73,23 @@ const FileDiffPanel: React.FC<{
   const [rejecting, setRejecting] = useState(false)
   const [accepting, setAccepting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const bodyScrollRef = useRef<HTMLDivElement>(null)
 
   const statusLabel = entry.status === 'added' ? '新建' : entry.status === 'deleted' ? '删除' : '修改'
   const statusClass = entry.status === 'added' ? 'diff-file--added' : entry.status === 'deleted' ? 'diff-file--deleted' : 'diff-file--modified'
 
-  const openInInspector = messageId
-    ? () => {
-        useLayoutStore.getState().openReview({ messageId, filePath: entry.filePath })
-      }
-    : undefined
+  const handleReview = () => {
+    if (!messageId) return
+    useLayoutStore.getState().openReview({ messageId, filePath: entry.filePath })
+  }
+
+  const handleOpen = () => {
+    useLayoutStore.getState().openFiles()
+    useFileTreeStore.getState().selectFile(entry.filePath)
+  }
+
+  const toggleExpanded = () => setExpanded(v => !v)
 
   const handleReject = async () => {
     setRejecting(true)
@@ -108,86 +117,101 @@ const FileDiffPanel: React.FC<{
     })()
   }
 
-  const headerProps = openInInspector
-    ? {
-        className: 'diff-file__header',
-        role: 'button' as const,
-        tabIndex: 0,
-        onClick: openInInspector,
-        onKeyDown: (event: React.KeyboardEvent) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            openInInspector()
-          }
-        }
+  const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => e.stopPropagation()
+
+  const headerProps = {
+    className: 'diff-file__header',
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-expanded': expanded,
+    onClick: toggleExpanded,
+    onKeyDown: (event: React.KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        toggleExpanded()
       }
-    : { className: 'diff-file__header diff-file__header--static' }
-
-  // 已拒绝状态
-  if (reviewStatus === 'rejected') {
-    return (
-      <div className="diff-file diff-file--rejected">
-        <div {...headerProps}>
-          <ChevronIcon size={14} direction="right" />
-          <span className="diff-file__name">{entry.filePath}</span>
-          <span className="diff-file__status-badge">{statusLabel}</span>
-          <FileChangeStats entry={entry} />
-          <span className="diff-file__review-badge diff-file__review-badge--rejected">已拒绝</span>
-        </div>
-      </div>
-    )
+    }
   }
 
-  // 已接受状态
-  if (reviewStatus === 'accepted') {
-    return (
-      <div className="diff-file diff-file--accepted">
-        <div {...headerProps}>
-          <ChevronIcon size={14} direction="right" />
-          <span className="diff-file__name">{entry.filePath}</span>
-          <span className="diff-file__status-badge">{statusLabel}</span>
-          <FileChangeStats entry={entry} />
-          <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
-        </div>
-      </div>
-    )
-  }
+  const fileStatusClass =
+    reviewStatus === 'rejected' ? 'diff-file--rejected' :
+    reviewStatus === 'accepted' ? 'diff-file--accepted' :
+    statusClass
 
-  // 待审查状态
   return (
-    <div className={`diff-file ${statusClass}`}>
+    <div className={`diff-file ${fileStatusClass}${expanded ? ' diff-file--expanded' : ''}`}>
       <div {...headerProps}>
-        <ChevronIcon size={14} direction="right" />
+        <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
         <span className="diff-file__name">{entry.filePath}</span>
         <span className="diff-file__status-badge">{statusLabel}</span>
         <FileChangeStats entry={entry} />
-        <div
-          className="diff-file__actions"
-          onClick={e => e.stopPropagation()}
-          onKeyDown={e => e.stopPropagation()}
-        >
-          <IconButton
-            label="接受改动（标记为已审查）"
-            icon={<CheckIcon size={13} />}
-            variant="ghost"
-            size="sm"
-            className="diff-action-btn diff-action-btn--accept"
-            onClick={handleAccept}
-            isDisabled={accepting || rejecting}
-            tooltip="接受改动（标记为已审查）"
-          />
-          <IconButton
-            label="拒绝改动（恢复原始文件）"
-            icon={<UndoIcon size={13} />}
-            variant="ghost"
-            size="sm"
-            className="diff-action-btn diff-action-btn--reject"
-            onClick={handleReject}
-            isDisabled={accepting || rejecting}
-            tooltip="拒绝改动（恢复原始文件）"
-          />
+        <div className="diff-file__actions" onClick={stopPropagation} onKeyDown={stopPropagation}>
+          {messageId && (
+            <button
+              type="button"
+              className="diff-file__text-btn"
+              onClick={handleReview}
+              aria-label="在右侧审阅面板查看差异"
+            >
+              审查
+            </button>
+          )}
+          <button
+            type="button"
+            className="diff-file__text-btn"
+            onClick={handleOpen}
+            aria-label="在右侧文件面板打开文件"
+          >
+            打开
+          </button>
+          {reviewStatus === 'accepted' && (
+            <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
+          )}
+          {reviewStatus === 'rejected' && (
+            <span className="diff-file__review-badge diff-file__review-badge--rejected">已拒绝</span>
+          )}
+          {reviewStatus === 'pending' && (
+            <>
+              <IconButton
+                label="接受改动（标记为已审查）"
+                icon={<CheckIcon size={13} />}
+                variant="ghost"
+                size="sm"
+                className="diff-action-btn diff-action-btn--accept"
+                onClick={handleAccept}
+                isDisabled={accepting || rejecting}
+                tooltip="接受改动（标记为已审查）"
+              />
+              <IconButton
+                label="拒绝改动（恢复原始文件）"
+                icon={<UndoIcon size={13} />}
+                variant="ghost"
+                size="sm"
+                className="diff-action-btn diff-action-btn--reject"
+                onClick={handleReject}
+                isDisabled={accepting || rejecting}
+                tooltip="拒绝改动（恢复原始文件）"
+              />
+            </>
+          )}
         </div>
       </div>
+
+      {expanded && (
+        <div className="diff-file__body" ref={bodyScrollRef}>
+          <div className="diff-file__body-inner">
+            {entry.hunks.map((hunk, idx) => (
+              <HunkView
+                key={idx}
+                hunk={hunk}
+                filePath={entry.filePath}
+                status={entry.status}
+                scrollRef={bodyScrollRef}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="diff-file__error">{error}</div>
@@ -328,13 +352,25 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     />
   )
 
+  const headerRef = useRef<HTMLDivElement>(null)
+
   // 文件列表默认收起为前几行（目录分组模式始终全量展示）
-  const capped = !groupByDir && !showAllFiles && visibleDiffs.length > FILE_LIST_PREVIEW_COUNT
-  const listedDiffs = capped ? visibleDiffs.slice(0, FILE_LIST_PREVIEW_COUNT) : visibleDiffs
+  const canToggleList = !groupByDir && visibleDiffs.length > FILE_LIST_PREVIEW_COUNT
+  const listedDiffs = canToggleList && !showAllFiles ? visibleDiffs.slice(0, FILE_LIST_PREVIEW_COUNT) : visibleDiffs
+
+  const handleToggleShowAll = () => {
+    if (showAllFiles) {
+      setShowAllFiles(false)
+      // 收起时平滑滚动回卡片头部，避免列表变短后画面位置丢失
+      headerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      setShowAllFiles(true)
+    }
+  }
 
   return (
     <div className={`diff-viewer${tier1Stale ? ' diff-viewer--tier1-stale' : ''}`} title={tier1Stale ? '此消息的文件改动未同步到当前工作区，以下 diff 仅作历史参考' : undefined}>
-      <div className="diff-viewer__header">
+      <div className="diff-viewer__header" ref={headerRef}>
         <span className="diff-viewer__title">
           {tier1Stale ? '文件变更（历史记录，工作区未同步）' : `已编辑 ${diffs.length} 个文件`}
         </span>
@@ -446,14 +482,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           ) : (
             <>
               {listedDiffs.map(renderFile)}
-              {capped && (
+              {canToggleList && (
                 <Button
-                  label={`再显示 ${visibleDiffs.length - FILE_LIST_PREVIEW_COUNT} 个文件`}
+                  label={showAllFiles ? '收起' : `再显示 ${visibleDiffs.length - FILE_LIST_PREVIEW_COUNT} 个文件`}
                   variant="ghost"
                   size="sm"
                   className="diff-viewer__show-more"
-                  onClick={() => setShowAllFiles(true)}
-                  endContent={<ChevronIcon size={12} direction="down" />}
+                  onClick={handleToggleShowAll}
+                  endContent={<ChevronIcon size={12} direction={showAllFiles ? 'up' : 'down'} />}
                 />
               )}
             </>
@@ -475,18 +511,32 @@ function formatBytes(bytes: number): string {
 /** 按目录分组的小折叠面板 */
 const DiffDirGroup: React.FC<{ dir: string; entries: DiffEntry[]; children: React.ReactNode }> = ({ dir, entries, children }) => {
   const [open, setOpen] = useState(true)
+  const headerRef = useRef<HTMLDivElement>(null)
+
+  const toggle = () => {
+    setOpen(value => {
+      const next = !value
+      if (!next) {
+        // 折叠时平滑滚动回分组头部，避免内容突然消失导致画面位置丢失
+        headerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+      return next
+    })
+  }
+
   return (
     <div className="diff-dir-group">
       <div
+        ref={headerRef}
         className="diff-dir-group__header"
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         onKeyDown={event => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            setOpen(value => !value)
+            toggle()
           }
         }}
       >

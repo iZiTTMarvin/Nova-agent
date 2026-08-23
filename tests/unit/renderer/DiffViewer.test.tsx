@@ -2,6 +2,16 @@
 
 import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
+
+/** 单元测试不实际渲染 Pierre diff 视图，避免 jsdom 对 Web Component 的支持缺口 */
+vi.mock('../../../src/renderer/features/diff/diffLines', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/renderer/features/diff/diffLines')>()
+  return {
+    ...actual,
+    HunkView: () => null
+  }
+})
+
 import { DiffViewer } from '../../../src/renderer/features/diff/DiffViewer'
 import type { DiffEntry, SkippedFileInfo } from '../../../src/shared/diff/types'
 import { act, renderDom } from './renderDom'
@@ -90,7 +100,7 @@ describe('DiffViewer', () => {
     renderer.unmount()
   })
 
-  it('超过 3 个文件时默认折叠并显示「再显示 N 个文件」', () => {
+  it('超过 3 个文件时默认折叠，展开后可收起', () => {
     const diffs = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts'].map(filePath => makeDiff({ filePath }))
 
     const renderer = renderDom(
@@ -102,9 +112,22 @@ describe('DiffViewer', () => {
     expect(text).toContain('c.ts')
     expect(text).not.toContain('d.ts')
 
-    const showMore = renderer.container.querySelector('.diff-viewer__show-more')
+    const showMore = renderer.container.querySelector<HTMLButtonElement>('.diff-viewer__show-more')
     const label = showMore?.textContent ?? ''
     expect(label).toBe('再显示 2 个文件')
+
+    act(() => {
+      showMore?.click()
+    })
+    expect(renderer.container.textContent ?? '').toContain('d.ts')
+    expect(renderer.container.textContent ?? '').toContain('e.ts')
+    expect(showMore?.textContent).toBe('收起')
+
+    act(() => {
+      showMore?.click()
+    })
+    expect(renderer.container.textContent ?? '').not.toContain('d.ts')
+    expect(showMore?.textContent).toBe('再显示 2 个文件')
     renderer.unmount()
   })
 
@@ -136,7 +159,7 @@ describe('DiffViewer', () => {
     renderer.unmount()
   })
 
-  it('点击文件行打开 Inspector 审查，不内联展开 hunk', async () => {
+  it('默认折叠 hunk；点击「审查」按钮打开 Inspector 审阅', async () => {
     const map = new Map<string, string>()
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -174,6 +197,14 @@ describe('DiffViewer', () => {
     expect(header).not.toBeNull()
     act(() => {
       header?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(renderer.container.querySelector('.diff-file__body')).not.toBeNull()
+
+    const reviewBtn = Array.from(renderer.container.querySelectorAll('button'))
+      .find(b => b.textContent === '审查')
+    expect(reviewBtn).not.toBeUndefined()
+    act(() => {
+      reviewBtn?.click()
     })
 
     const layout = useLayoutStore.getState()
@@ -216,14 +247,19 @@ describe('DiffViewer', () => {
 
     const header = renderer.container.querySelector('.diff-file__header')
     expect(header).not.toBeNull()
-    expect(header?.getAttribute('role')).toBeNull()
-    expect(header?.className).toContain('diff-file__header--static')
+    expect(header?.getAttribute('role')).toBe('button')
+
+    const reviewBtn = Array.from(renderer.container.querySelectorAll('button'))
+      .find(b => b.textContent === '审查')
+    expect(reviewBtn).toBeUndefined()
+
+    expect(renderer.container.querySelector('.diff-file__body')).toBeNull()
     act(() => {
       header?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
+    expect(renderer.container.querySelector('.diff-file__body')).not.toBeNull()
 
     expect(useLayoutStore.getState().reviewTarget).toBeNull()
-    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
     renderer.unmount()
   })
 })

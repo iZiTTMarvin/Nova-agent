@@ -214,19 +214,59 @@
 /* ── 文件操作按钮 ──────────────────────────────────── */
 .diff-file__actions {
   display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.diff-file:hover .diff-file__actions {
-  opacity: 1;
+.diff-file__text-btn {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.diff-file__text-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-sand);
 }
 
 .diff-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* ── 单个文件展开后的 diff 内容（条件渲染 + 合成器淡入） ───────────────── */
+.diff-file__body {
+  border-top: 1px solid var(--border-cream);
+  background-color: var(--bg-card);
+  overflow: auto;
+  max-height: 420px;
+  animation: diff-file-body-enter 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes diff-file-body-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.diff-file__body-inner {
+  padding: 10px 14px;
+  min-width: 0;
 }
 
 /* ── 过滤开关行 ── */

@@ -53,6 +53,7 @@ describe('SubagentActivityRow', () => {
     mockInvoke.mockReset()
     mockOn.mockReset()
     // 就地替换 bridge（不重建 window，避免丢失 jsdom 原型上的 matchMedia）
+    // @ts-expect-error jsdom 测试环境手动挂载 bridge，global.window 类型未声明 api
     global.window.api = {
       invoke: mockInvoke,
       on: mockOn,
@@ -293,10 +294,12 @@ describe('SubagentActivityRow', () => {
     await flushAsync()
 
     expect(renderer.container.querySelector('.diff-viewer')).not.toBeNull()
-    // 会话级聚合视图逐文件路由消息各异，文件头不提供 Inspector 点击入口
+    // 会话级聚合视图逐文件路由消息各异，文件头仍可按自身 hunk 折叠，但不提供审查按钮
     const fileHeader = renderer.container.querySelector('.diff-file__header')
-    expect(fileHeader?.getAttribute('role')).toBeNull()
-    expect(fileHeader?.className).toContain('diff-file__header--static')
+    expect(fileHeader?.getAttribute('role')).toBe('button')
+    const reviewBtn = Array.from(renderer.container.querySelectorAll('button'))
+      .find(b => b.textContent === '审查')
+    expect(reviewBtn).toBeUndefined()
     const accept = renderer.container.querySelector<HTMLButtonElement>('.diff-action-btn--accept')
     expect(accept).not.toBeNull()
     act(() => accept!.click())
