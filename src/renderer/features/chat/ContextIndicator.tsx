@@ -10,12 +10,22 @@ interface BreakdownRow {
   tokens: number
 }
 
-/** 数字格式:>=1万显示 X.X万,>=1千显示 XK,否则原样 */
-function formatTokens(n: number): string {
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}亿`
-  if (n >= 10_000) return `${(n / 10_000).toFixed(1)}万`
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
-  return `${n}`
+/**
+ * 将 token 数量格式化为标准单位（K、M、B），避免出现「万」「亿」等非标准单位。
+ * 例如: 460 -> 460, 1100 -> 1.1K, 200000 -> 200K, 1000000 -> 1M
+ */
+export function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n >= 999_950_000) {
+    return `${parseFloat((n / 1_000_000_000).toFixed(1))}B`
+  }
+  if (n >= 999_950) {
+    return `${parseFloat((n / 1_000_000).toFixed(1))}M`
+  }
+  if (n >= 1_000) {
+    return `${parseFloat((n / 1_000).toFixed(1))}K`
+  }
+  return `${Math.round(n)}`
 }
 
 const ROWS: Array<{ key: BreakdownRow['key']; label: string }> = [
