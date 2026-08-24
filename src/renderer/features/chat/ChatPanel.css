@@ -126,6 +126,7 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   padding: 24px 16px;
   display: flex;
   flex-direction: column;
@@ -1352,9 +1353,8 @@ button.code-index-status-chip:hover {
    AskQuestion 消息内状态行（答题在底部 AskQuestionPanel）
    ────────────────────────────────────────────────────────── */
 .ask-question-tool-card {
-  margin: 6px 0;
-  padding-left: 10px;
-  border-left: 2px solid var(--border-warm, rgba(20, 20, 19, 0.12));
+  margin: 1px 0;
+  padding-left: 0;
   max-width: 100%;
   min-width: 0;
 }
@@ -1362,17 +1362,26 @@ button.code-index-status-chip:hover {
 .ask-question-tool-card__header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 4px 0;
+  max-width: 100%;
+  min-height: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 4px;
   border: 0;
   background: transparent;
   cursor: default;
   text-align: left;
   color: var(--text-muted, #8a857d);
-  font-size: 0.85rem;
-  line-height: 1.45;
+  font: inherit;
+  font-size: 13px;
   min-width: 0;
+  border-radius: var(--radius-sm, 6px);
+  appearance: none;
+  user-select: none;
+  overflow-anchor: auto;
+  transition: background-color var(--transition-fast, 140ms) ease;
 }
 
 .ask-question-tool-card__header:not(:disabled) {
@@ -1381,17 +1390,18 @@ button.code-index-status-chip:hover {
 
 .ask-question-tool-card__header:not(:disabled):hover {
   color: var(--text-primary, #1f1d1a);
+  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
 }
 
 .ask-question-tool-card__glyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   flex-shrink: 0;
   line-height: 1;
@@ -1430,7 +1440,9 @@ button.code-index-status-chip:hover {
 }
 
 .ask-question-tool-card__detail {
-  padding: 4px 0 8px 26px;
+  margin: 2px 0 6px 11px;
+  padding: 4px 0 6px 10px;
+  border-left: 1.5px solid color-mix(in srgb, var(--text-muted, #87867f) 28%, transparent);
   display: flex;
   flex-direction: column;
   gap: 8px;

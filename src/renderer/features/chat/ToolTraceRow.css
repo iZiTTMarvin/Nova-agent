@@ -1,13 +1,11 @@
 /**
- * L3 过程轨：比正文安静，但 Action 足够可扫读；连续左边线标识身份。
- * 行 margin 归零，竖线在列表内连续成轨。
+ * L3 过程行：比正文安静，但 Action 足够可扫读。
  */
 .tool-trace-row {
-  margin: 0;
-  padding-left: 12px;
-  border-left: 2px solid var(--border-warm, rgba(20, 20, 19, 0.12));
+  margin: 1px 0;
+  padding-left: 0;
   font-family: var(--font-sans, system-ui, sans-serif);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-muted, #8a857d);
   max-width: 100%;
@@ -16,33 +14,49 @@
 
 .tool-trace-row--live {
   animation: tool-trace-row-live-enter 80ms ease-out both;
-  border-left-color: var(--color-brand, #c96442);
 }
 
 .tool-trace-row--error {
-  border-left-color: var(--color-error, #c96442);
   color: var(--color-error, #c96442);
 }
 
 .tool-trace-row__header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 3px 4px 3px 0;
+  max-width: 100%;
+  min-height: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 4px;
   border: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
   color: inherit;
   font: inherit;
+  font-size: 13px;
   min-width: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm, 6px);
+  overflow-anchor: auto;
+  appearance: none;
+  user-select: none;
+  transition: background-color var(--transition-fast, 140ms) ease;
 }
 
 .tool-trace-row__header:hover {
-  color: var(--text-secondary, #6b6760);
-  background: rgba(20, 20, 19, 0.03);
+  color: var(--text-primary);
+  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
+}
+
+.tool-trace-row__dot-slot {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .tool-trace-row__dot {
@@ -67,35 +81,97 @@
 }
 
 .tool-trace-row__action {
-  flex-shrink: 0;
-  min-width: 4.5em;
-  color: var(--text-secondary, #6b6760);
+  flex: 0 0 3.8em;
+  color: var(--text-muted, #8a857d);
   font-family: var(--font-sans, system-ui, sans-serif);
-  font-weight: 600;
-  font-size: 12.5px;
+  font-size: 12px;
+  font-weight: 500;
   letter-spacing: 0.01em;
 }
 
-.tool-trace-row__target {
+.tool-trace-row__icon {
+  flex-shrink: 0;
+  color: var(--text-muted, #8a857d);
+  opacity: 0.85;
+}
+
+.tool-trace-row__icon--folder {
+  color: var(--text-secondary, #6b6760);
+}
+
+.tool-trace-row__file-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: -4px;
+  transition: background-color 120ms ease;
+}
+
+.tool-trace-row__file-target:hover {
+  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
+}
+
+.tool-trace-row__file-target:hover .tool-trace-row__filename {
+  text-decoration: underline;
+  color: var(--text-primary, #1f1d1a);
+}
+
+.tool-trace-row__filename {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--text-primary, #1f1d1a);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12px;
+}
+
+.tool-trace-row__dirname {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted, #8a857d);
+  font-size: 11.5px;
+  opacity: 0.8;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  margin-left: 2px;
+}
+
+.tool-trace-row__command {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
+  font-size: 11.5px;
+  color: var(--text-muted, #8a857d);
+}
+
+.tool-trace-row__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
-  font-weight: 400;
+  color: var(--text-muted, #8a857d);
 }
 
 .tool-trace-row__chevron {
   flex-shrink: 0;
   opacity: 0.45;
   color: var(--text-muted, #8a857d);
+  margin-left: auto;
 }
 
 .tool-trace-row__header:hover .tool-trace-row__chevron {
   opacity: 0.8;
+  color: var(--text-primary);
 }
 
 .tool-trace-row__detail {
@@ -174,6 +250,7 @@
   .tool-trace-row__dot--running {
     animation: none;
   }
+
 }
 
 /* run_code 沙箱内嵌套工具活动：缩进的紧凑行，不占顶级过程轨 */

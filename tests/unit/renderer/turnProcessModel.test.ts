@@ -258,6 +258,31 @@ describe('buildTurnRenderModel', () => {
     expect(model.hasProcess).toBe(true)
     expect(model.missingAnswer).toBe(true)
   })
+
+  it('completed 有起止点时带时长；旧消息缺字段则不带', () => {
+    const blocks: RendererMessageBlock[] = [
+      toolBlock('1', 'read', { path: 'a.ts' }),
+      { type: 'text', content: '结论' }
+    ]
+    expect(
+      buildTurnRenderModel({
+        blocks,
+        toolCalls: [],
+        mode: 'default',
+        phase: 'completed',
+        turnStartedAt: 1_000,
+        turnEndedAt: 98_000
+      }).durationMs
+    ).toBe(97_000)
+    expect(
+      buildTurnRenderModel({
+        blocks,
+        toolCalls: [],
+        mode: 'default',
+        phase: 'completed'
+      }).durationMs
+    ).toBeUndefined()
+  })
 })
 
 describe('normalizeThinkingForDisplay', () => {

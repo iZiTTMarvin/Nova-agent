@@ -1,24 +1,27 @@
 /**
- * 消息流工具块分组：将相邻同类只读工具合并为 ToolCallGroup 渲染单元。
+ * 消息流工具块分组：将相邻同族过程工具合并为 ToolCallGroup 渲染单元。
  *
  * 边界（与产品规格一致）：
  * - 仅同一条 assistant 消息内的 blocks / toolCalls 序列
- * - thinking / text / image 打断 tool 连续段
+ * - thinking / text / image / 提问卡 / 计划卡 / 子代理打断 tool 连续段
  * - 不可聚合工具单独输出，并切断 buffer
- * - 同类连续且 count >= 2 才输出 toolGroup
+ * - 同族连续且 count >= 2 才输出 toolGroup
  */
 import type { Mode } from '../../../shared/session/types'
 import { shouldRenderToolBlock } from './renderingPolicy'
-import { getToolGroupTraceParts } from './toolTraceDisplay'
+import { getToolGroupKind, getToolGroupTraceParts } from './toolTraceDisplay'
 import type { ExtendedToolCall, RendererMessageBlock, RendererToolBlock } from '../../stores/types'
 
-/** 可聚合的只读探索类工具 */
+/** 可聚合的过程工具；同一族的相邻调用合并为一个摘要组。 */
 export const AGGREGATABLE_TOOL_NAMES = new Set([
   'read',
   'grep',
   'find',
   'ls',
-  'web_search'
+  'web_search',
+  'write',
+  'edit',
+  'bash'
 ])
 
 export type RenderUnit =
@@ -27,7 +30,7 @@ export type RenderUnit =
   | { kind: 'toolGroup'; toolName: string; blocks: RendererToolBlock[] }
 
 export function isAggregatableTool(toolName: string): boolean {
-  return AGGREGATABLE_TOOL_NAMES.has(toolName)
+  return AGGREGATABLE_TOOL_NAMES.has(toolName) && getToolGroupKind(toolName) !== null
 }
 
 function toToolBlock(tc: ExtendedToolCall): RendererToolBlock {
@@ -92,8 +95,11 @@ export function buildBlockRenderUnits(
       continue
     }
 
-    // 同类连续：工具名变化时先 flush 再入队
-    if (buffer.length > 0 && buffer[buffer.length - 1].toolName !== block.toolName) {
+    // 同族连续：工具族变化时先 flush 再入队
+    if (
+      buffer.length > 0 &&
+      getToolGroupKind(buffer[buffer.length - 1].toolName) !== getToolGroupKind(block.toolName)
+    ) {
       flushBuffer()
     }
     buffer.push(block)
@@ -147,7 +153,10 @@ export function buildToolCallRenderUnits(
       continue
     }
 
-    if (buffer.length > 0 && buffer[buffer.length - 1].toolName !== block.toolName) {
+    if (
+      buffer.length > 0 &&
+      getToolGroupKind(buffer[buffer.length - 1].toolName) !== getToolGroupKind(block.toolName)
+    ) {
       flushBuffer()
     }
     buffer.push(block)
@@ -165,16 +174,15 @@ export function basenameFromPath(path: string): string {
 }
 
 export interface ToolGroupSummaryParts {
-  /** L3 Action（短动词） */
+  /** 折叠头动作 */
   prefix: string
-  /** L3 Target（首项路径/关键词） */
+  /** 折叠头数量与附加说明 */
   pill: string
-  /** 折叠头后缀文案（「等 N 个文件」等） */
   suffix: string
 }
 
 /**
- * 生成工具聚合行的 L3 摘要片段（与单条 ToolTraceRow 同一套 Action/Target 语言）。
+ * 生成工具聚合行的摘要片段。
  */
 export function getToolGroupSummaryParts(
   toolName: string,
@@ -187,6 +195,5 @@ export function getToolGroupSummaryParts(
 /** 纯文本摘要（测试与无障碍用） */
 export function getToolGroupSummary(toolName: string, blocks: RendererToolBlock[]): string {
   const { prefix, pill, suffix } = getToolGroupSummaryParts(toolName, blocks)
-  if (!suffix) return `${prefix} ${pill}`
-  return `${prefix} ${pill} ${suffix}`
+  return [prefix, pill, suffix].filter(Boolean).join(' ')
 }

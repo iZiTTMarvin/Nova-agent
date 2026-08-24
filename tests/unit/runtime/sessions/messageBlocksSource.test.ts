@@ -12,6 +12,7 @@ import {
   projectToolCallsFromBlocks,
   projectAssistantFieldsFromBlocks,
   buildBlocksFromLegacyFields,
+  serializeMessageForDisk,
   MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
 } from '../../../../src/runtime/sessions/messageProjection'
 import type { SessionMessage } from '../../../../src/runtime/sessions/types'
@@ -88,6 +89,22 @@ describe('消息 block 单一事实源', () => {
     expect(projected.content).toBe('answer')
     expect(projected.toolCalls).toHaveLength(1)
     expect(projected.blocks).toBe(blocks)
+  })
+
+  it('blocks 源序列化保留回合起止时刻', () => {
+    const persisted = serializeMessageForDisk({
+      id: 'm_timing',
+      parentId: null,
+      role: 'assistant',
+      content: 'answer',
+      blocks: [{ type: 'text', content: 'answer' }],
+      turnStartedAt: 10,
+      turnEndedAt: 25,
+      timestamp: 25
+    })
+
+    expect(persisted.turnStartedAt).toBe(10)
+    expect(persisted.turnEndedAt).toBe(25)
   })
 
   it('buildBlocksFromLegacyFields 保留 tool 状态', () => {

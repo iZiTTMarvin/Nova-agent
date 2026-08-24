@@ -32,6 +32,8 @@ describe('migrateSessionData', () => {
           role: 'assistant',
           content: 'hello',
           timestamp: 1,
+          turnStartedAt: 10,
+          turnEndedAt: 25,
           toolCalls: [
             {
               id: 'tc_1',
@@ -56,6 +58,8 @@ describe('migrateSessionData', () => {
     expect(migrated.frozenSystemPrompt).toBe('frozen')
     expect(migrated.messages[0].parentId).toBe(null)
     expect(migrated.currentLeafId).toBe('msg_1')
+    expect(migrated.messages[0].turnStartedAt).toBe(10)
+    expect(migrated.messages[0].turnEndedAt).toBe(25)
   })
 
   it('无 schemaVersion 的旧数据经迁移链升级到当前版本', () => {

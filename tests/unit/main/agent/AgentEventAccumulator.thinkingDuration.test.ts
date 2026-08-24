@@ -30,7 +30,7 @@ const runCoordinatorStub = {
   upsertTurnDraft: vi.fn(),
   clearTurnDraft: () => {},
   commitTerminal: () => {},
-  getSnapshot: () => undefined
+  getSnapshot: vi.fn(() => ({ turnStartedAt: undefined as number | undefined }))
 }
 
 vi.mock('../../../../src/main/services/RunCoordinatorHost', () => ({
@@ -67,6 +67,7 @@ describe('AgentEventAccumulator 思考耗时封存', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
     appendMessageFast.mockClear()
+    runCoordinatorStub.getSnapshot.mockReturnValue({ turnStartedAt: undefined })
     activeStreams.clear()
   })
   afterEach(() => {
@@ -87,6 +88,22 @@ describe('AgentEventAccumulator 思考耗时封存', () => {
 
     const thinking = persistedBlocks().find(b => b.type === 'thinking')
     expect(thinking?.durationMs).toBe(2400)
+  })
+
+  it('终态消息落盘回合起止时刻', () => {
+    runCoordinatorStub.getSnapshot.mockReturnValue({ turnStartedAt: 1000 })
+    const ctx = makeCtx()
+    const messageId = 'msg_turn_duration'
+    const feed = (event: AgentEvent) => accumulateStreamEvent('sess_test', event, ctx)
+
+    vi.setSystemTime(2000)
+    feed({ type: 'message_start', messageId })
+    vi.setSystemTime(3500)
+    feed({ type: 'message_end', messageId })
+
+    const message = appendMessageFast.mock.calls.at(-1)![1]
+    expect(message.turnStartedAt).toBe(1000)
+    expect(message.turnEndedAt).toBe(3500)
   })
 
   it('thinking 直接进入 message_end（无正文）：落盘仍带 durationMs', () => {
@@ -170,6 +187,7 @@ describe('AgentEventAccumulator 中断残态收敛', () => {
   beforeEach(() => {
     appendMessageFast.mockClear()
     runCoordinatorStub.upsertTurnDraft.mockClear()
+    runCoordinatorStub.getSnapshot.mockReturnValue({ turnStartedAt: undefined })
     activeStreams.clear()
   })
   afterEach(() => {

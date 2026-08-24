@@ -196,7 +196,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           interrupted: true,
           thinking: prev.thinking,
           blocks: nextBlocks,
-          toolCalls: prev.toolCalls
+          toolCalls: prev.toolCalls,
+          turnEndedAt: Date.now()
         })
         return {
           ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
@@ -207,13 +208,16 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
 
       // 罕见 fallback：error 在 message_start 之前到达，此时列表里还没有这条消息，
       // 才走追加路径（保持 messageIndexById 一致性）
+      const now = Date.now()
       const errorMsg: ExtendedMessage = {
         id: messageId,
         sessionId: activeSessionId,
         role: 'assistant',
         content: error,
         isError: true,
-        timestamp: Date.now(),
+        timestamp: now,
+        turnStartedAt: now,
+        turnEndedAt: now,
         _revision: 0
       }
       const nextMessages = [...state.messages, errorMsg]
@@ -270,7 +274,16 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           return tc
         })
 
-        return changed ? bumpRevision({ ...base, blocks, toolCalls }) : msg
+        return changed
+          ? bumpRevision({
+            ...base,
+            interrupted: true,
+            blocks,
+            toolCalls,
+            turnStartedAt: base.turnStartedAt ?? base.timestamp,
+            turnEndedAt: Date.now()
+          })
+          : msg
       })
 
       return {

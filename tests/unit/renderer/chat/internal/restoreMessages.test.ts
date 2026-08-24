@@ -134,6 +134,8 @@ describe('restoreSessionMessages', () => {
         sessionId: 's1',
         role: 'assistant',
         content: '看图',
+        turnStartedAt: 10,
+        turnEndedAt: 25,
         blocks: [
           { type: 'thinking', content: '推理' },
           { type: 'text', content: '看图' },
@@ -158,6 +160,8 @@ describe('restoreSessionMessages', () => {
     const [restored] = restoreSessionMessages(messages)
 
     expect(restored._revision).toBe(0)
+    expect(restored.turnStartedAt).toBe(10)
+    expect(restored.turnEndedAt).toBe(25)
     expect(restored.blocks).toEqual([
       { type: 'thinking', content: '推理' },
       { type: 'text', content: '看图' },

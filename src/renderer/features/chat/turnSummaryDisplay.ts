@@ -24,20 +24,20 @@ export function formatWorkedHeader(options: WorkedHeaderOptions): string {
 
   if (phase === 'live') {
     const elapsed = elapsedMs ?? durationMs
-    if (elapsed !== undefined && elapsed > 0) {
+    if (elapsed !== undefined && elapsed >= 0) {
       return `工作中 ${formatDurationMs(elapsed)}`
     }
     return '工作中'
   }
 
   if (interrupted) {
-    if (durationMs !== undefined && durationMs > 0) {
+    if (durationMs !== undefined && durationMs >= 0) {
       return `已停止 · 工作了 ${formatDurationMs(durationMs)}`
     }
     return '已停止'
   }
 
-  if (durationMs !== undefined && durationMs > 0) {
+  if (durationMs !== undefined && durationMs >= 0) {
     return `已工作 ${formatDurationMs(durationMs)}`
   }
 

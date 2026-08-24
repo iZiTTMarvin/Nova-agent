@@ -129,6 +129,7 @@ describe('turnLifecycleSlice', () => {
     const state = useChatStore.getState()
     const msg = state.messages[0]
     expect(msg.isError).toBe(true)
+    expect(msg.turnEndedAt).toBeTypeOf('number')
     expect(msg.blocks?.at(-1)).toMatchObject({
       type: 'text',
       content: '部分输出\n\n⚠️ 模型连接失败'
@@ -146,6 +147,22 @@ describe('turnLifecycleSlice', () => {
 
   it('markRunningAsCancelled 清空轮次运行态（含发送锁与分叉锁）', async () => {
     useChatStore.setState({
+      messages: [{
+        id: 'msg_cancel',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        content: '',
+        blocks: [{
+          type: 'tool',
+          toolCallId: 'tc_cancel',
+          toolName: 'bash',
+          arguments: {},
+          status: 'running'
+        }],
+        timestamp: 100,
+        _revision: 0
+      }],
+      messageIndexById: { msg_cancel: 0 },
       isGenerating: true,
       currentGeneratingMessageId: 'msg_cancel',
       activeAgentSessionId: 'sess-1',
@@ -161,6 +178,15 @@ describe('turnLifecycleSlice', () => {
     expect(state.activeAgentSessionId).toBeNull()
     expect(state.sendInFlight).toBe(false)
     expect(state.branchForkInProgress).toBe(false)
+    expect(state.messages[0]).toMatchObject({
+      interrupted: true,
+      turnStartedAt: 100,
+      blocks: [{
+        status: 'error',
+        result: '用户取消执行'
+      }]
+    })
+    expect(state.messages[0].turnEndedAt).toBeTypeOf('number')
   })
 
   it('终态后 steering 队列恰好出队一次', async () => {

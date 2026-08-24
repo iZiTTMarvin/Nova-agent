@@ -255,6 +255,10 @@ export interface SessionMessage {
    * 普通完成的消息不写此字段，UI 视为未设置即可。
    */
   interrupted?: boolean
+  /** assistant 回合的开始时刻，用于历史工作时长展示 */
+  turnStartedAt?: number
+  /** assistant 回合的结束时刻，用于历史工作时长展示 */
+  turnEndedAt?: number
   timestamp: number
 }
 

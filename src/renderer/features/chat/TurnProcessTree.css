@@ -12,15 +12,6 @@
   margin: 0;
 }
 
-.turn-process-tree__status {
-  padding: 4px 0;
-  color: var(--text-secondary, #6b6760);
-  font-family: var(--font-sans, system-ui, sans-serif);
-  font-size: 13.5px;
-  font-weight: 500;
-  line-height: 1.4;
-}
-
 .turn-process-tree__header {
   display: flex;
   align-items: center;
@@ -31,6 +22,7 @@
   border: 0;
   background: transparent;
   cursor: pointer;
+  overflow-anchor: auto;
   text-align: left;
   font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 13.5px;
@@ -59,6 +51,7 @@
 .turn-process-tree__body {
   margin-top: 2px;
   padding-left: 2px;
+  overflow-anchor: none;
 }
 
 /* 无最终结论时的占位：与折叠头同级外露，不进入消息历史 */

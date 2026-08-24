@@ -62,13 +62,17 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
   // 累积器以有序 blocks 为唯一事实源；content/toolCalls 仅在 message_end 投影。
   switch (event.type) {
     case 'message_start': {
+      const snapStarted = ctx.runId
+        ? getRunCoordinator().getSnapshot(ctx.runId)?.turnStartedAt
+        : undefined
       activeStreams.set(event.messageId, {
         blocks: [],
         cancelled: false,
         runId: ctx.runId ?? '',
         executionGeneration: ctx.executionGeneration ?? 0,
         sessionId,
-        messageId: event.messageId
+        messageId: event.messageId,
+        turnStartedAt: snapStarted ?? Date.now()
       })
       break
     }
@@ -158,7 +162,15 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         // turnDraft(active) → SessionStore 幂等追加成功 → message_finalized → clear turnDraft
         // 不得在 SessionStore 成功前标 finalized / clear
         try {
-          finalizeAssistantTurn(sessionId, ctx.runId, event.messageId, blocks, event.interrupted, ctx.executionGeneration)
+          finalizeAssistantTurn(
+            sessionId,
+            ctx.runId,
+            event.messageId,
+            blocks,
+            event.interrupted,
+            ctx.executionGeneration,
+            stream.turnStartedAt
+          )
         } catch (err) {
           console.error('[message_end] finalize 失败，保留 turnDraft:', err)
           if (ctx.runId) {
@@ -202,14 +214,18 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             event.messageId,
             finalBlocks,
             true,
-            ctx.executionGeneration
+            ctx.executionGeneration,
+            stream.turnStartedAt
           )
         } catch (err) {
           console.error('[error] finalize 失败，回退仅存错误文案:', err)
-          saveErrorMessage(sessionId, event.messageId, event.error)
+          saveErrorMessage(sessionId, event.messageId, event.error, stream.turnStartedAt)
         }
       } else {
-        saveErrorMessage(sessionId, event.messageId, event.error)
+        const turnStartedAt = ctx.runId
+          ? getRunCoordinator().getSnapshot(ctx.runId)?.turnStartedAt ?? Date.now()
+          : Date.now()
+        saveErrorMessage(sessionId, event.messageId, event.error, turnStartedAt)
       }
       break
     }
@@ -311,7 +327,9 @@ function saveAssistantMessage(
   sessionId: string,
   messageId: string,
   blocks: MessageBlock[],
-  interrupted?: boolean
+  interrupted?: boolean,
+  turnStartedAt?: number,
+  turnEndedAt: number = Date.now()
 ): AppendMessageResult {
   const sessionStore = getSessionStore()
   const projected = projectAssistantFieldsFromBlocks(blocks)
@@ -323,7 +341,9 @@ function saveAssistantMessage(
     blocks: projected.blocks.length > 0 ? projected.blocks : undefined,
     messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE,
     timestamp: Date.now(),
-    ...(interrupted ? { interrupted: true } : {})
+    ...(interrupted ? { interrupted: true } : {}),
+    ...(turnStartedAt !== undefined ? { turnStartedAt } : {}),
+    ...(turnStartedAt !== undefined ? { turnEndedAt } : {})
   }
   return sessionStore.appendMessageFast(sessionId, assistantMessage)
 }
@@ -349,10 +369,15 @@ function finalizeAssistantTurn(
   messageId: string,
   blocks: MessageBlock[],
   interrupted?: boolean,
-  executionGeneration?: number
+  executionGeneration?: number,
+  turnStartedAt?: number
 ): void {
   // 终态统一收口：SessionStore 消息与 turnDraft receipt 都只写无 running 态的 blocks
   const settledBlocks = settleRunningBlocksAsInterrupted(blocks)
+  const turnEndedAt = Date.now()
+  const resolvedTurnStartedAt =
+    turnStartedAt ??
+    (runId ? getRunCoordinator().getSnapshot(runId)?.turnStartedAt : undefined)
 
   // 1) 确保草稿仍为 active（未 finalized）
   if (runId) {
@@ -360,7 +385,14 @@ function finalizeAssistantTurn(
   }
 
   // 2) SessionStore 幂等追加
-  const appendResult = saveAssistantMessage(sessionId, messageId, settledBlocks, interrupted)
+  const appendResult = saveAssistantMessage(
+    sessionId,
+    messageId,
+    settledBlocks,
+    interrupted,
+    resolvedTurnStartedAt,
+    turnEndedAt
+  )
   if (!appendResult.ok) {
     throw new Error(`SessionStore 追加失败: ${appendResult.error}`)
   }
@@ -427,13 +459,20 @@ function dropPermissionDeniedResidualBlocks(blocks: MessageBlock[]): MessageBloc
 }
 
 /** 保存错误消息到会话存储 */
-function saveErrorMessage(sessionId: string, messageId: string, error: string): void {
+function saveErrorMessage(
+  sessionId: string,
+  messageId: string,
+  error: string,
+  turnStartedAt?: number,
+  turnEndedAt: number = Date.now()
+): void {
   const sessionStore = getSessionStore()
   const errorMessage: SessionMessageAppend = {
     id: messageId,
     role: 'assistant',
     content: error,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    ...(turnStartedAt !== undefined ? { turnStartedAt, turnEndedAt } : {})
   }
   const result = sessionStore.appendMessageFast(sessionId, errorMessage)
   if (!result.ok) {

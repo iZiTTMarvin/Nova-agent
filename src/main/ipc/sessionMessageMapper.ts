@@ -60,6 +60,8 @@ export function toSharedMessage(
     })),
     blocks: normalizeBlocks(msg.blocks),
     timestamp: msg.timestamp,
+    ...(msg.turnStartedAt !== undefined ? { turnStartedAt: msg.turnStartedAt } : {}),
+    ...(msg.turnEndedAt !== undefined ? { turnEndedAt: msg.turnEndedAt } : {}),
     // 透传 interrupted 标记，让历史会话加载后 UI 仍能区分
     ...(msg.interrupted ? { interrupted: true } : {}),
     _toolCallResults: Object.keys(toolCallResults).length > 0 ? toolCallResults : undefined

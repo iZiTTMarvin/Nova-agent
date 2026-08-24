@@ -320,7 +320,6 @@ function MessageItemInner({
       blocks={msg.blocks ?? []}
       sessionId={currentSessionId}
       pendingPlanReview={pendingPlanReview}
-      turnStartedAt={msg.turnStartedAt}
       persistedUserOpen={turnProcessOpen}
       onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
     />

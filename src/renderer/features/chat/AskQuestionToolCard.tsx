@@ -4,9 +4,9 @@
  * 不承载答题交互（答题在底部 AskQuestionPanel）。
  * running：正在询问；success：已询问 N 个问题，可展开回看问答摘要。
  */
-import React, { useState } from 'react'
-import { Button } from '@astryxdesign/core/Button'
+import React, { useRef, useState } from 'react'
 import { ChevronIcon } from '../../components/Icons'
+import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 
 export interface AskQuestionToolCardProps {
   toolCallId?: string
@@ -65,6 +65,7 @@ function questionCount(args: Record<string, unknown>): number {
 export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.memo(
   function AskQuestionToolCard({ args, status, result, isLiveStreaming = false }) {
     const [expanded, setExpanded] = useState(false)
+    const headerRef = useRef<HTMLButtonElement>(null)
     const count = questionCount(args)
     const parsed = parseAskQuestionResult(result)
     const canExpand = status === 'success' && (parsed.pairs.length > 0 || parsed.dismissed)
@@ -87,41 +88,49 @@ export const AskQuestionToolCard: React.FC<AskQuestionToolCardProps> = React.mem
 
     return (
       <div className={rootClass}>
-        <Button
-          label={label}
-          variant="ghost"
-          size="sm"
+        <button
+          ref={headerRef}
+          type="button"
           className="ask-question-tool-card__header"
           onClick={() => {
-            if (canExpand) setExpanded(prev => !prev)
+            if (!canExpand) return
+            setExpanded(prev => !prev)
           }}
+          disabled={!canExpand}
           aria-expanded={canExpand ? expanded : undefined}
-          isDisabled={!canExpand}
-          icon={<span className={`ask-question-tool-card__glyph ask-question-tool-card__glyph--${status}`} aria-hidden="true">
+        >
+          <span className={`ask-question-tool-card__glyph ask-question-tool-card__glyph--${status}`} aria-hidden="true">
             ?
-          </span>}
-          endContent={canExpand ? (
+          </span>
+          <span className="ask-question-tool-card__label">{label}</span>
+          {canExpand && (
             <span className="ask-question-tool-card__chevron" data-expanded={expanded} aria-hidden="true">
               <ChevronIcon size={14} direction={expanded ? 'up' : 'down'} />
             </span>
-          ) : undefined}
-        />
+          )}
+        </button>
 
-        {expanded && parsed.pairs.length > 0 && (
-          <div className="ask-question-tool-card__detail">
-            {parsed.pairs.map((pair, i) => (
-              <div key={i} className="ask-question-tool-card__qa">
-                <div className="ask-question-tool-card__q">{pair.question}</div>
-                <div className="ask-question-tool-card__a">{pair.answer}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {expanded && parsed.dismissed && (
-          <div className="ask-question-tool-card__detail">
-            <div className="ask-question-tool-card__a">用户跳过了提问</div>
-          </div>
-        )}
+        <TurnProcessCollapsible
+          open={expanded}
+          className="ask-question-tool-card__expandable"
+          pinHeaderRef={headerRef}
+        >
+          {parsed.pairs.length > 0 && (
+            <div className="ask-question-tool-card__detail">
+              {parsed.pairs.map((pair, i) => (
+                <div key={i} className="ask-question-tool-card__qa">
+                  <div className="ask-question-tool-card__q">{pair.question}</div>
+                  <div className="ask-question-tool-card__a">{pair.answer}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {parsed.dismissed && (
+            <div className="ask-question-tool-card__detail">
+              <div className="ask-question-tool-card__a">用户跳过了提问</div>
+            </div>
+          )}
+        </TurnProcessCollapsible>
       </div>
     )
   }

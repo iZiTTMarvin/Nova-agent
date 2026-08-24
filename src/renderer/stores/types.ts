@@ -83,9 +83,9 @@ export interface ExtendedMessage {
    * 不持久化，不参与跨进程 IPC。
    */
   _revision?: number
-  /** L1「Worked for」计时起点；handleMessageStart 写入。仅渲染层内存：持久化类型 SessionMessage 不含此字段，重载/切分支重放后丢失，L1 降级为无时长显示 */
+  /** L1「Worked for」计时起点；新回合由 renderer 立即写入，终态由持久化消息恢复 */
   turnStartedAt?: number
-  /** L1 计时终点；handleMessageEnd 写入。同上：仅渲染层内存存活一个轮次，重载后丢失 */
+  /** L1 计时终点；终态由 renderer 写入并随消息持久化 */
   turnEndedAt?: number
 }
 

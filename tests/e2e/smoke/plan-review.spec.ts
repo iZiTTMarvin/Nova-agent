@@ -49,7 +49,7 @@ test('批准计划后在同一 run 继续实施，计划与审批按源顺序显
   await expect(planCard).toHaveCount(1)
   await expect(planCard).toContainText('番茄钟实施计划')
   await expect(approvalCard).toBeVisible()
-  await expect(nova.page.getByTestId('turn-process-header')).toContainText('工作中')
+  await expect(nova.page.getByTestId('turn-process-header')).toHaveCount(0)
   await expect(nova.page.locator('.turn-process-tree__chevron')).toHaveCount(0)
   expect(await readPlanMarkdown(nova.workspacePath)).toContain('实现 25 分钟计时')
 

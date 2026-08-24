@@ -31,6 +31,10 @@ describe('formatWorkedHeader', () => {
     expect(formatWorkedHeader({ phase: 'completed', durationMs: 97_000 })).toBe('已工作 1 分 37 秒')
   })
 
+  it('同一毫秒结束也显示零秒', () => {
+    expect(formatWorkedHeader({ phase: 'completed', durationMs: 0 })).toBe('已工作 0 秒')
+  })
+
   it('无时间戳降级已工作', () => {
     expect(formatWorkedHeader({ phase: 'completed' })).toBe('已工作')
   })

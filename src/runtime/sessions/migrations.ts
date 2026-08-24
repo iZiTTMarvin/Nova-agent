@@ -85,6 +85,12 @@ function normalizeMessageV0(msg: unknown): SessionMessage {
     ...(Array.isArray(m.toolCalls) ? { toolCalls: m.toolCalls as SessionMessage['toolCalls'] } : {}),
     ...(Array.isArray(m.blocks) ? { blocks: m.blocks as SessionMessage['blocks'] } : {}),
     ...(typeof m.toolCallId === 'string' ? { toolCallId: m.toolCallId } : {}),
+    ...(typeof m.turnStartedAt === 'number' && Number.isFinite(m.turnStartedAt)
+      ? { turnStartedAt: m.turnStartedAt }
+      : {}),
+    ...(typeof m.turnEndedAt === 'number' && Number.isFinite(m.turnEndedAt)
+      ? { turnEndedAt: m.turnEndedAt }
+      : {}),
     ...(m.interrupted === true ? { interrupted: true } : {})
   }
 }

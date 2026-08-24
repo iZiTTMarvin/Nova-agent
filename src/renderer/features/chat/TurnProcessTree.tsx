@@ -1,7 +1,7 @@
 /**
  * TurnProcessTree — 回合工作区折叠容器
  *
- * 单层结构：「已工作 X 分 X 秒」折叠头 + 过程时间线（折叠时不 mount）。
+ * 单层结构：「已工作 X 分 X 秒」折叠头 + 过程时间线。
  * 最终结论文案不在此容器内，由 MessageItem 以正文样式单独渲染。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -26,7 +26,6 @@ export interface TurnProcessTreeProps {
   blocks: RendererMessageBlock[]
   sessionId?: string | null
   pendingPlanReview?: PendingPlanReview | null
-  turnStartedAt?: number
   persistedUserOpen?: boolean
   onUserOpenChange?: (open: boolean) => void
 }
@@ -74,20 +73,16 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   blocks,
   sessionId,
   pendingPlanReview,
-  turnStartedAt,
   persistedUserOpen,
   onUserOpenChange
 }) {
   const reducedMotion = usePrefersReducedMotion()
+  const headerRef = useRef<HTMLButtonElement>(null)
   const userToggledRef = useRef(persistedUserOpen !== undefined)
   const prevIsLiveRef = useRef(isLive)
 
   // live 默认展开；completed 默认折叠
   const [userOpen, setUserOpen] = useState(persistedUserOpen ?? isLive)
-  const [liveElapsedMs, setLiveElapsedMs] = useState<number | undefined>(model.durationMs)
-
-  // live 阶段过程区不套折叠壳、头部不可点击，等待审批/问答时内容天然可见；
-  // 此处 open 只服务于 completed 阶段的折叠壳。
   const open = userOpen
 
   // live → completed：未手动操作时自动收起；重新 live 时自动展开
@@ -99,15 +94,6 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
       setUserOpen(isLive)
     }
   }, [isLive])
-
-  // live 计时刷新
-  useEffect(() => {
-    if (!isLive || turnStartedAt === undefined) return
-    const tick = () => setLiveElapsedMs(Date.now() - turnStartedAt)
-    tick()
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
-  }, [isLive, turnStartedAt])
 
   const toggle = useCallback(() => {
     userToggledRef.current = true
@@ -121,7 +107,6 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   const headerTitle = formatWorkedHeader({
     phase: model.phase,
     durationMs: model.durationMs,
-    elapsedMs: liveElapsedMs,
     interrupted
   })
 
@@ -142,12 +127,9 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
 
   return (
     <div className={`turn-process-tree${isLive ? ' turn-process-tree--live' : ''}`} data-testid="turn-process-tree">
-      {isLive ? (
-        <div className="turn-process-tree__status" data-testid="turn-process-header">
-          {headerTitle}
-        </div>
-      ) : model.hasProcess ? (
+      {!isLive && model.hasProcess ? (
         <button
+          ref={headerRef}
           type="button"
           className="turn-process-tree__header"
           onClick={toggle}
@@ -165,14 +147,13 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
 
       {groups.map((group, index) => group.display === 'persistent' ? (
         <React.Fragment key={`persistent-${index}`}>{trace(group.segments)}</React.Fragment>
-      ) : isLive ? (
-        <React.Fragment key={`process-${index}`}>{trace(group.segments)}</React.Fragment>
       ) : (
         <TurnProcessCollapsible
           key={`process-${index}`}
-          open={open}
+          open={isLive || open}
           reducedMotion={reducedMotion}
           className="turn-process-tree__body"
+          pinHeaderRef={headerRef}
         >
           {trace(group.segments)}
         </TurnProcessCollapsible>

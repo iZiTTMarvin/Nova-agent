@@ -64,16 +64,18 @@ function renderTree(
 describe('TurnProcessTree', () => {
   it('completed 默认折叠整个工作过程（含计划卡），仅最终文本保持挂载', () => {
     const renderer = renderTree(false)
+    const collapsible = renderer.container.querySelector('.turn-process-collapsible')
+    expect(collapsible?.getAttribute('data-expanded')).toBe('false')
     expect(renderer.container.querySelector('.trace-process')).toBeNull()
     expect(renderer.container.querySelectorAll('.trace-persistent').length).toBeGreaterThan(0)
     expect(renderer.container.querySelector('[data-testid="turn-no-summary"]')).toBeNull()
     renderer.unmount()
   })
 
-  it('live 显示不可点击的工作状态行且没有 disclosure 箭头，过程区直接展开', () => {
+  it('live 不显示工作状态头，过程区直接展开', () => {
     const renderer = renderTree(true)
     const header = renderer.container.querySelector('[data-testid="turn-process-header"]')
-    expect(header?.tagName).toBe('DIV')
+    expect(header).toBeNull()
     expect(renderer.container.querySelector('.turn-process-tree__chevron')).toBeNull()
     expect(renderer.container.querySelector('.trace-process')).not.toBeNull()
     expect(renderer.container.querySelector('.trace-persistent')).not.toBeNull()
@@ -88,7 +90,8 @@ describe('TurnProcessTree', () => {
     expect(renderer.container.querySelector('.trace-persistent')).not.toBeNull()
 
     act(() => header?.click())
-    expect(renderer.container.querySelector('.trace-process')).toBeNull()
+    expect(renderer.container.querySelector('.turn-process-collapsible')?.getAttribute('data-expanded'))
+      .toBe('false')
     expect(renderer.container.querySelector('.trace-persistent')).not.toBeNull()
     renderer.unmount()
   })

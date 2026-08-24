@@ -1,19 +1,34 @@
 /**
- * ToolTraceRow — L3 等宽原子行
+ * ToolTraceRow — L3 原子过程行
  *
- * 默认只渲染 [Action] [Target] 一行；点击后才挂载 L4（参数/结果/文件预览）。
- * 权限放行条始终挂在行下（冒泡），不依赖 L4 展开。
+ * 与 ToolCallGroup 时间线保持一致的中文动词、文件扩展名徽标与分层排版；
+ * 点击整行展开 L4 详情（参数/结果/文件预览）。
  */
-import React, { useMemo, useState } from 'react'
-import { ChevronIcon } from '../../components/Icons'
+import React, { useMemo, useRef, useState } from 'react'
+import {
+  ChevronIcon,
+  FileIcon,
+  FolderIcon,
+  SearchIcon,
+  TerminalIcon
+} from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
-import { getToolTraceAction, getToolTraceTarget, getFileToolPreviewText } from './toolTraceDisplay'
+import { useLayoutStore } from '../../stores/useLayoutStore'
+import { useFileTreeStore } from '../inspector/useFileTreeStore'
+import {
+  compactPathForTrace,
+  getToolTraceActionChinese,
+  getToolTraceTarget,
+  getFileToolPreviewText,
+  splitFilePath
+} from './toolTraceDisplay'
 import { clampBashShellOutputForDisplay } from './bashOutputDisplay'
 import { parsePartialToolArgs } from '../../lib/partialJsonArgs'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { WebSearchCard } from './WebSearchCard'
+import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import type { NestedToolActivity, PendingPermissionRequest } from '../../stores/types'
 import './ToolTraceRow.css'
 
@@ -44,13 +59,55 @@ function selectAnchoredRequest(
   return ids[ids.length - 1] === toolCallId ? request : null
 }
 
-function StatusDot({ status }: { status: ToolTraceRowProps['status'] }) {
-  return (
-    <span
-      className={`tool-trace-row__dot tool-trace-row__dot--${status}`}
-      aria-hidden="true"
-    />
-  )
+function TraceFileBadgeOrIcon({
+  toolName,
+  ext
+}: {
+  toolName: string
+  ext: string
+}) {
+  if (toolName === 'ls') {
+    return <FolderIcon size={12} className="tool-trace-row__icon tool-trace-row__icon--folder" />
+  }
+  if (toolName === 'grep' || toolName === 'find' || toolName === 'web_search') {
+    return <SearchIcon size={12} className="tool-trace-row__icon" />
+  }
+  if (toolName === 'bash') {
+    return <TerminalIcon size={12} className="tool-trace-row__icon" />
+  }
+
+  const normalizedExt = ext.toLowerCase()
+  if (normalizedExt === 'ts' || normalizedExt === 'mts' || normalizedExt === 'cts') {
+    return <span className="file-badge file-badge--ts">TS</span>
+  }
+  if (normalizedExt === 'tsx') {
+    return <span className="file-badge file-badge--tsx">TSX</span>
+  }
+  if (normalizedExt === 'js' || normalizedExt === 'mjs' || normalizedExt === 'cjs') {
+    return <span className="file-badge file-badge--js">JS</span>
+  }
+  if (normalizedExt === 'jsx') {
+    return <span className="file-badge file-badge--jsx">JSX</span>
+  }
+  if (normalizedExt === 'json') {
+    return <span className="file-badge file-badge--json">JSON</span>
+  }
+  if (normalizedExt === 'md' || normalizedExt === 'markdown') {
+    return <span className="file-badge file-badge--md">MD</span>
+  }
+  if (normalizedExt === 'py') {
+    return <span className="file-badge file-badge--py">PY</span>
+  }
+  if (normalizedExt === 'css' || normalizedExt === 'scss' || normalizedExt === 'less') {
+    return <span className="file-badge file-badge--css">CSS</span>
+  }
+  if (normalizedExt === 'html') {
+    return <span className="file-badge file-badge--html">HTML</span>
+  }
+  if (normalizedExt) {
+    return <span className="file-badge file-badge--generic">{normalizedExt.slice(0, 3).toUpperCase()}</span>
+  }
+  return <FileIcon size={12} className="tool-trace-row__icon" />
 }
 
 /** L4：仅在展开时挂载的重内容 */
@@ -130,13 +187,12 @@ function areTracePropsEqual(prev: ToolTraceRowProps, next: ToolTraceRowProps): b
     prev.result === next.result &&
     prev.isLiveStreaming === next.isLiveStreaming &&
     prev.argumentsRaw === next.argumentsRaw &&
-    // args 引用稳定时跳过：store 只替换变更 block，其它行 args 同引用
     prev.args === next.args &&
     prev.nestedActivities === next.nestedActivities
   )
 }
 
-/** run_code 沙箱内嵌套工具的紧凑活动行（默认可见，不依赖 L4 展开） */
+/** run_code 沙箱内嵌套工具活动行 */
 function NestedActivityList({
   activities,
   workspaceRoot
@@ -149,8 +205,7 @@ function NestedActivityList({
     <div className="tool-trace-row__nested">
       {activities.map(activity => (
         <div key={activity.toolCallId} className="tool-trace-row__nested-row">
-          <StatusDot status={activity.status} />
-          <span className="tool-trace-row__action">{getToolTraceAction(activity.toolName)}</span>
+          <span className="tool-trace-row__action">{getToolTraceActionChinese(activity.toolName)}</span>
           <span className="tool-trace-row__target">
             {getToolTraceTarget(activity.toolName, activity.args, workspaceRoot)}
           </span>
@@ -171,6 +226,7 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   nestedActivities
 }) {
   const [isOpen, setIsOpen] = useState(false)
+  const headerRef = useRef<HTMLButtonElement>(null)
 
   const args = useMemo<Record<string, unknown>>(() => {
     if (argumentsRaw !== undefined) {
@@ -180,12 +236,31 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   }, [name, argumentsRaw, argsProp])
 
   const workspaceRoot = useWorkspaceStore(state => state.currentProjectPath)
-  const action = getToolTraceAction(name)
-  const target = getToolTraceTarget(name, args, workspaceRoot)
+  const actionText = getToolTraceActionChinese(name)
 
   const anchoredRequest = useAgentStore(state =>
     selectAnchoredRequest(state.pendingPermissionRequest, toolCallId)
   )
+
+  const isFileTool =
+    name === 'read' ||
+    name === 'write' ||
+    name === 'edit' ||
+    name === 'save_plan'
+
+  const rawPath = (args.path as string) || (args.filePath as string) || ''
+  const isLs = name === 'ls'
+  const isBash = name === 'bash'
+
+  const fileParts = isFileTool || isLs ? splitFilePath(rawPath || (isLs ? '.' : ''), workspaceRoot) : null
+  const command = isBash ? (args.command as string) || '' : ''
+  const generalTarget = !isFileTool && !isLs && !isBash ? getToolTraceTarget(name, args, workspaceRoot) : ''
+
+  const fullTitle = isFileTool
+    ? `${actionText} ${fileParts?.dir || ''}${fileParts?.filename || ''}`
+    : isBash
+      ? `${actionText} ${command}`
+      : `${actionText} ${generalTarget || fileParts?.filename || ''}`
 
   const rootClass = [
     'tool-trace-row',
@@ -195,19 +270,71 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
     .filter(Boolean)
     .join(' ')
 
+  const handleOpenFile = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const relPath = rawPath ? compactPathForTrace(rawPath, workspaceRoot) : ''
+    if (!relPath) return
+    useLayoutStore.getState().openFiles()
+    useFileTreeStore.getState().selectFile(relPath)
+  }
+
+  const handleOpenDir = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const relPath = rawPath && rawPath !== '.' ? compactPathForTrace(rawPath, workspaceRoot) : ''
+    useLayoutStore.getState().openFiles()
+    useFileTreeStore.getState().selectFile(null)
+    if (relPath) {
+      useFileTreeStore.getState().setExpanded(relPath, true)
+    }
+  }
+
   return (
     <div className={rootClass}>
-      {/* 原生 disclosure 行：Astryx Button 内容居中，不能用作全宽过程轨行 */}
       <button
+        ref={headerRef}
         type="button"
         className="tool-trace-row__header"
         onClick={() => setIsOpen(prev => !prev)}
         aria-expanded={isOpen}
-        title={`${action} ${target}`}
+        title={fullTitle}
       >
-        <StatusDot status={status} />
-        <span className="tool-trace-row__action">{action}</span>
-        <span className="tool-trace-row__target">{target}</span>
+        <span className="tool-trace-row__action">{actionText}</span>
+        <TraceFileBadgeOrIcon toolName={name} ext={fileParts?.ext || ''} />
+
+        {isFileTool && (
+          <span
+            className="tool-trace-row__file-target"
+            onClick={handleOpenFile}
+            title={`在侧边栏查看 ${fileParts?.filename || rawPath}`}
+          >
+            <span className="tool-trace-row__filename">{fileParts?.filename || 'file'}</span>
+            {fileParts?.dir ? <span className="tool-trace-row__dirname">{fileParts.dir}</span> : null}
+          </span>
+        )}
+
+        {isLs && (
+          <span
+            className="tool-trace-row__file-target"
+            onClick={handleOpenDir}
+            title={`在侧边栏查看目录 ${fileParts?.filename || fileParts?.dir || '.'}`}
+          >
+            <span className="tool-trace-row__filename">{fileParts?.filename || fileParts?.dir || '.'}</span>
+            {fileParts?.dir && fileParts?.filename ? (
+              <span className="tool-trace-row__dirname">{fileParts.dir}</span>
+            ) : null}
+          </span>
+        )}
+
+        {isBash && (
+          <span className="tool-trace-row__command" title={command}>
+            {command}
+          </span>
+        )}
+
+        {!isFileTool && !isLs && !isBash && (
+          <span className="tool-trace-row__text">{generalTarget}</span>
+        )}
+
         <ChevronIcon
           size={12}
           direction={isOpen ? 'down' : 'right'}
@@ -215,10 +342,13 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
         />
       </button>
 
-      {/* L4：仅展开时挂载，避免默认渲染大段 result / 参数 DOM */}
-      {isOpen && (
+      <TurnProcessCollapsible
+        open={isOpen}
+        className="tool-trace-row__collapsible"
+        pinHeaderRef={headerRef}
+      >
         <ToolTraceDetail name={name} args={args} status={status} result={result} />
-      )}
+      </TurnProcessCollapsible>
 
       {nestedActivities && nestedActivities.length > 0 && (
         <NestedActivityList activities={nestedActivities} workspaceRoot={workspaceRoot} />

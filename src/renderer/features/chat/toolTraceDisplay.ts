@@ -72,6 +72,27 @@ export function getToolTraceAction(toolName: string): string {
   }
 }
 
+export type ToolGroupKind = 'explore' | 'write' | 'command'
+
+export function getToolGroupKind(toolName: string): ToolGroupKind | null {
+  if (
+    toolName === 'read' ||
+    toolName === 'grep' ||
+    toolName === 'find' ||
+    toolName === 'ls' ||
+    toolName === 'web_search'
+  ) {
+    return 'explore'
+  }
+  if (toolName === 'write' || toolName === 'edit') {
+    return 'write'
+  }
+  if (toolName === 'bash') {
+    return 'command'
+  }
+  return null
+}
+
 /**
  * L3 行 Target：路径、命令前缀、搜索词等。
  * 工作区内路径紧凑为相对路径；过长截断；完整内容进 L4。
@@ -205,11 +226,142 @@ function extractPreviewText(value: unknown): string {
   return ''
 }
 
-/** 聚合行：Action + 首项 Target + 后缀 */
+/** L3 行中文动作动词（对齐 Cursor 风格平铺轨迹） */
+export function getToolTraceActionChinese(toolName: string): string {
+  switch (toolName) {
+    case 'read':
+      return '已读取'
+    case 'grep':
+      return '已搜索'
+    case 'find':
+      return '已查找'
+    case 'ls':
+      return '已列出'
+    case 'write':
+      return '已写入'
+    case 'edit':
+      return '已编辑'
+    case 'bash':
+      return '已执行'
+    case 'web_search':
+      return '已搜索'
+    case 'task':
+      return '已委托'
+    case 'invoke_skill':
+      return '已调用技能'
+    case 'todo_write':
+      return '已更新待办'
+    case 'askQuestion':
+      return '已提问'
+    case 'save_plan':
+      return '已保存计划'
+    case 'switch_mode':
+      return '已切换模式'
+    case 'run_code':
+      return '已探索'
+    default:
+      return getToolTraceAction(toolName)
+  }
+}
+
+export interface FilePathParts {
+  filename: string
+  dir: string
+  ext: string
+}
+
+/** 拆解路径为文件名、目录前缀与扩展名 */
+export function splitFilePath(path: string, workspaceRoot?: string | null): FilePathParts {
+  if (!path) return { filename: '', dir: '', ext: '' }
+  const relPath = compactPathForTrace(path, workspaceRoot)
+  const norm = relPath.replace(/\\/g, '/')
+  const lastSlash = norm.lastIndexOf('/')
+  if (lastSlash === -1) {
+    const ext = norm.includes('.') ? norm.split('.').pop()?.toLowerCase() || '' : ''
+    return { filename: norm, dir: '', ext }
+  }
+  const dir = norm.slice(0, lastSlash + 1)
+  const filename = norm.slice(lastSlash + 1)
+  const ext = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() || '' : ''
+  return { filename, dir, ext }
+}
+
+export interface ToolGroupHeaderInfo {
+  kind: ToolGroupKind
+  title: string
+  summaryText: string
+  fullSummary: string
+}
+
+/** 结构化提取聚合组头部信息（标题、统计与分类） */
+export function getToolGroupHeaderInfo(
+  blocks: Array<{ toolName?: string }>,
+  fallbackToolName?: string
+): ToolGroupHeaderInfo | null {
+  if (blocks.length === 0) return null
+  const names = blocks.map(block => block.toolName ?? fallbackToolName ?? '')
+  const groupKind = names.length > 0 ? getToolGroupKind(names[0]) : null
+  if (!groupKind || !names.every(name => getToolGroupKind(name) === groupKind)) {
+    return null
+  }
+
+  if (groupKind === 'explore') {
+    const fileCount = names.filter(name => name === 'read').length
+    const directoryCount = names.filter(name => name === 'ls').length
+    const searchCount = names.filter(
+      name => name === 'grep' || name === 'find' || name === 'web_search'
+    ).length
+    const parts: string[] = []
+    if (searchCount > 0) parts.push(`${searchCount} 搜索`)
+    if (fileCount > 0) parts.push(`${fileCount} 文件`)
+    if (directoryCount > 0) parts.push(`${directoryCount} 目录`)
+    const summaryText = parts.join(' ') || `${blocks.length} 项探索`
+    const title = '探索'
+    const fullSummary = `已探索 ${summaryText}`
+    return { kind: 'explore', title, summaryText, fullSummary }
+  }
+
+  if (groupKind === 'write') {
+    const writeCount = names.filter(name => name === 'write').length
+    const editCount = names.filter(name => name === 'edit').length
+    const parts: string[] = []
+    if (writeCount > 0) parts.push(`${writeCount} 写入`)
+    if (editCount > 0) parts.push(`${editCount} 编辑`)
+    const summaryText = parts.join(' ') || `${blocks.length} 文件`
+    const title = '写入'
+    const fullSummary = `已写入 ${summaryText}`
+    return { kind: 'write', title, summaryText, fullSummary }
+  }
+
+  const title = '运行'
+  const summaryText = `${blocks.length} 条命令`
+  const fullSummary = `已运行 ${summaryText}`
+  return { kind: 'command', title, summaryText, fullSummary }
+}
+
+/** 摘要组折叠头：整句中文，展开后仍用各行英文短动词。 */
+export function getToolGroupHeadline(
+  blocks: Array<{ toolName?: string }>,
+  fallbackToolName?: string
+): string | null {
+  const info = getToolGroupHeaderInfo(blocks, fallbackToolName)
+  return info ? info.fullSummary : null
+}
+
+/** 聚合行：整句中文摘要进 action；无摘要时回退到单工具 L3 文案。 */
 export function getToolGroupTraceParts(
   toolName: string,
-  blocks: Array<{ arguments?: Record<string, unknown> }>
+  blocks: Array<{ toolName?: string; arguments?: Record<string, unknown> }>
 ): { action: string; target: string; suffix: string } {
+  const info = getToolGroupHeaderInfo(blocks, toolName)
+  if (info) {
+    return {
+      action: info.title,
+      target: info.summaryText,
+      suffix: ''
+    }
+  }
+
   const count = blocks.length
   const firstArgs = blocks[0]?.arguments ?? {}
   const action = getToolTraceAction(toolName)

@@ -1,0 +1,33 @@
+.turn-process-collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow-anchor: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 160ms ease,
+    visibility 240ms;
+  will-change: grid-template-rows, opacity;
+}
+
+.turn-process-collapsible[data-expanded="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+}
+
+.turn-process-collapsible__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.turn-process-collapsible--reduced {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-process-collapsible {
+    transition: none;
+  }
+}

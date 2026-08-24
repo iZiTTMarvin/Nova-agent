@@ -28,6 +28,8 @@ describe('sessionMessageMapper', () => {
         },
         { type: 'text', content: '已找到入口' }
       ],
+      turnStartedAt: 10,
+      turnEndedAt: 25,
       timestamp: 1
     }
 
@@ -47,6 +49,8 @@ describe('sessionMessageMapper', () => {
       { type: 'text', content: '已找到入口' }
     ])
     expect(shared._toolCallResults).toEqual({ tc_1: 'ok' })
+    expect(shared.turnStartedAt).toBe(10)
+    expect(shared.turnEndedAt).toBe(25)
   })
 
   it('工具参数损坏时应安全回退为空对象', () => {

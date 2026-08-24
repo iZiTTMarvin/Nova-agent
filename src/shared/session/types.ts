@@ -116,6 +116,10 @@ export interface Message {
   interrupted?: boolean
   /** 存在兄弟分支时由主进程附加，供 UI 翻页器展示 ‹ k/n › */
   branch?: BranchMeta
+  /** assistant 回合的开始时刻，用于历史工作时长展示 */
+  turnStartedAt?: number
+  /** assistant 回合的结束时刻，用于历史工作时长展示 */
+  turnEndedAt?: number
   timestamp: number
 }
 
