@@ -4,7 +4,7 @@
  * 这里集中承载 budget_exhausted / failure_class / 退出码的判定口径。
  */
 import type { IncompleteReason } from '../runtime/agent/turn'
-import type { AgentEvent } from '../runtime/agent/types'
+import type { AgentEvent, RepairDiagnosticKind } from '../runtime/agent/types'
 
 export type HeadlessStatus = 'completed' | 'incomplete' | 'failed' | 'cancelled'
 
@@ -49,24 +49,11 @@ export function deriveHeadlessSummary(
 }
 
 /** 修复分型汇总（repair.native_xml 等，写入 headless summary） */
-export type RepairTotals = Record<
-  | 'native_xml'
-  | 'empty_args_from_content'
-  | 'unclosed_parameter'
-  | 'type_coercion'
-  | 'control_character'
-  | 'tool_name_case',
-  number
->
+export type RepairTotals = Record<RepairDiagnosticKind, number>
 
 /** 修复后执行结果（每分型：成功 / 失败计数，用于发现"错误修复"反向伤害） */
-export interface RepairOutcomeTotals {
-  native_xml: { success: number; failure: number }
-  empty_args_from_content: { success: number; failure: number }
-  unclosed_parameter: { success: number; failure: number }
-  type_coercion: { success: number; failure: number }
-  control_character: { success: number; failure: number }
-  tool_name_case: { success: number; failure: number }
+export type RepairOutcomeTotals = {
+  [K in RepairDiagnosticKind]: { success: number; failure: number }
 }
 
 /** 从事件流累计修复分型计数。纯函数，便于单测。 */
@@ -77,7 +64,10 @@ export function accumulateRepairTotals(events: AgentEvent[]): RepairTotals {
     unclosed_parameter: 0,
     type_coercion: 0,
     control_character: 0,
-    tool_name_case: 0
+    tool_name_case: 0,
+    shape_null_strip: 0,
+    shape_array_repair: 0,
+    shape_scalar_coercion: 0
   }
   for (const event of events) {
     if (event.type === 'repair_diagnostic') {
@@ -100,7 +90,10 @@ export function accumulateRepairOutcomes(events: AgentEvent[]): RepairOutcomeTot
     unclosed_parameter: { ...empty },
     type_coercion: { ...empty },
     control_character: { ...empty },
-    tool_name_case: { ...empty }
+    tool_name_case: { ...empty },
+    shape_null_strip: { ...empty },
+    shape_array_repair: { ...empty },
+    shape_scalar_coercion: { ...empty }
   }
 
   // toolCallId → 该调用涉及的修复分型（顺序无关，去重）

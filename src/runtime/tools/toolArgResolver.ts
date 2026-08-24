@@ -52,6 +52,21 @@ const ARG_ALIASES: Record<ToolArgKind, readonly string[]> = {
   command: COMMAND_ALIASES,
 }
 
+/** 退化 Markdown 自动链接：链接文本与去协议后的 URL 完全一致（聊天分布泄漏进参数值） */
+const DEGENERATE_AUTOLINK = /^\[([^\]]+)\]\(https?:\/\/([^()\s]+)\)$/
+
+/**
+ * 展开退化 Markdown 自动链接（如 `[notes.md](http://notes.md)` → `notes.md`）。
+ * 仅当链接文本等于去协议 URL 时才展开；真 Markdown 链接与普通路径原样返回。
+ */
+export function unwrapDegenerateAutolink(value: string): string {
+  const match = DEGENERATE_AUTOLINK.exec(value.trim())
+  if (match && match[1] === match[2]) {
+    return match[1]
+  }
+  return value
+}
+
 /**
  * 按别名优先级从 args 中取字符串参数。
  * 返回第一个存在的非空值；都缺失返回 undefined。
@@ -77,14 +92,14 @@ export function resolveToolArg(
   for (const key of aliases) {
     const value = args[key]
     if (typeof value === 'string' && value.length > 0) {
-      return value
+      return unwrapDegenerateAutolink(value)
     }
   }
   // 第二轮：非字符串类型也兜底取（模型传 number / 布尔等）
   for (const key of aliases) {
     const value = args[key]
     if (value !== undefined && value !== null) {
-      return String(value)
+      return unwrapDegenerateAutolink(String(value))
     }
   }
   return undefined

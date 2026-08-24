@@ -37,17 +37,15 @@ function createContext(): ToolContext {
 function registerTool(
   registry: ToolRegistry,
   name: string,
-  executor: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
+  executor: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>,
+  parameters: Record<string, unknown> = { type: 'object', properties: {} }
 ): void {
   registry.register({
     name,
     description: name,
     executionMode: 'parallel',
     isConcurrencySafe: () => true,
-    parameters: {
-      type: 'object',
-      properties: {}
-    },
+    parameters,
     execute: executor
   })
 }
@@ -1148,6 +1146,202 @@ describe('executeToolBatch', () => {
 
     expect(result.outcomes[0].failed).toBe(true)
     expect(result.outcomes[0].resultText).toBe('工具 "no_such_tool" 不可用：未注册工具')
+    expect(events.filter(event => event.type === 'repair_diagnostic')).toHaveLength(0)
+  })
+})
+
+describe('executeToolBatch —— 参数形状关卡', () => {
+  const EDIT_PARAMETERS: Record<string, unknown> = {
+    type: 'object',
+    properties: {
+      filePath: { type: 'string' },
+      edits: { type: 'array', items: { type: 'object' } }
+    },
+    required: ['filePath', 'edits']
+  }
+
+  const READ_PARAMETERS: Record<string, unknown> = {
+    type: 'object',
+    properties: {
+      path: { type: 'string' },
+      offset: { type: 'number' },
+      limit: { type: 'number' }
+    },
+    required: ['path']
+  }
+
+  it('数组以 JSON 字符串输出时被修复，工具收到真数组并发出 shape_array_repair', async () => {
+    const registry = new ToolRegistry()
+    const received: Array<Record<string, unknown>> = []
+    registerTool(
+      registry,
+      'edit',
+      async args => {
+        received.push(args)
+        return { success: true, output: 'edit-ok' }
+      },
+      EDIT_PARAMETERS
+    )
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      toolCalls: [
+        {
+          id: 'tc_shape_fix',
+          name: 'edit',
+          arguments: JSON.stringify({ filePath: 'a.ts', edits: '[{"oldText":"a","newText":"b"}]' })
+        }
+      ],
+      messageId: 'msg_shape_fix',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(received).toHaveLength(1)
+    expect(received[0].edits).toEqual([{ oldText: 'a', newText: 'b' }])
+    expect(result.outcomes[0].failed).toBeFalsy()
+    const repairs = events.filter(event => event.type === 'repair_diagnostic')
+    expect(repairs).toHaveLength(1)
+    expect(repairs[0]).toMatchObject({
+      kind: 'shape_array_repair',
+      toolCallId: 'tc_shape_fix',
+      toolName: 'edit'
+    })
+  })
+
+  it('不可修复的类型不符：工具不执行，回传字段清单式错误', async () => {
+    const registry = new ToolRegistry()
+    const received: Array<Record<string, unknown>> = []
+    registerTool(
+      registry,
+      'edit',
+      async args => {
+        received.push(args)
+        return { success: true, output: 'edit-ok' }
+      },
+      EDIT_PARAMETERS
+    )
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      toolCalls: [
+        { id: 'tc_shape_bad', name: 'edit', arguments: '{"filePath":"a.ts","edits":123}' }
+      ],
+      messageId: 'msg_shape_bad',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(received).toHaveLength(0)
+    expect(result.outcomes[0].failed).toBe(true)
+    const toolResults = events.filter(event => event.type === 'tool_result')
+    expect(toolResults).toHaveLength(1)
+    expect(toolResults[0].failed).toBe(true)
+    expect(toolResults[0].result).toContain('参数 "edits" 应为 array，实际为 number')
+    expect(toolResults[0].result).toContain('filePath（string，必填）')
+    expect(toolResults[0].result.startsWith('工具执行失败:')).toBe(true)
+  })
+
+  it('正常参数零修复事件，原样透传（防误伤回归）', async () => {
+    const registry = new ToolRegistry()
+    const received: Array<Record<string, unknown>> = []
+    registerTool(
+      registry,
+      'edit',
+      async args => {
+        received.push(args)
+        return { success: true, output: 'edit-ok' }
+      },
+      EDIT_PARAMETERS
+    )
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      toolCalls: [
+        {
+          id: 'tc_shape_ok',
+          name: 'edit',
+          arguments: JSON.stringify({ filePath: 'a.ts', edits: [{ oldText: 'a', newText: 'b' }] })
+        }
+      ],
+      messageId: 'msg_shape_ok',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(received[0]).toEqual({ filePath: 'a.ts', edits: [{ oldText: 'a', newText: 'b' }] })
+    expect(result.outcomes[0].failed).toBeFalsy()
+    expect(events.filter(event => event.type === 'repair_diagnostic')).toHaveLength(0)
+  })
+
+  it('别名参数不被形状关卡误杀：schema 外字段不可见', async () => {
+    const registry = new ToolRegistry()
+    const received: Array<Record<string, unknown>> = []
+    registerTool(
+      registry,
+      'read',
+      async args => {
+        received.push(args)
+        return { success: true, output: 'read-ok' }
+      },
+      READ_PARAMETERS
+    )
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      toolCalls: [{ id: 'tc_alias', name: 'read', arguments: '{"filePath":"a.ts"}' }],
+      messageId: 'msg_alias',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    expect(received).toHaveLength(1)
+    expect(received[0].filePath).toBe('a.ts')
+    expect(result.outcomes[0].failed).toBeFalsy()
     expect(events.filter(event => event.type === 'repair_diagnostic')).toHaveLength(0)
   })
 })

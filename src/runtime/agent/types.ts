@@ -12,6 +12,15 @@ import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { AskQuestionItem } from '../../shared/askQuestion/types'
 import type { HookEvent } from '../../shared/agent/types'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { RepairKind as NativeArgsRepairKind } from './stream/nativeArgsRepair'
+import type { ShapeRepairKind } from './execution/toolShapeValidation'
+
+/**
+ * repair_diagnostic 事件的分型联合，唯一来源。
+ * native / shape 分型由各自修复层 Owner 定义，tool_name_case 由执行器发出；
+ * 消费端（headless summary 等）只 import 此处，不得复制字面量列表。
+ */
+export type RepairDiagnosticKind = NativeArgsRepairKind | ShapeRepairKind | 'tool_name_case'
 
 export type { HookEvent }
 
@@ -43,14 +52,8 @@ export type AgentEvent =
   | {
       type: 'repair_diagnostic'
       messageId: string
-      /** Native 参数与工具名修复分型。 */
-      kind:
-        | 'native_xml'
-        | 'empty_args_from_content'
-        | 'unclosed_parameter'
-        | 'type_coercion'
-        | 'control_character'
-        | 'tool_name_case'
+      /** 工具调用参数与工具名修复分型。 */
+      kind: RepairDiagnosticKind
       toolCallId: string
       toolName: string
       sessionId?: string

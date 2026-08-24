@@ -25,6 +25,7 @@ import {
   parseNativeArguments,
   repairNativeArguments
 } from '../stream/nativeArgsRepair'
+import { validateAndRepairToolArgs } from './toolShapeValidation'
 
 export interface ToolExecutionOutcome {
   index: number
@@ -733,6 +734,34 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
       })
       continue
     }
+
+    // 形状关卡：按工具 schema 校验参数类型并按证据修复（validate-then-repair）。
+    // 只处理 schema 声明且类型不符的字段；别名 / 缺参校验仍归工具本身。
+    const shapeChecked = validateAndRepairToolArgs(
+      resolvedToolCall.name,
+      tool.parameters,
+      args,
+      kind => {
+        options.emit({
+          type: 'repair_diagnostic',
+          messageId: options.messageId,
+          kind,
+          toolCallId: resolvedToolCall.id,
+          toolName: resolvedToolCall.name
+        })
+      }
+    )
+    if (shapeChecked.errorText) {
+      preparedCalls.push({
+        index,
+        toolCall: resolvedToolCall,
+        args: shapeChecked.args,
+        tool,
+        precheckOutcome: createErrorOutcome(index, resolvedToolCall, shapeChecked.args, shapeChecked.errorText)
+      })
+      continue
+    }
+    args = shapeChecked.args
 
     preparedCalls.push({
       index,

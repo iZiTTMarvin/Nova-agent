@@ -126,7 +126,10 @@ describe('accumulateRepairTotals', () => {
       unclosed_parameter: 0,
       type_coercion: 1,
       control_character: 1,
-      tool_name_case: 0
+      tool_name_case: 0,
+      shape_null_strip: 0,
+      shape_array_repair: 0,
+      shape_scalar_coercion: 0
     })
   })
 
@@ -137,7 +140,10 @@ describe('accumulateRepairTotals', () => {
       unclosed_parameter: 0,
       type_coercion: 0,
       control_character: 0,
-      tool_name_case: 0
+      tool_name_case: 0,
+      shape_null_strip: 0,
+      shape_array_repair: 0,
+      shape_scalar_coercion: 0
     })
   })
 
@@ -152,6 +158,30 @@ describe('accumulateRepairTotals', () => {
       }
     ]
     expect(accumulateRepairTotals(events).tool_name_case).toBe(1)
+  })
+
+  it('形状修复分型计数', () => {
+    const events: AgentEvent[] = [
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'shape_array_repair',
+        toolCallId: 'tc1',
+        toolName: 'edit'
+      },
+      {
+        type: 'repair_diagnostic',
+        messageId: 'm1',
+        kind: 'shape_scalar_coercion',
+        toolCallId: 'tc2',
+        toolName: 'read'
+      }
+    ]
+    expect(accumulateRepairTotals(events)).toMatchObject({
+      shape_array_repair: 1,
+      shape_scalar_coercion: 1,
+      shape_null_strip: 0
+    })
   })
 })
 
