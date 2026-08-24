@@ -70,6 +70,7 @@ export function isHardTerminalRunStatus(status: RunStatus): boolean {
 export type InteractionType =
   | 'permission'
   | 'askQuestion'
+  | 'planApproval'
 
 /** Interaction 生命周期状态 */
 export type InteractionStatus =

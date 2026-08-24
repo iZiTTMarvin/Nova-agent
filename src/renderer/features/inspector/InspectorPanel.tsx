@@ -7,6 +7,7 @@ import { useLayoutStore, INSPECTOR_WIDTH_MIN, INSPECTOR_WIDTH_MAX } from '../../
 import type { InspectorTab as InspectorTabId } from '../../stores/useLayoutStore'
 import { ReviewTab } from './ReviewTab'
 import { FilesTab } from './FilesTab'
+import { PlanInspectorView } from './PlanInspectorView'
 import './InspectorPanel.css'
 
 /**
@@ -20,6 +21,7 @@ export const InspectorPanel: React.FC = () => {
   const inspectorOpen = useLayoutStore(s => s.inspectorOpen)
   const inspectorTab = useLayoutStore(s => s.inspectorTab)
   const inspectorWidth = useLayoutStore(s => s.inspectorWidth)
+  const inspectorSurface = useLayoutStore(s => s.inspectorSurface)
   const setInspectorTab = useLayoutStore(s => s.setInspectorTab)
   const closeInspector = useLayoutStore(s => s.closeInspector)
   const setInspectorWidth = useLayoutStore(s => s.setInspectorWidth)
@@ -143,56 +145,62 @@ export const InspectorPanel: React.FC = () => {
             aria-label="调整面板宽度"
           />
           <div className="inspector-panel__inner">
-            <header className="inspector-panel__header">
-              <div className="inspector-panel__tabs" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === 'review'}
-                  className={`inspector-panel__tab${inspectorTab === 'review' ? ' inspector-panel__tab--active' : ''}`}
-                  onClick={() => switchTab('review')}
-                >
-                  审阅
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === 'files'}
-                  className={`inspector-panel__tab${inspectorTab === 'files' ? ' inspector-panel__tab--active' : ''}`}
-                  onClick={() => switchTab('files')}
-                >
-                  文件
-                </button>
-              </div>
-              <button
-                type="button"
-                className="inspector-icon-btn"
-                aria-label="关闭面板"
-                onClick={() => closeInspector()}
-              >
-                <CloseIcon size={14} />
-              </button>
-            </header>
-            <div className="inspector-panel__body">
-              {visitedReview && (
-                <div
-                  className="inspector-panel__pane"
-                  hidden={inspectorTab !== 'review'}
-                  role="tabpanel"
-                >
-                  <ReviewTab />
+            {inspectorSurface === 'plan' ? (
+              <PlanInspectorView />
+            ) : (
+              <>
+                <header className="inspector-panel__header">
+                  <div className="inspector-panel__tabs" role="tablist">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={inspectorTab === 'review'}
+                      className={`inspector-panel__tab${inspectorTab === 'review' ? ' inspector-panel__tab--active' : ''}`}
+                      onClick={() => switchTab('review')}
+                    >
+                      审阅
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={inspectorTab === 'files'}
+                      className={`inspector-panel__tab${inspectorTab === 'files' ? ' inspector-panel__tab--active' : ''}`}
+                      onClick={() => switchTab('files')}
+                    >
+                      文件
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="inspector-icon-btn"
+                    aria-label="关闭面板"
+                    onClick={() => closeInspector()}
+                  >
+                    <CloseIcon size={14} />
+                  </button>
+                </header>
+                <div className="inspector-panel__body">
+                  {visitedReview && (
+                    <div
+                      className="inspector-panel__pane"
+                      hidden={inspectorTab !== 'review'}
+                      role="tabpanel"
+                    >
+                      <ReviewTab />
+                    </div>
+                  )}
+                  {visitedFiles && (
+                    <div
+                      className="inspector-panel__pane"
+                      hidden={inspectorTab !== 'files'}
+                      role="tabpanel"
+                    >
+                      <FilesTab />
+                    </div>
+                  )}
                 </div>
-              )}
-              {visitedFiles && (
-                <div
-                  className="inspector-panel__pane"
-                  hidden={inspectorTab !== 'files'}
-                  role="tabpanel"
-                >
-                  <FilesTab />
-                </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </>
       )}

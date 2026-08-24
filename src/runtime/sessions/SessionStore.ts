@@ -1002,8 +1002,8 @@ export class SessionStore {
 
   /**
    * 批准计划确认门（用户手动点击，或 auto 模式下自动放行并留痕 auto: true）。
-   * 不校验当前阶段是否为「计划」——阶段判断属于调用方（stage_transition 工具、
-   * compose:approve-plan IPC）的编排职责，持久化层只负责状态写入本身。
+   * 不校验当前阶段是否为「计划」——阶段判断属于调用方的编排职责，
+   * 持久化层只负责状态写入本身。
    */
   approveComposePlan(sessionId: string, opts: { auto: boolean }): ComposePlanApproval | null {
     const session = this.load(sessionId)

@@ -45,9 +45,11 @@ vi.mock('../../../src/main/agent/turn', () => ({
 
 import {
   respondAskQuestion,
-  respondPermission
+  respondPermission,
+  respondPlanReview
 } from '../../../src/main/agent/interaction/AgentInteractionController'
 import { pendingAskQuestions } from '../../../src/main/agent/interaction/askQuestionWaiters'
+import { planReviewWaiters } from '../../../src/main/agent/interaction/planReviewWaiters'
 
 describe('AgentInteractionController 契约', () => {
   beforeEach(() => {
@@ -103,7 +105,7 @@ describe('AgentInteractionController 契约', () => {
 
     const result = await respondAskQuestion({
       requestId: 'spoofed_aq',
-      answers: [{ questionId: 'q1', selectedOptionIds: ['a'] }],
+      answers: [{ selectedLabels: ['a'] }],
       commandId: 'cmd_aq',
       interactionId: 'aq_1',
       expectedVersion: 1
@@ -158,6 +160,7 @@ describe('AgentInteractionController 契约', () => {
     executionRegistry.isCurrent.mockReturnValue(true)
     const resolve = vi.fn()
     pendingAskQuestions.set('aq_1', {
+      sessionId: 's1',
       runId: 'run_2',
       resolve,
       eventBus: { emit: vi.fn() } as never
@@ -457,6 +460,7 @@ describe('AgentInteractionController 契约', () => {
     const resolve = vi.fn()
     const emit = vi.fn()
     pendingAskQuestions.set('aq_1', {
+      sessionId: 's1',
       runId: 'run_1',
       resolve,
       eventBus: { emit } as never
@@ -476,5 +480,148 @@ describe('AgentInteractionController 契约', () => {
     expect(resolve).toHaveBeenCalledWith(answers)
     expect(emit).toHaveBeenCalledWith({ type: 'ask_question_resolved', requestId: 'aq_1' })
     expect(pendingAskQuestions.has('aq_1')).toBe(false)
+  })
+
+  it('plan review 按真实 permission 类型路由到 switch_mode resolver', async () => {
+    const found = {
+      interactionId: 'perm-plan',
+      runId: 'run_1',
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'permission' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: {
+        requestId: 'perm-plan',
+        toolName: 'switch_mode',
+        args: { mode: 'default', reason: '开始实施' }
+      }
+    }
+    const snapshot = {
+      runId: 'run_1',
+      sessionId: 's1',
+      status: 'waiting_user',
+      executionGeneration: 7
+    }
+    const durable = { ok: true, firstApplied: true, interaction: found, snapshot }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue(snapshot)
+    coordinator.inbox.answer.mockReturnValue(durable)
+    executionRegistry.get.mockReturnValue({ runId: 'run_1', generation: 7 })
+    executionRegistry.isCurrent.mockReturnValue(true)
+    const runLoop = {
+      hasPendingPermission: vi.fn(() => true),
+      respondPlanReview: vi.fn()
+    }
+    loopLookup.byRun.mockReturnValue(runLoop)
+
+    const result = await respondPlanReview({
+      interactionId: 'perm-plan',
+      commandId: 'revise-plan',
+      expectedVersion: 1,
+      decision: 'revise',
+      feedback: '补充数据库回滚步骤'
+    })
+
+    expect(result).toEqual(durable)
+    expect(runLoop.respondPlanReview).toHaveBeenCalledWith('perm-plan', {
+      decision: 'revise',
+      feedback: '补充数据库回滚步骤'
+    })
+  })
+
+  it('planApproval 仅在 durable answer 首次生效后 resolve 对应完整调用身份', async () => {
+    const ref = {
+      runId: 'run_1',
+      sessionId: 's1',
+      messageId: 'm1',
+      toolCallId: 'tool_1'
+    }
+    const pending = planReviewWaiters.create(ref)
+    const found = {
+      interactionId: pending.interactionId,
+      runId: ref.runId,
+      sessionId: ref.sessionId,
+      messageId: ref.messageId,
+      type: 'planApproval' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: {
+        toolName: 'stage_transition',
+        action: 'complete',
+        toolCallId: ref.toolCallId
+      }
+    }
+    const snapshot = {
+      runId: ref.runId,
+      sessionId: ref.sessionId,
+      status: 'waiting_user',
+      executionGeneration: 7
+    }
+    const durable = { ok: true, firstApplied: true, interaction: found, snapshot }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue(snapshot)
+    coordinator.inbox.answer.mockReturnValue(durable)
+    executionRegistry.get.mockReturnValue({ runId: ref.runId, generation: 7 })
+    executionRegistry.isCurrent.mockReturnValue(true)
+    const resolveSpy = vi.spyOn(planReviewWaiters, 'resolve')
+    const command = {
+      interactionId: pending.interactionId,
+      commandId: 'approve-plan',
+      expectedVersion: 1,
+      decision: 'approve' as const
+    }
+
+    expect(await respondPlanReview(command)).toEqual(durable)
+    expect(await pending.promise).toEqual({ decision: 'approve' })
+    expect(resolveSpy).toHaveBeenCalledOnce()
+
+    const answered = { ...found, status: 'answered' as const, version: 2 }
+    const duplicateAck = {
+      ok: true,
+      firstApplied: false,
+      duplicate: true,
+      interaction: answered,
+      snapshot
+    }
+    coordinator.findInteraction.mockReturnValue(answered)
+    coordinator.inbox.answer.mockReturnValue(duplicateAck)
+    const duplicate = await respondPlanReview(command)
+    expect(duplicate).toEqual(duplicateAck)
+    expect(coordinator.inbox.answer).toHaveBeenCalledTimes(2)
+    expect(resolveSpy).toHaveBeenCalledOnce()
+    resolveSpy.mockRestore()
+  })
+
+  it('plan review 不得借普通 permission 回答非 switch_mode(default) 请求', async () => {
+    const found = {
+      interactionId: 'perm_1',
+      runId: 'run_1',
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'permission' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: {
+        requestId: 'perm_1',
+        toolName: 'bash',
+        args: { command: 'npm test' }
+      }
+    }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue({ runId: 'run_1', sessionId: 's1' })
+
+    const result = await respondPlanReview({
+      interactionId: 'perm_1',
+      commandId: 'spoof-plan-review',
+      expectedVersion: 1,
+      decision: 'approve'
+    })
+
+    expect(result).toMatchObject({ ok: false, code: 'identity_mismatch' })
+    expect(coordinator.inbox.answer).not.toHaveBeenCalled()
   })
 })

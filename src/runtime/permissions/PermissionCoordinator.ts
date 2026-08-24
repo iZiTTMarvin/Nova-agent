@@ -16,6 +16,9 @@ import type { Mode } from '../../shared/session/types'
 import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { AgentEvent } from '../agent/types'
 import type { RiskLevel } from './types'
+import type { PlanReviewResolution } from '../../shared/planReview'
+import { PLAN_REVIEW_IGNORED_RESULT_MARKER } from '../../shared/planReview'
+import type { ToolControlSignal } from '../tools/types'
 import {
   isSafeAutomaticModeTransition,
   type PermissionManager
@@ -49,7 +52,10 @@ export interface PermissionCheckResult {
   allowed: boolean
   reason: string
   aborted?: boolean
+  control?: ToolControlSignal
 }
+
+type PermissionResponse = PlanReviewResolution | { decision: 'deny' }
 
 /** 叠加在基础 PermissionManager 之前的运行时权限策略（阶段工作流等更窄的能力边界） */
 export type ToolAuthorizationPolicy = (
@@ -80,7 +86,7 @@ export class PermissionCoordinator {
   /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
   private readonly pendingPermissions = new Map<
     string,
-    { resolve: (granted: boolean) => void; reject: (err: Error) => void }
+    { resolve: (response: PermissionResponse) => void; reject: (err: Error) => void }
   >()
 
   constructor(private readonly deps: PermissionCoordinatorDeps) {}
@@ -169,11 +175,21 @@ export class PermissionCoordinator {
     })
 
     try {
-      const granted = await permissionResponse
-      if (!granted) {
-        return { allowed: false, reason: `用户拒绝了 "${toolName}" 工具的执行请求` }
+      const response = await permissionResponse
+      if (response.decision === 'approve') {
+        return { allowed: true, reason: '' }
       }
-      return { allowed: true, reason: '' }
+      if (response.decision === 'revise') {
+        return { allowed: false, reason: response.feedback }
+      }
+      if (response.decision === 'ignore') {
+        return {
+          allowed: false,
+          reason: `${PLAN_REVIEW_IGNORED_RESULT_MARKER}，本轮正常结束。`,
+          control: { type: 'turn_complete' }
+        }
+      }
+      return { allowed: false, reason: `用户拒绝了 "${toolName}" 工具的执行请求` }
     } catch (err) {
       if (err instanceof PermissionAbortedError) {
         return { allowed: false, reason: '', aborted: true }
@@ -260,12 +276,23 @@ export class PermissionCoordinator {
     })
 
     try {
-      const granted = await permissionResponse
+      const response = await permissionResponse
       for (const item of askItems) {
-        if (!granted) {
-          results.set(item.toolCallId, { allowed: false, reason: `用户拒绝了 "${item.toolName}" 工具的执行请求` })
-        } else {
+        if (response.decision === 'approve') {
           results.set(item.toolCallId, { allowed: true, reason: '' })
+        } else if (response.decision === 'revise') {
+          results.set(item.toolCallId, { allowed: false, reason: response.feedback })
+        } else if (response.decision === 'ignore') {
+          results.set(item.toolCallId, {
+            allowed: false,
+            reason: `${PLAN_REVIEW_IGNORED_RESULT_MARKER}，本轮正常结束。`,
+            control: { type: 'turn_complete' }
+          })
+        } else {
+          results.set(item.toolCallId, {
+            allowed: false,
+            reason: `用户拒绝了 "${item.toolName}" 工具的执行请求`
+          })
         }
       }
       return results
@@ -281,7 +308,7 @@ export class PermissionCoordinator {
   }
 
   /** 等待用户对权限请求的响应；abortPending 时会以 PermissionAbortedError reject */
-  private waitForPermissionResponse(requestId: string): Promise<boolean> {
+  private waitForPermissionResponse(requestId: string): Promise<PermissionResponse> {
     return new Promise((resolve, reject) => {
       this.pendingPermissions.set(requestId, { resolve, reject })
     })
@@ -297,11 +324,18 @@ export class PermissionCoordinator {
    * 未知 / 已消费的 requestId 是无操作——过期回应不得串到其他等待中的请求。
    */
   respondPermission(requestId: string, granted: boolean): void {
+    this.resolvePermission(requestId, granted ? { decision: 'approve' } : { decision: 'deny' })
+  }
+
+  respondPlanReview(requestId: string, resolution: PlanReviewResolution): void {
+    this.resolvePermission(requestId, resolution)
+  }
+
+  private resolvePermission(requestId: string, response: PermissionResponse): void {
     const entry = this.pendingPermissions.get(requestId)
-    if (entry) {
-      this.pendingPermissions.delete(requestId)
-      entry.resolve(granted)
-    }
+    if (!entry) return
+    this.pendingPermissions.delete(requestId)
+    entry.resolve(response)
   }
 
   /**

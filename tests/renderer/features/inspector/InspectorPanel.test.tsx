@@ -21,6 +21,10 @@ vi.mock('../../../../src/renderer/features/inspector/FilesTab', () => ({
   FilesTab: () => <div data-testid="files-tab" />
 }))
 
+vi.mock('../../../../src/renderer/features/inspector/PlanInspectorView', () => ({
+  PlanInspectorView: () => <div data-testid="plan-inspector" />
+}))
+
 describe('InspectorPanel', () => {
   beforeEach(() => {
     resetLayoutStoreForTests()
@@ -40,6 +44,18 @@ describe('InspectorPanel', () => {
     expect(aside?.style.transform).toBe('translateX(0)')
     const openWidth = useLayoutStore.getState().inspectorWidth
     expect(aside?.style.width).toBe(`${openWidth}px`)
+    renderer.unmount()
+  })
+
+  it('计划 surface 使用同一个面板壳且不并列显示标准 tabs', () => {
+    const renderer = renderDom(<InspectorPanel />)
+    act(() => {
+      useLayoutStore.getState().openPlan({ sessionId: 's1', messageId: 'm1', toolCallId: 'p1' })
+    })
+
+    expect(renderer.container.querySelector('[data-testid="plan-inspector"]')).not.toBeNull()
+    expect(renderer.container.querySelector('.inspector-panel__tabs')).toBeNull()
+    expect(renderer.container.querySelectorAll('.inspector-panel')).toHaveLength(1)
     renderer.unmount()
   })
 

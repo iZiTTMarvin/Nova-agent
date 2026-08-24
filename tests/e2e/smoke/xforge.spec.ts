@@ -44,27 +44,22 @@ test('XForge 手动批准：计划硬门拦住开发，批准后走完六阶段'
       },
       callId: 'call_save_plan'
     },
-    { kind: 'tool', name: 'stage_transition', arguments: { action: 'complete' }, callId: 'call_plan_gate_locked' },
-    { kind: 'text', text: 'NOVA_E2E_PLAN_READY' }
+    { kind: 'tool', name: 'stage_transition', arguments: { action: 'complete' }, callId: 'call_plan_review' }
   )
 
   await nova.sendPrompt('帮我做一个番茄钟 app')
-  await nova.provider.waitForRequestCount(4)
-  await expect(nova.page.getByText('NOVA_E2E_PLAN_READY', { exact: false })).toBeVisible()
-  await nova.waitUntilIdle()
+  await nova.provider.waitForRequestCount(3)
 
-  // 计划硬门：未经批准时 stage_transition(complete) 必须被拒绝并回灌给模型
-  const gateRequest = JSON.stringify(nova.provider.requests[3]?.body ?? {})
-  expect(gateRequest).toContain('计划尚未获得用户批准')
-
+  const waiting = await nova.getRunSnapshot(sessionId)
+  expect(waiting?.status).toBe('waiting_user')
   await expectCurrentStage(nova.page, '计划')
   await expectCompletedCount(nova.page, 1)
   expect(await readPlanMarkdown(nova.workspacePath)).toContain('# 番茄钟 E2E 计划')
 
-  const reviewCard = nova.page.getByLabel('计划审阅')
+  const reviewCard = nova.page.locator('section.plan-review-card')
   await expect(reviewCard).toBeVisible()
   await expect(reviewCard).toContainText('番茄钟计划')
-  const approve = nova.page.getByRole('button', { name: /批准并开始开发/ })
+  const approve = nova.page.getByLabel('实施计划审批').getByRole('button', { name: '批准', exact: true })
   await expect(approve).toBeEnabled()
 
   nova.provider.enqueue(
@@ -76,7 +71,6 @@ test('XForge 手动批准：计划硬门拦住开发，批准后走完六阶段'
       },
       callId: 'call_todo_import'
     },
-    { kind: 'tool', name: 'stage_transition', arguments: { action: 'complete' }, callId: 'call_plan_done' },
     {
       kind: 'tool',
       name: 'write',
@@ -101,10 +95,10 @@ test('XForge 手动批准：计划硬门拦住开发，批准后走完六阶段'
   )
 
   await approve.click()
-  await nova.provider.waitForRequestCount(12)
+  await nova.provider.waitForRequestCount(10)
   await expectCurrentStage(nova.page, '收尾')
   await expect(nova.page.getByText('NOVA_E2E_XFORGE_REPORT', { exact: false })).toBeVisible()
-  await expect(reviewCard).toContainText('已批准，进入「开发」阶段')
+  await expect(nova.page.getByLabel('实施计划审批')).toHaveCount(0)
   await nova.waitUntilIdle()
 
   expect(await readFile(path.join(nova.workspacePath, 'tomato-timer.html'), 'utf8'))
@@ -169,8 +163,7 @@ test('XForge 全自动：计划门自动放行并闭环走完六阶段', async (
   const planApprovalRequest = JSON.stringify(nova.provider.requests[2]?.body ?? {})
   expect(planApprovalRequest).toContain('[自动推进已开启]')
 
-  await expect(nova.page.getByText('已自动批准（auto 模式）', { exact: false })).toBeVisible()
-  await expect(nova.page.getByRole('button', { name: /批准并开始开发/ })).toHaveCount(0)
+  await expect(nova.page.getByLabel('实施计划审批')).toHaveCount(0)
   await expectCompletedCount(nova.page, 6)
   await expect(nova.page.locator(CURRENT_STAGE)).toHaveCount(0)
 

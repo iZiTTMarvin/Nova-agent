@@ -6,14 +6,25 @@
  * - todo_write：由会话顶部 TodoPanel 统一渲染，此处返回 null 避免与消息流重复
  */
 import React from 'react'
+import type { PendingPlanReview } from '../../../shared/planReview'
+import { isPlanReviewIgnoredResult } from '../../../shared/planReview'
 import { AskQuestionToolCard } from './AskQuestionToolCard'
+import { PlanApprovalCard, PlanApprovalIgnoredCard } from './PlanApprovalCard'
+import { PlanReviewCard } from './PlanReviewCard'
 import { ToolTraceRow } from './ToolTraceRow'
 import type { RendererToolBlock } from '../../stores/types'
 import { SubagentToolRow } from '../subagents/SubagentActivityRow'
 
+export interface RenderToolBlockContext {
+  messageId: string
+  sessionId?: string | null
+  pendingPlanReview?: PendingPlanReview | null
+}
+
 export function renderToolBlock(
   block: RendererToolBlock,
-  isCurrentAssistantGenerating: boolean
+  isCurrentAssistantGenerating: boolean,
+  context?: RenderToolBlockContext
 ): React.ReactNode {
   // 工具级：瞬时工具（askQuestion / write / edit / 默认行）流式态，工具完成即结束
   const isLive = isCurrentAssistantGenerating && block.status === 'running'
@@ -23,13 +34,29 @@ export function renderToolBlock(
     return null
   }
 
-  // save_plan 由 MessageItem 在过程/结论边界处渲染计划审阅卡，通用工具行不重复展示
   if (block.toolName === 'save_plan') {
-    return null
+    if (!context?.sessionId) return null
+    return (
+      <PlanReviewCard
+        key={block.toolCallId}
+        sessionId={context.sessionId}
+        messageId={context.messageId}
+        toolCallId={block.toolCallId}
+        status={block.status}
+        args={block.arguments}
+        result={block.result}
+      />
+    )
   }
 
-  // stage_transition 由会话顶部阶段条统一呈现，不在消息流里展示原始 JSON/状态码
-  if (block.toolName === 'stage_transition') {
+  if (block.toolName === 'switch_mode' || block.toolName === 'stage_transition') {
+    // 控制面工具只有两种可见形态：等待审批的交互卡，以及忽略决定随工具结果持久化后的灰态记录
+    if (context?.pendingPlanReview?.toolCallId === block.toolCallId) {
+      return <PlanApprovalCard key={block.toolCallId} review={context.pendingPlanReview} />
+    }
+    if (isPlanReviewIgnoredResult(block.result)) {
+      return <PlanApprovalIgnoredCard key={block.toolCallId} />
+    }
     return null
   }
 

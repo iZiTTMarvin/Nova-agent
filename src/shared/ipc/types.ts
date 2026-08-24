@@ -245,6 +245,10 @@ export interface IpcCommands {
     }
     result: void | InteractionAnswerResult
   }
+  'respond-plan-review': {
+    params: unknown
+    result: InteractionAnswerResult
+  }
   'respond-ask-question': {
     params: {
       requestId: string
@@ -430,10 +434,6 @@ export interface IpcCommands {
   'compose:apply-stage-transition': {
     params: { sessionId: string; action: ComposeStageAction }
     result: { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string }
-  }
-  'compose:approve-plan': {
-    params: { sessionId: string }
-    result: { ok: true; approval: ComposePlanApproval } | { ok: false; error: string }
   }
   'workspace:regenerate': {
     params: { sessionId: string; messageId: string }

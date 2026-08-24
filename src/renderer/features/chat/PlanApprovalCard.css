@@ -1,0 +1,180 @@
+.plan-approval-card {
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid var(--border-warm);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+/* 忽略后的终态：无交互、整体降为灰阶记录 */
+.plan-approval-card--ignored {
+  background: color-mix(in srgb, var(--bg-card) 72%, var(--bg-app));
+  box-shadow: none;
+}
+
+.plan-approval-card--ignored .plan-approval-card__header {
+  padding-bottom: 13px;
+  border-bottom: 0;
+}
+
+.plan-approval-card__resolved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.plan-approval-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px 11px;
+  border-bottom: 1px solid var(--border-cream);
+}
+
+.plan-approval-card__eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.plan-approval-card__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.94rem;
+  font-weight: 650;
+}
+
+.plan-approval-card__count {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.plan-approval-card__choices {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.plan-approval-card__choice,
+.plan-approval-card__feedback {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border-cream);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-card) 82%, var(--bg-sand));
+  color: var(--text-primary);
+}
+
+.plan-approval-card__choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.plan-approval-card__choice--selected,
+.plan-approval-card__feedback--selected {
+  border-color: color-mix(in srgb, var(--color-brand) 58%, var(--border-warm));
+  background: color-mix(in srgb, var(--color-brand) 7%, var(--bg-card));
+}
+
+.plan-approval-card__radio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-warm);
+  border-radius: 50%;
+  color: var(--bg-card);
+  background: var(--bg-card);
+}
+
+.plan-approval-card__choice--selected .plan-approval-card__radio {
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+}
+
+.plan-approval-card__choice strong,
+.plan-approval-card__choice small {
+  display: block;
+}
+
+.plan-approval-card__choice strong {
+  font-size: 0.83rem;
+}
+
+.plan-approval-card__choice small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.plan-approval-card__feedback {
+  display: grid;
+  gap: 7px;
+  padding: 10px 11px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.plan-approval-card__feedback textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  min-height: 66px;
+  padding: 8px 9px;
+  border: 1px solid var(--border-warm);
+  border-radius: 7px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font: 400 0.8rem/1.45 var(--font-sans);
+}
+
+.plan-approval-card__feedback textarea:focus {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 15%, transparent);
+}
+
+.plan-approval-card__error {
+  padding: 0 14px 10px;
+  color: var(--nova-status-error, var(--color-error));
+  font-size: 0.76rem;
+}
+
+.plan-approval-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border-cream);
+}
+
+.plan-approval-card__hint {
+  margin-right: auto;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+
+@media (max-width: 760px) {
+  .plan-approval-card__hint {
+    display: none;
+  }
+}

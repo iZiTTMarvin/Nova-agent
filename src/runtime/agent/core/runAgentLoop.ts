@@ -158,6 +158,7 @@ export interface LoopEndResult {
 export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult> {
   const { messageId, userText, context, config, streamProcessor, hookManager, emit } = p
   let toolRound = 0
+  let turnCompletedByControl = false
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
   const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
@@ -349,6 +350,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           })
           p.onToolResultCommitted?.(content)
         }
+        p.updateTokenEstimate()
+        if (batchResult.outcomes.some(outcome => outcome.control?.type === 'turn_complete')) {
+          turnCompletedByControl = true
+          break
+        }
         // 工具写回后、下一轮模型前：mid-turn 主动压缩。
         // fail-open 由编排层兜底：端口拒绝不得终止 turn，交给后续溢出恢复。
         if (p.runMidTurnCompaction) {
@@ -371,7 +377,6 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             continue
           }
         }
-        p.updateTokenEstimate()
       }
 
       if (batchResult.aborted || p.signal() || p.abortSignal()?.aborted) {
@@ -436,7 +441,12 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   // 循环条件耗尽（while 判定为 false 而非 break 退出）同样记为 max_rounds。
   // toolRound > 0 排除从未进入循环的配置（模型一次都未被调用，不算轮数耗尽）；
   // signal 提前 break 时 toolRound 尚未触及上限，也不会误判。
-  if (stopReason === undefined && toolRound > 0 && toolRound >= config.maxToolRounds) {
+  if (
+    !turnCompletedByControl &&
+    stopReason === undefined &&
+    toolRound > 0 &&
+    toolRound >= config.maxToolRounds
+  ) {
     stopReason = 'max_rounds'
   }
   return { ended: 'normal', ...(stopReason ? { stopReason } : {}) }

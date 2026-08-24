@@ -9,6 +9,7 @@ import {
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useRunStore } from '../../stores/useRunStore'
+import { projectPendingPlanReview } from '../../../shared/planReview'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { selectSupportsVisionFromConfig } from '../../stores/selectors'
@@ -149,14 +150,18 @@ export const ChatPanel: React.FC = () => {
   const interruptedAction = useRunStore(state => state.interruptedAction)
   const clearInterrupted = useRunStore(state => state.clearInterrupted)
   const interruptedSteps = useRunStore(state => state.interruptedSteps)
+  const runSnapshot = useRunStore(state => state.snapshot)
+  const pendingPlanReview = useMemo(() => projectPendingPlanReview(runSnapshot), [runSnapshot])
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
 
   const isPausedForUserInput =
     !!pendingAskQuestion ||
-    !!pendingPermissionRequest
-  const pausedMessageId = pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+    !!pendingPermissionRequest ||
+    !!pendingPlanReview
+  const pausedMessageId =
+    pendingPlanReview?.messageId ?? pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
 
   // 取消/中断都归属发起会话：其他会话的视图不呈现、不操作（归属未知时按旧语义放行当前会话）
   const cancellingForCurrentSession =

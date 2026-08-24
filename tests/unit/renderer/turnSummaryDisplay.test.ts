@@ -22,9 +22,9 @@ describe('formatDurationMs', () => {
 })
 
 describe('formatWorkedHeader', () => {
-  it('live 显示正在工作…', () => {
-    expect(formatWorkedHeader({ phase: 'live' })).toBe('正在工作…')
-    expect(formatWorkedHeader({ phase: 'live', elapsedMs: 5000 })).toBe('正在工作… 5 秒')
+  it('live 显示不可折叠的工作中时长', () => {
+    expect(formatWorkedHeader({ phase: 'live' })).toBe('工作中')
+    expect(formatWorkedHeader({ phase: 'live', elapsedMs: 5000 })).toBe('工作中 5 秒')
   })
 
   it('completed 有 duration 显示已工作', () => {

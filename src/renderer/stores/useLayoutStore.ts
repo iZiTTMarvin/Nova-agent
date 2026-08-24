@@ -5,10 +5,23 @@
 import { create } from 'zustand'
 
 export type InspectorTab = 'review' | 'files'
+export type InspectorSurface = 'standard' | 'plan'
 
 export type ReviewTarget = {
   messageId: string
   filePath?: string
+}
+
+export type PlanTarget = {
+  sessionId: string
+  messageId: string
+  toolCallId: string
+  expectedPath?: string
+}
+
+type PlanReturnState = {
+  inspectorOpen: boolean
+  inspectorTab: InspectorTab
 }
 
 const STORAGE_PREFIX = 'nova.layout.'
@@ -25,7 +38,10 @@ const DEFAULTS = {
   inspectorOpen: false,
   inspectorTab: 'review' as InspectorTab,
   inspectorWidth: 420,
-  reviewTarget: null as ReviewTarget | null
+  reviewTarget: null as ReviewTarget | null,
+  inspectorSurface: 'standard' as InspectorSurface,
+  planTarget: null as PlanTarget | null,
+  planReturnState: null as PlanReturnState | null
 }
 
 function canUseLocalStorage(): boolean {
@@ -92,11 +108,15 @@ export interface LayoutStoreState {
   inspectorTab: InspectorTab
   inspectorWidth: number
   reviewTarget: ReviewTarget | null
+  inspectorSurface: InspectorSurface
+  planTarget: PlanTarget | null
+  planReturnState: PlanReturnState | null
 
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
   openReview: (target: ReviewTarget) => void
   openFiles: () => void
+  openPlan: (target: PlanTarget) => void
   closeInspector: () => void
   toggleInspector: (tab?: InspectorTab) => void
   setInspectorWidth: (w: number) => void
@@ -126,15 +146,52 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
 
   openReview: (target) => {
     writeStored('inspectorTab', 'review')
-    set({ inspectorOpen: true, inspectorTab: 'review', reviewTarget: target })
+    set({
+      inspectorOpen: true,
+      inspectorTab: 'review',
+      reviewTarget: target,
+      inspectorSurface: 'standard',
+      planTarget: null,
+      planReturnState: null
+    })
   },
 
   openFiles: () => {
     writeStored('inspectorTab', 'files')
-    set({ inspectorOpen: true, inspectorTab: 'files' })
+    set({
+      inspectorOpen: true,
+      inspectorTab: 'files',
+      inspectorSurface: 'standard',
+      planTarget: null,
+      planReturnState: null
+    })
+  },
+
+  openPlan: (target) => {
+    const state = get()
+    set({
+      inspectorOpen: true,
+      inspectorSurface: 'plan',
+      planTarget: target,
+      planReturnState: state.inspectorSurface === 'plan'
+        ? state.planReturnState
+        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
+    })
   },
 
   closeInspector: () => {
+    const state = get()
+    if (state.inspectorSurface === 'plan') {
+      const restore = state.planReturnState
+      set({
+        inspectorOpen: restore?.inspectorOpen ?? false,
+        inspectorTab: restore?.inspectorTab ?? state.inspectorTab,
+        inspectorSurface: 'standard',
+        planTarget: null,
+        planReturnState: null
+      })
+      return
+    }
     set({ inspectorOpen: false })
   },
 

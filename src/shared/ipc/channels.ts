@@ -57,6 +57,7 @@ export const SET_MODE = 'set-mode' as const
 export const ACCEPT_FILE = 'accept-file' as const
 export const REJECT_FILE = 'reject-file' as const
 export const RESPOND_PERMISSION = 'respond-permission' as const
+export const RESPOND_PLAN_REVIEW = 'respond-plan-review' as const
 export const RESPOND_ASK_QUESTION = 'respond-ask-question' as const
 export const LOAD_SESSIONS = 'load-sessions' as const
 export const LOAD_SESSION = 'load-session' as const
@@ -98,8 +99,6 @@ export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 export const WORKSPACE_OPEN_ACTIVE_PLAN = 'workspace:open-active-plan' as const
 /** compose 阶段条手动推进/跳过/回退（与 stage_transition 工具同一套校验） */
 export const COMPOSE_APPLY_STAGE_TRANSITION = 'compose:apply-stage-transition' as const
-/** 计划审阅卡「批准」按钮专用：只推进计划确认门，不改动阶段表 */
-export const COMPOSE_APPROVE_PLAN = 'compose:approve-plan' as const
 /** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */
 export const WORKSPACE_REGENERATE = 'workspace:regenerate' as const
 /** 切换兄弟分支（LCA 文件 undo + setCurrentLeaf） */

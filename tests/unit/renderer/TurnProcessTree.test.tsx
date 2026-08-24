@@ -1,8 +1,5 @@
 // @vitest-environment jsdom
 
-/**
- * TurnProcessTree mount 门控单测：折叠时过程时间线不 mount
- */
 import React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { TurnProcessTree } from '../../../src/renderer/features/chat/TurnProcessTree'
@@ -11,21 +8,20 @@ import type { RendererMessageBlock, RendererToolBlock } from '../../../src/rende
 import { act, renderDom } from './renderDom'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
-
 vi.mock('../../../src/renderer/features/chat/ProcessTraceList', () => ({
-  ProcessTraceList: () => React.createElement('div', { className: 'tool-trace-row', 'data-testid': 'mock-trace' })
+  ProcessTraceList: ({ segments }: { segments: Array<{ display?: string }> }) =>
+    React.createElement(
+      'div',
+      { className: `trace-${segments[0]?.display ?? 'legacy'}`, 'data-testid': 'mock-trace' },
+      segments[0]?.display
+    )
 }))
 
-vi.mock('../../../src/renderer/stores/useAgentStore', () => ({
-  useAgentStore: (selector: (s: { pendingPermissionRequest: null; pendingAskQuestion: null }) => unknown) =>
-    selector({ pendingPermissionRequest: null, pendingAskQuestion: null })
-}))
-
-function toolBlock(id: string): RendererToolBlock {
+function toolBlock(id: string, toolName = 'read'): RendererToolBlock {
   return {
     type: 'tool',
     toolCallId: id,
-    toolName: 'read',
+    toolName,
     arguments: { path: `${id}.ts` },
     status: 'success'
   }
@@ -34,8 +30,10 @@ function toolBlock(id: string): RendererToolBlock {
 function buildCompletedModel() {
   const blocks: RendererMessageBlock[] = [
     toolBlock('1'),
+    { type: 'text', content: '计划说明' },
+    toolBlock('plan', 'save_plan'),
     toolBlock('2'),
-    { type: 'text', content: '结论' }
+    { type: 'text', content: '最终结论' }
   ]
   return buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
 }
@@ -43,15 +41,18 @@ function buildCompletedModel() {
 function renderTree(
   isLive: boolean,
   persistedUserOpen?: boolean,
-  onUserOpenChange?: (open: boolean) => void
+  onUserOpenChange?: (open: boolean) => void,
+  model = buildCompletedModel(),
+  interrupted = false
 ) {
   return renderDom(
     <TurnProcessTree
-      model={buildCompletedModel()}
-      messageId="msg_1"
+      model={model}
+      messageId="msg-1"
       isLive={isLive}
-      isCurrentAssistantGenerating={false}
-      isTurnActiveForThisMsg={false}
+      interrupted={interrupted}
+      isCurrentAssistantGenerating={isLive}
+      isTurnActiveForThisMsg={isLive}
       isPausedForInput={false}
       blocks={[]}
       persistedUserOpen={persistedUserOpen}
@@ -60,47 +61,75 @@ function renderTree(
   )
 }
 
-describe('TurnProcessTree mount 门控', () => {
-  it('completed 默认折叠 → 过程时间线不 mount', () => {
+describe('TurnProcessTree', () => {
+  it('completed 默认折叠整个工作过程（含计划卡），仅最终文本保持挂载', () => {
     const renderer = renderTree(false)
-    expect(renderer.container.querySelectorAll('.tool-trace-row')).toHaveLength(0)
+    expect(renderer.container.querySelector('.trace-process')).toBeNull()
+    expect(renderer.container.querySelectorAll('.trace-persistent').length).toBeGreaterThan(0)
+    expect(renderer.container.querySelector('[data-testid="turn-no-summary"]')).toBeNull()
     renderer.unmount()
   })
 
-  it('live 默认展开 → 过程时间线直接 mount', () => {
+  it('live 显示不可点击的工作状态行且没有 disclosure 箭头，过程区直接展开', () => {
     const renderer = renderTree(true)
-    expect(renderer.container.querySelectorAll('.tool-trace-row').length).toBeGreaterThan(0)
+    const header = renderer.container.querySelector('[data-testid="turn-process-header"]')
+    expect(header?.tagName).toBe('DIV')
+    expect(renderer.container.querySelector('.turn-process-tree__chevron')).toBeNull()
+    expect(renderer.container.querySelector('.trace-process')).not.toBeNull()
+    expect(renderer.container.querySelector('.trace-persistent')).not.toBeNull()
     renderer.unmount()
   })
 
-  it('点击折叠头展开 → 挂载过程时间线；再次点击 → 收起卸载', () => {
+  it('completed 点击折叠头切换过程挂载，最终文本始终外露', () => {
     const renderer = renderTree(false)
     const header = renderer.container.querySelector<HTMLElement>('[data-testid="turn-process-header"]')
-    expect(header).not.toBeNull()
+    act(() => header?.click())
+    expect(renderer.container.querySelector('.trace-process')).not.toBeNull()
+    expect(renderer.container.querySelector('.trace-persistent')).not.toBeNull()
 
-    act(() => {
-      header?.click()
-    })
-    expect(renderer.container.querySelectorAll('.tool-trace-row').length).toBeGreaterThan(0)
-
-    act(() => {
-      header?.click()
-    })
-    expect(renderer.container.querySelectorAll('.tool-trace-row')).toHaveLength(0)
+    act(() => header?.click())
+    expect(renderer.container.querySelector('.trace-process')).toBeNull()
+    expect(renderer.container.querySelector('.trace-persistent')).not.toBeNull()
     renderer.unmount()
   })
 
-  it('把用户展开状态交给虚拟列表保存，重挂载后仍保持展开', () => {
+  it('用户展开状态可由虚拟列表保存并在重挂载后恢复', () => {
     const onUserOpenChange = vi.fn()
     const first = renderTree(false, undefined, onUserOpenChange)
-    const header = first.container.querySelector<HTMLElement>('[data-testid="turn-process-header"]')
-
-    act(() => header?.click())
+    act(() => first.container.querySelector<HTMLElement>('[data-testid="turn-process-header"]')?.click())
     expect(onUserOpenChange).toHaveBeenCalledWith(true)
     first.unmount()
 
     const remounted = renderTree(false, true, onUserOpenChange)
-    expect(remounted.container.querySelectorAll('.tool-trace-row').length).toBeGreaterThan(0)
+    expect(remounted.container.querySelector('.trace-process')).not.toBeNull()
     remounted.unmount()
+  })
+
+  it('无最终 text 的 completed 轮次在折叠区外展示占位文案；中断轮次不展示', () => {
+    const blocks: RendererMessageBlock[] = [
+      toolBlock('1'),
+      { type: 'text', content: '计划说明' },
+      toolBlock('plan', 'save_plan')
+    ]
+    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
+    expect(model.missingAnswer).toBe(true)
+
+    const finished = renderTree(false, undefined, undefined, model)
+    expect(finished.container.querySelector('[data-testid="turn-no-summary"]')?.textContent)
+      .toBe('已结束，未生成总结')
+    finished.unmount()
+
+    const interrupted = renderTree(false, undefined, undefined, model, true)
+    expect(interrupted.container.querySelector('[data-testid="turn-no-summary"]')).toBeNull()
+    interrupted.unmount()
+
+    const working = renderTree(true, undefined, undefined, buildTurnRenderModel({
+      blocks,
+      toolCalls: [],
+      mode: 'default',
+      phase: 'live'
+    }))
+    expect(working.container.querySelector('[data-testid="turn-no-summary"]')).toBeNull()
+    working.unmount()
   })
 })

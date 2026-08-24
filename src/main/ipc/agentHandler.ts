@@ -4,7 +4,14 @@
  */
 import { BrowserWindow } from 'electron'
 import { handle } from './secureIpc'
-import { SEND_MESSAGE, CANCEL_EXECUTION, RESPOND_PERMISSION, RESPOND_ASK_QUESTION } from '../../shared/ipc/channels'
+import {
+  SEND_MESSAGE,
+  CANCEL_EXECUTION,
+  RESPOND_PERMISSION,
+  RESPOND_PLAN_REVIEW,
+  RESPOND_ASK_QUESTION
+} from '../../shared/ipc/channels'
+import { parsePlanReviewCommand } from '../../shared/planReview'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import {
@@ -14,6 +21,7 @@ import {
 import {
   cancelExecution,
   respondPermission,
+  respondPlanReview,
   respondAskQuestion
 } from '../agent/interaction'
 
@@ -36,6 +44,19 @@ export function registerAgentHandler(
   handle(CANCEL_EXECUTION, async (_event, params) => cancelExecution(params ?? {}))
 
   handle(RESPOND_PERMISSION, async (_event, params) => respondPermission(params))
+
+  handle(RESPOND_PLAN_REVIEW, async (_event, params: unknown) => {
+    const parsed = parsePlanReviewCommand(params)
+    if (!parsed.ok) {
+      return {
+        ok: false as const,
+        code: 'identity_mismatch' as const,
+        message: parsed.message,
+        firstApplied: false
+      }
+    }
+    return respondPlanReview(parsed.command)
+  })
 
   handle(RESPOND_ASK_QUESTION, async (_event, params) => respondAskQuestion(params))
 }

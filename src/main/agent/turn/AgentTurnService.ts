@@ -59,6 +59,7 @@ import {
   dismissPendingAskQuestionsForSession,
   dismissPendingAskQuestionsForRun
 } from '../interaction/askQuestionWaiters'
+import { planReviewWaiters } from '../interaction/planReviewWaiters'
 import {
   enqueueSteeringMessage,
   dequeueSteeringMessage,
@@ -526,6 +527,7 @@ export async function sendAgentMessage(
       },
       onCleanup: (context) => {
         agentLoopsByRunId.delete(context.runId)
+        planReviewWaiters.cancelForRun(context.runId)
         disposeTurnStreams(context.runId, context.executionGeneration)
         writerLeaseRegistry.release(context.resourceOwnerRunId)
         setActiveRunId(null)

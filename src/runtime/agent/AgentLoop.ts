@@ -37,6 +37,7 @@ import { preferredToolDialect, type ToolDialect } from '../model/dialect'
 import { createReadState, type ReadState } from '../tools/editTool'
 import type { ArtifactStore } from '../artifacts/ArtifactStore'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
+import type { PlanReviewResolution } from '../../shared/planReview'
 import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 import { isToolDirectlyPresented } from '../code-mode'
@@ -178,6 +179,7 @@ export class AgentLoop {
    * 不调用时 askQuestion 工具降级为 no-op，主要用于子 agent / 测试场景。
    */
   private askQuestionHandler?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  private planReviewHandler?: ToolContext['requestPlanReview']
   /** 当前轮次的编排自动化快照；只透传给工具上下文，不参与 AgentLoop 控制流。 */
   private autoMode = false
   /** 经 PermissionManager 批准后，由宿主同步会话、WorkspaceService 与当前循环。 */
@@ -576,6 +578,10 @@ export class AgentLoop {
     this.askQuestionHandler = handler
   }
 
+  setPlanReviewHandler(handler: NonNullable<ToolContext['requestPlanReview']>): void {
+    this.planReviewHandler = handler
+  }
+
   setSwitchModeHandler(handler: NonNullable<ToolContext['switchMode']>): void {
     this.switchModeHandler = handler
   }
@@ -809,6 +815,7 @@ export class AgentLoop {
         readState: this.ctx.readState,
         artifactStore: this.ctx.artifactStore,
         askQuestion: this.askQuestionHandler,
+        requestPlanReview: this.planReviewHandler,
         switchMode: this.switchModeHandler,
         // 本会话已触发的 skill 目录 → 只读工具的额外允许根
         extraAllowedRoots: [...this.skillRoots],
@@ -1080,6 +1087,10 @@ export class AgentLoop {
    */
   respondPermission(requestId: string, granted: boolean): void {
     this.permissionCoordinator.respondPermission(requestId, granted)
+  }
+
+  respondPlanReview(requestId: string, resolution: PlanReviewResolution): void {
+    this.permissionCoordinator.respondPlanReview(requestId, resolution)
   }
 
   /** 清空对话上下文 */

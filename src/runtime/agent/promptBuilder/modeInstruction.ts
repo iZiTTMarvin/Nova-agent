@@ -19,9 +19,8 @@ function buildPlanInstruction(opts?: ModeInstructionOptions): string {
     '禁止修改业务文件、禁止执行 shell。唯一允许的文件副作用是调用 save_plan，把完整 Markdown 计划写入当前项目的 .nova/plans/。',
     '计划必须覆盖目标、范围与非目标、当前调用链证据、职责与数据流、分阶段改动、保护的已有行为、失败模式、验证、回退和待决事项。',
     '完成前必须调用 save_plan；不要只在聊天正文里留下不可恢复的计划。',
-    'save_plan 成功后，完整计划会显示在计划审阅卡中。用一两句话总结计划要点并立即结束本轮，等待用户在审阅卡上选择「执行」或「需要更正」，不要假定用户已经批准。',
-    '保存计划后不要自行调用 switch_mode 退出 plan，也不要用 askQuestion 询问是否批准或如何推进计划；批准与更正交互由审阅卡承担。',
-    '只有当用户在文字回复中明确批准计划后，才可调用 switch_mode 请求切换到 default；切换必须经过用户确认。'
+    'save_plan 成功后必须立即调用 switch_mode(mode: default)，通过计划审阅交互等待用户批准、更正或忽略；不要先结束本轮。',
+    '不要用 askQuestion 询问是否批准或如何推进计划；审阅结果会在同一 run 内恢复 switch_mode。批准后立即按 active plan 继续实施，更正时根据反馈继续修订，忽略时正常结束本轮。'
   ]
   if (opts?.activePlanPath) {
     lines.push(`当前会话已有 active plan: ${opts.activePlanPath}。修订同一计划时沿用原标题，避免生成重复文件。`)

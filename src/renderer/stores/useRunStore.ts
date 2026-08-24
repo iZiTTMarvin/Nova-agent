@@ -9,6 +9,7 @@
 import { create } from 'zustand'
 import type { RunSnapshot, PendingInteraction, RunStatus } from '../../shared/run/types'
 import type { AskQuestionRequest } from '../../shared/askQuestion/types'
+import { projectPendingPlanReview } from '../../shared/planReview'
 import type { PendingPermissionRequest } from './types'
 import { useAgentStore } from './useAgentStore'
 
@@ -100,7 +101,10 @@ export function projectInteractionsToAgentStore(
     i => i.status === 'pending' || i.status === 'submitting'
   )
 
-  const perm = pending.find(i => i.type === 'permission')
+  const planReview = projectPendingPlanReview(snapshot)
+  const perm = pending.find(
+    i => i.type === 'permission' && i.interactionId !== planReview?.interactionId
+  )
   const ask = pending.find(i => i.type === 'askQuestion')
 
   const agent = useAgentStore.getState()

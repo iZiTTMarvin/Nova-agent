@@ -69,6 +69,8 @@ import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistenc
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
+import { writerLeaseRegistry } from '../../../runtime/workspace'
+import { planReviewWaiters } from '../interaction/planReviewWaiters'
 
 export interface AgentRuntimeRunRefs {
   runId: string
@@ -407,6 +409,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       if (!hasReadableActivePlan) {
         throw new Error('进入 default 前必须先用 save_plan 保存可读取的 active plan')
       }
+      agentLoop.setActivePlanPath(activePath)
     }
     if (currentSession.mode === targetMode) {
       return { previousMode: currentSession.mode, currentMode: targetMode }
@@ -456,6 +459,37 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     })
   }
   agentLoop.setAskQuestionHandler(askQuestionHandler)
+  agentLoop.setPlanReviewHandler((ref) => {
+    if (
+      ref.sessionId !== sessionId ||
+      ref.runId !== runRefs.runId ||
+      ref.messageId.trim().length === 0 ||
+      ref.toolCallId.trim().length === 0
+    ) {
+      throw new Error('计划审阅工具调用身份与当前 run 不匹配')
+    }
+
+    const pending = planReviewWaiters.create(ref)
+    try {
+      runCoordinator.inbox.enqueue({
+        runId: ref.runId,
+        sessionId: ref.sessionId,
+        messageId: ref.messageId,
+        type: 'planApproval',
+        interactionId: pending.interactionId,
+        payload: {
+          toolName: 'stage_transition',
+          action: 'complete',
+          toolCallId: ref.toolCallId
+        }
+      })
+      writerLeaseRegistry.release(runRefs.resourceOwnerRunId)
+    } catch (error) {
+      planReviewWaiters.cancel(pending.interactionId)
+      throw error
+    }
+    return pending.promise
+  })
 
   const providerForCache =
     modelPool instanceof ModelClientPool

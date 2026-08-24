@@ -159,6 +159,94 @@
   color: var(--text-muted);
 }
 
+.inspector-plan {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.inspector-plan__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 7px 9px 7px 14px;
+  border-bottom: 1px solid var(--border-cream);
+  background: var(--bg-card);
+}
+
+.inspector-plan__icon {
+  display: inline-flex;
+  color: var(--color-brand);
+}
+
+.inspector-plan__heading {
+  display: grid;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.inspector-plan__heading span {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.inspector-plan__heading strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-plan__banner {
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border-cream);
+  background: var(--bg-sand);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+}
+
+.inspector-plan__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.inspector-plan__document {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px clamp(18px, 5vw, 38px) 56px;
+}
+
+.inspector-plan__state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 180px;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.inspector-plan__state--error,
+.inspector-plan__error {
+  color: var(--nova-status-error, var(--color-error));
+}
+
+.inspector-plan__error {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-cream);
+  background: color-mix(in srgb, var(--nova-status-error, var(--color-error)) 7%, var(--bg-card));
+  font-size: 0.74rem;
+}
+
 /* ── ReviewTab ── */
 
 .inspector-review {

@@ -22,7 +22,6 @@ import { registerRunHandler } from './runHandler'
 import { registerCodeIndexHandler } from './codeIndexHandler'
 import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
 import { registerComposeStageHandler } from './composeStageHandler'
-import { registerComposePlanApprovalHandler } from './composePlanApprovalHandler'
 import { registerPlanFileHandler } from './planFileHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { getRunCoordinator, initRunCoordinatorHost } from '../services/RunCoordinatorHost'
@@ -78,8 +77,6 @@ export function registerIpcHandlers(): ImageStore {
 
   // compose 阶段条手动推进/回退（依赖 SessionStore，须在 registerSessionHandler 之后）
   registerComposeStageHandler()
-  // 计划审阅卡「批准」按钮（依赖 SessionStore，须在 registerSessionHandler 之后）
-  registerComposePlanApprovalHandler()
 
   // 注册技能管理 IPC
   registerSkillHandler(getMainWindow)

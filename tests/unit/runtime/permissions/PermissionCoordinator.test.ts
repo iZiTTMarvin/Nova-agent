@@ -151,6 +151,50 @@ describe('PermissionCoordinator allow / deny / ask', () => {
     expect(result.reason).toContain('用户拒绝了 "bash" 工具的执行请求')
     expect(result.aborted).toBeUndefined()
   })
+
+  it('计划审阅 revise 拒绝切换并把反馈写回 reason', async () => {
+    const { coordinator, events } = createCoordinator({
+      mode: 'plan',
+      manager: new PermissionManager()
+    })
+    const pending = coordinator.checkPermission(
+      'switch_mode',
+      { mode: 'default', reason: '开始实施' },
+      'msg-1'
+    )
+    await vi.waitFor(() => expect(events).toHaveLength(1))
+
+    coordinator.respondPlanReview(events[0].requestId, {
+      decision: 'revise',
+      feedback: '补充分批回滚步骤'
+    })
+
+    expect(await pending).toEqual({
+      allowed: false,
+      reason: '补充分批回滚步骤'
+    })
+  })
+
+  it('计划审阅 ignore 拒绝切换并返回可信 turn_complete 控制信号', async () => {
+    const { coordinator, events } = createCoordinator({
+      mode: 'plan',
+      manager: new PermissionManager()
+    })
+    const pending = coordinator.checkPermission(
+      'switch_mode',
+      { mode: 'default', reason: '开始实施' },
+      'msg-1'
+    )
+    await vi.waitFor(() => expect(events).toHaveLength(1))
+
+    coordinator.respondPlanReview(events[0].requestId, { decision: 'ignore' })
+
+    expect(await pending).toEqual({
+      allowed: false,
+      reason: '用户选择忽略当前计划，本轮正常结束。',
+      control: { type: 'turn_complete' }
+    })
+  })
 })
 
 describe('PermissionCoordinator 批量合并', () => {

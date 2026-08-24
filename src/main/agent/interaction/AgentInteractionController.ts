@@ -1,6 +1,11 @@
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import type { PermissionDecision } from '../../../shared/session/types'
 import type { InteractionAnswerResult, PendingInteraction } from '../../../shared/run/types'
+import type {
+  PlanReviewCommand,
+  PlanReviewResolution
+} from '../../../shared/planReview'
+import type { ToolInvocationRef } from '../../../runtime/tools/types'
 import {
   getRunCoordinator,
   getRunExecutionRegistry,
@@ -12,6 +17,7 @@ import {
   pendingAskQuestions,
   dismissPendingAskQuestionsForRun
 } from './askQuestionWaiters'
+import { planReviewWaiters } from './planReviewWaiters'
 import { clearSteeringQueue } from '../turn/SteeringQueue'
 import { getSubagentLifecycleCoordinator } from '../../services/SubagentLifecycleHost'
 
@@ -76,6 +82,26 @@ function identityMismatchResult(
   }
 }
 
+function versionMismatchResult(
+  expectedVersion: number,
+  found: PendingInteraction
+): InteractionAnswerResult {
+  return {
+    ok: false,
+    code: 'version_mismatch',
+    message: `版本不匹配：期望 ${expectedVersion}，实际 ${found.version}`,
+    firstApplied: false,
+    snapshot: getRunCoordinator().getSnapshot(found.runId) ?? undefined
+  }
+}
+
+function planReviewResolution(command: PlanReviewCommand): PlanReviewResolution {
+  if (command.decision === 'revise') {
+    return { decision: 'revise', feedback: command.feedback! }
+  }
+  return { decision: command.decision }
+}
+
 export async function cancelExecution(params: { runId?: string } = {}): Promise<{ runId: string | null; status: string }> {
   const runId = params.runId ?? getActiveRunId()
   const coord = getRunCoordinator()
@@ -88,6 +114,7 @@ export async function cancelExecution(params: { runId?: string } = {}): Promise<
     for (const cancelledRunId of cancelled.requestedRunIds) {
       markActiveStreamsCancelled(cancelledRunId)
       dismissPendingAskQuestionsForRun(cancelledRunId)
+      planReviewWaiters.cancelForRun(cancelledRunId)
     }
 
     // 会话层面的清理：取消后 idle 压缩窗口不再需要，排队消息也不再处理。
@@ -183,6 +210,106 @@ export async function respondPermission(params: {
   if (!loopForRun) return
   loopForRun.respondPermission(params.requestId, granted)
   return durableResult
+}
+
+export async function respondPlanReview(
+  command: PlanReviewCommand
+): Promise<InteractionAnswerResult> {
+  const coord = getRunCoordinator()
+  const found = coord.findInteraction(command.interactionId)
+  if (!found) {
+    return coord.inbox.answer({
+      interactionId: command.interactionId,
+      commandId: command.commandId,
+      expectedVersion: command.expectedVersion,
+      outcome: command.decision === 'approve' ? 'answered' : 'dismissed',
+      payload: {
+        decision: command.decision,
+        ...(command.feedback ? { feedback: command.feedback } : {})
+      }
+    })
+  }
+
+  const snapshot = coord.getSnapshot(found.runId)
+  if (!snapshot || snapshot.sessionId !== found.sessionId || snapshot.runId !== found.runId) {
+    return identityMismatchResult('计划审阅 interaction 的 run/session 归属无效', found)
+  }
+
+  let resolveApplied: (() => void) | null = null
+  if (found.type === 'permission') {
+    const args = found.payload.args
+    const requestId = found.payload.requestId
+    if (
+      found.payload.toolName !== 'switch_mode' ||
+      typeof requestId !== 'string' ||
+      typeof args !== 'object' ||
+      args === null ||
+      (args as Record<string, unknown>).mode !== 'default'
+    ) {
+      return identityMismatchResult('该 permission 不是退出 plan 的 switch_mode(default) 请求', found)
+    }
+
+    if (isPendingInteraction(found)) {
+      if (found.version !== command.expectedVersion) {
+        return versionMismatchResult(command.expectedVersion, found)
+      }
+      const executionError = liveExecutionIdentityError(found)
+      if (executionError) return identityMismatchResult(executionError, found)
+      const loop = getAgentLoopForRun(found.runId)
+      if (!loop || !loop.hasPendingPermission(requestId)) {
+        return identityMismatchResult(`计划审阅权限请求 ${requestId} 没有对应的 resolver`, found)
+      }
+      const resolution = planReviewResolution(command)
+      resolveApplied = () => loop.respondPlanReview(requestId, resolution)
+    }
+  } else if (found.type === 'planApproval') {
+    const toolCallId = found.payload.toolCallId
+    if (
+      found.payload.toolName !== 'stage_transition' ||
+      found.payload.action !== 'complete' ||
+      typeof toolCallId !== 'string' ||
+      toolCallId.trim().length === 0
+    ) {
+      return identityMismatchResult('该 planApproval 不是 stage_transition complete 请求', found)
+    }
+
+    if (isPendingInteraction(found)) {
+      if (found.version !== command.expectedVersion) {
+        return versionMismatchResult(command.expectedVersion, found)
+      }
+      const executionError = liveExecutionIdentityError(found)
+      if (executionError) return identityMismatchResult(executionError, found)
+      const ref: ToolInvocationRef = {
+        runId: found.runId,
+        sessionId: found.sessionId,
+        messageId: found.messageId,
+        toolCallId
+      }
+      if (!planReviewWaiters.has(found.interactionId, ref)) {
+        return identityMismatchResult(`计划审阅 ${found.interactionId} 没有匹配的 waiter`, found)
+      }
+      const resolution = planReviewResolution(command)
+      resolveApplied = () => {
+        planReviewWaiters.resolve(found.interactionId, resolution)
+      }
+    }
+  } else {
+    return identityMismatchResult(`interaction 类型不支持计划审阅：${found.type}`, found)
+  }
+
+  const result = coord.inbox.answer({
+    interactionId: command.interactionId,
+    commandId: command.commandId,
+    expectedVersion: command.expectedVersion,
+    outcome: command.decision === 'approve' ? 'answered' : 'dismissed',
+    payload: {
+      decision: command.decision,
+      ...(command.feedback ? { feedback: command.feedback } : {})
+    }
+  })
+  if (!result.ok || !result.firstApplied) return result
+  resolveApplied?.()
+  return result
 }
 
 export async function respondAskQuestion(params: {

@@ -45,6 +45,7 @@ let sessionExists = true
 let sessionComposeStages: ComposeStageEntry[] | undefined
 let sessionMode = 'compose'
 let sessionKind = 'primary'
+let pendingInteractions: Array<{ type: string }> = []
 
 const mockStore = {
   load: vi.fn((sessionId: string) => {
@@ -94,6 +95,12 @@ vi.mock('electron', () => ({
 vi.mock('../../../src/main/services/SessionStoreHost', () => ({
   initSessionStoreHost: () => mockStore,
   getSessionStore: () => mockStore
+}))
+
+vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
+  getRunCoordinator: () => ({
+    inbox: { listPendingForSession: () => pendingInteractions }
+  })
 }))
 
 vi.mock('../../../src/main/mainWindowRef', () => ({
@@ -168,6 +175,7 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     sessionExists = true
     sessionMode = 'compose'
     sessionKind = 'primary'
+    pendingInteractions = []
     registerComposeStageHandler()
   })
 
@@ -284,6 +292,39 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
       stages,
       reviewLoops: 0
     })
+  })
+
+  it('活动计划 waiter 存在时手动阶段操作不得绕过审批卡', async () => {
+    currentStages = planInProgressStages()
+    pendingInteractions = [{ type: 'planApproval' }]
+    const handler = registeredHandler('compose:apply-stage-transition')
+    const complete = await handler(makeTrustedEvent(), {
+      sessionId: 'sess_1',
+      action: { type: 'complete' }
+    })
+    const skip = await handler(makeTrustedEvent(), {
+      sessionId: 'sess_1',
+      action: { type: 'skip', reason: '绕过审批' }
+    })
+
+    expect(complete).toEqual({ ok: false, error: '当前计划正在等待审批，请在计划审批卡中处理。' })
+    expect(skip).toEqual({ ok: false, error: '当前计划正在等待审批，请在计划审批卡中处理。' })
+    expect(mockStore.approveComposePlan).not.toHaveBeenCalled()
+    expect(mockStore.applyComposeStageTransition).not.toHaveBeenCalled()
+  })
+
+  it('存在其他 pending 交互时手动阶段操作不得推进', async () => {
+    currentStages = planInProgressStages()
+    pendingInteractions = [{ type: 'permission' }]
+    const handler = registeredHandler('compose:apply-stage-transition')
+    const result = await handler(makeTrustedEvent(), {
+      sessionId: 'sess_1',
+      action: { type: 'complete' }
+    })
+
+    expect(result).toEqual({ ok: false, error: '当前会话仍有未处理的交互请求，无法手动推进阶段。' })
+    expect(mockStore.approveComposePlan).not.toHaveBeenCalled()
+    expect(mockStore.applyComposeStageTransition).not.toHaveBeenCalled()
   })
 
   it('手动完成计划阶段：未批准时写批准留痕（auto:false）并推送批准事件，随后正常推进', async () => {

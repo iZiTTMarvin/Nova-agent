@@ -30,7 +30,8 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
 function createContext(): ToolContext {
   return {
     workingDir: process.cwd(),
-    supportsVision: true
+    supportsVision: true,
+    readState: createReadState()
   }
 }
 
@@ -83,6 +84,7 @@ describe('executeToolBatch', () => {
 
     const events: string[] = []
     const runPromise = executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read', name: 'read', arguments: '{"path":"a.ts"}' },
         { id: 'tc_grep', name: 'grep', arguments: '{"pattern":"foo"}' }
@@ -138,6 +140,7 @@ describe('executeToolBatch', () => {
     })
 
     const runPromise = executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read', name: 'read', arguments: '{"path":"a.ts"}' },
         { id: 'tc_grep', name: 'grep', arguments: '{"pattern":"foo"}' }
@@ -193,6 +196,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         {
           id: 'tc_switch',
@@ -230,6 +234,63 @@ describe('executeToolBatch', () => {
       .toContain('模式已切换')
   })
 
+  it('switch_mode ignore 产生正常 tool_result 并透传 turn_complete 控制信号', async () => {
+    const registry = new ToolRegistry()
+    const execute = vi.fn(async () => ({ success: true, output: '不应执行' }))
+    registry.register({
+      name: 'switch_mode',
+      description: 'switch',
+      executionMode: 'sequential',
+      isConcurrencySafe: () => false,
+      parameters: { type: 'object', properties: {} },
+      execute
+    })
+    const afterExecute = vi.fn(async () => ({ success: true, output: '不应执行' }))
+    registerTool(registry, 'read', afterExecute)
+    const emitted: AgentEvent[] = []
+
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{
+        id: 'tc_ignore',
+        name: 'switch_mode',
+        arguments: '{"mode":"default","reason":"开始实施"}'
+      }, {
+        id: 'tc_after',
+        name: 'read',
+        arguments: '{"path":"a.ts"}'
+      }],
+      messageId: 'msg_ignore',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'plan',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({
+        allowed: false,
+        reason: '用户选择忽略当前计划，本轮正常结束。',
+        control: { type: 'turn_complete' }
+      }),
+      emit: event => emitted.push(event),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 1,
+      toolExecution: 'sequential'
+    })
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(afterExecute).not.toHaveBeenCalled()
+    expect(result.outcomes[0]).toMatchObject({
+      failed: false,
+      control: { type: 'turn_complete' }
+    })
+    expect(emitted.find(event => event.type === 'tool_result')).toMatchObject({
+      type: 'tool_result',
+      toolCallId: 'tc_ignore',
+      failed: false
+    })
+  })
+
   it('switch_mode 同模式成功不产生控制信号，也不阻断同批后续工具', async () => {
     const registry = new ToolRegistry()
     const executed: string[] = []
@@ -250,6 +311,7 @@ describe('executeToolBatch', () => {
     })
 
     await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         {
           id: 'tc_switch_noop',
@@ -350,6 +412,7 @@ describe('executeToolBatch', () => {
     })
 
     const runPromise = executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read', name: 'read', arguments: '{"path":"a.ts"}' },
         { id: 'tc_grep', name: 'grep', arguments: '{"pattern":"foo"}' },
@@ -401,6 +464,7 @@ describe('executeToolBatch', () => {
 
     const events: string[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read', name: 'read', arguments: '{"path":"a.ts"}' },
         { id: 'tc_grep', name: 'grep', arguments: '{"pattern":"foo"}' }
@@ -439,6 +503,7 @@ describe('executeToolBatch', () => {
     })
 
     const runPromise = executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read', name: 'read', arguments: '{"path":"a.ts"}' }
       ],
@@ -497,6 +562,7 @@ describe('executeToolBatch', () => {
       }
 
       const runPromise = executeToolBatch({
+        readState: createReadState(),
         toolCalls: [
           { id: `tc_${limit}_1`, name: `tool_${limit}_0`, arguments: '{}' },
           { id: `tc_${limit}_2`, name: `tool_${limit}_1`, arguments: '{}' },
@@ -552,6 +618,7 @@ describe('executeToolBatch', () => {
 
     const events: string[] = []
     const runPromise = executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read', name: 'read', arguments: '{"path":"a.ts"}' },
         { id: 'tc_grep', name: 'grep', arguments: '{"pattern":"foo"}' },
@@ -614,6 +681,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_native_bad', name: 'read', arguments: badArguments }
       ],
@@ -652,6 +720,7 @@ describe('executeToolBatch', () => {
     })
 
     await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_native_bad2', name: 'read', arguments: badArguments }
       ],
@@ -696,6 +765,7 @@ describe('executeToolBatch', () => {
     }
 
     await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_read_identity', name: 'read', arguments: '{}' },
         { id: 'tc_grep_identity', name: 'grep', arguments: '{}' }
@@ -742,6 +812,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_no_identity', name: 'read', arguments: '{}' }],
       messageId: 'msg_without_session',
       sessionId: 'sess_present',
@@ -776,6 +847,7 @@ describe('executeToolBatch', () => {
     const goodArguments = JSON.stringify({ path: 'src/normal.ts', offset: 10 })
 
     await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_good', name: 'read', arguments: goodArguments }
       ],
@@ -827,6 +899,7 @@ describe('executeToolBatch', () => {
     } as any
 
     await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_bash_1', name: 'bash', arguments: '{"command":"ls"}' }
       ],
@@ -862,6 +935,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc1', name: 'web_search', arguments: '{}' }],
       messageId: 'msg_gate',
       toolRegistry: registry,
@@ -875,8 +949,7 @@ describe('executeToolBatch', () => {
       applyTruncation: output => output,
       maxParallelToolCalls: 4,
       toolExecution: 'parallel',
-      isToolAvailable: name => name !== 'web_search',
-      readState: createReadState()
+      isToolAvailable: name => name !== 'web_search'
     })
 
     expect(executed).toBe(false)
@@ -904,6 +977,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_load', name: 'load_tools', arguments: JSON.stringify({ group: 'agent' }) },
         { id: 'tc_task', name: 'task', arguments: '{}' }
@@ -920,8 +994,7 @@ describe('executeToolBatch', () => {
       applyTruncation: output => output,
       maxParallelToolCalls: 4,
       toolExecution: 'parallel',
-      isToolAvailable: name => availability.isToolAvailable(name),
-      readState: createReadState()
+      isToolAvailable: name => availability.isToolAvailable(name)
     })
 
     const loadOutcome = result.outcomes.find(o => o.toolCall.id === 'tc_load')
@@ -946,6 +1019,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_long_err', name: 'read', arguments: '{}' }],
       messageId: 'msg_long_err',
       toolRegistry: registry,
@@ -984,6 +1058,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_throw', name: 'read', arguments: '{}' }],
       messageId: 'msg_throw',
       toolRegistry: registry,
@@ -1015,6 +1090,7 @@ describe('executeToolBatch', () => {
     })
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_short_err', name: 'read', arguments: '{}' }],
       messageId: 'msg_short_err',
       toolRegistry: registry,
@@ -1047,6 +1123,7 @@ describe('executeToolBatch', () => {
     const events: AgentEvent[] = []
 
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_case', name: 'Bash', arguments: '{"command":"ls"}' }],
       messageId: 'msg_case',
       toolRegistry: registry,
@@ -1092,6 +1169,71 @@ describe('executeToolBatch', () => {
     expect(toolResult).toMatchObject({ toolCallId: 'tc_case', toolName: 'bash' })
   })
 
+  it('turn_complete 工具执行后，同批次后续工具不再启动并标记为跳过', async () => {
+    const registry = new ToolRegistry()
+    const gate = deferred<void>()
+    const executed: string[] = []
+
+    registry.register({
+      name: 'turner',
+      description: 'turner',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        executed.push('turner:start')
+        await gate.promise
+        executed.push('turner:end')
+        return { success: true, output: 'turned', control: { type: 'turn_complete' as const } }
+      }
+    })
+
+    registry.register({
+      name: 'after',
+      description: 'after',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        executed.push('after')
+        return { success: true, output: 'after-ok' }
+      }
+    })
+
+    const runPromise = executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [
+        { id: 'tc_turner', name: 'turner', arguments: '{}' },
+        { id: 'tc_after', name: 'after', arguments: '{}' }
+      ],
+      messageId: 'msg_turn_complete',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'plan',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 1,
+      toolExecution: 'parallel'
+    })
+
+    await waitFor(() => executed.includes('turner:start'))
+    expect(executed).not.toContain('after')
+
+    gate.resolve()
+    const result = await runPromise
+
+    expect(executed).not.toContain('after')
+    const turnerOutcome = result.outcomes.find(o => o.toolCall.id === 'tc_turner')
+    const afterOutcome = result.outcomes.find(o => o.toolCall.id === 'tc_after')
+    expect(turnerOutcome?.control).toEqual({ type: 'turn_complete' })
+    expect(afterOutcome?.failed).toBe(true)
+    expect(afterOutcome?.resultText).toContain('本轮已按用户的计划审阅决定结束')
+  })
+
   it('大小写存在多个候选时不纠正，维持未注册错误且不写诊断事件', async () => {
     const registry = new ToolRegistry()
     registerTool(registry, 'read', async () => ({ success: true, output: 'lower' }))
@@ -1099,6 +1241,7 @@ describe('executeToolBatch', () => {
 
     const events: AgentEvent[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_ambiguous', name: 'READ', arguments: '{}' }],
       messageId: 'msg_ambiguous',
       toolRegistry: registry,
@@ -1127,6 +1270,7 @@ describe('executeToolBatch', () => {
 
     const events: AgentEvent[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_miss', name: 'no_such_tool', arguments: '{}' }],
       messageId: 'msg_miss',
       toolRegistry: registry,
@@ -1185,6 +1329,7 @@ describe('executeToolBatch —— 参数形状关卡', () => {
 
     const events: AgentEvent[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         {
           id: 'tc_shape_fix',
@@ -1235,6 +1380,7 @@ describe('executeToolBatch —— 参数形状关卡', () => {
 
     const events: AgentEvent[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         { id: 'tc_shape_bad', name: 'edit', arguments: '{"filePath":"a.ts","edits":123}' }
       ],
@@ -1279,6 +1425,7 @@ describe('executeToolBatch —— 参数形状关卡', () => {
 
     const events: AgentEvent[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [
         {
           id: 'tc_shape_ok',
@@ -1322,6 +1469,7 @@ describe('executeToolBatch —— 参数形状关卡', () => {
 
     const events: AgentEvent[] = []
     const result = await executeToolBatch({
+      readState: createReadState(),
       toolCalls: [{ id: 'tc_alias', name: 'read', arguments: '{"filePath":"a.ts"}' }],
       messageId: 'msg_alias',
       toolRegistry: registry,

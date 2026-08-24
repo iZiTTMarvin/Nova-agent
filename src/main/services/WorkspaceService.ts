@@ -34,6 +34,7 @@ import {
 import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
 import { disposeIdleLoopForSession } from '../agent/turn'
 import { clearSteeringQueue } from '../agent/turn/SteeringQueue'
+import { planReviewWaiters } from '../agent/interaction/planReviewWaiters'
 import { calculateContextBreakdown } from '../../runtime/agent'
 import { loadModelConfig } from '../../runtime/model/config'
 import { resolveContextWindow } from '../../shared/config/types'
@@ -360,6 +361,10 @@ export class WorkspaceService {
       clearSteeringQueue(id)
     }
     runCoordinator.deleteRunsForSessions(deletingIdSet)
+
+    for (const id of deletingIds) {
+      planReviewWaiters.cancelForSession(id)
+    }
 
     const remaining = store.list()
     const deletingCurrent =

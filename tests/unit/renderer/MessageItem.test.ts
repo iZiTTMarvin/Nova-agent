@@ -16,7 +16,6 @@ function makeProps(overrides: Partial<MessageItemProps> = {}): MessageItemProps 
     currentGeneratingMessageId: null,
     currentMode: 'default',
     currentSessionId: 'sess_1',
-    isLatestPlan: false,
     onRegenerate: stableRegenerate,
     regenerateBlocked: false,
     onAcceptFile: stableAcceptFile,
@@ -52,9 +51,4 @@ describe('MessageItem areEqual', () => {
     expect(areEqual(prev, next)).toBe(true)
   })
 
-  it('isLatestPlan 变化会重新渲染（新轮次落卡后旧卡翻为只读）', () => {
-    const prev = makeProps({ isLatestPlan: true })
-    const next = makeProps({ isLatestPlan: false })
-    expect(areEqual(prev, next)).toBe(false)
-  })
 })

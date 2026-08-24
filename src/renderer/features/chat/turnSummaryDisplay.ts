@@ -18,16 +18,16 @@ export interface WorkedHeaderOptions {
   interrupted?: boolean
 }
 
-/** 折叠头标题：正在工作… / 已工作 X 分 X 秒；用户中断时以「已停止」为主状态 */
+/** 状态标题：工作中 X 秒 / 已工作 X 分 X 秒；用户中断时以「已停止」为主状态 */
 export function formatWorkedHeader(options: WorkedHeaderOptions): string {
   const { phase, durationMs, elapsedMs, interrupted } = options
 
   if (phase === 'live') {
     const elapsed = elapsedMs ?? durationMs
     if (elapsed !== undefined && elapsed > 0) {
-      return `正在工作… ${formatDurationMs(elapsed)}`
+      return `工作中 ${formatDurationMs(elapsed)}`
     }
-    return '正在工作…'
+    return '工作中'
   }
 
   if (interrupted) {
@@ -43,3 +43,6 @@ export function formatWorkedHeader(options: WorkedHeaderOptions): string {
 
   return '已工作'
 }
+
+/** completed 轮次无最终 text 时的占位文案；仅渲染层使用，不写入消息历史 */
+export const MISSING_ANSWER_TEXT = '已结束，未生成总结'

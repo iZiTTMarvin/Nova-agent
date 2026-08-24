@@ -42,6 +42,41 @@ describe('useLayoutStore', () => {
     expect(s.inspectorTab).toBe('review')
     expect(s.inspectorWidth).toBe(420)
     expect(s.reviewTarget).toBeNull()
+    expect(s.inspectorSurface).toBe('standard')
+    expect(s.planTarget).toBeNull()
+  })
+
+  it('计划视图复用 Inspector 并在关闭后恢复此前 surface', () => {
+    useLayoutStore.getState().openFiles()
+    useLayoutStore.getState().openPlan({
+      sessionId: 's1',
+      messageId: 'm1',
+      toolCallId: 'p1'
+    })
+    expect(useLayoutStore.getState()).toMatchObject({
+      inspectorOpen: true,
+      inspectorSurface: 'plan',
+      inspectorTab: 'files',
+      planTarget: { sessionId: 's1', messageId: 'm1', toolCallId: 'p1' }
+    })
+
+    useLayoutStore.getState().closeInspector()
+    expect(useLayoutStore.getState()).toMatchObject({
+      inspectorOpen: true,
+      inspectorSurface: 'standard',
+      inspectorTab: 'files',
+      planTarget: null
+    })
+  })
+
+  it('从关闭状态打开计划，关闭计划后仍回到关闭状态', () => {
+    useLayoutStore.getState().openPlan({ sessionId: 's1', messageId: 'm1', toolCallId: 'p1' })
+    useLayoutStore.getState().closeInspector()
+    expect(useLayoutStore.getState()).toMatchObject({
+      inspectorOpen: false,
+      inspectorSurface: 'standard',
+      planTarget: null
+    })
   })
 
   it('openReview / openFiles / closeInspector', () => {

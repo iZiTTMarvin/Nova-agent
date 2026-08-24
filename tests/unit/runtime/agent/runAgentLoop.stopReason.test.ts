@@ -15,31 +15,20 @@ import { RecoveryStateMachine } from '../../../../src/runtime/agent/recovery/Rec
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import { HookManager } from '../../../../src/runtime/agent/core/HookManager'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
-import type { AgentContext } from '../../../../src/runtime/agent/core/AgentContext'
+import { createAgentContext } from '../../../../src/runtime/agent/core/AgentContext'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ChatEvent } from '../../../../src/runtime/model/types'
 import type { ToolBatchExecutionResult } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 
 /** 构造最小可用 AgentContext（native 方言，不触发 XML scanner） */
-function createNativeContext(): AgentContext {
-  return {
-    messages: [{ role: 'user', content: 'hi' }],
-    systemPrompt: '',
-    toolRegistry: null,
+function createNativeContext() {
+  return createAgentContext({
     dialect: 'native',
     mode: 'default',
-    workingDir: null,
-    shellPath: undefined,
-    binDirs: [],
-    sessionStore: null,
-    sessionId: null,
-    artifactStore: null,
-    readState: { readFiles: new Set() } as unknown as AgentContext['readState'],
-    compactionLevel: 0,
-    userTurnsSinceCompaction: 0,
-    lastEstimatedTokens: 0,
-    skillsTokenBudget: 0
-  }
+    readState: createReadState(),
+    messages: [{ role: 'user', content: 'hi' }]
+  })
 }
 
 function toolCallResponse(toolCallId: string): { events: ChatEvent[] } {
@@ -70,6 +59,7 @@ async function runKernel(
   opts: {
     signal?: () => boolean
     executeBatch?: () => Promise<ToolBatchExecutionResult>
+    onToolResultCommitted?: () => void
   } = {}
 ) {
   const modelPool = new ModelClientPool({
@@ -115,6 +105,7 @@ async function runKernel(
     signal,
     abortSignal: () => undefined,
     executeBatch,
+    onToolResultCommitted: opts.onToolResultCommitted,
     runCompactionIfThreshold: async () => false,
     updateTokenEstimate: () => {},
     sleep: () => Promise.resolve(),
@@ -151,6 +142,30 @@ describe('runAgentLoop 停止原因', () => {
 
     expect(endResult.ended).toBe('normal')
     expect(endResult.stopReason).toBeUndefined()
+  })
+
+  it('turn_complete 在工具结果写回后正常结束，不标 cancelled 或 incomplete', async () => {
+    const client = new MockModelClient()
+    client.addResponse(toolCallResponse('t1'))
+    let committed = 0
+
+    const endResult = await runKernel(client, 1, {
+      onToolResultCommitted: () => { committed++ },
+      executeBatch: async () => ({
+        aborted: false,
+        outcomes: [{
+          index: 0,
+          toolCall: { id: 't1', name: 'stage_transition', arguments: '{}' },
+          args: {},
+          resultText: '用户选择忽略当前计划',
+          control: { type: 'turn_complete' },
+          failed: false
+        }]
+      })
+    })
+
+    expect(committed).toBe(1)
+    expect(endResult).toEqual({ ended: 'normal' })
   })
 
   it('批次后 signal 置位 → cancelled，且不设 stopReason', async () => {

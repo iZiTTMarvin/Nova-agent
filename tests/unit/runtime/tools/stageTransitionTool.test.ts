@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { stageTransitionTool } from '../../../../src/runtime/tools/stageTransition'
+import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import type { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { ComposePlanApproval, ComposeStageEntry } from '../../../../src/shared/composeLifecycle'
 import { createInitialStageTable } from '../../../../src/shared/composeLifecycle'
 import type { Mode } from '../../../../src/shared/session/types'
+import type { PlanReviewResolution } from '../../../../src/shared/planReview'
 
 type ApplyResult =
   | {
@@ -32,6 +34,7 @@ function createContext(opts: {
   sessionStore?: MockSessionStore | null
   sessionId?: string | null
   eventBus?: { emit: (event: unknown) => void } | null
+  requestPlanReview?: () => Promise<PlanReviewResolution>
   applyResult?: ApplyResult
 } = {}): { context: ToolContext; events: unknown[]; sessionStore: MockSessionStore } {
   const events: unknown[] = []
@@ -69,11 +72,23 @@ function createContext(opts: {
     workingDir: process.cwd(),
     mode: opts.mode,
     autoMode: opts.autoMode,
+    readState: createReadState(),
     ...(opts.sessionStore === null ? {} : { sessionStore: sessionStore as ToolContext['sessionStore'] }),
     ...(opts.sessionId === null
       ? {}
       : { sessionId: opts.sessionId ?? 'sess_test' }),
-    ...(eventBus ? { eventBus: eventBus as unknown as EventBus } : {})
+    ...(eventBus ? { eventBus: eventBus as unknown as EventBus } : {}),
+    ...(opts.requestPlanReview
+      ? {
+          invocationRef: {
+            sessionId: opts.sessionId ?? 'sess_test',
+            runId: 'run_test',
+            messageId: 'msg_test',
+            toolCallId: 'tool_test'
+          },
+          requestPlanReview: opts.requestPlanReview
+        }
+      : {})
   }
 
   return { context, events, sessionStore }
@@ -141,7 +156,7 @@ describe('stage_transition', () => {
 
     const rejectedStore: MockSessionStore = {
       applyComposeStageTransition: vi.fn(() => ({
-        status: 'rejected',
+        status: 'rejected' as const,
         error: '只能回退到当前进行中阶段之前的阶段'
       }))
     }
@@ -157,7 +172,7 @@ describe('stage_transition', () => {
   it('超限回退：存储层 rejected 透传 success false 与可读原因', async () => {
     const limitStore: MockSessionStore = {
       applyComposeStageTransition: vi.fn(() => ({
-        status: 'rejected',
+        status: 'rejected' as const,
         error: '修复-复审循环已达上限（3 次）。请向用户说明审查结论与阻塞点，停在审查阶段等待用户决定。'
       }))
     }
@@ -192,20 +207,89 @@ describe('stage_transition：计划确认门', () => {
     return stages
   }
 
-  it('计划阶段未获批准时 complete 被拒绝，且不落盘', async () => {
+  it('revise 返回包含用户反馈的失败结果，同一 run 可继续修订', async () => {
     const applyFn = vi.fn()
+    const approveFn = vi.fn()
     const sessionStore: MockSessionStore = {
       applyComposeStageTransition: applyFn,
       getComposeStages: vi.fn(() => planInProgressStages()),
-      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }))
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval),
+      approveComposePlan: approveFn
     }
-    const { context } = createContext({ mode: 'compose', sessionStore })
+    const { context } = createContext({
+      mode: 'compose',
+      sessionStore,
+      requestPlanReview: async () => ({ decision: 'revise', feedback: '补充回滚方案' })
+    })
 
     const result = await stageTransitionTool.execute({ action: 'complete' }, context)
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('批准')
+    expect(result.error).toContain('补充回滚方案')
+    expect(approveFn).not.toHaveBeenCalled()
     expect(applyFn).not.toHaveBeenCalled()
+  })
+
+  it('ignore 正常结束工具调用，但不批准也不推进阶段', async () => {
+    const applyFn = vi.fn()
+    const approveFn = vi.fn()
+    const sessionStore: MockSessionStore = {
+      applyComposeStageTransition: applyFn,
+      getComposeStages: vi.fn(() => planInProgressStages()),
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval),
+      approveComposePlan: approveFn
+    }
+    const { context } = createContext({
+      mode: 'compose',
+      sessionStore,
+      requestPlanReview: async () => ({ decision: 'ignore' })
+    })
+
+    const result = await stageTransitionTool.execute({ action: 'complete' }, context)
+
+    expect(result).toMatchObject({
+      success: true,
+      control: { type: 'turn_complete' }
+    })
+    expect(result.output).toContain('未批准')
+    expect(approveFn).not.toHaveBeenCalled()
+    expect(applyFn).not.toHaveBeenCalled()
+  })
+
+  it('approve 先写批准并发出事件，再由同一次调用推进到开发阶段', async () => {
+    const nextStages = planInProgressStages()
+    nextStages[1] = { id: 'plan', status: 'completed', completedAt: 2 }
+    nextStages[2] = { id: 'implement', status: 'in_progress' }
+    const approveFn = vi.fn(() => ({ status: 'approved' as const, auto: false, approvedAt: 123 }))
+    const applyFn = vi.fn(() => ({
+      status: 'applied' as const,
+      session: {},
+      stages: nextStages,
+      previousStages: planInProgressStages()
+    }))
+    const sessionStore: MockSessionStore = {
+      applyComposeStageTransition: applyFn,
+      getComposeStages: vi.fn(() => planInProgressStages()),
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval),
+      approveComposePlan: approveFn
+    }
+    const { context, events } = createContext({
+      mode: 'compose',
+      sessionStore,
+      requestPlanReview: async () => ({ decision: 'approve' })
+    })
+
+    const result = await stageTransitionTool.execute({ action: 'complete' }, context)
+
+    expect(result.success).toBe(true)
+    expect(approveFn).toHaveBeenCalledWith('sess_test', { auto: false })
+    expect(applyFn).toHaveBeenCalledWith('sess_test', { type: 'complete' })
+    expect(events[0]).toEqual({
+      type: 'compose_plan_approval_updated',
+      sessionId: 'sess_test',
+      approval: { status: 'approved', auto: false, approvedAt: 123 }
+    })
+    expect(events[1]).toMatchObject({ type: 'compose_stages_updated' })
   })
 
   it('计划已获批准后 complete 正常推进到开发阶段', async () => {
@@ -220,7 +304,7 @@ describe('stage_transition：计划确认门', () => {
         previousStages: planInProgressStages()
       })),
       getComposeStages: vi.fn(() => planInProgressStages()),
-      getComposePlanApproval: vi.fn(() => ({ status: 'approved', approvedAt: 1 }))
+      getComposePlanApproval: vi.fn(() => ({ status: 'approved', approvedAt: 1 }) as ComposePlanApproval)
     }
     const { context } = createContext({ mode: 'compose', sessionStore })
 
@@ -247,7 +331,7 @@ describe('stage_transition：计划确认门', () => {
     const sessionStore: MockSessionStore = {
       applyComposeStageTransition: applyFn,
       getComposeStages: vi.fn(() => planInProgressStages()),
-      getComposePlanApproval: vi.fn(() => ({ status: 'pending' })),
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval),
       approveComposePlan: approveFn
     }
     const { context, events } = createContext({ mode: 'compose', autoMode: true, sessionStore })
@@ -273,7 +357,7 @@ describe('stage_transition：计划确认门', () => {
         previousStages: planInProgressStages()
       })),
       getComposeStages: vi.fn(() => planInProgressStages()),
-      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }))
+      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval)
     }
     const { context } = createContext({ mode: 'compose', sessionStore })
 

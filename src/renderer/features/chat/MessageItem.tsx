@@ -24,14 +24,9 @@ import { useEffectiveMessage } from './useEffectiveMessage'
 import { useChatStore } from '../../stores/useChatStore'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
-import { PlanReviewCard } from './PlanReviewCard'
 import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
-import { getComposeStageCursor, createInitialStageTable } from '../../../shared/composeLifecycle'
-import {
-  selectSessionComposePlanApproval,
-  selectSessionComposeStages,
-  useComposeStageStore
-} from '../compose/useComposeStageStore'
+import { projectPendingPlanReview } from '../../../shared/planReview'
+import { useRunStore } from '../../stores/useRunStore'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
@@ -57,8 +52,6 @@ export interface MessageItemProps {
   currentGeneratingMessageId: string | null
   currentMode: Mode
   currentSessionId: string | null
-  /** 是否为消息流中最后一张成功保存的计划卡；历史/旧轮次计划卡只读，不提供决策 */
-  isLatestPlan: boolean
   /** Tier 1：工作区未重放此分支文件改动，diff 仅作历史展示 */
   tier1DiffStale?: boolean
   onRegenerate: (messageId: string) => void
@@ -210,7 +203,6 @@ function MessageItemInner({
   currentGeneratingMessageId,
   currentMode,
   currentSessionId,
-  isLatestPlan,
   onRegenerate,
   regenerateBlocked = false,
   tier1DiffStale = false,
@@ -272,6 +264,11 @@ function MessageItemInner({
   const handleRenderPoolTick = isStaticRow ? undefined : onRenderPoolTick
 
   const turnPhase = resolveTurnPhase(msg.id, currentGeneratingMessageId, isGenerating)
+  const runSnapshot = useRunStore(state => state.snapshot)
+  const pendingPlanReview = useMemo(() => {
+    const pending = projectPendingPlanReview(runSnapshot)
+    return pending?.messageId === msg.id && pending.sessionId === currentSessionId ? pending : null
+  }, [currentSessionId, msg.id, runSnapshot])
   const turnModel = useMemo(
     () =>
       isAssistant
@@ -300,26 +297,6 @@ function MessageItemInner({
     ]
   )
 
-  const savedPlanBlock = useMemo(
-    () =>
-      isAssistant
-        ? [...(msg.blocks ?? [])].reverse().find(
-            block => block.type === 'tool' && block.toolName === 'save_plan'
-          )
-        : undefined,
-    [isAssistant, msg.blocks]
-  )
-
-  // compose 模式的计划确认门：阶段 id 与批准状态都来自阶段条共用的同一份缓存
-  const composeStages = useComposeStageStore(state => selectSessionComposeStages(state, currentSessionId))
-  const composePlanApproval = useComposeStageStore(state =>
-    selectSessionComposePlanApproval(state, currentSessionId)
-  )
-  const composeStageId =
-    currentMode === 'compose'
-      ? getComposeStageCursor(composeStages ?? createInitialStageTable()).currentStageId
-      : null
-
   const unitRenderCtx = {
     msg,
     isTurnActiveForThisMsg,
@@ -329,6 +306,25 @@ function MessageItemInner({
     currentGeneratingMessageId,
     handleRenderPoolTick
   }
+
+  const turnTree = isAssistant && turnModel ? (
+    <TurnProcessTree
+      model={turnModel}
+      messageId={msg.id}
+      isLive={turnPhase === 'live'}
+      interrupted={msg.interrupted}
+      isCurrentAssistantGenerating={isCurrentAssistantGenerating}
+      onRenderPoolTick={handleRenderPoolTick}
+      isTurnActiveForThisMsg={isTurnActiveForThisMsg}
+      isPausedForInput={isPausedForInput}
+      blocks={msg.blocks ?? []}
+      sessionId={currentSessionId}
+      pendingPlanReview={pendingPlanReview}
+      turnStartedAt={msg.turnStartedAt}
+      persistedUserOpen={turnProcessOpen}
+      onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
+    />
+  ) : null
 
   // 用户消息图片提取（用于图片网格渲染）
   const userImageBlocks = isUser
@@ -405,44 +401,7 @@ function MessageItemInner({
   const messageBody = (
     <>
         {hasBlocks && isAssistant && turnModel ? (
-          /* assistant blocks：过程树 → 结论（含 ask 卡片） */
-          <>
-            {turnModel.hasProcess && (
-              <TurnProcessTree
-                model={turnModel}
-                messageId={msg.id}
-                isLive={turnPhase === 'live'}
-                interrupted={msg.interrupted}
-                isCurrentAssistantGenerating={isCurrentAssistantGenerating}
-                onRenderPoolTick={handleRenderPoolTick}
-                isTurnActiveForThisMsg={isTurnActiveForThisMsg}
-                isPausedForInput={isPausedForInput}
-                blocks={msg.blocks ?? []}
-                turnStartedAt={msg.turnStartedAt}
-                persistedUserOpen={turnProcessOpen}
-                onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
-              />
-            )}
-            {/* save_plan 是过程/结论硬边界：审阅卡原位插入，其后的块仍在卡片之后 */}
-            {savedPlanBlock?.type === 'tool' && currentSessionId && (
-              <PlanReviewCard
-                sessionId={currentSessionId}
-                currentMode={currentMode}
-                status={savedPlanBlock.status}
-                args={savedPlanBlock.arguments}
-                result={savedPlanBlock.result}
-                turnActive={isTurnActiveForThisMsg}
-                isLatestPlan={isLatestPlan}
-                composeStageId={composeStageId}
-                composePlanApproval={composePlanApproval}
-              />
-            )}
-            {turnModel.answerUnits.map((unit, i) => (
-              <React.Fragment key={`answer-${i}`}>
-                {renderMessageUnit(unit, unitRenderCtx)}
-              </React.Fragment>
-            ))}
-          </>
+          turnTree
         ) : hasBlocks ? (
           /* 非 assistant 的 blocks 路径（用户消息等） */
           buildBlockRenderUnits(msg.blocks, currentMode).map((unit) =>
@@ -452,29 +411,7 @@ function MessageItemInner({
           /* 旧渲染路径：无 blocks */
           <>
             {isAssistant && turnModel ? (
-              <>
-                {turnModel.hasProcess && (
-                  <TurnProcessTree
-                    model={turnModel}
-                    messageId={msg.id}
-                    isLive={turnPhase === 'live'}
-                    interrupted={msg.interrupted}
-                    isCurrentAssistantGenerating={isCurrentAssistantGenerating}
-                    onRenderPoolTick={handleRenderPoolTick}
-                    isTurnActiveForThisMsg={isTurnActiveForThisMsg}
-                    isPausedForInput={isPausedForInput}
-                    blocks={msg.blocks ?? []}
-                    turnStartedAt={msg.turnStartedAt}
-                    persistedUserOpen={turnProcessOpen}
-                    onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
-                  />
-                )}
-                {turnModel.answerUnits.map((unit, i) => (
-                  <React.Fragment key={`answer-${i}`}>
-                    {renderMessageUnit(unit, unitRenderCtx)}
-                  </React.Fragment>
-                ))}
-              </>
+              turnTree
             ) : (
               <>
                 {thinkingContent && (
@@ -634,7 +571,6 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.currentGeneratingMessageId === next.currentGeneratingMessageId &&
     prev.currentMode === next.currentMode &&
     prev.currentSessionId === next.currentSessionId &&
-    prev.isLatestPlan === next.isLatestPlan &&
     prev.onRegenerate === next.onRegenerate &&
     prev.regenerateBlocked === next.regenerateBlocked &&
     prev.tier1DiffStale === next.tier1DiffStale &&

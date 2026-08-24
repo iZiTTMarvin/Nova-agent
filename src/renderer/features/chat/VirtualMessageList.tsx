@@ -9,7 +9,7 @@
  *
  * 测试环境（无真实 layout / clientHeight=0）退化为全量渲染，保证接线单测可用。
  */
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ExtendedMessage } from '../../stores/types'
 import type { MessageDiffCache } from '../../stores/types'
@@ -24,23 +24,6 @@ const ESTIMATED_MESSAGE_HEIGHT_PX = 120
 const MESSAGE_GAP_PX = 14
 /** 视口外额外挂载条数 */
 const OVERSCAN = 6
-
-/**
- * 消息流中最后一张「成功保存计划」的 assistant 消息 id。
- * 多轮修订会在消息流里留下多张计划卡，而保存内容都写到同一 active plan；
- * 只有最后一张卡的身份与内容一致，历史卡只读、不提供决策。
- */
-export function findLatestPlanMessageId(messages: ExtendedMessage[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]
-    if (msg.role !== 'assistant' || !msg.blocks) continue
-    const hasSavedPlan = msg.blocks.some(
-      block => block.type === 'tool' && block.toolName === 'save_plan' && block.status === 'success'
-    )
-    if (hasSavedPlan) return msg.id
-  }
-  return null
-}
 
 export interface VirtualMessageListProps {
   messages: ExtendedMessage[]
@@ -77,8 +60,7 @@ function renderMessageRow(
   total: number,
   props: VirtualMessageListProps,
   turnProcessOpen: boolean | undefined,
-  onTurnProcessOpenChange: (messageId: string, open: boolean) => void,
-  latestPlanMessageId: string | null
+  onTurnProcessOpenChange: (messageId: string, open: boolean) => void
 ): React.ReactNode {
   const {
     isGenerating,
@@ -123,7 +105,6 @@ function renderMessageRow(
       currentGeneratingMessageId={currentGeneratingMessageId}
       currentMode={currentMode}
       currentSessionId={currentSessionId}
-      isLatestPlan={msg.id === latestPlanMessageId}
       onRegenerate={onRegenerate}
       regenerateBlocked={regenerateBlocked}
       onSwitchBranch={onSwitchBranch}
@@ -149,8 +130,6 @@ function renderMessageRow(
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => {
   const { messages, scrollElement, isGenerating } = props
   const [viewportReady, setViewportReady] = useState(false)
-  // 最后一张成功保存的计划消息 id；随着新轮次落卡，上一张卡的 isLatestPlan 自动翻为 false
-  const latestPlanMessageId = useMemo(() => findLatestPlanMessageId(messages), [messages])
   const [turnProcessOpenByMessageId, setTurnProcessOpenByMessageId] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
@@ -229,8 +208,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
                 messages.length,
                 props,
                 turnProcessOpenByMessageId[msg.id],
-                handleTurnProcessOpenChange,
-                latestPlanMessageId
+                handleTurnProcessOpenChange
               )}
             </div>
           )
@@ -274,8 +252,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
             messages.length,
             props,
             turnProcessOpenByMessageId[messages[item.index].id],
-            handleTurnProcessOpenChange,
-            latestPlanMessageId
+            handleTurnProcessOpenChange
           )}
         </div>
       ))}

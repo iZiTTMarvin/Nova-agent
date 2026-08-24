@@ -12,6 +12,15 @@
   margin: 0;
 }
 
+.turn-process-tree__status {
+  padding: 4px 0;
+  color: var(--text-secondary, #6b6760);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .turn-process-tree__header {
   display: flex;
   align-items: center;
@@ -50,6 +59,15 @@
 .turn-process-tree__body {
   margin-top: 2px;
   padding-left: 2px;
+}
+
+/* 无最终结论时的占位：与折叠头同级外露，不进入消息历史 */
+.turn-process-tree__no-summary {
+  padding: 6px 0;
+  color: var(--text-secondary, #6b6760);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 13.5px;
+  line-height: 1.5;
 }
 
 /* 过程区内中间状态句：与最终结论正文保持同一观感，不再用浅灰小字区分 */

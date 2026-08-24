@@ -17,49 +17,47 @@ import type {
 /** 回合阶段 */
 export type TurnPhase = 'live' | 'completed'
 
-/**
- * askQuestion 不参与「最后一个可见工具」边界判定：
- * 避免把 ask 当成过程终点，把后续结论文案卷进过程树。
- * ask 仍按 blocks 原序进入 process 或 answer。
- */
-function isAskQuestionTool(toolName: string): boolean {
-  return toolName === 'askQuestion'
-}
-
-/** 过程区时间线段：block 单元与 tool/toolGroup 单元按原始顺序穿插 */
+/** block 单元与 tool/toolGroup 单元按原始顺序穿插。 */
 export type ProcessSegment =
   | { kind: 'block'; block: RendererMessageBlock; index: number }
   | Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }>
+
+export type TurnTimelineSegment = ProcessSegment & {
+  display: 'process' | 'persistent'
+}
 
 export interface TurnRenderModel {
   phase: TurnPhase
   hasProcess: boolean
   durationMs?: number
-  /** 恒为空；历史字段保留以免破坏解构 */
-  bubbleUnits: RenderUnit[]
-  processTimeline: ProcessSegment[]
-  answerUnits: RenderUnit[]
-}
-
-function findLastVisibleToolIndex(blocks: RendererMessageBlock[], mode: Mode): number {
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const block = blocks[i]
-    if (block.type === 'tool' && shouldRenderToolBlock(mode, block.toolName) && !isAskQuestionTool(block.toolName)) {
-      return i
-    }
-  }
-  return -1
+  timeline: TurnTimelineSegment[]
+  /** completed 且无最终 text：折叠区外需展示占位文案（仅渲染层，不写入 blocks） */
+  missingAnswer: boolean
 }
 
 /**
- * save_plan 是过程/结论的硬边界：计划审阅卡原位渲染在过程树与结论之间，
- * 其后的块（如 switch_mode 行、收尾文案）按 append-only 顺序落在卡片之后。
- * 不能把卡片钉到整条消息末尾，否则顺序会与真实调用链颠倒。
+ * 最终答案边界：turn 内最后一段非空 text，且其后没有任何可见工具。
+ * thinking、工具、plan 卡、过程性 text 一律属于工作过程；只有这段 text 外露。
  */
+function findAnswerIndex(blocks: RendererMessageBlock[], mode: Mode): number {
+  let lastVisibleToolIndex = -1
+  let lastTextIndex = -1
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]
+    if (block.type === 'tool') {
+      if (shouldRenderToolBlock(mode, block.toolName)) lastVisibleToolIndex = i
+      continue
+    }
+    if (block.type === 'text' && block.content.trim()) lastTextIndex = i
+  }
+  return lastTextIndex > lastVisibleToolIndex ? lastTextIndex : -1
+}
+
+/** 同一消息只投影最后一次成功/进行中的 save_plan；失败的 save_plan 不替换已有计划。 */
 function findLastSavePlanIndex(blocks: RendererMessageBlock[]): number {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (block.type === 'tool' && block.toolName === 'save_plan') {
+    if (block.type === 'tool' && block.toolName === 'save_plan' && block.status !== 'error') {
       return i
     }
   }
@@ -183,16 +181,13 @@ export function normalizeThinkingForDisplay(thinking: string): string {
 }
 
 /**
- * 将过程区 blocks 映射为按时间线排序的 ProcessSegment[]（tool 段经 buildBlockRenderUnits 聚合）。
+ * 将 blocks 映射为按时间线排序的 TurnTimelineSegment[]（tool 段经 buildBlockRenderUnits 聚合）。
+ * 工具全部属于 process；只有 answerIndex 处的 text 是 persistent；空 text 不产生渲染单元。
  */
-export function buildProcessTimeline(
-  blocks: RendererMessageBlock[],
-  lastToolIndex: number,
-  mode: Mode
-): ProcessSegment[] {
-  if (lastToolIndex < 0) return []
-
-  const segments: ProcessSegment[] = []
+function buildTimeline(blocks: RendererMessageBlock[], mode: Mode): TurnTimelineSegment[] {
+  const answerIndex = findAnswerIndex(blocks, mode)
+  const lastSavePlanIndex = findLastSavePlanIndex(blocks)
+  const timeline: TurnTimelineSegment[] = []
   let toolRun: RendererToolBlock[] = []
 
   const flushToolRun = (): void => {
@@ -200,41 +195,34 @@ export function buildProcessTimeline(
     const units = buildBlockRenderUnits(toolRun, mode)
     for (const unit of units) {
       if (unit.kind === 'tool' || unit.kind === 'toolGroup') {
-        segments.push(unit)
+        timeline.push({ ...unit, display: 'process' })
       }
     }
     toolRun = []
   }
 
-  for (let i = 0; i <= lastToolIndex; i++) {
-    const block = blocks[i]
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index]
 
     if (block.type === 'tool') {
-      // askQuestion 不计入 lastToolIndex，但仍按时间线进入 process（若落在边界内）
-      if (!shouldRenderToolBlock(mode, block.toolName)) {
-        continue
-      }
+      if (!shouldRenderToolBlock(mode, block.toolName)) continue
+      if (block.toolName === 'save_plan' && index !== lastSavePlanIndex) continue
       toolRun.push(block)
       continue
     }
 
+    if (block.type === 'text' && !block.content.trim()) continue
+
     flushToolRun()
-    segments.push({ kind: 'block', block, index: i })
+    timeline.push({
+      kind: 'block',
+      block,
+      index,
+      display: index === answerIndex ? 'persistent' : 'process'
+    })
   }
   flushToolRun()
-
-  return segments
-}
-
-function blocksToRenderUnits(
-  items: Array<{ block: RendererMessageBlock; index: number }>,
-  mode: Mode
-): RenderUnit[] {
-  return buildBlockRenderUnits(
-    items.map(item => item.block),
-    mode,
-    offset => items[offset]!.index
-  )
+  return timeline
 }
 
 function resolveDurationMs(
@@ -281,80 +269,41 @@ export function buildTurnRenderModel(input: {
   } = input
 
   const durationMs = resolveDurationMs(phase, turnStartedAt, turnEndedAt)
+  let timeline: TurnTimelineSegment[]
 
-  // ── blocks 路径（优先） ──
   if (blocks && blocks.length > 0) {
-    const lastToolIndex = findLastVisibleToolIndex(blocks, mode)
-    const lastSavePlanIndex = findLastSavePlanIndex(blocks)
-    const boundaryIndex = lastSavePlanIndex >= 0 ? lastSavePlanIndex : lastToolIndex
-    const hasProcess = boundaryIndex >= 0
-
-    const answerItems: Array<{ block: RendererMessageBlock; index: number }> = []
-
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i]
-      if (!hasProcess) {
-        answerItems.push({ block, index: i })
-        continue
-      }
-      if (i > boundaryIndex) {
-        if (block.type === 'tool' && !shouldRenderToolBlock(mode, block.toolName)) {
-          continue
-        }
-        answerItems.push({ block, index: i })
-      }
-    }
-
-    return {
-      phase,
-      hasProcess,
-      durationMs,
-      bubbleUnits: [],
-      processTimeline: hasProcess ? buildProcessTimeline(blocks, boundaryIndex, mode) : [],
-      answerUnits: blocksToRenderUnits(answerItems, mode)
-    }
+    timeline = buildTimeline(blocks, mode)
+  } else {
+    // 旧路径降级：toolCalls + content/thinking。语义与 blocks 路径一致：
+    // thinking 与全部工具（含 askQuestion）属于过程，content 是最终答案。
+    const thinkingBlock: RendererMessageBlock | null = thinking?.trim()
+      ? { type: 'thinking', content: thinking }
+      : null
+    const answerBlock: RendererMessageBlock | null = content?.trim()
+      ? { type: 'text', content }
+      : null
+    timeline = [
+      ...(thinkingBlock
+        ? [{ kind: 'block' as const, block: thinkingBlock, index: -1, display: 'process' as const }]
+        : []),
+      ...buildToolCallRenderUnits(toolCalls, mode)
+        .filter((unit): unit is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
+          unit.kind === 'tool' || unit.kind === 'toolGroup')
+        .map(unit => ({ ...unit, display: 'process' as const })),
+      ...(answerBlock
+        ? [{ kind: 'block' as const, block: answerBlock, index: -1, display: 'persistent' as const }]
+        : [])
+    ]
   }
 
-  // ── 旧路径降级：toolCalls + content/thinking ──
-  // askQuestion 不参与过程边界，但按调用顺序追加到 answer
-  const processToolCalls =
-    toolCalls?.filter(tc => shouldRenderToolBlock(mode, tc.name) && !isAskQuestionTool(tc.name)) ?? []
-  const askToolCalls =
-    toolCalls?.filter(tc => tc.name === 'askQuestion' && shouldRenderToolBlock(mode, tc.name)) ?? []
-  const hasProcess = processToolCalls.length > 0
-  const toolUnits = buildToolCallRenderUnits(processToolCalls, mode).filter(
-    (u): u is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
-      u.kind === 'tool' || u.kind === 'toolGroup'
-  )
-
-  const processTimeline: ProcessSegment[] = hasProcess
-    ? [
-        ...(thinking?.trim()
-          ? [{ kind: 'block' as const, block: { type: 'thinking' as const, content: thinking }, index: -1 }]
-          : []),
-        ...toolUnits
-      ]
-    : []
-
-  const answerUnits: RenderUnit[] = []
-  if (!hasProcess) {
-    if (thinking?.trim()) {
-      answerUnits.push({ kind: 'block', block: { type: 'thinking', content: thinking }, index: -1 })
-    }
-    if (content?.trim()) {
-      answerUnits.push({ kind: 'block', block: { type: 'text', content }, index: -1 })
-    }
-  } else if (content?.trim()) {
-    answerUnits.push({ kind: 'block', block: { type: 'text', content }, index: -1 })
-  }
-  answerUnits.push(...buildToolCallRenderUnits(askToolCalls, mode))
+  const hasProcess = timeline.some(segment => segment.display === 'process')
+  const hasAnswer = timeline.some(segment => segment.display === 'persistent')
 
   return {
     phase,
     hasProcess,
     durationMs,
-    bubbleUnits: [],
-    processTimeline,
-    answerUnits
+    timeline,
+    missingAnswer: phase === 'completed' && hasProcess && !hasAnswer
   }
 }

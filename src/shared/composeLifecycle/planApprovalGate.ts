@@ -17,5 +17,5 @@ export function getPlanCompleteDenial(
   const cursor = getComposeStageCursor(stages)
   if (cursor.currentStageId !== 'plan') return null
   if (approval?.status === 'approved') return null
-  return '计划尚未获得用户批准，无法完成「计划」阶段。请等待用户在计划审阅卡中点击批准。'
+  return '计划尚未获得用户批准，无法完成「计划」阶段。请通过当前任务的计划审阅交互等待用户决定。'
 }

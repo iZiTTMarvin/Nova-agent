@@ -22,6 +22,7 @@ import { useCodeIndexStore } from './stores/useCodeIndexStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
+import { isPlanReviewPermissionPayload } from '../shared/planReview'
 import './App.css'
 
 // 图标注册：built 主题产物（parchment.js）由 CLI 生成时丢弃 icons 字段
@@ -153,6 +154,7 @@ function App(): React.ReactNode {
 
     // 监听：Agent 请求用户确认权限
     const unsubPermissionRequest = window.api.on('agent:permission-request', gateAgentEvent('permission-request', (data) => {
+      if (isPlanReviewPermissionPayload({ toolName: data.toolName, args: data.args })) return
       handlePermissionRequest(data)
     }))
 

@@ -11,6 +11,7 @@ import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestio
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { Mode } from '../../shared/session/types'
 import type { ModelClient } from '../model/ModelClient'
+import type { PlanReviewResolution } from '../../shared/planReview'
 
 export type { ToolTruncationMeta }
 
@@ -57,11 +58,13 @@ export interface NestedToolCallResult {
 }
 
 /** 工具触发的 Runtime 控制信号，不依赖本地化后的输出文本做控制流判断。 */
-export type ToolControlSignal = {
-  type: 'mode_transition'
-  previousMode: Mode
-  currentMode: Mode
-}
+export type ToolControlSignal =
+  | {
+      type: 'mode_transition'
+      previousMode: Mode
+      currentMode: Mode
+    }
+  | { type: 'turn_complete' }
 
 /** 工具执行上下文，携带工作区边界和 checkpoint 信息 */
 export interface ToolContext {
@@ -147,6 +150,8 @@ export interface ToolContext {
    * 不存在时工具降级为 no-op（不阻塞）；是否可交互由宿主按 run 身份装配。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /** 等待宿主对当前工具调用完成计划审阅。 */
+  requestPlanReview?: (ref: ToolInvocationRef) => Promise<PlanReviewResolution>
   /**
    * 普通模式切换由宿主完成：同步 WorkspaceService、会话元数据与当前 AgentLoop。
    * 进入只读 Plan 可自动完成；退出 Plan 的用户确认由 PermissionManager 在执行前处理。

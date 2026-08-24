@@ -19,6 +19,7 @@ import type { ReadState } from '../../tools/editTool'
 import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../../shared/askQuestion/types'
+import type { PermissionCheckResult } from '../../permissions/PermissionCoordinator'
 import { sanitizeToolOutput } from '../../../shared/tool-input-sanitizer'
 import {
   needsRepair,
@@ -78,11 +79,11 @@ export interface ToolBatchExecutionOptions {
   supportsVision: boolean
   checkpointManager: CheckpointManager | null
   abortSignal: AbortSignal | undefined
-  checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string, toolCallId?: string) => Promise<{ allowed: boolean; reason: string; aborted?: boolean }>
+  checkPermission: (toolName: string, args: Record<string, unknown>, messageId: string, toolCallId?: string) => Promise<PermissionCheckResult>
   checkBatchPermission?: (
     items: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>,
     messageId: string
-  ) => Promise<Map<string, { allowed: boolean; reason: string; aborted?: boolean }>>
+  ) => Promise<Map<string, PermissionCheckResult>>
   emit: (event: AgentEvent) => void
   applyTruncation: (output: string, maxSize: number) => string
   maxParallelToolCalls: number
@@ -127,6 +128,8 @@ export interface ToolBatchExecutionOptions {
    * 由宿主按 run 身份注入；未装配交互宿主的 AgentLoop 会降级跳过。
    */
   askQuestion?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
+  /** 当前工具调用的计划审阅端口。 */
+  requestPlanReview?: ToolContext['requestPlanReview']
   /** Plan/Default 模式切换宿主回调；权限确认在工具执行前完成。 */
   switchMode?: ToolContext['switchMode']
   /**
@@ -245,6 +248,7 @@ function buildToolContext(
     ...(options.binDirs && options.binDirs.length > 0 ? { binDirs: options.binDirs } : {}),
     ...(options.artifactStore ? { artifactStore: options.artifactStore } : {}),
     ...(options.askQuestion ? { askQuestion: options.askQuestion } : {}),
+    ...(options.requestPlanReview ? { requestPlanReview: options.requestPlanReview } : {}),
     ...(options.switchMode ? { switchMode: options.switchMode } : {}),
     ...(options.extraAllowedRoots && options.extraAllowedRoots.length > 0
       ? { extraAllowedRoots: options.extraAllowedRoots }
@@ -316,6 +320,16 @@ function createSkippedOutcome(index: number, toolCall: ChatToolCall, args: Recor
   }
 }
 
+function createControlOutcome(
+  index: number,
+  toolCall: ChatToolCall,
+  args: Record<string, unknown>,
+  resultText: string,
+  control: ToolControlSignal
+): ToolExecutionOutcome {
+  return { index, toolCall, args, resultText, control, failed: false }
+}
+
 function isSuccessfulModeSwitch(outcome: ToolExecutionOutcome): boolean {
   return outcome.control?.type === 'mode_transition' && !outcome.skippedByAbort
 }
@@ -326,6 +340,17 @@ function createModeSwitchBarrierOutcome(item: PreparedToolCall): ToolExecutionOu
     item.toolCall,
     item.args,
     '模式已切换，当前批次的后续工具未执行。Agent 将在当前任务的下一次模型调用中按新模式重新发起。'
+  )
+}
+
+function createTurnCompleteBarrierOutcome(
+  item: Pick<PreparedToolCall, 'index' | 'toolCall' | 'args'>
+): ToolExecutionOutcome {
+  return createErrorOutcome(
+    item.index,
+    item.toolCall,
+    item.args,
+    '本轮已按用户的计划审阅决定结束，当前批次的后续工具未执行。'
   )
 }
 
@@ -506,6 +531,22 @@ async function runSequentialBatch(
     const result = await executePreparedToolCall(items[i], options)
     outcomes.push(result.outcome)
 
+    if (result.outcome.control?.type === 'turn_complete') {
+      for (let j = i + 1; j < items.length; j++) {
+        const outcome = createTurnCompleteBarrierOutcome(items[j])
+        outcomes.push(outcome)
+        options.emit({
+          type: 'tool_result',
+          messageId: options.messageId,
+          toolCallId: items[j].toolCall.id,
+          toolName: items[j].toolCall.name,
+          result: sanitizeToolOutput(items[j].toolCall.name, outcome.resultText, true),
+          failed: true
+        })
+      }
+      break
+    }
+
     if (!result.emitted && result.outcome.skippedByAbort) {
       for (let j = i + 1; j < items.length; j++) {
         outcomes.push(createSkippedOutcome(items[j].index, items[j].toolCall, items[j].args))
@@ -527,18 +568,32 @@ async function runWithConcurrencyLimit(
   let nextIndex = 0
   let activeCount = 0
   let settled = false
+  let turnCompleteSeen = false
 
   return await new Promise<ToolExecutionOutcome[]>((resolve) => {
     const finish = () => {
       if (settled) return
       if (activeCount > 0) return
 
-      // 填充未启动的任务槽位：abort 导致 maybeStart 提前停止时，
+      // 填充未启动的任务槽位：abort 或 turn_complete 导致 maybeStart 提前停止时，
       // 部分任务从未被调度，results 中对应位置仍为 undefined。
       // 正常完成时所有槽位已由 executePreparedToolCall 填充，此循环不产生效果。
       for (let i = 0; i < items.length; i++) {
         if (!results[i]) {
-          results[i] = createSkippedOutcome(items[i].index, items[i].toolCall, items[i].args)
+          if (turnCompleteSeen) {
+            const outcome = createTurnCompleteBarrierOutcome(items[i])
+            results[i] = outcome
+            options.emit({
+              type: 'tool_result',
+              messageId: options.messageId,
+              toolCallId: items[i].toolCall.id,
+              toolName: items[i].toolCall.name,
+              result: sanitizeToolOutput(items[i].toolCall.name, outcome.resultText, true),
+              failed: true
+            })
+          } else {
+            results[i] = createSkippedOutcome(items[i].index, items[i].toolCall, items[i].args)
+          }
         }
       }
 
@@ -549,7 +604,7 @@ async function runWithConcurrencyLimit(
     const maybeStart = () => {
       if (settled) return
 
-      while (activeCount < concurrency && nextIndex < items.length && !options.abortSignal?.aborted) {
+      while (activeCount < concurrency && nextIndex < items.length && !options.abortSignal?.aborted && !turnCompleteSeen) {
         const currentIndex = nextIndex++
         activeCount++
 
@@ -557,6 +612,10 @@ async function runWithConcurrencyLimit(
           try {
             const result = await executePreparedToolCall(items[currentIndex], options)
             results[currentIndex] = result.outcome
+            if (!turnCompleteSeen && result.outcome.control?.type === 'turn_complete') {
+              turnCompleteSeen = true
+              maybeStart()
+            }
           } finally {
             activeCount--
             maybeStart()
@@ -789,7 +848,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     bashGroups.push(currentGroup)
   }
 
-  const permissionResults = new Map<string, { allowed: boolean; reason: string; aborted?: boolean }>()
+  const permissionResults = new Map<string, PermissionCheckResult>()
 
   for (const group of bashGroups) {
     if (options.checkBatchPermission) {
@@ -814,8 +873,23 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
   // ── 分发前置拦截、校验最终权限并入队待执行项 ──
   const precheckOutcomes: ToolExecutionOutcome[] = []
   const executionCandidates: PreparedToolCall[] = []
+  let turnCompletePermissionIndex: number | null = null
 
   for (const item of preparedCalls) {
+    if (turnCompletePermissionIndex !== null && item.index > turnCompletePermissionIndex) {
+      const outcome = createTurnCompleteBarrierOutcome(item)
+      precheckOutcomes.push(outcome)
+      options.emit({
+        type: 'tool_result',
+        messageId: options.messageId,
+        toolCallId: item.toolCall.id,
+        toolName: item.toolCall.name,
+        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true),
+        failed: true
+      })
+      continue
+    }
+
     if (item.precheckOutcome) {
       precheckOutcomes.push(item.precheckOutcome)
       options.emit({
@@ -835,7 +909,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     }
 
     // 运行最终权限校验（此时的 item.args 已是经过 hook 改写后的最新实际参数）
-    let permissionResult: { allowed: boolean; reason: string; aborted?: boolean }
+    let permissionResult: PermissionCheckResult
     if (item.toolCall.name === 'bash') {
       permissionResult = permissionResults.get(item.toolCall.id) || { allowed: false, reason: '未找到权限校验结果' }
     } else {
@@ -854,6 +928,27 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         }
       }
       break
+    }
+
+    if (!permissionResult.allowed && permissionResult.control?.type === 'turn_complete') {
+      const outcome = createControlOutcome(
+        item.index,
+        item.toolCall,
+        item.args,
+        permissionResult.reason,
+        permissionResult.control
+      )
+      precheckOutcomes.push(outcome)
+      turnCompletePermissionIndex = item.index
+      options.emit({
+        type: 'tool_result',
+        messageId: options.messageId,
+        toolCallId: item.toolCall.id,
+        toolName: item.toolCall.name,
+        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, false),
+        failed: false
+      })
+      continue
     }
 
     if (!permissionResult.allowed) {
@@ -898,10 +993,15 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
       : await runSequentialBatch(batch.items, options)
 
     executionOutcomes.push(...batchOutcomes)
-    if (batchOutcomes.some(isSuccessfulModeSwitch)) {
+    const barrier = batchOutcomes.some(outcome => outcome.control?.type === 'turn_complete')
+      ? createTurnCompleteBarrierOutcome
+      : batchOutcomes.some(isSuccessfulModeSwitch)
+        ? createModeSwitchBarrierOutcome
+        : null
+    if (barrier) {
       for (const remainingBatch of batches.slice(batchIndex + 1)) {
         for (const item of remainingBatch.items) {
-          const outcome = createModeSwitchBarrierOutcome(item)
+          const outcome = barrier(item)
           executionOutcomes.push(outcome)
           options.emit({
             type: 'tool_result',

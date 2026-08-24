@@ -8,6 +8,7 @@ import { ToolCallGroup } from './ToolCallGroup'
 import { renderToolBlock } from './renderToolBlock'
 import { isActiveThinkingBlock } from './renderingPolicy'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
+import type { PendingPlanReview } from '../../../shared/planReview'
 import type { ProcessSegment } from './turnProcessModel'
 import type { RendererMessageBlock } from '../../stores/types'
 
@@ -18,6 +19,8 @@ export interface ProcessTraceListProps {
   isTurnActiveForThisMsg: boolean
   isPausedForInput: boolean
   isCurrentAssistantGenerating: boolean
+  sessionId?: string | null
+  pendingPlanReview?: PendingPlanReview | null
   onRenderPoolTick?: () => void
 }
 
@@ -38,6 +41,8 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
   isTurnActiveForThisMsg,
   isPausedForInput,
   isCurrentAssistantGenerating,
+  sessionId,
+  pendingPlanReview,
   onRenderPoolTick
 }) {
   return (
@@ -98,7 +103,11 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
         }
 
         if (segment.kind === 'tool') {
-          return renderToolBlock(segment.block, isCurrentAssistantGenerating)
+          return renderToolBlock(segment.block, isCurrentAssistantGenerating, {
+            messageId,
+            sessionId,
+            pendingPlanReview
+          })
         }
 
         return null

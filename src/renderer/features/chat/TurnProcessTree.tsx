@@ -8,10 +8,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronIcon } from '../../components/Icons'
 import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import { ProcessTraceList } from './ProcessTraceList'
-import { formatWorkedHeader } from './turnSummaryDisplay'
-import { selectForceExpandedForMessage } from './turnProcessSelectors'
-import { useAgentStore } from '../../stores/useAgentStore'
-import type { TurnRenderModel } from './turnProcessModel'
+import { formatWorkedHeader, MISSING_ANSWER_TEXT } from './turnSummaryDisplay'
+import type { PendingPlanReview } from '../../../shared/planReview'
+import type { TurnRenderModel, TurnTimelineSegment } from './turnProcessModel'
 import type { RendererMessageBlock } from '../../stores/types'
 import './TurnProcessTree.css'
 
@@ -25,6 +24,8 @@ export interface TurnProcessTreeProps {
   isTurnActiveForThisMsg: boolean
   isPausedForInput: boolean
   blocks: RendererMessageBlock[]
+  sessionId?: string | null
+  pendingPlanReview?: PendingPlanReview | null
   turnStartedAt?: number
   persistedUserOpen?: boolean
   onUserOpenChange?: (open: boolean) => void
@@ -45,6 +46,22 @@ function usePrefersReducedMotion(): boolean {
   return reduced
 }
 
+function groupTimeline(timeline: TurnTimelineSegment[]): Array<{
+  display: TurnTimelineSegment['display']
+  segments: TurnTimelineSegment[]
+}> {
+  const groups: Array<{
+    display: TurnTimelineSegment['display']
+    segments: TurnTimelineSegment[]
+  }> = []
+  for (const segment of timeline) {
+    const current = groups.at(-1)
+    if (current?.display === segment.display) current.segments.push(segment)
+    else groups.push({ display: segment.display, segments: [segment] })
+  }
+  return groups
+}
+
 export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(function TurnProcessTree({
   model,
   messageId,
@@ -55,6 +72,8 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   isTurnActiveForThisMsg,
   isPausedForInput,
   blocks,
+  sessionId,
+  pendingPlanReview,
   turnStartedAt,
   persistedUserOpen,
   onUserOpenChange
@@ -67,12 +86,9 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   const [userOpen, setUserOpen] = useState(persistedUserOpen ?? isLive)
   const [liveElapsedMs, setLiveElapsedMs] = useState<number | undefined>(model.durationMs)
 
-  const agentForceExpanded = useAgentStore(state =>
-    selectForceExpandedForMessage(state, messageId, isLive)
-  )
-  const forceExpanded = agentForceExpanded
-
-  const open = forceExpanded ? true : userOpen
+  // live 阶段过程区不套折叠壳、头部不可点击，等待审批/问答时内容天然可见；
+  // 此处 open 只服务于 completed 阶段的折叠壳。
+  const open = userOpen
 
   // live → completed：未手动操作时自动收起；重新 live 时自动展开
   useEffect(() => {
@@ -94,14 +110,13 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   }, [isLive, turnStartedAt])
 
   const toggle = useCallback(() => {
-    if (forceExpanded) return
     userToggledRef.current = true
     setUserOpen(prev => {
       const next = !prev
       onUserOpenChange?.(next)
       return next
     })
-  }, [forceExpanded, onUserOpenChange])
+  }, [onUserOpenChange])
 
   const headerTitle = formatWorkedHeader({
     phase: model.phase,
@@ -110,53 +125,64 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
     interrupted
   })
 
-  // live 运行期间直接平铺渲染步骤，去除冗余的「正在工作…」外层折叠头（对齐 DeepSeek-Harness）
-  if (isLive) {
-    return (
-      <div className="turn-process-tree turn-process-tree--live" data-testid="turn-process-tree">
-        <ProcessTraceList
-          segments={model.processTimeline}
-          messageId={messageId}
-          blocks={blocks}
-          isTurnActiveForThisMsg={isTurnActiveForThisMsg}
-          isPausedForInput={isPausedForInput}
-          isCurrentAssistantGenerating={isCurrentAssistantGenerating}
-          onRenderPoolTick={onRenderPoolTick}
-        />
-      </div>
-    )
-  }
+  const groups = groupTimeline(model.timeline)
+  const trace = (segments: TurnTimelineSegment[]) => (
+    <ProcessTraceList
+      segments={segments}
+      messageId={messageId}
+      blocks={blocks}
+      sessionId={sessionId}
+      pendingPlanReview={pendingPlanReview}
+      isTurnActiveForThisMsg={isTurnActiveForThisMsg}
+      isPausedForInput={isPausedForInput}
+      isCurrentAssistantGenerating={isCurrentAssistantGenerating}
+      onRenderPoolTick={onRenderPoolTick}
+    />
+  )
 
   return (
-    <div className="turn-process-tree" data-testid="turn-process-tree">
-      {/* 任务完成后的原生 disclosure 折叠头 */}
-      <button
-        type="button"
-        className="turn-process-tree__header"
-        onClick={toggle}
-        aria-expanded={open}
-        data-testid="turn-process-header"
-      >
-        <span className="turn-process-tree__header-title">{headerTitle}</span>
-        <ChevronIcon
-          size={12}
-          direction={open ? 'down' : 'right'}
-          className="turn-process-tree__chevron"
-        />
-      </button>
+    <div className={`turn-process-tree${isLive ? ' turn-process-tree--live' : ''}`} data-testid="turn-process-tree">
+      {isLive ? (
+        <div className="turn-process-tree__status" data-testid="turn-process-header">
+          {headerTitle}
+        </div>
+      ) : model.hasProcess ? (
+        <button
+          type="button"
+          className="turn-process-tree__header"
+          onClick={toggle}
+          aria-expanded={open}
+          data-testid="turn-process-header"
+        >
+          <span className="turn-process-tree__header-title">{headerTitle}</span>
+          <ChevronIcon
+            size={12}
+            direction={open ? 'down' : 'right'}
+            className="turn-process-tree__chevron"
+          />
+        </button>
+      ) : null}
 
-      {/* 过程时间线：折叠时不 mount */}
-      <TurnProcessCollapsible open={open} reducedMotion={reducedMotion} className="turn-process-tree__body">
-        <ProcessTraceList
-          segments={model.processTimeline}
-          messageId={messageId}
-          blocks={blocks}
-          isTurnActiveForThisMsg={isTurnActiveForThisMsg}
-          isPausedForInput={isPausedForInput}
-          isCurrentAssistantGenerating={isCurrentAssistantGenerating}
-          onRenderPoolTick={onRenderPoolTick}
-        />
-      </TurnProcessCollapsible>
+      {groups.map((group, index) => group.display === 'persistent' ? (
+        <React.Fragment key={`persistent-${index}`}>{trace(group.segments)}</React.Fragment>
+      ) : isLive ? (
+        <React.Fragment key={`process-${index}`}>{trace(group.segments)}</React.Fragment>
+      ) : (
+        <TurnProcessCollapsible
+          key={`process-${index}`}
+          open={open}
+          reducedMotion={reducedMotion}
+          className="turn-process-tree__body"
+        >
+          {trace(group.segments)}
+        </TurnProcessCollapsible>
+      ))}
+
+      {model.missingAnswer && !interrupted && (
+        <div className="turn-process-tree__no-summary" data-testid="turn-no-summary">
+          {MISSING_ANSWER_TEXT}
+        </div>
+      )}
     </div>
   )
 })

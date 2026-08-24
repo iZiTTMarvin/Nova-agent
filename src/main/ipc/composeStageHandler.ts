@@ -21,6 +21,7 @@ import {
   type ComposeStageAction
 } from '../../shared/composeLifecycle'
 import { getSessionStore } from '../services/SessionStoreHost'
+import { getRunCoordinator } from '../services/RunCoordinatorHost'
 import { getMainWindow } from '../mainWindowRef'
 
 /** 边界校验：外部输入按 unknown 收敛为合法 ComposeStageAction，形状非法直接拒绝 */
@@ -54,6 +55,15 @@ export function registerComposeStageHandler(): void {
     if (!session) return { ok: false as const, error: '会话不存在或已被删除' }
     if (session.mode !== 'compose' || session.kind !== 'primary') {
       return { ok: false as const, error: '仅 compose 主会话支持调整生命周期阶段' }
+    }
+
+    const pendingInSession = getRunCoordinator().inbox.listPendingForSession(sessionId)
+    const activePlanReview = pendingInSession.find(interaction => interaction.type === 'planApproval')
+    if (activePlanReview) {
+      return { ok: false as const, error: '当前计划正在等待审批，请在计划审批卡中处理。' }
+    }
+    if (pendingInSession.length > 0) {
+      return { ok: false as const, error: '当前会话仍有未处理的交互请求，无法手动推进阶段。' }
     }
 
     // 手动完成「计划」阶段 = 用户自行放行确认门：写批准留痕并推送事件后继续推进。

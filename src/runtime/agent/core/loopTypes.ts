@@ -85,7 +85,9 @@ export interface AgentLoopConfig {
    * 模式切换成功后生成最新模式约束。循环会把它作为内部 user 控制消息追加到
    * 工具结果之后，再在同一任务中继续调用模型。
    */
-  getModeTransitionInstruction?: (transition: ToolControlSignal) => string
+  getModeTransitionInstruction?: (
+    transition: Extract<ToolControlSignal, { type: 'mode_transition' }>
+  ) => string
 
   /**
    * 轮内预算校验（只估算，不改写）。
