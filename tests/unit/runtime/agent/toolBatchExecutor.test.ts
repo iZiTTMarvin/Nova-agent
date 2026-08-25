@@ -1234,6 +1234,53 @@ describe('executeToolBatch', () => {
     expect(afterOutcome?.resultText).toContain('本轮已按用户的计划审阅决定结束')
   })
 
+  it('工具结果携带的进程句柄原值透传到 tool_result 事件与 outcome，无句柄时不出现该字段', async () => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'bash', async () => ({
+      success: true,
+      output: '进程仍在运行，可通过句柄续接。',
+      processHandle: { ref: 'proc_1', state: 'running' }
+    }))
+    registerTool(registry, 'read', async () => ({ success: true, output: 'ok' }))
+
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [
+        { id: 'tc_proc', name: 'bash', arguments: '{"command":"long-run"}' },
+        { id: 'tc_plain', name: 'read', arguments: '{"path":"a.ts"}' }
+      ],
+      messageId: 'msg_process_handle',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => {
+        events.push(event)
+      },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    const bashResult = events.find(
+      event => event.type === 'tool_result' && event.toolCallId === 'tc_proc'
+    )
+    expect(bashResult).toMatchObject({
+      processHandle: { ref: 'proc_1', state: 'running' }
+    })
+    expect(result.outcomes.find(o => o.toolCall.id === 'tc_proc')?.processHandle)
+      .toEqual({ ref: 'proc_1', state: 'running' })
+
+    const plainResult = events.find(
+      event => event.type === 'tool_result' && event.toolCallId === 'tc_plain'
+    )
+    expect(plainResult && 'processHandle' in plainResult).toBe(false)
+  })
+
   it('大小写存在多个候选时不纠正，维持未注册错误且不写诊断事件', async () => {
     const registry = new ToolRegistry()
     registerTool(registry, 'read', async () => ({ success: true, output: 'lower' }))

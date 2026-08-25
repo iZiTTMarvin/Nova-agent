@@ -37,14 +37,12 @@ export interface ShellConfig {
   name: string
 }
 
-/** bash 工具 JSON Schema 入参（毫秒级超时、相对 workdir、可选描述）。 */
+/** bash 工具 JSON Schema 入参（相对 workdir、可选描述）。 */
 export interface BashToolParams {
   command: string
-  /** 超时（毫秒），默认 120000，最大 300000 */
-  timeout?: number
   /** 相对 workingDir 的工作目录（可选），不填则在 workingDir 执行 */
   workdir?: string
-  /** 5-10 词的简短描述（可选） */
+  /** 5-10 词的简短描述（可选），帮助 UI 展示 */
   description?: string
 }
 

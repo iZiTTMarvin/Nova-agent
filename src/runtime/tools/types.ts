@@ -198,6 +198,12 @@ export interface ImageContent {
   mimeType: string
 }
 
+/** 运行中进程的会话句柄：ref 用于后续轮询/续接，state 标记进程当前是否仍在跑 */
+export interface ToolProcessHandle {
+  ref: string
+  state: 'running' | 'exited'
+}
+
 /** 工具执行结果 */
 export interface ToolResult {
   /** 是否执行成功 */
@@ -227,6 +233,11 @@ export interface ToolResult {
   exitCode?: number
   /** 成功执行后交给 AgentLoop 的结构化控制信号。 */
   control?: ToolControlSignal
+  /**
+   * 运行中进程会话句柄：只有 bash / shell_session 在进程未随调用结束时填充；
+   * UI 据此区分「跑完了」与「还在跑」，不进入模型上下文与持久化侧车。
+   */
+  processHandle?: ToolProcessHandle
 }
 
 /** 工具执行器接口，所有工具必须实现 */

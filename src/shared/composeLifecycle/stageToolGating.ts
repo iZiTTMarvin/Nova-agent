@@ -13,13 +13,29 @@ import { COMPOSE_STAGE_LABELS, type ComposeStageId } from './types'
  * 在所有阶段放行——否则无法推进阶段、维护任务清单或向用户提问。
  * 「开发」起不再按阶段收放，回到基础权限（危险命令仍由既有策略拦截）。
  */
-export function getComposeStageToolDenial(stage: ComposeStageId, toolName: string): string | null {
+export function getComposeStageToolDenial(
+  stage: ComposeStageId,
+  toolName: string,
+  args?: Record<string, unknown>
+): string | null {
   if (stage !== 'brainstorm' && stage !== 'plan') {
     return null
   }
 
   const label = COMPOSE_STAGE_LABELS[stage]
   const capability = getToolCapability(toolName)
+
+  // shell-session 按 action 收放：read/interrupt/stop 是只读观察，各阶段可用；
+  // write 可执行任意内容，brainstorm 与 plan 阶段一律拒绝。
+  if (capability === 'shell-session') {
+    if (args?.action === 'write') {
+      return (
+        `当前处于「${label}」阶段，禁止向终端会话写入输入，"${toolName}" 已被拦截。` +
+        'read/interrupt/stop 可继续使用；进入「开发」阶段后即可写入。'
+      )
+    }
+    return null
+  }
 
   if (stage === 'brainstorm') {
     if (capability === 'readonly') {

@@ -231,6 +231,19 @@ describe('planToolResultSupersession', () => {
     expect(plan.size).toBe(0)
   })
 
+  it('shell_session 不参与任何去重：两条同参 read 都保留（增量静默丢弃是真实回归）', () => {
+    const args = JSON.stringify({ ref: 'psn_aaaaaaaaaaaa', action: 'read' })
+    const messages: ChatMessage[] = [
+      asst('s1', 'shell_session', args),
+      tool('s1', 'output chunk 1'),
+      asst('s2', 'shell_session', args),
+      tool('s2', 'output chunk 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.has('s1')).toBe(false)
+    expect(plan.has('s2')).toBe(false)
+  })
+
   it('limit=0 语义与 readTool 对齐：表示读到末尾', () => {
     // readTool 把 limit<1 归一为读到 EOF，判定也必须如此；
     // 较晚的有限读取不应覆盖较早的「读到末尾」读取

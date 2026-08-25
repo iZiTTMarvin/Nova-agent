@@ -14,6 +14,7 @@ import type { HookEvent } from '../../shared/agent/types'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { RepairKind as NativeArgsRepairKind } from './stream/nativeArgsRepair'
 import type { ShapeRepairKind } from './execution/toolShapeValidation'
+import type { ToolProcessHandle } from '../tools/types'
 
 /**
  * repair_diagnostic 事件的分型联合，唯一来源。
@@ -32,7 +33,7 @@ export type AgentEvent =
   | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string; sessionId?: string }
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string; sessionId?: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown>; sessionId?: string; parentToolCallId?: string }
-  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string }
+  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processHandle?: ToolProcessHandle }
   | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string }
   | {
       type: 'diff_update'

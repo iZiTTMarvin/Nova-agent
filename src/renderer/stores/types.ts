@@ -16,6 +16,7 @@ import type {
   BranchMeta
 } from '../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../shared/diff/types'
+import type { AgentToolProcessHandle } from '../../shared/ipc/types'
 
 /**
  * 嵌套工具活动（run_code 沙箱内的 tools.* 调用）：瞬态观测信息，
@@ -28,10 +29,12 @@ export interface NestedToolActivity {
   status: 'running' | 'success' | 'error'
 }
 
-/** 流式增量阶段携带的额外字段：原始 JSON 字符串；嵌套活动仅 renderer 瞬态 */
+/** 流式增量阶段携带的额外字段：原始 JSON 字符串；嵌套活动与进程句柄仅 renderer 瞬态 */
 export type RendererToolBlock = ToolBlock & {
   argumentsRaw?: string
   nestedActivities?: NestedToolActivity[]
+  /** 运行中进程会话句柄（bash 让出时工具仍在跑）；随事件更新，不持久化 */
+  processHandle?: AgentToolProcessHandle
 }
 
 /** 顺序消息块：ToolBlock 使用携带 argumentsRaw 的 renderer 扩展版本 */

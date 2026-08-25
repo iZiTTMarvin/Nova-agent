@@ -12,6 +12,7 @@ import { createCodeContextTool } from '../../../runtime/tools/codeContext'
 import { editTool } from '../../../runtime/tools/editTool'
 import { writeTool } from '../../../runtime/tools/writeTool'
 import { bashTool } from '../../../runtime/tools/bashTool'
+import { shellSessionTool } from '../../../runtime/tools/shellSession'
 import { todoWriteTool } from '../../../runtime/tools/todoWriteTool'
 import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
@@ -91,6 +92,7 @@ export function registerBuiltinTools(
   toolRegistry.register(editTool)
   toolRegistry.register(writeTool)
   toolRegistry.register(bashTool)
+  toolRegistry.register(shellSessionTool)
   toolRegistry.register(archiveReadTool)
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)

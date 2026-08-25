@@ -20,6 +20,7 @@ import { closeAllCodeGraphs } from './services/CodeGraphHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
+import { processRegistry } from '../runtime/process'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
 import { initMainLogger, mainLog } from './logger'
@@ -288,9 +289,14 @@ async function bootstrap(): Promise<void> {
     // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
     closeAllSessionIndexes()
     // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
-    void closeAllCodeGraphs()
-      .catch((error) => {
-        console.error('[CodeGraphHost] 退出前释放失败:', error)
+    void Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll()])
+      .then(([graphs, processes]) => {
+        if (graphs.status === 'rejected') {
+          console.error('[CodeGraphHost] 退出前释放失败:', graphs.reason)
+        }
+        if (processes.status === 'rejected') {
+          console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
+        }
       })
       .finally(() => app.exit(requestedExitCode))
   })

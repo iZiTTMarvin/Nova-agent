@@ -18,6 +18,7 @@ import {
   sendAgentMessage,
   ensureTerminalHooksRegistered
 } from '../agent/turn'
+import { ensureProcessCleanupWired } from '../services/ProcessCleanupHost'
 import {
   cancelExecution,
   respondPermission,
@@ -36,6 +37,7 @@ export function registerAgentHandler(
   getImageStore: () => ImageStore
 ): void {
   ensureTerminalHooksRegistered()
+  ensureProcessCleanupWired()
 
   handle(SEND_MESSAGE, async (_event, params) => {
     await sendAgentMessage(params, { getMainWindow, getModelClient, getImageStore })

@@ -5,6 +5,7 @@ export type ToolCapability =
   | 'readonly'
   | 'write'
   | 'bash'
+  | 'shell-session'
   | 'plan-artifact'
   | 'mode-transition'
   | 'orchestration'
@@ -32,6 +33,10 @@ export function getToolCapability(toolName: string): ToolCapability {
       return 'write'
     case 'bash':
       return 'bash'
+    case 'shell_session':
+      // 工具整体在 plan 可见：read/interrupt/stop 是只读观察（default 起的进程切 plan
+      // 后不能失明）；write 动作由权限层按 action 拒绝——可见性管不到 action 粒度。
+      return 'shell-session'
     case 'todo_write':
       // todo_write 写的是会话级元数据，不动文件系统。
       // 归为 readonly：plan 模式下可见且可用，UI 不会被染成危险操作色，
@@ -76,7 +81,8 @@ export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
     return (
       capability === 'readonly' ||
       capability === 'plan-artifact' ||
-      capability === 'mode-transition'
+      capability === 'mode-transition' ||
+      capability === 'shell-session'
     )
   }
   if (mode === 'compose' && capability === 'mode-transition') {

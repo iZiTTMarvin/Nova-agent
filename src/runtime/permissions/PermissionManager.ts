@@ -5,6 +5,7 @@
  *
  * bash 不变量：assessCommandRisk 对整段命令永远最先执行；
  * 白名单与 allow 规则只拥有「把 ask 降为 allow」的权力，永远无权豁免高危命令。
+ * shell_session 按 action 决策：write 是唯一产生副作用的动作。
  */
 import type { Mode, PermissionPolicy } from '../../shared/session/types'
 import type { PermissionQuery, PermissionResult } from './types'
@@ -17,6 +18,7 @@ import {
 import { isCommandFullyWhitelisted } from './commandSegments'
 import { matchPermission, type MatchInput } from './PermissionMatcher'
 import type { PermissionRule } from './PermissionRule'
+import { isInteractiveEntryCommand } from '../tools/bash'
 
 /** 进入只读 Plan 或保持当前模式不会扩大副作用权限，可以由 Agent 自动完成。 */
 export function isSafeAutomaticModeTransition(
@@ -83,10 +85,11 @@ export class PermissionManager {
    *
    * bash 决策顺序：
    * 1. assessCommandRisk（高危命令不可被白名单/allow 规则豁免）
-   * 2. 持久化 deny 规则
-   * 3. 会话白名单（每一段首 token 均命中）
-   * 4. 持久化 allow 规则
-   * 5. mode + policy 基线决策
+   * 2. 交互式入口（REPL / 交互 shell，同样不可被白名单/allow 豁免）
+   * 3. 持久化 deny 规则
+   * 4. 会话白名单（每一段首 token 均命中）
+   * 5. 持久化 allow 规则
+   * 6. mode + policy 基线决策
    */
   check(query: PermissionQuery, mode: Mode): PermissionResult {
     const { toolName, args } = query
@@ -111,6 +114,9 @@ export class PermissionManager {
       const dangerous = this.resolveDangerousBash(command, mode)
       if (dangerous) return dangerous
 
+      const interactive = this.resolveInteractiveEntry(command, mode)
+      if (interactive) return interactive
+
       const denyFromRules = this.matchPersistentDecision(toolName, args, 'deny')
       if (denyFromRules) return denyFromRules
 
@@ -129,6 +135,10 @@ export class PermissionManager {
       if (allowFromRules) return allowFromRules
 
       return this.checkBashSafe(command, mode)
+    }
+
+    if (toolName === 'shell_session') {
+      return this.checkShellSession(args, mode)
     }
 
     const denyFromRules = this.matchPersistentDecision(toolName, args, 'deny')
@@ -170,6 +180,94 @@ export class PermissionManager {
       decision: 'ask',
       riskLevel,
       reason
+    }
+  }
+
+  /**
+   * 交互式入口（REPL / 交互 shell）：不可被白名单/allow 规则豁免。
+   * 白名单与 allow 是「命令前缀」语义，对会话成立后写入的 stdin 字节无定义，
+   * 因此命中必须在规则匹配之前出结果。
+   */
+  private resolveInteractiveEntry(command: string, mode: Mode): PermissionResult | null {
+    if (!isInteractiveEntryCommand(command || '')) return null
+
+    if (isAutoPermissionSemantics(mode, this.permissionPolicy)) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: '自动执行策略下禁止启动交互式会话（任意执行入口），请改用非交互命令'
+      }
+    }
+
+    return {
+      decision: 'ask',
+      riskLevel: 'high',
+      reason: '该命令会启动等待输入的交互式会话，后续可写入任意内容，需要逐次确认'
+    }
+  }
+
+  /**
+   * shell_session 按 action 决策。会话白名单与 PermissionMatcher 持久规则都是
+   * 命令前缀语义，对 action/ref 无定义，因此本分支直接返回，不走 matchPersistentDecision。
+   */
+  private checkShellSession(args: Record<string, unknown>, mode: Mode): PermissionResult {
+    const action = args.action
+    if (
+      action !== 'read' &&
+      action !== 'write' &&
+      action !== 'interrupt' &&
+      action !== 'stop'
+    ) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: '未知的 shell_session action'
+      }
+    }
+
+    if (action === 'write') {
+      return this.checkShellSessionWrite(args, mode)
+    }
+
+    return {
+      decision: 'allow',
+      riskLevel: 'low',
+      reason: '终端会话观察与终止不产生新副作用'
+    }
+  }
+
+  /** 写入内容风险评估是纵深防御第二层；第一层是创建时点的交互入口判定。 */
+  private checkShellSessionWrite(args: Record<string, unknown>, mode: Mode): PermissionResult {
+    if (mode === 'plan') {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: 'plan 模式下禁止向终端会话写入输入（read/interrupt/stop 可用）'
+      }
+    }
+
+    const input = typeof args.input === 'string' ? args.input : ''
+    const { riskLevel, isDangerous, reason } = assessCommandRisk(input)
+
+    if (isAutoPermissionSemantics(mode, this.permissionPolicy)) {
+      if (isDangerous) {
+        return {
+          decision: 'deny',
+          riskLevel: 'high',
+          reason: `自动执行策略下禁止向会话写入危险内容: ${reason}`
+        }
+      }
+      return {
+        decision: 'allow',
+        riskLevel: 'low',
+        reason: '向运行中的终端进程写入输入'
+      }
+    }
+
+    return {
+      decision: 'ask',
+      riskLevel,
+      reason: isDangerous ? reason : '向运行中的终端进程写入输入'
     }
   }
 

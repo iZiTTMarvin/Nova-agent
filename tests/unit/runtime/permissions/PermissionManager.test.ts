@@ -325,4 +325,126 @@ describe('PermissionManager', () => {
       expect(pm.check({ toolName: 'bash', args: { command: 'python script.py' } }, 'default').decision).toBe('ask')
     })
   })
+
+  // ── bash 交互式入口（持久会话安全承重墙）──
+
+  describe('bash 交互式入口', () => {
+    it('default+ask 下启动 REPL 需要确认且风险等级为 high', () => {
+      const result = pm.check({ toolName: 'bash', args: { command: 'python' } }, 'default')
+      expect(result.decision).toBe('ask')
+      expect(result.riskLevel).toBe('high')
+      expect(result.reason).toContain('交互')
+    })
+
+    it('default+auto 下启动交互式会话被拒绝', () => {
+      pm.setPermissionPolicy('auto')
+      const result = pm.check({ toolName: 'bash', args: { command: 'python' } }, 'default')
+      expect(result.decision).toBe('deny')
+      expect(result.riskLevel).toBe('high')
+    })
+
+    it('plan 下 bash 依旧整体拒绝（既有 plan 分支，先于交互入口判定）', () => {
+      const result = pm.check({ toolName: 'bash', args: { command: 'bash' } }, 'plan')
+      expect(result.decision).toBe('deny')
+      expect(result.reason).toContain('plan')
+    })
+
+    it('非交互形态不触发交互入口判定，走普通 bash 基线', () => {
+      const withC = pm.check({ toolName: 'bash', args: { command: 'bash -c "npm test"' } }, 'default')
+      expect(withC.decision).toBe('ask')
+      expect(withC.riskLevel).toBe('low')
+
+      const withScript = pm.check({ toolName: 'bash', args: { command: 'python script.py' } }, 'default')
+      expect(withScript.decision).toBe('ask')
+      expect(withScript.riskLevel).toBe('low')
+    })
+
+    it('会话白名单不能豁免交互式入口', () => {
+      pm.setSessionId('session-interactive')
+      grantSessionPermission('session-interactive', 'python')
+
+      const result = pm.check({ toolName: 'bash', args: { command: 'python' } }, 'default')
+      expect(result.decision).toBe('ask')
+      expect(result.riskLevel).toBe('high')
+    })
+  })
+
+  // ── shell_session 会话工具 ──
+
+  describe('shell_session 会话工具', () => {
+    it('write 在 plan 模式被拒绝，read/interrupt/stop 在 plan 模式放行', () => {
+      const write = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'ls' }
+      }, 'plan')
+      expect(write.decision).toBe('deny')
+      expect(write.reason).toContain('plan')
+
+      for (const action of ['read', 'interrupt', 'stop'] as const) {
+        const result = pm.check({
+          toolName: 'shell_session',
+          args: { action, ref: 'proc-1' }
+        }, 'plan')
+        expect(result.decision, `action ${action} 应该 allow`).toBe('allow')
+      }
+    })
+
+    it('write 在 default+ask 未命中危险内容时以 low 风险询问', () => {
+      const result = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'print(1)' }
+      }, 'default')
+      expect(result.decision).toBe('ask')
+      expect(result.riskLevel).toBe('low')
+    })
+
+    it('write 在 default+ask 命中危险内容时以 high 风险询问', () => {
+      const result = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'rm -rf /tmp/x' }
+      }, 'default')
+      expect(result.decision).toBe('ask')
+      expect(result.riskLevel).toBe('high')
+    })
+
+    it('write 在 default+auto 未命中危险放行、命中危险拒绝', () => {
+      pm.setPermissionPolicy('auto')
+
+      const safe = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'print(1)' }
+      }, 'default')
+      expect(safe.decision).toBe('allow')
+
+      const dangerous = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'sudo apt install foo' }
+      }, 'default')
+      expect(dangerous.decision).toBe('deny')
+      expect(dangerous.riskLevel).toBe('high')
+    })
+
+    it('未知或缺失 action 被拒绝', () => {
+      const unknown = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'explode', ref: 'proc-1' }
+      }, 'default')
+      expect(unknown.decision).toBe('deny')
+      expect(unknown.reason).toContain('未知')
+
+      const missing = pm.check({ toolName: 'shell_session', args: { ref: 'proc-1' } }, 'default')
+      expect(missing.decision).toBe('deny')
+    })
+
+    it('会话白名单对 shell_session write 无豁免（命令前缀语义不适用于 action）', () => {
+      pm.setSessionId('session-shell')
+      grantSessionPermission('session-shell', 'print')
+
+      const result = pm.check({
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'print(1)' }
+      }, 'default')
+      expect(result.decision).toBe('ask')
+    })
+  })
 })

@@ -48,12 +48,12 @@ export function createComposeStageToolPolicy(
   sessionStore: SessionStore,
   sessionId: string
 ): ToolAuthorizationPolicy {
-  return (toolName) => {
+  return (toolName, args) => {
     const stageId = currentStageId(sessionStore, sessionId)
     if (!stageId) {
       return { allowed: true, reason: '' }
     }
-    const denial = getComposeStageToolDenial(stageId, toolName)
+    const denial = getComposeStageToolDenial(stageId, toolName, args)
     return denial ? { allowed: false, reason: denial } : { allowed: true, reason: '' }
   }
 }

@@ -24,6 +24,7 @@ import type {
   Tier1BranchContext
 } from '../../shared/workspace/types'
 import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests } from '../../runtime/checkpoints/restore'
+import { processRegistry } from '../../runtime/process'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
 import {
   clearReadStateForSession,
@@ -318,7 +319,7 @@ export class WorkspaceService {
    * 删除会话。
    * 删除的是当前会话时，自动切到剩余列表的第一条；没有剩余会话则清空工作区。
    */
-  deleteSession(sessionId: string): WorkspaceState {
+  async deleteSession(sessionId: string): Promise<WorkspaceState> {
     this.clearTier1View()
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
@@ -359,6 +360,8 @@ export class WorkspaceService {
       deleteReadStateForSession(id)
       disposeIdleLoopForSession(id)
       clearSteeringQueue(id)
+      // 门禁只拦活跃 turn，持久进程恰在无 turn 时仍在跑，须随会话删除终止
+      await processRegistry.terminateForSession(id)
     }
     runCoordinator.deleteRunsForSessions(deletingIdSet)
 

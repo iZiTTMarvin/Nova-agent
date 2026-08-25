@@ -32,6 +32,10 @@ import { findTool } from '../runtime/tools/findTool'
 import { editTool } from '../runtime/tools/editTool'
 import { writeTool } from '../runtime/tools/writeTool'
 import { bashTool } from '../runtime/tools/bashTool'
+import { shellSessionTool } from '../runtime/tools/shellSession'
+import { setPersistentShellEnabled } from '../runtime/tools/bash'
+import { processRegistry } from '../runtime/process'
+import { loadNovaSettings } from '../runtime/settings/novaSettings'
 import { archiveReadTool } from '../runtime/tools/archiveRead'
 import type { AgentEvent } from '../runtime/agent/types'
 import type { NormalizedUsage } from '../shared/model/types'
@@ -199,6 +203,7 @@ async function createCodingTools(
   registry.register(editTool)
   registry.register(writeTool)
   registry.register(bashTool)
+  registry.register(shellSessionTool)
   registry.register(archiveReadTool)
   // 子集注册路径同样 fail closed：注册项必须已登记 Catalog
   const subsetCheck = validateRegisteredToolsAreCataloged(
@@ -294,6 +299,8 @@ async function main(): Promise<void> {
       abortSignal: deadlineAbortController.signal
     })
   }
+  // headless 与桌面共用 runtime bash 工具：持久会话部署开关同样生效
+  setPersistentShellEnabled(loadNovaSettings().persistentShellSessions)
   const registry = await createCodingTools(
     toolEconomyEnabled ? toolAvailability : null,
     codeGraphController?.queryPort ?? null
@@ -389,6 +396,8 @@ async function main(): Promise<void> {
     clearTimeout(deadlineTimer)
     activeLoop = null
     loop.dispose()
+    // headless 无 will-quit，持久进程须在此统一终止
+    await processRegistry.terminateAll()
     await codeGraphController?.close()
   }
 

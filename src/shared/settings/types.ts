@@ -47,8 +47,11 @@ export interface NovaSettingsDto {
   permissionPolicy: PermissionPolicy
   /** bash 工具默认 shell 路径（空表示用系统默认） */
   defaultShell: string
-  /** bash 命令默认超时（毫秒，0 表示不超时） */
-  defaultShellTimeout: number
+  /**
+   * 持久 shell 会话部署开关：bash 命令到前台等待边界仍存活时登记为可续操作会话；
+   * 关闭后退回旧的边界强制终止语义。删除条件见方案文档回滚节。
+   */
+  persistentShellSessions: boolean
   /** 主 Agent 单条消息内最大连续工具调用轮数，防止长任务静默截断；范围 1~1000 */
   maxToolRounds: number
   /** 编辑器字体大小（px） */

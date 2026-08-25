@@ -8,7 +8,13 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { spawn } from 'child_process'
-import { getShellConfig, getShellEnv, killProcessTree } from '@runtime/tools/bash/shell'
+import {
+  getShellConfig,
+  getShellEnv,
+  killProcessTree,
+  spawnShell,
+  waitForChildProcess
+} from '@runtime/tools/bash/shell'
 
 describe('shell', () => {
   describe('getShellConfig', () => {
@@ -72,6 +78,19 @@ describe('shell', () => {
   })
 
   // 进程终止测试在 Windows 上跑 taskkill，需要 child 进程存在
+  describe('spawnShell', () => {
+    it('spawn 后 stdin 保持打开（供持久会话写入）', async () => {
+      const config = getShellConfig()
+      const child = spawnShell(config, 'echo ok', process.cwd(), process.env)
+      try {
+        expect(child.stdin?.writable).toBe(true)
+      } finally {
+        child.kill()
+        await waitForChildProcess(child)
+      }
+    })
+  })
+
   describe('killProcessTree', () => {
     if (process.platform === 'win32') {
       it('Windows：调用 taskkill 不抛错', async () => {

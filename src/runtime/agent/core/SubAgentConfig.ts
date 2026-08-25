@@ -21,7 +21,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     name: 'code',
     description: '受限编程：可读、写、跑命令，写操作需父 agent 权限审批。',
-    allowedTools: ['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash'],
+    allowedTools: ['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'shell_session'],
     prompt: `你是一个受限编程助手。在指定工作区内读、写、执行命令完成任务。
 写操作遵守安全边界。完成后返回结构化摘要（改了什么、关键结论）。`,
     maxToolRounds: 30

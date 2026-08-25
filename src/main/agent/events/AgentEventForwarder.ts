@@ -85,7 +85,8 @@ export function forwardEventToRenderer(
         ...(event.failed !== undefined ? { failed: event.failed } : {}),
         ...(event.artifactId ? { artifactId: event.artifactId } : {}),
         ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {}),
-        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {})
+        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+        ...(event.processHandle ? { processHandle: event.processHandle } : {})
       })
       break
     case 'permission_request':

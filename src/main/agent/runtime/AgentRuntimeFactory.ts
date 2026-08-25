@@ -46,6 +46,7 @@ import {
 } from '../../../runtime/sessions/contextSnapshot'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
 import { ArtifactStore } from '../../../runtime/artifacts/ArtifactStore'
+import { setPersistentShellEnabled } from '../../../runtime/tools/bash'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import { loadNovaSettings } from '../../../runtime/settings/novaSettings'
 import {
@@ -362,6 +363,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setBashEnvironment({
     binDirs: [join(projectPath, 'node_modules', '.bin')]
   })
+  // 部署开关随设置生效：关闭时 bash 到前台等待边界退回强制终止语义
+  setPersistentShellEnabled(novaSettings.persistentShellSessions)
   agentLoop.setPermissionManager(permissionManager)
   agentLoop.setMode(session.mode)
   agentLoop.setAutoMode(autoMode)

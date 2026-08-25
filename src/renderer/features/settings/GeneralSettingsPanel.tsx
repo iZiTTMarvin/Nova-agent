@@ -1,7 +1,7 @@
 /**
  * GeneralSettingsPanel — 通用偏好设置面板
  *
- * 包含：默认运行模式、bash shell/超时、编辑器字体/主题、diff 自动展开。
+ * 包含：默认运行模式、bash shell、持久终端会话、编辑器字体/主题、diff 自动展开。
  * 所有改动通过 settings:set 持久化，主进程做 schema 校验。
  */
 import React, { useEffect, useState } from 'react'
@@ -179,18 +179,15 @@ export const GeneralSettingsPanel: React.FC = () => {
               />
             </SettingsField>
             <SettingsRow
-              label="Shell 命令超时（毫秒）"
-              description="0 表示不超时。默认 120000ms（2 分钟）。"
+              label="持久终端会话"
+              description="开启后，长时间运行的命令超时不再被强制终止，而是转为可继续交互的终端会话；关闭后退回超时即终止的行为。"
               end={
-                <NumberInput
-                  label="Shell 命令超时（毫秒）"
+                <Switch
+                  label="持久终端会话"
                   isLabelHidden
-                  value={settings.defaultShellTimeout}
-                  onChange={value => void update('defaultShellTimeout', value)}
-                  min={0}
-                  step={1000}
+                  value={settings.persistentShellSessions}
+                  onChange={checked => void update('persistentShellSessions', checked)}
                   isDisabled={saving}
-                  width={150}
                 />
               }
             />

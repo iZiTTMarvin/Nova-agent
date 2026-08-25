@@ -563,6 +563,15 @@ export type IpcCommandChannel = keyof IpcCommands
 
 // ── main → renderer 事件的数据类型 ──────────────────────
 
+/**
+ * 运行中进程会话句柄。与 runtime 的 ToolProcessHandle 契约对齐：
+ * shared 不 import runtime，两边字段形状必须同步维护。
+ */
+export interface AgentToolProcessHandle {
+  ref: string
+  state: 'running' | 'exited'
+}
+
 export interface IpcEvents {
   'agent:message-start': {
     messageId: string
@@ -602,6 +611,8 @@ export interface IpcEvents {
     truncationMeta?: ToolTruncationMeta
     /** 嵌套工具调用（run_code 沙箱内）的父调用 ID；顶层调用不带 */
     parentToolCallId?: string
+    /** 运行中进程会话句柄；缺失表示进程已随工具调用结束（跑完了） */
+    processHandle?: AgentToolProcessHandle
   }
   'agent:permission-request': {
     messageId: string

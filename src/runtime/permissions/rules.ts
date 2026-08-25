@@ -7,11 +7,14 @@
  * | edit/write           | deny    | allow       | allow                  |
  * | bash                 | deny    | ask         | allow*                 |
  * | task/invoke_skill    | deny    | allow       | allow                  |
+ * | shell_session        | deny    | ask         | allow*                 |
  *
  * *auto 语义下危险命令（sudo、rm -rf、curl|sh 等）强制 deny
  *
  * task/invoke_skill 为编排类（orchestration）：派遣动作本身无副作用，直接放行；
  * 真正的副作用由子代理内部工具各自走权限检查（不在派遣层重复拦截）。
+ * shell_session 矩阵行是兜底防线：write 可执行任意内容，按 action 的精细化
+ * 在 PermissionManager 的 shell_session 分支（read/interrupt/stop 在 plan 也放行）。
  */
 import type { Mode, PermissionDecision, PermissionPolicy } from '../../shared/session/types'
 import { getToolCapability } from '../../shared/session/toolVisibility'
@@ -125,8 +128,8 @@ export function getBaseDecision(
     return 'allow'
   }
 
-  // default + ask：只读和写入 allow，bash 需确认
-  return category === 'bash' ? 'ask' : 'allow'
+  // default + ask：只读和写入 allow，bash 与会话写入需确认
+  return category === 'bash' || category === 'shell-session' ? 'ask' : 'allow'
 }
 
 /**
@@ -140,5 +143,6 @@ export function getRiskDescription(toolName: string, riskLevel: RiskLevel): stri
   if (category === 'plan-artifact') return '写入工作区计划文档'
   if (category === 'mode-transition') return '切换运行模式'
   if (category === 'write') return riskLevel === 'high' ? '高风险写入' : '写入操作'
+  if (category === 'shell-session') return riskLevel === 'high' ? '高风险的会话输入' : '终端会话输入'
   return riskLevel === 'high' ? '高风险命令' : 'Shell 命令'
 }

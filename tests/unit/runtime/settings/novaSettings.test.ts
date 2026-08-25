@@ -88,6 +88,34 @@ describe('novaSettings', () => {
     expect(loadNovaSettings().codeIndexEnabled).toBe(true)
   })
 
+  it('persistentShellSessions 默认开启且可持久化关闭', async () => {
+    const { loadNovaSettings, saveNovaSettings } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    expect(loadNovaSettings().persistentShellSessions).toBe(true)
+    saveNovaSettings({ persistentShellSessions: false })
+    expect(loadNovaSettings().persistentShellSessions).toBe(false)
+  })
+
+  it('persistentShellSessions 非法值被 saveNovaSettings 拒绝', async () => {
+    const { saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    expect(() => saveNovaSettings({ persistentShellSessions: 'yes' as unknown as boolean })).toThrow(
+      /persistentShellSessions/
+    )
+  })
+
+  it('旧 settings.json 含 defaultShellTimeout 时加载无错且该字段被丢弃', async () => {
+    const { loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    writeFileSync(
+      join(mockHome, '.nova', 'settings.json'),
+      JSON.stringify({ settingsVersion: 1, defaultShellTimeout: 60_000, theme: 'dark' }),
+      'utf-8'
+    )
+    const s = loadNovaSettings()
+    expect('defaultShellTimeout' in s).toBe(false)
+    expect(s.theme).toBe('dark')
+  })
+
   it('memorySearchLimit 非法值被 saveNovaSettings 拒绝', async () => {
     const { saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     for (const bad of [0, -1, 1.5, 'abc' as unknown as number]) {

@@ -257,7 +257,7 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
  *
  * 统一处理：
  * - windowsHide: true（避免弹黑色窗口）
- * - stdio: ['pipe', 'pipe', 'pipe']（我们接管 stdout/stderr，关闭 stdin）
+ * - stdio: ['pipe', 'pipe', 'pipe']（三个管道全接管；stdin 保持打开供持久会话后续写入）
  * - env: 通过 getShellEnv 注入
  */
 export function buildSpawnOptions(
@@ -274,7 +274,7 @@ export function buildSpawnOptions(
   }
 }
 
-/** spawn 包装：返回一个 child 并立即关闭 stdin。 */
+/** spawn 包装：返回 child，stdin 保持打开（持久会话需要 stdin 可写）。 */
 export function spawnShell(
   config: ShellConfig,
   command: string,
@@ -283,7 +283,10 @@ export function spawnShell(
   signal?: AbortSignal
 ): ChildProcess {
   const child = spawn(config.shell, [...config.args, command], buildSpawnOptions(env, cwd, { signal }))
-  // 关闭 stdin，避免命令因等待输入而卡死
-  child.stdin?.end()
+  // stdin 不立即关闭：让出为持久会话后仍可写入。不读 stdin 的命令在进程退出时
+  // 管道随之关闭，行为不受影响（waitForChildProcess 等 close 已兜底）。
+  // 子进程退出瞬间若有未完成写入会触发 EPIPE——预期现象，吞掉避免成为
+  // 未处理流错误炸掉宿主进程。
+  child.stdin?.on('error', () => {})
   return child
 }

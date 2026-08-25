@@ -98,7 +98,7 @@ function executionHint(family: ShellFamily): string[] {
       '- 路径含空格时用双引号包裹：`Get-Content "C:/Program Files/..."`。',
       '- 避免使用 Unix 风格的反引号或 `$()` 嵌套陷阱——PowerShell 的字符串插值是 `"$var"`。',
       '- 重要操作前先 dry-run：例如 `Remove-Item -WhatIf`、`Get-ChildItem` 先看。',
-      '- 长任务用 `-Verbose` 或写进度文件，避免你看不到进度。'
+      '- 长任务不用预判时长，直接跑：仍在运行时会返回进程引用（ref），用 shell_session 的 read 继续看输出、write 写入输入（内容需自带换行）、stop 终止。'
     ]
   }
   if (family === 'cmd') {
@@ -108,14 +108,14 @@ function executionHint(family: ShellFamily): string[] {
       '- cmd 没有反引号；命令嵌套用 `call`。',
       '- 重要操作前先 dry-run：例如先 `dir` 看一眼再 `del`。',
       '- 避免依赖 Unix 工具——`find` / `grep` 在 Windows 上不可用。',
-      '- 长任务会阻塞整个调用直到完成，超过时限会被强制终止——把大任务拆成可分步验证的小步执行。'
+      '- 长任务不用预判时长，直接跑：仍在运行时会返回进程引用（ref），用 shell_session 的 read 继续看输出、write 写入输入（内容需自带换行）、stop 终止。'
     ]
   }
   return [
     '## 命令执行注意事项',
     '- 路径含空格或包含 `$` 时用单引号包裹：`cat \'/path with $dollar/file\'`。',
     '- 重要操作前先 dry-run：例如 `rm -i`、先 `ls` 再 `rm`。',
-    '- 长任务会阻塞整个调用直到完成，超过时限会被强制终止——把大任务拆成可分步验证的小步执行。',
+    '- 长任务不用预判时长，直接跑：仍在运行时会返回进程引用（ref），用 shell_session 的 read 继续看输出、write 写入输入（内容需自带换行）、stop 终止。',
     '- 如果命令会写入工作区文件，会被 checkpoint 系统自动追踪。'
   ]
 }

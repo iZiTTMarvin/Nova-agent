@@ -1,5 +1,6 @@
 import { sanitizeToolInput, sanitizeToolOutput } from '../../../../shared/tool-input-sanitizer'
 import { retainCommittedBlocksForRetry } from '../../../../shared/session/retainCommittedBlocksForRetry'
+import type { AgentToolProcessHandle } from '../../../../shared/ipc/types'
 import { parsePartialToolArgs } from '../../../lib/partialJsonArgs'
 import { createAssistantMessage } from '../../../lib/focusedSessionRecovery'
 import {
@@ -378,7 +379,8 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     _toolName: string,
     result: string,
     parentToolCallId?: string,
-    failed?: boolean
+    failed?: boolean,
+    processHandle?: AgentToolProcessHandle
   ) => {
     const isError = failed ?? (result.startsWith('工具执行失败') || result.startsWith('权限拒绝:'))
 
@@ -405,7 +407,12 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
 
       const blocks = msg.blocks?.map(b => {
         if (b.type === 'tool' && b.toolCallId === toolCallId) {
-          return { ...b, status: isError ? 'error' as const : 'success' as const, result: sanitizedResult }
+          return {
+            ...b,
+            status: isError ? 'error' as const : 'success' as const,
+            result: sanitizedResult,
+            ...(processHandle ? { processHandle } : {})
+          }
         }
         return b
       })

@@ -34,7 +34,7 @@ const settingsDto = {
   defaultMode: 'default',
   permissionPolicy: 'ask',
   defaultShell: '',
-  defaultShellTimeout: 120_000,
+  persistentShellSessions: true,
   maxToolRounds: 100,
   editorFontSize: 13,
   editorFontFamily: 'monospace',

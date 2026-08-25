@@ -103,7 +103,7 @@ describe('WorkspaceService workspace root changes', () => {
     ])
   })
 
-  it('删除最后一个会话时发送 workspace 关闭通知', () => {
+  it('删除最后一个会话时发送 workspace 关闭通知', async () => {
     const service = createService()
     const events: WorkspaceRootChange[] = []
     const session = store.create('/workspace/a')
@@ -111,7 +111,7 @@ describe('WorkspaceService workspace root changes', () => {
     service.selectSession(session.id)
     events.length = 0
 
-    service.deleteSession(session.id)
+    await service.deleteSession(session.id)
 
     expect(events).toEqual([
       { previousRoot: '/workspace/a', nextRoot: null }
@@ -155,7 +155,7 @@ describe('WorkspaceService workspace root changes', () => {
     expect(store.load(disabledId)?.codeIndexEnabled).toBe(false)
   })
 
-  it('删除当前会话并切到不同项目时发布前后根路径', () => {
+  it('删除当前会话并切到不同项目时发布前后根路径', async () => {
     const service = createService()
     const events: WorkspaceRootChange[] = []
     const current = store.create('/workspace/current')
@@ -164,7 +164,7 @@ describe('WorkspaceService workspace root changes', () => {
     service.selectSession(current.id)
     events.length = 0
 
-    service.deleteSession(current.id)
+    await service.deleteSession(current.id)
 
     expect(service.getState().currentSessionId).toBe(remaining.id)
     expect(events).toEqual([

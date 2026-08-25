@@ -95,13 +95,13 @@ describe('WorkspaceService subagent deletion', () => {
     return { service, assertNoNonTerminalRunsForSessions, deleteRunsForSessions }
   }
 
-  it('删除父会话时按后序回收明确 child subtree 与对应 run', () => {
+  it('删除父会话时按后序回收明确 child subtree 与对应 run', async () => {
     const parent = store.create(path.join(tempRoot, 'workspace'))
     const child = createChild(parent.id, 'one')
     const { service, assertNoNonTerminalRunsForSessions, deleteRunsForSessions } = createService()
     service.selectSession(child.id)
 
-    service.deleteSession(parent.id)
+    await service.deleteSession(parent.id)
 
     expect(store.load(parent.id)).toBeNull()
     expect(store.load(child.id)).toBeNull()
@@ -112,12 +112,12 @@ describe('WorkspaceService subagent deletion', () => {
     expect(service.getState().currentSessionId).toBeNull()
   })
 
-  it('禁止绕过父会话单独删除 Child Session', () => {
+  it('禁止绕过父会话单独删除 Child Session', async () => {
     const parent = store.create(path.join(tempRoot, 'workspace'))
     const child = createChild(parent.id, 'one')
     const { service } = createService()
 
-    expect(() => service.deleteSession(child.id)).toThrow(/Child Session 不允许单独删除/)
+    await expect(service.deleteSession(child.id)).rejects.toThrow(/Child Session 不允许单独删除/)
     expect(store.load(parent.id)).not.toBeNull()
     expect(store.load(child.id)).not.toBeNull()
   })

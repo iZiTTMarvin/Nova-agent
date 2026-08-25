@@ -55,7 +55,7 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('deleteSession：flush-then-delete，回调时会话仍在 store', () => {
+  it('deleteSession：flush-then-delete，回调时会话仍在 store', async () => {
     const events: string[] = []
     const session = store.create('/ws/project-a', 'default')
 
@@ -80,7 +80,7 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     service.setBroadcaster(() => {})
 
     service.selectSession(session.id)
-    service.deleteSession(session.id)
+    await service.deleteSession(session.id)
 
     expect(events).toEqual(['leaving', 'cleanup'])
     expect(store.load(session.id)).toBeNull()

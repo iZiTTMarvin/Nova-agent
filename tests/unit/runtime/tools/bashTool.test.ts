@@ -3,6 +3,11 @@ import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { bashTool } from '../../../../src/runtime/tools/bashTool'
+import {
+  setBashYieldBoundaryForTests,
+  setPersistentShellEnabled
+} from '../../../../src/runtime/tools/bash'
+import { processRegistry } from '../../../../src/runtime/process'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
@@ -75,20 +80,52 @@ describe('bashTool', () => {
     expect(result.output).toBeTruthy()
   })
 
-  // ── 超时机制 ───────────────────────────────────────────
+  // ── 让出边界（持久会话） ────────────────────────────────
 
-  it('超时后终止命令并返回错误', async () => {
+  it('持久会话开关关闭时：边界到点终止命令并返回错误', async () => {
     // 跨平台长运行命令：Windows 用 ping，Unix 用 sleep
     const longCmd = process.platform === 'win32'
       ? 'ping -n 30 127.0.0.1 >nul'
       : 'sleep 30'
-    // 毫秒精度：1000ms = 1s
-    const result = await bashTool.execute(
-      { command: longCmd, timeout: 1000 },
-      createContext()
-    )
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('超时')
+    setPersistentShellEnabled(false)
+    setBashYieldBoundaryForTests(1000)
+    try {
+      const result = await bashTool.execute(
+        { command: longCmd },
+        createContext()
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('超时')
+    } finally {
+      setPersistentShellEnabled(true)
+      setBashYieldBoundaryForTests(120_000)
+    }
+  }, 15_000)
+
+  it('长命令到让出边界登记为持久会话（真实后端）', async () => {
+    const longCmd = process.platform === 'win32'
+      ? 'ping -n 30 127.0.0.1'
+      : 'sleep 30'
+    setBashYieldBoundaryForTests(800)
+    try {
+      const result = await bashTool.execute(
+        { command: longCmd },
+        {
+          workingDir: WORKSPACE,
+          readState: createReadState(),
+          sessionId: 'sess_real_yield',
+          runId: 'run_real_yield'
+        }
+      )
+      expect(result.success).toBe(true)
+      expect(result.processHandle?.state).toBe('running')
+      expect(result.output).toContain(result.processHandle!.ref)
+      // 收尾：终止真实进程，不留后台 ping
+      await processRegistry.stopSession(result.processHandle!.ref, 'sess_real_yield')
+    } finally {
+      setBashYieldBoundaryForTests(120_000)
+      processRegistry.resetForTests()
+    }
   }, 15_000)
 
   // ── 安全边界 ───────────────────────────────────────────
@@ -171,8 +208,9 @@ describe('bashTool', () => {
 
   // ── 参数校验 ───────────────────────────────────────────
 
-  it('timeout 参数被正确识别（毫秒）', async () => {
-    // 毫秒精度：10000ms = 10s，echo 远远小于这个时间
+  it('残留的 timeout 入参被静默忽略（schema 已不声明该参数）', async () => {
+    // 模型历史习惯可能仍传 timeout；validateAndRepairToolArgs 只遍历 args 与
+    // schema.properties 的交集键，未声明键不报错，命令按让出边界语义正常执行。
     const result = await bashTool.execute(
       { command: 'echo "fast"', timeout: 10000 },
       createContext()

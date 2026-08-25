@@ -12,6 +12,7 @@ import type {
   ToolInvocationRef,
   ToolTruncationMeta,
   ToolControlSignal,
+  ToolProcessHandle,
   NestedToolCallRequest,
   NestedToolCallResult
 } from '../../tools/types'
@@ -38,6 +39,8 @@ export interface ToolExecutionOutcome {
   artifactId?: string
   truncationMeta?: ToolTruncationMeta
   control?: ToolControlSignal
+  /** 运行中进程会话句柄（与 ToolResult.processHandle 对齐，仅供事件/UI 层） */
+  processHandle?: ToolProcessHandle
   skippedByAbort?: boolean
   /**
    * 工具是否以失败告终（执行异常 / success=false / 权限拒绝 / 未注册）。
@@ -430,6 +433,7 @@ async function executePreparedToolCall(
   let artifactId: string | undefined
   let truncationMeta: ToolTruncationMeta | undefined
   let control: ToolControlSignal | undefined
+  let processHandle: ToolProcessHandle | undefined
   let failed = false
 
   try {
@@ -455,6 +459,7 @@ async function executePreparedToolCall(
       artifactId = toolResult.artifactId
       truncationMeta = toolResult.truncationMeta
       control = toolResult.control
+      processHandle = toolResult.processHandle
     } else {
       // 工具执行失败：仍保留工具已产出的 output（如超时前的部分日志、错误堆栈）。
       // 历史问题：失败分支只回传 error 文案、把 output 整个丢弃，导致模型拿不到任何
@@ -495,7 +500,8 @@ async function executePreparedToolCall(
     result: sanitizeToolOutput(item.toolCall.name, resultText, failed),
     failed,
     ...(artifactId ? { artifactId } : {}),
-    ...(truncationMeta ? { truncationMeta } : {})
+    ...(truncationMeta ? { truncationMeta } : {}),
+    ...(processHandle ? { processHandle } : {})
   })
 
   return {
@@ -508,6 +514,7 @@ async function executePreparedToolCall(
       artifactId,
       truncationMeta,
       ...(!failed && control ? { control } : {}),
+      ...(processHandle ? { processHandle } : {}),
       failed
     },
     emitted: true

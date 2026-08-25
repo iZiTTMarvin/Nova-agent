@@ -79,6 +79,22 @@ describe('compose 阶段工具门禁', () => {
     })
   })
 
+  describe('shell_session 会话工具：按 action 收放', () => {
+    // write 可执行任意内容，brainstorm 与 plan 阶段一律拒绝；
+    // read/interrupt/stop 是只读观察，各阶段都必须可用（否则 default 起的进程在阶段内失明）。
+    it('brainstorm 与 plan 阶段拒绝 write、放行只读 action', () => {
+      expect(getComposeStageToolDenial('brainstorm', 'shell_session', { action: 'write' })).toContain('写入')
+      expect(getComposeStageToolDenial('plan', 'shell_session', { action: 'write' })).toContain('写入')
+      expect(getComposeStageToolDenial('brainstorm', 'shell_session', { action: 'read' })).toBeNull()
+      expect(getComposeStageToolDenial('plan', 'shell_session', { action: 'interrupt' })).toBeNull()
+      expect(getComposeStageToolDenial('plan', 'shell_session', { action: 'stop' })).toBeNull()
+    })
+
+    it('开发及以后不干预任何 action', () => {
+      expect(getComposeStageToolDenial('implement', 'shell_session', { action: 'write' })).toBeNull()
+    })
+  })
+
   describe('开发及以后：不干预', () => {
     const OPEN_STAGES = ['implement', 'verify', 'review', 'report'] as const
     const ALL_TOOLS = [...READONLY_TOOLS, ...NON_READONLY_TOOLS, 'some_future_tool']

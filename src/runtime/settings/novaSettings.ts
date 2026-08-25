@@ -28,7 +28,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   defaultMode: 'default',
   permissionPolicy: 'ask',
   defaultShell: '',
-  defaultShellTimeout: 120_000,
+  persistentShellSessions: true,
   maxToolRounds: 100,
   editorFontSize: 13,
   editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
@@ -91,8 +91,8 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.defaultShell === 'string') {
     result.defaultShell = obj.defaultShell
   }
-  if (typeof obj.defaultShellTimeout === 'number' && obj.defaultShellTimeout >= 0) {
-    result.defaultShellTimeout = obj.defaultShellTimeout
+  if (typeof obj.persistentShellSessions === 'boolean') {
+    result.persistentShellSessions = obj.persistentShellSessions
   }
   if (
     typeof obj.maxToolRounds === 'number' &&
@@ -182,9 +182,9 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
       errors.push('permissionPolicy 必须是 ask / auto 之一')
     }
   }
-  if ('defaultShellTimeout' in patch && patch.defaultShellTimeout !== undefined) {
-    if (typeof patch.defaultShellTimeout !== 'number' || patch.defaultShellTimeout < 0) {
-      errors.push('defaultShellTimeout 必须是非负数')
+  if ('persistentShellSessions' in patch && patch.persistentShellSessions !== undefined) {
+    if (typeof patch.persistentShellSessions !== 'boolean') {
+      errors.push('persistentShellSessions 必须是布尔值')
     }
   }
   if ('maxToolRounds' in patch && patch.maxToolRounds !== undefined) {

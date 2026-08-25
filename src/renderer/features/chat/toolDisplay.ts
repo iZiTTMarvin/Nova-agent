@@ -21,6 +21,8 @@ export function getToolDisplayName(toolName: string): string {
       return '修改文件 (edit)'
     case 'bash':
       return '执行命令 (bash)'
+    case 'shell_session':
+      return '终端会话 (shell_session)'
     case 'task':
       return '调度子代理 (task)'
     case 'invoke_skill':
@@ -104,6 +106,12 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       // 截断过长的命令，只显示有效前缀
       const display = command.length > 60 ? command.slice(0, 57) + '...' : command
       return command ? `正在执行 ${display}` : '正在执行命令'
+    }
+    case 'shell_session': {
+      const action = (args.action as string) || ''
+      const ref = (args.ref as string) || ''
+      const display = ref.length > 12 ? `${ref.slice(0, 12)}...` : ref
+      return action ? `终端会话 ${action} ${display}` : '操作终端会话'
     }
     case 'read': {
       const path = (args.path as string) || ''

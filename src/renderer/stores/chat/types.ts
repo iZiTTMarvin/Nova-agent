@@ -8,7 +8,7 @@ import type { Session } from '../../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus } from '../../../shared/diff/types'
 import type { Tier1BranchContext } from '../../../shared/workspace/types'
 import type { HookEvent } from '../../../shared/agent/types'
-import type { RendererRecoveryState } from '../../../shared/ipc/types'
+import type { RendererRecoveryState, AgentToolProcessHandle } from '../../../shared/ipc/types'
 import type { ImageAttachment } from '../../lib/image-attachments'
 import type {
   ExtendedMessage,
@@ -111,7 +111,8 @@ export interface StreamSliceState {
     toolName: string,
     result: string,
     parentToolCallId?: string,
-    failed?: boolean
+    failed?: boolean,
+    processHandle?: AgentToolProcessHandle
   ) => void
 }
 

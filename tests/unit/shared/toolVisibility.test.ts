@@ -31,6 +31,10 @@ describe('toolVisibility', () => {
       expect(getToolCapability('bash')).toBe('bash')
     })
 
+    it('shell_session 归为 shell-session（会话读写，read/interrupt/stop 是只读观察）', () => {
+      expect(getToolCapability('shell_session')).toBe('shell-session')
+    })
+
     it('todo_write 归为 readonly（不写文件系统）', () => {
       expect(getToolCapability('todo_write')).toBe('readonly')
     })
@@ -88,6 +92,11 @@ describe('toolVisibility', () => {
       expect(isToolVisibleInMode('plan', 'todo_write')).toBe(true)
     })
 
+    it('plan 模式下 shell_session 可见（default 起的进程切 plan 后不能失明）', () => {
+      expect(isToolVisibleInMode('plan', 'shell_session')).toBe(true)
+      expect(isToolVisibleInMode('default', 'shell_session')).toBe(true)
+    })
+
     it('plan 模式下可见受限计划产物和模式切换', () => {
       expect(isToolVisibleInMode('plan', 'save_plan')).toBe(true)
       expect(isToolVisibleInMode('plan', 'switch_mode')).toBe(true)
@@ -130,6 +139,10 @@ describe('toolVisibility', () => {
       expect(isModeHiddenWriteTool('plan', 'edit')).toBe(true)
       expect(isModeHiddenWriteTool('plan', 'write')).toBe(true)
       expect(isModeHiddenWriteTool('plan', 'bash')).toBe(true)
+    })
+
+    it('plan 模式下 shell_session 卡片照常渲染（read 观察是合法操作，write 由权限层按 action 拒绝）', () => {
+      expect(isModeHiddenWriteTool('plan', 'shell_session')).toBe(false)
     })
 
     it('default / compose 模式下没有工具被隐藏', () => {
