@@ -14,9 +14,10 @@ describe('checkBatchPermission 批量权限校验', () => {
   beforeEach(() => {
     client = new MockModelClient()
     eventBus = new EventBus()
-    loop = new AgentLoop(client, eventBus)
     pm = new PermissionManager()
-    loop.setPermissionManager(pm)
+    loop = new AgentLoop(client, eventBus, { permissionManager: pm })
+    loop.setWorkingDir('/test-project')
+    loop.setWorkspaceRoot('/test-project')
   })
 
   it('如果所有 bash 命令本地规则匹配为 allow 或 deny，应该直接返回而不弹窗', async () => {
@@ -42,7 +43,6 @@ describe('checkBatchPermission 批量权限校验', () => {
       }
     ]
     pm.setRules(rules)
-    pm.setCurrentProjectPath('/test-project')
 
     const items = [
       { toolCallId: 'call-1', toolName: 'bash', args: { command: 'ls -la' } },

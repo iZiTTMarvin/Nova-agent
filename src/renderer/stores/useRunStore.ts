@@ -116,7 +116,7 @@ export function projectInteractionsToAgentStore(
       requestId: String(p.requestId ?? perm.interactionId),
       toolName: String(p.toolName ?? 'bash'),
       args: (p.args as Record<string, unknown>) ?? {},
-      riskLevel: (p.riskLevel as 'low' | 'medium' | 'high') ?? 'medium',
+      riskLevel: p.riskLevel === 'high' ? 'high' : 'low',
       reason: String(p.reason ?? ''),
       toolCallIds: p.toolCallIds as string[] | undefined,
       interactionId: perm.interactionId,

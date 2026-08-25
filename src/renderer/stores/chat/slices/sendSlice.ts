@@ -23,7 +23,6 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
   sendMessage: async (content: string, images?: ImageAttachment[], options?: {
     /** IPC 失败时恢复乐观截断前的消息树 */
     rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
-    autoMode?: boolean
   }): Promise<boolean> => {
     const { currentSessionId, isGenerating, sendInFlight, branchForkInProgress } = get()
     if (isGenerating || sendInFlight) return false
@@ -91,8 +90,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
           fileName: img.fileName,
           data: img.dataUrl,
           mimeType: img.mimeType
-        })),
-        ...(options?.autoMode !== undefined ? { autoMode: options.autoMode } : {})
+        }))
       })
     } catch (err) {
       if (options?.rollbackSnapshot) {
@@ -123,7 +121,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
     return true
   },
 
-  enqueuePendingMessage: (text, images, autoMode) => {
+  enqueuePendingMessage: (text, images) => {
     set(state => {
       // 防止用户疯狂输入导致队列无限增长。超过上限时丢弃最早的项。
       if (state.pendingUserMessages.length >= MAX_PENDING_MESSAGES) {
@@ -134,8 +132,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
             ...state.pendingUserMessages.slice(dropped),
             {
               text,
-              images: [...images],
-              ...(autoMode !== undefined ? { autoMode } : {})
+              images: [...images]
             }
           ]
         }
@@ -143,7 +140,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
       return {
         pendingUserMessages: [
           ...state.pendingUserMessages,
-          { text, images: [...images], ...(autoMode !== undefined ? { autoMode } : {}) }
+          { text, images: [...images] }
         ]
       }
     })

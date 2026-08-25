@@ -123,7 +123,7 @@ tests/e2e/
 │  ├─ startup.spec.ts
 │  ├─ chat.spec.ts
 │  ├─ tool-call.spec.ts
-│  └─ xforge.spec.ts         # XForge 六阶段：计划硬门、手动批准与全自动闭环
+│  └─ xforge.spec.ts         # XForge 六阶段：计划硬门、手动批准与阶段闭环
 ├─ lifecycle/
 │  ├─ abort.spec.ts
 │  ├─ session-switch.spec.ts
@@ -154,7 +154,7 @@ tests/live/
 
 `tests/live` 用 headless 运行时驱动真实 AgentLoop 与真实模型 API，验证服务端前缀缓存命中；key 门控（无 key 跳过）、显式运行（`npm run test:live-cache`）、会花钱，默认套件与 CI 必跑项均不包含。
 
-`smoke` 必须快且稳定；其中 `xforge.spec.ts` 覆盖 XForge 六阶段主流程、计划硬门、手动批准与全自动闭环。`lifecycle` 验证真实桌面状态恢复。`fault` 可以更重，但故障必须可重复，随机测试要固定 seed 并在失败时输出 seed。`packaged` 只验证构建产物特有风险，不复制整套 smoke。
+`smoke` 必须快且稳定；其中 `xforge.spec.ts` 覆盖 XForge 六阶段主流程、计划硬门、手动批准与阶段闭环。`lifecycle` 验证真实桌面状态恢复。`fault` 可以更重，但故障必须可重复，随机测试要固定 seed 并在失败时输出 seed。`packaged` 只验证构建产物特有风险，不复制整套 smoke。
 
 ## 7. 失败时留下什么
 

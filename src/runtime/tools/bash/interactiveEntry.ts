@@ -90,8 +90,12 @@ function normalizeCommandToken(token: string): string {
 }
 
 export function isInteractiveEntryCommand(command: string): boolean {
-  const segments = command.split(/\|\||&&|;|\|/).map(s => s.trim()).filter(Boolean)
-  return segments.some(s => segmentIsInteractiveEntry(s, 0))
+  const chains = command.split(/\|\||&&|;/).map(s => s.trim()).filter(Boolean)
+  return chains.some(chain => {
+    // 管道后续命令的 stdin 来自前一段，不会占用用户交互通道；只检查管道首段。
+    const firstPipelineSegment = chain.split('|')[0]?.trim() ?? ''
+    return firstPipelineSegment.length > 0 && segmentIsInteractiveEntry(firstPipelineSegment, 0)
+  })
 }
 
 function segmentIsInteractiveEntry(segment: string, depth: number): boolean {

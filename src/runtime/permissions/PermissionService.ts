@@ -26,7 +26,17 @@ function readRulesFile(filePath: string): PermissionRule[] {
   if (!existsSync(filePath)) return []
   try {
     const raw = JSON.parse(readFileSync(filePath, 'utf-8'))
-    if (Array.isArray(raw)) return raw as PermissionRule[]
+    if (Array.isArray(raw)) {
+      const rules = raw.filter((rule): rule is PermissionRule => {
+        if (!rule || typeof rule !== 'object') return false
+        const candidate = rule as Record<string, unknown>
+        return candidate.behavior === 'allow' || candidate.behavior === 'deny'
+      })
+      if (rules.length !== raw.length) {
+        console.warn(`[permissions] 已忽略 ${raw.length - rules.length} 条无效或旧版 ask 规则`)
+      }
+      return rules
+    }
     return []
   } catch {
     return []
@@ -80,6 +90,10 @@ export function upsertPermissionRule(input: {
   filePath?: string
   description?: string
 }): PermissionRule {
+  if (input.behavior !== 'allow' && input.behavior !== 'deny') {
+    throw new Error('权限规则 behavior 只能是 allow 或 deny')
+  }
+
   // 校验项目级规则的路径
   if (input.scope === 'project') {
     if (!input.projectPath || !isAbsolute(input.projectPath)) {

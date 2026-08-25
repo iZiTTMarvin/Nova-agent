@@ -21,11 +21,7 @@ export async function dispatchNextPendingMessage(api: ChatStoreApi): Promise<voi
   const [next, ...rest] = pendingUserMessages
   api.setState({ pendingUserMessages: rest })
   try {
-    const sent = await sendMessage(
-      next.text,
-      next.images,
-      next.autoMode !== undefined ? { autoMode: next.autoMode } : undefined
-    )
+    const sent = await sendMessage(next.text, next.images)
     if (!sent) {
       // 守卫拒绝（新轮次抢占 / 项目缺失）：保留在队列中等待下一个 turn boundary
       api.setState(state => ({ pendingUserMessages: [next, ...state.pendingUserMessages] }))

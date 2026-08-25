@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PermissionModeButton } from '../../../src/renderer/features/permissions/PermissionModeButton'
 import { act, renderDom } from './renderDom'
 
@@ -12,6 +12,20 @@ function openMenu(container: HTMLElement): void {
 }
 
 describe('PermissionModeButton', () => {
+  beforeEach(() => {
+    window.scrollTo = vi.fn()
+    Object.defineProperty(window, 'CSS', {
+      configurable: true,
+      value: { escape: (value: string) => value }
+    })
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.setAttribute('open', '')
+    })
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+      this.removeAttribute('open')
+    })
+  })
+
   it('会话切换后立即显示该会话自己的权限模式', () => {
     const onChange = vi.fn()
     const renderer = renderDom(
@@ -46,8 +60,8 @@ describe('PermissionModeButton', () => {
     renderer.unmount()
   })
 
-  it('完全访问展示为即将可用且不可选择', () => {
-    const onChange = vi.fn()
+  it('切换到完全访问必须二次确认，取消不改状态', async () => {
+    const onChange = vi.fn(async () => {})
     const renderer = renderDom(
       <PermissionModeButton permissionMode="auto" onChange={onChange} />
     )
@@ -55,9 +69,25 @@ describe('PermissionModeButton', () => {
 
     const fullAccess = Array.from(renderer.container.querySelectorAll<HTMLElement>('[role="menuitem"]'))
       .find(item => item.textContent?.includes('完全访问'))
-    expect(fullAccess?.textContent).toContain('即将可用')
     act(() => fullAccess?.click())
     expect(onChange).not.toHaveBeenCalled()
+
+    const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find(button => button.textContent?.trim() === '取消')
+    act(() => cancel?.click())
+    expect(onChange).not.toHaveBeenCalled()
+
+    openMenu(renderer.container)
+    const reopenedFullAccess = Array.from(renderer.container.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find(item => item.textContent?.includes('完全访问'))
+    act(() => reopenedFullAccess?.click())
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find(button => button.textContent?.trim() === '启用完全访问')
+    await act(async () => {
+      confirm?.click()
+      await Promise.resolve()
+    })
+    expect(onChange).toHaveBeenCalledWith('full_access')
     renderer.unmount()
   })
 })

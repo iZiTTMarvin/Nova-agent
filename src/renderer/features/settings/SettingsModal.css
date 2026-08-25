@@ -553,15 +553,6 @@
   color: var(--color-error);
 }
 
-.perm-rule__behavior--ask {
-  background-color: rgba(183, 110, 28, 0.14);
-  color: #b76e1c;
-}
-
-:root[data-theme='dark'] .perm-rule__behavior--ask {
-  color: #e0a35c;
-}
-
 .perm-rule__tool {
   font-family: var(--font-mono, monospace);
   font-size: 0.8rem;

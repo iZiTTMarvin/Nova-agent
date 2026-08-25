@@ -101,8 +101,6 @@ export interface ToolBatchExecutionOptions {
   resolveTool?: ToolContext['resolveTool']
   /** 当前模型上下文窗口 */
   contextWindow?: number
-  /** 当前轮次是否启用全自动推进。 */
-  autoMode?: boolean
   /** 事件总线（供 todo_write 等向 renderer 推送事件） */
   eventBus?: EventBus | null
   /** bash 工具的自定义 shell 路径（可选） */
@@ -244,7 +242,6 @@ function buildToolContext(
     ...(options.modelClient ? { modelClient: options.modelClient } : {}),
     ...(options.resolveTool ? { resolveTool: options.resolveTool } : {}),
     ...(options.contextWindow !== undefined ? { contextWindow: options.contextWindow } : {}),
-    ...(options.autoMode !== undefined ? { autoMode: options.autoMode } : {}),
     ...(options.mode ? { mode: options.mode } : {}),
     ...(options.eventBus ? { eventBus: options.eventBus } : {}),
     ...(options.shellPath ? { shellPath: options.shellPath } : {}),

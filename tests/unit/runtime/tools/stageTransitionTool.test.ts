@@ -30,7 +30,6 @@ type MockSessionStore = {
 
 function createContext(opts: {
   mode?: Mode
-  autoMode?: boolean
   sessionStore?: MockSessionStore | null
   sessionId?: string | null
   eventBus?: { emit: (event: unknown) => void } | null
@@ -71,7 +70,6 @@ function createContext(opts: {
   const context: ToolContext = {
     workingDir: process.cwd(),
     mode: opts.mode,
-    autoMode: opts.autoMode,
     readState: createReadState(),
     ...(opts.sessionStore === null ? {} : { sessionStore: sessionStore as ToolContext['sessionStore'] }),
     ...(opts.sessionId === null
@@ -315,37 +313,6 @@ describe('stage_transition：计划确认门', () => {
       type: 'complete'
     })
     expect(result.output).toContain('开发')
-  })
-
-  it('auto 模式下计划未批准会自动放行并留痕，同时 emit 批准更新事件', async () => {
-    const nextStages = planInProgressStages()
-    nextStages[1] = { id: 'plan', status: 'completed', completedAt: 2 }
-    nextStages[2] = { id: 'implement', status: 'in_progress' }
-    const approveFn = vi.fn(() => ({ status: 'approved' as const, auto: true, approvedAt: 123 }))
-    const applyFn = vi.fn(() => ({
-      status: 'applied' as const,
-      session: {},
-      stages: nextStages,
-      previousStages: planInProgressStages()
-    }))
-    const sessionStore: MockSessionStore = {
-      applyComposeStageTransition: applyFn,
-      getComposeStages: vi.fn(() => planInProgressStages()),
-      getComposePlanApproval: vi.fn(() => ({ status: 'pending' }) as ComposePlanApproval),
-      approveComposePlan: approveFn
-    }
-    const { context, events } = createContext({ mode: 'compose', autoMode: true, sessionStore })
-
-    const result = await stageTransitionTool.execute({ action: 'complete' }, context)
-
-    expect(result.success).toBe(true)
-    expect(approveFn).toHaveBeenCalledWith('sess_test', { auto: true })
-    expect(applyFn).toHaveBeenCalled()
-    expect(events).toContainEqual({
-      type: 'compose_plan_approval_updated',
-      sessionId: 'sess_test',
-      approval: { status: 'approved', auto: true, approvedAt: 123 }
-    })
   })
 
   it('skip/return 不受计划确认门约束（门禁只作用于 complete）', async () => {

@@ -30,7 +30,10 @@ function createLoop(
   config?: AgentLoopConfig
 ): { loop: AgentLoop; events: AgentEvent[] } {
   const eventBus = new EventBus()
-  const loop = new AgentLoop(client, eventBus, config)
+  const loop = new AgentLoop(client, eventBus, {
+    permissionMode: 'full_access',
+    ...config
+  })
   loops.push(loop)
   const events: AgentEvent[] = []
   eventBus.on(e => events.push(e))

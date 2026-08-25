@@ -10,7 +10,7 @@ import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
-import type { PermissionManager } from '../permissions/PermissionManager'
+import { PermissionManager } from '../permissions/PermissionManager'
 import {
   PermissionCoordinator,
   type ToolAuthorizationPolicy
@@ -180,8 +180,6 @@ export class AgentLoop {
    */
   private askQuestionHandler?: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
   private planReviewHandler?: ToolContext['requestPlanReview']
-  /** 当前轮次的编排自动化快照；只透传给工具上下文，不参与 AgentLoop 控制流。 */
-  private autoMode = false
   /** 经 PermissionManager 批准后，由宿主同步会话、WorkspaceService 与当前循环。 */
   private switchModeHandler?: ToolContext['switchMode']
   /** 本轮构造时捕获的 active plan；计划正文仍以工作区文件为真源。 */
@@ -207,8 +205,14 @@ export class AgentLoop {
       })
     this.eventBus = eventBus
     this.permissionCoordinator = new PermissionCoordinator({
+      permissionManager: config?.permissionManager ?? new PermissionManager(),
       emit: (event) => this.eventBus.emit(event),
-      getMode: () => this.ctx.mode
+      getMode: () => this.ctx.mode,
+      getPermissionRuntimeSnapshot: () => ({
+        sessionId: this.ctx.sessionId ?? '',
+        workspaceRoot: this.ctx.workspaceRoot ?? this.ctx.workingDir ?? process.cwd(),
+        permissionMode: this.ctx.permissionMode
+      })
     })
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
@@ -229,6 +233,7 @@ export class AgentLoop {
     this.syncToolDialectFromActiveProvider()
     /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
     this.ctx.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
+    this.ctx.permissionMode = config?.permissionMode ?? 'request_approval'
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.contextBudgetManager = createProductionContextBudgetManager({
       contextWindow: this.config.contextWindow ?? 200_000
@@ -309,7 +314,7 @@ export class AgentLoop {
         id: this.ctx.sessionId ?? '',
         workspaceRoot: this.ctx.workingDir ?? '',
         mode: this.ctx.mode,
-        permissionMode: 'request_approval',
+        permissionMode: this.ctx.permissionMode,
         messages: [],
         currentLeafId: null,
         frozenSystemPrompt: this.ctx.systemPrompt,
@@ -477,11 +482,6 @@ export class AgentLoop {
     this.checkpointManager = manager
   }
 
-  /** 设置权限决策引擎 */
-  setPermissionManager(manager: PermissionManager): void {
-    this.permissionCoordinator.setPermissionManager(manager)
-  }
-
   /**
    * 叠加在基础 PermissionManager 之前的运行时权限策略。
    * 用于阶段工作流等更窄的能力边界；拒绝项不会再弹基础权限确认。
@@ -503,11 +503,6 @@ export class AgentLoop {
   /** 设置当前运行的会话命名空间；不要求装配 SessionStore。 */
   setSessionId(sessionId: string): void {
     this.ctx.sessionId = sessionId
-  }
-
-  /** 设置当前轮次是否启用全自动推进。 */
-  setAutoMode(autoMode: boolean): void {
-    this.autoMode = autoMode
   }
 
   /** 注入会话级 artifact 存储，供 bash / grep / read 大输出落盘 */
@@ -806,7 +801,6 @@ export class AgentLoop {
         modelClient: this.modelPool,
         resolveTool: (name) => this.ctx.toolRegistry?.getTool(name),
         contextWindow: this.config.contextWindow,
-        autoMode: this.autoMode,
         eventBus: this.eventBus,
         hookManager: this.hookManager,
         isToolAvailable: (name) =>

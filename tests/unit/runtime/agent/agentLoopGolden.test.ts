@@ -33,7 +33,6 @@ import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import type { ChatEvent, NormalizedUsage } from '../../../../src/runtime/model/types'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
-import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
 
 // ── 公共辅助 ──────────────────────────────────────────────
@@ -440,7 +439,6 @@ describe('黄金测试 §9.7 权限 ask → 允许/拒绝', () => {
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
     loop.setToolRegistry(registry)
     loop.setMode('default')
-    loop.setPermissionManager(new PermissionManager())
 
     // sendMessage 是 async，权限请求会挂起等待 respondPermission
     const collectPromise = runAndCollect(loop, eventBus, '执行命令')
@@ -482,7 +480,6 @@ describe('黄金测试 §9.7 权限 ask → 允许/拒绝', () => {
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
     loop.setToolRegistry(registry)
     loop.setMode('default')
-    loop.setPermissionManager(new PermissionManager())
 
     const collectPromise = runAndCollect(loop, eventBus, '删')
     const permEvent = await waitForEvent(eventBus, 'permission_request', collectPromise)
@@ -520,7 +517,6 @@ describe('黄金测试 §9.8 权限打断（cancel during ask）', () => {
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
     loop.setToolRegistry(registry)
     loop.setMode('default')
-    loop.setPermissionManager(new PermissionManager())
 
     const collectPromise = runAndCollect(loop, eventBus, '执行')
     const permEvent = await waitForEvent(eventBus, 'permission_request', collectPromise)

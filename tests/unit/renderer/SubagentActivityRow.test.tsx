@@ -319,7 +319,7 @@ describe('SubagentActivityRow', () => {
       requestId: 'perm-child',
       toolName: 'bash',
       args: { command: 'npm test' },
-      riskLevel: 'medium',
+      riskLevel: 'low',
       reason: '运行测试命令',
       sessionId: 'sess-child',
       interactionId: 'perm-child',

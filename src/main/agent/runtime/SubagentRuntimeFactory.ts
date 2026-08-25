@@ -60,9 +60,6 @@ export function prepareSubagentRuntime(
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
   permissionManager.setRules(listPermissionRules(input.workingDirectory))
-  permissionManager.setCurrentProjectPath(input.workingDirectory)
-  permissionManager.setSessionId(input.childSession.id)
-  permissionManager.setPermissionMode(input.childSession.permissionMode)
 
   const modelPool = buildModelPoolWithFallbacks(input.modelClient)
   const agentLoop = new AgentLoop(modelPool, eventBus, {
@@ -72,6 +69,8 @@ export function prepareSubagentRuntime(
     supportsVision: input.supportsVision,
     toolExecution: 'sequential',
     reasoningEffort: input.reasoningEffort,
+    permissionMode: input.childSession.permissionMode,
+    permissionManager,
     ...(input.promptCacheKey ? { promptCacheKey: input.promptCacheKey } : {}),
     onCompaction: (compactedContext, meta) => {
       if (
@@ -91,7 +90,6 @@ export function prepareSubagentRuntime(
   agentLoop.setWorkingDir(input.workingDirectory)
   agentLoop.setWorkspaceRoot(input.childSession.workspaceRoot)
   agentLoop.setToolRegistry(toolRegistry)
-  agentLoop.setPermissionManager(permissionManager)
   agentLoop.setMode(
     input.profile.permissionCeiling === 'read_only' || input.isolation === 'readonly'
       ? 'plan'

@@ -26,6 +26,7 @@ import type {
   ToolDefinition
 } from '../../src/runtime/model/types'
 import type { NormalizedUsage } from '../../src/shared/model/types'
+import { PermissionManager } from '../../src/runtime/permissions/PermissionManager'
 
 /** 门禁覆盖的缓存档案：被动前缀 / all-history 回放 / 路由 key / think-tag 各得验证 */
 export type LiveProviderId = 'deepseek' | 'glm' | 'kimi' | 'minimax'
@@ -220,6 +221,8 @@ export async function runLiveConversation(
     systemPrompt: GATE_SYSTEM_PROMPT,
     contextWindow,
     supportsVision: false,
+    permissionMode: 'full_access',
+    permissionManager: new PermissionManager(),
     maxToolRounds: options.maxToolRounds ?? 12,
     toolExecution: 'parallel',
     maxParallelToolCalls: 4,

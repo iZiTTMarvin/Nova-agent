@@ -98,7 +98,7 @@ export interface PendingPermissionRequest {
   requestId: string
   toolName: string
   args: Record<string, unknown>
-  riskLevel: 'low' | 'medium' | 'high'
+  riskLevel: 'low' | 'high'
   reason: string
   commands?: string[]
   /** 本次请求对应的工具卡片 id 列表，内联放行据此锚定到具体卡片（锚点取末尾一张） */

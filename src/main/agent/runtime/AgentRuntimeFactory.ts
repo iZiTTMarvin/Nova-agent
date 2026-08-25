@@ -160,7 +160,6 @@ export interface PrepareAgentRuntimeInput {
   readState: ReadState
   pendingAskQuestions: Map<string, PendingAskQuestionEntry>
   runCoordinator: RunCoordinator
-  autoMode?: boolean
   /** 由 TurnService 预先 ensure 的 cache routing key；factory 不写 session */
   promptCacheKey?: string
   /** task 工具执行时读取；装配完成后由 TurnService 绑定本 turn 的执行服务。 */
@@ -182,7 +181,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     readState,
     pendingAskQuestions,
     runCoordinator,
-    autoMode = false,
     promptCacheKey,
     getSpawnSubagentPort,
     getCodeContextQueryPort
@@ -229,9 +227,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
   permissionManager.setRules(listPermissionRules(projectPath))
-  permissionManager.setCurrentProjectPath(projectPath)
-  permissionManager.setSessionId(sessionId)
-  permissionManager.setPermissionMode(session.permissionMode)
 
   const toolRegistry = new ToolRegistry()
   // Tool Economy 三态由内部策略决定（默认 off = 全量工具面，行为与历史一致）；
@@ -346,6 +341,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     toolDialectOverride: persistedConfig?.toolDialect,
     promptCacheKey,
     reasoningEffort: session.reasoningEffortOverride,
+    permissionMode: session.permissionMode,
+    permissionManager,
     onCompaction: (compactedContext, meta) => {
       if (!persistCompactionSnapshot(sessionStore, sessionId, compactedContext, meta)) {
         console.error(`[onCompaction] 找不到会话 ${sessionId}，快照未写`)
@@ -365,14 +362,12 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   })
   // 部署开关随设置生效：关闭时 bash 到前台等待边界退回强制终止语义
   setPersistentShellEnabled(novaSettings.persistentShellSessions)
-  agentLoop.setPermissionManager(permissionManager)
   agentLoop.setMode(session.mode)
-  agentLoop.setAutoMode(autoMode)
   // compose：模式指令与阶段指南挂 user 消息尾部（每轮实时读取阶段表），
   // 阶段工具门禁作为 overlay 在基础权限判定之前生效
   if (session.mode === 'compose') {
     agentLoop.setModeInstructionProvider(
-      createComposeModeInstructionProvider(sessionStore, sessionId, autoMode)
+      createComposeModeInstructionProvider(sessionStore, sessionId)
     )
     agentLoop.setToolAuthorizationPolicy(createComposeStageToolPolicy(sessionStore, sessionId))
   }

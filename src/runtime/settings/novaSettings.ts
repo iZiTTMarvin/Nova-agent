@@ -20,13 +20,13 @@ import type { NovaSettingsDto } from '../../shared/settings/types'
 export type NovaSettings = NovaSettingsDto
 
 /** 当前 settings schema 版本（用于未来迁移） */
-const CURRENT_SETTINGS_VERSION = 2
+const CURRENT_SETTINGS_VERSION = 3
 
 /** 默认值：所有字段的兜底 */
 export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   loadThirdPartySkills: true,
   defaultMode: 'default',
-  defaultPermissionMode: 'request_approval',
+  defaultPermissionMode: 'auto',
   defaultShell: '',
   persistentShellSessions: true,
   maxToolRounds: 100,
@@ -85,7 +85,8 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   if (
     obj.defaultPermissionMode === 'request_approval' ||
-    obj.defaultPermissionMode === 'auto'
+    obj.defaultPermissionMode === 'auto' ||
+    obj.defaultPermissionMode === 'full_access'
   ) {
     result.defaultPermissionMode = obj.defaultPermissionMode as PermissionMode
   } else if (obj.permissionPolicy === 'ask') {
@@ -185,8 +186,8 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
     }
   }
   if ('defaultPermissionMode' in patch && patch.defaultPermissionMode !== undefined) {
-    if (!['request_approval', 'auto'].includes(patch.defaultPermissionMode)) {
-      errors.push('defaultPermissionMode 当前必须是 request_approval / auto 之一')
+    if (!['request_approval', 'auto', 'full_access'].includes(patch.defaultPermissionMode)) {
+      errors.push('defaultPermissionMode 必须是 request_approval / auto / full_access 之一')
     }
   }
   if ('persistentShellSessions' in patch && patch.persistentShellSessions !== undefined) {

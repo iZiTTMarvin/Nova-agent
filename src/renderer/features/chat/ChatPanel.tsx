@@ -24,7 +24,6 @@ import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { PermissionModeButton } from '../permissions/PermissionModeButton'
 import { ModelSelector } from './ModelSelector'
-import { AutoModeToggle } from './AutoModeToggle'
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
   browserFrameScheduler,
@@ -214,7 +213,6 @@ export const ChatPanel: React.FC = () => {
   }, [rejectFile])
 
   const [inputVal, setInputVal] = useState('')
-  const [autoMode, setAutoMode] = useState(false)
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
@@ -234,10 +232,6 @@ export const ChatPanel: React.FC = () => {
     () => [skillTrigger],
     [skillTrigger]
   )
-
-  useEffect(() => {
-    setAutoMode(false)
-  }, [currentSessionId, currentMode])
 
   // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
   useEffect(() => {
@@ -521,7 +515,7 @@ export const ChatPanel: React.FC = () => {
 
     // Steering Queue：Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
     if (stillGenerating) {
-      enqueuePendingMessage(text, images, currentMode === 'compose' ? autoMode : undefined)
+      enqueuePendingMessage(text, images)
       setInputVal('')
       setImageAttachments([])
       return
@@ -530,9 +524,7 @@ export const ChatPanel: React.FC = () => {
     // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列。
     // sendMessage 返回 false 表示被守卫拦截（如分叉准备窗口、缺工作区），
     // 此时必须保留草稿，不能让用户刚输入的内容凭空消失。
-    const accepted = currentMode === 'compose'
-      ? await sendMessage(text, images, { autoMode })
-      : await sendMessage(text, images)
+    const accepted = await sendMessage(text, images)
     if (!accepted) return
     setInputVal('')
     setImageAttachments([])
@@ -1013,15 +1005,12 @@ export const ChatPanel: React.FC = () => {
                     onSelectImage={() => fileInputRef.current?.click()}
                     onSelectSkills={handleSlashButton}
                   />
-                  {currentSession && currentSession.mode !== 'compose' && (
+                  {currentSession && (
                     <PermissionModeButton
                       permissionMode={currentSession.permissionMode}
                       isDisabled={isGenerating || sendInFlight || !!pendingPermissionRequest}
                       onChange={setPermissionMode}
                     />
-                  )}
-                  {currentMode === 'compose' && (
-                    <AutoModeToggle enabled={autoMode} onChange={setAutoMode} />
                   )}
                   <CodeIndexStatusChip />
                 </div>

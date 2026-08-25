@@ -544,10 +544,6 @@ export class WorkspaceService {
     ) {
       throw new Error('未知的权限模式')
     }
-    if (params.permissionMode === 'full_access') {
-      throw new Error('完全访问即将可用，当前版本暂不支持启用')
-    }
-
     store.updatePermissionMode(sessionId, params.permissionMode)
     this.state.availableSessions = store.list()
     this.broadcast()

@@ -110,8 +110,6 @@ export interface ToolContext {
   resolveTool?: (name: string) => ToolExecutor | undefined
   /** 当前模型上下文窗口，供需要创建子 Agent 的宿主能力使用。 */
   contextWindow?: number
-  /** 当前轮次是否启用全自动编排；工具只能读取该快照。 */
-  autoMode?: boolean
   /** 当前轮次运行模式，供宿主构造子 Agent 的行为上下文。 */
   mode?: Mode
   /**

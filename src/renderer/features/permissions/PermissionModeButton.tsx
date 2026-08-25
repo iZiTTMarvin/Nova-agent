@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { CheckSmallIcon, ShieldIcon } from '../../components/Icons'
 import type { PermissionMode } from '../../../shared/session/types'
+import { FullAccessConfirmDialog } from './FullAccessConfirmDialog'
 import './PermissionModeButton.css'
 
 interface PermissionModeOption {
@@ -15,18 +16,17 @@ const OPTIONS: PermissionModeOption[] = [
   {
     id: 'request_approval',
     label: '请求批准',
-    description: 'Shell 与终端输入执行前询问，文件操作直接执行'
+    description: 'Shell、工作区外文件和网络操作执行前询问'
   },
   {
     id: 'auto',
     label: '自动',
-    description: '常规操作自动执行，已识别的危险命令会被拦截'
+    description: '常规开发操作自动执行，风险操作需要确认'
   },
   {
     id: 'full_access',
     label: '完全访问',
-    description: '允许 Nova 直接访问文件、网络并执行命令 · 即将可用',
-    disabled: true
+    description: '允许 Nova 直接访问文件、网络并执行命令'
   }
 ]
 
@@ -43,13 +43,21 @@ export const PermissionModeButton: React.FC<PermissionModeButtonProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [pendingFullAccess, setPendingFullAccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const active = OPTIONS.find(option => option.id === permissionMode) ?? OPTIONS[0]
   const interactionDisabled = isDisabled || isSaving
 
   useEffect(() => {
-    if (interactionDisabled) setIsOpen(false)
+    if (interactionDisabled) {
+      setIsOpen(false)
+      setPendingFullAccess(false)
+    }
   }, [interactionDisabled])
+
+  useEffect(() => {
+    setPendingFullAccess(false)
+  }, [permissionMode])
 
   const selectMode = async (option: PermissionModeOption): Promise<void> => {
     if (option.disabled || option.id === permissionMode || interactionDisabled) {
@@ -57,14 +65,25 @@ export const PermissionModeButton: React.FC<PermissionModeButtonProps> = ({
       return
     }
 
+    if (option.id === 'full_access') {
+      setIsOpen(false)
+      setPendingFullAccess(true)
+      return
+    }
+
+    await applyMode(option.id)
+  }
+
+  const applyMode = async (nextMode: PermissionMode): Promise<void> => {
     setError(null)
     setIsSaving(true)
     try {
-      await onChange(option.id)
+      await onChange(nextMode)
       setIsOpen(false)
+      setPendingFullAccess(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '切换权限模式失败')
-      setIsOpen(true)
+      setIsOpen(nextMode !== 'full_access')
     } finally {
       setIsSaving(false)
     }
@@ -72,10 +91,11 @@ export const PermissionModeButton: React.FC<PermissionModeButtonProps> = ({
 
   const tooltip = interactionDisabled
     ? '等待当前操作完成后再切换权限模式'
-    : `${active.label}：${active.description.replace(' · 即将可用', '')}`
+    : `${active.label}：${active.description}`
 
   return (
-    <DropdownMenu
+    <>
+      <DropdownMenu
       className="permission-mode__menu"
       placement="above"
       menuWidth={320}
@@ -105,6 +125,13 @@ export const PermissionModeButton: React.FC<PermissionModeButtonProps> = ({
           onClick={() => void selectMode(option)}
         />
       ))}
-    </DropdownMenu>
+      </DropdownMenu>
+      <FullAccessConfirmDialog
+        isOpen={pendingFullAccess}
+        isSubmitting={isSaving}
+        onCancel={() => setPendingFullAccess(false)}
+        onConfirm={() => void applyMode('full_access')}
+      />
+    </>
   )
 }

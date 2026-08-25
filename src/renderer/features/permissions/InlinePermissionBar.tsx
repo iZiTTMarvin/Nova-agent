@@ -8,7 +8,7 @@ import {
 import { useAgentStore } from '../../stores/useAgentStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
-import type { PermissionDecision } from '../../../shared/session/types'
+import type { PermissionBehavior } from '../../../shared/permissions/types'
 import type { PendingPermissionRequest } from '../../stores/types'
 import { PERMISSION_GRANT_SESSION_SCOPE, PERMISSION_UPSERT } from '../../../shared/ipc/channels'
 import './InlinePermissionBar.css'
@@ -30,11 +30,15 @@ import './InlinePermissionBar.css'
 
 /**
  * 从权限请求中提取用于规则匹配的命令前缀。
- * bash 取首个 token（如 "npm install" → "npm"），非命令工具返回 undefined。
+ * bash 读取 command，shell_session write 读取 input；两者都取首个 token。
  */
 function extractCommandPrefix(toolName: string, args: Record<string, unknown>): string | undefined {
-  if (toolName !== 'bash') return undefined
-  const command = typeof args.command === 'string' ? args.command.trim() : ''
+  const rawCommand = toolName === 'bash'
+    ? args.command
+    : toolName === 'shell_session' && args.action === 'write'
+      ? args.input
+      : undefined
+  const command = typeof rawCommand === 'string' ? rawCommand.trim() : ''
   if (!command) return undefined
   const firstToken = command.split(/\s+/)[0]
   return firstToken || undefined
@@ -81,7 +85,7 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
   }
 
   /** 创建持久化规则后给出本次决策 */
-  const rememberAndRespond = async (scope: 'project' | 'global', behavior: PermissionDecision) => {
+  const rememberAndRespond = async (scope: 'project' | 'global', behavior: PermissionBehavior) => {
     const currentProject = useWorkspaceStore.getState().currentProjectPath
     const commandPrefix = extractCommandPrefix(request.toolName, request.args)
 
@@ -95,7 +99,7 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
         behavior,
         scope,
         ...(commandPrefix ? { commandPrefix } : {}),
-        description: `${scope === 'project' ? '本项目' : '全局'} ${behavior === 'allow' ? '允许' : behavior === 'deny' ? '拒绝' : '询问'} ${request.toolName}${commandPrefix ? ' ' + commandPrefix : ''}`
+        description: `${scope === 'project' ? '本项目' : '全局'} ${behavior === 'allow' ? '允许' : '拒绝'} ${request.toolName}${commandPrefix ? ' ' + commandPrefix : ''}`
       })
     } catch (err) {
       failRuleWrite('保存持久化规则', err)
@@ -135,18 +139,69 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
       {permissionError && <div className="inline-perm__error">{permissionError}</div>}
 
       <div className="inline-perm__actions">
-        <Button
-          label="拒绝"
-          variant="secondary"
-          size="sm"
-          className="inline-perm__btn inline-perm__btn--deny"
-          onClick={() => respondPermissionRequest('deny')}
-          isDisabled={isSubmitting}
-        >
-          拒绝
-        </Button>
+        {request.riskLevel === 'high' ? (
+          <ButtonGroup label="拒绝方式" className="inline-perm__btn-group" size="sm">
+            <Button
+              label="拒绝"
+              variant="secondary"
+              size="sm"
+              className="inline-perm__btn inline-perm__btn--deny"
+              onClick={() => respondPermissionRequest('deny')}
+              isDisabled={isSubmitting}
+            >
+              拒绝
+            </Button>
+            <DropdownMenu
+              className="inline-perm__dropdown"
+              placement="above"
+              menuWidth={230}
+              isMenuOpen={showDropdown}
+              onOpenChange={setShowDropdown}
+              button={{
+                label: '更多拒绝选项',
+                variant: 'secondary',
+                size: 'sm',
+                isIconOnly: true,
+                isDisabled: isSubmitting,
+                icon: <span aria-hidden="true">▾</span>,
+                tooltip: '更多拒绝选项',
+                className: 'inline-perm__btn-dropdown-toggle'
+              }}
+            >
+              <DropdownMenuItem
+                label="始终拒绝执行"
+                description="创建全局拒绝规则"
+                className="inline-perm__danger-option"
+                onClick={() => void rememberAndRespond('global', 'deny')}
+              />
+            </DropdownMenu>
+          </ButtonGroup>
+        ) : (
+          <Button
+            label="拒绝"
+            variant="secondary"
+            size="sm"
+            className="inline-perm__btn inline-perm__btn--deny"
+            onClick={() => respondPermissionRequest('deny')}
+            isDisabled={isSubmitting}
+          >
+            拒绝
+          </Button>
+        )}
 
-        <ButtonGroup label="权限决策" className="inline-perm__btn-group" size="sm">
+        {request.riskLevel === 'high' ? (
+          <Button
+            label={isBatch ? allowLabel : '允许一次'}
+            variant="primary"
+            size="sm"
+            className="inline-perm__btn inline-perm__btn--allow"
+            onClick={() => respondPermissionRequest('allow')}
+            isDisabled={isSubmitting}
+          >
+            {isSubmitting ? '提交中...' : isBatch ? allowLabel : '允许一次'}
+          </Button>
+        ) : (
+          <ButtonGroup label="权限决策" className="inline-perm__btn-group" size="sm">
           <Button
             label={allowLabel}
             variant="primary"
@@ -205,7 +260,8 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
               onClick={() => void rememberAndRespond('global', 'deny')}
             />
           </DropdownMenu>
-        </ButtonGroup>
+          </ButtonGroup>
+        )}
       </div>
     </div>
   )

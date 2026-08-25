@@ -134,39 +134,28 @@ export const stageTransitionTool: ToolExecutor = {
         stages ? sessionStore.getComposePlanApproval(sessionId) : null
       )
       if (denial) {
-        if (context.autoMode) {
-          const approved = sessionStore.approveComposePlan(sessionId, { auto: true })
-          if (approved) {
-            context.eventBus?.emit({
-              type: 'compose_plan_approval_updated',
-              sessionId,
-              approval: approved
-            })
-          }
-        } else {
-          if (!context.requestPlanReview || !context.invocationRef) {
-            return failed('当前宿主无法发起计划审阅')
-          }
-          const resolution = await context.requestPlanReview(context.invocationRef)
-          if (resolution.decision === 'revise') {
-            return failed(`用户要求修改计划：${resolution.feedback}`)
-          }
-          if (resolution.decision === 'ignore') {
-            return {
-              success: true,
-              output: `${PLAN_REVIEW_IGNORED_RESULT_MARKER}；计划未批准，仍停留在「计划」阶段。`,
-              control: { type: 'turn_complete' }
-            }
-          }
-
-          const approved = sessionStore.approveComposePlan(sessionId, { auto: false })
-          if (!approved) return failed('会话不存在')
-          context.eventBus?.emit({
-            type: 'compose_plan_approval_updated',
-            sessionId,
-            approval: approved
-          })
+        if (!context.requestPlanReview || !context.invocationRef) {
+          return failed('当前宿主无法发起计划审阅')
         }
+        const resolution = await context.requestPlanReview(context.invocationRef)
+        if (resolution.decision === 'revise') {
+          return failed(`用户要求修改计划：${resolution.feedback}`)
+        }
+        if (resolution.decision === 'ignore') {
+          return {
+            success: true,
+            output: `${PLAN_REVIEW_IGNORED_RESULT_MARKER}；计划未批准，仍停留在「计划」阶段。`,
+            control: { type: 'turn_complete' }
+          }
+        }
+
+        const approved = sessionStore.approveComposePlan(sessionId, { auto: false })
+        if (!approved) return failed('会话不存在')
+        context.eventBus?.emit({
+          type: 'compose_plan_approval_updated',
+          sessionId,
+          approval: approved
+        })
       }
     }
 

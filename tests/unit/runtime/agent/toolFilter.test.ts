@@ -221,7 +221,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
 
     // 模型收到的 tool_result 也包含拒绝信息
     expect(seenToolResultsByModel).toEqual([
-      expect.stringContaining('当前为 plan 模式')
+      expect.stringContaining('plan 模式')
     ])
   })
 })

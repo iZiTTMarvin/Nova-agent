@@ -329,7 +329,7 @@ function loadDefaultPermissionMode(): PermissionMode {
   try {
     return loadNovaSettings().defaultPermissionMode
   } catch {
-    return 'request_approval'
+    return 'auto'
   }
 }
 
@@ -459,8 +459,7 @@ function assertValidSessionKind(value: unknown): asserts value is SessionData {
 }
 
 function normalizeAvailablePermissionMode(value: unknown): PermissionMode {
-  if (value === 'request_approval' || value === 'auto') return value
-  if (value === 'full_access') return 'request_approval'
+  if (value === 'request_approval' || value === 'auto' || value === 'full_access') return value
   throw new Error('会话必须携带合法的 permissionMode')
 }
 

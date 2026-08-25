@@ -11,13 +11,17 @@ type EmittedEvent = Parameters<PermissionCoordinatorDeps['emit']>[0]
 function createCoordinator(options?: { mode?: Mode; manager?: PermissionManager }) {
   const events: EmittedEvent[] = []
   let mode: Mode = options?.mode ?? 'default'
+  const manager = options?.manager ?? new PermissionManager()
   const coordinator = new PermissionCoordinator({
+    permissionManager: manager,
     emit: (event) => events.push(event),
-    getMode: () => mode
+    getMode: () => mode,
+    getPermissionRuntimeSnapshot: () => ({
+      sessionId: 'session-1',
+      workspaceRoot: '/workspace',
+      permissionMode: 'request_approval'
+    })
   })
-  if (options?.manager) {
-    coordinator.setPermissionManager(options.manager)
-  }
   return {
     coordinator,
     events,
@@ -26,54 +30,6 @@ function createCoordinator(options?: { mode?: Mode; manager?: PermissionManager 
     }
   }
 }
-
-describe('PermissionCoordinator 无 PermissionManager 的安全降级', () => {
-  it('default 模式下普通工具直接放行，不发权限事件', async () => {
-    const { coordinator, events } = createCoordinator()
-    const result = await coordinator.checkPermission('write', { path: 'a.ts' }, 'msg-1')
-    expect(result).toEqual({ allowed: true, reason: '' })
-    expect(events).toHaveLength(0)
-  })
-
-  it('plan 模式只读允许、写入拒绝', async () => {
-    const { coordinator } = createCoordinator({ mode: 'plan' })
-    const read = await coordinator.checkPermission('read', { path: 'a.ts' }, 'msg-1')
-    expect(read.allowed).toBe(true)
-    const write = await coordinator.checkPermission('write', { path: 'a.ts' }, 'msg-1')
-    expect(write.allowed).toBe(false)
-    expect(write.reason).toContain('plan 模式')
-  })
-
-  it('switch_mode 恢复写入能力时 fail closed，安全转换放行', async () => {
-    const planSide = createCoordinator({ mode: 'plan' })
-    const unsafe = await planSide.coordinator.checkPermission('switch_mode', { mode: 'default' }, 'msg-1')
-    expect(unsafe.allowed).toBe(false)
-    expect(unsafe.reason).toContain('缺少 PermissionManager')
-
-    // default → plan 是收缩权限的安全转换，降级路径下直接放行
-    const defaultSide = createCoordinator({ mode: 'default' })
-    const safe = await defaultSide.coordinator.checkPermission('switch_mode', { mode: 'plan' }, 'msg-1')
-    expect(safe.allowed).toBe(true)
-  })
-
-  it('批量路径与单项路径共享同一降级判定', async () => {
-    const { coordinator, events } = createCoordinator({ mode: 'plan' })
-    const results = await coordinator.checkBatchPermission(
-      [
-        { toolCallId: 'c1', toolName: 'read', args: { path: 'a.ts' } },
-        { toolCallId: 'c2', toolName: 'write', args: { path: 'a.ts' } },
-        { toolCallId: 'c3', toolName: 'switch_mode', args: { mode: 'default' } }
-      ],
-      'msg-1'
-    )
-    expect(results.get('c1')).toEqual({ allowed: true, reason: '' })
-    expect(results.get('c2')?.allowed).toBe(false)
-    expect(results.get('c2')?.reason).toContain('plan 模式')
-    expect(results.get('c3')?.allowed).toBe(false)
-    expect(results.get('c3')?.reason).toContain('缺少 PermissionManager')
-    expect(events).toHaveLength(0)
-  })
-})
 
 describe('PermissionCoordinator authorization overlay', () => {
   it('overlay 拒绝优先于 PermissionManager，不弹权限确认', async () => {

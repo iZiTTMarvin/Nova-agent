@@ -189,7 +189,7 @@ export interface SendSliceState {
    * Agent 运行期间用户仍可输入，输入的消息会进入此队列，
    * 在 turn boundary（handleMessageEnd / cancel 完成）自动 dispatch。
    */
-  pendingUserMessages: Array<{ text: string; images: ImageAttachment[]; autoMode?: boolean }>
+  pendingUserMessages: Array<{ text: string; images: ImageAttachment[] }>
 
   /** 发送用户消息（含图片）。返回 false 表示被守卫拦截未发出。 */
   sendMessage: (
@@ -197,14 +197,13 @@ export interface SendSliceState {
     images?: ImageAttachment[],
     options?: {
       rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
-      autoMode?: boolean
     }
   ) => Promise<boolean>
   /**
    * Steering Queue — 用户在 Agent 运行期间入队消息
    * 实际 dispatch 在 turn boundary 触发（handleMessageEnd / markRunningAsCancelled 后）
    */
-  enqueuePendingMessage: (text: string, images: ImageAttachment[], autoMode?: boolean) => void
+  enqueuePendingMessage: (text: string, images: ImageAttachment[]) => void
   /** 取消某条挂起消息的排队（按索引） */
   removePendingMessage: (index: number) => void
   /** 清空全部挂起消息 */

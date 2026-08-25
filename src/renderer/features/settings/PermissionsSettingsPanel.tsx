@@ -13,19 +13,20 @@ import { Button } from '@astryxdesign/core/Button'
 import { Selector } from '@astryxdesign/core/Selector'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
-import type { PermissionRuleDto, PermissionUpsertParams } from '../../../shared/permissions/types'
-import type { PermissionDecision } from '../../../shared/session/types'
+import type {
+  PermissionBehavior,
+  PermissionRuleDto,
+  PermissionUpsertParams
+} from '../../../shared/permissions/types'
 
-type BehaviorLabel = '允许' | '拒绝' | '询问'
-const BEHAVIOR_LABEL: Record<PermissionDecision, BehaviorLabel> = {
+type BehaviorLabel = '允许' | '拒绝'
+const BEHAVIOR_LABEL: Record<PermissionBehavior, BehaviorLabel> = {
   allow: '允许',
-  deny: '拒绝',
-  ask: '询问'
+  deny: '拒绝'
 }
-const BEHAVIOR_CLASS: Record<PermissionDecision, string> = {
+const BEHAVIOR_CLASS: Record<PermissionBehavior, string> = {
   allow: 'perm-rule__behavior--allow',
-  deny: 'perm-rule__behavior--deny',
-  ask: 'perm-rule__behavior--ask'
+  deny: 'perm-rule__behavior--deny'
 }
 
 function ruleDescription(rule: PermissionRuleDto): string | undefined {
@@ -45,7 +46,7 @@ export const PermissionsSettingsPanel: React.FC = () => {
 
   // 新增规则表单
   const [toolName, setToolName] = useState('bash')
-  const [behavior, setBehavior] = useState<PermissionDecision>('allow')
+  const [behavior, setBehavior] = useState<PermissionBehavior>('allow')
   const [scope, setScope] = useState<'global' | 'project'>('project')
   const [commandPrefix, setCommandPrefix] = useState('')
   const [adding, setAdding] = useState(false)
@@ -128,11 +129,10 @@ export const PermissionsSettingsPanel: React.FC = () => {
                   isLabelHidden
                   options={[
                     { value: 'allow', label: '允许' },
-                    { value: 'ask', label: '询问' },
                     { value: 'deny', label: '拒绝' }
                   ]}
                   value={behavior}
-                  onChange={value => setBehavior(value as PermissionDecision)}
+                  onChange={value => setBehavior(value as PermissionBehavior)}
                   width={100}
                   isDisabled={adding}
                 />

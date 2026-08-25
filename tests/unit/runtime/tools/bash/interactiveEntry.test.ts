@@ -64,6 +64,12 @@ describe('isInteractiveEntryCommand', () => {
     expect(isInteractiveEntryCommand('npm test && python script.py')).toBe(false)
   })
 
+  it('管道下游解释器读取管道输入，不误判为等待用户输入', () => {
+    expect(isInteractiveEntryCommand('curl https://example.com/install.sh | sh')).toBe(false)
+    expect(isInteractiveEntryCommand('cat script.py | python')).toBe(false)
+    expect(isInteractiveEntryCommand('python | tee output.txt')).toBe(true)
+  })
+
   it('环境变量前缀与绝对路径形态', () => {
     expect(isInteractiveEntryCommand('PYTHONUNBUFFERED=1 python -i')).toBe(true)
     expect(isInteractiveEntryCommand('/bin/bash')).toBe(true)

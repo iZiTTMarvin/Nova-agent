@@ -500,7 +500,7 @@ describe('migrateSessionData', () => {
     })
   })
 
-  it('未开放的完全访问持久值按请求批准收窄，不向界面或 Runtime 声称已启用', () => {
+  it('完全访问持久值按当前 schema 原样恢复', () => {
     const migrated = migrateSessionData({
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       kind: 'primary',
@@ -515,7 +515,7 @@ describe('migrateSessionData', () => {
       updatedAt: 2
     })
 
-    expect(migrated.permissionMode).toBe('request_approval')
+    expect(migrated.permissionMode).toBe('full_access')
   })
 
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {

@@ -14,6 +14,7 @@ import { useSettingsStore } from '../../stores/useSettingsStore'
 import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
+import { FullAccessConfirmDialog } from '../permissions/FullAccessConfirmDialog'
 
 const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: 'default', label: '默认模式（模型自主循环）' },
@@ -27,7 +28,7 @@ const PERMISSION_OPTIONS: Array<{
 }> = [
   { value: 'request_approval', label: '请求批准' },
   { value: 'auto', label: '自动' },
-  { value: 'full_access', label: '完全访问（即将可用）', disabled: true }
+  { value: 'full_access', label: '完全访问' }
 ]
 
 export const GeneralSettingsPanel: React.FC = () => {
@@ -37,6 +38,7 @@ export const GeneralSettingsPanel: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [confirmFullAccess, setConfirmFullAccess] = useState(false)
 
   useEffect(() => {
     void loadSettings()
@@ -86,6 +88,15 @@ export const GeneralSettingsPanel: React.FC = () => {
     }
   }
 
+  const selectDefaultPermissionMode = (value: NovaSettingsDto['defaultPermissionMode']): void => {
+    if (!settings) return
+    if (value === 'full_access' && settings.defaultPermissionMode !== 'full_access') {
+      setConfirmFullAccess(true)
+      return
+    }
+    void update('defaultPermissionMode', value)
+  }
+
   if (!settings) {
     return (
       <div className="settings-panel">
@@ -120,14 +131,14 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsRow
               label="默认权限模式"
-              description="新建会话使用；已有会话保留自己的权限模式。完全访问即将可用。"
+              description="新建会话使用；已有会话保留自己的权限模式。"
               end={
                 <Selector
                   label="默认权限模式"
                   isLabelHidden
                   options={PERMISSION_OPTIONS}
                   value={settings.defaultPermissionMode}
-                  onChange={value => void update('defaultPermissionMode', value as NovaSettingsDto['defaultPermissionMode'])}
+                  onChange={value => selectDefaultPermissionMode(value as NovaSettingsDto['defaultPermissionMode'])}
                   isDisabled={saving}
                   width={240}
                 />
@@ -244,6 +255,15 @@ export const GeneralSettingsPanel: React.FC = () => {
           {saved && <div className="settings-status settings-status--gap settings-status--ok">已保存</div>}
         </SettingsPage>
       </div>
+      <FullAccessConfirmDialog
+        isOpen={confirmFullAccess}
+        isSubmitting={saving}
+        onCancel={() => setConfirmFullAccess(false)}
+        onConfirm={() => {
+          setConfirmFullAccess(false)
+          void update('defaultPermissionMode', 'full_access')
+        }}
+      />
     </div>
   )
 }

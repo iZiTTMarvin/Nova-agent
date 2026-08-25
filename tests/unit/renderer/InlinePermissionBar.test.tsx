@@ -23,7 +23,7 @@ const request: PendingPermissionRequest = {
   requestId: 'req_1',
   toolName: 'bash',
   args: { command: 'npm install' },
-  riskLevel: 'medium',
+  riskLevel: 'low',
   reason: '安装依赖需要确认',
   toolCallIds: ['tc_1'],
   sessionId: 'sess_1',
@@ -131,6 +131,46 @@ describe('InlinePermissionBar', () => {
     expect(state.permissionError).toContain('写入本会话白名单失败')
     expect(renderer.container.querySelector('.inline-perm__error')?.textContent).toContain(
       '写入本会话白名单失败'
+    )
+    renderer.unmount()
+  })
+
+  it('高风险 shell_session 请求只保留带输入前缀的始终拒绝', async () => {
+    const renderer = renderDom(
+      <InlinePermissionBar request={{
+        ...request,
+        toolName: 'shell_session',
+        args: { action: 'write', ref: 'proc-1', input: 'sudo reboot' },
+        riskLevel: 'high'
+      }} />
+    )
+
+    const menuButton = renderer.container.querySelector('[aria-haspopup="menu"]')
+    expect(menuButton?.getAttribute('aria-label')).toContain('拒绝')
+    click(menuButton!)
+    const labels = Array.from(renderer.container.querySelectorAll('[role="menuitem"]'))
+      .map(item => item.textContent ?? '')
+
+    expect(labels.some(label => label.includes('始终拒绝执行'))).toBe(true)
+    expect(labels.some(label => label.includes('本会话允许'))).toBe(false)
+    expect(labels.some(label => label.includes('本项目永久允许'))).toBe(false)
+    expect(labels.some(label => label.includes('全局永久允许'))).toBe(false)
+    expect(renderer.container.textContent).toContain('允许一次')
+
+    const denyItem = Array.from(renderer.container.querySelectorAll('[role="menuitem"]')).find(
+      item => (item.textContent ?? '').includes('始终拒绝执行')
+    )
+    await act(async () => {
+      denyItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    expect(mockInvoke).toHaveBeenCalledWith(
+      PERMISSION_UPSERT,
+      expect.objectContaining({
+        toolName: 'shell_session',
+        behavior: 'deny',
+        commandPrefix: 'sudo'
+      })
     )
     renderer.unmount()
   })

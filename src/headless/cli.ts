@@ -48,6 +48,7 @@ import {
 import { buildAtifTrajectory } from './atif'
 import { resolveHeadlessMaxToolRounds } from './roundBudget'
 import { headlessAssistantCompletionPolicy } from './completionPolicy'
+import { PermissionManager } from '../runtime/permissions/PermissionManager'
 import {
   disabledHeadlessCodeGraphDiagnostics,
   startHeadlessCodeGraph,
@@ -349,6 +350,9 @@ async function main(): Promise<void> {
     // 显式参数优先；缺省时由模型元数据解析（不再硬编码 1M，避免压缩阈值永不触发）
     contextWindow,
     supportsVision: false,
+    // Headless 没有交互批准通道，固定采用既有的自动执行语义，避免 ask 永久等待。
+    permissionMode: 'full_access',
+    permissionManager: new PermissionManager(),
     toolExecution: 'parallel',
     maxParallelToolCalls: 4,
     onCompaction: () => {

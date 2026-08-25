@@ -81,7 +81,7 @@ function childPermissionSnapshot(overrides: {
           requestId: 'perm-child',
           toolName: 'bash',
           args: { command: 'pwd' },
-          riskLevel: 'medium',
+          riskLevel: 'low',
           reason: '子代理请求执行命令'
         }
       }
@@ -134,7 +134,7 @@ describe('子代理权限请求：重启/切回恢复与响应送达', () => {
       requestId: 'perm-child',
       toolName: 'bash',
       args: { command: 'pwd' },
-      riskLevel: 'medium',
+      riskLevel: 'low',
       reason: '',
       sessionId: 's-child',
       interactionId: 'perm-child',

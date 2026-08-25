@@ -37,6 +37,35 @@
   color: rgba(255, 255, 255, 0.78);
 }
 
+.full-access-confirm__body {
+  padding: 22px 22px 12px;
+}
+
+.full-access-confirm__body h3 {
+  margin: 0 0 12px;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.full-access-confirm__body p {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.full-access-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 22px 18px;
+}
+
+.full-access-confirm__enable {
+  background: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
 @media (max-width: 720px) {
   .permission-mode__trigger {
     width: 32px;

@@ -1,7 +1,7 @@
 /**
  * 模式 + 权限策略规则表 + 危险命令检测
  *
- * | 工具                 | plan    | default+ask | default+auto / compose |
+ * | 工具                 | plan    | 请求批准    | 自动 / 完全访问        |
  * |----------------------|---------|-------------|------------------------|
  * | ls/read/grep/find    | allow   | allow       | allow                  |
  * | edit/write           | deny    | allow       | allow                  |
@@ -9,7 +9,7 @@
  * | task/invoke_skill    | deny    | allow       | allow                  |
  * | shell_session        | deny    | ask         | allow*                 |
  *
- * *auto 语义下危险命令（sudo、rm -rf、curl|sh 等）强制 deny
+ * 高风险命令由 PermissionManager 在 baseline 之前升级为 ask。
  *
  * task/invoke_skill 为编排类（orchestration）：派遣动作本身无副作用，直接放行；
  * 真正的副作用由子代理内部工具各自走权限检查（不在派遣层重复拦截）。
@@ -21,8 +21,7 @@ import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { RiskLevel } from './types'
 
 /**
- * 危险命令黑名单模式
- * 匹配这些模式的命令在 auto 语义下也会被拒绝
+ * 已知高风险命令模式。
  */
 const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bsudo\b/, reason: '需要超级用户权限' },
@@ -88,48 +87,35 @@ export function assessCommandRisk(command: string): {
 }
 
 /**
- * 是否走 auto 语义（自动放行，危险命令仍拦）。
- * - plan：永不 auto
- * - compose：run 内固定 auto 语义
- * - default：读会话 permissionMode
- */
-export function isAutoPermissionSemantics(
-  mode: Mode,
-  permissionMode: PermissionMode = 'request_approval'
-): boolean {
-  if (mode === 'plan') return false
-  if (mode === 'compose') return true
-  return permissionMode === 'auto'
-}
-
-/**
- * 根据模式、权限策略和工具名查询权限决策（不含 bash 命令级别判断）
+ * 根据 Agent Mode、Permission Mode 和工具名查询 baseline 决策。
  */
 export function getBaseDecision(
   mode: Mode,
   toolName: string,
-  permissionMode: PermissionMode = 'request_approval'
+  permissionMode: PermissionMode
 ): PermissionDecision {
   const capability = getToolCapability(toolName)
-  const category = capability === 'unknown' ? 'bash' : capability
 
   // 模式切换始终要求确认，不能被 default auto / compose 的自动语义放行。
-  if (category === 'mode-transition') {
+  if (capability === 'mode-transition') {
     return 'ask'
   }
 
   // plan 模式：只读与受限计划产物 allow，其余全部 deny。
   if (mode === 'plan') {
-    return category === 'readonly' || category === 'plan-artifact' ? 'allow' : 'deny'
+    return capability === 'readonly' || capability === 'plan-artifact' ? 'allow' : 'deny'
   }
 
-  // compose / default+auto：所有工具默认 allow（bash 危险命令在 PermissionManager 层处理）
-  if (isAutoPermissionSemantics(mode, permissionMode)) {
+  // 未知工具无法获得可靠授权语义；完全访问只跳过 Permission Mode 批准。
+  if (capability === 'unknown') {
+    return permissionMode === 'full_access' ? 'allow' : 'ask'
+  }
+
+  if (permissionMode === 'auto' || permissionMode === 'full_access') {
     return 'allow'
   }
 
-  // default + ask：只读和写入 allow，bash 与会话写入需确认
-  return category === 'bash' || category === 'shell-session' ? 'ask' : 'allow'
+  return capability === 'bash' || capability === 'shell-session' ? 'ask' : 'allow'
 }
 
 /**

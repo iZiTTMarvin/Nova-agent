@@ -2,7 +2,7 @@
 import type { ChatMessage, ToolDefinition } from '../../model/types'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
 import type { ToolDialect } from '../../model/dialect'
-import type { Mode } from '../../../shared/session/types'
+import type { Mode, PermissionMode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
@@ -34,6 +34,8 @@ export interface AgentContext {
   dialect: ToolDialect
   /** 运行模式 */
   mode: Mode
+  /** 本轮捕获的会话权限模式。 */
+  permissionMode: PermissionMode
   /** 执行环境 */
   workingDir: string | null
   shellPath: string | undefined
@@ -78,6 +80,7 @@ export function createAgentContext(initial: {
     toolPresentation: 'direct',
     dialect: 'xml',
     mode: 'default',
+    permissionMode: 'request_approval',
     workingDir: null,
     shellPath: undefined,
     binDirs: [],

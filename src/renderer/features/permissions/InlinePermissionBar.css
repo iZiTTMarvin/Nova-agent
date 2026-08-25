@@ -27,9 +27,6 @@
 .inline-perm__reason--low {
   border-left: 3px solid #7a8a53;
 }
-.inline-perm__reason--medium {
-  border-left: 3px solid #b77a2d;
-}
 .inline-perm__reason--high {
   border-left: 3px solid var(--color-error, #b53333);
 }

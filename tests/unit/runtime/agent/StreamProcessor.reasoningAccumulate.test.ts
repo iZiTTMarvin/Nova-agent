@@ -439,7 +439,10 @@ describe('AgentLoop：reasoningContent 进入 runtime context', () => {
       primaryConfig: { baseUrl: '', apiKey: '', modelId: 'test', toolDialect: 'native' }
     })
     const eventBus = new EventBus()
-    const loop = new AgentLoop(pool, eventBus, { toolDialectOverride: 'native' })
+    const loop = new AgentLoop(pool, eventBus, {
+      toolDialectOverride: 'native',
+      permissionMode: 'full_access'
+    })
     const registry = new ToolRegistry()
     registry.register({
       name: 'echo',

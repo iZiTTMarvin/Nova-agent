@@ -5,30 +5,21 @@
  * - PermissionManager 仍是规则判定真源（allow/deny/ask），本类不复制任何规则；
  * - 本类独占 pending resolver（requestId → resolve/reject），负责 ask 决策的
  *   permission_request 事件发射与用户回应等待；
- * - 单项与批量路径共享同一基础判定（authorization overlay → 无 Manager 安全降级 →
- *   PermissionManager.check），不存在第二套规则入口。
+ * - 单项与批量路径共享同一基础判定（authorization overlay → PermissionManager.check），
+ *   不存在第二套规则入口。
  *
  * requestId 只由本类生成和持有；每个 AgentLoop 持有独立实例，
  * 跨 run 路由由主进程 controller 通过 durable run 身份直达 AgentLoop。
  */
 import { randomUUID } from 'crypto'
 import type { Mode } from '../../shared/session/types'
-import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { AgentEvent } from '../agent/types'
 import type { RiskLevel } from './types'
 import type { PlanReviewResolution } from '../../shared/planReview'
 import { PLAN_REVIEW_IGNORED_RESULT_MARKER } from '../../shared/planReview'
 import type { ToolControlSignal } from '../tools/types'
-import {
-  isSafeAutomaticModeTransition,
-  type PermissionManager
-} from './PermissionManager'
-
-/** plan 模式下仅允许只读和 plan-artifact 能力的工具 */
-function isPlanModeBlocked(toolName: string): boolean {
-  const cap = getToolCapability(toolName)
-  return cap !== 'readonly' && cap !== 'plan-artifact'
-}
+import type { PermissionManager } from './PermissionManager'
+import type { PermissionMode } from '../../shared/session/types'
 
 /**
  * 表示权限请求被 cancel 中断的 sentinel 错误。
@@ -72,15 +63,19 @@ type BaseDecision =
   | { decision: 'ask'; riskLevel: RiskLevel; reason: string }
 
 export interface PermissionCoordinatorDeps {
+  permissionManager: PermissionManager
   /** 发射 permission_request 事件（由宿主接到 EventBus） */
   emit: (event: PermissionRequestEvent) => void
   /** 当前运行模式；权限判定时实时读取，模式切换后无需重新装配 */
   getMode: () => Mode
+  getPermissionRuntimeSnapshot: () => {
+    sessionId: string
+    workspaceRoot: string
+    permissionMode: PermissionMode
+  }
 }
 
 export class PermissionCoordinator {
-  /** 权限决策引擎（可选；缺失时走安全降级） */
-  private permissionManager: PermissionManager | null = null
   private toolAuthorizationPolicy: ToolAuthorizationPolicy | null = null
 
   /** 等待用户确认的权限请求（requestId → { resolve, reject } 回调） */
@@ -91,20 +86,13 @@ export class PermissionCoordinator {
 
   constructor(private readonly deps: PermissionCoordinatorDeps) {}
 
-  setPermissionManager(manager: PermissionManager): void {
-    this.permissionManager = manager
-  }
-
   setToolAuthorizationPolicy(policy: ToolAuthorizationPolicy | null): void {
     this.toolAuthorizationPolicy = policy
   }
 
   /**
-   * 基础判定：overlay 拒绝优先 → 无 PermissionManager 时安全降级 →
-   * PermissionManager 规则判定。单项与批量路径都必须经过这里，不得复制规则。
-   *
-   * 安全降级不变量：缺 Manager 时 switch_mode 不得恢复写入能力（fail closed），
-   * plan 模式只放行只读与 plan-artifact 工具。
+   * 基础判定：overlay 拒绝优先，再交给 PermissionManager。
+   * 单项与批量路径都必须经过这里，不得复制规则。
    */
   private evaluate(toolName: string, args: Record<string, unknown>): BaseDecision {
     const overlay = this.toolAuthorizationPolicy?.(toolName, args)
@@ -114,26 +102,8 @@ export class PermissionCoordinator {
 
     const mode = this.deps.getMode()
 
-    if (!this.permissionManager) {
-      if (
-        toolName === 'switch_mode' &&
-        !isSafeAutomaticModeTransition(mode, args.mode)
-      ) {
-        return {
-          decision: 'deny',
-          reason: '缺少 PermissionManager，不能执行会恢复写入能力的模式切换。'
-        }
-      }
-      if (mode === 'plan' && isPlanModeBlocked(toolName)) {
-        return {
-          decision: 'deny',
-          reason: `当前为 plan 模式，"${toolName}" 工具不可用。请切换到 default 或 auto 模式后再执行写入操作。`
-        }
-      }
-      return { decision: 'allow' }
-    }
-
-    const result = this.permissionManager.check({ toolName, args }, mode)
+    const snapshot = this.deps.getPermissionRuntimeSnapshot()
+    const result = this.deps.permissionManager.check({ toolName, args, ...snapshot }, mode)
     if (result.decision === 'allow') {
       return { decision: 'allow' }
     }
@@ -247,7 +217,7 @@ export class PermissionCoordinator {
     // 合并展示信息：命令列表、最高风险等级、去重原因说明
     const commands: string[] = []
     let maxRiskLevel: RiskLevel = 'low'
-    const riskLevelsWeight = { low: 1, medium: 2, high: 3 }
+    const riskLevelsWeight = { low: 1, high: 2 }
     const reasons: string[] = []
 
     for (const item of askItems) {

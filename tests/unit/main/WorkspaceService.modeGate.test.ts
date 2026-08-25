@@ -143,7 +143,7 @@ describe('WorkspaceService mode gate', () => {
     expect(store.load(session.id)?.mode).toBe('plan')
   })
 
-  it('权限模式写入当前会话，运行中与未开放档位均保持原值', () => {
+  it('权限模式写入当前会话，运行中保持原值，完全访问可启用', () => {
     const session = store.create(workspace, 'default', {
       permissionMode: 'request_approval'
     })
@@ -162,10 +162,10 @@ describe('WorkspaceService mode gate', () => {
     expect(store.load(session.id)?.permissionMode).toBe('auto')
 
     vi.mocked(isSessionTurnInProgress).mockReturnValue(false)
-    expect(() => service.setPermissionMode({
+    service.setPermissionMode({
       permissionMode: 'full_access',
       sessionId: session.id
-    })).toThrow('完全访问即将可用')
-    expect(store.load(session.id)?.permissionMode).toBe('auto')
+    })
+    expect(store.load(session.id)?.permissionMode).toBe('full_access')
   })
 })

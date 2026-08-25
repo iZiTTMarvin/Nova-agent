@@ -43,7 +43,7 @@ describe('novaSettings', () => {
   it.each([
     [{ permissionPolicy: 'ask' }, 'request_approval'],
     [{ permissionPolicy: 'auto' }, 'auto'],
-    [{}, 'request_approval']
+    [{}, 'auto']
   ] as const)('旧权限设置迁移为默认权限模式', async (legacy, expected) => {
     const settingsPath = join(mockHome, '.nova', 'settings.json')
     writeFileSync(settingsPath, JSON.stringify(legacy), 'utf-8')
@@ -59,10 +59,12 @@ describe('novaSettings', () => {
     expect('permissionPolicy' in persisted).toBe(false)
   })
 
-  it('完全访问未开放时拒绝写入默认设置', async () => {
-    const { saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
-    expect(() => saveNovaSettings({ defaultPermissionMode: 'full_access' }))
-      .toThrow(/defaultPermissionMode/)
+  it('完全访问可作为新会话的默认权限模式持久化', async () => {
+    const { loadNovaSettings, saveNovaSettings } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    saveNovaSettings({ defaultPermissionMode: 'full_access' })
+    expect(loadNovaSettings().defaultPermissionMode).toBe('full_access')
   })
 
   it('maxToolRounds 默认值为 100', async () => {

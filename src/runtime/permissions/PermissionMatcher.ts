@@ -11,12 +11,11 @@
  * 命中策略：
  * - deny 直接拒绝（即便有同级 allow 也拒绝）
  * - allow 直接放行
- * - ask 转交现有 mode + 黑名单逻辑
  * - 无匹配返回 no-match，由调用方走 mode-based 决策
  */
 import type { PermissionRule, PermissionBehavior } from './PermissionRule'
 
-export type MatcherDecision = 'allow' | 'ask' | 'deny' | 'no-match'
+export type MatcherDecision = 'allow' | 'deny' | 'no-match'
 
 export interface MatchResult {
   decision: MatcherDecision
@@ -116,11 +115,6 @@ export function matchPermission(rules: PermissionRule[], input: MatchInput): Mat
     if (allow) {
       return { decision: 'allow', matchedRule: allow, reason: `命中允许规则: ${allow.description ?? allow.id}` }
     }
-    // 再找 ask
-    const ask = bucket.find(r => r.behavior === 'ask')
-    if (ask) {
-      return { decision: 'ask', matchedRule: ask, reason: `命中询问规则: ${ask.description ?? ask.id}` }
-    }
   }
 
   return { decision: 'no-match', reason: '无匹配规则' }
@@ -138,6 +132,6 @@ export function isDeny(decision: MatcherDecision): boolean {
 
 /** 把 MatcherDecision 转为 PermissionBehavior（no-match 时返回 undefined） */
 export function toBehavior(decision: MatcherDecision): PermissionBehavior | undefined {
-  if (decision === 'allow' || decision === 'deny' || decision === 'ask') return decision
+  if (decision === 'allow' || decision === 'deny') return decision
   return undefined
 }

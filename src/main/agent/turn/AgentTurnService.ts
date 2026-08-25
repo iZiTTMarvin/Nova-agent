@@ -138,8 +138,6 @@ export interface SendAgentMessageParams {
   userMessageId?: string
   images?: Array<{ fileName: string; data: string; mimeType: string }>
   regenerate?: boolean
-  /** compose 输入框的临时自动编排快照，不写入会话设置。 */
-  autoMode?: boolean
 }
 
 export interface SendAgentMessageDeps {
@@ -261,7 +259,6 @@ export async function sendAgentMessage(
     readState: getReadStateForSession(params.sessionId),
     pendingAskQuestions,
     runCoordinator,
-    autoMode: session.mode === 'compose' && params.autoMode === true,
     promptCacheKey,
     getSpawnSubagentPort: () => spawnSubagentPort,
     getCodeContextQueryPort: () => getCodeContextQueryPort(projectPath)
@@ -594,7 +591,6 @@ function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageParams {
     ...(msg.userMessageId !== undefined ? { userMessageId: msg.userMessageId } : {}),
     ...(msg.images !== undefined ? { images: msg.images } : {}),
     ...(msg.regenerate !== undefined ? { regenerate: msg.regenerate } : {}),
-    ...(msg.autoMode !== undefined ? { autoMode: msg.autoMode } : {})
   }
 }
 

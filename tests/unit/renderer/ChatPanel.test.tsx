@@ -167,7 +167,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
           requestId: 'perm_1',
           toolName: 'bash',
           args: { command: 'npm test' },
-          riskLevel: 'medium',
+          riskLevel: 'low',
           reason: '命令执行需要确认',
           toolCallIds: ['tool_1']
         }
@@ -484,7 +484,7 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     renderer.unmount()
   })
 
-  it('存在 pending 权限请求时禁用盾牌，Compose 保留既有单一自动入口', async () => {
+  it('存在 pending 权限请求时禁用盾牌，Compose 仍使用同一权限入口', async () => {
     const session = primarySession('sessA')
     act(() => {
       useChatStore.setState({ currentSessionId: session.id, sessions: [session] })
@@ -514,8 +514,8 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
       })
       await Promise.resolve()
     })
-    expect(renderer.container.querySelector('[aria-label="请求批准"], [aria-label="自动"]')).toBeNull()
-    expect(renderer.container.textContent).toContain('全自动')
+    expect(renderer.container.querySelector('[aria-label="请求批准"]')).not.toBeNull()
+    expect(renderer.container.textContent).not.toContain('全自动')
     renderer.unmount()
   })
 })

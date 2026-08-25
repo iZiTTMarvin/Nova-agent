@@ -18,7 +18,6 @@ export interface SteeringMessage {
   userMessageId?: string
   images?: Array<{ fileName: string; data: string; mimeType: string }>
   regenerate?: boolean
-  autoMode?: boolean
 }
 
 const queuesBySession = new Map<string, SteeringMessage[]>()

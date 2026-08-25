@@ -7,13 +7,13 @@
  * 防御性约束：项目级规则的 upsert 必须由用户通过 UI 发起，
  * 主进程校验 projectPath 是当前打开项目后才允许写盘（见 PermissionService）。
  */
-import type { PermissionDecision } from '../session/types'
+export type PermissionBehavior = 'allow' | 'deny'
 
 /** IPC 传输用的规则载荷（与 runtime PermissionRule 结构对齐，但不携带运行时方法） */
 export interface PermissionRuleDto {
   id: string
   toolName: string
-  behavior: PermissionDecision
+  behavior: PermissionBehavior
   scope: 'global' | 'project'
   projectPath?: string
   commandPrefix?: string
@@ -32,7 +32,7 @@ export interface PermissionListParams {
 /** 新增/更新规则参数 */
 export interface PermissionUpsertParams {
   toolName: string
-  behavior: PermissionDecision
+  behavior: PermissionBehavior
   scope: 'global' | 'project'
   /** 项目级规则必填；主进程校验必须是当前打开项目 */
   projectPath?: string

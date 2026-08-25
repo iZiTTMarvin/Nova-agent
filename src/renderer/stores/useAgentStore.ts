@@ -306,9 +306,9 @@ export async function projectDescendantPendingPermissions(currentSessionId: stri
       requestId: typeof payload.requestId === 'string' ? payload.requestId : interaction.interactionId,
       toolName: typeof payload.toolName === 'string' ? payload.toolName : '未知工具',
       args: payload.args && typeof payload.args === 'object' ? payload.args as Record<string, unknown> : {},
-      riskLevel: payload.riskLevel === 'low' || payload.riskLevel === 'medium' || payload.riskLevel === 'high'
+      riskLevel: payload.riskLevel === 'low' || payload.riskLevel === 'high'
         ? payload.riskLevel
-        : 'medium',
+        : 'low',
       reason: typeof payload.reason === 'string' ? payload.reason : '',
       commands: Array.isArray(payload.commands)
         ? payload.commands.filter((item): item is string => typeof item === 'string')

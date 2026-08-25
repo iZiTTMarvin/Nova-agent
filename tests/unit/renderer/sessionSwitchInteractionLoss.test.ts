@@ -44,7 +44,7 @@ const sessionASnapshot: RunSnapshot = {
         requestId: 'perm_1',
         toolName: 'bash',
         args: { command: 'ls' },
-        riskLevel: 'medium',
+        riskLevel: 'low',
         reason: 'run ls',
         toolCallIds: ['tc_1']
       }
@@ -115,7 +115,7 @@ const permissionRequest: PendingPermissionRequest = {
   requestId: 'perm_1',
   toolName: 'bash',
   args: { command: 'ls' },
-  riskLevel: 'medium',
+  riskLevel: 'low',
   reason: 'run ls',
   toolCallIds: ['tc_1'],
   sessionId: 'session-A',

@@ -55,6 +55,7 @@ describe('headless artifact pruning', () => {
       toolExecution: 'sequential',
       maxParallelToolCalls: 1,
       supportsVision: false,
+      permissionMode: 'full_access',
       toolDialectOverride: 'native'
     })
     loop.setToolRegistry(registry)

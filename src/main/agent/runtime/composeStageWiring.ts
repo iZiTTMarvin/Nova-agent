@@ -20,26 +20,16 @@ function currentStageId(sessionStore: SessionStore, sessionId: string): ComposeS
   return getComposeStageCursor(stages).currentStageId
 }
 
-/**
- * auto 轮次的确认门说明：构思软门与计划硬门自动通过。
- * 共识与计划照常发到消息流保持透明，但模型不得停下等待用户确认。
- */
-const COMPOSE_AUTO_GATE_NOTE =
-  '[自动推进已开启] 构思与计划的确认门自动通过：照常把需求共识与计划发出来保持透明，' +
-  '但不要停下等待用户确认，依据已有信息自行作出安全决定并继续推进阶段。'
-
 /** 模式指令 + 当前阶段指南，每轮由 AgentLoop 调用后追加到 user 消息尾部 */
 export function createComposeModeInstructionProvider(
   sessionStore: SessionStore,
-  sessionId: string,
-  autoMode: boolean
+  sessionId: string
 ): () => string {
   return () => {
     const base = getModeInstruction('compose')
     const stageId = currentStageId(sessionStore, sessionId)
     const guide = stageId ? `\n\n${getComposeStageGuide(stageId)}` : ''
-    const autoNote = autoMode ? `\n\n${COMPOSE_AUTO_GATE_NOTE}` : ''
-    return `${base}${guide}${autoNote}`
+    return `${base}${guide}`
   }
 }
 

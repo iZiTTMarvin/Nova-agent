@@ -53,7 +53,7 @@ const TERMINAL_STAGES: ComposeStageEntry[] = createInitialStageTable().map(entry
 describe('createComposeModeInstructionProvider', () => {
   it('旧会话无阶段表时按初始表注入构思指南', () => {
     const { store } = mockSessionStore(null)
-    const provider = createComposeModeInstructionProvider(store, 'sess_1', false)
+    const provider = createComposeModeInstructionProvider(store, 'sess_1')
     const text = provider()
     expect(text).toContain(getModeInstruction('compose'))
     expect(text).toContain('[当前阶段: 构思 — 阶段指南]')
@@ -61,7 +61,7 @@ describe('createComposeModeInstructionProvider', () => {
 
   it('输出随阶段表切换而变化', () => {
     const { store, setStages } = mockSessionStore(stagesWithInProgress('brainstorm'))
-    const provider = createComposeModeInstructionProvider(store, 'sess_1', false)
+    const provider = createComposeModeInstructionProvider(store, 'sess_1')
     expect(provider()).toContain('[当前阶段: 构思 — 阶段指南]')
 
     setStages(stagesWithInProgress('verify'))
@@ -72,23 +72,10 @@ describe('createComposeModeInstructionProvider', () => {
 
   it('生命周期终态后只回基础模式指令', () => {
     const { store } = mockSessionStore(TERMINAL_STAGES)
-    const provider = createComposeModeInstructionProvider(store, 'sess_1', false)
+    const provider = createComposeModeInstructionProvider(store, 'sess_1')
     expect(provider()).toBe(getModeInstruction('compose'))
   })
 
-  it('auto 轮次追加确认门自动通过说明，非 auto 不出现', () => {
-    const { store } = mockSessionStore(stagesWithInProgress('brainstorm'))
-    const auto = createComposeModeInstructionProvider(store, 'sess_1', true)
-    const manual = createComposeModeInstructionProvider(store, 'sess_1', false)
-
-    const autoText = auto()
-    expect(autoText).toContain('确认门自动通过')
-    expect(autoText).toContain('不要停下等待用户确认')
-    // 指南仍然注入，确认门说明追加在尾部
-    expect(autoText).toContain('[当前阶段: 构思 — 阶段指南]')
-
-    expect(manual()).not.toContain('确认门自动通过')
-  })
 })
 
 describe('createComposeStageToolPolicy', () => {
@@ -120,15 +107,19 @@ describe('createComposeStageToolPolicy', () => {
     expect(terminal('write', {}).allowed).toBe(true)
   })
 
-  it('overlay 在 compose auto 语义下仍拒绝：优先于 PermissionManager 基础判定', async () => {
+  it('overlay 在 compose 下仍优先于 PermissionManager 基础判定', async () => {
     const events: unknown[] = []
-    const coordinator = new PermissionCoordinator({
-      emit: event => events.push(event),
-      getMode: () => 'compose'
-    })
-    // compose 恒为 auto 语义：无 overlay 时 write 会被基础判定直接放行
     const manager = new PermissionManager()
-    coordinator.setPermissionManager(manager)
+    const coordinator = new PermissionCoordinator({
+      permissionManager: manager,
+      emit: event => events.push(event),
+      getMode: () => 'compose',
+      getPermissionRuntimeSnapshot: () => ({
+        sessionId: 'sess_1',
+        workspaceRoot: '/workspace',
+        permissionMode: 'auto'
+      })
+    })
     const baseline = await coordinator.checkPermission('write', { path: 'a.ts' }, 'msg-1')
     expect(baseline.allowed).toBe(true)
 

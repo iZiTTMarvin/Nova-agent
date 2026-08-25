@@ -148,8 +148,6 @@ export interface IpcCommands {
       }>
       /** true 时跳过用户消息 append，从当前 leaf（user）取内容重新生成 assistant */
       regenerate?: boolean
-      /** compose 输入框的临时自动编排开关 */
-      autoMode?: boolean
     }
     result: void
   }
@@ -624,7 +622,7 @@ export interface IpcEvents {
     requestId: string
     toolName: string
     args: Record<string, unknown>
-    riskLevel: 'low' | 'medium' | 'high'
+    riskLevel: 'low' | 'high'
     reason: string
     commands?: string[]
     /** 本次请求对应的工具卡片 id 列表，渲染层据此把放行卡片内联到消息流（锚点取末尾一张） */

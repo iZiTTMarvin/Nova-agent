@@ -209,7 +209,7 @@ describe('useAppStore Zustand Store', () => {
       requestId: 'req_2',
       toolName: 'bash',
       args: { command: 'npm run build' },
-      riskLevel: 'medium',
+      riskLevel: 'low',
       reason: '命令执行'
     })
 

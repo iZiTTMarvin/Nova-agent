@@ -60,7 +60,6 @@ export interface AppState {
   pendingUserMessages: Array<{
     text: string
     images: import('../lib/image-attachments').ImageAttachment[]
-    autoMode?: boolean
   }>
   // ── actions ──
   selectProject: () => Promise<void>
@@ -121,8 +120,7 @@ export interface AppState {
   /**入队一条挂起消息（Agent 运行期间用户输入） */
   enqueuePendingMessage: (
     text: string,
-    images: import('../lib/image-attachments').ImageAttachment[],
-    autoMode?: boolean
+    images: import('../lib/image-attachments').ImageAttachment[]
   ) => void
   /**移除一条挂起消息（按索引） */
   removePendingMessage: (index: number) => void

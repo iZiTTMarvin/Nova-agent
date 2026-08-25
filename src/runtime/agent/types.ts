@@ -15,6 +15,7 @@ import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { RepairKind as NativeArgsRepairKind } from './stream/nativeArgsRepair'
 import type { ShapeRepairKind } from './execution/toolShapeValidation'
 import type { ToolProcessHandle } from '../tools/types'
+import type { PermissionManager } from '../permissions/PermissionManager'
 
 /**
  * repair_diagnostic 事件的分型联合，唯一来源。
@@ -34,7 +35,7 @@ export type AgentEvent =
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string; sessionId?: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown>; sessionId?: string; parentToolCallId?: string }
   | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processHandle?: ToolProcessHandle }
-  | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'medium' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string }
+  | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string }
   | {
       type: 'diff_update'
       messageId: string
@@ -172,6 +173,10 @@ export interface AgentLoopConfig {
   systemPrompt?: string
   /** 6 层 system prompt（优先于 systemPrompt 字符串） */
   systemPromptLayers?: SystemPromptLayers
+  /** 本轮捕获的会话权限模式；裸构造测试默认请求批准。 */
+  permissionMode?: import('../../shared/session/types').PermissionMode
+  /** 权限规则引擎；产品 Runtime 必须在构造时注入已加载规则的实例。 */
+  permissionManager?: PermissionManager
   /**
    * skillContext 层正文 token 估算（char/4）。
    * agentHandler 在拼完 skillContext 后算一次传入，AgentLoop 用它把"技能正文"

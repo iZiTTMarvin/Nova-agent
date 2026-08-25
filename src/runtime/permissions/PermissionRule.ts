@@ -1,14 +1,12 @@
 /**
  * PermissionRule — 持久化的工具权限规则（PRD §5.2）
  *
- * 定义某个工具在某个范围（全局/项目）下是 allow / deny / ask。
+ * 定义某个工具在某个范围（全局/项目）下是 allow / deny。
  * 注意：与现有针对 .mdc 规则文件的 RuleFileEntry 概念无关，命名上请勿混淆
  *       （后者是 agent 行为规则文件，本类型是工具调用授权规则）。
  */
 import { createHash } from 'crypto'
-import type { PermissionDecision } from '../../shared/session/types'
-
-export type PermissionBehavior = PermissionDecision // 'allow' | 'deny' | 'ask'
+export type PermissionBehavior = 'allow' | 'deny'
 
 /** 匹配条件的目标工具名，'*' 表示通配所有工具 */
 export type PermissionToolName = string

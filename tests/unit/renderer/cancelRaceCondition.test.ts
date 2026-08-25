@@ -281,7 +281,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       requestId: 'perm_1',
       toolName: 'bash',
       args: { command: 'npm test' },
-      riskLevel: 'medium',
+      riskLevel: 'low',
       reason: '需要确认',
       toolCallIds: ['tc_1'],
       sessionId: 'sessA'
@@ -324,7 +324,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       requestId: 'perm_child',
       toolName: 'bash',
       args: { command: 'npm test' },
-      riskLevel: 'medium',
+      riskLevel: 'low',
       reason: '子任务需要确认',
       sessionId: 'sess_child'
     })

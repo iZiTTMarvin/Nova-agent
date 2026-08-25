@@ -4,7 +4,6 @@ import { EventBus } from '../../../src/runtime/agent/EventBus'
 import { IdleCompressionTimer } from '../../../src/runtime/agent/compaction/IdleCompressionTimer'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
-import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { extractTextFromContent } from '../../../src/runtime/model/types'
 import type { ChatMessage } from '../../../src/runtime/model/types'
@@ -41,7 +40,7 @@ describe('AgentLoop', () => {
   function createLoop(mockClient?: MockModelClient) {
     const client = mockClient ?? new MockModelClient()
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
     loop.setToolRegistry(createTestRegistry())
     return { loop, eventBus, client }
   }
@@ -537,7 +536,7 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
     loop.setToolRegistry(registry)
 
     const events: string[] = []
@@ -598,7 +597,7 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
     loop.setToolRegistry(registry)
 
     await loop.sendMessage('读取图片', agentRoute())
@@ -728,7 +727,6 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(client, eventBus)
     loop.setToolRegistry(registry)
     loop.setMode('default')
-    loop.setPermissionManager(new PermissionManager())
 
     const events: unknown[] = []
     let permissionRequestId = ''
@@ -792,7 +790,6 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(client, eventBus)
     loop.setToolRegistry(registry)
     loop.setMode('default')
-    loop.setPermissionManager(new PermissionManager())
 
     const events: unknown[] = []
     eventBus.on((event) => {
@@ -848,7 +845,6 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(client, eventBus)
     loop.setToolRegistry(registry)
     loop.setMode('default')
-    loop.setPermissionManager(new PermissionManager())
 
     const events: unknown[] = []
     eventBus.on((event) => {
@@ -1203,7 +1199,7 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
     loop.setToolRegistry(registry)
 
     const events: any[] = []
@@ -1297,7 +1293,7 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
     loop.setToolRegistry(registry)
 
     const events: any[] = []
@@ -1436,7 +1432,6 @@ describe('AgentLoop', () => {
     registry.register(readTool)
     loop.setToolRegistry(registry)
     loop.setWorkingDir(workDir)
-    loop.setPermissionManager(new PermissionManager())
 
     const events: Array<{ type: string; result?: string; success?: boolean }> = []
     eventBus.on((e) => events.push(e as { type: string; result?: string; success?: boolean }))
@@ -1484,7 +1479,6 @@ describe('AgentLoop', () => {
     const loop1 = new AgentLoop(client1, new EventBus())
     loop1.setToolRegistry(new ToolRegistry())
     loop1.setWorkingDir(workDir)
-    loop1.setPermissionManager(new PermissionManager())
     const persisted: string[] = []
     loop1.setOnSkillRootAdded(dir => persisted.push(dir))
     const route1 = resolveAgentTurnRoute({
@@ -1526,7 +1520,6 @@ describe('AgentLoop', () => {
     registry2.register(readTool)
     loop2.setToolRegistry(registry2)
     loop2.setWorkingDir(workDir)
-    loop2.setPermissionManager(new PermissionManager())
     loop2.restoreSkillRoots(roots)
 
     const events: Array<{ type: string; result?: string }> = []
@@ -1578,7 +1571,6 @@ describe('AgentLoop', () => {
     registry.register(readTool)
     loop.setToolRegistry(registry)
     loop.setWorkingDir(workDir)
-    loop.setPermissionManager(new PermissionManager())
 
     const events: Array<{ type: string; result?: string; success?: boolean }> = []
     eventBus.on((e) => events.push(e as { type: string; result?: string; success?: boolean }))
