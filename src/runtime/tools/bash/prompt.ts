@@ -107,14 +107,15 @@ function executionHint(family: ShellFamily): string[] {
       '- 路径含空格时用双引号包裹：`type "C:/Program Files/..."`。',
       '- cmd 没有反引号；命令嵌套用 `call`。',
       '- 重要操作前先 dry-run：例如先 `dir` 看一眼再 `del`。',
-      '- 避免依赖 Unix 工具——`find` / `grep` 在 Windows 上不可用。'
+      '- 避免依赖 Unix 工具——`find` / `grep` 在 Windows 上不可用。',
+      '- 长任务会阻塞整个调用直到完成，超过时限会被强制终止——把大任务拆成可分步验证的小步执行。'
     ]
   }
   return [
     '## 命令执行注意事项',
     '- 路径含空格或包含 `$` 时用单引号包裹：`cat \'/path with $dollar/file\'`。',
     '- 重要操作前先 dry-run：例如 `rm -i`、先 `ls` 再 `rm`。',
-    '- 长任务用 `nohup ... &` + 写日志文件，避免你看不到进度。',
+    '- 长任务会阻塞整个调用直到完成，超过时限会被强制终止——把大任务拆成可分步验证的小步执行。',
     '- 如果命令会写入工作区文件，会被 checkpoint 系统自动追踪。'
   ]
 }
@@ -122,9 +123,9 @@ function executionHint(family: ShellFamily): string[] {
 function truncationHint(): string[] {
   return [
     '## 输出截断',
-    `超过 ${DEFAULT_MAX_LINES} 行或 ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB 的输出会被截断，`,
-    '完整内容会写入 `os.tmpdir()/nova-bash-*.log`，结果末尾会附带文件路径，',
-    '需要看完整内容时用 read 工具打开那个文件。'
+    `超过 ${DEFAULT_MAX_LINES} 行或 ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB 的输出会被截断，只保留末尾，`,
+    `输出量超过 ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB 时完整内容会写入 \`os.tmpdir()/nova-bash-*.log\`，`,
+    '结果末尾会附带文件路径，有路径时用 read 工具打开可看完整内容。'
   ]
 }
 

@@ -59,4 +59,23 @@ describe('renderBashDescription', () => {
     expect(pwsh).not.toBe(cmd)
     expect(bash).not.toBe(cmd)
   })
+
+  it('长任务指导不教 nohup，改为提示时限终止与拆步', () => {
+    const bash = renderBashDescription('bash', 'linux')
+    expect(bash).not.toContain('nohup')
+    expect(bash).toContain('长任务')
+    expect(bash).toContain('强制终止')
+  })
+
+  it('三个 shell family 的长任务指导齐全', () => {
+    const bash = renderBashDescription('bash', 'linux')
+    const pwsh = renderBashDescription('pwsh', 'win32')
+    const cmd = renderBashDescription('cmd', 'win32')
+    expect(bash).toContain('长任务')
+    expect(pwsh).toContain('长任务')
+    expect(cmd).toContain('长任务')
+    expect(cmd).toContain('强制终止')
+    expect(bash).toContain('小步')
+    expect(cmd).toContain('小步')
+  })
 })
