@@ -20,9 +20,14 @@ const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: 'plan', label: '计划模式（只读分析）' }
 ]
 
-const PERMISSION_OPTIONS: { value: NovaSettingsDto['permissionPolicy']; label: string }[] = [
-  { value: 'ask', label: '执行前确认（bash 需批准）' },
-  { value: 'auto', label: '自动执行（危险命令仍拦截）' }
+const PERMISSION_OPTIONS: Array<{
+  value: NovaSettingsDto['defaultPermissionMode']
+  label: string
+  disabled?: boolean
+}> = [
+  { value: 'request_approval', label: '请求批准' },
+  { value: 'auto', label: '自动' },
+  { value: 'full_access', label: '完全访问（即将可用）', disabled: true }
 ]
 
 export const GeneralSettingsPanel: React.FC = () => {
@@ -114,15 +119,15 @@ export const GeneralSettingsPanel: React.FC = () => {
               }
             />
             <SettingsRow
-              label="工具批准"
-              description="仅约束默认模式；计划模式始终只读，XForge 模式 run 内固定自动执行语义。"
+              label="默认权限模式"
+              description="新建会话使用；已有会话保留自己的权限模式。完全访问即将可用。"
               end={
                 <Selector
-                  label="工具批准"
+                  label="默认权限模式"
                   isLabelHidden
                   options={PERMISSION_OPTIONS}
-                  value={settings.permissionPolicy}
-                  onChange={value => void update('permissionPolicy', value as NovaSettingsDto['permissionPolicy'])}
+                  value={settings.defaultPermissionMode}
+                  onChange={value => void update('defaultPermissionMode', value as NovaSettingsDto['defaultPermissionMode'])}
                   isDisabled={saving}
                   width={240}
                 />

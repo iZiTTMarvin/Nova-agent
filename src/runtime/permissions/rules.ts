@@ -16,7 +16,7 @@
  * shell_session 矩阵行是兜底防线：write 可执行任意内容，按 action 的精细化
  * 在 PermissionManager 的 shell_session 分支（read/interrupt/stop 在 plan 也放行）。
  */
-import type { Mode, PermissionDecision, PermissionPolicy } from '../../shared/session/types'
+import type { Mode, PermissionDecision, PermissionMode } from '../../shared/session/types'
 import { getToolCapability } from '../../shared/session/toolVisibility'
 import type { RiskLevel } from './types'
 
@@ -91,15 +91,15 @@ export function assessCommandRisk(command: string): {
  * 是否走 auto 语义（自动放行，危险命令仍拦）。
  * - plan：永不 auto
  * - compose：run 内固定 auto 语义
- * - default：读 permissionPolicy
+ * - default：读会话 permissionMode
  */
 export function isAutoPermissionSemantics(
   mode: Mode,
-  policy: PermissionPolicy = 'ask'
+  permissionMode: PermissionMode = 'request_approval'
 ): boolean {
   if (mode === 'plan') return false
   if (mode === 'compose') return true
-  return policy === 'auto'
+  return permissionMode === 'auto'
 }
 
 /**
@@ -108,7 +108,7 @@ export function isAutoPermissionSemantics(
 export function getBaseDecision(
   mode: Mode,
   toolName: string,
-  policy: PermissionPolicy = 'ask'
+  permissionMode: PermissionMode = 'request_approval'
 ): PermissionDecision {
   const capability = getToolCapability(toolName)
   const category = capability === 'unknown' ? 'bash' : capability
@@ -124,7 +124,7 @@ export function getBaseDecision(
   }
 
   // compose / default+auto：所有工具默认 allow（bash 危险命令在 PermissionManager 层处理）
-  if (isAutoPermissionSemantics(mode, policy)) {
+  if (isAutoPermissionSemantics(mode, permissionMode)) {
     return 'allow'
   }
 

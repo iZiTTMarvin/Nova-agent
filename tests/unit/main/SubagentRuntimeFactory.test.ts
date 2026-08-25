@@ -34,6 +34,7 @@ describe('SubagentRuntimeFactory', () => {
     const child = store.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
+      permissionMode: 'request_approval',
       task: 'inspect',
       subagent: {
         lineage: {

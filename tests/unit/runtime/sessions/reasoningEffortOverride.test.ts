@@ -53,8 +53,8 @@ describe('SessionStore 思考强度覆盖', () => {
 })
 
 describe('schema v10 → v11 迁移', () => {
-  it('当前版本为 15', () => {
-    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(16)
+  it('当前版本包含会话权限模式字段', () => {
+    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(17)
   })
 
   it('v10 会话迁移后无覆盖字段，结构合法', () => {

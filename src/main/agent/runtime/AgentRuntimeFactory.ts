@@ -231,7 +231,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   permissionManager.setRules(listPermissionRules(projectPath))
   permissionManager.setCurrentProjectPath(projectPath)
   permissionManager.setSessionId(sessionId)
-  permissionManager.setPermissionPolicy(novaSettings.permissionPolicy)
+  permissionManager.setPermissionMode(session.permissionMode)
 
   const toolRegistry = new ToolRegistry()
   // Tool Economy 三态由内部策略决定（默认 off = 全量工具面，行为与历史一致）；

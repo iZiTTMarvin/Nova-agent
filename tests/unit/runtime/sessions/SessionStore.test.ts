@@ -31,6 +31,7 @@ describe('SessionStore', () => {
     const createCommand = () => ({
       workspaceRoot: path.resolve(tmpDir, 'workspace'),
       mode: 'plan' as const,
+      permissionMode: 'request_approval' as const,
       task: 'inspect the runtime',
       subagent: {
         lineage: {

@@ -22,6 +22,7 @@ import {
 import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
+import { PermissionModeButton } from '../permissions/PermissionModeButton'
 import { ModelSelector } from './ModelSelector'
 import { AutoModeToggle } from './AutoModeToggle'
 import {
@@ -96,6 +97,7 @@ export const ChatPanel: React.FC = () => {
   const composerPrefill = useSettingsStore(state => state.composerPrefill)
   const clearComposerPrefill = useSettingsStore(state => state.clearComposerPrefill)
   const isSessionLoading = useWorkspaceStore(state => state.isSessionLoading)
+  const setPermissionMode = useWorkspaceStore(state => state.setPermissionMode)
 
   // Vision 门控：当前模型是否支持图片输入
   const supportsVision = selectSupportsVisionFromConfig(modelConfig)
@@ -1011,6 +1013,13 @@ export const ChatPanel: React.FC = () => {
                     onSelectImage={() => fileInputRef.current?.click()}
                     onSelectSkills={handleSlashButton}
                   />
+                  {currentSession && currentSession.mode !== 'compose' && (
+                    <PermissionModeButton
+                      permissionMode={currentSession.permissionMode}
+                      isDisabled={isGenerating || sendInFlight || !!pendingPermissionRequest}
+                      onChange={setPermissionMode}
+                    />
+                  )}
                   {currentMode === 'compose' && (
                     <AutoModeToggle enabled={autoMode} onChange={setAutoMode} />
                   )}

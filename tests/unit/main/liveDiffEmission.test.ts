@@ -55,7 +55,7 @@ vi.mock('../../../src/runtime/checkpoints/diffState', () => ({
 function makeCtx(eventBus: EventBus): MessageContext {
   return {
     mode: 'default',
-    permissionPolicy: 'ask',
+    permissionMode: 'request_approval',
     workspaceRoot: '/tmp/project',
     sessionsDir: '/tmp/test-sessions',
     eventBus,

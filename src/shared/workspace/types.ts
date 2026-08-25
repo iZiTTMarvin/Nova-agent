@@ -5,7 +5,7 @@
  * 当前会话 ID、当前项目路径、当前运行模式。由主进程 WorkspaceService 持有，
  * 通过 workspace:changed 广播给 renderer。
  */
-import type { Mode } from '../session/types'
+import type { Mode, PermissionMode } from '../session/types'
 import type { Session } from '../session/types'
 import type { ReasoningEffort } from '../config/llmRegistry'
 
@@ -77,6 +77,13 @@ export interface CreateSessionParams {
 export interface SetModeParams {
   mode: Mode
   /** 若提供则同时持久化到指定会话；否则用当前会话 */
+  sessionId?: string
+}
+
+/** 设置会话权限模式的参数。 */
+export interface SetPermissionModeParams {
+  permissionMode: PermissionMode
+  /** 若提供则持久化到指定会话；否则使用当前会话。 */
   sessionId?: string
 }
 

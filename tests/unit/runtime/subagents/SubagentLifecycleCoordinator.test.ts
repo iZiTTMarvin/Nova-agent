@@ -47,6 +47,7 @@ describe('SubagentLifecycleCoordinator', () => {
     const child = store.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
+      permissionMode: 'request_approval',
       task: childRunId,
       subagent: {
         lineage: {

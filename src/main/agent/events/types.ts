@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import type { EventBus } from '../../../runtime/agent'
-import type { Mode, PermissionPolicy, MessageBlock } from '../../../shared/session/types'
+import type { Mode, PermissionMode, MessageBlock } from '../../../shared/session/types'
 
 /**
  * 单条流式消息的短期累积状态。
@@ -30,8 +30,8 @@ export interface StreamAccumulator {
  */
 export interface TurnEventContext {
   mode: Mode
-  /** 工具批准策略（验证弹窗：default+ask 才确认） */
-  permissionPolicy: PermissionPolicy
+  /** 本 turn 捕获的会话权限模式。 */
+  permissionMode: PermissionMode
   workspaceRoot: string
   sessionsDir: string
   eventBus: EventBus

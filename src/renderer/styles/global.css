@@ -23,6 +23,7 @@
   --color-brand-hover: #b05131;
   --color-brand-dim: rgba(201, 100, 66, 0.08);
   --color-accent: #d97757;     /* 珊瑚橙，次要高亮 */
+  --color-warning: #a66500;
   --nova-status-error: #b53333;      /* 温暖深红，错误状态 */
   --nova-status-success: #788c5d;    /* 莫兰迪绿，成功状态 */
   --color-error: var(--nova-status-error);
@@ -92,6 +93,7 @@
   --color-brand-hover: #ef9d74;
   --color-brand-dim: rgba(223, 138, 98, 0.18);
   --color-accent: #e29a73;
+  --color-warning: #f2c14e;
   --nova-status-error: #f08a83;
   --nova-status-success: #b4c98e;
   --color-error: var(--nova-status-error);
@@ -127,6 +129,7 @@
     --color-brand-hover: #ef9d74;
     --color-brand-dim: rgba(223, 138, 98, 0.18);
     --color-accent: #e29a73;
+    --color-warning: #f2c14e;
     --nova-status-error: #f08a83;
     --nova-status-success: #b4c98e;
     --color-error: var(--nova-status-error);

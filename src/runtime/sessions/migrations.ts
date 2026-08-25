@@ -17,13 +17,13 @@ import type {
   SubagentProfileSnapshot,
   SubagentSessionMetadata
 } from '../../shared/subagents'
-import type { Mode } from '../../shared/session/types'
+import type { Mode, PermissionMode } from '../../shared/session/types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 16
+export const CURRENT_SESSION_SCHEMA_VERSION = 17
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -49,6 +49,7 @@ function migrateV0ToV1(data: unknown): SessionData {
     id: typeof raw.id === 'string' ? raw.id : '',
     workspaceRoot: typeof raw.workspaceRoot === 'string' ? raw.workspaceRoot : '',
     mode: normalizeLegacyMode(raw.mode),
+    permissionMode: 'request_approval',
     messages,
     currentLeafId: messages.at(-1)?.id ?? null,
     codeIndexEnabled: false,
@@ -176,7 +177,7 @@ function migrateV4ToV5(data: unknown): SessionData {
 
 /**
  * v5 → v6：Mode 去掉 auto。
- * mode==='auto' → default，并尽量把用户 permissionPolicy 写成 auto（保留习惯）。
+ * mode==='auto' → default，并尽量把默认权限模式写成 auto（保留习惯）。
  */
 function migrateV5ToV6(data: unknown): SessionData {
   const session = data as SessionData
@@ -311,6 +312,27 @@ function migrateV15ToV16(data: unknown): SessionData {
   }
 }
 
+/** 旧会话继承迁移后设置中的默认权限模式。 */
+export function migrateV16ToV17(
+  data: unknown,
+  permissionMode: PermissionMode = loadDefaultPermissionMode()
+): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 17,
+    permissionMode
+  }
+}
+
+function loadDefaultPermissionMode(): PermissionMode {
+  try {
+    return loadNovaSettings().defaultPermissionMode
+  } catch {
+    return 'request_approval'
+  }
+}
+
 type UnknownObject = { [propertyName: string]: unknown }
 
 function isPlainObject(value: unknown): value is UnknownObject {
@@ -436,22 +458,28 @@ function assertValidSessionKind(value: unknown): asserts value is SessionData {
   throw new Error('subagent 会话必须携带合法的 subagent metadata')
 }
 
+function normalizeAvailablePermissionMode(value: unknown): PermissionMode {
+  if (value === 'request_approval' || value === 'auto') return value
+  if (value === 'full_access') return 'request_approval'
+  throw new Error('会话必须携带合法的 permissionMode')
+}
+
 /** 旧字面量 auto → default；非法值兜底 default */
 function normalizeLegacyMode(mode: unknown): Mode {
   if (mode === 'plan' || mode === 'default' || mode === 'compose') return mode
   if (mode === 'auto') {
-    tryPromotePermissionPolicyToAuto()
+    tryPromoteDefaultPermissionModeToAuto()
     return 'default'
   }
   return 'default'
 }
 
 /** 会话从 auto 迁出时，尽量把全局策略写成 auto（失败不阻断迁移） */
-function tryPromotePermissionPolicyToAuto(): void {
+function tryPromoteDefaultPermissionModeToAuto(): void {
   try {
     const settings = loadNovaSettings()
-    if (settings.permissionPolicy === 'auto') return
-    saveNovaSettings({ permissionPolicy: 'auto' })
+    if (settings.defaultPermissionMode === 'auto') return
+    saveNovaSettings({ defaultPermissionMode: 'auto' })
   } catch {
     /* ignore */
   }
@@ -474,7 +502,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV12ToV13, // v12 → v13
   migrateV13ToV14, // v13 → v14
   migrateV14ToV15, // v14 → v15
-  migrateV15ToV16 // v15 → v16
+  migrateV15ToV16, // v15 → v16
+  migrateV16ToV17 // v16 → v17
 ]
 
 /**
@@ -507,6 +536,7 @@ export function migrateSessionData(data: unknown): SessionData {
       messages: withTree,
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       currentLeafId: session.currentLeafId ?? withTree.at(-1)?.id ?? null,
+      permissionMode: normalizeAvailablePermissionMode(session.permissionMode),
       codeIndexEnabled: session.codeIndexEnabled === true
     }
     assertValidSessionKind(result)
@@ -529,6 +559,7 @@ export function migrateSessionData(data: unknown): SessionData {
     schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
     messages,
     currentLeafId: migrated.currentLeafId ?? messages.at(-1)?.id ?? null,
+    permissionMode: normalizeAvailablePermissionMode(migrated.permissionMode),
     codeIndexEnabled: migrated.codeIndexEnabled === true
   }
   assertValidSessionKind(result)

@@ -2,7 +2,7 @@
  * novaSettings 持久化与损坏文件回退
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -38,6 +38,31 @@ describe('novaSettings', () => {
     )
     saveNovaSettings({ loadThirdPartySkills: false })
     expect(loadNovaSettings().loadThirdPartySkills).toBe(false)
+  })
+
+  it.each([
+    [{ permissionPolicy: 'ask' }, 'request_approval'],
+    [{ permissionPolicy: 'auto' }, 'auto'],
+    [{}, 'request_approval']
+  ] as const)('旧权限设置迁移为默认权限模式', async (legacy, expected) => {
+    const settingsPath = join(mockHome, '.nova', 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify(legacy), 'utf-8')
+    const { loadNovaSettings, saveNovaSettings } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+
+    expect(loadNovaSettings().defaultPermissionMode).toBe(expected)
+    saveNovaSettings({ loadThirdPartySkills: false })
+
+    const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+    expect(persisted.defaultPermissionMode).toBe(expected)
+    expect('permissionPolicy' in persisted).toBe(false)
+  })
+
+  it('完全访问未开放时拒绝写入默认设置', async () => {
+    const { saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    expect(() => saveNovaSettings({ defaultPermissionMode: 'full_access' }))
+      .toThrow(/defaultPermissionMode/)
   })
 
   it('maxToolRounds 默认值为 100', async () => {

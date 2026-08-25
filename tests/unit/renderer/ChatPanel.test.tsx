@@ -49,7 +49,9 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   StopIcon: () => null,
   NovaLogo: () => null,
   ImageIcon: () => null,
-  ChevronIcon: () => null
+  ChevronIcon: () => null,
+  ShieldIcon: () => null,
+  CheckSmallIcon: () => null
 }))
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
@@ -379,6 +381,7 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
       kind: 'primary' as const,
       workspaceRoot: '/ws',
       mode: 'default' as const,
+      permissionMode: 'request_approval' as const,
       createdAt: 1,
       updatedAt: 1,
       messageCount: 0,
@@ -456,6 +459,63 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     })
     expect(renderer.container.textContent ?? '').toContain('上次任务异常中断')
     expect(renderer.container.textContent ?? '').toContain('继续分析')
+    renderer.unmount()
+  })
+
+  it('切换会话时权限盾牌跟随会话属性，不沿用上一会话状态', () => {
+    const sessionA = primarySession('sessA')
+    const sessionB = { ...primarySession('sessB'), permissionMode: 'auto' as const }
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sessA',
+        sessions: [sessionA, sessionB]
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    expect(renderer.container.querySelector('[aria-haspopup="menu"]')?.textContent)
+      .toContain('请求批准')
+
+    act(() => {
+      useChatStore.setState({ currentSessionId: 'sessB' })
+    })
+    expect(renderer.container.querySelector('[aria-haspopup="menu"]')?.textContent)
+      .toContain('自动')
+    renderer.unmount()
+  })
+
+  it('存在 pending 权限请求时禁用盾牌，Compose 保留既有单一自动入口', async () => {
+    const session = primarySession('sessA')
+    act(() => {
+      useChatStore.setState({ currentSessionId: session.id, sessions: [session] })
+      useAgentStore.setState({
+        pendingPermissionRequest: {
+          messageId: 'msg_1',
+          requestId: 'perm_1',
+          toolName: 'bash',
+          args: { command: 'npm test' },
+          riskLevel: 'low',
+          reason: '需要确认',
+          toolCallIds: ['tool_1']
+        }
+      })
+    })
+
+    const renderer = renderDom(React.createElement(ChatPanel))
+    await act(async () => { await Promise.resolve() })
+    expect(renderer.container.querySelector('[aria-haspopup="menu"][aria-disabled="true"]'))
+      .not.toBeNull()
+
+    await act(async () => {
+      useAgentStore.setState({ pendingPermissionRequest: null })
+      useSettingsStore.setState({ currentMode: 'compose' })
+      useChatStore.setState({
+        sessions: [{ ...session, mode: 'compose' }]
+      })
+      await Promise.resolve()
+    })
+    expect(renderer.container.querySelector('[aria-label="请求批准"], [aria-label="自动"]')).toBeNull()
+    expect(renderer.container.textContent).toContain('全自动')
     renderer.unmount()
   })
 })

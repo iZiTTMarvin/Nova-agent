@@ -11,12 +11,12 @@ import type { TodoItem } from '../todo/types'
  * - default：模型自主循环（协作聊天）
  * - plan：只读规划
  * - compose：编排脚本强制推进（阶段 C1）
- * 权限档位已迁出为 PermissionPolicy（设置），不再用 Mode 表达 auto。
+ * 权限档位由 PermissionMode 独立表达，不再用 Mode 表达 auto。
  */
 export type Mode = 'plan' | 'default' | 'compose'
 
-/** 工具批准策略（仅约束 default 模式；plan/compose 由模式硬约束） */
-export type PermissionPolicy = 'ask' | 'auto'
+/** 当前会话的工具执行权限档位。 */
+export type PermissionMode = 'request_approval' | 'auto' | 'full_access'
 
 /** 权限决策：允许 / 需确认 / 拒绝 */
 export type PermissionDecision = 'allow' | 'ask' | 'deny'
@@ -127,6 +127,7 @@ interface SessionBase {
   id: string
   workspaceRoot: string
   mode: Mode
+  permissionMode: PermissionMode
   createdAt: number
   updatedAt: number
   messageCount: number

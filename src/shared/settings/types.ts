@@ -1,9 +1,9 @@
 /**
  * 设置相关 IPC 共享类型
  */
-import type { Mode, PermissionPolicy } from '../session/types'
+import type { Mode, PermissionMode } from '../session/types'
 
-export type { PermissionPolicy }
+export type { PermissionMode }
 
 export type RuleScope = 'workspace' | 'global'
 
@@ -40,11 +40,8 @@ export interface NovaSettingsDto {
   // ── PRD §5.6 新增：通用偏好 ──
   /** 默认运行模式（新建会话时使用） */
   defaultMode: Mode
-  /**
-   * 工具批准策略（仅约束 default 模式）：
-   * ask ≈ 原 default（bash 需确认）；auto ≈ 原 auto（自动执行，危险命令仍拦）
-   */
-  permissionPolicy: PermissionPolicy
+  /** 新建会话使用的默认权限模式。 */
+  defaultPermissionMode: PermissionMode
   /** bash 工具默认 shell 路径（空表示用系统默认） */
   defaultShell: string
   /**

@@ -13,6 +13,7 @@ import {
   migrateSessionData,
   migrateSessionFile,
   migrateV3ToV4,
+  migrateV16ToV17,
   CURRENT_SESSION_SCHEMA_VERSION
 } from '../../../../src/runtime/sessions/migrations'
 import { SESSION_DATA_FILE } from '../../../../src/runtime/sessions/types'
@@ -157,6 +158,7 @@ describe('migrateSessionData', () => {
       id: 'sess_v8',
       workspaceRoot: '/ws',
       mode: 'default' as const,
+      permissionMode: 'request_approval' as const,
       messages: [],
       currentLeafId: null,
       createdAt: 1,
@@ -240,6 +242,7 @@ describe('migrateSessionData', () => {
       id: 'sess_child',
       workspaceRoot: '/ws',
       mode: 'default' as const,
+      permissionMode: 'request_approval' as const,
       codeIndexEnabled: false,
       messages: [],
       currentLeafId: null,
@@ -258,6 +261,7 @@ describe('migrateSessionData', () => {
       id: 'sess_skill_child',
       workspaceRoot: join(tmpdir(), 'workspace'),
       mode: 'plan' as const,
+      permissionMode: 'request_approval' as const,
       codeIndexEnabled: false,
       messages: [],
       currentLeafId: null,
@@ -440,8 +444,78 @@ describe('migrateSessionData', () => {
     expect(migrateSessionData({
       ...base,
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      permissionMode: 'request_approval',
       codeIndexEnabled: true
     }).codeIndexEnabled).toBe(true)
+  })
+
+  it('v16 会话按设置默认值补权限模式且不改消息与会话树', () => {
+    const messages = [
+      { id: 'm1', parentId: null, role: 'user', content: 'hello', timestamp: 1 }
+    ]
+    const migrated = migrateV16ToV17({
+      schemaVersion: 16,
+      kind: 'primary',
+      id: 'sess_v16',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      codeIndexEnabled: true,
+      messages,
+      currentLeafId: 'm1',
+      createdAt: 1,
+      updatedAt: 2
+    }, 'auto')
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 17,
+      permissionMode: 'auto',
+      currentLeafId: 'm1',
+      messages
+    })
+  })
+
+  it('v16 子会话同样补权限模式并保留 lineage 与 profile', () => {
+    const subagent = {
+      lineage: { parentSessionId: 'parent', depth: 1 },
+      profile: { profileId: 'explore', name: 'Explore', permissionCeiling: 'read_only' }
+    }
+    const migrated = migrateV16ToV17({
+      schemaVersion: 16,
+      kind: 'subagent',
+      id: 'child',
+      workspaceRoot: '/ws',
+      mode: 'plan',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2,
+      subagent
+    }, 'request_approval')
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 17,
+      permissionMode: 'request_approval',
+      subagent
+    })
+  })
+
+  it('未开放的完全访问持久值按请求批准收窄，不向界面或 Runtime 声称已启用', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      kind: 'primary',
+      id: 'sess_full_access',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      permissionMode: 'full_access',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2
+    })
+
+    expect(migrated.permissionMode).toBe('request_approval')
   })
 
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {

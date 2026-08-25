@@ -91,6 +91,8 @@ export const WORKSPACE_SET_SESSION_PINNED = 'workspace:set-session-pinned' as co
 export const WORKSPACE_SELECT_SESSION = 'workspace:select-session' as const
 /** 切换运行模式 */
 export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
+/** 切换当前会话的权限模式 */
+export const WORKSPACE_SET_PERMISSION_MODE = 'workspace:set-permission-mode' as const
 /** 设置当前会话的思考强度覆盖（null 清除） */
 export const WORKSPACE_SET_REASONING_EFFORT = 'workspace:set-reasoning-effort' as const
 /** 读取当前会话 active plan 的完整 Markdown，用于计划审阅卡 */

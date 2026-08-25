@@ -14,7 +14,6 @@ import {
   persistCompactionSnapshot,
   restoreOrInjectHistory
 } from '../../../runtime/sessions/contextSnapshot'
-import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type {
   PreparedSubagentTurn,
   PrepareSubagentTurnInput
@@ -28,7 +27,6 @@ export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
   readonly resolveTool: (name: string) => ToolExecutor | undefined
   readonly sessionStore: SessionStore
   readonly sessionsDir: string
-  readonly novaSettings: NovaSettings
   readonly readState: ReadState
   readonly contextWindow: number
   readonly supportsVision: boolean
@@ -64,7 +62,7 @@ export function prepareSubagentRuntime(
   permissionManager.setRules(listPermissionRules(input.workingDirectory))
   permissionManager.setCurrentProjectPath(input.workingDirectory)
   permissionManager.setSessionId(input.childSession.id)
-  permissionManager.setPermissionPolicy(input.novaSettings.permissionPolicy)
+  permissionManager.setPermissionMode(input.childSession.permissionMode)
 
   const modelPool = buildModelPoolWithFallbacks(input.modelClient)
   const agentLoop = new AgentLoop(modelPool, eventBus, {

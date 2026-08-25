@@ -94,7 +94,7 @@ describe('PermissionManager', () => {
     const mode: Mode = 'default'
 
     beforeEach(() => {
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
     })
 
     it('只读工具允许执行', () => {
@@ -221,8 +221,19 @@ describe('PermissionManager', () => {
   // ── 边界场景 ──────────────────────────────────────────
 
   describe('边界场景', () => {
+    it('未开放的完全访问按请求批准语义收窄，不提前放行 shell', () => {
+      pm.setPermissionMode('full_access')
+
+      expect(pm.check({ toolName: 'bash', args: { command: 'npm test' } }, 'default').decision)
+        .toBe('ask')
+      expect(pm.check({ toolName: 'bash', args: { command: 'rm -rf build' } }, 'default').decision)
+        .toBe('ask')
+      expect(pm.check({ toolName: 'write', args: { path: 'a.ts' } }, 'default').decision)
+        .toBe('allow')
+    })
+
     it('进入只读 Plan 自动允许，退出 Plan 仍要求用户确认', () => {
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
       pm.setRules([{
         id: 'allow-switch',
         toolName: 'switch_mode',
@@ -255,9 +266,9 @@ describe('PermissionManager', () => {
       const query = { toolName: 'bash', args: { command: 'ls' } }
 
       expect(pm.check(query, 'plan').decision).toBe('deny')
-      pm.setPermissionPolicy('ask')
+      pm.setPermissionMode('request_approval')
       expect(pm.check(query, 'default').decision).toBe('ask')
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
       expect(pm.check(query, 'default').decision).toBe('allow')
       expect(pm.check(query, 'compose').decision).toBe('allow')
     })
@@ -282,7 +293,7 @@ describe('PermissionManager', () => {
     it('白名单不放行搭车的危险命令段', () => {
       pm.setSessionId('session-wl')
       grantSessionPermission('session-wl', 'npm')
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
 
       const result = pm.check({
         toolName: 'bash',
@@ -294,7 +305,7 @@ describe('PermissionManager', () => {
     it('git 白名单不放行拼接的 curl | sh', () => {
       pm.setSessionId('session-git')
       grantSessionPermission('session-git', 'git')
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
 
       const result = pm.check({
         toolName: 'bash',
@@ -337,7 +348,7 @@ describe('PermissionManager', () => {
     })
 
     it('default+auto 下启动交互式会话被拒绝', () => {
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
       const result = pm.check({ toolName: 'bash', args: { command: 'python' } }, 'default')
       expect(result.decision).toBe('deny')
       expect(result.riskLevel).toBe('high')
@@ -408,7 +419,7 @@ describe('PermissionManager', () => {
     })
 
     it('write 在 default+auto 未命中危险放行、命中危险拒绝', () => {
-      pm.setPermissionPolicy('auto')
+      pm.setPermissionMode('auto')
 
       const safe = pm.check({
         toolName: 'shell_session',

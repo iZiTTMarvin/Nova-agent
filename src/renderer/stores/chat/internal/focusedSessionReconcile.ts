@@ -10,6 +10,7 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
     id: detail.id,
     workspaceRoot: detail.workspaceRoot,
     mode: detail.mode,
+    permissionMode: detail.permissionMode,
     createdAt: detail.createdAt,
     updatedAt: detail.updatedAt,
     messageCount: detail.messageCount

@@ -39,6 +39,7 @@ import type {
   SelectProjectParams,
   CreateSessionParams,
   SetModeParams,
+  SetPermissionModeParams,
   SetReasoningEffortParams,
   ActivePlanDocument,
   ReadActivePlanParams
@@ -417,6 +418,10 @@ export interface IpcCommands {
   }
   'workspace:set-mode': {
     params: SetModeParams
+    result: WorkspaceState
+  }
+  'workspace:set-permission-mode': {
+    params: SetPermissionModeParams
     result: WorkspaceState
   }
   'workspace:set-reasoning-effort': {

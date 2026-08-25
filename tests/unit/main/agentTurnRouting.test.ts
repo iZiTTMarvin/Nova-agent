@@ -139,7 +139,7 @@ vi.mock('../../../src/runtime/model/config', () => ({
 
 vi.mock('../../../src/runtime/settings/novaSettings', () => ({
   loadNovaSettings: vi.fn(() => ({
-    permissionPolicy: 'auto',
+    permissionMode: 'auto',
     memoryEnabled: false,
     maxToolRounds: 20
   }))

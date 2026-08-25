@@ -1,6 +1,6 @@
 export {
   type Mode,
-  type PermissionPolicy,
+  type PermissionMode,
   type PermissionDecision,
   type MessageRole,
   type ToolCall,

@@ -50,6 +50,7 @@ describe('WorkspaceService subagent deletion', () => {
     const command: CreateChildSessionCommand = {
       workspaceRoot: path.join(tempRoot, 'workspace'),
       mode: 'default',
+      permissionMode: 'request_approval',
       task: `child task ${suffix}`,
       subagent: {
         lineage: {

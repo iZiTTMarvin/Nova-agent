@@ -48,7 +48,7 @@ import { getSessionStore } from '../../../src/main/services/SessionStoreHost'
 function makeCtx(overrides?: Partial<MessageContext>): MessageContext {
   return {
     mode: 'default',
-    permissionPolicy: 'ask',
+    permissionMode: 'request_approval',
     workspaceRoot: '/tmp/project',
     sessionsDir: '/tmp/test-sessions',
     eventBus: new EventBus(),

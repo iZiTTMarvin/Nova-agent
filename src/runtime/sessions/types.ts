@@ -4,7 +4,7 @@
  * 会话消息以树形存储（parentId 链 + currentLeafId），激活路径为当前展示与喂模型的线性视图。
  * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
-import type { Mode, MessageBlock } from '../../shared/session'
+import type { Mode, MessageBlock, PermissionMode } from '../../shared/session'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   SessionKind,
@@ -35,6 +35,7 @@ interface SessionSummaryBase {
   id: string
   workspaceRoot: string
   mode: Mode
+  permissionMode: PermissionMode
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -89,6 +90,7 @@ interface SessionDataBase {
   id: string
   workspaceRoot: string
   mode: Mode
+  permissionMode: PermissionMode
   messages: SessionMessage[]
   /**
    * 当前激活的叶子节点 id。空会话为 null。
@@ -194,6 +196,7 @@ export type SessionMetadata =
 export interface CreateChildSessionCommand {
   readonly workspaceRoot: string
   readonly mode: Mode
+  readonly permissionMode: PermissionMode
   readonly task: string
   readonly subagent: SubagentSessionMetadata
   /** Child Session 继承宿主会话快照，不重读当前设置。 */

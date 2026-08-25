@@ -13,20 +13,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import type { Mode, PermissionPolicy } from '../../shared/session/types'
+import type { Mode, PermissionMode } from '../../shared/session/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 
 /** 应用级设置字段（与 NovaSettingsDto 完全对齐） */
 export type NovaSettings = NovaSettingsDto
 
 /** 当前 settings schema 版本（用于未来迁移） */
-const CURRENT_SETTINGS_VERSION = 1
+const CURRENT_SETTINGS_VERSION = 2
 
 /** 默认值：所有字段的兜底 */
 export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   loadThirdPartySkills: true,
   defaultMode: 'default',
-  permissionPolicy: 'ask',
+  defaultPermissionMode: 'request_approval',
   defaultShell: '',
   persistentShellSessions: true,
   maxToolRounds: 100,
@@ -75,7 +75,7 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.loadThirdPartySkills === 'boolean') {
     result.loadThirdPartySkills = obj.loadThirdPartySkills
   }
-  // 旧 Mode 含 auto：迁为 default，并尽量把 permissionPolicy 写成 auto
+  // 旧 Mode 含 auto：迁为 default，并保留其自动权限语义。
   let migratedAutoMode = false
   if (obj.defaultMode === 'auto') {
     result.defaultMode = 'default'
@@ -83,10 +83,17 @@ function migrateAndFill(raw: unknown): NovaSettings {
   } else if (obj.defaultMode === 'plan' || obj.defaultMode === 'default' || obj.defaultMode === 'compose') {
     result.defaultMode = obj.defaultMode as Mode
   }
-  if (obj.permissionPolicy === 'ask' || obj.permissionPolicy === 'auto') {
-    result.permissionPolicy = obj.permissionPolicy as PermissionPolicy
+  if (
+    obj.defaultPermissionMode === 'request_approval' ||
+    obj.defaultPermissionMode === 'auto'
+  ) {
+    result.defaultPermissionMode = obj.defaultPermissionMode as PermissionMode
+  } else if (obj.permissionPolicy === 'ask') {
+    result.defaultPermissionMode = 'request_approval'
+  } else if (obj.permissionPolicy === 'auto') {
+    result.defaultPermissionMode = 'auto'
   } else if (migratedAutoMode) {
-    result.permissionPolicy = 'auto'
+    result.defaultPermissionMode = 'auto'
   }
   if (typeof obj.defaultShell === 'string') {
     result.defaultShell = obj.defaultShell
@@ -177,9 +184,9 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
       errors.push('defaultMode 必须是 plan / default / compose 之一')
     }
   }
-  if ('permissionPolicy' in patch && patch.permissionPolicy !== undefined) {
-    if (!['ask', 'auto'].includes(patch.permissionPolicy)) {
-      errors.push('permissionPolicy 必须是 ask / auto 之一')
+  if ('defaultPermissionMode' in patch && patch.defaultPermissionMode !== undefined) {
+    if (!['request_approval', 'auto'].includes(patch.defaultPermissionMode)) {
+      errors.push('defaultPermissionMode 当前必须是 request_approval / auto 之一')
     }
   }
   if ('persistentShellSessions' in patch && patch.persistentShellSessions !== undefined) {

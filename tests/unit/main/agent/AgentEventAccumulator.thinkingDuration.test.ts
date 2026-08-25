@@ -45,7 +45,7 @@ import {
 function makeCtx(): MessageContext {
   return {
     mode: 'default',
-    permissionPolicy: 'auto',
+    permissionMode: 'auto',
     workspaceRoot: '',
     sessionsDir: '',
     eventBus: { emit: () => {}, on: () => () => {} } as unknown as MessageContext['eventBus'],

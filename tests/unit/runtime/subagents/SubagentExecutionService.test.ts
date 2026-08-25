@@ -406,6 +406,7 @@ describe('SubagentExecutionService', () => {
     const nestedParent = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
+      permissionMode: 'request_approval',
       task: 'nested parent',
       subagent: {
         lineage: {
@@ -467,6 +468,7 @@ describe('SubagentExecutionService', () => {
     const depthTwo = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'default',
+      permissionMode: 'request_approval',
       task: 'depth two parent',
       subagent: {
         lineage: {
@@ -512,6 +514,7 @@ describe('SubagentExecutionService', () => {
     sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
+      permissionMode: 'request_approval',
       task: spawnCommand.task,
       subagent: {
         lineage: {
@@ -542,6 +545,7 @@ describe('SubagentExecutionService', () => {
     const child = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
+      permissionMode: 'request_approval',
       task: spawnCommand.task,
       subagent: {
         lineage: {
@@ -632,6 +636,7 @@ describe('SubagentExecutionService', () => {
     const child = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
       mode: 'plan',
+      permissionMode: 'request_approval',
       task: spawnCommand.task,
       subagent: {
         lineage: {

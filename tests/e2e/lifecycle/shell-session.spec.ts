@@ -76,7 +76,7 @@ async function startLongTaskAndWaitForYield(
 
 test('长任务让出后跨 turn 与 reload 存活，删除会话后无残留进程', async ({ nova }) => {
   test.setTimeout(150_000)
-  await nova.invoke(SETTINGS_SET, { permissionPolicy: 'auto' })
+  await nova.invoke(SETTINGS_SET, { defaultPermissionMode: 'auto' })
 
   const pidFile = join(nova.workspacePath, 'nova-e2e-pid.txt')
   const pid = await startLongTaskAndWaitForYield(nova, pidFile)
@@ -117,7 +117,7 @@ test('长任务让出后跨 turn 与 reload 存活，删除会话后无残留进
 
 test('应用退出路径走完后无残留子进程', async ({ nova }) => {
   test.setTimeout(150_000)
-  await nova.invoke(SETTINGS_SET, { permissionPolicy: 'auto' })
+  await nova.invoke(SETTINGS_SET, { defaultPermissionMode: 'auto' })
 
   const pidFile = join(nova.workspacePath, 'nova-e2e-pid.txt')
   const pid = await startLongTaskAndWaitForYield(nova, pidFile)

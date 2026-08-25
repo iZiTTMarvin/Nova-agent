@@ -14,7 +14,7 @@
  * action 不直接 setState（避免与广播双写产生歧义）。
  */
 import { create } from 'zustand'
-import type { Mode, Session, BranchMeta } from '../../shared/session/types'
+import type { Mode, PermissionMode, Session, BranchMeta } from '../../shared/session/types'
 import type { WorkspaceState } from '../../shared/workspace/types'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 
@@ -50,6 +50,8 @@ export interface WorkspaceStoreState {
   selectSession: (sessionId: string) => Promise<void>
   /** 切换模式 */
   setMode: (mode: Mode) => Promise<void>
+  /** 切换当前会话的权限模式。 */
+  setPermissionMode: (permissionMode: PermissionMode) => Promise<void>
   /** 设置当前会话思考强度覆盖；null 清除覆盖 */
   setReasoningEffortOverride: (effort: ReasoningEffort | null) => Promise<void>
   /** 重新生成助手消息的分叉准备 */
@@ -159,6 +161,17 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 切换模式失败:', err)
+      throw err
+    }
+  },
+
+  setPermissionMode: async (permissionMode: PermissionMode) => {
+    try {
+      const state = await window.api.invoke('workspace:set-permission-mode', { permissionMode })
+      const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+      dispatchWorkspaceChange(state)
+    } catch (err) {
+      console.error('[useWorkspaceStore] 切换权限模式失败:', err)
       throw err
     }
   },

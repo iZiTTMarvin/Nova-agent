@@ -21,7 +21,7 @@ import { loadModelConfig } from '../../../runtime/model/config'
 import { resolveSupportsVision } from '../../../shared/config/types'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SessionMessageAppend, SerializableContentBlock } from '../../../runtime/sessions/types'
-import type { MessageBlock, Mode, PermissionPolicy } from '../../../shared/session/types'
+import type { MessageBlock, Mode, PermissionMode } from '../../../shared/session/types'
 import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
@@ -201,7 +201,7 @@ export async function sendAgentMessage(
   // 在闭包中捕获本次调用的全部上下文，后续所有操作只读这些值
   const capturedSessionId = params.sessionId
   const capturedMode = session.mode
-  const capturedPermissionPolicy = novaSettings.permissionPolicy
+  const capturedPermissionMode = session.permissionMode
   const capturedWorkspaceRoot = projectPath
   const capturedSessionsDir = sessionsDir
 
@@ -289,7 +289,6 @@ export async function sendAgentMessage(
         resolveTool: (name) => prepared.toolRegistry.getTool(name),
         sessionStore,
         sessionsDir,
-        novaSettings,
         readState: getReadStateForSession(input.childSession.id),
         contextWindow: prepared.contextWindow,
         supportsVision: prepared.supportsVision,
@@ -336,7 +335,7 @@ export async function sendAgentMessage(
         sessionId: context.childSessionId,
         parentSessionId: context.parentSessionId,
         mode: context.mode,
-        permissionPolicy: capturedPermissionPolicy,
+        permissionMode: capturedPermissionMode,
         workspaceRoot: context.workspaceRoot,
         sessionsDir: capturedSessionsDir,
         eventBus: context.agentLoop.getEventBus(),
@@ -482,7 +481,7 @@ export async function sendAgentMessage(
       executionGeneration: runRefs.executionGeneration,
       sessionId: capturedSessionId,
       mode: capturedMode,
-      permissionPolicy: capturedPermissionPolicy,
+      permissionMode: capturedPermissionMode,
       workspaceRoot: capturedWorkspaceRoot,
       sessionsDir: capturedSessionsDir,
       eventBus,
@@ -626,7 +625,7 @@ interface ForwardAgentEventContext {
   /** 子代理事件携带直接父会话归属；主会话事件不设置 */
   readonly parentSessionId?: string
   readonly mode: Mode
-  readonly permissionPolicy: PermissionPolicy
+  readonly permissionMode: PermissionMode
   readonly workspaceRoot: string
   readonly sessionsDir: string
   readonly eventBus: ReturnType<AgentLoop['getEventBus']>
@@ -671,7 +670,7 @@ function forwardAgentEvent(
   forwardEventToRenderer(context.getMainWindow(), event)
   accumulateStreamEvent(context.sessionId, event, {
     mode: context.mode,
-    permissionPolicy: context.permissionPolicy,
+    permissionMode: context.permissionMode,
     workspaceRoot: context.workspaceRoot,
     sessionsDir: context.sessionsDir,
     eventBus: context.eventBus,

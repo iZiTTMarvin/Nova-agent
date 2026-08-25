@@ -32,7 +32,7 @@ function recordDto(overrides: Partial<MemoryRecordDto> = {}): MemoryRecordDto {
 const settingsDto = {
   loadThirdPartySkills: true,
   defaultMode: 'default',
-  permissionPolicy: 'ask',
+  defaultPermissionMode: 'request_approval',
   defaultShell: '',
   persistentShellSessions: true,
   maxToolRounds: 100,

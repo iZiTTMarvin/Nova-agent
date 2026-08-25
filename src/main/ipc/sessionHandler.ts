@@ -60,6 +60,7 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     id: data.id,
     workspaceRoot: data.workspaceRoot,
     mode: data.mode,
+    permissionMode: data.permissionMode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     messageCount: totalCount,

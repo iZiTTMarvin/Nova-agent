@@ -213,6 +213,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         profile.permissionCeiling === 'read_only' || command.isolation === 'readonly'
           ? 'plan'
           : 'default',
+      permissionMode: parentSession.permissionMode,
       task: command.task,
       codeIndexEnabled: parentSession.codeIndexEnabled === true,
       subagent: { lineage, profile }

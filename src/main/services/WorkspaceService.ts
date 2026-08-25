@@ -15,7 +15,7 @@ import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionData } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
-import type { Mode, SessionDetail } from '../../shared/session'
+import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   ActivePlanDocument,
@@ -276,8 +276,10 @@ export class WorkspaceService {
     reloadSkillsForWorkspace(selectedPath)
 
     // 创建新会话
+    const settings = loadNovaSettings()
     const data = store.create(selectedPath, this.state.currentMode, {
-      codeIndexEnabled: loadNovaSettings().codeIndexEnabled
+      codeIndexEnabled: settings.codeIndexEnabled,
+      permissionMode: settings.defaultPermissionMode
     })
 
     this.state = {
@@ -299,8 +301,10 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store)
+    const settings = loadNovaSettings()
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode, {
-      codeIndexEnabled: loadNovaSettings().codeIndexEnabled
+      codeIndexEnabled: settings.codeIndexEnabled,
+      permissionMode: settings.defaultPermissionMode
     })
     this.state = {
       currentSessionId: data.id,
@@ -509,6 +513,44 @@ export class WorkspaceService {
     if (session) {
       pushContextBreakdownForSession(session, this.deps.getMainWindow)
     }
+    return this.getState()
+  }
+
+  /** 切换会话权限模式；运行中与子会话均不可由用户修改。 */
+  setPermissionMode(params: {
+    permissionMode: PermissionMode
+    sessionId?: string
+  }): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    const sessionId = params.sessionId ?? this.state.currentSessionId
+    if (!sessionId) {
+      throw new Error('当前没有可切换权限模式的会话')
+    }
+
+    const session = store.load(sessionId)
+    if (!session) {
+      throw new Error(`会话不存在: ${sessionId}`)
+    }
+    if (session.kind === 'subagent') {
+      throw new Error('子会话的权限模式由父任务派生，不能单独切换')
+    }
+    if (isSessionTurnInProgress(sessionId)) {
+      throw new Error('当前会话仍在运行，不能切换权限模式。请等待当前操作完成。')
+    }
+    if (
+      params.permissionMode !== 'request_approval' &&
+      params.permissionMode !== 'auto' &&
+      params.permissionMode !== 'full_access'
+    ) {
+      throw new Error('未知的权限模式')
+    }
+    if (params.permissionMode === 'full_access') {
+      throw new Error('完全访问即将可用，当前版本暂不支持启用')
+    }
+
+    store.updatePermissionMode(sessionId, params.permissionMode)
+    this.state.availableSessions = store.list()
+    this.broadcast()
     return this.getState()
   }
 

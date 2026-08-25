@@ -7,7 +7,7 @@
  * 白名单与 allow 规则只拥有「把 ask 降为 allow」的权力，永远无权豁免高危命令。
  * shell_session 按 action 决策：write 是唯一产生副作用的动作。
  */
-import type { Mode, PermissionPolicy } from '../../shared/session/types'
+import type { Mode, PermissionMode } from '../../shared/session/types'
 import type { PermissionQuery, PermissionResult } from './types'
 import {
   getBaseDecision,
@@ -53,8 +53,8 @@ export class PermissionManager {
   private currentProjectPath: string | null = null
   /** 当前会话 ID */
   private sessionId: string | null = null
-  /** 工具批准策略（仅约束 default；compose 固定 auto 语义） */
-  private permissionPolicy: PermissionPolicy = 'ask'
+  /** 会话权限模式；compose 当前仍保持既有 auto 语义。 */
+  private permissionMode: PermissionMode = 'request_approval'
 
   /** 注入持久化规则集合（供 agentHandler 在加载/变更时调用） */
   setRules(rules: PermissionRule[]): void {
@@ -71,13 +71,13 @@ export class PermissionManager {
     this.sessionId = sessionId
   }
 
-  /** 设置工具批准策略（来自 ~/.nova/settings.json） */
-  setPermissionPolicy(policy: PermissionPolicy): void {
-    this.permissionPolicy = policy
+  /** 设置当前 turn 捕获的会话权限模式。 */
+  setPermissionMode(permissionMode: PermissionMode): void {
+    this.permissionMode = permissionMode
   }
 
-  getPermissionPolicy(): PermissionPolicy {
-    return this.permissionPolicy
+  getPermissionMode(): PermissionMode {
+    return this.permissionMode
   }
 
   /**
@@ -147,7 +147,7 @@ export class PermissionManager {
     const allowFromRules = this.matchPersistentDecision(toolName, args, 'allow')
     if (allowFromRules) return allowFromRules
 
-    const baseDecision = getBaseDecision(mode, toolName, this.permissionPolicy)
+    const baseDecision = getBaseDecision(mode, toolName, this.permissionMode)
     return {
       decision: baseDecision,
       riskLevel: baseDecision === 'deny' ? 'high' : 'low',
@@ -168,7 +168,7 @@ export class PermissionManager {
     const { riskLevel, isDangerous, reason } = assessCommandRisk(command || '')
     if (!isDangerous) return null
 
-    if (isAutoPermissionSemantics(mode, this.permissionPolicy)) {
+    if (isAutoPermissionSemantics(mode, this.permissionMode)) {
       return {
         decision: 'deny',
         riskLevel: 'high',
@@ -191,7 +191,7 @@ export class PermissionManager {
   private resolveInteractiveEntry(command: string, mode: Mode): PermissionResult | null {
     if (!isInteractiveEntryCommand(command || '')) return null
 
-    if (isAutoPermissionSemantics(mode, this.permissionPolicy)) {
+    if (isAutoPermissionSemantics(mode, this.permissionMode)) {
       return {
         decision: 'deny',
         riskLevel: 'high',
@@ -249,7 +249,7 @@ export class PermissionManager {
     const input = typeof args.input === 'string' ? args.input : ''
     const { riskLevel, isDangerous, reason } = assessCommandRisk(input)
 
-    if (isAutoPermissionSemantics(mode, this.permissionPolicy)) {
+    if (isAutoPermissionSemantics(mode, this.permissionMode)) {
       if (isDangerous) {
         return {
           decision: 'deny',
@@ -295,7 +295,7 @@ export class PermissionManager {
 
   /** 已通过危险检测的 bash：走 mode + policy 基线 */
   private checkBashSafe(command: string, mode: Mode): PermissionResult {
-    const baseDecision = getBaseDecision(mode, 'bash', this.permissionPolicy)
+    const baseDecision = getBaseDecision(mode, 'bash', this.permissionMode)
     const { riskLevel } = assessCommandRisk(command || '')
 
     return {

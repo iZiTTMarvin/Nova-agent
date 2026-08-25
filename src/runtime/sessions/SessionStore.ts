@@ -44,7 +44,7 @@ import {
   generateSessionTitleFromText
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
-import type { Mode } from '../../shared/session'
+import type { Mode, PermissionMode } from '../../shared/session'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import {
@@ -134,7 +134,10 @@ export class SessionStore {
   create(
     workspaceRoot: string,
     mode: Mode = 'default',
-    options: { readonly codeIndexEnabled?: boolean } = {}
+    options: {
+      readonly codeIndexEnabled?: boolean
+      readonly permissionMode?: PermissionMode
+    } = {}
   ): SessionData {
     const now = Date.now()
     const session: SessionData = {
@@ -143,6 +146,7 @@ export class SessionStore {
       id: `sess_${randomUUID()}`,
       workspaceRoot,
       mode,
+      permissionMode: options.permissionMode ?? 'request_approval',
       messages: [],
       currentLeafId: null,
       createdAt: now,
@@ -186,6 +190,7 @@ export class SessionStore {
       id: childSessionId,
       workspaceRoot: command.workspaceRoot,
       mode: command.mode,
+      permissionMode: command.permissionMode,
       messages: [initialMessage],
       currentLeafId: initialMessage.id,
       createdAt: now,
@@ -245,7 +250,11 @@ export class SessionStore {
     if (!isDeepStrictEqual(existing.subagent, command.subagent)) {
       throw new Error(`[SessionStore] spawnKey 冲突：${existing.id} 的 subagent metadata 不匹配`)
     }
-    if (existing.workspaceRoot !== command.workspaceRoot || existing.mode !== command.mode) {
+    if (
+      existing.workspaceRoot !== command.workspaceRoot ||
+      existing.mode !== command.mode ||
+      existing.permissionMode !== command.permissionMode
+    ) {
       throw new Error(`[SessionStore] spawnKey 冲突：${existing.id} 的执行环境不匹配`)
     }
     const firstMessage = existing.messages[0]
@@ -443,6 +452,7 @@ export class SessionStore {
           id: data.id,
           workspaceRoot: data.workspaceRoot,
           mode: data.mode,
+          permissionMode: data.permissionMode,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
           messageCount,
@@ -831,6 +841,17 @@ export class SessionStore {
     if (!session) return null
 
     session.mode = mode
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /** 更新会话权限模式并持久化（只写 session.json 元数据）。 */
+  updatePermissionMode(sessionId: string, permissionMode: PermissionMode): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    session.permissionMode = permissionMode
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return session

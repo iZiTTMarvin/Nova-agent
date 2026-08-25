@@ -15,6 +15,7 @@ import {
   WORKSPACE_SET_SESSION_PINNED,
   WORKSPACE_SELECT_SESSION,
   WORKSPACE_SET_MODE,
+  WORKSPACE_SET_PERMISSION_MODE,
   WORKSPACE_SET_REASONING_EFFORT,
   WORKSPACE_READ_ACTIVE_PLAN,
   WORKSPACE_REGENERATE,
@@ -72,6 +73,10 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       source: 'user'
     })
+  })
+
+  handle(WORKSPACE_SET_PERMISSION_MODE, async (_event, params: import('../../shared/workspace/types').SetPermissionModeParams) => {
+    return service.setPermissionMode(params)
   })
 
   handle(WORKSPACE_SET_REASONING_EFFORT, async (_event, params: import('../../shared/workspace/types').SetReasoningEffortParams) => {

@@ -309,6 +309,7 @@ export class AgentLoop {
         id: this.ctx.sessionId ?? '',
         workspaceRoot: this.ctx.workingDir ?? '',
         mode: this.ctx.mode,
+        permissionMode: 'request_approval',
         messages: [],
         currentLeafId: null,
         frozenSystemPrompt: this.ctx.systemPrompt,
