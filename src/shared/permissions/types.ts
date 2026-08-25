@@ -1,13 +1,39 @@
 /**
- * 权限相关 IPC 共享类型（PRD §5.2）
- *
- * 注意：PermissionRule 的完整定义在 runtime/permissions/PermissionRule.ts（运行时）。
- * 这里只放 IPC 协议层的参数/返回值类型，避免 shared 层反向依赖 runtime。
- *
- * 防御性约束：项目级规则的 upsert 必须由用户通过 UI 发起，
- * 主进程校验 projectPath 是当前打开项目后才允许写盘（见 PermissionService）。
+ * 权限领域的共享契约。
+ * 运行时规则对象仍在 runtime/permissions；此处只放跨层类型，避免 shared 反向依赖 runtime。
  */
+export type PermissionDecision = 'allow' | 'ask' | 'deny'
+
 export type PermissionBehavior = 'allow' | 'deny'
+
+export type ToolEffect =
+  | 'filesystem.read'
+  | 'filesystem.write'
+  | 'shell.execute'
+  | 'process.control'
+  | 'network.read'
+  | 'network.write'
+  | 'session.write'
+  | 'orchestration'
+  | 'mode.transition'
+
+export interface ToolPermissionDescriptor {
+  /** 静态声明可能产生的副作用；实际生效的 effects 由 args 动态解析 */
+  effects: readonly ToolEffect[]
+  pathScope?: 'workspace' | 'dynamic' | 'none'
+  risk?: 'low' | 'dynamic'
+  /** Plan 下唯一允许的文件写入（工作区计划文档） */
+  planArtifact?: boolean
+}
+
+export type PathAccessKind = 'read' | 'write'
+
+export interface SessionPathGrant {
+  canonicalRoot: string
+  access: PathAccessKind
+  match: 'exact' | 'subtree'
+  origin: 'user' | 'skill'
+}
 
 /** IPC 传输用的规则载荷（与 runtime PermissionRule 结构对齐，但不携带运行时方法） */
 export interface PermissionRuleDto {

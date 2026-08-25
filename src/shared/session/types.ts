@@ -18,9 +18,6 @@ export type Mode = 'plan' | 'default' | 'compose'
 /** 当前会话的工具执行权限档位。 */
 export type PermissionMode = 'request_approval' | 'auto' | 'full_access'
 
-/** 权限决策：允许 / 需确认 / 拒绝 */
-export type PermissionDecision = 'allow' | 'ask' | 'deny'
-
 /** 消息角色 */
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
 

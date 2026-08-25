@@ -73,7 +73,9 @@ export function projectAgentEventToRun(
           riskLevel: event.riskLevel,
           reason: event.reason,
           commands: event.commands,
-          toolCallIds: event.toolCallIds
+          toolCallIds: event.toolCallIds,
+          externalPaths: event.externalPaths,
+          pathAccess: event.pathAccess
         }
       })
       writerLeaseRegistry.release(resourceOwnerRunId)

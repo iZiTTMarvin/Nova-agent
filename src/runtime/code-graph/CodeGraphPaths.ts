@@ -1,17 +1,14 @@
 import { createHash } from 'node:crypto'
-import { realpathSync } from 'node:fs'
-import { join, normalize, resolve } from 'node:path'
+import { join } from 'node:path'
+import { canonicalizeExistingPath, lexicalNormalize } from '../permissions/pathAccess'
 
 const WORKSPACE_ID_LENGTH = 16
 
 /** 工作区身份以规范真实路径为唯一输入，不受会话或设置影响。 */
 export function normalizeCodeGraphWorkspaceRoot(workspaceRoot: string): string {
-  const resolved = normalize(resolve(workspaceRoot))
-  try {
-    return normalize(realpathSync.native(resolved))
-  } catch {
-    return resolved
-  }
+  const resolved = lexicalNormalize(workspaceRoot)
+  const canonical = canonicalizeExistingPath(resolved)
+  return canonical.ok ? canonical.path : resolved
 }
 
 export function computeCodeGraphWorkspaceIdentity(workspaceRoot: string): string {

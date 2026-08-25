@@ -12,6 +12,10 @@ import { readTool } from '../../../../src/runtime/tools/readTool'
 import { writeTool } from '../../../../src/runtime/tools/writeTool'
 import { encodeFile } from '../../../../src/runtime/tools/editDiff'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
+import {
+  clearSessionPathGrants,
+  replaceSkillPathGrants
+} from '../../../../src/runtime/permissions/pathAccess'
 
 const TMP = join(process.cwd(), '.test-workspace-edit')
 
@@ -461,41 +465,44 @@ describe('editTool 集成测试', () => {
     expect(readFileSync(join(TMP, 'over.ts'), 'utf-8')).toBe('edited\n')
   })
 
-  // ── skill 目录只读保证：即使 ToolContext 带 extraAllowedRoots，edit/write 仍拒 ──
-
-  it('edit 对 skill 目录路径仍拒绝（不消费 extraAllowedRoots）', async () => {
+  it('edit 对 skill 目录路径仍拒绝（只读 grant 不能写入）', async () => {
     const skillDir = join(process.cwd(), '.test-skill-root-edit')
+    const sessionId = 'edit-skill-grant-session'
     mkdirSync(join(skillDir, 'references'), { recursive: true })
     writeFileSync(join(skillDir, 'references', 'rule.md'), 'do-not-edit\n')
     try {
+      replaceSkillPathGrants(sessionId, [skillDir])
       const target = join(skillDir, 'references', 'rule.md')
-      // 即使上下文带了额外根（read 会放行），edit 仍双参校验 → 越界
       const result = await editTool.execute(
         { filePath: target, edits: [{ oldText: 'do-not-edit', newText: 'hacked' }] },
-        createContext({ extraAllowedRoots: [skillDir] })
+        createContext({ sessionId })
       )
       expect(result.success).toBe(false)
       expect(result.error).toContain('越界')
       expect(readFileSync(target, 'utf-8')).toBe('do-not-edit\n')
     } finally {
+      clearSessionPathGrants(sessionId)
       rmSync(skillDir, { recursive: true, force: true })
     }
   })
 
-  it('write 对 skill 目录路径仍拒绝（不消费 extraAllowedRoots）', async () => {
+  it('write 对 skill 目录路径仍拒绝（只读 grant 不能写入）', async () => {
     const skillDir = join(process.cwd(), '.test-skill-root-write')
+    const sessionId = 'write-skill-grant-session'
     mkdirSync(join(skillDir, 'references'), { recursive: true })
     writeFileSync(join(skillDir, 'references', 'rule.md'), 'original\n')
     try {
+      replaceSkillPathGrants(sessionId, [skillDir])
       const target = join(skillDir, 'references', 'rule.md')
       const result = await writeTool.execute(
         { path: target, content: 'hacked\n' },
-        createContext({ extraAllowedRoots: [skillDir] })
+        createContext({ sessionId })
       )
       expect(result.success).toBe(false)
       expect(result.error).toContain('越界')
       expect(readFileSync(target, 'utf-8')).toBe('original\n')
     } finally {
+      clearSessionPathGrants(sessionId)
       rmSync(skillDir, { recursive: true, force: true })
     }
   })

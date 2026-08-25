@@ -3,7 +3,7 @@
  * 供设置页 Rules 面板与后续 AgentLoop 注入（Task 14）
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
-import { dirname, join, relative, resolve, normalize, isAbsolute } from 'path'
+import { dirname, join } from 'path'
 import { getNovaHomeDir } from '../../settings/novaSettings'
 import type { RuleFileEntry, RuleScope } from '../../../shared/settings/types'
 
@@ -11,19 +11,6 @@ export type { RuleFileEntry, RuleScope }
 
 /** 工作区根目录下的经典规则文件名 */
 const WORKSPACE_RULE_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules'] as const
-
-/**
- * 校验绝对路径是否在指定根目录内（防路径穿越）。
- * Windows 跨盘符时 path.relative 会返回绝对路径（不以 .. 开头），必须用 isAbsolute 拦截。
- */
-export function isPathInsideRoot(targetPath: string, root: string): boolean {
-  const resolvedRoot = resolve(normalize(root))
-  const resolvedTarget = resolve(normalize(targetPath))
-  const rel = relative(resolvedRoot, resolvedTarget)
-  if (rel === '') return true
-  if (isAbsolute(rel)) return false
-  return !rel.startsWith('..')
-}
 
 function listGlobalNovaRules(): RuleFileEntry[] {
   const rulesDir = join(getNovaHomeDir(), 'rules')

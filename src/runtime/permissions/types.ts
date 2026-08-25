@@ -2,7 +2,8 @@
  * 权限系统类型定义
  * 定义权限请求、决策和风险等级，供 PermissionManager 和 AgentLoop 使用
  */
-import type { PermissionDecision, PermissionMode } from '../../shared/session/types'
+import type { PathAccessKind, SessionPathGrant } from '../../shared/permissions/types'
+import type { PermissionMode } from '../../shared/session/types'
 
 /** 命令风险等级，影响权限决策和 UI 展示 */
 export type RiskLevel = 'low' | 'high'
@@ -20,11 +21,13 @@ export interface PermissionQuery {
 export interface PermissionRequestMeta {
   command?: string
   riskReason?: string
+  externalPaths?: string[]
+  pathAccess?: PathAccessKind
 }
 
 /** 权限决策结果；只有 ask 会携带交互展示元数据。 */
 export type PermissionResult =
-  | { decision: 'allow'; reason: string }
+  | { decision: 'allow'; reason: string; executionPathGrants?: SessionPathGrant[] }
   | {
       decision: 'ask'
       reason: string

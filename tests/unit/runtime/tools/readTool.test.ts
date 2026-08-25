@@ -20,6 +20,10 @@ import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 import { mkdtempSync, rmSync as rmSyncOs } from 'fs'
 import { tmpdir } from 'os'
 import { MIN_SUMMARY_LINES } from '../../../../src/runtime/tools/readSummarizer'
+import {
+  clearSessionPathGrants,
+  replaceSkillPathGrants
+} from '../../../../src/runtime/permissions/pathAccess'
 
 const TMP = join(process.cwd(), '.test-workspace-readtool')
 
@@ -705,8 +709,9 @@ describe('readTool', () => {
 
   // ── 额外只读根（skill 目录） ──────────────────────────────
 
-  describe('extraAllowedRoots', () => {
+  describe('skill 路径授权', () => {
     const skillDir = join(process.cwd(), '.test-skill-root-read')
+    const sessionId = 'read-skill-grant-session'
 
     beforeEach(() => {
       mkdirSync(join(skillDir, 'references'), { recursive: true })
@@ -714,20 +719,22 @@ describe('readTool', () => {
     })
 
     afterEach(() => {
+      clearSessionPathGrants(sessionId)
       rmSync(skillDir, { recursive: true, force: true })
     })
 
-    it('带 extraAllowedRoots 时能读 skill 目录文件', async () => {
+    it('登记 skill grant 后能读 skill 目录文件', async () => {
+      replaceSkillPathGrants(sessionId, [skillDir])
       const target = join(skillDir, 'references', 'rule.md')
       const result = await readTool.execute(
         { path: target },
-        createContext({ extraAllowedRoots: [skillDir] })
+        createContext({ sessionId })
       )
       expect(result.success).toBe(true)
       expect(result.output).toContain('skill-rule-content')
     })
 
-    it('不带 extraAllowedRoots 时拒绝 skill 目录', async () => {
+    it('未登记 grant 时拒绝 skill 目录', async () => {
       const target = join(skillDir, 'references', 'rule.md')
       const result = await readTool.execute({ path: target }, createContext())
       expect(result.success).toBe(false)

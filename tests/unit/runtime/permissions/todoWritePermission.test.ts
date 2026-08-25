@@ -1,36 +1,43 @@
 /**
- * todo_write 的基础权限规则验证
- *
- * 重点：todo_write 走 readonly 分类，3 种模式都返回 allow。
- * 不会被 PermissionManager 的 bash 命令检测误拦截（它是 readonly 工具）。
+ * todo_write 走 session.write，不写文件系统，各模式与权限档位都应放行。
+ * 对照：plan 下真实写文件工具仍拒绝。
  */
 import { describe, expect, it } from 'vitest'
-import { getBaseDecision } from '../../../../src/runtime/permissions/rules'
-import { assessCommandRisk } from '../../../../src/runtime/permissions/rules'
-import type { Mode } from '../../../../src/shared/session/types'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import type { PermissionQuery } from '../../../../src/runtime/permissions/types'
+import type { Mode, PermissionMode } from '../../../../src/shared/session/types'
 
-describe('todo_write 权限基础规则', () => {
-  it('plan 模式 → allow', () => {
-    expect(getBaseDecision('plan', 'todo_write')).toBe('allow')
+function query(
+  toolName: string,
+  args: Record<string, unknown>,
+  permissionMode: PermissionMode = 'auto'
+): PermissionQuery {
+  return {
+    toolName,
+    args,
+    sessionId: 'todo-write-session',
+    workspaceRoot: '/workspace',
+    permissionMode
+  }
+}
+
+describe('todo_write 权限', () => {
+  const manager = new PermissionManager()
+
+  it.each(['plan', 'default', 'compose'] as const)('%s 模式下允许 todo_write', mode => {
+    expect(manager.check(query('todo_write', { todos: [] }), mode).decision).toBe('allow')
   })
 
-  it('default 模式 → allow', () => {
-    expect(getBaseDecision('default', 'todo_write')).toBe('allow')
-  })
+  it.each(['request_approval', 'auto', 'full_access'] as const)(
+    '%s 档位下允许 todo_write',
+    permissionMode => {
+      expect(
+        manager.check(query('todo_write', { todos: [] }, permissionMode), 'default').decision
+      ).toBe('allow')
+    }
+  )
 
-  it('default+auto / compose → allow', () => {
-    expect(getBaseDecision('default', 'todo_write', 'auto')).toBe('allow')
-    expect(getBaseDecision('compose', 'todo_write')).toBe('allow')
-  })
-
-  it('三模式都不调用 bash 命令检测（不传 command）', () => {
-    // todo_write 的 args 不会含 command，assessCommandRisk 仅在 PermissionManager
-    // 处理 bash 工具时才会被调用。这里用空调用验证它不会抛错。
-    const result = assessCommandRisk('')
-    expect(result.isDangerous).toBe(false)
-  })
-
-  it('模式路由：write 工具在 plan 模式仍为 deny，对照保证测试隔离', () => {
-    expect(getBaseDecision('plan', 'edit' as Mode extends never ? never : 'edit')).toBe('deny')
+  it('plan 模式下写文件工具仍拒绝', () => {
+    expect(manager.check(query('write', { path: 'a.ts' }), 'plan' as Mode).decision).toBe('deny')
   })
 })

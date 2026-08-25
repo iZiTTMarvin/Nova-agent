@@ -1,97 +1,35 @@
 import type { Mode } from './types'
-
-/** 工具能力分类：驱动可见性和权限规则共用同一套基础语义 */
-export type ToolCapability =
-  | 'readonly'
-  | 'write'
-  | 'bash'
-  | 'shell-session'
-  | 'plan-artifact'
-  | 'mode-transition'
-  | 'orchestration'
-  | 'unknown'
-
-/** 根据工具名归类，避免 UI、模型可见性和权限规则各写一套判断 */
-export function getToolCapability(toolName: string): ToolCapability {
-  switch (toolName) {
-    case 'ls':
-    case 'read':
-    case 'grep':
-    case 'find':
-    case 'web_search':
-    case 'archive_read':
-    case 'memory_search':
-    case 'code_context':
-    case 'run_code':
-      // run_code 只编排只读探索工具（嵌套调用各自再过权限），归 readonly：
-      // plan 模式下可见可用，UI 不按危险操作渲染。
-      return 'readonly'
-    case 'load_tools':
-      return 'readonly'
-    case 'edit':
-    case 'write':
-      return 'write'
-    case 'bash':
-      return 'bash'
-    case 'shell_session':
-      // 工具整体在 plan 可见：read/interrupt/stop 是只读观察（default 起的进程切 plan
-      // 后不能失明）；write 动作由权限层按 action 拒绝——可见性管不到 action 粒度。
-      return 'shell-session'
-    case 'todo_write':
-      // todo_write 写的是会话级元数据，不动文件系统。
-      // 归为 readonly：plan 模式下可见且可用，UI 不会被染成危险操作色，
-      // PermissionManager 走读类工具的宽松默认规则。
-      return 'readonly'
-    case 'stage_transition':
-      // stage_transition 写的是会话级元数据，不动文件系统。
-      return 'readonly'
-    case 'askQuestion':
-      // askQuestion 是用户交互工具：阻塞等待用户回答，不触碰文件系统 / shell，无副作用。
-      // 归为 readonly，使其在所有模式下直接放行、无需"执行前确认"，且 plan 模式下可见可用
-      // （在 plan 阶段向用户澄清偏好/方案选择正是其典型用途）。
-      // 若不分类，会落到 default 分支 'unknown'，被权限层当作 bash 处理而要求确认（已知 bug）。
-      return 'readonly'
-    case 'save_plan':
-      // Plan 唯一允许的文件副作用。工具自身固定工作区内 `.nova/plans/`，
-      // 不接收任意路径，并继续走 checkpoint / writer lease / generation fencing。
-      return 'plan-artifact'
-    case 'switch_mode':
-      // 进入只读 Plan 可自动完成；退出 Plan 恢复写能力时由 PermissionManager 强制询问。
-      return 'mode-transition'
-    case 'task':
-    case 'invoke_skill':
-      // 编排类工具：本身没有文件系统/shell 副作用，只负责派遣子代理 / 调用技能。
-      // 真正的副作用由子代理内部的 bash/write 等工具各自走权限检查，
-      // 因此派遣动作本身不应再拦截一次（否则双重弹窗，且与主流 agent 行为不一致）。
-      // 归为独立 orchestration 分类：default/auto 直接放行，plan 模式仍按非只读处理（deny + 隐藏）。
-      return 'orchestration'
-    default:
-      return 'unknown'
-  }
-}
+import { getToolPermissionDescriptor } from '../permissions/toolEffects'
 
 /** 当前模式下模型/UI 是否应该看见该工具 */
 export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
-  // compose 生命周期工具，其他模式不可见。
   if (toolName === 'stage_transition') {
     return mode === 'compose'
   }
-  const capability = getToolCapability(toolName)
-  if (mode === 'plan') {
-    return (
-      capability === 'readonly' ||
-      capability === 'plan-artifact' ||
-      capability === 'mode-transition' ||
-      capability === 'shell-session'
-    )
-  }
-  if (mode === 'compose' && capability === 'mode-transition') {
+  if (mode === 'compose' && toolName === 'switch_mode') {
     return false
   }
+  if (mode !== 'plan') {
+    return true
+  }
+
+  if (
+    toolName === 'save_plan' ||
+    toolName === 'switch_mode' ||
+    toolName === 'shell_session'
+  ) {
+    return true
+  }
+
+  const descriptor = getToolPermissionDescriptor(toolName)
+  if (!descriptor) return false
+  if (descriptor.effects.includes('orchestration')) return false
+  if (descriptor.effects.includes('filesystem.write')) return false
+  if (descriptor.effects.includes('shell.execute')) return false
   return true
 }
 
-/** 使用与权限层相同的能力分类收窄模型可见工具，供 native schema 与 XML 工具目录共用。 */
+/** 使用与权限层相同的 effects 描述收窄模型可见工具，供 native schema 与 XML 工具目录共用。 */
 export function getModeVisibleTools<T extends { name: string }>(
   mode: Mode,
   tools: readonly T[]
@@ -104,7 +42,13 @@ export function isModeHiddenWriteTool(mode: Mode, toolName: string): boolean {
   if (mode !== 'plan') {
     return false
   }
-
-  const capability = getToolCapability(toolName)
-  return capability === 'write' || capability === 'bash'
+  if (toolName === 'save_plan' || toolName === 'shell_session') {
+    return false
+  }
+  const descriptor = getToolPermissionDescriptor(toolName)
+  if (!descriptor) return false
+  return (
+    descriptor.effects.includes('filesystem.write') ||
+    descriptor.effects.includes('shell.execute')
+  )
 }

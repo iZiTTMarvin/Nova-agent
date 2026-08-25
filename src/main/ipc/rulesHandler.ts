@@ -9,10 +9,10 @@ import {
   listRuleFiles,
   readRuleFile,
   writeRuleFile,
-  isPathInsideRoot,
   buildNewGlobalRulePath,
   buildNewWorkspaceRulePath
 } from '../../runtime/agent'
+import { isPathWithinRoot } from '../../runtime/permissions/pathAccess'
 import { getNovaHomeDir } from '../../runtime/settings/novaSettings'
 import type {
   RuleFileEntry,
@@ -29,12 +29,12 @@ function assertRulePathAllowed(absolutePath: string, workspaceRoot?: string | nu
   const novaHome = getNovaHomeDir()
 
   // 全局 ~/.nova/rules
-  if (isPathInsideRoot(absolutePath, join(novaHome, 'rules'))) {
+  if (isPathWithinRoot(join(novaHome, 'rules'), absolutePath)) {
     return
   }
 
   // 工作区 .nova/rules
-  if (workspaceRoot && isPathInsideRoot(absolutePath, join(workspaceRoot, '.nova', 'rules'))) {
+  if (workspaceRoot && isPathWithinRoot(join(workspaceRoot, '.nova', 'rules'), absolutePath)) {
     return
   }
 

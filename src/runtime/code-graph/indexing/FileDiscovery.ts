@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { readdir, realpath, stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import * as path from 'node:path'
 import { isPathSkipped, loadIgnoreMatcher } from '../../workspace'
+import { canonicalizeExistingPath, isPathWithinRoot } from '../../permissions/pathAccess'
 import type { CodeGraphLanguage } from '../types'
 import { isExpandedInvalidationPath } from './ChangePlanner'
 
@@ -95,7 +96,11 @@ export async function discoverCodeFiles(
   options: FileDiscoveryOptions
 ): Promise<FileDiscoveryResult> {
   throwIfAborted(options.abortSignal)
-  const workspaceRoot = await realpath(path.resolve(options.workspaceRoot))
+  const workspaceCanon = canonicalizeExistingPath(path.resolve(options.workspaceRoot))
+  if (!workspaceCanon.ok) {
+    throw new Error(workspaceCanon.reason)
+  }
+  const workspaceRoot = workspaceCanon.path
   const diagnostics: FileDiscoveryDiagnostic[] = []
   let candidates: readonly string[]
   let source: FileDiscoveryResult['source'] = 'git'
@@ -174,7 +179,9 @@ export async function inspectCodeFile(
   if (normalized === null || normalized.split('/').some(isPathSkipped)) return null
   const language = languageForPath(normalized)
   if (language === null) return null
-  const workspaceRoot = await realpath(path.resolve(options.workspaceRoot))
+  const workspaceCanon = canonicalizeExistingPath(path.resolve(options.workspaceRoot))
+  if (!workspaceCanon.ok) return null
+  const workspaceRoot = workspaceCanon.path
   const validated = await validateCandidate(workspaceRoot, normalized)
   if (!validated.ok) return null
   const status: CodeFileDiscoveryStatus = language === 'unsupported'
@@ -322,16 +329,12 @@ async function validateCandidate(
 > {
   const absolutePath = path.resolve(workspaceRoot, ...relativePath.split('/'))
   try {
-    const actualPath = await realpath(absolutePath)
-    const relativeActual = path.relative(workspaceRoot, actualPath)
-    if (
-      relativeActual === '..' ||
-      relativeActual.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relativeActual)
-    ) {
+    const actualCanon = canonicalizeExistingPath(absolutePath)
+    if (!actualCanon.ok) return { ok: false, reason: 'unreadable' }
+    if (!isPathWithinRoot(workspaceRoot, actualCanon.path)) {
       return { ok: false, reason: 'outside_workspace' }
     }
-    const fileStat = await stat(actualPath)
+    const fileStat = await stat(actualCanon.path)
     if (!fileStat.isFile()) return { ok: false, reason: 'not_a_file' }
     return {
       ok: true,

@@ -100,7 +100,9 @@ export function forwardEventToRenderer(
         commands: event.commands,
         toolCallIds: event.toolCallIds,
         sessionId: event.sessionId,
-        ...(event.parentSessionId ? { parentSessionId: event.parentSessionId } : {})
+        ...(event.parentSessionId ? { parentSessionId: event.parentSessionId } : {}),
+        ...(event.externalPaths ? { externalPaths: event.externalPaths } : {}),
+        ...(event.pathAccess ? { pathAccess: event.pathAccess } : {})
       })
       break
     case 'diff_update':

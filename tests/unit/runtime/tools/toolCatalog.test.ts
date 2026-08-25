@@ -21,7 +21,7 @@ import {
   validateCatalogIntegrity,
   validateRegistryAgainstCatalog
 } from '../../../../src/runtime/tools/catalog'
-import { getToolCapability } from '../../../../src/shared/session/toolVisibility'
+import { getToolPermissionDescriptor } from '../../../../src/shared/permissions/toolEffects'
 
 function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): ToolRegistry {
   const registry = new ToolRegistry()
@@ -160,20 +160,13 @@ describe('Deferred 组暴露规则', () => {
     expect(getCatalogEntry('load_tools')?.codeMode).toBe('direct-only')
   })
 
-  it('Catalog capability 与 shared 权限分类对齐（两组映射不得漂移）', () => {
-    // shared/session/toolVisibility 是权限层的分类真源（shared 不得依赖 runtime），
-    // 此处以 CI 断言保持 Catalog capability 与其一致
-    const readonlyCapabilities = new Set(['filesystem-read', 'web', 'archive', 'memory'])
+  it('Catalog 工具都有权限描述（两组清单不得漂移）', () => {
     for (const entry of listCatalogEntries()) {
       if (entry.name === 'load_tools') continue
-      const sharedCapability = getToolCapability(entry.name)
-      expect(sharedCapability, `${entry.name} 未在 shared toolVisibility 登记分类`).not.toBe('unknown')
-      if (readonlyCapabilities.has(entry.capability)) {
-        expect(
-          sharedCapability,
-          `${entry.capability} 类工具 ${entry.name} 在 shared 中应为 readonly`
-        ).toBe('readonly')
-      }
+      expect(
+        getToolPermissionDescriptor(entry.name),
+        `${entry.name} 未在 shared/permissions/toolEffects 登记`
+      ).toBeDefined()
     }
   })
 })

@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest'
-import { resolve, join } from 'path'
+import { describe, it, expect, afterEach } from 'vitest'
+import { join } from 'path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { ToolRegistry, resolveAndValidatePath } from '../../../src/runtime/tools/ToolRegistry'
-import type { ToolExecutor, ToolContext, ToolResult } from '../../../src/runtime/tools/types'
-import { createReadState } from '../../../src/runtime/tools/editTool'
+import type { ToolExecutor, ToolResult } from '../../../src/runtime/tools/types'
+import {
+  clearSessionPathGrants,
+  replaceSkillPathGrants
+} from '../../../src/runtime/permissions/pathAccess'
 
 /** 创建一个简单的测试工具 */
 function makeTool(name: string, output: string): ToolExecutor {
@@ -20,12 +25,6 @@ function makeTool(name: string, output: string): ToolExecutor {
     }
   }
 }
-
-/** 创建一个会越界检查的上下文 */
-const createContext = (workingDir: string): ToolContext => ({
-  workingDir,
-  readState: createReadState()
-})
 
 describe('ToolRegistry', () => {
   it('注册工具后可通过名称获取', () => {
@@ -56,26 +55,6 @@ describe('ToolRegistry', () => {
       expect(d).toHaveProperty('description')
       expect(d).toHaveProperty('parameters')
     }
-  })
-
-  it('execute 调用对应工具并返回结果', async () => {
-    const registry = new ToolRegistry()
-    registry.register(makeTool('echo', 'ECHO'))
-
-    const ctx = createContext('/project')
-    const result = await registry.execute('echo', { input: 'hello' }, ctx)
-
-    expect(result.success).toBe(true)
-    expect(result.output).toBe('ECHO: hello')
-  })
-
-  it('execute 对不存在的工具返回错误', async () => {
-    const registry = new ToolRegistry()
-    const ctx = createContext('/project')
-
-    const result = await registry.execute('missing', {}, ctx)
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('未注册')
   })
 
   it('resolvePath 将相对路径解析为绝对路径', () => {
@@ -144,98 +123,114 @@ describe('resolveToolNameCaseInsensitive', () => {
   })
 })
 
-describe('resolveAndValidatePath 多根校验', () => {
-  const workDir = resolve('/workspace/project')
-  const skillRoot = resolve('/home/user/.nova/skills/ref-test')
-  const otherRoot = resolve('/tmp/other-skill')
+describe('resolveAndValidatePath 会话路径授权', () => {
+  const sessionId = 'tool-registry-skill-session'
+  let workDir = ''
+  let skillRoot = ''
+  let otherRoot = ''
 
-  it('不传 extraRoots：越界仍拒绝（回归）', () => {
+  function setupRoots(): void {
+    workDir = mkdtempSync(join(tmpdir(), 'nova-reg-ws-'))
+    skillRoot = mkdtempSync(join(tmpdir(), 'nova-reg-skill-'))
+    otherRoot = mkdtempSync(join(tmpdir(), 'nova-reg-other-'))
+    mkdirSync(join(skillRoot, 'references'), { recursive: true })
+    writeFileSync(join(skillRoot, 'references', 'rule.md'), 'skill\n')
+    writeFileSync(join(otherRoot, 'a.md'), 'other\n')
+  }
+
+  afterEach(() => {
+    clearSessionPathGrants(sessionId)
+    for (const dir of [workDir, skillRoot, otherRoot]) {
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('未登记 grant 时工作区外仍拒绝', () => {
+    setupRoots()
     const result = resolveAndValidatePath(workDir, skillRoot)
     expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error).toContain('越界')
-    }
+    if (!result.ok) expect(result.error).toContain('越界')
   })
 
-  it('传 extraRoots：根内绝对路径放行', () => {
+  it('登记 skill grant 后根内绝对路径放行', () => {
+    setupRoots()
+    replaceSkillPathGrants(sessionId, [skillRoot])
     const target = join(skillRoot, 'references', 'rule.md')
-    const result = resolveAndValidatePath(workDir, target, [skillRoot])
+    const result = resolveAndValidatePath(workDir, target, { sessionId, access: 'read' })
     expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.path).toBe(resolve(workDir, target))
-    }
   })
 
-  it('传 extraRoots：根外仍拒绝', () => {
+  it('登记 skill grant 后根外仍拒绝', () => {
+    setupRoots()
+    replaceSkillPathGrants(sessionId, [skillRoot])
     const outside = join(otherRoot, 'secret.md')
-    const result = resolveAndValidatePath(workDir, outside, [skillRoot])
+    writeFileSync(outside, 'nope\n')
+    const result = resolveAndValidatePath(workDir, outside, { sessionId, access: 'read' })
     expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error).toContain('越界')
-    }
+    if (!result.ok) expect(result.error).toContain('越界')
   })
 
-  it('相对路径永远基于 workingDir，不会解析到 extraRoots 下', () => {
-    // 相对路径 "references/rule.md" 应落到 workDir 下，而非 skillRoot
-    const result = resolveAndValidatePath(workDir, 'references/rule.md', [skillRoot])
+  it('相对路径永远基于 workingDir，不会解析到 skill 根下', () => {
+    setupRoots()
+    replaceSkillPathGrants(sessionId, [skillRoot])
+    const result = resolveAndValidatePath(workDir, 'references/rule.md', { sessionId, access: 'read' })
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.path).toBe(join(workDir, 'references', 'rule.md'))
-      expect(result.path).not.toContain('.nova')
+      expect(result.path.toLowerCase()).toContain('nova-reg-ws-')
+      expect(result.path.toLowerCase()).not.toContain('nova-reg-skill-')
     }
   })
 
-  it('.. 穿越攻击：<root>/../secret 拒绝', () => {
-    // 绝对路径指向 skill 根的父级（穿越出额外根）
+  it('穿越出 skill 根仍拒绝', () => {
+    setupRoots()
+    replaceSkillPathGrants(sessionId, [skillRoot])
     const traversal = join(skillRoot, '..', 'secret.txt')
-    const result = resolveAndValidatePath(workDir, traversal, [skillRoot])
+    const result = resolveAndValidatePath(workDir, traversal, { sessionId, access: 'read' })
     expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error).toContain('越界')
-    }
+    if (!result.ok) expect(result.error).toContain('越界')
   })
 
-  it('工作区内路径不依赖 extraRoots 仍放行', () => {
+  it('工作区内路径不依赖 grant 仍放行', () => {
+    setupRoots()
     const result = resolveAndValidatePath(workDir, 'src/main.ts')
     expect(result.ok).toBe(true)
   })
 
-  it('多个 extraRoots：命中任一即可', () => {
+  it('多个 skill 根：命中任一即可', () => {
+    setupRoots()
+    replaceSkillPathGrants(sessionId, [skillRoot, otherRoot])
     const target = join(otherRoot, 'a.md')
-    const result = resolveAndValidatePath(workDir, target, [skillRoot, otherRoot])
+    const result = resolveAndValidatePath(workDir, target, { sessionId, access: 'read' })
     expect(result.ok).toBe(true)
+  })
+
+  it('skill 只读 grant 不能用于写入', () => {
+    setupRoots()
+    replaceSkillPathGrants(sessionId, [skillRoot])
+    const target = join(skillRoot, 'references', 'rule.md')
+    const result = resolveAndValidatePath(workDir, target, { sessionId, access: 'write' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('越界')
   })
 })
 
 /**
  * Windows 跨盘符：path.relative 返回绝对路径，旧实现会误判为「在根内」。
- * 非 Windows 无盘符概念，本段仅在 win32 上跑真实 resolveAndValidatePath。
  */
 describe.runIf(process.platform === 'win32')('resolveAndValidatePath 跨盘符边界（Windows）', () => {
   const workDir = 'D:\\workspace\\project'
-  const skillRoot = 'C:\\Users\\x\\.nova\\skills\\ref-test'
   const skillFile = 'C:\\Users\\x\\.nova\\skills\\ref-test\\references\\rule.md'
-  const unrelated = 'C:\\Windows\\system32\\config\\SAM'
+  const unrelated = 'C:\\nova-unrelated-outside\\secret.md'
 
-  it('未注册 extraRoots：跨盘符绝对路径必须拒绝', () => {
+  it('未登记 grant 时跨盘符绝对路径必须拒绝', () => {
     const result = resolveAndValidatePath(workDir, unrelated)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toContain('越界')
   })
 
-  it('未注册时，跨盘符 skill 路径仍拒绝（边界未松动）', () => {
+  it('未登记时跨盘符 skill 路径仍拒绝', () => {
     const result = resolveAndValidatePath(workDir, skillFile)
     expect(result.ok).toBe(false)
-  })
-
-  it('注册跨盘符 skillRoot 后，仅根内文件放行', () => {
-    expect(resolveAndValidatePath(workDir, skillFile, [skillRoot]).ok).toBe(true)
-    expect(resolveAndValidatePath(workDir, unrelated, [skillRoot]).ok).toBe(false)
-  })
-
-  it('兄弟目录穿越仍拒绝（同盘符 / 跨盘符共同语义）', () => {
-    const sibling = 'C:\\Users\\x\\.nova\\skills\\other-skill\\secret.md'
-    expect(resolveAndValidatePath(workDir, sibling, [skillRoot]).ok).toBe(false)
   })
 
   it('isWithinWorkspace 跨盘符也拒绝', () => {

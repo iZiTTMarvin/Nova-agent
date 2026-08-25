@@ -1,5 +1,6 @@
-import { readFile, realpath } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import * as path from 'node:path'
+import { canonicalizeExistingPath, isPathWithinRoot } from '../../permissions/pathAccess'
 import type { CodeRelationResolver } from '../types'
 import {
   WorkspaceModuleFileIndex,
@@ -229,13 +230,14 @@ async function readWorkspaceJsonc(
 ): Promise<unknown> {
   const normalized = normalizeWorkspacePath(relativePath)
   if (!normalized) throw new Error('配置路径不安全')
-  const root = await realpath(path.resolve(workspaceRoot))
-  const file = await realpath(path.resolve(root, ...normalized.split('/')))
-  const relative = path.relative(root, file)
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  const rootCanon = canonicalizeExistingPath(path.resolve(workspaceRoot))
+  if (!rootCanon.ok) throw new Error(rootCanon.reason)
+  const fileCanon = canonicalizeExistingPath(path.resolve(rootCanon.path, ...normalized.split('/')))
+  if (!fileCanon.ok) throw new Error(fileCanon.reason)
+  if (!isPathWithinRoot(rootCanon.path, fileCanon.path)) {
     throw new Error('配置路径越过 workspace')
   }
-  const content = await readFile(file, 'utf8')
+  const content = await readFile(fileCanon.path, 'utf8')
   const parsed: unknown = JSON.parse(stripTrailingCommas(stripJsonComments(content)))
   return parsed
 }

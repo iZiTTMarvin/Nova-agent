@@ -11,8 +11,9 @@
  * 6. 工具描述按 shell 平台动态生成（参见 prompt.ts）
  * 7. 默认执行后端可替换：通过 `BashOperations` 接口注入（便于测试 / 远程执行）
  */
-import { resolve, relative, isAbsolute } from 'path'
-import { realpathSync, existsSync } from 'fs'
+import { resolve } from 'path'
+import { existsSync } from 'fs'
+import { canonicalizeExistingPath, isPathWithinRoot } from '../../permissions/pathAccess'
 import { readFile, stat } from 'fs/promises'
 import type { ChildProcess } from 'child_process'
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
@@ -417,20 +418,19 @@ function parseBashParams(args: Record<string, unknown>):
 
 function resolveWorkdir(workingDir: string, workdir: string | undefined): string {
   if (!workdir) return workingDir
-  // 用 realpath 解析符号链接，防止 workdir 通过 symlink 逃逸工作区
-  const workspaceReal = realpathSync.native(workingDir)
+  const workspaceReal = canonicalizeExistingPath(workingDir)
+  if (!workspaceReal.ok) {
+    throw new Error(`工作区路径无法解析`)
+  }
   const resolved = resolve(workingDir, workdir)
-  let resolvedReal: string
-  try {
-    resolvedReal = realpathSync.native(resolved)
-  } catch {
+  const resolvedReal = canonicalizeExistingPath(resolved)
+  if (!resolvedReal.ok) {
     throw new Error(`workdir "${workdir}" 不存在或无法解析`)
   }
-  const rel = relative(workspaceReal, resolvedReal)
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (!isPathWithinRoot(workspaceReal.path, resolvedReal.path)) {
     throw new Error(`workdir "${workdir}" 逃逸工作区边界，已拒绝执行`)
   }
-  return resolvedReal
+  return resolvedReal.path
 }
 
 async function recordCheckpoint(

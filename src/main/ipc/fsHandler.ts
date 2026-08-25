@@ -10,11 +10,14 @@ import {
   openSync,
   readdirSync,
   readSync,
-  realpathSync,
   statSync
 } from 'fs'
 import { isAbsolute, resolve } from 'path'
-import { isPathInsideRoot } from '../../runtime/agent'
+import {
+  canonicalizeExistingPath,
+  canonicalizeTargetPath,
+  isPathWithinRoot
+} from '../../runtime/permissions/pathAccess'
 import { FS_LIST_DIRECTORY, FS_READ_FILE_PREVIEW } from '../../shared/ipc/channels'
 import type {
   FsEntry,
@@ -68,19 +71,21 @@ function toPosixRelative(relativeDir: string, name: string): string {
 export function resolvePathInsideRoot(rootAbs: string, relativePath: string): string {
   assertSafeRelative(relativePath)
   const resolved = resolve(rootAbs, relativePath)
-  if (!isPathInsideRoot(resolved, rootAbs)) {
+  if (!isPathWithinRoot(rootAbs, resolved)) {
     throw new Error('非法路径：超出项目根')
   }
-  let real: string
-  try {
-    real = realpathSync(resolved)
-  } catch {
+  const rootCanon = canonicalizeTargetPath(rootAbs)
+  if (!rootCanon.ok) {
     throw new Error('路径不存在')
   }
-  if (!isPathInsideRoot(real, rootAbs)) {
+  const realResult = canonicalizeExistingPath(resolved)
+  if (!realResult.ok) {
+    throw new Error('路径不存在')
+  }
+  if (!isPathWithinRoot(rootCanon.path, realResult.path)) {
     throw new Error('非法路径：超出项目根')
   }
-  return real
+  return realResult.path
 }
 
 /** 单层列举；符号链接指向 root 外时跳过该项 */
@@ -104,14 +109,10 @@ export function listDirectoryEntries(
     try {
       const lst = lstatSync(entryAbs)
       if (lst.isSymbolicLink()) {
-        let linkReal: string
-        try {
-          linkReal = realpathSync(entryAbs)
-        } catch {
-          continue
-        }
-        if (!isPathInsideRoot(linkReal, rootAbs)) continue
-        const targetStat = statSync(linkReal)
+        const linkCanon = canonicalizeExistingPath(entryAbs)
+        if (!linkCanon.ok) continue
+        if (!isPathWithinRoot(dirReal, linkCanon.path)) continue
+        const targetStat = statSync(linkCanon.path)
         if (targetStat.isDirectory()) type = 'directory'
         else if (targetStat.isFile()) type = 'file'
         else continue

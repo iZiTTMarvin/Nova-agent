@@ -63,7 +63,7 @@ export interface BuiltinToolRegistrationDeps {
 /**
  * 注册全部内置工具。新增工具时除了在此 register，还必须：
  * (1) 在 runtime/tools/catalog/ToolCatalog.ts 登记 Catalog 条目；
- * (2) 在 shared/session/toolVisibility.getToolCapability 登记能力分类；
+ * (2) 在 shared/permissions/toolEffects 登记权限 effects；
  * (3) 在 renderer toolDisplay 补显示名。
  * 回归守卫见 tests/unit/runtime/tools/toolCatalog.test.ts 与 toolCapabilityCoverage.test.ts。
  */

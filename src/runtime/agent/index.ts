@@ -20,7 +20,6 @@ export {
   listRuleFiles,
   readRuleFile,
   writeRuleFile,
-  isPathInsideRoot,
   buildNewGlobalRulePath,
   buildNewWorkspaceRulePath,
   type RuleFileEntry,

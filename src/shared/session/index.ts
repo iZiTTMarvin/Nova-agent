@@ -1,7 +1,6 @@
 export {
   type Mode,
   type PermissionMode,
-  type PermissionDecision,
   type MessageRole,
   type ToolCall,
   type Message,
@@ -20,10 +19,8 @@ export {
 } from './messagePagination'
 
 export {
-  getToolCapability,
   isToolVisibleInMode,
-  isModeHiddenWriteTool,
-  type ToolCapability
+  isModeHiddenWriteTool
 } from './toolVisibility'
 
 export {

@@ -4,6 +4,7 @@ import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { EventBus } from '../EventBus'
+import { clearExecutionPathGrants } from '../../permissions/pathAccess'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
 import type {
   ToolContext,
@@ -134,12 +135,6 @@ export interface ToolBatchExecutionOptions {
   /** Plan/Default 模式切换宿主回调；权限确认在工具执行前完成。 */
   switchMode?: ToolContext['switchMode']
   /**
-   * 额外允许读取的根目录（绝对路径）。
-   * 来源：AgentLoop.skillRoots（本会话已触发的 skill 目录）。
-   * 只对只读工具生效；edit/write 不消费此字段。
-   */
-  extraAllowedRoots?: string[]
-  /**
    * 执行 generation fencing：副作用前校验。
    * 由 AgentLoop 注入，绑定当前 runId/generation。
    */
@@ -250,9 +245,6 @@ function buildToolContext(
     ...(options.askQuestion ? { askQuestion: options.askQuestion } : {}),
     ...(options.requestPlanReview ? { requestPlanReview: options.requestPlanReview } : {}),
     ...(options.switchMode ? { switchMode: options.switchMode } : {}),
-    ...(options.extraAllowedRoots && options.extraAllowedRoots.length > 0
-      ? { extraAllowedRoots: options.extraAllowedRoots }
-      : {}),
     ...(options.assertExecutionCurrent
       ? { assertExecutionCurrent: options.assertExecutionCurrent }
       : {}),
@@ -472,6 +464,8 @@ async function executePreparedToolCall(
   } catch (err) {
     resultText = limitToolErrorText(`工具执行失败: ${(err as Error).message}`)
     failed = true
+  } finally {
+    clearExecutionPathGrants(options.sessionId ?? '', item.toolCall.id)
   }
 
   // postToolUse：允许 hook 修改工具结果

@@ -1,68 +1,16 @@
 /**
  * toolVisibility 单元测试
  *
- * 重点验证：todo_write 被显式归类为 readonly，plan 模式下可见且不被当作 write/bash 隐藏。
+ * 可见性按 effects 收窄：plan 隐藏写文件 / shell / 编排，保留网络读取与会话状态工具。
  */
 import { describe, expect, it } from 'vitest'
 import {
   getModeVisibleTools,
-  getToolCapability,
   isToolVisibleInMode,
   isModeHiddenWriteTool
 } from '../../../src/shared/session/toolVisibility'
 
 describe('toolVisibility', () => {
-  describe('getToolCapability', () => {
-    it('读类工具归为 readonly', () => {
-      expect(getToolCapability('ls')).toBe('readonly')
-      expect(getToolCapability('read')).toBe('readonly')
-      expect(getToolCapability('grep')).toBe('readonly')
-      expect(getToolCapability('find')).toBe('readonly')
-      expect(getToolCapability('web_search')).toBe('readonly')
-      expect(getToolCapability('code_context')).toBe('readonly')
-    })
-
-    it('写类工具归为 write', () => {
-      expect(getToolCapability('edit')).toBe('write')
-      expect(getToolCapability('write')).toBe('write')
-    })
-
-    it('bash 归为 bash', () => {
-      expect(getToolCapability('bash')).toBe('bash')
-    })
-
-    it('shell_session 归为 shell-session（会话读写，read/interrupt/stop 是只读观察）', () => {
-      expect(getToolCapability('shell_session')).toBe('shell-session')
-    })
-
-    it('todo_write 归为 readonly（不写文件系统）', () => {
-      expect(getToolCapability('todo_write')).toBe('readonly')
-    })
-
-    it('stage_transition 归为 readonly（会话级元数据，不动文件系统）', () => {
-      expect(getToolCapability('stage_transition')).toBe('readonly')
-    })
-
-    it('askQuestion 归为 readonly（用户交互工具，无副作用，所有模式放行且 plan 可见）', () => {
-      // 回归保护：曾因未分类落到 unknown→被权限层当 bash 处理，default 模式误弹"执行前确认"
-      expect(getToolCapability('askQuestion')).toBe('readonly')
-    })
-
-    it('save_plan 与 switch_mode 使用独立能力分类', () => {
-      expect(getToolCapability('save_plan')).toBe('plan-artifact')
-      expect(getToolCapability('switch_mode')).toBe('mode-transition')
-    })
-
-    it('task / invoke_skill 归为 orchestration（编排类，派遣动作本身无副作用）', () => {
-      expect(getToolCapability('task')).toBe('orchestration')
-      expect(getToolCapability('invoke_skill')).toBe('orchestration')
-    })
-
-    it('未知工具归为 unknown', () => {
-      expect(getToolCapability('some_future_tool')).toBe('unknown')
-    })
-  })
-
   describe('isToolVisibleInMode', () => {
     it('default / compose 暴露常规工具，plan 隐藏写入类', () => {
       expect(isToolVisibleInMode('default', 'bash')).toBe(true)
@@ -102,7 +50,7 @@ describe('toolVisibility', () => {
       expect(isToolVisibleInMode('plan', 'switch_mode')).toBe(true)
     })
 
-    it('plan 模式下只读工具可见', () => {
+    it('plan 模式下只读与网络工具可见', () => {
       expect(isToolVisibleInMode('plan', 'read')).toBe(true)
       expect(isToolVisibleInMode('plan', 'ls')).toBe(true)
       expect(isToolVisibleInMode('plan', 'web_search')).toBe(true)

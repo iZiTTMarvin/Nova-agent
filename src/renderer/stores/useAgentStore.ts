@@ -11,7 +11,7 @@
  * - 不被 useChatStore 内部状态依赖
  */
 import { create } from 'zustand'
-import type { PermissionDecision } from '../../shared/session/types'
+import type { PermissionDecision } from '../../shared/permissions/types'
 import type { PendingPermissionRequest } from './types'
 import type { AskQuestionRequest, AskQuestionAnswer } from '../../shared/askQuestion/types'
 

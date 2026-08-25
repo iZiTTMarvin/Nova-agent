@@ -6,7 +6,7 @@
 import { dirname, normalize } from 'path'
 import { mkdirSync, constants } from 'fs'
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, stat as fsStat } from 'fs/promises'
-import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveAndValidateToolPath } from './ToolRegistry'
 import { resolveToolArg } from './toolArgResolver'
 import { metricReadStateStats } from '../../shared/diagnostics/metrics'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
@@ -780,7 +780,7 @@ export const editTool: ToolExecutor = {
       return { success: false, output: '', error: '缺少 edits 参数（或旧格式 old/new）' }
     }
 
-    const validated = resolveAndValidatePath(context.workingDir, input.filePath)
+    const validated = resolveAndValidateToolPath(context, input.filePath, 'write')
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }

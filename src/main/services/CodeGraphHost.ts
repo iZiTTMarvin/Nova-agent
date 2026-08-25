@@ -1,6 +1,6 @@
 import { app } from 'electron'
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
-import { join, normalize, resolve } from 'node:path'
+import { existsSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   CodeContextPack,
   CodeContextQueryPort,
@@ -14,6 +14,7 @@ import type {
   WorkspaceChangeSource,
   CodeGraphRuntimeReaderProvider
 } from '../../runtime/code-graph'
+import { normalizeCodeGraphWorkspaceRoot } from '../../runtime/code-graph'
 import type { CodeIndexStatusDto } from '../../shared/code-index'
 import {
   CodeGraphStatusProjection,
@@ -382,10 +383,5 @@ function resolveCodeGraphGrammarRoot(): string {
 }
 
 function cacheKey(workspaceRoot: string): string {
-  const resolved = normalize(resolve(workspaceRoot))
-  try {
-    return normalize(realpathSync.native(resolved))
-  } catch {
-    return resolved
-  }
+  return normalizeCodeGraphWorkspaceRoot(workspaceRoot)
 }

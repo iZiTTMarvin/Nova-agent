@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import * as path from 'node:path'
+import { canonicalizeExistingPath, isPathWithinRoot } from '../../permissions/pathAccess'
 import {
   CODE_INDEX_MAX_SOURCE_BYTES,
   FileDiscoveryCancelledError,
@@ -820,14 +821,14 @@ async function readWorkspaceFile(
   workspaceRoot: string,
   relativePath: string
 ): Promise<{ readonly content: Buffer; readonly mtimeMs: number }> {
-  const root = await realpath(path.resolve(workspaceRoot))
-  const target = await realpath(path.resolve(root, ...relativePath.split('/')))
-  const relative = path.relative(root, target)
-  // 读取前再做 realpath fence，避免发现后 symlink/junction 被替换。
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  const rootCanon = canonicalizeExistingPath(path.resolve(workspaceRoot))
+  if (!rootCanon.ok) throw new Error(rootCanon.reason)
+  const targetCanon = canonicalizeExistingPath(path.resolve(rootCanon.path, ...relativePath.split('/')))
+  if (!targetCanon.ok) throw new Error(targetCanon.reason)
+  if (!isPathWithinRoot(rootCanon.path, targetCanon.path)) {
     throw new Error('源文件真实路径越出 workspace')
   }
-  const [content, fileStat] = await Promise.all([readFile(target), stat(target)])
+  const [content, fileStat] = await Promise.all([readFile(targetCanon.path), stat(targetCanon.path)])
   return Object.freeze({ content, mtimeMs: fileStat.mtimeMs })
 }
 

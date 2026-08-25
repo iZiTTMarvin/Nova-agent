@@ -14,12 +14,14 @@
 import { randomUUID } from 'crypto'
 import type { Mode } from '../../shared/session/types'
 import type { AgentEvent } from '../agent/types'
-import type { RiskLevel } from './types'
+import type { PermissionRequestMeta, RiskLevel } from './types'
 import type { PlanReviewResolution } from '../../shared/planReview'
 import { PLAN_REVIEW_IGNORED_RESULT_MARKER } from '../../shared/planReview'
 import type { ToolControlSignal } from '../tools/types'
 import type { PermissionManager } from './PermissionManager'
 import type { PermissionMode } from '../../shared/session/types'
+import type { SessionPathGrant } from '../../shared/permissions/types'
+import { setExecutionPathGrants } from './pathAccess/sessionPathGrants'
 
 /**
  * 表示权限请求被 cancel 中断的 sentinel 错误。
@@ -58,9 +60,9 @@ type PermissionRequestEvent = Extract<AgentEvent, { type: 'permission_request' }
 
 /** 基础判定结果：单项与批量路径共用，ask 携带发起用户确认所需的展示信息 */
 type BaseDecision =
-  | { decision: 'allow' }
+  | { decision: 'allow'; executionPathGrants?: SessionPathGrant[] }
   | { decision: 'deny'; reason: string }
-  | { decision: 'ask'; riskLevel: RiskLevel; reason: string }
+  | { decision: 'ask'; riskLevel: RiskLevel; reason: string; request: PermissionRequestMeta }
 
 export interface PermissionCoordinatorDeps {
   permissionManager: PermissionManager
@@ -105,12 +107,38 @@ export class PermissionCoordinator {
     const snapshot = this.deps.getPermissionRuntimeSnapshot()
     const result = this.deps.permissionManager.check({ toolName, args, ...snapshot }, mode)
     if (result.decision === 'allow') {
-      return { decision: 'allow' }
+      return { decision: 'allow', executionPathGrants: result.executionPathGrants }
     }
     if (result.decision === 'deny') {
       return { decision: 'deny', reason: result.reason }
     }
-    return { decision: 'ask', riskLevel: result.riskLevel, reason: result.reason }
+    return {
+      decision: 'ask',
+      riskLevel: result.riskLevel,
+      reason: result.reason,
+      request: result.request
+    }
+  }
+
+  private applyExecutionGrants(
+    toolCallId: string | undefined,
+    grants: readonly SessionPathGrant[] | undefined
+  ): void {
+    if (!grants || grants.length === 0) return
+    const snapshot = this.deps.getPermissionRuntimeSnapshot()
+    if (!snapshot.sessionId || !toolCallId) return
+    setExecutionPathGrants(snapshot.sessionId, toolCallId, grants)
+  }
+
+  private grantsFromRequest(request: PermissionRequestMeta): SessionPathGrant[] {
+    if (!request.externalPaths || request.externalPaths.length === 0) return []
+    const access = request.pathAccess ?? 'read'
+    return request.externalPaths.map(canonicalRoot => ({
+      canonicalRoot,
+      access,
+      match: 'exact' as const,
+      origin: 'user' as const
+    }))
   }
 
   /** 单项权限检查入口（toolBatchExecutor 对非 bash 工具逐项调用） */
@@ -122,6 +150,7 @@ export class PermissionCoordinator {
   ): Promise<PermissionCheckResult> {
     const base = this.evaluate(toolName, args)
     if (base.decision === 'allow') {
+      this.applyExecutionGrants(toolCallId, base.executionPathGrants)
       return { allowed: true, reason: '' }
     }
     if (base.decision === 'deny') {
@@ -140,13 +169,16 @@ export class PermissionCoordinator {
       args,
       riskLevel: base.riskLevel,
       reason: base.reason,
-      // 内联放行：单工具场景把自身 toolCallId 作为唯一锚点传给渲染层
-      ...(toolCallId ? { toolCallIds: [toolCallId] } : {})
+      ...(toolCallId ? { toolCallIds: [toolCallId] } : {}),
+      sessionId: this.deps.getPermissionRuntimeSnapshot().sessionId,
+      ...(base.request.externalPaths ? { externalPaths: base.request.externalPaths } : {}),
+      ...(base.request.pathAccess ? { pathAccess: base.request.pathAccess } : {})
     })
 
     try {
       const response = await permissionResponse
       if (response.decision === 'approve') {
+        this.applyExecutionGrants(toolCallId, this.grantsFromRequest(base.request))
         return { allowed: true, reason: '' }
       }
       if (response.decision === 'revise') {
@@ -242,7 +274,8 @@ export class PermissionCoordinator {
       commands,
       // 内联放行：携带本批命令对应的 toolCallId 列表，
       // 渲染层据此把放行卡片直接挂到消息流中对应命令卡片上（锚点取末尾一张）。
-      toolCallIds: askItems.map(item => item.toolCallId)
+      toolCallIds: askItems.map(item => item.toolCallId),
+      sessionId: this.deps.getPermissionRuntimeSnapshot().sessionId
     })
 
     try {

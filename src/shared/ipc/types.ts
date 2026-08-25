@@ -2,7 +2,8 @@
  * IPC 命令和事件的类型定义
  * 保证 renderer → main 命令和 main → renderer 事件的端到端类型安全
  */
-import type { Mode, PermissionDecision, Message, Session, SessionDetail } from '../session'
+import type { Mode, Message, Session, SessionDetail } from '../session'
+import type { PermissionDecision, PathAccessKind } from '../permissions/types'
 import type { ModelConfig, LlmRegistry } from '../config'
 import type {
   DiffEntry,
@@ -471,6 +472,10 @@ export interface IpcCommands {
     params: { sessionId: string; commandPrefix: string }
     result: void
   }
+  'permission:grant-session-path': {
+    params: { sessionId: string; canonicalPath: string; access: PathAccessKind }
+    result: void
+  }
   // ── DiffViewer 批量审阅（PRD §5.3） ──
   'accept-all-files': {
     params: { sessionId: string; messageId: string; filePaths: string[] }
@@ -631,6 +636,9 @@ export interface IpcEvents {
     sessionId?: string
     /** 子代理请求的直接父会话归属；renderer 会话门控据此放行到父会话视图 */
     parentSessionId?: string
+    /** 工作区外路径访问请求：canonical path 列表 */
+    externalPaths?: string[]
+    pathAccess?: PathAccessKind
   }
   'agent:diff-update': {
     messageId: string

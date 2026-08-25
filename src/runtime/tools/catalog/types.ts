@@ -16,7 +16,7 @@ export type ToolExposure =
 
 /**
  * 稳定能力标签：用于诊断、能力投影与一致性校验，不用于语义检索。
- * 与 shared/session/toolVisibility 的权限分类是两个正交维度；
+ * 与 shared/permissions/toolEffects 的权限 effects 是两个正交维度；
  * 一致性由 catalog 覆盖测试保证（shared 不得反向依赖 runtime）。
  */
 export type ToolCapabilityTag =

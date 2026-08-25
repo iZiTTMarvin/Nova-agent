@@ -107,7 +107,7 @@ describe('save_plan', () => {
     }, context())
 
     expect(result.success).toBe(false)
-    expect(result.error).toContain('符号链接')
+    expect(result.error).toMatch(/越界|符号链接/)
     expect(fs.existsSync(path.join(outside, 'plans'))).toBe(false)
   })
 

@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, basename, join, relative, resolve } from 'node:path'
 import { PLAN_RELATIVE_DIR, isPlanRelativePath } from '../../plans'
 import { acquireWriterLeaseOrConflict } from '../../workspace'
 import { withFileMutationQueue } from '../file-mutation-queue'
-import { resolveAndValidatePath } from '../ToolRegistry'
+import { resolveAndValidateToolPath } from '../ToolRegistry'
+import { isPathWithinRoot } from '../../permissions/pathAccess'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import { assertSideEffectAllowed } from '../types'
 
@@ -60,8 +61,7 @@ async function rejectLinkIfPresent(path: string, label: string): Promise<void> {
 }
 
 function isWithinRoot(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate)
-  return rel === '' || (!isAbsolute(rel) && !rel.startsWith('..'))
+  return isPathWithinRoot(root, candidate)
 }
 
 async function prepareSafePlanDirectory(
@@ -156,7 +156,7 @@ function resolveActivePlanPath(
   activePath: unknown
 ): string | null {
   if (!isPlanRelativePath(activePath)) return null
-  const validated = resolveAndValidatePath(context.workingDir, activePath)
+  const validated = resolveAndValidateToolPath(context, activePath, 'write')
   if (!validated.ok) return null
   const rel = relative(planDirectory, validated.path)
   if (!rel || isAbsolute(rel) || rel.startsWith('..') || rel.includes('/') || rel.includes('\\')) {
@@ -231,7 +231,7 @@ export const savePlanTool: ToolExecutor = {
       return { success: false, output: '', error: '会话工作区与当前工具工作区不一致' }
     }
 
-    const validatedDirectory = resolveAndValidatePath(context.workingDir, PLAN_RELATIVE_DIR)
+    const validatedDirectory = resolveAndValidateToolPath(context, PLAN_RELATIVE_DIR, 'write')
     if (!validatedDirectory.ok) {
       return { success: false, output: '', error: validatedDirectory.error }
     }
@@ -278,7 +278,7 @@ export const savePlanTool: ToolExecutor = {
           timestamp: written.mtimeMs
         })
 
-        const relativePath = relative(context.workingDir, absolutePath).replace(/\\/g, '/')
+        const relativePath = `${PLAN_RELATIVE_DIR}/${basename(absolutePath)}`
         const updatedAt = Date.now()
         const updated = context.sessionStore!.updateActivePlan(context.sessionId!, {
           path: relativePath,

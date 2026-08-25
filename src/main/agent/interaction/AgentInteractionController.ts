@@ -1,5 +1,5 @@
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
-import type { PermissionDecision } from '../../../shared/session/types'
+import type { PermissionDecision } from '../../../shared/permissions/types'
 import type { InteractionAnswerResult, PendingInteraction } from '../../../shared/run/types'
 import type {
   PlanReviewCommand,

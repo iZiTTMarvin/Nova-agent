@@ -20,11 +20,8 @@ import type {
   MessageDiffCache,
   SessionUsageStats
 } from './types'
-import type {
-  Session,
-  Mode,
-  PermissionDecision
-} from '../../shared/session/types'
+import type { Session, Mode } from '../../shared/session/types'
+import type { PermissionDecision } from '../../shared/permissions/types'
 import type { ModelConfig } from '../../shared/config'
 import type { DiffEntry, DiffReviewStatus } from '../../shared/diff/types'
 import type { NormalizedUsage } from '../../shared/model/types'

@@ -35,7 +35,7 @@ export type AgentEvent =
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string; sessionId?: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown>; sessionId?: string; parentToolCallId?: string }
   | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processHandle?: ToolProcessHandle }
-  | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string }
+  | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string; externalPaths?: string[]; pathAccess?: 'read' | 'write' }
   | {
       type: 'diff_update'
       messageId: string

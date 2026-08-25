@@ -1079,7 +1079,7 @@ export class SessionStore {
 
   /**
    * 登记本会话已触发的 skill 目录为额外只读根（幂等）。
-   * 供跨轮 AgentLoop 重建后恢复 extraAllowedRoots。
+   * 供跨轮 AgentLoop 重建后恢复 skill 路径授权。
    */
   addGrantedSkillRoot(sessionId: string, skillDirectory: string): SessionData | null {
     const trimmed = skillDirectory.trim()

@@ -12,7 +12,7 @@ import {
   useChatStore
 } from '../../../src/renderer/stores/useChatStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
-import { PERMISSION_UPSERT } from '../../../src/shared/ipc/channels'
+import { PERMISSION_GRANT_SESSION_PATH, PERMISSION_UPSERT } from '../../../src/shared/ipc/channels'
 import { act, renderDom } from './renderDom'
 import type { PendingPermissionRequest } from '../../../src/renderer/stores/types'
 
@@ -171,6 +171,85 @@ describe('InlinePermissionBar', () => {
         behavior: 'deny',
         commandPrefix: 'sudo'
       })
+    )
+    renderer.unmount()
+  })
+
+  it('工作区外访问展示路径，并提供允许一次与本会话允许此目录', () => {
+    const pathRequest: PendingPermissionRequest = {
+      ...request,
+      toolName: 'read',
+      args: { path: 'C:\\Users\\x\\.config\\foo' },
+      reason: '需要访问工作区外文件',
+      externalPaths: ['C:\\Users\\x\\.config\\foo'],
+      pathAccess: 'read'
+    }
+    const renderer = renderDom(<InlinePermissionBar request={pathRequest} />)
+    const text = renderer.container.textContent ?? ''
+    expect(text).toContain('需要访问工作区外文件')
+    expect(text).toContain('C:\\Users\\x\\.config\\foo')
+    expect(text).toContain('读取')
+    expect(text).toContain('拒绝')
+    expect(text).toContain('允许一次')
+    expect(text).toContain('本会话允许此目录')
+    expect(renderer.container.querySelector('[aria-haspopup="menu"]')).toBeNull()
+    renderer.unmount()
+  })
+
+  it('本会话允许此目录写入失败时不放行', async () => {
+    const pathRequest: PendingPermissionRequest = {
+      ...request,
+      toolName: 'read',
+      args: { path: '/tmp/outside.txt' },
+      externalPaths: ['/tmp/outside.txt'],
+      pathAccess: 'read'
+    }
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === PERMISSION_GRANT_SESSION_PATH) throw new Error('目录授权失败')
+      return undefined
+    })
+
+    const renderer = renderDom(<InlinePermissionBar request={pathRequest} />)
+    const grantBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('本会话允许此目录')
+    )
+    expect(grantBtn).toBeTruthy()
+    await act(async () => {
+      grantBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const respondCalls = mockInvoke.mock.calls.filter(([c]) => c === 'respond-permission')
+    expect(respondCalls).toHaveLength(0)
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('req_1')
+    expect(useAgentStore.getState().permissionError).toContain('写入本会话目录授权失败')
+    renderer.unmount()
+  })
+
+  it('本会话允许此目录写入请求所属会话，而不是当前聊天会话', async () => {
+    const pathRequest: PendingPermissionRequest = {
+      ...request,
+      sessionId: 'child-session',
+      toolName: 'read',
+      externalPaths: ['/tmp/outside.txt'],
+      pathAccess: 'read'
+    }
+    useChatStore.setState({ currentSessionId: 'parent-session' })
+
+    const renderer = renderDom(<InlinePermissionBar request={pathRequest} />)
+    const grantBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('本会话允许此目录')
+    )
+    await act(async () => {
+      grantBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      PERMISSION_GRANT_SESSION_PATH,
+      expect.objectContaining({ sessionId: 'child-session' })
     )
     renderer.unmount()
   })

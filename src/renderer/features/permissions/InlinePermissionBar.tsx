@@ -10,7 +10,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import type { PermissionBehavior } from '../../../shared/permissions/types'
 import type { PendingPermissionRequest } from '../../stores/types'
-import { PERMISSION_GRANT_SESSION_SCOPE, PERMISSION_UPSERT } from '../../../shared/ipc/channels'
+import { PERMISSION_GRANT_SESSION_PATH, PERMISSION_GRANT_SESSION_SCOPE, PERMISSION_UPSERT } from '../../../shared/ipc/channels'
 import './InlinePermissionBar.css'
 
 /**
@@ -53,9 +53,13 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
   const permissionError = useAgentStore(state => state.permissionError)
   const respondPermissionRequest = useAgentStore(state => state.respondPermissionRequest)
   const currentSessionId = useChatStore(state => state.currentSessionId)
+  const grantSessionId = request.sessionId ?? currentSessionId
 
   const [showDropdown, setShowDropdown] = useState(false)
 
+  const isPathRequest = !!request.externalPaths && request.externalPaths.length > 0
+  const pathAccessLabel = request.pathAccess === 'write' ? '写入' : '读取'
+  const displayedPath = request.externalPaths?.[0]
   const isBatch = !!request.commands && request.commands.length > 1
   const allowLabel = isBatch ? `全部允许（${request.commands!.length} 条）` : '允许'
 
@@ -112,11 +116,11 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
 
   /** 本会话允许同前缀命令 */
   const rememberSessionAndRespond = async () => {
-    if (!currentSessionId) return
+    if (!grantSessionId) return
     try {
       for (const prefix of prefixArray) {
         await window.api.invoke(PERMISSION_GRANT_SESSION_SCOPE, {
-          sessionId: currentSessionId,
+          sessionId: grantSessionId,
           commandPrefix: prefix
         })
       }
@@ -128,16 +132,71 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
     setShowDropdown(false)
   }
 
+  const rememberPathDirectoryAndRespond = async () => {
+    if (!grantSessionId || !displayedPath) return
+    try {
+      await window.api.invoke(PERMISSION_GRANT_SESSION_PATH, {
+        sessionId: grantSessionId,
+        canonicalPath: displayedPath,
+        access: request.pathAccess ?? 'read'
+      })
+    } catch (err) {
+      failRuleWrite('写入本会话目录授权', err)
+      return
+    }
+    respondPermissionRequest('allow')
+  }
+
   return (
     <div className="inline-perm" onClick={e => e.stopPropagation()}>
-      {request.reason && (
+      {(isPathRequest || request.reason) && (
         <div className={`inline-perm__reason inline-perm__reason--${request.riskLevel}`}>
-          {request.reason}
+          {isPathRequest ? '需要访问工作区外文件' : request.reason}
+        </div>
+      )}
+      {isPathRequest && displayedPath && (
+        <div className="inline-perm__path">
+          <code>{displayedPath}</code>
+          <span className="inline-perm__path-access">{pathAccessLabel}</span>
         </div>
       )}
 
       {permissionError && <div className="inline-perm__error">{permissionError}</div>}
 
+      {isPathRequest ? (
+        <div className="inline-perm__actions">
+          <Button
+            label="拒绝"
+            variant="secondary"
+            size="sm"
+            className="inline-perm__btn inline-perm__btn--deny"
+            onClick={() => respondPermissionRequest('deny')}
+            isDisabled={isSubmitting}
+          >
+            拒绝
+          </Button>
+          <Button
+            label="允许一次"
+            variant="primary"
+            size="sm"
+            className="inline-perm__btn inline-perm__btn--allow"
+            onClick={() => respondPermissionRequest('allow')}
+            isDisabled={isSubmitting}
+          >
+            {isSubmitting ? '提交中...' : '允许一次'}
+          </Button>
+          <Button
+            label="本会话允许此目录"
+            variant="secondary"
+            size="sm"
+            className="inline-perm__btn"
+            onClick={() => void rememberPathDirectoryAndRespond()}
+            isDisabled={isSubmitting || !grantSessionId}
+          >
+            本会话允许此目录
+          </Button>
+        </div>
+      ) : (
       <div className="inline-perm__actions">
         {request.riskLevel === 'high' ? (
           <ButtonGroup label="拒绝方式" className="inline-perm__btn-group" size="sm">
@@ -238,7 +297,7 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
               <DropdownMenuItem
                 label={`本会话允许（${commandPrefixText}）`}
                 description="本会话内相同命令前缀无需再次确认"
-                isDisabled={!currentSessionId}
+                isDisabled={!grantSessionId}
                 onClick={() => void rememberSessionAndRespond()}
               />
             )}
@@ -263,6 +322,7 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
           </ButtonGroup>
         )}
       </div>
+      )}
     </div>
   )
 }

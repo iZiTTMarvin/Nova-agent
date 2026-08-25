@@ -103,6 +103,9 @@ export interface PendingPermissionRequest {
   commands?: string[]
   /** 本次请求对应的工具卡片 id 列表，内联放行据此锚定到具体卡片（锚点取末尾一张） */
   toolCallIds?: string[]
+  /** 工作区外路径访问请求 */
+  externalPaths?: string[]
+  pathAccess?: 'read' | 'write'
   /** InteractionInbox 归属（可选兼容旧事件） */
   interactionId?: string
   runId?: string

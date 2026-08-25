@@ -120,6 +120,7 @@ export const PERMISSION_LIST = 'permission:list' as const
 export const PERMISSION_UPSERT = 'permission:upsert' as const
 export const PERMISSION_DELETE = 'permission:delete' as const
 export const PERMISSION_GRANT_SESSION_SCOPE = 'permission:grant-session-scope' as const
+export const PERMISSION_GRANT_SESSION_PATH = 'permission:grant-session-path' as const
 // ── DiffViewer 批量审阅（PRD §5.3） ──────────────────────
 export const ACCEPT_ALL_FILES = 'accept-all-files' as const
 export const REJECT_ALL_FILES = 'reject-all-files' as const

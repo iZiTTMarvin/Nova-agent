@@ -14,6 +14,7 @@
 import { app } from 'electron'
 import { handle } from './secureIpc'
 import { clearSessionWhitelist } from '../../runtime/permissions/PermissionManager'
+import { clearSessionPathGrants } from '../../runtime/permissions/pathAccess'
 import { processRegistry } from '../../runtime/process'
 import {
   STORAGE_USAGE,
@@ -48,6 +49,7 @@ export function registerStorageHandler(): void {
 
   handle(STORAGE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
     clearSessionWhitelist(params.sessionId)
+    clearSessionPathGrants(params.sessionId)
     // 本入口绕过编排删除，持久进程必须先终止，否则留下孤儿进程
     await processRegistry.terminateForSession(params.sessionId)
     return deleteSessionCompletely(appDataPath, params.sessionId)

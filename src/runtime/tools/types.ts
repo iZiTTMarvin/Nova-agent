@@ -159,11 +159,6 @@ export interface ToolContext {
     reason: string
   ) => Promise<{ previousMode: Mode; currentMode: Mode }>
   /**
-   * 额外允许读取的根目录（绝对路径），当前唯一来源是「本会话已触发的 skill 目录」。
-   * 只对只读工具（read/ls/grep/find）生效；edit/write 不消费此字段。
-   */
-  extraAllowedRoots?: string[]
-  /**
    * 执行 generation fencing：副作用前必须为 true。
    * generation 失效（grace 超时 / interrupted）后拒绝写文件与 checkpoint。
    */

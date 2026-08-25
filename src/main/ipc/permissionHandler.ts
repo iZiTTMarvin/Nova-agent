@@ -8,8 +8,18 @@
  * - 当前项目路径从 main 进程全局状态读取，不接受 renderer 传入的任意路径。
  */
 import { handle } from './secureIpc'
+import { dirname } from 'path'
+import { statSync } from 'fs'
 import { grantSessionPermission } from '../../runtime/permissions/PermissionManager'
-import { PERMISSION_LIST, PERMISSION_UPSERT, PERMISSION_DELETE, PERMISSION_GRANT_SESSION_SCOPE } from '../../shared/ipc/channels'
+import { addSessionPathGrant } from '../../runtime/permissions/pathAccess'
+import { canonicalizeTargetPath } from '../../runtime/permissions/pathAccess/canonicalPath'
+import {
+  PERMISSION_LIST,
+  PERMISSION_UPSERT,
+  PERMISSION_DELETE,
+  PERMISSION_GRANT_SESSION_SCOPE,
+  PERMISSION_GRANT_SESSION_PATH
+} from '../../shared/ipc/channels'
 import {
   listPermissionRules,
   upsertPermissionRule,
@@ -20,7 +30,8 @@ import type {
   PermissionRuleDto,
   PermissionListParams,
   PermissionUpsertParams,
-  PermissionDeleteParams
+  PermissionDeleteParams,
+  PathAccessKind
 } from '../../shared/permissions/types'
 import { getWorkspaceService } from '../services/WorkspaceService'
 
@@ -77,4 +88,29 @@ export function registerPermissionHandler(): void {
   handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: { sessionId: string; commandPrefix: string }) => {
     grantSessionPermission(params.sessionId, params.commandPrefix)
   })
+
+  handle(
+    PERMISSION_GRANT_SESSION_PATH,
+    async (_event, params: { sessionId: string; canonicalPath: string; access: PathAccessKind }) => {
+      const canonical = canonicalizeTargetPath(params.canonicalPath)
+      if (!canonical.ok) {
+        throw new Error(canonical.reason)
+      }
+      const access = params.access === 'write' ? 'write' : 'read'
+      let root = canonical.path
+      try {
+        if (!statSync(root).isDirectory()) {
+          root = dirname(root)
+        }
+      } catch {
+        root = dirname(root)
+      }
+      addSessionPathGrant(params.sessionId, {
+        canonicalRoot: root,
+        access,
+        match: 'subtree',
+        origin: 'user'
+      })
+    }
+  )
 }

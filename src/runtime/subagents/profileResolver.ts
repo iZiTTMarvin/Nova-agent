@@ -1,18 +1,12 @@
 import { createHash } from 'crypto'
 import type { SubagentProfileSnapshot } from '../../shared/subagents'
+import { toolHasWriteCapability } from '../../shared/permissions/toolEffects'
 
 const MAX_PROFILE_NAME_LENGTH = 128
 const MAX_DESCRIPTION_LENGTH = 4_096
 const MAX_SYSTEM_PROMPT_LENGTH = 65_536
 const MAX_TOOL_NAME_LENGTH = 128
 const MAX_TOOL_ROUNDS = 1_000
-const WRITE_CAPABLE_TOOLS = new Set([
-  'edit',
-  'write',
-  'bash',
-  'save_plan',
-  'switch_mode'
-])
 const ARCHIVE_READ_TOOL = 'archive_read'
 
 /**
@@ -59,14 +53,14 @@ export function resolveSubagentProfileSnapshot(
 
   const permissionCeiling =
     parsed.name === 'explore' ||
-    !parsed.allowedTools.some((name) => WRITE_CAPABLE_TOOLS.has(name))
+    !parsed.allowedTools.some((name) => toolHasWriteCapability(name))
       ? 'read_only'
       : 'workspace_write'
   const toolNames = parsed.allowedTools.filter((name) => {
     if (name === 'task' && options.allowRecursion !== true) return false
     return (
       permissionCeiling !== 'read_only' ||
-      !WRITE_CAPABLE_TOOLS.has(name)
+      !toolHasWriteCapability(name)
     )
   })
   const hashInput = {

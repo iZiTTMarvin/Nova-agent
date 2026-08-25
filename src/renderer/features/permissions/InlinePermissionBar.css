@@ -61,6 +61,30 @@
   background-color: rgba(181, 51, 51, 0.06) !important;
 }
 
+.inline-perm__path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  padding: 0 2px;
+}
+
+.inline-perm__path code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.inline-perm__path-access {
+  flex-shrink: 0;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
 .inline-perm__dropdown-divider {
   height: 1px;
   background-color: var(--border-cream, rgba(0, 0, 0, 0.1));

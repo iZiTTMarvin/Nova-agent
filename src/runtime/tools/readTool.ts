@@ -9,7 +9,7 @@
  */
 import { readFile as asyncReadFile, stat as asyncStat } from 'fs/promises'
 import { extname } from 'path'
-import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveAndValidateToolPath } from './ToolRegistry'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 import { resolveToolArg } from './toolArgResolver'
 import { decodeFileBuffer } from './editDiff'
@@ -395,8 +395,7 @@ export const readTool: ToolExecutor = {
       )
     }
 
-    // 第三参：本会话已触发的 skill 目录可作为额外只读根
-    const validated = resolveAndValidatePath(context.workingDir, inputPath, context.extraAllowedRoots)
+    const validated = resolveAndValidateToolPath(context, inputPath, 'read')
     if (!validated.ok) {
       // 区外图片路径：补充可操作提示（不放宽安全边界）
       const lookLikeImage = IMAGE_EXTENSIONS.has(extname(inputPath).toLowerCase())

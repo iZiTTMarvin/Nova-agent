@@ -2,7 +2,13 @@ import { spawn } from 'child_process'
 import { open, readdir } from 'fs/promises'
 import { join, relative } from 'path'
 import { createInterface } from 'readline'
-import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveAndValidateToolPath } from './ToolRegistry'
+import {
+  createCanonicalPathCache,
+  canonicalizeTargetPath,
+  isPathAccessible,
+  type CanonicalPathCache
+} from '../permissions/pathAccess'
 import { findRipgrep, isRgAvailable } from './find-rg'
 import { createTruncationPipeline } from './TruncationPipeline'
 import { OutputSink } from './OutputSink'
@@ -44,6 +50,10 @@ interface SearchOptions {
   beforeN: number
   afterN: number
   workingDir: string
+  workspaceRoot: string
+  sessionId?: string
+  toolCallId?: string
+  cache?: CanonicalPathCache
   headLimit: number | undefined
   offset: number | undefined
   outputMode: GrepOutputMode
@@ -159,8 +169,8 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
         return { success: false, output: '', error: '缺少 pattern 参数' }
       }
 
-      // 第三参：本会话已触发的 skill 目录可作为额外只读根
-      const validated = resolveAndValidatePath(context.workingDir, inputPath, context.extraAllowedRoots)
+      const cache = createCanonicalPathCache()
+      const validated = resolveAndValidateToolPath(context, inputPath, 'read', cache)
       if (!validated.ok) {
         return { success: false, output: '', error: validated.error }
       }
@@ -181,7 +191,8 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
           contextLines,
           headLimit,
           offset,
-          multiline
+          multiline,
+          cache
         )
       } else {
         const fallback = await executeFallback(
@@ -194,7 +205,8 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
           beforeContext,
           contextLines,
           headLimit,
-          offset
+          offset,
+          cache
         )
         result = fallback.result
         fallbackPrefix = fallback.prefix
@@ -279,9 +291,12 @@ async function executeWithRipgrep(
   contextLines: number | undefined,
   headLimit: number | undefined,
   offset: number | undefined,
-  multiline: boolean | undefined
+  multiline: boolean | undefined,
+  cache: CanonicalPathCache
 ): Promise<ToolResult> {
   const rgPath = findRipgrep()
+  const workspaceCanon = canonicalizeTargetPath(context.workingDir)
+  const relativeRoot = workspaceCanon.ok ? workspaceCanon.path : context.workingDir
   const rgArgs: string[] = [
     '--json',
     '--no-heading',
@@ -348,7 +363,20 @@ async function executeWithRipgrep(
         if (event.type === 'match') {
           const data = event.data
           const filePath = data.path?.text ?? ''
-          const relPath = relative(context.workingDir, filePath).replace(/\\/g, '/')
+          if (
+            !filePath ||
+            !isPathAccessible({
+              workingDir: context.workingDir,
+              inputPath: filePath,
+              access: 'read',
+              sessionId: context.sessionId,
+              toolCallId: context.invocationRef?.toolCallId,
+              cache
+            })
+          ) {
+            return
+          }
+          const relPath = relative(relativeRoot, filePath).replace(/\\/g, '/')
           const lineNumber = data.line_number
           const linesText = data.lines?.text ?? ''
 
@@ -436,7 +464,8 @@ async function executeFallback(
   beforeContext: number | undefined,
   contextLines: number | undefined,
   headLimit: number | undefined,
-  offset: number | undefined
+  offset: number | undefined,
+  cache: CanonicalPathCache
 ): Promise<{ result: ToolResult; prefix: string }> {
   const state: FallbackState = {
     cancelled: false,
@@ -469,6 +498,7 @@ async function executeFallback(
     }
   }
 
+  const workspaceCanon = canonicalizeTargetPath(context.workingDir)
   const opts: SearchOptions = {
     pattern,
     signal: context.abortSignal,
@@ -476,7 +506,11 @@ async function executeFallback(
     ignoreMatcher,
     beforeN,
     afterN,
-    workingDir: context.workingDir,
+    workingDir: workspaceCanon.ok ? workspaceCanon.path : context.workingDir,
+    workspaceRoot: context.workingDir,
+    sessionId: context.sessionId,
+    toolCallId: context.invocationRef?.toolCallId,
+    cache,
     headLimit,
     offset,
     outputMode
@@ -557,6 +591,18 @@ async function searchDir(dir: string, state: FallbackState, opts: SearchOptions)
     if (isPathSkipped(name)) continue
 
     const fullPath = join(dir, name)
+    if (
+      !isPathAccessible({
+        workingDir: opts.workspaceRoot,
+        inputPath: fullPath,
+        access: 'read',
+        sessionId: opts.sessionId,
+        toolCallId: opts.toolCallId,
+        cache: opts.cache
+      })
+    ) {
+      continue
+    }
     const relPath = relative(opts.workingDir, fullPath).replace(/\\/g, '/')
 
     if (entry.isDirectory()) {

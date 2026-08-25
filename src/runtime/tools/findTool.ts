@@ -14,7 +14,8 @@
  */
 import { readdir, stat } from 'fs/promises'
 import { relative } from 'path'
-import { resolveAndValidatePath } from './ToolRegistry'
+import { resolveAndValidateToolPath } from './ToolRegistry'
+import { createCanonicalPathCache, canonicalizeTargetPath, isPathAccessible } from '../permissions/pathAccess'
 import { resolveToolArg } from './toolArgResolver'
 import { isPathSkipped, loadIgnoreMatcher } from '../workspace'
 import { createTruncationPipeline } from './TruncationPipeline'
@@ -87,8 +88,8 @@ export const findTool: ToolExecutor = {
     if (!pattern) {
       return { success: false, output: '', error: '缺少 pattern 参数' }
     }
-    // 第三参：本会话已触发的 skill 目录可作为额外只读根
-    const validated = resolveAndValidatePath(context.workingDir, inputPath, context.extraAllowedRoots)
+    const cache = createCanonicalPathCache()
+    const validated = resolveAndValidateToolPath(context, inputPath, 'read', cache)
     if (!validated.ok) {
       return { success: false, output: '', error: validated.error }
     }
@@ -102,6 +103,8 @@ export const findTool: ToolExecutor = {
     let cancelled = false
     // 搜索起点，glob 匹配基于此目录计算相对路径
     const searchRoot = validated.path
+    const workspaceCanon = canonicalizeTargetPath(context.workingDir, cache)
+    const relativeRoot = workspaceCanon.ok ? workspaceCanon.path : context.workingDir
 
     /**
      * 异步递归遍历目录。
@@ -134,10 +137,22 @@ export const findTool: ToolExecutor = {
         if (isPathSkipped(name)) continue
 
         const fullPath = `${dir}/${entry.name}`
+        if (
+          !isPathAccessible({
+            workingDir: context.workingDir,
+            inputPath: fullPath,
+            access: 'read',
+            sessionId: context.sessionId,
+            toolCallId: context.invocationRef?.toolCallId,
+            cache
+          })
+        ) {
+          continue
+        }
         // glob 匹配基于搜索起点的相对路径
         const relToSearch = relative(searchRoot, fullPath).replace(/\\/g, '/')
         // 输出结果基于工作区根
-        const relToWorkDir = relative(context.workingDir, fullPath).replace(/\\/g, '/')
+        const relToWorkDir = relative(relativeRoot, fullPath).replace(/\\/g, '/')
 
         let isDir: boolean
         try {

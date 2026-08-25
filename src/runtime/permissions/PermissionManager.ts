@@ -5,17 +5,21 @@
  * 静态命令分类器无法证明任意 Shell 命令安全，未命中仅表示没有命中已知高风险模式。
  */
 import type { Mode } from '../../shared/session/types'
+import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
+import type { SessionPathGrant } from '../../shared/permissions/types'
 import type {
   PermissionQuery,
   PermissionRequestMeta,
   PermissionResult,
   RiskLevel
 } from './types'
-import { assessCommandRisk, getBaseDecision, getRiskDescription } from './rules'
+import { resolvePermissionEffects, type EffectResolution } from './effectResolver'
+import { getRiskDescriptionFromEffects, resolveModeBaseline } from './permissionBaseline'
 import { isCommandFullyWhitelisted } from './commandSegments'
 import { matchPermission, type MatchInput } from './PermissionMatcher'
 import type { PermissionRule } from './PermissionRule'
 import { isInteractiveEntryCommand } from '../tools/bash'
+import { resolveToolArg } from '../tools/toolArgResolver'
 
 /** 进入只读 Plan 或保持当前模式不会扩大副作用权限，可以由 Agent 自动完成。 */
 export function isSafeAutomaticModeTransition(
@@ -48,67 +52,12 @@ export class PermissionManager {
   }
 
   check(query: PermissionQuery, mode: Mode): PermissionResult {
-    const { toolName, args } = query
-
-    if (toolName === 'switch_mode') {
-      const denyFromRules = this.matchPersistentDecision(query, 'deny')
-      if (denyFromRules) return denyFromRules
-
-      if (isSafeAutomaticModeTransition(mode, args.mode)) {
-        return {
-          decision: 'allow',
-          reason: '进入只读 Plan 模式不会扩大副作用权限'
-        }
-      }
-      return {
-        decision: 'ask',
-        riskLevel: 'low',
-        reason: '退出 Plan 将恢复写入能力，需要用户确认',
-        request: {}
-      }
+    if (query.toolName === 'switch_mode') {
+      return this.checkSwitchMode(query, mode)
     }
 
-    if (toolName === 'bash') {
-      return this.checkBash(query, mode)
-    }
-
-    if (toolName === 'shell_session') {
-      return this.checkShellSession(query, mode)
-    }
-
-    const baseDecision = getBaseDecision(mode, toolName, query.permissionMode)
-    if (baseDecision === 'deny') {
-      return {
-        decision: 'deny',
-        riskLevel: 'high',
-        reason: this.buildReason(toolName, mode, baseDecision)
-      }
-    }
-
-    const denyFromRules = this.matchPersistentDecision(query, 'deny')
-    if (denyFromRules) return denyFromRules
-
-    const allowFromRules = this.matchPersistentDecision(query, 'allow')
-    if (allowFromRules) return allowFromRules
-
-    const reason = this.buildReason(toolName, mode, baseDecision)
-    return baseDecision === 'ask'
-      ? { decision: 'ask', riskLevel: 'low', reason, request: {} }
-      : { decision: 'allow', reason }
-  }
-
-  private checkBash(query: PermissionQuery, mode: Mode): PermissionResult {
-    const command = typeof query.args.command === 'string' ? query.args.command.trim() : ''
-
-    if (mode === 'plan') {
-      return {
-        decision: 'deny',
-        riskLevel: 'high',
-        reason: 'plan 模式下禁止执行任何 shell 命令'
-      }
-    }
-
-    if (isInteractiveEntryCommand(command)) {
+    const command = this.extractCommand(query)
+    if (query.toolName === 'bash' && isInteractiveEntryCommand(command)) {
       return {
         decision: 'deny',
         riskLevel: 'high',
@@ -116,85 +65,183 @@ export class PermissionManager {
       }
     }
 
-    const denyFromRules = this.matchPersistentDecision(query, 'deny')
+    const resolution = resolvePermissionEffects(query)
+    const hard = this.resolveHardBoundary(query, mode, resolution)
+    if (hard) return hard
+
+    const ruleQuery = this.ruleQuery(query, command)
+    const denyFromRules = this.matchPersistentDecision(ruleQuery, 'deny')
     if (denyFromRules) return denyFromRules
 
-    const risk = assessCommandRisk(command)
-    if (risk.isDangerous && query.permissionMode !== 'full_access') {
-      return this.buildAskResult(risk.reason, { command, riskReason: risk.reason }, 'high')
+    if (
+      resolution.ok &&
+      resolution.riskLevel === 'high' &&
+      query.permissionMode !== 'full_access'
+    ) {
+      return this.buildAskResult(
+        resolution.reasons[0] || '高风险操作需要确认',
+        this.buildRequestMeta(query, resolution),
+        'high'
+      )
     }
 
-    const whitelist = sessionWhitelists.get(query.sessionId)
-    if (whitelist && isCommandFullyWhitelisted(command, whitelist)) {
-      return {
-        decision: 'allow',
-        reason: '本会话临时白名单允许执行该命令'
+    if (query.toolName === 'bash' && command) {
+      const whitelist = sessionWhitelists.get(query.sessionId)
+      if (whitelist && isCommandFullyWhitelisted(command, whitelist)) {
+        return { decision: 'allow', reason: '本会话临时白名单允许执行该命令' }
       }
     }
 
-    const allowFromRules = this.matchPersistentDecision(query, 'allow')
-    if (allowFromRules) return allowFromRules
+    const allowFromRules = this.matchPersistentDecision(ruleQuery, 'allow')
+    if (allowFromRules) {
+      return resolution.ok
+        ? { ...allowFromRules, ...this.executionGrants(resolution) }
+        : allowFromRules
+    }
 
-    const decision = getBaseDecision(mode, 'bash', query.permissionMode)
-    const reason = risk.isDangerous ? risk.reason : getRiskDescription('bash', risk.riskLevel)
-    return decision === 'ask'
-      ? this.buildAskResult(reason, { command, riskReason: risk.isDangerous ? risk.reason : undefined }, risk.riskLevel)
-      : { decision: 'allow', reason }
+    if (!resolution.ok) {
+      return this.failClosed(query, resolution.reason)
+    }
+
+    const baseline = resolveModeBaseline({
+      permissionMode: query.permissionMode,
+      effects: resolution.effects,
+      riskLevel: resolution.riskLevel,
+      hasExternalPath: resolution.externalPaths.length > 0
+    })
+    const reason =
+      resolution.reasons[0] ||
+      getRiskDescriptionFromEffects(
+        resolution.effects,
+        resolution.riskLevel,
+        resolution.externalPaths.length > 0
+      )
+    if (baseline === 'ask') {
+      return this.buildAskResult(reason, this.buildRequestMeta(query, resolution), resolution.riskLevel)
+    }
+    return {
+      decision: 'allow',
+      reason,
+      ...this.executionGrants(resolution)
+    }
   }
 
-  private checkShellSession(query: PermissionQuery, mode: Mode): PermissionResult {
-    const action = query.args.action
-    if (
-      action !== 'read' &&
-      action !== 'write' &&
-      action !== 'interrupt' &&
-      action !== 'stop'
-    ) {
+  private checkSwitchMode(query: PermissionQuery, mode: Mode): PermissionResult {
+    const denyFromRules = this.matchPersistentDecision(query, 'deny')
+    if (denyFromRules) return denyFromRules
+    if (isSafeAutomaticModeTransition(mode, query.args.mode)) {
+      return {
+        decision: 'allow',
+        reason: '进入只读 Plan 模式不会扩大副作用权限'
+      }
+    }
+    return {
+      decision: 'ask',
+      riskLevel: 'low',
+      reason: '退出 Plan 将恢复写入能力，需要用户确认',
+      request: {}
+    }
+  }
+
+  private resolveHardBoundary(
+    query: PermissionQuery,
+    mode: Mode,
+    resolution: EffectResolution
+  ): PermissionResult | null {
+    if (!resolution.ok && resolution.kind === 'unknown_action') {
+      return { decision: 'deny', riskLevel: 'high', reason: resolution.reason }
+    }
+
+    if (mode !== 'plan') return null
+
+    if (!resolution.ok) {
       return {
         decision: 'deny',
         riskLevel: 'high',
-        reason: '未知的 shell_session action'
+        reason: `plan 模式下禁止使用无法解析副作用的工具 "${query.toolName}"`
       }
     }
 
-    if (mode === 'plan') {
-      if (action === 'write') {
-        return {
-          decision: 'deny',
-          riskLevel: 'high',
-          reason: 'plan 模式下禁止向终端会话写入输入（read/interrupt/stop 可用）'
-        }
-      }
-    }
-
-    if (action !== 'write') {
+    const descriptor = getToolPermissionDescriptor(query.toolName)
+    if (resolution.effects.includes('orchestration')) {
       return {
-        decision: 'allow',
-        reason: action === 'read' ? '读取终端会话输出' : '控制现有终端进程'
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: this.planDenyReason(query.toolName)
       }
     }
-
-    const input = typeof query.args.input === 'string' ? query.args.input : ''
-    const commandQuery: PermissionQuery = {
-      ...query,
-      args: { ...query.args, command: input }
+    if (resolution.effects.includes('shell.execute')) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason:
+          query.toolName === 'shell_session'
+            ? 'plan 模式下禁止向终端会话写入输入（read/interrupt/stop 可用）'
+            : 'plan 模式下禁止执行任何 shell 命令'
+      }
     }
-    const denyFromRules = this.matchPersistentDecision(commandQuery, 'deny')
-    if (denyFromRules) return denyFromRules
-
-    const risk = assessCommandRisk(input)
-    if (risk.isDangerous && query.permissionMode !== 'full_access') {
-      return this.buildAskResult(risk.reason, { command: input, riskReason: risk.reason }, 'high')
+    if (resolution.effects.includes('filesystem.write') && descriptor?.planArtifact !== true) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: this.planDenyReason(query.toolName)
+      }
     }
+    return null
+  }
 
-    const allowFromRules = this.matchPersistentDecision(commandQuery, 'allow')
-    if (allowFromRules) return allowFromRules
+  private failClosed(query: PermissionQuery, reason: string): PermissionResult {
+    if (query.permissionMode === 'full_access') {
+      return { decision: 'allow', reason }
+    }
+    return {
+      decision: 'ask',
+      riskLevel: 'low',
+      reason,
+      request: {}
+    }
+  }
 
-    const decision = getBaseDecision(mode, 'shell_session', query.permissionMode)
-    const reason = risk.isDangerous ? risk.reason : '向运行中的终端进程写入输入'
-    return decision === 'ask'
-      ? this.buildAskResult(reason, { command: input, riskReason: risk.isDangerous ? risk.reason : undefined }, risk.riskLevel)
-      : { decision: 'allow', reason }
+  private extractCommand(query: PermissionQuery): string {
+    if (query.toolName === 'bash') {
+      return (resolveToolArg(query.args, 'command') ?? '').trim()
+    }
+    if (query.toolName === 'shell_session' && query.args.action === 'write') {
+      return typeof query.args.input === 'string' ? query.args.input : ''
+    }
+    return ''
+  }
+
+  private ruleQuery(query: PermissionQuery, command: string): PermissionQuery {
+    if (!command || query.args.command === command) return query
+    return { ...query, args: { ...query.args, command } }
+  }
+
+  private buildRequestMeta(
+    query: PermissionQuery,
+    resolution: Extract<EffectResolution, { ok: true }>
+  ): PermissionRequestMeta {
+    const command = this.extractCommand(query)
+    return {
+      ...(command ? { command } : {}),
+      ...(resolution.reasons[0] ? { riskReason: resolution.reasons[0] } : {}),
+      ...(resolution.externalPaths.length > 0 ? { externalPaths: resolution.externalPaths } : {}),
+      ...(resolution.pathAccess ? { pathAccess: resolution.pathAccess } : {})
+    }
+  }
+
+  private executionGrants(
+    resolution: Extract<EffectResolution, { ok: true }>
+  ): { executionPathGrants?: SessionPathGrant[] } {
+    if (resolution.externalPaths.length === 0 || !resolution.pathAccess) return {}
+    return {
+      executionPathGrants: resolution.externalPaths.map(canonicalRoot => ({
+        canonicalRoot,
+        access: resolution.pathAccess!,
+        match: 'exact' as const,
+        origin: 'user' as const
+      }))
+    }
   }
 
   private matchPersistentDecision(
@@ -202,6 +249,12 @@ export class PermissionManager {
     target: 'allow' | 'deny'
   ): PermissionResult | null {
     if (this.rules.length === 0) return null
+    if (
+      query.toolName === 'shell_session' &&
+      query.args.action !== 'write'
+    ) {
+      return null
+    }
 
     const input: MatchInput = {
       toolName: query.toolName,
@@ -216,18 +269,8 @@ export class PermissionManager {
       : { decision: 'allow', reason: match.reason }
   }
 
-  private buildReason(
-    toolName: string,
-    mode: Mode,
-    decision: 'allow' | 'ask' | 'deny'
-  ): string {
-    if (decision === 'deny') {
-      if (mode === 'plan') {
-        return `plan 模式下禁止使用 "${toolName}" 工具，请切换到默认模式或编排模式`
-      }
-      return `权限策略拒绝执行 "${toolName}"`
-    }
-    return getRiskDescription(toolName, 'low')
+  private planDenyReason(toolName: string): string {
+    return `plan 模式下禁止使用 "${toolName}" 工具，请切换到默认模式或编排模式`
   }
 
   private buildAskResult(

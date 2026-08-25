@@ -119,6 +119,8 @@ export function projectInteractionsToAgentStore(
       riskLevel: p.riskLevel === 'high' ? 'high' : 'low',
       reason: String(p.reason ?? ''),
       toolCallIds: p.toolCallIds as string[] | undefined,
+      externalPaths: p.externalPaths as string[] | undefined,
+      pathAccess: p.pathAccess === 'write' ? 'write' : p.pathAccess === 'read' ? 'read' : undefined,
       interactionId: perm.interactionId,
       runId: perm.runId,
       sessionId: perm.sessionId,

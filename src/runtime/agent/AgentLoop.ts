@@ -15,6 +15,7 @@ import {
   PermissionCoordinator,
   type ToolAuthorizationPolicy
 } from '../permissions/PermissionCoordinator'
+import { replaceSkillPathGrants } from '../permissions/pathAccess'
 import type { SessionStore } from '../sessions/SessionStore'
 import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
@@ -503,6 +504,7 @@ export class AgentLoop {
   /** 设置当前运行的会话命名空间；不要求装配 SessionStore。 */
   setSessionId(sessionId: string): void {
     this.ctx.sessionId = sessionId
+    this.syncSkillPathGrants()
   }
 
   /** 注入会话级 artifact 存储，供 bash / grep / read 大输出落盘 */
@@ -526,6 +528,7 @@ export class AgentLoop {
     if (!trimmed) return
     if (this.skillRoots.has(trimmed)) return
     this.skillRoots.add(trimmed)
+    this.syncSkillPathGrants()
     this.onSkillRootAdded?.(trimmed)
   }
 
@@ -536,11 +539,18 @@ export class AgentLoop {
       const trimmed = dir.trim()
       if (trimmed) this.skillRoots.add(trimmed)
     }
+    this.syncSkillPathGrants()
   }
 
   /** 当前已登记的 skill 可读根（只读快照） */
   getSkillRoots(): string[] {
     return [...this.skillRoots]
+  }
+
+  private syncSkillPathGrants(): void {
+    const sessionId = this.ctx.sessionId
+    if (!sessionId) return
+    replaceSkillPathGrants(sessionId, [...this.skillRoots])
   }
 
   /**
@@ -812,8 +822,6 @@ export class AgentLoop {
         askQuestion: this.askQuestionHandler,
         requestPlanReview: this.planReviewHandler,
         switchMode: this.switchModeHandler,
-        // 本会话已触发的 skill 目录 → 只读工具的额外允许根
-        extraAllowedRoots: [...this.skillRoots],
         allowNestedToolDispatch: true,
         ...(this.assertExecutionCurrent
           ? { assertExecutionCurrent: this.assertExecutionCurrent }

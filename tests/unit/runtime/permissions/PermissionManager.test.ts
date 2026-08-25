@@ -4,6 +4,7 @@ import {
   clearSessionWhitelist,
   grantSessionPermission
 } from '../../../../src/runtime/permissions/PermissionManager'
+import { resolveModeBaseline } from '../../../../src/runtime/permissions/permissionBaseline'
 import type { PermissionQuery } from '../../../../src/runtime/permissions/types'
 import type { Mode, PermissionMode } from '../../../../src/shared/session/types'
 
@@ -221,5 +222,41 @@ describe('PermissionManager', () => {
     expect(manager.check(query('unknown_tool', {}, 'request_approval'), 'default').decision).toBe('ask')
     expect(manager.check(query('unknown_tool', {}, 'auto'), 'default').decision).toBe('ask')
     expect(manager.check(query('unknown_tool', {}, 'full_access'), 'default').decision).toBe('allow')
+  })
+
+  it('网络读取从普通只读拆出：自动放行，请求批准需确认', () => {
+    expect(manager.check(query('web_search', { query: 'nova' }, 'auto'), 'default').decision).toBe(
+      'allow'
+    )
+    expect(
+      manager.check(query('web_search', { query: 'nova' }, 'request_approval'), 'default').decision
+    ).toBe('ask')
+    expect(
+      manager.check(query('web_search', { query: 'nova' }, 'full_access'), 'default').decision
+    ).toBe('allow')
+  })
+
+  it('空 effects 允许，解析失败 fail closed 为 ask', () => {
+    expect(manager.check(query('run_code', { code: '1' }, 'auto'), 'default').decision).toBe('allow')
+    expect(manager.check(query('unknown_tool', {}, 'auto'), 'default').decision).toBe('ask')
+  })
+
+  it('network.write 在自动档仍需确认，完全访问才放行', () => {
+    expect(
+      resolveModeBaseline({
+        permissionMode: 'auto',
+        effects: ['network.write'],
+        riskLevel: 'low',
+        hasExternalPath: false
+      })
+    ).toBe('ask')
+    expect(
+      resolveModeBaseline({
+        permissionMode: 'full_access',
+        effects: ['network.write'],
+        riskLevel: 'low',
+        hasExternalPath: false
+      })
+    ).toBe('allow')
   })
 })
