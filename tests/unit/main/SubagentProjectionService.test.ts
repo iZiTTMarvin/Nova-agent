@@ -58,7 +58,7 @@ describe('SubagentProjectionService', () => {
     }
     return sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'request_approval',
       task: 'inspect runtime',
       subagent: metadata

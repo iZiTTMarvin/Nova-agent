@@ -10,7 +10,7 @@ import type { ReadState } from '../../tools/editTool'
 import type { ToolAvailability } from '../../tools/availability'
 import type { ToolPresentationMode } from '../../code-mode'
 import { applyToolPresentation } from '../../code-mode'
-import { getModeVisibleTools } from '../../../shared/session/toolVisibility'
+import { getRuntimeVisibleTools } from '../../../shared/session/toolVisibility'
 
 export interface AgentContext {
   /** 对话上下文（含 system 在 [0]） */
@@ -23,7 +23,7 @@ export interface AgentContext {
   effectiveToolDefinitions: (() => ToolDefinition[]) | null
   /**
    * 工具分组可用性（会话级）。
-   * 与 mode 过滤正交；在 getEffectiveToolDefinitions 中于 mode 之后组合。
+   * 与产品模式、能力上限正交；在 getEffectiveToolDefinitions 中于二者之后组合。
    */
   toolAvailability: ToolAvailability | null
   /**
@@ -103,19 +103,20 @@ export function createAgentContext(initial: {
 }
 
 /**
- * 模型可见工具投影唯一出口：registry/provider → mode → group → presentation。
+ * 模型可见工具投影唯一出口：registry/provider → mode + capability → group → presentation。
  * 装配层拼 toolSummary 时必须调用本函数，禁止平行过滤。
  */
 export function projectEffectiveToolDefinitions(
   mode: Mode,
   definitions: readonly ToolDefinition[],
   availability: ToolAvailability | null | undefined,
-  presentation: ToolPresentationMode = 'direct'
+  presentation: ToolPresentationMode = 'direct',
+  capabilityCeiling: PermissionCapabilityCeiling | null = null
 ): ToolDefinition[] {
-  const modeVisible = getModeVisibleTools(mode, definitions)
+  const runtimeVisible = getRuntimeVisibleTools(mode, definitions, capabilityCeiling)
   const availabilityVisible = availability
-    ? availability.filterDefinitions(modeVisible)
-    : modeVisible
+    ? availability.filterDefinitions(runtimeVisible)
+    : runtimeVisible
   return applyToolPresentation(presentation, availabilityVisible)
 }
 
@@ -126,6 +127,7 @@ export function getEffectiveToolDefinitions(context: AgentContext): ToolDefiniti
     context.mode,
     definitions,
     context.toolAvailability,
-    context.toolPresentation
+    context.toolPresentation,
+    context.permissionCeiling
   )
 }

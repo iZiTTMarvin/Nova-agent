@@ -1,7 +1,11 @@
 import type { Mode } from './types'
-import { getToolPermissionDescriptor } from '../permissions/toolEffects'
+import type { PermissionCapabilityCeiling } from '../permissions/types'
+import {
+  getToolPermissionDescriptor,
+  isToolAvailableWithinCapabilityCeiling
+} from '../permissions/toolEffects'
 
-/** 当前模式下模型/UI 是否应该看见该工具 */
+/** 当前产品模式下模型/UI 是否应该看见该工具 */
 export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
   if (toolName === 'stage_transition') {
     return mode === 'compose'
@@ -29,12 +33,23 @@ export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
   return true
 }
 
-/** 使用与权限层相同的 effects 描述收窄模型可见工具，供 native schema 与 XML 工具目录共用。 */
+/** 使用产品模式收窄模型可见工具，供 native schema 与 XML 工具目录共用。 */
 export function getModeVisibleTools<T extends { name: string }>(
   mode: Mode,
   tools: readonly T[]
 ): T[] {
   return tools.filter(tool => isToolVisibleInMode(mode, tool.name))
+}
+
+/** 产品模式与 hard capability 共同决定当前 Runtime 可暴露的工具。 */
+export function getRuntimeVisibleTools<T extends { name: string }>(
+  mode: Mode,
+  tools: readonly T[],
+  capabilityCeiling: PermissionCapabilityCeiling | null
+): T[] {
+  return getModeVisibleTools(mode, tools).filter(tool =>
+    isToolAvailableWithinCapabilityCeiling(tool.name, capabilityCeiling)
+  )
 }
 
 /** 是否属于 plan 模式下应完全隐藏的写入类工具 */

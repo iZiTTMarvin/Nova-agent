@@ -30,7 +30,7 @@ describe('SessionStore', () => {
     const spawnKey = 'task_tool:stable-spawn-key'
     const createCommand = () => ({
       workspaceRoot: path.resolve(tmpDir, 'workspace'),
-      mode: 'plan' as const,
+      mode: 'default' as const,
       permissionMode: 'request_approval' as const,
       task: 'inspect the runtime',
       subagent: {

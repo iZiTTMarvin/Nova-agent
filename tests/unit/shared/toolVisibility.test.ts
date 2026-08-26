@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getModeVisibleTools,
+  getRuntimeVisibleTools,
   isToolVisibleInMode,
   isModeHiddenWriteTool
 } from '../../../src/shared/session/toolVisibility'
@@ -73,6 +74,16 @@ describe('toolVisibility', () => {
         'read',
         'save_plan',
         'switch_mode'
+      ])
+    })
+
+    it('只读能力上限独立于产品模式收窄工具面，并保留终端观察动作', () => {
+      const tools = ['read', 'write', 'bash', 'shell_session', 'task', 'web_search']
+        .map(name => ({ name }))
+      expect(getRuntimeVisibleTools('default', tools, 'read_only').map(tool => tool.name)).toEqual([
+        'read',
+        'shell_session',
+        'web_search'
       ])
     })
   })

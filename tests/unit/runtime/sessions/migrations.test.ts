@@ -260,7 +260,7 @@ describe('migrateSessionData', () => {
       kind: 'subagent' as const,
       id: 'sess_skill_child',
       workspaceRoot: join(tmpdir(), 'workspace'),
-      mode: 'plan' as const,
+      mode: 'default' as const,
       permissionMode: 'request_approval' as const,
       codeIndexEnabled: false,
       messages: [],
@@ -498,6 +498,68 @@ describe('migrateSessionData', () => {
       permissionMode: 'request_approval',
       subagent
     })
+  })
+
+  it('v17 仅归一化子会话的伪 Plan 模式，主会话真实 Plan 保持不变', () => {
+    const messages = [
+      { id: 'm1', parentId: null, role: 'user' as const, content: 'hello', timestamp: 1 }
+    ]
+    const base = {
+      schemaVersion: 17,
+      id: 'session',
+      workspaceRoot: '/ws',
+      mode: 'plan' as const,
+      permissionMode: 'auto' as const,
+      codeIndexEnabled: false,
+      messages,
+      currentLeafId: 'm1',
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const subagent = {
+      lineage: {
+        parentSessionId: 'parent',
+        parentRunId: 'run-parent',
+        rootRunId: 'run-parent',
+        depth: 1,
+        spawnKey: 'spawn-key',
+        spawnRunId: 'run-child',
+        origin: {
+          kind: 'task_tool' as const,
+          parentMessageId: 'message-parent',
+          parentToolCallId: 'tool-parent'
+        }
+      },
+      profile: {
+        profileId: 'explore',
+        name: 'Explore',
+        description: 'Read-only exploration',
+        systemPrompt: 'Inspect and report.',
+        toolNames: ['read', 'grep'],
+        permissionCeiling: 'read_only' as const,
+        maxToolRounds: 20,
+        configHash: 'profile-hash'
+      }
+    }
+
+    const primary = migrateSessionData({ ...base, kind: 'primary' })
+    const child = migrateSessionData({ ...base, kind: 'subagent', subagent })
+    const historicalComposeChild = migrateSessionData({
+      ...base,
+      kind: 'subagent',
+      mode: 'compose',
+      subagent
+    })
+
+    expect(primary).toMatchObject({ schemaVersion: 18, mode: 'plan' })
+    expect(child).toMatchObject({
+      schemaVersion: 18,
+      mode: 'default',
+      messages,
+      currentLeafId: 'm1',
+      subagent
+    })
+    expect(historicalComposeChild).toMatchObject({ schemaVersion: 18, mode: 'compose' })
   })
 
   it('完全访问持久值按当前 schema 原样恢复', () => {

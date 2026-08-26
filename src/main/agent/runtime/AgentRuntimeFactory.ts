@@ -12,10 +12,10 @@ import {
   buildSkillContextForMode,
   estimateTokens,
   discoverProjectRules,
+  projectEffectiveToolDefinitions,
   renderBaseRules,
   renderMinimalEngineeringPolicy
 } from '../../../runtime/agent'
-import { projectEffectiveToolDefinitions } from '../../../runtime/agent/core/AgentContext'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
 import { loadModelConfig } from '../../../runtime/model/config'

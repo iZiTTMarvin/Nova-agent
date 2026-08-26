@@ -247,7 +247,7 @@ describe('SubagentExecutionService', () => {
       const child = sessionStore.load(execution.childSessionId)
       if (child?.kind !== 'subagent') throw new Error('expected Child Session')
       expect(child.permissionMode).toBe(parentMode)
-      expect(child.mode).toBe('plan')
+      expect(child.mode).toBe('default')
     }
   )
 
@@ -452,7 +452,7 @@ describe('SubagentExecutionService', () => {
     const readOnlySnapshot = resolveSubagentProfileSnapshot(profile, 'explore')
     const nestedParent = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'request_approval',
       task: 'nested parent',
       subagent: {
@@ -560,7 +560,7 @@ describe('SubagentExecutionService', () => {
     const identity = createSpawnIdentity(spawnCommand)
     sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'request_approval',
       task: spawnCommand.task,
       subagent: {
@@ -591,7 +591,7 @@ describe('SubagentExecutionService', () => {
     const identity = createSpawnIdentity(spawnCommand)
     const child = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'request_approval',
       task: spawnCommand.task,
       subagent: {
@@ -682,7 +682,7 @@ describe('SubagentExecutionService', () => {
     const identity = createSpawnIdentity(spawnCommand)
     const child = sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'request_approval',
       task: spawnCommand.task,
       subagent: {

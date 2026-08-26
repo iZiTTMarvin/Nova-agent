@@ -16,6 +16,7 @@ export { estimateTokens, estimateContextTokens, estimateChatMessageTokens } from
 export { discoverProjectRules, discoverProjectRulesFile } from './context/projectRulesDiscovery'
 export { renderBaseRules, renderMinimalEngineeringPolicy } from './promptRenderer'
 export { calculateContextBreakdown } from './context/contextBreakdownCalculator'
+export { projectEffectiveToolDefinitions } from './core/AgentContext'
 export {
   listRuleFiles,
   readRuleFile,

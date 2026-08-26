@@ -11,6 +11,7 @@ import { SessionStore } from '../../../src/runtime/sessions'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
 import { createReadState } from '../../../src/runtime/tools/editTool'
+import type { ToolExecutor } from '../../../src/runtime/tools/types'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 
 vi.mock('../../../src/main/agent/runtime/AgentRuntimeFactory', () => ({
@@ -33,7 +34,7 @@ describe('SubagentRuntimeFactory', () => {
     const skillRoot = resolve(workspace, 'skills', 'inspect')
     const child = store.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'request_approval',
       task: 'inspect',
       subagent: {
@@ -180,6 +181,7 @@ describe('SubagentRuntimeFactory 权限装配', () => {
 
   async function prepareReadonlyChild(input: {
     isolation: 'shared' | 'readonly'
+    profileId?: 'explore' | 'code'
     toolAuthorizationPolicy?: import('../../../src/runtime/permissions/PermissionCoordinator').ToolAuthorizationPolicy
   }) {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-perm-'))
@@ -187,15 +189,25 @@ describe('SubagentRuntimeFactory 权限装配', () => {
     const workspace = resolve(sessionsDir, 'workspace')
     const store = new SessionStore(sessionsDir)
     const parent = store.create(workspace, 'default', { permissionMode: 'full_access' })
+    const profileId = input.profileId ?? 'explore'
     const profile = resolveSubagentProfileSnapshot({
-      name: 'explore',
-      description: 'read only',
+      name: profileId,
+      description: profileId === 'explore' ? 'read only' : 'workspace writer',
       prompt: 'inspect',
-      allowedTools: ['read', 'grep']
-    }, 'explore')
+      allowedTools: profileId === 'explore' ? ['read', 'grep'] : ['read', 'write', 'bash']
+    }, profileId)
+    const resolveTool = (name: string): ToolExecutor | undefined =>
+      profile.toolNames.includes(name)
+        ? {
+            name,
+            description: `${name} tool`,
+            parameters: { type: 'object', properties: {} },
+            execute: async () => ({ success: true, output: '' })
+          }
+        : undefined
     const child = store.createChildIfAbsent({
       workspaceRoot: workspace,
-      mode: 'plan',
+      mode: 'default',
       permissionMode: 'full_access',
       task: 'inspect',
       subagent: {
@@ -224,7 +236,7 @@ describe('SubagentRuntimeFactory 权限装配', () => {
       parentRunId: 'run-parent',
       rootRunId: 'run-parent',
       modelClient: new MockModelClient(),
-      resolveTool: () => undefined,
+      resolveTool,
       sessionStore: store,
       sessionsDir,
       readState: createReadState(),
@@ -235,16 +247,40 @@ describe('SubagentRuntimeFactory 权限装配', () => {
     return { prepared, dispose: () => prepared.agentLoop.dispose() }
   }
 
-  it('完全访问父会话下，只读上限仍拒绝 Shell 与进程控制', async () => {
+  it('只读上限独立于 Default 模式拒绝 Shell 与进程控制', async () => {
     const { prepared, dispose } = await prepareReadonlyChild({ isolation: 'shared' })
+    const permissionRequests: string[] = []
+    const unsubscribe = prepared.agentLoop.getEventBus().on((event) => {
+      if (event.type !== 'permission_request') return
+      permissionRequests.push(event.requestId)
+      prepared.agentLoop.respondPermission(event.requestId, false)
+    })
     const results = await prepared.agentLoop.checkBatchPermission([
       { toolCallId: 'tc_bash', toolName: 'bash', args: { command: 'npm test' } },
       { toolCallId: 'tc_interrupt', toolName: 'shell_session', args: { action: 'interrupt', ref: 'p' } },
       { toolCallId: 'tc_read', toolName: 'read', args: { path: 'a.ts' } }
     ], 'msg-child')
+    const modeResult = await prepared.agentLoop.checkBatchPermission([
+      { toolCallId: 'tc_mode', toolName: 'switch_mode', args: { mode: 'default' } }
+    ], 'msg-child')
     expect(results.get('tc_bash')).toMatchObject({ allowed: false })
     expect(results.get('tc_interrupt')).toMatchObject({ allowed: false })
     expect(results.get('tc_read')).toMatchObject({ allowed: true })
+    expect(modeResult.get('tc_mode')).toMatchObject({ allowed: true })
+    expect(permissionRequests).toEqual([])
+    unsubscribe()
+    dispose()
+  })
+
+  it('调用隔离收窄实现型 profile 时，模型目录不再暴露写入与 Shell', async () => {
+    const { prepared, dispose } = await prepareReadonlyChild({
+      isolation: 'readonly',
+      profileId: 'code'
+    })
+    const systemPrompt = prepared.agentLoop.getFrozenSystemPrompt()
+    expect(systemPrompt).toContain('- read: read tool')
+    expect(systemPrompt).not.toContain('- write: write tool')
+    expect(systemPrompt).not.toContain('- bash: bash tool')
     dispose()
   })
 

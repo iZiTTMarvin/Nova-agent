@@ -5,7 +5,10 @@
  * 静态命令分类器无法证明任意 Shell 命令安全，未命中仅表示没有命中已知高风险模式。
  */
 import type { Mode } from '../../shared/session/types'
-import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
+import {
+  effectsExceedCapabilityCeiling,
+  getToolPermissionDescriptor
+} from '../../shared/permissions/toolEffects'
 import type { SessionPathGrant } from '../../shared/permissions/types'
 import type {
   PermissionQuery,
@@ -209,13 +212,7 @@ export class PermissionManager {
         reason: `只读上限下禁止使用无法解析副作用的工具 "${query.toolName}"`
       }
     }
-    const effects = resolution.effects
-    if (
-      effects.includes('filesystem.write') ||
-      effects.includes('shell.execute') ||
-      effects.includes('process.control') ||
-      effects.includes('orchestration')
-    ) {
+    if (effectsExceedCapabilityCeiling(resolution.effects, query.capabilityCeiling)) {
       return {
         decision: 'deny',
         riskLevel: 'high',

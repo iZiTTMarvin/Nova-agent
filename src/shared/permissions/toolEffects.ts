@@ -1,4 +1,8 @@
-import type { ToolPermissionDescriptor } from './types'
+import type {
+  PermissionCapabilityCeiling,
+  ToolEffect,
+  ToolPermissionDescriptor
+} from './types'
 
 const FILESYSTEM_READ: ToolPermissionDescriptor = {
   effects: ['filesystem.read'],
@@ -54,4 +58,30 @@ export function toolHasWriteCapability(toolName: string): boolean {
     descriptor.effects.includes('filesystem.write') ||
     descriptor.effects.includes('shell.execute')
   )
+}
+
+const READ_ONLY_FORBIDDEN_EFFECTS = new Set<ToolEffect>([
+  'filesystem.write',
+  'shell.execute',
+  'process.control',
+  'orchestration'
+])
+
+export function effectsExceedCapabilityCeiling(
+  effects: readonly ToolEffect[],
+  ceiling: PermissionCapabilityCeiling | null | undefined
+): boolean {
+  return ceiling === 'read_only' && effects.some(effect => READ_ONLY_FORBIDDEN_EFFECTS.has(effect))
+}
+
+export function isToolAvailableWithinCapabilityCeiling(
+  toolName: string,
+  ceiling: PermissionCapabilityCeiling | null | undefined
+): boolean {
+  if (ceiling !== 'read_only') return true
+  const descriptor = getToolPermissionDescriptor(toolName)
+  if (!descriptor) return false
+  // shell_session 仍需暴露 read；write / interrupt / stop 会按动态 effects 被硬边界拒绝。
+  if (toolName === 'shell_session') return true
+  return !effectsExceedCapabilityCeiling(descriptor.effects, ceiling)
 }

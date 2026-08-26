@@ -209,10 +209,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
     const childResult = this.deps.sessionStore.createChildIfAbsent({
       workspaceRoot: command.workingDirectory,
-      mode:
-        profile.permissionCeiling === 'read_only' || command.isolation === 'readonly'
-          ? 'plan'
-          : 'default',
+      mode: 'default',
       permissionMode: parentSession.permissionMode,
       task: command.task,
       codeIndexEnabled: parentSession.codeIndexEnabled === true,

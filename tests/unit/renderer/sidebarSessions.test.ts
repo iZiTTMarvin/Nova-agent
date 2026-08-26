@@ -17,7 +17,7 @@ const child: Session = {
   id: 'child',
   kind: 'subagent',
   workspaceRoot: 'D:/workspace',
-  mode: 'plan',
+  mode: 'default',
   createdAt: 2,
   updatedAt: 2,
   messageCount: 1,

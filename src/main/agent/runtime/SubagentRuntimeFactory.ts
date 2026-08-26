@@ -1,5 +1,10 @@
 import { join } from 'path'
-import { AgentLoop, EventBus, renderMinimalEngineeringPolicy } from '../../../runtime/agent'
+import {
+  AgentLoop,
+  EventBus,
+  projectEffectiveToolDefinitions,
+  renderMinimalEngineeringPolicy
+} from '../../../runtime/agent'
 import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
@@ -37,11 +42,9 @@ export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
   readonly toolAuthorizationPolicy?: ToolAuthorizationPolicy | null
 }
 
-/** 只读上限以 profile 上限与调用方隔离取并集；权限层据此收窄，模式字段不再兼任闸门语义。 */
+/** profile 与调用隔离任一要求只读时，生效能力只能收窄。 */
 function resolveReadonlyCeiling(input: PrepareSubagentRuntimeInput): boolean {
-  return (
-    input.profile.permissionCeiling === 'read_only' || input.isolation === 'readonly'
-  )
+  return input.profile.permissionCeiling === 'read_only' || input.isolation === 'readonly'
 }
 
 /** 为 Child Session 装配普通 AgentLoop；不创建 Session/Run，也不提交终态。 */
@@ -54,8 +57,15 @@ export function prepareSubagentRuntime(
     const tool = input.resolveTool(toolName)
     if (tool) toolRegistry.register(tool)
   }
-  const toolSummary = toolRegistry
-    .getToolDefinitions()
+  const capabilityCeiling = isReadonly ? 'read_only' as const : null
+  const visibleToolDefinitions = projectEffectiveToolDefinitions(
+    input.childSession.mode,
+    toolRegistry.getToolDefinitions(),
+    null,
+    'direct',
+    capabilityCeiling
+  )
+  const toolSummary = visibleToolDefinitions
     .map((tool) => `- ${tool.name}: ${tool.description.split('\n')[0]}`)
     .join('\n')
   const systemPrompt = SystemPromptBuilder.build({
@@ -81,7 +91,7 @@ export function prepareSubagentRuntime(
     toolExecution: 'sequential',
     reasoningEffort: input.reasoningEffort,
     permissionMode: input.childSession.permissionMode,
-    ...(isReadonly ? { permissionCeiling: 'read_only' as const } : {}),
+    ...(capabilityCeiling ? { permissionCeiling: capabilityCeiling } : {}),
     permissionManager,
     ...(input.promptCacheKey ? { promptCacheKey: input.promptCacheKey } : {}),
     onCompaction: (compactedContext, meta) => {
@@ -102,14 +112,12 @@ export function prepareSubagentRuntime(
   agentLoop.setWorkingDir(input.workingDirectory)
   agentLoop.setWorkspaceRoot(input.childSession.workspaceRoot)
   agentLoop.setToolRegistry(toolRegistry)
-  agentLoop.setMode(isReadonly ? 'plan' : 'default')
+  agentLoop.setMode(input.childSession.mode)
   // compose 阶段门禁 overlay 随父会话继承：子代理能力只能比父会话更窄。
   if (input.toolAuthorizationPolicy) {
     agentLoop.setToolAuthorizationPolicy(input.toolAuthorizationPolicy)
   }
-  // 子代理的 mode 只是能力闸门（收窄工具与权限），不是主会话的计划/编排语义。
-  // 主会话模式指令会要求调用 save_plan / switch_mode、等待用户审批——子代理既没有
-  // 这些工具也没有真实用户，拼到任务尾部会被模型正确识别为角色不符的注入指令。
+  // 子代理不执行主会话的 Plan / Compose 产品流程，避免注入不适用的模式指令。
   agentLoop.setModeInstructionProvider(() => '')
   agentLoop.setSessionContext(input.sessionStore, input.childSession.id)
   agentLoop.setReadState(input.readState)

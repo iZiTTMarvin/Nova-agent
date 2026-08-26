@@ -23,7 +23,7 @@ import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 17
+export const CURRENT_SESSION_SCHEMA_VERSION = 18
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -325,6 +325,18 @@ export function migrateV16ToV17(
   }
 }
 
+/** 历史子会话借用 plan 表达只读上限；能力上限已有独立字段后统一回到默认产品模式。 */
+export function migrateV17ToV18(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 18,
+    ...(session.kind === 'subagent' && session.mode === 'plan'
+      ? { mode: 'default' as const }
+      : {})
+  }
+}
+
 function loadDefaultPermissionMode(): PermissionMode {
   try {
     return loadNovaSettings().defaultPermissionMode
@@ -502,7 +514,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV13ToV14, // v13 → v14
   migrateV14ToV15, // v14 → v15
   migrateV15ToV16, // v15 → v16
-  migrateV16ToV17 // v16 → v17
+  migrateV16ToV17, // v16 → v17
+  migrateV17ToV18 // v17 → v18
 ]
 
 /**
