@@ -144,8 +144,8 @@ describe('ContentTopBar 删除会话错误反馈', () => {
         ?.click()
     })
     const deleteItem = Array.from(
-      renderer.container.querySelectorAll<HTMLButtonElement>('button')
-    ).find(btn => btn.textContent?.trim() === '删除')
+      renderer.container.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find(item => item.textContent?.trim() === '删除')
     expect(deleteItem).not.toBeNull()
 
     act(() => {
@@ -190,8 +190,8 @@ describe('ContentTopBar 删除会话错误反馈', () => {
         ?.click()
     })
     const deleteItem = Array.from(
-      renderer.container.querySelectorAll<HTMLButtonElement>('button')
-    ).find(btn => btn.textContent?.trim() === '删除')
+      renderer.container.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find(item => item.textContent?.trim() === '删除')
     act(() => {
       deleteItem!.click()
     })

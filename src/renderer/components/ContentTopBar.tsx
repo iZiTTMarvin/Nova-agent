@@ -7,33 +7,12 @@ import {
   PanelLeftIcon,
   PanelRightIcon
 } from './Icons'
+import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { useLayoutStore } from '../stores/useLayoutStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
 import './ContentTopBar.css'
-
-/** 菜单打开期间：点击外部或 Escape 关闭（与侧边栏会话菜单同一交互约定） */
-function useDismissOnOutsideInteraction(open: boolean, onDismiss: () => void, excludeSelector: string): void {
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target
-      if (!(target instanceof Element)) return
-      if (target.closest(excludeSelector)) return
-      onDismiss()
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onDismiss()
-    }
-    window.addEventListener('mousedown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('mousedown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open, onDismiss, excludeSelector])
-}
 
 /** 窗口控制按钮组：最小化 / 最大化或还原 / 关闭（Windows 风格，固定在内容区顶行右侧） */
 const WindowControls: React.FC = () => {
@@ -90,14 +69,11 @@ const SessionMoreMenu: React.FC = () => {
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const deleteSession = useChatStore(state => state.deleteSession)
   const setSessionPinned = useChatStore(state => state.setSessionPinned)
-  const [open, setOpen] = useState(false)
-  useDismissOnOutsideInteraction(open, () => setOpen(false), '.content-topbar__session-menu')
 
   const currentSession = sessions.find(s => s.id === currentSessionId)
   if (!currentSession || currentSession.kind !== 'primary') return null
 
   const handleDelete = async () => {
-    setOpen(false)
     const response = await window.api.invoke('dialog:confirm', {
       title: '删除会话',
       message: '确定要删除这个会话吗？',
@@ -121,42 +97,27 @@ const SessionMoreMenu: React.FC = () => {
   }
 
   return (
-    <div className="content-topbar__session-menu">
-      <IconButton
-        label="当前会话操作"
-        icon={<span className="content-topbar__menu-ellipsis" aria-hidden>⋯</span>}
-        variant="ghost"
-        size="sm"
-        className="content-topbar__btn"
-        tooltip="当前会话操作"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen(v => !v)}
+    <DropdownMenu
+      button={{
+        label: '当前会话操作',
+        icon: <span className="content-topbar__menu-ellipsis" aria-hidden>⋯</span>,
+        variant: 'ghost',
+        size: 'sm',
+        isIconOnly: true,
+        className: 'content-topbar__btn',
+        tooltip: '当前会话操作'
+      }}
+    >
+      <DropdownMenuItem
+        label={currentSession.pinned ? '取消置顶' : '置顶'}
+        onClick={() => void setSessionPinned(currentSession.id, !currentSession.pinned)}
       />
-      {open && (
-        <div className="content-topbar__menu-panel" role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            className="content-topbar__menu-item"
-            onClick={() => {
-              setOpen(false)
-              void setSessionPinned(currentSession.id, !currentSession.pinned)
-            }}
-          >
-            {currentSession.pinned ? '取消置顶' : '置顶'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="content-topbar__menu-item content-topbar__menu-item--danger"
-            onClick={() => void handleDelete()}
-          >
-            删除
-          </button>
-        </div>
-      )}
-    </div>
+      <DropdownMenuItem
+        label="删除"
+        style={{ color: 'var(--color-error)' }}
+        onClick={() => void handleDelete()}
+      />
+    </DropdownMenu>
   )
 }
 

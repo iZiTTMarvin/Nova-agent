@@ -10,6 +10,7 @@ import {
 } from '../../shared/session/title'
 import { NovaLogo, FolderIcon, SettingsIcon, PlusIcon, PinIcon, PanelLeftIcon } from './Icons'
 import { Button } from '@astryxdesign/core/Button'
+import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
@@ -122,25 +123,6 @@ const SidebarSessions = React.memo(function SidebarSessions() {
       editInputRef.current.select()
     }
   }, [editingId])
-
-  useEffect(() => {
-    if (!openMenuSessionId) return
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target
-      if (!(target instanceof Element)) return
-      if (target.closest('.sidebar-session-row__actions')) return
-      setOpenMenuSessionId(null)
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenMenuSessionId(null)
-    }
-    window.addEventListener('mousedown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('mousedown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [openMenuSessionId])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -330,78 +312,58 @@ const SidebarSessions = React.memo(function SidebarSessions() {
           />
         )}
         {!isEditing && (
-          <div
-            className="sidebar-session-row__actions"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <IconButton
-              label="会话操作"
-              icon={<span className="sidebar-session-menu__ellipsis" aria-hidden>⋯</span>}
-              variant="ghost"
-              size="sm"
-              tooltip="会话操作"
-              aria-expanded={openMenuSessionId === session.id}
-              aria-haspopup="menu"
-              onClick={(e) => {
-                e.stopPropagation()
-                setOpenMenuSessionId((current) =>
-                  current === session.id ? null : session.id
-                )
+          <div className="sidebar-session-row__actions">
+            {/*
+             * 菜单走 Astryx DropdownMenu（原生 popover 顶层渲染）：
+             * 会话行位于项目折叠容器的 overflow:hidden 内，
+             * 自绘 absolute 面板会被裁剪，顶层弹出不受任何祖先裁剪。
+             */}
+            <DropdownMenu
+              isMenuOpen={openMenuSessionId === session.id}
+              onOpenChange={(open) => setOpenMenuSessionId(open ? session.id : null)}
+              button={{
+                label: '会话操作',
+                icon: <span className="sidebar-session-menu__ellipsis" aria-hidden>⋯</span>,
+                variant: 'ghost',
+                size: 'sm',
+                isIconOnly: true,
+                tooltip: '会话操作'
               }}
-            />
-            {openMenuSessionId === session.id && (
-              <div className="sidebar-session-menu__panel" role="menu">
-                {showWaiting || showRunning ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="sidebar-session-menu__item"
+            >
+              {showWaiting || showRunning ? (
+                <DropdownMenuItem
+                  label="停止运行"
+                  onClick={() => {
+                    setOpenMenuSessionId(null)
+                    void cancelExecution(
+                      showWaiting ? waitingBadge?.runId : runningBadge?.runId
+                    )
+                  }}
+                />
+              ) : (
+                <>
+                  <DropdownMenuItem
+                    label={session.pinned ? '取消置顶' : '置顶'}
+                    onClick={() => togglePin(session)}
+                  />
+                  <DropdownMenuItem
+                    label="重命名"
                     onClick={() => {
                       setOpenMenuSessionId(null)
-                      void cancelExecution(
-                        showWaiting ? waitingBadge?.runId : runningBadge?.runId
-                      )
+                      startEditing(session)
                     }}
-                  >
-                    停止运行
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="sidebar-session-menu__item"
-                      onClick={() => togglePin(session)}
-                    >
-                      {session.pinned ? '取消置顶' : '置顶'}
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="sidebar-session-menu__item"
-                      onClick={() => {
-                        setOpenMenuSessionId(null)
-                        startEditing(session)
-                      }}
-                    >
-                      重命名
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="sidebar-session-menu__item sidebar-session-menu__item--danger"
-                      onClick={() => {
-                        setOpenMenuSessionId(null)
-                        void handleDelete(session.id)
-                      }}
-                    >
-                      删除
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+                  />
+                  <DropdownMenuItem
+                    label="删除"
+                    style={{ color: 'var(--color-error)' }}
+                    onClick={() => {
+                      setOpenMenuSessionId(null)
+                      void handleDelete(session.id)
+                    }}
+                  />
+                </>
+              )}
+            </DropdownMenu>
           </div>
         )}
       </div>
@@ -465,71 +427,64 @@ const SidebarSessions = React.memo(function SidebarSessions() {
               : null
 
           /*
-           * 项目「+」与 SideNavItem 为行级兄弟：endContent 在主按钮内部，
-           * 放入 IconButton 会形成 button 嵌套。
+           * 项目行默认右侧留白，任务数 /「+」/ 折叠箭头都归入悬浮簇，hover 或聚焦时出现；
+           * 折叠箭头由 CSS 控制显隐（Astryx 把它渲染为主按钮的最后一个 span）。
+           * 「+」保持行级兄弟，避免 endContent 嵌套 button。
            */
           return (
-            <div key={projectPath} className="group flex items-start gap-1">
-              <div className="flex-1 min-w-0">
-                <SideNavItem
-                  label={getProjectName(projectPath)}
-                  icon={<FolderIcon size={16} />}
-                  size="sm"
-                  collapsible={{
-                    isCollapsed: !isExpanded,
-                    onCollapsedChange: (collapsed) => {
-                      setExpandedProjects(prev => ({ ...prev, [projectPath]: !collapsed }))
-                    }
-                  }}
-                  endContent={(
-                    projectIndexStatus === null
-                      ? (
-                          <span className="text-[11px] text-text-muted group-hover:hidden">
-                            {projectSessions.length} 个任务
-                          </span>
-                        )
-                      : (
-                          <SidebarStatusDot
-                            tone={projectIndexStatus === 'building' ? 'accent' : 'warning'}
-                            label={projectIndexStatus === 'building' ? '正在建立代码索引' : '代码索引不可用'}
-                            isPulsing={projectIndexStatus === 'building'}
-                            onActivate={openCodeIndexSettings}
-                          />
-                        )
-                  )}
-                >
-                  {visibleSessions.map((session) => renderSessionRow(session))}
-                  {showMoreToggle && (
-                    <Button
-                      label={isSessionListExpanded ? '收起' : '显示更多'}
-                      variant="ghost"
-                      size="sm"
-                      width="100%"
-                      type="button"
-                      className="w-full text-left px-3 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setExpandedSessionLists(prev => ({
-                          ...prev,
-                          [projectPath]: !isSessionListExpanded
-                        }))
-                      }}
-                    />
-                  )}
-                </SideNavItem>
-              </div>
-              <IconButton
-                label="在此项目下新建会话"
-                icon={<PlusIcon size={16} />}
-                variant="ghost"
+            <div key={projectPath} className="sidebar-project-row">
+              <SideNavItem
+                label={getProjectName(projectPath)}
+                icon={<FolderIcon size={16} />}
                 size="sm"
-                className="opacity-0 group-hover:opacity-100 shrink-0 mt-0.5"
-                tooltip="在此项目下新建会话"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  createNewSession(projectPath)
+                collapsible={{
+                  isCollapsed: !isExpanded,
+                  onCollapsedChange: (collapsed) => {
+                    setExpandedProjects(prev => ({ ...prev, [projectPath]: !collapsed }))
+                  }
                 }}
-              />
+              >
+                {visibleSessions.map((session) => renderSessionRow(session))}
+                {showMoreToggle && (
+                  <Button
+                    label={isSessionListExpanded ? '收起' : '显示更多'}
+                    variant="ghost"
+                    size="sm"
+                    width="100%"
+                    type="button"
+                    className="w-full text-left px-3 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setExpandedSessionLists(prev => ({
+                        ...prev,
+                        [projectPath]: !isSessionListExpanded
+                      }))
+                    }}
+                  />
+                )}
+              </SideNavItem>
+              <div className="sidebar-project-row__hover-cluster">
+                {projectIndexStatus === null ? (
+                  <span className="sidebar-project-row__count text-[11px] text-text-muted">
+                    {projectSessions.length} 个任务
+                  </span>
+                ) : (
+                  <SidebarStatusDot
+                    tone={projectIndexStatus === 'building' ? 'accent' : 'warning'}
+                    label={projectIndexStatus === 'building' ? '正在建立代码索引' : '代码索引不可用'}
+                    isPulsing={projectIndexStatus === 'building'}
+                    onActivate={openCodeIndexSettings}
+                  />
+                )}
+                <IconButton
+                  label="在此项目下新建会话"
+                  icon={<PlusIcon size={16} />}
+                  variant="ghost"
+                  size="sm"
+                  tooltip="在此项目下新建会话"
+                  onClick={() => createNewSession(projectPath)}
+                />
+              </div>
             </div>
           )
         })}
