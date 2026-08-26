@@ -137,6 +137,7 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
     try {
       await window.api.invoke(PERMISSION_GRANT_SESSION_PATH, {
         sessionId: grantSessionId,
+        requestId: request.requestId,
         canonicalPath: displayedPath,
         access: request.pathAccess ?? 'read'
       })

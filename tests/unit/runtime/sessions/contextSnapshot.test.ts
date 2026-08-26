@@ -13,6 +13,7 @@ import {
 } from '../../../../src/runtime/sessions/contextSnapshot'
 import { CONTEXT_SNAPSHOT_VERSION } from '../../../../src/runtime/sessions/types'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 let tmpDir: string
 
@@ -65,6 +66,7 @@ describe('contextSnapshot 纯函数', () => {
     store.appendMessage(session.id, { id: 'u1', role: 'user', content: '问题', timestamp: 1 })
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: '助手'
     })
     restoreOrInjectHistory(loop, store.load(session.id)!, null)

@@ -10,6 +10,7 @@ import { restoreOrInjectHistory } from '../../../../src/runtime/sessions/context
 import type { SessionData } from '../../../../src/runtime/sessions/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import type { MessageBlock } from '../../../../src/shared/session'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 /** 运行时子轮序列（无 reasoning 附着） */
 const SPLIT_NO_REASONING: ChatMessage[] = [
@@ -125,6 +126,7 @@ describe('有 blocks 时恢复路径与运行时子轮对齐', () => {
     ])
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: '助手'
     })
     restoreOrInjectHistory(loop, session, null)

@@ -6,6 +6,7 @@ import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { createTaskTool } from '../../../src/runtime/tools/task'
 import type { SpawnSubagentPort } from '../../../src/runtime/subagents'
 import { agentRoute } from '../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 
 function setupExploreE2E() {
   const client = new MockModelClient()
@@ -48,7 +49,7 @@ function setupExploreE2E() {
   const registry = new ToolRegistry()
   registry.register(createTaskTool({ getSpawnSubagentPort: () => port }))
 
-  const loop = new AgentLoop(client, bus)
+  const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager() })
   loop.setToolRegistry(registry)
   loop.setWorkingDir(process.cwd())
   loop.setExecutionIdentity({

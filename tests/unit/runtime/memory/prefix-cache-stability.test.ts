@@ -18,6 +18,7 @@ import { MEMORY_POLICY_PROMPT } from '../../../../src/runtime/memory/memoryConfi
 import { MEMORY_PREFETCH_BLOCK_TITLE } from '../../../../src/runtime/memory/retrieval/MemoryPrefetchService'
 import { MemoryPrefetchService } from '../../../../src/runtime/memory/retrieval/MemoryPrefetchService'
 import { createMemoryPrefetchWiring } from '../../../../src/runtime/memory/retrieval/MemoryPrefetchWiring'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 import type {
   MemorySearchInput,
   MemorySearchResult,
@@ -74,6 +75,7 @@ function createMemoryLoop(
   retrieval: ReturnType<typeof createRetrievalStub>
 ): AgentLoop {
   const loop = new AgentLoop(client, new EventBus(), {
+    permissionManager: new PermissionManager(),
     systemPromptLayers: {
       agentRole: buildStableSystemPrompt({ workingDir: '/tmp/project' }),
       baseRules: renderBaseRules(),

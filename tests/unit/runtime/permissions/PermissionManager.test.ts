@@ -291,4 +291,48 @@ describe('PermissionManager', () => {
       })
     ).toBe('allow')
   })
+
+  it.each([
+    ['request_approval', ['filesystem.read'], 'low', 'workspace', 'allow'],
+    ['request_approval', ['filesystem.read'], 'low', 'external', 'ask'],
+    ['request_approval', ['filesystem.write'], 'low', 'workspace', 'allow'],
+    ['request_approval', ['filesystem.write'], 'low', 'external', 'ask'],
+    ['request_approval', ['shell.execute'], 'low', 'none', 'ask'],
+    ['request_approval', ['shell.execute'], 'high', 'none', 'ask'],
+    ['request_approval', ['network.read'], 'low', 'none', 'ask'],
+    ['request_approval', ['network.write'], 'low', 'none', 'ask'],
+    ['request_approval', ['session.write'], 'low', 'none', 'allow'],
+    ['request_approval', ['orchestration'], 'low', 'none', 'allow'],
+    ['auto', ['filesystem.read'], 'low', 'workspace', 'allow'],
+    ['auto', ['filesystem.read'], 'low', 'external', 'ask'],
+    ['auto', ['filesystem.write'], 'low', 'workspace', 'allow'],
+    ['auto', ['filesystem.write'], 'low', 'external', 'ask'],
+    ['auto', ['shell.execute'], 'low', 'none', 'allow'],
+    ['auto', ['shell.execute'], 'high', 'none', 'ask'],
+    ['auto', ['network.read'], 'low', 'none', 'allow'],
+    ['auto', ['network.write'], 'low', 'none', 'ask'],
+    ['auto', ['session.write'], 'low', 'none', 'allow'],
+    ['auto', ['orchestration'], 'low', 'none', 'allow'],
+    ['full_access', ['filesystem.read'], 'low', 'workspace', 'allow'],
+    ['full_access', ['filesystem.read'], 'low', 'external', 'allow'],
+    ['full_access', ['filesystem.write'], 'low', 'workspace', 'allow'],
+    ['full_access', ['filesystem.write'], 'low', 'external', 'allow'],
+    ['full_access', ['shell.execute'], 'high', 'none', 'allow'],
+    ['full_access', ['network.read'], 'low', 'none', 'allow'],
+    ['full_access', ['network.write'], 'low', 'none', 'allow'],
+    ['full_access', ['session.write'], 'low', 'none', 'allow'],
+    ['full_access', ['orchestration'], 'low', 'none', 'allow']
+  ] as const)(
+    'baseline matrix: %s + %s + %s + %s → %s',
+    (permissionMode, effects, riskLevel, pathScope, expected) => {
+      expect(
+        resolveModeBaseline({
+          permissionMode,
+          effects,
+          riskLevel,
+          hasExternalPath: pathScope === 'external'
+        })
+      ).toBe(expected)
+    }
+  )
 })

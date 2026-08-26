@@ -17,6 +17,7 @@ import { restoreOrInjectHistory, buildSnapshotFromCompaction } from '../../../..
 import type { SessionData, SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import type { MessageBlock } from '../../../../src/shared/session'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const TURN_BLOCKS: MessageBlock[] = [
   { type: 'thinking', content: '先读 a.ts 确认问题根因…' },
@@ -317,6 +318,7 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
   it('AgentLoop + restoreOrInjectHistory(deepseek) 与 buildConversationContext 一致', () => {
     const session = makeSession(thinkingToolTurnMessages())
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: '助手'
     })
     restoreOrInjectHistory(loop, session, null, {
@@ -358,6 +360,7 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     session.currentLeafId = 'u2'
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: '助手'
     })
     restoreOrInjectHistory(loop, session, snapshot, {
@@ -387,6 +390,7 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     snapshot.lastMessageId = 'msg_does_not_exist'
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: '助手'
     })
     restoreOrInjectHistory(loop, session, snapshot, {

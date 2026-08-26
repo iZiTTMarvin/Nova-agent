@@ -14,6 +14,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 /** 构造 AgentLoop；通过 modelId + dialect 覆盖控制方言（xml / native） */
 function createLoop(opts: {
@@ -34,6 +35,7 @@ function createLoop(opts: {
   })
   const eventBus = new EventBus()
   const loop = new AgentLoop(pool, eventBus, {
+    permissionManager: new PermissionManager(),
     ...(dialect ? { toolDialectOverride: dialect } : {})
   })
 

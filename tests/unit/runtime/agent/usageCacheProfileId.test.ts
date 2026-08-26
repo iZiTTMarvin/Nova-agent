@@ -10,6 +10,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import type { ChatEvent, NormalizedUsage } from '../../../../src/runtime/model/types'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const loops: AgentLoop[] = []
 
@@ -75,7 +76,7 @@ describe('usage 事件 cacheProfileId', () => {
       }
     })
     const eventBus = new EventBus()
-    const loop = new AgentLoop(pool, eventBus, {})
+    const loop = new AgentLoop(pool, eventBus, { permissionManager: new PermissionManager() })
     loops.push(loop)
 
     const events: AgentEvent[] = []
@@ -125,7 +126,7 @@ describe('usage 事件 cacheProfileId', () => {
       ]
     })
     const eventBus = new EventBus()
-    const loop = new AgentLoop(pool, eventBus, {})
+    const loop = new AgentLoop(pool, eventBus, { permissionManager: new PermissionManager() })
     loops.push(loop)
 
     const events = await runDrained(loop, eventBus, 'hi')
@@ -161,7 +162,7 @@ describe('usage 事件 cacheProfileId', () => {
       }
     })
     const eventBus = new EventBus()
-    const loop = new AgentLoop(pool, eventBus, {})
+    const loop = new AgentLoop(pool, eventBus, { permissionManager: new PermissionManager() })
     loops.push(loop)
 
     const events: AgentEvent[] = []

@@ -18,6 +18,7 @@ import type { ChatMessage } from '../../../src/runtime/model/types'
 import { CONTEXT_SNAPSHOT_VERSION } from '../../../src/runtime/sessions/types'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 
 /**
  * 集成测试：快照优先恢复 + 增量补齐 + 回退路径。
@@ -96,6 +97,7 @@ describe('上下文快照恢复', () => {
 
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
       onCompaction: (ctx, meta) => persistCompactionSnapshot(store, session.id, ctx, meta)
@@ -129,6 +131,7 @@ describe('上下文快照恢复', () => {
 
     const recoveryClient = new MockModelClient()
     const recoveryLoop = new AgentLoop(recoveryClient, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
     recoveryLoop.setToolRegistry(createTestRegistry())
@@ -193,6 +196,7 @@ describe('上下文快照恢复', () => {
     const afterDelta = store.load(session.id)!
     const eventBus = new EventBus()
     const loop = new AgentLoop(new MockModelClient(), eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
     loop.setToolRegistry(createTestRegistry())
@@ -227,7 +231,10 @@ describe('上下文快照恢复', () => {
     const eventBus = new EventBus()
     const client = new MockModelClient()
 
-    const loopNoSnapshot = new AgentLoop(client, eventBus, { systemPrompt: '你是助手。' })
+    const loopNoSnapshot = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '你是助手。'
+    })
     loopNoSnapshot.setToolRegistry(createTestRegistry())
     restoreOrInjectHistory(loopNoSnapshot, reloaded, null)
 
@@ -246,7 +253,10 @@ describe('上下文快照恢复', () => {
       updatedAt: Date.now()
     })
 
-    const loopStale = new AgentLoop(client, eventBus, { systemPrompt: '你是助手。' })
+    const loopStale = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '你是助手。'
+    })
     loopStale.setToolRegistry(createTestRegistry())
     restoreOrInjectHistory(loopStale, reloaded, store.loadContextSnapshot(session.id))
 
@@ -292,7 +302,10 @@ describe('上下文快照恢复', () => {
 
     const truncated = store.load(session.id)!
     const eventBus = new EventBus()
-    const loop = new AgentLoop(new MockModelClient(), eventBus, { systemPrompt: '你是助手。' })
+    const loop = new AgentLoop(new MockModelClient(), eventBus, {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '你是助手。'
+    })
     loop.setToolRegistry(createTestRegistry())
     restoreOrInjectHistory(loop, truncated, store.loadContextSnapshot(session.id))
 

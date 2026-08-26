@@ -26,6 +26,7 @@ import {
   buildEvidenceProvenance
 } from '../../../../../src/runtime/memory/extraction/MemoryExtractor'
 import type { ToolContext, ToolResult } from '../../../../../src/runtime/tools/types'
+import { PermissionManager } from '../../../../../src/runtime/permissions/PermissionManager'
 
 function createWiredLoop(
   client: MockModelClient,
@@ -33,6 +34,7 @@ function createWiredLoop(
   options?: { timeoutMs?: number }
 ): AgentLoop {
   const loop = new AgentLoop(client, new EventBus(), {
+    permissionManager: new PermissionManager(),
     systemPromptLayers: {
       agentRole: buildStableSystemPrompt({ workingDir: '/tmp/project' })
     }

@@ -20,6 +20,7 @@ import { createAgentContext } from '../../../../src/runtime/agent/core/AgentCont
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { defaultContextBudgetManager } from '../../../../src/runtime/agent/ContextBudgetManager'
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 /** 默认「有资格」的调度状态，供 timer 单测走通压缩路径 */
 function eligibleScheduleState(
@@ -400,7 +401,10 @@ describe('AgentLoop 空闲压缩集成', () => {
   ) {
     const client = mockClient ?? new MockModelClient()
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, config)
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      ...config
+    })
     loop.setToolRegistry(createTestRegistry())
     return { loop, eventBus, client }
   }

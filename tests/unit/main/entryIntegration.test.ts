@@ -7,6 +7,7 @@ import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import type { SessionData } from '../../../src/runtime/sessions/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 
 /**
  * 入口级集成测试
@@ -78,6 +79,7 @@ describe('入口级集成测试：agentHandler wiring', () => {
 
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是 Nova 的编程助手。'
     })
     loop.setToolRegistry(createTestRegistry())
@@ -126,7 +128,10 @@ describe('入口级集成测试：agentHandler wiring', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { systemPrompt: '助手' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '助手'
+    })
     loop.injectHistory(history)
 
     await loop.sendMessage('你好', agentRoute())
@@ -165,7 +170,10 @@ describe('入口级集成测试：agentHandler wiring', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { systemPrompt: '助手' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '助手'
+    })
     loop.injectHistory(history)
     await loop.sendMessage('继续分析', agentRoute())
 
@@ -215,7 +223,10 @@ describe('入口级集成测试：agentHandler wiring', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { systemPrompt: '助手' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '助手'
+    })
     loop.injectHistory(history)
     await loop.sendMessage('再加一个', agentRoute())
 

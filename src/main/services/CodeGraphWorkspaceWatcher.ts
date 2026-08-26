@@ -7,6 +7,7 @@ import type {
 } from '../../runtime/code-graph'
 import { watch as chokidarWatch } from 'chokidar'
 import * as path from 'node:path'
+import { toWorkspaceRelativePath as toCanonicalWorkspaceRelativePath } from '../../runtime/permissions/pathAccess'
 
 type ChokidarEvent = 'add' | 'change' | 'unlink'
 
@@ -199,16 +200,13 @@ function createIgnoredMatcher(
 
 function toWorkspaceRelativePath(workspaceRoot: string, filePath: string): string | null {
   if (!filePath || filePath.includes('\0')) return null
-  const absolutePath = path.resolve(workspaceRoot, filePath)
-  const relativePath = path.relative(workspaceRoot, absolutePath)
-  if (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  ) return null
-  if (relativePath === '') return ''
-  const normalized = relativePath.replace(/\\/g, '/')
-  const posixPath = path.posix.normalize(normalized)
+  const relativePath = toCanonicalWorkspaceRelativePath(
+    workspaceRoot,
+    path.resolve(workspaceRoot, filePath)
+  )
+  if (relativePath === null) return null
+  if (relativePath === '.') return ''
+  const posixPath = path.posix.normalize(relativePath)
   if (posixPath === '.' || posixPath === '..' || posixPath.startsWith('../')) return null
   return posixPath
 }

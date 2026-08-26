@@ -17,6 +17,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { canonicalizeForCacheComparison } from '../../../../src/runtime/model/cacheCanonicalize'
 import type { ToolResult } from '../../../../src/runtime/tools/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const TURNS = 12
 const READ_PATH = '/src/app.ts'
@@ -109,6 +110,8 @@ describe('wire 层 append-only 门禁（当前必败，A1 后转绿）', () => {
     })
 
     const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access',
       contextWindow: 1_000_000
     })
     loops.push(loop)
@@ -148,7 +151,11 @@ describe('wire 层 append-only 门禁（当前必败，A1 后转绿）', () => {
       modelId: 'deepseek-chat'
     })
 
-    const loop1 = new AgentLoop(client, new EventBus(), { contextWindow: 1_000_000 })
+    const loop1 = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access',
+      contextWindow: 1_000_000
+    })
     loops.push(loop1)
     const registry1 = new ToolRegistry()
     registerReadTool(registry1)
@@ -160,7 +167,11 @@ describe('wire 层 append-only 门禁（当前必败，A1 后转绿）', () => {
     const bodiesBeforeRestore = interceptor.bodies.length
 
     // 新 loop = 独立 epoch，不与前一个 loop 的请求做前缀比较
-    const loop2 = new AgentLoop(client, new EventBus(), { contextWindow: 1_000_000 })
+    const loop2 = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access',
+      contextWindow: 1_000_000
+    })
     loops.push(loop2)
     const registry2 = new ToolRegistry()
     registerReadTool(registry2)
@@ -215,7 +226,11 @@ describe('运行时消息层 append-only 门禁（当前必败，A1 后转绿）
       })
     }
 
-    const loop = new AgentLoop(client, new EventBus(), { contextWindow: 1_000_000 })
+    const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access',
+      contextWindow: 1_000_000
+    })
     loops.push(loop)
 
     const registry = new ToolRegistry()

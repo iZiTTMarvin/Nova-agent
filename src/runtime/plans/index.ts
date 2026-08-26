@@ -6,7 +6,8 @@ import {
   readFileSync,
   realpathSync
 } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { isPathWithinRoot } from '../permissions/pathAccess'
 
 export const PLAN_RELATIVE_DIR = '.nova/plans'
 const MAX_PLAN_DOCUMENT_CHARS = 1_000_000
@@ -48,8 +49,7 @@ export function isReadablePlanInWorkspace(
 
     const realWorkspace = realpathSync(workspaceRoot)
     const realPlan = realpathSync(planPath)
-    const rel = relative(realWorkspace, realPlan)
-    return rel !== '' && !isAbsolute(rel) && !rel.startsWith('..')
+    return realPlan !== realWorkspace && isPathWithinRoot(realWorkspace, realPlan)
   } catch {
     return false
   }

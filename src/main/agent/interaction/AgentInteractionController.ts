@@ -1,5 +1,6 @@
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import type { PermissionDecision } from '../../../shared/permissions/types'
+import type { PathAccessKind } from '../../../shared/permissions/types'
 import type { InteractionAnswerResult, PendingInteraction } from '../../../shared/run/types'
 import type {
   PlanReviewCommand,
@@ -210,6 +211,48 @@ export async function respondPermission(params: {
   if (!loopForRun) return
   loopForRun.respondPermission(params.requestId, granted)
   return durableResult
+}
+
+export function assertCanGrantSessionPath(params: {
+  requestId: string
+  sessionId: string
+  canonicalPath: string
+  access: PathAccessKind
+  interactionId?: string
+}): void {
+  const interactionId = params.interactionId ?? params.requestId
+  const coord = getRunCoordinator()
+  const found = coord.findInteraction(interactionId)
+  const identityError = interactionIdentityError(
+    found,
+    { requestId: params.requestId, interactionId },
+    'permission'
+  )
+  if (identityError) {
+    throw new Error(`权限请求身份不匹配：${identityError}`)
+  }
+  if (!found || !isPendingInteraction(found)) {
+    throw new Error(`权限请求 ${params.requestId} 不存在或已处理`)
+  }
+  if (found.sessionId !== params.sessionId) {
+    throw new Error('权限请求会话不匹配')
+  }
+
+  const executionError = liveExecutionIdentityError(found)
+  if (executionError) throw new Error(executionError)
+
+  const loopForRun = getAgentLoopForRun(found.runId)
+  if (!loopForRun || !loopForRun.hasPendingPermission(params.requestId)) {
+    throw new Error(`权限请求 ${params.requestId} 没有对应的 resolver`)
+  }
+
+  const externalPaths = found.payload.externalPaths
+  if (!Array.isArray(externalPaths) || !externalPaths.includes(params.canonicalPath)) {
+    throw new Error('目录授权路径不属于当前权限请求')
+  }
+  if (found.payload.pathAccess !== params.access) {
+    throw new Error('目录授权访问类型不属于当前权限请求')
+  }
 }
 
 export async function respondPlanReview(

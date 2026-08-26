@@ -34,6 +34,7 @@ import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/type
 import type { ChatEvent, NormalizedUsage } from '../../../../src/runtime/model/types'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 // ── 公共辅助 ──────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ function createLoop(opts: {
   })
   const eventBus = new EventBus()
   const loop = new AgentLoop(pool, eventBus, {
+    permissionManager: new PermissionManager(),
     ...config,
     ...(dialect ? { toolDialectOverride: dialect } : {})
   })
@@ -159,7 +161,11 @@ describe('黄金测试 §9.1 纯文本应答', () => {
       ]
     })
     const registry = new ToolRegistry()
-    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
+    const { loop, eventBus } = createLoop({
+      modelId: 'gpt-4o',
+      client,
+      config: { permissionMode: 'full_access' }
+    })
     loop.setToolRegistry(registry)
 
     const events = await runAndCollect(loop, eventBus, '你好')
@@ -211,7 +217,11 @@ describe('黄金测试 §9.2 单工具调用（native）', () => {
 
     const registry = new ToolRegistry()
     registerTool(registry, 'ls', args => ({ success: true, output: `目录: ${args.path ?? '.'}` }))
-    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
+    const { loop, eventBus } = createLoop({
+      modelId: 'gpt-4o',
+      client,
+      config: { permissionMode: 'full_access' }
+    })
     loop.setToolRegistry(registry)
 
     const events = await runAndCollect(loop, eventBus, '列出文件')
@@ -400,7 +410,11 @@ describe('黄金测试 §9.6 native 空参修复', () => {
       seen.push(args)
       return { success: true, output: 'ok' }
     })
-    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
+    const { loop, eventBus } = createLoop({
+      modelId: 'gpt-4o',
+      client,
+      config: { permissionMode: 'full_access' }
+    })
     loop.setToolRegistry(registry)
 
     const events = await runAndCollect(loop, eventBus, '列')

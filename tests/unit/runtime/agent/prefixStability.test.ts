@@ -9,6 +9,7 @@ import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBui
 import type { Mode } from '../../../../src/shared/session/types'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 describe('前缀稳定性 (缓存 Harness C2)', () => {
   it('getStableSystemPrompt 对不同模式返回相同内容', () => {
@@ -59,6 +60,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     expect(baseRules).toBeTruthy()
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPromptLayers: {
         agentRole: buildStableSystemPrompt({ workingDir: '/tmp' }),
         baseRules,
@@ -90,8 +92,14 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
 
     const frozenOf = (loop: AgentLoop) =>
       extractTextFromContent(loop.getContext().find(m => m.role === 'system')!.content)
-    const loop1 = new AgentLoop(new MockModelClient(), new EventBus(), { systemPromptLayers: layers })
-    const loop2 = new AgentLoop(new MockModelClient(), new EventBus(), { systemPromptLayers: layers })
+    const loop1 = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
+      systemPromptLayers: layers
+    })
+    const loop2 = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
+      systemPromptLayers: layers
+    })
     const frozen1 = frozenOf(loop1)
     expect(frozen1.match(/=== Task Policy ===/g)).toHaveLength(1)
     // 同输入两次构建逐字节一致（缓存前缀契约）
@@ -104,7 +112,10 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const loop = new AgentLoop(client, new EventBus(), { systemPromptLayers: layers })
+    const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
+      systemPromptLayers: layers
+    })
     loop.setMode('plan')
     await loop.sendMessage('重构这个模块', agentRoute())
 
@@ -127,6 +138,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     })
 
     const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPromptLayers: {
         agentRole: buildStableSystemPrompt({ workingDir: '/tmp' }),
         baseRules: renderBaseRules(),

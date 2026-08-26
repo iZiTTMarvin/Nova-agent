@@ -19,6 +19,7 @@ import type { CheckpointManager } from '../../../../src/runtime/checkpoints/Chec
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { SkillManifest } from '../../../../src/runtime/skills/types'
 import { agentRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const loops: AgentLoop[] = []
 
@@ -29,7 +30,7 @@ afterEach(() => {
 
 function createLoop(client: MockModelClient): { loop: AgentLoop; events: AgentEvent[] } {
   const eventBus = new EventBus()
-  const loop = new AgentLoop(client, eventBus)
+  const loop = new AgentLoop(client, eventBus, { permissionManager: new PermissionManager() })
   loops.push(loop)
   const events: AgentEvent[] = []
   eventBus.on(e => events.push(e))

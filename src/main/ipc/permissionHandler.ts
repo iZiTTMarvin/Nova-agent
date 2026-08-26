@@ -11,8 +11,8 @@ import { handle } from './secureIpc'
 import { dirname } from 'path'
 import { statSync } from 'fs'
 import { grantSessionPermission } from '../../runtime/permissions/PermissionManager'
-import { addSessionPathGrant } from '../../runtime/permissions/pathAccess'
-import { canonicalizeTargetPath } from '../../runtime/permissions/pathAccess/canonicalPath'
+import { addSessionPathGrant, canonicalizeTargetPath } from '../../runtime/permissions/pathAccess'
+import { assertCanGrantSessionPath } from '../agent/interaction'
 import {
   PERMISSION_LIST,
   PERMISSION_UPSERT,
@@ -30,7 +30,6 @@ import type {
   PermissionRuleDto,
   PermissionListParams,
   PermissionUpsertParams,
-  PermissionDeleteParams,
   PathAccessKind
 } from '../../shared/permissions/types'
 import { getWorkspaceService } from '../services/WorkspaceService'
@@ -42,6 +41,22 @@ function getCurrentProjectPath(): string | null {
 /** runtime PermissionRule → IPC dto */
 function toDto(rule: PermissionRule): PermissionRuleDto {
   return { ...rule }
+}
+
+function readStringField(input: unknown, field: string): string {
+  if (typeof input !== 'object' || input === null) {
+    throw new Error('权限请求参数无效')
+  }
+  const value = (input as Record<string, unknown>)[field]
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`权限请求缺少 ${field}`)
+  }
+  return value
+}
+
+function parsePathAccess(value: unknown): PathAccessKind {
+  if (value === 'read' || value === 'write') return value
+  throw new Error('权限请求 access 无效')
 }
 
 export function registerPermissionHandler(): void {
@@ -79,24 +94,40 @@ export function registerPermissionHandler(): void {
     return toDto(rule)
   })
 
-  handle(PERMISSION_DELETE, async (_event, params: PermissionDeleteParams) => {
+  handle(PERMISSION_DELETE, async (_event, params) => {
     const projectPath = params.projectPath ?? getCurrentProjectPath()
     const deleted = deletePermissionRule(params.ruleId, projectPath)
     return { deleted }
   })
 
-  handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: { sessionId: string; commandPrefix: string }) => {
-    grantSessionPermission(params.sessionId, params.commandPrefix)
+  handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: unknown) => {
+    grantSessionPermission(
+      readStringField(params, 'sessionId'),
+      readStringField(params, 'commandPrefix')
+    )
   })
 
   handle(
     PERMISSION_GRANT_SESSION_PATH,
-    async (_event, params: { sessionId: string; canonicalPath: string; access: PathAccessKind }) => {
-      const canonical = canonicalizeTargetPath(params.canonicalPath)
+    async (_event, params: unknown) => {
+      const sessionId = readStringField(params, 'sessionId')
+      const requestId = readStringField(params, 'requestId')
+      const canonicalPath = readStringField(params, 'canonicalPath')
+      const access = parsePathAccess(
+        typeof params === 'object' && params !== null
+          ? (params as Record<string, unknown>).access
+          : undefined
+      )
+      const canonical = canonicalizeTargetPath(canonicalPath)
       if (!canonical.ok) {
         throw new Error(canonical.reason)
       }
-      const access = params.access === 'write' ? 'write' : 'read'
+      assertCanGrantSessionPath({
+        sessionId,
+        requestId,
+        canonicalPath: canonical.path,
+        access
+      })
       let root = canonical.path
       try {
         if (!statSync(root).isDirectory()) {
@@ -105,7 +136,7 @@ export function registerPermissionHandler(): void {
       } catch {
         root = dirname(root)
       }
-      addSessionPathGrant(params.sessionId, {
+      addSessionPathGrant(sessionId, {
         canonicalRoot: root,
         access,
         match: 'subtree',

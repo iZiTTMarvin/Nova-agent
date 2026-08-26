@@ -5,13 +5,14 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/types'
 import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 /** Session context 只注入模型运行时消息，不生成独立消息或持久化前缀。 */
 
 function createLoop(mockClient?: MockModelClient) {
   const client = mockClient ?? new MockModelClient()
   const eventBus = new EventBus()
-  const loop = new AgentLoop(client, eventBus)
+  const loop = new AgentLoop(client, eventBus, { permissionManager: new PermissionManager() })
   return { loop, client }
 }
 
@@ -185,7 +186,9 @@ describe('AgentLoop session context 注入', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new TestDateAgentLoop(client, eventBus)
+    const loop = new TestDateAgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager()
+    })
     loop.setWorkingDir('D:/proj')
     loop.setSessionDate('2026-06-15T12:00:00')
 
@@ -288,7 +291,7 @@ describe('AgentLoop session context 注入', () => {
         modelId: 'model-a'
       }
     })
-    const loop = new AgentLoop(pool, new EventBus())
+    const loop = new AgentLoop(pool, new EventBus(), { permissionManager: new PermissionManager() })
     loop.setWorkingDir('D:/proj')
 
     await loop.sendMessage('第一条', agentRoute())

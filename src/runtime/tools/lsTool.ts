@@ -8,9 +8,9 @@
  * 才用 isPathSkipped 排除构建产物。这是钉死的边界差异。
  */
 import { readdir } from 'fs/promises'
-import { isAbsolute, join, relative } from 'path'
+import { join } from 'path'
 import { resolveAndValidateToolPath } from './ToolRegistry'
-import { canonicalizeTargetPath } from '../permissions/pathAccess'
+import { canonicalizeTargetPath, toWorkspaceRelativePath } from '../permissions/pathAccess'
 import { resolveToolArg } from './toolArgResolver'
 import type { ToolExecutor, ToolContext, ToolResult } from './types'
 
@@ -52,8 +52,8 @@ export const lsTool: ToolExecutor = {
       // 排序保证截断确定性：readdir 顺序不保证，不排序时「前 N 条」每次运行可能不同
       const sorted = entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
       for (const entry of sorted) {
-        const rel = relative(relativeRoot, join(validated.path, entry.name)).replace(/\\/g, '/')
-        if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue
+        const rel = toWorkspaceRelativePath(relativeRoot, join(validated.path, entry.name))
+        if (!rel || rel === '.') continue
         try {
           lines.push(entry.isDirectory() ? `${rel}/` : rel)
         } catch {

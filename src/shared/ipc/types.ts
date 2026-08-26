@@ -473,7 +473,7 @@ export interface IpcCommands {
     result: void
   }
   'permission:grant-session-path': {
-    params: { sessionId: string; canonicalPath: string; access: PathAccessKind }
+    params: { sessionId: string; requestId: string; canonicalPath: string; access: PathAccessKind }
     result: void
   }
   // ── DiffViewer 批量审阅（PRD §5.3） ──

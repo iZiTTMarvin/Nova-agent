@@ -21,6 +21,7 @@ import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ModelConfig } from '../../../../src/shared/config'
 import type { TurnStreamResult } from '../../../../src/runtime/agent/stream/streamTypes'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 function createNativeContext(): AgentContext {
   return {
@@ -440,6 +441,7 @@ describe('AgentLoop：reasoningContent 进入 runtime context', () => {
     })
     const eventBus = new EventBus()
     const loop = new AgentLoop(pool, eventBus, {
+      permissionManager: new PermissionManager(),
       toolDialectOverride: 'native',
       permissionMode: 'full_access'
     })

@@ -3,6 +3,7 @@ import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import type { ModelClient, ChatEvent, ToolDefinition } from '../../../../src/runtime/model/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 /** 创建 mock ModelClient，返回空流 */
 function createMockClient(): ModelClient {
@@ -40,7 +41,10 @@ function captureTools(
   } as unknown as ModelClient
 
   const createLoop = (eventBus: EventBus) =>
-    new AgentLoop(client, eventBus, toolDialectOverride ? { toolDialectOverride } : undefined)
+    new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      ...(toolDialectOverride ? { toolDialectOverride } : {})
+    })
 
   return {
     client,
@@ -191,7 +195,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
       updateConfig() {}
     } as unknown as ModelClient
 
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionManager: new PermissionManager() })
     loop.setMode('plan')
 
     const allDefs = makeToolDefs(ALL_TOOLS)

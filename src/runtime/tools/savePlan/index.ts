@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { isAbsolute, basename, join, relative, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { PLAN_RELATIVE_DIR, isPlanRelativePath } from '../../plans'
 import { acquireWriterLeaseOrConflict } from '../../workspace'
 import { withFileMutationQueue } from '../file-mutation-queue'
 import { resolveAndValidateToolPath } from '../ToolRegistry'
-import { isPathWithinRoot } from '../../permissions/pathAccess'
+import { isPathWithinRoot, toWorkspaceRelativePath } from '../../permissions/pathAccess'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import { assertSideEffectAllowed } from '../types'
 
@@ -158,8 +158,8 @@ function resolveActivePlanPath(
   if (!isPlanRelativePath(activePath)) return null
   const validated = resolveAndValidateToolPath(context, activePath, 'write')
   if (!validated.ok) return null
-  const rel = relative(planDirectory, validated.path)
-  if (!rel || isAbsolute(rel) || rel.startsWith('..') || rel.includes('/') || rel.includes('\\')) {
+  const rel = toWorkspaceRelativePath(planDirectory, validated.path)
+  if (!rel || rel === '.' || rel.includes('/')) {
     return null
   }
   return validated.path

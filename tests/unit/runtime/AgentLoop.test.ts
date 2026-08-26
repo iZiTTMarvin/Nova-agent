@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { agentRoute, resolveAgentTurnRoute } from '../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -40,7 +41,10 @@ describe('AgentLoop', () => {
   function createLoop(mockClient?: MockModelClient) {
     const client = mockClient ?? new MockModelClient()
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     loop.setToolRegistry(createTestRegistry())
     return { loop, eventBus, client }
   }
@@ -311,7 +315,10 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { maxToolRounds: 1 })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      maxToolRounds: 1
+    })
     const registry = createTestRegistry()
     registry.register(switchModeTool)
     registry.register({
@@ -536,7 +543,10 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     loop.setToolRegistry(registry)
 
     const events: string[] = []
@@ -597,7 +607,10 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     loop.setToolRegistry(registry)
 
     await loop.sendMessage('读取图片', agentRoute())
@@ -724,7 +737,9 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager()
+    })
     loop.setToolRegistry(registry)
     loop.setMode('default')
 
@@ -787,7 +802,7 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionManager: new PermissionManager() })
     loop.setToolRegistry(registry)
     loop.setMode('default')
 
@@ -842,7 +857,7 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, { permissionManager: new PermissionManager() })
     loop.setToolRegistry(registry)
     loop.setMode('default')
 
@@ -903,6 +918,7 @@ describe('AgentLoop', () => {
 
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
       onCompaction: (_ctx, _meta) => {}
@@ -978,6 +994,7 @@ describe('AgentLoop', () => {
     })
     const compactionLevels: number[] = []
     const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       onCompaction: (_context, meta) => compactionLevels.push(meta.compactionLevel)
     })
@@ -1199,7 +1216,10 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     loop.setToolRegistry(registry)
 
     const events: any[] = []
@@ -1293,7 +1313,10 @@ describe('AgentLoop', () => {
     })
 
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, { permissionMode: 'full_access' })
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     loop.setToolRegistry(registry)
 
     const events: any[] = []
@@ -1427,10 +1450,14 @@ describe('AgentLoop', () => {
     const workDir = join(tmpdir(), `loop-ws-${Date.now()}`)
     mkdirSync(workDir, { recursive: true })
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     const registry = new ToolRegistry()
     registry.register(readTool)
     loop.setToolRegistry(registry)
+    loop.setSessionId('skill-ref-test')
     loop.setWorkingDir(workDir)
 
     const events: Array<{ type: string; result?: string; success?: boolean }> = []
@@ -1476,8 +1503,9 @@ describe('AgentLoop', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const loop1 = new AgentLoop(client1, new EventBus())
+    const loop1 = new AgentLoop(client1, new EventBus(), { permissionManager: new PermissionManager() })
     loop1.setToolRegistry(new ToolRegistry())
+    loop1.setSessionId('skill-restore-test')
     loop1.setWorkingDir(workDir)
     const persisted: string[] = []
     loop1.setOnSkillRootAdded(dir => persisted.push(dir))
@@ -1515,10 +1543,14 @@ describe('AgentLoop', () => {
       ]
     })
     const eventBus2 = new EventBus()
-    const loop2 = new AgentLoop(client2, eventBus2)
+    const loop2 = new AgentLoop(client2, eventBus2, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
     const registry2 = new ToolRegistry()
     registry2.register(readTool)
     loop2.setToolRegistry(registry2)
+    loop2.setSessionId('skill-restore-test')
     loop2.setWorkingDir(workDir)
     loop2.restoreSkillRoots(roots)
 
@@ -1566,7 +1598,10 @@ describe('AgentLoop', () => {
     const workDir = join(tmpdir(), `loop-ws-deny-${Date.now()}`)
     mkdirSync(workDir, { recursive: true })
     const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus)
+    const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
+      permissionAskDeniedReason: '测试环境不处理交互授权'
+    })
     const registry = new ToolRegistry()
     registry.register(readTool)
     loop.setToolRegistry(registry)
@@ -1580,7 +1615,7 @@ describe('AgentLoop', () => {
     const toolResults = events.filter(e => e.type === 'tool_result')
     expect(toolResults.length).toBeGreaterThanOrEqual(1)
     const blob = JSON.stringify(toolResults)
-    expect(blob).toMatch(/越界|success":false/)
+    expect(blob).toContain('权限拒绝: 测试环境不处理交互授权')
 
     rmSync(skillsDir, { recursive: true, force: true })
     rmSync(workDir, { recursive: true, force: true })

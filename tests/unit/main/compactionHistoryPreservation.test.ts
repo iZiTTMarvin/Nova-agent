@@ -15,6 +15,7 @@ import type { SessionData, SessionMessage } from '../../../src/runtime/sessions/
 import { extractTextFromSerializableContent } from '../../../src/runtime/sessions/types'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 
 /**
  * 止血测试：压缩触发后 session.messages 不得被截断。
@@ -199,6 +200,7 @@ describe('压缩不截断 session.messages', () => {
 
     // agentHandler 行为：不传落盘逻辑（此处用空回调捕获 compactedContext 做对照）
     const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
       onCompaction: (compactedContext, _meta) => {
@@ -252,6 +254,7 @@ describe('压缩不截断 session.messages', () => {
 
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       maxToolRounds: 20
     })
@@ -265,6 +268,7 @@ describe('压缩不截断 session.messages', () => {
     const history = buildConversationContext(reloaded, reloaded.mode)
 
     const recoveryLoop = new AgentLoop(client, eventBus, {
+      permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
     recoveryLoop.setToolRegistry(createTestRegistry())

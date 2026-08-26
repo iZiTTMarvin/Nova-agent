@@ -5,6 +5,7 @@ import type { ChatEvent, ToolDefinition } from '../../../../src/runtime/model/ty
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolExecutor } from '../../../../src/runtime/tools/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 function tool(name: string): ToolExecutor {
   return {
@@ -69,7 +70,11 @@ describe('AgentLoop effective tool definitions', () => {
         updateConfig() {}
       }
 
-      const loop = new AgentLoop(client as any, bus, { systemPrompt: 'system', toolDialectOverride: 'native' })
+      const loop = new AgentLoop(client as any, bus, {
+        permissionManager: new PermissionManager(),
+        systemPrompt: 'system',
+        toolDialectOverride: 'native'
+      })
       loop.setToolRegistry(registry)
       if (filterTools) {
         loop.setEffectiveToolDefinitionsProvider(() =>
@@ -124,6 +129,7 @@ describe('AgentLoop effective tool definitions', () => {
       updateConfig() {}
     }
     const loop = new AgentLoop(client as any, new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPrompt: 'system',
       toolDialectOverride: 'native'
     })

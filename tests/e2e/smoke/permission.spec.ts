@@ -7,7 +7,6 @@
  * - 切回「自动」后同一命令再次请求；拒绝不阻断整轮
  * - Plan 模式下 write / bash 不可执行（不受权限模式放宽），且无权限条
  * - reload 后会话权限模式恢复为「自动」（持久化与 listener 重绑定）
- * - 子代理权限请求锚定父会话活动行（子代理继承父会话权限模式）
  */
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
@@ -139,51 +138,5 @@ test('权限模式闭环：自动询问 → 完全访问放行 → 回自动再�
     Boolean((window as typeof window & { api?: unknown }).api)
   )
   await expect(nova.page.locator('.permission-mode__trigger')).toContainText('自动')
-  expect(nova.pageErrors).toEqual([])
-})
-
-test('子代理继承父会话权限模式，权限请求锚定父会话活动行并可回应', async ({ nova }) => {
-  const state = await nova.createSession('default')
-  const sessionId = state.currentSessionId
-  if (!sessionId) throw new Error('session id missing')
-  const targetDir = path.join(nova.workspacePath, 'sub-perm-target')
-  await mkdir(targetDir, { recursive: true })
-
-  nova.provider.enqueue(
-    {
-      kind: 'tool',
-      name: 'task',
-      arguments: { subagent_type: 'code', task: '删除子任务目录并汇报' },
-      callId: 'call_task_spawn'
-    },
-    // 子代理第一轮请求高风险 bash 权限（继承父会话「自动」→ 高风险询问）
-    {
-      kind: 'tool',
-      name: 'bash',
-      arguments: { command: 'Remove-Item -Recurse -Force sub-perm-target' },
-      callId: 'call_sub_bash'
-    },
-    { kind: 'text', text: 'NOVA_E2E_SUBAGENT_DONE' },
-    { kind: 'text', text: 'NOVA_E2E_PARENT_DONE' }
-  )
-
-  await nova.sendPrompt('派一个子代理执行子任务')
-  await nova.provider.waitForRequestCount(2)
-
-  const activityRow = nova.page.locator('.subagent-activity-row')
-  await expect(activityRow).toBeVisible()
-  const anchoredBar = activityRow.locator('.inline-perm')
-  await expect(activityRow.getByText('子代理请求权限', { exact: false })).toBeVisible()
-  await expect(anchoredBar.getByRole('button', { name: '允许一次', exact: true })).toBeVisible()
-
-  // 在父会话视图中允许后，子代理命令真实执行并完成整轮
-  await anchoredBar.getByRole('button', { name: '允许一次', exact: true }).click()
-  await nova.provider.waitForRequestCount(4)
-  await expect(activityRow).toHaveCount(0)
-  await expect(nova.page.getByText('NOVA_E2E_PARENT_DONE', { exact: false })).toBeVisible()
-  await nova.waitUntilIdle()
-  await expect.poll(() => !existsSync(targetDir)).toBe(true)
-  expect((await nova.getRunSnapshot(sessionId))?.status).toBe('completed')
-
   expect(nova.pageErrors).toEqual([])
 })

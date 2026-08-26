@@ -21,6 +21,7 @@ import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBui
 import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { MEMORY_PREFETCH_BLOCK_TITLE } from '../../../../src/runtime/memory'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const STABLE_TOOLS: ToolDefinition[] = [
   {
@@ -171,6 +172,7 @@ describe('前缀稳定性黑盒', () => {
 
     const memLayer = 'Memory is historical evidence.'
     const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
       systemPromptLayers: {
         agentRole: buildStableSystemPrompt({ workingDir: '/tmp/project' }),
         baseRules: renderBaseRules(),

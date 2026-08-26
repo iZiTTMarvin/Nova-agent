@@ -17,6 +17,7 @@ import { extractTextFromSerializableContent } from '../../../../src/runtime/sess
 import type { SessionData } from '../../../../src/runtime/sessions/types'
 import { getSessionActiveMessages } from '../../../../src/runtime/sessions/tree'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -46,6 +47,7 @@ function createLoopWithSkillContext(skillContext: string): {
   const client = new MockModelClient()
   const eventBus = new EventBus()
   const loop = new AgentLoop(client, eventBus, {
+    permissionManager: new PermissionManager(),
     systemPromptLayers: {
       agentRole: '你是助手。',
       skillContext

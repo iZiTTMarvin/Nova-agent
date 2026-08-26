@@ -88,16 +88,8 @@ describe('权限体系静态门禁', () => {
 
   it('path.relative 越界判断组合只允许出现在 pathAccess', () => {
     const allowed = new Set(['src/runtime/permissions/pathAccess/canonicalPath.ts'])
-    /** 历史债务：既有手写边界判断，迁移到 pathAccess 前冻结在 allowlist。
-     * 删除条件：各自改用 pathAccess 的 isPathWithinRoot / toWorkspaceRelativePath。 */
-    const allowlist = new Set([
-      'src/runtime/plans/index.ts',
-      'src/runtime/tools/lsTool.ts',
-      'src/runtime/tools/savePlan/index.ts',
-      'src/main/services/CodeGraphWorkspaceWatcher.ts'
-    ])
     const offenders = srcFiles.filter((file) => {
-      if (allowed.has(file) || allowlist.has(file)) return false
+      if (allowed.has(file)) return false
       const text = readSource(file)
       const usesRelative =
         text.includes('relative(') &&
@@ -107,5 +99,10 @@ describe('权限体系静态门禁', () => {
       return usesRelative && boundaryPredicate
     })
     expect(offenders).toEqual([])
+  })
+
+  it('ToolRegistry 不得重新引入绕过权限批执行的 execute 入口', () => {
+    const text = readSource('src/runtime/tools/ToolRegistry.ts')
+    expect(text).not.toMatch(/\bexecute\s*\(/)
   })
 })

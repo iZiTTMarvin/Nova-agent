@@ -44,6 +44,7 @@ vi.mock('../../../src/main/agent/turn', () => ({
 }))
 
 import {
+  assertCanGrantSessionPath,
   respondAskQuestion,
   respondPermission,
   respondPlanReview
@@ -320,6 +321,83 @@ describe('AgentInteractionController 契约', () => {
     expect(result).toMatchObject({ ok: false, code: 'identity_mismatch' })
     expect(coordinator.inbox.answer).not.toHaveBeenCalled()
     expect(runLoop.respondPermission).not.toHaveBeenCalled()
+  })
+
+  it('session path grant 必须命中 pending permission 的路径与访问类型', () => {
+    const found = {
+      interactionId: 'perm_path',
+      runId: 'run_1',
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'permission' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: {
+        requestId: 'perm_path',
+        externalPaths: ['C:\\outside\\file.txt'],
+        pathAccess: 'read'
+      }
+    }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue({
+      runId: 'run_1',
+      sessionId: 's1',
+      status: 'waiting_user',
+      executionGeneration: 7
+    })
+    executionRegistry.get.mockReturnValue({ runId: 'run_1', generation: 7 })
+    executionRegistry.isCurrent.mockReturnValue(true)
+    loopLookup.byRun.mockReturnValue({ hasPendingPermission: vi.fn(() => true) })
+
+    expect(() => assertCanGrantSessionPath({
+      requestId: 'perm_path',
+      sessionId: 's1',
+      canonicalPath: 'C:\\outside\\file.txt',
+      access: 'read'
+    })).not.toThrow()
+
+    expect(() => assertCanGrantSessionPath({
+      requestId: 'perm_path',
+      sessionId: 's1',
+      canonicalPath: 'C:\\outside\\file.txt',
+      access: 'write'
+    })).toThrow(/访问类型/)
+  })
+
+  it('session path grant 不得写入没有 live resolver 的权限请求', () => {
+    const found = {
+      interactionId: 'perm_path',
+      runId: 'run_1',
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'permission' as const,
+      status: 'pending' as const,
+      version: 1,
+      createdAt: 1,
+      payload: {
+        requestId: 'perm_path',
+        externalPaths: ['C:\\outside\\file.txt'],
+        pathAccess: 'read'
+      }
+    }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockReturnValue({
+      runId: 'run_1',
+      sessionId: 's1',
+      status: 'waiting_user',
+      executionGeneration: 7
+    })
+    executionRegistry.get.mockReturnValue({ runId: 'run_1', generation: 7 })
+    executionRegistry.isCurrent.mockReturnValue(true)
+    loopLookup.byRun.mockReturnValue({ hasPendingPermission: vi.fn(() => false) })
+
+    expect(() => assertCanGrantSessionPath({
+      requestId: 'perm_path',
+      sessionId: 's1',
+      canonicalPath: 'C:\\outside\\file.txt',
+      access: 'read'
+    })).toThrow(/resolver/)
   })
 
   it('Child Session permission 以 child run 原始 requestId 路由到自己的 AgentLoop', async () => {

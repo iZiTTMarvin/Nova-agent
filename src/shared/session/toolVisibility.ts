@@ -4,6 +4,18 @@ import {
   getToolPermissionDescriptor,
   isToolAvailableWithinCapabilityCeiling
 } from '../permissions/toolEffects'
+import type { ToolPermissionDescriptor } from '../permissions/types'
+
+function hasPlanHiddenEffects(
+  descriptor: ToolPermissionDescriptor,
+  options: { includeOrchestration: boolean }
+): boolean {
+  return (
+    (options.includeOrchestration && descriptor.effects.includes('orchestration')) ||
+    descriptor.effects.includes('filesystem.write') ||
+    descriptor.effects.includes('shell.execute')
+  )
+}
 
 /** 当前产品模式下模型/UI 是否应该看见该工具 */
 export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
@@ -27,10 +39,7 @@ export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
 
   const descriptor = getToolPermissionDescriptor(toolName)
   if (!descriptor) return false
-  if (descriptor.effects.includes('orchestration')) return false
-  if (descriptor.effects.includes('filesystem.write')) return false
-  if (descriptor.effects.includes('shell.execute')) return false
-  return true
+  return !hasPlanHiddenEffects(descriptor, { includeOrchestration: true })
 }
 
 /** 使用产品模式收窄模型可见工具，供 native schema 与 XML 工具目录共用。 */
@@ -62,8 +71,5 @@ export function isModeHiddenWriteTool(mode: Mode, toolName: string): boolean {
   }
   const descriptor = getToolPermissionDescriptor(toolName)
   if (!descriptor) return false
-  return (
-    descriptor.effects.includes('filesystem.write') ||
-    descriptor.effects.includes('shell.execute')
-  )
+  return hasPlanHiddenEffects(descriptor, { includeOrchestration: false })
 }

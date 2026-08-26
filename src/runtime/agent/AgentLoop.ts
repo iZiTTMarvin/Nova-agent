@@ -10,7 +10,7 @@ import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
-import { PermissionManager } from '../permissions/PermissionManager'
+import type { PermissionManager } from '../permissions/PermissionManager'
 import {
   PermissionCoordinator,
   type ToolAuthorizationPolicy
@@ -189,8 +189,11 @@ export class AgentLoop {
   constructor(
     modelClient: ModelClient | ModelClientPool,
     eventBus: EventBus,
-    config?: AgentLoopConfig
+    config: AgentLoopConfig
   ) {
+    if (!config.permissionManager) {
+      throw new Error('AgentLoop requires a PermissionManager')
+    }
     // 统一包装成 ModelClientPool（单个 ModelClient 时无 fallback）
     // 从 client 自身的 config 读取 modelId/baseUrl 用于 dialect 判定
     const clientConfig = (modelClient as { config?: { modelId?: string; baseUrl?: string } }).config
@@ -206,7 +209,7 @@ export class AgentLoop {
       })
     this.eventBus = eventBus
     this.permissionCoordinator = new PermissionCoordinator({
-      permissionManager: config?.permissionManager ?? new PermissionManager(),
+      permissionManager: config.permissionManager,
       emit: (event) => this.eventBus.emit(event),
       getMode: () => this.ctx.mode,
       getPermissionRuntimeSnapshot: () => ({
@@ -232,7 +235,8 @@ export class AgentLoop {
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
       promptCacheKey: config?.promptCacheKey,
-      reasoningEffort: config?.reasoningEffort
+      reasoningEffort: config?.reasoningEffort,
+      permissionManager: config.permissionManager
     }
     // 按当前 active provider 判定方言；fallback 切换后由 StreamProcessor 重算
     this.syncToolDialectFromActiveProvider()

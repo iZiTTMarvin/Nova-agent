@@ -13,6 +13,7 @@ import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import type { AgentLoopConfig } from '../../../../src/runtime/agent/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 import {
   HEADLESS_CONTINUATION_INSTRUCTION,
   headlessAssistantCompletionPolicy
@@ -31,6 +32,7 @@ function createLoop(
 ): { loop: AgentLoop; events: AgentEvent[] } {
   const eventBus = new EventBus()
   const loop = new AgentLoop(client, eventBus, {
+    permissionManager: new PermissionManager(),
     permissionMode: 'full_access',
     ...config
   })

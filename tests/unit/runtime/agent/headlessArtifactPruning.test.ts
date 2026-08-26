@@ -11,6 +11,7 @@ import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 describe('headless artifact pruning', () => {
   it('第 1 轮将大工具结果归档，下一轮以同一命名空间通过 archive_read 校验回读', async () => {
@@ -51,6 +52,7 @@ describe('headless artifact pruning', () => {
 
     const store = new ArtifactStore(logsDir)
     const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
       maxToolRounds: 4,
       toolExecution: 'sequential',
       maxParallelToolCalls: 1,

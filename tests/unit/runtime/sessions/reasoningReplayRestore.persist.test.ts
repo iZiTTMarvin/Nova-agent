@@ -19,6 +19,7 @@ import { getSessionActiveMessages } from '../../../../src/runtime/sessions/tree'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import type { MessageBlock } from '../../../../src/shared/session'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const TURN_BLOCKS: MessageBlock[] = [
   { type: 'thinking', content: '先读 a.ts 确认问题根因…' },
@@ -93,7 +94,10 @@ function appendThinkingToolTurn(store: SessionStore, sessionId: string): void {
 }
 
 function newLoop(): AgentLoop {
-  return new AgentLoop(new MockModelClient(), new EventBus(), { systemPrompt: '助手' })
+  return new AgentLoop(new MockModelClient(), new EventBus(), {
+    permissionManager: new PermissionManager(),
+    systemPrompt: '助手'
+  })
 }
 
 function nonSystemContext(loop: AgentLoop): ChatMessage[] {

@@ -17,6 +17,7 @@ import type { ModelClient } from '../../../../src/runtime/model/ModelClient'
 import type { ModelConfig } from '../../../../src/shared/config'
 import { computeWireSnapshot } from '../../../../src/runtime/model/requestFingerprint'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 let tmpDir: string
 
@@ -147,6 +148,7 @@ describe('ChatOptions.promptCacheKey 透传', () => {
     })
     const eventBus = new EventBus()
     const loop = new AgentLoop(pool, eventBus, {
+      permissionManager: new PermissionManager(),
       promptCacheKey: 'route-key-abc'
     })
 

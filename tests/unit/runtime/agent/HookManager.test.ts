@@ -8,6 +8,7 @@ import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBa
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 const ALL_EVENTS: HookEvent[] = [
   'onMessageStart', 'beforeAgentStart', 'preChat', 'context',
@@ -66,7 +67,7 @@ describe('HookManager', () => {
       ]
     })
     const bus = new EventBus()
-    const loop = new AgentLoop(client, bus)
+    const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager() })
     loop.getHookManager().on('onMessageStart', () => { throw new Error('hook fail') })
     await loop.sendMessage('hello', agentRoute())
     expect(loop.getState()).toBe('idle')
