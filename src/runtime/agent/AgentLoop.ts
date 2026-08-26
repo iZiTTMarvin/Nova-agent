@@ -212,8 +212,12 @@ export class AgentLoop {
       getPermissionRuntimeSnapshot: () => ({
         sessionId: this.ctx.sessionId ?? '',
         workspaceRoot: this.ctx.workspaceRoot ?? this.ctx.workingDir ?? process.cwd(),
-        permissionMode: this.ctx.permissionMode
-      })
+        permissionMode: this.ctx.permissionMode,
+        capabilityCeiling: this.ctx.permissionCeiling
+      }),
+      ...(config?.permissionAskDeniedReason !== undefined
+        ? { askDeniedReason: config.permissionAskDeniedReason }
+        : {})
     })
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
@@ -235,6 +239,7 @@ export class AgentLoop {
     /** 技能正文独立 token 桶（来自 skillContext 拼装时一次性估算） */
     this.ctx.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
     this.ctx.permissionMode = config?.permissionMode ?? 'request_approval'
+    this.ctx.permissionCeiling = config?.permissionCeiling ?? null
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.contextBudgetManager = createProductionContextBudgetManager({
       contextWindow: this.config.contextWindow ?? 200_000

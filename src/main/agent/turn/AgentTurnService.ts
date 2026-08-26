@@ -282,6 +282,8 @@ export async function sendAgentMessage(
         ...input,
         // 子代理继承父会话思考强度覆盖，保证投影显示与实际运行一致
         reasoningEffort: session.reasoningEffortOverride,
+        // compose 阶段门禁随父会话继承，子代理能力只能收窄
+        toolAuthorizationPolicy: prepared.toolAuthorizationPolicy,
         modelClient,
         resolveTool: (name) => prepared.toolRegistry.getTool(name),
         sessionStore,

@@ -46,9 +46,10 @@ import {
   type HeadlessTurnReport
 } from './summary'
 import { buildAtifTrajectory } from './atif'
-import { resolveHeadlessMaxToolRounds } from './roundBudget'
+import { parseArgs, type CliOptions } from './cliOptions'
 import { headlessAssistantCompletionPolicy } from './completionPolicy'
 import { PermissionManager } from '../runtime/permissions/PermissionManager'
+import { listPermissionRules } from '../runtime/permissions/PermissionService'
 import {
   disabledHeadlessCodeGraphDiagnostics,
   startHeadlessCodeGraph,
@@ -56,127 +57,11 @@ import {
 } from './codeGraph'
 import type { CodeContextQueryPort } from '../runtime/code-graph/context'
 
-interface CliOptions {
-  workdir: string
-  logsDir: string
-  model: string
-  baseUrl: string
-  reasoningEffort: 'low' | 'medium' | 'high' | 'max'
-  maxToolRounds: number
-  deadlineSeconds?: number
-  instructionFile?: string
-  /** 显式上下文窗口覆盖；缺省时由模型元数据解析 */
-  contextWindow?: number
-  economyTaskMode?: boolean
-  heavyTaskMode?: boolean
-  taskCategory?: string
-  taskTags?: string[]
-  /** 强制开启工具分组过滤（即使任务分级不是 economy） */
-  toolEconomy?: boolean
-  /** 显式启用本次运行的本地代码索引。 */
-  codeGraph?: boolean
-  evaluationCase?: string
-}
-
 interface UsageTotals {
   uncachedInputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
   outputTokens: number
-}
-
-function parseArgs(argv: string[]): CliOptions {
-  const supported = new Set([
-    'workdir',
-    'logs-dir',
-    'model',
-    'base-url',
-    'reasoning-effort',
-    'max-tool-rounds',
-    'deadline-seconds',
-    'instruction-file',
-    'context-window',
-    'economy-task-mode',
-    'heavy-task-mode',
-    'task-category',
-    'task-tags',
-    'tool-economy',
-    'code-graph',
-    'evaluation-case'
-  ])
-  const flagOnly = new Set([
-    'economy-task-mode',
-    'heavy-task-mode',
-    'tool-economy',
-    'code-graph'
-  ])
-  const values = new Map<string, string>()
-  const flags = new Set<string>()
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]
-    if (!arg.startsWith('--')) throw new Error(`无法识别的参数: ${arg}`)
-    const name = arg.slice(2)
-    if (!supported.has(name)) throw new Error(`无法识别的参数: ${arg}`)
-    if (flagOnly.has(name)) {
-      flags.add(name)
-      continue
-    }
-    const value = argv[i + 1]
-    if (!value || value.startsWith('--')) throw new Error(`参数 ${arg} 缺少值`)
-    values.set(name, value)
-    i += 1
-  }
-
-  const workdir = resolve(values.get('workdir') ?? process.cwd())
-  const logsDir = resolve(values.get('logs-dir') ?? resolve(workdir, '.nova-headless'))
-  const effort = values.get('reasoning-effort') ?? 'max'
-  if (!['low', 'medium', 'high', 'max'].includes(effort)) {
-    throw new Error(`不支持的 reasoning effort: ${effort}`)
-  }
-  const deadlineValue = values.get('deadline-seconds')
-  const deadlineSeconds = deadlineValue === undefined ? undefined : Number(deadlineValue)
-  if (deadlineSeconds !== undefined && (!Number.isFinite(deadlineSeconds) || deadlineSeconds <= 0)) {
-    throw new Error('--deadline-seconds 必须是正数')
-  }
-  const maxToolRounds = resolveHeadlessMaxToolRounds(
-    values.get('max-tool-rounds'),
-    deadlineSeconds
-  )
-  const contextWindowValue = values.get('context-window')
-  const contextWindow = contextWindowValue === undefined ? undefined : Number(contextWindowValue)
-  if (contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0)) {
-    throw new Error('--context-window 必须是正整数')
-  }
-  const evaluationCase = values.get('evaluation-case')
-  if (evaluationCase !== undefined && (evaluationCase.trim().length === 0 || evaluationCase.length > 512)) {
-    throw new Error('--evaluation-case 必须是 1 到 512 个字符')
-  }
-
-  const taskTagsRaw = values.get('task-tags')
-  const taskTags = taskTagsRaw
-    ? taskTagsRaw.split(',').map(t => t.trim()).filter(Boolean)
-    : undefined
-
-  return {
-    workdir,
-    logsDir,
-    model: values.get('model') ?? 'deepseek-v4-flash',
-    baseUrl: values.get('base-url') ?? 'https://api.deepseek.com',
-    reasoningEffort: effort as CliOptions['reasoningEffort'],
-    maxToolRounds,
-    ...(deadlineSeconds === undefined ? {} : { deadlineSeconds }),
-    ...(contextWindow === undefined ? {} : { contextWindow }),
-    ...(values.get('instruction-file')
-      ? { instructionFile: resolve(values.get('instruction-file')!) }
-      : {}),
-    ...(flags.has('economy-task-mode') ? { economyTaskMode: true } : {}),
-    ...(flags.has('heavy-task-mode') ? { heavyTaskMode: true } : {}),
-    ...(values.get('task-category') ? { taskCategory: values.get('task-category') } : {}),
-    ...(taskTags ? { taskTags } : {}),
-    ...(flags.has('tool-economy') ? { toolEconomy: true } : {}),
-    ...(flags.has('code-graph') ? { codeGraph: true } : {}),
-    ...(evaluationCase === undefined ? {} : { evaluationCase })
-  }
 }
 
 async function readInstruction(filePath?: string): Promise<string> {
@@ -248,6 +133,9 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
   const instruction = (await readInstruction(options.instructionFile)).trim()
   if (!instruction) throw new Error('任务指令为空')
+
+  // 跑分差异回溯的第一入口：先输出生效权限模式再进入任何执行路径
+  process.stderr.write(`[nova-headless] permission-mode: ${options.permissionMode}\n`)
 
   const apiKey = process.env.DEEPSEEK_API_KEY
   delete process.env.DEEPSEEK_API_KEY
@@ -344,15 +232,19 @@ async function main(): Promise<void> {
   })
   // 传输路径写入汇总，便于隔离环境网络问题的现场诊断（不含代理凭据）
   const proxyTransport = describeEnvProxy()
+  // 权限按显式 --permission-mode 生效并加载持久化规则；
+  // headless 没有交互授权通道，需要批准的操作直接拒绝而不是挂死等待。
+  const permissionManager = new PermissionManager()
+  permissionManager.setRules(listPermissionRules(options.workdir))
   const loop = new AgentLoop(modelClient, eventBus, {
     systemPromptLayers,
     maxToolRounds: options.maxToolRounds,
     // 显式参数优先；缺省时由模型元数据解析（不再硬编码 1M，避免压缩阈值永不触发）
     contextWindow,
     supportsVision: false,
-    // Headless 没有交互批准通道，固定采用既有的自动执行语义，避免 ask 永久等待。
-    permissionMode: 'full_access',
-    permissionManager: new PermissionManager(),
+    permissionMode: options.permissionMode,
+    permissionManager,
+    permissionAskDeniedReason: 'headless 无交互授权通道，需要用户批准的操作已拒绝',
     toolExecution: 'parallel',
     maxParallelToolCalls: 4,
     onCompaction: () => {
@@ -456,6 +348,7 @@ async function main(): Promise<void> {
     },
     model: options.model,
     reasoning_effort: options.reasoningEffort,
+    permission_mode: options.permissionMode,
     proxy_transport: proxyTransport,
     max_tool_rounds: Number.isFinite(options.maxToolRounds)
       ? options.maxToolRounds

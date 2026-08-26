@@ -152,6 +152,9 @@ export class PermissionManager {
       return { decision: 'deny', riskLevel: 'high', reason: resolution.reason }
     }
 
+    const ceiling = this.resolveCapabilityCeiling(query, resolution)
+    if (ceiling) return ceiling
+
     if (mode !== 'plan') return null
 
     if (!resolution.ok) {
@@ -185,6 +188,38 @@ export class PermissionManager {
         decision: 'deny',
         riskLevel: 'high',
         reason: this.planDenyReason(query.toolName)
+      }
+    }
+    return null
+  }
+
+  /**
+   * 只读能力上限：排除写文件、执行 Shell、控制进程与编排派生。
+   * 编排也在排除之列，保持与只读子代理此前借用 plan 边界时一致的收窄面。
+   */
+  private resolveCapabilityCeiling(
+    query: PermissionQuery,
+    resolution: EffectResolution
+  ): PermissionResult | null {
+    if (query.capabilityCeiling !== 'read_only') return null
+    if (!resolution.ok) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: `只读上限下禁止使用无法解析副作用的工具 "${query.toolName}"`
+      }
+    }
+    const effects = resolution.effects
+    if (
+      effects.includes('filesystem.write') ||
+      effects.includes('shell.execute') ||
+      effects.includes('process.control') ||
+      effects.includes('orchestration')
+    ) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: `只读上限下禁止 "${query.toolName}" 产生的副作用（写文件 / 执行 Shell / 控制进程 / 编排）`
       }
     }
     return null

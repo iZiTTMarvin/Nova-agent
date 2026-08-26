@@ -175,8 +175,15 @@ export interface AgentLoopConfig {
   systemPromptLayers?: SystemPromptLayers
   /** 本轮捕获的会话权限模式；裸构造测试默认请求批准。 */
   permissionMode?: import('../../shared/session/types').PermissionMode
+  /** 能力上限（如只读子代理）；缺省表示无上限。 */
+  permissionCeiling?: import('../../shared/permissions/types').PermissionCapabilityCeiling
   /** 权限规则引擎；产品 Runtime 必须在构造时注入已加载规则的实例。 */
   permissionManager?: PermissionManager
+  /**
+   * 无交互授权通道（如 headless）时 ask 决策的拒绝原因；
+   * 提供后 ask 不等待用户，直接以该原因拒绝。
+   */
+  permissionAskDeniedReason?: string
   /**
    * skillContext 层正文 token 估算（char/4）。
    * agentHandler 在拼完 skillContext 后算一次传入，AgentLoop 用它把"技能正文"

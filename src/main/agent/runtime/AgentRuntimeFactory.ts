@@ -33,6 +33,7 @@ import {
 } from '../../../runtime/code-mode'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
+import type { ToolAuthorizationPolicy } from '../../../runtime/permissions/PermissionCoordinator'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
 import { CheckpointManager } from '../../../runtime/checkpoints/CheckpointManager'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
@@ -103,6 +104,8 @@ export interface PreparedAgentRuntime {
   /** 由 TurnService / agentHandler 在 startRun 后填入；runners / askQuestion 读取 */
   runRefs: AgentRuntimeRunRefs
   setAskQuestionHandler: AgentLoop['setAskQuestionHandler']
+  /** compose 阶段工具门禁；非 compose 会话为 null。子代理派生时继承。 */
+  toolAuthorizationPolicy: ToolAuthorizationPolicy | null
 }
 
 /**
@@ -365,11 +368,13 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setMode(session.mode)
   // compose：模式指令与阶段指南挂 user 消息尾部（每轮实时读取阶段表），
   // 阶段工具门禁作为 overlay 在基础权限判定之前生效
+  let toolAuthorizationPolicy: ToolAuthorizationPolicy | null = null
   if (session.mode === 'compose') {
     agentLoop.setModeInstructionProvider(
       createComposeModeInstructionProvider(sessionStore, sessionId)
     )
-    agentLoop.setToolAuthorizationPolicy(createComposeStageToolPolicy(sessionStore, sessionId))
+    toolAuthorizationPolicy = createComposeStageToolPolicy(sessionStore, sessionId)
+    agentLoop.setToolAuthorizationPolicy(toolAuthorizationPolicy)
   }
   // 动态记忆 prefetch：turn 级 context hook，把检索块插入当次请求的用户消息之前。
   // 注入不触碰 system prompt / 持久化路径；服务不可用（如原生模块缺失）时整体跳过。
@@ -566,6 +571,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     supportsVision,
     frozenPrompt: agentLoop.getFrozenSystemPrompt(),
     runRefs,
-    setAskQuestionHandler: (handler) => agentLoop.setAskQuestionHandler(handler)
+    setAskQuestionHandler: (handler) => agentLoop.setAskQuestionHandler(handler),
+    toolAuthorizationPolicy
   }
 }

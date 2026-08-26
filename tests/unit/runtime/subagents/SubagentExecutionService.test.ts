@@ -9,7 +9,7 @@ import {
   createRunCoordinator,
   RunExecutionRegistry
 } from '../../../../src/runtime/run'
-import { SessionStore } from '../../../../src/runtime/sessions'
+import { SessionStore, deriveChildSessionId } from '../../../../src/runtime/sessions'
 import {
   SubagentExecutionService,
   SubagentScheduler,
@@ -214,6 +214,53 @@ describe('SubagentExecutionService', () => {
     expect(child.codeIndexEnabled).toBe(true)
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['request_approval', 'auto', 'full_access'] as const)(
+    '子会话继承父会话权限模式 %s，只读 profile 仍保持只读闸门',
+    async (parentMode) => {
+      const parent = sessionStore.create(workspace, 'default', {
+        codeIndexEnabled: true,
+        permissionMode: parentMode
+      })
+      const parentRunId = `run-${parentMode}`
+      coordinator.startRun({
+        kind: 'agent',
+        runId: parentRunId,
+        workspaceId: workspace,
+        sessionId: parent.id
+      })
+      coordinator.markRunning(parentRunId, 'msg-parent')
+      coordinator.bindExecutionGeneration(parentRunId, 7)
+      const { service } = createService()
+
+      const execution = await service.spawn(
+        command({ parentSessionId: parent.id, parentRunId }),
+        { invocationRef: {
+          sessionId: parent.id,
+          runId: parentRunId,
+          messageId: 'msg-parent',
+          toolCallId: 'call-task'
+        } }
+      )
+
+      const child = sessionStore.load(execution.childSessionId)
+      if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+      expect(child.permissionMode).toBe(parentMode)
+      expect(child.mode).toBe('plan')
+    }
+  )
+
+  it('request_approval 父派生实现型子代理时权限模式不得升级', async () => {
+    const { service } = createService()
+    const execution = await service.spawn(
+      command({ profileId: 'code', isolation: 'shared' }),
+      { invocationRef: invocationRef() }
+    )
+    const child = sessionStore.load(execution.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(child.permissionMode).toBe('request_approval')
+    expect(child.mode).toBe('default')
   })
 
   it('宿主有 archive_read 时 prepareTurn 收到含该工具的执行 profile', async () => {

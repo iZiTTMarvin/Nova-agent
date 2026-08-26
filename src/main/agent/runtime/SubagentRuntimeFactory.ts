@@ -18,6 +18,7 @@ import type {
   PreparedSubagentTurn,
   PrepareSubagentTurnInput
 } from '../../../runtime/subagents'
+import type { ToolAuthorizationPolicy } from '../../../runtime/permissions/PermissionCoordinator'
 import { buildModelPoolWithFallbacks } from './AgentRuntimeFactory'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是子代理，不要反问父 agent。'
@@ -32,12 +33,22 @@ export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
   readonly supportsVision: boolean
   readonly promptCacheKey?: string
   readonly resolveImageUrl?: (url: string) => string
+  /** 父会话的阶段工具门禁（compose）；子代理继承，只能收窄。 */
+  readonly toolAuthorizationPolicy?: ToolAuthorizationPolicy | null
+}
+
+/** 只读上限以 profile 上限与调用方隔离取并集；权限层据此收窄，模式字段不再兼任闸门语义。 */
+function resolveReadonlyCeiling(input: PrepareSubagentRuntimeInput): boolean {
+  return (
+    input.profile.permissionCeiling === 'read_only' || input.isolation === 'readonly'
+  )
 }
 
 /** 为 Child Session 装配普通 AgentLoop；不创建 Session/Run，也不提交终态。 */
 export function prepareSubagentRuntime(
   input: PrepareSubagentRuntimeInput
 ): PreparedSubagentTurn {
+  const isReadonly = resolveReadonlyCeiling(input)
   const toolRegistry = new ToolRegistry()
   for (const toolName of input.profile.toolNames) {
     const tool = input.resolveTool(toolName)
@@ -70,6 +81,7 @@ export function prepareSubagentRuntime(
     toolExecution: 'sequential',
     reasoningEffort: input.reasoningEffort,
     permissionMode: input.childSession.permissionMode,
+    ...(isReadonly ? { permissionCeiling: 'read_only' as const } : {}),
     permissionManager,
     ...(input.promptCacheKey ? { promptCacheKey: input.promptCacheKey } : {}),
     onCompaction: (compactedContext, meta) => {
@@ -90,11 +102,11 @@ export function prepareSubagentRuntime(
   agentLoop.setWorkingDir(input.workingDirectory)
   agentLoop.setWorkspaceRoot(input.childSession.workspaceRoot)
   agentLoop.setToolRegistry(toolRegistry)
-  agentLoop.setMode(
-    input.profile.permissionCeiling === 'read_only' || input.isolation === 'readonly'
-      ? 'plan'
-      : 'default'
-  )
+  agentLoop.setMode(isReadonly ? 'plan' : 'default')
+  // compose 阶段门禁 overlay 随父会话继承：子代理能力只能比父会话更窄。
+  if (input.toolAuthorizationPolicy) {
+    agentLoop.setToolAuthorizationPolicy(input.toolAuthorizationPolicy)
+  }
   // 子代理的 mode 只是能力闸门（收窄工具与权限），不是主会话的计划/编排语义。
   // 主会话模式指令会要求调用 save_plan / switch_mode、等待用户审批——子代理既没有
   // 这些工具也没有真实用户，拼到任务尾部会被模型正确识别为角色不符的注入指令。

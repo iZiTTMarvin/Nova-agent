@@ -252,6 +252,7 @@ class NovaHeadless(BaseInstalledAgent):
             f'printf "%s" "${{{instruction_var}}}" | '
             "/opt/node/bin/node /opt/nova/nova-headless.cjs "
             "--workdir /app --logs-dir /logs/agent "
+            "--permission-mode full_access "
             f"--model {shlex.quote(model)} "
             f"--base-url {shlex.quote(self._base_url)} "
             f"--reasoning-effort {shlex.quote(self._reasoning_effort)} "

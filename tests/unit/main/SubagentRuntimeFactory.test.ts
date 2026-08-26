@@ -170,3 +170,98 @@ describe('SubagentRuntimeFactory', () => {
     enabled.agentLoop.dispose()
   })
 })
+
+describe('SubagentRuntimeFactory 权限装配', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  async function prepareReadonlyChild(input: {
+    isolation: 'shared' | 'readonly'
+    toolAuthorizationPolicy?: import('../../../src/runtime/permissions/PermissionCoordinator').ToolAuthorizationPolicy
+  }) {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-perm-'))
+    roots.push(sessionsDir)
+    const workspace = resolve(sessionsDir, 'workspace')
+    const store = new SessionStore(sessionsDir)
+    const parent = store.create(workspace, 'default', { permissionMode: 'full_access' })
+    const profile = resolveSubagentProfileSnapshot({
+      name: 'explore',
+      description: 'read only',
+      prompt: 'inspect',
+      allowedTools: ['read', 'grep']
+    }, 'explore')
+    const child = store.createChildIfAbsent({
+      workspaceRoot: workspace,
+      mode: 'plan',
+      permissionMode: 'full_access',
+      task: 'inspect',
+      subagent: {
+        lineage: {
+          parentSessionId: parent.id,
+          parentRunId: 'run-parent',
+          rootRunId: 'run-parent',
+          depth: 1,
+          spawnKey: 'spawn-perm',
+          spawnRunId: 'run-child-perm',
+          origin: {
+            kind: 'task_tool',
+            parentMessageId: 'message-parent',
+            parentToolCallId: 'call-task'
+          }
+        },
+        profile
+      }
+    }).session
+    const prepared = prepareSubagentRuntime({
+      profile,
+      task: 'inspect',
+      workingDirectory: workspace,
+      isolation: input.isolation,
+      childSession: child,
+      parentRunId: 'run-parent',
+      rootRunId: 'run-parent',
+      modelClient: new MockModelClient(),
+      resolveTool: () => undefined,
+      sessionStore: store,
+      sessionsDir,
+      readState: createReadState(),
+      contextWindow: 32_000,
+      supportsVision: false,
+      ...(input.toolAuthorizationPolicy ? { toolAuthorizationPolicy: input.toolAuthorizationPolicy } : {})
+    })
+    return { prepared, dispose: () => prepared.agentLoop.dispose() }
+  }
+
+  it('完全访问父会话下，只读上限仍拒绝 Shell 与进程控制', async () => {
+    const { prepared, dispose } = await prepareReadonlyChild({ isolation: 'shared' })
+    const results = await prepared.agentLoop.checkBatchPermission([
+      { toolCallId: 'tc_bash', toolName: 'bash', args: { command: 'npm test' } },
+      { toolCallId: 'tc_interrupt', toolName: 'shell_session', args: { action: 'interrupt', ref: 'p' } },
+      { toolCallId: 'tc_read', toolName: 'read', args: { path: 'a.ts' } }
+    ], 'msg-child')
+    expect(results.get('tc_bash')).toMatchObject({ allowed: false })
+    expect(results.get('tc_interrupt')).toMatchObject({ allowed: false })
+    expect(results.get('tc_read')).toMatchObject({ allowed: true })
+    dispose()
+  })
+
+  it('compose 阶段门禁 overlay 随子代理继承，只能收窄', async () => {
+    const { prepared, dispose } = await prepareReadonlyChild({
+      isolation: 'shared',
+      toolAuthorizationPolicy: (toolName) =>
+        toolName === 'grep'
+          ? { allowed: false, reason: '当前阶段禁止 grep' }
+          : { allowed: true, reason: '' }
+    })
+    const results = await prepared.agentLoop.checkBatchPermission([
+      { toolCallId: 'tc_grep', toolName: 'grep', args: { pattern: 'x' } },
+      { toolCallId: 'tc_read', toolName: 'read', args: { path: 'a.ts' } }
+    ], 'msg-child')
+    expect(results.get('tc_grep')).toMatchObject({ allowed: false, reason: '当前阶段禁止 grep' })
+    expect(results.get('tc_read')).toMatchObject({ allowed: true })
+    dispose()
+  })
+})

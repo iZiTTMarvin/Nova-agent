@@ -20,7 +20,7 @@ import { PLAN_REVIEW_IGNORED_RESULT_MARKER } from '../../shared/planReview'
 import type { ToolControlSignal } from '../tools/types'
 import type { PermissionManager } from './PermissionManager'
 import type { PermissionMode } from '../../shared/session/types'
-import type { SessionPathGrant } from '../../shared/permissions/types'
+import type { PermissionCapabilityCeiling, SessionPathGrant } from '../../shared/permissions/types'
 import { setExecutionPathGrants } from './pathAccess/sessionPathGrants'
 
 /**
@@ -74,7 +74,13 @@ export interface PermissionCoordinatorDeps {
     sessionId: string
     workspaceRoot: string
     permissionMode: PermissionMode
+    capabilityCeiling: PermissionCapabilityCeiling | null
   }
+  /**
+   * 无交互授权通道（如 headless）时 ask 决策的拒绝原因；
+   * 提供后不再发射 permission_request、不等待用户，ask 一律按该原因拒绝。
+   */
+  askDeniedReason?: string
 }
 
 export class PermissionCoordinator {
@@ -155,6 +161,9 @@ export class PermissionCoordinator {
     }
     if (base.decision === 'deny') {
       return { allowed: false, reason: base.reason }
+    }
+    if (this.deps.askDeniedReason !== undefined) {
+      return { allowed: false, reason: this.deps.askDeniedReason }
     }
 
     // ask：发射 permission_request 事件，等待用户决策
@@ -240,6 +249,13 @@ export class PermissionCoordinator {
     }
 
     if (askItems.length === 0) {
+      return results
+    }
+
+    if (this.deps.askDeniedReason !== undefined) {
+      for (const item of askItems) {
+        results.set(item.toolCallId, { allowed: false, reason: this.deps.askDeniedReason })
+      }
       return results
     }
 

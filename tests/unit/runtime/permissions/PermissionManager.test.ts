@@ -241,6 +241,38 @@ describe('PermissionManager', () => {
     expect(manager.check(query('unknown_tool', {}, 'auto'), 'default').decision).toBe('ask')
   })
 
+  it('只读上限排除写文件、执行 Shell、控制进程与编排，完全访问也不能放宽', () => {
+    const readonlyQuery = (toolName: string, args: Record<string, unknown>): PermissionQuery => ({
+      ...query(toolName, args, 'full_access'),
+      capabilityCeiling: 'read_only'
+    })
+    expect(manager.check(readonlyQuery('write', { path: 'a.ts' }), 'default').decision).toBe('deny')
+    expect(manager.check(readonlyQuery('edit', { path: 'a.ts' }), 'default').decision).toBe('deny')
+    expect(manager.check(readonlyQuery('bash', { command: 'npm test' }), 'default').decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('shell_session', { action: 'write', ref: 'p', input: 'echo hi' }),
+      'default'
+    ).decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('shell_session', { action: 'interrupt', ref: 'p' }),
+      'default'
+    ).decision).toBe('deny')
+    expect(manager.check(readonlyQuery('shell_session', { action: 'stop', ref: 'p' }), 'default').decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('task', { subagent_type: 'explore', task: 'x' }),
+      'default'
+    ).decision).toBe('deny')
+    // 只读观察不受上限影响
+    expect(manager.check(readonlyQuery('read', { path: 'a.ts' }), 'default').decision).toBe('allow')
+    expect(manager.check(readonlyQuery('web_search', { query: 'nova' }), 'default').decision).toBe('allow')
+    expect(manager.check(
+      readonlyQuery('shell_session', { action: 'read', ref: 'p' }),
+      'default'
+    ).decision).toBe('allow')
+    // 无法解析副作用的工具在只读上限下 fail closed
+    expect(manager.check(readonlyQuery('unknown_tool', {}), 'default').decision).toBe('deny')
+  })
+
   it('network.write 在自动档仍需确认，完全访问才放行', () => {
     expect(
       resolveModeBaseline({

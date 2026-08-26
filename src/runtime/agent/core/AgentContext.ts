@@ -3,6 +3,7 @@ import type { ChatMessage, ToolDefinition } from '../../model/types'
 import type { ToolRegistry } from '../../tools/ToolRegistry'
 import type { ToolDialect } from '../../model/dialect'
 import type { Mode, PermissionMode } from '../../../shared/session/types'
+import type { PermissionCapabilityCeiling } from '../../../shared/permissions/types'
 import type { SessionStore } from '../../sessions/SessionStore'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
@@ -36,6 +37,8 @@ export interface AgentContext {
   mode: Mode
   /** 本轮捕获的会话权限模式。 */
   permissionMode: PermissionMode
+  /** 能力上限（如只读子代理）；null 表示无上限。 */
+  permissionCeiling: PermissionCapabilityCeiling | null
   /** 执行环境 */
   workingDir: string | null
   shellPath: string | undefined
@@ -81,6 +84,7 @@ export function createAgentContext(initial: {
     dialect: 'xml',
     mode: 'default',
     permissionMode: 'request_approval',
+    permissionCeiling: null,
     workingDir: null,
     shellPath: undefined,
     binDirs: [],

@@ -143,6 +143,7 @@ try {
   const normal = await runHeadless(
     [
       '--workdir', workspace,
+      '--permission-mode', 'auto',
       '--logs-dir', logs,
       '--base-url', `http://127.0.0.1:${address.port}`,
       '--model', 'deepseek-v4-flash',
@@ -171,7 +172,7 @@ try {
   }
   if (requestBody?.model !== 'deepseek-v4-flash') throw new Error('model ID was not forwarded')
   if (requestBody?.reasoning_effort !== 'max') throw new Error('max effort was not forwarded')
-  if (!Array.isArray(requestBody?.tools) || requestBody.tools.length !== 8) {
+  if (!Array.isArray(requestBody?.tools) || requestBody.tools.length !== 9) {
     throw new Error('coding tool registry was not forwarded')
   }
 
@@ -180,6 +181,7 @@ try {
   const environment = await runHeadless(
     [
       '--workdir', workspace,
+      '--permission-mode', 'auto',
       '--logs-dir', environmentLogs,
       '--base-url', `http://127.0.0.1:${address.port}`,
       '--model', 'deepseek-v4-flash',
@@ -205,6 +207,7 @@ try {
   const deadline = await runHeadless(
     [
       '--workdir', workspace,
+      '--permission-mode', 'auto',
       '--logs-dir', deadlineLogs,
       '--base-url', `http://127.0.0.1:${address.port}`,
       '--model', 'deepseek-v4-flash',
@@ -230,6 +233,7 @@ try {
   const budget = await runHeadless(
     [
       '--workdir', workspace,
+      '--permission-mode', 'auto',
       '--logs-dir', budgetLogs,
       '--base-url', `http://127.0.0.1:${address.port}`,
       '--model', 'deepseek-v4-flash',
@@ -281,6 +285,7 @@ try {
   const artifactRun = await runHeadless(
     [
       '--workdir', workspace,
+      '--permission-mode', 'auto',
       '--logs-dir', artifactLogs,
       '--base-url', `http://127.0.0.1:${address.port}`,
       '--model', 'deepseek-v4-flash',
@@ -327,6 +332,7 @@ try {
       const run = await runHeadless(
         [
           '--workdir', workspace,
+          '--permission-mode', 'auto',
           '--logs-dir', armLogs,
           '--base-url', `http://127.0.0.1:${address.port}`,
           '--model', 'deepseek-v4-flash',
