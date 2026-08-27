@@ -29,3 +29,13 @@ export {
   SubagentLifecycleCoordinator,
   type CancelSubagentTreeResult
 } from './SubagentLifecycleCoordinator'
+export {
+  deletePreset,
+  getPresetFilePaths,
+  getSubAgentSpecFromStore,
+  listCustomPresets,
+  loadGlobalPresets,
+  loadMergedCustomPresets,
+  loadProjectPresets,
+  savePreset
+} from './presetStore'

@@ -1,9 +1,10 @@
 /**
- * SubAgentConfig — 子代理规格与内置/自定义配置加载
+ * SubAgentConfig — 内置规格与运行时预设解析
+ *
+ * 持久化预设的读取/合并/迁移由 runtime/subagents/presetStore 拥有；
+ * 本模块只保留内置 definition 与 dispatcher 侧的 workspace-scoped 解析。
  */
-import { existsSync, readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
+import { getSubAgentSpecFromStore, listCustomPresets } from '../../subagents'
 import type { SubAgentSpec } from '../../../shared/settings/types'
 
 export type { SubAgentSpec }
@@ -39,15 +40,16 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
 
 const specByName = new Map(BUILTIN_SUBAGENTS.map(s => [s.name, s]))
 
-/** 按名称获取子代理规格（内置 + 用户自定义） */
-export function getSubAgentSpec(name: string, customDir?: string): SubAgentSpec | undefined {
-  const custom = loadCustomSubAgents(customDir).find(s => s.name === name)
-  return custom ?? specByName.get(name)
+/** 按名称获取子代理规格，workspaceRoot 存在时优先匹配项目级预设覆盖全局。 */
+export function getSubAgentSpec(name: string, workspaceRoot?: string | null): SubAgentSpec | undefined {
+  const custom = getSubAgentSpecFromStore(name, workspaceRoot)
+  if (custom) return custom
+  return specByName.get(name)
 }
 
-/** 列出所有可用子代理 */
-export function listSubAgents(customDir?: string): SubAgentSpec[] {
-  const custom = loadCustomSubAgents(customDir)
+/** 列出所有可用子代理，custom 按 workspace 合并后与内置去重。 */
+export function listSubAgents(workspaceRoot?: string | null): SubAgentSpec[] {
+  const custom = listCustomPresets(workspaceRoot)
   const names = new Set<string>()
   const result: SubAgentSpec[] = []
   for (const s of [...custom, ...BUILTIN_SUBAGENTS]) {
@@ -56,23 +58,4 @@ export function listSubAgents(customDir?: string): SubAgentSpec[] {
     result.push(s)
   }
   return result
-}
-
-function loadCustomSubAgents(dir?: string): SubAgentSpec[] {
-  const subDir = dir ?? join(homedir(), '.nova', 'subagents')
-  if (!existsSync(subDir)) return []
-  try {
-    return readdirSync(subDir)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        try {
-          return JSON.parse(readFileSync(join(subDir, f), 'utf-8')) as SubAgentSpec
-        } catch {
-          return null
-        }
-      })
-      .filter((s): s is SubAgentSpec => s !== null && Boolean(s.name))
-  } catch {
-    return []
-  }
 }

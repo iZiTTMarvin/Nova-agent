@@ -1,13 +1,8 @@
-/**
- * Subagents 配置 IPC — 内置 + 全局/项目自定义 JSON
- */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { join } from 'path'
 import { handle } from './secureIpc'
 import { SUBAGENTS_LIST, SUBAGENTS_SAVE, SUBAGENTS_DELETE } from '../../shared/ipc/channels'
 import { BUILTIN_SUBAGENTS } from '../../runtime/agent'
 import type { SubAgentSpec } from '../../shared/settings/types'
-import { getNovaHomeDir } from '../../runtime/settings/novaSettings'
+import { deletePreset, getPresetFilePaths, loadMergedCustomPresets, savePreset } from '../../runtime/subagents'
 import type {
   SubagentListItem,
   SubagentsListParams,
@@ -17,60 +12,20 @@ import type {
 
 const BUILTIN_NAMES = new Set(BUILTIN_SUBAGENTS.map(s => s.name))
 
-function globalSubagentsDir(): string {
-  return join(getNovaHomeDir(), 'subagents')
-}
-
-function projectSubagentsDir(workspaceRoot: string): string {
-  return join(workspaceRoot, '.nova', 'subagents')
-}
-
-function loadJsonSpecs(dir: string, origin: 'global' | 'project'): SubagentListItem[] {
-  if (!existsSync(dir)) return []
-  const result: SubagentListItem[] = []
-  try {
-    for (const f of readdirSync(dir).filter(file => file.endsWith('.json'))) {
-      const filePath = join(dir, f)
-      try {
-        const spec = JSON.parse(readFileSync(filePath, 'utf-8')) as SubAgentSpec
-        if (!spec?.name) continue
-        result.push({
-          ...spec,
-          builtin: false,
-          origin,
-          filePath
-        })
-      } catch {
-        // 跳过损坏的 JSON
-      }
-    }
-  } catch {
-    return []
-  }
-  return result
-}
-
 function listAllSubagents(workspaceRoot?: string | null): SubagentListItem[] {
-  const byName = new Map<string, SubagentListItem>()
-
-  // 项目级覆盖全局
-  for (const item of loadJsonSpecs(globalSubagentsDir(), 'global')) {
-    byName.set(item.name, item)
-  }
-  if (workspaceRoot) {
-    for (const item of loadJsonSpecs(projectSubagentsDir(workspaceRoot), 'project')) {
-      byName.set(item.name, item)
-    }
-  }
-
-  const custom = [...byName.values()]
+  const merged = loadMergedCustomPresets(workspaceRoot)
+  const filePaths = getPresetFilePaths()
+  const custom: SubagentListItem[] = merged.map(({ spec, origin }) => ({
+    ...spec,
+    builtin: false,
+    origin,
+    filePath: origin === 'project' && workspaceRoot ? filePaths.projectFile(workspaceRoot) : filePaths.globalFile
+  }))
   const builtins: SubagentListItem[] = BUILTIN_SUBAGENTS.map(s => ({
     ...s,
     builtin: true,
     origin: 'builtin' as const
   }))
-
-  // 自定义同名覆盖内置展示，但内置仍保留若未被覆盖
   const names = new Set<string>()
   const result: SubagentListItem[] = []
   for (const s of [...custom, ...builtins]) {
@@ -99,20 +54,12 @@ export function registerSubagentsHandler(): void {
 
   handle(SUBAGENTS_SAVE, async (_event, params: SubagentsSaveParams): Promise<SubagentListItem> => {
     validateSpec(params.spec)
-    const dir =
-      params.location === 'project'
-        ? params.workspaceRoot
-          ? projectSubagentsDir(params.workspaceRoot)
-          : null
-        : globalSubagentsDir()
-    if (!dir) {
-      throw new Error('保存项目级子代理需要先打开工作区')
-    }
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
-    }
-    const filePath = join(dir, `${params.spec.name}.json`)
-    writeFileSync(filePath, JSON.stringify(params.spec, null, 2), 'utf-8')
+    savePreset(params.spec, params.location, params.workspaceRoot ?? null)
+    const filePaths = getPresetFilePaths()
+    const filePath =
+      params.location === 'project' && params.workspaceRoot
+        ? filePaths.projectFile(params.workspaceRoot)
+        : filePaths.globalFile
     return {
       ...params.spec,
       builtin: false,
@@ -125,17 +72,7 @@ export function registerSubagentsHandler(): void {
     if (BUILTIN_NAMES.has(params.name)) {
       throw new Error('内置子代理不可删除')
     }
-    const candidates = [
-      join(globalSubagentsDir(), `${params.name}.json`),
-      ...(params.workspaceRoot ? [join(projectSubagentsDir(params.workspaceRoot), `${params.name}.json`)] : [])
-    ]
-    let deleted = false
-    for (const p of candidates) {
-      if (existsSync(p)) {
-        rmSync(p)
-        deleted = true
-      }
-    }
+    const deleted = deletePreset(params.name, params.workspaceRoot ?? null)
     if (!deleted) {
       throw new Error('未找到要删除的子代理配置')
     }

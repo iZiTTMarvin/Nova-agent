@@ -274,7 +274,7 @@ export async function sendAgentMessage(
     scheduler: getSubagentScheduler(),
     isRunExecutionActive: (runId) => executionRegistry.get(runId) !== null,
     hostHasArchiveRead: () => prepared.toolRegistry.getTool('archive_read') !== undefined,
-    loadProfile: (profileId) => getSubAgentSpec(profileId),
+    loadProfile: (profileId) => getSubAgentSpec(profileId, projectPath),
     prepareTurn: (input) => {
       const childPromptCacheKey =
         sessionStore.ensureCacheRoutingKey(input.childSession.id) ?? undefined
