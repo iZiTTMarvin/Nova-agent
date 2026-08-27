@@ -1,4 +1,7 @@
-import { appendTerminalErrorToBlocks } from '../../../../shared/session/terminalErrorBlocks'
+import {
+  appendTerminalErrorToBlocks,
+  formatTerminalErrorMessage
+} from '../../../../shared/session/terminalErrorBlocks'
 import { markThinkingEndedForMessage } from '../../../lib/thinkingTimingMemory'
 import type { ChatState, ExtendedMessage, RendererToolBlock } from '../types'
 import {
@@ -158,6 +161,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
   },
 
   handleError: async (messageId: string, error: string) => {
+    const displayError = formatTerminalErrorMessage(error)
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
 
@@ -191,7 +195,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         nextMessages[idx] = bumpRevision({
           ...prev,
           // 无 blocks 时用错误文案；有 blocks 时保留原 content，由 blocks 渲染
-          content: hasBlocks ? prev.content || '' : error,
+          content: hasBlocks ? prev.content || '' : displayError,
           isError: true,
           interrupted: true,
           thinking: prev.thinking,
@@ -213,7 +217,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         id: messageId,
         sessionId: activeSessionId,
         role: 'assistant',
-        content: error,
+        content: displayError,
         isError: true,
         timestamp: now,
         turnStartedAt: now,

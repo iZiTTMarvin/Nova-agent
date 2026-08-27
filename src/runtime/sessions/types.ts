@@ -9,8 +9,9 @@ import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   SessionKind,
   SubagentLineage,
-  SubagentModelSnapshot,
+  SubagentProfileModel,
   SubagentProfileProjection,
+  SubagentSessionHeader,
   SubagentSessionListMetadata,
   SubagentSessionMetadata
 } from '../../shared/subagents'
@@ -45,7 +46,7 @@ interface SessionSummaryBase {
   pinned?: boolean
   /**
    * 会话级思考强度覆盖（与 SessionData.reasoningEffortOverride 同源）。
-   * 子代理投影读取父会话此项，保证显示与运行时一致。
+   * 只作用于主会话；子代理的有效值记录在自身 header 中。
    */
   reasoningEffortOverride?: ReasoningEffort
 }
@@ -72,9 +73,11 @@ export type InternalSessionSummary =
       subagent: {
         lineage: SubagentLineage
         profile: Omit<SubagentProfileProjection, 'model'> & {
-          /** profile 显式覆盖的模型（不进入对外 SubagentProfileProjection）。 */
-          readonly model?: SubagentModelSnapshot
+          /** 仅供 main/runtime 内部兼容旧 profile；不进入对外投影。 */
+          readonly model?: SubagentProfileModel
         }
+        /** Child Session header；旧会话缺省表示实际模型未知。 */
+        readonly header?: SubagentSessionHeader
       }
     })
 

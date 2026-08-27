@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   migrateV1ToV2,
   resolveModelConfig,
+  resolveModelReference,
   resolveActiveModelConfig,
   validateLlmRegistry,
   createProviderFromPreset,
@@ -89,6 +90,44 @@ describe('llmRegistry', () => {
     if (registry.valid) {
       expect(resolveActiveModelConfig(registry.registry)).toBeNull()
     }
+  })
+
+  it('resolveModelReference 区分 disabled、missing 与 retired', () => {
+    const provider = createProviderFromPreset('deepseek', 'key')
+    const ref = { providerId: provider.id, modelEntryId: provider.models[0]!.id }
+    const disabled = {
+      version: 2 as const,
+      providers: [{ ...provider, enabled: false }],
+      activeModel: ref
+    }
+    expect(resolveModelReference(disabled, ref).status).toBe('provider_disabled')
+
+    const missing = {
+      version: 2 as const,
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelEntryId: 'missing' }
+    }
+    expect(resolveModelReference(missing, missing.activeModel).status).toBe('model_missing')
+
+    const retired = {
+      version: 2 as const,
+      providers: [{ ...provider, models: [{ ...provider.models[0]!, retired: true }] }],
+      activeModel: ref
+    }
+    expect(resolveModelReference(retired, ref).status).toBe('model_retired')
+  })
+
+  it('validateLlmRegistry 拒绝非 boolean 的 retired 字段', () => {
+    const provider = createProviderFromPreset('deepseek', 'key')
+    const result = validateLlmRegistry({
+      version: 2 as const,
+      providers: [{
+        ...provider,
+        models: [{ ...provider.models[0]!, retired: 'true' }]
+      }],
+      activeModel: { providerId: provider.id, modelEntryId: provider.models[0]!.id }
+    })
+    expect(result).toEqual(expect.objectContaining({ valid: false }))
   })
 
   it('mergeFetchedModelEntries 去重合并', () => {

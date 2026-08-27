@@ -2,6 +2,7 @@
  * 设置相关 IPC 共享类型
  */
 import type { Mode, PermissionMode } from '../session/types'
+import type { SubagentModelBinding } from '../subagents/types'
 
 export type { PermissionMode }
 
@@ -22,7 +23,7 @@ export interface SubAgentSpec {
   description: string
   allowedTools: string[]
   prompt: string
-  model?: { providerID: string; modelID: string }
+  model?: SubagentModelBinding
   maxToolRounds?: number
   contextWindow?: number
 }

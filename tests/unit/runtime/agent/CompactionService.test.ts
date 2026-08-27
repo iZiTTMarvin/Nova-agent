@@ -260,6 +260,45 @@ describe('CompactionService', () => {
     expect(onCompaction).not.toHaveBeenCalled()
   })
 
+  it('重建上下文的投影等待期间取消时不写回任何压缩状态', async () => {
+    const original = createMessages()
+    const snapshot = structuredClone(original)
+    const context = createContext(original)
+    const abortController = new AbortController()
+    const onCompaction = vi.fn()
+    let projectionCalls = 0
+    let releaseSecondProjection: ((messages: ChatMessage[]) => void) | undefined
+    const projection = {
+      project: async (messages: ChatMessage[]): Promise<ChatMessage[]> => {
+        projectionCalls++
+        if (projectionCalls === 2) {
+          return new Promise(resolve => {
+            releaseSecondProjection = resolve
+          })
+        }
+        return messages
+      }
+    }
+    const client = new MockModelClient().addResponse({
+      events: [
+        { type: 'text_delta', delta: 'compacted summary' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { service } = createService({ context, client, onCompaction })
+    const compaction = service.runThresholdCompaction(projection, abortController.signal)
+
+    await vi.waitFor(() => expect(projectionCalls).toBe(2))
+    abortController.abort()
+    releaseSecondProjection?.(snapshot)
+
+    await expect(compaction).resolves.toBe(false)
+    expect(context.messages).toBe(original)
+    expect(context.messages).toEqual(snapshot)
+    expect(context.compactionLevel).toBe(0)
+    expect(onCompaction).not.toHaveBeenCalled()
+  })
+
   it('restore 与 user turn 记账也由 service 更新同一 AgentContext', () => {
     const context = createContext([
       { role: 'system', content: 'system prompt' },

@@ -7,7 +7,7 @@ import { CHARS_PER_TOKEN } from '../tokenEstimator'
 
 /** 请求 payload 字符量（与 ContextBudgetManager 序列化口径一致） */
 export function measureRequestPayloadChars(messages: readonly ChatMessage[]): number {
-  return Buffer.byteLength(JSON.stringify(messages), 'utf8')
+  return JSON.stringify(messages).length
 }
 
 export interface EstimateNextRequestTokensInput {

@@ -14,11 +14,12 @@ import {
   discoverProjectRules,
   projectEffectiveToolDefinitions,
   renderBaseRules,
-  renderMinimalEngineeringPolicy
+  renderMinimalEngineeringPolicy,
+  listSubAgents
 } from '../../../runtime/agent'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
-import { loadModelConfig } from '../../../runtime/model/config'
+import { loadLlmRegistry, loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
 import { preferredToolDialect } from '../../../runtime/model/dialect'
 import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
@@ -69,7 +70,10 @@ import {
 } from './composeStageWiring'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
-import type { SpawnSubagentPort } from '../../../runtime/subagents'
+import {
+  buildSubagentCatalog,
+  type SpawnSubagentPort
+} from '../../../runtime/subagents'
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import { writerLeaseRegistry } from '../../../runtime/workspace'
 import { planReviewWaiters } from '../interaction/planReviewWaiters'
@@ -245,6 +249,11 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryRetrievalService,
     loadSettings: loadNovaSettings,
     getSpawnSubagentPort,
+    getSubagentCatalog: () =>
+      buildSubagentCatalog(
+        listSubAgents(projectPath),
+        loadLlmRegistry(app.getPath('userData'))
+      ),
     getToolAvailability: () => toolAvailability,
     // 构建产物 out/main/codeModeWorker.js；缺失时 run_code 回退进程内沙箱
     codeModeWorkerPath: join(__dirname, 'codeModeWorker.js'),

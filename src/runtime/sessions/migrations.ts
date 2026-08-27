@@ -15,8 +15,10 @@ import type { SessionData, SessionMessage } from './types'
 import type {
   SubagentOrigin,
   SubagentProfileSnapshot,
+  SubagentSessionHeader,
   SubagentSessionMetadata
 } from '../../shared/subagents'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { Mode, PermissionMode } from '../../shared/session/types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
@@ -417,10 +419,41 @@ function isSubagentProfileSnapshot(value: unknown): value is SubagentProfileSnap
   }
 
   if (value.model === undefined) return true
+  return isSubagentProfileModel(value.model)
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return (
-    isPlainObject(value.model) &&
-    isNonEmptyString(value.model.providerId) &&
-    isNonEmptyString(value.model.modelId)
+    value === 'auto' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'max'
+  )
+}
+
+function isSubagentProfileModel(
+  value: unknown
+): value is SubagentProfileSnapshot['model'] {
+  if (!isPlainObject(value) || !isNonEmptyString(value.providerId)) return false
+  if (value.providerID !== undefined || value.modelID !== undefined) return false
+  if (value.modelEntryId !== undefined) {
+    return (
+      value.modelId === undefined &&
+      isNonEmptyString(value.modelEntryId) &&
+      (value.reasoningEffort === undefined || isReasoningEffort(value.reasoningEffort))
+    )
+  }
+  return isNonEmptyString(value.modelId)
+}
+
+function isSubagentSessionHeader(value: unknown): value is SubagentSessionHeader {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.providerId) &&
+    isNonEmptyString(value.modelEntryId) &&
+    isNonEmptyString(value.modelId) &&
+    isReasoningEffort(value.reasoningEffort)
   )
 }
 
@@ -438,6 +471,7 @@ function isSubagentSessionMetadata(value: unknown): value is SubagentSessionMeta
   ) {
     return false
   }
+  if (value.header !== undefined && !isSubagentSessionHeader(value.header)) return false
   return (
     isNonEmptyString(lineage.parentSessionId) &&
     isNonEmptyString(lineage.parentRunId) &&

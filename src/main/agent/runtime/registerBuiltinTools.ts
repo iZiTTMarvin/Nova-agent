@@ -17,6 +17,7 @@ import { todoWriteTool } from '../../../runtime/tools/todoWriteTool'
 import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
+import { createAgentListTool } from '../../../runtime/tools/agent_list'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
@@ -36,6 +37,7 @@ import type { MemoryRetrievalService } from '../../../runtime/memory/retrieval/M
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
+import type { SubagentCatalogEntry } from '../../../shared/subagents'
 
 export interface BuiltinToolRegistrationDeps {
   skillRegistry: SkillRegistry
@@ -45,6 +47,8 @@ export interface BuiltinToolRegistrationDeps {
   loadSettings: () => NovaSettings
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
+  /** agent_list 读取的 workspace-scoped catalog；仅返回公开字段。 */
+  getSubagentCatalog?: () => readonly SubagentCatalogEntry[]
   /** load_tools 写入的会话级工具可用性 Owner */
   getToolAvailability?: () => ToolAvailability | null
   /** run_code 的沙箱 Code Runtime 构建产物路径；缺省仅用于测试的进程内执行 */
@@ -111,6 +115,11 @@ export function registerBuiltinTools(
   toolRegistry.register(
     createTaskTool({
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
+    })
+  )
+  toolRegistry.register(
+    createAgentListTool({
+      getCatalog: deps.getSubagentCatalog ?? (() => [])
     })
   )
   // load_tools 最后注册：其 enum / 描述需要完整注册清单来判定 live deferred 组

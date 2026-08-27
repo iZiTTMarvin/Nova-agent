@@ -13,10 +13,34 @@ import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
 import { createReadState } from '../../../src/runtime/tools/editTool'
 import type { ToolExecutor } from '../../../src/runtime/tools/types'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
+import { OpenAICompatibleModelClient } from '../../../src/runtime/model/OpenAICompatibleModelClient'
+import type { LlmRegistry } from '../../../src/shared/config/llmRegistry'
+import type { SubagentSessionHeader } from '../../../src/shared/subagents'
 
-vi.mock('../../../src/main/agent/runtime/AgentRuntimeFactory', () => ({
-  buildModelPoolWithFallbacks: (client: unknown) => client
-}))
+const testRegistry: LlmRegistry = {
+  version: 2,
+  activeModel: { providerId: 'test-provider', modelEntryId: 'test-entry' },
+  providers: [{
+    id: 'test-provider',
+    name: 'Test provider',
+    baseUrl: 'https://test.invalid/v1',
+    apiKey: 'test-key',
+    enabled: true,
+    models: [{ id: 'test-entry', modelId: 'test-model', contextWindow: 32_000, supportsVision: false }]
+  }]
+}
+
+const testHeader: SubagentSessionHeader = {
+  providerId: 'test-provider',
+  modelEntryId: 'test-entry',
+  modelId: 'test-model',
+  reasoningEffort: 'auto'
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe('SubagentRuntimeFactory', () => {
   const roots: string[] = []
@@ -38,6 +62,7 @@ describe('SubagentRuntimeFactory', () => {
       permissionMode: 'request_approval',
       task: 'inspect',
       subagent: {
+        header: testHeader,
         lineage: {
           parentSessionId: parent.id,
           parentRunId: 'run-parent',
@@ -83,14 +108,12 @@ describe('SubagentRuntimeFactory', () => {
       childSession: reloaded,
       parentRunId: 'run-parent',
       rootRunId: 'run-parent',
-      modelClient: new MockModelClient(),
+      registry: testRegistry,
       resolveTool: () => undefined,
       sessionStore: store,
       sessionsDir,
       novaSettings: DEFAULT_NOVA_SETTINGS,
-      readState: createReadState(),
-      contextWindow: 32_000,
-      supportsVision: false
+      readState: createReadState()
     })
 
     const history = prepared.agentLoop.getContext().map((message) =>
@@ -142,6 +165,7 @@ describe('SubagentRuntimeFactory', () => {
         })
       })
     })
+    vi.spyOn(OpenAICompatibleModelClient.prototype, 'chat').mockImplementation(client.chat.bind(client))
     const enabled = prepareSubagentRuntime({
       profile: reloaded.subagent.profile,
       task: 'inspect',
@@ -150,14 +174,12 @@ describe('SubagentRuntimeFactory', () => {
       childSession: reloaded,
       parentRunId: 'run-parent',
       rootRunId: 'run-parent',
-      modelClient: client,
+      registry: testRegistry,
       resolveTool: (name) => name === 'code_context' ? codeContextTool : undefined,
       sessionStore: store,
       sessionsDir,
       novaSettings: DEFAULT_NOVA_SETTINGS,
-      readState: createReadState(),
-      contextWindow: 32_000,
-      supportsVision: false
+      readState: createReadState()
     })
     enabled.agentLoop.setRunRef('run-child')
 
@@ -211,6 +233,7 @@ describe('SubagentRuntimeFactory 权限装配', () => {
       permissionMode: 'full_access',
       task: 'inspect',
       subagent: {
+        header: testHeader,
         lineage: {
           parentSessionId: parent.id,
           parentRunId: 'run-parent',
@@ -235,13 +258,11 @@ describe('SubagentRuntimeFactory 权限装配', () => {
       childSession: child,
       parentRunId: 'run-parent',
       rootRunId: 'run-parent',
-      modelClient: new MockModelClient(),
+      registry: testRegistry,
       resolveTool,
       sessionStore: store,
       sessionsDir,
       readState: createReadState(),
-      contextWindow: 32_000,
-      supportsVision: false,
       ...(input.toolAuthorizationPolicy ? { toolAuthorizationPolicy: input.toolAuthorizationPolicy } : {})
     })
     return { prepared, dispose: () => prepared.agentLoop.dispose() }
@@ -299,5 +320,114 @@ describe('SubagentRuntimeFactory 权限装配', () => {
     expect(results.get('tc_grep')).toMatchObject({ allowed: false, reason: '当前阶段禁止 grep' })
     expect(results.get('tc_read')).toMatchObject({ allowed: true })
     dispose()
+  })
+})
+
+describe('SubagentRuntimeFactory 模型请求', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('两个 child 按持久化 header 使用独立模型与 effort，保留各自视觉能力和上下文窗口', async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-wire-'))
+    roots.push(sessionsDir)
+    const workspace = resolve(sessionsDir, 'workspace')
+    const store = new SessionStore(sessionsDir)
+    const parent = store.create(workspace)
+    store.updateReasoningEffortOverride(parent.id, 'max')
+    const registry: LlmRegistry = {
+      ...testRegistry,
+      providers: [
+        ...testRegistry.providers,
+        {
+          id: 'child-a', name: 'Child A', baseUrl: 'https://child-a.invalid/v1',
+          apiKey: 'test-child-a', enabled: true, toolDialect: 'native',
+          models: [{
+            id: 'entry-a', modelId: 'model-a', reasoningEffort: 'low',
+            contextWindow: 48_000, supportsVision: true
+          }]
+        },
+        {
+          id: 'child-b', name: 'Child B', baseUrl: 'https://child-b.invalid/v1',
+          apiKey: 'test-child-b', enabled: true, toolDialect: 'native',
+          models: [{
+            id: 'entry-b', modelId: 'model-b', reasoningEffort: 'high',
+            contextWindow: 64_000, supportsVision: false
+          }]
+        }
+      ],
+      fallbacks: [testRegistry.activeModel]
+    }
+    const requests: Array<{ url: string; body: unknown }> = []
+    vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
+      if (typeof init?.body !== 'string') throw new Error('expected serialized model body')
+      const body: unknown = JSON.parse(init.body)
+      requests.push({ url: String(url), body })
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":1}}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+      )
+    })
+    const headers: SubagentSessionHeader[] = [
+      { providerId: 'child-a', modelEntryId: 'entry-a', modelId: 'model-a', reasoningEffort: 'high' },
+      { providerId: 'child-b', modelEntryId: 'entry-b', modelId: 'model-b', reasoningEffort: 'auto' }
+    ]
+    const children = headers.map((header, index) => {
+      const profile = resolveSubagentProfileSnapshot({
+        name: 'inspect', description: 'Inspect', prompt: 'Inspect', allowedTools: [],
+        contextWindow: index === 0 ? 24_000 : 100_000
+      }, 'inspect')
+      const child = store.createChildIfAbsent({
+        workspaceRoot: workspace, mode: 'default', permissionMode: 'request_approval', task: 'inspect',
+        subagent: {
+          header, profile,
+          lineage: {
+            parentSessionId: parent.id, parentRunId: 'run-parent', rootRunId: 'run-parent',
+            depth: 1, spawnKey: `wire-${index}`, spawnRunId: `run-child-${index}`,
+            origin: { kind: 'task_tool', parentMessageId: 'message-parent', parentToolCallId: `call-${index}` }
+          }
+        }
+      }).session
+      const restored = new SessionStore(sessionsDir).load(child.id)
+      if (!restored || restored.kind !== 'subagent') throw new Error('expected persisted child')
+      const prepared = prepareSubagentRuntime({
+        profile, childSession: restored, task: 'inspect', workingDirectory: workspace,
+        isolation: 'readonly', parentRunId: 'run-parent', rootRunId: 'run-parent',
+        registry, resolveTool: () => undefined, sessionStore: store, sessionsDir,
+        readState: createReadState(), novaSettings: DEFAULT_NOVA_SETTINGS
+      })
+      prepared.agentLoop.setRunRef(`run-child-${index}`)
+      const limits: number[] = []
+      prepared.eventBus.on((event) => {
+        if (event.type === 'context_breakdown' && event.contextLimit !== undefined) limits.push(event.contextLimit)
+      })
+      return { prepared, limits }
+    })
+    try {
+      const outcomes = await Promise.all(children.map(({ prepared }) => prepared.agentLoop.sendMessage([
+        { type: 'text', text: 'inspect' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }
+      ], agentRoute())))
+      expect(outcomes.map((outcome) => outcome.status)).toEqual(['completed', 'completed'])
+      expect(requests).toHaveLength(2)
+      const requestA = requests.find((request) => request.url.startsWith('https://child-a.invalid/'))
+      const requestB = requests.find((request) => request.url.startsWith('https://child-b.invalid/'))
+      expect(requestA).toMatchObject({
+        url: 'https://child-a.invalid/v1/chat/completions',
+        body: { model: 'model-a', reasoning_effort: 'high' }
+      })
+      expect(requestB).toMatchObject({
+        url: 'https://child-b.invalid/v1/chat/completions', body: { model: 'model-b' }
+      })
+      expect(requestB?.body).not.toHaveProperty('reasoning_effort')
+      expect(JSON.stringify(requestA?.body)).toContain('data:image/png;base64,AQID')
+      expect(JSON.stringify(requestB?.body)).not.toContain('data:image/png;base64,AQID')
+      expect(children[0].limits).toContain(24_000)
+      expect(children[1].limits).toContain(64_000)
+    } finally {
+      children.forEach(({ prepared }) => prepared.agentLoop.dispose())
+    }
   })
 })

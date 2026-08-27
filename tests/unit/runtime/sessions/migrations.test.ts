@@ -252,6 +252,25 @@ describe('migrateSessionData', () => {
     }
 
     expect(migrateSessionData(input)).toEqual(input)
+    const header = {
+      providerId: 'provider', modelEntryId: 'entry', modelId: 'api-model', reasoningEffort: 'auto'
+    }
+    const bound = {
+      ...input,
+      subagent: {
+        ...metadata,
+        profile: { ...metadata.profile, model: { providerId: 'provider', modelEntryId: 'entry' } },
+        header
+      }
+    }
+    expect(migrateSessionData(bound)).toEqual(bound)
+    for (const invalidHeader of [
+      { ...header, modelEntryId: '' },
+      { ...header, reasoningEffort: 'unknown' }
+    ]) {
+      expect(() => migrateSessionData({ ...bound, subagent: { ...bound.subagent, header: invalidHeader } }))
+        .toThrow(/合法的 subagent metadata/)
+    }
   })
 
   it('skill fork 持久化根必须绑定 skill_fork origin 且为绝对路径', () => {

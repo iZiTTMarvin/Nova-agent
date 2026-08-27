@@ -25,6 +25,8 @@ export function getToolDisplayName(toolName: string): string {
       return '终端会话 (shell_session)'
     case 'task':
       return '调度子代理 (task)'
+    case 'agent_list':
+      return '查看子代理目录 (agent_list)'
     case 'invoke_skill':
       return '调用技能 (invoke_skill)'
     case 'todo_write':

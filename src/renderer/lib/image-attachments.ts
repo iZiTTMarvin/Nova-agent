@@ -13,7 +13,7 @@ export interface ImageAttachment {
   fileName: string
   /**
    * 图片来源 URL。
-   * 落盘后为 nova-image:// URL（由主进程返回）；落盘失败时为 base64 data URL 兜底。
+   * 落盘后为 nova-image:// URL（由主进程返回）。
    * 可直接作为 <img src>。
    */
   dataUrl: string
@@ -49,7 +49,7 @@ export function validateImageFile(file: File): { valid: boolean; reason?: string
  * 将 File 对象编码为 ImageAttachment。
  *
  * 流程：FileReader 读为 base64 data URL（仅短暂持有）→ IPC 落盘 → 拿回 nova-image:// URL。
- * 主进程落盘失败时降级为 base64 data URL 兜底（保证可用性优先）。
+ * 主进程拒绝单张图片时返回该图片的可操作错误，不绕过入库门槛。
  *
  * @param sessionId 当前会话 ID（落盘到 sessions/{sessionId}/images/）
  */
@@ -83,17 +83,9 @@ export async function fileToImageAttachment(
       }
     }
   } catch (err) {
-    // 主进程落盘失败：降级为 base64 data URL 兜底（可用性优先，但记日志便于排查）
-    console.error('[image-attachments] 落盘失败，降级 base64:', err)
-    return {
-      attachment: {
-        id: crypto.randomUUID(),
-        fileName: file.name,
-        dataUrl,
-        mimeType: file.type,
-        size: file.size
-      }
-    }
+    const message = err instanceof Error ? err.message : '图片处理失败，请重试'
+    console.error('[image-attachments] 图片入库失败:', err)
+    return { error: message }
   }
 }
 

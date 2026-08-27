@@ -6,8 +6,9 @@ import {
   renderMinimalEngineeringPolicy
 } from '../../../runtime/agent'
 import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
-import type { ModelClient } from '../../../runtime/model/ModelClient'
+import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
+import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import type { ToolExecutor } from '../../../runtime/tools/types'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
@@ -24,18 +25,17 @@ import type {
   PrepareSubagentTurnInput
 } from '../../../runtime/subagents'
 import type { ToolAuthorizationPolicy } from '../../../runtime/permissions/PermissionCoordinator'
-import { buildModelPoolWithFallbacks } from './AgentRuntimeFactory'
+import type { LlmRegistry } from '../../../shared/config'
+import { resolveChildModelFromHeader } from '../subagents/childModelRouting'
 
 const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是子代理，不要反问父 agent。'
 
 export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
-  readonly modelClient: ModelClient
+  readonly registry: LlmRegistry
   readonly resolveTool: (name: string) => ToolExecutor | undefined
   readonly sessionStore: SessionStore
   readonly sessionsDir: string
   readonly readState: ReadState
-  readonly contextWindow: number
-  readonly supportsVision: boolean
   readonly promptCacheKey?: string
   readonly resolveImageUrl?: (url: string) => string
   /** 父会话的阶段工具门禁（compose）；子代理继承，只能收窄。 */
@@ -82,14 +82,26 @@ export function prepareSubagentRuntime(
   const permissionManager = new PermissionManager()
   permissionManager.setRules(listPermissionRules(input.workingDirectory))
 
-  const modelPool = buildModelPoolWithFallbacks(input.modelClient)
+  const childHeader = input.childSession.subagent.header
+  if (!childHeader) {
+    throw new Error('Child Session 缺少模型 header，无法准备执行')
+  }
+  const childModel = resolveChildModelFromHeader(input.registry, childHeader)
+  const modelClient = new OpenAICompatibleModelClient(childModel.modelConfig)
+  const modelPool = new ModelClientPool({
+    primary: modelClient,
+    primaryConfig: childModel.modelConfig
+  })
+  const contextWindow = Math.min(
+    input.profile.contextWindow ?? childModel.contextWindow,
+    childModel.contextWindow
+  )
   const agentLoop = new AgentLoop(modelPool, eventBus, {
     systemPrompt,
     maxToolRounds: input.profile.maxToolRounds,
-    contextWindow: input.profile.contextWindow ?? input.contextWindow,
-    supportsVision: input.supportsVision,
+    contextWindow,
+    supportsVision: childModel.supportsVision,
     toolExecution: 'sequential',
-    reasoningEffort: input.reasoningEffort,
     permissionMode: input.childSession.permissionMode,
     ...(capabilityCeiling ? { permissionCeiling: capabilityCeiling } : {}),
     permissionManager,

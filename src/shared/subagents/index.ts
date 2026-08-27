@@ -6,9 +6,16 @@ export type {
   SubagentExecutionStatus,
   SubagentFailureCode,
   SubagentLineage,
+  SubagentModelBinding,
   SubagentModelSnapshot,
+  LegacySubagentModelReference,
+  SubagentProfileModel,
   SubagentOrigin,
   SubagentProfileSnapshot,
+  SubagentCatalogEntry,
+  SubagentCatalogModel,
+  SubagentCatalogReason,
+  SubagentSessionHeader,
   SubagentSessionMetadata
 } from './types'
 export type {

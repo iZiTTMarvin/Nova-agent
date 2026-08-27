@@ -6,7 +6,10 @@ import { SubagentProjectionService } from '../../../src/main/agent/subagents'
 import { createRunCoordinator } from '../../../src/runtime/run'
 import { SessionStore } from '../../../src/runtime/sessions'
 import { writeManifest, getFilesDir } from '../../../src/runtime/checkpoints/manifest'
-import type { SubagentSessionMetadata } from '../../../src/shared/subagents'
+import type {
+  SubagentSessionHeader,
+  SubagentSessionMetadata
+} from '../../../src/shared/subagents'
 
 describe('SubagentProjectionService', () => {
   let tempRoot: string
@@ -28,7 +31,8 @@ describe('SubagentProjectionService', () => {
   function createChild(
     toolCallId: string,
     spawnRunId: string,
-    profileModel?: { providerId: string; modelId: string }
+    profileModel?: { providerId: string; modelId: string },
+    header?: SubagentSessionHeader
   ) {
     const metadata: SubagentSessionMetadata = {
       lineage: {
@@ -54,7 +58,8 @@ describe('SubagentProjectionService', () => {
         maxToolRounds: 20,
         configHash: 'hash',
         ...(profileModel ? { model: profileModel } : {})
-      }
+      },
+      ...(header ? { header } : {})
     }
     return sessionStore.createChildIfAbsent({
       workspaceRoot: workspace,
@@ -280,8 +285,13 @@ describe('SubagentProjectionService', () => {
     }))
   })
 
-  it('model 继承父会话活跃模型，profile.model 覆盖优先', () => {
-    const child = createChild('call-model', 'run-child-model')
+  it('model 只从 child header 投影，不随父会话或 profile metadata 漂移', () => {
+    const child = createChild('call-model', 'run-child-model', undefined, {
+      providerId: 'child-provider',
+      modelEntryId: 'child-entry',
+      modelId: 'child-model',
+      reasoningEffort: 'auto'
+    })
     coordinator.startRun({
       kind: 'agent',
       runId: 'run-child-model',
@@ -291,19 +301,20 @@ describe('SubagentProjectionService', () => {
     coordinator.markRunning('run-child-model', 'msg-child')
     coordinator.commitTerminal({ runId: 'run-child-model', status: 'completed' })
 
-    const service = new SubagentProjectionService({
-      sessionStore,
-      runCoordinator: coordinator,
-      resolveParentModel: () => ({ providerId: 'parent-provider', modelId: 'parent-model' })
-    })
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
     expect(service.getByParentToolCallId(parentSessionId, 'call-model')?.model).toEqual({
-      providerId: 'parent-provider',
-      modelId: 'parent-model'
+      providerId: 'child-provider',
+      modelId: 'child-model'
     })
 
     const overridden = createChild('call-override', 'run-child-override', {
       providerId: 'profile-provider',
       modelId: 'profile-model'
+    }, {
+      providerId: 'header-provider',
+      modelEntryId: 'header-entry',
+      modelId: 'header-model',
+      reasoningEffort: 'low'
     })
     coordinator.startRun({
       kind: 'agent',
@@ -315,8 +326,8 @@ describe('SubagentProjectionService', () => {
 
     const projection = service.getByParentToolCallId(parentSessionId, 'call-override')
     expect(projection?.model).toEqual({
-      providerId: 'profile-provider',
-      modelId: 'profile-model'
+      providerId: 'header-provider',
+      modelId: 'header-model'
     })
     // 对外 profile 投影不携带 model（model 只出现在投影顶层）
     expect(projection?.profile).not.toHaveProperty('model')
@@ -338,8 +349,13 @@ describe('SubagentProjectionService', () => {
     expect(projection).not.toHaveProperty('model')
   })
 
-  it('reasoningEffort 继承父会话覆盖；无覆盖时省略', () => {
-    const child = createChild('call-effort', 'run-child-effort')
+  it('reasoningEffort 只使用 child header，不继承父会话覆盖', () => {
+    const child = createChild('call-effort', 'run-child-effort', undefined, {
+      providerId: 'child-provider',
+      modelEntryId: 'child-entry',
+      modelId: 'child-model',
+      reasoningEffort: 'high'
+    })
     coordinator.startRun({
       kind: 'agent',
       runId: 'run-child-effort',
@@ -349,11 +365,11 @@ describe('SubagentProjectionService', () => {
     coordinator.commitTerminal({ runId: 'run-child-effort', status: 'completed' })
 
     const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
-    expect(service.getByParentToolCallId(parentSessionId, 'call-effort')).not.toHaveProperty(
-      'reasoningEffort'
-    )
+    expect(service.getByParentToolCallId(parentSessionId, 'call-effort')).toMatchObject({
+      reasoningEffort: 'high'
+    })
 
-    sessionStore.updateReasoningEffortOverride(parentSessionId, 'high')
+    sessionStore.updateReasoningEffortOverride(parentSessionId, 'low')
     expect(service.getByParentToolCallId(parentSessionId, 'call-effort')).toMatchObject({
       reasoningEffort: 'high'
     })

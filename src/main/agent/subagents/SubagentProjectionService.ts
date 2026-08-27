@@ -5,7 +5,6 @@ import { projectSubagentExecutionResult } from '../../../runtime/subagents'
 import { buildSessionDiffState } from '../../../runtime/checkpoints/sessionDiffState'
 import { countEntryChanges } from '../../../shared/diff/compute'
 import { isTerminalRunStatus } from '../../../shared/run/types'
-import type { ReasoningEffort } from '../../../shared/config/llmRegistry'
 import type {
   SubagentActivityProjection,
   SubagentFileChange,
@@ -15,11 +14,6 @@ import type {
 export interface SubagentProjectionServiceDeps {
   readonly sessionStore: SessionStore
   readonly runCoordinator: RunCoordinator
-  /**
-   * 解析父会话实际生效模型（与主会话 ModelClient 装配同一事实源）。
-   * 未接线时投影省略 model 字段。
-   */
-  readonly resolveParentModel?: () => SubagentModelSnapshot | undefined
 }
 
 /** 只读 join 服务：Child Session 与 RunSnapshot 仍由各自 Owner 持久化。 */
@@ -58,11 +52,7 @@ export class SubagentProjectionService {
       )
       .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
       .map((session) =>
-        this.project(
-          session,
-          includeTerminalDetails,
-          this.findParentReasoningEffort(summaries, session.subagent.lineage.parentSessionId)
-        )
+        this.project(session, includeTerminalDetails)
       )
   }
 
@@ -80,8 +70,7 @@ export class SubagentProjectionService {
     return session
       ? this.project(
           session,
-          true,
-          this.findParentReasoningEffort(this.deps.sessionStore.listInternal(), parentSessionId)
+          true
         )
       : null
   }
@@ -93,33 +82,22 @@ export class SubagentProjectionService {
     return session?.kind === 'subagent'
       ? this.project(
           session,
-          true,
-          this.findParentReasoningEffort(
-            this.deps.sessionStore.listInternal(),
-            session.subagent.lineage.parentSessionId
-          )
+          true
         )
       : null
   }
 
-  /** 从摘要集合读取父会话的思考强度覆盖（缺省视为无覆盖）。 */
-  private findParentReasoningEffort(
-    summaries: readonly InternalSessionSummary[],
-    parentSessionId: string
-  ): ReasoningEffort | undefined {
-    return summaries.find((candidate) => candidate.id === parentSessionId)?.reasoningEffortOverride
-  }
-
   private project(
     session: Extract<InternalSessionSummary, { kind: 'subagent' }>,
-    includeTerminalDetails: boolean,
-    parentReasoningEffort: ReasoningEffort | undefined
+    includeTerminalDetails: boolean
   ): SubagentActivityProjection {
     const { lineage } = session.subagent
-    // 内部摘要可带 profile.model（覆盖）；对外 profile 投影仍保持窄形状
-    const { model: profileModelOverride, ...profileProjection } = session.subagent.profile
+    const { model: _profileModel, ...profileProjection } = session.subagent.profile
     const snapshot = this.deps.runCoordinator.getSnapshot(lineage.spawnRunId)
-    const effectiveModel = profileModelOverride ?? this.deps.resolveParentModel?.()
+    const header = session.subagent.header
+    const effectiveModel: SubagentModelSnapshot | undefined = header
+      ? { providerId: header.providerId, modelId: header.modelId }
+      : undefined
     const base = {
       childSessionId: session.id,
       childRunId: lineage.spawnRunId,
@@ -142,9 +120,7 @@ export class SubagentProjectionService {
       taskLabel: session.title?.trim() || '未命名子任务',
       artifactCount: 0,
       ...(effectiveModel ? { model: effectiveModel } : {}),
-      ...(parentReasoningEffort !== undefined
-        ? { reasoningEffort: parentReasoningEffort }
-        : {})
+      ...(header ? { reasoningEffort: header.reasoningEffort } : {})
     }
 
     if (!snapshot) {

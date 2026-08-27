@@ -42,6 +42,7 @@ import type { PlanReviewResolution } from '../../shared/planReview'
 import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 import { isToolDirectlyPresented } from '../code-mode'
+import { formatTerminalErrorMessage } from '../../shared/session/terminalErrorBlocks'
 
 import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
@@ -979,7 +980,11 @@ export class AgentLoop {
     }
 
     if (outcome.status === 'failed') {
-      this.eventBus.emit({ type: 'error', messageId, error: outcome.error.message })
+      this.eventBus.emit({
+        type: 'error',
+        messageId,
+        error: formatTerminalErrorMessage(outcome.error.message)
+      })
     } else {
       // incomplete 与 completed 一样发 message_end 且不带 interrupted：
       // 轮次确实结束了，只是任务未被声称完成。

@@ -2,10 +2,19 @@
  * 终态错误并入消息 blocks：主进程落盘与渲染层 UI 共用，避免文案/标错逻辑分叉。
  */
 export const TERMINAL_ERROR_NOTICE_PREFIX = '⚠️ '
+export const CONTEXT_BUDGET_EXCEEDED_NOTICE =
+  '对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。'
+
+/** 将内部预算错误转换为用户可执行的提示，其他错误保留原文。 */
+export function formatTerminalErrorMessage(error: string): string {
+  return error.startsWith('ContextBudgetExceeded:')
+    ? CONTEXT_BUDGET_EXCEEDED_NOTICE
+    : error
+}
 
 /** 生成终态错误提示文案（含统一前缀） */
 export function formatTerminalErrorNotice(error: string): string {
-  return `${TERMINAL_ERROR_NOTICE_PREFIX}${error}`
+  return `${TERMINAL_ERROR_NOTICE_PREFIX}${formatTerminalErrorMessage(error)}`
 }
 
 /** 可被本函数处理的最小 block 形状（兼容 MessageBlock / RendererMessageBlock） */

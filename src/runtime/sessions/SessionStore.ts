@@ -476,7 +476,8 @@ export class SessionStore {
                 ...(data.subagent.profile.model
                   ? { model: data.subagent.profile.model }
                   : {})
-              }
+              },
+              ...(data.subagent.header ? { header: data.subagent.header } : {})
             }
           })
         } else {

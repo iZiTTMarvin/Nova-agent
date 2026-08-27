@@ -4,12 +4,24 @@
 import { describe, it, expect } from 'vitest'
 import {
   TERMINAL_ERROR_NOTICE_PREFIX,
+  CONTEXT_BUDGET_EXCEEDED_NOTICE,
   formatTerminalErrorNotice,
+  formatTerminalErrorMessage,
   appendTerminalErrorToBlocks
 } from '../../../src/shared/session/terminalErrorBlocks'
 import type { MessageBlock } from '../../../src/shared/session/types'
 
 describe('appendTerminalErrorToBlocks', () => {
+  it('只转换预算终态错误，其他错误原文保持不变', () => {
+    expect(formatTerminalErrorMessage(
+      'ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'
+    )).toBe(CONTEXT_BUDGET_EXCEEDED_NOTICE)
+    expect(formatTerminalErrorMessage('API 超时')).toBe('API 超时')
+    expect(formatTerminalErrorMessage('读取 ContextBudgetExceeded.ts 失败'))
+      .toBe('读取 ContextBudgetExceeded.ts 失败')
+    expect(formatTerminalErrorNotice('API 超时')).toBe(`${TERMINAL_ERROR_NOTICE_PREFIX}API 超时`)
+  })
+
   it('前缀常量与 format 一致', () => {
     expect(formatTerminalErrorNotice('预算用尽')).toBe(`${TERMINAL_ERROR_NOTICE_PREFIX}预算用尽`)
   })

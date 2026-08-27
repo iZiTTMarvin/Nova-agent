@@ -25,6 +25,8 @@ export {
 
 export {
   TERMINAL_ERROR_NOTICE_PREFIX,
+  CONTEXT_BUDGET_EXCEEDED_NOTICE,
+  formatTerminalErrorMessage,
   formatTerminalErrorNotice,
   appendTerminalErrorToBlocks,
   type TerminalErrorBlockLike

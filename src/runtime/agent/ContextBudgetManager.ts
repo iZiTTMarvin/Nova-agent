@@ -32,17 +32,17 @@ export class ContextBudgetExceededError extends Error {
 export interface ContextBudgetOptions {
   /** 估算 token 硬上限；超限则继续压缩，仍超则失败 */
   maxEstimatedTokens?: number
-  /** 序列化字节硬上限 */
+  /** 序列化 UTF-8 字节硬上限；显式配置时仍作为独立门槛 */
   maxSerializedBytes?: number
-  /** 为模型输出预留的 token（从硬上限中扣除） */
+  /** 为模型输出预留的 token（从自定义 maxEstimatedTokens 中扣除） */
   reservedOutputTokens?: number
 }
 
-/** 粗估：字符/4 ≈ token；序列化用 JSON 字节 */
+/** 粗估：JSON 字符数/4 ≈ token；字节字段保留 UTF-8 计量供显式硬上限使用 */
 export function estimateContextSize(messages: ChatMessage[]): { tokens: number; bytes: number } {
   const json = JSON.stringify(messages)
   const bytes = Buffer.byteLength(json, 'utf8')
-  const tokens = Math.ceil(bytes / 4)
+  const tokens = Math.ceil(json.length / 4)
   return { tokens, bytes }
 }
 
@@ -91,6 +91,7 @@ export function resolveProductionBudgetLimits(opts: {
   return {
     reservedOutputTokens,
     highWaterTokens,
+    // 生产 token 预算不使用这个字节上限，避免多字节文本被重复限流。
     maxSerializedBytes: highWaterTokens * 4
   }
 }
@@ -100,11 +101,9 @@ export function createProductionContextBudgetManager(opts: {
   contextWindow: number
   reservedOutputTokens?: number
 }): ContextBudgetManager {
-  const { reservedOutputTokens, highWaterTokens, maxSerializedBytes } =
+  const { highWaterTokens } =
     resolveProductionBudgetLimits(opts)
   return new ContextBudgetManager({
-    maxEstimatedTokens: highWaterTokens,
-    maxSerializedBytes,
-    reservedOutputTokens
+    maxEstimatedTokens: highWaterTokens
   })
 }

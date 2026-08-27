@@ -2,7 +2,7 @@ import { handle } from './secureIpc'
 import { SUBAGENTS_LIST, SUBAGENTS_SAVE, SUBAGENTS_DELETE } from '../../shared/ipc/channels'
 import { BUILTIN_SUBAGENTS } from '../../runtime/agent'
 import type { SubAgentSpec } from '../../shared/settings/types'
-import { deletePreset, getPresetFilePaths, loadMergedCustomPresets, savePreset } from '../../runtime/subagents'
+import { deletePreset, getPresetFilePaths, loadMergedCustomPresets, parseSubagentModel, savePreset } from '../../runtime/subagents'
 import type {
   SubagentListItem,
   SubagentsListParams,
@@ -36,14 +36,42 @@ function listAllSubagents(workspaceRoot?: string | null): SubagentListItem[] {
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-/** 校验自定义子代理规格（导出供单测） */
-export function validateSpec(spec: SubAgentSpec): void {
-  if (!spec.name?.trim()) throw new Error('子代理名称不能为空')
-  if (!spec.description?.trim()) throw new Error('子代理描述不能为空')
+/** 校验自定义子代理规格（导出供单测）；外部 IPC 只以 unknown 进入。 */
+export function validateSpec(spec: unknown): asserts spec is SubAgentSpec {
+  if (!isRecord(spec)) throw new Error('子代理规格必须是 object')
+  if (!isNonEmptyString(spec.name)) throw new Error('子代理名称不能为空')
+  if (!isNonEmptyString(spec.description)) throw new Error('子代理描述不能为空')
   if (!Array.isArray(spec.allowedTools)) throw new Error('allowedTools 必须是数组')
-  if (!spec.prompt?.trim()) throw new Error('子代理 prompt 不能为空')
+  if (!spec.allowedTools.every(isNonEmptyString)) throw new Error('allowedTools 必须是 string[]')
+  if (!isNonEmptyString(spec.prompt)) throw new Error('子代理 prompt 不能为空')
+  if (spec.model !== undefined) validateModelBinding(spec.model)
+  if (spec.maxToolRounds !== undefined && !isPositiveInteger(spec.maxToolRounds)) {
+    throw new Error('maxToolRounds 必须是正整数')
+  }
+  if (spec.contextWindow !== undefined && !isPositiveInteger(spec.contextWindow)) {
+    throw new Error('contextWindow 必须是正整数')
+  }
   if (BUILTIN_NAMES.has(spec.name)) {
     throw new Error('不能使用与内置子代理相同的名称')
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+function validateModelBinding(value: unknown): void {
+  const model = parseSubagentModel(value)
+  if (!('modelEntryId' in model)) {
+    throw new Error('旧 model 引用不可保存，请改为 providerId + modelEntryId')
   }
 }
 

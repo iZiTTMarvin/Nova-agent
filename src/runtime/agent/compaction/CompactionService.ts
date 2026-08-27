@@ -178,7 +178,13 @@ export class CompactionService {
     const { highWaterTokens } = resolveProductionBudgetLimits({
       contextWindow: this.contextWindow
     })
-    const payloadChars = measureRequestPayloadChars(this.context.messages)
+    let projectedContext: ChatMessage[]
+    try {
+      projectedContext = await projection.project(this.context.messages)
+    } catch {
+      return false
+    }
+    const payloadChars = measureRequestPayloadChars(projectedContext)
     const estimate = estimateNextRequestTokens({
       ...(this.lastRequestInputTokens !== undefined
         ? { priorUsageTokens: this.lastRequestInputTokens }
@@ -212,7 +218,12 @@ export class CompactionService {
       const summary = await this.requestSummary(parts, projection, abortSignal)
       if (!summary || abortSignal?.aborted) return false
 
-      if (!this.applyCompactionResult(parts, summary)) return false
+      if (!await this.applyCompactionResult(
+        parts,
+        summary,
+        projection,
+        () => !abortSignal?.aborted && !this.disposed
+      )) return false
       if (abortSignal?.aborted) return false
       this.notifyCompaction(summary, 'mid-turn')
       return true
@@ -268,7 +279,12 @@ export class CompactionService {
       const summary = await this.requestSummary(parts, projection, abortSignal)
       if (!summary || abortSignal?.aborted) return false
 
-      if (!this.applyCompactionResult(parts, summary)) return false
+      if (!await this.applyCompactionResult(
+        parts,
+        summary,
+        projection,
+        () => !abortSignal?.aborted && !this.disposed
+      )) return false
       if (abortSignal?.aborted) return false
       this.notifyCompaction(summary, 'overflow')
       return true
@@ -293,7 +309,12 @@ export class CompactionService {
     const summary = await this.requestSummary(parts, projection, abortSignal)
     if (!summary || abortSignal?.aborted || !canApply()) return false
 
-    if (!this.applyCompactionResult(parts, summary)) return false
+    if (!await this.applyCompactionResult(
+      parts,
+      summary,
+      projection,
+      () => !abortSignal?.aborted && !this.disposed && canApply()
+    )) return false
     if (abortSignal?.aborted || !canApply()) return false
     this.notifyCompaction(summary, trigger)
     return true
@@ -457,7 +478,12 @@ export class CompactionService {
    * 返回 false 表示摘要未通过采纳校验（替换后总量不小于压缩前），
    * 本次压缩放弃写回，原上下文与簿记保持不变（fail-open，不终止 turn）。
    */
-  private applyCompactionResult(parts: CompactionParts, summary: string): boolean {
+  private async applyCompactionResult(
+    parts: CompactionParts,
+    summary: string,
+    projection: SummaryProjection,
+    canApply: () => boolean = () => true
+  ): Promise<boolean> {
     // 采纳校验：替换后总量必须严格小于压缩前，否则摘要没有压缩收益。
     // 两侧保留区相同，等价于摘要必须小于被折叠的 oldMessages；按完整两侧计算便于阅读。
     const keptTokens =
@@ -465,6 +491,7 @@ export class CompactionService {
     const projectedTokens = estimateTokens(summary) + keptTokens
     const originalTokens = estimateContextTokens(parts.oldMessages) + keptTokens
     if (projectedTokens >= originalTokens) return false
+    if (!canApply()) return false
 
     const rebuilt = rebuildWithCompression(
       parts.systemPrompt,
@@ -472,11 +499,12 @@ export class CompactionService {
       parts.recentMessages,
       parts.pulledBackMessages
     )
-    const budget = this.contextBudgetManager.enforceInline(rebuilt)
+    const projected = await projection.project(rebuilt)
+    if (!canApply()) return false
+    const budget = this.contextBudgetManager.enforceInline(projected)
     if (budget.status === 'requires_compaction') {
       throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
     }
-
     this.context.messages = rebuilt
     this.context.compactionLevel++
     this.context.userTurnsSinceCompaction = 0

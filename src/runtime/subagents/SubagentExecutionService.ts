@@ -18,14 +18,14 @@ import type {
   SpawnSubagentCommand,
   SubagentExecutionResult,
   SubagentFailureCode,
+  SubagentSessionHeader,
   SubagentLineage,
   SubagentOrigin,
   SubagentProfileSnapshot
 } from '../../shared/subagents'
-import { isTerminalRunStatus, type RunSnapshot } from '../../shared/run/types'
+import { isHardTerminalRunStatus, isTerminalRunStatus, type RunSnapshot } from '../../shared/run/types'
 import type { ToolInvocationRef } from '../tools/types'
 import type { Mode } from '../../shared/session'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
 import {
   applyHostArchiveReadCapability,
@@ -46,8 +46,6 @@ export interface PrepareSubagentTurnInput {
   readonly childSession: SubagentSessionData
   readonly parentRunId: string
   readonly rootRunId: string
-  /** 父会话思考强度覆盖；由宿主从父会话读取，与主会话同一传法。 */
-  readonly reasoningEffort?: ReasoningEffort
 }
 
 export interface PreparedSubagentTurn {
@@ -73,6 +71,12 @@ export interface SubagentExecutionServiceDeps {
   readonly turnExecutor: AgentTurnExecutor
   readonly loadProfile: (profileId: string) => unknown
   readonly prepareTurn: (input: PrepareSubagentTurnInput) => PreparedSubagentTurn
+  /** 派生前校验 registry 并为新 child 解析、冻结 header；不得返回凭据。 */
+  readonly resolveExecutionTarget: (
+    input:
+      | { readonly profile: SubagentProfileSnapshot }
+      | { readonly header: SubagentSessionHeader }
+  ) => SubagentSessionHeader
   readonly adaptEvent?: (event: AgentEvent, context: SubagentEventContext) => AgentEvent
   readonly onEvent?: (event: AgentEvent, context: SubagentEventContext) => void
   readonly onExecutionStarted?: (context: SubagentExecutionLifecycleContext) => void
@@ -164,7 +168,9 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     const existingChild = this.deps.sessionStore.load(
       deriveChildSessionId(identity.spawnKey)
     )
+    const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
     let profile: SubagentProfileSnapshot
+    let header: SubagentSessionHeader | undefined
     if (existingChild) {
       if (existingChild.kind !== 'subagent') {
         throw new Error(`spawnKey ${identity.spawnKey} 已绑定非 Child Session`)
@@ -173,6 +179,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         throw new Error(`spawnKey ${identity.spawnKey} 的 profile identity 冲突`)
       }
       profile = existingChild.subagent.profile
+      header = existingChild.subagent.header
       if (context.profile !== undefined) {
         const supplied = resolveSubagentProfileSnapshot(context.profile, command.profileId, {
           allowRecursion: this.allowRecursion
@@ -207,19 +214,31 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       spawnRunId: identity.spawnRunId,
       origin: command.invocation
     }
+    if (!existingChild) {
+      header = this.deps.resolveExecutionTarget({ profile })
+    } else if (!existingRun || !isHardTerminalRunStatus(existingRun.status)) {
+      if (!header) {
+        throw new Error('历史 Child Session 缺少模型 header，无法恢复；请重新派遣子代理')
+      }
+      this.deps.resolveExecutionTarget({ header })
+    }
+    const subagent = {
+      lineage,
+      profile,
+      ...(header ? { header } : {})
+    }
     const childResult = this.deps.sessionStore.createChildIfAbsent({
       workspaceRoot: command.workingDirectory,
       mode: 'default',
       permissionMode: parentSession.permissionMode,
       task: command.task,
       codeIndexEnabled: parentSession.codeIndexEnabled === true,
-      subagent: { lineage, profile }
+      subagent
     })
     const childSession = childResult.session
     this.deps.onLinked?.({ childSession, created: childResult.created })
 
     let recoverySnapshot: RunSnapshot | null = null
-    const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
     if (existingRun) {
       try {
         assertChildRunIdentity(existingRun, childSession)

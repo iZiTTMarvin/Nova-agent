@@ -17,6 +17,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { agentRoute, resolveAgentTurnRoute } from '../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
+import type { AgentEvent } from '../../../src/runtime/agent/types'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -142,13 +143,72 @@ describe('AgentLoop', () => {
     })
 
     const { loop, eventBus } = createLoop(client)
-    const events: unknown[] = []
+    const events: AgentEvent[] = []
     eventBus.on((e) => events.push(e))
 
     await loop.sendMessage('hello', agentRoute())
 
-    expect(events.some((e: any) => e.type === 'error')).toBe(true)
+    expect(events.filter(e => e.type === 'error')).toEqual([
+      expect.objectContaining({ error: 'API 错误 401' })
+    ])
     expect(loop.getState()).toBe('error')
+  })
+
+  it('预算终态错误发射可操作提示', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        {
+          type: 'error',
+          error: 'ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'
+        }
+      ]
+    })
+
+    const { loop, eventBus } = createLoop(client)
+    const events: AgentEvent[] = []
+    eventBus.on((e) => events.push(e))
+
+    await loop.sendMessage('hello', agentRoute())
+
+    expect(events.filter(e => e.type === 'error')).toEqual([
+      expect.objectContaining({
+        error: '对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。'
+      })
+    ])
+    expect(loop.getState()).toBe('error')
+  })
+
+  it('超额图片先投影再检查上下文预算，原始上下文仍保留图片', async () => {
+    const client = new MockModelClient().addResponse({
+      events: [
+        { type: 'text_delta', delta: '图片已省略，请分批发送' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const loop = new AgentLoop(client, new EventBus(), {
+      contextWindow: 8_000,
+      supportsVision: true,
+      permissionManager: new PermissionManager()
+    })
+    try {
+      const outcome = await loop.sendMessage([
+        { type: 'text', text: '检查附件' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'A'.repeat(12 * 1024 * 1024) } }
+      ], agentRoute())
+      expect(outcome.status).toBe('completed')
+      expect(client.getCalls()).toHaveLength(1)
+      const sent = client.getCalls()[0].messages
+      expect(sent.some(message => Array.isArray(message.content)
+        && message.content.some(block => block.type === 'image_url'))).toBe(false)
+      expect(sent.map(message => extractTextFromContent(message.content)).join('\n'))
+        .toContain('图片已省略')
+      expect(loop.getContext().some(message => Array.isArray(message.content)
+        && message.content.some(block => block.type === 'image_url'))).toBe(true)
+    } finally {
+      loop.dispose()
+    }
   })
 
   it('cancel 中断正在执行的循环', async () => {

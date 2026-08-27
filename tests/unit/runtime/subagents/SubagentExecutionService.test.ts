@@ -17,7 +17,11 @@ import {
   resolveSubagentProfileSnapshot,
   type SubagentExecutionServiceDeps
 } from '../../../../src/runtime/subagents'
-import type { SpawnSubagentCommand } from '../../../../src/shared/subagents'
+import type {
+  SpawnSubagentCommand,
+  SubagentSessionHeader
+} from '../../../../src/shared/subagents'
+import type { PrepareSubagentTurnInput } from '../../../../src/runtime/subagents'
 
 const profile = {
   name: 'explore',
@@ -25,6 +29,13 @@ const profile = {
   allowedTools: ['read', 'grep'],
   prompt: 'inspect and summarize',
   maxToolRounds: 20
+}
+
+const modelHeader: SubagentSessionHeader = {
+  providerId: 'test-provider',
+  modelEntryId: 'test-model-entry',
+  modelId: 'test-model',
+  reasoningEffort: 'auto'
 }
 
 describe('SubagentExecutionService', () => {
@@ -91,8 +102,9 @@ describe('SubagentExecutionService', () => {
     onLinked?: SubagentExecutionServiceDeps['onLinked']
     hostHasArchiveRead?: () => boolean
     childFinalText?: string
+    resolveExecutionTarget?: SubagentExecutionServiceDeps['resolveExecutionTarget']
   } = {}) {
-    const prepareTurn = vi.fn((input: any) => {
+    const prepareTurn = vi.fn((input: PrepareSubagentTurnInput) => {
       const eventBus = new EventBus()
       let fence = (): boolean => false
       let cancelled = false
@@ -167,6 +179,9 @@ describe('SubagentExecutionService', () => {
         return undefined
       }),
       prepareTurn,
+      resolveExecutionTarget: options.resolveExecutionTarget ?? ((input) =>
+        'header' in input ? input.header : modelHeader
+      ),
       ...(options.hostHasArchiveRead
         ? { hostHasArchiveRead: options.hostHasArchiveRead }
         : {}),
@@ -328,25 +343,48 @@ describe('SubagentExecutionService', () => {
     expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
   })
 
-  it('全局 profile 修改后终态重放仍使用 Child Session 中的冻结快照', async () => {
+  it('全局 profile 修改或模型不可用后，终态重放仍使用持久化结果', async () => {
     let currentPrompt = 'original frozen prompt'
+    let modelAvailable = true
+    const resolveExecutionTarget = vi.fn(() => {
+      if (!modelAvailable) throw new Error('provider 已禁用')
+      return modelHeader
+    })
     const { service, prepareTurn } = createService({
-      loadProfile: () => ({ ...profile, prompt: currentPrompt })
+      loadProfile: () => ({ ...profile, prompt: currentPrompt }),
+      resolveExecutionTarget
     })
     const spawnCommand = command()
     const context = { invocationRef: invocationRef() }
     const first = await service.spawn(spawnCommand, context)
     currentPrompt = 'new global prompt'
+    modelAvailable = false
 
     const replayed = await service.spawn(spawnCommand, context)
 
     expect(replayed).toEqual(first)
     expect(prepareTurn).toHaveBeenCalledTimes(1)
+    expect(resolveExecutionTarget).toHaveBeenCalledTimes(1)
+    await expect(service.spawn({ ...spawnCommand, task: 'different task' }, context))
+      .rejects.toThrow(/冲突/)
     const child = sessionStore.load(first.childSessionId)
     expect(child?.kind).toBe('subagent')
     if (child?.kind === 'subagent') {
       expect(child.subagent.profile.systemPrompt).toBe('original frozen prompt')
     }
+  })
+
+  it('模型解析失败在创建 child session 与 run 之前拒绝派遣', async () => {
+    const { service, prepareTurn } = createService({
+      resolveExecutionTarget: () => { throw new Error('model entry 已退役') }
+    })
+    const spawnCommand = command()
+    const identity = createSpawnIdentity(spawnCommand)
+    await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toThrow(/已退役/)
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
   })
 
   it('调用身份、parent identity、profile 与已有 metadata 冲突均 fail closed', async () => {
@@ -469,7 +507,8 @@ describe('SubagentExecutionService', () => {
             parentToolCallId: 'call-parent-nested'
           }
         },
-        profile: readOnlySnapshot
+        profile: readOnlySnapshot,
+        header: modelHeader
       }
     }).session
     coordinator.startRun({
@@ -524,7 +563,8 @@ describe('SubagentExecutionService', () => {
           spawnKey: 'depth-two-parent-key',
           spawnRunId: 'run-depth-two-parent'
         },
-        profile: codeSnapshot
+        profile: codeSnapshot,
+        header: modelHeader
       }
     }).session
     coordinator.startRun({
@@ -555,7 +595,7 @@ describe('SubagentExecutionService', () => {
     })).rejects.toThrow(/超过上限/)
   })
 
-  it('crash window 中 Child Session 已存在但 run 未启动时复用预分配 runId', async () => {
+  it.each([true, false])('crash window 仅恢复有模型 header 的 Child Session（header=%s）', async (hasHeader) => {
     const spawnCommand = command()
     const identity = createSpawnIdentity(spawnCommand)
     sessionStore.createChildIfAbsent({
@@ -573,11 +613,19 @@ describe('SubagentExecutionService', () => {
           spawnRunId: identity.spawnRunId,
           origin: spawnCommand.invocation
         },
-        profile: resolveSubagentProfileSnapshot(profile, 'explore')
+        profile: resolveSubagentProfileSnapshot(profile, 'explore'),
+        ...(hasHeader ? { header: modelHeader } : {})
       }
     })
     const { service, prepareTurn } = createService()
 
+    if (!hasHeader) {
+      await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+        .rejects.toThrow(/缺少模型 header.*重新派遣/)
+      expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+      expect(prepareTurn).not.toHaveBeenCalled()
+      return
+    }
     const result = await service.spawn(spawnCommand, { invocationRef: invocationRef() })
 
     expect(result.childRunId).toBe(identity.spawnRunId)
@@ -604,7 +652,8 @@ describe('SubagentExecutionService', () => {
           spawnRunId: identity.spawnRunId,
           origin: spawnCommand.invocation
         },
-        profile: resolveSubagentProfileSnapshot(profile, 'explore')
+        profile: resolveSubagentProfileSnapshot(profile, 'explore'),
+        header: modelHeader
       }
     }).session
     coordinator.startRun({
@@ -626,7 +675,20 @@ describe('SubagentExecutionService', () => {
       status: 'interrupted',
       reason: 'process_exit'
     })
-    const { service, prepareTurn } = createService()
+    let modelAvailable = false
+    const { service, prepareTurn } = createService({
+      resolveExecutionTarget: (input) => {
+        expect(input).toEqual({ header: modelHeader })
+        if (!modelAvailable) throw new Error('provider 已禁用')
+        return modelHeader
+      }
+    })
+
+    await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toThrow(/已禁用/)
+    expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('interrupted')
+    expect(prepareTurn).not.toHaveBeenCalled()
+    modelAvailable = true
 
     const result = await service.spawn(spawnCommand, { invocationRef: invocationRef() })
 
@@ -695,7 +757,8 @@ describe('SubagentExecutionService', () => {
           spawnRunId: identity.spawnRunId,
           origin: spawnCommand.invocation
         },
-        profile: resolveSubagentProfileSnapshot(profile, 'explore')
+        profile: resolveSubagentProfileSnapshot(profile, 'explore'),
+        header: modelHeader
       }
     }).session
     coordinator.startRun({

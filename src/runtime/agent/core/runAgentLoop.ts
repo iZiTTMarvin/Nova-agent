@@ -226,7 +226,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
 
       // 轮内预算校验：只估算不改写，超预算走压缩恢复链
       if (config.enforceInlineBudget) {
-        const budget = config.enforceInlineBudget(context.messages)
+        const budget = config.enforceInlineBudget(chatMessages)
         if (budget.status === 'requires_compaction') {
           const ok = config.runOverflowCompaction
             && (await config.runOverflowCompaction('standard', summaryProjection)
@@ -366,7 +366,14 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         }
         // 工具批次后轮内预算校验：超预算走压缩恢复链
         if (config.enforceInlineBudget) {
-          const budget = config.enforceInlineBudget(context.messages)
+          const projectedAfterTools = await projectRequestMessages({
+            messages: context.messages,
+            toolRound,
+            policy: requestProjectionPolicy,
+            archiveCache: requestProjectionArchiveCache,
+            archive: archiveWriter
+          })
+          const budget = config.enforceInlineBudget(projectedAfterTools.messages)
           if (budget.status === 'requires_compaction') {
             const ok = config.runOverflowCompaction
               && (await config.runOverflowCompaction('standard', summaryProjection)

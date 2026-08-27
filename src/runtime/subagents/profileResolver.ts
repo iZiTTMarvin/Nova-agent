@@ -1,5 +1,11 @@
 import { createHash } from 'crypto'
-import type { SubagentProfileSnapshot } from '../../shared/subagents'
+import type {
+  LegacySubagentModelReference,
+  SubagentModelBinding,
+  SubagentProfileModel,
+  SubagentProfileSnapshot
+} from '../../shared/subagents'
+import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import { toolHasWriteCapability } from '../../shared/permissions/toolEffects'
 
 const MAX_PROFILE_NAME_LENGTH = 128
@@ -32,7 +38,7 @@ interface ParsedSubagentProfile {
   description: string
   allowedTools: string[]
   prompt: string
-  model?: { providerId: string; modelId: string }
+  model?: SubagentProfileModel
   maxToolRounds: number
   contextWindow?: number
   skillRoots?: string[]
@@ -156,10 +162,7 @@ function parseSubagentProfile(input: unknown): ParsedSubagentProfile {
 
   let model: ParsedSubagentProfile['model']
   if (input.model !== undefined) {
-    if (!isObject(input.model)) throw new Error('子代理 profile.model 必须是 object')
-    const providerId = readAliasedString(input.model, 'providerID', 'providerId')
-    const modelId = readAliasedString(input.model, 'modelID', 'modelId')
-    model = { providerId, modelId }
+    model = parseSubagentModel(input.model)
   }
 
   return {
@@ -172,6 +175,33 @@ function parseSubagentProfile(input: unknown): ParsedSubagentProfile {
     ...(skillRoots ? { skillRoots } : {}),
     ...(model ? { model } : {})
   }
+}
+
+/** 统一解析 preset/profile 的模型字段；旧 modelId 形状只作为只读兼容保留。 */
+export function parseSubagentModel(input: unknown): SubagentProfileModel {
+  if (!isObject(input)) throw new Error('子代理 profile.model 必须是 object')
+  if (hasOwn(input, 'modelEntryId')) {
+    if (
+      !hasOwn(input, 'providerId') ||
+      hasOwn(input, 'providerID') ||
+      hasOwn(input, 'modelID') ||
+      hasOwn(input, 'modelId')
+    ) {
+      throw new Error('子代理 profile.model 的新形状必须是 providerId + modelEntryId')
+    }
+    const providerId = readString(input, 'providerId', MAX_PROFILE_NAME_LENGTH)
+    const modelEntryId = readString(input, 'modelEntryId', MAX_PROFILE_NAME_LENGTH)
+    const reasoningEffort = readOptionalReasoningEffort(input.reasoningEffort)
+    return {
+      providerId,
+      modelEntryId,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {})
+    } satisfies SubagentModelBinding
+  }
+
+  const providerId = readAliasedString(input, 'providerID', 'providerId')
+  const modelId = readAliasedString(input, 'modelID', 'modelId')
+  return { providerId, modelId } satisfies LegacySubagentModelReference
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -201,6 +231,24 @@ function readAliasedString(
     throw new Error(`子代理 profile.model.${first}/${second} 必须是非空字符串`)
   }
   return field.trim()
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+function readOptionalReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  if (value === undefined) return undefined
+  if (
+    value !== 'auto' &&
+    value !== 'low' &&
+    value !== 'medium' &&
+    value !== 'high' &&
+    value !== 'max'
+  ) {
+    throw new Error('子代理 profile.model.reasoningEffort 必须是 auto/low/medium/high/max')
+  }
+  return value
 }
 
 function readOptionalPositiveInteger(

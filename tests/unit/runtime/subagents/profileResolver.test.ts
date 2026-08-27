@@ -48,6 +48,40 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(snapshot.toolNames).toEqual(['read', 'task'])
   })
 
+  it('保留 canonical modelEntryId binding 与显式 reasoning effort', () => {
+    const snapshot = resolveSubagentProfileSnapshot({
+      name: 'code',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read'],
+      model: {
+        providerId: 'provider',
+        modelEntryId: 'entry',
+        reasoningEffort: 'medium'
+      }
+    }, 'code')
+
+    expect(snapshot.model).toEqual({
+      providerId: 'provider',
+      modelEntryId: 'entry',
+      reasoningEffort: 'medium'
+    })
+  })
+
+  it('拒绝混用 modelEntryId 与旧 modelId 字段', () => {
+    expect(() => resolveSubagentProfileSnapshot({
+      name: 'code',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read'],
+      model: {
+        providerId: 'provider',
+        modelEntryId: 'entry',
+        modelId: 'api-model'
+      }
+    }, 'code')).toThrow(/modelEntryId/)
+  })
+
   it('read_only profile 永久剥离写工具与递归 delegation 工具', () => {
     const snapshot = resolveSubagentProfileSnapshot({
       name: 'explore',

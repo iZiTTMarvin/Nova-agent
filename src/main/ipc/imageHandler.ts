@@ -7,6 +7,7 @@
 import { handle } from './secureIpc'
 import { IMAGE_SAVE } from '../../shared/ipc/channels'
 import type { ImageStore } from '../../runtime/storage/ImageStore'
+import { prepareImageForStorage } from '../images/imageIngest'
 
 /**
  * 注册图片保存 IPC handler。
@@ -20,7 +21,14 @@ export function registerImageHandler(getImageStore: () => ImageStore): void {
     mimeType: string
   }): Promise<{ url: string }> => {
     const store = getImageStore()
-    const { url } = store.save(params.sessionId, params.dataUrl, params.mimeType)
+    let prepared
+    try {
+      prepared = await prepareImageForStorage(params.dataUrl, params.mimeType)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '请重试'
+      throw new Error(`图片“${params.fileName}”处理失败：${detail}`)
+    }
+    const { url } = store.save(params.sessionId, prepared.dataUrl, prepared.mimeType)
     return { url }
   })
 }

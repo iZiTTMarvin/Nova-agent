@@ -80,12 +80,9 @@ export interface SubagentActivityProjection {
   readonly summary?: string
   readonly artifactCount: number
   readonly failure?: SubagentExecutionFailure
-  /**
-   * 子代理实际生效模型：profile 覆盖优先，否则父会话活跃模型。
-   * 无法从持久化事实推导时省略，UI 对应不展示模型段。
-   */
+  /** 子代理实际生效模型；仅从 child SessionHeader 投影，旧会话无法推导时省略。 */
   readonly model?: SubagentModelSnapshot
-  /** 父会话思考强度覆盖，传递到子代理运行时；auto/缺省时省略。 */
+  /** child SessionHeader 冻结的有效思考强度。 */
   readonly reasoningEffort?: ReasoningEffort
   /**
    * 终态且存在 checkpoint 改动时输出会话级聚合的净文件变化。

@@ -33,6 +33,8 @@ export interface ModelEntry {
   supportsVision?: boolean
   /** 思考强度；缺省或 'auto' 时不发送 reasoning 参数 */
   reasoningEffort?: ReasoningEffort
+  /** 已退役模型不得用于新执行，但历史 header 可继续解释。 */
+  retired?: boolean
 }
 
 /** 服务商配置 */
@@ -217,32 +219,74 @@ export function resolveModelConfig(
   registry: LlmRegistry,
   ref?: ActiveModelRef
 ): ModelConfig | null {
+  const resolved = resolveModelReference(registry, ref)
+  return resolved.status === 'available' ? resolved.config : null
+}
+
+/** 模型引用不可用的原因，供派生前失败与只读 catalog 复用。 */
+export type ModelResolutionStatus =
+  | 'available'
+  | 'provider_missing'
+  | 'provider_disabled'
+  | 'credentials_missing'
+  | 'model_missing'
+  | 'model_retired'
+  | 'model_invalid'
+
+export type ModelResolutionResult =
+  | {
+      readonly status: 'available'
+      readonly provider: ProviderConfig
+      readonly entry: ModelEntry
+      readonly config: ModelConfig
+    }
+  | {
+      readonly status: Exclude<ModelResolutionStatus, 'available'>
+      readonly provider?: ProviderConfig
+      readonly entry?: ModelEntry
+    }
+
+/**
+ * 按稳定 providerId + modelEntryId 解析模型。
+ * 与 resolveModelConfig 的 null 兼容 API 分开保留原因，避免 missing/retired 混淆。
+ */
+export function resolveModelReference(
+  registry: LlmRegistry,
+  ref?: ActiveModelRef
+): ModelResolutionResult {
   const target = ref ?? registry.activeModel
   const provider = findProvider(registry, target.providerId)
-  if (!provider || !provider.enabled) return null
+  if (!provider) return { status: 'provider_missing' }
+  if (!provider.enabled) return { status: 'provider_disabled', provider }
+
+  const entry = findModelEntry(provider, target.modelEntryId)
+  if (!entry) return { status: 'model_missing', provider }
+  if (entry.retired === true) return { status: 'model_retired', provider, entry }
 
   const apiKey = provider.apiKey.trim()
   const baseUrl = provider.baseUrl.trim()
-  if (!apiKey || !baseUrl) return null
-
-  const entry = findModelEntry(provider, target.modelEntryId)
-  if (!entry) return null
+  if (!apiKey || !baseUrl) return { status: 'credentials_missing', provider, entry }
 
   const modelId = entry.modelId.trim()
-  if (!modelId) return null
+  if (!modelId) return { status: 'model_invalid', provider, entry }
 
   return {
-    baseUrl,
-    apiKey,
-    modelId,
-    ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
-    ...(entry.supportsVision !== undefined ? { supportsVision: entry.supportsVision } : {}),
-    ...(entry.reasoningEffort && entry.reasoningEffort !== 'auto'
-      ? { reasoningEffort: entry.reasoningEffort }
-      : {}),
-    ...(provider.toolDialect && provider.toolDialect !== 'auto'
-      ? { toolDialect: provider.toolDialect }
-      : {})
+    status: 'available',
+    provider,
+    entry,
+    config: {
+      baseUrl,
+      apiKey,
+      modelId,
+      ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
+      ...(entry.supportsVision !== undefined ? { supportsVision: entry.supportsVision } : {}),
+      ...(entry.reasoningEffort && entry.reasoningEffort !== 'auto'
+        ? { reasoningEffort: entry.reasoningEffort }
+        : {}),
+      ...(provider.toolDialect && provider.toolDialect !== 'auto'
+        ? { toolDialect: provider.toolDialect }
+        : {})
+    }
   }
 }
 
@@ -302,7 +346,7 @@ export function listSelectableModels(registry: LlmRegistry): SelectableModel[] {
   for (const provider of registry.providers) {
     if (!provider.enabled || !provider.apiKey.trim()) continue
     for (const entry of provider.models) {
-      if (!entry.modelId.trim()) continue
+      if (entry.retired === true || !entry.modelId.trim()) continue
       items.push({
         providerId: provider.id,
         providerName: provider.name,
@@ -449,6 +493,14 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
     if (!baseUrl || !/^https?:\/\/.+/.test(baseUrl)) {
       return { valid: false, message: `服务商「${p.name}」的接口地址无效` }
     }
+    if (!Array.isArray(p.models)) {
+      return { valid: false, message: `服务商「${p.name}」的模型列表无效` }
+    }
+    for (const model of p.models) {
+      if (model.retired !== undefined && typeof model.retired !== 'boolean') {
+        return { valid: false, message: `服务商「${p.name}」的模型退役状态无效` }
+      }
+    }
     providers.push({
       id: p.id,
       name: p.name.trim(),
@@ -464,7 +516,8 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
         ...(m.supportsVision !== undefined ? { supportsVision: m.supportsVision } : {}),
         ...(m.reasoningEffort && m.reasoningEffort !== 'auto'
           ? { reasoningEffort: m.reasoningEffort }
-          : {})
+          : {}),
+        ...(m.retired === true ? { retired: true } : {})
       })),
       ...(p.toolDialect && p.toolDialect !== 'auto' ? { toolDialect: p.toolDialect } : {})
     })

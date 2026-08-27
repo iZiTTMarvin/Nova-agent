@@ -5,6 +5,7 @@
  * intentionally do not depend on any runtime, main-process, or renderer type.
  */
 import type { TurnTruncationReason } from '../run/types'
+import type { ReasoningEffort } from '../config/llmRegistry'
 
 /** The caller category that gives a child execution its durable identity. */
 export type SubagentOrigin =
@@ -52,6 +53,61 @@ export interface SubagentModelSnapshot {
   readonly modelId: string
 }
 
+/** Preset model binding; modelEntryId is the registry-owned stable identity. */
+export interface SubagentModelBinding {
+  readonly providerId: string
+  readonly modelEntryId: string
+  /** 缺省时使用 registry entry 的默认值，派生时写入 header 的有效值。 */
+  readonly reasoningEffort?: ReasoningEffort
+}
+
+/**
+ * 旧 profile 的只读模型引用；不可用于新执行。
+ * 删除条件：所有持久化 profile 完成重新绑定后，且迁移不再读取 modelId 形状。
+ */
+export type LegacySubagentModelReference = SubagentModelSnapshot
+
+export type SubagentProfileModel = SubagentModelBinding | LegacySubagentModelReference
+
+/**
+ * Child Session 的最小模型事实。
+ * 能力、缓存和凭据不落盘，恢复时按同一 registry entry 解析。
+ */
+export interface SubagentSessionHeader {
+  readonly providerId: string
+  readonly modelEntryId: string
+  /** 创建时看到的公开 API model ID；entry 漂移时恢复必须失败。 */
+  readonly modelId: string
+  readonly reasoningEffort: ReasoningEffort
+}
+
+export type SubagentCatalogReason =
+  | 'provider_missing'
+  | 'provider_disabled'
+  | 'credentials_missing'
+  | 'model_missing'
+  | 'model_retired'
+  | 'model_invalid'
+  | 'legacy_model_binding'
+  | 'invalid_model_binding'
+
+export interface SubagentCatalogModel {
+  readonly providerId: string
+  readonly modelEntryId?: string
+  readonly modelId?: string
+  readonly reasoningEffort?: ReasoningEffort
+}
+
+/** agent_list 只读展示项，不含 prompt、凭据或运行时配置。 */
+export interface SubagentCatalogEntry {
+  readonly profileId: string
+  readonly name: string
+  readonly description: string
+  readonly status: 'available' | 'unavailable'
+  readonly reason?: SubagentCatalogReason
+  readonly model?: SubagentCatalogModel
+}
+
 /** Frozen profile used to make a historical child run interpretable. */
 export interface SubagentProfileSnapshot {
   readonly profileId: string
@@ -60,7 +116,7 @@ export interface SubagentProfileSnapshot {
   readonly systemPrompt: string
   readonly toolNames: readonly string[]
   readonly permissionCeiling: 'read_only' | 'workspace_write'
-  readonly model?: SubagentModelSnapshot
+  readonly model?: SubagentProfileModel
   readonly maxToolRounds: number
   readonly contextWindow?: number
   /** 仅 skill_fork 可用的持久化只读根，用于加载 skill references。 */
@@ -74,6 +130,8 @@ export type SessionKind = 'primary' | 'subagent'
 export interface SubagentSessionMetadata {
   readonly lineage: SubagentLineage
   readonly profile: SubagentProfileSnapshot
+  /** 新建 child 必须存在；历史会话可缺省且不能据此猜测实际模型。 */
+  readonly header?: SubagentSessionHeader
 }
 
 /** Intent submitted to the future subagent execution owner. */

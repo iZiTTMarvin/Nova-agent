@@ -9,13 +9,15 @@ export {
 } from './SubagentExecutionService'
 export {
   resolveSubagentProfileSnapshot,
-  applyHostArchiveReadCapability
+  applyHostArchiveReadCapability,
+  parseSubagentModel
 } from './profileResolver'
 export {
   MAX_SUBAGENT_SUMMARY_CHARS,
   projectSubagentExecutionResult
 } from './resultProjection'
 export type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
+export { buildSubagentCatalog } from './catalog'
 export {
   SubagentScheduler,
   SubagentScheduleRejectedError,

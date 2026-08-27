@@ -18,6 +18,7 @@ import {
   type SubagentEventContext
 } from '../../../runtime/subagents'
 import { loadModelConfig } from '../../../runtime/model/config'
+import { loadLlmRegistry } from '../../../runtime/model/config'
 import { resolveSupportsVision } from '../../../shared/config/types'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { SessionMessageAppend, SerializableContentBlock } from '../../../runtime/sessions/types'
@@ -67,6 +68,10 @@ import {
 } from './SteeringQueue'
 import { resolveEntryLockAction } from './entryLock'
 import { SubagentExecutionHost } from '../subagents'
+import {
+  resolveChildModelFromHeader,
+  resolveChildModelFromProfile
+} from '../subagents/childModelRouting'
 import { getSubagentScheduler } from '../../services/SubagentSchedulerHost'
 import {
   ensureCodeGraphForWorkspace,
@@ -275,22 +280,27 @@ export async function sendAgentMessage(
     isRunExecutionActive: (runId) => executionRegistry.get(runId) !== null,
     hostHasArchiveRead: () => prepared.toolRegistry.getTool('archive_read') !== undefined,
     loadProfile: (profileId) => getSubAgentSpec(profileId, projectPath),
+    resolveExecutionTarget: (input) => {
+      const registry = loadLlmRegistry(app.getPath('userData'))
+      if (!registry) throw new Error('子代理模型不可用：尚未配置模型注册表')
+      return 'header' in input
+        ? resolveChildModelFromHeader(registry, input.header).header
+        : resolveChildModelFromProfile(registry, input.profile).header
+    },
     prepareTurn: (input) => {
       const childPromptCacheKey =
         sessionStore.ensureCacheRoutingKey(input.childSession.id) ?? undefined
+      const registry = loadLlmRegistry(app.getPath('userData'))
+      if (!registry) throw new Error('子代理模型不可用：尚未配置模型注册表')
       const childPrepared = prepareSubagentRuntime({
         ...input,
-        // 子代理继承父会话思考强度覆盖，保证投影显示与实际运行一致
-        reasoningEffort: session.reasoningEffortOverride,
+        registry,
         // compose 阶段门禁随父会话继承，子代理能力只能收窄
         toolAuthorizationPolicy: prepared.toolAuthorizationPolicy,
-        modelClient,
         resolveTool: (name) => prepared.toolRegistry.getTool(name),
         sessionStore,
         sessionsDir,
         readState: getReadStateForSession(input.childSession.id),
-        contextWindow: prepared.contextWindow,
-        supportsVision: prepared.supportsVision,
         resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
         ...(childPromptCacheKey ? { promptCacheKey: childPromptCacheKey } : {})
       })

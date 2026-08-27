@@ -1,15 +1,17 @@
-/**
- * projectRequestMessages 投影层骨架测试。
- *
- * 只验证投影关闭态的行为：原样返回、不 mutate 输入、幂等、不调用 archive。
- * 归档逻辑启用后，这些测试仍然成立。
- */
 import { describe, it, expect } from 'vitest'
 import {
   createRequestProjectionArchiveCache,
+  IMAGE_REQUEST_BUDGET_PLACEHOLDER,
+  MAX_PROVIDER_IMAGE_REQUEST_BYTES,
   projectRequestMessages
 } from '../../../../src/runtime/agent/core/projectRequestMessages'
-import type { ChatMessage } from '../../../../src/runtime/model/types'
+import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/types'
+
+function imageWithRequestBytes(bytes: number): Extract<ContentBlock, { type: 'image_url' }> {
+  const block = { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,' } }
+  const overhead = Buffer.byteLength(JSON.stringify(block), 'utf8')
+  return { ...block, image_url: { url: block.image_url.url + 'A'.repeat(bytes - overhead) } }
+}
 
 describe('projectRequestMessages', () => {
   it('policy.enabled=false 时原样返回，诊断全为零', async () => {
@@ -75,5 +77,56 @@ describe('projectRequestMessages', () => {
       archive: async () => { called = true; return null }
     })
     expect(called).toBe(false)
+  })
+
+  it.each([
+    { enabled: false, toolRound: 1 },
+    { enabled: true, toolRound: 0 }
+  ])('图片预算不依赖工具归档开关或起始轮次：%o', async ({ enabled, toolRound }) => {
+    const first = imageWithRequestBytes(6 * 1024 * 1024)
+    const overflow = imageWithRequestBytes(7 * 1024 * 1024)
+    const later = imageWithRequestBytes(1024)
+    const messages: ChatMessage[] = [
+      { role: 'user', content: [first] },
+      { role: 'tool', toolCallId: 'read-image', content: [
+        { type: 'text', text: '保留说明' }, overflow, later
+      ] }
+    ]
+    const input = {
+      messages,
+      toolRound,
+      policy: { enabled },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => { throw new Error('图片投影不应写归档') }
+    }
+    const result = await projectRequestMessages(input)
+    expect(result.messages).toEqual([
+      messages[0],
+      { role: 'tool', toolCallId: 'read-image', content: [
+        { type: 'text', text: '保留说明' },
+        { type: 'text', text: IMAGE_REQUEST_BUDGET_PLACEHOLDER }, later
+      ] }
+    ])
+    expect(messages[1].content).toEqual([{ type: 'text', text: '保留说明' }, overflow, later])
+    expect((await projectRequestMessages({ ...input, messages: result.messages })).messages)
+      .toEqual(result.messages)
+    expect((await projectRequestMessages(input)).messages).toEqual(result.messages)
+  })
+
+  it('图片 JSON 的 UTF-8 字节恰好达到上限仍保留，额外图片逐张省略', async () => {
+    const remote: ContentBlock = { type: 'image_url', image_url: { url: 'https://example.test/图.png' } }
+    const remoteBytes = Buffer.byteLength(JSON.stringify(remote), 'utf8')
+    const filler = imageWithRequestBytes(MAX_PROVIDER_IMAGE_REQUEST_BYTES - remoteBytes)
+    const extra: ContentBlock = { type: 'image_url', image_url: { url: 'https://example.test/next.png' } }
+    const result = await projectRequestMessages({
+      messages: [{ role: 'user', content: [filler, remote, extra] }],
+      toolRound: 0,
+      policy: { enabled: false },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => null
+    })
+    expect(result.messages[0].content).toEqual([
+      filler, remote, { type: 'text', text: IMAGE_REQUEST_BUDGET_PLACEHOLDER }
+    ])
   })
 })

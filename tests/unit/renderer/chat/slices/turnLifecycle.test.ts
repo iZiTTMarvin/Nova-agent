@@ -217,4 +217,18 @@ describe('turnLifecycleSlice', () => {
     expect(sendCalls).toHaveLength(1)
     expect(sendCalls[0][1]).toMatchObject({ content: 'error 后排队消息' })
   })
+
+  it('无消息块时只转换预算错误，其他终态错误保留原文', async () => {
+    await useChatStore.getState().handleError(
+      'msg_budget',
+      'ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'
+    )
+    await useChatStore.getState().handleError('msg_network', '网络连接失败')
+
+    const messages = useChatStore.getState().messages
+    expect(messages.find(message => message.id === 'msg_budget')?.content)
+      .toBe('对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。')
+    expect(messages.find(message => message.id === 'msg_network')?.content)
+      .toBe('网络连接失败')
+  })
 })

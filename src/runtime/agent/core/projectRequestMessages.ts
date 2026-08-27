@@ -6,7 +6,7 @@
  * 2. 溢出压缩恢复后必须重新投影（调用方的 continue 路径回到循环顶会重新执行投影；若未来有人把恢复改成就地重试，必须显式重新投影）。
  * 3. 投影是幂等的——对已是占位符的内容再次投影原样返回。
  */
-import type { ChatMessage } from '../../model/types'
+import type { ChatMessage, ContentBlock } from '../../model/types'
 import { buildArtifactRef, sha256Hex } from '../../artifacts/artifactRef'
 import { planToolResultSupersession } from './toolResultSupersession'
 
@@ -14,10 +14,15 @@ import { planToolResultSupersession } from './toolResultSupersession'
 export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
 /** 起始归档轮次（第 0 轮不归档，保留首轮上下文完整） */
 export const ACTIVE_PRUNE_MIN_TOOL_ROUND = 1
-/** 字符/token 估算系数，与 estimateContextSize 的 JSON 字节 / 4 口径一致 */
+/** 字符/token 估算系数，与 estimateContextSize 的 JSON 字符 / 4 口径一致 */
 export const CHARS_PER_TOKEN = 4
 /** 被覆盖结果的最低归档阈值：低于此体积不归档，避免占位符比原文还大 */
 export const SUPERSEDED_MIN_ESTIMATED_TOKENS = 256
+/** 单次模型请求允许携带的图片 JSON 字节上限。 */
+export const MAX_PROVIDER_IMAGE_REQUEST_BYTES = 12 * 1024 * 1024
+/** 图片超过轮预算后保留的可操作提示。 */
+export const IMAGE_REQUEST_BUDGET_PLACEHOLDER =
+  '[图片已省略：本轮图片请求已超过 12 MiB 上限。请减少图片数量或尺寸后重试。]'
 /** 占位符预览：正文前 N 行 */
 const PREVIEW_HEAD_LINES = 3
 /** 占位符预览：正文后 N 行 */
@@ -169,6 +174,44 @@ const EMPTY_DIAGNOSTICS: RequestProjectionDiagnostics = {
   estimatedTokensSaved: 0
 }
 
+function imageRequestBytes(block: Extract<ContentBlock, { type: 'image_url' }>): number {
+  return Buffer.byteLength(JSON.stringify(block), 'utf8')
+}
+
+/** 在不改写权威上下文的前提下，按消息顺序限制图片请求体积。 */
+function projectImagesWithinBudget(messages: ChatMessage[]): ChatMessage[] {
+  let usedBytes = 0
+  let changed = false
+
+  const projected = messages.map(message => {
+    if (!Array.isArray(message.content)) return message
+
+    let messageChanged = false
+    const content: ContentBlock[] = []
+    for (const block of message.content) {
+      if (block.type !== 'image_url') {
+        content.push(block)
+        continue
+      }
+
+      const bytes = imageRequestBytes(block)
+      if (usedBytes + bytes <= MAX_PROVIDER_IMAGE_REQUEST_BYTES) {
+        usedBytes += bytes
+        content.push(block)
+      } else {
+        messageChanged = true
+        content.push({ type: 'text', text: IMAGE_REQUEST_BUDGET_PLACEHOLDER })
+      }
+    }
+
+    if (!messageChanged) return message
+    changed = true
+    return { ...message, content }
+  })
+
+  return changed ? projected : messages
+}
+
 /** 关闭态策略：门面默认值 */
 export const DISABLED_PRUNE_POLICY: ActiveToolResultPrunePolicy = { enabled: false }
 
@@ -183,7 +226,7 @@ export async function projectRequestMessages(
   input: RequestProjectionInput
 ): Promise<RequestProjectionResult> {
   if (!input.policy.enabled) {
-    return { messages: input.messages, diagnostics: EMPTY_DIAGNOSTICS }
+    return { messages: projectImagesWithinBudget(input.messages), diagnostics: EMPTY_DIAGNOSTICS }
   }
 
   const maxTokens = input.policy.maxEstimatedTokens ?? ACTIVE_TOOL_RESULT_MAX_TOKENS
@@ -191,7 +234,7 @@ export async function projectRequestMessages(
 
   // 第 0 轮不归档，保留首轮上下文完整
   if (input.toolRound < minRound) {
-    return { messages: input.messages, diagnostics: EMPTY_DIAGNOSTICS }
+    return { messages: projectImagesWithinBudget(input.messages), diagnostics: EMPTY_DIAGNOSTICS }
   }
 
   const maxChars = maxTokens * CHARS_PER_TOKEN
@@ -275,7 +318,7 @@ export async function projectRequestMessages(
   }
 
   return {
-    messages: projected,
+    messages: projectImagesWithinBudget(projected),
     diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved }
   }
 }
