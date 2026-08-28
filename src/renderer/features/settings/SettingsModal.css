@@ -19,26 +19,186 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  padding: 20px 12px 16px;
+  padding: 24px 14px 20px 18px;
   min-height: 0;
+  user-select: none;
+  background: var(--bg-app);
 }
 
 .settings-shell__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   align-self: flex-start;
-  margin-bottom: 12px;
+  padding: 6px 10px;
+  margin-bottom: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  outline: none;
   flex-shrink: 0;
-  transition: transform var(--transition-fast), background-color var(--transition-fast);
+  transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
 }
 
 .settings-shell__back:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-sand);
   transform: translateX(-2px);
 }
 
-.settings-shell__nav {
+.settings-shell__back:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-brand);
+}
+
+.settings-shell__back-icon {
+  flex-shrink: 0;
+  color: currentColor;
+  transition: transform var(--transition-fast);
+}
+
+.settings-shell__back:hover .settings-shell__back-icon {
+  transform: translateX(-1px);
+}
+
+.settings-shell__back-label {
+  letter-spacing: 0.01em;
+}
+
+/* ── 导航列表 ── */
+.settings-nav {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-right: 4px;
 }
+
+.settings-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-nav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+.settings-nav:hover::-webkit-scrollbar-thumb {
+  background: var(--border-warm);
+}
+
+.settings-nav__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-nav__group-title {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  padding: 2px 10px 4px;
+  margin-bottom: 2px;
+}
+
+.settings-nav__group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  position: relative;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.settings-nav__item:hover {
+  background-color: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.settings-nav__item--selected {
+  background-color: var(--bg-sand) !important;
+  color: var(--text-primary) !important;
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .settings-nav__item--selected {
+  background-color: rgba(255, 255, 255, 0.09) !important;
+}
+
+.settings-nav__item:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-brand);
+}
+
+.settings-nav__item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: color var(--transition-fast);
+}
+
+.settings-nav__item:hover .settings-nav__item-icon,
+.settings-nav__item--selected .settings-nav__item-icon {
+  color: var(--text-primary);
+}
+
+.settings-nav__item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.settings-nav__item-badge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-weight: 500;
+  line-height: 1;
+  padding: 2.5px 6px;
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.settings-nav__item:hover .settings-nav__item-badge,
+.settings-nav__item--selected .settings-nav__item-badge {
+  background-color: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  color: var(--text-secondary);
+}
+
 
 /* 内容板：与侧栏相接的浮动圆角面板 */
 .settings-shell__pane {
