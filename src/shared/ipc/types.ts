@@ -78,6 +78,14 @@ import type {
   FsReadFilePreviewResult
 } from '../fs/types'
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
+import type { AppUpdateSnapshot } from '../update'
+import {
+  APP_UPDATE_STATE_CHANGED,
+  CHECK_APP_UPDATE,
+  DOWNLOAD_APP_UPDATE,
+  GET_APP_UPDATE_STATE,
+  INSTALL_APP_UPDATE
+} from './channels'
 import type { SubagentActivityProjection } from '../subagents'
 
 /**
@@ -547,7 +555,19 @@ export interface IpcCommands {
     params: FsReadFilePreviewParams
     result: FsReadFilePreviewResult
   }
-  'app:install-update': {
+  [GET_APP_UPDATE_STATE]: {
+    params: void
+    result: AppUpdateSnapshot
+  }
+  [CHECK_APP_UPDATE]: {
+    params: void
+    result: AppUpdateSnapshot
+  }
+  [DOWNLOAD_APP_UPDATE]: {
+    params: void
+    result: AppUpdateSnapshot
+  }
+  [INSTALL_APP_UPDATE]: {
     params: void
     result: void
   }
@@ -810,9 +830,7 @@ export interface IpcEvents {
     inProgress: boolean
     sessionId: string | null
   }
-  'app:update-downloaded': {
-    version: string
-  }
+  [APP_UPDATE_STATE_CHANGED]: AppUpdateSnapshot
 }
 
 /** 所有事件 channel 名称 */

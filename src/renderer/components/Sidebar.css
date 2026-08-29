@@ -70,6 +70,18 @@
   min-height: 0;
 }
 
+.sidebar-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebar-footer-actions > :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
 .sidebar-shell__resize-handle {
   position: absolute;
   top: 0;

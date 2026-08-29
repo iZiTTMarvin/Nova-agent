@@ -355,6 +355,15 @@ export const RefreshIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   </svg>
 )
 
+/** 下载图标 - 应用更新入口 */
+export const DownloadIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M12 3v12" />
+    <path d="m7 10 5 5 5-5" />
+    <path d="M5 21h14" />
+  </svg>
+)
+
 /** 放大镜图标 - 搜索过滤 */
 export const SearchIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>

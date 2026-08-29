@@ -18,6 +18,8 @@ import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
 import { selectCurrentCodeIndexStatus, useCodeIndexStore } from '../stores/useCodeIndexStore'
 import { listPinnedSessions, listSidebarRootSessions, resolveSidebarActiveSessionId } from '../features/subagents/sidebarSessions'
+import type { AppUpdateSnapshot } from '../../shared/update'
+import { UpdateIndicator } from '../features/update/UpdateIndicator'
 import './Sidebar.css'
 
 /** 每个项目下默认展示的最新会话数 */
@@ -81,7 +83,11 @@ function SidebarStatusDot({
 }
 
 /** 会话树内容：不订阅布局宽度，拖拽调宽时仅壳层重绘 */
-const SidebarSessions = React.memo(function SidebarSessions() {
+interface SidebarSessionsProps {
+  updateSnapshot: AppUpdateSnapshot | null
+}
+
+const SidebarSessions = React.memo(function SidebarSessions({ updateSnapshot }: SidebarSessionsProps) {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const createNewSession = useChatStore(state => state.createNewSession)
@@ -394,11 +400,14 @@ const SidebarSessions = React.memo(function SidebarSessions() {
         </>
       )}
       footer={(
-        <SideNavItem
-          label="设置"
-          icon={<SettingsIcon size={18} />}
-          onClick={() => setConfigModalOpen(true)}
-        />
+        <div className="sidebar-footer-actions">
+          <UpdateIndicator snapshot={updateSnapshot} />
+          <SideNavItem
+            label="设置"
+            icon={<SettingsIcon size={18} />}
+            onClick={() => setConfigModalOpen(true)}
+          />
+        </div>
       )}
     >
       {pinnedSessions.length > 0 && (
@@ -493,7 +502,11 @@ const SidebarSessions = React.memo(function SidebarSessions() {
   )
 })
 
-export const Sidebar: React.FC = () => {
+export interface SidebarProps {
+  updateSnapshot?: AppUpdateSnapshot | null
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const sidebarWidth = useLayoutStore(state => state.sidebarWidth)
   const [isResizing, setIsResizing] = useState(false)
@@ -589,7 +602,7 @@ export const Sidebar: React.FC = () => {
         </div>
         {/* 顶行占位 40px，导航区占剩余高度 */}
         <div className="sidebar-shell__nav">
-          <SidebarSessions />
+          <SidebarSessions updateSnapshot={updateSnapshot} />
         </div>
       </div>
       {!sidebarCollapsed && (

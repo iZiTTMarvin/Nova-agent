@@ -1,0 +1,376 @@
+.app-update-indicator {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-update-indicator__trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  outline: none;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.app-update-indicator__trigger:hover,
+.app-update-indicator__trigger[aria-expanded='true'] {
+  border-color: var(--border-warm);
+  background: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.app-update-indicator__trigger:focus-visible {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 30%, transparent);
+}
+
+.app-update-indicator__trigger--available,
+.app-update-indicator__trigger--ready {
+  color: var(--color-brand);
+}
+
+.app-update-indicator__trigger--downloading {
+  color: var(--color-accent);
+}
+
+.app-update-indicator__trigger--error {
+  color: var(--color-error);
+}
+
+.app-update-indicator__dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--bg-sidebar);
+  border-radius: 50%;
+  background: var(--color-brand);
+}
+
+.app-update-indicator__trigger--downloading .app-update-indicator__dot {
+  background: var(--color-accent);
+}
+
+.app-update-indicator__trigger--error .app-update-indicator__dot {
+  background: var(--color-error);
+}
+
+.app-update-popover {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 24px));
+  min-width: min(280px, calc(100vw - 24px));
+  overflow: hidden;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-xl);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-popup);
+  color: var(--text-primary);
+  outline: none;
+  animation: app-update-popover-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.app-update-popover__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border-cream);
+}
+
+.app-update-popover__heading {
+  min-width: 0;
+}
+
+.app-update-popover__eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-brand);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.app-update-popover__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.app-update-popover__date,
+.app-update-popover__release-name {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.app-update-popover__release-name {
+  color: var(--text-secondary);
+}
+
+.app-update-popover__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  outline: none;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.app-update-popover__close:hover {
+  border-color: var(--border-warm);
+  background: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.app-update-popover__close:focus-visible {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 30%, transparent);
+}
+
+.app-update-popover__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-update-popover__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  margin: 12px 16px 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--border-warm));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-error) 9%, var(--bg-card));
+  color: var(--color-error);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.app-update-popover__progress-group {
+  flex-shrink: 0;
+  padding: 12px 16px 0;
+}
+
+.app-update-popover__progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.app-update-popover__progress-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-update-popover__progress {
+  height: 5px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-sand);
+}
+
+.app-update-popover__progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-brand);
+  transition: width var(--transition-normal);
+}
+
+.app-update-popover__notes {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  overscroll-behavior: contain;
+}
+
+.app-update-popover__note + .app-update-popover__note {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-cream);
+}
+
+.app-update-popover__note-version {
+  margin: 0 0 7px;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.app-update-popover__note-content {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.app-update-popover__note-content .markdown-body {
+  min-width: 0;
+}
+
+.app-update-popover__note-content .markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+.app-update-popover__note-content .markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.app-update-popover__note-content .markdown-body p,
+.app-update-popover__note-content .markdown-body ul,
+.app-update-popover__note-content .markdown-body ol,
+.app-update-popover__note-content .markdown-body blockquote {
+  margin-block: 0.55em;
+}
+
+.app-update-popover__note-content .markdown-body h1,
+.app-update-popover__note-content .markdown-body h2,
+.app-update-popover__note-content .markdown-body h3,
+.app-update-popover__note-content .markdown-body h4,
+.app-update-popover__note-content .markdown-body h5,
+.app-update-popover__note-content .markdown-body h6 {
+  margin-block: 0.8em 0.35em;
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.app-update-popover__note-content .markdown-body ul,
+.app-update-popover__note-content .markdown-body ol {
+  padding-inline-start: 1.35em;
+}
+
+.app-update-popover__note-content .markdown-body li + li {
+  margin-top: 0.25em;
+}
+
+.app-update-popover__note-content .markdown-body code {
+  overflow-wrap: anywhere;
+}
+
+.app-update-popover__empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.app-update-popover__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--border-cream);
+}
+
+.app-update-popover__primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  color: var(--bg-card);
+  font-size: 0.8rem;
+  font-weight: 600;
+  outline: none;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.app-update-popover__primary-action:hover:not(:disabled) {
+  border-color: var(--color-brand-hover);
+  background: var(--color-brand-hover);
+}
+
+.app-update-popover__primary-action:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--color-focus);
+}
+
+.app-update-popover__primary-action:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.app-update-popover__action-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@keyframes app-update-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 520px) {
+  .app-update-popover {
+    width: calc(100vw - 24px);
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-update-popover,
+  .app-update-popover__progress > span,
+  .app-update-indicator__trigger,
+  .app-update-popover__close,
+  .app-update-popover__primary-action {
+    animation: none;
+    transition: none;
+  }
+}

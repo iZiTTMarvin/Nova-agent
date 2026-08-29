@@ -14,6 +14,7 @@ import { registerSubagentsHandler } from './subagentsHandler'
 import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
+import { registerUpdaterHandler } from './updaterHandler'
 import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
 import { registerFsHandler } from './fsHandler'
@@ -65,6 +66,7 @@ export function registerIpcHandlers(): ImageStore {
   registerDevDiagnosticsHandlers()
   // 注册异步对话框 IPC（替代阻塞的 window.confirm）
   registerDialogHandler()
+  registerUpdaterHandler()
 
   // 注册模型配置存取 IPC
   registerConfigHandler()

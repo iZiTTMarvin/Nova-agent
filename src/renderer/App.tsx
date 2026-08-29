@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Theme } from '@astryxdesign/core/theme'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
@@ -23,6 +23,8 @@ import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
 import { isPlanReviewPermissionPayload } from '../shared/planReview'
+import type { AppUpdateSnapshot } from '../shared/update'
+import { APP_UPDATE_STATE_CHANGED, GET_APP_UPDATE_STATE } from '../shared/ipc/channels'
 import './App.css'
 
 // 图标注册：built 主题产物（parchment.js）由 CLI 生成时丢弃 icons 字段
@@ -44,6 +46,8 @@ registerIcons(neutralIconRegistry)
  * 除此之外不订阅 messages / streaming 字段，保证 text delta 不会触发 App 根 commit。
  */
 function App(): React.ReactNode {
+  const [updateSnapshot, setUpdateSnapshot] = useState<AppUpdateSnapshot | null>(null)
+
   // settings：仅稳定 action
   const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
   const loadTheme = useSettingsStore(state => state.loadTheme)
@@ -92,6 +96,27 @@ function App(): React.ReactNode {
       stopDispatcher()
     }
   }, [loadModelConfig, loadTheme])
+
+  // 自动更新只在发现版本后等待用户决定，不在后台静默下载。
+  useEffect(() => {
+    let cancelled = false
+    const unsubscribe = window.api.on(APP_UPDATE_STATE_CHANGED, (snapshot) => {
+      if (!cancelled) setUpdateSnapshot(snapshot)
+    })
+
+    void window.api.invoke(GET_APP_UPDATE_STATE)
+      .then((snapshot) => {
+        if (!cancelled) setUpdateSnapshot(snapshot)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) console.error('[app-update] 获取更新状态失败:', error)
+      })
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
 
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
   useEffect(() => {
@@ -289,14 +314,6 @@ function App(): React.ReactNode {
     // 轮次归属改由 run:snapshot（useRunStore）投影到 handleTurnState；
     // agent:turn-state 裸广播已移除。
 
-    // 自动更新：下载完成后提示重启安装
-    const unsubUpdateDownloaded = window.api.on('app:update-downloaded', (data) => {
-      const install = window.confirm(`新版本 ${data.version} 已下载，是否立即重启安装？`)
-      if (install) {
-        void window.api.invoke('app:install-update')
-      }
-    })
-
     // 清理函数：解绑所有主进程事件监听器，释放 buffer
     // 顺序很关键（防御性）：
     // 1. 先解绑所有主进程 IPC 监听器，避免清理过程中又有新 delta 进来
@@ -330,7 +347,6 @@ function App(): React.ReactNode {
       unsubRecoveryHint()
       unsubRecoveryState()
       unsubAttemptFailed()
-      unsubUpdateDownloaded()
       buffer.flushNow()
       buffer.dispose()
     }
@@ -364,7 +380,7 @@ function App(): React.ReactNode {
       */}
       <AppShell
         variant="section"
-        sideNav={<Sidebar />}
+        sideNav={<Sidebar updateSnapshot={updateSnapshot} />}
         contentPadding={0}
         height="fill"
         mobileNav={false}

@@ -1,35 +1,75 @@
-name: Packaged Electron Gate
+name: Windows Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to rebuild and publish
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  packaged:
+  release:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CI: true
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
+      - name: Validate release metadata
+        id: release-metadata
+        shell: pwsh
+        run: >-
+          node scripts/prepare-release.mjs
+          --tag "$env:RELEASE_TAG"
+          --output "$env:RUNNER_TEMP\release-notes.md"
+          --github-output "$env:GITHUB_OUTPUT"
+
       - name: Install app dependencies
         run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
       - name: Install Electron E2E harness
         run: npm run test:e2e:install
-      - name: Pack and verify Electron app
-        run: npm run test:e2e:packaged
+
+      - name: Build Windows release
+        shell: pwsh
+        run: |
+          npm run build
+          npm run sync:icon
+          npx electron-builder --config electron-builder.yml --win nsis --publish never
+
+      - name: Verify packaged Electron app
+        run: npm --prefix tests/e2e run test:packaged
+
       - name: Upload packaged E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -40,3 +80,54 @@ jobs:
             playwright-report/e2e
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Verify update artifacts
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: |
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'release'
+          $setupName = "NovaAgent-Setup-$env:RELEASE_VERSION.exe"
+          $requiredFiles = @(
+            $setupName,
+            "$setupName.blockmap",
+            'latest.yml'
+          )
+
+          foreach ($fileName in $requiredFiles) {
+            $filePath = Join-Path $releaseDir $fileName
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+              throw "缺少发布产物: $filePath"
+            }
+            if ((Get-Item -LiteralPath $filePath).Length -le 0) {
+              throw "发布产物为空: $filePath"
+            }
+          }
+
+          $latestYml = Get-Content -LiteralPath (Join-Path $releaseDir 'latest.yml') -Raw
+          $versionPattern = [regex]::Escape($env:RELEASE_VERSION)
+          if ($latestYml -notmatch "(?m)^version:\s*$versionPattern\s*$") {
+            throw 'latest.yml 的版本与 package.json 不一致'
+          }
+          if ($latestYml -notmatch [regex]::Escape("path: $setupName")) {
+            throw 'latest.yml 未指向当前版本的 NSIS 安装包'
+          }
+
+          Write-Host "已验证 NSIS 安装包、blockmap 与 latest.yml ($env:RELEASE_VERSION)"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release-metadata.outputs.tag }}
+          name: Nova Agent ${{ steps.release-metadata.outputs.tag }}
+          body_path: ${{ steps.release-metadata.outputs.release_notes_path }}
+          generate_release_notes: false
+          draft: false
+          prerelease: ${{ contains(steps.release-metadata.outputs.tag, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            release/NovaAgent-Setup-${{ steps.release-metadata.outputs.version }}.exe
+            release/NovaAgent-Setup-${{ steps.release-metadata.outputs.version }}.exe.blockmap
+            release/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

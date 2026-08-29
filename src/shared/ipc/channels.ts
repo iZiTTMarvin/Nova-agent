@@ -139,8 +139,11 @@ export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
 export const FS_LIST_DIRECTORY = 'fs:list-directory' as const
 /** 当前项目：文件预览（只读，有大小上限） */
 export const FS_READ_FILE_PREVIEW = 'fs:read-file-preview' as const
-/** 安装已下载的应用更新并重启 */
-export const INSTALL_APP_UPDATE = 'app:install-update' as const
+/** 应用更新状态与用户控制 */
+export const GET_APP_UPDATE_STATE = 'app:update:get-state' as const
+export const CHECK_APP_UPDATE = 'app:update:check' as const
+export const DOWNLOAD_APP_UPDATE = 'app:update:download' as const
+export const INSTALL_APP_UPDATE = 'app:update:install' as const
 /** 图片落盘：用户上传的 base64 data URL → 主进程写盘 → 返回 nova-image:// URL */
 export const IMAGE_SAVE = 'image:save' as const
 
@@ -180,5 +183,5 @@ export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */
 export const WORKSPACE_CHANGED = 'workspace:changed' as const
-/** 自动更新已下载，提示用户重启安装 */
-export const APP_UPDATE_DOWNLOADED = 'app:update-downloaded' as const
+/** 主进程应用更新状态投影 */
+export const APP_UPDATE_STATE_CHANGED = 'app:update:state-changed' as const

@@ -6,8 +6,7 @@ import {
   LOAD_LLM_REGISTRY,
   SAVE_LLM_REGISTRY,
   SET_ACTIVE_MODEL,
-  FETCH_PROVIDER_MODELS,
-  INSTALL_APP_UPDATE
+  FETCH_PROVIDER_MODELS
 } from '../../shared/ipc/channels'
 import type { ModelConfig } from '../../shared/config'
 import type { LlmRegistry } from '../../shared/config/llmRegistry'
@@ -24,7 +23,6 @@ import {
 import { fetchProviderModels } from '../../runtime/model/fetchProviderModels'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { getModelClient, setModelClient } from '../services/ModelClientHost'
-import { quitAndInstallUpdate } from '../updater'
 
 /** 返回渲染层前掩码所有 provider 的 apiKey */
 function maskRegistryForRenderer(registry: LlmRegistry): LlmRegistry {
@@ -132,9 +130,4 @@ export function registerConfigHandler(): void {
       return fetchProviderModels(params)
     }
   )
-
-  // 用户确认后安装已下载的更新
-  handle(INSTALL_APP_UPDATE, async (): Promise<void> => {
-    quitAndInstallUpdate()
-  })
 }
