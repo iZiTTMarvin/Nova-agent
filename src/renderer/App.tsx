@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Theme } from '@astryxdesign/core/theme'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
@@ -10,7 +10,7 @@ import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { Sidebar } from './components/Sidebar'
-import { ChatPanel } from './features/chat/ChatPanel'
+import { ChatPanel, type ChatPanelHandle } from './features/chat/ChatPanel'
 import { InspectorPanel } from './features/inspector/InspectorPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { ContentTopBar } from './components/ContentTopBar'
@@ -47,6 +47,8 @@ registerIcons(neutralIconRegistry)
  */
 function App(): React.ReactNode {
   const [updateSnapshot, setUpdateSnapshot] = useState<AppUpdateSnapshot | null>(null)
+  // Inspector 拖拽会话 → ChatPanel 冻结/恢复阅读宽度；App 只做兄弟模块连接，不保存拖拽状态
+  const chatPanelRef = useRef<ChatPanelHandle>(null)
 
   // settings：仅稳定 action
   const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
@@ -389,9 +391,14 @@ function App(): React.ReactNode {
           <ContentTopBar />
           <div className="app-workspace__body">
             <div className="app-workspace__main">
-              <ChatPanel />
+              <ChatPanel ref={chatPanelRef} />
             </div>
-            <InspectorPanel />
+            <InspectorPanel
+              onDragSessionChange={(active) => {
+                if (active) chatPanelRef.current?.freezeReadingWidth()
+                else chatPanelRef.current?.restoreReadingWidth()
+              }}
+            />
           </div>
         </div>
 

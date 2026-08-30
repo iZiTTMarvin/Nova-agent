@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Profiler } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, useMemo, Profiler } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import {
@@ -87,7 +87,20 @@ const MaybeProfiler: React.FC<{
 /** 距列表顶部小于此像素时触发向更早方向补载历史 */
 const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
 
-export const ChatPanel: React.FC = () => {
+/** Inspector 拖拽期间冻结阅读宽度的根节点标记 class（与 CSS 冻结规则成对） */
+const READING_FROZEN_CLASS = 'chat-panel--reading-width-frozen'
+
+/**
+ * ChatPanel 命令式布局接口：由 App 在 Inspector 拖拽会话期间调用，
+ * 冻结消息阅读柱与 Composer 的实际渲染宽度，从源头消除逐帧文字重排。
+ */
+export interface ChatPanelHandle {
+  freezeReadingWidth: () => void
+  restoreReadingWidth: () => void
+}
+
+export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref }) => {
+  const rootRef = useRef<HTMLDivElement | null>(null)
   // ── settings store（项目/模型/模式/配置弹窗） ──
   const currentProject = useSettingsStore(state => state.currentProject)
   const modelConfig = useSettingsStore(state => state.modelConfig)
@@ -294,6 +307,37 @@ export const ChatPanel: React.FC = () => {
 
   // 悬浮输入区高度动态监测（保证消息流滚动到底部时刚好避让输入框与 Todo 卡片）
   const composerAreaRef = useRef<HTMLDivElement | null>(null)
+  /** composer 阅读柱容器：Inspector 拖拽时冻结其实际渲染宽度 */
+  const composerInnerRef = useRef<HTMLDivElement | null>(null)
+
+  // 冻结值取两个容器各自的实际渲染宽度（窄窗口、滚动条和响应式 padding 下互不相同），
+  // 不能用主区宽度或单一 max-width 代替；已冻结时重复调用保持首次测量值不变
+  const freezeReadingWidth = useCallback(() => {
+    const root = rootRef.current
+    if (!root || root.classList.contains(READING_FROZEN_CLASS)) return
+    const flow = messagesContentRef.current
+    const composer = composerInnerRef.current
+    if (flow) {
+      root.style.setProperty('--chat-frozen-flow-width', `${flow.getBoundingClientRect().width}px`)
+    }
+    if (composer) {
+      root.style.setProperty('--chat-frozen-composer-width', `${composer.getBoundingClientRect().width}px`)
+    }
+    root.classList.add(READING_FROZEN_CLASS)
+  }, [])
+
+  const restoreReadingWidth = useCallback(() => {
+    const root = rootRef.current
+    if (!root) return
+    root.classList.remove(READING_FROZEN_CLASS)
+    root.style.removeProperty('--chat-frozen-flow-width')
+    root.style.removeProperty('--chat-frozen-composer-width')
+  }, [])
+
+  useImperativeHandle(ref, () => ({ freezeReadingWidth, restoreReadingWidth }), [
+    freezeReadingWidth,
+    restoreReadingWidth
+  ])
 
   const canAutoScroll = useCallback(() => {
     return canFollowAutoScroll(autoScrollModeRef.current)
@@ -706,6 +750,7 @@ export const ChatPanel: React.FC = () => {
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
     <div
+      ref={rootRef}
       className="chat-panel relative flex flex-col h-full"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -838,7 +883,7 @@ export const ChatPanel: React.FC = () => {
           isEmptyState ? 'chat-panel__composer-area--empty' : ''
         }`}
       >
-        <div className="chat-panel__composer-inner">
+        <div ref={composerInnerRef} className="chat-panel__composer-inner">
           {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
           {!isEmptyState && showScrollToBottom && (
             <button

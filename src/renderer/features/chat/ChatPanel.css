@@ -1225,6 +1225,21 @@ button.code-index-status-chip:hover {
   pointer-events: none;
 }
 
+/* Inspector 拖拽期间冻结阅读宽度：阅读柱与 Composer 固定为拖拽开始时的实际渲染宽度
+   （变量由 ChatPanel freezeReadingWidth 写入根节点），超出收缩后的主区由根容器裁剪，
+   消除逐帧文字重排与行高重测；恢复响应式时 class 与变量一并移除。 */
+.chat-panel--reading-width-frozen {
+  overflow: hidden;
+}
+
+.chat-panel--reading-width-frozen .chat-messages__flow-inner {
+  width: var(--chat-frozen-flow-width, 100%);
+}
+
+.chat-panel--reading-width-frozen .chat-panel__composer-inner {
+  width: var(--chat-frozen-composer-width, 100%);
+}
+
 .ask-question-dock {
   width: 100%;
   max-width: 100%;

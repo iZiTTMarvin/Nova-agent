@@ -17,7 +17,12 @@ import './InspectorPanel.css'
  */
 const SLIDE_TRANSITION = 'transform var(--transition-normal), opacity var(--transition-normal)'
 
-export const InspectorPanel: React.FC = () => {
+export interface InspectorPanelProps {
+  /** 拖拽会话开始/结束成对通知；连接方负责冻结/恢复相邻布局，Inspector 自身不持有外部状态 */
+  onDragSessionChange?: (active: boolean) => void
+}
+
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionChange }) => {
   const inspectorOpen = useLayoutStore(s => s.inspectorOpen)
   const inspectorTab = useLayoutStore(s => s.inspectorTab)
   const inspectorWidth = useLayoutStore(s => s.inspectorWidth)
@@ -32,8 +37,87 @@ export const InspectorPanel: React.FC = () => {
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
   const dragStartWidth = useRef(0)
+  const latestClientX = useRef(0)
+  const rafId = useRef<number | null>(null)
   /** 拖拽期间宽度直写面板 DOM，避免每次 mousemove 触发 store 重渲染 */
   const asideRef = useRef<HTMLElement>(null)
+  /** 拖拽会话通知去重：保证开始/结束严格成对，重复清理无副作用 */
+  const dragSessionActive = useRef(false)
+  const onDragSessionChangeRef = useRef(onDragSessionChange)
+  onDragSessionChangeRef.current = onDragSessionChange
+
+  const notifyDragSession = useCallback((active: boolean) => {
+    if (active === dragSessionActive.current) return
+    dragSessionActive.current = active
+    onDragSessionChangeRef.current?.(active)
+  }, [])
+
+  const widthFromClientX = useCallback((clientX: number) => {
+    const delta = dragStartX.current - clientX
+    return Math.min(INSPECTOR_WIDTH_MAX, Math.max(INSPECTOR_WIDTH_MIN, dragStartWidth.current + delta))
+  }, [])
+
+  /** 拖拽期间直接写外壳 DOM 宽度：过渡已关闭，不触发 store / localStorage / 重渲染 */
+  const applyShellWidth = useCallback((clientX: number) => {
+    const el = asideRef.current
+    if (el) el.style.width = `${widthFromClientX(clientX)}px`
+  }, [widthFromClientX])
+
+  const onResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragStartX.current = e.clientX
+      latestClientX.current = e.clientX
+      dragStartWidth.current = useLayoutStore.getState().inspectorWidth
+      notifyDragSession(true)
+      setDragging(true)
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+    },
+    [notifyDragSession]
+  )
+
+  useEffect(() => {
+    if (!dragging) return
+
+    // 高频 mousemove 只保存最新 clientX，每帧最多写一次外壳宽度
+    const onMove = (e: MouseEvent) => {
+      latestClientX.current = e.clientX
+      if (rafId.current === null) {
+        rafId.current = requestAnimationFrame(() => {
+          rafId.current = null
+          applyShellWidth(latestClientX.current)
+        })
+      }
+    }
+    const onUp = () => {
+      // 先消费最后指针位置（含未执行的帧），再提交宽度和结束冻结
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current)
+        rafId.current = null
+      }
+      applyShellWidth(latestClientX.current)
+      setInspectorWidth(widthFromClientX(latestClientX.current))
+      notifyDragSession(false)
+      setDragging(false)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current)
+        rafId.current = null
+      }
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      // 卸载/中断路径同样结束拖拽会话，恢复相邻布局
+      notifyDragSession(false)
+    }
+  }, [dragging, applyShellWidth, widthFromClientX, setInspectorWidth, notifyDragSession])
 
   useEffect(() => {
     if (inspectorOpen) setMounted(true)
@@ -67,55 +151,6 @@ export const InspectorPanel: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [inspectorOpen, closeInspector])
 
-  const onResizeMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      dragStartX.current = e.clientX
-      dragStartWidth.current = useLayoutStore.getState().inspectorWidth
-      setDragging(true)
-      document.body.style.userSelect = 'none'
-      document.body.style.cursor = 'col-resize'
-    },
-    []
-  )
-
-  useEffect(() => {
-    if (!dragging) return
-
-    const onMove = (e: MouseEvent) => {
-      const delta = dragStartX.current - e.clientX
-      // 拖拽期间直接写 DOM 宽度：过渡已关闭，不触发 store / localStorage / 重渲染
-      const el = asideRef.current
-      if (el) el.style.width = `${Math.min(INSPECTOR_WIDTH_MAX, Math.max(INSPECTOR_WIDTH_MIN, dragStartWidth.current + delta))}px`
-    }
-    const onUp = () => {
-      setDragging(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-  }, [dragging])
-
-  /** 拖拽结束：一次性提交最终宽度到 store（含持久化） */
-  useEffect(() => {
-    if (dragging) return
-    const el = asideRef.current
-    if (!el) return
-    const w = el.style.width
-    if (!w) return
-    const finalWidth = Math.min(INSPECTOR_WIDTH_MAX, Math.max(INSPECTOR_WIDTH_MIN, Number.parseFloat(w)))
-    if (Number.isFinite(finalWidth) && finalWidth !== inspectorWidth) {
-      setInspectorWidth(finalWidth)
-    }
-  }, [dragging, inspectorWidth, setInspectorWidth])
-
   const width = inspectorOpen ? inspectorWidth : 0
   const showContent = mounted && inspectorOpen
 
@@ -144,7 +179,10 @@ export const InspectorPanel: React.FC = () => {
             aria-orientation="vertical"
             aria-label="调整面板宽度"
           />
-          <div className="inspector-panel__inner">
+          <div
+            className="inspector-panel__inner"
+            style={{ width: inspectorWidth }}
+          >
             {inspectorSurface === 'plan' ? (
               <PlanInspectorView />
             ) : (

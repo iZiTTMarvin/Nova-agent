@@ -3,7 +3,7 @@
 import React from 'react'
 import { act, renderDom } from './renderDom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
+import { ChatPanel, type ChatPanelHandle } from '../../../src/renderer/features/chat/ChatPanel'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 import {
   resetSettingsStoreForTests,
@@ -626,6 +626,110 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
       expect.objectContaining({ content: '保留后成功发送的草稿' })
     )
     expect(editable!.textContent ?? '').not.toContain('保留后成功发送的草稿')
+    renderer.unmount()
+  })
+})
+
+/**
+ * 阅读宽度冻结接口回归（Inspector 拖拽会话调用）。
+ *
+ * 冻结值必须来自消息流与 Composer 两个容器各自的实际渲染宽度
+ * （窄窗口、滚动条、响应式 padding 下互不相同），不能用主区宽度或
+ * 单一 max-width 代替；接口幂等，空状态/消息流未挂载时安全。
+ */
+describe('ChatPanel → 阅读宽度冻结接口', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetChatStoreForTests()
+    resetSettingsStoreForTests()
+    resetAgentStoreForTests()
+    mockInvoke.mockResolvedValue(undefined)
+    Object.assign(window, {
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+    })
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function stubWidth(el: HTMLElement, width: number) {
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ width } as DOMRect)
+  }
+
+  it('冻结值取自两个容器各自的实际宽度，恢复后移除 class 与变量', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        messages: [makeAssistantMessage('msg_1')]
+      })
+    })
+    const handleRef = React.createRef<ChatPanelHandle>()
+    const renderer = renderDom(React.createElement(ChatPanel, { ref: handleRef }))
+    const root = renderer.container.querySelector<HTMLElement>('.chat-panel')
+    const flow = renderer.container.querySelector<HTMLElement>('.chat-messages__flow-inner')
+    const composer = renderer.container.querySelector<HTMLElement>('.chat-panel__composer-inner')
+    expect(root).not.toBeNull()
+    expect(flow).not.toBeNull()
+    expect(composer).not.toBeNull()
+
+    // 两个容器宽度刻意不同，证明冻结值分别来自各自容器
+    stubWidth(flow!, 700)
+    stubWidth(composer!, 640)
+
+    act(() => {
+      handleRef.current!.freezeReadingWidth()
+    })
+    expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(true)
+    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('700px')
+    expect(root!.style.getPropertyValue('--chat-frozen-composer-width')).toBe('640px')
+
+    // 幂等：已冻结时重复调用保持首次测量值
+    stubWidth(flow!, 900)
+    act(() => {
+      handleRef.current!.freezeReadingWidth()
+    })
+    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('700px')
+
+    act(() => {
+      handleRef.current!.restoreReadingWidth()
+    })
+    expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(false)
+    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('')
+    expect(root!.style.getPropertyValue('--chat-frozen-composer-width')).toBe('')
+
+    // 恢复幂等：重复恢复无副作用
+    act(() => {
+      handleRef.current!.restoreReadingWidth()
+    })
+    expect(root!.className).not.toContain('chat-panel--reading-width-frozen')
+    renderer.unmount()
+  })
+
+  it('空状态（消息流未挂载）也能安全冻结 Composer 宽度', () => {
+    const handleRef = React.createRef<ChatPanelHandle>()
+    const renderer = renderDom(React.createElement(ChatPanel, { ref: handleRef }))
+    const root = renderer.container.querySelector<HTMLElement>('.chat-panel')
+    const flow = renderer.container.querySelector<HTMLElement>('.chat-messages__flow-inner')
+    const composer = renderer.container.querySelector<HTMLElement>('.chat-panel__composer-inner')
+    expect(flow).toBeNull()
+    expect(composer).not.toBeNull()
+    stubWidth(composer!, 660)
+
+    act(() => {
+      handleRef.current!.freezeReadingWidth()
+    })
+    expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(true)
+    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('')
+    expect(root!.style.getPropertyValue('--chat-frozen-composer-width')).toBe('660px')
+
+    act(() => {
+      handleRef.current!.restoreReadingWidth()
+    })
+    expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(false)
     renderer.unmount()
   })
 })
