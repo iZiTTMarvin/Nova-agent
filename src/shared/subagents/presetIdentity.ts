@@ -14,7 +14,8 @@ const ID_FALLBACK_BASE = 'subagent'
 export const BUILTIN_SUBAGENT_IDS = {
   explore: 'explore',
   code: 'code',
-  review: 'review'
+  review: 'review',
+  generalPurpose: 'general-purpose'
 } as const
 
 export type BuiltinSubagentId = (typeof BUILTIN_SUBAGENT_IDS)[keyof typeof BUILTIN_SUBAGENT_IDS]
@@ -22,7 +23,8 @@ export type BuiltinSubagentId = (typeof BUILTIN_SUBAGENT_IDS)[keyof typeof BUILT
 const BUILTIN_SUBAGENT_ID_LIST: readonly BuiltinSubagentId[] = [
   BUILTIN_SUBAGENT_IDS.explore,
   BUILTIN_SUBAGENT_IDS.code,
-  BUILTIN_SUBAGENT_IDS.review
+  BUILTIN_SUBAGENT_IDS.review,
+  BUILTIN_SUBAGENT_IDS.generalPurpose
 ]
 
 export function isBuiltinSubagentId(value: string): value is BuiltinSubagentId {

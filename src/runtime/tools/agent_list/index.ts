@@ -9,7 +9,7 @@ export interface AgentListToolDeps {
 export function createAgentListTool(deps: AgentListToolDeps): ToolExecutor {
   return {
     name: 'agent_list',
-    description: '列出可派遣的子代理预设、绑定模型和当前可用性。',
+    description: '列出可派遣的子代理预设、绑定模型和当前可用性。优先为专业任务匹配 explore/code/review，混合任务再考虑 general-purpose。',
     parameters: {
       type: 'object',
       properties: {},

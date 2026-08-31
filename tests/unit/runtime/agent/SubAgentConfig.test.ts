@@ -49,4 +49,17 @@ describe('SubAgentConfig', () => {
   it('BUILTIN_SUBAGENTS 至少 3 个', () => {
     expect(BUILTIN_SUBAGENTS.length).toBeGreaterThanOrEqual(3)
   })
+
+  it('内置 general-purpose 为可写混合 profile 且不可继续派遣子代理', () => {
+    const spec = getSubAgentSpec('general-purpose')
+    expect(spec).toBeDefined()
+    expect(spec?.description).toContain('通用')
+    expect(spec?.allowedTools).toEqual(expect.arrayContaining(['read', 'edit', 'write', 'bash', 'web_search', 'run_code']))
+    for (const forbidden of ['task', 'invoke_skill', 'save_plan', 'stage_transition', 'askQuestion', 'switch_mode', 'todo_write']) {
+      expect(spec?.allowedTools).not.toContain(forbidden)
+    }
+    expect(spec?.allowedTools).not.toContain('memory_search')
+    expect(spec?.maxToolRounds).toBe(30)
+    expect(spec?.prompt).toMatch(/混合任务/)
+  })
 })

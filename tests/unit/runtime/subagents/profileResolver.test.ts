@@ -184,6 +184,32 @@ describe('builtin review profile', () => {
   })
 })
 
+describe('builtin general-purpose profile', () => {
+  it('解析为 workspace_write：可写能力由工具 effect 推导，不靠 prompt', () => {
+    const spec = BUILTIN_SUBAGENTS.find(s => s.id === 'general-purpose')
+    expect(spec).toBeDefined()
+    if (!spec) return
+
+    const snapshot = resolveSubagentProfileSnapshot(spec, 'general-purpose')
+    expect(snapshot.permissionCeiling).toBe('workspace_write')
+    expect(snapshot.toolNames).toEqual(expect.arrayContaining(['ls', 'read', 'write', 'bash', 'web_search', 'run_code']))
+    for (const forbidden of ['task', 'invoke_skill', 'save_plan', 'stage_transition', 'askQuestion', 'switch_mode', 'todo_write']) {
+      expect(snapshot.toolNames).not.toContain(forbidden)
+    }
+    expect(snapshot.toolNames).not.toContain('memory_search')
+    expect(snapshot.systemPrompt).toMatch(/混合任务/)
+  })
+
+  it('不绑定模型时走派遣时 activeModel 冻结 header，不继承父 reasoning override', async () => {
+    const spec = BUILTIN_SUBAGENTS.find(s => s.id === 'general-purpose')
+    expect(spec).toBeDefined()
+    if (!spec) return
+
+    const snapshot = resolveSubagentProfileSnapshot(spec, 'general-purpose')
+    expect(snapshot.model).toBeUndefined()
+  })
+})
+
 describe('applyHostArchiveReadCapability', () => {
   it('宿主有 archive_read 时子工具列表继承该能力', () => {
     expect(applyHostArchiveReadCapability(['read', 'grep'], true)).toEqual([

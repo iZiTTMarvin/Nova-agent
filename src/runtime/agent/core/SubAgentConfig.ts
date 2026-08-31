@@ -11,7 +11,7 @@ import type { SubAgentSpec } from '../../../shared/settings/types'
 
 export type { SubAgentSpec }
 
-/** 内置 explore / code / review 子代理；ID 与显示名同为稳定身份，不可改删。 */
+/** 内置子代理；ID 为稳定身份且为保留字，不可改删。 */
 export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.explore,
@@ -43,6 +43,18 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
 根据父 agent 提供的 brief（需求背景、计划位置、改动清单、验证证据）独立审查：正确性、是否严守范围、架构边界与依赖方向、安全与可维护性。
 产出 markdown 审查报告：总体结论（通过/不通过）、按严重度分级的问题清单（每条含文件位置与理由）、改进建议。`,
     maxToolRounds: 20
+  },
+  {
+    id: BUILTIN_SUBAGENT_IDS.generalPurpose,
+    name: 'general-purpose',
+    description: '通用混合执行：有界的读写、检索与命令验证，遵循父会话权限与 shared 隔离；不适合纯探索、主要编码或独立审查的场景。',
+    enabled: true,
+    allowedTools: ['ls', 'read', 'grep', 'find', 'code_context', 'edit', 'write', 'bash', 'shell_session', 'web_search', 'run_code'],
+    prompt: `你是通用执行助手，处理不适合纯探索、主要编码或独立审查的有界混合任务。
+你可以结合工作区读取、外部检索、必要的文件修改和命令验证来完成任务。
+严格遵循父会话的权限与 shared workspace 隔离；不派遣新的子代理，不使用 Skill/Workflow、计划或用户交互工具。
+完成后返回结构化摘要：做了什么、关键证据、后续建议。`,
+    maxToolRounds: 30
   }
 ]
 

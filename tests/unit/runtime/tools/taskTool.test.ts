@@ -50,12 +50,12 @@ describe('task tool spawn adapter', () => {
     const { tool } = setup()
     expect(tool.name).toBe('task')
     expect(tool.description).toBe(
-      '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。'
+      '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。'
     )
     expect(tool.parameters).toEqual({
       type: 'object',
       properties: {
-        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review' },
+        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose' },
         task: { type: 'string', description: '子任务描述' }
       },
       required: ['subagent_type', 'task']

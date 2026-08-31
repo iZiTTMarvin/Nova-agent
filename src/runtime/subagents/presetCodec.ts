@@ -15,6 +15,7 @@ import {
   isValidSubagentPresetId
 } from '../../shared/subagents/presetIdentity'
 import { getCatalogEntry } from '../tools/catalog'
+import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
 import type {
   SubAgentSpec,
   SubagentPresetDiagnostic,
@@ -95,6 +96,7 @@ export function decodeSubagentPreset(input: unknown): SubAgentSpec {
   }
   requireCanonicalModelBinding(fields)
   requireCatalogTools(fields)
+  requireSelectableTools(fields)
   return {
     id: fields.id,
     name: fields.name,
@@ -131,6 +133,26 @@ function requireCatalogTools(fields: SubagentProfileFields): void {
       {
         field: 'allowedTools',
         message: `子代理预设.allowedTools 包含未知工具「${unknown}」`
+      }
+    ])
+  }
+}
+
+function requireSelectableTools(fields: SubagentProfileFields): void {
+  const forbidden = fields.allowedTools.find(toolName => {
+    const effects = getToolPermissionDescriptor(toolName)?.effects ?? []
+    return effects.some(
+      effect =>
+        effect === 'orchestration' ||
+        effect === 'session.write' ||
+        effect === 'mode.transition'
+    )
+  })
+  if (forbidden) {
+    throw new SubagentPresetDecodeError([
+      {
+        field: 'allowedTools',
+        message: `子代理预设.allowedTools 不可包含「${forbidden}」（编排/会话/模式工具不可授予子代理）`
       }
     ])
   }

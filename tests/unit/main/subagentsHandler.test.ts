@@ -65,7 +65,7 @@ describe('subagentsHandler IPC（global/project 层级语义）', () => {
       diagnostics: unknown[]
       tools: Array<{ name: string; effects: string[]; selectable: boolean }>
     }>('subagents:list', {})
-    expect(result.items.map(i => i.id).sort()).toEqual(['code', 'explore', 'review'])
+    expect(result.items.map(i => i.id).sort()).toEqual(['code', 'explore', 'general-purpose', 'review'])
     expect(result.items.every(i => i.builtin)).toBe(true)
     expect(result.diagnostics).toEqual([])
     expect(result.tools.find(tool => tool.name === 'read')).toEqual({
@@ -291,6 +291,20 @@ describe('subagentsHandler IPC（global/project 层级语义）', () => {
     await expectReject(/未知工具/, () =>
       invoke('subagents:create', {
         preset: draft({ allowedTools: ['made_up_tool'] }),
+        location: 'global',
+        workspaceRoot: null
+      })
+    )
+    await expectReject(/不可授予子代理/, () =>
+      invoke('subagents:create', {
+        preset: draft({ allowedTools: ['task'] }),
+        location: 'global',
+        workspaceRoot: null
+      })
+    )
+    await expectReject(/不可授予子代理/, () =>
+      invoke('subagents:create', {
+        preset: draft({ allowedTools: ['invoke_skill'] }),
         location: 'global',
         workspaceRoot: null
       })
