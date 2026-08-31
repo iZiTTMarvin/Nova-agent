@@ -15,6 +15,7 @@ import type { ExtendedMessage } from '../../stores/types'
 import type { MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { Mode } from '../../../shared/session/types'
+import type { PendingPlanReview } from '../../../shared/planReview'
 import { MessageItem } from './MessageItem'
 import { resolveMessageRenderMode } from './messageRenderTier'
 
@@ -52,6 +53,7 @@ export interface VirtualMessageListProps {
   loadingDiffs: Set<string>
   loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
   onLoadDiffs: (sessionId: string, messageId: string) => void | Promise<void>
+  pendingPlanReview: PendingPlanReview | null
 }
 
 function renderMessageRow(
@@ -95,6 +97,12 @@ function renderMessageRow(
     msg.role === 'assistant'
     && prevMsg?.role === 'user'
     && !!prevMsg.blocks?.some(b => b.type === 'image')
+  const pendingPlanReviewForRow =
+    props.pendingPlanReview
+    && props.pendingPlanReview.sessionId === currentSessionId
+    && props.pendingPlanReview.messageId === msg.id
+      ? props.pendingPlanReview
+      : null
 
   return (
     <MessageItem
@@ -123,6 +131,7 @@ function renderMessageRow(
       isDiffLoading={isDiffLoading}
       diffPlaceholders={diffPlaceholders}
       onLoadDiffs={onLoadDiffs}
+      pendingPlanReview={pendingPlanReviewForRow}
     />
   )
 }

@@ -10,8 +10,65 @@ import { create } from 'zustand'
 import type { RunSnapshot, PendingInteraction, RunStatus } from '../../shared/run/types'
 import type { AskQuestionRequest } from '../../shared/askQuestion/types'
 import { projectPendingPlanReview } from '../../shared/planReview'
+import type { PendingPlanReview } from '../../shared/planReview'
 import type { PendingPermissionRequest } from './types'
 import { useAgentStore } from './useAgentStore'
+
+let refreshWaitingBadgesSeq = 0
+let refreshWaitingBadgesInFlight: Promise<void> | null = null
+
+export function getWaitingBadgeCountForSnapshot(snapshot: RunSnapshot | null): number {
+  if (!snapshot) return 0
+  const pendingCount = snapshot.pendingInteractions.filter(
+    i => i.status === 'pending' || i.status === 'submitting'
+  ).length
+  return Math.max(pendingCount, snapshot.status === 'waiting_user' ? 1 : 0)
+}
+
+export function areWaitingSessionsEqual(
+  a: WaitingSessionBadge[],
+  b: WaitingSessionBadge[]
+): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  const key = (x: WaitingSessionBadge) => `${x.sessionId}\0${x.runId}\0${x.pendingCount}`
+  const countByKey = new Map<string, number>()
+  for (const item of a) {
+    const k = key(item)
+    countByKey.set(k, (countByKey.get(k) ?? 0) + 1)
+  }
+  for (const item of b) {
+    const k = key(item)
+    const c = countByKey.get(k)
+    if (!c) return false
+    if (c === 1) countByKey.delete(k)
+    else countByKey.set(k, c - 1)
+  }
+  return countByKey.size === 0
+}
+
+export function arePendingPlanReviewsEqual(
+  a: PendingPlanReview | null,
+  b: PendingPlanReview | null
+): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.interactionId === b.interactionId &&
+    a.commandVersion === b.commandVersion &&
+    a.runId === b.runId &&
+    a.sessionId === b.sessionId &&
+    a.messageId === b.messageId &&
+    a.toolCallId === b.toolCallId &&
+    a.source === b.source
+  )
+}
+
+export function selectPendingPlanReview(
+  snapshot: RunSnapshot | null
+): PendingPlanReview | null {
+  return projectPendingPlanReview(snapshot)
+}
 
 export interface WaitingSessionBadge {
   sessionId: string
@@ -218,6 +275,11 @@ export const useRunStore = create<RunViewState>((set, get) => ({
           delete activeRunIdBySessionId[sessionId]
         }
         const isSelected = get().selectedSessionId === sessionId
+        const nextWaitingSessions = (result?.waitingSessions ?? []) as WaitingSessionBadge[]
+        const shouldWriteWaitingSessions = !areWaitingSessionsEqual(
+          get().waitingSessions,
+          nextWaitingSessions
+        )
         set({
           snapshot: isSelected ? snap : get().snapshot,
           lastSequence: isSelected ? (snap?.sequence ?? 0) : get().lastSequence,
@@ -229,7 +291,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
           pullTokenByRunId: snap
             ? { ...get().pullTokenByRunId, [snap.runId]: token }
             : get().pullTokenByRunId,
-          waitingSessions: result?.waitingSessions ?? [],
+          ...(shouldWriteWaitingSessions ? { waitingSessions: nextWaitingSessions } : {}),
           interruptedRunId: snap?.status === 'interrupted' ? snap.runId : get().interruptedRunId,
           interruptedSessionId:
             snap?.status === 'interrupted' ? snap.sessionId : get().interruptedSessionId,
@@ -291,6 +353,11 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       return
     }
 
+    const previousSnapshotForRun = state.snapshotsByRunId[snapshot.runId] ?? null
+    const previousWaitingCount = getWaitingBadgeCountForSnapshot(previousSnapshotForRun)
+    const nextWaitingCount = getWaitingBadgeCountForSnapshot(snapshot)
+    const shouldRefreshWaiting = previousWaitingCount !== nextWaitingCount
+
     const activeRunIdBySessionId = {
       ...state.activeRunIdBySessionId,
       [snapshot.sessionId]: snapshot.runId
@@ -327,8 +394,9 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       if (snapshot.sessionId === currentSessionId) {
         projectInteractionsToAgentStore(snapshot, currentSessionId)
       }
-      // 刷新徽标
-      void get().refreshWaitingBadges()
+      if (shouldRefreshWaiting) {
+        void get().refreshWaitingBadges()
+      }
 
       const cancellingThisRun =
         get().cancelling && snapshotResolvesCancelling(get(), snapshot, currentSessionId)
@@ -346,12 +414,25 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   },
 
   refreshWaitingBadges: async () => {
-    try {
-      const list = await window.api.invoke('run:list-waiting')
-      set({ waitingSessions: list })
-    } catch {
-      // 忽略
-    }
+    const seq = ++refreshWaitingBadgesSeq
+    let promise!: Promise<void>
+    promise = (async () => {
+      try {
+        const list = (await window.api.invoke('run:list-waiting')) as WaitingSessionBadge[]
+        if (seq !== refreshWaitingBadgesSeq) return
+        const current = get().waitingSessions
+        if (areWaitingSessionsEqual(current, list)) return
+        set({ waitingSessions: list })
+      } catch {
+        // 忽略：异常时不清空已有徽标
+      } finally {
+        if (refreshWaitingBadgesInFlight === promise) {
+          refreshWaitingBadgesInFlight = null
+        }
+      }
+    })()
+    refreshWaitingBadgesInFlight = promise
+    await promise
   },
 
   beginLocalCancel: (runId?: string | null) => {
@@ -477,6 +558,8 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   resetForTests: () => {
     clearCancelGraceTimer()
     pullInFlightBySession.clear()
+    refreshWaitingBadgesSeq = 0
+    refreshWaitingBadgesInFlight = null
     set({
       snapshot: null,
       lastSequence: 0,

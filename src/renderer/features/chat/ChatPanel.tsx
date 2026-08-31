@@ -8,8 +8,11 @@ import {
 } from '@astryxdesign/core/Chat'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
-import { useRunStore } from '../../stores/useRunStore'
-import { projectPendingPlanReview } from '../../../shared/planReview'
+import {
+  arePendingPlanReviewsEqual,
+  selectPendingPlanReview,
+  useRunStore
+} from '../../stores/useRunStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { selectSupportsVisionFromConfig } from '../../stores/selectors'
@@ -164,8 +167,10 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const interruptedAction = useRunStore(state => state.interruptedAction)
   const clearInterrupted = useRunStore(state => state.clearInterrupted)
   const interruptedSteps = useRunStore(state => state.interruptedSteps)
-  const runSnapshot = useRunStore(state => state.snapshot)
-  const pendingPlanReview = useMemo(() => projectPendingPlanReview(runSnapshot), [runSnapshot])
+  const pendingPlanReview = useRunStore(
+    state => selectPendingPlanReview(state.snapshot),
+    arePendingPlanReviewsEqual
+  )
   const pendingPermissionRequest = useAgentStore(state => state.pendingPermissionRequest)
   const pendingAskQuestion = useAgentStore(state => state.pendingAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
@@ -836,6 +841,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           loadingDiffs={loadingDiffs}
           loadingDiffPlaceholders={loadingDiffPlaceholders}
           onLoadDiffs={loadMessageDiffs}
+          pendingPlanReview={pendingPlanReview}
         />
 
         {/* 流尾状态指示器：在 Agent 运行时稳稳挂在消息流最底部（零抖动） */}

@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -25,8 +25,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { RegenerateIcon, EditIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
-import { projectPendingPlanReview } from '../../../shared/planReview'
-import { useRunStore } from '../../stores/useRunStore'
+import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
 import type { DiffEntry } from '../../../shared/diff/types'
@@ -77,6 +76,7 @@ export interface MessageItemProps {
   diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
   /** 按需加载 diff 的回调，MessageItem 挂载时调用 */
   onLoadDiffs?: (sessionId: string, messageId: string) => void
+  pendingPlanReview?: PendingPlanReview | null
 }
 
 type ThinkingParseSource = Pick<ExtendedMessage, 'id'> & {
@@ -219,7 +219,8 @@ function MessageItemInner({
   diffCache,
   isDiffLoading,
   diffPlaceholders,
-  onLoadDiffs
+  onLoadDiffs,
+  pendingPlanReview
 }: MessageItemProps) {
   // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
   // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
@@ -264,11 +265,12 @@ function MessageItemInner({
   const handleRenderPoolTick = isStaticRow ? undefined : onRenderPoolTick
 
   const turnPhase = resolveTurnPhase(msg.id, currentGeneratingMessageId, isGenerating)
-  const runSnapshot = useRunStore(state => state.snapshot)
-  const pendingPlanReview = useMemo(() => {
-    const pending = projectPendingPlanReview(runSnapshot)
-    return pending?.messageId === msg.id && pending.sessionId === currentSessionId ? pending : null
-  }, [currentSessionId, msg.id, runSnapshot])
+  const handleTurnProcessOpenChangeForMessage = useCallback(
+    (open: boolean) => {
+      onTurnProcessOpenChange?.(msg.id, open)
+    },
+    [msg.id, onTurnProcessOpenChange]
+  )
   const turnModel = useMemo(
     () =>
       isAssistant
@@ -319,9 +321,9 @@ function MessageItemInner({
       isPausedForInput={isPausedForInput}
       blocks={msg.blocks ?? []}
       sessionId={currentSessionId}
-      pendingPlanReview={pendingPlanReview}
+      pendingPlanReview={pendingPlanReview ?? null}
       persistedUserOpen={turnProcessOpen}
-      onUserOpenChange={open => onTurnProcessOpenChange?.(msg.id, open)}
+      onUserOpenChange={handleTurnProcessOpenChangeForMessage}
     />
   ) : null
 
@@ -588,7 +590,8 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.diffCache === next.diffCache &&
     prev.isDiffLoading === next.isDiffLoading &&
     prev.diffPlaceholders === next.diffPlaceholders &&
-    prev.onLoadDiffs === next.onLoadDiffs
+    prev.onLoadDiffs === next.onLoadDiffs &&
+    prev.pendingPlanReview === next.pendingPlanReview
   )
 }
 
