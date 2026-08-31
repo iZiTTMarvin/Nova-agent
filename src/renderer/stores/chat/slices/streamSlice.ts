@@ -286,13 +286,6 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
   },
 
   handleToolCallStart: (messageId: string, toolCallId: string, toolName: string) => {
-    const placeholder: ExtendedToolCall = {
-      id: toolCallId,
-      name: toolName,
-      arguments: {},
-      status: 'running'
-    }
-
     set(state => {
       const idx = state.messageIndexById[messageId]
       if (idx === undefined) return state
@@ -303,15 +296,28 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const live = state.liveTurn[messageId]
       const base = live ? appendLiveBlock(msg, live) : msg
 
+      const existingRaw = state.streamingToolArgs[toolCallId] ?? ''
+      const parsedExisting = existingRaw ? parsePartialToolArgs(toolName, existingRaw) : null
+      const sanitizedExisting = parsedExisting !== null ? sanitizeToolInput(toolName, parsedExisting) : null
+      const blockArgs = sanitizedExisting ?? {}
+      const placeholderArgs = sanitizedExisting ?? {}
+      const placeholder: ExtendedToolCall = {
+        id: toolCallId,
+        name: toolName,
+        arguments: placeholderArgs,
+        status: 'running',
+        ...(existingRaw ? { argumentsRaw: existingRaw } : {})
+      }
+
       const blocks: RendererMessageBlock[] = base.blocks ? [...base.blocks] : []
       blocks.push({
         type: 'tool',
         toolCallId,
         toolName,
-        arguments: {},
+        arguments: blockArgs,
         status: 'running',
-        argumentsRaw: ''
-      })
+        argumentsRaw: existingRaw
+      } as RendererToolBlock)
 
       const toolCalls = base.toolCalls ? [...base.toolCalls, placeholder] : [placeholder]
       const nextMessages = state.messages.slice()
@@ -319,7 +325,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
 
       const patch: Partial<ChatState> = {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: '' }
+        streamingToolArgs: { ...state.streamingToolArgs, [toolCallId]: existingRaw }
       }
       if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
       return patch
@@ -519,6 +525,8 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
           messageSealed = true
         }
 
+        const touchedOrder: string[] = []
+        const fragmentsById = new Map<string, string[]>()
         for (const delta of messageDeltas) {
           if (delta.kind === 'thinking' || delta.kind === 'text') {
             const blockType: 'thinking' | 'text' = delta.kind === 'thinking' ? 'thinking' : 'text'
@@ -537,7 +545,6 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
               open.content += delta.delta
             }
           } else {
-            // 工具 partial delta：先封存活跃块（工具前的文本/思考须落盘），再更新工具块。
             sealOpen()
             const sourceBlocks = sealedBlocks ?? msg.blocks ?? []
             const blockIdx = sourceBlocks.findIndex(
@@ -546,47 +553,61 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
             const toolBlock = blockIdx !== -1 && sourceBlocks[blockIdx].type === 'tool'
               ? sourceBlocks[blockIdx]
               : null
-            // 最终 tool_call 会删除 argumentsRaw；此后缓冲区迟到的 partial 只能丢弃，
-            // 否则残缺解析结果会覆盖已确认的完整 arguments。
             if (toolBlock && toolBlock.argumentsRaw === undefined) continue
-
-            const prevRaw = nextStreaming[delta.toolCallId] ?? ''
-            const nextRaw = prevRaw + delta.delta
-            nextStreaming[delta.toolCallId] = nextRaw
+            let arr = fragmentsById.get(delta.toolCallId)
+            if (!arr) {
+              arr = []
+              fragmentsById.set(delta.toolCallId, arr)
+              touchedOrder.push(delta.toolCallId)
+            }
+            arr.push(delta.delta)
+          }
+        }
+        if (touchedOrder.length > 0) {
+          if (sealedBlocks === undefined && msg.blocks) sealedBlocks = [...msg.blocks]
+          else if (sealedBlocks === undefined) sealedBlocks = []
+          for (const toolCallId of touchedOrder) {
+            const frags = fragmentsById.get(toolCallId)!
+            const combined = frags.join('')
+            const prevRaw = nextStreaming[toolCallId] ?? ''
+            const nextRaw = prevRaw + combined
+            nextStreaming[toolCallId] = nextRaw
             streamingChanged = true
 
-            if (sealedBlocks === undefined) sealedBlocks = msg.blocks ? [...msg.blocks] : []
-            const partialArgs = toolBlock
-              ? parsePartialToolArgs(toolBlock.toolName, nextRaw)
+            const blockIdx = sealedBlocks.findIndex(
+              b => b.type === 'tool' && b.toolCallId === toolCallId
+            )
+            const toolBlock = blockIdx !== -1 && sealedBlocks[blockIdx].type === 'tool'
+              ? sealedBlocks[blockIdx]
               : null
-            const sanitizedPartialArgs = partialArgs !== null && toolBlock
-              ? sanitizeToolInput(toolBlock.toolName, partialArgs)
-              : partialArgs
 
-            if (toolBlock && sanitizedPartialArgs !== null) {
-              sealedBlocks[blockIdx] = {
-                ...toolBlock,
-                arguments: sanitizedPartialArgs,
-                argumentsRaw: nextRaw
-              } as RendererToolBlock
+            if (!toolBlock) {
+              if (workingToolCalls) {
+                workingToolCalls = workingToolCalls.map(tc =>
+                  tc.id === toolCallId ? { ...tc, argumentsRaw: nextRaw } : tc
+                )
+              }
+              continue
             }
 
-            if (workingToolCalls && toolBlock && sanitizedPartialArgs !== null) {
+            const partialArgs = parsePartialToolArgs(toolBlock.toolName, nextRaw)
+            const sanitizedPartialArgs = sanitizeToolInput(toolBlock.toolName, partialArgs)
+
+            sealedBlocks[blockIdx] = {
+              ...toolBlock,
+              arguments: sanitizedPartialArgs,
+              argumentsRaw: nextRaw
+            } as RendererToolBlock
+
+            if (workingToolCalls) {
               workingToolCalls = workingToolCalls.map(tc =>
-                tc.id === delta.toolCallId
+                tc.id === toolCallId
                   ? { ...tc, arguments: sanitizedPartialArgs, argumentsRaw: nextRaw }
                   : tc
               )
-            } else if (workingToolCalls && !toolBlock) {
-              // tool_call_start 可能晚于 partial delta；先保留 raw，之后创建占位块时才不会丢失进度。
-              workingToolCalls = workingToolCalls.map(tc =>
-                tc.id === delta.toolCallId
-                  ? { ...tc, argumentsRaw: nextRaw }
-                  : tc
-              )
             }
-            messageSealed = true
           }
+          messageSealed = true
         }
 
         if (messageSealed) {
