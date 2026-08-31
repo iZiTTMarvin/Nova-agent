@@ -11,9 +11,11 @@ import type {
   SubagentModelBinding,
   SubagentProfileModel
 } from '../../shared/subagents'
-import { parseSubagentModel } from './profileResolver'
 
-/** 将预设列表与当前注册表 join 成不含凭据的只读 catalog。 */
+/**
+ * 将已解码的 preset 列表与当前注册表 join 成不含凭据的只读 catalog。
+ * profileId 是稳定派遣身份；name 仅作展示，重命名不影响可派遣性。
+ */
 export function buildSubagentCatalog(
   specs: readonly SubAgentSpec[],
   registry: LlmRegistry | null
@@ -25,21 +27,10 @@ function buildCatalogEntry(
   spec: SubAgentSpec,
   registry: LlmRegistry | null
 ): SubagentCatalogEntry {
-  let model: SubagentProfileModel | undefined
-  try {
-    model = spec.model === undefined ? undefined : parseSubagentModel(spec.model)
-  } catch {
-    return {
-      profileId: spec.name,
-      name: spec.name,
-      description: spec.description,
-      status: 'unavailable',
-      reason: 'invalid_model_binding'
-    }
-  }
+  const model: SubagentProfileModel | undefined = spec.model
   if (model && !('modelEntryId' in model)) {
     return {
-      profileId: spec.name,
+      profileId: spec.id,
       name: spec.name,
       description: spec.description,
       status: 'unavailable',
@@ -63,7 +54,7 @@ function buildCatalogEntry(
   const reasoningEffort =
     model?.reasoningEffort ?? resolved.entry.reasoningEffort ?? 'auto'
   return {
-    profileId: spec.name,
+    profileId: spec.id,
     name: spec.name,
     description: spec.description,
     status: 'available',
@@ -91,7 +82,7 @@ function unavailable(
       }
     : undefined
   return {
-    profileId: spec.name,
+    profileId: spec.id,
     name: spec.name,
     description: spec.description,
     status: 'unavailable',

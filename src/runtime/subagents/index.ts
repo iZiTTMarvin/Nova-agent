@@ -9,8 +9,7 @@ export {
 } from './SubagentExecutionService'
 export {
   resolveSubagentProfileSnapshot,
-  applyHostArchiveReadCapability,
-  parseSubagentModel
+  applyHostArchiveReadCapability
 } from './profileResolver'
 export {
   MAX_SUBAGENT_SUMMARY_CHARS,
@@ -32,12 +31,15 @@ export {
   type CancelSubagentTreeResult
 } from './SubagentLifecycleCoordinator'
 export {
+  createPreset,
   deletePreset,
-  getPresetFilePaths,
+  getPresetFilePath,
   getSubAgentSpecFromStore,
+  listCustomPresetView,
   listCustomPresets,
-  loadGlobalPresets,
-  loadMergedCustomPresets,
-  loadProjectPresets,
-  savePreset
+  setPresetEnabled,
+  updatePreset,
+  SubagentPresetCommandError,
+  type SubagentPresetCommandErrorCode,
+  type SubagentPresetViewEntry
 } from './presetStore'

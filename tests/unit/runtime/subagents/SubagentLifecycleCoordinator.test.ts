@@ -64,6 +64,7 @@ describe('SubagentLifecycleCoordinator', () => {
           }
         },
         profile: resolveSubagentProfileSnapshot({
+          id: 'explore',
           name: 'explore',
           description: 'read only',
           prompt: 'inspect',

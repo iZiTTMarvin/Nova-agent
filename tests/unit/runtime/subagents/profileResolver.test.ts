@@ -8,6 +8,7 @@ import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentCo
 describe('resolveSubagentProfileSnapshot', () => {
   it('校验 unknown 输入并冻结稳定 profile snapshot 与 configHash', () => {
     const raw = {
+      id: 'code',
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
@@ -37,8 +38,22 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(Object.isFrozen(first.toolNames)).toBe(true)
   })
 
+  it('profileId 取稳定 id，snapshot.name 取展示名', () => {
+    const snapshot = resolveSubagentProfileSnapshot({
+      id: 'code',
+      name: '编程助手',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read']
+    }, 'code')
+
+    expect(snapshot.profileId).toBe('code')
+    expect(snapshot.name).toBe('编程助手')
+  })
+
   it('递归工具只有显式开启时可见', () => {
     const snapshot = resolveSubagentProfileSnapshot({
+      id: 'code',
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
@@ -50,6 +65,7 @@ describe('resolveSubagentProfileSnapshot', () => {
 
   it('保留 canonical modelEntryId binding 与显式 reasoning effort', () => {
     const snapshot = resolveSubagentProfileSnapshot({
+      id: 'code',
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
@@ -70,6 +86,7 @@ describe('resolveSubagentProfileSnapshot', () => {
 
   it('拒绝混用 modelEntryId 与旧 modelId 字段', () => {
     expect(() => resolveSubagentProfileSnapshot({
+      id: 'code',
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
@@ -84,6 +101,7 @@ describe('resolveSubagentProfileSnapshot', () => {
 
   it('read_only profile 永久剥离写工具与递归 delegation 工具', () => {
     const snapshot = resolveSubagentProfileSnapshot({
+      id: 'explore',
       name: 'explore',
       description: 'inspect',
       prompt: 'read only',
@@ -96,6 +114,7 @@ describe('resolveSubagentProfileSnapshot', () => {
 
   it('skillRoots 进入冻结快照与 configHash，路径变化会生成不同配置身份', () => {
     const base = {
+      id: 'skill:inspect',
       name: 'skill:inspect',
       description: 'inspect with skill references',
       prompt: 'read the referenced material',
@@ -117,6 +136,7 @@ describe('resolveSubagentProfileSnapshot', () => {
   it('identity、类型与边界不合法时 fail closed', () => {
     expect(() => resolveSubagentProfileSnapshot(null, 'explore')).toThrow(/JSON object/)
     expect(() => resolveSubagentProfileSnapshot({
+      id: 'other',
       name: 'other',
       description: 'x',
       prompt: 'x',
@@ -126,10 +146,18 @@ describe('resolveSubagentProfileSnapshot', () => {
       name: 'explore',
       description: 'x',
       prompt: 'x',
+      allowedTools: []
+    }, 'explore')).toThrow(/\.id/)
+    expect(() => resolveSubagentProfileSnapshot({
+      id: 'explore',
+      name: 'explore',
+      description: 'x',
+      prompt: 'x',
       allowedTools: ['read'],
       maxToolRounds: 0
     }, 'explore')).toThrow(/maxToolRounds/)
     expect(() => resolveSubagentProfileSnapshot({
+      id: 'explore',
       name: 'explore',
       description: 'x',
       prompt: 'x',
@@ -141,7 +169,7 @@ describe('resolveSubagentProfileSnapshot', () => {
 
 describe('builtin review profile', () => {
   it('解析为 read_only：写工具全部剥离，prompt 含审查职责语义', () => {
-    const spec = BUILTIN_SUBAGENTS.find(s => s.name === 'review')
+    const spec = BUILTIN_SUBAGENTS.find(s => s.id === 'review')
     expect(spec).toBeDefined()
     if (!spec) return
 

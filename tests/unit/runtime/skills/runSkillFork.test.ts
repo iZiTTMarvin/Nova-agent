@@ -51,6 +51,7 @@ describe('runSkillFork durable child consumer', () => {
       }),
       expect.objectContaining({
         profile: expect.objectContaining({
+          id: 'fork-ref',
           name: 'fork-ref',
           prompt: expect.stringContaining(`${skillDir}/references`),
           skillRoots: [skillDir]

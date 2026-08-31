@@ -1,7 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { BUILTIN_SUBAGENTS, getSubAgentSpec, listSubAgents } from '../../../../src/runtime/agent/core/SubAgentConfig'
+import { BUILTIN_SUBAGENT_IDS, isBuiltinSubagentId } from '../../../../src/shared/subagents/presetIdentity'
 
 describe('SubAgentConfig', () => {
+  it('内置 definition 与共享保留 ID 双向对账，防止身份出现第二来源', () => {
+    const ids = BUILTIN_SUBAGENTS.map(s => s.id).sort()
+    expect(ids).toEqual(Object.values(BUILTIN_SUBAGENT_IDS).sort())
+    for (const spec of BUILTIN_SUBAGENTS) {
+      expect(isBuiltinSubagentId(spec.id)).toBe(true)
+      expect(spec.enabled).toBe(true)
+    }
+  })
+
   it('内置 explore 子代理', () => {
     const spec = getSubAgentSpec('explore')
     expect(spec?.allowedTools).toContain('read')

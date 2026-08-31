@@ -24,6 +24,7 @@ import type {
 import type { PrepareSubagentTurnInput } from '../../../../src/runtime/subagents'
 
 const profile = {
+  id: 'explore',
   name: 'explore',
   description: 'read only exploration',
   allowedTools: ['read', 'grep'],
@@ -169,6 +170,7 @@ describe('SubagentExecutionService', () => {
         if (profileId === 'explore') return profile
         if (profileId === 'code') {
           return {
+            id: 'code',
             name: 'code',
             description: 'workspace writer',
             allowedTools: ['read', 'write'],
@@ -296,6 +298,7 @@ describe('SubagentExecutionService', () => {
     const { service, prepareTurn } = createService({
       hostHasArchiveRead: () => false,
       loadProfile: () => ({
+        id: 'explore',
         name: 'explore',
         description: 'read only exploration',
         allowedTools: ['read', 'grep', 'archive_read'],
@@ -417,6 +420,7 @@ describe('SubagentExecutionService', () => {
       profileId: 'skill:inspect'
     }
     const dynamicProfile = {
+      id: 'skill:inspect',
       name: 'skill:inspect',
       description: 'read skill references',
       prompt: 'inspect using the selected skill',
@@ -460,6 +464,7 @@ describe('SubagentExecutionService', () => {
       profileId: 'skill:relative'
     }, {
       profile: {
+        id: 'skill:relative',
         name: 'skill:relative',
         description: 'invalid root',
         prompt: 'inspect',
@@ -545,6 +550,7 @@ describe('SubagentExecutionService', () => {
     })).rejects.toThrow(/read_only/)
 
     const codeSnapshot = resolveSubagentProfileSnapshot({
+      id: 'code',
       name: 'code',
       description: 'workspace writer',
       allowedTools: ['read', 'write'],

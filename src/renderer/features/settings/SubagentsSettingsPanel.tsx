@@ -1,5 +1,8 @@
 /**
  * Subagents 配置面板 — 内置 + 自定义 JSON
+ *
+ * 只维护未提交草稿与页面选择状态；preset 真源在 presetStore，
+ * 保存后以主进程返回的权威结果对账。
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
@@ -7,12 +10,16 @@ import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { subagentsI18n } from '../skills/i18n'
-import type { SubagentListItem } from '../../../shared/settings/types'
-import type { SubAgentSpec } from '../../../shared/settings/types'
+import type {
+  SubAgentSpec,
+  SubagentListItem,
+  SubagentPresetDiagnostic
+} from '../../../shared/settings/types'
+import { generateSubagentPresetId } from '../../../shared/subagents'
 
-const EMPTY_TEMPLATE: SubAgentSpec = {
-  name: '',
+const EMPTY_TEMPLATE: Omit<SubAgentSpec, 'id' | 'name'> = {
   description: '',
+  enabled: true,
   allowedTools: ['ls', 'read', 'grep'],
   prompt: '你是一个子代理助手。',
   maxToolRounds: 20
@@ -21,26 +28,28 @@ const EMPTY_TEMPLATE: SubAgentSpec = {
 export const SubagentsSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
   const [items, setItems] = useState<SubagentListItem[]>([])
-  const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [diagnostics, setDiagnostics] = useState<SubagentPresetDiagnostic[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [jsonText, setJsonText] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  const selected = items.find(i => i.name === selectedName) ?? null
+  const selected = items.find(i => i.id === selectedId) ?? null
 
   const loadList = useCallback(async () => {
     setLoading(true)
     try {
-      const list = await window.api.invoke('subagents:list', { workspaceRoot: currentProject })
-      setItems(list)
-      if (list.length > 0 && !list.some(i => i.name === selectedName)) {
-        setSelectedName(list[0].name)
+      const result = await window.api.invoke('subagents:list', { workspaceRoot: currentProject })
+      setItems(result.items)
+      setDiagnostics(result.diagnostics)
+      if (result.items.length > 0 && !result.items.some(i => i.id === selectedId)) {
+        setSelectedId(result.items[0].id)
       }
     } finally {
       setLoading(false)
     }
-  }, [currentProject, selectedName])
+  }, [currentProject, selectedId])
 
   useEffect(() => {
     void loadList()
@@ -49,8 +58,10 @@ export const SubagentsSettingsPanel: React.FC = () => {
   useEffect(() => {
     if (selected) {
       const spec: SubAgentSpec = {
+        id: selected.id,
         name: selected.name,
         description: selected.description,
+        enabled: selected.enabled,
         allowedTools: selected.allowedTools,
         prompt: selected.prompt,
         model: selected.model,
@@ -67,7 +78,11 @@ export const SubagentsSettingsPanel: React.FC = () => {
     const name = window.prompt(subagentsI18n.newNamePrompt)
     if (!name?.trim()) return
 
-    const spec: SubAgentSpec = { ...EMPTY_TEMPLATE, name: name.trim() }
+    const preset: SubAgentSpec = {
+      ...EMPTY_TEMPLATE,
+      id: generateSubagentPresetId(name, items.map(i => i.id)),
+      name: name.trim()
+    }
     let location: 'global' | 'project' = 'global'
     if (currentProject) {
       const choice = window.prompt('保存位置：global 或 project', 'global')
@@ -75,13 +90,13 @@ export const SubagentsSettingsPanel: React.FC = () => {
     }
 
     try {
-      const saved = await window.api.invoke('subagents:save', {
-        spec,
+      const saved = await window.api.invoke('subagents:create', {
+        preset,
         location,
         workspaceRoot: currentProject
       })
       await loadList()
-      setSelectedName(saved.name)
+      setSelectedId(saved.id)
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '创建失败')
     }
@@ -93,9 +108,10 @@ export const SubagentsSettingsPanel: React.FC = () => {
     setSaving(true)
     setSaveError(null)
     try {
-      const spec = JSON.parse(jsonText) as SubAgentSpec
-      await window.api.invoke('subagents:save', {
-        spec,
+      const preset = JSON.parse(jsonText) as SubAgentSpec
+      await window.api.invoke('subagents:update', {
+        id: selected.id,
+        preset,
         location: selected.origin === 'project' ? 'project' : 'global',
         workspaceRoot: currentProject
       })
@@ -113,8 +129,12 @@ export const SubagentsSettingsPanel: React.FC = () => {
     if (!selected || selected.builtin) return
     if (!window.confirm(`确定删除子代理「${selected.name}」？`)) return
     try {
-      await window.api.invoke('subagents:delete', { name: selected.name, workspaceRoot: currentProject })
-      setSelectedName(null)
+      await window.api.invoke('subagents:delete', {
+        id: selected.id,
+        location: selected.origin === 'project' ? 'project' : 'global',
+        workspaceRoot: currentProject
+      })
+      setSelectedId(null)
       await loadList()
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '删除失败')
@@ -135,19 +155,28 @@ export const SubagentsSettingsPanel: React.FC = () => {
           {!loading && items.length === 0 && (
             <p className="settings-panel__muted">{subagentsI18n.empty}</p>
           )}
+          {diagnostics.map((diagnostic, index) => (
+            <p key={`${diagnostic.code}-${index}`} className="settings-panel__status settings-panel__status--error">
+              {diagnostic.location}：{diagnostic.message}
+            </p>
+          ))}
           {items.map(item => (
             <ClickableCard
-              key={item.name}
+              key={item.id}
               label={item.name}
               variant="transparent"
               padding={0}
               width="100%"
-              className={`settings-split__item${selectedName === item.name ? ' settings-split__item--active' : ''}`}
-              onClick={() => setSelectedName(item.name)}
+              className={`settings-split__item${selectedId === item.id ? ' settings-split__item--active' : ''}`}
+              onClick={() => setSelectedId(item.id)}
             >
               <span className="settings-split__item-title">{item.name}</span>
               <span className="settings-split__item-meta">
-                {item.builtin ? subagentsI18n.builtin : subagentsI18n.custom}
+                {item.builtin
+                  ? subagentsI18n.builtin
+                  : item.enabled
+                    ? subagentsI18n.custom
+                    : `${subagentsI18n.custom} · 已禁用`}
               </span>
             </ClickableCard>
           ))}

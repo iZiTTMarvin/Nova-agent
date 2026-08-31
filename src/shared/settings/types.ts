@@ -2,7 +2,7 @@
  * 设置相关 IPC 共享类型
  */
 import type { Mode, PermissionMode } from '../session/types'
-import type { SubagentModelBinding } from '../subagents/types'
+import type { SubagentProfileModel } from '../subagents/types'
 
 export type { PermissionMode }
 
@@ -17,15 +17,43 @@ export interface RuleFileEntry {
   editable: boolean
 }
 
-/** 子代理规格 */
+/** 子代理持久化预设（当前版本 schema）。 */
 export interface SubAgentSpec {
+  /** 稳定身份：创建时生成，之后不可修改；global/project 同 ID 表示显式覆盖。 */
+  id: string
+  /** 显示名：可修改，重命名不影响覆盖、历史 Child Session 或显式派遣。 */
   name: string
   description: string
+  /** 禁用只影响新的派遣；历史 child 仍按冻结配置恢复或重放。 */
+  enabled: boolean
   allowedTools: string[]
   prompt: string
-  model?: SubagentModelBinding
+  /** 缺省绑定 = 跟随默认模型（派遣时确定）；旧 modelId 形状仅可只读加载。 */
+  model?: SubagentProfileModel
   maxToolRounds?: number
   contextWindow?: number
+}
+
+export type SubagentPresetLocation = 'global' | 'project'
+
+/**
+ * 加载/写入预设时的类型化诊断；损坏配置不得伪装成「没有配置」。
+ * 只由 preset 领域 Owner 产生，Renderer 与工具仅投影。
+ */
+export type SubagentPresetDiagnosticCode =
+  | 'document_unreadable'
+  | 'unknown_version'
+  | 'duplicate_id'
+  | 'invalid_preset'
+
+export interface SubagentPresetDiagnostic {
+  code: SubagentPresetDiagnosticCode
+  location: SubagentPresetLocation
+  message: string
+  /** 条目级诊断的归属 ID（可解析时提供）。 */
+  presetId?: string
+  /** 条目级诊断的字段名（可解析时提供）。 */
+  field?: string
 }
 
 /**
@@ -121,18 +149,40 @@ export interface SubagentListItem extends SubAgentSpec {
   /** 是否内置（不可删） */
   builtin: boolean
   /** 来源：global | project | builtin */
-  origin: 'builtin' | 'global' | 'project'
+  origin: 'builtin' | SubagentPresetLocation
   /** 磁盘路径（内置为空） */
   filePath?: string
 }
 
-export interface SubagentsSaveParams {
-  spec: SubAgentSpec
-  location: 'global' | 'project'
+export interface SubagentsListResult {
+  items: SubagentListItem[]
+  /** 读取自定义预设时产生的诊断投影；无损坏时为空数组。 */
+  diagnostics: SubagentPresetDiagnostic[]
+}
+
+export interface SubagentPresetCreateParams {
+  preset: SubAgentSpec
+  location: SubagentPresetLocation
+  workspaceRoot?: string | null
+}
+
+export interface SubagentPresetUpdateParams {
+  /** 更新目标 ID；与 preset.id 不一致时拒绝（ID 创建后不可改）。 */
+  id: string
+  preset: SubAgentSpec
+  location: SubagentPresetLocation
+  workspaceRoot?: string | null
+}
+
+export interface SubagentPresetSetEnabledParams {
+  id: string
+  enabled: boolean
+  location: SubagentPresetLocation
   workspaceRoot?: string | null
 }
 
 export interface SubagentsDeleteParams {
-  name: string
+  id: string
+  location: SubagentPresetLocation
   workspaceRoot?: string | null
 }

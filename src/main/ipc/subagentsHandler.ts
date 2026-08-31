@@ -1,108 +1,100 @@
 import { handle } from './secureIpc'
-import { SUBAGENTS_LIST, SUBAGENTS_SAVE, SUBAGENTS_DELETE } from '../../shared/ipc/channels'
+import {
+  SUBAGENTS_LIST,
+  SUBAGENTS_CREATE,
+  SUBAGENTS_UPDATE,
+  SUBAGENTS_SET_ENABLED,
+  SUBAGENTS_DELETE
+} from '../../shared/ipc/channels'
 import { BUILTIN_SUBAGENTS } from '../../runtime/agent'
-import type { SubAgentSpec } from '../../shared/settings/types'
-import { deletePreset, getPresetFilePaths, loadMergedCustomPresets, parseSubagentModel, savePreset } from '../../runtime/subagents'
+import {
+  createPreset,
+  deletePreset,
+  getPresetFilePath,
+  listCustomPresetView,
+  setPresetEnabled,
+  updatePreset
+} from '../../runtime/subagents'
+import type { SubAgentSpec, SubagentPresetLocation } from '../../shared/settings/types'
 import type {
   SubagentListItem,
   SubagentsListParams,
-  SubagentsSaveParams,
+  SubagentsListResult,
+  SubagentPresetCreateParams,
+  SubagentPresetUpdateParams,
+  SubagentPresetSetEnabledParams,
   SubagentsDeleteParams
 } from '../../shared/settings/types'
 
-const BUILTIN_NAMES = new Set(BUILTIN_SUBAGENTS.map(s => s.name))
-
-function listAllSubagents(workspaceRoot?: string | null): SubagentListItem[] {
-  const merged = loadMergedCustomPresets(workspaceRoot)
-  const filePaths = getPresetFilePaths()
-  const custom: SubagentListItem[] = merged.map(({ spec, origin }) => ({
-    ...spec,
-    builtin: false,
+function toListItem(
+  preset: SubAgentSpec,
+  origin: SubagentListItem['origin'],
+  filePath?: string
+): SubagentListItem {
+  return {
+    ...preset,
+    builtin: origin === 'builtin',
     origin,
-    filePath: origin === 'project' && workspaceRoot ? filePaths.projectFile(workspaceRoot) : filePaths.globalFile
-  }))
-  const builtins: SubagentListItem[] = BUILTIN_SUBAGENTS.map(s => ({
-    ...s,
-    builtin: true,
-    origin: 'builtin' as const
-  }))
-  const names = new Set<string>()
-  const result: SubagentListItem[] = []
-  for (const s of [...custom, ...builtins]) {
-    if (names.has(s.name)) continue
-    names.add(s.name)
-    result.push(s)
-  }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
-}
-
-/** 校验自定义子代理规格（导出供单测）；外部 IPC 只以 unknown 进入。 */
-export function validateSpec(spec: unknown): asserts spec is SubAgentSpec {
-  if (!isRecord(spec)) throw new Error('子代理规格必须是 object')
-  if (!isNonEmptyString(spec.name)) throw new Error('子代理名称不能为空')
-  if (!isNonEmptyString(spec.description)) throw new Error('子代理描述不能为空')
-  if (!Array.isArray(spec.allowedTools)) throw new Error('allowedTools 必须是数组')
-  if (!spec.allowedTools.every(isNonEmptyString)) throw new Error('allowedTools 必须是 string[]')
-  if (!isNonEmptyString(spec.prompt)) throw new Error('子代理 prompt 不能为空')
-  if (spec.model !== undefined) validateModelBinding(spec.model)
-  if (spec.maxToolRounds !== undefined && !isPositiveInteger(spec.maxToolRounds)) {
-    throw new Error('maxToolRounds 必须是正整数')
-  }
-  if (spec.contextWindow !== undefined && !isPositiveInteger(spec.contextWindow)) {
-    throw new Error('contextWindow 必须是正整数')
-  }
-  if (BUILTIN_NAMES.has(spec.name)) {
-    throw new Error('不能使用与内置子代理相同的名称')
+    ...(filePath ? { filePath } : {})
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
-}
-
-function validateModelBinding(value: unknown): void {
-  const model = parseSubagentModel(value)
-  if (!('modelEntryId' in model)) {
-    throw new Error('旧 model 引用不可保存，请改为 providerId + modelEntryId')
+/** 合并视图按稳定 ID 去重：同 ID 的自定义覆盖（含误配）优先展示，内置兜底。 */
+function listAllSubagents(workspaceRoot?: string | null): SubagentsListResult {
+  const { presets, diagnostics } = listCustomPresetView(workspaceRoot)
+  const ids = new Set<string>()
+  const items: SubagentListItem[] = []
+  for (const entry of presets) {
+    ids.add(entry.preset.id)
+    items.push(toListItem(entry.preset, entry.location, entry.filePath))
   }
+  for (const builtin of BUILTIN_SUBAGENTS) {
+    if (ids.has(builtin.id)) continue
+    items.push(toListItem(builtin, 'builtin'))
+  }
+  return {
+    items: items.sort((a, b) => a.name.localeCompare(b.name)),
+    diagnostics
+  }
+}
+
+/** 命令结果与 list 行形状一致：location 即写入层级，路径由存储 Owner 提供。 */
+function itemForCommandResult(
+  preset: SubAgentSpec,
+  location: SubagentPresetLocation,
+  workspaceRoot?: string | null
+): SubagentListItem {
+  return toListItem(preset, location, getPresetFilePath(location, workspaceRoot))
 }
 
 export function registerSubagentsHandler(): void {
-  handle(SUBAGENTS_LIST, async (_event, params: SubagentsListParams = {}): Promise<SubagentListItem[]> => {
+  handle(SUBAGENTS_LIST, async (_event, params: SubagentsListParams = {}): Promise<SubagentsListResult> => {
     return listAllSubagents(params.workspaceRoot)
   })
 
-  handle(SUBAGENTS_SAVE, async (_event, params: SubagentsSaveParams): Promise<SubagentListItem> => {
-    validateSpec(params.spec)
-    savePreset(params.spec, params.location, params.workspaceRoot ?? null)
-    const filePaths = getPresetFilePaths()
-    const filePath =
-      params.location === 'project' && params.workspaceRoot
-        ? filePaths.projectFile(params.workspaceRoot)
-        : filePaths.globalFile
-    return {
-      ...params.spec,
-      builtin: false,
-      origin: params.location,
-      filePath
-    }
+  handle(SUBAGENTS_CREATE, async (_event, params: SubagentPresetCreateParams): Promise<SubagentListItem> => {
+    const preset = createPreset(params.preset, params.location, params.workspaceRoot ?? null)
+    return itemForCommandResult(preset, params.location, params.workspaceRoot ?? null)
+  })
+
+  handle(SUBAGENTS_UPDATE, async (_event, params: SubagentPresetUpdateParams): Promise<SubagentListItem> => {
+    const preset = updatePreset(params.id, params.preset, params.location, params.workspaceRoot ?? null)
+    return itemForCommandResult(preset, params.location, params.workspaceRoot ?? null)
+  })
+
+  handle(SUBAGENTS_SET_ENABLED, async (_event, params: SubagentPresetSetEnabledParams): Promise<SubagentListItem> => {
+    const preset = setPresetEnabled(
+      params.id,
+      params.enabled,
+      params.location,
+      params.workspaceRoot ?? null
+    )
+    return itemForCommandResult(preset, params.location, params.workspaceRoot ?? null)
   })
 
   handle(SUBAGENTS_DELETE, async (_event, params: SubagentsDeleteParams): Promise<void> => {
-    if (BUILTIN_NAMES.has(params.name)) {
-      throw new Error('内置子代理不可删除')
-    }
-    const deleted = deletePreset(params.name, params.workspaceRoot ?? null)
-    if (!deleted) {
-      throw new Error('未找到要删除的子代理配置')
-    }
+    // 内置拒绝在 preset 领域边界完成（SubagentPresetCommandError: builtin_readonly），
+    // 这里不做第二次判断。
+    deletePreset(params.id, params.location, params.workspaceRoot ?? null)
   })
 }

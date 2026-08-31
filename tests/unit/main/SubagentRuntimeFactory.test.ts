@@ -77,6 +77,7 @@ describe('SubagentRuntimeFactory', () => {
           }
         },
         profile: resolveSubagentProfileSnapshot({
+          id: 'skill:inspect',
           name: 'skill:inspect',
           description: 'read only',
           prompt: 'inspect',
@@ -213,6 +214,7 @@ describe('SubagentRuntimeFactory 权限装配', () => {
     const parent = store.create(workspace, 'default', { permissionMode: 'full_access' })
     const profileId = input.profileId ?? 'explore'
     const profile = resolveSubagentProfileSnapshot({
+      id: profileId,
       name: profileId,
       description: profileId === 'explore' ? 'read only' : 'workspace writer',
       prompt: 'inspect',
@@ -376,6 +378,7 @@ describe('SubagentRuntimeFactory 模型请求', () => {
     ]
     const children = headers.map((header, index) => {
       const profile = resolveSubagentProfileSnapshot({
+        id: 'inspect',
         name: 'inspect', description: 'Inspect', prompt: 'Inspect', allowedTools: [],
         contextWindow: index === 0 ? 24_000 : 100_000
       }, 'inspect')

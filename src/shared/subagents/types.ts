@@ -89,7 +89,6 @@ export type SubagentCatalogReason =
   | 'model_retired'
   | 'model_invalid'
   | 'legacy_model_binding'
-  | 'invalid_model_binding'
 
 export interface SubagentCatalogModel {
   readonly providerId: string
@@ -100,7 +99,9 @@ export interface SubagentCatalogModel {
 
 /** agent_list 只读展示项，不含 prompt、凭据或运行时配置。 */
 export interface SubagentCatalogEntry {
+  /** 稳定派遣身份；模型以此派遣，显示名重命名不影响它。 */
   readonly profileId: string
+  /** 展示名，可修改。 */
   readonly name: string
   readonly description: string
   readonly status: 'available' | 'unavailable'
@@ -110,7 +111,9 @@ export interface SubagentCatalogEntry {
 
 /** Frozen profile used to make a historical child run interpretable. */
 export interface SubagentProfileSnapshot {
+  /** 冻结时刻的稳定 preset/内置/skill 身份。 */
   readonly profileId: string
+  /** 冻结时刻的展示名；历史快照不随后续重命名漂移。 */
   readonly name: string
   readonly description: string
   readonly systemPrompt: string
@@ -139,6 +142,7 @@ export interface SpawnSubagentCommand {
   readonly parentSessionId: string
   readonly parentRunId: string
   readonly invocation: SubagentOrigin
+  /** 稳定 profile/preset ID（内置 ID 为保留字），不是可改的显示名。 */
   readonly profileId: string
   readonly task: string
   readonly workingDirectory: string

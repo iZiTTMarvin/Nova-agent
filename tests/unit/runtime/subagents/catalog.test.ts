@@ -5,8 +5,10 @@ import type { SubAgentSpec } from '../../../../src/shared/settings/types'
 
 const specs: SubAgentSpec[] = [
   {
+    id: 'bound',
     name: 'bound',
     description: 'bound child',
+    enabled: true,
     allowedTools: ['read'],
     prompt: 'read',
     model: {
@@ -16,28 +18,29 @@ const specs: SubAgentSpec[] = [
     }
   },
   {
+    id: 'unbound',
     name: 'unbound',
     description: 'default child',
+    enabled: true,
     allowedTools: ['read'],
     prompt: 'read'
   },
   {
+    id: 'legacy',
     name: 'legacy',
     description: 'old child',
+    enabled: true,
     allowedTools: ['read'],
     prompt: 'read',
     model: { providerId: 'provider-a', modelId: 'api-model-a' } as unknown as SubAgentSpec['model']
   },
   {
-    name: 'malformed',
-    description: 'invalid child',
+    id: 'helper',
+    name: '旧显示名已改',
+    description: 'renamed child keeps stable dispatch identity',
+    enabled: true,
     allowedTools: ['read'],
-    prompt: 'read',
-    model: {
-      providerId: 'provider-a',
-      modelEntryId: 'model-a',
-      modelId: 'api-model-a'
-    } as unknown as SubAgentSpec['model']
+    prompt: 'read'
   }
 ]
 
@@ -106,18 +109,22 @@ describe('buildSubagentCatalog', () => {
     })
   })
 
-  it('shows legacy and malformed bindings as unavailable instead of inheriting active model', () => {
-    const entries = buildSubagentCatalog(specs.slice(2), registry())
+  it('marks legacy bindings unavailable instead of inheriting active model', () => {
+    const entries = buildSubagentCatalog(specs.slice(2, 3), registry())
     expect(entries[0]).toMatchObject({
       profileId: 'legacy',
       status: 'unavailable',
       reason: 'legacy_model_binding',
       model: { providerId: 'provider-a', modelId: 'api-model-a' }
     })
-    expect(entries[1]).toMatchObject({
-      profileId: 'malformed',
-      status: 'unavailable',
-      reason: 'invalid_model_binding'
+  })
+
+  it('重命名只改展示名，派遣身份仍是稳定 ID', () => {
+    const entries = buildSubagentCatalog(specs.slice(3), registry())
+    expect(entries[0]).toMatchObject({
+      profileId: 'helper',
+      name: '旧显示名已改',
+      status: 'available'
     })
   })
 })

@@ -31,7 +31,10 @@ import type {
   RulesCreateParams,
   SubagentListItem,
   SubagentsListParams,
-  SubagentsSaveParams,
+  SubagentsListResult,
+  SubagentPresetCreateParams,
+  SubagentPresetUpdateParams,
+  SubagentPresetSetEnabledParams,
   SubagentsDeleteParams
 } from '../settings/types'
 import type { CodeIndexStatusDto } from '../code-index'
@@ -383,10 +386,18 @@ export interface IpcCommands {
   }
   'subagents:list': {
     params: SubagentsListParams
-    result: SubagentListItem[]
+    result: SubagentsListResult
   }
-  'subagents:save': {
-    params: SubagentsSaveParams
+  'subagents:create': {
+    params: SubagentPresetCreateParams
+    result: SubagentListItem
+  }
+  'subagents:update': {
+    params: SubagentPresetUpdateParams
+    result: SubagentListItem
+  }
+  'subagents:set-enabled': {
+    params: SubagentPresetSetEnabledParams
     result: SubagentListItem
   }
   'subagents:delete': {

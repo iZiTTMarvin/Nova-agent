@@ -49,6 +49,7 @@ function buildProfile(
   return {
     profileId,
     profile: {
+      id: profileId,
       name: profileId,
       description: `Durable fork for skill ${skill.name}`,
       prompt: systemPrompt,

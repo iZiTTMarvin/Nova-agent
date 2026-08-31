@@ -35,7 +35,9 @@ export const RULES_WRITE = 'rules:write' as const
 export const RULES_CREATE = 'rules:create' as const
 /** Subagents 管理 */
 export const SUBAGENTS_LIST = 'subagents:list' as const
-export const SUBAGENTS_SAVE = 'subagents:save' as const
+export const SUBAGENTS_CREATE = 'subagents:create' as const
+export const SUBAGENTS_UPDATE = 'subagents:update' as const
+export const SUBAGENTS_SET_ENABLED = 'subagents:set-enabled' as const
 export const SUBAGENTS_DELETE = 'subagents:delete' as const
 export const CANCEL_EXECUTION = 'cancel-execution' as const
 /** 查询 Run 权威快照（snapshot-first） */
