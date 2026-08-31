@@ -63,10 +63,17 @@ describe('subagentsHandler IPC（global/project 层级语义）', () => {
     const result = await invoke<{
       items: Array<{ id: string; builtin: boolean }>
       diagnostics: unknown[]
+      tools: Array<{ name: string; effects: string[]; selectable: boolean }>
     }>('subagents:list', {})
     expect(result.items.map(i => i.id).sort()).toEqual(['code', 'explore', 'review'])
     expect(result.items.every(i => i.builtin)).toBe(true)
     expect(result.diagnostics).toEqual([])
+    expect(result.tools.find(tool => tool.name === 'read')).toEqual({
+      name: 'read',
+      effects: ['filesystem.read'],
+      selectable: true
+    })
+    expect(result.tools.find(tool => tool.name === 'task')?.selectable).toBe(false)
   })
 
   it('创建到 global 后 list 可见，文件落在 ~/.nova/subagents.json', async () => {
@@ -277,6 +284,13 @@ describe('subagentsHandler IPC（global/project 层级语义）', () => {
     await expectReject(/allowedTools/, () =>
       invoke('subagents:create', {
         preset: draft({ allowedTools: ['   '] }),
+        location: 'global',
+        workspaceRoot: null
+      })
+    )
+    await expectReject(/未知工具/, () =>
+      invoke('subagents:create', {
+        preset: draft({ allowedTools: ['made_up_tool'] }),
         location: 'global',
         workspaceRoot: null
       })

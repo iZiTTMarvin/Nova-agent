@@ -7,6 +7,8 @@ import {
   SUBAGENTS_DELETE
 } from '../../shared/ipc/channels'
 import { BUILTIN_SUBAGENTS } from '../../runtime/agent'
+import { listCatalogEntries } from '../../runtime/tools/catalog'
+import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
 import {
   createPreset,
   deletePreset,
@@ -54,7 +56,21 @@ function listAllSubagents(workspaceRoot?: string | null): SubagentsListResult {
   }
   return {
     items: items.sort((a, b) => a.name.localeCompare(b.name)),
-    diagnostics
+    diagnostics,
+    tools: listCatalogEntries().map(entry => {
+      const effects = getToolPermissionDescriptor(entry.name)?.effects ?? []
+      return {
+        name: entry.name,
+        effects,
+        selectable:
+          entry.exposure === 'always' &&
+          !effects.some(effect =>
+            effect === 'orchestration' ||
+            effect === 'session.write' ||
+            effect === 'mode.transition'
+          )
+      }
+    })
   }
 }
 

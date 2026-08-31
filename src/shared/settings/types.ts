@@ -2,6 +2,7 @@
  * 设置相关 IPC 共享类型
  */
 import type { Mode, PermissionMode } from '../session/types'
+import type { ToolEffect } from '../permissions/types'
 import type { SubagentProfileModel } from '../subagents/types'
 
 export type { PermissionMode }
@@ -154,10 +155,19 @@ export interface SubagentListItem extends SubAgentSpec {
   filePath?: string
 }
 
+export interface SubagentToolOption {
+  name: string
+  effects: readonly ToolEffect[]
+  /** 编排、模式切换与内部控制工具不允许从设置页授予子代理。 */
+  selectable: boolean
+}
+
 export interface SubagentsListResult {
   items: SubagentListItem[]
   /** 读取自定义预设时产生的诊断投影；无损坏时为空数组。 */
   diagnostics: SubagentPresetDiagnostic[]
+  /** Tool Catalog 的 Renderer 安全投影，不含实现或动态参数。 */
+  tools: SubagentToolOption[]
 }
 
 export interface SubagentPresetCreateParams {

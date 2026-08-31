@@ -14,6 +14,7 @@ import {
   isBuiltinSubagentId,
   isValidSubagentPresetId
 } from '../../shared/subagents/presetIdentity'
+import { getCatalogEntry } from '../tools/catalog'
 import type {
   SubAgentSpec,
   SubagentPresetDiagnostic,
@@ -93,6 +94,7 @@ export function decodeSubagentPreset(input: unknown): SubAgentSpec {
     ])
   }
   requireCanonicalModelBinding(fields)
+  requireCatalogTools(fields)
   return {
     id: fields.id,
     name: fields.name,
@@ -117,6 +119,18 @@ function requireCanonicalModelBinding(fields: SubagentProfileFields): void {
       {
         field: 'model',
         message: '子代理预设的模型绑定必须是 providerId + modelEntryId，旧 model 引用不可保存'
+      }
+    ])
+  }
+}
+
+function requireCatalogTools(fields: SubagentProfileFields): void {
+  const unknown = fields.allowedTools.find(toolName => !getCatalogEntry(toolName))
+  if (unknown) {
+    throw new SubagentPresetDecodeError([
+      {
+        field: 'allowedTools',
+        message: `子代理预设.allowedTools 包含未知工具「${unknown}」`
       }
     ])
   }
@@ -414,6 +428,7 @@ export function migrateLegacyPresets(
     const name = typeof raw.name === 'string' ? raw.name.trim() : ''
     try {
       const fields = decodeSubagentProfileFields({ ...raw, id: LEGACY_ID_PLACEHOLDER })
+      requireCatalogTools(fields)
       const preset: SubAgentSpec = {
         id: generateSubagentPresetId(fields.name, taken),
         name: fields.name,

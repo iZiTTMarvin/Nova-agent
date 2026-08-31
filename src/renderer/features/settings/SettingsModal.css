@@ -1635,3 +1635,345 @@
     transition: none;
   }
 }
+
+/* ── 子代理设置 ── */
+.subagents-settings {
+  gap: 10px;
+}
+
+.subagent-workspace {
+  overflow: hidden;
+}
+
+.subagent-list {
+  gap: 6px;
+}
+
+.subagent-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+
+.subagent-list__row:hover,
+.subagent-list__row--active {
+  background: var(--bg-card);
+}
+
+.subagent-list__row--active {
+  border-color: var(--border-warm);
+  box-shadow: inset 3px 0 0 var(--color-brand);
+}
+
+.subagent-list__card {
+  min-width: 0;
+}
+
+.subagent-list__card > * {
+  pointer-events: none;
+}
+
+.subagent-empty,
+.subagent-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 12px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.subagent-empty strong,
+.subagent-placeholder strong {
+  color: var(--text-primary);
+  font-size: 0.86rem;
+}
+
+.subagent-placeholder {
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  text-align: center;
+}
+
+.subagent-editor {
+  overflow: hidden;
+}
+
+.subagent-wizard,
+.subagent-detail-page {
+  min-height: 0;
+  height: 100%;
+}
+
+.subagent-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 2px 4px 4px;
+}
+
+.subagent-wizard header,
+.subagent-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-cream);
+}
+
+.subagent-wizard header {
+  display: block;
+}
+
+.subagent-wizard header > span,
+.subagent-detail-header span {
+  color: var(--color-brand);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.subagent-wizard h3,
+.subagent-detail-header h3 {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-size: 1.12rem;
+  font-weight: 500;
+}
+
+.subagent-wizard header p,
+.subagent-detail-header p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.subagent-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.subagent-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 5px;
+}
+
+.subagent-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.subagent-actions--sticky {
+  flex-shrink: 0;
+  min-height: 42px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-warm);
+}
+
+.subagent-actions--sticky > :first-child {
+  margin-right: auto;
+}
+
+.subagent-form {
+  gap: 24px;
+  padding-bottom: 8px;
+}
+
+.subagent-form__error {
+  color: var(--color-error);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.subagent-advanced {
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+
+.subagent-advanced > summary {
+  padding: 11px 12px;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.subagent-advanced > summary:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.subagent-advanced__content {
+  display: grid;
+  gap: 14px;
+  padding: 4px 12px 14px;
+  border-top: 1px solid var(--border-cream);
+}
+
+.subagent-advanced__content textarea {
+  min-height: 130px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.subagent-tool-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-sm);
+}
+
+.subagent-tool-fieldset legend {
+  padding: 0 4px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.subagent-tool-fieldset > p {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.subagent-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.subagent-tool-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+
+.subagent-tool-option > span {
+  margin-left: 22px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  overflow-wrap: anywhere;
+}
+
+.subagent-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.subagent-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, var(--border-warm));
+  border-radius: var(--radius-md);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 7%, var(--bg-card));
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.subagent-page-error {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 7%, transparent);
+}
+
+.subagent-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-error);
+  font-size: 0.74rem;
+}
+
+.subagent-capability-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.subagent-capability-summary h4 {
+  margin: 12px 0 0;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+.subagent-capability-summary p,
+.subagent-capability-summary pre {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.subagent-capability-summary pre {
+  overflow: auto;
+  padding: 11px;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subagent-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.subagent-chip-list code {
+  padding: 2px 6px;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sand);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+@media (max-width: 720px) {
+  .subagent-workspace {
+    overflow-y: auto;
+  }
+
+  .subagent-list {
+    max-height: 190px;
+  }
+
+  .subagent-detail-page {
+    min-height: 0;
+  }
+
+  .subagent-tool-grid,
+  .subagent-limit-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .subagent-delete-confirm {
+    flex-wrap: wrap;
+  }
+}
