@@ -48,6 +48,12 @@ export interface PrepareSubagentTurnInput {
   readonly rootRunId: string
 }
 
+/**
+ * 所有子代理派遣共用的壁钟兜底：并发容量与用户可感知时长的护栏，
+ * 不是任务规模预算；轮数预算由 profileResolver 按 permissionCeiling 分档。
+ */
+export const SUBAGENT_WALL_CLOCK_TIMEOUT_MS = 15 * 60 * 1000
+
 export interface PreparedSubagentTurn {
   readonly agentLoop: AgentLoop
   readonly eventBus: EventBus

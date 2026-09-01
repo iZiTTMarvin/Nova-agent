@@ -1,5 +1,5 @@
 /** Skill fork 只负责构造 durable child 命令，执行生命周期归统一子代理端口。 */
-import type { SpawnSubagentPort } from '../subagents'
+import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../subagents'
 import type { ToolInvocationRef } from '../tools/types'
 import type { SpawnSubagentCommand, SubagentOrigin } from '../../shared/subagents'
 import { expandTemplate } from './template'
@@ -54,7 +54,6 @@ function buildProfile(
       description: `Durable fork for skill ${skill.name}`,
       prompt: systemPrompt,
       allowedTools: [...tools],
-      maxToolRounds: 20,
       skillRoots: [skill.directory]
     }
   }
@@ -90,10 +89,11 @@ export async function runSkillFork(
     parentRunId: params.parentRunId,
     invocation: buildOrigin(params),
     profileId,
-    task: params.args.trim() || '按技能说明执行',
-    workingDirectory: params.workingDirectory,
-    isolation
-  }
+        task: params.args.trim() || '按技能说明执行',
+        workingDirectory: params.workingDirectory,
+        isolation,
+        timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS
+      }
 
   try {
     const result = await port.spawn(command, {

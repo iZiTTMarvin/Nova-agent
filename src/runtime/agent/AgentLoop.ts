@@ -139,8 +139,9 @@ export class AgentLoop {
   /**
    * StopPolicyExtension：熔断计数 + maxRounds 提示。
    * 实例态持有熔断计数 Map，每条用户消息开始时 clear()。
+   * 构造时按配置的受众选择停止通知文案。
    */
-  private readonly stopPolicy = new StopPolicyExtension()
+  private readonly stopPolicy: StopPolicyExtension
   private assistantCompletionPolicy: AssistantCompletionPolicy | null = null
 
   /** 错误恢复状态机 */
@@ -209,6 +210,7 @@ export class AgentLoop {
         }
       })
     this.eventBus = eventBus
+    this.stopPolicy = new StopPolicyExtension({ audience: config?.stopNoticeAudience })
     this.permissionCoordinator = new PermissionCoordinator({
       permissionManager: config.permissionManager,
       emit: (event) => this.eventBus.emit(event),

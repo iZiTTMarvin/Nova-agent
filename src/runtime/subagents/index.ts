@@ -1,5 +1,6 @@
 export {
   SubagentExecutionService,
+  SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
   createSpawnIdentity,
   type PreparedSubagentTurn,
   type PrepareSubagentTurnInput,

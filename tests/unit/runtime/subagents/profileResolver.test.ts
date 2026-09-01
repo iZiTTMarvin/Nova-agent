@@ -133,6 +133,51 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(first.configHash).not.toBe(second.configHash)
   })
 
+  it('未配置轮数时按 permissionCeiling 分档：只读与可写取不同默认，自定义只读 preset 走只读档', () => {
+    const readOnly = resolveSubagentProfileSnapshot({
+      id: 'custom-reader',
+      name: 'reader',
+      description: 'inspect',
+      prompt: 'read only',
+      allowedTools: ['read', 'grep']
+    }, 'custom-reader')
+
+    const workspaceWrite = resolveSubagentProfileSnapshot({
+      id: 'custom-writer',
+      name: 'writer',
+      description: 'implement',
+      prompt: 'write things',
+      allowedTools: ['read', 'write']
+    }, 'custom-writer')
+
+    expect(readOnly.permissionCeiling).toBe('read_only')
+    expect(workspaceWrite.permissionCeiling).toBe('workspace_write')
+    expect(readOnly.maxToolRounds).not.toBe(workspaceWrite.maxToolRounds)
+    // 内置 explore 同样不声明轮数，走与自定义只读 preset 相同的默认档
+    const builtinExplore = BUILTIN_SUBAGENTS.find(s => s.id === 'explore')
+    if (!builtinExplore) throw new Error('expected explore builtin')
+    const exploreSnapshot = resolveSubagentProfileSnapshot(builtinExplore, 'explore')
+    expect(exploreSnapshot.maxToolRounds).toBe(readOnly.maxToolRounds)
+  })
+
+  it('显式配置的轮数覆盖分档默认并进入 configHash', () => {
+    const base = {
+      id: 'custom-reader',
+      name: 'reader',
+      description: 'inspect',
+      prompt: 'read only',
+      allowedTools: ['read']
+    }
+    const withDefault = resolveSubagentProfileSnapshot(base, 'custom-reader')
+    const explicit = resolveSubagentProfileSnapshot(
+      { ...base, maxToolRounds: 7 },
+      'custom-reader'
+    )
+
+    expect(explicit.maxToolRounds).toBe(7)
+    expect(explicit.configHash).not.toBe(withDefault.configHash)
+  })
+
   it('identity、类型与边界不合法时 fail closed', () => {
     expect(() => resolveSubagentProfileSnapshot(null, 'explore')).toThrow(/JSON object/)
     expect(() => resolveSubagentProfileSnapshot({

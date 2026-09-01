@@ -226,6 +226,11 @@ export interface AgentLoopConfig {
    * 压缩等内部调用不跟随（见 CONTEXT.md 术语边界）。
    */
   reasoningEffort?: ReasoningEffort
+  /**
+   * 停止通知受众：primary 含面向人类的操作指引；subagent（子代理装配）版本
+   * 不含，避免误导读取摘要的父代理。
+   */
+  stopNoticeAudience?: import('./extensions/stopPolicyExtension').StopNoticeAudience
 }
 
 /** 压缩完成时传给 onCompaction 的元数据 */

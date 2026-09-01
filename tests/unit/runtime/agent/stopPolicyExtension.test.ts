@@ -305,3 +305,75 @@ describe('StopPolicyExtension — 重复失败恢复', () => {
     expect(result).toMatchObject({ stop: true, reason: 'max_rounds' })
   })
 })
+
+describe('StopPolicyExtension — subagent 受众文案', () => {
+  // 三条停止路径的判定与 primary 完全一致，仅文案不同：
+  // 子代理的停止通知会成为父代理读到的摘要，不得包含面向人类的操作指引。
+  let policy: StopPolicyExtension
+
+  beforeEach(() => {
+    policy = new StopPolicyExtension({ audience: 'subagent' })
+  })
+
+  const successfulRound = {
+    toolCallsThisRound: [{ name: 'grep', args: { pattern: 'x' } }],
+    outcomes: [{
+      toolCall: { id: 'tc', name: 'grep' },
+      args: { pattern: 'x' },
+      resultText: 'ok',
+      failed: false
+    }]
+  }
+
+  it('max_rounds 子代理版说明截断事实与重新派遣方式，不含「发送继续」或设置指引', async () => {
+    const result = await policy.shouldStopAfterTurn(makeArgs({
+      ...successfulRound,
+      toolRound: 20,
+      maxToolRounds: 20
+    }))
+
+    expect(result).toMatchObject({ stop: true, reason: 'max_rounds' })
+    expect(result?.notice).toContain('重新派遣')
+    expect(result?.notice).not.toContain('发送「继续」')
+    expect(result?.notice).not.toContain('设置')
+  })
+
+  it('breaker 子代理版不含「调整指令」类人类指引', async () => {
+    const round = {
+      toolCallsThisRound: [{ name: 'read', args: { path: 'missing.ts' } }],
+      outcomes: [{
+        toolCall: { id: 'tc', name: 'read' },
+        args: { path: 'missing.ts' },
+        resultText: 'not found',
+        failed: true
+      }]
+    }
+    await policy.shouldStopAfterTurn(makeArgs(round))
+    await policy.shouldStopAfterTurn(makeArgs(round))
+    await policy.shouldStopAfterTurn(makeArgs(round))
+
+    const stopped = await policy.shouldStopAfterTurn(makeArgs(round))
+    expect(stopped).toMatchObject({ stop: true, reason: 'breaker' })
+    expect(stopped?.notice).not.toContain('请')
+    expect(stopped?.notice).not.toContain('设置')
+  })
+
+  it('empty_args 子代理版不含 XML 兼容模式的设置指引', async () => {
+    const emptyFailedRound = {
+      toolCallsThisRound: [{ name: 'grep', args: {} }],
+      outcomes: [{
+        toolCall: { id: 'tc1', name: 'grep' },
+        args: {},
+        resultText: '错误',
+        failed: true
+      }]
+    }
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound, toolRound: 1 }))
+    await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound, toolRound: 2 }))
+
+    const stopped = await policy.shouldStopAfterTurn(makeArgs({ ...emptyFailedRound, toolRound: 3 }))
+    expect(stopped).toMatchObject({ stop: true, reason: 'empty_args' })
+    expect(stopped?.notice).not.toContain('XML')
+    expect(stopped?.notice).not.toContain('设置')
+  })
+})

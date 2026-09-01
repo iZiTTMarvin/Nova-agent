@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createTaskTool } from '../../../../src/runtime/tools/task'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
-import type { SpawnSubagentPort } from '../../../../src/runtime/subagents'
+import {
+  SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
+  type SpawnSubagentPort
+} from '../../../../src/runtime/subagents'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 
 const invocationRef = {
@@ -100,7 +103,8 @@ describe('task tool spawn adapter', () => {
         profileId: 'explore',
         task: 'find TODOs',
         workingDirectory: process.cwd(),
-        isolation: 'readonly'
+        isolation: 'readonly',
+        timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS
       },
       { invocationRef }
     )

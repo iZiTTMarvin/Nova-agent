@@ -15,8 +15,21 @@ export const REPEATED_FAILURE_LIMIT = 3
 /** 连续全空参轮次达到该次数时注入恢复指令；引导后下一轮仍全空参才中断 */
 export const EMPTY_ARGS_LIMIT = 2
 
+/**
+ * 停止通知的受众。primary 面向主会话人类（含「发送继续」「设置」等操作指引）；
+ * subagent 的通知会经最终 assistant 消息成为父代理读到的摘要，不得包含
+ * 面向人类的指引。
+ */
+export type StopNoticeAudience = 'primary' | 'subagent'
+
 /** 停止策略扩展。持有当前失败签名与空参轮次状态。 */
 export class StopPolicyExtension {
+  private readonly audience: StopNoticeAudience
+
+  constructor(options: { audience?: StopNoticeAudience } = {}) {
+    this.audience = options.audience ?? 'primary'
+  }
+
   private readonly repeatedFailures = new Map<string, {
     toolName: string
     count: number
@@ -41,18 +54,23 @@ export class StopPolicyExtension {
 
     const repeatedFailure = this.trackRepeatedFailures(args.outcomes)
     if (repeatedFailure?.action === 'stop') {
-      const notice =
-        `\n\n[已自动中断] 对「${repeatedFailure.toolName}」的相同失败调用在恢复提示后仍被重复，` +
-        `已停止本轮以避免无效循环。` +
-        `请查看上方的工具错误信息后再调整指令。`
+      const notice = this.audience === 'subagent'
+        ? `\n\n[已自动中断] 对「${repeatedFailure.toolName}」的相同失败调用在恢复提示后仍被重复，` +
+          `已停止本轮以避免无效循环。失败原因见上方的工具错误信息。`
+        : `\n\n[已自动中断] 对「${repeatedFailure.toolName}」的相同失败调用在恢复提示后仍被重复，` +
+          `已停止本轮以避免无效循环。` +
+          `请查看上方的工具错误信息后再调整指令。`
       return { stop: true, reason: 'breaker', notice }
     }
 
     if (args.toolRound >= args.maxToolRounds) {
-      const notice =
-        `\n\n[已达到最大工具调用轮数 ${args.maxToolRounds}] ` +
-        `任务可能尚未完成，已暂停以避免无限循环。` +
-        `发送「继续」可接着执行；如长任务频繁触发，可在「设置 → 通用 → 最大工具调用轮数」中调大该上限。`
+      const notice = this.audience === 'subagent'
+        ? `\n\n[已达到最大工具调用轮数 ${args.maxToolRounds}] ` +
+          `任务尚未完成，以上为截断前的执行进展；` +
+          `如需继续，请由调用方以更窄的范围重新派遣子任务。`
+        : `\n\n[已达到最大工具调用轮数 ${args.maxToolRounds}] ` +
+          `任务可能尚未完成，已暂停以避免无限循环。` +
+          `发送「继续」可接着执行；如长任务频繁触发，可在「设置 → 通用 → 最大工具调用轮数」中调大该上限。`
       return { stop: true, reason: 'max_rounds', notice }
     }
     // 空参引导比通用重复失败引导更具体，同轮同时命中时优先下发。
@@ -92,9 +110,10 @@ export class StopPolicyExtension {
     if (this.emptyArgsRoundCount < EMPTY_ARGS_LIMIT) return null
 
     if (this.emptyArgsRecoveryIssued) {
-      const notice =
-        `\n\n[已自动中断] 模型在空参恢复提示后仍返回空工具参数，已停止本轮以避免空转。` +
-        `可在「设置 → LLM 配置 → 工具调用方式」改为 XML 兼容模式后重试。`
+      const notice = this.audience === 'subagent'
+        ? `\n\n[已自动中断] 模型在空参恢复提示后仍返回空工具参数，已停止本轮以避免空转。`
+        : `\n\n[已自动中断] 模型在空参恢复提示后仍返回空工具参数，已停止本轮以避免空转。` +
+          `可在「设置 → LLM 配置 → 工具调用方式」改为 XML 兼容模式后重试。`
       return { stop: true, reason: 'empty_args', notice }
     }
 

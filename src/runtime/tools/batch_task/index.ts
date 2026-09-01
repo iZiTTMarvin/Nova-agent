@@ -3,6 +3,7 @@ import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import {
   assertBatchInputReadonlyEligibility,
   BatchReadonlyEligibilityError,
+  SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
   type SpawnSubagentPort
 } from '../../subagents'
 import {
@@ -125,6 +126,7 @@ export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
           workingDirectory: context.workingDir,
           // 批次固定只读
           isolation: 'readonly',
+          timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
           ...(item.model ? { modelOverride: item.model } : {}),
           ...(item.reasoningEffort !== undefined ? { reasoningEffort: item.reasoningEffort } : {})
         }

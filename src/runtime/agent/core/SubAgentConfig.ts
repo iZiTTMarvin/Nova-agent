@@ -20,8 +20,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是一个只读探索助手。分析代码、搜索模式、读文件、做调研。
-你不能修改任何文件。完成后用结构化总结回答父 agent 的问题。`,
-    maxToolRounds: 20
+你不能修改任何文件。完成后用结构化总结回答父 agent 的问题。`
   },
   {
     id: BUILTIN_SUBAGENT_IDS.code,
@@ -30,8 +29,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'shell_session'],
     prompt: `你是一个受限编程助手。在指定工作区内读、写、执行命令完成任务。
-写操作遵守安全边界。完成后返回结构化摘要（改了什么、关键结论）。`,
-    maxToolRounds: 30
+写操作遵守安全边界。完成后返回结构化摘要（改了什么、关键结论）。`
   },
   {
     id: BUILTIN_SUBAGENT_IDS.review,
@@ -41,8 +39,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是独立代码审查助手。你不修改任何文件。
 根据父 agent 提供的 brief（需求背景、计划位置、改动清单、验证证据）独立审查：正确性、是否严守范围、架构边界与依赖方向、安全与可维护性。
-产出 markdown 审查报告：总体结论（通过/不通过）、按严重度分级的问题清单（每条含文件位置与理由）、改进建议。`,
-    maxToolRounds: 20
+产出 markdown 审查报告：总体结论（通过/不通过）、按严重度分级的问题清单（每条含文件位置与理由）、改进建议。`
   },
   {
     id: BUILTIN_SUBAGENT_IDS.generalPurpose,
@@ -53,8 +50,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     prompt: `你是通用执行助手，处理不适合纯探索、主要编码或独立审查的有界混合任务。
 你可以结合工作区读取、外部检索、必要的文件修改和命令验证来完成任务。
 严格遵循父会话的权限与 shared workspace 隔离；不派遣新的子代理，不使用 Skill/Workflow、计划或用户交互工具。
-完成后返回结构化摘要：做了什么、关键证据、后续建议。`,
-    maxToolRounds: 30
+完成后返回结构化摘要：做了什么、关键证据、后续建议。`
   }
 ]
 

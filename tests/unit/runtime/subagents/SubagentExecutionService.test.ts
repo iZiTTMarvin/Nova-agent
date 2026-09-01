@@ -831,6 +831,47 @@ describe('SubagentExecutionService', () => {
     expect(scheduler.snapshot().activeGlobal).toBe(0)
   })
 
+  it('配置壁钟超时的派遣被父取消时结果为 cancelled，不误报 timeout failure', async () => {
+    const never = new Promise<void>(() => {})
+    const controller = new AbortController()
+    const { service, scheduler } = createService({ wait: never, cancelReleasesWait: true })
+
+    const pending = service.spawn(command({ timeoutMs: 60_000 }), {
+      invocationRef: invocationRef(),
+      abortSignal: controller.signal
+    })
+    await vi.waitFor(() => expect(scheduler.snapshot().activeGlobal).toBe(1))
+    controller.abort()
+
+    const result = await pending
+    expect(result.status).toBe('cancelled')
+    expect(result.failure).toBeUndefined()
+    expect(scheduler.snapshot().activeGlobal).toBe(0)
+  })
+
+  it('configHash 漂移的既有 child 恢复被显式拒绝，不静默沿用旧冻结配置', async () => {
+    const spawnCommand = command()
+    const frozenProfile = { ...profile, prompt: 'original frozen prompt' }
+    const { service } = createService()
+
+    const first = await service.spawn(spawnCommand, {
+      invocationRef: invocationRef(),
+      profile: frozenProfile
+    })
+    expect(first.status).toBe('completed')
+
+    // 跨版本升级后同一原始 profile 的解析结果已漂移（解析规则或内容变化）：
+    // 冻结配置无法忠实恢复，必须按单项失败回传父代理，不得静默接受旧 hash。
+    await expect(service.spawn(spawnCommand, {
+      invocationRef: invocationRef(),
+      profile: { ...frozenProfile, prompt: 'drifted prompt' }
+    })).rejects.toThrow(/profile config 冲突/)
+
+    const child = sessionStore.load(first.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(child.subagent.profile.systemPrompt).toBe('original frozen prompt')
+  })
+
   it('显式等待容量的派遣会进入 Scheduler 队列并在 permit 释放后继续', async () => {
     let release!: () => void
     const wait = new Promise<void>((resolveWait) => { release = resolveWait })

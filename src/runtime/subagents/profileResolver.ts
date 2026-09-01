@@ -4,8 +4,17 @@ import { toolHasWriteCapability } from '../../shared/permissions/toolEffects'
 import { decodeSubagentProfileFields } from './presetCodec'
 import { BUILTIN_SUBAGENT_IDS } from '../../shared/subagents/presetIdentity'
 
-const DEFAULT_MAX_TOOL_ROUNDS = 20
 const ARCHIVE_READ_TOOL = 'archive_read'
+
+/**
+ * 未显式配置轮数时的默认预算，按 permissionCeiling 分档：可写档需覆盖
+ * 「读 → 改 → 跑验证 → 修」循环，只读档单轮效率更高故更短。工程判断而非
+ * 测量结果，唯一来源；调用方不得复制分档值。
+ */
+const DEFAULT_MAX_TOOL_ROUNDS_BY_CEILING = {
+  read_only: 40,
+  workspace_write: 80
+} as const
 
 /**
  * 宿主有 archive_read 时子 Agent 必须继承；宿主明确没有时不得携带。
@@ -53,7 +62,8 @@ export function resolveSubagentProfileSnapshot(
       !toolHasWriteCapability(name)
     )
   })
-  const maxToolRounds = parsed.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS
+  const maxToolRounds =
+    parsed.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS_BY_CEILING[permissionCeiling]
   const hashInput = {
     profileId: parsed.id,
     name: parsed.name,

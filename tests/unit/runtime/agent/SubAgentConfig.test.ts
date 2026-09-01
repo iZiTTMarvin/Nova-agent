@@ -29,10 +29,15 @@ describe('SubAgentConfig', () => {
     expect(spec?.description).toContain('审查')
     expect(spec?.allowedTools).toEqual(['ls', 'read', 'grep', 'find', 'code_context'])
     expect(spec?.allowedTools.some(t => t === 'edit' || t === 'write' || t === 'bash')).toBe(false)
-    expect(spec?.maxToolRounds).toBe(20)
     expect(spec?.prompt).toBeTruthy()
     expect(spec?.prompt).toMatch(/审查/)
     expect(spec?.prompt).toContain('不修改任何文件')
+  })
+
+  it('内置规格不携带轮数预算，默认档由 profile 解析唯一决定', () => {
+    for (const spec of BUILTIN_SUBAGENTS) {
+      expect('maxToolRounds' in spec).toBe(false)
+    }
   })
 
   it('未知类型返回 undefined', () => {
@@ -59,7 +64,6 @@ describe('SubAgentConfig', () => {
       expect(spec?.allowedTools).not.toContain(forbidden)
     }
     expect(spec?.allowedTools).not.toContain('memory_search')
-    expect(spec?.maxToolRounds).toBe(30)
     expect(spec?.prompt).toMatch(/混合任务/)
   })
 })

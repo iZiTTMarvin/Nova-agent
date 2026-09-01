@@ -102,6 +102,8 @@ export function prepareSubagentRuntime(
     contextWindow,
     supportsVision: childModel.supportsVision,
     toolExecution: 'sequential',
+    // 停止通知的读者是父代理而非人类，不携带「发送继续」「设置」类指引
+    stopNoticeAudience: 'subagent',
     permissionMode: input.childSession.permissionMode,
     ...(capabilityCeiling ? { permissionCeiling: capabilityCeiling } : {}),
     permissionManager,

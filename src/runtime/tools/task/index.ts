@@ -1,5 +1,5 @@
 import type { ReasoningEffort } from '../../../shared/config'
-import type { SpawnSubagentPort } from '../../subagents'
+import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../../subagents'
 import type { SubagentExecutionStatus } from '../../../shared/subagents'
 import type { TurnTruncationReason } from '../../../shared/run/types'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
@@ -104,6 +104,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
             task,
             workingDirectory: context.workingDir,
             isolation: profileId === 'explore' ? 'readonly' : 'shared',
+            timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
             ...(modelOverride ? { modelOverride } : {}),
             ...(reasoningEffort !== undefined ? { reasoningEffort } : {})
           },

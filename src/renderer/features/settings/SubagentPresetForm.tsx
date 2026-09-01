@@ -307,10 +307,12 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
               <div className="subagent-limit-grid">
                 <NumberInput
                   label="最大工具轮数"
-                  value={draft.preset.maxToolRounds ?? 20}
+                  value={draft.preset.maxToolRounds ?? null}
                   onChange={maxToolRounds => updatePreset({ maxToolRounds: maxToolRounds ?? undefined })}
+                  placeholder="按权限档默认"
                   min={1}
                   max={1000}
+                  hasClear
                   isDisabled={disabled}
                   width="100%"
                 />

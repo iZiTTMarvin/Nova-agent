@@ -33,7 +33,8 @@ interface AbilityTemplate {
   description: string
   prompt: string
   allowedTools: string[]
-  maxToolRounds: number
+  /** 未声明时新建 preset 不预填轮数，保存后按权限档默认执行。 */
+  maxToolRounds?: number
 }
 
 const FALLBACK_TEMPLATE: AbilityTemplate = {
@@ -41,8 +42,7 @@ const FALLBACK_TEMPLATE: AbilityTemplate = {
   name: '只读助手',
   description: '读取工作区信息并整理结果，不修改文件。',
   prompt: '读取必要信息并用结构化结论回答。',
-  allowedTools: ['ls', 'read', 'grep'],
-  maxToolRounds: 20
+  allowedTools: ['ls', 'read', 'grep']
 }
 
 type Route =
@@ -65,7 +65,9 @@ function createDraft(
       enabled: true,
       allowedTools: [...template.allowedTools],
       prompt: template.prompt,
-      maxToolRounds: template.maxToolRounds
+      ...(template.maxToolRounds !== undefined
+        ? { maxToolRounds: template.maxToolRounds }
+        : {})
     }
   }
 }
@@ -236,7 +238,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
         description: item.description,
         prompt: item.prompt,
         allowedTools: [...item.allowedTools],
-        maxToolRounds: item.maxToolRounds ?? 20
+        ...(item.maxToolRounds !== undefined ? { maxToolRounds: item.maxToolRounds } : {})
       }))
     return builtinTemplates.length > 0 ? builtinTemplates : [FALLBACK_TEMPLATE]
   }, [items])
@@ -584,7 +586,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                   <h4>System prompt</h4>
                   <pre>{selected.prompt}</pre>
                   <h4>运行限制</h4>
-                  <p>最多 {selected.maxToolRounds ?? 20} 轮工具调用{selected.contextWindow ? ` · 上下文 ${selected.contextWindow} tokens` : ''}</p>
+                  <p>{selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}{selected.contextWindow ? ` · 上下文 ${selected.contextWindow} tokens` : ''}</p>
                 </section>
               </div>
             </div>
