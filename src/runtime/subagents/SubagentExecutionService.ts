@@ -74,7 +74,11 @@ export interface SubagentExecutionServiceDeps {
   /** 派生前校验 registry 并为新 child 解析、冻结 header；不得返回凭据。 */
   readonly resolveExecutionTarget: (
     input:
-      | { readonly profile: SubagentProfileSnapshot }
+      | {
+          readonly profile: SubagentProfileSnapshot
+          readonly modelOverride?: { readonly providerId: string; readonly modelEntryId: string }
+          readonly reasoningEffort?: SubagentSessionHeader['reasoningEffort']
+        }
       | { readonly header: SubagentSessionHeader }
   ) => SubagentSessionHeader
   readonly adaptEvent?: (event: AgentEvent, context: SubagentEventContext) => AgentEvent
@@ -164,6 +168,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       throw new Error(`子代理深度 ${lineageBase.depth} 超过上限 ${this.maxDepth}`)
     }
     validateWorkingDirectory(command, parentSession.workspaceRoot)
+    validateSpawnModelOverride(command)
 
     const existingChild = this.deps.sessionStore.load(
       deriveChildSessionId(identity.spawnKey)
@@ -177,6 +182,9 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       }
       if (existingChild.subagent.profile.profileId !== command.profileId) {
         throw new Error(`spawnKey ${identity.spawnKey} 的 profile identity 冲突`)
+      }
+      if (!isSameModelOverride(existingChild.subagent.header, command)) {
+        throw new Error(`spawnKey ${identity.spawnKey} 的模型覆盖冲突`)
       }
       profile = existingChild.subagent.profile
       header = existingChild.subagent.header
@@ -215,7 +223,11 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       origin: command.invocation
     }
     if (!existingChild) {
-      header = this.deps.resolveExecutionTarget({ profile })
+      header = this.deps.resolveExecutionTarget({
+        profile,
+        ...(command.modelOverride ? { modelOverride: command.modelOverride } : {}),
+        ...(command.reasoningEffort !== undefined ? { reasoningEffort: command.reasoningEffort } : {})
+      })
     } else if (!existingRun || !isHardTerminalRunStatus(existingRun.status)) {
       if (!header) {
         throw new Error('历史 Child Session 缺少模型 header，无法恢复；请重新派遣子代理')
@@ -300,6 +312,16 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       throw new Error(`root run ${lineage.rootRunId} 的 execution generation 不可用`)
     }
 
+    if (!existingRun && context.waitForCapacity === true) {
+      const queued = this.deps.runCoordinator.startRun({
+        kind: 'agent',
+        runId: identity.spawnRunId,
+        workspaceId: childSession.workspaceRoot,
+        sessionId: childSession.id
+      })
+      assertChildRunIdentity(queued, childSession)
+    }
+
     if (context.abortSignal?.aborted) {
       this.commitWithoutExecution(
         childSession,
@@ -314,10 +336,14 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       runId: identity.spawnRunId,
       rootRunId: lineage.rootRunId,
       requestKey: identity.spawnKey,
-      wait: false,
+      wait: context.waitForCapacity === true,
       ...(context.abortSignal ? { abortSignal: context.abortSignal } : {})
     })
     if (!permitResult.ok) {
+      const current = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
+      if (current && isHardTerminalRunStatus(current.status)) {
+        return this.projectResult(command, childSession, identity.spawnRunId)
+      }
       if (recoverySnapshot || permitResult.code === 'run_active') {
         throw new SubagentScheduleRejectedError(permitResult)
       }
@@ -637,6 +663,45 @@ function validateSkillRoots(
   if (roots.some((root) => !path.isAbsolute(root))) {
     throw new Error('skillRoots 必须全部是绝对路径')
   }
+}
+
+const REASONING_EFFORT_VALUES = ['auto', 'low', 'medium', 'high', 'max'] as const
+
+function validateSpawnModelOverride(command: SpawnSubagentCommand): void {
+  if (command.modelOverride) {
+    const providerId = command.modelOverride.providerId?.trim()
+    const modelEntryId = command.modelOverride.modelEntryId?.trim()
+    if (!providerId || !modelEntryId) {
+      throw new Error('modelOverride 必须是包含 providerId 与 modelEntryId 的非空对象')
+    }
+  }
+  if (command.reasoningEffort !== undefined) {
+    if (!(REASONING_EFFORT_VALUES as readonly string[]).includes(command.reasoningEffort)) {
+      throw new Error('reasoningEffort 必须是 auto/low/medium/high/max 之一')
+    }
+  }
+}
+
+function isSameModelOverride(
+  header: SubagentSessionHeader | undefined,
+  command: SpawnSubagentCommand
+): boolean {
+  const override = command.modelOverride
+  const effort = command.reasoningEffort
+  if (!override && effort === undefined) {
+    // 调用方未提供覆盖，视为沿用已冻结路由；不触发冲突
+    return true
+  }
+  if (!header) return false
+  if (override) {
+    if (header.providerId !== override.providerId || header.modelEntryId !== override.modelEntryId) {
+      return false
+    }
+  }
+  if (effort !== undefined && header.reasoningEffort !== effort) {
+    return false
+  }
+  return true
 }
 
 function resolveLineageBase(

@@ -1,6 +1,7 @@
 /**
  * 内置工具注册清单（与 AgentRuntimeFactory 共用，避免测试与装配漂移）。
  */
+import { app } from 'electron'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { lsTool } from '../../../runtime/tools/lsTool'
 import { readTool } from '../../../runtime/tools/readTool'
@@ -17,7 +18,11 @@ import { todoWriteTool } from '../../../runtime/tools/todoWriteTool'
 import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
+import { createBatchTaskTool } from '../../../runtime/tools/batch_task'
 import { createAgentListTool } from '../../../runtime/tools/agent_list'
+import { createModelListTool } from '../../../runtime/tools/model_list'
+import { getModelDirectory } from '../../../shared/config'
+import { loadLlmRegistry } from '../../../runtime/model/config'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
@@ -49,6 +54,7 @@ export interface BuiltinToolRegistrationDeps {
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
   /** agent_list 读取的 workspace-scoped catalog；仅返回公开字段。 */
   getSubagentCatalog?: () => readonly SubagentCatalogEntry[]
+  loadSubagentProfile: (profileId: string, workspaceRoot: string) => unknown
   /** load_tools 写入的会话级工具可用性 Owner */
   getToolAvailability?: () => ToolAvailability | null
   /** run_code 的沙箱 Code Runtime 构建产物路径；缺省仅用于测试的进程内执行 */
@@ -118,8 +124,23 @@ export function registerBuiltinTools(
     })
   )
   toolRegistry.register(
+    createBatchTaskTool({
+      getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined),
+      loadProfile: deps.loadSubagentProfile
+    })
+  )
+  toolRegistry.register(
     createAgentListTool({
       getCatalog: deps.getSubagentCatalog ?? (() => [])
+    })
+  )
+  toolRegistry.register(
+    createModelListTool({
+      getModelDirectory: () => {
+        const registry = loadLlmRegistry(app.getPath('userData'))
+        if (!registry) return { entries: [], total: 0, truncated: false }
+        return getModelDirectory(registry)
+      }
     })
   )
   // load_tools 最后注册：其 enum / 描述需要完整注册清单来判定 live deferred 组

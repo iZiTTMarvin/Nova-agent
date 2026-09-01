@@ -25,8 +25,12 @@ export function getToolDisplayName(toolName: string): string {
       return '终端会话 (shell_session)'
     case 'task':
       return '调度子代理 (task)'
+    case 'batch_task':
+      return '并行调度子代理批次 (batch_task)'
     case 'agent_list':
       return '查看子代理目录 (agent_list)'
+    case 'model_list':
+      return '查看模型目录 (model_list)'
     case 'invoke_skill':
       return '调用技能 (invoke_skill)'
     case 'todo_write':
@@ -155,6 +159,12 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (sub && display) return `子代理 ${sub}：${display}`
       if (sub) return `子代理 ${sub}`
       return display || '调度子代理'
+    }
+    case 'batch_task': {
+      const items = Array.isArray(args.items) ? args.items : []
+      const first = items[0] && typeof items[0] === 'object' ? (items[0] as Record<string, unknown>).task : ''
+      const preview = typeof first === 'string' && first ? first.slice(0, 40) : ''
+      return items.length > 0 ? `并行批次 ${items.length} 项${preview ? `：${preview}…` : ''}` : '并行批次'
     }
     case 'invoke_skill': {
       // 技能调用：展示技能名 + 任务摘要

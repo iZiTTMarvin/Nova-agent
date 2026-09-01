@@ -131,11 +131,17 @@ export class SubagentScheduler {
     }
   }
 
-  /** generation 已失效后由生命周期 Owner 强制回收；执行 finally 的重复 release 安全。 */
+  /** 生命周期取消可同时回收活动 permit 或移除排队请求。 */
   releaseForRun(runId: string): boolean {
     const permit = this.activeByRun.get(runId)
-    if (!permit) return false
-    permit.release()
+    if (permit) {
+      permit.release()
+      return true
+    }
+    const waiter = this.queue.find((entry) => entry.input.runId === runId)
+    if (!waiter || !this.removeWaiter(waiter)) return false
+    this.cleanupWaiter(waiter)
+    waiter.resolve(this.reject('aborted', '子代理请求已取消', false))
     return true
   }
 

@@ -138,16 +138,17 @@ describe('llmRegistry', () => {
     expect(merged.some(m => m.modelId === 'new-model-x')).toBe(true)
   })
 
-  it('groupSelectableModels 按服务商分组', () => {
+  it('groupSelectableModels 只分组实际可用的服务商', () => {
     const p1 = createProviderFromPreset('glm', 'key1')
     const p2 = createProviderFromPreset('deepseek', 'key2')
+    p2.baseUrl = ''
     const registry = {
       version: 2 as const,
       providers: [p1, p2],
       activeModel: { providerId: p1.id, modelEntryId: p1.models[0].id }
     }
     const groups = groupSelectableModels(registry)
-    expect(groups).toHaveLength(2)
+    expect(groups.map((group) => group.providerId)).toEqual([p1.id])
   })
 
   it('resolveModelConfig 合并 provider 级 toolDialect', () => {

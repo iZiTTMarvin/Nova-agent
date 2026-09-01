@@ -18,6 +18,15 @@ const profile: SubagentProfileSnapshot = {
   model: {
     providerId: 'provider-a',
     modelEntryId: 'model-a',
+    reasoningEffort: 'auto'
+  }
+}
+
+const highEffortProfile: SubagentProfileSnapshot = {
+  ...profile,
+  model: {
+    providerId: 'provider-a',
+    modelEntryId: 'model-a',
     reasoningEffort: 'high'
   }
 }
@@ -32,7 +41,7 @@ function createProvider(overrides: Partial<ProviderConfig> = {}): ProviderConfig
     toolDialect: 'native',
     models: [{
       id: 'model-a',
-      modelId: 'api-model-a',
+      modelId: 'glm-5.2',
       contextWindow: 64_000,
       supportsVision: true,
       reasoningEffort: 'medium'
@@ -54,7 +63,7 @@ function registry(): LlmRegistry {
         enabled: true,
         models: [{
           id: 'model-b',
-          modelId: 'api-model-b',
+          modelId: 'glm-5.3-flash',
           contextWindow: 32_000,
           supportsVision: false,
           reasoningEffort: 'low'
@@ -67,27 +76,37 @@ function registry(): LlmRegistry {
 
 describe('child model routing', () => {
   it('profile binding wins over active model and uses entry capabilities', () => {
-    const resolved = resolveChildModelFromProfile(registry(), profile)
+    const reg = registry()
+    reg.providers[0]!.models[0]!.reasoningEffort = undefined
+    const resolved = resolveChildModelFromProfile(reg, profile)
 
     expect(resolved.header).toEqual({
       providerId: 'provider-a',
       modelEntryId: 'model-a',
-      modelId: 'api-model-a',
-      reasoningEffort: 'high'
+      modelId: 'glm-5.2',
+      reasoningEffort: 'auto'
     })
     expect(resolved.modelConfig).toMatchObject({
-      modelId: 'api-model-a',
+      modelId: 'glm-5.2',
       apiKey: 'routing-test-key',
       contextWindow: 64_000,
       supportsVision: true,
-      reasoningEffort: 'high',
-      cacheProfile: 'generic',
+      cacheProfile: 'glm',
       toolDialect: 'native'
     })
+    expect(resolved.modelConfig).not.toHaveProperty('reasoningEffort')
+  })
+
+  it('unbound profile uses the active model entry default effort', () => {
+    const resolved = resolveChildModelFromProfile(registry(), { ...profile, model: undefined })
+    expect(resolved.header.reasoningEffort).toBe('low')
   })
 
   it('unbound profile resolves the registry active model and its default effort', () => {
-    const resolved = resolveChildModelFromProfile(registry(), {
+    const reg = registry()
+    // 覆盖 activeModel 的 entry 默认值，让未绑定 profile 回落到 auto
+    reg.providers[1]!.models[0]!.reasoningEffort = undefined
+    const resolved = resolveChildModelFromProfile(reg, {
       ...profile,
       model: undefined
     })
@@ -95,8 +114,8 @@ describe('child model routing', () => {
     expect(resolved.header).toEqual({
       providerId: 'provider-b',
       modelEntryId: 'model-b',
-      modelId: 'api-model-b',
-      reasoningEffort: 'low'
+      modelId: 'glm-5.3-flash',
+      reasoningEffort: 'auto'
     })
   })
 
@@ -107,8 +126,10 @@ describe('child model routing', () => {
 
     const restored = resolveChildModelFromHeader(changed, header)
 
-    expect(restored.header.reasoningEffort).toBe('high')
-    expect(restored.modelConfig.reasoningEffort).toBe('high')
+    expect(restored.header.reasoningEffort).toBe('auto')
+    // 恢复路径以持久 header 为准；header 为 auto 时模型请求不携带 reasoning_effort
+    expect(restored.header.reasoningEffort).toBe('auto')
+    expect(restored.modelConfig).not.toHaveProperty('reasoning_effort')
   })
 
   it('rejects a public modelId drift during header recovery', () => {
@@ -151,7 +172,38 @@ describe('child model routing', () => {
   it('rejects legacy profile model references before child creation', () => {
     expect(() => resolveChildModelFromProfile(registry(), {
       ...profile,
-      model: { providerId: 'provider-a', modelId: 'api-model-a' }
+      model: { providerId: 'provider-a', modelId: 'glm-5.2' }
     })).toThrow()
+  })
+
+  it('single override wins over profile binding and validates effort support', () => {
+    const reg = registry()
+    expect(() => resolveChildModelFromProfile(reg, profile, {
+      modelOverride: { providerId: 'provider-b', modelEntryId: 'model-b' },
+      reasoningEffortOverride: 'medium'
+    })).toThrow(/不支持思考强度/)
+
+    const ok = resolveChildModelFromProfile(reg, profile, {
+      modelOverride: { providerId: 'provider-b', modelEntryId: 'model-b' },
+      reasoningEffortOverride: 'max'
+    })
+    expect(ok.header).toEqual({
+      providerId: 'provider-b',
+      modelEntryId: 'model-b',
+      modelId: 'glm-5.3-flash',
+      reasoningEffort: 'max'
+    })
+  })
+
+  it('effort priority: single override > profile effort > entry default > auto', () => {
+    const reg = registry()
+    expect(resolveChildModelFromProfile(reg, profile, {
+      reasoningEffortOverride: 'max'
+    }).header.reasoningEffort).toBe('max')
+    expect(resolveChildModelFromProfile(reg, highEffortProfile).header.reasoningEffort).toBe('high')
+    expect(resolveChildModelFromProfile(reg, { ...profile, model: undefined }).header.reasoningEffort).toBe('low')
+
+    reg.providers[1]!.models[0]!.reasoningEffort = undefined
+    expect(resolveChildModelFromProfile(reg, { ...profile, model: undefined }).header.reasoningEffort).toBe('auto')
   })
 })

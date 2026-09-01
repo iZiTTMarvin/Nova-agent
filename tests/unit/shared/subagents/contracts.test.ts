@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type {
-  SpawnSubagentCommand,
-  SubagentActivityProjection,
-  SubagentProfileSnapshot,
-  SubagentSessionMetadata
+import {
+  decodeBatchInput,
+  SubagentBatchDecodeError,
+  type SpawnSubagentCommand,
+  type SubagentActivityProjection,
+  type SubagentProfileSnapshot,
+  type SubagentSessionMetadata
 } from '../../../../src/shared/subagents'
 
 const profile: SubagentProfileSnapshot = {
@@ -73,5 +75,24 @@ describe('shared subagent contracts', () => {
     expect(activity).not.toHaveProperty('systemPrompt')
     expect(activity.profile).not.toHaveProperty('systemPrompt')
     expect(activity.parentToolCallId).toBe('tc_parent')
+  })
+
+  it('批次输入要求 2-4 个非重复项，并保留输入顺序', () => {
+    expect(() => decodeBatchInput({
+      items: [{ itemId: 'only', profileId: 'review', task: 'check' }]
+    })).toThrow(SubagentBatchDecodeError)
+    expect(() => decodeBatchInput({
+      items: [
+        { itemId: 'same', profileId: 'review', task: 'first' },
+        { itemId: 'same', profileId: 'review', task: 'second' }
+      ]
+    })).toThrow(/重复/)
+
+    expect(decodeBatchInput({
+      items: [
+        { itemId: 'first', profileId: 'review', task: 'first task' },
+        { itemId: 'second', profileId: 'explore', task: 'second task' }
+      ]
+    }).items.map((item) => item.itemId)).toEqual(['first', 'second'])
   })
 })

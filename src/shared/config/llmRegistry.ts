@@ -4,17 +4,12 @@
  * version 2 配置结构：多个服务商，每个服务商下多个模型；
  * 运行时通过 resolveModelConfig 合并为 OpenAI 兼容 ModelConfig。
  */
-import type { ModelConfig } from './types'
+import type { ModelConfig, ReasoningEffort } from './types'
+import { lookupModelCapability } from './modelRegistry'
+export type { ReasoningEffort } from './types'
 
 /** 预设服务商 ID */
 export type PresetProviderId = 'minimax' | 'glm' | 'deepseek'
-
-/**
- * 思考强度（reasoning effort）。
- * - 'auto'：不发送该参数，让模型用默认行为（零行为变化）
- * - 'low' / 'medium' / 'high' / 'max'：显式控制推理深度
- */
-export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'max'
 
 /** 活跃模型引用（provider + model entry） */
 export interface ActiveModelRef {
@@ -29,6 +24,8 @@ export interface ModelEntry {
   /** API 模型标识 */
   modelId: string
   displayName?: string
+  /** 显式别名：仅规范化后的精确匹配参与自然语言解析，不做编辑距离猜测。 */
+  aliases?: string[]
   contextWindow?: number
   supportsVision?: boolean
   /** 思考强度；缺省或 'auto' 时不发送 reasoning 参数 */
@@ -340,11 +337,11 @@ export interface SelectableModel {
   isActive: boolean
 }
 
-/** 列出所有可选择的模型（enabled + 有 apiKey + 有模型） */
+/** 列出所有可选择的模型（provider 可用且模型未退役）。 */
 export function listSelectableModels(registry: LlmRegistry): SelectableModel[] {
   const items: SelectableModel[] = []
   for (const provider of registry.providers) {
-    if (!provider.enabled || !provider.apiKey.trim()) continue
+    if (!provider.enabled || !provider.baseUrl.trim() || !provider.apiKey.trim()) continue
     for (const entry of provider.models) {
       if (entry.retired === true || !entry.modelId.trim()) continue
       items.push({
@@ -401,6 +398,19 @@ export function getActiveModelReasoningEffort(registry: LlmRegistry): ReasoningE
   if (!provider) return 'auto'
   const entry = findModelEntry(provider, registry.activeModel.modelEntryId)
   return entry?.reasoningEffort ?? 'auto'
+}
+
+/** 未登记能力时返回 null；auto 始终安全，因为它不会向 provider 发送 effort。 */
+export function getSupportedReasoningEfforts(entry: ModelEntry): readonly ReasoningEffort[] | null {
+  const efforts = lookupModelCapability(entry.modelId)?.reasoningEfforts
+  return efforts ? ['auto', ...efforts] : null
+}
+
+/** 判断 effort 是否被指定模型支持（缺省视为 auto）。 */
+export function isReasoningEffortSupported(entry: ModelEntry, effort?: ReasoningEffort): boolean {
+  const normalized = effort ?? 'auto'
+  if (normalized === 'auto') return true
+  return getSupportedReasoningEfforts(entry)?.includes(normalized) === true
 }
 
 /**
@@ -470,6 +480,334 @@ export function isLlmRegistryV2(raw: unknown): raw is LlmRegistry {
   return obj.version === 2 && Array.isArray(obj.providers) && typeof obj.activeModel === 'object'
 }
 
+/** 模型选择解析的有界候选上限 */
+export const MAX_MODEL_SELECTOR_CANDIDATES = 5
+
+/** 模型目录的默认条数与字符预算 */
+export const MODEL_DIRECTORY_DEFAULT_LIMIT = 50
+export const MODEL_DIRECTORY_MAX_CHARS = 20_000
+
+export interface ModelSelectorCandidate {
+  readonly selector: string
+  readonly providerId: string
+  readonly providerName: string
+  readonly modelEntryId: string
+  readonly modelId: string
+  readonly displayName: string
+  readonly aliases: readonly string[]
+}
+
+export type ModelSelectorStatus =
+  | 'resolved'
+  | 'not_found'
+  | 'ambiguous'
+  | 'unavailable'
+  | 'unsupported_effort'
+
+export type ModelSelectorResult =
+  | {
+      readonly status: 'resolved'
+      readonly provider: ProviderConfig
+      readonly entry: ModelEntry
+      readonly ref: ActiveModelRef
+      readonly supportedEfforts: readonly ReasoningEffort[] | null
+    }
+  | {
+      readonly status: 'not_found'
+      readonly candidates: readonly ModelSelectorCandidate[]
+    }
+  | {
+      readonly status: 'ambiguous'
+      readonly candidates: readonly ModelSelectorCandidate[]
+    }
+  | {
+      readonly status: 'unavailable'
+      readonly reason: Exclude<ModelResolutionStatus, 'available'>
+      readonly provider?: ProviderConfig
+      readonly entry?: ModelEntry
+      readonly candidates?: readonly ModelSelectorCandidate[]
+    }
+  | {
+      readonly status: 'unsupported_effort'
+      readonly reason: 'unsupported_effort'
+      readonly provider: ProviderConfig
+      readonly entry: ModelEntry
+      readonly requestedEffort: ReasoningEffort
+      readonly supportedEfforts: readonly ReasoningEffort[] | null
+    }
+
+export interface ModelDirectoryEntry {
+  readonly selector: string
+  readonly providerId: string
+  readonly providerName: string
+  readonly modelEntryId: string
+  readonly modelId: string
+  readonly displayName: string
+  readonly aliases: readonly string[]
+  readonly availability: 'available' | 'unavailable'
+  readonly reason?: Exclude<ModelResolutionStatus, 'available'>
+  readonly supportedEfforts: readonly ReasoningEffort[] | null
+  readonly isActive: boolean
+}
+
+export interface ModelDirectoryResult {
+  readonly entries: readonly ModelDirectoryEntry[]
+  readonly total: number
+  readonly truncated: boolean
+}
+
+function normalizeSelectorValue(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\/:\s]+/g, ' ')
+    .replace(/[._\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function toSelectorCandidate(provider: ProviderConfig, entry: ModelEntry): ModelSelectorCandidate {
+  return {
+    selector: `${provider.id}::${entry.id}`,
+    providerId: provider.id,
+    providerName: provider.name,
+    modelEntryId: entry.id,
+    modelId: entry.modelId,
+    displayName: entry.displayName ?? entry.modelId,
+    aliases: entry.aliases ? [...entry.aliases] : []
+  }
+}
+
+function buildNormalizedKeys(provider: ProviderConfig, entry: ModelEntry): string[] {
+  const keys: string[] = []
+  const providerNorm = normalizeSelectorValue(provider.name)
+  const idNorm = normalizeSelectorValue(provider.id)
+  const modelIdNorm = normalizeSelectorValue(entry.modelId)
+  const displayNorm = entry.displayName ? normalizeSelectorValue(entry.displayName) : ''
+  const aliasNorms = (entry.aliases ?? []).map(normalizeSelectorValue).filter(Boolean)
+
+  if (modelIdNorm) keys.push(modelIdNorm)
+  if (displayNorm) keys.push(displayNorm)
+  for (const alias of aliasNorms) keys.push(alias)
+  if (providerNorm) {
+    keys.push(providerNorm)
+    if (idNorm && idNorm !== providerNorm) keys.push(idNorm)
+    if (modelIdNorm) keys.push(`${providerNorm} ${modelIdNorm}`)
+    if (idNorm && idNorm !== providerNorm && modelIdNorm) keys.push(`${idNorm} ${modelIdNorm}`)
+    if (displayNorm) keys.push(`${providerNorm} ${displayNorm}`)
+    if (idNorm && idNorm !== providerNorm && displayNorm) keys.push(`${idNorm} ${displayNorm}`)
+    for (const alias of aliasNorms) {
+      keys.push(`${providerNorm} ${alias}`)
+      if (idNorm && idNorm !== providerNorm) keys.push(`${idNorm} ${alias}`)
+    }
+  }
+  return Array.from(new Set(keys.filter(Boolean)))
+}
+
+function sortCandidates(candidates: ModelSelectorCandidate[]): ModelSelectorCandidate[] {
+  return [...candidates].sort((a, b) => {
+    const providerCompare = a.providerName.localeCompare(b.providerName)
+    if (providerCompare !== 0) return providerCompare
+    const displayCompare = a.displayName.localeCompare(b.displayName)
+    if (displayCompare !== 0) return displayCompare
+    const modelCompare = a.modelId.localeCompare(b.modelId)
+    if (modelCompare !== 0) return modelCompare
+    return a.selector.localeCompare(b.selector)
+  })
+}
+
+function boundedCandidates(candidates: ModelSelectorCandidate[]): ModelSelectorCandidate[] {
+  const sorted = sortCandidates(candidates)
+  return sorted.slice(0, MAX_MODEL_SELECTOR_CANDIDATES)
+}
+
+/**
+ * 纯解析器：自然语言/displayName/alias/canonical 到 providerId+modelEntryId 的解析与歧义判断。
+ * - 优先接受 canonical providerId+modelEntryId；
+ * - 自然语言匹配仅针对 provider 名、modelId、displayName 和显式 alias 的规范化精确匹配；
+ * - 跨 provider 只有唯一结果时才解析；多结果返回有界候选，禁止编辑距离猜测与取第一个。
+ */
+export function resolveModelSelector(
+  registry: LlmRegistry,
+  rawSelector: string | ActiveModelRef,
+  requestedEffort?: ReasoningEffort
+): ModelSelectorResult {
+  const effort = requestedEffort ?? 'auto'
+
+  // Canonical object path
+  if (typeof rawSelector !== 'string') {
+    const ref: ActiveModelRef = { providerId: rawSelector.providerId, modelEntryId: rawSelector.modelEntryId }
+    const resolved = resolveModelReference(registry, ref)
+    if (resolved.status !== 'available') {
+      return { status: 'unavailable', reason: resolved.status, provider: resolved.provider, entry: resolved.entry }
+    }
+    const supported = getSupportedReasoningEfforts(resolved.entry)
+    if (effort !== 'auto' && supported?.includes(effort) !== true) {
+      return {
+        status: 'unsupported_effort',
+        reason: 'unsupported_effort',
+        provider: resolved.provider,
+        entry: resolved.entry,
+        requestedEffort: effort,
+        supportedEfforts: supported
+      }
+    }
+    return { status: 'resolved', provider: resolved.provider, entry: resolved.entry, ref, supportedEfforts: supported }
+  }
+
+  const selector = rawSelector.trim()
+  if (!selector) return { status: 'not_found', candidates: [] }
+
+  // Canonical string "providerId::modelEntryId"
+  if (selector.includes('::')) {
+    const [providerId, modelEntryId] = selector.split('::')
+    if (providerId && modelEntryId) {
+      const ref: ActiveModelRef = { providerId: providerId.trim(), modelEntryId: modelEntryId.trim() }
+      const resolved = resolveModelReference(registry, ref)
+      if (resolved.status !== 'available') {
+        return { status: 'unavailable', reason: resolved.status, provider: resolved.provider, entry: resolved.entry }
+      }
+      const supported = getSupportedReasoningEfforts(resolved.entry)
+      if (effort !== 'auto' && supported?.includes(effort) !== true) {
+        return {
+          status: 'unsupported_effort',
+          reason: 'unsupported_effort',
+          provider: resolved.provider,
+          entry: resolved.entry,
+          requestedEffort: effort,
+          supportedEfforts: supported
+        }
+      }
+      return { status: 'resolved', provider: resolved.provider, entry: resolved.entry, ref, supportedEfforts: supported }
+    }
+  }
+
+  const normalized = normalizeSelectorValue(selector)
+  if (!normalized) return { status: 'not_found', candidates: [] }
+
+  const matches: Array<{ provider: ProviderConfig; entry: ModelEntry }> = []
+  for (const provider of registry.providers) {
+    for (const entry of provider.models) {
+      if (!entry.modelId.trim()) continue
+      const keys = buildNormalizedKeys(provider, entry)
+      if (keys.includes(normalized)) {
+        matches.push({ provider, entry })
+      }
+    }
+  }
+
+  if (matches.length === 0) {
+    return { status: 'not_found', candidates: [] }
+  }
+
+  if (matches.length > 1) {
+    const candidates = boundedCandidates(matches.map(({ provider, entry }) => toSelectorCandidate(provider, entry)))
+    return { status: 'ambiguous', candidates }
+  }
+
+  const single = matches[0]!
+  const ref: ActiveModelRef = { providerId: single.provider.id, modelEntryId: single.entry.id }
+  const resolved = resolveModelReference(registry, ref)
+  if (resolved.status !== 'available') {
+    return { status: 'unavailable', reason: resolved.status, provider: resolved.provider, entry: resolved.entry, candidates: [toSelectorCandidate(single.provider, single.entry)] }
+  }
+  const supported = getSupportedReasoningEfforts(resolved.entry)
+  if (effort !== 'auto' && supported?.includes(effort) !== true) {
+    return {
+      status: 'unsupported_effort',
+      reason: 'unsupported_effort',
+      provider: resolved.provider,
+      entry: resolved.entry,
+      requestedEffort: effort,
+      supportedEfforts: supported
+    }
+  }
+  return { status: 'resolved', provider: resolved.provider, entry: resolved.entry, ref, supportedEfforts: supported }
+}
+
+/** 校验 effort 是否受支持；不支持时返回可选集合供 fail-closed 诊断。 */
+export function validateReasoningEffort(
+  entry: ModelEntry,
+  requestedEffort?: ReasoningEffort
+): { ok: true; supportedEfforts: readonly ReasoningEffort[] | null } | {
+  ok: false
+  supportedEfforts: readonly ReasoningEffort[] | null
+  requestedEffort: ReasoningEffort
+} {
+  const supported = getSupportedReasoningEfforts(entry)
+  const normalized = requestedEffort ?? 'auto'
+  if (normalized === 'auto' || supported?.includes(normalized) === true) {
+    return { ok: true, supportedEfforts: supported }
+  }
+  return { ok: false, supportedEfforts: supported, requestedEffort: normalized }
+}
+
+/** 单一可信的模型选择只读投影：不暴露 baseUrl/凭据/完整 ModelConfig，带稳定排序与预算。 */
+export function getModelDirectory(
+  registry: LlmRegistry,
+  options?: { limit?: number; maxChars?: number }
+): ModelDirectoryResult {
+  const limit = Math.min(options?.limit ?? MODEL_DIRECTORY_DEFAULT_LIMIT, MODEL_DIRECTORY_DEFAULT_LIMIT)
+  const maxChars = options?.maxChars ?? MODEL_DIRECTORY_MAX_CHARS
+
+  const entries: ModelDirectoryEntry[] = []
+  for (const provider of registry.providers) {
+    for (const entry of provider.models) {
+      if (!entry.modelId.trim()) continue
+      const ref: ActiveModelRef = { providerId: provider.id, modelEntryId: entry.id }
+      const resolved = resolveModelReference(registry, ref)
+      const availability: ModelDirectoryEntry['availability'] = resolved.status === 'available' ? 'available' : 'unavailable'
+      const supportedEfforts = getSupportedReasoningEfforts(entry)
+      const directoryEntry: ModelDirectoryEntry = {
+        selector: `${provider.id}::${entry.id}`,
+        providerId: provider.id,
+        providerName: provider.name,
+        modelEntryId: entry.id,
+        modelId: entry.modelId,
+        displayName: entry.displayName ?? entry.modelId,
+        aliases: entry.aliases ? [...entry.aliases] : [],
+        availability,
+        ...(availability === 'unavailable' ? { reason: resolved.status as Exclude<ModelResolutionStatus, 'available'> } : {}),
+        supportedEfforts,
+        isActive: registry.activeModel.providerId === provider.id && registry.activeModel.modelEntryId === entry.id
+      }
+      entries.push(directoryEntry)
+    }
+  }
+
+  entries.sort((a, b) => {
+    const providerCompare = a.providerName.localeCompare(b.providerName)
+    if (providerCompare !== 0) return providerCompare
+    const displayCompare = a.displayName.localeCompare(b.displayName)
+    if (displayCompare !== 0) return displayCompare
+    const modelCompare = a.modelId.localeCompare(b.modelId)
+    if (modelCompare !== 0) return modelCompare
+    return a.selector.localeCompare(b.selector)
+  })
+
+  const total = entries.length
+  let truncated = false
+  let sliced = entries
+  if (sliced.length > limit) {
+    sliced = sliced.slice(0, limit)
+    truncated = true
+  }
+
+  let charCount = 0
+  const budgeted: ModelDirectoryEntry[] = []
+  for (const entry of sliced) {
+    const jsonLen = JSON.stringify(entry).length
+    if (charCount + jsonLen > maxChars && budgeted.length > 0) {
+      truncated = true
+      break
+    }
+    charCount += jsonLen
+    budgeted.push(entry)
+  }
+
+  return { entries: budgeted, total, truncated }
+}
+
 /** 校验并规范化 LlmRegistry */
 export type LlmRegistryValidationResult =
   | { valid: true; registry: LlmRegistry }
@@ -500,6 +838,11 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
       if (model.retired !== undefined && typeof model.retired !== 'boolean') {
         return { valid: false, message: `服务商「${p.name}」的模型退役状态无效` }
       }
+      if (model.aliases !== undefined) {
+        if (!Array.isArray(model.aliases) || model.aliases.some(item => typeof item !== 'string' || !item.trim() || item.length > 128)) {
+          return { valid: false, message: `服务商「${p.name}」的模型别名无效` }
+        }
+      }
     }
     providers.push({
       id: p.id,
@@ -512,6 +855,14 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
         id: m.id || generateLocalId('model'),
         modelId: (m.modelId ?? '').trim(),
         ...(m.displayName ? { displayName: m.displayName.trim() } : {}),
+        ...(Array.isArray(m.aliases)
+          ? {
+              aliases: (m.aliases as unknown[])
+                .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+                .map(item => item.trim())
+                .slice(0, 8)
+            }
+          : {}),
         ...(m.contextWindow !== undefined ? { contextWindow: m.contextWindow } : {}),
         ...(m.supportsVision !== undefined ? { supportsVision: m.supportsVision } : {}),
         ...(m.reasoningEffort && m.reasoningEffort !== 'auto'

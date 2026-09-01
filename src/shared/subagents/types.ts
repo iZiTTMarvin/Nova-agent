@@ -5,7 +5,7 @@
  * intentionally do not depend on any runtime, main-process, or renderer type.
  */
 import type { TurnTruncationReason } from '../run/types'
-import type { ReasoningEffort } from '../config/llmRegistry'
+import type { ReasoningEffort } from '../config'
 
 /** The caller category that gives a child execution its durable identity. */
 export type SubagentOrigin =
@@ -148,6 +148,12 @@ export interface SpawnSubagentCommand {
   readonly workingDirectory: string
   readonly isolation: 'shared' | 'readonly'
   readonly timeoutMs?: number
+  /** 可选 canonical 模型覆盖；只影响模型路由，不改变 profile prompt/工具/权限/isolation。 */
+  readonly modelOverride?: {
+    readonly providerId: string
+    readonly modelEntryId: string
+  }
+  readonly reasoningEffort?: ReasoningEffort
 }
 
 export type SubagentExecutionStatus =

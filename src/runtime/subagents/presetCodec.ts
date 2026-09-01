@@ -3,7 +3,7 @@
  * 类型化诊断都在这里产生。IPC 保存、磁盘读取与运行时 profile 解析前校验
  * 都收敛到本模块，调用方不得复制规则。
  */
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { ReasoningEffort } from '../../shared/config'
 import type {
   LegacySubagentModelReference,
   SubagentModelBinding,

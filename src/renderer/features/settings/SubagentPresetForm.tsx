@@ -7,10 +7,11 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import {
   getActiveModelDisplayName,
+  getSupportedReasoningEfforts,
   listSelectableModels,
   type LlmRegistry,
   type ReasoningEffort
-} from '../../../shared/config/llmRegistry'
+} from '../../../shared/config'
 import type {
   SubAgentSpec,
   SubagentPresetLocation,
@@ -90,10 +91,10 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
         .find(provider => provider.id === selectedModel.providerId)
         ?.models.find(entry => entry.id === selectedModel.modelEntryId)
     : undefined
-  const knownEfforts: ReasoningEffort[] = ['auto']
-  if (selectedEntry?.reasoningEffort && selectedEntry.reasoningEffort !== 'auto') {
-    knownEfforts.push(selectedEntry.reasoningEffort)
-  }
+  const effortSupport = selectedEntry
+    ? getSupportedReasoningEfforts(selectedEntry)
+    : null
+  const knownEfforts: readonly ReasoningEffort[] = effortSupport ?? ['auto']
   const updatePreset = (patch: Partial<SubAgentSpec>) => {
     onChange({ ...draft, preset: { ...draft.preset, ...patch } })
   }
@@ -198,7 +199,22 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
                   return
                 }
                 const [providerId, modelEntryId] = value.split('::')
-                updatePreset({ model: { providerId, modelEntryId } })
+                const nextEffort = draft.preset.model && 'modelEntryId' in draft.preset.model
+                  ? draft.preset.model.reasoningEffort
+                  : undefined
+                const nextEntry = registry?.providers
+                  .find(provider => provider.id === providerId)
+                  ?.models.find(entry => entry.id === modelEntryId)
+                const shouldKeepEffort = nextEntry && nextEffort
+                  ? getSupportedReasoningEfforts(nextEntry)?.includes(nextEffort) === true
+                  : false
+                updatePreset({
+                  model: {
+                    providerId: providerId!,
+                    modelEntryId: modelEntryId!,
+                    ...(shouldKeepEffort && nextEffort ? { reasoningEffort: nextEffort } : {})
+                  }
+                })
               }}
               isDisabled={disabled}
               width={280}

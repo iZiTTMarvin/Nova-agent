@@ -9,6 +9,8 @@
  * 数据来源：Cherry Studio 注册表 + litellm 模型表 + 各厂商官方文档（见每条注释）。
  * 维护：新模型上线并确认能力后在此添加一条精确 modelId；拿不准的不收录。
  */
+import type { ReasoningEffort } from './types'
+
 export interface ModelCapabilityEntry {
   /** 是否支持图片输入。true=明确支持；false=明确不支持 */
   supportsVision?: boolean
@@ -18,6 +20,7 @@ export interface ModelCapabilityEntry {
    * 未设时走 resolveContextWindow → inferContextWindow 兜底。
    */
   contextWindow?: number
+  reasoningEfforts?: readonly Exclude<ReasoningEffort, 'auto'>[]
 }
 
 /** 精确 modelId → 能力。查找时统一 toLowerCase 全等匹配。 */
@@ -71,8 +74,12 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'glm-5': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text
   'glm-5.1': { supportsVision: false }, // 来源: Cherry Studio（id: glm-5-1）inputModalities=text
   'glm-5-1': { supportsVision: false }, // 来源: Cherry Studio 连字符别名
-  'glm-5.2': { supportsVision: false }, // 来源: Cherry Studio（id: glm-5-2）inputModalities=text
-  'glm-5-2': { supportsVision: false }, // 来源: Cherry Studio 连字符别名
+  'glm-5.2': { supportsVision: false, reasoningEfforts: ['low', 'medium', 'high', 'max'] }, // 来源: 智谱官方 thinking 文档（2026-09）
+  'glm-5-2': { supportsVision: false, reasoningEfforts: ['low', 'medium', 'high', 'max'] }, // 来源: 智谱官方 thinking 文档（2026-09）
+  'glm-5.3': { supportsVision: false, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3 文档（2026-09）
+  'glm-5-3': { supportsVision: false, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3 文档（2026-09）
+  'glm-5.3-flash': { supportsVision: true, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3-Flash 文档（2026-09）
+  'glm-5-3-flash': { supportsVision: true, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3-Flash 文档（2026-09）
   // 视觉变体
   'glm-4v': { supportsVision: true }, // 来源: Cherry Studio
   'glm-4v-flash': { supportsVision: true }, // 来源: Cherry Studio

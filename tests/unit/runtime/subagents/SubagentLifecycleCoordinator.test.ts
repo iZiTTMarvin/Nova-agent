@@ -117,6 +117,31 @@ describe('SubagentLifecycleCoordinator', () => {
     expect(coordinator.getSnapshot('run-grandchild')?.status).toBe('cancelled')
   })
 
+  it('单独取消排队中的 child 会移除 Scheduler waiter', async () => {
+    createChild(parentSessionId, 'run-parent', 'run-child', 1)
+    scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1, waitTimeoutMs: 100 })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      rootRunId: 'run-other',
+      requestKey: 'occupied'
+    })
+    const waiting = scheduler.acquire({
+      runId: 'run-child',
+      rootRunId: 'run-parent',
+      requestKey: 'child',
+      wait: true
+    })
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    await lifecycle.cancelRunTree('run-child', 'child_cancel')
+
+    await expect(waiting).resolves.toEqual(expect.objectContaining({ ok: false, code: 'aborted' }))
+    expect(coordinator.getSnapshot('run-child')?.status).toBe('cancelled')
+    expect(coordinator.getSnapshot('run-parent')?.status).toBe('running')
+    expect(scheduler.snapshot().queued).toBe(0)
+    if (occupied.ok) occupied.permit.release()
+  })
+
   it('grace 到期保留 lingering handle、失效 generation 并提交 interrupted', async () => {
     createChild(parentSessionId, 'run-parent', 'run-child', 1)
     registry.register({

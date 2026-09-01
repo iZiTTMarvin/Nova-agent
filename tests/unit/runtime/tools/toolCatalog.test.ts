@@ -30,6 +30,7 @@ function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): To
     getAgentLoop: () => null,
     getMemoryRetrievalService: () => null,
     loadSettings: () => DEFAULT_NOVA_SETTINGS,
+    loadSubagentProfile: () => undefined,
     memoryEnabled: true,
     codeIndexEnabled: true,
     getCodeContextQueryPort: () => null,
@@ -94,7 +95,7 @@ describe('Tool Catalog 清洁度', () => {
 
   it('live 组成员全部未注册 → 校验失败（空组绝不下发）', () => {
     const result = validateRegistryAgainstCatalog(
-      fullRegistryNames().filter(name => name !== 'task')
+      fullRegistryNames().filter(name => name !== 'task' && name !== 'batch_task')
     )
     expect(result.ok).toBe(false)
     expect(result.issues.some(issue => issue.kind === 'empty-live-group')).toBe(true)

@@ -56,9 +56,25 @@ describe('task tool spawn adapter', () => {
       type: 'object',
       properties: {
         subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose' },
-        task: { type: 'string', description: '子任务描述' }
+        task: { type: 'string', description: '子任务描述' },
+        model: {
+          type: 'object',
+          description: '可选 canonical 模型覆盖，仅改变模型路由，不改变 profile prompt/工具/权限/isolation',
+          properties: {
+            providerId: { type: 'string', description: '目标 providerId' },
+            modelEntryId: { type: 'string', description: '目标 modelEntryId' }
+          },
+          required: ['providerId', 'modelEntryId'],
+          additionalProperties: false
+        },
+        reasoningEffort: {
+          type: 'string',
+          description: '可选思考强度覆盖（auto/low/medium/high/max），仅改变推理强度',
+          enum: ['auto', 'low', 'medium', 'high', 'max']
+        }
       },
-      required: ['subagent_type', 'task']
+      required: ['subagent_type', 'task'],
+      additionalProperties: false
     })
     expect(tool.executionMode).toBe('sequential')
   })
@@ -173,5 +189,61 @@ describe('task tool spawn adapter', () => {
       { subagent_type: 'explore', task: 'x' },
       context()
     )).error).toContain('尚未装配')
+  })
+
+  it('支持可选 canonical 模型覆盖与 effort，严格拒绝非法 effort 与未知字段', async () => {
+    const { tool, spawn } = setup()
+    const withOverride = await tool.execute(
+      {
+        subagent_type: 'explore',
+        task: 'inspect',
+        model: { providerId: 'glm', modelEntryId: 'glm-52' },
+        reasoningEffort: 'max'
+      },
+      context()
+    )
+    expect(withOverride.success).toBe(true)
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: 'explore',
+        modelOverride: { providerId: 'glm', modelEntryId: 'glm-52' },
+        reasoningEffort: 'max'
+      }),
+      expect.anything()
+    )
+
+    expect((await tool.execute(
+      { subagent_type: 'explore', task: 'inspect', reasoningEffort: 'ultra' },
+      context()
+    )).error).toContain('reasoningEffort')
+
+    expect((await tool.execute(
+      { subagent_type: 'explore', task: 'inspect', unknownField: 1 } as Record<string, unknown>,
+      context()
+    )).error).toContain('未知字段')
+
+    expect((await tool.execute(
+      { subagent_type: 'explore', task: 'inspect', model: { providerId: '', modelEntryId: '' } },
+      context()
+    )).error).toContain('model')
+  })
+
+  it('模型覆盖不改变 profile 的 tool/权限/isolation', async () => {
+    const { tool, spawn } = setup()
+    // explore 覆盖 GLM 仍保持 readonly isolation；code 覆盖仍保持 shared
+    await tool.execute(
+      { subagent_type: 'explore', task: 'inspect', model: { providerId: 'glm', modelEntryId: 'm1' } },
+      context()
+    )
+    expect(spawn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ profileId: 'explore', isolation: 'readonly', modelOverride: expect.any(Object) })
+    )
+    await tool.execute(
+      { subagent_type: 'code', task: 'edit', model: { providerId: 'glm', modelEntryId: 'm1' } },
+      context()
+    )
+    expect(spawn.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ profileId: 'code', isolation: 'shared', modelOverride: expect.any(Object) })
+    )
   })
 })

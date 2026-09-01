@@ -38,6 +38,7 @@ function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): To
     getAgentLoop: () => null,
     getMemoryRetrievalService: () => null,
     loadSettings: () => DEFAULT_NOVA_SETTINGS,
+    loadSubagentProfile: () => undefined,
     memoryEnabled: true,
     codeIndexEnabled: true,
     getCodeContextQueryPort: () => null,

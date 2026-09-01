@@ -283,9 +283,13 @@ export async function sendAgentMessage(
     resolveExecutionTarget: (input) => {
       const registry = loadLlmRegistry(app.getPath('userData'))
       if (!registry) throw new Error('子代理模型不可用：尚未配置模型注册表')
-      return 'header' in input
-        ? resolveChildModelFromHeader(registry, input.header).header
-        : resolveChildModelFromProfile(registry, input.profile).header
+      if ('header' in input) {
+        return resolveChildModelFromHeader(registry, input.header).header
+      }
+      return resolveChildModelFromProfile(registry, input.profile, {
+        ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
+        ...(input.reasoningEffort !== undefined ? { reasoningEffortOverride: input.reasoningEffort } : {})
+      }).header
     },
     prepareTurn: (input) => {
       const childPromptCacheKey =

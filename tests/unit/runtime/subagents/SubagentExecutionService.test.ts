@@ -12,6 +12,7 @@ import {
 import { SessionStore, deriveChildSessionId } from '../../../../src/runtime/sessions'
 import {
   SubagentExecutionService,
+  SubagentLifecycleCoordinator,
   SubagentScheduler,
   createSpawnIdentity,
   resolveSubagentProfileSnapshot,
@@ -189,7 +190,7 @@ describe('SubagentExecutionService', () => {
         : {}),
       ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
-    return { service, prepareTurn, scheduler }
+    return { service, prepareTurn, scheduler, registry }
   }
 
   it('创建 durable Child Session 与预分配 child run，并投影最终结果', async () => {
@@ -388,6 +389,91 @@ describe('SubagentExecutionService', () => {
     expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
     expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
     expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('单次模型覆盖在创建 Child Session 前完成解析与能力校验，并冻结到 header', async () => {
+    const resolveExecutionTarget = vi.fn((input: { profile?: unknown; header?: unknown; modelOverride?: unknown; reasoningEffort?: string }) => {
+      if ('header' in input) return input.header as SubagentSessionHeader
+      if (input.reasoningEffort === 'max') throw new Error('不支持思考强度 max，可选：auto')
+      if (input.modelOverride) {
+        return {
+          providerId: (input.modelOverride as { providerId: string }).providerId,
+          modelEntryId: (input.modelOverride as { modelEntryId: string }).modelEntryId,
+          modelId: 'glm-5.3-flash',
+          reasoningEffort: input.reasoningEffort ?? 'auto'
+        } as SubagentSessionHeader
+      }
+      return modelHeader
+    })
+    const { service, prepareTurn } = createService({ resolveExecutionTarget })
+    const spawnCommand = command({ modelOverride: { providerId: 'glm', modelEntryId: 'glm-flash' }, reasoningEffort: 'max' })
+    const identity = createSpawnIdentity(spawnCommand)
+    await expect(service.spawn(spawnCommand, { invocationRef: invocationRef() }))
+      .rejects.toThrow(/不支持思考强度/)
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
+
+    const valid = await service.spawn(
+      command({ modelOverride: { providerId: 'glm', modelEntryId: 'glm-flash' }, reasoningEffort: 'auto' }),
+      { invocationRef: invocationRef() }
+    )
+    expect(valid.childSessionId).toBeTruthy()
+    const child = sessionStore.load(valid.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(child.subagent.header).toEqual(expect.objectContaining({ providerId: 'glm', modelEntryId: 'glm-flash', modelId: 'glm-5.3-flash' }))
+  })
+
+  it('同一 spawn identity 不同模型覆盖触发 metadata conflict，终态 replay 不重新解析', async () => {
+    const resolveExecutionTarget = vi.fn((input: { profile?: unknown; header?: unknown; modelOverride?: unknown }) => {
+      if ('header' in input) return input.header as SubagentSessionHeader
+      if (input.modelOverride) {
+        const override = input.modelOverride as { providerId: string; modelEntryId: string }
+        return { providerId: override.providerId, modelEntryId: override.modelEntryId, modelId: `model-${override.modelEntryId}`, reasoningEffort: 'auto' } as SubagentSessionHeader
+      }
+      return modelHeader
+    })
+    const { service } = createService({ resolveExecutionTarget })
+    const first = await service.spawn(
+      command({ modelOverride: { providerId: 'glm', modelEntryId: 'glm-a' } }),
+      { invocationRef: invocationRef() }
+    )
+    const baseCommand = command({ modelOverride: { providerId: 'glm', modelEntryId: 'glm-a' } })
+    // 幂等：同一覆盖应重放，不再调用解析
+    const replayed = await service.spawn(baseCommand, { invocationRef: invocationRef() })
+    expect(replayed).toEqual(first)
+    expect(resolveExecutionTarget).toHaveBeenCalledTimes(1)
+
+    // 不同覆盖应冲突，且不产生新 child
+    await expect(service.spawn(
+      command({ modelOverride: { providerId: 'glm', modelEntryId: 'glm-b' } }),
+      { invocationRef: invocationRef() }
+    )).rejects.toThrow(/模型覆盖冲突/)
+    expect(sessionStore.list().filter(item => item.kind === 'subagent')).toHaveLength(1)
+  })
+
+  it('模型覆盖不改变 profile 的 allowedTools/effects 与 isolation', async () => {
+    const codeProfile = {
+      id: 'code',
+      name: 'code',
+      description: 'workspace writer',
+      allowedTools: ['read', 'write'],
+      prompt: 'implement changes',
+      maxToolRounds: 30
+    }
+    const { service } = createService({
+      loadProfile: (profileId) => {
+        if (profileId === 'code') return codeProfile
+        return profile
+      }
+    })
+    const execution = await service.spawn(
+      command({ profileId: 'code', isolation: 'shared', modelOverride: { providerId: 'glm', modelEntryId: 'glm-x' } }),
+      { invocationRef: invocationRef() }
+    )
+    const child = sessionStore.load(execution.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(child.subagent.profile.toolNames).toEqual(expect.arrayContaining(['read', 'write']))
+    expect(child.subagent.profile.permissionCeiling).toBe('workspace_write')
   })
 
   it('调用身份、parent identity、profile 与已有 metadata 冲突均 fail closed', async () => {
@@ -743,6 +829,70 @@ describe('SubagentExecutionService', () => {
     const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
     expect(prepared.agentLoop.cancel).toHaveBeenCalled()
     expect(scheduler.snapshot().activeGlobal).toBe(0)
+  })
+
+  it('显式等待容量的派遣会进入 Scheduler 队列并在 permit 释放后继续', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1, waitTimeoutMs: 1_000 })
+    const { service, prepareTurn } = createService({ wait, scheduler })
+    const first = service.spawn(command(), { invocationRef: invocationRef() })
+    await vi.waitFor(() => expect(prepareTurn).toHaveBeenCalledTimes(1))
+
+    const secondToolCallId = 'call-task-second'
+    const secondCommand = command({
+      invocation: {
+        kind: 'task_tool',
+        parentMessageId: 'msg-parent',
+        parentToolCallId: secondToolCallId
+      },
+      task: 'inspect second'
+    })
+    const secondIdentity = createSpawnIdentity(secondCommand)
+    const second = service.spawn(secondCommand, {
+      invocationRef: { ...invocationRef(), toolCallId: secondToolCallId },
+      waitForCapacity: true
+    })
+    await vi.waitFor(() => expect(scheduler.snapshot().queued).toBe(1))
+    expect(coordinator.getSnapshot(secondIdentity.spawnRunId)?.status).toBe('queued')
+
+    release()
+    await Promise.all([first, second])
+    expect(prepareTurn).toHaveBeenCalledTimes(2)
+    expect(scheduler.snapshot()).toEqual(expect.objectContaining({ activeGlobal: 0, queued: 0 }))
+  })
+
+  it('排队中的 child 可按 runId 单独取消且不影响兄弟执行', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1, waitTimeoutMs: 1_000 })
+    const { service, prepareTurn, registry } = createService({ wait, scheduler })
+    const first = service.spawn(command(), { invocationRef: invocationRef() })
+    await vi.waitFor(() => expect(prepareTurn).toHaveBeenCalledTimes(1))
+
+    const toolCallId = 'call-task-queued-cancel'
+    const queuedCommand = command({
+      invocation: {
+        kind: 'task_tool',
+        parentMessageId: 'msg-parent',
+        parentToolCallId: toolCallId
+      },
+      task: 'cancel queued child'
+    })
+    const queuedIdentity = createSpawnIdentity(queuedCommand)
+    const queued = service.spawn(queuedCommand, {
+      invocationRef: { ...invocationRef(), toolCallId },
+      waitForCapacity: true
+    })
+    await vi.waitFor(() => expect(scheduler.snapshot().queued).toBe(1))
+
+    const lifecycle = new SubagentLifecycleCoordinator(sessionStore, coordinator, registry, scheduler)
+    await lifecycle.cancelRunTree(queuedIdentity.spawnRunId, 'cancel_queued_child')
+    await expect(queued).resolves.toEqual(expect.objectContaining({ status: 'cancelled' }))
+    expect(coordinator.getSnapshot('run-parent')?.status).toBe('running')
+
+    release()
+    await first
   })
 
   it('interrupted resume 无 permit 时保持 interrupted，不留下假 resuming', async () => {

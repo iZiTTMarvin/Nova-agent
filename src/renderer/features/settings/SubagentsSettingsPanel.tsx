@@ -5,7 +5,11 @@ import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
-import { listSelectableModels, type LlmRegistry } from '../../../shared/config/llmRegistry'
+import {
+  getSupportedReasoningEfforts,
+  listSelectableModels,
+  type LlmRegistry
+} from '../../../shared/config'
 import {
   generateSubagentPresetId,
   isValidSubagentPresetId
@@ -123,11 +127,22 @@ function validateDraft(
     } else {
       const binding = draft.preset.model
       const available = registry ? listSelectableModels(registry) : []
-      if (!available.some(model =>
+      const matched = available.find(model =>
         model.providerId === binding.providerId &&
         model.modelEntryId === binding.modelEntryId
-      )) {
+      )
+      if (!matched) {
         errors.model = '固定模型当前不可用，请重新选择或改为跟随默认模型。'
+      } else if (binding.reasoningEffort && binding.reasoningEffort !== 'auto') {
+        const entry = registry?.providers
+          .find(provider => provider.id === binding.providerId)
+          ?.models.find(item => item.id === binding.modelEntryId)
+        const supported = entry ? getSupportedReasoningEfforts(entry) : null
+        if (supported?.includes(binding.reasoningEffort) !== true) {
+          errors.model = supported
+            ? `该模型不支持 ${binding.reasoningEffort}，可选：${supported.join('、')}。`
+            : '该模型的思考强度能力未知，请使用自动。'
+        }
       }
     }
   }

@@ -259,7 +259,9 @@ export function createPreset(
   location: SubagentPresetLocation,
   workspaceRoot?: string | null
 ): SubAgentSpec {
+  assertNotBuiltin((input as { id?: string })?.id ?? '')
   const preset = decodeDraft(input)
+  assertNotBuiltin(preset.id)
   const layer = requireWritableLayer(location, workspaceRoot)
   if (layer.presets.some((entry) => entry.id === preset.id)) {
     throw new SubagentPresetCommandError(
@@ -278,6 +280,7 @@ export function updatePreset(
   location: SubagentPresetLocation,
   workspaceRoot?: string | null
 ): SubAgentSpec {
+  assertNotBuiltin(targetId)
   const preset = decodeDraft(input)
   if (preset.id !== targetId) {
     throw new SubagentPresetCommandError(
@@ -335,6 +338,6 @@ export function deletePreset(
 
 function assertNotBuiltin(id: string): void {
   if (isBuiltinSubagentId(id)) {
-    throw new SubagentPresetCommandError('builtin_readonly', `内置子代理「${id}」不可写入或删除`)
+    throw new SubagentPresetCommandError('builtin_readonly', `内置子代理「${id}」为内置保留身份，不可写入或删除`)
   }
 }

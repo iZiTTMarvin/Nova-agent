@@ -35,3 +35,19 @@ export {
   normalizeSubagentPresetId
 } from './presetIdentity'
 export type { BuiltinSubagentId } from './presetIdentity'
+export type {
+  BatchSubagentInput,
+  BatchSubagentItem,
+  BatchSubagentItemResult,
+  BatchSubagentModelOverride,
+  BatchSubagentOutput
+} from './batch'
+export {
+  BATCH_ITEM_ID_MAX_LENGTH,
+  BATCH_ITEM_ID_PATTERN,
+  BATCH_MAX_ITEMS,
+  BATCH_MIN_ITEMS,
+  BATCH_TASK_MAX_LENGTH,
+  SubagentBatchDecodeError,
+  decodeBatchInput
+} from './batch'

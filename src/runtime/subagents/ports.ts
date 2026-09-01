@@ -9,6 +9,7 @@ export interface SpawnSubagentContext {
   /** 仅内部消费者可提供；ExecutionService 仍会以 unknown 在边界校验并冻结。 */
   readonly profile?: unknown
   readonly abortSignal?: AbortSignal
+  readonly waitForCapacity?: boolean
 }
 
 /** Stable consumer port for task and skill_fork child executions. */

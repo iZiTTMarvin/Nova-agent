@@ -12,6 +12,12 @@ export {
   applyHostArchiveReadCapability
 } from './profileResolver'
 export {
+  assertBatchInputReadonlyEligibility,
+  assertBatchItemReadonlyEligibility,
+  BatchReadonlyEligibilityError,
+  type BatchEligibilityInput
+} from './batchEligibility'
+export {
   MAX_SUBAGENT_SUMMARY_CHARS,
   projectSubagentExecutionResult
 } from './resultProjection'

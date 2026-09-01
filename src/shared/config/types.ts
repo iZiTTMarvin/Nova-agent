@@ -8,6 +8,9 @@ import { lookupModelCapability } from './modelRegistry'
 /** 缓存策略：auto = 前缀稳定即自动命中；anthropic = 显式 cache_control 标记 */
 export type CacheStrategy = 'auto' | 'anthropic'
 
+/** 'auto' 不发送参数，其余值显式控制推理深度。 */
+export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'max'
+
 /**
  * 缓存档案标识（与 runtime/model/cacheProfile.ts 对齐）。
  * 'auto' 表示交给 resolveCacheProfile 自动判定，不是档案本身。
@@ -57,7 +60,7 @@ export interface ModelConfig {
    * 缺省或 'auto' 时不发送该参数；'low'/'medium'/'high'/'max' 显式控制推理深度。
    * 运行时按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
    */
-  reasoningEffort?: 'auto' | 'low' | 'medium' | 'high' | 'max'
+  reasoningEffort?: ReasoningEffort
 }
 
 /** 从 baseUrl 推断默认缓存策略 */
