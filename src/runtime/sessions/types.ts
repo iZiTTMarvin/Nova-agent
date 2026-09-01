@@ -197,6 +197,8 @@ export type SessionMetadata =
 
 /** SessionStore 原子创建 Child Session 所需的完整持久化意图。 */
 export interface CreateChildSessionCommand {
+  /** 子会话身份由派遣方决定；SessionStore 只做存在性校验与原子发布。 */
+  readonly childSessionId: string
   readonly workspaceRoot: string
   readonly mode: Mode
   readonly permissionMode: PermissionMode

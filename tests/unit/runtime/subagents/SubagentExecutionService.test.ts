@@ -14,11 +14,13 @@ import {
   SubagentExecutionService,
   SubagentLifecycleCoordinator,
   SubagentScheduler,
+  createFollowupSpawnIdentity,
   createSpawnIdentity,
   resolveSubagentProfileSnapshot,
   type SubagentExecutionServiceDeps
 } from '../../../../src/runtime/subagents'
 import type {
+  FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentSessionHeader
 } from '../../../../src/shared/subagents'
@@ -105,6 +107,7 @@ describe('SubagentExecutionService', () => {
     hostHasArchiveRead?: () => boolean
     childFinalText?: string
     resolveExecutionTarget?: SubagentExecutionServiceDeps['resolveExecutionTarget']
+    hasSessionExecutionHandle?: (sessionId: string) => boolean
   } = {}) {
     const prepareTurn = vi.fn((input: PrepareSubagentTurnInput) => {
       const eventBus = new EventBus()
@@ -187,6 +190,9 @@ describe('SubagentExecutionService', () => {
       ),
       ...(options.hostHasArchiveRead
         ? { hostHasArchiveRead: options.hostHasArchiveRead }
+        : {}),
+      ...(options.hasSessionExecutionHandle
+        ? { hasSessionExecutionHandle: options.hasSessionExecutionHandle }
         : {}),
       ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
@@ -580,6 +586,7 @@ describe('SubagentExecutionService', () => {
   it('depth 超限与 read_only 父级权限提升请求均被服务拒绝', async () => {
     const readOnlySnapshot = resolveSubagentProfileSnapshot(profile, 'explore')
     const nestedParent = sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('nested-parent-key'),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -644,6 +651,7 @@ describe('SubagentExecutionService', () => {
       maxToolRounds: 30
     }, 'code')
     const depthTwo = sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('depth-two-parent-key'),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -691,6 +699,7 @@ describe('SubagentExecutionService', () => {
     const spawnCommand = command()
     const identity = createSpawnIdentity(spawnCommand)
     sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(identity.spawnKey),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -730,6 +739,7 @@ describe('SubagentExecutionService', () => {
     const spawnCommand = command()
     const identity = createSpawnIdentity(spawnCommand)
     const child = sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(identity.spawnKey),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -940,6 +950,7 @@ describe('SubagentExecutionService', () => {
     const spawnCommand = command()
     const identity = createSpawnIdentity(spawnCommand)
     const child = sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(identity.spawnKey),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -1064,5 +1075,476 @@ describe('SubagentExecutionService', () => {
         { invocationRef: invocationRef() }
       )
     ).rejects.toThrow(/workflow 子代理入口已移除/)
+  })
+
+  describe('followup', () => {
+    function createTargetChild(options: {
+      readonly parentId?: string
+      readonly hasHeader?: boolean
+      readonly rawProfile?: typeof profile
+      readonly key?: string
+    } = {}) {
+      const key = options.key ?? 'followup-target-key'
+      const rawProfile = options.rawProfile ?? profile
+      return sessionStore.createChildIfAbsent({
+        childSessionId: deriveChildSessionId(key),
+        workspaceRoot: workspace,
+        mode: 'default',
+        permissionMode: 'request_approval',
+        task: 'initial birth task',
+        subagent: {
+          lineage: {
+            parentSessionId: options.parentId ?? parentSessionId,
+            parentRunId: 'run-parent',
+            rootRunId: 'run-parent',
+            depth: 1,
+            spawnKey: key,
+            spawnRunId: 'run-birth-followup-target',
+            origin: {
+              kind: 'task_tool',
+              parentMessageId: 'msg-parent',
+              parentToolCallId: 'call-birth'
+            }
+          },
+          profile: resolveSubagentProfileSnapshot(rawProfile, rawProfile.id),
+          ...(options.hasHeader === false ? {} : { header: modelHeader })
+        }
+      }).session
+    }
+
+    function followupCommand(
+      previousChildSessionId: string,
+      overrides: Partial<FollowupSubagentCommand> = {}
+    ): FollowupSubagentCommand {
+      return {
+        parentSessionId,
+        parentRunId: 'run-parent',
+        previousChildSessionId,
+        parentMessageId: 'msg-parent',
+        parentToolCallId: 'call-followup',
+        task: 'continue the earlier work',
+        ...overrides
+      }
+    }
+
+    function followupRef(toolCallId = 'call-followup') {
+      return {
+        sessionId: parentSessionId,
+        runId: 'run-parent',
+        messageId: 'msg-parent',
+        toolCallId
+      }
+    }
+
+    it('复用既有 childSessionId，产生与出生 spawnRunId 不同的新 run', async () => {
+      const { service } = createService()
+      const birth = await service.spawn(command(), { invocationRef: invocationRef() })
+
+      const followupCmd = followupCommand(birth.childSessionId)
+      const identity = createFollowupSpawnIdentity(followupCmd)
+      const result = await service.followup(followupCmd, {
+        invocationRef: followupRef()
+      })
+
+      expect(result.childSessionId).toBe(birth.childSessionId)
+      expect(result.childRunId).not.toBe(birth.childRunId)
+      expect(result.childRunId).toBe(identity.spawnRunId)
+      expect(result.status).toBe('completed')
+      expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('completed')
+      expect(coordinator.getSnapshot(birth.childRunId)?.status).toBe('completed')
+    })
+
+    it('followup 后既有 subagent metadata 逐字段保持出生记录不变', async () => {
+      const { service } = createService()
+      const birth = await service.spawn(command(), { invocationRef: invocationRef() })
+      const before = sessionStore.load(birth.childSessionId)
+      if (before?.kind !== 'subagent') throw new Error('expected Child Session')
+      const frozenMetadata = JSON.parse(JSON.stringify(before.subagent)) as typeof before.subagent
+      const initialMessage = JSON.parse(JSON.stringify(before.messages[0])) as typeof before.messages[0]
+
+      await service.followup(followupCommand(birth.childSessionId), {
+        invocationRef: followupRef()
+      })
+
+      const after = sessionStore.load(birth.childSessionId)
+      if (after?.kind !== 'subagent') throw new Error('expected Child Session')
+      expect(after.subagent).toEqual(frozenMetadata)
+      expect(after.subagent.lineage).toEqual(frozenMetadata.lineage)
+      expect(after.subagent.profile).toEqual(frozenMetadata.profile)
+      expect(after.subagent.header).toEqual(frozenMetadata.header)
+      expect(after.messages[0]).toEqual(initialMessage)
+    })
+
+    it('同一 followup 命令在途共享 promise、冲突命令被拒、终态后重放不产生新 run', async () => {
+      let release!: () => void
+      const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+      const { service, prepareTurn } = createService({ wait })
+      const child = createTargetChild()
+      const followupCmd = followupCommand(child.id)
+      const context = { invocationRef: followupRef() }
+
+      const first = service.followup(followupCmd, context)
+      const second = service.followup(followupCmd, context)
+      expect(first).toBe(second)
+      await expect(
+        service.followup({ ...followupCmd, task: 'conflicting followup task' }, context)
+      ).rejects.toThrow(/metadata 冲突/)
+      release()
+      const firstResult = await first
+
+      const replayed = await service.followup(followupCmd, context)
+      expect(replayed).toEqual(firstResult)
+      expect(prepareTurn).toHaveBeenCalledTimes(1)
+      expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
+    })
+
+    it('目标子会话不存在、指向 primary 或指向别的父会话均 fail closed', async () => {
+      const { service, prepareTurn } = createService()
+      const primary = sessionStore.create(workspace)
+      const otherParent = sessionStore.create(workspace)
+      const foreignChild = createTargetChild({
+        parentId: otherParent.id,
+        key: 'foreign-child-key'
+      })
+
+      await expect(
+        service.followup(followupCommand('sess_sub_missing'), { invocationRef: followupRef() })
+      ).rejects.toThrow(/目标子会话 sess_sub_missing 不存在/)
+      await expect(
+        service.followup(followupCommand(primary.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/不是子代理会话/)
+      await expect(
+        service.followup(followupCommand(foreignChild.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/不属于父会话/)
+      expect(prepareTurn).not.toHaveBeenCalled()
+    })
+
+    it('无模型 header 的历史子会话被拒并提示重新派遣', async () => {
+      const { service, prepareTurn } = createService()
+      const legacy = createTargetChild({ hasHeader: false })
+
+      await expect(
+        service.followup(followupCommand(legacy.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/缺少模型 header.*重新派遣/)
+      expect(prepareTurn).not.toHaveBeenCalled()
+    })
+
+    it('上一轮 failed 或 cancelled 的子会话均可被 followup 续跑', async () => {
+      for (const terminal of ['failed', 'cancelled'] as const) {
+        const { service } = createService()
+        const child = createTargetChild({ key: `followup-${terminal}-key` })
+        const birthRunId = `run-birth-${terminal}`
+        const started = coordinator.startRun({
+          kind: 'agent',
+          runId: birthRunId,
+          workspaceId: workspace,
+          sessionId: child.id
+        })
+        coordinator.markRunning(started.runId)
+        coordinator.commitTerminal({ runId: birthRunId, status: terminal, reason: '上一轮结束' })
+
+        const result = await service.followup(
+          followupCommand(child.id, { parentToolCallId: `call-followup-${terminal}` }),
+          { invocationRef: followupRef(`call-followup-${terminal}`) }
+        )
+        expect(result.status).toBe('completed')
+        expect(result.childSessionId).toBe(child.id)
+      }
+    })
+
+    it('模型 entry 漂移导致 header 无法路由时 followup 被拒且不产生 run', async () => {
+      const child = createTargetChild()
+      const followupCmd = followupCommand(child.id)
+      const identity = createFollowupSpawnIdentity(followupCmd)
+      const resolveExecutionTarget = vi.fn((input: { header?: unknown }) => {
+        expect(input).toEqual({ header: modelHeader })
+        throw new Error('provider 已禁用')
+      })
+      const { service, prepareTurn } = createService({ resolveExecutionTarget })
+
+      await expect(
+        service.followup(followupCmd, { invocationRef: followupRef() })
+      ).rejects.toThrow(/已禁用/)
+      expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+      expect(prepareTurn).not.toHaveBeenCalled()
+    })
+
+    it('isolation 按冻结 ceiling 派生：read_only 收到 readonly，workspace_write 收到 shared', async () => {
+      const { service, prepareTurn } = createService()
+      const readOnlyChild = createTargetChild()
+      const codeProfile = {
+        id: 'code',
+        name: 'code',
+        description: 'workspace writer',
+        allowedTools: ['read', 'write'],
+        prompt: 'implement changes',
+        maxToolRounds: 30
+      }
+      const writeChild = createTargetChild({
+        rawProfile: codeProfile,
+        key: 'followup-write-target-key'
+      })
+
+      await service.followup(
+        followupCommand(readOnlyChild.id, { parentToolCallId: 'call-followup-readonly' }),
+        { invocationRef: followupRef('call-followup-readonly') }
+      )
+      await service.followup(
+        followupCommand(writeChild.id, { parentToolCallId: 'call-followup-shared' }),
+        { invocationRef: followupRef('call-followup-shared') }
+      )
+
+      expect(prepareTurn.mock.calls[0][0].isolation).toBe('readonly')
+      expect(prepareTurn.mock.calls[1][0].isolation).toBe('shared')
+    })
+
+    it('followup 执行完整 turn 后在初始消息之后追加指令与回复并提交终态 run', async () => {
+      const { service, prepareTurn } = createService()
+      const child = createTargetChild()
+      const followupCmd = followupCommand(child.id)
+      const identity = createFollowupSpawnIdentity(followupCmd)
+
+      const result = await service.followup(followupCmd, {
+        invocationRef: followupRef()
+      })
+
+      expect(result.status).toBe('completed')
+      expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('completed')
+      const reloaded = sessionStore.load(child.id)
+      if (reloaded?.kind !== 'subagent') throw new Error('expected Child Session')
+      expect(reloaded.messages).toHaveLength(3)
+      expect(reloaded.messages[0]).toEqual(
+        expect.objectContaining({ role: 'user', content: 'initial birth task' })
+      )
+      expect(reloaded.messages[1]).toEqual(
+        expect.objectContaining({ role: 'user', content: followupCmd.task })
+      )
+      expect(reloaded.messages[2]).toEqual(
+        expect.objectContaining({ role: 'assistant', content: 'child summary' })
+      )
+      expect(prepareTurn).toHaveBeenCalledTimes(1)
+    })
+
+    it('追加指令以确定性身份持久化，终态重放不产生第二条指令消息', async () => {
+      const { service } = createService()
+      const child = createTargetChild()
+      const followupCmd = followupCommand(child.id)
+
+      const first = await service.followup(followupCmd, { invocationRef: followupRef() })
+      const replayed = await service.followup(followupCmd, { invocationRef: followupRef() })
+      expect(replayed.childRunId).toBe(first.childRunId)
+
+      const reloaded = sessionStore.load(child.id)
+      if (reloaded?.kind !== 'subagent') throw new Error('expected Child Session')
+      const instructions = reloaded.messages.filter(
+        (message) => message.role === 'user' && message.content === followupCmd.task
+      )
+      expect(instructions).toHaveLength(1)
+    })
+
+    it('目标子会话仍有其它 running run 时拒绝 followup，防双执行并发写同一会话历史', async () => {
+      const child = createTargetChild()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-followup-occupied',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-followup-occupied')
+      const { service, prepareTurn } = createService()
+
+      await expect(
+        service.followup(followupCommand(child.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/正在执行/)
+      expect(prepareTurn).not.toHaveBeenCalled()
+      expect(coordinator.getSnapshot('run-followup-occupied')?.status).toBe('running')
+    })
+
+    it('durable 已终态但进程内句柄未收敛时仍拒绝，防短暂终态窗口内放行', async () => {
+      const child = createTargetChild()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-followup-lingering',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-followup-lingering')
+      coordinator.commitTerminal({ runId: 'run-followup-lingering', status: 'completed' })
+      const { service, prepareTurn } = createService({
+        hasSessionExecutionHandle: () => true
+      })
+
+      await expect(
+        service.followup(followupCommand(child.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/尚未收敛/)
+      expect(prepareTurn).not.toHaveBeenCalled()
+    })
+
+    it('最近一轮 interrupted 且仍留 pending 交互时拒绝，防带着未答授权继续执行', async () => {
+      const child = createTargetChild()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-followup-pending-auth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-followup-pending-auth')
+      coordinator.inbox.enqueue({
+        runId: 'run-followup-pending-auth',
+        sessionId: child.id,
+        messageId: '',
+        type: 'permission',
+        interactionId: 'interaction-followup-pending',
+        payload: { toolName: 'bash' }
+      })
+      coordinator.commitTerminal({
+        runId: 'run-followup-pending-auth',
+        status: 'interrupted',
+        reason: 'process_exit'
+      })
+      const { service, prepareTurn } = createService()
+
+      await expect(
+        service.followup(followupCommand(child.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/待处理的授权/)
+      expect(prepareTurn).not.toHaveBeenCalled()
+    })
+
+    it('挂起交互已 answered 时放行，不把已处理交互误当阻塞', async () => {
+      const child = createTargetChild()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-followup-answered-auth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-followup-answered-auth')
+      coordinator.inbox.enqueue({
+        runId: 'run-followup-answered-auth',
+        sessionId: child.id,
+        messageId: '',
+        type: 'permission',
+        interactionId: 'interaction-followup-answered',
+        payload: { toolName: 'bash' }
+      })
+      coordinator.updateInteraction('run-followup-answered-auth', 'interaction-followup-answered', {
+        status: 'answered',
+        version: 2
+      })
+      coordinator.commitTerminal({
+        runId: 'run-followup-answered-auth',
+        status: 'interrupted',
+        reason: 'process_exit'
+      })
+      const { service, prepareTurn } = createService()
+
+      const result = await service.followup(followupCommand(child.id), {
+        invocationRef: followupRef()
+      })
+
+      expect(result.status).toBe('completed')
+      expect(prepareTurn).toHaveBeenCalledTimes(1)
+    })
+
+    it('句柄释放且无活跃 run 后放行，不因短暂占用永久卡死', async () => {
+      const child = createTargetChild()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-followup-handle-release',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-followup-handle-release')
+      coordinator.commitTerminal({ runId: 'run-followup-handle-release', status: 'completed' })
+      let handleActive = true
+      const { service, prepareTurn } = createService({
+        hasSessionExecutionHandle: () => handleActive
+      })
+
+      await expect(
+        service.followup(followupCommand(child.id), { invocationRef: followupRef() })
+      ).rejects.toThrow(/尚未收敛/)
+
+      handleActive = false
+      const result = await service.followup(followupCommand(child.id), {
+        invocationRef: followupRef()
+      })
+      expect(result.status).toBe('completed')
+      expect(prepareTurn).toHaveBeenCalledTimes(1)
+    })
+
+    it('并发两次不同 toolCallId 的 followup 指向同一子会话时只放行一个，另一个被拒', async () => {
+      let release!: () => void
+      const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+      const child = createTargetChild()
+      const { service, prepareTurn } = createService({ wait })
+      const firstCommand = followupCommand(child.id, { parentToolCallId: 'call-followup-a' })
+      const firstIdentity = createFollowupSpawnIdentity(firstCommand)
+
+      const first = service.followup(firstCommand, {
+        invocationRef: followupRef('call-followup-a')
+      })
+      await vi.waitFor(() =>
+        expect(coordinator.getSnapshot(firstIdentity.spawnRunId)?.status).toBe('running')
+      )
+      await expect(
+        service.followup(
+          followupCommand(child.id, { parentToolCallId: 'call-followup-b' }),
+          { invocationRef: followupRef('call-followup-b') }
+        )
+      ).rejects.toThrow(/正在执行/)
+      expect(prepareTurn).toHaveBeenCalledTimes(1)
+
+      release()
+      const firstResult = await first
+      expect(firstResult.status).toBe('completed')
+    })
+
+    it('本次 followup 自己的 run 崩溃残留为 running 且无句柄时，重试不被忙检查误拒并收敛恢复', async () => {
+      const child = createTargetChild()
+      const followupCmd = followupCommand(child.id)
+      const identity = createFollowupSpawnIdentity(followupCmd)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: identity.spawnRunId,
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning(identity.spawnRunId)
+      const { service, prepareTurn } = createService()
+
+      const result = await service.followup(followupCmd, { invocationRef: followupRef() })
+
+      expect(result.status).toBe('completed')
+      expect(result.childRunId).toBe(identity.spawnRunId)
+      expect(coordinator.getSnapshot(identity.spawnRunId)?.status).toBe('completed')
+      expect(prepareTurn).toHaveBeenCalledTimes(1)
+    })
+
+    it('createFollowupSpawnIdentity 同输入同输出、关键字段变化即换身份且不与 task_tool 冲突', () => {
+      const followupCmd = followupCommand('sess_sub_target')
+      const identity = createFollowupSpawnIdentity(followupCmd)
+      expect(createFollowupSpawnIdentity(followupCmd)).toEqual(identity)
+
+      const toolChanged = createFollowupSpawnIdentity({
+        ...followupCmd,
+        parentToolCallId: 'call-followup-other'
+      })
+      expect(toolChanged.spawnKey).not.toBe(identity.spawnKey)
+      expect(toolChanged.spawnRunId).not.toBe(identity.spawnRunId)
+
+      const childChanged = createFollowupSpawnIdentity({
+        ...followupCmd,
+        previousChildSessionId: 'sess_sub_other'
+      })
+      expect(childChanged.spawnKey).not.toBe(identity.spawnKey)
+      expect(childChanged.spawnRunId).not.toBe(identity.spawnRunId)
+
+      expect(identity.spawnKey.startsWith('task_followup:')).toBe(true)
+      const taskToolIdentity = createSpawnIdentity(command())
+      expect(taskToolIdentity.spawnKey.startsWith('task_tool:')).toBe(true)
+      expect(identity.spawnKey).not.toBe(taskToolIdentity.spawnKey)
+      expect(identity.spawnRunId).not.toBe(taskToolIdentity.spawnRunId)
+    })
   })
 })

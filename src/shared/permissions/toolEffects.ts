@@ -41,6 +41,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   },
   switch_mode: { effects: ['mode.transition'], pathScope: 'none' },
   task: { effects: ['orchestration'], pathScope: 'none' },
+  task_followup: { effects: ['orchestration'], pathScope: 'none' },
   batch_task: { effects: ['orchestration'], pathScope: 'none' },
   invoke_skill: { effects: ['orchestration'], pathScope: 'none' },
   agent_list: { effects: [], pathScope: 'none' },

@@ -73,7 +73,8 @@ export function renderToolBlock(
     )
   }
 
-  if (block.toolName === 'task') {
+  // task 与 task_followup 都以子代理活动行呈现：同一子会话的每个 run 各占一行
+  if (block.toolName === 'task' || block.toolName === 'task_followup') {
     return (
       <SubagentToolRow
         key={block.toolCallId}

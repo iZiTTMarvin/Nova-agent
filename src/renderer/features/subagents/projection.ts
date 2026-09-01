@@ -4,9 +4,9 @@ import type { Session, SessionDetail } from '../../../shared/session/types'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 
 export interface SubagentProjectionState {
-  byChildSessionId: Record<string, SubagentActivityProjection>
-  childIdsByParentSessionId: Record<string, string[]>
-  childSessionIdByParentToolCallId: Record<string, string>
+  byChildRunId: Record<string, SubagentActivityProjection>
+  childRunIdsByParentSessionId: Record<string, string[]>
+  childRunIdByParentToolCallId: Record<string, string>
 }
 
 interface SubagentProjectionActions {
@@ -26,9 +26,9 @@ interface SubagentProjectionActions {
 export type SubagentProjectionStore = SubagentProjectionState & SubagentProjectionActions
 
 const EMPTY_STATE: SubagentProjectionState = {
-  byChildSessionId: {},
-  childIdsByParentSessionId: {},
-  childSessionIdByParentToolCallId: {}
+  byChildRunId: {},
+  childRunIdsByParentSessionId: {},
+  childRunIdByParentToolCallId: {}
 }
 
 const refreshTokens = new Map<string, number>()
@@ -37,19 +37,19 @@ let summaryRefreshToken = 0
 function indexProjections(
   projections: Iterable<SubagentActivityProjection>
 ): SubagentProjectionState {
-  const byChildSessionId: Record<string, SubagentActivityProjection> = {}
-  const childIdsByParentSessionId: Record<string, string[]> = {}
-  const childSessionIdByParentToolCallId: Record<string, string> = {}
+  const byChildRunId: Record<string, SubagentActivityProjection> = {}
+  const childRunIdsByParentSessionId: Record<string, string[]> = {}
+  const childRunIdByParentToolCallId: Record<string, string> = {}
   for (const projection of projections) {
-    byChildSessionId[projection.childSessionId] = projection
-    const children = childIdsByParentSessionId[projection.parentSessionId] ?? []
-    children.push(projection.childSessionId)
-    childIdsByParentSessionId[projection.parentSessionId] = children
+    byChildRunId[projection.childRunId] = projection
+    const runs = childRunIdsByParentSessionId[projection.parentSessionId] ?? []
+    runs.push(projection.childRunId)
+    childRunIdsByParentSessionId[projection.parentSessionId] = runs
     if (projection.parentToolCallId) {
-      childSessionIdByParentToolCallId[projection.parentToolCallId] = projection.childSessionId
+      childRunIdByParentToolCallId[projection.parentToolCallId] = projection.childRunId
     }
   }
-  return { byChildSessionId, childIdsByParentSessionId, childSessionIdByParentToolCallId }
+  return { byChildRunId, childRunIdsByParentSessionId, childRunIdByParentToolCallId }
 }
 
 function replaceParent(
@@ -57,11 +57,11 @@ function replaceParent(
   parentSessionId: string,
   projections: SubagentActivityProjection[]
 ): SubagentProjectionState {
-  const retained = Object.values(state.byChildSessionId).filter(
+  const retained = Object.values(state.byChildRunId).filter(
     (projection) => projection.parentSessionId !== parentSessionId
   )
   const reconciled = projections.map((projection) => {
-    const current = state.byChildSessionId[projection.childSessionId]
+    const current = state.byChildRunId[projection.childRunId]
     if (
       current?.sequence !== undefined &&
       (projection.sequence === undefined || current.sequence > projection.sequence)
@@ -87,7 +87,7 @@ export const useSubagentProjectionStore = create<SubagentProjectionStore>((set, 
   ...EMPTY_STATE,
 
   syncSessionList: (sessions) => {
-    const previous = get().byChildSessionId
+    const previous = get().byChildRunId
     const subagentSessions = sessions.filter(
       (session): session is Extract<Session, { kind: 'subagent' }> => session.kind === 'subagent'
     )
@@ -96,9 +96,12 @@ export const useSubagentProjectionStore = create<SubagentProjectionStore>((set, 
       Object.values(previous).filter((projection) => durableChildIds.has(projection.childSessionId))
     ))
 
+    const knownChildIds = new Set(
+      Object.values(previous).map((projection) => projection.childSessionId)
+    )
     const parentsNeedingRefresh = new Set(
       subagentSessions
-        .filter((session) => previous[session.id] === undefined)
+        .filter((session) => !knownChildIds.has(session.id))
         .map((session) => session.subagent.lineage.parentSessionId)
     )
     if (parentsNeedingRefresh.size > 0) {
@@ -115,35 +118,37 @@ export const useSubagentProjectionStore = create<SubagentProjectionStore>((set, 
   },
 
   applyRunSnapshot: (snapshot) => {
-    const projection = get().byChildSessionId[snapshot.sessionId]
-    if (!projection || projection.childRunId !== snapshot.runId) return
-    if (projection.sequence !== undefined && snapshot.sequence <= projection.sequence) return
-    set((state) => ({
-      ...state,
-      byChildSessionId: {
-        ...state.byChildSessionId,
-        [projection.childSessionId]: {
-          ...projection,
-          status: snapshot.status,
-          sequence: snapshot.sequence,
-          startedAt: snapshot.turnStartedAt ?? snapshot.createdAt,
-          completedAt:
-            snapshot.status === 'completed' ||
-            snapshot.status === 'failed' ||
-            snapshot.status === 'cancelled' ||
-            snapshot.status === 'interrupted'
-              ? snapshot.updatedAt
-              : undefined,
-          latestActivity: snapshot.progress?.label
-        }
-      }
-    }))
-    if (
+    // childRunId 严格匹配：一个子会话可有多个 run，各 run 的投影互不覆盖
+    const projection = get().byChildRunId[snapshot.runId]
+    const isTerminal =
       snapshot.status === 'completed' ||
       snapshot.status === 'failed' ||
       snapshot.status === 'cancelled' ||
       snapshot.status === 'interrupted'
-    ) {
+    if (!projection) {
+      // followup 的父调用归属靠父会话工具调用正向重算，而该消息要等父 turn 结束才落盘；
+      // 父 run 终态后补一次刷新，让 followup 活动行补齐归属（消息持久化先于 run 终态提交）
+      if (isTerminal && get().childRunIdsByParentSessionId[snapshot.sessionId] !== undefined) {
+        void get().refreshParent(snapshot.sessionId)
+      }
+      return
+    }
+    if (projection.sequence !== undefined && snapshot.sequence <= projection.sequence) return
+    set((state) => ({
+      ...state,
+      byChildRunId: {
+        ...state.byChildRunId,
+        [snapshot.runId]: {
+          ...projection,
+          status: snapshot.status,
+          sequence: snapshot.sequence,
+          startedAt: snapshot.turnStartedAt ?? snapshot.createdAt,
+          completedAt: isTerminal ? snapshot.updatedAt : undefined,
+          latestActivity: snapshot.progress?.label
+        }
+      }
+    }))
+    if (isTerminal) {
       void get().refreshParent(projection.parentSessionId)
     }
   },
@@ -194,10 +199,10 @@ export const useSubagentProjectionStore = create<SubagentProjectionStore>((set, 
         parentToolCallId
       })
       if (!projection) return
-      const current = Object.values(get().byChildSessionId).filter(
+      const current = Object.values(get().byChildRunId).filter(
         (item) =>
           item.parentSessionId === parentSessionId &&
-          item.childSessionId !== projection.childSessionId
+          item.childRunId !== projection.childRunId
       )
       get().hydrateParent(parentSessionId, [...current, projection])
     } catch (error) {
@@ -216,6 +221,20 @@ export function selectSubagentByParentToolCallId(
   state: SubagentProjectionState,
   parentToolCallId: string
 ): SubagentActivityProjection | undefined {
-  const childSessionId = state.childSessionIdByParentToolCallId[parentToolCallId]
-  return childSessionId ? state.byChildSessionId[childSessionId] : undefined
+  const childRunId = state.childRunIdByParentToolCallId[parentToolCallId]
+  return childRunId ? state.byChildRunId[childRunId] : undefined
+}
+
+/** 同一子会话多 run 时取最新一条（run 的 startedAt 单调递增；单 run 直接返回）。 */
+export function selectLatestSubagentByChildSessionId(
+  state: SubagentProjectionState,
+  childSessionId: string
+): SubagentActivityProjection | undefined {
+  const candidates = Object.values(state.byChildRunId).filter(
+    (projection) => projection.childSessionId === childSessionId
+  )
+  if (candidates.length <= 1) return candidates[0]
+  return candidates.reduce((latest, candidate) =>
+    (candidate.startedAt ?? 0) >= (latest.startedAt ?? 0) ? candidate : latest
+  )
 }

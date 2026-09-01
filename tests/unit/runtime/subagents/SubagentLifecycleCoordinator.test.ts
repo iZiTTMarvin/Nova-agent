@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRunCoordinator, RunExecutionRegistry } from '../../../../src/runtime/run'
-import { SessionStore } from '../../../../src/runtime/sessions'
+import { SessionStore, deriveChildSessionId } from '../../../../src/runtime/sessions'
 import {
   resolveSubagentProfileSnapshot,
   SubagentLifecycleCoordinator,
@@ -45,6 +45,7 @@ describe('SubagentLifecycleCoordinator', () => {
 
   function createChild(parentId: string, parentRunId: string, childRunId: string, depth: number) {
     const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(`key-${childRunId}`),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',

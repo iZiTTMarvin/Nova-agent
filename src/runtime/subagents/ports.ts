@@ -1,4 +1,5 @@
 import type {
+  FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentExecutionResult
 } from '../../shared/subagents'
@@ -16,6 +17,12 @@ export interface SpawnSubagentContext {
 export interface SpawnSubagentPort {
   spawn(
     command: SpawnSubagentCommand,
+    context?: SpawnSubagentContext
+  ): Promise<SubagentExecutionResult>
+
+  /** 追加执行不携带 profile/isolation 等派遣输入，一切沿用既有子会话冻结值。 */
+  followup(
+    command: FollowupSubagentCommand,
     context?: SpawnSubagentContext
   ): Promise<SubagentExecutionResult>
 }

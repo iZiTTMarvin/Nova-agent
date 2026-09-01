@@ -7,7 +7,7 @@ import { extractTextFromContent } from '../../../src/runtime/model/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
 import { createEmptyCodeContextPack } from '../../../src/runtime/code-graph/context'
 import { createCodeContextTool } from '../../../src/runtime/tools/codeContext'
-import { SessionStore } from '../../../src/runtime/sessions'
+import { SessionStore, deriveChildSessionId } from '../../../src/runtime/sessions'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
 import { createReadState } from '../../../src/runtime/tools/editTool'
@@ -57,6 +57,7 @@ describe('SubagentRuntimeFactory', () => {
     const parent = store.create(workspace)
     const skillRoot = resolve(workspace, 'skills', 'inspect')
     const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('spawn-key'),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -230,6 +231,7 @@ describe('SubagentRuntimeFactory 权限装配', () => {
           }
         : undefined
     const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('spawn-perm'),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'full_access',
@@ -383,6 +385,7 @@ describe('SubagentRuntimeFactory 模型请求', () => {
         contextWindow: index === 0 ? 24_000 : 100_000
       }, 'inspect')
       const child = store.createChildIfAbsent({
+        childSessionId: deriveChildSessionId(`wire-${index}`),
         workspaceRoot: workspace, mode: 'default', permissionMode: 'request_approval', task: 'inspect',
         subagent: {
           header, profile,

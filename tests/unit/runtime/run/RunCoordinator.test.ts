@@ -1,7 +1,7 @@
 /**
  * RunCoordinator / InteractionInbox / RunStore 单测
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -107,6 +107,35 @@ describe('RunCoordinator', () => {
     expect(coord.deleteRunsForSessions(new Set(['s-terminal']))).toBe(1)
     expect(store.loadSnapshot(terminal.runId)).toBeNull()
     expect(coord.getSnapshotForSession('s-terminal')).toBeNull()
+  })
+
+  it('listSnapshotsForSession：createdAt 升序稳定，内存快照优先于磁盘', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000)
+      coord.startRun({ kind: 'agent', runId: 'run-b', workspaceId: '/ws', sessionId: 's1' })
+      coord.markRunning('run-b', 'm1')
+      vi.setSystemTime(2_000)
+      coord.startRun({ kind: 'agent', runId: 'run-z', workspaceId: '/ws', sessionId: 's1' })
+      coord.startRun({ kind: 'agent', runId: 'run-a', workspaceId: '/ws', sessionId: 's1' })
+
+      const cold = new RunCoordinator({ store })
+      // createdAt 升序；同刻创建的 run-z / run-a 按 runId 字典序稳定排序
+      expect(cold.listSnapshotsForSession('s1').map(s => s.runId)).toEqual([
+        'run-b',
+        'run-a',
+        'run-z'
+      ])
+      expect(cold.listSnapshotsForSession('s-other')).toEqual([])
+
+      // 冷 coordinator 把 run-b 提交终态写盘；热 coordinator 内存中的 running 版本必须优先
+      cold.commitTerminal({ runId: 'run-b', status: 'completed' })
+      const hot = coord.listSnapshotsForSession('s1').find(s => s.runId === 'run-b')
+      expect(hot?.status).toBe('running')
+      expect(cold.listSnapshotsForSession('s1').find(s => s.runId === 'run-b')?.status).toBe('completed')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('InteractionInbox 持久化并支持幂等回答', () => {

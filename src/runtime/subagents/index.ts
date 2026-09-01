@@ -2,6 +2,7 @@ export {
   SubagentExecutionService,
   SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
   createSpawnIdentity,
+  createFollowupSpawnIdentity,
   type PreparedSubagentTurn,
   type PrepareSubagentTurnInput,
   type SubagentEventContext,

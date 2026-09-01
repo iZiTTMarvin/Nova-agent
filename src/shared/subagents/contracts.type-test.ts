@@ -1,5 +1,6 @@
 import type {
   SessionKind,
+  FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentActivityProjection,
   SubagentActivityStatus,
@@ -33,6 +34,7 @@ type PublicContractsRemainExplicit = [
   Assert<IsNotAny<SubagentProfileSnapshot>>,
   Assert<IsNotAny<SubagentSessionMetadata>>,
   Assert<IsNotAny<SpawnSubagentCommand>>,
+  Assert<IsNotAny<FollowupSubagentCommand>>,
   Assert<IsNotAny<SubagentExecutionResult>>,
   Assert<IsNotAny<SubagentActivityProjection>>,
   Assert<Equal<SessionKind, 'primary' | 'subagent'>>,
@@ -51,9 +53,11 @@ type PublicContractsRemainExplicit = [
   Assert<Equal<IsLooseUnknownRecord<SubagentOrigin>, false>>,
   Assert<Equal<IsLooseUnknownRecord<SubagentLineage>, false>>,
   Assert<Equal<IsLooseUnknownRecord<SpawnSubagentCommand>, false>>,
+  Assert<Equal<IsLooseUnknownRecord<FollowupSubagentCommand>, false>>,
   Assert<Equal<IsLooseUnknownRecord<SubagentExecutionResult>, false>>,
   Assert<Equal<IsLooseUnknownRecord<SubagentActivityProjection>, false>>,
-  Assert<Equal<SpawnSubagentCommand['isolation'], 'shared' | 'readonly'>>
+  Assert<Equal<SpawnSubagentCommand['isolation'], 'shared' | 'readonly'>>,
+  Assert<Equal<FollowupSubagentCommand['task'], string>>
 ]
 
 export type SubagentContractTypeAssertions = PublicContractsRemainExplicit

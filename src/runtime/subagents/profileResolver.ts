@@ -56,7 +56,10 @@ export function resolveSubagentProfileSnapshot(
       ? 'read_only'
       : 'workspace_write'
   const toolNames = parsed.allowedTools.filter((name) => {
-    if (name === 'task' && options.allowRecursion !== true) return false
+    // 递归编排工具默认全部剥离（含续跑），防子代理再派子代理；仅显式 allowRecursion 放行
+    if ((name === 'task' || name === 'task_followup') && options.allowRecursion !== true) {
+      return false
+    }
     return (
       permissionCeiling !== 'read_only' ||
       !toolHasWriteCapability(name)

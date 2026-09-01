@@ -99,8 +99,8 @@ export function deriveChildSessionId(spawnKey: string): string {
   return `sess_sub_${digest.slice(0, 32)}`
 }
 
-function deriveInitialChildMessageId(spawnKey: string): string {
-  const digest = createHash('sha256').update(`initial-task\0${spawnKey}`, 'utf8').digest('hex')
+function deriveInitialChildMessageId(childSessionId: string): string {
+  const digest = createHash('sha256').update(`initial-task\0${childSessionId}`, 'utf8').digest('hex')
   return `msg_sub_user_${digest.slice(0, 32)}`
 }
 
@@ -162,11 +162,12 @@ export class SessionStore {
   }
 
   /**
-   * 原子创建由 spawnKey 唯一标识的 Child Session。
-   * 完整目录先写入同级临时目录，再以 rename 发布；并发输家只读取并校验既有事实。
+   * 原子创建由 command.childSessionId 标识的 Child Session；身份由派遣方决定，
+   * 这里只做存在性校验与原子发布。完整目录先写入同级临时目录，再以 rename 发布；
+   * 并发输家只读取并校验既有事实。
    */
   createChildIfAbsent(command: CreateChildSessionCommand): CreateChildSessionResult {
-    const childSessionId = deriveChildSessionId(command.subagent.lineage.spawnKey)
+    const childSessionId = command.childSessionId
     const existing = this.load(childSessionId)
     if (existing) {
       return {
@@ -177,7 +178,7 @@ export class SessionStore {
 
     const now = Date.now()
     const initialMessage = normalizeMessageToBlocksSource({
-      id: deriveInitialChildMessageId(command.subagent.lineage.spawnKey),
+      id: deriveInitialChildMessageId(childSessionId),
       parentId: null,
       role: 'user',
       content: command.task,

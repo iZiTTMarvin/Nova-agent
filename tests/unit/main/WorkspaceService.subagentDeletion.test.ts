@@ -3,7 +3,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceService } from '../../../src/main/services/WorkspaceService'
-import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
+import { SessionStore, deriveChildSessionId } from '../../../src/runtime/sessions/SessionStore'
 import type { CreateChildSessionCommand } from '../../../src/runtime/sessions/types'
 
 vi.mock('electron', () => ({
@@ -48,6 +48,7 @@ describe('WorkspaceService subagent deletion', () => {
 
   function createChild(parentSessionId: string, suffix: string) {
     const command: CreateChildSessionCommand = {
+      childSessionId: deriveChildSessionId(`spawn-key-${suffix}`),
       workspaceRoot: path.join(tempRoot, 'workspace'),
       mode: 'default',
       permissionMode: 'request_approval',

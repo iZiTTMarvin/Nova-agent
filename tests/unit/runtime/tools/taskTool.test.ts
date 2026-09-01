@@ -111,7 +111,7 @@ describe('task tool spawn adapter', () => {
     expect(output).toEqual({
       success: true,
       output:
-        '[子代理 explore / 11111111-2222-3333-4444-555555555555]\nfound todos'
+        '[子代理 explore / 会话 sess_sub_1234 / run 11111111-2222-3333-4444-555555555555]\nfound todos'
     })
   })
 
@@ -154,7 +154,7 @@ describe('task tool spawn adapter', () => {
     )
 
     expect(output.success).toBe(false)
-    expect(output.output).toContain('[子代理 code / 11111111-2222-3333-4444-555555555555]')
+    expect(output.output).toContain('[子代理 code / 会话 sess_sub_1234 / run 11111111-2222-3333-4444-555555555555]')
     expect(output.output).toContain('partial evidence')
     expect(output.error).toBe('tool failed')
   })

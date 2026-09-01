@@ -29,6 +29,7 @@ describe('SessionStore', () => {
   describe('createChildIfAbsent', () => {
     const spawnKey = 'task_tool:stable-spawn-key'
     const createCommand = () => ({
+      childSessionId: deriveChildSessionId(spawnKey),
       workspaceRoot: path.resolve(tmpDir, 'workspace'),
       mode: 'default' as const,
       permissionMode: 'request_approval' as const,
@@ -60,7 +61,7 @@ describe('SessionStore', () => {
       }
     })
 
-    it('由 spawnKey 派生稳定 ID，并把原始 task 作为唯一首条 user message 原子发布', () => {
+    it('使用传入的 childSessionId 发布稳定身份，并把原始 task 作为唯一首条 user message 原子发布', () => {
       const store = new SessionStore(tmpDir)
       const first = store.createChildIfAbsent(createCommand())
 
@@ -69,6 +70,25 @@ describe('SessionStore', () => {
       expect(first.session.kind).toBe('subagent')
       expect(first.session.messages).toHaveLength(1)
       expect(first.session.messages[0]).toEqual(
+        expect.objectContaining({ role: 'user', content: 'inspect the runtime' })
+      )
+      expect(store.load(first.session.id)?.messages).toHaveLength(1)
+    })
+
+    it('childSessionId 与 deriveChildSessionId(spawnKey) 一致时创建结果与旧行为等价', () => {
+      const store = new SessionStore(tmpDir)
+      const first = store.createChildIfAbsent(createCommand())
+      const second = store.createChildIfAbsent(createCommand())
+
+      expect(first.created).toBe(true)
+      expect(first.session.id).toBe(deriveChildSessionId(spawnKey))
+      expect(first.session.messages[0]).toEqual(
+        expect.objectContaining({ role: 'user', content: 'inspect the runtime' })
+      )
+      expect(first.session.currentLeafId).toBe(first.session.messages[0].id)
+      expect(second.created).toBe(false)
+      expect(second.session.id).toBe(first.session.id)
+      expect(second.session.messages[0]).toEqual(
         expect.objectContaining({ role: 'user', content: 'inspect the runtime' })
       )
       expect(store.load(first.session.id)?.messages).toHaveLength(1)

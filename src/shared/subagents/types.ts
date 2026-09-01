@@ -156,6 +156,16 @@ export interface SpawnSubagentCommand {
   readonly reasoningEffort?: ReasoningEffort
 }
 
+/** 对既有子会话追加一次执行；profile、模型 header、权限上限全部沿用该会话冻结值。 */
+export interface FollowupSubagentCommand {
+  readonly parentSessionId: string
+  readonly parentRunId: string
+  readonly previousChildSessionId: string
+  readonly parentMessageId: string
+  readonly parentToolCallId: string
+  readonly task: string
+}
+
 export type SubagentExecutionStatus =
   | 'completed'
   | 'incomplete'

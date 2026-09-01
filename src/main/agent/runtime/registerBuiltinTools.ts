@@ -18,6 +18,7 @@ import { todoWriteTool } from '../../../runtime/tools/todoWriteTool'
 import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
+import { createTaskFollowupTool } from '../../../runtime/tools/task_followup'
 import { createBatchTaskTool } from '../../../runtime/tools/batch_task'
 import { createAgentListTool } from '../../../runtime/tools/agent_list'
 import { createModelListTool } from '../../../runtime/tools/model_list'
@@ -120,6 +121,11 @@ export function registerBuiltinTools(
   )
   toolRegistry.register(
     createTaskTool({
+      getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
+    })
+  )
+  toolRegistry.register(
+    createTaskFollowupTool({
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
     })
   )

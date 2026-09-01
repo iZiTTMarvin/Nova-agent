@@ -25,6 +25,8 @@ export function getToolDisplayName(toolName: string): string {
       return '终端会话 (shell_session)'
     case 'task':
       return '调度子代理 (task)'
+    case 'task_followup':
+      return '继续既有子代理 (task_followup)'
     case 'batch_task':
       return '并行调度子代理批次 (batch_task)'
     case 'agent_list':
@@ -159,6 +161,16 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (sub && display) return `子代理 ${sub}：${display}`
       if (sub) return `子代理 ${sub}`
       return display || '调度子代理'
+    }
+    case 'task_followup': {
+      // 子代理续跑：展示目标子会话 + 追加指令摘要
+      const child = (args.child_session_id as string) || ''
+      const childDisplay = child.length > 12 ? `${child.slice(0, 12)}...` : child
+      const task = (args.task as string) || ''
+      const display = task.length > 50 ? task.slice(0, 47) + '...' : task
+      if (childDisplay && display) return `续跑子代理 ${childDisplay}：${display}`
+      if (childDisplay) return `续跑子代理 ${childDisplay}`
+      return display || '继续既有子代理'
     }
     case 'batch_task': {
       const items = Array.isArray(args.items) ? args.items : []

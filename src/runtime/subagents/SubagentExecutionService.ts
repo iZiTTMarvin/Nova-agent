@@ -14,7 +14,9 @@ import {
   type SessionStore
 } from '../sessions/SessionStore'
 import type { SessionData, SubagentSessionData } from '../sessions/types'
+import { extractTextFromSerializableContent } from '../sessions/types'
 import type {
+  FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentExecutionResult,
   SubagentFailureCode,
@@ -100,18 +102,30 @@ export interface SubagentExecutionServiceDeps {
   readonly allowRecursion?: boolean
   readonly scheduler: SubagentScheduler
   readonly isRunExecutionActive?: (runId: string) => boolean
+  /** 按会话查进程内执行句柄，主进程由 registry 组合实现。 */
+  readonly hasSessionExecutionHandle?: (sessionId: string) => boolean
   /** 宿主是否具备 archive_read；用于子 Agent 能力继承与投影门控。 */
   readonly hostHasArchiveRead?: () => boolean
 }
 
-interface SpawnIdentity {
-  spawnKey: string
-  spawnRunId: string
+export interface SpawnIdentity {
+  readonly spawnKey: string
+  readonly spawnRunId: string
 }
 
 interface ActiveSubagentExecution {
-  readonly command: SpawnSubagentCommand
+  readonly command: SpawnSubagentCommand | FollowupSubagentCommand
   readonly promise: Promise<SubagentExecutionResult>
+}
+
+/** 已完成身份与归属校验的一次子代理执行的输入；spawn 与 followup 共用执行段。 */
+interface ResolvedExecutionPlan {
+  readonly task: string
+  readonly workingDirectory: string
+  readonly isolation: SpawnSubagentCommand['isolation']
+  readonly timeoutMs?: number
+  readonly parentSessionId: string
+  readonly parentRunId: string
 }
 
 /**
@@ -139,21 +153,47 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     } catch (error) {
       return Promise.reject(error)
     }
-    const active = this.activeExecutions.get(identity.spawnKey)
+    return this.runDeduplicated(identity.spawnKey, command, () =>
+      this.spawnOnce(command, context, identity)
+    )
+  }
+
+  followup(
+    command: FollowupSubagentCommand,
+    context: SpawnSubagentContext = {}
+  ): Promise<SubagentExecutionResult> {
+    let identity: SpawnIdentity
+    try {
+      assertFollowupInvocationIdentity(command, context)
+      identity = createFollowupSpawnIdentity(command)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    return this.runDeduplicated(identity.spawnKey, command, () =>
+      this.followupOnce(command, context, identity)
+    )
+  }
+
+  private runDeduplicated(
+    spawnKey: string,
+    command: SpawnSubagentCommand | FollowupSubagentCommand,
+    start: () => Promise<SubagentExecutionResult>
+  ): Promise<SubagentExecutionResult> {
+    const active = this.activeExecutions.get(spawnKey)
     if (active) {
       if (!isDeepStrictEqual(active.command, command)) {
         return Promise.reject(
-          new Error(`spawnKey ${identity.spawnKey} 的并发命令 metadata 冲突`)
+          new Error(`spawnKey ${spawnKey} 的并发命令 metadata 冲突`)
         )
       }
       return active.promise
     }
 
-    const execution = this.spawnOnce(command, context, identity)
-    this.activeExecutions.set(identity.spawnKey, { command, promise: execution })
+    const execution = start()
+    this.activeExecutions.set(spawnKey, { command, promise: execution })
     void execution.finally(() => {
-      if (this.activeExecutions.get(identity.spawnKey)?.promise === execution) {
-        this.activeExecutions.delete(identity.spawnKey)
+      if (this.activeExecutions.get(spawnKey)?.promise === execution) {
+        this.activeExecutions.delete(spawnKey)
       }
     }).catch(() => undefined)
     return execution
@@ -176,9 +216,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     validateWorkingDirectory(command, parentSession.workspaceRoot)
     validateSpawnModelOverride(command)
 
-    const existingChild = this.deps.sessionStore.load(
-      deriveChildSessionId(identity.spawnKey)
-    )
+    const childSessionId = deriveChildSessionId(identity.spawnKey)
+    const existingChild = this.deps.sessionStore.load(childSessionId)
     const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
     let profile: SubagentProfileSnapshot
     let header: SubagentSessionHeader | undefined
@@ -246,6 +285,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       ...(header ? { header } : {})
     }
     const childResult = this.deps.sessionStore.createChildIfAbsent({
+      childSessionId,
       workspaceRoot: command.workingDirectory,
       mode: 'default',
       permissionMode: parentSession.permissionMode,
@@ -256,10 +296,161 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     const childSession = childResult.session
     this.deps.onLinked?.({ childSession, created: childResult.created })
 
+    return this.runResolvedExecution(
+      {
+        task: command.task,
+        workingDirectory: command.workingDirectory,
+        isolation: command.isolation,
+        ...(command.timeoutMs !== undefined ? { timeoutMs: command.timeoutMs } : {}),
+        parentSessionId: command.parentSessionId,
+        parentRunId: command.parentRunId
+      },
+      context,
+      identity,
+      childSession,
+      profile,
+      existingRun,
+      lineageBase.rootRunId
+    )
+  }
+
+  private async followupOnce(
+    command: FollowupSubagentCommand,
+    context: SpawnSubagentContext,
+    identity: SpawnIdentity
+  ): Promise<SubagentExecutionResult> {
+    const parentSession = this.deps.sessionStore.load(command.parentSessionId)
+    if (!parentSession) {
+      throw new Error(`父会话 ${command.parentSessionId} 不存在`)
+    }
+    this.requireParentRunAlive(command.parentSessionId, command.parentRunId)
+
+    const targetChild = this.deps.sessionStore.load(command.previousChildSessionId)
+    if (!targetChild) {
+      throw new Error(`目标子会话 ${command.previousChildSessionId} 不存在`)
+    }
+    if (targetChild.kind !== 'subagent') {
+      throw new Error(`目标会话 ${command.previousChildSessionId} 不是子代理会话`)
+    }
+    if (targetChild.subagent.lineage.parentSessionId !== command.parentSessionId) {
+      throw new Error(
+        `目标子会话 ${command.previousChildSessionId} 不属于父会话 ${command.parentSessionId}`
+      )
+    }
+    // 排除自己的 spawnRunId：同一 followup 调用崩溃后重试需经共享段收敛 interrupted 再恢复，不能按忙拒绝
+    if (
+      this.deps.runCoordinator.hasActiveRunForSession(command.previousChildSessionId, {
+        excludeRunId: identity.spawnRunId
+      })
+    ) {
+      throw new Error(`子会话 ${command.previousChildSessionId} 正在执行中，请稍后重试`)
+    }
+    if (this.deps.hasSessionExecutionHandle?.(command.previousChildSessionId)) {
+      throw new Error(`子会话 ${command.previousChildSessionId} 的执行尚未收敛，请稍后重试`)
+    }
+    // 与 spawnOnce 恢复路径的 unresolved 检查同理：挂着没人回答的授权时继续执行会让交互状态错乱
+    const latest = this.deps.runCoordinator.getSnapshotForSession(
+      command.previousChildSessionId
+    )
+    if (
+      latest?.status === 'interrupted' &&
+      latest.pendingInteractions.some(
+        (interaction) => interaction.status === 'pending' || interaction.status === 'submitting'
+      )
+    ) {
+      throw new Error(
+        `子会话 ${command.previousChildSessionId} 有待处理的授权请求，请先回答或忽略后再继续`
+      )
+    }
+    const profile = targetChild.subagent.profile
+    const header = targetChild.subagent.header
+    if (!header) {
+      throw new Error('历史子会话缺少模型 header，无法 followup；请重新派遣子代理')
+    }
+
+    const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
+    if (!existingRun || !isHardTerminalRunStatus(existingRun.status)) {
+      this.deps.resolveExecutionTarget({ header })
+    }
+    const lineageBase = resolveLineageBase(parentSession, command.parentRunId)
+
+    // 指令先落子会话历史再执行：后续 followup 恢复上下文与详情弹窗都要看到
+    // 当初的追加指令。硬终态重放路径不写——重放的是旧执行，不引入新指令。
+    let childSession = targetChild
+    if (!existingRun || !isHardTerminalRunStatus(existingRun.status)) {
+      childSession = this.persistFollowupInstruction(command, identity) ?? targetChild
+    }
+
+    // 不走 createChildIfAbsent：既有子会话没有可创建的关系，而创建路径会用
+    // 命令 task 与首条消息深比较，followup 的 task 是新指令，语义上不该经过它；
+    // 存在性与归属已在上面校验。
+    return this.runResolvedExecution(
+      {
+        task: command.task,
+        workingDirectory: childSession.workspaceRoot,
+        isolation: profile.permissionCeiling === 'read_only' ? 'readonly' : 'shared',
+        timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
+        parentSessionId: command.parentSessionId,
+        parentRunId: command.parentRunId
+      },
+      context,
+      identity,
+      childSession,
+      profile,
+      existingRun,
+      lineageBase.rootRunId
+    )
+  }
+
+  /**
+   * 把追加指令持久化为子会话的 user 消息。消息 id 由 spawnKey 确定，
+   * 崩溃后重试命中 already_exists 不重复写入；同 id 不同文本属 durable
+   * 身份冲突，fail closed。
+   */
+  private persistFollowupInstruction(
+    command: FollowupSubagentCommand,
+    identity: SpawnIdentity
+  ): SubagentSessionData | null {
+    const messageId = deriveFollowupUserMessageId(identity.spawnKey)
+    const append = this.deps.sessionStore.appendMessageFast(command.previousChildSessionId, {
+      id: messageId,
+      role: 'user',
+      content: command.task,
+      timestamp: Date.now()
+    })
+    if (!append.ok) {
+      throw new Error(
+        `追加 followup 指令到子会话 ${command.previousChildSessionId} 失败: ${append.error}`
+      )
+    }
+    const reloaded = this.deps.sessionStore.load(command.previousChildSessionId)
+    if (reloaded?.kind !== 'subagent') {
+      throw new Error(`子会话 ${command.previousChildSessionId} 的 followup 指令持久化后不可见`)
+    }
+    const persisted = reloaded.messages.find((message) => message.id === messageId)
+    if (!persisted || persisted.role !== 'user') {
+      throw new Error(`子会话 ${command.previousChildSessionId} 的 followup 指令持久化后不可见`)
+    }
+    if (extractTextFromSerializableContent(persisted.content) !== command.task) {
+      throw new Error(`spawnKey ${identity.spawnKey} 的 followup 指令文本与既有持久化记录冲突`)
+    }
+    return reloaded
+  }
+
+  /** spawn 与 followup 的共用执行段：run 收敛、root 栅栏、排队、调度与最终 turn。 */
+  private async runResolvedExecution(
+    plan: ResolvedExecutionPlan,
+    context: SpawnSubagentContext,
+    identity: SpawnIdentity,
+    childSession: SubagentSessionData,
+    profile: SubagentProfileSnapshot,
+    existingRun: RunSnapshot | null,
+    rootRunId: string
+  ): Promise<SubagentExecutionResult> {
     let recoverySnapshot: RunSnapshot | null = null
     if (existingRun) {
       try {
-        assertChildRunIdentity(existingRun, childSession)
+        assertChildRunIdentity(existingRun, childSession, identity.spawnRunId)
       } catch (error) {
         this.deps.runCoordinator.recordDiagnostic(
           existingRun.runId,
@@ -269,7 +460,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         throw error
       }
       if (existingRun.status === 'completed' || existingRun.status === 'failed' || existingRun.status === 'cancelled') {
-        return this.projectResult(command, childSession, identity.spawnRunId)
+        return this.projectResult(childSession, identity.spawnRunId)
       }
       if (this.deps.isRunExecutionActive?.(existingRun.runId)) {
         throw new Error(`child run ${existingRun.runId} 已有活跃执行句柄`)
@@ -306,16 +497,16 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       recoverySnapshot = interrupted ?? null
     }
 
-    const rootRun = this.deps.runCoordinator.getSnapshot(lineage.rootRunId)
+    const rootRun = this.deps.runCoordinator.getSnapshot(rootRunId)
     if (
       !rootRun ||
       rootRun.executionGeneration === undefined ||
       !this.deps.runCoordinator.isExecutionCurrent(
-        lineage.rootRunId,
+        rootRunId,
         rootRun.executionGeneration
       )
     ) {
-      throw new Error(`root run ${lineage.rootRunId} 的 execution generation 不可用`)
+      throw new Error(`root run ${rootRunId} 的 execution generation 不可用`)
     }
 
     if (!existingRun && context.waitForCapacity === true) {
@@ -325,7 +516,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         workspaceId: childSession.workspaceRoot,
         sessionId: childSession.id
       })
-      assertChildRunIdentity(queued, childSession)
+      assertChildRunIdentity(queued, childSession, identity.spawnRunId)
     }
 
     if (context.abortSignal?.aborted) {
@@ -335,12 +526,12 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         'cancelled',
         '父执行已取消'
       )
-      return this.projectResult(command, childSession, identity.spawnRunId)
+      return this.projectResult(childSession, identity.spawnRunId)
     }
 
     const permitResult = await this.deps.scheduler.acquire({
       runId: identity.spawnRunId,
-      rootRunId: lineage.rootRunId,
+      rootRunId,
       requestKey: identity.spawnKey,
       wait: context.waitForCapacity === true,
       ...(context.abortSignal ? { abortSignal: context.abortSignal } : {})
@@ -348,7 +539,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     if (!permitResult.ok) {
       const current = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
       if (current && isHardTerminalRunStatus(current.status)) {
-        return this.projectResult(command, childSession, identity.spawnRunId)
+        return this.projectResult(childSession, identity.spawnRunId)
       }
       if (recoverySnapshot || permitResult.code === 'run_active') {
         throw new SubagentScheduleRejectedError(permitResult)
@@ -360,7 +551,6 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         `scheduler:${permitResult.code}:${permitResult.message}`
       )
       return this.projectResult(
-        command,
         childSession,
         identity.spawnRunId,
         permitResult.code === 'aborted' ? undefined : 'scheduler'
@@ -379,12 +569,12 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         }
       }
       return await this.executePrepared(
-        command,
+        plan,
         context,
         identity,
         childSession,
         profile,
-        lineage.rootRunId,
+        rootRunId,
         rootRun.executionGeneration,
         recoverySnapshot
       )
@@ -394,7 +584,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   }
 
   private async executePrepared(
-    command: SpawnSubagentCommand,
+    plan: ResolvedExecutionPlan,
     context: SpawnSubagentContext,
     identity: SpawnIdentity,
     childSession: SubagentSessionData,
@@ -417,12 +607,12 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       })
       prepared = this.deps.prepareTurn({
         profile: executionProfile,
-        task: command.task,
-        workingDirectory: command.workingDirectory,
-        isolation: command.isolation,
+        task: plan.task,
+        workingDirectory: plan.workingDirectory,
+        isolation: plan.isolation,
         ...(context.invocationRef ? { invocationRef: context.invocationRef } : {}),
         childSession,
-        parentRunId: command.parentRunId,
+        parentRunId: plan.parentRunId,
         rootRunId
       })
     } catch (error) {
@@ -432,7 +622,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         'failed',
         error instanceof Error ? error.message : String(error)
       )
-      return this.projectResult(command, childSession, identity.spawnRunId, 'host')
+      return this.projectResult(childSession, identity.spawnRunId, 'host')
     }
 
     const runRefs: AgentTurnRunRefs = {
@@ -442,8 +632,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
     const eventContext = (): SubagentEventContext => ({
       ...runRefs,
-      parentRunId: command.parentRunId,
-      parentSessionId: command.parentSessionId,
+      parentRunId: plan.parentRunId,
+      parentSessionId: plan.parentSessionId,
       childSessionId: childSession.id,
       mode: childSession.mode,
       workspaceRoot: childSession.workspaceRoot,
@@ -472,25 +662,25 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
     context.abortSignal?.addEventListener('abort', cancelChild, { once: true })
     const timeoutHandle =
-      command.timeoutMs !== undefined && command.timeoutMs > 0
+      plan.timeoutMs !== undefined && plan.timeoutMs > 0
         ? setTimeout(() => {
             if (parentCancelled) return
             timedOut = true
             prepared.agentLoop.cancel()
-          }, command.timeoutMs)
+          }, plan.timeoutMs)
         : null
 
     try {
       const executionTask = recoverySnapshot
-        ? buildRecoveryTask(command.task, recoverySnapshot)
-        : command.task
+        ? buildRecoveryTask(plan.task, recoverySnapshot)
+        : plan.task
       await this.deps.turnExecutor.execute({
         agentLoop: prepared.agentLoop,
         task: executionTask,
         route: agentRoute(),
         sessionId: childSession.id,
-        workingDirectory: command.workingDirectory,
-        isolation: command.isolation,
+        workingDirectory: plan.workingDirectory,
+        isolation: plan.isolation,
         ...(context.invocationRef ? { invocationRef: context.invocationRef } : {}),
         profile,
         runId: identity.spawnRunId,
@@ -505,7 +695,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
             this.deps.runCoordinator.commitTerminal({
               runId: identity.spawnRunId,
               status: 'failed',
-              reason: `子代理执行超时（${command.timeoutMs}ms）`
+              reason: `子代理执行超时（${plan.timeoutMs}ms）`
             })
           }
         },
@@ -513,7 +703,6 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       })
     } catch {
       return this.projectResult(
-        command,
         childSession,
         identity.spawnRunId,
         timedOut ? 'timeout' : 'host'
@@ -526,21 +715,28 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
 
     return this.projectResult(
-      command,
       childSession,
       identity.spawnRunId,
       timedOut ? 'timeout' : undefined
     )
   }
 
-  private requireParentRun(command: SpawnSubagentCommand): void {
-    const parentRun = this.deps.runCoordinator.getSnapshot(command.parentRunId)
-    if (!parentRun || parentRun.sessionId !== command.parentSessionId) {
+  private requireParentRunAlive(parentSessionId: string, parentRunId: string): RunSnapshot {
+    const parentRun = this.deps.runCoordinator.getSnapshot(parentRunId)
+    if (!parentRun || parentRun.sessionId !== parentSessionId) {
       throw new Error('parent session/run identity 不匹配')
     }
     if (isTerminalRunStatus(parentRun.status)) {
-      throw new Error(`parent run ${command.parentRunId} 已终止`)
+      throw new Error(`parent run ${parentRunId} 已终止`)
     }
+    return parentRun
+  }
+
+  private requireParentRun(command: SpawnSubagentCommand): void {
+    const parentRun = this.requireParentRunAlive(
+      command.parentSessionId,
+      command.parentRunId
+    )
     if (
       command.invocation.kind === 'skill_fork' &&
       command.invocation.parentToolCallId === undefined &&
@@ -562,7 +758,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       workspaceId: childSession.workspaceRoot,
       sessionId: childSession.id
     })
-    assertChildRunIdentity(snapshot, childSession)
+    assertChildRunIdentity(snapshot, childSession, runId)
     if (!isTerminalRunStatus(snapshot.status)) {
       if (snapshot.status !== 'running') this.deps.runCoordinator.markRunning(runId)
       this.deps.runCoordinator.commitTerminal({ runId, status, reason })
@@ -570,7 +766,6 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   }
 
   private projectResult(
-    command: SpawnSubagentCommand,
     childSession: SubagentSessionData,
     runId: string,
     failureCode?: SubagentFailureCode
@@ -586,6 +781,23 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   }
 }
 
+function invocationRefMatches(
+  ref: ToolInvocationRef,
+  expected: {
+    readonly parentSessionId: string
+    readonly parentRunId: string
+    readonly parentMessageId: string
+    readonly parentToolCallId: string | undefined
+  }
+): boolean {
+  return (
+    ref.sessionId === expected.parentSessionId &&
+    ref.runId === expected.parentRunId &&
+    ref.messageId === expected.parentMessageId &&
+    ref.toolCallId === expected.parentToolCallId
+  )
+}
+
 function assertInvocationIdentity(
   command: SpawnSubagentCommand,
   context: SpawnSubagentContext
@@ -599,32 +811,76 @@ function assertInvocationIdentity(
   ) return
   const ref = context.invocationRef
   if (!ref) throw new Error('工具触发的子代理缺少完整 ToolInvocationRef')
-  const parentToolCallId = command.invocation.parentToolCallId
   if (
-    ref.sessionId !== command.parentSessionId ||
-    ref.runId !== command.parentRunId ||
-    ref.messageId !== command.invocation.parentMessageId ||
-    ref.toolCallId !== parentToolCallId
+    !invocationRefMatches(ref, {
+      parentSessionId: command.parentSessionId,
+      parentRunId: command.parentRunId,
+      parentMessageId: command.invocation.parentMessageId,
+      parentToolCallId: command.invocation.parentToolCallId
+    })
   ) {
     throw new Error('工具触发的子代理调用身份与 SpawnSubagentCommand 不匹配')
   }
 }
 
-export function createSpawnIdentity(command: SpawnSubagentCommand): SpawnIdentity {
-  const spawnKey = createStableSpawnKey(command)
+function assertFollowupInvocationIdentity(
+  command: FollowupSubagentCommand,
+  context: SpawnSubagentContext
+): void {
+  const ref = context.invocationRef
+  if (!ref) throw new Error('followup 缺少完整 ToolInvocationRef')
+  if (!invocationRefMatches(ref, command)) {
+    throw new Error('followup 调用身份与 FollowupSubagentCommand 不匹配')
+  }
+}
+
+function deriveSpawnRunId(spawnKey: string): string {
   const digest = createHash('sha256')
     .update(`spawn-run\0${spawnKey}`, 'utf8')
     .digest('hex')
-  return {
-    spawnKey,
-    spawnRunId: [
-      digest.slice(0, 8),
-      digest.slice(8, 12),
-      digest.slice(12, 16),
-      digest.slice(16, 20),
-      digest.slice(20, 32)
-    ].join('-')
-  }
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    digest.slice(12, 16),
+    digest.slice(16, 20),
+    digest.slice(20, 32)
+  ].join('-')
+}
+
+function hashStableFields(stableFields: readonly string[]): string {
+  return createHash('sha256')
+    .update(stableFields.join('\0'), 'utf8')
+    .digest('hex')
+}
+
+export function createSpawnIdentity(command: SpawnSubagentCommand): SpawnIdentity {
+  const spawnKey = createStableSpawnKey(command)
+  return { spawnKey, spawnRunId: deriveSpawnRunId(spawnKey) }
+}
+
+/**
+ * followup 的稳定身份：同一次 followup 工具调用幂等，不同调用得到不同 run；
+ * 与 task_tool 分支同构，previousChildSessionId 保证不同子会话的 followup 互不冲突。
+ */
+export function createFollowupSpawnIdentity(
+  command: FollowupSubagentCommand
+): SpawnIdentity {
+  const spawnKey = `task_followup:${hashStableFields([
+    'task_followup',
+    command.parentRunId,
+    command.parentMessageId,
+    command.parentToolCallId,
+    command.previousChildSessionId
+  ])}`
+  return { spawnKey, spawnRunId: deriveSpawnRunId(spawnKey) }
+}
+
+/** followup 指令在子会话中的持久化消息 id；同一次调用重试不产生第二条指令。 */
+function deriveFollowupUserMessageId(spawnKey: string): string {
+  const digest = createHash('sha256')
+    .update(`followup-task\0${spawnKey}`, 'utf8')
+    .digest('hex')
+  return `msg_sub_user_${digest.slice(0, 32)}`
 }
 
 function createStableSpawnKey(command: SpawnSubagentCommand): string {
@@ -651,10 +907,7 @@ function createStableSpawnKey(command: SpawnSubagentCommand): string {
       String(origin.occurrence ?? 0)
     ]
   })()
-  const digest = createHash('sha256')
-    .update(stableFields.join('\0'), 'utf8')
-    .digest('hex')
-  return `${origin.kind}:${digest}`
+  return `${origin.kind}:${hashStableFields(stableFields)}`
 }
 
 function validateSkillRoots(
@@ -739,10 +992,11 @@ function validateWorkingDirectory(
 
 function assertChildRunIdentity(
   snapshot: RunSnapshot,
-  childSession: SubagentSessionData
+  childSession: SubagentSessionData,
+  expectedRunId: string
 ): void {
   if (
-    snapshot.runId !== childSession.subagent.lineage.spawnRunId ||
+    snapshot.runId !== expectedRunId ||
     snapshot.sessionId !== childSession.id ||
     snapshot.workspaceId !== childSession.workspaceRoot
   ) {

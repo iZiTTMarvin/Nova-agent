@@ -278,6 +278,10 @@ export async function sendAgentMessage(
     turnExecutor,
     scheduler: getSubagentScheduler(),
     isRunExecutionActive: (runId) => executionRegistry.get(runId) !== null,
+    hasSessionExecutionHandle: (sessionId) =>
+      executionRegistry.listActiveRunIds().some(
+        (runId) => runCoordinator.getSnapshot(runId)?.sessionId === sessionId
+      ),
     hostHasArchiveRead: () => prepared.toolRegistry.getTool('archive_read') !== undefined,
     loadProfile: (profileId) => getSubAgentSpec(profileId, projectPath),
     resolveExecutionTarget: (input) => {

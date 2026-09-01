@@ -1,7 +1,6 @@
 import type { ReasoningEffort } from '../../../shared/config'
 import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../../subagents'
-import type { SubagentExecutionStatus } from '../../../shared/subagents'
-import type { TurnTruncationReason } from '../../../shared/run/types'
+import { buildSubagentToolResult, failure } from '../subagentResultText'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 
 const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'max'] as const
@@ -91,7 +90,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
       if (!port) return failure('子代理执行服务尚未装配')
 
       try {
-        const result = await port.spawn(
+        const spawnResult = await port.spawn(
           {
             parentSessionId: invocationRef.sessionId,
             parentRunId: invocationRef.runId,
@@ -113,57 +112,14 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
             ...(context.abortSignal ? { abortSignal: context.abortSignal } : {})
           }
         )
-        const output = `[子代理 ${profileId} / ${result.childRunId}]\n${result.summary}`
-        if (result.status === 'completed') {
-          return { success: true, output }
-        }
-        return {
-          success: false,
-          output,
-          error:
-            result.failure?.message ??
-            (result.status === 'incomplete'
-              ? `子代理未完成任务${describeIncompleteReason(result.incompleteReason)}`
-              : `子代理执行${statusLabel(result.status)}`)
-        }
+        // 表头暴露 childSessionId：父模型凭它对同一子代理发起 task_followup 续跑
+        return buildSubagentToolResult(
+          `[子代理 ${profileId} / 会话 ${spawnResult.childSessionId} / run ${spawnResult.childRunId}]`,
+          spawnResult
+        )
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error))
       }
     }
-  }
-}
-
-function failure(error: string): ToolResult {
-  return { success: false, output: '', error }
-}
-
-function statusLabel(status: SubagentExecutionStatus): string {
-  switch (status) {
-    case 'completed':
-      return '成功'
-    case 'incomplete':
-      return '未完成'
-    case 'failed':
-      return '失败'
-    case 'cancelled':
-      return '已取消'
-    case 'interrupted':
-      return '已中断'
-  }
-}
-
-/** 截断原因的可读说明（仅文案；判定不依赖文案） */
-function describeIncompleteReason(reason: TurnTruncationReason | undefined): string {
-  switch (reason) {
-    case 'max_rounds':
-      return '（已达工具轮数上限）'
-    case 'breaker':
-      return '（重复失败已熔断）'
-    case 'empty_args':
-      return '（连续空参已中断）'
-    case 'deadline':
-      return '（达到宿主截止时间）'
-    default:
-      return ''
   }
 }

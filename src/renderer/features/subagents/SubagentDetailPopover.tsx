@@ -181,8 +181,8 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
   // 运行中：投影 sequence/status 推进时重拉消息，保持面板与执行同步
   useEffect(() => {
     const unsubscribe = useSubagentProjectionStore.subscribe((state, prevState) => {
-      const current = state.byChildSessionId[projection.childSessionId]
-      const previous = prevState.byChildSessionId[projection.childSessionId]
+      const current = state.byChildRunId[projection.childRunId]
+      const previous = prevState.byChildRunId[projection.childRunId]
       if (
         current &&
         (current.sequence !== previous?.sequence || current.status !== previous?.status)
@@ -191,7 +191,7 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
       }
     })
     return unsubscribe
-  }, [projection.childSessionId])
+  }, [projection.childRunId])
 
   // Esc 关闭；点击背板关闭（背板覆盖全屏，面板自身冒泡禁止）
   useEffect(() => {

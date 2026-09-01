@@ -2,7 +2,7 @@ import React from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
-import { useSubagentProjectionStore } from './projection'
+import { useSubagentProjectionStore, selectLatestSubagentByChildSessionId } from './projection'
 import './SubagentSessionHeader.css'
 
 export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> = ({
@@ -14,7 +14,7 @@ export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> =
   const cancelExecution = useAgentStore((state) => state.cancelExecution)
   const session = sessions.find((candidate) => candidate.id === currentSessionId)
   const projection = useSubagentProjectionStore((state) =>
-    currentSessionId ? state.byChildSessionId[currentSessionId] : undefined
+    currentSessionId ? selectLatestSubagentByChildSessionId(state, currentSessionId) : undefined
   )
   if (!session || session.kind !== 'subagent') return null
 

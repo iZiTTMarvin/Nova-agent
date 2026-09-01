@@ -37,6 +37,18 @@ describe('按会话 turn 占用判断', () => {
     expect(coord.hasActiveRunForSession('s2')).toBe(false)
   })
 
+  it('excludeRunId 是唯一占用者时返回 false，其它占用者仍在时返回 true', () => {
+    const mine = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1', runId: 'run-mine' })
+    coord.markRunning(mine.runId)
+    const other = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1', runId: 'run-other' })
+    coord.markRunning(other.runId)
+
+    expect(coord.hasActiveRunForSession('s1', { excludeRunId: 'run-mine' })).toBe(true)
+    coord.commitTerminal({ runId: other.runId, status: 'completed' })
+    expect(coord.hasActiveRunForSession('s1', { excludeRunId: 'run-mine' })).toBe(false)
+    expect(coord.hasActiveRunForSession('s1')).toBe(true)
+  })
+
   it('不同会话可同时持 active run（并发前提）', () => {
     const a = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
     const b = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's2' })

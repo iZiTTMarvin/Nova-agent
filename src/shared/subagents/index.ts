@@ -1,5 +1,6 @@
 export type {
   SessionKind,
+  FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentExecutionFailure,
   SubagentExecutionResult,

@@ -4,7 +4,8 @@ import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubagentProjectionService } from '../../../src/main/agent/subagents'
 import { createRunCoordinator } from '../../../src/runtime/run'
-import { SessionStore } from '../../../src/runtime/sessions'
+import { SessionStore, deriveChildSessionId } from '../../../src/runtime/sessions'
+import { createFollowupSpawnIdentity } from '../../../src/runtime/subagents'
 import { writeManifest, getFilesDir } from '../../../src/runtime/checkpoints/manifest'
 import type {
   SubagentSessionHeader,
@@ -62,6 +63,7 @@ describe('SubagentProjectionService', () => {
       ...(header ? { header } : {})
     }
     return sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(`task_tool:${toolCallId}`),
       workspaceRoot: workspace,
       mode: 'default',
       permissionMode: 'request_approval',
@@ -102,12 +104,50 @@ describe('SubagentProjectionService', () => {
       }
     }
     return sessionStore.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(`workflow:${toolCallId}`),
       workspaceRoot: workspace,
       mode: 'compose',
       permissionMode: 'request_approval',
       task: 'research question',
       subagent: metadata
     }).session
+  }
+
+  function startParentRun() {
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-parent',
+      workspaceId: workspace,
+      sessionId: parentSessionId
+    })
+    coordinator.markRunning('run-parent', 'msg-parent')
+  }
+
+  /** 父会话侧的 followup 调用事实：assistant 消息携带 task_followup 调用 + 父 run 的 toolCommits。 */
+  function attachFollowupCall(childSessionId: string, task: string) {
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-followup',
+      role: 'assistant',
+      content: 'continue',
+      toolCalls: [{
+        id: 'call-followup',
+        name: 'task_followup',
+        arguments: JSON.stringify({ child_session_id: childSessionId, task })
+      }],
+      timestamp: Date.now()
+    })
+    coordinator.recordToolPhase('run-parent', 'call-followup', 'task_followup', 'executing')
+  }
+
+  function followupRunId(childSessionId: string, task: string): string {
+    return createFollowupSpawnIdentity({
+      parentSessionId,
+      parentRunId: 'run-parent',
+      previousChildSessionId: childSessionId,
+      parentMessageId: 'msg-followup',
+      parentToolCallId: 'call-followup',
+      task
+    }).spawnRunId
   }
 
   it('从 durable session 与 run 重建父工具投影且不泄露 profile 配置', () => {
@@ -465,5 +505,270 @@ describe('SubagentProjectionService', () => {
     expect(load).not.toHaveBeenCalled()
     expect(projection).not.toHaveProperty('fileChanges')
     expect(projection).not.toHaveProperty('summary')
+  })
+
+  it('同一子会话出生 run 与 followup run 各产出独立投影，父调用身份各自命中正确 run', () => {
+    vi.useFakeTimers()
+    try {
+      const child = createChild('call-birth', 'run-birth')
+      vi.setSystemTime(1_000)
+      startParentRun()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-birth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-birth', 'msg-birth')
+      coordinator.commitTerminal({ runId: 'run-birth', status: 'completed' })
+
+      vi.setSystemTime(2_000)
+      const followupTask = '继续检查 runtime 细节'
+      attachFollowupCall(child.id, followupTask)
+      const followupRun = followupRunId(child.id, followupTask)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: followupRun,
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning(followupRun, 'msg-followup-child')
+
+      const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+      const projections = service.listByParentSessionId(parentSessionId)
+      expect(projections).toHaveLength(2)
+      const [birth, followup] = projections
+      // 出生行：parentToolCallId 来自 lineage.origin，终态不被 followup 覆盖
+      expect(birth).toMatchObject({
+        childSessionId: child.id,
+        childRunId: 'run-birth',
+        parentToolCallId: 'call-birth',
+        status: 'completed'
+      })
+      // followup 行：parentToolCallId 与 taskLabel 来自父会话正向重算
+      expect(followup).toMatchObject({
+        childSessionId: child.id,
+        childRunId: followupRun,
+        parentToolCallId: 'call-followup',
+        taskLabel: '继续检查 runtime 细节',
+        status: 'running'
+      })
+
+      expect(service.getByParentToolCallId(parentSessionId, 'call-birth')?.childRunId).toBe('run-birth')
+      expect(service.getByParentToolCallId(parentSessionId, 'call-followup')?.childRunId).toBe(followupRun)
+      // 会话级查询返回最新 run
+      expect(service.getByChildSessionId(child.id)?.childRunId).toBe(followupRun)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('followup run 的 waiting_user 在多 run 下仍逐 run 正确', () => {
+    vi.useFakeTimers()
+    try {
+      const child = createChild('call-multi', 'run-multi-birth')
+      vi.setSystemTime(1_000)
+      startParentRun()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-multi-birth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-multi-birth', 'msg-birth')
+      coordinator.commitTerminal({ runId: 'run-multi-birth', status: 'completed' })
+
+      vi.setSystemTime(2_000)
+      const followupTask = '继续执行'
+      attachFollowupCall(child.id, followupTask)
+      const followupRun = followupRunId(child.id, followupTask)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: followupRun,
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning(followupRun, 'msg-followup-child')
+      coordinator.inbox.enqueue({
+        runId: followupRun,
+        sessionId: child.id,
+        messageId: 'msg-followup-child',
+        type: 'permission',
+        interactionId: 'permission-followup',
+        payload: { requestId: 'permission-followup' }
+      })
+      coordinator.commitTerminal({
+        runId: followupRun,
+        status: 'interrupted',
+        reason: 'process_exit'
+      })
+
+      const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+      const projections = service.listByParentSessionId(parentSessionId)
+      expect(projections).toHaveLength(2)
+      expect(projections[0]).toMatchObject({ childRunId: 'run-multi-birth', status: 'completed' })
+      expect(projections[1]).toMatchObject({
+        childRunId: followupRun,
+        status: 'waiting_user',
+        latestActivity: '等待你的授权'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('followup run 终态但 transcript 不可读时降级 record_missing 且不影响出生行', () => {
+    vi.useFakeTimers()
+    try {
+      const child = createChild('call-missing2', 'run-missing-birth')
+      vi.setSystemTime(1_000)
+      startParentRun()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-missing-birth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-missing-birth', 'msg-birth')
+      coordinator.commitTerminal({ runId: 'run-missing-birth', status: 'completed' })
+
+      vi.setSystemTime(2_000)
+      const followupTask = '收尾'
+      attachFollowupCall(child.id, followupTask)
+      const followupRun = followupRunId(child.id, followupTask)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: followupRun,
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning(followupRun, 'msg-followup-child')
+      coordinator.commitTerminal({ runId: followupRun, status: 'completed' })
+
+      // 出生行先投影成功；followup 行投影时 transcript 读取失败（第二次 child load 返回 null）
+      const realLoad = sessionStore.load.bind(sessionStore)
+      let childLoads = 0
+      vi.spyOn(sessionStore, 'load').mockImplementation((sessionId: string) => {
+        if (sessionId === child.id) {
+          childLoads += 1
+          return childLoads === 1 ? realLoad(sessionId) : null
+        }
+        return realLoad(sessionId)
+      })
+
+      const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+      const projections = service.listByParentSessionId(parentSessionId)
+      expect(projections).toHaveLength(2)
+      expect(projections[0]).toMatchObject({ childRunId: 'run-missing-birth', status: 'completed' })
+      expect(projections[1]).toMatchObject({ childRunId: followupRun, status: 'record_missing' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('多 run 下会话级 fileChanges 只挂最后一个终态 run', () => {
+    vi.useFakeTimers()
+    try {
+      const child = createChild('call-files-multi', 'run-files-birth')
+      const sessionRoot = join(tempRoot, 'sessions')
+      const backupPath = resolve(getFilesDir(sessionRoot, child.id, 'msg-birth'), 'src', 'a.ts')
+      mkdirSync(join(backupPath, '..'), { recursive: true })
+      writeFileSync(backupPath, 'old line', 'utf-8')
+      const workspaceFile = join(workspace, 'src', 'a.ts')
+      mkdirSync(join(workspaceFile, '..'), { recursive: true })
+      writeFileSync(workspaceFile, 'new line\nsecond line', 'utf-8')
+      writeManifest(sessionRoot, {
+        sessionId: child.id,
+        messageId: 'msg-birth',
+        workspaceRoot: workspace,
+        createdFiles: [],
+        modifiedFiles: ['src/a.ts'],
+        deletedFiles: [],
+        status: 'active',
+        createdAt: 1_000
+      })
+
+      vi.setSystemTime(1_000)
+      startParentRun()
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-files-birth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-files-birth', 'msg-birth')
+      coordinator.commitTerminal({ runId: 'run-files-birth', status: 'completed' })
+
+      vi.setSystemTime(2_000)
+      const followupTask = '继续改文件'
+      attachFollowupCall(child.id, followupTask)
+      const followupRun = followupRunId(child.id, followupTask)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: followupRun,
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning(followupRun, 'msg-followup-child')
+
+      const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+      // 最新 run 未终态：出生行即便终态也不携带聚合 diff
+      const whileRunning = service.listByParentSessionId(parentSessionId)
+      expect(whileRunning[0]).not.toHaveProperty('fileChanges')
+      expect(whileRunning[1]).not.toHaveProperty('fileChanges')
+
+      coordinator.commitTerminal({ runId: followupRun, status: 'completed' })
+      const settled = service.listByParentSessionId(parentSessionId)
+      expect(settled[0]).not.toHaveProperty('fileChanges')
+      expect(settled[1]?.fileChanges).toEqual([
+        { filePath: 'src/a.ts', status: 'modified', addedLines: 2, removedLines: 1 }
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('父会话 followup 调用数据缺失时 followup 行降级为无 parentToolCallId 且不丢弃', () => {
+    vi.useFakeTimers()
+    try {
+      const child = createChild('call-orphan', 'run-orphan-birth')
+      vi.setSystemTime(1_000)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-orphan-birth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-orphan-birth', 'msg-birth')
+      coordinator.commitTerminal({ runId: 'run-orphan-birth', status: 'completed' })
+
+      // followup run 存在，但父会话没有对应的 task_followup 调用记录
+      vi.setSystemTime(2_000)
+      const followupRun = followupRunId(child.id, '孤儿 followup')
+      coordinator.startRun({
+        kind: 'agent',
+        runId: followupRun,
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning(followupRun, 'msg-followup-child')
+
+      const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+      const projections = service.listByParentSessionId(parentSessionId)
+      expect(projections).toHaveLength(2)
+      expect(projections[0]).toMatchObject({
+        childRunId: 'run-orphan-birth',
+        parentToolCallId: 'call-orphan'
+      })
+      expect(projections[1]).toMatchObject({
+        childRunId: followupRun,
+        status: 'running',
+        taskLabel: 'inspect runtime'
+      })
+      expect(projections[1]).not.toHaveProperty('parentToolCallId')
+      expect(service.getByParentToolCallId(parentSessionId, 'call-followup')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

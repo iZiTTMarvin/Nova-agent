@@ -136,6 +136,20 @@ export class RunCoordinator {
     return cloneSnapshot(nonTerminal ?? fromDisk[0])
   }
 
+  /** 按会话列举全部 run 快照（内存优先覆盖磁盘，按 createdAt 升序、同刻按 runId 稳定排序）。 */
+  listSnapshotsForSession(sessionId: string): RunSnapshot[] {
+    const byRunId = new Map<string, RunSnapshot>()
+    for (const snap of this.store.findSnapshotsBySession(sessionId)) {
+      byRunId.set(snap.runId, snap)
+    }
+    for (const snap of this.runs.values()) {
+      if (snap.sessionId === sessionId) byRunId.set(snap.runId, snap)
+    }
+    return [...byRunId.values()]
+      .sort((left, right) => left.createdAt - right.createdAt || left.runId.localeCompare(right.runId))
+      .map(cloneSnapshot)
+  }
+
   /** 会话下所有仍有 pending 交互的 snapshot（侧边栏徽标） */
   listWaitingSessions(): Array<{ sessionId: string; runId: string; pendingCount: number }> {
     const result: Array<{ sessionId: string; runId: string; pendingCount: number }> = []
@@ -168,11 +182,17 @@ export class RunCoordinator {
    * 只要该会话下存在任意一个这样的 run，就认为该会话的 turn 尚未结束，
    * 入口锁据此拒绝同会话的新 turn（让新消息进 steering queue）。
    * waiting_user 也算占用：用户尚未回应，该会话仍处于一轮未闭合状态。
+   * excludeRunId 指定的 run 不计入占用：其收敛/恢复由调用方自己的执行身份处理
+   * （如 followup 幂等重试要经共享段把崩溃残留收敛为 interrupted 再恢复）。
    */
-  hasActiveRunForSession(sessionId: string): boolean {
+  hasActiveRunForSession(
+    sessionId: string,
+    options?: { readonly excludeRunId?: string }
+  ): boolean {
     const runIds = this.sessionIndex.get(sessionId)
     if (!runIds) return false
     for (const runId of runIds) {
+      if (runId === options?.excludeRunId) continue
       const snap = this.runs.get(runId)
       if (!snap) continue
       if (

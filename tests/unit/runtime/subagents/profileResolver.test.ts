@@ -12,7 +12,7 @@ describe('resolveSubagentProfileSnapshot', () => {
       name: 'code',
       description: 'writes code',
       prompt: 'do the work',
-      allowedTools: ['read', 'write', 'read', 'task'],
+      allowedTools: ['read', 'write', 'read', 'task', 'task_followup'],
       model: { providerID: 'provider', modelID: 'model' },
       maxToolRounds: 30,
       contextWindow: 128_000
