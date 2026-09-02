@@ -1,19 +1,28 @@
 /**
  * GeneralSettingsPanel — 通用偏好设置面板
  *
- * 包含：默认运行模式、bash shell、持久终端会话、编辑器字体/主题、diff 自动展开。
+ * 包含：默认运行模式、bash shell、持久终端会话、编辑器字体/主题、diff 自动展开、应用更新。
  * 所有改动通过 settings:set 持久化，主进程做 schema 校验。
  */
 import React, { useEffect, useState } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
 import { Selector } from '@astryxdesign/core/Selector'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import {
+  APP_UPDATE_STATE_CHANGED,
+  CHECK_APP_UPDATE,
+  DOWNLOAD_APP_UPDATE,
+  GET_APP_UPDATE_STATE,
+  INSTALL_APP_UPDATE,
+} from '../../../shared/ipc/channels'
 import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
+import type { AppUpdateSnapshot } from '../../../shared/update'
 import { FullAccessConfirmDialog } from '../permissions/FullAccessConfirmDialog'
 
 const MODE_OPTIONS: { value: Mode; label: string }[] = [
@@ -31,6 +40,53 @@ const PERMISSION_OPTIONS: Array<{
   { value: 'full_access', label: '完全访问' }
 ]
 
+function displayVersion(version: string): string {
+  return version.toLowerCase().startsWith('v') ? version : `v${version}`
+}
+
+function formatCheckedAt(checkedAt: string): string {
+  const date = new Date(checkedAt)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+function describeUpdateState(snapshot: AppUpdateSnapshot | null): string {
+  if (!snapshot) return '正在读取版本信息…'
+  switch (snapshot.status) {
+    case 'idle':
+      return `当前版本 ${displayVersion(snapshot.currentVersion)}`
+    case 'checking':
+      return `当前版本 ${displayVersion(snapshot.currentVersion)}，正在检查更新…`
+    case 'up-to-date': {
+      const checkedAt = formatCheckedAt(snapshot.checkedAt)
+      return `已是最新版本 ${displayVersion(snapshot.currentVersion)}${checkedAt ? `（${checkedAt} 检查）` : ''}`
+    }
+    case 'available':
+      return `发现新版本 ${displayVersion(snapshot.update.version)}`
+    case 'downloading':
+      return `正在下载 ${displayVersion(snapshot.update.version)}（${Math.round(Math.min(100, Math.max(0, snapshot.progress.percent)))}%）`
+    case 'ready':
+      return `${displayVersion(snapshot.update.version)} 已就绪，重启后自动安装`
+    case 'error':
+      return snapshot.operation === 'check'
+        ? `检查更新失败：${snapshot.message}`
+        : `下载更新失败：${snapshot.message}`
+  }
+}
+
+/** 依据当前快照给出可执行动作；无可执行动作（检查中/下载中/已是最新）返回 null */
+function getUpdateAction(
+  snapshot: AppUpdateSnapshot | null,
+): { label: string; channel: typeof DOWNLOAD_APP_UPDATE | typeof INSTALL_APP_UPDATE } | null {
+  if (!snapshot) return null
+  if (snapshot.status === 'available') return { label: '下载更新', channel: DOWNLOAD_APP_UPDATE }
+  if (snapshot.status === 'ready') return { label: '重启并安装', channel: INSTALL_APP_UPDATE }
+  if (snapshot.status === 'error' && snapshot.operation === 'download') {
+    return { label: '重试下载', channel: DOWNLOAD_APP_UPDATE }
+  }
+  return null
+}
+
 export const GeneralSettingsPanel: React.FC = () => {
   const theme = useSettingsStore(state => state.theme)
   const setTheme = useSettingsStore(state => state.setTheme)
@@ -39,9 +95,28 @@ export const GeneralSettingsPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
+  const [updateSnapshot, setUpdateSnapshot] = useState<AppUpdateSnapshot | null>(null)
+  const [updateActionError, setUpdateActionError] = useState<string | null>(null)
 
   useEffect(() => {
     void loadSettings()
+  }, [])
+
+  // 更新状态由主进程 AppUpdateController 唯一持有，这里只订阅镜像用于就地展示
+  useEffect(() => {
+    let cancelled = false
+    const unsubscribe = window.api.on(APP_UPDATE_STATE_CHANGED, (snapshot) => {
+      if (!cancelled) setUpdateSnapshot(snapshot)
+    })
+    void window.api.invoke(GET_APP_UPDATE_STATE)
+      .then((snapshot) => {
+        if (!cancelled) setUpdateSnapshot(snapshot)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [])
 
   const loadSettings = async () => {
@@ -97,6 +172,16 @@ export const GeneralSettingsPanel: React.FC = () => {
     void update('defaultPermissionMode', value)
   }
 
+  /** 手动检查 / 下载 / 安装共用入口；状态变化经 APP_UPDATE_STATE_CHANGED 回流 */
+  const runUpdateAction = async (channel: typeof CHECK_APP_UPDATE | typeof DOWNLOAD_APP_UPDATE | typeof INSTALL_APP_UPDATE): Promise<void> => {
+    setUpdateActionError(null)
+    try {
+      await window.api.invoke(channel)
+    } catch (err) {
+      setUpdateActionError(err instanceof Error && err.message.trim() ? err.message : '操作未完成，请重试。')
+    }
+  }
+
   if (!settings) {
     return (
       <div className="settings-panel">
@@ -108,6 +193,7 @@ export const GeneralSettingsPanel: React.FC = () => {
   }
 
   const defaultMode = settings.defaultMode === 'compose' ? 'default' : settings.defaultMode
+  const updateAction = getUpdateAction(updateSnapshot)
 
   return (
     <div className="settings-panel">
@@ -249,6 +335,42 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
+          </SettingsSection>
+
+          <SettingsSection title="应用更新">
+            <SettingsRow
+              label="应用版本"
+              description={describeUpdateState(updateSnapshot)}
+              end={
+                <>
+                  {updateAction && (
+                    <Button
+                      label={updateAction.label}
+                      size="sm"
+                      onClick={() => void runUpdateAction(updateAction.channel)}
+                    >
+                      {updateAction.label}
+                    </Button>
+                  )}
+                  <Button
+                    label="检查更新"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void runUpdateAction(CHECK_APP_UPDATE)}
+                    isDisabled={
+                      updateSnapshot?.status === 'checking' || updateSnapshot?.status === 'downloading'
+                    }
+                  >
+                    {updateSnapshot?.status === 'checking' ? '正在检查…' : '检查更新'}
+                  </Button>
+                </>
+              }
+            />
+            {updateActionError && (
+              <SettingsField>
+                <span className="settings-status settings-status--error">{updateActionError}</span>
+              </SettingsField>
+            )}
           </SettingsSection>
 
           {error && <div className="settings-status settings-status--gap settings-status--error">{error}</div>}
