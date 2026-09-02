@@ -109,6 +109,7 @@ describe('skillZip', () => {
 
   // ── C6 回归：zip bomb 防护 ────────────────────────────────
 
+  // 构造用例要真实写出上千文件或上百 MB 数据，并行负载下 5s 默认超时不够
   it('解压文件数超过上限时拒绝并清理（zip bomb 防护）', async () => {
     // 构造 1001 个小文件的 zip，触发 MAX_EXTRACTED_FILE_COUNT=1000
     const stagingDir = join(workDir, 'staging-files')
@@ -119,7 +120,7 @@ describe('skillZip', () => {
     await expect(extractZip(zipPath, extractDir)).rejects.toThrow(/zip bomb|文件数/)
     // 失败时必须清理半成品，避免污染目标目录
     expect(existsSync(extractDir)).toBe(false)
-  })
+  }, 30_000)
 
   it('解压总大小超过上限时拒绝并清理（zip bomb 防护）', async () => {
     // 构造一个总大小 > 100MB 的 zip：2 个 60MB 文件，触发 MAX_EXTRACTED_TOTAL_SIZE
@@ -131,5 +132,5 @@ describe('skillZip', () => {
     const extractDir = join(workDir, 'out-size')
     await expect(extractZip(zipPath, extractDir)).rejects.toThrow(/zip bomb|大小|过大/)
     expect(existsSync(extractDir)).toBe(false)
-  })
+  }, 60_000)
 })

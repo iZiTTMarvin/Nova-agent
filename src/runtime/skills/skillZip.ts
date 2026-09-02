@@ -2,6 +2,7 @@
  * Skill zip 解压与目录发现（Task 8）
  */
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import type { WriteStream } from 'fs'
 import { dirname, join, normalize, sep } from 'path'
 import { tmpdir } from 'os'
 import * as yauzl from 'yauzl'
@@ -30,16 +31,24 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
     let totalSize = 0
     let rejected = false
 
-    const fail = (err: Error): void => {
+    const fail = (err: Error, pendingWriteStream?: WriteStream): void => {
       if (rejected) return
       rejected = true
-      // 解压失败时清理半成品，避免污染目标目录
-      try {
-        rmSync(destDir, { recursive: true, force: true })
-      } catch {
-        // 清理失败不影响错误传递
+      const cleanupAndReject = (): void => {
+        // 解压失败时清理半成品，避免污染目标目录；
+        // Windows 下句柄未释放时删除会 EBUSY，靠重试兜底
+        try {
+          rmSync(destDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+        } catch {
+          // 清理失败不影响错误传递
+        }
+        reject(err)
       }
-      reject(err)
+      if (pendingWriteStream) {
+        pendingWriteStream.once('close', cleanupAndReject)
+      } else {
+        cleanupAndReject()
+      }
     }
 
     yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
@@ -100,10 +109,15 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
             entrySize += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
             totalSize += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
             if (totalSize > MAX_EXTRACTED_TOTAL_SIZE) {
-              fail(new Error(`解压总大小超过上限 ${MAX_EXTRACTED_TOTAL_SIZE} bytes，疑似 zip bomb`))
+              // 先销毁流再 fail：fail 的清理要等写句柄 close 后才删除目录，
+              // 否则 Windows 上带句柄删除会 EBUSY，半成品目录静默残留
               writeStream.destroy()
               readStream.destroy()
               zipfile.close()
+              fail(
+                new Error(`解压总大小超过上限 ${MAX_EXTRACTED_TOTAL_SIZE} bytes，疑似 zip bomb`),
+                writeStream
+              )
             }
           })
 
