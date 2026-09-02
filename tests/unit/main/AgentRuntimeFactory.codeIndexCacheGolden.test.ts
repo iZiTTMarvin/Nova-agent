@@ -52,6 +52,12 @@ vi.mock('../../../src/main/services/SubagentSchedulerHost', () => ({
   getSubagentScheduler: () => ({ enqueue: vi.fn() })
 }))
 
+// bash 描述按探测到的 shell 家族渲染（pwsh/cmd/POSIX），随机器环境漂移；
+// golden 以常量锚定该段，家族渲染由 bash/prompt 自身测试保护
+vi.mock('../../../src/runtime/tools/bash/prompt', () => ({
+  renderBashDescription: () => '[golden] bash description'
+}))
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -131,9 +137,10 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         toolsHash: snapshot.toolsHash,
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
-        // 基线随工具面更新：0.1.3 起 model_list / batch_task / task_followup 进入工具目录
-        toolsHash: '6c8108aa694967b8',
-        systemContentHash: '34ee3fbd55d48ef5'
+        // 基线随工具面更新：0.1.3 起 model_list / batch_task / task_followup 进入工具目录；
+        // bash 描述被锚定为常量（见文件顶部 mock），两个哈希跨机器稳定
+        toolsHash: '3cf1f2e84f3ea74c',
+        systemContentHash: '080120c1b7d75acf'
       })
     } finally {
       prepared.agentLoop.dispose()
