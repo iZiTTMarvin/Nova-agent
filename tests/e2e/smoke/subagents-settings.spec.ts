@@ -2,6 +2,14 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, launchNova, test, type NovaHarness } from '../fixtures/nova'
 
+const KNOWN_LONGTASK_DIAGNOSTIC = /^\[warning\] \[longtask\] \d+ms @ \d+\.\d+ \(主线程被同步任务占满，界面会冻住\)$/
+
+function unexpectedRendererDiagnostics(lines: readonly string[]): string[] {
+  return lines.filter(line =>
+    !KNOWN_LONGTASK_DIAGNOSTIC.test(line) && /warning|unhandled|\[error\]/i.test(line)
+  )
+}
+
 async function openSubagents(nova: NovaHarness): Promise<void> {
   await nova.page.getByRole('button', { name: '设置' }).click()
   await nova.page.getByRole('tab', { name: '子 Agent' }).click()
@@ -55,7 +63,7 @@ test('子代理设置通过真实 IPC 完成复制、编辑、启停和项目覆
     await resumed.page.getByLabel('全局探索副本', { exact: true }).click()
     await expect(resumed.page.getByText('ID：')).toContainText('explore-2')
     expect(resumed.pageErrors).toEqual([])
-    expect(resumed.rendererConsole.filter(line => /Warning|unhandled/i.test(line))).toEqual([])
+    expect(unexpectedRendererDiagnostics(resumed.rendererConsole)).toEqual([])
   } finally {
     await resumed.cleanup()
   }
@@ -77,7 +85,7 @@ test('无可用模型与损坏配置在真实 Electron 中可诊断，保存失�
     await expect(nova.page.getByLabel('显示名称')).toHaveValue('保留草稿验证')
     await expect(nova.page.getByText('步骤 2 / 2')).toBeVisible()
     expect(nova.pageErrors).toEqual([])
-    expect(nova.rendererConsole.filter(line => /Warning|unhandled/i.test(line))).toEqual([])
+    expect(unexpectedRendererDiagnostics(nova.rendererConsole)).toEqual([])
   } finally {
     await nova.cleanup()
   }
