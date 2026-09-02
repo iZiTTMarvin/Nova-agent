@@ -94,8 +94,11 @@ function buildResolvedChildModel(
   const cacheProfile = resolveCacheProfile(resolved.config.baseUrl, modelId)
   const contextWindow = resolveContextWindow(modelId, resolved.entry.contextWindow)
   const supportsVision = resolveSupportsVision(modelId, resolved.entry.supportsVision)
+  // header 是子代理思考强度的唯一权威：entry 的默认 effort 只在派遣时进入 header，
+  // 恢复为 auto 时不得经 resolved.config 泄漏回模型请求
+  const { reasoningEffort: _entryDefaultEffort, ...providerConfig } = resolved.config
   const modelConfig: ModelConfig = {
-    ...resolved.config,
+    ...providerConfig,
     modelId,
     contextWindow,
     supportsVision,

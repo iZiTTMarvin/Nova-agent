@@ -127,9 +127,8 @@ describe('child model routing', () => {
     const restored = resolveChildModelFromHeader(changed, header)
 
     expect(restored.header.reasoningEffort).toBe('auto')
-    // 恢复路径以持久 header 为准；header 为 auto 时模型请求不携带 reasoning_effort
-    expect(restored.header.reasoningEffort).toBe('auto')
-    expect(restored.modelConfig).not.toHaveProperty('reasoning_effort')
+    // 恢复路径以持久 header 为准；header 为 auto 时不得回退到 entry 默认 effort
+    expect(restored.modelConfig).not.toHaveProperty('reasoningEffort')
   })
 
   it('rejects a public modelId drift during header recovery', () => {
