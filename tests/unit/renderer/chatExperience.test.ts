@@ -217,8 +217,8 @@ describe('聊天体验回归', () => {
 
     // 展开折叠头 → 挂载过程时间线等宽行
     act(() => header?.click())
-    expect(renderer.container.querySelector('.tool-trace-row__action')?.textContent).toBe('Wrote')
-    expect(renderer.container.querySelector('.tool-trace-row__target')?.textContent ?? '').toContain('index.html')
+    expect(renderer.container.querySelector('.tool-trace-row__action')?.textContent).toBe('已写入')
+    expect(renderer.container.querySelector('.tool-trace-row__filename')?.textContent ?? '').toContain('index.html')
     expect(renderer.container.querySelectorAll('.tool-trace-row__detail')).toHaveLength(0)
 
     renderer.unmount()

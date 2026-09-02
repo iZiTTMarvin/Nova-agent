@@ -97,10 +97,10 @@ describe('对话表面：过程轨行用原生 disclosure 行（左对齐）', (
     expect(toolTraceRowSource).toContain('tool-trace-row__target')
   })
 
-  it('ToolCallGroup 不使用 Astryx Button，且渲染 action/target 结构化 span', () => {
+  it('ToolCallGroup 不使用 Astryx Button，且行内动作/文件名为结构化 span', () => {
     expect(toolCallGroupSource).not.toContain("@astryxdesign/core/Button")
-    expect(toolCallGroupSource).toContain('tool-call-group__action')
-    expect(toolCallGroupSource).toContain('tool-call-group__target')
+    expect(toolCallGroupSource).toContain('tool-call-group__item-action')
+    expect(toolCallGroupSource).toContain('tool-call-group__item-filename')
   })
 
   it('TurnProcessTree 折叠头不使用 Astryx Button，且渲染 header-title span', () => {

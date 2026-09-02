@@ -131,8 +131,9 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         toolsHash: snapshot.toolsHash,
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
-        toolsHash: '50f1622902eead43',
-        systemContentHash: '073c785db036bfad'
+        // 基线随工具面更新：0.1.3 起 model_list / batch_task / task_followup 进入工具目录
+        toolsHash: '6c8108aa694967b8',
+        systemContentHash: '34ee3fbd55d48ef5'
       })
     } finally {
       prepared.agentLoop.dispose()

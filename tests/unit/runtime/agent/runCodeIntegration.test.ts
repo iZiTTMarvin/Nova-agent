@@ -4,7 +4,7 @@
  * 验证嵌套调用真实执行、父子关联可观测、嵌套结果不进入主上下文、
  * direct-only 与未激活 deferred 工具无法经 SDK 调用。
  */
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -213,7 +213,9 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     expect(nestedResults.map(event => event.toolName)).toEqual(['code_context', 'read'])
     expect(nestedResults[0]?.result).not.toContain('\n')
     expect(nestedResults.every(event => event.parentToolCallId === 'tc_run_code')).toBe(true)
-    expect(readState.has(join(workspace, 'auth.ts'))).toBe(true)
+    // readState 的 key 是工具链路 canonical 化后的路径；Windows 临时目录可能带 8.3 短名，
+    // 断言须用 native realpath 展开后的形态，否则短名/长名不一致导致误报
+    expect(readState.has(join(realpathSync.native(workspace), 'auth.ts'))).toBe(true)
   })
 
   it('direct-only 工具无法通过 SDK 调用（edit 不可达）', async () => {

@@ -95,14 +95,21 @@ describe('computeActivePath', () => {
     }
     const leaf = `n${depth - 1}`
 
+    // 预热让两个实现进入稳定 JIT 区，再放大迭代拉开量级差距；
+    // 裸墙钟对比在并行负载下会被噪声翻转，导致算法守护测试偶发误报
+    for (let i = 0; i < 5; i++) {
+      computeActivePath(messages, leaf)
+      computeActivePathUnshiftReference(messages, leaf)
+    }
+
     const t0 = performance.now()
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 250; i++) {
       computeActivePath(messages, leaf)
     }
     const optimizedMs = performance.now() - t0
 
     const t1 = performance.now()
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 250; i++) {
       computeActivePathUnshiftReference(messages, leaf)
     }
     const referenceMs = performance.now() - t1

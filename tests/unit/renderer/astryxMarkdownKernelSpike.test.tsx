@@ -341,7 +341,7 @@ describe('spike：流式基准（console 输出用于报告，断言只锁不变
   const frames = buildFrames(CORPUS)
   const largeFrames = buildFrames(LARGE_CORPUS)
 
-  it('增量解析的累计重解析量与耗时显著低于每帧全量重解析', () => {
+  it('增量解析的累计重解析量显著低于每帧全量重解析', () => {
     const naive = runNaiveFullReparse(frames)
     const astryx = runAstryxEngine(frames)
 
@@ -352,8 +352,9 @@ describe('spike：流式基准（console 输出用于报告，断言只锁不变
         `  astryx增量: reparse=${astryx.reparseChars}chars parse=${astryx.parseMs.toFixed(1)}ms`
     )
 
+    // 墙钟耗时只进报告不进断言：并行负载下的调度噪声会翻转裸时间对比，
+    // 重解析量比例才是可稳定守护的不变式
     expect(astryx.reparseChars).toBeLessThan(naive.reparseChars * 0.5)
-    expect(astryx.parseMs).toBeLessThan(naive.parseMs)
   })
 
   it('大语料 + 长未闭合 fence（worst case）：增量重解析面仍受控', () => {
