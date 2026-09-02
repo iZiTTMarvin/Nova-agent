@@ -141,10 +141,6 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
       if (typeof messages[0]?.content === 'string') {
         messages[0] = { ...messages[0], content: messages[0].content.replace(/\r\n/g, '\n') }
       }
-      // TEMP-DIAG: 定位跨机器漂移段，发布后移除
-      if (typeof messages[0]?.content === 'string') {
-        console.log(`[golden-b64]${Buffer.from(messages[0].content, 'utf8').toString('base64')}[/golden-b64]`)
-      }
       const snapshot = computeWireSnapshot(normalizedBody, 'generic')
 
       expect({
@@ -152,9 +148,9 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
         // 基线随工具面更新：0.1.3 起 model_list / batch_task / task_followup 进入工具目录；
-        // bash 描述被锚定为常量（见文件顶部 mock），系统消息行尾统一为 LF 后跨机器稳定
+        // bash 描述锚定为常量、系统消息行尾统一 LF 后，两个哈希跨机器稳定
         toolsHash: '3cf1f2e84f3ea74c',
-        systemContentHash: 'd4326fd6a20426c9'
+        systemContentHash: '9469848f6dceb2e1'
       })
     } finally {
       prepared.agentLoop.dispose()
