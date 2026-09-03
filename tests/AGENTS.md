@@ -109,7 +109,7 @@ npm run test:e2e:packaged
 LIVE_CACHE_DEEPSEEK_API_KEY=sk-... npm run test:live-cache
 ```
 
-全量 Vitest、完整 Electron E2E、fault/stress 和 packaged gate 由 CI / nightly / release 承担。任务完成前仍要运行与本次影响范围直接相关的回归，不能用“CI 会跑”跳过必要验证。
+全量 Vitest、完整 Electron E2E、fault/stress 和 packaged gate 由 CI / nightly / release 承担。任务完成前仍要运行与本次影响范围直接相关的回归，不能用“CI 会跑”跳过必要验证。门禁触发、推送纪律与偶发失败契约见 `../docs/ci-gate.md`。
 
 ## 6. E2E 目录职责
 
