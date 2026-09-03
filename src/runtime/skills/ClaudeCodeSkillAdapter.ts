@@ -124,7 +124,7 @@ function syncScope(
       continue
     }
 
-    if (shouldSyncSkillDir(sourceDir, targetDir)) {
+    if (opts.overwrite || shouldSyncSkillDir(sourceDir, targetDir)) {
       if (existsSync(targetDir)) {
         rmSync(targetDir, { recursive: true, force: true })
       }

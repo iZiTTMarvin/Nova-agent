@@ -10,7 +10,10 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication } from '@playwright/test'
-import { RUN_LIST_WAITING } from '../../../src/shared/ipc/channels'
+import {
+  RUN_LIST_WAITING,
+  WORKSPACE_SET_PERMISSION_MODE
+} from '../../../src/shared/ipc/channels'
 import { expect, launchNova, test, type NovaHarness } from '../fixtures/nova'
 
 const CONTINUE_PROMPT = '请从中断处继续完成刚才的任务。'
@@ -110,6 +113,11 @@ test('挂起权限请求在重启对账后收敛为已取消，不残留「等�
   const state = await nova.createSession('default')
   const sessionId = state.currentSessionId
   if (!sessionId) throw new Error('session id missing')
+
+  await nova.invoke(WORKSPACE_SET_PERMISSION_MODE, {
+    sessionId,
+    permissionMode: 'request_approval'
+  })
 
   nova.provider.enqueue({
     kind: 'tool',

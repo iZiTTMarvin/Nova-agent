@@ -367,6 +367,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
   const deleteSelected = async () => {
     if (!selected || selected.builtin) return
+    const deletedId = selected.id
     setSaving(true)
     setPageError(null)
     try {
@@ -377,7 +378,8 @@ export const SubagentsSettingsPanel: React.FC = () => {
       })
       setRoute({ kind: 'list' })
       const nextItems = await loadList()
-      if (nextItems?.[0]) setRoute({ kind: 'detail', id: nextItems[0].id })
+      const nextSelected = nextItems?.find(item => item.id === deletedId) ?? nextItems?.[0] ?? null
+      setRoute(nextSelected ? { kind: 'detail', id: nextSelected.id } : { kind: 'list' })
     } catch (error) {
       setPageError(errorMessage(error, '删除失败。'))
     } finally {

@@ -105,6 +105,19 @@ test('拖拽 Inspector 期间聊天阅读宽度冻结，松手后恢复响应式
 test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不被强制回底', async ({ nova }) => {
   const { page, app } = nova
 
+  const streamChunks = Array.from(
+    { length: 36 },
+    (_, index) => `流式第 ${index + 1} 段：${'内容 '.repeat(45)}\n`
+  )
+  const enqueueStreamingReply = () => {
+    nova.provider.enqueue({
+      kind: 'text',
+      text: streamChunks.join(''),
+      chunks: streamChunks,
+      chunkDelayMs: 50
+    })
+  }
+
   await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
     win?.setBounds({ x: 60, y: 60, width: 1280, height: 800 })
@@ -118,7 +131,7 @@ test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不�
     })
 
   // 第一轮：流式输出 + 拖拽 → 自动跟底保持
-  nova.provider.enqueue({ kind: 'hold', id: 'stream-drag-1', text: COMPLEX_REPLY })
+  enqueueStreamingReply()
   await nova.sendPrompt('输出固定长文')
   await page.locator('.chat-messages__tail-status').waitFor({ state: 'visible' })
 
@@ -138,24 +151,20 @@ test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不�
     await page.waitForTimeout(60)
   }
   await page.mouse.up()
-  nova.provider.release('stream-drag-1')
   await nova.waitUntilIdle()
   expect(await distanceFromBottom()).toBeLessThan(120)
 
   // 第二轮：流式输出中用户上滚 → 拖拽不强制回底
-  nova.provider.enqueue({ kind: 'hold', id: 'stream-drag-2', text: COMPLEX_REPLY })
+  enqueueStreamingReply()
   await nova.sendPrompt('再输出一次')
   await page.locator('.chat-messages__tail-status').waitFor({ state: 'visible' })
-  await page.waitForTimeout(200)
 
   const scrollContainer = page.locator('.chat-messages')
-  const distanceBeforeScrollUp = await distanceFromBottom()
-  await scrollContainer.evaluate(el => {
-    el.scrollTop = 0
-  })
-  // 触发一次滚动同步，让自动滚动模式进入用户上滚态
-  await page.waitForTimeout(300)
-  expect(await distanceFromBottom()).toBeGreaterThan(distanceBeforeScrollUp)
+  await expect.poll(async () => scrollContainer.evaluate(el => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(500)
+  await scrollContainer.hover()
+  await page.mouse.wheel(0, -1200)
+  await expect.poll(distanceFromBottom).toBeGreaterThan(400)
 
   const handleBox2 = await handle.boundingBox()
   const startX2 = handleBox2!.x + handleBox2!.width / 2
@@ -166,7 +175,6 @@ test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不�
     await page.waitForTimeout(60)
   }
   await page.mouse.up()
-  nova.provider.release('stream-drag-2')
   await nova.waitUntilIdle()
 
   // 上滚位置不被强制拉回底部

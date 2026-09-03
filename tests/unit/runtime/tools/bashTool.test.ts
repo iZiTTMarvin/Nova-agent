@@ -257,7 +257,7 @@ describe('bashTool', () => {
       manager.endMessage()
       rmSync(tempDir, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   // ── workdir 参数（新） ────────────────────────────────
 

@@ -449,6 +449,12 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     tryLoadOlderMessages()
   }, [syncBottomState, tryLoadOlderMessages])
 
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0 && autoScrollModeRef.current === 'stream') {
+      autoScrollModeRef.current = 'off'
+    }
+  }, [])
+
   // prepend 早期消息后按高度差修正 scrollTop（overflow-anchor:none 下需手动锚定）
   useLayoutEffect(() => {
     const container = scrollContainerRef.current
@@ -786,6 +792,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           className="chat-messages flex-1 overflow-y-auto"
           ref={bindScrollContainer}
           onScroll={handleScroll}
+          onWheel={handleWheel}
           style={{
             overflowAnchor: 'none',
             paddingBottom: '156px'
