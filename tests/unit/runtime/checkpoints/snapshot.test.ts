@@ -174,6 +174,21 @@ describe('snapshot', () => {
     expect(contentCount).toBe(1)
   })
 
+  it('同预算下前后快照覆盖一致，未改动文件不误判删除', async () => {
+    const files: Record<string, string> = {}
+    for (let i = 0; i < 5; i++) {
+      files[`f${i}.txt`] = String(i)
+    }
+    tempDir = createTempWorkspace(files)
+
+    const before = await snapshotWorkspace(tempDir, { maxFiles: 2 })
+    const after = await snapshotMtimes(tempDir, { maxFiles: 2 })
+
+    expect(before.size).toBe(5)
+    expect(after.size).toBe(5)
+    expect(diffSnapshots(before, after)).toEqual({ modified: [], added: [], deleted: [] })
+  })
+
   it('超大文件（>10MB）跳过 content，只记 mtime', async () => {
     tempDir = createTempWorkspace({
       'big.bin': Buffer.alloc(11 * 1024 * 1024),

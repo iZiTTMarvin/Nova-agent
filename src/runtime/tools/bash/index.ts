@@ -463,13 +463,17 @@ export async function recordCheckpointChanges(
   )
   for (const relPath of modifiedSet) {
     const entry = baseline.get(relPath)
-    // entry.content 可能为 undefined（超大文件跳过内容读取），跳过 backup 但仍记录到 manifest
     if (entry) {
-      checkpointManager.recordBashChange(
-        join(context.workingDir, relPath),
-        entry.content ?? Buffer.alloc(0),
-        false
-      )
+      // 内容未知时只登记跳过，不写空备份
+      if (entry.content === undefined) {
+        checkpointManager.recordBashSkippedFile(join(context.workingDir, relPath), entry.size)
+      } else {
+        checkpointManager.recordBashChange(
+          join(context.workingDir, relPath),
+          entry.content,
+          false
+        )
+      }
     }
   }
   for (const relPath of addedSet) {
@@ -482,12 +486,17 @@ export async function recordCheckpointChanges(
   for (const relPath of deletedSet) {
     const entry = baseline.get(relPath)
     if (entry) {
-      checkpointManager.recordBashChange(
-        join(context.workingDir, relPath),
-        entry.content ?? Buffer.alloc(0),
-        false,
-        true
-      )
+      // 内容未知时只登记跳过，不写空备份
+      if (entry.content === undefined) {
+        checkpointManager.recordBashSkippedFile(join(context.workingDir, relPath), entry.size)
+      } else {
+        checkpointManager.recordBashChange(
+          join(context.workingDir, relPath),
+          entry.content,
+          false,
+          true
+        )
+      }
     }
   }
 }

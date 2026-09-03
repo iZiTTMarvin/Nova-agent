@@ -215,6 +215,27 @@ describe('CheckpointManager', () => {
       const backupPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'files', 'src', 'main.ts')
       expect(readFileSync(backupPath, 'utf-8')).toBe('const x = 1\n')
     })
+
+    it('内容未知的文件只进 skippedFiles，不产生空备份', () => {
+      const mgr = createManager()
+      mgr.beginMessage(MESSAGE_ID)
+
+      const filePath = join(TMP, 'existing.txt')
+      mgr.recordBashSkippedFile(filePath, 12345)
+
+      const manifest = readManifest(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID)
+      expect(manifest!.modifiedFiles).toHaveLength(0)
+      expect(manifest!.deletedFiles).toHaveLength(0)
+      expect(manifest!.skippedFiles).toHaveLength(1)
+      expect(manifest!.skippedFiles![0]).toMatchObject({
+        path: 'existing.txt',
+        reason: 'oversized',
+        bytes: 12345
+      })
+
+      const backupPath = join(CHECKPOINT_ROOT, SESSION_ID, MESSAGE_ID, 'files', 'existing.txt')
+      expect(existsSync(backupPath)).toBe(false)
+    })
   })
 
   // ── 跨消息隔离 ──────────────────────────────────────────────

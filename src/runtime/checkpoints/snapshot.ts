@@ -266,9 +266,10 @@ async function walkMtimes(
         stats.fileCount++
         stats.totalBytes += fileStat.size
 
-        // mtime 快照也受预算保护，避免极端情况下 stat 太多文件
+        // 预算超限只省内存不省覆盖，仍记录 mtime 以与 walk 侧对齐
         if (isBudgetExceeded(stats, options)) {
           stats.budgetLimited++
+          mtimes.set(relPath, fileStat.mtimeMs)
           continue
         }
 

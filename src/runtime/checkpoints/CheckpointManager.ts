@@ -282,15 +282,26 @@ export class CheckpointManager {
   }
 
   /**
-   * 记录 bash 命令造成的文件变更
-   *
+   * 登记 bash 路径下内容未知的文件为跳过备份。
+   * 未知内容永不产生空备份，避免拒绝或回滚把真实文件清空。
+   */
+  recordBashSkippedFile(absoluteFilePath: string, bytes: number): void {
+    if (!this.currentMessageId) return
+
+    const relPath = relative(this.config.workspaceRoot, absoluteFilePath).replace(/\\/g, '/')
+
+    if (this.backedUpFiles.has(relPath)) return
+    this.backedUpFiles.add(relPath)
+
+    const manifest = this.getOrCreateManifest()
+    this.addSkippedFile(manifest, { path: relPath, reason: 'oversized', bytes })
+    writeManifest(this.config.checkpointDir, manifest)
+  }
+
+  /**
+   * 记录 bash 命令造成的文件变更。
    * 与 backupBeforeWrite 不同的是：此方法接收原始内容参数，
    * 因为 bash 已经修改了工作区文件，无法再从磁盘读取原始内容。
-   *
-   * @param absoluteFilePath 文件绝对路径
-   * @param originalContent bash 执行前的文件内容（Buffer 二进制安全，或 string）
-   * @param isNewFile bash 是否新建了该文件
-   * @param isDeleted bash 是否删除了该文件
    */
   recordBashChange(
     absoluteFilePath: string,
