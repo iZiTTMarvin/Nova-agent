@@ -5,7 +5,7 @@
  * 不涉及 artifact 写入与占位符——那是 projectRequestMessages 的职责。
  */
 import { describe, it, expect } from 'vitest'
-import { planToolResultSupersession } from '../../../../src/runtime/agent/core/toolResultSupersession'
+import { planToolResultSupersession } from '../../../../src/runtime/request-projection'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 
 function asst(id: string, name: string, args: string): ChatMessage {

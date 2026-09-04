@@ -830,7 +830,7 @@ describe('SessionStore', () => {
               to: { messageId: 'a0', step: 0 }
             },
             stub: '[c1: 折叠]',
-            touchedFiles: [],
+            touchedFiles: { paths: [], omittedCount: 0 },
             trigger: 'threshold' as const,
             createdAt: 0
           }
@@ -863,6 +863,68 @@ describe('SessionStore', () => {
       )
 
       expect(store.loadContextSnapshot(session.id)).toBeNull()
+    })
+
+    it('嵌套结构损坏的账本返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const filePath = path.join(tmpDir, 'sessions', session.id, 'context-snapshot.json')
+      const validEntry = {
+        id: 'c1',
+        shadows: {
+          from: { messageId: 'u1', step: 0 },
+          to: { messageId: 'a1', step: 0 }
+        },
+        stub: 'stub',
+        touchedFiles: { paths: [], omittedCount: 0 },
+        trigger: 'threshold',
+        createdAt: 1
+      }
+      const validState = {
+        text: 'state',
+        coversThrough: { messageId: 'a1', step: 0 },
+        taskVerbatim: null,
+        realityLine: '',
+        revision: 1
+      }
+      const malformedLedgers: unknown[] = [
+        { version: 2, entries: [{}], state: null, tailFrom: null, updatedAt: 1 },
+        {
+          version: 2,
+          entries: [{
+            id: 'c1',
+            shadows: { from: { messageId: 'u1', step: -1 }, to: { messageId: 'a1', step: 0 } },
+            stub: 'stub',
+            touchedFiles: { paths: [], omittedCount: 0 },
+            trigger: 'unknown',
+            createdAt: 1
+          }],
+          state: null,
+          tailFrom: null,
+          updatedAt: 1
+        },
+        { version: 2, entries: [], state: { text: 'missing fields' }, tailFrom: null, updatedAt: 1 },
+        { version: 2, entries: [], state: null, tailFrom: { messageId: '', step: 0 }, updatedAt: 1 },
+        {
+          version: 2,
+          entries: [validEntry],
+          state: null,
+          tailFrom: null,
+          updatedAt: 1
+        },
+        {
+          version: 2,
+          entries: [validEntry],
+          state: { ...validState, revision: 2 },
+          tailFrom: null,
+          updatedAt: 1
+        }
+      ]
+
+      for (const malformed of malformedLedgers) {
+        fs.writeFileSync(filePath, JSON.stringify(malformed), 'utf8')
+        expect(store.loadContextSnapshot(session.id)).toBeNull()
+      }
     })
 
     it('clearContextSnapshot 后 load 返回 null', () => {

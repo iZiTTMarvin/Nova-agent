@@ -385,6 +385,7 @@ export async function sendAgentMessage(
   let sendContent: string | ContentBlock[]
   let persistContent: string | SerializableContentBlock[] | null = null
   let persistBlocks: MessageBlock[] = []
+  let turnUserMessageId = params.userMessageId
 
   if (isRegenerate) {
     const activePath = getSessionActiveMessages(session)
@@ -392,6 +393,7 @@ export async function sendAgentMessage(
     if (!leafUser || leafUser.role !== 'user') {
       throw new Error('重新生成失败：当前激活叶子不是用户消息')
     }
+    turnUserMessageId = leafUser.id
     if (params.images && params.images.length > 0) {
       throw new Error('重新生成暂不支持含图片的消息')
     }
@@ -447,7 +449,6 @@ export async function sendAgentMessage(
   })
 
   // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
-  let turnUserMessageId = params.userMessageId
   if (!isRegenerate && persistContent !== null) {
     // 追加前记录是否已有含文字的用户消息（用于首条文字消息自动生成标题）
     const hadTextUserMsg = session.messages.some(
@@ -478,6 +479,9 @@ export async function sendAgentMessage(
         }
       }
     }
+  }
+  if (!turnUserMessageId) {
+    throw new Error('轮次执行缺少持久化用户消息坐标')
   }
 
   // 常驻黑匣子：stall 只认「RunCoordinator=running 且 heartbeat 超时」
@@ -528,7 +532,7 @@ export async function sendAgentMessage(
       workingDirectory: projectPath,
       isolation: 'shared',
       runRefs,
-      ...(turnUserMessageId ? { userMessageId: turnUserMessageId } : {}),
+      userMessageId: turnUserMessageId,
       onStarted: (context) => {
         agentLoopsByRunId.set(context.runId, loopForRun)
         setActiveRunId(context.runId)

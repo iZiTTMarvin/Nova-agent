@@ -470,6 +470,54 @@ describe('CompactionService', () => {
     expect(extractTextFromContent(tailedCtx.messages[tailedCtx.messages.length - 1]!.content)).toBe('KEEP_IN_TAIL')
   })
 
+  it('同一轮连续压缩保留首次冻结的任务原文', async () => {
+    const context = createContext([
+      { role: 'system', content: 'system prompt' },
+      ...Array.from({ length: 20 }, (_, index): ChatMessage => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `history-${index}-${'h'.repeat(160)}`,
+        origin: { messageId: `history-${index}`, step: 0 }
+      })),
+      {
+        role: 'user',
+        content: 'FROZEN_TASK',
+        origin: { messageId: 'u-task', step: 0 }
+      },
+      {
+        role: 'assistant',
+        content: 'a'.repeat(400),
+        origin: { messageId: 'a-first', step: 0 }
+      }
+    ])
+    const client = new MockModelClient()
+      .addCompactionPair({
+        events: [
+          { type: 'text_delta', delta: 'first-state' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+      .addCompactionPair({
+        events: [
+          { type: 'text_delta', delta: 'second-state' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+    const { service } = createService({ context, client, contextWindow: 100 })
+
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    expect(context.compactionState?.state?.taskVerbatim?.text).toBe('FROZEN_TASK')
+
+    for (let index = 0; index < 8; index++) {
+      context.messages.push({
+        role: 'assistant',
+        content: `continued-${index}-${'b'.repeat(160)}`,
+        origin: { messageId: `a-${index}`, step: 0 }
+      })
+    }
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    expect(context.compactionState?.state?.taskVerbatim?.text).toBe('FROZEN_TASK')
+  })
+
   it('提交后交接包只读：追加消息与 touchedFiles 回调变化都不改已提交渲染', async () => {
     const original: ChatMessage[] = [
       { role: 'system', content: 'system prompt' },
@@ -494,7 +542,7 @@ describe('CompactionService', () => {
       contextBudgetManager: defaultContextBudgetManager,
       cacheDiagnostics: new CacheDiagnostics(),
       contextWindow: 4_000,
-      collectTouchedFiles: () => files,
+      collectTouchedFiles: () => ({ paths: files, omittedCount: 0 }),
       getRealityAnchors: () => ({ workspacePath: '/ws', activePlanPath: '/ws/plan.md' }),
       getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' }),
       idleProjection: identitySummaryProjection
@@ -502,14 +550,20 @@ describe('CompactionService', () => {
 
     await expect(serviceWithPorts.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
     const first = extractTextFromContent(context.messages[0].content)
-    expect(context.compactionState?.entries[0]?.touchedFiles).toEqual(['src/a.ts'])
+    expect(context.compactionState?.entries[0]?.touchedFiles).toEqual({
+      paths: ['src/a.ts'],
+      omittedCount: 0
+    })
     expect(first).toContain('src/a.ts')
     expect(first).toContain('/ws')
     files = ['src/new.ts']
     context.messages.push({ role: 'user', content: 'later' })
     const second = extractTextFromContent(context.messages[0].content)
     expect(second).toBe(first)
-    expect(context.compactionState?.entries[0]?.touchedFiles).toEqual(['src/a.ts'])
+    expect(context.compactionState?.entries[0]?.touchedFiles).toEqual({
+      paths: ['src/a.ts'],
+      omittedCount: 0
+    })
     expect(second).not.toContain('src/new.ts')
     expect(second).not.toContain('later')
   })

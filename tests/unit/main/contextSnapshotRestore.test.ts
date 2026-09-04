@@ -169,7 +169,11 @@ describe('上下文账本恢复', () => {
     const loaded = store.load(session.id)!
     const ledger = makeCompactionLedger({
       summary: '已读 a.ts',
-      tailFrom: { messageId: 'a1', step: 1 }
+      tailFrom: { messageId: 'a1', step: 1 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      },
     })
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
       permissionManager: new PermissionManager(),
@@ -194,7 +198,11 @@ describe('上下文账本恢复', () => {
     const loaded = store.load(session.id)!
     const ledger = makeCompactionLedger({
       summary: '进行中摘要',
-      tailFrom: { messageId: 'asst_inflight', step: 0 }
+      tailFrom: { messageId: 'asst_inflight', step: 0 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'u1', step: 0 }
+      },
     })
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
       permissionManager: new PermissionManager(),
@@ -214,7 +222,11 @@ describe('上下文账本恢复', () => {
 
     const ledger = makeCompactionLedger({
       summary: '折叠后摘要',
-      tailFrom: { messageId: 'u2', step: 0 }
+      tailFrom: { messageId: 'u2', step: 0 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'u2', step: 0 }
+      },
     })
     store.saveContextSnapshot(session.id, ledger)
     store.setCurrentLeaf(session.id, 'u1')
@@ -320,7 +332,11 @@ describe('上下文账本恢复', () => {
     const loaded = store.load(session.id)!
     const ledger = makeCompactionLedger({
       summary: '幂等摘要',
-      tailFrom: { messageId: 'u2', step: 0 }
+      tailFrom: { messageId: 'u2', step: 0 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      },
     })
     const a = restoreFromLedger(loaded, ledger, '你是助手。')
     const b = restoreFromLedger(loaded, ledger, '你是助手。')

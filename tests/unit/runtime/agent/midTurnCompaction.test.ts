@@ -21,6 +21,10 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import type { TurnStreamResult } from '../../../../src/runtime/agent/stream/streamTypes'
 import type { ToolBatchExecutionResult } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
+import {
+  getTailTokenBudget,
+  splitForCompactionByTokens
+} from '../../../../src/runtime/agent/compaction/compaction'
 
 function createContext(messages: ChatMessage[]): AgentContext {
   return createAgentContext({
@@ -98,6 +102,10 @@ describe('CompactionService mid-turn', () => {
       onCompaction,
       useProductionBudget: true
     })
+    const expectedTail = splitForCompactionByTokens(
+      messages,
+      getTailTokenBudget(8_000)
+    ).recentMessages
 
     // 锚点接近高水位，再叠加大 delta 触发
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: 8_000 })
@@ -111,9 +119,8 @@ describe('CompactionService mid-turn', () => {
       expect.objectContaining({ trigger: 'mid-turn', summary: 'mid-turn summary' })
     )
     expect(extractTextFromContent(context.messages[0].content)).toContain('mid-turn summary')
-    // tail 至少保留一条；工具对不得被切断
     const nonSystem = context.messages.filter(m => m.role !== 'system')
-    expect(nonSystem.length).toBeGreaterThanOrEqual(1)
+    expect(nonSystem).toEqual(expectedTail)
     for (const assistant of nonSystem.filter(m => m.role === 'assistant' && m.toolCalls)) {
       for (const call of assistant.toolCalls!) {
         expect(nonSystem.some(m => m.role === 'tool' && m.toolCallId === call.id)).toBe(true)

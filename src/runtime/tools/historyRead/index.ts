@@ -3,15 +3,16 @@
  */
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import type { ChatMessage, MessageOrigin } from '../../model/types'
-import type { CompactionLedger, LedgerEntry } from '../../sessions/types'
 import {
   buildConversationContext,
-  renderMessagesAsTranscript
-} from '../../agent/context/contextBuilder'
+  renderMessagesAsTranscript,
+  type CompactionLedger,
+  type LedgerEntry
+} from '../../sessions'
 import {
   createRequestProjectionArchiveCache,
   projectRequestMessages
-} from '../../agent/core/projectRequestMessages'
+} from '../../request-projection'
 import { ARCHIVE_READ_MAX_RESPONSE_CHARS } from '../archiveRead'
 
 export const HISTORY_READ_MAX_RESPONSE_CHARS = ARCHIVE_READ_MAX_RESPONSE_CHARS
@@ -100,7 +101,7 @@ async function projectFoldedMessages(
 async function loadFoldedTranscript(
   context: ToolContext,
   entries: LedgerEntry[]
-): Promise<{ ok: true; transcript: string; messages: ChatMessage[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; transcript: string } | { ok: false; error: string }> {
   const sessionStore = context.sessionStore
   const sessionId = context.sessionId
   if (!sessionStore || !sessionId) {
@@ -117,8 +118,7 @@ async function loadFoldedTranscript(
   const projected = await projectFoldedMessages(folded, context)
   return {
     ok: true,
-    transcript: renderMessagesAsTranscript(projected),
-    messages: projected
+    transcript: renderMessagesAsTranscript(projected)
   }
 }
 

@@ -314,13 +314,17 @@ export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
 export const CONTEXT_SNAPSHOT_VERSION = 2
 
 export type LedgerTrigger = 'threshold' | 'mid-turn' | 'overflow' | 'idle'
+export interface TouchedFilesSnapshot {
+  paths: string[]
+  omittedCount: number
+}
 
 /** 一次压缩折叠的索引条目；提交后只读追加 */
 export interface LedgerEntry {
   id: string
   shadows: { from: MessageOrigin; to: MessageOrigin }
   stub: string
-  touchedFiles: string[]
+  touchedFiles: TouchedFilesSnapshot
   trigger: LedgerTrigger
   createdAt: number
 }

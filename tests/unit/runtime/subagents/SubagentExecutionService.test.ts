@@ -238,6 +238,12 @@ describe('SubagentExecutionService', () => {
     expect(child.codeIndexEnabled).toBe(true)
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('completed')
     expect(prepareTurn).toHaveBeenCalledTimes(1)
+    const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
+    expect(prepared.agentLoop.sendMessage).toHaveBeenCalledWith(
+      'inspect runtime',
+      expect.anything(),
+      expect.objectContaining({ userMessageId: child.messages[0]!.id })
+    )
   })
 
   it.each(['request_approval', 'auto', 'full_access'] as const)(
@@ -801,7 +807,7 @@ describe('SubagentExecutionService', () => {
     expect(prepared.agentLoop.sendMessage).toHaveBeenCalledWith(
       expect.stringContaining('禁止自动重放的未提交非幂等步骤：write:write-before-crash'),
       expect.anything(),
-      expect.objectContaining({ userMessageId: undefined })
+      expect.objectContaining({ userMessageId: child.messages[0]!.id })
     )
     expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
   })

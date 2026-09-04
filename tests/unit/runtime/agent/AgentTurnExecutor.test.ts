@@ -49,6 +49,7 @@ describe('AgentTurnExecutor', () => {
       sessionId: 'sess-1',
       workingDirectory: tempRoot,
       isolation: 'shared',
+      userMessageId: 'user-1',
       runRefs,
       onCleanup: cleanup
     })
@@ -83,6 +84,7 @@ describe('AgentTurnExecutor', () => {
       sessionId: 'sess-1',
       workingDirectory: tempRoot,
       isolation: 'shared',
+      userMessageId: 'user-1',
       onStarted: (context) => { startedRunId = context.runId },
       onCleanup: cleanup
     })).rejects.toThrow(/loop setup failed/)
@@ -107,6 +109,7 @@ describe('AgentTurnExecutor', () => {
       sessionId: 'sess-1',
       workingDirectory: tempRoot,
       isolation: 'shared',
+      userMessageId: 'user-1',
       runRefs,
       onCleanup: cleanup
     })
@@ -134,6 +137,7 @@ describe('AgentTurnExecutor', () => {
       sessionId: 'sess-1',
       workingDirectory: tempRoot,
       isolation: 'shared',
+      userMessageId: 'user-1',
       runRefs,
       onCleanup: cleanup
     })
@@ -175,6 +179,7 @@ describe('AgentTurnExecutor', () => {
         runId: 'run-child',
         resourceOwnerRunId: root.runId,
         resourceOwnerGeneration: 7,
+        userMessageId: 'user-child',
         onStarted: (context) => {
           childRunId = context.runId
           resolve()

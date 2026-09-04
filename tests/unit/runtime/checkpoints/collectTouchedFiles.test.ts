@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  collectTouchedFilesFromManifests,
-  isTouchedFilesOverflowMarker
+  collectTouchedFilesFromManifests
 } from '../../../../src/runtime/checkpoints/collectTouchedFiles'
 
 describe('collectTouchedFilesFromManifests', () => {
@@ -23,7 +22,10 @@ describe('collectTouchedFilesFromManifests', () => {
       ],
       new Set(['m1', 'm2'])
     )
-    expect(files).toEqual(['src/a.ts', 'src/b.ts', 'notes.md', 'old.txt'])
+    expect(files).toEqual({
+      paths: ['src/a.ts', 'src/b.ts', 'notes.md', 'old.txt'],
+      omittedCount: 0
+    })
   })
 
   it('超出上限时折成另 N 个文件', () => {
@@ -39,10 +41,10 @@ describe('collectTouchedFilesFromManifests', () => {
       new Set(['m1']),
       3
     )
-    expect(files).toHaveLength(3)
-    expect(files.slice(0, 2)).toEqual(['a.ts', 'b.ts'])
-    expect(isTouchedFilesOverflowMarker(files[2]!)).toBe(true)
-    expect(files[2]).toContain('2 个文件')
+    expect(files).toEqual({
+      paths: ['a.ts', 'b.ts'],
+      omittedCount: 2
+    })
   })
 
   it('未覆盖的 messageId 不出现手改路径', () => {
@@ -57,6 +59,6 @@ describe('collectTouchedFilesFromManifests', () => {
       ],
       new Set(['m1'])
     )
-    expect(files).toEqual([])
+    expect(files).toEqual({ paths: [], omittedCount: 0 })
   })
 })

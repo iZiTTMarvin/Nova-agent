@@ -24,7 +24,7 @@ import {
   type RequestProjectionArchiveCache,
   type SummaryProjection,
   DISABLED_PRUNE_POLICY
-} from './projectRequestMessages'
+} from '../../request-projection'
 import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildConversationContext } from '../../../../src/runtime/agent/context/contextBuilder'
+import { buildConversationContext } from '../../../../src/runtime/sessions'
 import type { SessionData } from '../../../../src/runtime/sessions/types'
 
 /** 构造最小化 SessionData，只填充 messages */

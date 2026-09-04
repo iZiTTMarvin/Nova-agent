@@ -398,6 +398,8 @@ describe('compaction', () => {
       expect(recentMessages.some(m => m.role === 'tool' && m.toolCallId === 'c1')).toBe(
         recentMessages.some(m => m.role === 'assistant' && m.toolCalls?.[0]?.id === 'c1')
       )
+      expect(oldMessages[0]?.role).toBe('user')
+      expect(recentMessages[0]?.role).toBe('assistant')
       expect(oldMessages.concat(recentMessages).map(m => m.content)).toEqual(
         messages.filter(m => m.role !== 'system').map(m => m.content)
       )
@@ -428,8 +430,8 @@ describe('compaction', () => {
     it('超预算时从最旧条目起折成指针，保留 id', () => {
       const origin = { messageId: 'm', step: 0 }
       const entries = [
-        { id: 'c1', shadows: { from: origin, to: origin }, stub: 'long stub one ' + 'x'.repeat(400), touchedFiles: [], trigger: 'threshold' as const, createdAt: 1 },
-        { id: 'c2', shadows: { from: origin, to: origin }, stub: 'long stub two ' + 'y'.repeat(400), touchedFiles: [], trigger: 'threshold' as const, createdAt: 2 }
+        { id: 'c1', shadows: { from: origin, to: origin }, stub: 'long stub one ' + 'x'.repeat(400), touchedFiles: { paths: [], omittedCount: 0 }, trigger: 'threshold' as const, createdAt: 1 },
+        { id: 'c2', shadows: { from: origin, to: origin }, stub: 'long stub two ' + 'y'.repeat(400), touchedFiles: { paths: [], omittedCount: 0 }, trigger: 'threshold' as const, createdAt: 2 }
       ]
       const folded = foldLedgerEntriesToBudget(entries, 150)
       expect(folded[0]!.stub).toBe(formatPointerStub('c1', origin, origin))
@@ -440,7 +442,7 @@ describe('compaction', () => {
     it('预算为 0 时全部折成指针', () => {
       const origin = { messageId: 'm', step: 1 }
       const entries = [
-        { id: 'c1', shadows: { from: origin, to: origin }, stub: 'keep me', touchedFiles: [], trigger: 'idle' as const, createdAt: 1 }
+        { id: 'c1', shadows: { from: origin, to: origin }, stub: 'keep me', touchedFiles: { paths: [], omittedCount: 0 }, trigger: 'idle' as const, createdAt: 1 }
       ]
       expect(foldLedgerEntriesToBudget(entries, 0)[0]!.stub).toBe(formatPointerStub('c1', origin, origin))
     })
@@ -452,7 +454,7 @@ describe('compaction', () => {
           id: 'c1',
           shadows: { from: origin, to: origin },
           stub: 'short',
-          touchedFiles: ['src/' + 'a'.repeat(400) + '.ts'],
+          touchedFiles: { paths: ['src/' + 'a'.repeat(400) + '.ts'], omittedCount: 0 },
           trigger: 'threshold' as const,
           createdAt: 1
         },
@@ -460,14 +462,14 @@ describe('compaction', () => {
           id: 'c2',
           shadows: { from: origin, to: origin },
           stub: 'keep',
-          touchedFiles: [],
+          touchedFiles: { paths: [], omittedCount: 0 },
           trigger: 'threshold' as const,
           createdAt: 2
         }
       ]
       const folded = foldLedgerEntriesToBudget(entries, 40)
       expect(folded[0]!.stub).toBe(formatPointerStub('c1', origin, origin))
-      expect(folded[0]!.touchedFiles[0]).toContain('src/')
+      expect(folded[0]!.touchedFiles.paths[0]).toContain('src/')
       expect(renderLedgerEntry(folded[0]!)).toBe(formatPointerStub('c1', origin, origin))
       expect(folded[1]!.stub).toBe('keep')
     })

@@ -4,7 +4,7 @@ import { toolHasWriteCapability } from '../../shared/permissions/toolEffects'
 import { decodeSubagentProfileFields } from './presetCodec'
 import { BUILTIN_SUBAGENT_IDS } from '../../shared/subagents/presetIdentity'
 
-const ARCHIVE_READ_TOOL = 'archive_read'
+const HOST_ARCHIVE_TOOL_NAMES = ['archive_read', 'history_read'] as const
 
 /**
  * 未显式配置轮数时的默认预算，按 permissionCeiling 分档：可写档需覆盖
@@ -17,21 +17,22 @@ const DEFAULT_MAX_TOOL_ROUNDS_BY_CEILING = {
 } as const
 
 /**
- * 宿主有 archive_read 时子 Agent 必须继承；宿主明确没有时不得携带。
- * hostHasArchiveRead 未提供时保持 profile 原样，避免装配漏接线误剥能力。
+ * 宿主有档案回读能力时，子代理同时继承 artifact 与账本入口。
+ * 未提供宿主状态时保持 profile 原样，避免装配漏接线误剥能力。
  */
-export function applyHostArchiveReadCapability(
+export function applyHostArchiveCapabilities(
   toolNames: readonly string[],
   hostHasArchiveRead: boolean | undefined
 ): string[] {
   if (hostHasArchiveRead === undefined) {
     return [...toolNames]
   }
-  const withoutArchive = toolNames.filter((name) => name !== ARCHIVE_READ_TOOL)
-  if (hostHasArchiveRead) {
-    return [...withoutArchive, ARCHIVE_READ_TOOL]
-  }
-  return withoutArchive
+  const withoutArchiveTools = toolNames.filter(
+    name => !HOST_ARCHIVE_TOOL_NAMES.includes(name as typeof HOST_ARCHIVE_TOOL_NAMES[number])
+  )
+  return hostHasArchiveRead
+    ? [...withoutArchiveTools, ...HOST_ARCHIVE_TOOL_NAMES]
+    : withoutArchiveTools
 }
 
 /**

@@ -8,6 +8,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import {
+  classifyLedgerRestore,
   persistCompactionSnapshot,
   restoreFromLedger,
   restoreOrInjectHistory
@@ -83,12 +84,101 @@ describe('contextSnapshot 纯函数', () => {
 
     const loaded = store.load(session.id)!
     const ledger = makeCompactionLedger({
-      summary: '已折叠旧轮',
+      entries: [{
+        id: 'c1',
+        shadows: {
+          from: { messageId: 'u1', step: 0 },
+          to: { messageId: 'a1', step: 0 }
+        },
+        stub: '已折叠旧轮',
+        touchedFiles: { paths: [], omittedCount: 0 },
+        trigger: 'threshold',
+        createdAt: 1
+      }],
+      state: {
+        text: '已折叠旧轮',
+        coversThrough: { messageId: 'a1', step: 0 },
+        taskVerbatim: null,
+        realityLine: '',
+        revision: 1
+      },
       tailFrom: { messageId: 'u2', step: 0 }
     })
     const first = restoreFromLedger(loaded, ledger, '助手')
     const second = restoreFromLedger(loaded, ledger, '助手')
     expect(first.kind).toBe('restored')
     expect(JSON.stringify(first.messages)).toBe(JSON.stringify(second.messages))
+  })
+
+  it('只允许 tailFrom 暂未落盘，条目与状态缺失坐标均判为失效', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/project')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: '问题', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: '回复', timestamp: 2 })
+    const loaded = store.load(session.id)!
+
+    expect(classifyLedgerRestore(
+      loaded,
+      makeCompactionLedger({
+        tailFrom: { messageId: 'pending', step: 0 },
+        shadows: {
+          from: { messageId: 'u1', step: 0 },
+          to: { messageId: 'a1', step: 0 }
+        }
+      })
+    )).toBe('empty-tail')
+
+    const missingEntry = makeCompactionLedger({
+      tailFrom: { messageId: 'a1', step: 0 },
+      state: {
+        text: '摘要',
+        coversThrough: { messageId: 'a1', step: 0 },
+        taskVerbatim: null,
+        realityLine: '',
+        revision: 1
+      }
+    })
+    expect(classifyLedgerRestore(loaded, missingEntry)).toBe('invalid')
+
+    const missingState = makeCompactionLedger({
+      entries: [{
+        id: 'c1',
+        shadows: {
+          from: { messageId: 'u1', step: 0 },
+          to: { messageId: 'a1', step: 0 }
+        },
+        stub: '已折叠',
+        touchedFiles: { paths: [], omittedCount: 0 },
+        trigger: 'threshold',
+        createdAt: 1
+      }],
+      state: {
+        text: '摘要',
+        coversThrough: { messageId: 'missing', step: 0 },
+        taskVerbatim: null,
+        realityLine: '',
+        revision: 1
+      },
+      tailFrom: { messageId: 'a1', step: 0 }
+    })
+
+    const invalidEntryStep = makeCompactionLedger({
+      shadows: {
+        from: { messageId: 'u1', step: 1 },
+        to: { messageId: 'a1', step: 0 }
+      },
+      tailFrom: { messageId: 'a1', step: 0 }
+    })
+    expect(classifyLedgerRestore(loaded, invalidEntryStep)).toBe('invalid')
+
+    const invalidTailStep = makeCompactionLedger({
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      },
+      tailFrom: { messageId: 'a1', step: 1 }
+    })
+    expect(classifyLedgerRestore(loaded, invalidTailStep)).toBe('invalid')
+    expect(classifyLedgerRestore(loaded, missingState)).toBe('invalid')
   })
 })

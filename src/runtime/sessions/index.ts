@@ -9,9 +9,24 @@ export type {
   CreateChildSessionResult,
   CompactionLedger,
   LedgerEntry,
-  StateDoc
+  LedgerTrigger,
+  StateDoc,
+  SubagentSessionData,
+  TouchedFilesSnapshot
 } from './types'
-export { SESSION_DATA_FILE, CONTEXT_SNAPSHOT_VERSION } from './types'
+export {
+  CONTEXT_SNAPSHOT_VERSION,
+  SESSION_DATA_FILE,
+  extractTextFromSerializableContent
+} from './types'
+export {
+  buildConversationContext,
+  projectAssistantWithReasoningReplay,
+  renderMessagesAsTranscript,
+  resolveImageUrlsInMessages,
+  sliceMessagesFromOrigin
+} from './conversationContext'
+export type { BuildConversationContextOptions } from './conversationContext'
 export {
   CURRENT_SESSION_SCHEMA_VERSION,
   migrateSessionData,

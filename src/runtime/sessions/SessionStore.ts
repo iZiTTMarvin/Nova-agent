@@ -29,12 +29,17 @@ import type {
   SessionMessageAppend,
   AppendMessageResult,
   CompactionLedger,
+  LedgerEntry,
+  LedgerTrigger,
   SessionTitleSource,
   CreateChildSessionCommand,
   CreateChildSessionResult,
+  StateDoc,
   SubagentSessionData,
+  TouchedFilesSnapshot,
   SessionToolAvailabilityState
 } from './types'
+import type { MessageOrigin } from '../model/types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
@@ -104,10 +109,171 @@ function deriveInitialChildMessageId(childSessionId: string): string {
   return `msg_sub_user_${digest.slice(0, 32)}`
 }
 
-function isCompactionLedger(value: unknown): value is CompactionLedger {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Record<string, unknown>
-  return record.version === CONTEXT_SNAPSHOT_VERSION && Array.isArray(record.entries)
+const LEDGER_TRIGGERS = ['threshold', 'mid-turn', 'overflow', 'idle'] as const
+
+function parseMessageOrigin(value: unknown): MessageOrigin | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as { messageId?: unknown; step?: unknown }
+  if (
+    typeof candidate.messageId !== 'string'
+    || candidate.messageId.length === 0
+    || !Number.isInteger(candidate.step)
+    || (candidate.step as number) < 0
+  ) {
+    return null
+  }
+  return { messageId: candidate.messageId, step: candidate.step as number }
+}
+
+function parseTouchedFilesSnapshot(value: unknown): TouchedFilesSnapshot | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as { paths?: unknown; omittedCount?: unknown }
+  if (
+    !Array.isArray(candidate.paths)
+    || !candidate.paths.every(path => typeof path === 'string' && path.length > 0)
+    || !Number.isInteger(candidate.omittedCount)
+    || (candidate.omittedCount as number) < 0
+  ) {
+    return null
+  }
+  return {
+    paths: candidate.paths as string[],
+    omittedCount: candidate.omittedCount as number
+  }
+}
+
+function parseStateDoc(value: unknown): StateDoc | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as {
+    text?: unknown
+    coversThrough?: unknown
+    taskVerbatim?: unknown
+    realityLine?: unknown
+    revision?: unknown
+  }
+  const coversThrough = parseMessageOrigin(candidate.coversThrough)
+  let taskVerbatim: StateDoc['taskVerbatim']
+  if (candidate.taskVerbatim === null) {
+    taskVerbatim = null
+  } else {
+    if (
+      typeof candidate.taskVerbatim !== 'object'
+      || Array.isArray(candidate.taskVerbatim)
+    ) {
+      return null
+    }
+    const task = candidate.taskVerbatim as { text?: unknown; origin?: unknown }
+    const origin = parseMessageOrigin(task.origin)
+    if (typeof task.text !== 'string' || !origin) return null
+    taskVerbatim = { text: task.text, origin }
+  }
+  if (
+    typeof candidate.text !== 'string'
+    || !coversThrough
+    || typeof candidate.realityLine !== 'string'
+    || !Number.isInteger(candidate.revision)
+    || (candidate.revision as number) < 1
+  ) {
+    return null
+  }
+  return {
+    text: candidate.text,
+    coversThrough,
+    taskVerbatim,
+    realityLine: candidate.realityLine,
+    revision: candidate.revision as number
+  }
+}
+
+function parseLedgerEntry(value: unknown): LedgerEntry | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as {
+    id?: unknown
+    shadows?: unknown
+    stub?: unknown
+    touchedFiles?: unknown
+    trigger?: unknown
+    createdAt?: unknown
+  }
+  if (candidate.shadows === null || typeof candidate.shadows !== 'object' || Array.isArray(candidate.shadows)) {
+    return null
+  }
+  const shadows = candidate.shadows as { from?: unknown; to?: unknown }
+  const from = parseMessageOrigin(shadows.from)
+  const to = parseMessageOrigin(shadows.to)
+  const touchedFiles = parseTouchedFilesSnapshot(candidate.touchedFiles)
+  if (
+    typeof candidate.id !== 'string'
+    || !/^c[1-9]\d*$/.test(candidate.id)
+    || !from
+    || !to
+    || typeof candidate.stub !== 'string'
+    || !touchedFiles
+    || !LEDGER_TRIGGERS.includes(candidate.trigger as LedgerTrigger)
+    || typeof candidate.createdAt !== 'number'
+    || !Number.isFinite(candidate.createdAt)
+    || candidate.createdAt < 0
+  ) {
+    return null
+  }
+  return {
+    id: candidate.id,
+    shadows: { from, to },
+    stub: candidate.stub,
+    touchedFiles,
+    trigger: candidate.trigger as LedgerTrigger,
+    createdAt: candidate.createdAt
+  }
+}
+
+function parseCompactionLedger(value: unknown): CompactionLedger | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as {
+    version?: unknown
+    entries?: unknown
+    state?: unknown
+    tailFrom?: unknown
+    updatedAt?: unknown
+  }
+  if (candidate.version !== CONTEXT_SNAPSHOT_VERSION || !Array.isArray(candidate.entries)) return null
+
+  const entries: LedgerEntry[] = []
+  for (const [index, rawEntry] of candidate.entries.entries()) {
+    const entry = parseLedgerEntry(rawEntry)
+    if (!entry || entry.id !== `c${index + 1}`) return null
+    entries.push(entry)
+  }
+
+  const state = candidate.state === null ? null : parseStateDoc(candidate.state)
+  if (candidate.state !== null && !state) return null
+  const tailFrom = candidate.tailFrom === null ? null : parseMessageOrigin(candidate.tailFrom)
+  if (candidate.tailFrom !== null && !tailFrom) return null
+  if (entries.length === 0) {
+    if (state !== null || tailFrom !== null) return null
+  } else {
+    if (!state || state.revision !== entries.length) return null
+    const lastCovered = entries[entries.length - 1]!.shadows.to
+    if (
+      state.coversThrough.messageId !== lastCovered.messageId
+      || state.coversThrough.step !== lastCovered.step
+    ) {
+      return null
+    }
+  }
+  if (
+    typeof candidate.updatedAt !== 'number'
+    || !Number.isFinite(candidate.updatedAt)
+    || candidate.updatedAt < 0
+  ) {
+    return null
+  }
+  return {
+    version: CONTEXT_SNAPSHOT_VERSION,
+    entries,
+    state,
+    tailFrom,
+    updatedAt: candidate.updatedAt
+  }
 }
 
 export class SessionStore {
@@ -1209,8 +1375,7 @@ export class SessionStore {
 
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-      if (!isCompactionLedger(parsed)) return null
-      return parsed
+      return parseCompactionLedger(parsed)
     } catch {
       return null
     }

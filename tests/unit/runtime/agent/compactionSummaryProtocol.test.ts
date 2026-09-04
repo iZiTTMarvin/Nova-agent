@@ -17,7 +17,7 @@ import {
   ACTIVE_TOOL_RESULT_MAX_TOKENS,
   createRequestProjectionArchiveCache,
   isArchivedPlaceholder
-} from '../../../../src/runtime/agent/core/projectRequestMessages'
+} from '../../../../src/runtime/request-projection'
 import { CHARS_PER_TOKEN } from '../../../../src/runtime/agent/tokenEstimator'
 import {
   createAgentContext,

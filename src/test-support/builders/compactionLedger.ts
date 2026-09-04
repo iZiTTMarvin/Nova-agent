@@ -4,7 +4,7 @@ import {
   type CompactionLedger,
   type LedgerEntry,
   type StateDoc
-} from '../../runtime/sessions/types'
+} from '../../runtime/sessions'
 
 export function makeCompactionLedger(opts?: {
   summary?: string
@@ -12,17 +12,19 @@ export function makeCompactionLedger(opts?: {
   tailFrom?: MessageOrigin | null
   entries?: LedgerEntry[]
   state?: StateDoc | null
+  shadows?: { from: MessageOrigin; to: MessageOrigin }
 }): CompactionLedger {
+  const shadows = opts?.shadows ?? {
+    from: { messageId: 'u0', step: 0 },
+    to: { messageId: 'a0', step: 0 }
+  }
   const entries = opts?.entries ?? Array.from({ length: opts?.entryCount ?? 1 }, (_, i) => {
     const id = `c${i + 1}`
     return {
       id,
-      shadows: {
-        from: { messageId: 'u0', step: 0 },
-        to: { messageId: 'a0', step: 0 }
-      },
-      stub: `[${id}: 折叠 #u0:0–#a0:0；原文可用 history_read("${id}")]`,
-      touchedFiles: [],
+      shadows,
+      stub: `[${id}: 折叠 #${shadows.from.messageId}:${shadows.from.step}–#${shadows.to.messageId}:${shadows.to.step}；原文可用 history_read("${id}")]`,
+      touchedFiles: { paths: [], omittedCount: 0 },
       trigger: 'threshold' as const,
       createdAt: 0
     }
@@ -35,7 +37,7 @@ export function makeCompactionLedger(opts?: {
       ? opts.state
       : {
           text: summary,
-          coversThrough: { messageId: 'a0', step: 0 },
+          coversThrough: entries.at(-1)?.shadows.to ?? shadows.to,
           taskVerbatim: null,
           realityLine: '',
           revision: Math.max(1, entries.length)

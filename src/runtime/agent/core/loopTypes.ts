@@ -1,7 +1,7 @@
 /** Agent kernel 真实消费的运行时回调契约。 */
 import type { ChatMessage } from '../../model/types'
 import type { InlineBudgetResult } from '../ContextBudgetManager'
-import type { ActiveToolResultPrunePolicy, SummaryProjection } from './projectRequestMessages'
+import type { ActiveToolResultPrunePolicy, SummaryProjection } from '../../request-projection'
 import type { ToolControlSignal } from '../../tools/types'
 
 /** shouldStopAfterTurn 回调入参 */

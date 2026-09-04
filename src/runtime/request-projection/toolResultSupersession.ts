@@ -4,10 +4,10 @@
  * 纯函数：只读输入，不写 artifact、不 mutate。
  * 保守原则贯穿全模块：任何解析或判定不确定一律不计入，保留原文交由调用方处理。
  */
-import type { ChatMessage } from '../../model/types'
-import { extractTextFromContent } from '../../model/types'
-import { isToolFailureText } from '../../../shared/toolResultStatus'
-import { resolveToolArg } from '../../tools/toolArgResolver'
+import type { ChatMessage } from '../model/types'
+import { extractTextFromContent } from '../model/types'
+import { isToolFailureText } from '../../shared/toolResultStatus'
+import { resolveToolArg } from '../tools/toolArgResolver'
 
 export type SupersessionReason =
   | 'exact_duplicate'

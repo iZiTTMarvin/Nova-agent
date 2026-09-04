@@ -38,12 +38,17 @@ import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import type { ToolAuthorizationPolicy } from '../../../runtime/permissions/PermissionCoordinator'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
-import { CheckpointManager } from '../../../runtime/checkpoints/CheckpointManager'
+import {
+  CheckpointManager,
+  collectTouchedFilesForSession
+} from '../../../runtime/checkpoints'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../../shared/askQuestion/types'
-import type { SessionData } from '../../../runtime/sessions/types'
-import type { SessionStore } from '../../../runtime/sessions/SessionStore'
-import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
+import {
+  getSessionActiveMessages,
+  type SessionData,
+  type SessionStore
+} from '../../../runtime/sessions'
 import {
   persistCompactionSnapshot,
   restoreOrInjectHistory
@@ -362,6 +367,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     reasoningEffort: session.reasoningEffortOverride,
     permissionMode: session.permissionMode,
     permissionManager,
+    collectCompactionTouchedFiles: messageIds =>
+      collectTouchedFilesForSession(sessionsDir, sessionId, messageIds),
     onCompaction: (_compactedContext, meta) => {
       if (!persistCompactionSnapshot(sessionStore, sessionId, meta.ledger)) {
         console.error(`[onCompaction] 找不到会话 ${sessionId}，快照未写`)

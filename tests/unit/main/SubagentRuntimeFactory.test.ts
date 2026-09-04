@@ -12,8 +12,12 @@ import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSetting
 import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
 import { createReadState } from '../../../src/runtime/tools/editTool'
 import type { ToolExecutor } from '../../../src/runtime/tools/types'
+import { archiveReadTool } from '../../../src/runtime/tools/archiveRead'
+import { historyReadTool } from '../../../src/runtime/tools/historyRead'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
+import { makeCompactionLedger } from '../../../src/test-support/builders/compactionLedger'
 import { OpenAICompatibleModelClient } from '../../../src/runtime/model/OpenAICompatibleModelClient'
+import { persistCompactionSnapshot } from '../../../src/runtime/sessions/contextSnapshot'
 import type { LlmRegistry } from '../../../src/shared/config/llmRegistry'
 import type { SubagentSessionHeader } from '../../../src/shared/subagents'
 
@@ -193,6 +197,104 @@ describe('SubagentRuntimeFactory', () => {
       .join('\n') ?? ''
     expect(secondCallText).toContain('"status":"ready"')
     enabled.agentLoop.dispose()
+  })
+
+  it('非空账本子代理同时暴露 archive_read 与 history_read', async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-history-'))
+    roots.push(sessionsDir)
+    const workspace = resolve(sessionsDir, 'workspace')
+    const store = new SessionStore(sessionsDir)
+    const parent = store.create(workspace)
+    const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('history-spawn-key'),
+      workspaceRoot: workspace,
+      mode: 'default',
+      permissionMode: 'request_approval',
+      task: 'inspect history',
+      subagent: {
+        header: testHeader,
+        lineage: {
+          parentSessionId: parent.id,
+          parentRunId: 'run-parent',
+          rootRunId: 'run-parent',
+          depth: 1,
+          spawnKey: 'history-spawn-key',
+          spawnRunId: 'run-child',
+          origin: {
+            kind: 'skill_fork',
+            parentMessageId: 'message-parent',
+            skillName: 'inspect'
+          }
+        },
+        profile: resolveSubagentProfileSnapshot({
+          id: 'skill:inspect',
+          name: 'skill:inspect',
+          description: 'read only',
+          prompt: 'inspect',
+          allowedTools: ['archive_read', 'history_read']
+        }, 'skill:inspect')
+      }
+    }).session
+    const userMessageId = child.messages[0]!.id
+    persistCompactionSnapshot(store, child.id, makeCompactionLedger({
+      entries: [{
+        id: 'c1',
+        shadows: {
+          from: { messageId: userMessageId, step: 0 },
+          to: { messageId: userMessageId, step: 0 }
+        },
+        stub: 'folded task',
+        touchedFiles: { paths: [], omittedCount: 0 },
+        trigger: 'threshold',
+        createdAt: 1
+      }],
+      state: {
+        text: 'state',
+        coversThrough: { messageId: userMessageId, step: 0 },
+        taskVerbatim: null,
+        realityLine: '',
+        revision: 1
+      },
+      tailFrom: null
+    }))
+    const reloaded = store.load(child.id)
+    if (reloaded?.kind !== 'subagent') throw new Error('expected child')
+
+    const client = new MockModelClient().addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: 'done' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    vi.spyOn(OpenAICompatibleModelClient.prototype, 'chat').mockImplementation(client.chat.bind(client))
+    const tools: Record<string, ToolExecutor> = {
+      archive_read: archiveReadTool,
+      history_read: historyReadTool
+    }
+    const prepared = prepareSubagentRuntime({
+      profile: reloaded.subagent.profile,
+      task: 'inspect history',
+      workingDirectory: workspace,
+      isolation: 'readonly',
+      childSession: reloaded,
+      parentRunId: 'run-parent',
+      rootRunId: 'run-parent',
+      registry: testRegistry,
+      resolveTool: name => tools[name],
+      sessionStore: store,
+      sessionsDir,
+      novaSettings: DEFAULT_NOVA_SETTINGS,
+      readState: createReadState()
+    })
+    expect(prepared.agentLoop.getFrozenSystemPrompt()).toContain('history_read')
+
+    await prepared.agentLoop.sendMessage('continue', agentRoute(), { userMessageId })
+
+    expect(client.getCalls()[0]?.tools?.map(tool => tool.name)).toEqual(
+      expect.arrayContaining(['archive_read', 'history_read'])
+    )
+    prepared.agentLoop.dispose()
   })
 })
 

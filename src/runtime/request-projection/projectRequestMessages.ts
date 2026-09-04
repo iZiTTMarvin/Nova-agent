@@ -6,8 +6,8 @@
  * 2. 溢出压缩恢复后必须重新投影（调用方的 continue 路径回到循环顶会重新执行投影；若未来有人把恢复改成就地重试，必须显式重新投影）。
  * 3. 投影是幂等的——对已是占位符的内容再次投影原样返回。
  */
-import type { ChatMessage, ContentBlock } from '../../model/types'
-import { buildArtifactRef, sha256Hex } from '../../artifacts/artifactRef'
+import type { ChatMessage, ContentBlock } from '../model/types'
+import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
 import { planToolResultSupersession } from './toolResultSupersession'
 
 /** 当轮归档阈值：超过此估算 token 的工具结果替换为占位符 */
@@ -25,6 +25,8 @@ export const IMAGE_REQUEST_BUDGET_PLACEHOLDER =
 const PREVIEW_HEAD_LINES = 3
 /** 占位符预览：正文后 N 行 */
 const PREVIEW_TAIL_LINES = 2
+/** 预览的字符硬上限；单行与超长行也不能让占位符反向膨胀。 */
+const PREVIEW_MAX_CHARS = 800
 
 /** 占位符 kind 常量 */
 export const ARCHIVED_PLACEHOLDER_KIND = 'nova.archived_tool_result'
@@ -69,15 +71,26 @@ export function isArchivedPlaceholder(text: string): boolean {
   }
 }
 
-/** 头尾预览：行数不足时退回全文，避免重复中间省略。 */
+/** 头尾预览同时受行数和字符数约束。 */
 export function buildArchiveContentPreview(body: string): string {
   const lines = body.split('\n')
-  if (lines.length <= PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES) {
-    return body
-  }
-  const head = lines.slice(0, PREVIEW_HEAD_LINES)
-  const tail = lines.slice(-PREVIEW_TAIL_LINES)
-  return [...head, '…', ...tail].join('\n')
+  const linePreview = lines.length <= PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES
+    ? body
+    : [
+        ...lines.slice(0, PREVIEW_HEAD_LINES),
+        '…',
+        ...lines.slice(-PREVIEW_TAIL_LINES)
+      ].join('\n')
+  if (linePreview.length <= PREVIEW_MAX_CHARS) return linePreview
+
+  const omission = '\n…\n'
+  const edgeChars = Math.floor((PREVIEW_MAX_CHARS - omission.length) / 2)
+  return `${linePreview.slice(0, edgeChars)}${omission}${linePreview.slice(-edgeChars)}`
+}
+function isSmallerWireContent(original: string, projected: string): boolean {
+  if (projected.length >= original.length) return false
+  return Buffer.byteLength(JSON.stringify(projected), 'utf8')
+    < Buffer.byteLength(JSON.stringify(original), 'utf8')
 }
 
 function buildPlaceholder(
@@ -273,6 +286,10 @@ export async function projectRequestMessages(
     // 缓存命中则复用占位符
     const cachedPlaceholder = input.archiveCache.get(cacheKey)
     if (cachedPlaceholder !== undefined) {
+      if (!isSmallerWireContent(text, cachedPlaceholder)) {
+        projected.push(msg)
+        continue
+      }
       projected.push({ ...msg, content: cachedPlaceholder })
       prunedCount++
       estimatedTokensSaved += Math.ceil((text.length - cachedPlaceholder.length) / CHARS_PER_TOKEN)
@@ -300,6 +317,10 @@ export async function projectRequestMessages(
       bodySha256,
       reason
     )
+    if (!isSmallerWireContent(text, placeholder)) {
+      projected.push(msg)
+      continue
+    }
     input.archiveCache.set(cacheKey, placeholder)
     projected.push({ ...msg, content: placeholder })
     prunedCount++

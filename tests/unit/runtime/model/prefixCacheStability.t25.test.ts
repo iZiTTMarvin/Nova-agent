@@ -28,7 +28,7 @@ import { PermissionManager } from '../../../../src/runtime/permissions/Permissio
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
 import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
-import { isArchivedPlaceholder } from '../../../../src/runtime/agent/core/projectRequestMessages'
+import { isArchivedPlaceholder } from '../../../../src/runtime/request-projection'
 
 const STABLE_TOOLS: ToolDefinition[] = [
   {

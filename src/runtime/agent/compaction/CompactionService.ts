@@ -7,17 +7,22 @@ import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { ContextBudgetExceededError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import type { AgentContext } from '../core/AgentContext'
 import { formatPointerStub } from '../core/renderHandoffPacket'
-import type { SummaryProjection } from '../core/projectRequestMessages'
+import type { SummaryProjection } from '../../request-projection'
 import type { CompactionMeta } from '../types'
-import type { CompactionLedger, LedgerEntry, LedgerTrigger } from '../../sessions/types'
-import { CONTEXT_SNAPSHOT_VERSION } from '../../sessions/types'
+import {
+  CONTEXT_SNAPSHOT_VERSION,
+  type CompactionLedger,
+  type LedgerEntry,
+  type LedgerTrigger,
+  type StateDoc,
+  type TouchedFilesSnapshot
+} from '../../sessions'
 import { CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import {
   estimateNextRequestTokens,
   measureRequestPayloadChars
 } from './estimateNextRequestTokens'
-import { selectMidTurnSafeBoundary } from './selectMidTurnSafeBoundary'
 import {
   MAX_STUB_ESTIMATED_TOKENS,
   LEDGER_RENDER_WINDOW_RATIO,
@@ -58,16 +63,14 @@ export interface CompactionServiceOptions {
    */
   promptCacheKey?: string
   /** 按被折叠 messageId 聚合 checkpoint 文件清单；缺省视为无变更 */
-  collectTouchedFiles?: (messageIds: string[]) => string[]
+  collectTouchedFiles?: (messageIds: readonly string[]) => TouchedFilesSnapshot
   /** 提交瞬间的工作区 / activePlan 路径 */
   getRealityAnchors?: () => { workspacePath: string | null; activePlanPath: string | null }
 }
 
 interface CompactionParts {
-  systemPrompt: string
   oldMessages: ChatMessage[]
   recentMessages: ChatMessage[]
-  pulledBackMessages: ChatMessage[]
   cutAt: MessageOrigin | null
 }
 
@@ -93,7 +96,7 @@ export class CompactionService {
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
   private readonly idleProjection: SummaryProjection
   private readonly promptCacheKey: string | undefined
-  private readonly collectTouchedFiles?: (messageIds: string[]) => string[]
+  private readonly collectTouchedFiles: CompactionServiceOptions['collectTouchedFiles']
   private readonly getRealityAnchors?: () => { workspacePath: string | null; activePlanPath: string | null }
   private readonly idleTimer: IdleCompressionTimer
   private compressingForOverflow = false
@@ -209,21 +212,15 @@ export class CompactionService {
       return false
     }
 
-    // 权威消息在工具写回后已是完整协议单元；当前无 partial/pin 字段，故不传钩子。
-    const nonSystem = this.context.messages.filter(message => message.role !== 'system')
-    const boundary = selectMidTurnSafeBoundary(nonSystem, { reserveTailMessages: 1 })
-    if (!boundary.ok || boundary.coveredCount < 1) return false
-
-    const oldMessages = nonSystem.slice(0, boundary.coveredCount)
-    const recentMessages = nonSystem.slice(boundary.coveredCount)
+    const { oldMessages, recentMessages } = splitForCompactionByTokens(
+      this.context.messages,
+      getTailTokenBudget(this.contextWindow)
+    )
     if (oldMessages.length === 0) return false
 
-    const systemMessage = this.context.messages.find(message => message.role === 'system')
     const parts: CompactionParts = {
-      systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
       oldMessages,
       recentMessages,
-      pulledBackMessages: [],
       cutAt: recentMessages[0]?.origin ?? null
     }
 
@@ -390,34 +387,27 @@ export class CompactionService {
   }
 
   private splitThresholdContext(): CompactionParts {
-    const systemMessage = this.context.messages.find(message => message.role === 'system')
-    const { oldMessages, recentMessages, pulledBackMessages } = splitForCompactionByTokens(
+    const { oldMessages, recentMessages } = splitForCompactionByTokens(
       this.context.messages,
       getTailTokenBudget(this.contextWindow)
     )
     return {
-      systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
       oldMessages,
       recentMessages,
-      pulledBackMessages,
       cutAt: recentMessages[0]?.origin ?? null
     }
   }
 
   private splitOverflowContext(extraTailTokens: number): CompactionParts {
-    const systemMessage = this.context.messages.find(message => message.role === 'system')
-    const { oldMessages, recentMessages, pulledBackMessages } = splitForCompactionByTokens(
+    const { oldMessages, recentMessages } = splitForCompactionByTokens(
       this.context.messages,
       getTailTokenBudget(this.contextWindow),
       extraTailTokens
     )
-    const tail = [...recentMessages, ...pulledBackMessages]
     return {
-      systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
       oldMessages,
       recentMessages,
-      pulledBackMessages,
-      cutAt: tail[0]?.origin ?? null
+      cutAt: recentMessages[0]?.origin ?? null
     }
   }
 
@@ -541,7 +531,7 @@ export class CompactionService {
   ): Promise<boolean> {
     if (!canApply()) return false
 
-    const tail = [...parts.recentMessages, ...parts.pulledBackMessages]
+    const tail = parts.recentMessages
     const beforeProjected = await projection.project(this.context.messages)
     const beforeTokens = estimateContextTokens(beforeProjected)
 
@@ -570,7 +560,7 @@ export class CompactionService {
     outputs: { stub: string | null; state: string },
     trigger: LedgerTrigger
   ): CompactionLedger {
-    const tail = [...parts.recentMessages, ...parts.pulledBackMessages]
+    const tail = parts.recentMessages
     const firstOld = parts.oldMessages[0]
     const lastOld = parts.oldMessages[parts.oldMessages.length - 1]
     const firstTail = tail[0]
@@ -591,7 +581,7 @@ export class CompactionService {
       id,
       shadows: { from, to },
       stub: stub.includes(id) ? stub : `${stub}\n${pointer}`,
-      touchedFiles: this.collectTouchedFiles?.(messageIds) ?? [],
+      touchedFiles: this.collectTouchedFiles?.(messageIds) ?? { paths: [], omittedCount: 0 },
       trigger,
       createdAt: Date.now()
     }
@@ -607,7 +597,7 @@ export class CompactionService {
       state: {
         text: outputs.state,
         coversThrough: to,
-        taskVerbatim: this.resolveTaskVerbatim(parts),
+        taskVerbatim: this.resolveTaskVerbatim(parts, prev?.state?.taskVerbatim ?? null),
         realityLine: buildRealityLine(anchors?.workspacePath, anchors?.activePlanPath),
         revision: (prev?.state?.revision ?? 0) + 1
       },
@@ -616,14 +606,14 @@ export class CompactionService {
     }
   }
 
-  private resolveTaskVerbatim(parts: CompactionParts): {
-    text: string
-    origin: MessageOrigin
-  } | null {
+  private resolveTaskVerbatim(
+    parts: CompactionParts,
+    previous: StateDoc['taskVerbatim']
+  ): StateDoc['taskVerbatim'] {
     const current = [...this.context.messages]
       .reverse()
       .find(message => message.role === 'user' && !message.internal)
-    if (!current) return null
+    if (!current) return previous
     const folded = parts.oldMessages.some(message =>
       message === current
       || (
@@ -633,12 +623,12 @@ export class CompactionService {
         && message.origin!.step === current.origin!.step
       )
     )
-    if (!folded) return null
+    if (!folded || !current.origin) return null
     const text = extractTextFromContent(current.content)
     const maxChars = 1_200
     return {
       text: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text,
-      origin: current.origin ?? { messageId: '', step: 0 }
+      origin: current.origin
     }
   }
 

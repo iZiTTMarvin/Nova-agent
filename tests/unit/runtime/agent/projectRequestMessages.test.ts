@@ -4,7 +4,7 @@ import {
   IMAGE_REQUEST_BUDGET_PLACEHOLDER,
   MAX_PROVIDER_IMAGE_REQUEST_BYTES,
   projectRequestMessages
-} from '../../../../src/runtime/agent/core/projectRequestMessages'
+} from '../../../../src/runtime/request-projection'
 import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/types'
 
 function imageWithRequestBytes(bytes: number): Extract<ContentBlock, { type: 'image_url' }> {

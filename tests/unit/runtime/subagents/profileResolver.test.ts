@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  applyHostArchiveReadCapability,
+  applyHostArchiveCapabilities,
   resolveSubagentProfileSnapshot
 } from '../../../../src/runtime/subagents'
 import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentConfig'
@@ -255,30 +255,31 @@ describe('builtin general-purpose profile', () => {
   })
 })
 
-describe('applyHostArchiveReadCapability', () => {
-  it('宿主有 archive_read 时子工具列表继承该能力', () => {
-    expect(applyHostArchiveReadCapability(['read', 'grep'], true)).toEqual([
+describe('applyHostArchiveCapabilities', () => {
+  it('宿主有档案回读能力时同时继承 archive_read 与 history_read', () => {
+    expect(applyHostArchiveCapabilities(['read', 'grep'], true)).toEqual([
       'read',
       'grep',
-      'archive_read'
+      'archive_read',
+      'history_read'
     ])
   })
 
-  it('宿主有能力时不重复插入 archive_read', () => {
+  it('重复注入仍保持工具名唯一', () => {
     expect(
-      applyHostArchiveReadCapability(['read', 'archive_read', 'grep'], true)
-    ).toEqual(['read', 'grep', 'archive_read'])
+      applyHostArchiveCapabilities(['read', 'history_read', 'archive_read', 'grep'], true)
+    ).toEqual(['read', 'grep', 'archive_read', 'history_read'])
   })
 
-  it('宿主无 archive_read 时子工具列表不得携带', () => {
+  it('宿主无 archive_read 时同时剥离两个档案回读入口', () => {
     expect(
-      applyHostArchiveReadCapability(['read', 'archive_read', 'grep'], false)
+      applyHostArchiveCapabilities(['read', 'archive_read', 'history_read', 'grep'], false)
     ).toEqual(['read', 'grep'])
   })
 
-  it('宿主能力未知时保持 profile 工具列表不变', () => {
+  it('宿主状态未提供时保持 profile 原样', () => {
     expect(
-      applyHostArchiveReadCapability(['read', 'archive_read'], undefined)
+      applyHostArchiveCapabilities(['read', 'archive_read'], undefined)
     ).toEqual(['read', 'archive_read'])
   })
 })

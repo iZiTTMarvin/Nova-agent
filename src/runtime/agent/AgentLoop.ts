@@ -9,17 +9,14 @@ import type { ChatMessage, ChatToolCall, ContentBlock, ToolDefinition } from '..
 import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
-import type { CheckpointManager } from '../checkpoints/CheckpointManager'
-import { listManifests } from '../checkpoints/restore'
-import { collectTouchedFilesFromManifests } from '../checkpoints/collectTouchedFiles'
+import type { CheckpointManager } from '../checkpoints'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import {
   PermissionCoordinator,
   type ToolAuthorizationPolicy
 } from '../permissions/PermissionCoordinator'
 import { replaceSkillPathGrants } from '../permissions/pathAccess'
-import type { SessionStore } from '../sessions/SessionStore'
-import type { CompactionLedger } from '../sessions/types'
+import type { CompactionLedger, SessionStore } from '../sessions'
 import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
@@ -51,7 +48,7 @@ import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
 import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
-import { resolveRequestProjectionPolicy } from './core/projectRequestMessages'
+import { resolveRequestProjectionPolicy } from '../request-projection'
 import { StreamProcessor } from './stream/StreamProcessor'
 import { createSummaryProjection, runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { CompactionService } from './compaction/CompactionService'
@@ -274,14 +271,7 @@ export class AgentLoop {
         policy: () => this.currentRequestProjectionPolicy()
       }),
       promptCacheKey: this.config.promptCacheKey,
-      collectTouchedFiles: messageIds => {
-        const manager = this.checkpointManager
-        if (!manager || messageIds.length === 0) return []
-        return collectTouchedFilesFromManifests(
-          listManifests(manager.getCheckpointDir(), manager.getSessionId()),
-          new Set(messageIds)
-        )
-      },
+      collectTouchedFiles: this.config.collectCompactionTouchedFiles,
       getRealityAnchors: () => ({
         workspacePath: this.ctx.workingDir,
         activePlanPath: this.activePlanPath ?? null

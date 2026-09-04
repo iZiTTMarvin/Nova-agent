@@ -3,7 +3,7 @@
  * 切点按 token 预算；重建用冻结 system + 只读交接包 + 原文尾部。
  */
 import type { ChatMessage } from '../../model/types'
-import type { CompactionLedger, LedgerEntry } from '../../sessions/types'
+import type { CompactionLedger, LedgerEntry } from '../../sessions'
 import type { CacheProfile } from '../../model/cacheProfile'
 import { CHARS_PER_TOKEN, estimateChatMessageTokens, estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { formatPointerStub, renderCompactedSystem, renderLedgerEntry } from '../core/renderHandoffPacket'
@@ -359,7 +359,7 @@ export function splitForCompactionByTokens(
   context: ChatMessage[],
   tailTokenBudget: number,
   extraTailTokens = 0
-): { oldMessages: ChatMessage[]; recentMessages: ChatMessage[]; pulledBackMessages: ChatMessage[] } {
+): { oldMessages: ChatMessage[]; recentMessages: ChatMessage[] } {
   const nonSystemMessages = context.filter(m => m.role !== 'system')
   const budget = Math.max(1, tailTokenBudget + extraTailTokens)
   let splitIndex = nonSystemMessages.length
@@ -377,33 +377,17 @@ export function splitForCompactionByTokens(
   }
   return {
     oldMessages: nonSystemMessages.slice(0, splitIndex),
-    recentMessages: nonSystemMessages.slice(splitIndex),
-    pulledBackMessages: []
+    recentMessages: nonSystemMessages.slice(splitIndex)
   }
 }
 
-/**
- * 将切点前移到工具调用组边界
- *
- * 工具调用组的结构：assistant(带 toolCalls) + 若干 tool 消息
- * 如果切点落在组内（tool 消息或带 toolCalls 的 assistant），前移到组起始位置之前
- */
+/** 将切点前移到工具调用组起点，确保 assistant(toolCalls) 与 tool 结果同在尾部。 */
 export function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: number): number {
   // 从切点位置向前扫描，如果当前消息是 tool 角色，继续前移
   while (splitIndex > 0 && messages[splitIndex]?.role === 'tool') {
     splitIndex--
   }
 
-  // 如果前移后落到了带 toolCalls 的 assistant 上，也要把它纳入 recent 侧
-  const msg = messages[splitIndex]
-  if (
-    splitIndex > 0 &&
-    msg?.role === 'assistant' &&
-    msg.toolCalls &&
-    msg.toolCalls.length > 0
-  ) {
-    splitIndex--
-  }
 
   return Math.max(0, splitIndex)
 }

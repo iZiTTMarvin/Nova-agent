@@ -11,14 +11,14 @@
  * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL；
  *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
-import type { ChatMessage, ContentBlock, MessageOrigin } from '../../model/types'
-import { extractTextFromContent } from '../../model/types'
-import type { CacheProfile } from '../../model/cacheProfile'
-import { isReasoningSourceCompatible } from '../../model/reasoningSource'
-import type { SessionData, SessionMessage, SessionToolCall } from '../../sessions/types'
-import { getSessionActiveMessages } from '../../sessions/tree'
-import type { Mode, MessageBlock } from '../../../shared/session/types'
-import { stripLeakedToolMarkup } from '../../../shared/tool-call-text-fallback'
+import type { ChatMessage, ContentBlock, MessageOrigin } from '../model/types'
+import { extractTextFromContent } from '../model/types'
+import type { CacheProfile } from '../model/cacheProfile'
+import { isReasoningSourceCompatible } from '../model/reasoningSource'
+import type { SessionData, SessionMessage, SessionToolCall } from './types'
+import { getSessionActiveMessages } from './tree'
+import type { Mode, MessageBlock } from '../../shared/session/types'
+import { stripLeakedToolMarkup } from '../../shared/tool-call-text-fallback'
 
 /** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
 function isInternalImageUrl(url: string): boolean {

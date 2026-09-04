@@ -7,7 +7,7 @@ import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/type
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { calculateContextBreakdown } from '../../../../src/runtime/agent/context/contextBreakdownCalculator'
-import { buildConversationContext } from '../../../../src/runtime/agent/context/contextBuilder'
+import { buildConversationContext } from '../../../../src/runtime/sessions'
 import {
   estimateChatMessageTokens,
   estimateTokens,

@@ -13,7 +13,7 @@ import {
   resolveRequestProjectionPolicy,
   DISABLED_PRUNE_POLICY,
   type ArchivedToolResultPlaceholder
-} from '../../../../src/runtime/agent/core/projectRequestMessages'
+} from '../../../../src/runtime/request-projection'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { createHash } from 'crypto'
 import { mkdtempSync, readdirSync, rmSync } from 'fs'
@@ -36,6 +36,24 @@ describe('projectRequestMessages archiving', () => {
     expect(isArchivedPlaceholder(result.messages[0].content as string)).toBe(true)
     expect(messages[0].content).toBe(original)
     expect(result.diagnostics.prunedCount).toBe(1)
+    const projected = result.messages[0].content as string
+    expect(Buffer.byteLength(projected, 'utf8')).toBeLessThan(
+      Buffer.byteLength(original, 'utf8')
+    )
+    expect(result.diagnostics.estimatedTokensSaved).toBeGreaterThan(0)
+  })
+
+  it('占位符 wire 内容不小于原文时保留权威结果', async () => {
+    const original = 'x'.repeat(9_000)
+    const result = await projectRequestMessages({
+      messages: [{ role: 'tool', content: original, toolCallId: 'tc-large-meta' }],
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'a'.repeat(20_000) })
+    })
+    expect(result.messages[0]?.content).toBe(original)
+    expect(result.diagnostics.prunedCount).toBe(0)
+    expect(result.diagnostics.estimatedTokensSaved).toBe(0)
   })
 
   it('超过阈值的工具结果在任何轮次都归档', async () => {
@@ -161,12 +179,9 @@ describe('projectRequestMessages archiving', () => {
     const expectedSha256 = createHash('sha256').update(fullBody, 'utf8').digest('hex')
     expect(parsed.sha256).toBe(expectedSha256)
     expect(parsed.originalBytes).toBe(Buffer.byteLength(fullBody, 'utf8'))
-    const previewLines = parsed.preview.split('\n')
-    expect(previewLines.slice(0, 3)).toEqual(['line-1', 'line-2', 'line-3'])
-    expect(previewLines[3]).toBe('…')
-    expect(previewLines.slice(-2)).toEqual(
-      fullBody.split('\n').slice(-2)
-    )
+    expect(parsed.preview.startsWith('line-1\nline-2\nline-3\n…\n')).toBe(true)
+    expect(parsed.preview.endsWith('x'.repeat(398))).toBe(true)
+    expect(parsed.preview.length).toBeLessThanOrEqual(800)
     expect(parsed.resourceRef).toContain(`sha256=${expectedSha256}`)
   })
 

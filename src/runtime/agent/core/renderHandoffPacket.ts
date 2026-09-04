@@ -2,8 +2,7 @@
  * 交接包渲染：只读账本字段，拼进 system 尾部。提交瞬间冻结，渲染期不算。
  */
 import type { MessageOrigin } from '../../model/types'
-import type { CompactionLedger, LedgerEntry, StateDoc } from '../../sessions/types'
-import { isTouchedFilesOverflowMarker } from '../../checkpoints/collectTouchedFiles'
+import type { CompactionLedger, LedgerEntry, StateDoc } from '../../sessions'
 
 export function formatPointerStub(
   id: string,
@@ -17,10 +16,10 @@ const TOUCHED_FILES_BOUNDARY =
   '（仅本会话 checkpoint 记录的创建/修改/删除，含 bash 快照 diff；不含编辑器手改与因过大跳过备份的文件）'
 
 function renderTouchedFiles(entry: LedgerEntry): string | null {
-  if (entry.touchedFiles.length === 0) return null
-  const listed = entry.touchedFiles.filter(path => !isTouchedFilesOverflowMarker(path))
-  const overflow = entry.touchedFiles.find(isTouchedFilesOverflowMarker)
-  const files = overflow ? `${listed.join('、')}，${overflow}` : listed.join('、')
+  const { paths, omittedCount } = entry.touchedFiles
+  if (paths.length === 0 && omittedCount === 0) return null
+  const overflow = omittedCount > 0 ? `…另 ${omittedCount} 个文件` : null
+  const files = [...paths, ...(overflow ? [overflow] : [])].join('、')
   return `改过的文件: ${files}${TOUCHED_FILES_BOUNDARY}`
 }
 

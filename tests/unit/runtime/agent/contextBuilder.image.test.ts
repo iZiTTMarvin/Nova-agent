@@ -6,7 +6,7 @@
  * 同时验证：未注入回调时原样透传（向后兼容单测路径）。
  */
 import { describe, it, expect } from 'vitest'
-import { buildConversationContext, resolveImageUrlsInMessages } from '../../../../src/runtime/agent/context/contextBuilder'
+import { buildConversationContext, resolveImageUrlsInMessages } from '../../../../src/runtime/sessions'
 import type { SessionData, SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 

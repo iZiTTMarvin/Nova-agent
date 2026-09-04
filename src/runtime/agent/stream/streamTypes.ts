@@ -11,7 +11,7 @@
 import type { ChatMessage, ChatToolCall, ToolDefinition } from '../../model/types'
 import type { AgentEvent } from '../types'
 import type { AgentContext } from '../core/AgentContext'
-import type { SummaryProjection } from '../core/projectRequestMessages'
+import type { SummaryProjection } from '../../request-projection'
 import type { ModelClientPool } from '../../model/ModelClientPool'
 import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'

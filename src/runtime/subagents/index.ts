@@ -11,7 +11,7 @@ export {
 } from './SubagentExecutionService'
 export {
   resolveSubagentProfileSnapshot,
-  applyHostArchiveReadCapability
+  applyHostArchiveCapabilities
 } from './profileResolver'
 export {
   assertBatchInputReadonlyEligibility,

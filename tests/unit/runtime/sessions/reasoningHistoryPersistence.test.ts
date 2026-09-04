@@ -159,7 +159,11 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
 
     const snapshot = makeCompactionLedger({
       summary: '已完成 a/b 修复',
-      tailFrom: { messageId: 'a1', step: 1 }
+      tailFrom: { messageId: 'a1', step: 1 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      }
     })
     store.saveContextSnapshot(session.id, snapshot)
     store.appendMessage(session.id, {
@@ -190,7 +194,11 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
 
     const snapshot = makeCompactionLedger({
       summary: '旧摘要',
-      tailFrom: { messageId: 'msg_does_not_exist', step: 0 }
+      tailFrom: { messageId: 'msg_does_not_exist', step: 0 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      }
     })
     store.saveContextSnapshot(session.id, snapshot)
 

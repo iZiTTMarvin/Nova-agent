@@ -9,7 +9,7 @@ import { historyReadTool } from '../../../../src/runtime/tools/historyRead'
 import { archiveReadTool } from '../../../../src/runtime/tools/archiveRead'
 import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
-import { ACTIVE_TOOL_RESULT_MAX_TOKENS } from '../../../../src/runtime/agent/core/projectRequestMessages'
+import { ACTIVE_TOOL_RESULT_MAX_TOKENS } from '../../../../src/runtime/request-projection'
 import { CHARS_PER_TOKEN } from '../../../../src/runtime/agent/tokenEstimator'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
 import { createAgentContext, getEffectiveToolDefinitions } from '../../../../src/runtime/agent/core/AgentContext'
@@ -73,7 +73,7 @@ describe('history_read', () => {
               to: { messageId: 'a-secret', step: 0 }
             },
             stub: 'folded',
-            touchedFiles: [],
+            touchedFiles: { paths: [], omittedCount: 0 },
             trigger: 'threshold',
             createdAt: 1
           }
@@ -132,7 +132,7 @@ describe('history_read', () => {
               to: { messageId: 'a1', step: 0 }
             },
             stub: 'folded',
-            touchedFiles: [],
+            touchedFiles: { paths: [], omittedCount: 0 },
             trigger: 'threshold',
             createdAt: 1
           }

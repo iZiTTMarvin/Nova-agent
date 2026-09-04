@@ -92,7 +92,7 @@ export interface AgentTurnExecutorInput {
   readonly resourceOwnerRunId?: string
   readonly resourceOwnerGeneration?: number
   readonly runRefs?: AgentTurnRunRefs
-  readonly userMessageId?: string
+  readonly userMessageId: string
   readonly onStarted?: (context: AgentTurnExecutionContext) => void
   readonly afterOutcome?: (
     outcome: AgentTurnOutcome,

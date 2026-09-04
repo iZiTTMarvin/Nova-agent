@@ -10,7 +10,7 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import {
   buildConversationContext,
   projectAssistantWithReasoningReplay
-} from '../../../../src/runtime/agent/context/contextBuilder'
+} from '../../../../src/runtime/sessions'
 import { rebuildWithCompression } from '../../../../src/runtime/agent/compaction/compaction'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { restoreOrInjectHistory } from '../../../../src/runtime/sessions/contextSnapshot'
@@ -345,7 +345,11 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     session.currentLeafId = 'a1'
     const snapshot = makeCompactionLedger({
       summary: '已完成 a/b 修复',
-      tailFrom: { messageId: 'a1', step: 1 }
+      tailFrom: { messageId: 'a1', step: 1 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      },
     })
 
     session.messages.push({
@@ -379,7 +383,11 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     const session = makeSession(thinkingToolTurnMessages())
     const snapshot = makeCompactionLedger({
       summary: '旧摘要',
-      tailFrom: { messageId: 'msg_does_not_exist', step: 0 }
+      tailFrom: { messageId: 'msg_does_not_exist', step: 0 },
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      },
     })
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {

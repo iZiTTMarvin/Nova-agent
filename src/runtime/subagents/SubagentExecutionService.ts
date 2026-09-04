@@ -11,10 +11,12 @@ import {
 import type { RunCoordinator } from '../run/RunCoordinator'
 import {
   deriveChildSessionId,
-  type SessionStore
-} from '../sessions/SessionStore'
-import type { SessionData, SubagentSessionData } from '../sessions/types'
-import { extractTextFromSerializableContent } from '../sessions/types'
+  extractTextFromSerializableContent,
+  getSessionActiveMessages,
+  type SessionData,
+  type SessionStore,
+  type SubagentSessionData
+} from '../sessions'
 import type {
   FollowupSubagentCommand,
   SpawnSubagentCommand,
@@ -30,7 +32,7 @@ import type { ToolInvocationRef } from '../tools/types'
 import type { Mode } from '../../shared/session'
 import type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
 import {
-  applyHostArchiveReadCapability,
+  applyHostArchiveCapabilities,
   resolveSubagentProfileSnapshot
 } from './profileResolver'
 import { projectSubagentExecutionResult } from './resultProjection'
@@ -597,7 +599,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     let prepared: PreparedSubagentTurn
     try {
       const hostHasArchiveRead = this.deps.hostHasArchiveRead?.()
-      const toolNames = applyHostArchiveReadCapability(
+      const toolNames = applyHostArchiveCapabilities(
         profile.toolNames,
         hostHasArchiveRead
       )
@@ -629,6 +631,15 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       runId: identity.spawnRunId,
       resourceOwnerRunId: rootRunId,
       executionGeneration: 0
+    }
+    const executionUserMessage = [...getSessionActiveMessages(childSession)]
+      .reverse()
+      .find(message =>
+        message.role === 'user'
+        && extractTextFromSerializableContent(message.content) === plan.task
+      )
+    if (!executionUserMessage) {
+      throw new Error(`子代理执行任务缺少持久化用户消息: ${childSession.id}`)
     }
     const eventContext = (): SubagentEventContext => ({
       ...runRefs,
@@ -687,6 +698,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         resourceOwnerRunId: rootRunId,
         resourceOwnerGeneration: rootExecutionGeneration,
         runRefs,
+        userMessageId: executionUserMessage.id,
         onStarted: () => this.deps.onExecutionStarted?.(eventContext()),
         afterOutcome: () => {
           if (!timedOut) return

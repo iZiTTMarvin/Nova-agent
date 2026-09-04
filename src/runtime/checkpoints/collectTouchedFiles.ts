@@ -2,17 +2,14 @@
  * 按消息 id 聚合 checkpoint manifest 中的文件变更。
  * 只读、提交瞬间调用一次；不含编辑器手改与 skippedFiles。
  */
+import type { TouchedFilesSnapshot } from '../sessions'
+import { listManifests } from './restore'
 import type { CheckpointManifest } from './types'
 
 export const MAX_TOUCHED_FILES = 16
 
-const TOUCHED_OVERFLOW_PREFIX = '…另 '
 
-export function isTouchedFilesOverflowMarker(entry: string): boolean {
-  return entry.startsWith(TOUCHED_OVERFLOW_PREFIX)
-}
-
-/** 合并 created/modified/deleted，去重保序；超出上限时末条为「…另 N 个文件」。 */
+/** 合并 created/modified/deleted，去重保序；超出上限时保留省略数量。 */
 export function collectTouchedFilesFromManifests(
   manifests: readonly Pick<
     CheckpointManifest,
@@ -20,9 +17,8 @@ export function collectTouchedFilesFromManifests(
   >[],
   messageIds: ReadonlySet<string>,
   limit: number = MAX_TOUCHED_FILES
-): string[] {
-  if (messageIds.size === 0 || limit <= 0) return []
-
+): TouchedFilesSnapshot {
+  if (messageIds.size === 0 || limit <= 0) return { paths: [], omittedCount: 0 }
   const seen = new Set<string>()
   const ordered: string[] = []
   for (const manifest of manifests) {
@@ -38,9 +34,22 @@ export function collectTouchedFilesFromManifests(
     }
   }
 
-  if (ordered.length <= limit) return ordered
-  const kept = ordered.slice(0, Math.max(0, limit - 1))
-  const overflow = ordered.length - kept.length
-  kept.push(`${TOUCHED_OVERFLOW_PREFIX}${overflow} 个文件`)
-  return kept
+  if (ordered.length <= limit) return { paths: ordered, omittedCount: 0 }
+  const paths = ordered.slice(0, Math.max(0, limit - 1))
+  return {
+    paths,
+    omittedCount: ordered.length - paths.length
+  }
+}
+
+export function collectTouchedFilesForSession(
+  checkpointRoot: string,
+  sessionId: string,
+  messageIds: readonly string[]
+): TouchedFilesSnapshot {
+  if (messageIds.length === 0) return { paths: [], omittedCount: 0 }
+  return collectTouchedFilesFromManifests(
+    listManifests(checkpointRoot, sessionId),
+    new Set(messageIds)
+  )
 }

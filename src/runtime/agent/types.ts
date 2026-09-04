@@ -16,7 +16,7 @@ import type { RepairKind as NativeArgsRepairKind } from './stream/nativeArgsRepa
 import type { ShapeRepairKind } from './execution/toolShapeValidation'
 import type { ToolProcessHandle } from '../tools/types'
 import type { PermissionManager } from '../permissions/PermissionManager'
-import type { CompactionLedger } from '../sessions/types'
+import type { CompactionLedger, TouchedFilesSnapshot } from '../sessions'
 
 /**
  * repair_diagnostic 事件的分型联合，唯一来源。
@@ -201,6 +201,10 @@ export interface AgentLoopConfig {
   toolExecution?: 'parallel' | 'sequential'
   /** 全局最大并发工具数，小于 1 时按 1 处理 */
   maxParallelToolCalls?: number
+  /** 提交压缩时按被折叠消息坐标聚合 checkpoint 文件。 */
+  collectCompactionTouchedFiles?: (
+    messageIds: readonly string[]
+  ) => TouchedFilesSnapshot
   /**
    * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文与元数据。
    * agentHandler 通过此回调将压缩态写入 context-snapshot.json，不修改 session.messages。

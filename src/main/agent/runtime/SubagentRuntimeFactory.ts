@@ -14,9 +14,12 @@ import type { ToolExecutor } from '../../../runtime/tools/types'
 import type { ReadState } from '../../../runtime/tools/editTool'
 import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
-import { CheckpointManager } from '../../../runtime/checkpoints/CheckpointManager'
+import {
+  CheckpointManager,
+  collectTouchedFilesForSession
+} from '../../../runtime/checkpoints'
 import { ArtifactStore } from '../../../runtime/artifacts/ArtifactStore'
-import type { SessionStore } from '../../../runtime/sessions/SessionStore'
+import type { SessionStore } from '../../../runtime/sessions'
 import {
   persistCompactionSnapshot,
   restoreOrInjectHistory
@@ -53,6 +56,7 @@ export function prepareSubagentRuntime(
   input: PrepareSubagentRuntimeInput
 ): PreparedSubagentTurn {
   const isReadonly = resolveReadonlyCeiling(input)
+  const ledger = input.sessionStore.loadContextSnapshot(input.childSession.id)
   const toolRegistry = new ToolRegistry()
   for (const toolName of input.profile.toolNames) {
     const tool = input.resolveTool(toolName)
@@ -67,7 +71,7 @@ export function prepareSubagentRuntime(
       'direct',
       capabilityCeiling
     ),
-    0
+    ledger?.entries.length ?? 0
   )
   const toolSummary = visibleToolDefinitions
     .map((tool) => `- ${tool.name}: ${tool.description.split('\n')[0]}`)
@@ -112,6 +116,12 @@ export function prepareSubagentRuntime(
     ...(capabilityCeiling ? { permissionCeiling: capabilityCeiling } : {}),
     permissionManager,
     ...(input.promptCacheKey ? { promptCacheKey: input.promptCacheKey } : {}),
+    collectCompactionTouchedFiles: messageIds =>
+      collectTouchedFilesForSession(
+        input.sessionsDir,
+        input.childSession.id,
+        messageIds
+      ),
     onCompaction: (_compactedContext, meta) => {
       if (
         !persistCompactionSnapshot(
@@ -161,7 +171,7 @@ export function prepareSubagentRuntime(
   restoreOrInjectHistory(
     agentLoop,
     input.childSession,
-    input.sessionStore.loadContextSnapshot(input.childSession.id),
+    ledger,
     {
       ...(input.resolveImageUrl ? { resolveImageUrl: input.resolveImageUrl } : {}),
       sessionStore: input.sessionStore

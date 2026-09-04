@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
-import { buildConversationContext } from '../../../../src/runtime/agent/context/contextBuilder'
+import { buildConversationContext } from '../../../../src/runtime/sessions'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'

@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live-cache": "vitest run --config vitest.live-cache.config.ts",
+    "test:compaction-eval": "vitest run --config vitest.compaction-eval.config.ts",
     "test:perf": "node scripts/run-perf-gate.mjs",
     "test:headless-smoke": "npm run build:headless && node scripts/harness_eval/smoke_headless.mjs",
     "test:headless-code-graph": "node scripts/run-headless-code-graph-smoke.mjs",

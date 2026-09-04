@@ -6,7 +6,7 @@ import { AgentLoop } from '../agent/AgentLoop'
 import {
   buildConversationContext,
   resolveImageUrlsInMessages
-} from '../agent/context/contextBuilder'
+} from './conversationContext'
 import { rebuildWithCompression } from '../agent/compaction/compaction'
 import type { ChatMessage } from '../model/types'
 import type { CacheProfile } from '../model/cacheProfile'
@@ -42,11 +42,13 @@ function originMessageId(origin: MessageOrigin | null | undefined): string | nul
   return id ? id : null
 }
 
+function originKey(origin: MessageOrigin | null | undefined): string | null {
+  const id = originMessageId(origin)
+  return id && origin ? `${id}\0${origin.step}` : null
+}
+
 /**
- * 校验账本坐标相对当前档案：
- * - off-path：坐标在档案中但不在激活路径（切分支）
- * - missing-tail：tailFrom 的 messageId 尚未落盘
- * - ok：可以按 tailFrom 切片（缺 id 则空尾部）
+ * tailFrom 尚未落盘时按空尾部恢复；已提交条目与状态坐标必须仍在激活路径。
  */
 export function classifyLedgerRestore(
   session: SessionData,
@@ -54,25 +56,40 @@ export function classifyLedgerRestore(
 ): Exclude<LedgerRestoreKind, never> {
   const activeIds = new Set(getSessionActiveMessages(session).map(m => m.id))
   const allIds = new Set(session.messages.map(m => m.id))
+  const activeOriginPositions = new Map<string, { first: number; last: number }>()
+  for (const [index, message] of buildConversationContext(session, session.mode).entries()) {
+    const key = originKey(message.origin)
+    if (!key) continue
+    const current = activeOriginPositions.get(key)
+    activeOriginPositions.set(key, {
+      first: current?.first ?? index,
+      last: index
+    })
+  }
 
-  const locate = (origin: MessageOrigin | null | undefined): 'ok' | 'missing' | 'off-path' | 'skip' => {
+  const locate = (
+    origin: MessageOrigin | null | undefined
+  ): 'ok' | 'missing' | 'off-path' | 'invalid-step' | 'skip' => {
     const id = originMessageId(origin)
     if (!id) return 'skip'
     if (!allIds.has(id)) return 'missing'
     if (!activeIds.has(id)) return 'off-path'
-    return 'ok'
+    const key = originKey(origin)
+    return key && activeOriginPositions.has(key) ? 'ok' : 'invalid-step'
   }
-
-  const tailStatus = locate(ledger.tailFrom)
-  if (tailStatus === 'off-path') return 'invalid'
-  if (tailStatus === 'missing') return 'empty-tail'
 
   for (const entry of ledger.entries) {
-    if (locate(entry.shadows.from) === 'off-path') return 'invalid'
-    if (locate(entry.shadows.to) === 'off-path') return 'invalid'
+    if (locate(entry.shadows.from) !== 'ok') return 'invalid'
+    if (locate(entry.shadows.to) !== 'ok') return 'invalid'
+    const from = activeOriginPositions.get(originKey(entry.shadows.from)!)!
+    const to = activeOriginPositions.get(originKey(entry.shadows.to)!)!
+    if (from.first > to.last) return 'invalid'
   }
-  if (locate(ledger.state?.coversThrough) === 'off-path') return 'invalid'
+  if (ledger.state && locate(ledger.state.coversThrough) !== 'ok') return 'invalid'
 
+  const tailStatus = locate(ledger.tailFrom)
+  if (tailStatus === 'off-path' || tailStatus === 'invalid-step') return 'invalid'
+  if (tailStatus === 'missing') return 'empty-tail'
   return 'restored'
 }
 
