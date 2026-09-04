@@ -14,20 +14,22 @@ import { PermissionManager } from '../../../../src/runtime/permissions/Permissio
 
 /** 运行时子轮序列（无 reasoning 附着） */
 const SPLIT_NO_REASONING: ChatMessage[] = [
-  { role: 'user', content: '分析并修复两个问题' },
+  { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
   {
     role: 'assistant',
     content: '',
-    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }],
+    origin: { messageId: 'a1', step: 0 }
   },
-  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a', origin: { messageId: 'a1', step: 0 } },
   {
     role: 'assistant',
     content: '',
-    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }],
+    origin: { messageId: 'a1', step: 1 }
   },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
-  { role: 'assistant', content: '已完成两处修复。' }
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 1 } },
+  { role: 'assistant', content: '已完成两处修复。', origin: { messageId: 'a1', step: 2 } }
 ]
 
 const TURN_BLOCKS: MessageBlock[] = [

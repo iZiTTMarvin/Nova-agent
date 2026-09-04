@@ -22,7 +22,6 @@ describe('projectRequestMessages', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: false },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
@@ -38,7 +37,6 @@ describe('projectRequestMessages', () => {
     const snapshot = JSON.parse(JSON.stringify(messages))
     await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: false },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
@@ -52,14 +50,12 @@ describe('projectRequestMessages', () => {
     ]
     const first = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: false },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
     })
     const second = await projectRequestMessages({
       messages: first.messages,
-      toolRound: 1,
       policy: { enabled: false },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
@@ -71,7 +67,6 @@ describe('projectRequestMessages', () => {
     let called = false
     await projectRequestMessages({
       messages: [{ role: 'user', content: 'hi' }],
-      toolRound: 1,
       policy: { enabled: false },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => { called = true; return null }
@@ -80,9 +75,9 @@ describe('projectRequestMessages', () => {
   })
 
   it.each([
-    { enabled: false, toolRound: 1 },
-    { enabled: true, toolRound: 0 }
-  ])('图片预算不依赖工具归档开关或起始轮次：%o', async ({ enabled, toolRound }) => {
+    { enabled: false },
+    { enabled: true }
+  ])('图片预算不依赖工具归档开关：%o', async ({ enabled }) => {
     const first = imageWithRequestBytes(6 * 1024 * 1024)
     const overflow = imageWithRequestBytes(7 * 1024 * 1024)
     const later = imageWithRequestBytes(1024)
@@ -94,7 +89,6 @@ describe('projectRequestMessages', () => {
     ]
     const input = {
       messages,
-      toolRound,
       policy: { enabled },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => { throw new Error('图片投影不应写归档') }
@@ -120,7 +114,6 @@ describe('projectRequestMessages', () => {
     const extra: ContentBlock = { type: 'image_url', image_url: { url: 'https://example.test/next.png' } }
     const result = await projectRequestMessages({
       messages: [{ role: 'user', content: [filler, remote, extra] }],
-      toolRound: 0,
       policy: { enabled: false },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null

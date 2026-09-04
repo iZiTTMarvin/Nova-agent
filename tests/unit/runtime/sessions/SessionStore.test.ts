@@ -821,11 +821,28 @@ describe('SessionStore', () => {
       const store = new SessionStore(tmpDir)
       const session = store.create('/project/root')
       const snapshot = {
-        version: 1,
-        summary: '对话摘要',
-        recentMessages: [{ role: 'user' as const, content: '最近问题' }],
-        lastMessageId: 'msg_anchor',
-        compactionLevel: 1,
+        version: 2,
+        entries: [
+          {
+            id: 'c1',
+            shadows: {
+              from: { messageId: 'u0', step: 0 },
+              to: { messageId: 'a0', step: 0 }
+            },
+            stub: '[c1: 折叠]',
+            touchedFiles: [],
+            trigger: 'threshold' as const,
+            createdAt: 0
+          }
+        ],
+        state: {
+          text: '对话摘要',
+          coversThrough: { messageId: 'a0', step: 0 },
+          taskVerbatim: null,
+          realityLine: '',
+          revision: 1
+        },
+        tailFrom: { messageId: 'u1', step: 0 },
         updatedAt: Date.now()
       }
 
@@ -852,11 +869,10 @@ describe('SessionStore', () => {
       const store = new SessionStore(tmpDir)
       const session = store.create('/project/root')
       store.saveContextSnapshot(session.id, {
-        version: 1,
-        summary: '摘要',
-        recentMessages: [],
-        lastMessageId: '',
-        compactionLevel: 0,
+        version: 2,
+        entries: [],
+        state: null,
+        tailFrom: null,
         updatedAt: 1
       })
 

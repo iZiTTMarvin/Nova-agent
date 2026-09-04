@@ -800,7 +800,8 @@ describe('SubagentExecutionService', () => {
     const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
     expect(prepared.agentLoop.sendMessage).toHaveBeenCalledWith(
       expect.stringContaining('禁止自动重放的未提交非幂等步骤：write:write-before-crash'),
-      expect.anything()
+      expect.anything(),
+      expect.objectContaining({ userMessageId: undefined })
     )
     expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
   })

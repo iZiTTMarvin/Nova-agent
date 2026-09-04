@@ -12,7 +12,6 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import {
-  buildSnapshotFromCompaction,
   restoreOrInjectHistory
 } from '../../../../src/runtime/sessions/contextSnapshot'
 import { getSessionActiveMessages } from '../../../../src/runtime/sessions/tree'
@@ -44,22 +43,24 @@ const TURN_BLOCKS: MessageBlock[] = [
 ]
 
 const DEEPSEEK_RECOVERY: ChatMessage[] = [
-  { role: 'user', content: '分析并修复两个问题' },
+  { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
   {
     role: 'assistant',
     content: '',
     reasoningContent: '先读 a.ts 确认问题根因…',
-    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }],
+    origin: { messageId: 'a1', step: 0 }
   },
-  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a', origin: { messageId: 'a1', step: 0 } },
   {
     role: 'assistant',
     content: '',
     reasoningContent: '再改 b.ts 对齐接口…',
-    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }],
+    origin: { messageId: 'a1', step: 1 }
   },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
-  { role: 'assistant', content: '已完成两处修复。' }
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 1 } },
+  { role: 'assistant', content: '已完成两处修复。', origin: { messageId: 'a1', step: 2 } }
 ]
 
 function appendThinkingToolTurn(store: SessionStore, sessionId: string): void {
@@ -168,8 +169,12 @@ describe('会话持久化：deepseek reasoning 恢复', () => {
       reasoningReplay: 'tool-call-history'
     })
     expect(nonSystemContext(loopAlt)).toEqual([
-      { role: 'user', content: '分析并修复两个问题' },
-      { role: 'assistant', content: '分支 B：改用另一种方案。' }
+      { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
+      {
+        role: 'assistant',
+        content: '分支 B：改用另一种方案。',
+        origin: { messageId: 'a1_alt', step: 0 }
+      }
     ])
   })
 

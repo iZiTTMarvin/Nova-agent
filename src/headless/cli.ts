@@ -23,7 +23,7 @@ import {
 } from '../runtime/tools/availability'
 import { validateRegisteredToolsAreCataloged } from '../runtime/tools/catalog'
 import { createLoadToolsTool } from '../runtime/tools/loadTools'
-import { projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
+import { applyLedgerToolVisibility, projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
 import { ArtifactStore } from '../runtime/artifacts/ArtifactStore'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
@@ -37,6 +37,7 @@ import { setPersistentShellEnabled } from '../runtime/tools/bash'
 import { processRegistry } from '../runtime/process'
 import { loadNovaSettings } from '../runtime/settings/novaSettings'
 import { archiveReadTool } from '../runtime/tools/archiveRead'
+import { historyReadTool } from '../runtime/tools/historyRead'
 import type { AgentEvent } from '../runtime/agent/types'
 import type { NormalizedUsage } from '../shared/model/types'
 import {
@@ -91,6 +92,7 @@ async function createCodingTools(
   registry.register(bashTool)
   registry.register(shellSessionTool)
   registry.register(archiveReadTool)
+  registry.register(historyReadTool)
   // 子集注册路径同样 fail closed：注册项必须已登记 Catalog
   const subsetCheck = validateRegisteredToolsAreCataloged(
     registry.getToolDefinitions().map(def => def.name)
@@ -218,7 +220,11 @@ async function main(): Promise<void> {
   }
   const systemPromptLayers = {
     ...stablePromptLayers,
-    toolSummary: renderModeToolInventory('default', definitions, { dialect: 'native' })
+    toolSummary: renderModeToolInventory(
+      'default',
+      applyLedgerToolVisibility(definitions, 0),
+      { dialect: 'native' }
+    )
   }
   const modelClient = new OpenAICompatibleModelClient({
     apiKey,

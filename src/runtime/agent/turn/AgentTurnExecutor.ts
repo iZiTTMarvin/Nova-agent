@@ -92,6 +92,7 @@ export interface AgentTurnExecutorInput {
   readonly resourceOwnerRunId?: string
   readonly resourceOwnerGeneration?: number
   readonly runRefs?: AgentTurnRunRefs
+  readonly userMessageId?: string
   readonly onStarted?: (context: AgentTurnExecutionContext) => void
   readonly afterOutcome?: (
     outcome: AgentTurnOutcome,
@@ -198,7 +199,9 @@ export class AgentTurnExecutor {
         this.runCoordinator.markRunning(context.runId)
       }
 
-      const outcome = await input.agentLoop.sendMessage(input.task, input.route)
+      const outcome = await input.agentLoop.sendMessage(input.task, input.route, {
+        userMessageId: input.userMessageId
+      })
       await input.afterOutcome?.(outcome, context)
 
       try {

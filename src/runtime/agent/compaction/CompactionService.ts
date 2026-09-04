@@ -1,13 +1,16 @@
 import type { ModelClient, ChatOptions } from '../../model/ModelClient'
-import type { ChatMessage } from '../../model/types'
+import type { ChatMessage, MessageOrigin } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { ContextBudgetExceededError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import type { AgentContext } from '../core/AgentContext'
+import { formatPointerStub } from '../core/renderHandoffPacket'
 import type { SummaryProjection } from '../core/projectRequestMessages'
 import type { CompactionMeta } from '../types'
+import type { CompactionLedger, LedgerEntry, LedgerTrigger } from '../../sessions/types'
+import { CONTEXT_SNAPSHOT_VERSION } from '../../sessions/types'
 import { CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import {
@@ -16,18 +19,24 @@ import {
 } from './estimateNextRequestTokens'
 import { selectMidTurnSafeBoundary } from './selectMidTurnSafeBoundary'
 import {
-  MIN_RECENT_MESSAGES,
+  MAX_STUB_ESTIMATED_TOKENS,
+  LEDGER_RENDER_WINDOW_RATIO,
   boundSummaryText,
   buildCompactionRequestTail,
-  extractPriorSummary,
+  buildRealityLine,
+  buildStubPrompt,
+  buildStateInstruction,
+  foldLedgerEntriesToBudget,
   getCompactionThreshold,
+  getStateTokenBudget,
+  getTailTokenBudget,
   rebuildWithCompression,
   shouldScheduleIdleCompaction,
   shouldCompact,
-  splitForCompaction
+  splitForCompactionByTokens,
+  truncateStateFromEnd
 } from './compaction'
 
-type CompactionTrigger = CompactionMeta['trigger']
 type OverflowMode = 'standard' | 'aggressive'
 
 export interface CompactionServiceOptions {
@@ -48,6 +57,10 @@ export interface CompactionServiceOptions {
    * 落在同一路由槽位，前缀对齐才能命中；非亲和档案由客户端白名单忽略。
    */
   promptCacheKey?: string
+  /** 按被折叠 messageId 聚合 checkpoint 文件清单；缺省视为无变更 */
+  collectTouchedFiles?: (messageIds: string[]) => string[]
+  /** 提交瞬间的工作区 / activePlan 路径 */
+  getRealityAnchors?: () => { workspacePath: string | null; activePlanPath: string | null }
 }
 
 interface CompactionParts {
@@ -55,6 +68,7 @@ interface CompactionParts {
   oldMessages: ChatMessage[]
   recentMessages: ChatMessage[]
   pulledBackMessages: ChatMessage[]
+  cutAt: MessageOrigin | null
 }
 
 /**
@@ -79,6 +93,8 @@ export class CompactionService {
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
   private readonly idleProjection: SummaryProjection
   private readonly promptCacheKey: string | undefined
+  private readonly collectTouchedFiles?: (messageIds: string[]) => string[]
+  private readonly getRealityAnchors?: () => { workspacePath: string | null; activePlanPath: string | null }
   private readonly idleTimer: IdleCompressionTimer
   private compressingForOverflow = false
   private idleAbortController: AbortController | null = null
@@ -101,6 +117,8 @@ export class CompactionService {
     this.getIdleCacheProfile = options.getIdleCacheProfile
     this.idleProjection = options.idleProjection
     this.promptCacheKey = options.promptCacheKey
+    this.collectTouchedFiles = options.collectTouchedFiles
+    this.getRealityAnchors = options.getRealityAnchors
     this.idleTimer = new IdleCompressionTimer(() => {
       void this.runScheduledIdleCompaction()
     })
@@ -129,16 +147,10 @@ export class CompactionService {
     this.lastRequestPayloadChars = Math.max(0, Math.floor(payloadChars))
   }
 
-  restoreCompactedContext(
-    summary: string,
-    recentMessages: ChatMessage[],
-    compactionLevel: number
-  ): void {
-    const systemPrompt = extractTextFromContent(
-      this.context.messages.find(message => message.role === 'system')?.content ?? ''
-    )
-    this.context.messages = rebuildWithCompression(systemPrompt, summary, recentMessages)
-    this.context.compactionLevel = compactionLevel
+  restoreCompactedContext(ledger: CompactionLedger, tail: ChatMessage[]): void {
+    this.context.messages = rebuildWithCompression(this.context.systemPrompt, ledger, tail)
+    this.context.compactionState = ledger
+    this.context.compactionLevel = ledger.entries.length
     this.context.userTurnsSinceCompaction = 0
     this.updateTokenEstimate()
     this.cacheDiagnostics.bumpEpoch('compaction')
@@ -211,21 +223,23 @@ export class CompactionService {
       systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
       oldMessages,
       recentMessages,
-      pulledBackMessages: []
+      pulledBackMessages: [],
+      cutAt: recentMessages[0]?.origin ?? null
     }
 
     try {
-      const summary = await this.requestSummary(parts, projection, abortSignal)
-      if (!summary || abortSignal?.aborted) return false
+      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal)
+      if (!outputs || abortSignal?.aborted) return false
 
       if (!await this.applyCompactionResult(
         parts,
-        summary,
+        outputs,
         projection,
+        'mid-turn',
         () => !abortSignal?.aborted && !this.disposed
       )) return false
       if (abortSignal?.aborted) return false
-      this.notifyCompaction(summary, 'mid-turn')
+      this.notifyCompaction('mid-turn')
       return true
     } catch {
       return false
@@ -267,26 +281,22 @@ export class CompactionService {
 
     this.compressingForOverflow = true
     try {
-      const pullBack = mode === 'aggressive'
-        ? Math.max(4, Math.min(
-            Math.floor(this.context.messages.length / 2),
-            this.context.messages.length - 2,
-            64))
-        : 1
-      const parts = this.splitOverflowContext(pullBack)
+      const extraTailTokens = mode === 'aggressive' ? getTailTokenBudget(this.contextWindow) : 0
+      const parts = this.splitOverflowContext(extraTailTokens)
       if (parts.oldMessages.length === 0) return false
 
-      const summary = await this.requestSummary(parts, projection, abortSignal)
-      if (!summary || abortSignal?.aborted) return false
+      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal)
+      if (!outputs || abortSignal?.aborted) return false
 
       if (!await this.applyCompactionResult(
         parts,
-        summary,
+        outputs,
         projection,
+        'overflow',
         () => !abortSignal?.aborted && !this.disposed
       )) return false
       if (abortSignal?.aborted) return false
-      this.notifyCompaction(summary, 'overflow')
+      this.notifyCompaction('overflow')
       return true
     } catch {
       return false
@@ -296,7 +306,7 @@ export class CompactionService {
   }
 
   private async runCompaction(
-    trigger: Extract<CompactionTrigger, 'threshold' | 'idle'>,
+    trigger: Extract<LedgerTrigger, 'threshold' | 'idle'>,
     projection: SummaryProjection,
     abortSignal?: AbortSignal,
     canApply: () => boolean = () => true
@@ -306,17 +316,18 @@ export class CompactionService {
     const parts = this.splitThresholdContext()
     if (parts.oldMessages.length === 0) return false
 
-    const summary = await this.requestSummary(parts, projection, abortSignal)
-    if (!summary || abortSignal?.aborted || !canApply()) return false
+    const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal)
+    if (!outputs || abortSignal?.aborted || !canApply()) return false
 
     if (!await this.applyCompactionResult(
       parts,
-      summary,
+      outputs,
       projection,
+      trigger,
       () => !abortSignal?.aborted && !this.disposed && canApply()
     )) return false
     if (abortSignal?.aborted || !canApply()) return false
-    this.notifyCompaction(summary, trigger)
+    this.notifyCompaction(trigger)
     return true
   }
 
@@ -380,45 +391,45 @@ export class CompactionService {
 
   private splitThresholdContext(): CompactionParts {
     const systemMessage = this.context.messages.find(message => message.role === 'system')
-    const { oldMessages, recentMessages } = splitForCompaction(
+    const { oldMessages, recentMessages, pulledBackMessages } = splitForCompactionByTokens(
       this.context.messages,
-      MIN_RECENT_MESSAGES
+      getTailTokenBudget(this.contextWindow)
     )
     return {
       systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
       oldMessages,
       recentMessages,
-      pulledBackMessages: []
+      pulledBackMessages,
+      cutAt: recentMessages[0]?.origin ?? null
     }
   }
 
-  private splitOverflowContext(pullBack: number): CompactionParts {
+  private splitOverflowContext(extraTailTokens: number): CompactionParts {
     const systemMessage = this.context.messages.find(message => message.role === 'system')
-    const { oldMessages, recentMessages, pulledBackMessages } = splitForCompaction(
+    const { oldMessages, recentMessages, pulledBackMessages } = splitForCompactionByTokens(
       this.context.messages,
-      MIN_RECENT_MESSAGES + pullBack,
-      pullBack
+      getTailTokenBudget(this.contextWindow),
+      extraTailTokens
     )
+    const tail = [...recentMessages, ...pulledBackMessages]
     return {
       systemPrompt: extractTextFromContent(systemMessage?.content ?? ''),
       oldMessages,
       recentMessages,
-      pulledBackMessages
+      pulledBackMessages,
+      cutAt: tail[0]?.origin ?? null
     }
   }
 
   /**
-   * 构造并发出摘要请求。
-   *
-   * 摘要输入回放主对话前缀（契约见 SummaryProjection）：对完整权威消息投影后
-   * 按切点截取被压缩区域，reasoning 不剥离，压缩指令仅作尾部追加。
-   * 摘要调用按普通请求参与缓存诊断，前缀回归触发既有告警。
+   * 并行发出 stub / state 两次压缩请求，都回放主对话前缀。
+   * state 失败则整轮放弃；stub 失败则降级为代码指针。
    */
-  private async requestSummary(
+  private async requestCompactionOutputs(
     parts: CompactionParts,
     projection: SummaryProjection,
     abortSignal?: AbortSignal
-  ): Promise<string | null> {
+  ): Promise<{ stub: string | null; state: string } | null> {
     if (abortSignal?.aborted) return null
 
     const systemMessage = this.context.messages.find(message => message.role === 'system')
@@ -426,18 +437,63 @@ export class CompactionService {
     const projectedOld = projectedAll
       .filter(message => message.role !== 'system')
       .slice(0, parts.oldMessages.length)
-    // 二次及以后压缩时 system 尾部已含前序摘要，显式注入压缩输入要求增量更新
-    const priorSummary = extractPriorSummary(extractTextFromContent(systemMessage?.content ?? ''))
-    const compactionContext: ChatMessage[] = [
+    const lastRole = projectedOld[projectedOld.length - 1]?.role
+    const prefix: ChatMessage[] = [
       ...(systemMessage ? [systemMessage] : []),
-      ...projectedOld,
+      ...projectedOld
+    ]
+    const priorState = this.context.compactionState?.state?.text
+    const stubContext = [
+      ...prefix,
+      ...buildCompactionRequestTail(lastRole, buildStubPrompt())
+    ]
+    const stateContext = [
+      ...prefix,
       ...buildCompactionRequestTail(
-        projectedOld[projectedOld.length - 1]?.role,
-        parts.recentMessages.length,
-        priorSummary
+        lastRole,
+        buildStateInstruction(priorState)
       )
     ]
 
+    const [stubText, rawState] = await Promise.all([
+      this.streamCompactionText(stubContext, abortSignal),
+      this.streamCompactionText(stateContext, abortSignal)
+    ])
+    if (abortSignal?.aborted) return null
+    if (!rawState) return null
+
+    const stateBudget = getStateTokenBudget(this.contextWindow)
+    let state = boundSummaryText(rawState, stateBudget)
+    if (estimateTokens(state) > stateBudget) {
+      const tightened = await this.streamCompactionText(
+        [
+          ...prefix,
+          ...buildCompactionRequestTail(
+            lastRole,
+            [
+              '请把下面这份状态文档收紧。保留「目标」和「下一步」，可以大幅压缩「关键决策」。只输出收紧后的五段摘要。',
+              '',
+              state
+            ].join('\n')
+          )
+        ],
+        abortSignal
+      )
+      if (abortSignal?.aborted) return null
+      if (tightened) state = tightened
+    }
+    state = truncateStateFromEnd(state, stateBudget)
+
+    return {
+      stub: stubText,
+      state
+    }
+  }
+
+  private async streamCompactionText(
+    messages: ChatMessage[],
+    abortSignal?: AbortSignal
+  ): Promise<string | null> {
     const chatOptions: ChatOptions = {
       abortSignal,
       includeInternalMessages: true,
@@ -445,13 +501,13 @@ export class CompactionService {
       ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
     }
 
-    let summary = ''
+    let text = ''
     try {
-      const stream = this.modelClient.chat(compactionContext, undefined, chatOptions)
+      const stream = this.modelClient.chat(messages, undefined, chatOptions)
       for await (const event of stream) {
         if (abortSignal?.aborted) return null
         if (event.type === 'text_delta') {
-          summary += event.delta
+          text += event.delta
         } else if (event.type === 'wire_snapshot') {
           this.cacheDiagnostics.recordWireSnapshot(event.snapshot, {
             purpose: 'compaction-summary'
@@ -468,56 +524,132 @@ export class CompactionService {
       return null
     }
 
-    const trimmed = summary.trim()
-    if (!trimmed) return null
-    return boundSummaryText(trimmed)
+    const trimmed = text.trim()
+    return trimmed.length > 0 ? trimmed : null
   }
 
   /**
-   * 采纳摘要并重建上下文。
-   * 返回 false 表示摘要未通过采纳校验（替换后总量不小于压缩前），
-   * 本次压缩放弃写回，原上下文与簿记保持不变（fail-open，不终止 turn）。
+   * 采纳 stub/state 并重建上下文。
+   * 膨胀保护：交接包 + 尾部必须严格小于压缩前投影总量，否则 fail-open。
    */
   private async applyCompactionResult(
     parts: CompactionParts,
-    summary: string,
+    outputs: { stub: string | null; state: string },
     projection: SummaryProjection,
+    trigger: LedgerTrigger,
     canApply: () => boolean = () => true
   ): Promise<boolean> {
-    // 采纳校验：替换后总量必须严格小于压缩前，否则摘要没有压缩收益。
-    // 两侧保留区相同，等价于摘要必须小于被折叠的 oldMessages；按完整两侧计算便于阅读。
-    const keptTokens =
-      estimateContextTokens(parts.recentMessages) + estimateContextTokens(parts.pulledBackMessages)
-    const projectedTokens = estimateTokens(summary) + keptTokens
-    const originalTokens = estimateContextTokens(parts.oldMessages) + keptTokens
-    if (projectedTokens >= originalTokens) return false
     if (!canApply()) return false
 
-    const rebuilt = rebuildWithCompression(
-      parts.systemPrompt,
-      summary,
-      parts.recentMessages,
-      parts.pulledBackMessages
-    )
+    const tail = [...parts.recentMessages, ...parts.pulledBackMessages]
+    const beforeProjected = await projection.project(this.context.messages)
+    const beforeTokens = estimateContextTokens(beforeProjected)
+
+    const ledger = this.buildNextLedger(parts, outputs, trigger)
+    const rebuilt = rebuildWithCompression(this.context.systemPrompt, ledger, tail)
     const projected = await projection.project(rebuilt)
     if (!canApply()) return false
+    const afterTokens = estimateContextTokens(projected)
+    if (afterTokens >= beforeTokens) return false
+
     const budget = this.contextBudgetManager.enforceInline(projected)
     if (budget.status === 'requires_compaction') {
       throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
     }
     this.context.messages = rebuilt
-    this.context.compactionLevel++
+    this.context.compactionState = ledger
+    this.context.compactionLevel = ledger.entries.length
     this.context.userTurnsSinceCompaction = 0
     this.updateTokenEstimate()
     this.cacheDiagnostics.bumpEpoch('compaction')
     return true
   }
 
-  private notifyCompaction(summary: string, trigger: CompactionTrigger): void {
+  private buildNextLedger(
+    parts: CompactionParts,
+    outputs: { stub: string | null; state: string },
+    trigger: LedgerTrigger
+  ): CompactionLedger {
+    const tail = [...parts.recentMessages, ...parts.pulledBackMessages]
+    const firstOld = parts.oldMessages[0]
+    const lastOld = parts.oldMessages[parts.oldMessages.length - 1]
+    const firstTail = tail[0]
+    const prev = this.context.compactionState
+    const id = `c${(prev?.entries.length ?? 0) + 1}`
+    const from = firstOld?.origin ?? { messageId: '', step: 0 }
+    const to = lastOld?.origin ?? { messageId: '', step: 0 }
+    const pointer = formatPointerStub(id, from, to)
+    const stub = outputs.stub
+      ? boundSummaryText(outputs.stub, MAX_STUB_ESTIMATED_TOKENS)
+      : pointer
+    const messageIds = [...new Set(
+      parts.oldMessages
+        .map(message => message.origin?.messageId)
+        .filter((value): value is string => Boolean(value))
+    )]
+    const entry: LedgerEntry = {
+      id,
+      shadows: { from, to },
+      stub: stub.includes(id) ? stub : `${stub}\n${pointer}`,
+      touchedFiles: this.collectTouchedFiles?.(messageIds) ?? [],
+      trigger,
+      createdAt: Date.now()
+    }
+    const maxStubTokens = Math.floor(this.contextWindow * LEDGER_RENDER_WINDOW_RATIO)
+    const entries = foldLedgerEntriesToBudget(
+      [...(prev?.entries ?? []), entry],
+      maxStubTokens
+    )
+    const anchors = this.getRealityAnchors?.()
+    return {
+      version: CONTEXT_SNAPSHOT_VERSION,
+      entries,
+      state: {
+        text: outputs.state,
+        coversThrough: to,
+        taskVerbatim: this.resolveTaskVerbatim(parts),
+        realityLine: buildRealityLine(anchors?.workspacePath, anchors?.activePlanPath),
+        revision: (prev?.state?.revision ?? 0) + 1
+      },
+      tailFrom: parts.cutAt ?? firstTail?.origin ?? null,
+      updatedAt: Date.now()
+    }
+  }
+
+  private resolveTaskVerbatim(parts: CompactionParts): {
+    text: string
+    origin: MessageOrigin
+  } | null {
+    const current = [...this.context.messages]
+      .reverse()
+      .find(message => message.role === 'user' && !message.internal)
+    if (!current) return null
+    const folded = parts.oldMessages.some(message =>
+      message === current
+      || (
+        Boolean(message.origin)
+        && Boolean(current.origin)
+        && message.origin!.messageId === current.origin!.messageId
+        && message.origin!.step === current.origin!.step
+      )
+    )
+    if (!folded) return null
+    const text = extractTextFromContent(current.content)
+    const maxChars = 1_200
+    return {
+      text: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text,
+      origin: current.origin ?? { messageId: '', step: 0 }
+    }
+  }
+
+  private notifyCompaction(trigger: LedgerTrigger): void {
+    const ledger = this.context.compactionState
+    if (!ledger) return
     this.onCompaction?.(this.context.messages, {
-      summary,
-      compactionLevel: this.context.compactionLevel,
-      trigger
+      summary: ledger.state?.text ?? '',
+      compactionLevel: ledger.entries.length,
+      trigger,
+      ledger
     })
   }
 }

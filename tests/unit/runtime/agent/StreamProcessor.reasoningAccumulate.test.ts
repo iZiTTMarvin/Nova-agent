@@ -40,6 +40,7 @@ function createNativeContext(): AgentContext {
     compactionLevel: 0,
     userTurnsSinceCompaction: 0,
     lastEstimatedTokens: 0,
+    compactionState: null,
     skillsTokenBudget: 0
   }
 }

@@ -19,7 +19,7 @@ import type { TodoItem } from '../../shared/todo/types'
 import type { ComposeStageEntry, ComposePlanApproval } from '../../shared/composeLifecycle'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { ToolAvailabilityPersistState } from '../tools/availability'
-import type { ChatMessage } from '../model/types'
+import type { MessageOrigin } from '../model/types'
 import type { ActivePlanRef } from '../plans'
 export {
   SESSION_PLACEHOLDER_TITLE,
@@ -310,32 +310,39 @@ export const SESSION_MESSAGES_FILE = 'messages.jsonl'
 /** 上下文快照文件名（与 SESSION_DATA_FILE 并列） */
 export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
 
-/** 当前快照结构版本；结构变更时 +1，旧版本快照一律丢弃并回退全量重建 */
-export const CONTEXT_SNAPSHOT_VERSION = 1
+/** 当前账本结构版本；不符则丢弃并全量重建 */
+export const CONTEXT_SNAPSHOT_VERSION = 2
+
+export type LedgerTrigger = 'threshold' | 'mid-turn' | 'overflow' | 'idle'
+
+/** 一次压缩折叠的索引条目；提交后只读追加 */
+export interface LedgerEntry {
+  id: string
+  shadows: { from: MessageOrigin; to: MessageOrigin }
+  stub: string
+  touchedFiles: string[]
+  trigger: LedgerTrigger
+  createdAt: number
+}
+
+/** 当前唯一可变的工作记忆；至多一份 */
+export interface StateDoc {
+  text: string
+  coversThrough: MessageOrigin
+  taskVerbatim: { text: string; origin: MessageOrigin } | null
+  /** 提交瞬间冻结的现实提示，渲染期只读 */
+  realityLine: string
+  revision: number
+}
 
 /**
- * 上下文快照 —— 压缩后运行时上下文的派生缓存（非事实源）。
- * 作用：让「每次 SEND_MESSAGE 重建上下文」时直接从压缩态起步，
- * 避免每次都从完整历史重新压缩。坏了/缺失可从 session.messages 重建。
+ * 压缩账本 —— 落在 context-snapshot.json，不复制消息正文。
+ * 恢复 = 纯函数(档案, 账本)。version 必须等于 CONTEXT_SNAPSHOT_VERSION。
  */
-export interface ContextSnapshot {
-  /** 结构版本，必须等于 CONTEXT_SNAPSHOT_VERSION 才可用 */
+export interface CompactionLedger {
   version: number
-  /** 当前生效的对话历史摘要原文（重启/下一次 send 时重新并入 system 前缀） */
-  summary: string
-  /**
-   * 压缩后运行时上下文里「除 system 外」的消息，原样存 ChatMessage[]。
-   * 即 compactedContext.filter(m => m.role !== 'system')。
-   * 注意：不含 system（system 由当前 frozenSystemPrompt + summary 重新合成）。
-   */
-  recentMessages: ChatMessage[]
-  /**
-   * 生成快照时 session.messages 的最后一条消息 id，作为「增量补齐」的锚点。
-   * 含义：本快照已经覆盖 session.messages 中截止到该 id 的所有内容。
-   */
-  lastMessageId: string
-  /** 压缩层级，用于恢复 AgentLoop.compactionLevel（软触发冷却/诊断） */
-  compactionLevel: number
-  /** 生成时间戳，仅排错用 */
+  entries: LedgerEntry[]
+  state: StateDoc | null
+  tailFrom: MessageOrigin | null
   updatedAt: number
 }

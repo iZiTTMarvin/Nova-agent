@@ -8,7 +8,6 @@ import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { extractTextFromContent } from '../../../src/runtime/model/types'
 import type { ChatMessage } from '../../../src/runtime/model/types'
 import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator'
-import { AGING_GROUP_BYTES_THRESHOLD } from '../../../src/runtime/agent/compaction/toolResultAging'
 import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
 import { readTool } from '../../../src/runtime/tools/readTool'
 import { switchModeTool } from '../../../src/runtime/tools/switchMode'
@@ -18,6 +17,7 @@ import { tmpdir } from 'os'
 import { agentRoute, resolveAgentTurnRoute } from '../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { AgentEvent } from '../../../src/runtime/agent/types'
+import { makeCompactionLedger } from '../../../src/test-support/builders/compactionLedger'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -39,12 +39,13 @@ function createTestRegistry(): ToolRegistry {
 }
 
 describe('AgentLoop', () => {
-  function createLoop(mockClient?: MockModelClient) {
+  function createLoop(mockClient?: MockModelClient, config?: ConstructorParameters<typeof AgentLoop>[2]) {
     const client = mockClient ?? new MockModelClient()
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, {
       permissionManager: new PermissionManager(),
-      permissionMode: 'full_access'
+      permissionMode: 'full_access',
+      ...config
     })
     loop.setToolRegistry(createTestRegistry())
     return { loop, eventBus, client }
@@ -128,7 +129,11 @@ describe('AgentLoop', () => {
     const calls = client.getCalls()
     // 第二次调用：system + user1（含 session context 前缀） + assistant1 + user2
     expect(calls[1].messages).toHaveLength(4)
-    expect(calls[1].messages[2]).toEqual({ role: 'assistant', content: '回复1' })
+    expect(calls[1].messages[2]).toEqual({
+      role: 'assistant',
+      content: '回复1',
+      origin: { messageId: expect.any(String), step: 0 }
+    })
     expect(calls[1].messages[3].role).toBe('user')
     expect(calls[1].messages[3].content).toContain('问题2')
   })
@@ -951,16 +956,7 @@ describe('AgentLoop', () => {
    */
   it('压缩时上下文以 user 结尾，模型收到的压缩上下文不会出现连续 user', async () => {
     const client = new MockModelClient()
-    // 第一轮：正常回复（不触发压缩）
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '好的' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-    // 压缩调用：模型生成摘要
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '这是对话摘要。' },
@@ -985,7 +981,7 @@ describe('AgentLoop', () => {
     })
     loop.setToolRegistry(createTestRegistry())
 
-    // 注入足够多的历史消息（> MIN_RECENT_MESSAGES + 2 = 22 条）且总 token > 阈值
+    // 注入足够多的历史消息且总 token > 阈值
     // 以触发压缩
     const history: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
@@ -1028,7 +1024,10 @@ describe('AgentLoop', () => {
       { role: 'assistant', content: '最近助手回复' }
     ]
 
-    loop.restoreCompactedContext('测试摘要内容', recentMessages, 2)
+    loop.restoreCompactedContext(
+      makeCompactionLedger({ summary: '测试摘要内容', entryCount: 2 }),
+      recentMessages
+    )
 
     const ctx = loop.getContext()
     expect(ctx[0].role).toBe('system')
@@ -1038,7 +1037,7 @@ describe('AgentLoop', () => {
 
   it('restoreCompactedContext 恢复压缩层级，后续压缩从该层级递增', async () => {
     const client = new MockModelClient()
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '新的摘要' },
@@ -1067,7 +1066,10 @@ describe('AgentLoop', () => {
       )
     }
 
-    loop.restoreCompactedContext('已有摘要', recentMessages, 2)
+    loop.restoreCompactedContext(
+      makeCompactionLedger({ summary: '已有摘要', entryCount: 2 }),
+      recentMessages
+    )
     await loop.sendMessage('继续', agentRoute())
 
     expect(compactionLevels).toEqual([3])
@@ -1082,8 +1084,7 @@ describe('AgentLoop', () => {
         { type: 'context_overflow', rawError: 'context length exceeded' }
       ]
     })
-    // 2. 压缩摘要调用返回成功
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '这是紧急摘要。' },
@@ -1099,16 +1100,16 @@ describe('AgentLoop', () => {
       ]
     })
 
-    const { loop, eventBus } = createLoop(client)
+    const { loop, eventBus } = createLoop(client, { contextWindow: 2_000 })
     const events: any[] = []
     eventBus.on(e => events.push(e))
 
-    // 注入足够多的历史（超过 MIN_RECENT_MESSAGES = 20），以进行紧急压缩
+    // 注入足够历史，使 token 尾部预算之外仍有 oldMessages 可压缩
     const history: ChatMessage[] = []
     for (let i = 0; i < 12; i++) {
       history.push(
-        { role: 'user', content: `q${i}` },
-        { role: 'assistant', content: `a${i}` }
+        { role: 'user', content: `q${i}-` + 'x'.repeat(200) },
+        { role: 'assistant', content: `a${i}-` + 'y'.repeat(200) }
       )
     }
     loop.injectHistory(history)
@@ -1136,15 +1137,15 @@ describe('AgentLoop', () => {
         { type: 'context_overflow', rawError: 'context length exceeded' }
       ]
     })
-    // 2. Layer 1 压缩调用本身又溢出
-    client.addResponse({
+    // 2. Layer 1 压缩的 stub+state 都溢出
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'context_overflow', rawError: 'compaction input too long' }
       ]
     })
     // 3. Layer 2 压缩调用成功返回摘要
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '更深层次的摘要。' },
@@ -1160,7 +1161,7 @@ describe('AgentLoop', () => {
       ]
     })
 
-    const { loop } = createLoop(client)
+    const { loop } = createLoop(client, { contextWindow: 2_000 })
 
     // 注入多条历史消息，使 Layer 2 弹起后依然有消息可以被压缩（至少 44 条非系统消息）。
     // 消息需带真实内容体量：采纳校验要求摘要严格小于被折叠的旧消息，
@@ -1193,14 +1194,14 @@ describe('AgentLoop', () => {
       ]
     })
     // 2. Layer 1 压缩失败
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'error', error: 'API Error' }
       ]
     })
     // 3. Layer 2 压缩失败
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'error', error: 'API Error' }
@@ -1796,7 +1797,7 @@ describe('AgentLoop', () => {
       })
       seeded.push({
         role: 'tool',
-        content: `line1\n${'z'.repeat(AGING_GROUP_BYTES_THRESHOLD + 50)}`,
+        content: `line1\n${'z'.repeat(8 * 1024 + 50)}`,
         toolCallId: `tc_${u}`
       })
     }
@@ -1840,7 +1841,7 @@ describe('AgentLoop', () => {
       client.addResponse({
         events: [{ type: 'message_start' }, { type: 'context_overflow', rawError: 'context overflow token limit' }]
       })
-      client.addResponse({
+      client.addCompactionPair({
         events: [{ type: 'text_delta', delta: '压缩摘要' }, { type: 'message_end', finishReason: 'stop' }]
       })
     }

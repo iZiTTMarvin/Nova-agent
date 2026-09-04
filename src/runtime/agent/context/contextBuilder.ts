@@ -11,7 +11,8 @@
  * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL；
  *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
-import type { ChatMessage, ContentBlock } from '../../model/types'
+import type { ChatMessage, ContentBlock, MessageOrigin } from '../../model/types'
+import { extractTextFromContent } from '../../model/types'
 import type { CacheProfile } from '../../model/cacheProfile'
 import { isReasoningSourceCompatible } from '../../model/reasoningSource'
 import type { SessionData, SessionMessage, SessionToolCall } from '../../sessions/types'
@@ -51,7 +52,7 @@ function resolveImageUrlsInContent(
 
 /**
  * 对一组 ChatMessage 扫描并转换其中的内部图片 URL。
- * 用于压缩快照（recentMessages）恢复路径——快照持久化时存的也是 nova-image:// URL。
+ * 用于从档案切出的尾部；内部协议 URL 发给模型前必须转换。
  */
 export function resolveImageUrlsInMessages(
   messages: ChatMessage[],
@@ -99,6 +100,11 @@ export interface BuildConversationContextOptions {
    * 缺省时不做来源门控（仅按 reasoningReplay 档位）。
    */
   currentProviderId?: string
+  /**
+   * 从该坐标起切尾部（含该坐标）。同一 assistant 可从 step N 起，
+   * 以覆盖 mid-turn 压缩后本轮后半段仍在档案里的情况。
+   */
+  from?: MessageOrigin
 }
 
 function normalizeBuildOptions(
@@ -114,11 +120,35 @@ function normalizeBuildOptions(
  * 默认扁平路径：单条 assistant（全部 toolCalls）+ 多条 tool 消息；丢弃 thinking。
  * 供 reasoningReplay === 'none' 的档案使用。
  */
+function archiveOrigin(messageId: string, step: number): MessageOrigin {
+  return { messageId, step }
+}
+
+/** 从指定档案坐标起保留消息；坐标不存在时返回空数组。 */
+export function sliceMessagesFromOrigin(
+  messages: ChatMessage[],
+  from: MessageOrigin
+): ChatMessage[] {
+  const exact = messages.findIndex(
+    m => m.origin?.messageId === from.messageId && m.origin.step === from.step
+  )
+  if (exact >= 0) return messages.slice(exact)
+
+  const laterSameMessage = messages.findIndex(
+    m => m.origin?.messageId === from.messageId && (m.origin.step ?? 0) >= from.step
+  )
+  if (laterSameMessage >= 0) return messages.slice(laterSameMessage)
+
+  return []
+}
+
 function projectAssistantFlattened(msg: SessionMessage): ChatMessage[] {
+  const origin = archiveOrigin(msg.id, 0)
   const out: ChatMessage[] = []
   const assistantMsg: ChatMessage = {
     role: 'assistant',
-    content: sanitizeAssistantContent(msg.content as string | ContentBlock[])
+    content: sanitizeAssistantContent(msg.content as string | ContentBlock[]),
+    origin
   }
 
   if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -144,6 +174,7 @@ function projectAssistantFlattened(msg: SessionMessage): ChatMessage[] {
         role: 'tool',
         content: tc.result,
         toolCallId: tc.id,
+        origin,
         ...(tc.artifactId ? { artifactId: tc.artifactId } : {}),
         ...(tc.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
       })
@@ -176,6 +207,7 @@ export function projectAssistantWithReasoningReplay(
 
   const toolCallById = new Map((msg.toolCalls ?? []).map(tc => [tc.id, tc]))
   const out: ChatMessage[] = []
+  let step = 0
 
   let reasoning = ''
   let reasoningProviderId: string | undefined
@@ -195,9 +227,11 @@ export function projectAssistantWithReasoningReplay(
   }
 
   const flushToolSubTurn = (): void => {
+    const origin = archiveOrigin(msg.id, step)
     const assistant: ChatMessage = {
       role: 'assistant',
-      content: sanitizeAssistantContent(text)
+      content: sanitizeAssistantContent(text),
+      origin
     }
     attachReasoning(assistant, true)
     assistant.toolCalls = pendingTools.map(({ block, tc }) => ({
@@ -219,11 +253,13 @@ export function projectAssistantWithReasoningReplay(
         role: 'tool',
         content: result,
         toolCallId: block.toolCallId,
+        origin,
         ...(tc?.artifactId ? { artifactId: tc.artifactId } : {}),
         ...(tc?.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
       })
     }
 
+    step += 1
     reasoning = ''
     reasoningProviderId = undefined
     text = ''
@@ -234,7 +270,8 @@ export function projectAssistantWithReasoningReplay(
     if (!text && !reasoning) return
     const assistant: ChatMessage = {
       role: 'assistant',
-      content: sanitizeAssistantContent(text)
+      content: sanitizeAssistantContent(text),
+      origin: archiveOrigin(msg.id, step)
     }
     attachReasoning(assistant, false)
     out.push(assistant)
@@ -318,7 +355,8 @@ export function buildConversationContext(
       context.push({
         role: 'tool',
         content: msg.content,
-        toolCallId: msg.toolCallId
+        toolCallId: msg.toolCallId,
+        origin: archiveOrigin(msg.id, 0)
       })
       continue
     }
@@ -327,9 +365,21 @@ export function buildConversationContext(
     const userContent = msg.content as string | ContentBlock[]
     context.push({
       role: msg.role,
-      content: resolveImageUrl ? resolveImageUrlsInContent(userContent, resolveImageUrl) : userContent
+      content: resolveImageUrl ? resolveImageUrlsInContent(userContent, resolveImageUrl) : userContent,
+      origin: archiveOrigin(msg.id, 0)
     })
   }
 
-  return context
+  return opts.from ? sliceMessagesFromOrigin(context, opts.from) : context
+}
+
+/** 将被折叠区间的运行时消息渲染为回读 transcript，不暴露原始事件结构。 */
+export function renderMessagesAsTranscript(messages: readonly ChatMessage[]): string {
+  return messages.map(message => {
+    const text = extractTextFromContent(message.content)
+    if (message.role === 'user') return `User: ${text}`
+    if (message.role === 'assistant') return `Assistant: ${text}`
+    if (message.role === 'tool') return `Tool result: ${text}`
+    return `${message.role}: ${text}`
+  }).join('\n\n')
 }

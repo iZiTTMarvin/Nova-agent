@@ -13,6 +13,7 @@ import {
   estimateTokens,
   discoverProjectRules,
   projectEffectiveToolDefinitions,
+  applyLedgerToolVisibility,
   renderBaseRules,
   renderMinimalEngineeringPolicy,
   getSubAgentSpec,
@@ -316,11 +317,14 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   )
   // 呈现模式进程级一次解析（会话内稳定）：code-readonly 时只读探索工具改由 SDK 暴露
   const toolPresentation = getProcessToolPresentationMode()
-  const effectiveToolDefinitions = projectEffectiveToolDefinitions(
-    session.mode,
-    toolRegistry.getToolDefinitions(),
-    toolAvailability,
-    toolPresentation
+  const effectiveToolDefinitions = applyLedgerToolVisibility(
+    projectEffectiveToolDefinitions(
+      session.mode,
+      toolRegistry.getToolDefinitions(),
+      toolAvailability,
+      toolPresentation
+    ),
+    sessionStore.loadContextSnapshot(sessionId)?.entries.length ?? 0
   )
   let toolSummary = renderModeToolInventory(session.mode, effectiveToolDefinitions, {
     dialect: toolDialect
@@ -358,8 +362,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     reasoningEffort: session.reasoningEffortOverride,
     permissionMode: session.permissionMode,
     permissionManager,
-    onCompaction: (compactedContext, meta) => {
-      if (!persistCompactionSnapshot(sessionStore, sessionId, compactedContext, meta)) {
+    onCompaction: (_compactedContext, meta) => {
+      if (!persistCompactionSnapshot(sessionStore, sessionId, meta.ledger)) {
         console.error(`[onCompaction] 找不到会话 ${sessionId}，快照未写`)
       }
     }
@@ -526,7 +530,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), {
     resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
     reasoningReplay: activeCacheProfile.reasoningReplay,
-    currentProviderId: activeCacheProfile.id
+    currentProviderId: activeCacheProfile.id,
+    sessionStore
   })
 
   // 跨回合诊断快照：读回上一轮状态并绑定持久化回调

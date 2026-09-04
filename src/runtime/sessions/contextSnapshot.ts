@@ -1,57 +1,29 @@
 /**
- * 上下文快照装配逻辑（共享实现）
- *
- * agentHandler 与单测共用本模块，避免测试镜像与生产闭包漂移。
- * 约束：只读写 context-snapshot.json，不修改 session.messages。
+ * 压缩账本装配：只读写 context-snapshot.json，不修改 session.messages。
+ * 恢复 = 纯函数(档案, 账本)，不复制消息正文。
  */
 import { AgentLoop } from '../agent/AgentLoop'
-import { buildConversationContext, resolveImageUrlsInMessages } from '../agent/context/contextBuilder'
-import type { CompactionMeta } from '../agent/types'
-import type { CacheProfile } from '../model/cacheProfile'
+import {
+  buildConversationContext,
+  resolveImageUrlsInMessages
+} from '../agent/context/contextBuilder'
+import { rebuildWithCompression } from '../agent/compaction/compaction'
 import type { ChatMessage } from '../model/types'
+import type { CacheProfile } from '../model/cacheProfile'
 import type { SessionStore } from './SessionStore'
 import {
   CONTEXT_SNAPSHOT_VERSION,
-  type ContextSnapshot,
+  type CompactionLedger,
   type SessionData
 } from './types'
+import type { MessageOrigin } from '../model/types'
 import { getSessionActiveMessages } from './tree'
 
-/**
- * 从压缩后的运行时上下文构建快照对象（不落盘）。
- * @param session 压缩当刻的会话数据，用于取 lastMessageId 锚点
- */
-export function buildSnapshotFromCompaction(
-  session: SessionData,
-  compactedContext: ChatMessage[],
-  meta: CompactionMeta
-): ContextSnapshot {
-  return {
-    version: CONTEXT_SNAPSHOT_VERSION,
-    summary: meta.summary,
-    recentMessages: compactedContext.filter(m => m.role !== 'system'),
-    lastMessageId: getSessionActiveMessages(session).at(-1)?.id ?? '',
-    compactionLevel: meta.compactionLevel,
-    updatedAt: Date.now()
-  }
-}
+export type LedgerRestoreKind = 'restored' | 'empty-tail' | 'invalid'
 
-/**
- * 压缩完成时持久化快照。找不到会话时返回 false（调用方负责打日志）。
- */
-export function persistCompactionSnapshot(
-  store: SessionStore,
-  sessionId: string,
-  compactedContext: ChatMessage[],
-  meta: CompactionMeta
-): boolean {
-  const session = store.load(sessionId)
-  if (!session) return false
-  store.saveContextSnapshot(
-    sessionId,
-    buildSnapshotFromCompaction(session, compactedContext, meta)
-  )
-  return true
+export interface RestoreFromLedgerResult {
+  kind: LedgerRestoreKind
+  messages: ChatMessage[]
 }
 
 /** restoreOrInjectHistory 的可选恢复参数 */
@@ -61,28 +33,111 @@ export interface RestoreHistoryOptions {
   reasoningReplay?: CacheProfile['reasoningReplay']
   /** 当前档案 ID；跨档案 reasoning 门控 */
   currentProviderId?: string
+  /** 坐标失效（切分支）时清空账本 */
+  sessionStore?: SessionStore
+}
+
+function originMessageId(origin: MessageOrigin | null | undefined): string | null {
+  const id = origin?.messageId
+  return id ? id : null
 }
 
 /**
- * 快照优先恢复运行时上下文；无快照或锚点失效时全量 injectHistory。
- * @param agentLoop 已完成 setToolRegistry 的实例
- * @param session handler 入口加载的会话（新用户消息尚未 append）
- * @param snapshot loadContextSnapshot 的结果，可传 null
- * @param resolveImageUrlOrOpts 可选的图片 URL 转换器，或含 reasoningReplay 的选项对象。
- *   历史消息与压缩快照里存的都是内部协议 URL，模型 API 不认识，必须转换后才能发给模型。
- *   不传则原样透传（单测路径）。
+ * 校验账本坐标相对当前档案：
+ * - off-path：坐标在档案中但不在激活路径（切分支）
+ * - missing-tail：tailFrom 的 messageId 尚未落盘
+ * - ok：可以按 tailFrom 切片（缺 id 则空尾部）
+ */
+export function classifyLedgerRestore(
+  session: SessionData,
+  ledger: CompactionLedger
+): Exclude<LedgerRestoreKind, never> {
+  const activeIds = new Set(getSessionActiveMessages(session).map(m => m.id))
+  const allIds = new Set(session.messages.map(m => m.id))
+
+  const locate = (origin: MessageOrigin | null | undefined): 'ok' | 'missing' | 'off-path' | 'skip' => {
+    const id = originMessageId(origin)
+    if (!id) return 'skip'
+    if (!allIds.has(id)) return 'missing'
+    if (!activeIds.has(id)) return 'off-path'
+    return 'ok'
+  }
+
+  const tailStatus = locate(ledger.tailFrom)
+  if (tailStatus === 'off-path') return 'invalid'
+  if (tailStatus === 'missing') return 'empty-tail'
+
+  for (const entry of ledger.entries) {
+    if (locate(entry.shadows.from) === 'off-path') return 'invalid'
+    if (locate(entry.shadows.to) === 'off-path') return 'invalid'
+  }
+  if (locate(ledger.state?.coversThrough) === 'off-path') return 'invalid'
+
+  return 'restored'
+}
+
+export function restoreFromLedger(
+  session: SessionData,
+  ledger: CompactionLedger,
+  frozenSystemPrompt: string,
+  buildOpts: {
+    resolveImageUrl?: (url: string) => string
+    reasoningReplay?: CacheProfile['reasoningReplay']
+    currentProviderId?: string
+  } = {}
+): RestoreFromLedgerResult {
+  const kind = classifyLedgerRestore(session, ledger)
+  if (kind === 'invalid') {
+    return { kind: 'invalid', messages: [] }
+  }
+
+  let tail: ChatMessage[] = []
+  if (kind !== 'empty-tail' && ledger.tailFrom) {
+    tail = buildConversationContext(session, session.mode, {
+      ...buildOpts,
+      from: ledger.tailFrom
+    })
+  }
+
+  if (buildOpts.resolveImageUrl && tail.length > 0) {
+    tail = resolveImageUrlsInMessages(tail, buildOpts.resolveImageUrl)
+  }
+
+  return {
+    kind,
+    messages: rebuildWithCompression(frozenSystemPrompt, ledger, tail)
+  }
+}
+
+/**
+ * 压缩完成时持久化账本。找不到会话时返回 false（调用方负责打日志）。
+ */
+export function persistCompactionSnapshot(
+  store: SessionStore,
+  sessionId: string,
+  ledger: CompactionLedger
+): boolean {
+  const session = store.load(sessionId)
+  if (!session) return false
+  store.saveContextSnapshot(sessionId, ledger)
+  return true
+}
+
+/**
+ * 账本优先恢复运行时上下文；无账本或坐标失效时全量 injectHistory。
+ * tailFrom.messageId 尚未落盘时恢复为空尾部，不抛错。
  */
 export function restoreOrInjectHistory(
   agentLoop: AgentLoop,
   session: SessionData,
-  snapshot: ContextSnapshot | null,
+  ledger: CompactionLedger | null,
   resolveImageUrlOrOpts?: ((url: string) => string) | RestoreHistoryOptions
 ): void {
   const opts: RestoreHistoryOptions =
     typeof resolveImageUrlOrOpts === 'function'
       ? { resolveImageUrl: resolveImageUrlOrOpts }
       : resolveImageUrlOrOpts ?? {}
-  const { resolveImageUrl, reasoningReplay, currentProviderId } = opts
+  const { resolveImageUrl, reasoningReplay, currentProviderId, sessionStore } = opts
 
   const buildOpts = {
     ...(resolveImageUrl ? { resolveImageUrl } : {}),
@@ -90,26 +145,23 @@ export function restoreOrInjectHistory(
     ...(currentProviderId ? { currentProviderId } : {})
   }
 
-  const activeMessages = getSessionActiveMessages(session)
-  const anchorIdx = snapshot
-    ? activeMessages.findIndex(m => m.id === snapshot.lastMessageId)
-    : -1
-
-  if (snapshot && anchorIdx >= 0) {
-    const delta = activeMessages.slice(anchorIdx + 1)
-    const deltaContext = buildConversationContext(
-      { ...session, messages: delta },
-      session.mode,
-      buildOpts
-    )
-    // 快照里的 recentMessages 持久化时同样存了 nova-image:// URL，需一并转换；
-    // recent 中已有的 reasoningContent 原样保留，供继续工具链
-    const recentResolved = resolveImageUrl
-      ? resolveImageUrlsInMessages(snapshot.recentMessages, resolveImageUrl)
-      : snapshot.recentMessages
-    const recent = [...recentResolved, ...deltaContext]
-    agentLoop.restoreCompactedContext(snapshot.summary, recent, snapshot.compactionLevel)
-  } else {
+  if (!ledger || ledger.version !== CONTEXT_SNAPSHOT_VERSION) {
     agentLoop.injectHistory(buildConversationContext(session, session.mode, buildOpts))
+    return
   }
+
+  const restored = restoreFromLedger(
+    session,
+    ledger,
+    agentLoop.getFrozenSystemPrompt(),
+    buildOpts
+  )
+
+  if (restored.kind === 'invalid') {
+    sessionStore?.clearContextSnapshot(session.id)
+    agentLoop.injectHistory(buildConversationContext(session, session.mode, buildOpts))
+    return
+  }
+
+  agentLoop.restoreCompactedContext(ledger, restored.messages.slice(1))
 }

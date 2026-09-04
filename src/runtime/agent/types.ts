@@ -16,6 +16,7 @@ import type { RepairKind as NativeArgsRepairKind } from './stream/nativeArgsRepa
 import type { ShapeRepairKind } from './execution/toolShapeValidation'
 import type { ToolProcessHandle } from '../tools/types'
 import type { PermissionManager } from '../permissions/PermissionManager'
+import type { CompactionLedger } from '../sessions/types'
 
 /**
  * repair_diagnostic 事件的分型联合，唯一来源。
@@ -235,10 +236,12 @@ export interface AgentLoopConfig {
 
 /** 压缩完成时传给 onCompaction 的元数据 */
 export interface CompactionMeta {
-  /** 模型生成的摘要原文（用于写入快照 summary） */
+  /** 模型生成的摘要原文（当前 state.text） */
   summary: string
-  /** 压缩层级（写入快照，用于恢复 AgentLoop.compactionLevel） */
+  /** 压缩层级，等于账本 entries.length */
   compactionLevel: number
   /** 触发来源，仅诊断用 */
   trigger: 'threshold' | 'overflow' | 'idle' | 'mid-turn'
+  /** 提交后的账本，供持久化；不含消息正文 */
+  ledger: CompactionLedger
 }

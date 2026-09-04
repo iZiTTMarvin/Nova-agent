@@ -50,15 +50,25 @@ describe('回归测试', () => {
 
       // 验证上下文完整恢复
       expect(context).toEqual([
-        { role: 'user', content: '项目有哪些文件？' },
+        { role: 'user', content: '项目有哪些文件？', origin: { messageId: 'm1', step: 0 } },
         {
           role: 'assistant',
           content: '让我看看目录结构。',
-          toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }]
+          toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }],
+          origin: { messageId: 'm2', step: 0 }
         },
-        { role: 'tool', content: 'src/\ntests/\npackage.json', toolCallId: 'tc_1' },
-        { role: 'user', content: '读一下 package.json' },
-        { role: 'assistant', content: 'package.json 内容如下：\n{ "name": "nova-agent" }' }
+        {
+          role: 'tool',
+          content: 'src/\ntests/\npackage.json',
+          toolCallId: 'tc_1',
+          origin: { messageId: 'm2', step: 0 }
+        },
+        { role: 'user', content: '读一下 package.json', origin: { messageId: 'm3', step: 0 } },
+        {
+          role: 'assistant',
+          content: 'package.json 内容如下：\n{ "name": "nova-agent" }',
+          origin: { messageId: 'm4', step: 0 }
+        }
       ])
 
       // 关键：context 长度 = 5（4 条历史消息 + 1 条 tool 消息）
@@ -90,7 +100,11 @@ describe('回归测试', () => {
       expect(assistantMsg.toolCalls).toBeUndefined()
 
       // 第二轮的 user 消息保留
-      expect(context[2]).toEqual({ role: 'user', content: '继续深入分析' })
+      expect(context[2]).toEqual({
+        role: 'user',
+        content: '继续深入分析',
+        origin: { messageId: 'm3', step: 0 }
+      })
     })
 
     it('切换 session 后上下文以新 session 为准', () => {

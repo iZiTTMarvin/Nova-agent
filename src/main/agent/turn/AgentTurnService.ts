@@ -447,15 +447,17 @@ export async function sendAgentMessage(
   })
 
   // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
+  let turnUserMessageId = params.userMessageId
   if (!isRegenerate && persistContent !== null) {
     // 追加前记录是否已有含文字的用户消息（用于首条文字消息自动生成标题）
     const hadTextUserMsg = session.messages.some(
       m => m.role === 'user' && extractTextFromSerializableContent(m.content).trim() !== ''
     )
 
+    turnUserMessageId = params.userMessageId ?? `msg_${Date.now()}_user`
     const userMessage: SessionMessageAppend = {
       // 与 renderer 乐观消息共用 id，避免分叉/编辑时「目标不在激活路径」
-      id: params.userMessageId ?? `msg_${Date.now()}_user`,
+      id: turnUserMessageId,
       role: 'user',
       content: persistContent,
       blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
@@ -526,6 +528,7 @@ export async function sendAgentMessage(
       workingDirectory: projectPath,
       isolation: 'shared',
       runRefs,
+      ...(turnUserMessageId ? { userMessageId: turnUserMessageId } : {}),
       onStarted: (context) => {
         agentLoopsByRunId.set(context.runId, loopForRun)
         setActiveRunId(context.runId)

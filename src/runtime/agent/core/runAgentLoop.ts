@@ -17,7 +17,6 @@ import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
 import {
-  ACTIVE_PRUNE_MIN_TOOL_ROUND,
   createRequestProjectionArchiveCache,
   projectRequestMessages,
   type ActiveToolResultPrunePolicy,
@@ -120,10 +119,6 @@ export function createArchiveWriter(
 /**
  * 压缩摘要投影（契约见 SummaryProjection）：与主请求共用同一策略与归档回调，
  * 活跃轮次传入主请求的 archiveCache 实例；缺省时独立建缓存（空闲压缩路径）。
- *
- * 投影固定按起始归档轮次语义执行：摘要前缀对齐的是最近一次带归档的主请求，
- * 不随当前轮次在第 0 轮退化为恒等投影——主请求第 0 轮以全文发送属既有行为，
- * 摘要跟随它只会丢掉存储侧占位符形态的更长前缀。
  */
 export function createSummaryProjection(options: {
   context: AgentContext
@@ -135,7 +130,6 @@ export function createSummaryProjection(options: {
     project: async messages => {
       const result = await projectRequestMessages({
         messages,
-        toolRound: ACTIVE_PRUNE_MIN_TOOL_ROUND,
         policy: typeof options.policy === 'function' ? options.policy() : options.policy,
         archiveCache: options.archiveCache ?? createRequestProjectionArchiveCache(),
         archive
@@ -213,7 +207,6 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
       const projection = await projectRequestMessages({
         messages: chatMessages,
-        toolRound,
         policy: requestProjectionPolicy,
         archiveCache: requestProjectionArchiveCache,
         archive: archiveWriter
@@ -283,7 +276,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       } =
         turnResult
 
-      const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent }
+      const stepOrigin = { messageId, step: toolRound }
+      const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent, origin: stepOrigin }
       if (toolCalls.length > 0) assistantMsg.toolCalls = toolCalls
       // 运行时字段：供后续模型历史回传；不进 UI / SessionMessage.content
       if (reasoningContent) {
@@ -345,6 +339,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             role: 'tool',
             content,
             toolCallId: outcome.toolCall.id,
+            origin: stepOrigin,
             ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
           })
@@ -368,7 +363,6 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         if (config.enforceInlineBudget) {
           const projectedAfterTools = await projectRequestMessages({
             messages: context.messages,
-            toolRound,
             policy: requestProjectionPolicy,
             archiveCache: requestProjectionArchiveCache,
             archive: archiveWriter

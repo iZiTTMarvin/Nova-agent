@@ -3,6 +3,7 @@ import {
   AgentLoop,
   EventBus,
   projectEffectiveToolDefinitions,
+  applyLedgerToolVisibility,
   renderMinimalEngineeringPolicy
 } from '../../../runtime/agent'
 import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
@@ -58,12 +59,15 @@ export function prepareSubagentRuntime(
     if (tool) toolRegistry.register(tool)
   }
   const capabilityCeiling = isReadonly ? 'read_only' as const : null
-  const visibleToolDefinitions = projectEffectiveToolDefinitions(
-    input.childSession.mode,
-    toolRegistry.getToolDefinitions(),
-    null,
-    'direct',
-    capabilityCeiling
+  const visibleToolDefinitions = applyLedgerToolVisibility(
+    projectEffectiveToolDefinitions(
+      input.childSession.mode,
+      toolRegistry.getToolDefinitions(),
+      null,
+      'direct',
+      capabilityCeiling
+    ),
+    0
   )
   const toolSummary = visibleToolDefinitions
     .map((tool) => `- ${tool.name}: ${tool.description.split('\n')[0]}`)
@@ -108,13 +112,12 @@ export function prepareSubagentRuntime(
     ...(capabilityCeiling ? { permissionCeiling: capabilityCeiling } : {}),
     permissionManager,
     ...(input.promptCacheKey ? { promptCacheKey: input.promptCacheKey } : {}),
-    onCompaction: (compactedContext, meta) => {
+    onCompaction: (_compactedContext, meta) => {
       if (
         !persistCompactionSnapshot(
           input.sessionStore,
           input.childSession.id,
-          compactedContext,
-          meta
+          meta.ledger
         )
       ) {
         console.error(
@@ -159,7 +162,10 @@ export function prepareSubagentRuntime(
     agentLoop,
     input.childSession,
     input.sessionStore.loadContextSnapshot(input.childSession.id),
-    input.resolveImageUrl
+    {
+      ...(input.resolveImageUrl ? { resolveImageUrl: input.resolveImageUrl } : {}),
+      sessionStore: input.sessionStore
+    }
   )
 
   return { agentLoop, eventBus }

@@ -28,7 +28,7 @@ import type {
   SessionMessage,
   SessionMessageAppend,
   AppendMessageResult,
-  ContextSnapshot,
+  CompactionLedger,
   SessionTitleSource,
   CreateChildSessionCommand,
   CreateChildSessionResult,
@@ -102,6 +102,12 @@ export function deriveChildSessionId(spawnKey: string): string {
 function deriveInitialChildMessageId(childSessionId: string): string {
   const digest = createHash('sha256').update(`initial-task\0${childSessionId}`, 'utf8').digest('hex')
   return `msg_sub_user_${digest.slice(0, 32)}`
+}
+
+function isCompactionLedger(value: unknown): value is CompactionLedger {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return record.version === CONTEXT_SNAPSHOT_VERSION && Array.isArray(record.entries)
 }
 
 export class SessionStore {
@@ -1179,8 +1185,8 @@ export class SessionStore {
     return data.messageCount
   }
 
-  /** 写入上下文快照（派生缓存，独立于 session.json） */
-  saveContextSnapshot(sessionId: string, snapshot: ContextSnapshot): void {
+  /** 写入压缩账本（派生缓存，独立于 session.json，不复制消息正文） */
+  saveContextSnapshot(sessionId: string, snapshot: CompactionLedger): void {
     const dir = this.resolveSessionDir(sessionId)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
@@ -1190,9 +1196,9 @@ export class SessionStore {
   }
 
   /**
-   * 加载上下文快照。文件不存在、JSON 损坏或版本不符时返回 null。
+   * 加载压缩账本。文件不存在、JSON 损坏、版本不符或结构无效时返回 null。
    */
-  loadContextSnapshot(sessionId: string): ContextSnapshot | null {
+  loadContextSnapshot(sessionId: string): CompactionLedger | null {
     let filePath: string
     try {
       filePath = path.join(this.resolveSessionDir(sessionId), SESSION_CONTEXT_SNAPSHOT_FILE)
@@ -1202,8 +1208,8 @@ export class SessionStore {
     if (!fs.existsSync(filePath)) return null
 
     try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ContextSnapshot
-      if (parsed.version !== CONTEXT_SNAPSHOT_VERSION) return null
+      const parsed: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+      if (!isCompactionLedger(parsed)) return null
       return parsed
     } catch {
       return null

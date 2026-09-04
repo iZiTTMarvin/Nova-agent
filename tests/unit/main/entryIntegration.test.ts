@@ -96,15 +96,33 @@ describe('入口级集成测试：agentHandler wiring', () => {
     // system prompt + 第一轮历史 + 第二轮历史 + 第三轮用户消息
     // 注：session context（合并方案）拼在最后一条 user 消息 content 前缀，不增加消息条数
     expect(modelMessages[0].role).toBe('system')
-    expect(modelMessages[1]).toEqual({ role: 'user', content: '第一轮问题' })
+    expect(modelMessages[1]).toEqual({
+      role: 'user',
+      content: '第一轮问题',
+      origin: { messageId: 'm1', step: 0 }
+    })
     expect(modelMessages[2]).toEqual({
       role: 'assistant',
       content: '让我看看目录。',
-      toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }]
+      toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }],
+      origin: { messageId: 'm2', step: 0 }
     })
-    expect(modelMessages[3]).toEqual({ role: 'tool', content: 'file1.ts\nfile2.ts', toolCallId: 'tc_1' })
-    expect(modelMessages[4]).toEqual({ role: 'user', content: '第二轮问题' })
-    expect(modelMessages[5]).toEqual({ role: 'assistant', content: '已找到。' })
+    expect(modelMessages[3]).toEqual({
+      role: 'tool',
+      content: 'file1.ts\nfile2.ts',
+      toolCallId: 'tc_1',
+      origin: { messageId: 'm2', step: 0 }
+    })
+    expect(modelMessages[4]).toEqual({
+      role: 'user',
+      content: '第二轮问题',
+      origin: { messageId: 'm3', step: 0 }
+    })
+    expect(modelMessages[5]).toEqual({
+      role: 'assistant',
+      content: '已找到。',
+      origin: { messageId: 'm4', step: 0 }
+    })
     expect(modelMessages[6].role).toBe('user')
     // 最后一条 user 消息含 session context 前缀（合并方案）
     expect(modelMessages[6].content).toContain('[Session context:')

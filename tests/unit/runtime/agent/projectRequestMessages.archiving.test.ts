@@ -29,7 +29,6 @@ describe('projectRequestMessages archiving', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
@@ -39,20 +38,19 @@ describe('projectRequestMessages archiving', () => {
     expect(result.diagnostics.prunedCount).toBe(1)
   })
 
-  it('toolRound === 0 时不归档', async () => {
+  it('超过阈值的工具结果在任何轮次都归档', async () => {
     const messages: ChatMessage[] = [
       { role: 'tool', content: 'x'.repeat(18 * 1024), toolCallId: 'tc1' }
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 0,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
     })
-    expect(result.messages).toEqual(messages)
-    expect(result.diagnostics.prunedCount).toBe(0)
-    expect(result.diagnostics.archiveFailures).toBe(0)
+    expect(isArchivedPlaceholder(result.messages[0].content as string)).toBe(true)
+    expect(result.diagnostics.prunedCount).toBe(1)
+    expect(messages[0].content).toBe('x'.repeat(18 * 1024))
   })
 
   it('artifact 写入失败时保留原文且不抛异常', async () => {
@@ -61,7 +59,6 @@ describe('projectRequestMessages archiving', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
@@ -79,7 +76,6 @@ describe('projectRequestMessages archiving', () => {
     const archiveCache = createRequestProjectionArchiveCache()
     const first = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache,
       archive: async () => {
@@ -89,7 +85,6 @@ describe('projectRequestMessages archiving', () => {
     })
     const second = await projectRequestMessages({
       messages,
-      toolRound: 2,
       policy: { enabled: true },
       archiveCache,
       archive: async () => {
@@ -118,14 +113,12 @@ describe('projectRequestMessages archiving', () => {
     try {
       const first = await projectRequestMessages({
         messages,
-        toolRound: 1,
         policy: { enabled: true },
         archiveCache: createRequestProjectionArchiveCache(),
         archive
       })
       const second = await projectRequestMessages({
         messages,
-        toolRound: 1,
         policy: { enabled: true },
         archiveCache: createRequestProjectionArchiveCache(),
         archive
@@ -144,7 +137,6 @@ describe('projectRequestMessages archiving', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
@@ -161,7 +153,6 @@ describe('projectRequestMessages archiving', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
@@ -202,7 +193,6 @@ describe('projectRequestMessages archiving', () => {
     let archiveCalls = 0
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: resolveRequestProjectionPolicy(false),
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => {
@@ -223,7 +213,6 @@ describe('projectRequestMessages archiving', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
@@ -255,7 +244,6 @@ describe('projectRequestMessages supersession 集成', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
@@ -282,7 +270,6 @@ describe('projectRequestMessages supersession 集成', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => ({ artifactId: 'art1' })
@@ -303,7 +290,6 @@ describe('projectRequestMessages supersession 集成', () => {
     ]
     const result = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => null
@@ -330,14 +316,12 @@ describe('projectRequestMessages supersession 集成', () => {
     }
     const first = await projectRequestMessages({
       messages,
-      toolRound: 1,
       policy: { enabled: true },
       archiveCache: cache,
       archive
     })
     const second = await projectRequestMessages({
       messages: first.messages,
-      toolRound: 2,
       policy: { enabled: true },
       archiveCache: cache,
       archive

@@ -6,9 +6,12 @@ export type {
   SessionToolCall,
   AppendMessageResult,
   CreateChildSessionCommand,
-  CreateChildSessionResult
+  CreateChildSessionResult,
+  CompactionLedger,
+  LedgerEntry,
+  StateDoc
 } from './types'
-export { SESSION_DATA_FILE } from './types'
+export { SESSION_DATA_FILE, CONTEXT_SNAPSHOT_VERSION } from './types'
 export {
   CURRENT_SESSION_SCHEMA_VERSION,
   migrateSessionData,

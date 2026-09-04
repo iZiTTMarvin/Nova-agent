@@ -180,7 +180,7 @@ describe('压缩不截断 session.messages', () => {
     const sessionId = session.id
 
     const client = new MockModelClient()
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '这是对话摘要。' },
@@ -237,7 +237,7 @@ describe('压缩不截断 session.messages', () => {
     const session = makeLongSession(store)
 
     const client = new MockModelClient()
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '摘要内容' },

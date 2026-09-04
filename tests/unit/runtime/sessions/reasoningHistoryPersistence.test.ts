@@ -13,9 +13,9 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import {
-  buildSnapshotFromCompaction,
   restoreOrInjectHistory
 } from '../../../../src/runtime/sessions/contextSnapshot'
+import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 import { getSessionActiveMessages } from '../../../../src/runtime/sessions/tree'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import type { MessageBlock } from '../../../../src/shared/session'
@@ -46,20 +46,22 @@ const TURN_BLOCKS: MessageBlock[] = [
 ]
 
 const SPLIT_NO_REASONING: ChatMessage[] = [
-  { role: 'user', content: '分析并修复两个问题' },
+  { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
   {
     role: 'assistant',
     content: '',
-    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }],
+    origin: { messageId: 'a1', step: 0 }
   },
-  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a', origin: { messageId: 'a1', step: 0 } },
   {
     role: 'assistant',
     content: '',
-    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }],
+    origin: { messageId: 'a1', step: 1 }
   },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
-  { role: 'assistant', content: '已完成两处修复。' }
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 1 } },
+  { role: 'assistant', content: '已完成两处修复。', origin: { messageId: 'a1', step: 2 } }
 ]
 
 function appendThinkingToolTurn(store: SessionStore, sessionId: string): void {
@@ -150,16 +152,14 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
     assertSplitNoReasoning(nonSystemContext(loop))
   })
 
-  it('context snapshot 命中后仍无 reasoning 正文泄漏', () => {
+  it('context 账本命中后仍无 reasoning 正文泄漏', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
 
-    const loaded = store.load(session.id)!
-    const snapshot = buildSnapshotFromCompaction(loaded, SPLIT_NO_REASONING, {
+    const snapshot = makeCompactionLedger({
       summary: '已完成 a/b 修复',
-      compactionLevel: 1,
-      trigger: 'threshold'
+      tailFrom: { messageId: 'a1', step: 1 }
     })
     store.saveContextSnapshot(session.id, snapshot)
     store.appendMessage(session.id, {
@@ -183,18 +183,15 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
     expect(JSON.stringify(nonSystemContext(loop))).not.toContain('先读 a.ts')
   })
 
-  it('snapshot 锚点失效回退全量 inject，仍拆子轮', () => {
+  it('tailFrom 尚未落盘时保留摘要并给出空尾部', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/tmp/project')
     appendThinkingToolTurn(store, session.id)
 
-    const loaded = store.load(session.id)!
-    const snapshot = buildSnapshotFromCompaction(loaded, SPLIT_NO_REASONING, {
+    const snapshot = makeCompactionLedger({
       summary: '旧摘要',
-      compactionLevel: 1,
-      trigger: 'threshold'
+      tailFrom: { messageId: 'msg_does_not_exist', step: 0 }
     })
-    snapshot.lastMessageId = 'msg_does_not_exist'
     store.saveContextSnapshot(session.id, snapshot)
 
     const loop = newLoop()
@@ -207,8 +204,8 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
     const systemText = extractTextFromContent(
       loop.getContext().find(m => m.role === 'system')!.content
     )
-    expect(systemText).not.toContain('旧摘要')
-    assertSplitNoReasoning(nonSystemContext(loop))
+    expect(systemText).toContain('旧摘要')
+    expect(nonSystemContext(loop)).toEqual([])
   })
 
   it('分支切换：主分支拆子轮恢复；旁路分支不含主分支 tool 历史', () => {
@@ -239,8 +236,12 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
     const loopAlt = newLoop()
     restoreOrInjectHistory(loopAlt, store.load(session.id)!, null)
     expect(nonSystemContext(loopAlt)).toEqual([
-      { role: 'user', content: '分析并修复两个问题' },
-      { role: 'assistant', content: '分支 B：改用另一种方案。' }
+      { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
+      {
+        role: 'assistant',
+        content: '分支 B：改用另一种方案。',
+        origin: { messageId: 'a1_alt', step: 0 }
+      }
     ])
   })
 })

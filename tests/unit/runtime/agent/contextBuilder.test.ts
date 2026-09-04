@@ -31,8 +31,8 @@ describe('buildConversationContext', () => {
     const result = buildConversationContext(session, 'default')
 
     expect(result).toEqual([
-      { role: 'user', content: '你好' },
-      { role: 'assistant', content: '你好！有什么可以帮你的？' }
+      { role: 'user', content: '你好', origin: { messageId: 'm1', step: 0 } },
+      { role: 'assistant', content: '你好！有什么可以帮你的？', origin: { messageId: 'm2', step: 0 } }
     ])
   })
 
@@ -54,13 +54,14 @@ describe('buildConversationContext', () => {
 
     // assistant 消息带 tool_calls，后面紧跟 tool 结果消息
     expect(result).toEqual([
-      { role: 'user', content: '列出目录' },
+      { role: 'user', content: '列出目录', origin: { messageId: 'm1', step: 0 } },
       {
         role: 'assistant',
         content: '让我看看目录结构...',
-        toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }]
+        toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }],
+        origin: { messageId: 'm2', step: 0 }
       },
-      { role: 'tool', content: 'file1.ts\nfile2.ts', toolCallId: 'tc_1' }
+      { role: 'tool', content: 'file1.ts\nfile2.ts', toolCallId: 'tc_1', origin: { messageId: 'm2', step: 0 } }
     ])
   })
 
@@ -82,21 +83,28 @@ describe('buildConversationContext', () => {
     const result = buildConversationContext(session, 'default')
 
     expect(result).toHaveLength(4)
-    expect(result[0]).toEqual({ role: 'user', content: '读两个文件' })
+    expect(result[0]).toEqual({ role: 'user', content: '读两个文件', origin: { messageId: 'm1', step: 0 } })
     expect(result[1]).toEqual({
       role: 'assistant',
       content: '',
       toolCalls: [
         { id: 'tc_1', name: 'read', arguments: '{"path":"a.ts"}' },
         { id: 'tc_2', name: 'read', arguments: '{"path":"b.ts"}' }
-      ]
+      ],
+      origin: { messageId: 'm2', step: 0 }
     })
     expect(result[2]).toEqual({
       role: 'tool',
       content: 'content a',
-      toolCallId: 'tc_1'
+      toolCallId: 'tc_1',
+      origin: { messageId: 'm2', step: 0 }
     })
-    expect(result[3]).toEqual({ role: 'tool', content: 'content b', toolCallId: 'tc_2' })
+    expect(result[3]).toEqual({
+      role: 'tool',
+      content: 'content b',
+      toolCallId: 'tc_2',
+      origin: { messageId: 'm2', step: 0 }
+    })
   })
 
   it('恢复带 artifactId 的工具结果', () => {
@@ -125,7 +133,8 @@ describe('buildConversationContext', () => {
       content: 'tail\nartifact://abc123',
       toolCallId: 'tc_bash',
       artifactId: 'abc123',
-      truncationMeta: { totalBytes: 10000, totalLines: 200, shownLines: 20, truncated: true }
+      truncationMeta: { totalBytes: 10000, totalLines: 200, shownLines: 20, truncated: true },
+      origin: { messageId: 'm2', step: 0 }
     })
   })
 
@@ -176,8 +185,8 @@ describe('buildConversationContext', () => {
 
     // 只应有 user + assistant（纯正文），不应包含 thinking
     expect(result).toEqual([
-      { role: 'user', content: '分析项目' },
-      { role: 'assistant', content: '分析如下...' }
+      { role: 'user', content: '分析项目', origin: { messageId: 'm1', step: 0 } },
+      { role: 'assistant', content: '分析如下...', origin: { messageId: 'm2', step: 0 } }
     ])
   })
 
@@ -205,15 +214,16 @@ describe('buildConversationContext', () => {
     const result = buildConversationContext(session, 'default')
 
     expect(result).toEqual([
-      { role: 'user', content: '看目录' },
+      { role: 'user', content: '看目录', origin: { messageId: 'm1', step: 0 } },
       {
         role: 'assistant',
         content: '',
-        toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }]
+        toolCalls: [{ id: 'tc_1', name: 'ls', arguments: '{"path":"."}' }],
+        origin: { messageId: 'm2', step: 0 }
       },
-      { role: 'tool', content: 'file1.ts', toolCallId: 'tc_1' },
-      { role: 'user', content: '读 file1.ts' },
-      { role: 'assistant', content: '文件内容如下...' }
+      { role: 'tool', content: 'file1.ts', toolCallId: 'tc_1', origin: { messageId: 'm2', step: 0 } },
+      { role: 'user', content: '读 file1.ts', origin: { messageId: 'm3', step: 0 } },
+      { role: 'assistant', content: '文件内容如下...', origin: { messageId: 'm4', step: 0 } }
     ])
   })
 
@@ -228,8 +238,8 @@ describe('buildConversationContext', () => {
 
     // system 消息被跳过，只有 user + assistant
     expect(result).toEqual([
-      { role: 'user', content: '你好' },
-      { role: 'assistant', content: '你好！' }
+      { role: 'user', content: '你好', origin: { messageId: 'm1', step: 0 } },
+      { role: 'assistant', content: '你好！', origin: { messageId: 'm2', step: 0 } }
     ])
   })
 
@@ -246,10 +256,10 @@ describe('buildConversationContext', () => {
     const result = buildConversationContext(session, 'default')
 
     expect(result).toEqual([
-      { role: 'user', content: '看看' },
-      { role: 'assistant', content: '' },
-      { role: 'tool', content: 'some result', toolCallId: 'tc_1' },
-      { role: 'assistant', content: '结果如下' }
+      { role: 'user', content: '看看', origin: { messageId: 'm1', step: 0 } },
+      { role: 'assistant', content: '', origin: { messageId: 'm2', step: 0 } },
+      { role: 'tool', content: 'some result', toolCallId: 'tc_1', origin: { messageId: 'm3', step: 0 } },
+      { role: 'assistant', content: '结果如下', origin: { messageId: 'm4', step: 0 } }
     ])
   })
 
@@ -279,7 +289,8 @@ describe('buildConversationContext', () => {
     expect(result.find(m => m.role === 'tool')).toEqual({
       role: 'tool',
       content: 'file1.ts',
-      toolCallId: 'tc_1'
+      toolCallId: 'tc_1',
+      origin: { messageId: 'm1', step: 0 }
     })
   })
 
@@ -295,8 +306,8 @@ describe('buildConversationContext', () => {
 
       const result = buildConversationContext(session, 'default')
       expect(result).toEqual([
-        { role: 'user', content: 'q1' },
-        { role: 'assistant', content: 'a1' }
+        { role: 'user', content: 'q1', origin: { messageId: 'm1', step: 0 } },
+        { role: 'assistant', content: 'a1', origin: { messageId: 'm2', step: 0 } }
       ])
     })
 
@@ -350,6 +361,129 @@ describe('buildConversationContext', () => {
 
       const result = buildConversationContext(session, 'default')
       expect(result[0].content).toBe(code)
+    })
+  })
+
+  describe('档案坐标 origin', () => {
+    it('有 blocks 时 origin.step 等于工具组序号，收尾 assistant 用当时的 step', () => {
+      const session = makeSession([
+        { id: 'u1', role: 'user', content: '修两处', timestamp: 1 },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '完成',
+          blocks: [
+            { type: 'text', content: '先读' },
+            {
+              type: 'tool',
+              toolCallId: 'tc_a',
+              toolName: 'read',
+              arguments: { path: 'a.ts' },
+              status: 'success',
+              result: 'a'
+            },
+            { type: 'text', content: '再改' },
+            {
+              type: 'tool',
+              toolCallId: 'tc_b',
+              toolName: 'edit',
+              arguments: { path: 'b.ts' },
+              status: 'success',
+              result: 'b'
+            },
+            { type: 'text', content: '完成' }
+          ],
+          timestamp: 2
+        }
+      ])
+
+      const result = buildConversationContext(session, 'default')
+      expect(result.map(m => m.origin)).toEqual([
+        { messageId: 'u1', step: 0 },
+        { messageId: 'a1', step: 0 },
+        { messageId: 'a1', step: 0 },
+        { messageId: 'a1', step: 1 },
+        { messageId: 'a1', step: 1 },
+        { messageId: 'a1', step: 2 }
+      ])
+    })
+
+    it('沿激活路径单调：messageId 跟随路径，同消息内 step 不回退，旁路分支不出现', () => {
+      const session: SessionData = {
+        ...makeSession([
+          { id: 'u1', role: 'user', content: 'q1', timestamp: 1, parentId: null },
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'a1',
+            timestamp: 2,
+            parentId: 'u1',
+            blocks: [
+              {
+                type: 'tool',
+                toolCallId: 'tc_1',
+                toolName: 'ls',
+                arguments: {},
+                status: 'success',
+                result: 'files'
+              },
+              { type: 'text', content: '看完了' }
+            ]
+          },
+          { id: 'u-side', role: 'user', content: '旁路', timestamp: 3, parentId: 'a1' },
+          { id: 'u2', role: 'user', content: 'q2', timestamp: 4, parentId: 'a1' },
+          { id: 'a2', role: 'assistant', content: 'done', timestamp: 5, parentId: 'u2' }
+        ]),
+        currentLeafId: 'a2'
+      }
+
+      const result = buildConversationContext(session, 'default')
+      expect(result.map(m => `${m.origin?.messageId}:${m.origin?.step}`)).toEqual([
+        'u1:0',
+        'a1:0',
+        'a1:0',
+        'a1:1',
+        'u2:0',
+        'a2:0'
+      ])
+      expect(result.some(m => m.origin?.messageId === 'u-side')).toBe(false)
+    })
+
+    it('from 从指定 step 切片，同一 assistant 后半段仍保留', () => {
+      const session: SessionData = {
+        ...makeSession([
+          { id: 'u1', role: 'user', content: 'q', timestamp: 1, parentId: null },
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'done',
+            timestamp: 2,
+            parentId: 'u1',
+            blocks: [
+              {
+                type: 'tool',
+                toolCallId: 'tc_1',
+                toolName: 'ls',
+                arguments: {},
+                status: 'success',
+                result: 'files'
+              },
+              { type: 'text', content: '看完了' }
+            ]
+          }
+        ]),
+        currentLeafId: 'a1'
+      }
+      const fromStep1 = buildConversationContext(session, 'default', {
+        from: { messageId: 'a1', step: 1 }
+      })
+      expect(fromStep1.map(m => `${m.origin?.messageId}:${m.origin?.step}`)).toEqual(['a1:1'])
+      expect(fromStep1[0]?.content).toBe('看完了')
+
+      const missing = buildConversationContext(session, 'default', {
+        from: { messageId: 'missing', step: 0 }
+      })
+      expect(missing).toEqual([])
     })
   })
 })

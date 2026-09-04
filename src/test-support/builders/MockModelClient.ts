@@ -20,6 +20,11 @@ export class MockModelClient implements ModelClient {
     return this
   }
 
+  /** 压缩成对调用：先 stub 后 state；省略 stub 时两者使用同一响应 */
+  addCompactionPair(state: MockResponse, stub: MockResponse = state): this {
+    return this.addResponse(stub).addResponse(state)
+  }
+
   /** 获取所有历史调用 */
   getCalls(): { messages: ChatMessage[]; tools?: ToolDefinition[]; options?: ChatOptions }[] {
     return this.calls

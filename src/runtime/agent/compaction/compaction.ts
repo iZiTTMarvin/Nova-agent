@@ -1,21 +1,15 @@
 /**
- * 上下文压缩模块 — 先插入再压缩策略
- *
- * 参考 openclacky 的 message_compressor 设计：
- * 1. 检测上下文是否超过阈值
- * 2. 将压缩指令追加到消息尾部（不改前缀 → 压缩调用本身仍命中缓存）
- * 3. 模型输出纯文本摘要
- * 4. 用 [system, 摘要, 最近 N 条] 重建历史
+ * 上下文压缩：切点、摘要指令与重建。
+ * 切点按 token 预算；重建用冻结 system + 只读交接包 + 原文尾部。
  */
 import type { ChatMessage } from '../../model/types'
+import type { CompactionLedger, LedgerEntry } from '../../sessions/types'
 import type { CacheProfile } from '../../model/cacheProfile'
-import { CHARS_PER_TOKEN, estimateContextTokens } from '../tokenEstimator'
+import { CHARS_PER_TOKEN, estimateChatMessageTokens, estimateContextTokens, estimateTokens } from '../tokenEstimator'
+import { formatPointerStub, renderCompactedSystem, renderLedgerEntry } from '../core/renderHandoffPacket'
 
 /** 触发压缩的 token 阈值（默认 120K），当未提供 contextWindow 时作为 fallback */
 export const COMPACTION_THRESHOLD = 120_000
-
-/** 压缩后保留的最近消息数 */
-export const MIN_RECENT_MESSAGES = 20
 
 /** 压缩指令消息的内部标记，用于 UI 过滤和缓存断点跳过 */
 export const COMPACTION_MARKER = '__compaction_instruction__'
@@ -73,7 +67,7 @@ export interface IdleCompactionScheduleState {
  *   - anthropic-short-ttl → 继续 token 阈值判断（短 TTL 需闲时刷新）
  * - 距硬阈值太远（token < threshold * 60%）→ 否
  *
- * 注意：splitForCompaction 的 oldMessages=[] 是 runCompaction 内的后置空操作保护，
+ * 注意：splitForCompactionByTokens 的 oldMessages=[] 是 runCompaction 内的后置空操作保护，
  * 不是本函数的前置预筛。不要只用消息数量判断资格。
  * 硬阈值压缩、溢出恢复、用户显式压缩不经过本函数。
  */
@@ -119,7 +113,8 @@ export function shouldCompact(
   estimatedTokens?: number,
   userTurnsSinceCompaction: number = 0
 ): boolean {
-  if (context.length <= MIN_RECENT_MESSAGES + 2) return false
+  const nonSystemCount = context.filter(message => message.role !== 'system').length
+  if (nonSystemCount < 2) return false
   const totalTokens = estimatedTokens ?? estimateContextTokens(context)
 
   // 硬 cap：超过 80% 阈值立即压缩
@@ -136,25 +131,17 @@ export function shouldCompact(
 }
 
 /**
- * 构建压缩指令文本
- * 告诉模型对旧消息生成摘要
- *
- * 固定五段结构：多轮压缩时输出结构不漂移，后续增量更新有稳定的落点。
+ * 构建 state 文档压缩指令。
+ * 五段顺序把「下一步」「关键上下文」放在「进展 / 关键决策」之前，超预算从末尾截时先保住接续信息。
  */
-export function buildCompactionPrompt(recentCount: number): string {
+export function buildCompactionPrompt(): string {
   return [
     '请对上面的对话历史生成一份结构化摘要。不要继续对话，只输出摘要。',
-    '摘要开头先用一行注明当前工作区绝对路径（Working directory），让后续对话能继续基于该路径操作。',
+    '工作区路径与已改文件由系统在交接包中提供，不要写 Working directory 或实时文件清单。',
     '随后严格按以下固定结构输出，五个段落标题不得更改或省略：',
     '',
     '## 目标',
     '用户要达成什么。',
-    '',
-    '## 进展',
-    '分「已完成」「进行中」两个子列表。',
-    '',
-    '## 关键决策',
-    '每项决策附一句简要理由。',
     '',
     '## 下一步',
     '按执行顺序列出有序列表。',
@@ -162,12 +149,112 @@ export function buildCompactionPrompt(recentCount: number): string {
     '## 关键上下文',
     '精确的文件路径、函数名、命令与错误信息；没有则写 "(none)"。',
     '',
+    '## 进展',
+    '分「已完成」「进行中」两个子列表。',
+    '',
+    '## 关键决策',
+    '每项决策附一句简要理由。',
+    '',
     '要求：',
     '- 丢弃冗余的思考过程、重复的工具输出、过时的中间状态。',
     '- 遇到含 artifact:// 的工具结果时，摘要里只保留结论，不要复述大段输出。',
     '- 摘要中可保留 artifact:// 指针，供后续 read 续读。',
-    `- 摘要之后，对话将从最近 ${recentCount} 条消息继续。`,
+    '- 摘要之后，对话将从切点之后的原文尾部继续。',
     '- 只输出摘要文本，不要复述对话，不要加任何前缀说明。'
+  ].join('\n')
+}
+
+/** stub 短摘要估算 token 上限 */
+export const MAX_STUB_ESTIMATED_TOKENS = 200
+
+/** 账本条目渲染占窗口的上限比例；超出由代码把最旧条目折成一行指针 */
+export const LEDGER_RENDER_WINDOW_RATIO = 0.025
+
+/** 尾部原文约占窗口的比例 */
+export const TAIL_WINDOW_RATIO = 0.15
+
+/** state 文档占窗口的中位比例；再夹到 [1200, 4000] */
+export const STATE_WINDOW_RATIO = 0.015
+export const MIN_STATE_ESTIMATED_TOKENS = 1_200
+export const MAX_STATE_ESTIMATED_TOKENS = 4_000
+
+export function getTailTokenBudget(contextWindow: number): number {
+  return Math.max(1, Math.floor(contextWindow * TAIL_WINDOW_RATIO))
+}
+
+export function getStateTokenBudget(contextWindow: number): number {
+  return Math.min(
+    MAX_STATE_ESTIMATED_TOKENS,
+    Math.max(MIN_STATE_ESTIMATED_TOKENS, Math.floor(contextWindow * STATE_WINDOW_RATIO))
+  )
+}
+
+const STATE_SECTION_HEADINGS = ['## 目标', '## 下一步', '## 关键上下文', '## 进展', '## 关键决策'] as const
+
+/** 超预算从末尾按段截断，先丢「关键决策」，保住「目标 / 下一步」。 */
+export function truncateStateFromEnd(text: string, maxTokens: number): string {
+  if (estimateTokens(text) <= maxTokens) return text
+  const sections = splitStateSections(text)
+  while (sections.length > 1 && estimateTokens(joinStateSections(sections)) > maxTokens) {
+    sections.pop()
+  }
+  const joined = joinStateSections(sections)
+  return estimateTokens(joined) <= maxTokens ? joined : boundSummaryText(joined, maxTokens)
+}
+
+function splitStateSections(text: string): string[] {
+  const matches = STATE_SECTION_HEADINGS
+    .map(heading => ({ heading, index: text.indexOf(heading) }))
+    .filter(item => item.index >= 0)
+    .sort((a, b) => a.index - b.index)
+  if (matches.length === 0) return [text]
+  const sections: string[] = []
+  const prefix = text.slice(0, matches[0]!.index).trim()
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i]!.index
+    const end = i + 1 < matches.length ? matches[i + 1]!.index : text.length
+    const body = text.slice(start, end).trim()
+    sections.push(i === 0 && prefix ? `${prefix}\n\n${body}` : body)
+  }
+  return sections
+}
+
+function joinStateSections(sections: string[]): string {
+  return sections.filter(Boolean).join('\n\n')
+}
+
+export function buildRealityLine(
+  workspacePath: string | null | undefined,
+  activePlanPath: string | null | undefined
+): string {
+  const workspace = workspacePath?.trim() || '(未知)'
+  const plan = activePlanPath?.trim()
+  const planPart = plan ? `；计划: ${plan}` : ''
+  return (
+    `工作区: ${workspace}${planPart}。` +
+    '被折叠区间改过的文件见各条目（含本会话 checkpoint 记录的 bash 变更；不含编辑器手改与因过大跳过备份的文件）。' +
+    '继续修改前请重新读取确认现状。'
+  )
+}
+
+/** stub：只叙述被折叠区间的事件，不写目标/下一步 */
+export function buildStubPrompt(): string {
+  return [
+    '请只总结上面被折叠的这一段对话里实际发生的事件。不要继续对话。',
+    '不要写目标、下一步、全局状态或工作记忆。',
+    '用 2–3 行叙述关键事件，最后单独一行给出一个字面锚点（错误信息、文件路径、命令或数值）。',
+    '只输出这段摘要，不要加任何前缀说明。'
+  ].join('\n')
+}
+
+export function buildStateInstruction(previousState?: string): string {
+  const base = buildCompactionPrompt()
+  if (!previousState) return base
+  return [
+    base,
+    '',
+    '前序摘要如下，请在它的基础上只更新新增事件与发生的变化，不要推翻重写仍然成立的部分：',
+    previousState
   ].join('\n')
 }
 
@@ -190,54 +277,32 @@ export function boundSummaryText(
   return `${summary.slice(0, cutAt)}\n…[摘要已截断]`
 }
 
-/** system 文本中历史摘要的合并标记，与 rebuildWithCompression 的拼接保持一致 */
-const PRIOR_SUMMARY_MARKER = '[对话历史摘要]'
-
 /**
- * 从含历史摘要标记的 system 文本中提取前序摘要；找不到或为空返回 undefined。
- * 多次压缩会在 system 尾部叠加多个标记段，取最后一个标记之后的内容（最新一版摘要）。
+ * 用冻结 system + 交接包 + 尾部重建上下文。
+ * 交接包由账本只读渲染；禁止把当前 system 正文（可能已含交接包）再叠一层。
  */
-export function extractPriorSummary(systemPrompt: string): string | undefined {
-  const markerIndex = systemPrompt.lastIndexOf(PRIOR_SUMMARY_MARKER)
-  if (markerIndex === -1) return undefined
-  const summary = systemPrompt
-    .slice(markerIndex + PRIOR_SUMMARY_MARKER.length)
-    .replace(/^\r?\n/, '')
-    .trim()
-  return summary.length > 0 ? summary : undefined
+export function rebuildWithCompression(
+  frozenSystemPrompt: string,
+  ledger: CompactionLedger,
+  tail: ChatMessage[]
+): ChatMessage[] {
+  return [
+    { role: 'system', content: renderCompactedSystem(frozenSystemPrompt, ledger) },
+    ...tail
+  ]
 }
 
 /**
  * 构建追加到压缩请求尾部的指令消息序列。
  *
- * 主动阈值压缩（runCompaction）与反应式溢出压缩（runOverflowCompaction）共用此逻辑，
- * 避免两处各维护一份桥接/指令拼装而产生分叉。返回的是「要追加到上下文末尾的消息」，
- * 不含原始上下文本身——调用方自行决定是拼成新数组还是 push 进 this.context。
- *
- * 关键约束（why）：
- * - 当上下文末尾是 user 消息时，先插一条 assistant 占位桥接。否则连续两条 user
- *   会被 Anthropic 严格模式拒绝。
- * - 压缩指令标记 internal：跳过缓存断点标记，但压缩调用会显式放行其正文
- *   （includeInternalMessages），让模型真正看到摘要要求；序列化层仍会剥离 internal 字段。
- *
- * @param lastMessageRole 当前上下文最后一条消息的 role（用于判断是否需要桥接）
- * @param recentCount 压缩后保留的最近消息数，用于在指令文案中告知模型续接位置
- * @param previousSummary 前序摘要；存在时显式注入指令，要求模型增量更新而非重写
+ * 主动阈值压缩与反应式溢出压缩共用此逻辑。
+ * 当上下文末尾是 user 时先插一条 assistant 占位桥接，避免连续两条 user。
  */
 export function buildCompactionRequestTail(
   lastMessageRole: ChatMessage['role'] | undefined,
-  recentCount: number,
-  previousSummary?: string
+  instruction: string
 ): ChatMessage[] {
   const needsAssistantBridge = lastMessageRole === 'user'
-  const instruction = previousSummary
-    ? [
-        buildCompactionPrompt(recentCount),
-        '',
-        '前序摘要如下，请在它的基础上只更新新增事件与发生的变化，不要推翻重写仍然成立的部分：',
-        previousSummary
-      ].join('\n')
-    : buildCompactionPrompt(recentCount)
   return [
     ...(needsAssistantBridge
       ? [{ role: 'assistant' as const, content: '好的，我来总结之前的对话。' }]
@@ -247,42 +312,30 @@ export function buildCompactionRequestTail(
 }
 
 /**
- * 用压缩摘要重建上下文
- *
- * 将摘要合并到 system 消息尾部而非作为独立 user 消息：
- * - system prompt 前半部分（原始 ~350 tokens）逐字节不变，Anthropic 前缀匹配可命中缓存
- * - 只有后半部分（摘要 ~200-500 tokens）需要 cache_write
- * - 后续轮次中完整的 system（prompt + 摘要）也可以持续命中
- *
- * @param frozenSystemPrompt 冻结的 system prompt（会话级不变）
- * @param summary 模型生成的摘要文本
- * @param recentMessages 保留的最近 N 条消息
- * @returns 重建后的上下文
+ * 账本条目渲染超预算时，从最旧条目起折成一行指针（保留 id 与 touchedFiles）。
+ * 预算按交接包里实际渲染的条目文本估算，含 touchedFiles。
  */
-export function rebuildWithCompression(
-  frozenSystemPrompt: string,
-  summary: string,
-  recentMessages: ChatMessage[],
-  pulledBackMessages?: ChatMessage[]
-): ChatMessage[] {
-  const context: ChatMessage[] = []
-
-  // 摘要合并到 system 消息尾部，保持 system prompt 前缀不变以命中缓存。
-  // summary 是纯文本，不含 reasoningContent 字段。
-  context.push({
-    role: 'system',
-    content: `${frozenSystemPrompt}\n\n[对话历史摘要]\n${summary}`
-  })
-
-  // 追加最近 N 条消息（保留 reasoningContent，以便继续工具链 / 前缀匹配）
-  context.push(...recentMessages)
-
-  // 如果有被弹出的消息，追加入重建后的上下文尾部
-  if (pulledBackMessages && pulledBackMessages.length > 0) {
-    context.push(...pulledBackMessages)
+export function foldLedgerEntriesToBudget(
+  entries: LedgerEntry[],
+  maxEstimatedTokens: number
+): LedgerEntry[] {
+  const next = entries.map(entry => ({ ...entry }))
+  const renderedTokens = (): number =>
+    estimateTokens(next.map(entry => renderLedgerEntry(entry)).filter(Boolean).join('\n\n'))
+  if (maxEstimatedTokens <= 0) {
+    return next.map(entry => ({
+      ...entry,
+      stub: formatPointerStub(entry.id, entry.shadows.from, entry.shadows.to)
+    }))
   }
-
-  return context
+  for (let i = 0; i < next.length && renderedTokens() > maxEstimatedTokens; i++) {
+    const entry = next[i]!
+    next[i] = {
+      ...entry,
+      stub: formatPointerStub(entry.id, entry.shadows.from, entry.shadows.to)
+    }
+  }
+  return next
 }
 
 /**
@@ -299,53 +352,33 @@ export function rollbackBefore(context: ChatMessage[], markerIndex: number): Cha
 }
 
 /**
- * 从上下文中提取需要压缩的旧消息和保留的最近消息
- *
- * 切点会对齐到工具调用组边界，避免切碎 assistant(toolCalls) + tool(result) 配对。
- * 支持 `pullBackFromTail` 以便在溢出时弹出末尾消息，弹出消息同样会对齐到工具调用组边界，
- * 避免破坏压缩时发送的 compactionContext 中工具调用与工具结果的完整性。
- *
- * @returns 包含 oldMessages、recentMessages 和 pulledBackMessages 的对象
+ * 从上下文中按 token 预算切出尾部原文，切点对齐工具调用组。
+ * 下限为当前工具组（至少保留一组完整原文）。
  */
-export function splitForCompaction(
+export function splitForCompactionByTokens(
   context: ChatMessage[],
-  recentCount: number = MIN_RECENT_MESSAGES,
-  pullBackFromTail: number = 0
+  tailTokenBudget: number,
+  extraTailTokens = 0
 ): { oldMessages: ChatMessage[]; recentMessages: ChatMessage[]; pulledBackMessages: ChatMessage[] } {
   const nonSystemMessages = context.filter(m => m.role !== 'system')
-
-  if (nonSystemMessages.length <= recentCount) {
-    let splitIndex = nonSystemMessages.length - pullBackFromTail
-    if (splitIndex < 1) splitIndex = 1 // 至少保留一条
-    splitIndex = alignPullBackBoundary(nonSystemMessages, splitIndex)
-
-    return {
-      oldMessages: [],
-      recentMessages: nonSystemMessages.slice(0, splitIndex),
-      pulledBackMessages: nonSystemMessages.slice(splitIndex)
-    }
+  const budget = Math.max(1, tailTokenBudget + extraTailTokens)
+  let splitIndex = nonSystemMessages.length
+  let acc = 0
+  while (splitIndex > 0) {
+    const message = nonSystemMessages[splitIndex - 1]!
+    const tokens = estimateChatMessageTokens(message)
+    if (acc > 0 && acc + tokens > budget) break
+    acc += tokens
+    splitIndex--
   }
-
-  let splitIndex = nonSystemMessages.length - recentCount
   splitIndex = alignToToolGroupBoundary(nonSystemMessages, splitIndex)
-
-  const oldMessages = nonSystemMessages.slice(0, splitIndex)
-  let recentMessages = nonSystemMessages.slice(splitIndex)
-
-  let pulledBackMessages: ChatMessage[] = []
-  if (pullBackFromTail > 0) {
-    let pbIndex = recentMessages.length - pullBackFromTail
-    if (pbIndex < 1) pbIndex = 1 // 至少保留一条最近消息以匹配 API 结构
-    pbIndex = alignPullBackBoundary(recentMessages, pbIndex)
-
-    pulledBackMessages = recentMessages.slice(pbIndex)
-    recentMessages = recentMessages.slice(0, pbIndex)
+  if (splitIndex >= nonSystemMessages.length && nonSystemMessages.length > 0) {
+    splitIndex = alignToToolGroupBoundary(nonSystemMessages, nonSystemMessages.length - 1)
   }
-
   return {
-    oldMessages,
-    recentMessages,
-    pulledBackMessages
+    oldMessages: nonSystemMessages.slice(0, splitIndex),
+    recentMessages: nonSystemMessages.slice(splitIndex),
+    pulledBackMessages: []
   }
 }
 
@@ -373,28 +406,4 @@ export function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: nu
   }
 
   return Math.max(0, splitIndex)
-}
-
-/**
- * 弹出消息时的边界对齐
- *
- * 如果切点落在 tool 消息上，或者在切点后的 tool 被弹走但带 toolCalls 的 assistant 留在 recentMessages，
- * 我们需要前移切点，把这一整组工具调用消息全部划入 pulledBackMessages，避免 recent 结尾留下孤儿 toolCalls。
- */
-function alignPullBackBoundary(messages: ChatMessage[], pbIndex: number): number {
-  while (pbIndex > 0 && messages[pbIndex]?.role === 'tool') {
-    pbIndex--
-  }
-
-  const msg = messages[pbIndex]
-  if (
-    pbIndex > 0 &&
-    msg?.role === 'assistant' &&
-    msg.toolCalls &&
-    msg.toolCalls.length > 0
-  ) {
-    pbIndex--
-  }
-
-  return Math.max(0, pbIndex)
 }

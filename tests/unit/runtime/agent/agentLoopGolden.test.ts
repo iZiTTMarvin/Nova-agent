@@ -638,16 +638,23 @@ describe('黄金测试 §9.11 上下文溢出压缩', () => {
     // （/context.?overflow/i, /token.*limit/i, /maximum context/i）才会被 classify 为 recovering。
     client.addResponse({ events: [{ type: 'message_start' }, { type: 'context_overflow', rawError: 'context overflow token limit' }] })
     // 压缩调用：返回摘要
-    client.addResponse({ events: [{ type: 'text_delta', delta: '这是摘要' }, { type: 'message_end', finishReason: 'stop' }] })
+    client.addCompactionPair({ events: [{ type: 'text_delta', delta: '这是摘要' }, { type: 'message_end', finishReason: 'stop' }] })
     // 压缩后重试：成功
     client.addResponse({
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: '恢复完成' }, usage(60), { type: 'message_end', finishReason: 'stop' }]
     })
 
-    const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
-    // runOverflowCompaction 需要 oldMessages 非空（splitForCompaction 保留最近 20 条），
+    const { loop, eventBus } = createLoop({
+      modelId: 'gpt-4o',
+      client,
+      config: { contextWindow: 2_000 }
+    })
+    // runOverflowCompaction 需要 oldMessages 非空（尾部按 token 预算切，窗口过大会整段落入 tail），
     // 注入足够历史使压缩流程可进入模型调用并返回摘要。
-    loop.injectHistory(Array.from({ length: 30 }, (_, i) => ({ role: 'user' as const, content: `历史 ${i}` })))
+    loop.injectHistory(Array.from({ length: 30 }, (_, i) => ({
+      role: 'user' as const,
+      content: `历史 ${i} ` + 'x'.repeat(120)
+    })))
 
     const events = await runAndCollectDrained(loop, eventBus, 'hi')
     const seq = types(events)
@@ -668,12 +675,11 @@ describe('黄金测试 §9.11 上下文溢出压缩', () => {
     // 正常调用溢出（rawError 匹配 OVERFLOW_PATTERNS）
     client.addResponse({ events: [{ type: 'context_overflow', rawError: 'context overflow' }] })
     // standard 压缩调用：也溢出（runOverflowCompaction 回滚返回 false）
-    client.addResponse({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
-    // aggressive 压缩调用：也溢出
-    client.addResponse({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
+    client.addCompactionPair({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
+    client.addCompactionPair({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
 
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
-    // runOverflowCompaction 需要 oldMessages 非空（splitForCompaction 保留最近 20 条），
+    // runOverflowCompaction 需要 oldMessages 非空（尾部按 token 预算切，窗口过大会整段落入 tail），
     // 注入足够历史使压缩流程可进入模型调用阶段。
     loop.injectHistory(Array.from({ length: 30 }, (_, i) => ({ role: 'user' as const, content: `历史 ${i}` })))
 
@@ -697,7 +703,7 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
     vi.useFakeTimers()
     const client = new MockModelClient()
     // 压缩调用：返回摘要
-    client.addResponse({ events: [{ type: 'text_delta', delta: '历史摘要' }, { type: 'message_end', finishReason: 'stop' }] })
+    client.addCompactionPair({ events: [{ type: 'text_delta', delta: '历史摘要' }, { type: 'message_end', finishReason: 'stop' }] })
     // 压缩后正常调用
     client.addResponse({
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: '答复' }, usage(50), { type: 'message_end', finishReason: 'stop' }]
@@ -715,7 +721,6 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
         }
       }
     })
-    // shouldCompact 守卫：context.length > MIN_RECENT_MESSAGES(20) + 2 = 22 才往下判断。
     // 注入 48 条大消息使 token > 160k 硬触发阈值压缩。
     const history: { role: 'user' | 'assistant'; content: string }[] = []
     for (let i = 0; i < 24; i++) {

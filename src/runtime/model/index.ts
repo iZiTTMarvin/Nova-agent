@@ -11,5 +11,5 @@ export type { VisionProjectionOptions } from './visionProjection'
 export type { ConfigValidationError, ConfigValidationResult } from './config'
 export type {
   ChatMessage, ChatToolCall, ToolDefinition,
-  ModelClientConfig, ChatEvent
+  ModelClientConfig, ChatEvent, MessageOrigin
 } from './types'

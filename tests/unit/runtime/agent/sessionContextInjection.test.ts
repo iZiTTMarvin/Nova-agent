@@ -6,6 +6,7 @@ import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/ty
 import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 
 /** Session context 只注入模型运行时消息，不生成独立消息或持久化前缀。 */
 
@@ -387,9 +388,8 @@ describe('AgentLoop session context 注入', () => {
 
     await loop.sendMessage('第一条', agentRoute())
     loop.restoreCompactedContext(
-      '已压缩的历史摘要',
-      [{ role: 'assistant', content: '压缩后保留的最近回复' }],
-      1
+      makeCompactionLedger({ summary: '已压缩的历史摘要' }),
+      [{ role: 'assistant', content: '压缩后保留的最近回复' }]
     )
 
     await loop.sendMessage('压缩后第一条', agentRoute())

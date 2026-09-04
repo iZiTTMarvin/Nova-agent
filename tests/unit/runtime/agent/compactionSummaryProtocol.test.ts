@@ -6,9 +6,9 @@ import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { defaultContextBudgetManager } from '../../../../src/runtime/agent/ContextBudgetManager'
 import { CompactionService } from '../../../../src/runtime/agent/compaction/CompactionService'
 import {
-  MIN_RECENT_MESSAGES,
-  MAX_SUMMARY_ESTIMATED_TOKENS,
-  splitForCompaction
+  splitForCompactionByTokens,
+  getTailTokenBudget,
+  getStateTokenBudget
 } from '../../../../src/runtime/agent/compaction/compaction'
 import {
   createSummaryProjection
@@ -111,7 +111,9 @@ describe('压缩摘要质量协议', () => {
     context.userTurnsSinceCompaction = 4
     const onCompaction = vi.fn()
     // 被折叠的 oldMessages 约 900 字符（≈225 估算 token），摘要明显更大
-    const client = new MockModelClient().addResponse(summaryResponse('冗长摘要\n' + 's'.repeat(2000)))
+    // 无换行，避免 boundSummaryText 在 maxChars 前回退到首行就把摘要裁没
+    const bloated = 's'.repeat(getStateTokenBudget(100) * CHARS_PER_TOKEN + 4000)
+    const client = new MockModelClient().addCompactionPair(summaryResponse(bloated))
     const { service, cacheDiagnostics } = createService({ context, client, onCompaction })
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(false)
@@ -127,7 +129,9 @@ describe('压缩摘要质量协议', () => {
     const original = createMessages(32)
     const context = createContext(original)
     const onCompaction = vi.fn()
-    const client = new MockModelClient().addResponse(summaryResponse('o'.repeat(2000)))
+    const client = new MockModelClient().addCompactionPair(
+      summaryResponse('o'.repeat(getStateTokenBudget(100) * CHARS_PER_TOKEN + 4000))
+    )
     const { service } = createService({ context, client, onCompaction })
 
     await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(false)
@@ -141,33 +145,38 @@ describe('压缩摘要质量协议', () => {
     const original = createMessages()
     const context = createContext(original)
     const onCompaction = vi.fn()
-    const client = new MockModelClient().addResponse(summaryResponse('简短摘要'))
+    const client = new MockModelClient().addCompactionPair(summaryResponse('简短摘要'))
     const { service } = createService({ context, client, onCompaction })
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
     expect(extractTextFromContent(context.messages[0].content)).toContain('简短摘要')
-    expect(context.messages.slice(1)).toEqual(original.slice(-20))
+    const tail = context.messages.slice(1)
+    expect(tail.length).toBeGreaterThan(0)
+    expect(original.slice(-tail.length)).toEqual(tail)
     expect(context.compactionLevel).toBe(1)
     expect(context.userTurnsSinceCompaction).toBe(0)
-    expect(onCompaction).toHaveBeenCalledWith(context.messages, {
+    expect(onCompaction).toHaveBeenCalledTimes(1)
+    expect(onCompaction.mock.calls[0][1]).toMatchObject({
       summary: '简短摘要',
       compactionLevel: 1,
       trigger: 'threshold'
     })
+    expect(onCompaction.mock.calls[0][1].ledger.state?.text).toBe('简短摘要')
   })
 
   it('超过估算上限的摘要截断后正常采纳', async () => {
     // 长消息让 oldMessages 明显大于 768 估算 token，截断后的摘要仍有压缩收益
     const context = createContext(createMessages(30, 500))
     const onCompaction = vi.fn()
-    const hugeSummary = 'h'.repeat(MAX_SUMMARY_ESTIMATED_TOKENS * CHARS_PER_TOKEN + 2000)
-    const client = new MockModelClient().addResponse(summaryResponse(hugeSummary))
+    const stateBudget = getStateTokenBudget(100)
+    const hugeSummary = 'h'.repeat(stateBudget * CHARS_PER_TOKEN + 2000)
+    const client = new MockModelClient().addCompactionPair(summaryResponse(hugeSummary))
     const { service } = createService({ context, client, onCompaction })
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
-    const boundedLength = MAX_SUMMARY_ESTIMATED_TOKENS * CHARS_PER_TOKEN + '\n…[摘要已截断]'.length
+    const boundedLength = stateBudget * CHARS_PER_TOKEN + '\n…[摘要已截断]'.length
     const meta = onCompaction.mock.calls[0][1] as CompactionMeta
     expect(meta.summary.endsWith('…[摘要已截断]')).toBe(true)
     expect(meta.summary.length).toBeLessThanOrEqual(boundedLength)
@@ -178,18 +187,17 @@ describe('压缩摘要质量协议', () => {
   it('二次压缩时把前序摘要显式注入压缩输入并要求增量更新', async () => {
     const context = createContext(createMessages())
     const client = new MockModelClient()
-      .addResponse(summaryResponse('第一版摘要'))
-      .addResponse(summaryResponse('第二版摘要'))
+      .addCompactionPair(summaryResponse('第一版摘要'))
+      .addCompactionPair(summaryResponse('第二版摘要'))
     const { service } = createService({ context, client })
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
-    // 首次压缩的指令不含前序摘要段
-    const firstCall = client.getCalls()[0]
-    const firstInstruction = firstCall.messages[firstCall.messages.length - 1]
+    expect(client.getCalls()).toHaveLength(2)
+    const firstState = client.getCalls()[1]
+    const firstInstruction = firstState.messages[firstState.messages.length - 1]
     expect(extractTextFromContent(firstInstruction.content)).not.toContain('前序摘要')
 
-    // 压缩后再积累足够多的消息，触发第二次压缩
     context.messages.push(...Array.from({ length: 30 }, (_, index): ChatMessage => ({
       role: index % 2 === 0 ? 'user' : 'assistant',
       content: `round2-${index}-${'y'.repeat(80)}`
@@ -197,8 +205,9 @@ describe('压缩摘要质量协议', () => {
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
-    const secondCall = client.getCalls()[1]
-    const secondInstruction = secondCall.messages[secondCall.messages.length - 1]
+    expect(client.getCalls()).toHaveLength(4)
+    const secondState = client.getCalls()[3]
+    const secondInstruction = secondState.messages[secondState.messages.length - 1]
     const instructionText = extractTextFromContent(secondInstruction.content)
     expect(instructionText).toContain('前序摘要')
     expect(instructionText).toContain('第一版摘要')
@@ -241,46 +250,47 @@ describe('压缩摘要前缀回放', () => {
     const warmedWrites = archiveWrites
     expect(warmedWrites).toBe(1)
 
-    const client = new MockModelClient().addResponse(summaryResponse('前缀摘要'))
+    const client = new MockModelClient().addCompactionPair(summaryResponse('前缀摘要'))
     const { service } = createService({ context, client })
 
     await expect(service.runThresholdCompaction(projection)).resolves.toBe(true)
 
-    // 摘要投影复用主请求同一归档缓存实例：压缩期间占位符全部命中缓存，无二次写入
     expect(archiveWrites).toBe(warmedWrites)
 
-    const [summaryCall] = client.getCalls()
-    const { oldMessages } = splitForCompaction(messages, MIN_RECENT_MESSAGES)
+    const calls = client.getCalls()
+    expect(calls).toHaveLength(2)
+    const { oldMessages } = splitForCompactionByTokens(messages, getTailTokenBudget(100))
     const oldCount = oldMessages.length
     expect(oldCount).toBeGreaterThan(0)
 
-    // system + 被压缩区域的投影视图切片与主请求视图逐字节一致：
-    // 覆盖归档占位符（tool 结果）与 reasoning 字段（各档案回放策略的输入）不漂移、不剥离
-    for (let i = 0; i <= oldCount; i++) {
-      expect(JSON.stringify(summaryCall.messages[i])).toBe(JSON.stringify(mainView[i]))
-    }
-    expect(summaryCall.messages.some(m => m.reasoningContent !== undefined)).toBe(true)
-
-    // 指令仅作为尾部追加：末条旧消息为 user 时含 assistant 桥接，否则仅指令本身
     const expectedTailLength = oldMessages[oldMessages.length - 1]?.role === 'user' ? 2 : 1
-    expect(summaryCall.messages).toHaveLength(1 + oldCount + expectedTailLength)
-    const tail = summaryCall.messages.slice(1 + oldCount)
-    expect(tail.at(-1)?.internal).toBe(true)
-    expect(extractTextFromContent(tail.at(-1)!.content)).toContain('结构化摘要')
-    if (expectedTailLength === 2) {
-      expect(tail[0].role).toBe('assistant')
+    for (const summaryCall of calls) {
+      for (let i = 0; i <= oldCount; i++) {
+        expect(JSON.stringify(summaryCall.messages[i])).toBe(JSON.stringify(mainView[i]))
+      }
+      expect(summaryCall.messages.some(m => m.reasoningContent !== undefined)).toBe(true)
+      expect(summaryCall.messages).toHaveLength(1 + oldCount + expectedTailLength)
+      const tail = summaryCall.messages.slice(1 + oldCount)
+      expect(tail.at(-1)?.internal).toBe(true)
+      if (expectedTailLength === 2) {
+        expect(tail[0].role).toBe('assistant')
+      }
+      expect(summaryCall.options?.purpose).toBe('compaction-summary')
     }
 
-    // 用途标记用于诊断与门禁识别摘要调用
-    expect(summaryCall.options?.purpose).toBe('compaction-summary')
+    expect(extractTextFromContent(calls[0].messages.at(-1)!.content)).toContain('被折叠的这一段')
+    expect(extractTextFromContent(calls[1].messages.at(-1)!.content)).toContain('结构化摘要')
   })
 
   it('无路由 key 的会话摘要调用不携带，配置后与主对话同槽位路由', async () => {
-    const client = new MockModelClient().addResponse(summaryResponse('摘要'))
+    const client = new MockModelClient().addCompactionPair(summaryResponse('摘要'))
     const context = createContext(createProjectedHistoryFixture())
     const { service } = createService({ context, client, promptCacheKey: 'routing-key-A' })
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
-    expect(client.getCalls()[0].options?.promptCacheKey).toBe('routing-key-A')
+    expect(client.getCalls()).toHaveLength(2)
+    for (const call of client.getCalls()) {
+      expect(call.options?.promptCacheKey).toBe('routing-key-A')
+    }
   })
 })

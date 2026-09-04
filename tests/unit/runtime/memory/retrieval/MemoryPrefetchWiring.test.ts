@@ -18,8 +18,7 @@ import type { ChatMessage } from '../../../../../src/runtime/model/types'
 import { createMemoryPrefetchWiring } from '../../../../../src/runtime/memory/retrieval/MemoryPrefetchWiring'
 import { MemoryPrefetchService, MEMORY_PREFETCH_BLOCK_TITLE } from '../../../../../src/runtime/memory/retrieval/MemoryPrefetchService'
 import type { MemoryPrefetchPort } from '../../../../../src/runtime/memory/retrieval/MemoryPrefetchWiring'
-import { buildSnapshotFromCompaction } from '../../../../../src/runtime/sessions/contextSnapshot'
-import type { SessionData } from '../../../../../src/runtime/sessions/types'
+import { makeCompactionLedger } from '../../../../../src/test-support/builders/compactionLedger'
 import {
   MemoryExtractor,
   projectExtractionMessages,
@@ -208,10 +207,13 @@ describe('MemoryPrefetchWiring（注入形态与轮内复用）', () => {
     loop.getHookManager().on('postMessage', (payload) => {
       if (!rewritten && payload.message.role === 'assistant' && payload.message.toolCalls) {
         rewritten = true
-        loop.restoreCompactedContext('本轮之前的历史已被摘要', [
-          { role: 'assistant', content: '', toolCalls: payload.message.toolCalls },
-          { role: 'tool', content: '目录: .', toolCallId: 'call-1' }
-        ], 1)
+        loop.restoreCompactedContext(
+          makeCompactionLedger({ summary: '本轮之前的历史已被摘要' }),
+          [
+            { role: 'assistant', content: '', toolCalls: payload.message.toolCalls },
+            { role: 'tool', content: '目录: .', toolCallId: 'call-1' }
+          ]
+        )
       }
     })
 
@@ -226,21 +228,7 @@ describe('MemoryPrefetchWiring（注入形态与轮内复用）', () => {
 })
 
 describe('压缩隔离（PRD 34.3）', () => {
-  function minimalSession(): SessionData {
-    return {
-      schemaVersion: 9,
-      kind: 'primary',
-      id: 'sess-1',
-      workspaceRoot: '/tmp/project',
-      mode: 'default',
-      messages: [],
-      currentLeafId: null,
-      createdAt: 0,
-      updatedAt: 0
-    }
-  }
-
-  it('prefetch 块不进入压缩快照；压缩后新 turn 能重新检索注入', async () => {
+  it('prefetch 块不进入压缩账本；压缩后新 turn 能重新检索注入', async () => {
     const client = new MockModelClient()
     client.addResponse(textResponse('第一轮回复'))
     client.addResponse(textResponse('第二轮回复'))
@@ -252,19 +240,13 @@ describe('压缩隔离（PRD 34.3）', () => {
     expect(ephemeralIndex(client.getCalls()[0].messages)).toBeGreaterThan(-1)
 
     // 模拟压缩：运行时上下文被重写为摘要 + 少量最近消息
-    loop.restoreCompactedContext('此前历史已被摘要', [{ role: 'assistant', content: '旧回复' }], 1)
-
-    // 压缩快照由压缩后的运行时上下文构建：注入块不得出现在快照消息中
-    const snapshot = buildSnapshotFromCompaction(
-      minimalSession(),
-      loop.getContext(),
-      { summary: '此前历史已被摘要', compactionLevel: 1, trigger: 'threshold' }
+    loop.restoreCompactedContext(
+      makeCompactionLedger({ summary: '此前历史已被摘要' }),
+      [{ role: 'assistant', content: '旧回复' }]
     )
-    expect(
-      snapshot.recentMessages.some(m =>
-        extractTextFromContent(m.content).includes(MEMORY_PREFETCH_BLOCK_TITLE)
-      )
-    ).toBe(false)
+
+    const ledger = makeCompactionLedger({ summary: '此前历史已被摘要' })
+    expect(JSON.stringify(ledger)).not.toContain(MEMORY_PREFETCH_BLOCK_TITLE)
 
     // 压缩后的新 turn：以当前问题重新检索，注入块再次进入请求
     await loop.sendMessage('第二个问题', agentRoute())

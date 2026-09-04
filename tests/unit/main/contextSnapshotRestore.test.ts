@@ -5,25 +5,19 @@ import { tmpdir } from 'os'
 import { AgentLoop } from '../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
-import { buildConversationContext } from '../../../src/runtime/agent/context/contextBuilder'
+import { makeCompactionLedger } from '../../../src/test-support/builders/compactionLedger'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 import {
-  buildSnapshotFromCompaction,
   persistCompactionSnapshot,
+  restoreFromLedger,
   restoreOrInjectHistory
 } from '../../../src/runtime/sessions/contextSnapshot'
 import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
 import { extractTextFromContent } from '../../../src/runtime/model/types'
-import type { ChatMessage } from '../../../src/runtime/model/types'
-import { CONTEXT_SNAPSHOT_VERSION } from '../../../src/runtime/sessions/types'
+import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
-import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
-
-/**
- * 集成测试：快照优先恢复 + 增量补齐 + 回退路径。
- * 使用与 agentHandler 相同的 contextSnapshot 模块，避免镜像漂移。
- */
+import type { MessageBlock } from '../../../src/shared/session'
 
 function createTestRegistry(): ToolRegistry {
   const registry = new ToolRegistry()
@@ -38,18 +32,7 @@ function createTestRegistry(): ToolRegistry {
   return registry
 }
 
-function injectCompactionTriggerHistory(loop: AgentLoop): void {
-  const history: ChatMessage[] = []
-  for (let i = 0; i < 24; i++) {
-    history.push(
-      { role: 'user', content: 'x'.repeat(20_000) },
-      { role: 'assistant', content: 'y'.repeat(20_000) }
-    )
-  }
-  loop.injectHistory(history)
-}
-
-describe('上下文快照恢复', () => {
+describe('上下文账本恢复', () => {
   let tmpDir: string
   let store: SessionStore
 
@@ -62,25 +45,25 @@ describe('上下文快照恢复', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('压缩 → 写快照 → 追加消息 → 快照优先恢复无重复无丢失', async () => {
+  it('压缩写账本后追加消息，恢复无重复无丢失', async () => {
     const session = store.create('/tmp/project', 'default')
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 24; i++) {
       store.appendMessage(session.id, {
         id: `user_${i}`,
         role: 'user',
-        content: `历史问题 ${i}`,
+        content: `历史问题 ${i} ${'x'.repeat(20_000)}`,
         timestamp: i * 2
       })
       store.appendMessage(session.id, {
         id: `asst_${i}`,
         role: 'assistant',
-        content: `历史回复 ${i}`,
+        content: `历史回复 ${i} ${'y'.repeat(20_000)}`,
         timestamp: i * 2 + 1
       })
     }
 
     const client = new MockModelClient()
-    client.addResponse({
+    client.addCompactionPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '压缩摘要文本' },
@@ -100,37 +83,34 @@ describe('上下文快照恢复', () => {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
-      onCompaction: (ctx, meta) => persistCompactionSnapshot(store, session.id, ctx, meta)
+      onCompaction: (_ctx, meta) => persistCompactionSnapshot(store, session.id, meta.ledger)
     })
     loop.setToolRegistry(createTestRegistry())
-    injectCompactionTriggerHistory(loop)
+    restoreOrInjectHistory(loop, store.load(session.id)!, null)
 
     await loop.sendMessage('触发压缩', agentRoute())
 
-    const snapshot = store.loadContextSnapshot(session.id)
-    expect(snapshot).not.toBeNull()
-    expect(snapshot!.summary).toBe('压缩摘要文本')
-    expect(snapshot!.recentMessages.every(m => m.role !== 'system')).toBe(true)
-    expect(snapshot!.lastMessageId).toBe('asst_5')
+    const ledger = store.loadContextSnapshot(session.id)
+    expect(ledger).not.toBeNull()
+    expect(ledger!.state?.text).toBe('压缩摘要文本')
+    expect(ledger).not.toHaveProperty('recentMessages')
+    expect(JSON.stringify(ledger)).not.toContain('历史问题 0')
 
     store.appendMessage(session.id, {
       id: 'user_delta_1',
       role: 'user',
       content: '压缩后新问题',
-      timestamp: 100
+      timestamp: 100_000
     })
     store.appendMessage(session.id, {
       id: 'asst_delta_1',
       role: 'assistant',
       content: '压缩后新回复',
-      timestamp: 101
+      timestamp: 100_001
     })
 
     const reloaded = store.load(session.id)!
-    expect(reloaded.messages).toHaveLength(14)
-
-    const recoveryClient = new MockModelClient()
-    const recoveryLoop = new AgentLoop(recoveryClient, eventBus, {
+    const recoveryLoop = new AgentLoop(new MockModelClient(), eventBus, {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
@@ -138,84 +118,123 @@ describe('上下文快照恢复', () => {
     restoreOrInjectHistory(recoveryLoop, reloaded, store.loadContextSnapshot(session.id))
 
     const ctx = recoveryLoop.getContext()
-    const systemText = extractTextFromContent(ctx[0].content)
-    expect(systemText).toContain('压缩摘要文本')
-
+    expect(extractTextFromContent(ctx[0].content)).toContain('压缩摘要文本')
     const userTexts = ctx.filter(m => m.role === 'user').map(m => extractTextFromContent(m.content))
     expect(userTexts.filter(t => t.includes('压缩后新问题'))).toHaveLength(1)
-    expect(snapshot!.recentMessages.length).toBeGreaterThan(0)
-    expect(userTexts.length).toBe(
-      snapshot!.recentMessages.filter(m => m.role === 'user').length + 1
-    )
-
+    expect(userTexts.some(t => t.includes('历史问题 0'))).toBe(false)
     expect(reloaded.messages.map(m => m.id)).toContain('user_0')
     expect(reloaded.messages.map(m => m.id)).toContain('user_delta_1')
   })
 
-  it('快照 recent 与 session 尾部对齐时，恢复无重复（拟真场景）', () => {
+  it('从 tailFrom 的 step 切片恢复，tool_call id 唯一（不叠两份子轮）', () => {
     const session = store.create('/tmp/project', 'default')
-    for (let i = 0; i < 3; i++) {
-      store.appendMessage(session.id, {
-        id: `user_${i}`,
-        role: 'user',
-        content: `历史问题 ${i}`,
-        timestamp: i * 2
-      })
-      store.appendMessage(session.id, {
-        id: `asst_${i}`,
-        role: 'assistant',
-        content: `历史回复 ${i}`,
-        timestamp: i * 2 + 1
-      })
-    }
-
-    const reloaded = store.load(session.id)!
-    // 快照 recent 来自 session 尾部真实消息（与压缩后落盘结构一致）
-    const tailMessages = reloaded.messages.slice(-4)
-    const recentFromSession = buildConversationContext(
-      { ...reloaded, messages: tailMessages },
-      reloaded.mode
-    )
-
-    store.saveContextSnapshot(session.id, {
-      version: CONTEXT_SNAPSHOT_VERSION,
-      summary: '对齐摘要',
-      recentMessages: recentFromSession,
-      lastMessageId: 'asst_2',
-      compactionLevel: 1,
-      updatedAt: Date.now()
-    })
-
     store.appendMessage(session.id, {
-      id: 'user_delta',
+      id: 'u1',
       role: 'user',
-      content: '压缩后新问题',
-      timestamp: 100
+      content: '分析并修复两个问题',
+      timestamp: 1
+    })
+    const blocks: MessageBlock[] = [
+      {
+        type: 'tool',
+        toolCallId: 'tc_a',
+        toolName: 'read',
+        arguments: { path: 'a.ts' },
+        status: 'success',
+        result: 'content of a.ts'
+      },
+      { type: 'thinking', content: '继续改 b.ts' },
+      {
+        type: 'tool',
+        toolCallId: 'tc_b',
+        toolName: 'edit',
+        arguments: { path: 'b.ts' },
+        status: 'success',
+        result: 'edited b.ts'
+      },
+      { type: 'text', content: '已完成两处修复。' }
+    ]
+    store.appendMessage(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      content: '已完成两处修复。',
+      blocks,
+      toolCalls: [
+        { id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}', result: 'content of a.ts' },
+        { id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts"}', result: 'edited b.ts' }
+      ],
+      timestamp: 2
     })
 
-    const afterDelta = store.load(session.id)!
-    const eventBus = new EventBus()
-    const loop = new AgentLoop(new MockModelClient(), eventBus, {
+    const loaded = store.load(session.id)!
+    const ledger = makeCompactionLedger({
+      summary: '已读 a.ts',
+      tailFrom: { messageId: 'a1', step: 1 }
+    })
+    const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
-    loop.setToolRegistry(createTestRegistry())
-    restoreOrInjectHistory(loop, afterDelta, store.loadContextSnapshot(session.id))
+    restoreOrInjectHistory(loop, loaded, ledger)
 
-    const userTexts = loop.getContext()
-      .filter(m => m.role === 'user')
-      .map(m => extractTextFromContent(m.content))
-
-    // 尾部 u1/u2 各出现一次（来自快照 recent），u0 已摘要化不在上下文
-    expect(userTexts.filter(t => t.includes('历史问题 1'))).toHaveLength(1)
-    expect(userTexts.filter(t => t.includes('历史问题 2'))).toHaveLength(1)
-    expect(userTexts.some(t => t.includes('历史问题 0'))).toBe(false)
-    // 锚点后增量恰好一次
-    expect(userTexts.filter(t => t.includes('压缩后新问题'))).toHaveLength(1)
-    expect(extractTextFromContent(loop.getContext()[0].content)).toContain('对齐摘要')
+    const ctx = loop.getContext()
+    const toolCallIds = ctx.flatMap(m => m.toolCalls?.map(tc => tc.id) ?? [])
+    expect(toolCallIds).toEqual(['tc_b'])
+    expect(ctx.filter(m => m.role === 'tool').map(m => m.toolCallId)).toEqual(['tc_b'])
+    expect(JSON.stringify(ctx)).not.toContain('content of a.ts')
+    expect(JSON.stringify(ctx)).toContain('edited b.ts')
+    expect(extractTextFromContent(ctx[0].content)).toContain('已读 a.ts')
   })
 
-  it('无快照或锚点失效时回退全量重建', () => {
+  it('tailFrom.messageId 尚未落盘时恢复为空尾部且不抛错', () => {
+    const session = store.create('/tmp/project', 'default')
+    store.appendMessage(session.id, {
+      id: 'u1', role: 'user', content: '问题一', timestamp: 1
+    })
+    const loaded = store.load(session.id)!
+    const ledger = makeCompactionLedger({
+      summary: '进行中摘要',
+      tailFrom: { messageId: 'asst_inflight', step: 0 }
+    })
+    const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '你是助手。'
+    })
+    restoreOrInjectHistory(loop, loaded, ledger)
+    const ctx = loop.getContext()
+    expect(extractTextFromContent(ctx[0].content)).toContain('进行中摘要')
+    expect(ctx.filter(m => m.role !== 'system')).toEqual([])
+  })
+
+  it('账本坐标不在激活路径时清空账本并全量 inject', () => {
+    const session = store.create('/tmp/project', 'default')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: '问题一', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: '回复一', timestamp: 2 })
+    store.appendMessage(session.id, { id: 'u2', role: 'user', content: '问题二', timestamp: 3 })
+
+    const ledger = makeCompactionLedger({
+      summary: '折叠后摘要',
+      tailFrom: { messageId: 'u2', step: 0 }
+    })
+    store.saveContextSnapshot(session.id, ledger)
+    store.setCurrentLeaf(session.id, 'u1')
+
+    const reloaded = store.load(session.id)!
+    const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
+      permissionManager: new PermissionManager(),
+      systemPrompt: '你是助手。'
+    })
+    restoreOrInjectHistory(loop, reloaded, store.loadContextSnapshot(session.id), { sessionStore: store })
+
+    expect(store.loadContextSnapshot(session.id)).toBeNull()
+    const users = loop.getContext()
+      .filter(m => m.role === 'user')
+      .map(m => extractTextFromContent(m.content))
+    expect(users).toEqual(['问题一'])
+    expect(extractTextFromContent(loop.getContext()[0].content)).not.toContain('折叠后摘要')
+  })
+
+  it('无账本时回退全量重建', () => {
     const session = store.create('/tmp/project', 'default')
     store.appendMessage(session.id, {
       id: 'u1', role: 'user', content: '问题一', timestamp: 1
@@ -223,54 +242,20 @@ describe('上下文快照恢复', () => {
     store.appendMessage(session.id, {
       id: 'a1', role: 'assistant', content: '回复一', timestamp: 2
     })
-    store.appendMessage(session.id, {
-      id: 'u2', role: 'user', content: '问题二', timestamp: 3
-    })
 
     const reloaded = store.load(session.id)!
-    const eventBus = new EventBus()
-    const client = new MockModelClient()
-
-    const loopNoSnapshot = new AgentLoop(client, eventBus, {
+    const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
-    loopNoSnapshot.setToolRegistry(createTestRegistry())
-    restoreOrInjectHistory(loopNoSnapshot, reloaded, null)
-
-    const usersNoSnapshot = loopNoSnapshot.getContext()
+    restoreOrInjectHistory(loop, reloaded, null)
+    const users = loop.getContext()
       .filter(m => m.role === 'user')
       .map(m => extractTextFromContent(m.content))
-    expect(usersNoSnapshot).toContain('问题一')
-    expect(usersNoSnapshot).toContain('问题二')
-
-    store.saveContextSnapshot(session.id, {
-      version: CONTEXT_SNAPSHOT_VERSION,
-      summary: '过期摘要',
-      recentMessages: [{ role: 'user', content: '仅快照内消息' }],
-      lastMessageId: 'deleted_anchor_id',
-      compactionLevel: 1,
-      updatedAt: Date.now()
-    })
-
-    const loopStale = new AgentLoop(client, eventBus, {
-      permissionManager: new PermissionManager(),
-      systemPrompt: '你是助手。'
-    })
-    loopStale.setToolRegistry(createTestRegistry())
-    restoreOrInjectHistory(loopStale, reloaded, store.loadContextSnapshot(session.id))
-
-    const ctxStale = loopStale.getContext()
-    expect(extractTextFromContent(ctxStale[0].content)).not.toContain('过期摘要')
-    const usersStale = ctxStale
-      .filter(m => m.role === 'user')
-      .map(m => extractTextFromContent(m.content))
-    expect(usersStale).toContain('问题一')
-    expect(usersStale).toContain('问题二')
-    expect(usersStale).not.toContain('仅快照内消息')
+    expect(users).toContain('问题一')
   })
 
-  it('截断历史后快照被清除，下次 restoreOrInjectHistory 走全量重建', () => {
+  it('截断历史后账本被清除，下次 restoreOrInjectHistory 走全量重建', () => {
     const session = store.create('/tmp/project', 'default')
     store.appendMessage(session.id, { id: 'u0', role: 'user', content: '问题0', timestamp: 1 })
     store.appendMessage(session.id, { id: 'a0', role: 'assistant', content: '回复0', timestamp: 2 })
@@ -279,18 +264,12 @@ describe('上下文快照恢复', () => {
     store.appendMessage(session.id, { id: 'u2', role: 'user', content: '问题2', timestamp: 5 })
 
     const loaded = store.load(session.id)!
-    store.saveContextSnapshot(session.id, buildSnapshotFromCompaction(
-      loaded,
-      [
-        { role: 'system', content: 'sys' },
-        { role: 'user', content: '快照内最近用户' },
-        { role: 'assistant', content: '快照内最近助手' }
-      ],
-      { summary: '截断前摘要', compactionLevel: 1, trigger: 'threshold' }
-    ))
+    store.saveContextSnapshot(session.id, makeCompactionLedger({
+      summary: '截断前摘要',
+      tailFrom: { messageId: 'u1', step: 0 }
+    }))
     expect(store.loadContextSnapshot(session.id)).not.toBeNull()
 
-    // 模拟 sessionHandler / WorkspaceService 截断分支
     const targetIdx = loaded.messages.findIndex(m => m.id === 'u2')
     expect(targetIdx).toBeGreaterThan(-1)
     loaded.messages = loaded.messages.slice(0, targetIdx)
@@ -301,12 +280,10 @@ describe('上下文快照恢复', () => {
     expect(store.loadContextSnapshot(session.id)).toBeNull()
 
     const truncated = store.load(session.id)!
-    const eventBus = new EventBus()
-    const loop = new AgentLoop(new MockModelClient(), eventBus, {
+    const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。'
     })
-    loop.setToolRegistry(createTestRegistry())
     restoreOrInjectHistory(loop, truncated, store.loadContextSnapshot(session.id))
 
     const ctx = loop.getContext()
@@ -315,10 +292,9 @@ describe('上下文快照恢复', () => {
     expect(users).toContain('问题0')
     expect(users).toContain('问题1')
     expect(users).not.toContain('问题2')
-    expect(users).not.toContain('快照内最近用户')
   })
 
-  it('persistCompactionSnapshot 只写快照文件，不修改 session.messages', () => {
+  it('persistCompactionSnapshot 只写账本文件，不修改 session.messages', () => {
     const session = store.create('/tmp/project', 'default')
     store.appendMessage(session.id, {
       id: 'm1', role: 'user', content: 'hello', timestamp: 1
@@ -329,14 +305,25 @@ describe('上下文快照恢复', () => {
     persistCompactionSnapshot(
       store,
       session.id,
-      [
-        { role: 'system', content: 'sys' },
-        { role: 'user', content: 'compact recent' }
-      ],
-      { summary: '摘要', compactionLevel: 1, trigger: 'threshold' }
+      makeCompactionLedger({ summary: '摘要', tailFrom: { messageId: 'm1', step: 0 } })
     )
 
     expect(store.load(session.id)!.messages).toEqual(beforeMessages)
     expect(store.loadContextSnapshot(session.id)).not.toBeNull()
+  })
+
+  it('restore 两次发出的上下文 fingerprint 相同', () => {
+    const session = store.create('/tmp/project', 'default')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: '旧', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: '旧回', timestamp: 2 })
+    store.appendMessage(session.id, { id: 'u2', role: 'user', content: '近', timestamp: 3 })
+    const loaded = store.load(session.id)!
+    const ledger = makeCompactionLedger({
+      summary: '幂等摘要',
+      tailFrom: { messageId: 'u2', step: 0 }
+    })
+    const a = restoreFromLedger(loaded, ledger, '你是助手。')
+    const b = restoreFromLedger(loaded, ledger, '你是助手。')
+    expect(JSON.stringify(a.messages)).toBe(JSON.stringify(b.messages))
   })
 })

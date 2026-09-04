@@ -85,7 +85,7 @@ describe('CompactionService mid-turn', () => {
   it('超高水位时压缩，保留 tool 对完整与 tail', async () => {
     const messages = buildHistoryForMidTurn({ fillerChars: 20_000, pairs: 4 })
     const onCompaction = vi.fn()
-    const client = new MockModelClient().addResponse({
+    const client = new MockModelClient().addCompactionPair({
       events: [
         { type: 'text_delta', delta: 'mid-turn summary' },
         { type: 'message_end', finishReason: 'stop' }

@@ -13,9 +13,11 @@ import {
 } from '../../../../src/runtime/agent/context/contextBuilder'
 import { rebuildWithCompression } from '../../../../src/runtime/agent/compaction/compaction'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
-import { restoreOrInjectHistory, buildSnapshotFromCompaction } from '../../../../src/runtime/sessions/contextSnapshot'
+import { restoreOrInjectHistory } from '../../../../src/runtime/sessions/contextSnapshot'
+import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 import type { SessionData, SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
+import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import type { MessageBlock } from '../../../../src/shared/session'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
@@ -43,22 +45,24 @@ const TURN_BLOCKS: MessageBlock[] = [
 
 /** deepseek：仅 tool 子轮带 reasoning；终态无 tool 不带 */
 const DEEPSEEK_RECOVERY: ChatMessage[] = [
-  { role: 'user', content: '分析并修复两个问题' },
+  { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
   {
     role: 'assistant',
     content: '',
     reasoningContent: '先读 a.ts 确认问题根因…',
-    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }],
+    origin: { messageId: 'a1', step: 0 }
   },
-  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a', origin: { messageId: 'a1', step: 0 } },
   {
     role: 'assistant',
     content: '',
     reasoningContent: '再改 b.ts 对齐接口…',
-    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }],
+    origin: { messageId: 'a1', step: 1 }
   },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
-  { role: 'assistant', content: '已完成两处修复。' }
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 1 } },
+  { role: 'assistant', content: '已完成两处修复。', origin: { messageId: 'a1', step: 2 } }
 ]
 
 /** kimi：全部历史 reasoning；本例终态无 thinking，与 deepseek 序列同形 */
@@ -66,34 +70,37 @@ const KIMI_RECOVERY: ChatMessage[] = DEEPSEEK_RECOVERY
 
 /** 有 blocks 但 reasoningReplay=none：拆子轮、不附着 reasoning */
 const SPLIT_NO_REASONING: ChatMessage[] = [
-  { role: 'user', content: '分析并修复两个问题' },
+  { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
   {
     role: 'assistant',
     content: '',
-    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }]
+    toolCalls: [{ id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' }],
+    origin: { messageId: 'a1', step: 0 }
   },
-  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a', origin: { messageId: 'a1', step: 0 } },
   {
     role: 'assistant',
     content: '',
-    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
+    toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }],
+    origin: { messageId: 'a1', step: 1 }
   },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
-  { role: 'assistant', content: '已完成两处修复。' }
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 1 } },
+  { role: 'assistant', content: '已完成两处修复。', origin: { messageId: 'a1', step: 2 } }
 ]
 
 const FLATTENED_RECOVERY: ChatMessage[] = [
-  { role: 'user', content: '分析并修复两个问题' },
+  { role: 'user', content: '分析并修复两个问题', origin: { messageId: 'u1', step: 0 } },
   {
     role: 'assistant',
     content: '已完成两处修复。',
     toolCalls: [
       { id: 'tc_a', name: 'read', arguments: '{"path":"a.ts"}' },
       { id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }
-    ]
+    ],
+    origin: { messageId: 'a1', step: 0 }
   },
-  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a' },
-  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' }
+  { role: 'tool', content: 'content of a.ts', toolCallId: 'tc_a', origin: { messageId: 'a1', step: 0 } },
+  { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 0 } }
 ]
 
 function makeSession(messages: SessionData['messages']): SessionData {
@@ -171,11 +178,16 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     }
     const projected = projectAssistantWithReasoningReplay(withFinalThinking, 'all-history')
     expect(projected).toEqual([
-      { role: 'assistant', content: '结论', reasoningContent: '最后再想一下' }
+      {
+        role: 'assistant',
+        content: '结论',
+        reasoningContent: '最后再想一下',
+        origin: { messageId: 'a2', step: 0 }
+      }
     ])
     // deepseek 终态无 tool → 剥离 reasoning
     expect(projectAssistantWithReasoningReplay(withFinalThinking, 'tool-call-history')).toEqual([
-      { role: 'assistant', content: '结论' }
+      { role: 'assistant', content: '结论', origin: { messageId: 'a2', step: 0 } }
     ])
   })
 
@@ -328,28 +340,14 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     expect(nonSystem).toEqual(DEEPSEEK_RECOVERY)
   })
 
-  it('context snapshot 命中：deepseek 下 recent 保留 reasoning，delta 正确投影', () => {
+  it('context 账本命中：deepseek 下从 tailFrom step 恢复，delta 正确投影', () => {
     const session = makeSession(thinkingToolTurnMessages())
     session.currentLeafId = 'a1'
-    // 快照 recent 模拟压缩后仍带 reasoning 的运行时上下文
-    const recentWithReasoning: ChatMessage[] = [
-      {
-        role: 'assistant',
-        content: '',
-        reasoningContent: '再改 b.ts 对齐接口…',
-        toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts","old":"x","new":"y"}' }]
-      },
-      { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b' },
-      { role: 'assistant', content: '已完成两处修复。' }
-    ]
-    const snapshot = buildSnapshotFromCompaction(session, recentWithReasoning, {
+    const snapshot = makeCompactionLedger({
       summary: '已完成 a/b 修复',
-      compactionLevel: 1,
-      trigger: 'threshold'
+      tailFrom: { messageId: 'a1', step: 1 }
     })
-    expect(snapshot.lastMessageId).toBe('a1')
 
-    // 锚点后追加新 user
     session.messages.push({
       id: 'u2',
       role: 'user',
@@ -368,26 +366,21 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     })
 
     const ctx = loop.getContext()
-    // 快照命中：system 含摘要（非全量回退）
     const systemText = String(ctx.find(m => m.role === 'system')?.content ?? '')
     expect(systemText).toContain('已完成 a/b 修复')
-    // recent 中带 reasoning 的 tool 子轮仍在
     expect(ctx.some(m => m.role === 'assistant' && m.reasoningContent === '再改 b.ts 对齐接口…')).toBe(
       true
     )
     expect(ctx.some(m => m.role === 'user' && m.content === '再确认一下')).toBe(true)
-    // 全量历史的第一段 reasoning 不应出现（已被摘要替代）
     expect(JSON.stringify(ctx)).not.toContain('先读 a.ts 确认问题根因')
   })
 
-  it('snapshot 锚点失效：deepseek 全量回退仍正确拆子轮', () => {
+  it('tailFrom 尚未落盘：空尾部保留摘要，不回退全量', () => {
     const session = makeSession(thinkingToolTurnMessages())
-    const snapshot = buildSnapshotFromCompaction(session, FLATTENED_RECOVERY, {
+    const snapshot = makeCompactionLedger({
       summary: '旧摘要',
-      compactionLevel: 1,
-      trigger: 'threshold'
+      tailFrom: { messageId: 'msg_does_not_exist', step: 0 }
     })
-    snapshot.lastMessageId = 'msg_does_not_exist'
 
     const loop = new AgentLoop(new MockModelClient(), new EventBus(), {
       permissionManager: new PermissionManager(),
@@ -396,7 +389,8 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
     restoreOrInjectHistory(loop, session, snapshot, {
       reasoningReplay: 'tool-call-history'
     })
-    expect(loop.getContext().filter(m => m.role !== 'system')).toEqual(DEEPSEEK_RECOVERY)
+    expect(extractTextFromContent(loop.getContext()[0].content)).toContain('旧摘要')
+    expect(loop.getContext().filter(m => m.role !== 'system')).toEqual([])
   })
 
   it('压缩：rebuild 的 recent 保留 reasoning（摘要请求侧不再剥离，由前缀回放协议测试保护）', () => {
@@ -410,7 +404,11 @@ describe('deepseek/kimi：按 blocks 恢复多子轮 + reasoning', () => {
       { role: 'tool', content: 'ok', toolCallId: 't1' }
     ]
 
-    const rebuilt = rebuildWithCompression('sys', '摘要不含思考', withReasoning)
+    const rebuilt = rebuildWithCompression(
+      'sys',
+      makeCompactionLedger({ summary: '摘要不含思考' }),
+      withReasoning
+    )
     expect(rebuilt.find(m => m.role === 'system')!.content).toContain('摘要不含思考')
     expect(rebuilt.find(m => m.role === 'assistant')!.reasoningContent).toBe('思考中')
   })

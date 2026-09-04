@@ -41,6 +41,8 @@ export function getToolDisplayName(toolName: string): string {
       return '联网搜索 (web_search)'
     case 'archive_read':
       return '读取归档内容 (archive_read)'
+    case 'history_read':
+      return '读取折叠历史 (history_read)'
     case 'run_code':
       return '运行探索代码 (run_code)'
     case 'memory_search':

@@ -70,6 +70,17 @@ export interface ChatMessage {
    * 跨档案回放时由序列化门控剥离；缺省视为与当前档案兼容。
    */
   reasoningProviderId?: string
+  /**
+   * 运行时档案坐标：user 的 step 恒为 0；assistant/tool 为该 SessionMessage 内工具组序号。
+   * 与 internal 一样只存在于本地上下文，API 序列化时剥离。
+   */
+  origin?: MessageOrigin
+}
+
+/** 运行时消息在档案中的来源。一组 assistant(toolCalls)+tool* 算一步。 */
+export interface MessageOrigin {
+  messageId: string
+  step: number
 }
 
 /** 模型返回的工具调用 */

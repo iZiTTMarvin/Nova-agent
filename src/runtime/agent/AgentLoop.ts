@@ -10,6 +10,8 @@ import { extractTextFromContent } from '../model/types'
 import type { AgentState, AgentLoopConfig } from './types'
 import { ToolRegistry } from '../tools/ToolRegistry'
 import type { CheckpointManager } from '../checkpoints/CheckpointManager'
+import { listManifests } from '../checkpoints/restore'
+import { collectTouchedFilesFromManifests } from '../checkpoints/collectTouchedFiles'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import {
   PermissionCoordinator,
@@ -17,6 +19,7 @@ import {
 } from '../permissions/PermissionCoordinator'
 import { replaceSkillPathGrants } from '../permissions/pathAccess'
 import type { SessionStore } from '../sessions/SessionStore'
+import type { CompactionLedger } from '../sessions/types'
 import type { Mode } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
@@ -270,7 +273,19 @@ export class AgentLoop {
         context: this.ctx,
         policy: () => this.currentRequestProjectionPolicy()
       }),
-      promptCacheKey: this.config.promptCacheKey
+      promptCacheKey: this.config.promptCacheKey,
+      collectTouchedFiles: messageIds => {
+        const manager = this.checkpointManager
+        if (!manager || messageIds.length === 0) return []
+        return collectTouchedFilesFromManifests(
+          listManifests(manager.getCheckpointDir(), manager.getSessionId()),
+          new Set(messageIds)
+        )
+      },
+      getRealityAnchors: () => ({
+        workspacePath: this.ctx.workingDir,
+        activePlanPath: this.activePlanPath ?? null
+      })
     })
     this.hookManager = new HookManager(eventBus)
     this.ctx.systemPrompt = this.buildFrozenSystemPrompt()
@@ -375,14 +390,11 @@ export class AgentLoop {
   }
 
   /**
-   * 用上下文快照恢复压缩态运行时上下文。
-   * 与 injectHistory 二选一：有可用快照走本方法，否则走 injectHistory。
-   * @param summary 快照里的摘要原文
-   * @param recentMessages 快照的非 system 消息 + 锚点之后的增量消息（已拼好）
-   * @param compactionLevel 快照记录的压缩层级
+   * 用账本恢复压缩态运行时上下文。
+   * 与 injectHistory 二选一：有可用账本走本方法，否则走 injectHistory。
    */
-  restoreCompactedContext(summary: string, recentMessages: ChatMessage[], compactionLevel: number): void {
-    this.compactionService.restoreCompactedContext(summary, recentMessages, compactionLevel)
+  restoreCompactedContext(ledger: CompactionLedger, tail: ChatMessage[]): void {
+    this.compactionService.restoreCompactedContext(ledger, tail)
     this.ctx.toolAvailability?.backfillFromMessages(this.ctx.messages)
     this.emitContextBreakdown('', 0)
   }
@@ -656,7 +668,11 @@ export class AgentLoop {
    * 终态契约：轮次一旦开始，所有成功 / 取消 / 失败路径都经 finalizeTurn 统一收尾，
    * resolve 为结构化 AgentTurnOutcome；仅轮次副作用前的装配校验失败会 reject。
    */
-  async sendMessage(content: string | ContentBlock[], route: AgentTurnRoute): Promise<AgentTurnOutcome> {
+  async sendMessage(
+    content: string | ContentBlock[],
+    route: AgentTurnRoute,
+    options?: { userMessageId?: string }
+  ): Promise<AgentTurnOutcome> {
     if (this.state === 'running') {
       const busy = '当前正在执行中，请先取消'
       this.eventBus.emit({ type: 'error', messageId: '', error: busy })
@@ -696,7 +712,7 @@ export class AgentLoop {
 
       this.eventBus.emit({ type: 'message_start', messageId })
 
-      outcome = await this.runTurn(content, route, messageId)
+      outcome = await this.runTurn(content, route, messageId, options?.userMessageId)
     } catch (err) {
       if (this.cancelled) {
         // 取消引发的执行中断（abort 拒绝等）按取消收尾，不伪装成失败
@@ -721,7 +737,8 @@ export class AgentLoop {
   private async runTurn(
     content: string | ContentBlock[],
     route: AgentTurnRoute,
-    messageId: string
+    messageId: string,
+    userMessageId?: string
   ): Promise<AgentTurnOutcome> {
     let userText = typeof content === 'string'
       ? content
@@ -767,6 +784,9 @@ export class AgentLoop {
       this.ctx.messages.push({ role: 'assistant', content: dispatched.assistantPrelude })
     }
     userText = dispatched.userText
+    const userOrigin = userMessageId
+      ? { messageId: userMessageId, step: 0 }
+      : undefined
     if (typeof dispatched.userContent === 'string') {
       // 空模式指令（子代理等宿主）不拼接，避免消息落盘时残留空尾
       const contentWithInstruction = modeInstruction
@@ -774,7 +794,8 @@ export class AgentLoop {
         : dispatched.userContent
       this.ctx.messages.push({
         role: 'user',
-        content: withPrefix(contentWithInstruction)
+        content: withPrefix(contentWithInstruction),
+        ...(userOrigin ? { origin: userOrigin } : {})
       })
     } else {
       // ContentBlock[]（含图片）：sessionPrefix 作为首个 text block 插入最前面
@@ -784,7 +805,11 @@ export class AgentLoop {
       if (modeInstruction) {
         blocks.push({ type: 'text' as const, text: modeInstruction })
       }
-      this.ctx.messages.push({ role: 'user', content: blocks })
+      this.ctx.messages.push({
+        role: 'user',
+        content: blocks,
+        ...(userOrigin ? { origin: userOrigin } : {})
+      })
     }
 
     // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。

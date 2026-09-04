@@ -143,6 +143,7 @@ describe('Deferred 组暴露规则', () => {
       'todo_write',
       'askQuestion',
       'archive_read',
+      'history_read',
       'web_search',
       'memory_search',
       'code_context',

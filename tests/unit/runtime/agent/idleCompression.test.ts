@@ -175,15 +175,20 @@ function createIdleService(
     onCompaction?: () => void
   }
 ) {
+  const messages = options?.messages ?? [
+    { role: 'system', content: 'system prompt' },
+    ...Array.from({ length: 30 }, (_, index): ChatMessage => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `history-${index}-${'x'.repeat(80)}`
+    }))
+  ]
+  const systemPrompt = messages[0]?.role === 'system' && typeof messages[0].content === 'string'
+    ? messages[0].content
+    : 'system prompt'
   const context = createAgentContext({
     readState: createReadState(),
-    messages: options?.messages ?? [
-      { role: 'system', content: 'system prompt' },
-      ...Array.from({ length: 30 }, (_, index): ChatMessage => ({
-        role: index % 2 === 0 ? 'user' : 'assistant',
-        content: `history-${index}-${'x'.repeat(80)}`
-      }))
-    ]
+    messages,
+    systemPrompt
   })
   const service = new CompactionService({
     context,
@@ -285,7 +290,7 @@ describe('CompactionService idle ownership', () => {
     const client: Pick<ModelClient, 'chat'> = {
       async *chat() {
         callCount++
-        if (callCount === 1) throw new Error('summary failed')
+        if (callCount <= 2) throw new Error('summary failed')
         yield { type: 'text_delta', delta: 'idle summary' }
         yield { type: 'message_end', finishReason: 'stop' }
       }
@@ -301,7 +306,7 @@ describe('CompactionService idle ownership', () => {
     await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
     await compacted
 
-    expect(callCount).toBe(2)
+    expect(callCount).toBe(4)
     expect(String(context.messages[0]?.content)).toContain('system prompt')
     expect(context.compactionLevel).toBe(1)
   })
@@ -323,8 +328,8 @@ describe('CompactionService idle ownership', () => {
     const client: Pick<ModelClient, 'chat'> = {
       async *chat() {
         callCount++
-        if (callCount === 1) {
-          resolveFirstStarted()
+        if (callCount <= 2) {
+          if (callCount === 1) resolveFirstStarted()
           await firstRelease
           yield { type: 'text_delta', delta: 'stale summary' }
           yield { type: 'message_end', finishReason: 'stop' }
@@ -345,14 +350,14 @@ describe('CompactionService idle ownership', () => {
     service.cancelIdle()
     service.scheduleIdle()
     await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
-    expect(callCount).toBe(1)
+    expect(callCount).toBe(2)
 
     releaseFirst()
     await flush()
     await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
     await compacted
 
-    expect(callCount).toBe(2)
+    expect(callCount).toBe(4)
     expect(context.messages.some(message =>
       String(message.content).includes('fresh summary')
     )).toBe(true)
@@ -593,8 +598,8 @@ describe('AgentLoop 空闲压缩集成', () => {
           yield { type: 'message_end', finishReason: 'stop' }
           return
         }
-        if (callIndex === 1) {
-          this.resolveIdleStarted()
+        if (callIndex === 1 || callIndex === 2) {
+          if (callIndex === 1) this.resolveIdleStarted()
           await this.idleRelease
           yield { type: 'text_delta', delta: 'late idle summary' }
           yield { type: 'message_end', finishReason: 'stop' }

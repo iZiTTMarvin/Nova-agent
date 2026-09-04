@@ -9,6 +9,9 @@
  * - 压缩 / 模型切换等预期变化经 bumpEpoch 后不误报
  */
 import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import { computeWireSnapshot, type WireSnapshot } from '../../../../src/runtime/model/requestFingerprint'
@@ -22,6 +25,10 @@ import { renderBaseRules } from '../../../../src/runtime/agent/promptRenderer'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { MEMORY_PREFETCH_BLOCK_TITLE } from '../../../../src/runtime/memory'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
+import type { ToolContext, ToolResult } from '../../../../src/runtime/tools/types'
+import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
+import { isArchivedPlaceholder } from '../../../../src/runtime/agent/core/projectRequestMessages'
 
 const STABLE_TOOLS: ToolDefinition[] = [
   {
@@ -291,5 +298,94 @@ describe('前缀稳定性黑盒', () => {
     // 与直接对 body 计算一致
     const directSnapshot = computeWireSnapshot(interceptor.bodies[0], 'generic')
     expect(directSnapshot.exactBodyHash).toBe(yieldedSnapshot!.exactBodyHash)
+  })
+
+  it('多轮会话含超阈值历史工具结果时，round 0 与 round 1 可复用前缀一致', async () => {
+    const huge = 'x'.repeat(18 * 1024)
+    const tmp = mkdtempSync(join(tmpdir(), 'nova-prefix-d4-'))
+    const client = new MockModelClient()
+    const toolCall = (id: string, path: string) => ({
+      type: 'tool_call' as const,
+      toolCall: { id, name: 'ls', arguments: JSON.stringify({ path }) }
+    })
+    const toolTurn = (id: string, path: string) => ({
+      events: [
+        { type: 'message_start' as const },
+        toolCall(id, path),
+        { type: 'message_end' as const, finishReason: 'tool_calls' }
+      ]
+    })
+    const textTurn = (text: string) => ({
+      events: [
+        { type: 'message_start' as const },
+        { type: 'text_delta' as const, delta: text },
+        { type: 'message_end' as const, finishReason: 'stop' }
+      ]
+    })
+    client.addResponse(toolTurn('call_huge', '.'))
+    client.addResponse(textTurn('目录已列出'))
+    client.addResponse(toolTurn('call_follow', 'src'))
+    client.addResponse(textTurn('继续'))
+
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'ls',
+      description: '列出目录',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' } }
+      },
+      async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
+        return {
+          success: true,
+          output: args.path === '.' ? huge : 'src/'
+        }
+      }
+    })
+    registry.register({
+      name: 'archive_read',
+      description: '回读归档',
+      parameters: { type: 'object', properties: {} },
+      async execute(): Promise<ToolResult> {
+        return { success: true, output: '' }
+      }
+    })
+
+    const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access'
+    })
+    loop.setToolRegistry(registry)
+    loop.setSessionId('sess_d4')
+    loop.setArtifactStore(new ArtifactStore(tmp))
+
+    try {
+      await loop.sendMessage('列出根目录', agentRoute())
+      await loop.sendMessage('再看 src', agentRoute())
+
+      const calls = client.getCalls()
+      expect(calls).toHaveLength(4)
+
+      const toolContent = (callIndex: number, toolCallId: string): string => {
+        const msg = calls[callIndex].messages.find(
+          m => m.role === 'tool' && m.toolCallId === toolCallId
+        )
+        expect(msg, `call ${callIndex} 应含 ${toolCallId}`).toBeDefined()
+        return typeof msg!.content === 'string' ? msg!.content : ''
+      }
+
+      const previousTurnLast = calls[1].messages
+      const thisTurnRound0 = calls[2].messages
+      const thisTurnRound1 = calls[3].messages
+
+      expect(isArchivedPlaceholder(toolContent(1, 'call_huge'))).toBe(true)
+      expect(toolContent(2, 'call_huge')).toBe(toolContent(1, 'call_huge'))
+      expect(toolContent(3, 'call_huge')).toBe(toolContent(1, 'call_huge'))
+
+      expect(thisTurnRound0.slice(0, previousTurnLast.length)).toEqual(previousTurnLast)
+      expect(thisTurnRound1.slice(0, thisTurnRound0.length)).toEqual(thisTurnRound0)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 })

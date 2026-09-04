@@ -12,8 +12,6 @@ import { planToolResultSupersession } from './toolResultSupersession'
 
 /** 当轮归档阈值：超过此估算 token 的工具结果替换为占位符 */
 export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
-/** 起始归档轮次（第 0 轮不归档，保留首轮上下文完整） */
-export const ACTIVE_PRUNE_MIN_TOOL_ROUND = 1
 /** 字符/token 估算系数，与 estimateContextSize 的 JSON 字符 / 4 口径一致 */
 export const CHARS_PER_TOKEN = 4
 /** 被覆盖结果的最低归档阈值：低于此体积不归档，避免占位符比原文还大 */
@@ -112,8 +110,6 @@ export interface ActiveToolResultPrunePolicy {
   enabled: boolean
   /** 归档阈值（估算 token） */
   maxEstimatedTokens?: number
-  /** 起始归档轮次（第 0 轮不改写） */
-  minToolRound?: number
 }
 
 /** 归档候选：一份待写入 artifact 的工具结果原文 */
@@ -145,7 +141,6 @@ export interface SummaryProjection {
 
 export interface RequestProjectionInput {
   messages: ChatMessage[]
-  toolRound: number
   policy: ActiveToolResultPrunePolicy
   /** 由本次 Agent turn 持有，跨模型轮次复用，turn 结束后随循环释放。 */
   archiveCache: RequestProjectionArchiveCache
@@ -230,12 +225,6 @@ export async function projectRequestMessages(
   }
 
   const maxTokens = input.policy.maxEstimatedTokens ?? ACTIVE_TOOL_RESULT_MAX_TOKENS
-  const minRound = input.policy.minToolRound ?? ACTIVE_PRUNE_MIN_TOOL_ROUND
-
-  // 第 0 轮不归档，保留首轮上下文完整
-  if (input.toolRound < minRound) {
-    return { messages: projectImagesWithinBudget(input.messages), diagnostics: EMPTY_DIAGNOSTICS }
-  }
 
   const maxChars = maxTokens * CHARS_PER_TOKEN
   const supersededMinChars = SUPERSEDED_MIN_ESTIMATED_TOKENS * CHARS_PER_TOKEN

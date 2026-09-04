@@ -29,6 +29,7 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
     registration: 'conditional'
   },
   { name: 'archive_read', capability: 'archive', exposure: 'always', codeMode: 'direct-only' },
+  { name: 'history_read', capability: 'archive', exposure: 'always', codeMode: 'direct-only' },
   {
     name: 'run_code',
     capability: 'filesystem-read',

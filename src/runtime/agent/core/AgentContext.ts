@@ -5,6 +5,7 @@ import type { ToolDialect } from '../../model/dialect'
 import type { Mode, PermissionMode } from '../../../shared/session/types'
 import type { PermissionCapabilityCeiling } from '../../../shared/permissions/types'
 import type { SessionStore } from '../../sessions/SessionStore'
+import type { CompactionLedger } from '../../sessions/types'
 import type { ArtifactStore } from '../../artifacts/ArtifactStore'
 import type { ReadState } from '../../tools/editTool'
 import type { ToolAvailability } from '../../tools/availability'
@@ -62,6 +63,8 @@ export interface AgentContext {
   compactionLevel: number
   userTurnsSinceCompaction: number
   lastEstimatedTokens: number
+  /** 当前会话账本；null 表示尚未压缩 */
+  compactionState: CompactionLedger | null
   /** 技能正文 token 预算 */
   skillsTokenBudget: number
 }
@@ -97,6 +100,7 @@ export function createAgentContext(initial: {
     compactionLevel: 0,
     userTurnsSinceCompaction: 0,
     lastEstimatedTokens: 0,
+    compactionState: null,
     skillsTokenBudget: 0,
     ...initial
   }
@@ -104,7 +108,7 @@ export function createAgentContext(initial: {
 
 /**
  * 模型可见工具投影唯一出口：registry/provider → mode + capability → group → presentation。
- * 装配层拼 toolSummary 时必须调用本函数，禁止平行过滤。
+ * 装配层拼 toolSummary 时必须先走本函数，再经 applyLedgerToolVisibility，禁止平行过滤。
  */
 export function projectEffectiveToolDefinitions(
   mode: Mode,
@@ -120,14 +124,25 @@ export function projectEffectiveToolDefinitions(
   return applyToolPresentation(presentation, availabilityVisible)
 }
 
+/** 账本为空时从工具面拿掉 history_read；装配 toolSummary 必须走同一函数。 */
+export function applyLedgerToolVisibility(
+  definitions: ToolDefinition[],
+  entryCount: number
+): ToolDefinition[] {
+  return entryCount === 0
+    ? definitions.filter(definition => definition.name !== 'history_read')
+    : definitions
+}
+
 export function getEffectiveToolDefinitions(context: AgentContext): ToolDefinition[] {
   const definitions =
     context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
-  return projectEffectiveToolDefinitions(
+  const projected = projectEffectiveToolDefinitions(
     context.mode,
     definitions,
     context.toolAvailability,
     context.toolPresentation,
     context.permissionCeiling
   )
+  return applyLedgerToolVisibility(projected, context.compactionState?.entries.length ?? 0)
 }

@@ -5,10 +5,11 @@ import * as os from 'os'
 import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
+import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import {
-  buildSnapshotFromCompaction,
   persistCompactionSnapshot,
+  restoreFromLedger,
   restoreOrInjectHistory
 } from '../../../../src/runtime/sessions/contextSnapshot'
 import { CONTEXT_SNAPSHOT_VERSION } from '../../../../src/runtime/sessions/types'
@@ -26,27 +27,24 @@ afterEach(() => {
 })
 
 describe('contextSnapshot 纯函数', () => {
-  it('buildSnapshotFromCompaction 字段与 agentHandler 契约一致', () => {
+  it('persistCompactionSnapshot 写入账本且不含消息正文', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/project')
     store.appendMessage(session.id, { id: 'u1', role: 'user', content: 'q', timestamp: 1 })
     store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: 'a', timestamp: 2 })
 
-    const loaded = store.load(session.id)!
-    const snapshot = buildSnapshotFromCompaction(
-      loaded,
-      [
-        { role: 'system', content: 'sys' },
-        { role: 'user', content: 'recent' }
-      ],
-      { summary: '摘要', compactionLevel: 2, trigger: 'idle' }
-    )
+    const ledger = makeCompactionLedger({
+      summary: '摘要',
+      tailFrom: { messageId: 'a1', step: 0 }
+    })
+    expect(persistCompactionSnapshot(store, session.id, ledger)).toBe(true)
 
-    expect(snapshot.version).toBe(CONTEXT_SNAPSHOT_VERSION)
-    expect(snapshot.summary).toBe('摘要')
-    expect(snapshot.recentMessages).toEqual([{ role: 'user', content: 'recent' }])
-    expect(snapshot.lastMessageId).toBe('a1')
-    expect(snapshot.compactionLevel).toBe(2)
+    const loaded = store.loadContextSnapshot(session.id)!
+    expect(loaded.version).toBe(CONTEXT_SNAPSHOT_VERSION)
+    expect(loaded.state?.text).toBe('摘要')
+    expect(loaded.tailFrom).toEqual({ messageId: 'a1', step: 0 })
+    expect(loaded).not.toHaveProperty('recentMessages')
+    expect(JSON.stringify(loaded)).not.toContain('"role":"user"')
   })
 
   it('persistCompactionSnapshot 找不到会话时返回 false', () => {
@@ -54,13 +52,12 @@ describe('contextSnapshot 纯函数', () => {
     const ok = persistCompactionSnapshot(
       store,
       'sess_missing',
-      [{ role: 'user', content: 'x' }],
-      { summary: 's', compactionLevel: 0, trigger: 'threshold' }
+      makeCompactionLedger({ summary: 's' })
     )
     expect(ok).toBe(false)
   })
 
-  it('restoreOrInjectHistory 无快照时 inject 全量历史', () => {
+  it('restoreOrInjectHistory 无账本时 inject 全量历史', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/project')
     store.appendMessage(session.id, { id: 'u1', role: 'user', content: '问题', timestamp: 1 })
@@ -75,5 +72,23 @@ describe('contextSnapshot 纯函数', () => {
       .filter(m => m.role === 'user')
       .map(m => extractTextFromContent(m.content))
     expect(users).toContain('问题')
+  })
+
+  it('同一档案+账本连续 restore 两次结果相同', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/project')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: '旧问题', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: '旧回复', timestamp: 2 })
+    store.appendMessage(session.id, { id: 'u2', role: 'user', content: '最近问题', timestamp: 3 })
+
+    const loaded = store.load(session.id)!
+    const ledger = makeCompactionLedger({
+      summary: '已折叠旧轮',
+      tailFrom: { messageId: 'u2', step: 0 }
+    })
+    const first = restoreFromLedger(loaded, ledger, '助手')
+    const second = restoreFromLedger(loaded, ledger, '助手')
+    expect(first.kind).toBe('restored')
+    expect(JSON.stringify(first.messages)).toBe(JSON.stringify(second.messages))
   })
 })

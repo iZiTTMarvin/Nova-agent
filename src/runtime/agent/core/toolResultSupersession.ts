@@ -27,6 +27,7 @@ const EXACT_DUPLICATE_TOOLS = new Set([
   'grep',
   'find',
   'archive_read',
+  'history_read',
   'memory_search',
   'web_search'
 ])

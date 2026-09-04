@@ -28,6 +28,7 @@ import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
 import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
+import { historyReadTool } from '../../../runtime/tools/historyRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import { createRunCodeTool } from '../../../runtime/tools/runCode'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
@@ -105,6 +106,7 @@ export function registerBuiltinTools(
   toolRegistry.register(bashTool)
   toolRegistry.register(shellSessionTool)
   toolRegistry.register(archiveReadTool)
+  toolRegistry.register(historyReadTool)
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)

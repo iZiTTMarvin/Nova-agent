@@ -223,4 +223,32 @@ describe('序列化层：session context 与 internal 消息', () => {
       ])
     })
   })
+
+  describe('origin 运行时坐标', () => {
+    it('API 请求体不得出现 origin 键', async () => {
+      const client = new OpenAICompatibleModelClient(config)
+      installFetchCapture()
+
+      await drain(client, [
+        { role: 'user', content: 'q1', origin: { messageId: 'u1', step: 0 } },
+        {
+          role: 'assistant',
+          content: 'a1',
+          origin: { messageId: 'a1', step: 0 }
+        },
+        {
+          role: 'tool',
+          content: 'result',
+          toolCallId: 'tc1',
+          origin: { messageId: 'a1', step: 0 }
+        }
+      ])
+
+      expect(capturedBody).not.toBeNull()
+      for (const msg of capturedBody!.messages) {
+        expect(msg).not.toHaveProperty('origin')
+        expect(JSON.stringify(msg)).not.toContain('"origin"')
+      }
+    })
+  })
 })

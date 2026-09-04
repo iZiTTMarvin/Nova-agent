@@ -12,6 +12,7 @@ import type { CompactionMeta } from '../../../../src/runtime/agent/types'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
+import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 
 /** 恒等投影：单测里摘要输入与权威消息逐条一致，便于断言服务侧行为 */
 
@@ -83,7 +84,7 @@ describe('CompactionService', () => {
     original[1].reasoningContent = 'internal reasoning'
     const context = createContext(original)
     context.userTurnsSinceCompaction = 7
-    const client = new MockModelClient().addResponse({
+    const client = new MockModelClient().addCompactionPair({
       events: [
         { type: 'text_delta', delta: '  compacted summary  ' },
         { type: 'message_end', finishReason: 'stop' }
@@ -100,33 +101,40 @@ describe('CompactionService', () => {
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
     expect(extractTextFromContent(context.messages[0].content)).toContain('compacted summary')
-    expect(context.messages.slice(1)).toEqual(original.slice(-20))
+    const tail = context.messages.slice(1)
+    expect(tail.length).toBeGreaterThan(0)
+    expect(original.slice(-tail.length)).toEqual(tail)
     expect(context.compactionLevel).toBe(1)
     expect(context.userTurnsSinceCompaction).toBe(0)
     expect(context.lastEstimatedTokens).toBeGreaterThan(0)
     expect(cacheDiagnostics.getEpochReason()).toBe('compaction')
-    expect(onCompaction).toHaveBeenCalledWith(context.messages, {
+    expect(onCompaction).toHaveBeenCalledTimes(1)
+    const meta = onCompaction.mock.calls[0][1]
+    expect(meta).toMatchObject({
       summary: 'compacted summary',
       compactionLevel: 1,
       trigger: 'threshold'
     })
+    expect(meta.ledger.entries).toHaveLength(1)
+    expect(meta.ledger.state?.text).toBe('compacted summary')
+    expect(context.compactionState).toBe(meta.ledger)
 
-    const [summaryCall] = client.getCalls()
-    expect(summaryCall.options).toMatchObject({
-      includeInternalMessages: true,
-      purpose: 'compaction-summary'
-    })
-    // 摘要请求携带会话缓存路由 key：会话亲和档案上与主对话同槽位路由，
-    // 前缀对齐才能命中；非亲和档案由客户端白名单忽略
-    expect(summaryCall.options?.promptCacheKey).toBe('routing-key-1')
-    // reasoning 不因压缩剥离：由模型客户端按档案回放策略序列化，与主请求一致
-    expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(true)
+    const summaryCalls = client.getCalls()
+    expect(summaryCalls).toHaveLength(2)
+    for (const summaryCall of summaryCalls) {
+      expect(summaryCall.options).toMatchObject({
+        includeInternalMessages: true,
+        purpose: 'compaction-summary'
+      })
+      expect(summaryCall.options?.promptCacheKey).toBe('routing-key-1')
+      expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(true)
+    }
   })
 
   it('standard overflow 成功时保留最近消息与 pulled-back 消息的原始顺序', async () => {
     const original = createMessages(32)
     const context = createContext(original)
-    const client = new MockModelClient().addResponse({
+    const client = new MockModelClient().addCompactionPair({
       events: [
         { type: 'text_delta', delta: 'overflow summary' },
         { type: 'message_end', finishReason: 'stop' }
@@ -136,14 +144,18 @@ describe('CompactionService', () => {
 
     await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(true)
 
-    expect(context.messages.slice(1)).toEqual(original.slice(-21))
+    const tail = context.messages.slice(1)
+    expect(tail.length).toBeGreaterThan(0)
+    expect(original.slice(-tail.length)).toEqual(tail)
     expect(extractTextFromContent(context.messages[0].content)).toContain('overflow summary')
     expect(service.isCompressingForOverflow()).toBe(false)
 
     // overflow 与 threshold 共用同一摘要调用点：无路由 key 的会话同样不携带
-    const [summaryCall] = client.getCalls()
-    expect(summaryCall.options?.promptCacheKey).toBeUndefined()
-    expect(summaryCall.options?.purpose).toBe('compaction-summary')
+    expect(client.getCalls()).toHaveLength(2)
+    for (const summaryCall of client.getCalls()) {
+      expect(summaryCall.options?.promptCacheKey).toBeUndefined()
+      expect(summaryCall.options?.purpose).toBe('compaction-summary')
+    }
   })
 
   it('overflow 组合层不会拆散 recent 与 pulled-back 边界上的工具调用组', async () => {
@@ -161,7 +173,7 @@ describe('CompactionService', () => {
       { role: 'system', content: 'system prompt' },
       ...Array.from({ length: 9 }, (_, index): ChatMessage => ({
         role: index % 2 === 0 ? 'user' : 'assistant',
-        content: `prefix-${index}`
+        content: `prefix-${index}-` + 'x'.repeat(800)
       })),
       toolAssistant,
       toolResult,
@@ -171,13 +183,13 @@ describe('CompactionService', () => {
       }))
     ]
     const context = createContext(original)
-    const client = new MockModelClient().addResponse({
+    const client = new MockModelClient().addCompactionPair({
       events: [
         { type: 'text_delta', delta: 'tool-safe summary' },
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const { service } = createService({ context, client })
+    const { service } = createService({ context, client, contextWindow: 2_000 })
 
     await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(true)
 
@@ -196,9 +208,10 @@ describe('CompactionService', () => {
     const original = createMessages(70)
     const originalSnapshot = structuredClone(original)
     const context = createContext(original)
+    const overflowFail = { events: [{ type: 'context_overflow' as const, rawError: 'still too large' }] }
     const client = new MockModelClient()
-      .addResponse({ events: [{ type: 'context_overflow', rawError: 'still too large' }] })
-      .addResponse({
+      .addCompactionPair(overflowFail)
+      .addCompactionPair({
         events: [
           { type: 'text_delta', delta: 'aggressive summary' },
           { type: 'message_end', finishReason: 'stop' }
@@ -222,8 +235,8 @@ describe('CompactionService', () => {
     context.userTurnsSinceCompaction = 6
     context.lastEstimatedTokens = 1234
     const client = new MockModelClient()
-      .addResponse({ events: [{ type: 'error', error: 'standard failed' }] })
-      .addResponse({ events: [{ type: 'context_overflow', rawError: 'aggressive failed' }] })
+      .addCompactionPair({ events: [{ type: 'error', error: 'standard failed' }] })
+      .addCompactionPair({ events: [{ type: 'context_overflow', rawError: 'aggressive failed' }] })
     const onCompaction = vi.fn()
     const { service, cacheDiagnostics } = createService({ context, client, onCompaction })
 
@@ -279,7 +292,7 @@ describe('CompactionService', () => {
         return messages
       }
     }
-    const client = new MockModelClient().addResponse({
+    const client = new MockModelClient().addCompactionPair({
       events: [
         { type: 'text_delta', delta: 'compacted summary' },
         { type: 'message_end', finishReason: 'stop' }
@@ -299,6 +312,91 @@ describe('CompactionService', () => {
     expect(onCompaction).not.toHaveBeenCalled()
   })
 
+  it('一轮内两次压缩 system 只有一份 state，没有第二段摘要标记', async () => {
+    const original = createMessages()
+    const context = createContext(original)
+    const client = new MockModelClient()
+      .addCompactionPair({
+        events: [
+          { type: 'text_delta', delta: '第一版摘要' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+      .addCompactionPair({
+        events: [
+          { type: 'text_delta', delta: '第二版摘要' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+    const { service } = createService({ context, client, contextWindow: 80 })
+
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    const afterFirst = extractTextFromContent(context.messages[0].content)
+    expect(afterFirst).toContain('第一版摘要')
+    expect(afterFirst).not.toContain('[对话历史摘要]')
+
+    for (let i = 0; i < 12; i++) {
+      context.messages.push({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `extra-${i}-${'z'.repeat(80)}`
+      })
+    }
+    context.userTurnsSinceCompaction = 7
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    const systemText = extractTextFromContent(context.messages[0].content)
+    expect(systemText).toContain('第二版摘要')
+    expect(systemText).not.toContain('第一版摘要')
+    expect(systemText.split('第二版摘要')).toHaveLength(2)
+    expect(systemText).not.toContain('[对话历史摘要]')
+    expect(context.compactionState?.state?.text).toBe('第二版摘要')
+    expect(context.compactionState?.entries.length).toBe(2)
+  })
+
+  it('stub 失败且 state 成功时降级为指针 stub 并提交账本', async () => {
+    const original = createMessages()
+    const context = createContext(original)
+    const client = new MockModelClient()
+      .addResponse({ events: [{ type: 'error', error: 'stub failed' }] })
+      .addResponse({
+        events: [
+          { type: 'text_delta', delta: 'state still ok' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+    const onCompaction = vi.fn()
+    const { service } = createService({ context, client, onCompaction })
+
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+
+    expect(context.compactionState?.state?.text).toBe('state still ok')
+    expect(context.compactionState?.entries).toHaveLength(1)
+    expect(context.compactionState?.entries[0]?.stub).toContain('history_read')
+    expect(context.compactionState?.entries[0]?.stub).not.toContain('stub failed')
+    expect(onCompaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('state 失败时整轮放弃，不写账本', async () => {
+    const original = createMessages()
+    const context = createContext(original)
+    const client = new MockModelClient()
+      .addResponse({
+        events: [
+          { type: 'text_delta', delta: 'stub ok' },
+          { type: 'message_end', finishReason: 'stop' }
+        ]
+      })
+      .addResponse({ events: [{ type: 'error', error: 'state failed' }] })
+    const onCompaction = vi.fn()
+    const { service } = createService({ context, client, onCompaction })
+
+    await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(false)
+
+    expect(context.messages).toBe(original)
+    expect(context.compactionState).toBeNull()
+    expect(context.compactionLevel).toBe(0)
+    expect(onCompaction).not.toHaveBeenCalled()
+  })
+
   it('restore 与 user turn 记账也由 service 更新同一 AgentContext', () => {
     const context = createContext([
       { role: 'system', content: 'system prompt' },
@@ -309,10 +407,13 @@ describe('CompactionService', () => {
       { role: 'user', content: 'recent user' },
       { role: 'assistant', content: 'recent assistant' }
     ]
+    const ledger = makeCompactionLedger({ summary: 'restored summary', entryCount: 3 })
 
-    service.restoreCompactedContext('restored summary', recent, 3)
+    service.restoreCompactedContext(ledger, recent)
     expect(context.messages.slice(1)).toEqual(recent)
     expect(context.compactionLevel).toBe(3)
+    expect(context.compactionState).toBe(ledger)
+    expect(extractTextFromContent(context.messages[0].content)).toContain('restored summary')
     expect(context.userTurnsSinceCompaction).toBe(0)
     expect(cacheDiagnostics.getEpochReason()).toBe('compaction')
 
@@ -321,5 +422,95 @@ describe('CompactionService', () => {
     service.recordUserTurn()
     expect(context.userTurnsSinceCompaction).toBe(1)
     expect(context.lastEstimatedTokens).toBeGreaterThan(beforeTokens)
+  })
+
+  it('当前任务 user 被折叠时写入 taskVerbatim，仍在尾部则为 null', async () => {
+    const folded = [
+      { role: 'system' as const, content: 'system prompt' },
+      ...Array.from({ length: 20 }, (_, index): ChatMessage => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `fat-${index}-${'x'.repeat(80)}`,
+        origin: { messageId: `m${index}`, step: 0 }
+      })),
+      {
+        role: 'user' as const,
+        content: 'FOLDED_TASK',
+        origin: { messageId: 'u-fold', step: 0 }
+      },
+      { role: 'assistant' as const, content: 'ack-' + 'y'.repeat(80) }
+    ]
+    const foldedCtx = createContext(folded)
+    const foldedClient = new MockModelClient().addCompactionPair({
+      events: [{ type: 'text_delta', delta: 's' }, { type: 'message_end', finishReason: 'stop' }]
+    })
+    const { service: foldedService } = createService({ context: foldedCtx, client: foldedClient })
+    await expect(foldedService.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    expect(foldedCtx.compactionState?.state?.taskVerbatim?.text).toBe('FOLDED_TASK')
+
+    const tailed = [
+      { role: 'system' as const, content: 'system prompt' },
+      ...Array.from({ length: 20 }, (_, index): ChatMessage => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `fat-${index}-${'x'.repeat(80)}`,
+        origin: { messageId: `n${index}`, step: 0 }
+      })),
+      {
+        role: 'user' as const,
+        content: 'KEEP_IN_TAIL',
+        origin: { messageId: 'u-tail', step: 0 }
+      }
+    ]
+    const tailedCtx = createContext(tailed)
+    const tailedClient = new MockModelClient().addCompactionPair({
+      events: [{ type: 'text_delta', delta: 's' }, { type: 'message_end', finishReason: 'stop' }]
+    })
+    const { service: tailedService } = createService({ context: tailedCtx, client: tailedClient })
+    await expect(tailedService.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    expect(tailedCtx.compactionState?.state?.taskVerbatim).toBeNull()
+    expect(extractTextFromContent(tailedCtx.messages[tailedCtx.messages.length - 1]!.content)).toBe('KEEP_IN_TAIL')
+  })
+
+  it('提交后交接包只读：追加消息与 touchedFiles 回调变化都不改已提交渲染', async () => {
+    const original: ChatMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      ...Array.from({ length: 30 }, (_, index): ChatMessage => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `message-${index}-${'x'.repeat(800)}`,
+        origin: { messageId: `m${index}`, step: 0 }
+      }))
+    ]
+    original[1] = { ...original[1], origin: { messageId: 'u-task', step: 0 } }
+    const context = createContext(original)
+    const client = new MockModelClient().addCompactionPair({
+      events: [
+        { type: 'text_delta', delta: 'frozen-state' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    let files = ['src/a.ts']
+    const serviceWithPorts = new CompactionService({
+      context,
+      modelClient: client,
+      contextBudgetManager: defaultContextBudgetManager,
+      cacheDiagnostics: new CacheDiagnostics(),
+      contextWindow: 4_000,
+      collectTouchedFiles: () => files,
+      getRealityAnchors: () => ({ workspacePath: '/ws', activePlanPath: '/ws/plan.md' }),
+      getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' }),
+      idleProjection: identitySummaryProjection
+    })
+
+    await expect(serviceWithPorts.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
+    const first = extractTextFromContent(context.messages[0].content)
+    expect(context.compactionState?.entries[0]?.touchedFiles).toEqual(['src/a.ts'])
+    expect(first).toContain('src/a.ts')
+    expect(first).toContain('/ws')
+    files = ['src/new.ts']
+    context.messages.push({ role: 'user', content: 'later' })
+    const second = extractTextFromContent(context.messages[0].content)
+    expect(second).toBe(first)
+    expect(context.compactionState?.entries[0]?.touchedFiles).toEqual(['src/a.ts'])
+    expect(second).not.toContain('src/new.ts')
+    expect(second).not.toContain('later')
   })
 })
