@@ -133,7 +133,7 @@ export function applyLedgerToolVisibility(
     : definitions
 }
 
-export function getEffectiveToolDefinitions(context: AgentContext): ToolDefinition[] {
+export function getEffectiveToolDefinitions(context: AgentContext, entryCount = context.compactionState?.entries.length ?? 0): ToolDefinition[] {
   const definitions =
     context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
   const projected = projectEffectiveToolDefinitions(
@@ -143,5 +143,5 @@ export function getEffectiveToolDefinitions(context: AgentContext): ToolDefiniti
     context.toolPresentation,
     context.permissionCeiling
   )
-  return applyLedgerToolVisibility(projected, context.compactionState?.entries.length ?? 0)
+  return applyLedgerToolVisibility(projected, entryCount)
 }

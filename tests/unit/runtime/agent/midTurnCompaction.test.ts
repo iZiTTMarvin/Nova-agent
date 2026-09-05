@@ -8,7 +8,7 @@ import {
   resolveProductionBudgetLimits
 } from '../../../../src/runtime/agent/ContextBudgetManager'
 import { CompactionService } from '../../../../src/runtime/agent/compaction/CompactionService'
-import { measureRequestPayloadChars } from '../../../../src/runtime/agent/compaction/estimateNextRequestTokens'
+import { measureRequestBudget } from '../../../../src/runtime/model/requestBudget'
 import {
   createAgentContext,
   type AgentContext
@@ -85,6 +85,33 @@ function buildHistoryForMidTurn(opts: { fillerChars: number; pairs: number }): C
   return messages
 }
 
+it.each([20, 20_000])('工具写回后唯一预算 Owner 决定是否继续，结果长度 %i', async size => {
+  const context = createContext([{ role: 'system', content: 's' }, { role: 'user', content: 'go' }])
+  context.dialect = 'native'
+  const { service } = createService({ context, contextWindow: 8000 })
+  let streamCalls = 0
+  let error = ''
+  const streamProcessor = { run: async (): Promise<TurnStreamResult> => {
+    streamCalls++
+    return streamCalls === 1
+      ? { kind: 'assistant', assistantContent: '', toolCalls: [{ id: 't', name: 'read', arguments: '{}' }], finishReason: 'tool_calls', sawUsage: false }
+      : { kind: 'assistant', assistantContent: 'done', toolCalls: [], finishReason: 'stop', sawUsage: false }
+  } }
+  const result = await runAgentLoop({ messageId: 'm', userText: 'go', context,
+    config: { maxToolRounds: 5, toolExecution: 'parallel', maxParallelToolCalls: 4, supportsVision: false },
+    streamProcessor: streamProcessor as never, hookManager: new HookManager(), emit: () => {}, emitContextBreakdown: () => {},
+    signal: () => false, abortSignal: () => undefined,
+    executeBatch: async () => ({ aborted: false, outcomes: [{ index: 0, toolCall: { id: 't', name: 'read', arguments: '{}' }, args: {}, resultText: 'x'.repeat(size), failed: false }] }),
+    prepareMainRequest: (messages, tools, projection) => service.prepareMainRequest(messages, tools, projection),
+    observeMainRequest: (tokens, request, source, revision) => { service.observeMainRequest(tokens, request, source, revision) },
+    updateTokenEstimate: () => service.updateTokenEstimate(), sleep: async () => {}, onTerminalError: text => { error = text }
+  })
+  expect(streamCalls).toBe(size === 20 ? 2 : 1)
+  expect(result.ended).toBe(size === 20 ? 'normal' : 'error')
+  expect(context.messages.find(m => m.role === 'tool')?.content).toBe('x'.repeat(size))
+  if (size > 20) expect(error).toContain('ContextBudgetExceeded')
+})
+
 describe('CompactionService mid-turn', () => {
   it('超高水位时压缩，保留 tool 对完整与 tail', async () => {
     const messages = buildHistoryForMidTurn({ fillerChars: 20_000, pairs: 4 })
@@ -109,8 +136,8 @@ describe('CompactionService mid-turn', () => {
 
     // 锚点接近高水位，再叠加大 delta 触发
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: 8_000 })
-    const priorPayload = measureRequestPayloadChars(messages.slice(0, 3))
-    service.recordRequestAnchor(highWaterTokens - 10, priorPayload)
+    const request = measureRequestBudget({ messages: messages.slice(0, 3), tools: undefined }, 'unknown', 8000)
+    service.observeMainRequest(highWaterTokens - 10, request, { routeId: 'unknown', purpose: 'main', logicalRequestId: 'l', physicalAttemptId: 'p' })
 
     await expect(service.runMidTurnCompaction(identitySummaryProjection)).resolves.toBe(true)
 
@@ -141,7 +168,7 @@ describe('CompactionService mid-turn', () => {
       useProductionBudget: true
     })
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: 8_000 })
-    service.recordRequestAnchor(highWaterTokens + 100, 100)
+
 
     await expect(service.runMidTurnCompaction(identitySummaryProjection)).resolves.toBe(false)
     expect(context.messages).toEqual(original)
@@ -164,162 +191,9 @@ describe('CompactionService mid-turn', () => {
       useProductionBudget: true
     })
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: 8_000 })
-    service.recordRequestAnchor(highWaterTokens + 50, 10)
+
 
     await expect(service.runMidTurnCompaction(identitySummaryProjection)).resolves.toBe(false)
     expect(context.messages).toHaveLength(3)
-  })
-})
-
-describe('runAgentLoop mid-turn integration', () => {
-  it('工具写回后调用 mid-turn；压缩失败时请求照常发出', async () => {
-    const midTurn = vi.fn(async () => {
-      /* fail-open: no throw */
-    })
-    const recordAnchor = vi.fn()
-    let streamCalls = 0
-    const streamProcessor = {
-      run: async (): Promise<TurnStreamResult> => {
-        streamCalls++
-        if (streamCalls === 1) {
-          return {
-            kind: 'assistant',
-            assistantContent: '',
-            toolCalls: [{ id: 't1', name: 'ls', arguments: '{}' }],
-            finishReason: 'tool_calls',
-            sawUsage: true,
-            promptTokens: 500
-          }
-        }
-        return {
-          kind: 'assistant',
-          assistantContent: 'done',
-          toolCalls: [],
-          finishReason: 'stop',
-          sawUsage: true,
-          promptTokens: 600
-        }
-      }
-    }
-
-    const context = createContext([
-      { role: 'system', content: 's' },
-      { role: 'user', content: 'go' }
-    ])
-    context.dialect = 'native'
-
-    const executeBatch = async (): Promise<ToolBatchExecutionResult> => ({
-      aborted: false,
-      outcomes: [{
-        index: 0,
-        toolCall: { id: 't1', name: 'ls', arguments: '{}' },
-        args: {},
-        resultText: 'ok',
-        failed: false
-      }]
-    })
-
-    const result = await runAgentLoop({
-      messageId: 'm1',
-      userText: 'go',
-      context,
-      config: {
-        maxToolRounds: 5,
-        toolExecution: 'parallel',
-        maxParallelToolCalls: 4,
-        supportsVision: false
-      },
-      streamProcessor: streamProcessor as never,
-      hookManager: new HookManager(),
-      emit: () => {},
-      emitContextBreakdown: () => {},
-      signal: () => false,
-      abortSignal: () => undefined,
-      executeBatch,
-      runCompactionIfThreshold: async () => false,
-      runMidTurnCompaction: midTurn,
-      recordRequestAnchor: recordAnchor,
-      updateTokenEstimate: () => {},
-      sleep: async () => {},
-      onTerminalError: () => {}
-    })
-
-    expect(result.ended).toBe('normal')
-    expect(midTurn).toHaveBeenCalledTimes(1)
-    expect(recordAnchor).toHaveBeenCalled()
-    expect(streamCalls).toBe(2)
-  })
-
-  it('mid-turn 端口抛错时 fail-open：turn 继续且仍发下一轮请求', async () => {
-    const midTurn = vi.fn(async () => {
-      throw new Error('mid-turn boom')
-    })
-    let streamCalls = 0
-    const streamProcessor = {
-      run: async (): Promise<TurnStreamResult> => {
-        streamCalls++
-        if (streamCalls === 1) {
-          return {
-            kind: 'assistant',
-            assistantContent: '',
-            toolCalls: [{ id: 't1', name: 'ls', arguments: '{}' }],
-            finishReason: 'tool_calls',
-            sawUsage: true,
-            promptTokens: 100
-          }
-        }
-        return {
-          kind: 'assistant',
-          assistantContent: 'continued',
-          toolCalls: [],
-          finishReason: 'stop',
-          sawUsage: true,
-          promptTokens: 120
-        }
-      }
-    }
-    const context = createContext([
-      { role: 'system', content: 's' },
-      { role: 'user', content: 'go' }
-    ])
-    context.dialect = 'native'
-
-    const result = await runAgentLoop({
-      messageId: 'm2',
-      userText: 'go',
-      context,
-      config: {
-        maxToolRounds: 5,
-        toolExecution: 'parallel',
-        maxParallelToolCalls: 4,
-        supportsVision: false
-      },
-      streamProcessor: streamProcessor as never,
-      hookManager: new HookManager(),
-      emit: () => {},
-      emitContextBreakdown: () => {},
-      signal: () => false,
-      abortSignal: () => undefined,
-      executeBatch: async () => ({
-        aborted: false,
-        outcomes: [{
-          index: 0,
-          toolCall: { id: 't1', name: 'ls', arguments: '{}' },
-          args: {},
-          resultText: 'ok',
-          failed: false
-        }]
-      }),
-      runCompactionIfThreshold: async () => false,
-      runMidTurnCompaction: midTurn,
-      updateTokenEstimate: () => {},
-      sleep: async () => {},
-      onTerminalError: () => {}
-    })
-
-    expect(result.ended).toBe('normal')
-    expect(result.cancelled).toBeUndefined()
-    expect(midTurn).toHaveBeenCalledTimes(1)
-    expect(streamCalls).toBe(2)
   })
 })

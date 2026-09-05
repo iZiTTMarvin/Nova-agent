@@ -82,9 +82,10 @@ describe('AgentLoop context_breakdown', () => {
     await loop.sendMessage('hello', agentRoute())
 
     const breakdownEvents = events.filter((e) => e.type === 'context_breakdown')
-    expect(breakdownEvents).toHaveLength(1)
+    expect(breakdownEvents).toHaveLength(2)
+    expect(breakdownEvents[0]).toMatchObject({ promptTokensActual: 0, budget: { source: 'conservative-estimate', status: 'within' } })
 
-    const ev = breakdownEvents[0] as Extract<AgentEvent, { type: 'context_breakdown' }>
+    const ev = breakdownEvents[1] as Extract<AgentEvent, { type: 'context_breakdown' }>
     const { breakdown, totalEstimated, promptTokensActual } = ev
 
     expect(promptTokensActual).toBe(100)
@@ -112,9 +113,10 @@ describe('AgentLoop context_breakdown', () => {
     await loop.sendMessage('hello', agentRoute())
 
     const breakdownEvents = events.filter((e) => e.type === 'context_breakdown')
-    expect(breakdownEvents).toHaveLength(1)
+    expect(breakdownEvents).toHaveLength(2)
+    expect(breakdownEvents[0]).toMatchObject({ promptTokensActual: 0, budget: { source: 'conservative-estimate', status: 'within' } })
 
-    const ev = breakdownEvents[0] as Extract<AgentEvent, { type: 'context_breakdown' }>
+    const ev = breakdownEvents[1] as Extract<AgentEvent, { type: 'context_breakdown' }>
     expect(ev.promptTokensActual).toBe(0)
     expect(ev.totalEstimated).toBeGreaterThan(0)
   })
@@ -181,10 +183,11 @@ describe('AgentLoop context_breakdown', () => {
     const breakdownEvents = events.filter((e) => e.type === 'context_breakdown') as Array<
       Extract<AgentEvent, { type: 'context_breakdown' }>
     >
-    expect(breakdownEvents).toHaveLength(2)
+    expect(breakdownEvents).toHaveLength(4)
+    expect(breakdownEvents.map(event => event.promptTokensActual)).toEqual([0, 80, 0, 0])
     // 回归：第二轮已把第一轮的 tool_call/tool_result 追加进 this.context，
     // messages 桶理应比第一轮更大——而不是像历史 bug 那样恒为 0 保持不变。
-    expect(breakdownEvents[1]!.breakdown.messages).toBeGreaterThan(breakdownEvents[0]!.breakdown.messages)
+    expect(breakdownEvents[2]!.breakdown.messages).toBeGreaterThan(breakdownEvents[0]!.breakdown.messages)
   })
 })
 

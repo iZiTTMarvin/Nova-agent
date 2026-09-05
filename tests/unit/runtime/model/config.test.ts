@@ -141,7 +141,7 @@ describe('saveModelConfig', () => {
     saveModelConfig(validConfig, tmpDir)
     const loaded = loadModelConfig(tmpDir)
     expect(loaded).not.toBeNull()
-    expect(loaded).toEqual({ ...validConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel })
+    expect(loaded).toEqual({ ...validConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel, connectionRevision: loadLlmRegistry(tmpDir)?.providers[0].connectionRevision })
     expect(loadModelConfig(tmpDir)?.routeRef).toEqual(loaded?.routeRef)
   })
 
@@ -175,7 +175,7 @@ describe('saveModelConfig', () => {
     saveModelConfig(updatedConfig, tmpDir)
 
     const loaded = loadModelConfig(tmpDir)
-    expect(loaded).toEqual({ ...updatedConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel })
+    expect(loaded).toEqual({ ...updatedConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel, connectionRevision: loadLlmRegistry(tmpDir)?.providers[0].connectionRevision })
   })
 
   it('配置文件带缩进格式化（可读性）', () => {
@@ -222,7 +222,7 @@ describe('loadModelConfig', () => {
   it('保存后可以完整加载回来', () => {
     saveModelConfig(validConfig, tmpDir)
     const loaded = loadModelConfig(tmpDir)
-    expect(loaded).toEqual({ ...validConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel })
+    expect(loaded).toEqual({ ...validConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel, connectionRevision: loadLlmRegistry(tmpDir)?.providers[0].connectionRevision })
   })
 
   it('损坏的配置文件返回 null（容错）', () => {
@@ -324,6 +324,18 @@ describe('getModelConfigPath', () => {
 // ── v2 LlmRegistry ───────────────────────────────────────────
 
 describe('loadLlmRegistry / saveLlmRegistry', () => {
+  it('连接身份由配置 Owner 生成，普通保存稳定，账号更换失效', () => {
+    const registry = migrateV1ToV2({ baseUrl: 'https://api.deepseek.com/v1', apiKey: 'fixture-one', modelId: 'deepseek-chat' })
+    const first = saveLlmRegistry(tmpDir, registry)
+    const revision = first.providers[0].connectionRevision
+    expect(revision).toMatch(/^[a-f0-9-]{36}$/)
+    expect(saveLlmRegistry(tmpDir, first).providers[0].connectionRevision).toBe(revision)
+    const changed = structuredClone(first)
+    changed.providers[0].apiKey = 'fixture-two'
+    const next = saveLlmRegistry(tmpDir, changed)
+    expect(next.providers[0].connectionRevision).not.toBe(revision)
+    expect(loadModelConfig(tmpDir)?.connectionRevision).toBe(next.providers[0].connectionRevision)
+  })
   it('v1 配置文件自动迁移为 v2', () => {
     const v1 = {
       baseUrl: 'https://api.openai.com/v1',

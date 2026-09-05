@@ -52,6 +52,8 @@ export interface ChatOptions {
 }
 
 export interface ModelClient {
+  measureRequest?(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): import('./requestBudget').RequestBudgetMeasurement
+
   /**
    * 发送消息序列并获取流式响应
    * @param messages 对话上下文

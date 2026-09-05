@@ -33,6 +33,7 @@ export interface ModelEntry {
 
 /** 服务商配置 */
 export interface ProviderConfig {
+  connectionRevision?: string
   id: string
   name: string
   /** 预设服务商标记；自定义服务商无此字段 */
@@ -273,6 +274,7 @@ export function resolveModelReference(
       apiKey,
       modelId,
       routeRef: { providerId: target.providerId, modelEntryId: target.modelEntryId },
+      ...(provider.connectionRevision ? { connectionRevision: provider.connectionRevision } : {}),
       ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
       ...(entry.supportsVision !== undefined ? { supportsVision: entry.supportsVision } : {}),
       ...(entry.reasoningEffort && entry.reasoningEffort !== 'auto'
@@ -848,6 +850,7 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
       ...(p.presetId ? { presetId: p.presetId } : {}),
       baseUrl,
       apiKey: (p.apiKey ?? '').trim(),
+      ...(typeof p.connectionRevision === 'string' && /^[a-f0-9-]{36}$/.test(p.connectionRevision) ? { connectionRevision: p.connectionRevision } : {}),
       enabled: p.enabled !== false,
       models: (p.models ?? []).map(m => ({
         id: m.id || generateLocalId('model'),

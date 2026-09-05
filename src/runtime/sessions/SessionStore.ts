@@ -1,3 +1,4 @@
+import { parseRequestBudgetAnchor, type RequestBudgetAnchor } from '../model/requestBudget'
 /**
  * SessionStore — 会话持久化管理
  *
@@ -226,6 +227,21 @@ function parseLedgerEntry(value: unknown): LedgerEntry | null {
   }
 }
 
+function migrateTouchedFiles(value: unknown): unknown {
+  if (!Array.isArray(value)) return value
+  const paths: string[] = []
+  let omittedCount = 0
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== 'string' || !item) return null
+    if (item.startsWith('…另 ')) {
+      const match = /^…另 ([1-9]\d*) 个文件$/.exec(item)
+      if (!match || index !== value.length - 1 || !Number.isSafeInteger(Number(match[1]))) return null
+      omittedCount = Number(match[1])
+    } else paths.push(item)
+  }
+  return { paths, omittedCount }
+}
+
 function parseCompactionLedger(value: unknown): CompactionLedger | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
   const candidate = value as {
@@ -234,12 +250,17 @@ function parseCompactionLedger(value: unknown): CompactionLedger | null {
     state?: unknown
     tailFrom?: unknown
     updatedAt?: unknown
+    revision?: unknown
+    budgetAnchor?: unknown
   }
-  if (candidate.version !== CONTEXT_SNAPSHOT_VERSION || !Array.isArray(candidate.entries)) return null
+  if ((candidate.version !== 2 && candidate.version !== CONTEXT_SNAPSHOT_VERSION) || !Array.isArray(candidate.entries)) return null
 
   const entries: LedgerEntry[] = []
   for (const [index, rawEntry] of candidate.entries.entries()) {
-    const entry = parseLedgerEntry(rawEntry)
+    const migratedEntry = candidate.version === 2 && rawEntry && typeof rawEntry === 'object' && Array.isArray(rawEntry.touchedFiles)
+      ? { ...rawEntry, touchedFiles: migrateTouchedFiles(rawEntry.touchedFiles) }
+      : rawEntry
+    const entry = parseLedgerEntry(migratedEntry)
     if (!entry || entry.id !== `c${index + 1}`) return null
     entries.push(entry)
   }
@@ -267,13 +288,13 @@ function parseCompactionLedger(value: unknown): CompactionLedger | null {
   ) {
     return null
   }
-  return {
-    version: CONTEXT_SNAPSHOT_VERSION,
-    entries,
-    state,
-    tailFrom,
-    updatedAt: candidate.updatedAt
-  }
+  const revision = candidate.version === 2 ? 0 : candidate.revision ?? 0
+  if (!Number.isSafeInteger(revision) || Number(revision) < 0) return null
+  const budgetAnchor = candidate.budgetAnchor === undefined ? undefined : parseRequestBudgetAnchor(candidate.budgetAnchor)
+  if (budgetAnchor === null || (budgetAnchor && budgetAnchor.revision !== revision)) return null
+  return { version: CONTEXT_SNAPSHOT_VERSION, entries, state, tailFrom, updatedAt: candidate.updatedAt,
+    revision: Number(revision), ...(budgetAnchor ? { budgetAnchor } : {}) }
+
 }
 
 export class SessionStore {
@@ -1358,7 +1379,22 @@ export class SessionStore {
       fs.mkdirSync(dir, { recursive: true })
     }
     const filePath = path.join(dir, SESSION_CONTEXT_SNAPSHOT_FILE)
-    atomicWriteFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8')
+    const canonical = parseCompactionLedger(snapshot)
+    if (!canonical) throw new Error('Invalid context snapshot')
+    atomicWriteFileSync(filePath, JSON.stringify(canonical, null, 2), 'utf8')
+  }
+
+  /** 条件写入同一快照，旧实例不能覆盖较新的上下文 revision。 */
+  saveBudgetAnchor(sessionId: string, anchor: RequestBudgetAnchor, expectedRevision: number): boolean {
+    const current = this.loadContextSnapshot(sessionId)
+    const file = path.join(this.resolveSessionDir(sessionId), SESSION_CONTEXT_SNAPSHOT_FILE)
+    if ((!current && fs.existsSync(file)) || (current?.revision ?? 0) !== expectedRevision ||
+        anchor.revision !== expectedRevision + 1 || !parseRequestBudgetAnchor(anchor)) return false
+    this.saveContextSnapshot(sessionId, {
+      ...(current ?? { version: CONTEXT_SNAPSHOT_VERSION, entries: [], state: null, tailFrom: null, updatedAt: Date.now() }),
+      revision: anchor.revision, budgetAnchor: anchor, updatedAt: Date.now()
+    })
+    return true
   }
 
   /**

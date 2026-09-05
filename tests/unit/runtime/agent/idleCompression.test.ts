@@ -1,3 +1,4 @@
+import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { IdleCompressionTimer } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
 import { CompactionService } from '../../../../src/runtime/agent/compaction/CompactionService'
@@ -21,6 +22,16 @@ import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { defaultContextBudgetManager } from '../../../../src/runtime/agent/ContextBudgetManager'
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+
+function restoreMeasuredHistory(loop: AgentLoop, client: ModelClient & { config: ModelClientConfig }): void {
+  const pool = new ModelClientPool({ primary: client, primaryConfig: client.config })
+  const request = pool.measureRequest(loop.getContext(), loop.getToolDialect() === 'xml' ? undefined : createTestRegistry().getToolDefinitions())
+  loop.restoreBudget({ version: 3, revision: 1, entries: [], state: null, tailFrom: null, updatedAt: 1,
+    budgetAnchor: { estimatorVersion: 1, revision: 1, routeId: request.routeId,
+      envelopeHash: request.envelopeHash, messageCount: request.prefixHashes.length,
+      prefixHash: request.prefixHashes.at(-1)!, serializedBytes: request.serializedBytes, inputTokens: 5_500,
+      source: { routeId: request.routeId, purpose: 'main', logicalRequestId: 'fixture-main', physicalAttemptId: 'fixture-attempt' } } })
+}
 
 /** 默认「有资格」的调度状态，供 timer 单测走通压缩路径 */
 function eligibleScheduleState(
@@ -507,7 +518,7 @@ describe('AgentLoop 空闲压缩集成', () => {
       ]
     })
 
-    const { loop } = createLoop(client, { contextWindow: 100 })
+    const { loop } = createLoop(client, { contextWindow: 10_000 })
     await loop.sendMessage('hello', agentRoute())
     loop.injectHistory(Array.from({ length: 30 }, (_, index): ChatMessage => ({
       role: index % 2 === 0 ? 'user' : 'assistant',
@@ -553,6 +564,7 @@ describe('AgentLoop 空闲压缩集成', () => {
       content: `history-${index}-${'x'.repeat(700)}`
     })))
 
+    restoreMeasuredHistory(loop, client)
     await loop.sendMessage('hello', agentRoute())
     await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
     await flush()
@@ -640,6 +652,7 @@ describe('AgentLoop 空闲压缩集成', () => {
       content: `history-${index}-${'x'.repeat(700)}`
     })))
 
+    restoreMeasuredHistory(loop, client)
     await loop.sendMessage('first', agentRoute())
     await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
     await client.idleStarted

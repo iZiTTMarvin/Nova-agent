@@ -43,6 +43,7 @@ export interface ModelConfig {
    * 下游路由身份必须把它记为无稳定引用，不得由 baseUrl 反推伪造。
    */
   routeRef?: ModelRouteRef
+  connectionRevision?: string
   /**
    * 缓存策略（兼容字段，保留不删）。默认 'auto'。
    * 'anthropic' 适用于 Anthropic 原生 API 或中转，会对最后 2 条消息打 cache_control 标记。

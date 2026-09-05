@@ -18,7 +18,7 @@ import { isReasoningSourceCompatible } from '../model/reasoningSource'
 import type { SessionData, SessionMessage, SessionToolCall } from './types'
 import { getSessionActiveMessages } from './tree'
 import type { Mode, MessageBlock } from '../../shared/session/types'
-import { stripLeakedToolMarkup } from '../../shared/tool-call-text-fallback'
+import { projectUserContent, projectAssistantContent as sanitizeAssistantContent, serializeToolArguments } from '../request-projection'
 
 /** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
 function isInternalImageUrl(url: string): boolean {
@@ -68,22 +68,6 @@ export function resolveImageUrlsInMessages(
     return msg
   })
   return changed ? next : messages
-}
-
-/** 清洗 assistant 正文中泄漏的模型原生工具标记（如 DeepSeek DSML） */
-function sanitizeAssistantContent(content: string | ContentBlock[]): string | ContentBlock[] {
-  if (typeof content === 'string') {
-    return stripLeakedToolMarkup(content)
-  }
-  if (Array.isArray(content)) {
-    return content.map(block => {
-      if (block.type === 'text' && typeof block.text === 'string') {
-        return { ...block, text: stripLeakedToolMarkup(block.text) }
-      }
-      return block
-    })
-  }
-  return content
 }
 
 /** buildConversationContext 可选参数（与旧版 resolveImageUrl 第三参兼容） */
@@ -238,7 +222,7 @@ export function projectAssistantWithReasoningReplay(
     assistant.toolCalls = pendingTools.map(({ block, tc }) => ({
       id: block.toolCallId,
       name: block.toolName,
-      arguments: tc?.arguments ?? JSON.stringify(block.arguments ?? {})
+      arguments: serializeToolArguments(block.arguments ?? {})
     }))
     out.push(assistant)
 
@@ -253,6 +237,7 @@ export function projectAssistantWithReasoningReplay(
       out.push({
         role: 'tool',
         content: result,
+        ...(block.delivery ? { toolDelivery: block.delivery } : {}),
         toolCallId: block.toolCallId,
         origin,
         ...(tc?.artifactId ? { artifactId: tc.artifactId } : {}),
@@ -345,6 +330,7 @@ export function buildConversationContext(
 
   const context: ChatMessage[] = []
   const activeMessages = getSessionActiveMessages(session)
+  const deliveries = new Map(activeMessages.filter(m => m.role === 'assistant' && m.userDelivery).map(m => [m.userDelivery!.userMessageId, m.userDelivery!]))
 
   for (const msg of activeMessages) {
     // system 消息跳过：由 AgentLoop 构造时的 frozenSystemPrompt 提供
@@ -374,7 +360,7 @@ export function buildConversationContext(
     }
 
     // user 消息：原样保留（content 可能是 string 或 ContentBlock[]）。
-    const userContent = msg.content as string | ContentBlock[]
+    const userContent = projectUserContent(msg.content as string | ContentBlock[], deliveries.get(msg.id))
     context.push({
       role: msg.role,
       content: resolveImageUrl ? resolveImageUrlsInContent(userContent, resolveImageUrl) : userContent,

@@ -1,7 +1,10 @@
+import { measureRequestBudget, type RequestBudgetAnchor, type RequestBudgetMeasurement } from '../../model/requestBudget'
+import type { ToolDefinition } from '../../model/types'
+import type { ContextBreakdown } from '../../../shared/agent/contextBreakdown'
 import type { ModelClient, ChatOptions } from '../../model/ModelClient'
 import { randomUUID } from 'crypto'
 import type { ChatRequestPurpose, UsageSource } from '../../../shared/model/types'
-import { metricUsageAdoption } from '../../../shared/diagnostics/metrics'
+import { recordMetric, metricUsageAdoption } from '../../../shared/diagnostics/metrics'
 import type { ChatMessage, MessageOrigin } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
@@ -20,12 +23,8 @@ import {
   type StateDoc,
   type TouchedFilesSnapshot
 } from '../../sessions'
-import { CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from '../tokenEstimator'
+import { estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
-import {
-  estimateNextRequestTokens,
-  measureRequestPayloadChars
-} from './estimateNextRequestTokens'
 import {
   MAX_STUB_ESTIMATED_TOKENS,
   LEDGER_RENDER_WINDOW_RATIO,
@@ -35,12 +34,10 @@ import {
   buildStubPrompt,
   buildStateInstruction,
   foldLedgerEntriesToBudget,
-  getCompactionThreshold,
   getStateTokenBudget,
   getTailTokenBudget,
   rebuildWithCompression,
   shouldScheduleIdleCompaction,
-  shouldCompact,
   splitForCompactionByTokens,
   truncateStateFromEnd
 } from './compaction'
@@ -53,6 +50,9 @@ export interface CompactionServiceOptions {
   contextBudgetManager: Pick<ContextBudgetManager, 'enforceInline'>
   cacheDiagnostics: Pick<CacheDiagnostics, 'bumpEpoch' | 'recordWireSnapshot'>
   contextWindow: number
+  measureRequest?: (messages: ChatMessage[], tools?: ToolDefinition[]) => RequestBudgetMeasurement
+  canWrite?: () => boolean
+  getSystemPrompt?: (entryCount: number) => string
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   getIdleCacheProfile: () => Pick<CacheProfile, 'idlePolicy'> | null
   /**
@@ -83,18 +83,23 @@ interface CompactionParts {
  * Service 直接更新 AgentContext 中的权威 messages 和压缩簿记，不维护平行上下文。
  * active turn 与 idle compaction 使用物理隔离的 AbortController；新消息通过 idle
  * generation 使晚到摘要失去写回资格，不依赖共享数组回滚。
- * mid-turn 复用同一压缩管线，仅新增触发时机；失败时 fail-open，不终止 turn。
+ * 主请求必须通过最终投影预算；压缩失败时禁止超预算续发。
  *
  * 摘要请求回放主对话前缀：输入是调用方传入的投影视图切片（活跃轮次复用主请求
  * 同一归档缓存实例），reasoning 不剥离、由客户端按档案回放策略序列化，会话亲和
  * 档案携带 Cache Routing Key——摘要调用从全价 cache miss 变为服务端前缀命中。
  */
 export class CompactionService {
+  private readonly measureRequest: NonNullable<CompactionServiceOptions['measureRequest']>
+  private readonly canWrite: () => boolean
+  private budget: ContextBreakdown['budget']
   private readonly context: AgentContext
   private readonly modelClient: Pick<ModelClient, 'chat'>
   private readonly contextBudgetManager: Pick<ContextBudgetManager, 'enforceInline'>
   private readonly cacheDiagnostics: Pick<CacheDiagnostics, 'bumpEpoch' | 'recordWireSnapshot'>
-  private readonly contextWindow: number
+  private readonly getSystemPrompt: CompactionServiceOptions['getSystemPrompt']
+  private readonly configuredContextWindow: number
+  private get contextWindow(): number { return Math.min(this.configuredContextWindow, this.measureRequest([]).contextWindow) }
   private readonly onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
   private readonly idleProjection: SummaryProjection
@@ -108,17 +113,15 @@ export class CompactionService {
   private idleReschedulePending = false
   private idleGeneration = 0
   private disposed = false
-  /** 上一次已发出请求的 provider input tokens；冷启动为 undefined */
-  private lastRequestInputTokens: number | undefined
-  /** 上一次已发出请求的 payload 字符量；与 lastRequestInputTokens 成对 */
-  private lastRequestPayloadChars: number | undefined
-
   constructor(options: CompactionServiceOptions) {
+    this.measureRequest = options.measureRequest ?? ((messages, tools) => measureRequestBudget({ messages, tools }, 'unknown', options.contextWindow))
+    this.canWrite = () => !this.disposed && (options.canWrite?.() ?? true)
     this.context = options.context
     this.modelClient = options.modelClient
     this.contextBudgetManager = options.contextBudgetManager
     this.cacheDiagnostics = options.cacheDiagnostics
-    this.contextWindow = options.contextWindow
+    this.getSystemPrompt = options.getSystemPrompt
+    this.configuredContextWindow = options.contextWindow
     this.onCompaction = options.onCompaction
     this.getIdleCacheProfile = options.getIdleCacheProfile
     this.idleProjection = options.idleProjection
@@ -143,14 +146,60 @@ export class CompactionService {
     this.context.lastEstimatedTokens = estimateContextTokens(this.context.messages)
   }
 
-  /**
-   * 记录刚发出的请求锚点：provider 真实 input usage + 当时 payload 字符量。
-   * 仅在见到正数 usage 时更新；供下一步 mid-turn 估算使用。
-   */
-  recordRequestAnchor(inputTokens: number, payloadChars: number): void {
-    if (!Number.isFinite(inputTokens) || inputTokens <= 0) return
-    this.lastRequestInputTokens = Math.floor(inputTokens)
-    this.lastRequestPayloadChars = Math.max(0, Math.floor(payloadChars))
+  getBudget(): ContextBreakdown['budget'] { return this.budget ? { ...this.budget } : undefined }
+
+  assessNextRequest(request: RequestBudgetMeasurement): NonNullable<ContextBreakdown['budget']> {
+    const contextWindow = Math.min(this.contextWindow, request.contextWindow)
+    const threshold = Math.floor(contextWindow * 0.8)
+    const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow })
+    const anchor = this.context.compactionState?.budgetAnchor
+    const compatible = anchor && anchor.estimatorVersion === 1 && anchor.routeId === request.routeId &&
+      anchor.envelopeHash === request.envelopeHash && anchor.messageCount <= request.prefixHashes.length &&
+      anchor.prefixHash === request.prefixHashes[anchor.messageCount - 1] && request.serializedBytes >= anchor.serializedBytes
+    const deltaBytes = compatible ? request.serializedBytes - anchor.serializedBytes : request.serializedBytes
+    // 未知 tokenizer 使用字节保守增量；不把字符差伪装成实际 token 差。
+    const marginTokens = compatible && deltaBytes === 0 ? 0 : Math.max(256, Math.ceil(deltaBytes * 0.05))
+    const estimatedTokens = (compatible ? anchor.inputTokens : 0) + deltaBytes + marginTokens
+    const reason = compatible ? 'compatible-main-anchor' : anchor ? 'incompatible-anchor' : 'no-main-usage'
+    const status = !compatible && estimatedTokens > highWaterTokens ? 'blocked'
+      : estimatedTokens >= threshold ? 'compact' : 'within'
+    this.budget = { status, estimatedTokens, contextWindow, threshold, marginTokens,
+      source: compatible ? deltaBytes === 0 ? 'provider' : 'anchored-estimate' : 'conservative-estimate', reason }
+    recordMetric('budget.assessment', { estimatedTokens, threshold, contextWindow, marginTokens, serializedBytes: request.serializedBytes,
+      revision: this.context.compactionState?.revision ?? 0 }, { id: this.context.runId ?? undefined,
+      tags: { status, reason, source: this.budget.source, routeId: request.routeId, tokenizerId: request.tokenizerId, envelopeHash: request.envelopeHash, prefixHash: request.prefixHashes.at(-1) ?? '' } })
+    return { ...this.budget }
+  }
+
+  observeMainRequest(inputTokens: number, request: RequestBudgetMeasurement, source: UsageSource, expectedRevision = 0): boolean {
+    if (!this.canWrite() || source.purpose !== 'main' || source.routeId !== request.routeId ||
+        request.routeId !== this.measureRequest([]).routeId ||
+        !Number.isSafeInteger(inputTokens) || inputTokens <= 0 || request.prefixHashes.length === 0) return false
+    const previous = this.context.compactionState
+    const revision = previous?.revision ?? 0
+    if (expectedRevision !== revision) return false
+    const anchor: RequestBudgetAnchor = { estimatorVersion: 1, revision: revision + 1,
+      routeId: request.routeId, envelopeHash: request.envelopeHash, messageCount: request.prefixHashes.length,
+      prefixHash: request.prefixHashes.at(-1)!, serializedBytes: request.serializedBytes, inputTokens, source }
+    if (this.context.sessionStore && this.context.sessionId &&
+        !this.context.sessionStore.saveBudgetAnchor(this.context.sessionId, anchor, revision)) return false
+    if (!this.canWrite()) return false
+    this.context.compactionState = { ...(previous ?? { version: CONTEXT_SNAPSHOT_VERSION, entries: [], state: null, tailFrom: null, updatedAt: Date.now() }), revision: anchor.revision, budgetAnchor: anchor }
+    this.assessNextRequest(request)
+    return true
+  }
+
+  restoreBudget(ledger: CompactionLedger): void { this.context.compactionState = ledger }
+
+  async prepareMainRequest(messages: ChatMessage[], tools: ToolDefinition[] | undefined, projection: SummaryProjection, signal?: AbortSignal): Promise<{ status: 'within' | 'compacted'; revision: number }> {
+    if (!this.canWrite() || signal?.aborted) throw new Error('Request budget authority expired')
+    const request = this.measureRequest(messages, tools)
+    const budget = this.assessNextRequest(request)
+    if (budget.status === 'within') return { status: 'within', revision: this.context.compactionState?.revision ?? 0 }
+    if (budget.status === 'blocked') throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, false)
+    const compacted = await this.runCompaction('threshold', projection, signal, this.canWrite)
+    if (!compacted) throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, true)
+    return { status: 'compacted', revision: this.context.compactionState?.revision ?? 0 }
   }
 
   restoreCompactedContext(ledger: CompactionLedger, tail: ChatMessage[]): void {
@@ -168,17 +217,8 @@ export class CompactionService {
   ): Promise<boolean> {
     if (this.compressingForOverflow || abortSignal?.aborted) return false
 
-    const threshold = getCompactionThreshold(this.contextWindow)
-    const currentTokens = estimateContextTokens(this.context.messages)
-    const tokensToCompare = Math.max(currentTokens, this.context.lastEstimatedTokens)
-    if (!shouldCompact(
-      this.context.messages,
-      threshold,
-      tokensToCompare,
-      this.context.userTurnsSinceCompaction
-    )) {
-      return false
-    }
+    const projected = await projection.project(this.context.messages)
+    if (this.assessNextRequest(this.measureRequest(projected)).status === 'within') return false
 
     return this.runCompaction('threshold', projection, abortSignal)
   }
@@ -193,27 +233,8 @@ export class CompactionService {
   ): Promise<boolean> {
     if (this.compressingForOverflow || abortSignal?.aborted || this.disposed) return false
 
-    const { highWaterTokens } = resolveProductionBudgetLimits({
-      contextWindow: this.contextWindow
-    })
-    let projectedContext: ChatMessage[]
-    try {
-      projectedContext = await projection.project(this.context.messages)
-    } catch {
-      return false
-    }
-    const payloadChars = measureRequestPayloadChars(projectedContext)
-    const estimate = estimateNextRequestTokens({
-      ...(this.lastRequestInputTokens !== undefined
-        ? { priorUsageTokens: this.lastRequestInputTokens }
-        : {}),
-      appendedChars: payloadChars - (this.lastRequestPayloadChars ?? payloadChars),
-      coldStartChars: payloadChars,
-      charsPerToken: CHARS_PER_TOKEN
-    })
-    if (estimate <= highWaterTokens) {
-      return false
-    }
+    const projectedContext = await projection.project(this.context.messages)
+    if (this.assessNextRequest(this.measureRequest(projectedContext)).status === 'within') return false
 
     const { oldMessages, recentMessages } = splitForCompactionByTokens(
       this.context.messages,
@@ -267,8 +288,7 @@ export class CompactionService {
 
   reset(): void {
     this.cancelIdle()
-    this.lastRequestInputTokens = undefined
-    this.lastRequestPayloadChars = undefined
+    this.budget = undefined
   }
 
   dispose(): void {
@@ -569,7 +589,8 @@ export class CompactionService {
     const beforeTokens = estimateContextTokens(beforeProjected)
 
     const ledger = this.buildNextLedger(parts, outputs, trigger)
-    const rebuilt = rebuildWithCompression(this.context.systemPrompt, ledger, tail)
+    const systemPrompt = this.getSystemPrompt?.(ledger.entries.length) ?? this.context.systemPrompt
+    const rebuilt = rebuildWithCompression(systemPrompt, ledger, tail)
     const projected = await projection.project(rebuilt)
     if (!canApply()) return false
     const afterTokens = estimateContextTokens(projected)
@@ -579,6 +600,7 @@ export class CompactionService {
     if (budget.status === 'requires_compaction') {
       throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
     }
+    this.context.systemPrompt = systemPrompt
     this.context.messages = rebuilt
     this.context.compactionState = ledger
     this.context.compactionLevel = ledger.entries.length
@@ -626,6 +648,7 @@ export class CompactionService {
     const anchors = this.getRealityAnchors?.()
     return {
       version: CONTEXT_SNAPSHOT_VERSION,
+      revision: (prev?.revision ?? 0) + 1,
       entries,
       state: {
         text: outputs.state,

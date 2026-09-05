@@ -1,3 +1,5 @@
+import { resolveContextWindow } from '../../shared/config/types'
+import { measureRequestBudget, type RequestBudgetMeasurement } from './requestBudget'
 /**
  * OpenAI-compatible 模型客户端
  * 通过 fetch 调用兼容 OpenAI Chat Completions API 的模型服务
@@ -134,19 +136,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
     return this.disabledCapabilities
   }
 
-  async *chat(
-    messages: ChatMessage[],
-    tools?: ToolDefinition[],
-    options?: ChatOptions
-  ): AsyncIterable<ChatEvent> {
-    // baseUrl 应为完整 API 根地址（如 https://api.openai.com/v1），
-    // 只需拼接路径后缀 /chat/completions
-    const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
-
-    // 网关级禁用能力（直接读实例态）：同一网关对所有请求行为一致，
-    // 并发 turn 共享同一底层 client 时共享同一份降级记忆是正确语义。
+  private buildRequestBody(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): Record<string, unknown> {
     const requestDisabled = this.disabledCapabilities
-
     // 默认过滤 internal 消息，避免把运行时临时提示暴露给普通对话；
     // 只有像 compaction 这样的受控内部调用，才会显式放行 internal 正文。
     const selectedMessages = options?.includeInternalMessages
@@ -207,6 +198,29 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (canInjectPromptCacheKey) {
       body.prompt_cache_key = options!.promptCacheKey
     }
+
+    return body
+  }
+
+  measureRequest(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): RequestBudgetMeasurement {
+    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: options?.reasoningEffort ?? this.config.reasoningEffort, cacheProfile: this.cacheProfile.id })
+    return measureRequestBudget(this.buildRequestBody(messages, tools, options), route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow))
+  }
+
+  async *chat(
+    messages: ChatMessage[],
+    tools?: ToolDefinition[],
+    options?: ChatOptions
+  ): AsyncIterable<ChatEvent> {
+    // baseUrl 应为完整 API 根地址（如 https://api.openai.com/v1），
+    // 只需拼接路径后缀 /chat/completions
+    const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`
+
+    // 网关级禁用能力（直接读实例态）：同一网关对所有请求行为一致，
+    // 并发 turn 共享同一底层 client 时共享同一份降级记忆是正确语义。
+    const requestDisabled = this.disabledCapabilities
+
+    const body = this.buildRequestBody(messages, tools, options)
 
     // 最终 body 就绪后计算语义快照（降级重试若剥离 key 会在成功/失败出口再算）
     const snapshotEvent = (): ChatEvent => ({
@@ -619,7 +633,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (rawUsage) {
       const usage = normalizeUsage(rawUsage)
       if (usage) {
-        yield { type: 'usage', usage, source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
+        yield { type: 'usage', usage, requestBudget: measureRequestBudget(body, route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow)), source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
       }
     }
 

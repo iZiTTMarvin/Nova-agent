@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   projectRequestMessages,
+  freezeToolDelivery,
   ACTIVE_TOOL_RESULT_MAX_TOKENS,
   SUPERSEDED_MIN_ESTIMATED_TOKENS,
   CHARS_PER_TOKEN,
@@ -22,6 +23,21 @@ import { join } from 'path'
 import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 
 describe('projectRequestMessages archiving', () => {
+  it.each([false, true])('首发决定跨新投影保留，首次归档成功=%s', async success => {
+    const body = '中文结果\n'.repeat(3000)
+    const input = { messages: [], policy: { enabled: true }, archiveCache: createRequestProjectionArchiveCache(), archive: async () => success ? { artifactId: 'stable' } : null }
+    const original: ChatMessage = { role: 'tool', toolCallId: 'old', content: body }
+    const frozen = await freezeToolDelivery(input, original)
+    const first = await projectRequestMessages({ ...input, messages: [frozen] })
+    const next = await projectRequestMessages({ ...input, archiveCache: createRequestProjectionArchiveCache(), archive: async () => ({ artifactId: 'later' }), messages: [
+      { role: 'assistant', content: '', toolCalls: [{ id: 'old', name: 'read', arguments: '{"path":"a"}' }] }, frozen,
+      { role: 'assistant', content: '', toolCalls: [{ id: 'new', name: 'read', arguments: '{"path":"a"}' }] }, { ...original, toolCallId: 'new' }
+    ] })
+    expect(next.messages[1].content).toBe(first.messages[0].content)
+    expect(frozen.content).toBe(body)
+    expect(frozen.toolDelivery?.kind).toBe(success ? 'archive' : 'original')
+    expect(isArchivedPlaceholder(String(first.messages[0].content))).toBe(success)
+  })
   it('18KB 的工具输出经投影后变为占位符，原消息未被 mutate', async () => {
     const original = 'x'.repeat(18 * 1024)
     const messages: ChatMessage[] = [

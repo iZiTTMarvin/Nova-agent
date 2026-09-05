@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 /**
  * 模型配置持久化与校验模块
  *
@@ -87,6 +88,13 @@ export function saveLlmRegistry(appDataPath: string, registry: LlmRegistry): Llm
     throw new Error(`配置校验失败：${validation.message}`)
   }
 
+  const previous = loadLlmRegistry(appDataPath)
+  for (const provider of validation.registry.providers) {
+    const old = previous?.providers.find(item => item.id === provider.id)
+    provider.connectionRevision = old && old.apiKey === provider.apiKey && old.baseUrl === provider.baseUrl
+      ? old.connectionRevision ?? randomUUID()
+      : randomUUID()
+  }
   const configDir = path.join(appDataPath, 'settings')
   const configPath = path.join(appDataPath, CONFIG_RELATIVE_PATH)
 

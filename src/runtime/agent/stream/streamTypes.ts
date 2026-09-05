@@ -33,6 +33,8 @@ export type TurnStreamResult =
       sawUsage: boolean
       /** 本轮 provider 回报的 prompt/input tokens；未见 usage 时省略 */
       promptTokens?: number
+      usageSource?: import('../../../shared/model/types').UsageSource
+      requestBudget?: import('../../model/requestBudget').RequestBudgetMeasurement
       /** 本子轮聚合的 reasoning；无 thinking_delta 时省略 */
       reasoningContent?: string
       /** 产生 reasoningContent 的缓存档案 ID */

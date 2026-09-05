@@ -162,6 +162,12 @@ export function restoreOrInjectHistory(
     ...(currentProviderId ? { currentProviderId } : {})
   }
 
+  if (ledger?.version === CONTEXT_SNAPSHOT_VERSION && ledger.entries.length === 0) {
+    agentLoop.injectHistory(buildConversationContext(session, session.mode, buildOpts))
+    agentLoop.restoreBudget(ledger)
+    return
+  }
+
   if (!ledger || ledger.version !== CONTEXT_SNAPSHOT_VERSION) {
     agentLoop.injectHistory(buildConversationContext(session, session.mode, buildOpts))
     return

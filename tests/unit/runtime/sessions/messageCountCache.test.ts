@@ -1,3 +1,4 @@
+import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 /**
  * messageCount 元数据缓存 vs 原算法（computeActivePath.length）对照单测。
  * 覆盖线性会话、分叉切叶、旧会话无 messageCount 字段等场景。
@@ -33,6 +34,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetSessionIndexHostForTests()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 

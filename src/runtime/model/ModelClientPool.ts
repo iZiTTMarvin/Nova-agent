@@ -1,3 +1,6 @@
+import { resolveContextWindow } from '../../shared/config/types'
+import { measureRequestBudget, type RequestBudgetMeasurement } from './requestBudget'
+import { resolveRouteIdentity } from './routeIdentity'
 /**
  * ModelClientPool — 主模型 + fallback 模型的 client 集合（PRD §5.4）
  *
@@ -64,6 +67,13 @@ export class ModelClientPool implements ModelClient {
         this.slots.push({ config: fb.config, client: fb.client, isPrimary: false })
       }
     }
+  }
+
+  measureRequest(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): RequestBudgetMeasurement {
+    const slot = this.slots[this.activeIndex]
+    if (slot.client.measureRequest) return slot.client.measureRequest(messages, tools, options)
+    const route = resolveRouteIdentity({ ...slot.config, reasoningEffort: options?.reasoningEffort ?? slot.config.reasoningEffort })
+    return measureRequestBudget({ messages, tools }, route.routeId, resolveContextWindow(slot.config.modelId, slot.config.contextWindow))
   }
 
   /** 实现 ModelClient.chat：委托给当前 active client */

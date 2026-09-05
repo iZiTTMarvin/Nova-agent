@@ -146,6 +146,7 @@ export class StreamProcessor {
     const attemptId = this.attemptController.beginAttempt()
     this.logicalRequestId ??= randomUUID()
     let usageSource: UsageSource | undefined
+    let requestBudget: import('../../model/requestBudget').RequestBudgetMeasurement | undefined
     const attemptStartedAt = Date.now()
     let ttftRecorded = false
     metricAttemptStart(attemptId)
@@ -488,6 +489,7 @@ export class StreamProcessor {
           }
 
           case 'usage':
+            requestBudget = event.requestBudget
             usageSource = event.source
             roundSawUsage = true
             roundPromptTokens = event.usage.promptTokens
@@ -624,6 +626,8 @@ export class StreamProcessor {
       finishReason,
       sawUsage: roundSawUsage,
       ...(roundPromptTokens !== undefined ? { promptTokens: roundPromptTokens } : {}),
+      ...(usageSource ? { usageSource } : {}),
+      ...(requestBudget ? { requestBudget } : {}),
       // 仅在有内容时携带，避免无 thinking 的子轮多出空字段
       ...(reasoningContent
         ? {

@@ -1,3 +1,4 @@
+import { serializeToolArguments } from '../request-projection'
 /**
  * 消息 block 单一事实源 — projection 与兼容序列化
  *
@@ -13,7 +14,7 @@ import { extractTextFromSerializableContent } from './types'
 import { isToolFailureText } from '../../shared/toolResultStatus'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
-export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 2
+export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 3
 
 /**
  * 从 blocks 投影出 content 文本（仅 text 块拼接）。
@@ -52,7 +53,7 @@ export function projectToolCallsFromBlocks(
     fromBlocks.push({
       id: b.toolCallId,
       name: b.toolName,
-      arguments: JSON.stringify(b.arguments ?? {}),
+      arguments: serializeToolArguments(b.arguments ?? {}),
       ...(b.result !== undefined ? { result: b.result } : {}),
       ...((b.artifactId ?? prev?.artifactId) ? { artifactId: b.artifactId ?? prev?.artifactId } : {}),
       ...((b.truncationMeta ?? prev?.truncationMeta) ? { truncationMeta: b.truncationMeta ?? prev?.truncationMeta } : {})
@@ -112,10 +113,10 @@ export function buildBlocksFromLegacyFields(message: {
  * 不强制写盘；调用方决定是否持久化。
  */
 export function normalizeMessageToBlocksSource(message: SessionMessage): SessionMessage {
-  if (message.messageSchemaVersion !== undefined && ![1, 2].includes(message.messageSchemaVersion)) {
+  if (message.messageSchemaVersion !== undefined && ![1, 2, 3].includes(message.messageSchemaVersion)) {
     throw new Error('Unsupported message schema version')
   }
-  if (message.messageSchemaVersion === 2) validateMessageFacts(message)
+  if (message.messageSchemaVersion === 2 || message.messageSchemaVersion === 3) validateMessageFacts(message)
   // 丢弃历史自动验证字段（功能已移除）
   const { verificationSummary: _drop, ...rest } = message as SessionMessage & {
     verificationSummary?: unknown
@@ -202,6 +203,10 @@ function validateMessageFacts(message: SessionMessage): void {
       previousStep = block.responseStep
     }
     if (block.type === 'tool') {
+      const delivery = block.delivery
+      if (delivery && (delivery.version !== 1 || !/^[a-f0-9]{64}$/.test(delivery.bodySha256) ||
+          !['original', 'archive'].includes(delivery.kind) ||
+          (delivery.kind === 'archive' && typeof delivery.placeholder !== 'string'))) throw new Error('Invalid tool delivery')
       if (typeof block.toolCallId !== 'string' || typeof block.toolName !== 'string' ||
           !block.arguments || typeof block.arguments !== 'object' || Array.isArray(block.arguments) ||
           !['running', 'success', 'error'].includes(block.status) ||

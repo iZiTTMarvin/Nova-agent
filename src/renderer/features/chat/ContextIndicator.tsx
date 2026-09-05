@@ -81,8 +81,8 @@ export const ContextIndicator: React.FC = () => {
 
   // 优先使用 breakdown 自带的 contextLimit(加载会话时直接计算的场景),
   // 回退到 store 的 contextLimit
-  const effectiveLimit = contextBreakdown?.contextLimit ?? contextLimit
-  const total = contextBreakdown?.totalEstimated ?? 0
+  const effectiveLimit = contextBreakdown?.budget?.contextWindow ?? contextBreakdown?.contextLimit ?? contextLimit
+  const total = contextBreakdown?.budget?.estimatedTokens ?? contextBreakdown?.totalEstimated ?? 0
   const ratio = effectiveLimit > 0 && total > 0 ? Math.min(total / effectiveLimit, 1) : 0
   const percent = total > 0 ? Math.round(ratio * 1000) / 10 : 0
   const getColor = () => {
@@ -211,6 +211,7 @@ export const ContextIndicator: React.FC = () => {
                 {total > 0
                   ? `${formatTokens(total)} / ${formatTokens(effectiveLimit)}`
                   : '等待 LLM 调用…'}
+                {contextBreakdown?.budget && <span>{contextBreakdown.budget.source === 'provider' ? ' 实际' : ' 估算'}</span>}
                 {total > 0 && <span className="context-popover__pct"> ({percent}%)</span>}
               </span>
             </div>

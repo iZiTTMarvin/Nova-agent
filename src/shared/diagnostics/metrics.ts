@@ -39,6 +39,7 @@ export type MetricCategory =
   /** 一条模型上报（或缺失）的 usage；按用途与路由分账 */
   | 'usage.report'
   | 'usage.adoption'
+  | 'budget.assessment'
   | 'session.append'
   | 'readState.set'
   | 'readState.evict'

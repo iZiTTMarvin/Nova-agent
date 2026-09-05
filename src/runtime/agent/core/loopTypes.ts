@@ -1,6 +1,5 @@
 /** Agent kernel 真实消费的运行时回调契约。 */
 import type { ChatMessage } from '../../model/types'
-import type { InlineBudgetResult } from '../ContextBudgetManager'
 import type { ActiveToolResultPrunePolicy, SummaryProjection } from '../../request-projection'
 import type { ToolControlSignal } from '../../tools/types'
 
@@ -88,12 +87,6 @@ export interface AgentLoopConfig {
   getModeTransitionInstruction?: (
     transition: Extract<ToolControlSignal, { type: 'mode_transition' }>
   ) => string
-
-  /**
-   * 轮内预算校验（只估算，不改写）。
-   * 返回结构化结果，超预算时由 runAgentLoop 控制流决定恢复策略。
-   */
-  enforceInlineBudget?: (messages: ChatMessage[]) => InlineBudgetResult
 
   /**
    * 溢出压缩回调，由门面提供。

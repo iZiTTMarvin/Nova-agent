@@ -95,10 +95,10 @@ async function drain(
   return snapshot
 }
 
-/** 可复用前缀：system + 除最后一条 user 外的历史 + tools 段 */
+/** 可复用前缀：system + 全部旧消息 + tools 段 */
 function reusablePrefixJson(body: Record<string, unknown>): string {
   const messages = body.messages as Array<Record<string, unknown>>
-  const prefixMessages = messages.slice(0, -1)
+  const prefixMessages = messages
   return JSON.stringify({
     messages: prefixMessages,
     tools: body.tools
@@ -156,8 +156,8 @@ describe('前缀稳定性黑盒', () => {
     // 轮次增长时，前一轮的 messages 前缀是后一轮的真前缀
     const msgs2 = interceptor.bodies[1].messages as unknown[]
     const msgs3 = interceptor.bodies[2].messages as unknown[]
-    expect(JSON.stringify(msgs3.slice(0, msgs2.length - 1))).toBe(
-      JSON.stringify(msgs2.slice(0, -1))
+    expect(JSON.stringify(msgs3.slice(0, msgs2.length))).toBe(
+      JSON.stringify(msgs2)
     )
 
     // 快照随历史增长而变化（消息数增加），但不得含明文

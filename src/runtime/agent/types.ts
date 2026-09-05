@@ -32,6 +32,7 @@ export type { HookEvent }
 export type AgentEvent =
   | { type: 'user_delivery'; messageId: string; facts: UserDeliveryFacts; sessionId?: string }
   | { type: 'assistant_step'; messageId: string; step: number; content: string; reasoningContent?: string; reasoningProviderId?: string; toolCalls: import('../../shared/session/types').ToolCall[]; sessionId?: string }
+  | { type: 'tool_delivery'; messageId: string; toolCallId: string; delivery: import('../../shared/session/types').ToolDelivery; sessionId?: string }
   | { type: 'message_start'; messageId: string; sessionId?: string }
   | { type: 'thinking_delta'; messageId: string; delta: string; providerId?: string; sessionId?: string }
   | { type: 'text_delta'; messageId: string; delta: string; sessionId?: string }
@@ -64,24 +65,7 @@ export type AgentEvent =
       toolName: string
       sessionId?: string
     }
-  | {
-      type: 'context_breakdown'
-      sessionId: string
-      /** 对应触发该统计的消息 ID;启动/注入历史时可为空字符串 */
-      messageId: string
-      breakdown: {
-        systemPrompt: number
-        skills: number
-        tools: number
-        messages: number
-        other: number
-      }
-      totalEstimated: number
-      promptTokensActual: number
-      capturedAt: number
-      /** 计算时使用的上下文窗口上限(覆盖 store 默认值,例如加载会话时直接计算) */
-      contextLimit?: number
-    }
+  | ({ type: 'context_breakdown' } & import('../../shared/agent/contextBreakdown').ContextBreakdown)
   | { type: 'cache_diagnostic'; messageId: string; diagnostic: CacheDiagnosticResult; sessionId?: string }
   | { type: 'error'; messageId: string; error: string; sessionId?: string }
   | { type: 'hook_error'; messageId: string; hookEvent: HookEvent; error: string; sessionId?: string }
@@ -177,6 +161,7 @@ export interface AgentLoopConfig {
   systemPrompt?: string
   /** 6 层 system prompt（优先于 systemPrompt 字符串） */
   systemPromptLayers?: SystemPromptLayers
+  toolSummaryRenderer?: (definitions: import('../model/types').ToolDefinition[]) => string
   /** 本轮捕获的会话权限模式；裸构造测试默认请求批准。 */
   permissionMode?: import('../../shared/session/types').PermissionMode
   /** 能力上限（如只读子代理）；缺省表示无上限。 */

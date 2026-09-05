@@ -312,7 +312,7 @@ export const SESSION_MESSAGES_FILE = 'messages.jsonl'
 export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
 
 /** 当前账本结构版本；不符则丢弃并全量重建 */
-export const CONTEXT_SNAPSHOT_VERSION = 2
+export const CONTEXT_SNAPSHOT_VERSION = 3
 
 export type LedgerTrigger = 'threshold' | 'mid-turn' | 'overflow' | 'idle'
 export interface TouchedFilesSnapshot {
@@ -345,6 +345,8 @@ export interface StateDoc {
  * 恢复 = 纯函数(档案, 账本)。version 必须等于 CONTEXT_SNAPSHOT_VERSION。
  */
 export interface CompactionLedger {
+  revision?: number
+  budgetAnchor?: import('../model/requestBudget').RequestBudgetAnchor
   version: number
   entries: LedgerEntry[]
   state: StateDoc | null

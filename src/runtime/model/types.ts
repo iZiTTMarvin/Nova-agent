@@ -44,6 +44,7 @@ export function extractTextFromContent(content: string | ContentBlock[]): string
 
 /** 发送给模型的消息 */
 export interface ChatMessage {
+  toolDelivery?: import('../../shared/session/types').ToolDelivery
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | ContentBlock[]
   /** assistant 消息可携带工具调用 */
@@ -130,6 +131,8 @@ export type TransportFetchImpl = (
 ) => Promise<Response>
 
 export interface ModelClientConfig {
+  contextWindow?: number
+  toolDialect?: import('../../shared/config/types').ModelConfig['toolDialect']
   baseUrl: string
   apiKey: string
   modelId: string
@@ -138,6 +141,7 @@ export interface ModelClientConfig {
    * ad-hoc 配置缺省时路由身份记为无稳定引用，不由 baseUrl 反推伪造。
    */
   routeRef?: ModelRouteRef
+  connectionRevision?: string
   /**
    * 缓存策略（兼容字段）。唯一类型来源：shared/config/types.CacheStrategy。
    * 与 cacheProfile 一并交给 resolveCacheProfile；缺省时按 URL/modelId 自动判定。
@@ -173,7 +177,7 @@ export type ChatEvent =
   | { type: 'tool_call'; toolCall: ChatToolCall }
   | { type: 'message_start' }
   | { type: 'message_end'; finishReason: 'stop' | 'tool_calls' | string }
-  | { type: 'usage'; usage: NormalizedUsage; source?: import('../../shared/model/types').UsageSource }
+  | { type: 'usage'; requestBudget?: import('./requestBudget').RequestBudgetMeasurement; usage: NormalizedUsage; source?: import('../../shared/model/types').UsageSource }
   | { type: 'error'; error: string; failure?: import('./failureTypes').ModelFailure }
   | { type: 'context_overflow'; rawError: string }
   | { type: 'cancelled' }

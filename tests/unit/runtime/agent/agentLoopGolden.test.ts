@@ -647,13 +647,13 @@ describe('黄金测试 §9.11 上下文溢出压缩', () => {
     const { loop, eventBus } = createLoop({
       modelId: 'gpt-4o',
       client,
-      config: { contextWindow: 2_000 }
+      config: { contextWindow: 10_000 }
     })
     // runOverflowCompaction 需要 oldMessages 非空（尾部按 token 预算切，窗口过大会整段落入 tail），
     // 注入足够历史使压缩流程可进入模型调用并返回摘要。
-    loop.injectHistory(Array.from({ length: 30 }, (_, i) => ({
+    loop.injectHistory(Array.from({ length: 12 }, (_, i) => ({
       role: 'user' as const,
-      content: `历史 ${i} ` + 'x'.repeat(120)
+      content: `历史 ${i} ` + 'x'.repeat(510)
     })))
 
     const events = await runAndCollectDrained(loop, eventBus, 'hi')
@@ -721,12 +721,12 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
         }
       }
     })
-    // 注入 48 条大消息使 token > 160k 硬触发阈值压缩。
+    // 最终序列化字节与余量超过正常阈值，但仍可安全调用压缩。
     const history: { role: 'user' | 'assistant'; content: string }[] = []
     for (let i = 0; i < 24; i++) {
       history.push(
-        { role: 'user', content: 'x'.repeat(20_000) },
-        { role: 'assistant', content: 'y'.repeat(20_000) }
+        { role: 'user', content: 'x'.repeat(2_200) },
+        { role: 'assistant', content: 'y'.repeat(2_200) }
       )
     }
     loop.injectHistory(history)

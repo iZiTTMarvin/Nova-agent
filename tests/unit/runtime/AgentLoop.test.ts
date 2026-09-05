@@ -986,8 +986,8 @@ describe('AgentLoop', () => {
     const history: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
       history.push(
-        { role: 'user', content: 'x'.repeat(20_000) },
-        { role: 'assistant', content: 'y'.repeat(20_000) }
+        { role: 'user', content: 'x'.repeat(3_300) },
+        { role: 'assistant', content: 'y'.repeat(3_300) }
       )
     }
     loop.injectHistory(history)
@@ -1061,8 +1061,8 @@ describe('AgentLoop', () => {
     const recentMessages: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
       recentMessages.push(
-        { role: 'user', content: 'x'.repeat(20_000) },
-        { role: 'assistant', content: 'y'.repeat(20_000) }
+        { role: 'user', content: 'x'.repeat(3_300) },
+        { role: 'assistant', content: 'y'.repeat(3_300) }
       )
     }
 
@@ -1100,16 +1100,16 @@ describe('AgentLoop', () => {
       ]
     })
 
-    const { loop, eventBus } = createLoop(client, { contextWindow: 2_000 })
+    const { loop, eventBus } = createLoop(client, { contextWindow: 10_000 })
     const events: any[] = []
     eventBus.on(e => events.push(e))
 
     // 注入足够历史，使 token 尾部预算之外仍有 oldMessages 可压缩
     const history: ChatMessage[] = []
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 6; i++) {
       history.push(
-        { role: 'user', content: `q${i}-` + 'x'.repeat(200) },
-        { role: 'assistant', content: `a${i}-` + 'y'.repeat(200) }
+        { role: 'user', content: `q${i}-` + 'x'.repeat(510) },
+        { role: 'assistant', content: `a${i}-` + 'y'.repeat(510) }
       )
     }
     loop.injectHistory(history)
@@ -1128,7 +1128,7 @@ describe('AgentLoop', () => {
     expect(loop.getContext()[0].content).toContain('这是紧急摘要。')
   })
 
-  it('Layer 1 压缩本身溢出后，升级到 Layer 2 压缩成功并重试', async () => {
+  it('压缩溢出且扩大保留尾部后无可折叠历史时，安全停止并保留原文', async () => {
     const client = new MockModelClient()
     // 1. 第一轮 chat 溢出
     client.addResponse({
@@ -1144,44 +1144,26 @@ describe('AgentLoop', () => {
         { type: 'context_overflow', rawError: 'compaction input too long' }
       ]
     })
-    // 3. Layer 2 压缩调用成功返回摘要
-    client.addCompactionPair({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '更深层次的摘要。' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-    // 4. 重试正常回复
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '回复成功。' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
+    const { loop } = createLoop(client, { contextWindow: 10_000 })
 
-    const { loop } = createLoop(client, { contextWindow: 2_000 })
-
-    // 注入多条历史消息，使 Layer 2 弹起后依然有消息可以被压缩（至少 44 条非系统消息）。
-    // 消息需带真实内容体量：采纳校验要求摘要严格小于被折叠的旧消息，
-    // 仅剩两条空壳消息时摘要没有压缩收益会被拒绝。
+    // 主请求可预检；标准压缩失败后，扩大保留尾部不能制造空摘要并继续发出。
     const history: ChatMessage[] = []
-    for (let i = 0; i < 22; i++) {
+    for (let i = 0; i < 6; i++) {
       history.push(
-        { role: 'user', content: `q${i}-` + 'x'.repeat(100) },
-        { role: 'assistant', content: `a${i}-` + 'y'.repeat(100) }
+        { role: 'user', content: `q${i}-` + 'x'.repeat(510) },
+        { role: 'assistant', content: `a${i}-` + 'y'.repeat(510) }
       )
     }
     loop.injectHistory(history)
 
-    await loop.sendMessage('最终问题', agentRoute())
+    const original = structuredClone(loop.getContext())
+    const outcome = await loop.sendMessage('最终问题', agentRoute())
 
-    expect(loop.getState()).toBe('idle')
-    expect(loop.getContext()[0].content).toContain('更深层次的摘要。')
-    const lastMsg = loop.getContext()[loop.getContext().length - 1]
-    expect(lastMsg.role).toBe('assistant')
-    expect(lastMsg.content).toBe('回复成功。')
+    expect(loop.getState()).toBe('error')
+    expect(outcome.status).toBe('failed')
+    expect(loop.getContext().slice(0, original.length)).toEqual(original)
+    expect(client.getCalls().filter(call => call.options?.purpose === 'main')).toHaveLength(1)
+    expect(loop.getContext().some(message => message.content === '回复成功。')).toBe(false)
   })
 
   it('Layer 1 和 Layer 2 均失败时，向上抛出错误，且上下文恢复原样', async () => {

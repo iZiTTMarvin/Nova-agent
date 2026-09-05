@@ -331,9 +331,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     ),
     sessionStore.loadContextSnapshot(sessionId)?.entries.length ?? 0
   )
-  let toolSummary = renderModeToolInventory(session.mode, effectiveToolDefinitions, {
-    dialect: toolDialect
-  })
+  let sdkSection = ''
   if (toolPresentation === 'code-readonly') {
     const sandboxToolNames = new Set(resolveCodeModeToolBindings(session.mode, new Set(toolAvailability.getActiveToolNames())))
     const sandboxToolDefinitions = projectEffectiveToolDefinitions(
@@ -341,8 +339,12 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       toolRegistry.getToolDefinitions(),
       toolAvailability
     ).filter(def => sandboxToolNames.has(def.name))
-    toolSummary = `${toolSummary}\n\n${renderCodeModeSdkSection(sandboxToolDefinitions)}`
+    sdkSection = `\n\n${renderCodeModeSdkSection(sandboxToolDefinitions)}`
   }
+
+  const toolSummaryRenderer = (definitions: typeof effectiveToolDefinitions) =>
+    renderModeToolInventory(session.mode, definitions, { dialect: toolDialect }) + sdkSection
+  const toolSummary = toolSummaryRenderer(effectiveToolDefinitions)
 
   const frozenPrompt = buildStableSystemPrompt({
     workingDir: projectPath
@@ -358,6 +360,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       taskPolicy: renderMinimalEngineeringPolicy(),
       toolSummary
     },
+    toolSummaryRenderer,
     skillsTokenEstimate,
     contextWindow,
     supportsVision,

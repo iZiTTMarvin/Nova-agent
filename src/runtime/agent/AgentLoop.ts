@@ -1,3 +1,4 @@
+import { projectUserContent } from '../request-projection'
 /**
  * AgentLoop — 核心消息-模型-工具循环的门面类。
  * 接收用户消息，组织上下文，调用模型，处理工具调用，通过 EventBus 向外发射流式事件。
@@ -228,6 +229,7 @@ export class AgentLoop {
     this.config = {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       systemPromptLayers: config?.systemPromptLayers,
+      toolSummaryRenderer: config?.toolSummaryRenderer,
       maxToolRounds: config?.maxToolRounds ?? 20,
       contextWindow: config?.contextWindow,
       supportsVision: config?.supportsVision ?? true,
@@ -258,6 +260,9 @@ export class AgentLoop {
       cacheDiagnostics: this.cacheDiagnostics,
       contextWindow: this.config.contextWindow ?? 200_000,
       onCompaction: this.config.onCompaction,
+      getSystemPrompt: entryCount => this.buildFrozenSystemPrompt(entryCount),
+      canWrite: () => !this.cancelled && (this.assertExecutionCurrent?.() ?? true),
+      measureRequest: (messages, tools) => this.modelPool.measureRequest(messages, tools, { purpose: 'main', promptCacheKey: this.config.promptCacheKey, reasoningEffort: this.config.reasoningEffort }),
       getIdleCacheProfile: () => {
         const provider = this.modelPool.getActiveProvider()
         return resolveCacheProfile(provider.baseUrl, provider.modelId, {
@@ -295,7 +300,7 @@ export class AgentLoop {
   }
 
   /** 从配置构建冻结 system prompt（根据模型方言注入工具目录格式） */
-  private buildFrozenSystemPrompt(): string {
+  private buildFrozenSystemPrompt(entryCount?: number): string {
     const layers = this.config.systemPromptLayers
     if (layers) {
       return SystemPromptBuilder.build({
@@ -306,7 +311,9 @@ export class AgentLoop {
         skillContext: layers.skillContext ?? '',
         modeInstruction: layers.modeInstruction ?? '',
         taskPolicy: layers.taskPolicy ?? '',
-        toolSummary: layers.toolSummary ?? ''
+        toolSummary: entryCount !== undefined && this.config.toolSummaryRenderer
+          ? this.config.toolSummaryRenderer(getEffectiveToolDefinitions(this.ctx, entryCount))
+          : layers.toolSummary ?? ''
       })
     }
     return this.config.systemPrompt ?? ''
@@ -350,10 +357,13 @@ export class AgentLoop {
     this.eventBus.emit({
       ...result.payload,
       type: 'context_breakdown',
+      budget: this.compactionService.getBudget(),
       messageId,
       promptTokensActual
     })
   }
+
+  restoreBudget(ledger: import('../sessions').CompactionLedger): void { this.compactionService.restoreBudget(ledger) }
 
   /** 注入自定义 HookManager（测试 / 扩展用） */
   setHookManager(hm: HookManager): void {
@@ -738,10 +748,6 @@ export class AgentLoop {
 
     // 已有有效锚点时不重复注入；当时的片段随完成消息事实保存，用户原文保持独立。
     const sessionPrefix = this.getSessionContextPrefix()
-    /** 把 sessionPrefix 拼到一段文本前（prefix 为空时原样返回） */
-    const withPrefix = (text: string): string =>
-      sessionPrefix ? `${sessionPrefix}\n\n${text}` : text
-
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
 
     // 产品分派下沉到 TurnDispatcher（路由在 startRun 前由 resolveAgentTurnRoute 确定）。
@@ -778,30 +784,11 @@ export class AgentLoop {
     const userOrigin = userMessageId
       ? { messageId: userMessageId, step: 0 }
       : undefined
-    if (typeof dispatched.userContent === 'string') {
-      // 空模式指令（子代理等宿主）不拼接，避免消息落盘时残留空尾
-      const contentWithInstruction = modeInstruction
-        ? `${dispatched.userContent}\n\n${modeInstruction}`
-        : dispatched.userContent
-      this.ctx.messages.push({
-        role: 'user',
-        content: withPrefix(contentWithInstruction),
-        ...(userOrigin ? { origin: userOrigin } : {})
-      })
-    } else {
-      // ContentBlock[]（含图片）：sessionPrefix 作为首个 text block 插入最前面
-      const blocks = sessionPrefix
-        ? [{ type: 'text' as const, text: sessionPrefix }, ...dispatched.userContent]
-        : [...dispatched.userContent]
-      if (modeInstruction) {
-        blocks.push({ type: 'text' as const, text: modeInstruction })
-      }
-      this.ctx.messages.push({
-        role: 'user',
-        content: blocks,
-        ...(userOrigin ? { origin: userOrigin } : {})
-      })
-    }
+    this.ctx.messages.push({
+      role: 'user',
+      content: projectUserContent(dispatched.userContent, { userMessageId: userMessageId ?? '', sessionPrefix, modeInstruction }),
+      ...(userOrigin ? { origin: userOrigin } : {})
+    })
 
     // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。
     // 硬上限在压缩之后、发模型之前套用（见 runAgentLoop），避免大历史无法进入压缩。
@@ -873,7 +860,6 @@ export class AgentLoop {
         ? { assistantCompletionPolicy: this.assistantCompletionPolicy }
         : {}),
       getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
-      enforceInlineBudget: (messages) => this.contextBudgetManager.enforceInline(messages),
       runOverflowCompaction: (mode, projection) =>
         this.compactionService.runOverflowCompaction(mode, projection, this.abortController?.signal),
       requestProjectionPolicy: this.currentRequestProjectionPolicy(),
@@ -896,14 +882,17 @@ export class AgentLoop {
       abortSignal: () => this.abortController?.signal,
       executeBatch,
       onToolResultCommitted: this.config.onToolResultCommitted,
-      runCompactionIfThreshold: async (projection) => {
-        return this.compactionService.runThresholdCompaction(projection, this.abortController?.signal)
+      prepareMainRequest: async (messages, tools, projection) => {
+        try {
+          return await this.compactionService.prepareMainRequest(messages, tools, projection, this.abortController?.signal)
+        } finally {
+          this.emitContextBreakdown(messageId, 0)
+        }
       },
-      runMidTurnCompaction: async (projection) => {
-        await this.compactionService.runMidTurnCompaction(projection, this.abortController?.signal)
-      },
-      recordRequestAnchor: (inputTokens, payloadChars) => {
-        this.compactionService.recordRequestAnchor(inputTokens, payloadChars)
+      observeMainRequest: (inputTokens, request, source, revision) => {
+        if (this.compactionService.observeMainRequest(inputTokens, request, source, revision)) {
+          this.emitContextBreakdown(messageId, inputTokens)
+        }
       },
       updateTokenEstimate: () => this.compactionService.updateTokenEstimate(),
       sleep: (ms: number) => this.sleep(ms),

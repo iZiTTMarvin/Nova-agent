@@ -171,6 +171,7 @@ export function forwardEventToRenderer(
         breakdown: event.breakdown,
         totalEstimated: event.totalEstimated,
         promptTokensActual: event.promptTokensActual,
+        ...(event.budget ? { budget: event.budget } : {}),
         capturedAt: event.capturedAt,
         contextLimit: event.contextLimit
       })

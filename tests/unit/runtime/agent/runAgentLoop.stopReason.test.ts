@@ -106,7 +106,8 @@ async function runKernel(
     abortSignal: () => undefined,
     executeBatch,
     onToolResultCommitted: opts.onToolResultCommitted,
-    runCompactionIfThreshold: async () => false,
+    prepareMainRequest: async () => ({ status: 'within', revision: 0 }),
+    observeMainRequest: () => {},
     updateTokenEstimate: () => {},
     sleep: () => Promise.resolve(),
     onTerminalError: () => {}

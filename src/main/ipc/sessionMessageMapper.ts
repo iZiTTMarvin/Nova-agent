@@ -28,8 +28,9 @@ function normalizeBlocks(blocks: SessionMessage['blocks']): MessageBlock[] | und
       return block
     }
 
+    const { delivery: _delivery, ...displayBlock } = block
     const toolBlock: ToolBlock = {
-      ...block,
+      ...displayBlock,
       ...(block.result !== undefined ? { result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') } : {}),
       arguments: parseToolArguments(block.arguments as string | Record<string, unknown> | undefined)
     }

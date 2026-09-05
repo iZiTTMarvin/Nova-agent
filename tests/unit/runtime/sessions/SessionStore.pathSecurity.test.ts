@@ -1,3 +1,4 @@
+import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -14,6 +15,7 @@ describe('SessionStore 路径安全', () => {
   })
 
   afterEach(() => {
+  resetSessionIndexHostForTests()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 

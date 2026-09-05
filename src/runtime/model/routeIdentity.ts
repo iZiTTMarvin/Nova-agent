@@ -1,3 +1,4 @@
+import { resolveContextWindow } from '../../shared/config/types'
 /** RouteIdentity — 无密钥的实际路由身份 */
 import type { CacheProfileId, ModelRouteRef } from '../../shared/config/types'
 import { createHash } from 'crypto'
@@ -15,6 +16,7 @@ export interface RouteIdentitySource {
   baseUrl: string
   modelId: string
   routeRef?: ModelRouteRef
+  connectionRevision?: string
   cacheProfile?: 'auto' | CacheProfileId
   cacheStrategy?: CacheStrategy
   reasoningEffort?: string
@@ -52,11 +54,12 @@ export function resolveRouteIdentity(source: RouteIdentitySource): RouteIdentity
   return {
     routeId: [
       refPart,
+      source.connectionRevision ?? 'legacy-connection',
       endpointHost,
       endpointIdentity(source.baseUrl),
       source.modelId,
       source.reasoningEffort ?? 'auto',
-      String(source.contextWindow ?? 'unknown'),
+      String(resolveContextWindow(source.modelId, source.contextWindow)),
       source.toolDialect ?? 'auto',
       cacheProfileId,
       `proto${OPENAI_COMPATIBLE_PROTOCOL_VERSION}`,

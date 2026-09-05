@@ -8,6 +8,7 @@ import { agentRoute } from '../../../src/runtime/agent/turn'
 import { createEmptyCodeContextPack } from '../../../src/runtime/code-graph/context'
 import { createCodeContextTool } from '../../../src/runtime/tools/codeContext'
 import { SessionStore, deriveChildSessionId } from '../../../src/runtime/sessions'
+import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
 import { createReadState } from '../../../src/runtime/tools/editTool'
@@ -50,6 +51,7 @@ describe('SubagentRuntimeFactory', () => {
   const roots: string[] = []
 
   afterEach(() => {
+    resetSessionIndexHostForTests()
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
@@ -302,6 +304,7 @@ describe('SubagentRuntimeFactory 权限装配', () => {
   const roots: string[] = []
 
   afterEach(() => {
+    resetSessionIndexHostForTests()
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
@@ -433,6 +436,7 @@ describe('SubagentRuntimeFactory 模型请求', () => {
   const roots: string[] = []
 
   afterEach(() => {
+    resetSessionIndexHostForTests()
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 

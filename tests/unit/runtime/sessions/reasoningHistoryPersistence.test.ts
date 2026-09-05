@@ -123,6 +123,7 @@ describe('会话持久化：有 blocks 时拆子轮恢复（无 reasoning 附着
   })
 
   afterEach(() => {
+  resetSessionIndexHostForTests()
     fs.rmSync(tmpDir, { recursive: true, force: true })
     resetSessionIndexHostForTests()
   })

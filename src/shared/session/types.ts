@@ -13,6 +13,11 @@ export interface UserDeliveryFacts {
   modeInstruction: string
 }
 
+/** 工具首发表示；全文仍由 result 拥有。 */
+export type ToolDelivery =
+  | { version: 1; kind: 'original'; bodySha256: string }
+  | { version: 1; kind: 'archive'; bodySha256: string; placeholder: string }
+
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
 /**
  * 行为模式（ModeSwitch）：
@@ -64,6 +69,7 @@ export interface TextBlock {
 /** 工具调用块 */
 export interface ToolBlock {
   type: 'tool'
+  delivery?: ToolDelivery
   responseStep?: number
   toolCallId: string
   toolName: string

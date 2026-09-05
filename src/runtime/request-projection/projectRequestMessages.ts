@@ -255,6 +255,16 @@ export async function projectRequestMessages(
       continue
     }
 
+    if (msg.toolDelivery) {
+      if (typeof msg.content !== 'string' || sha256Hex(msg.content) !== msg.toolDelivery.bodySha256) {
+        throw new Error('Tool delivery does not match its source body')
+      }
+      projected.push(msg.toolDelivery.kind === 'archive'
+        ? { ...msg, content: msg.toolDelivery.placeholder }
+        : msg)
+      continue
+    }
+
     // 仅归档纯文本结果：多模态块（如 read 返回的图片）不可归档——
     // 占位符只承载文本，会把图片块丢失；保守跳过。
     const text = typeof msg.content === 'string' ? msg.content : ''
@@ -331,4 +341,16 @@ export async function projectRequestMessages(
     messages: projectImagesWithinBudget(projected),
     diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved }
   }
+}
+
+/** 在结果第一次可投递前决定表示，包括归档失败后的原文选择。 */
+export async function freezeToolDelivery(input: RequestProjectionInput, message: ChatMessage): Promise<ChatMessage> {
+  if (message.toolDelivery || message.role !== 'tool' || typeof message.content !== 'string') return message
+  const result = await projectRequestMessages({ ...input, messages: [message] })
+  const content = result.messages[0].content
+  const bodySha256 = sha256Hex(message.content)
+  const toolDelivery: NonNullable<ChatMessage['toolDelivery']> = typeof content === 'string' && content !== message.content
+    ? { version: 1, kind: 'archive', bodySha256, placeholder: content }
+    : { version: 1, kind: 'original', bodySha256 }
+  return { ...message, toolDelivery }
 }

@@ -30,6 +30,7 @@ function createTestRegistry(): ToolRegistry {
       return { success: true, output: `目录: ${args.path ?? '.'}` }
     }
   })
+  registry.register({ name: 'history_read', description: '读取压缩历史', parameters: { type: 'object', properties: {} }, execute: async () => ({ success: true, output: 'history' }) })
   return registry
 }
 
@@ -56,13 +57,13 @@ describe('上下文账本恢复', () => {
       store.appendMessage(session.id, {
         id: `user_${i}`,
         role: 'user',
-        content: `历史问题 ${i} ${'x'.repeat(20_000)}`,
+        content: `历史问题 ${i} ${'x'.repeat(3_300)}`,
         timestamp: i * 2
       })
       store.appendMessage(session.id, {
         id: `asst_${i}`,
         role: 'assistant',
-        content: `历史回复 ${i} ${'y'.repeat(20_000)}`,
+        content: `历史回复 ${i} ${'y'.repeat(3_300)}`,
         timestamp: i * 2 + 1
       })
     }
@@ -86,14 +87,18 @@ describe('上下文账本恢复', () => {
     const eventBus = new EventBus()
     const loop = new AgentLoop(client, eventBus, {
       permissionManager: new PermissionManager(),
-      systemPrompt: '你是助手。',
+      systemPromptLayers: { agentRole: '你是助手。', toolSummary: 'ls' },
+      toolSummaryRenderer: definitions => definitions.map(d => d.name).join('\n'),
       maxToolRounds: 20,
       onCompaction: (_ctx, meta) => persistCompactionSnapshot(store, session.id, meta.ledger)
     })
     loop.setToolRegistry(createTestRegistry())
     restoreOrInjectHistory(loop, store.load(session.id)!, null)
 
+    expect(loop.getFrozenSystemPrompt()).not.toContain('history_read')
     await loop.sendMessage('触发压缩', agentRoute())
+    expect(loop.getFrozenSystemPrompt()).toContain('history_read')
+    expect(client.getCalls().at(-1)?.tools?.map(t => t.name)).toContain('history_read')
 
     const ledger = store.loadContextSnapshot(session.id)
     expect(ledger).not.toBeNull()
@@ -117,11 +122,14 @@ describe('上下文账本恢复', () => {
     const reloaded = store.load(session.id)!
     const recoveryLoop = new AgentLoop(new MockModelClient(), eventBus, {
       permissionManager: new PermissionManager(),
-      systemPrompt: '你是助手。'
+      systemPromptLayers: { agentRole: '你是助手。', toolSummary: 'ls\nhistory_read' },
+      toolSummaryRenderer: definitions => definitions.map(d => d.name).join('\n')
     })
     recoveryLoop.setToolRegistry(createTestRegistry())
     restoreOrInjectHistory(recoveryLoop, reloaded, store.loadContextSnapshot(session.id))
 
+    expect(recoveryLoop.getFrozenSystemPrompt()).toBe(loop.getFrozenSystemPrompt())
+    expect(recoveryLoop.getContext()[0]).toEqual(loop.getContext()[0])
     const ctx = recoveryLoop.getContext()
     expect(extractTextFromContent(ctx[0].content)).toContain('压缩摘要文本')
     const userTexts = ctx.filter(m => m.role === 'user').map(m => extractTextFromContent(m.content))

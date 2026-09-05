@@ -817,6 +817,21 @@ describe('SessionStore', () => {
   })
 
   describe('上下文快照（context-snapshot.json）', () => {
+    it.each([{ touchedFiles: ['a.ts', '…另 3 个文件'] }, { touchedFiles: { paths: ['a.ts'], omittedCount: 3 } }])('两种旧账本在唯一入口迁移，不改原始字节 %#', ({ touchedFiles }) => {
+      const store = new SessionStore(tmpDir), session = store.create('/project/root')
+      const file = path.join(tmpDir, 'sessions', session.id, 'context-snapshot.json')
+      const origin = { messageId: 'u', step: 0 }
+      const raw = JSON.stringify({ version: 2, entries: [{ id: 'c1', shadows: { from: origin, to: origin }, stub: 'pointer', touchedFiles, trigger: 'threshold', createdAt: 1 }], state: { text: 'legacy unverified', coversThrough: origin, taskVerbatim: null, realityLine: '', revision: 1 }, tailFrom: null, updatedAt: 1 })
+      fs.writeFileSync(file, raw)
+      const migrated = store.loadContextSnapshot(session.id)!
+      expect(migrated.version).toBe(3)
+      expect(migrated.entries[0].touchedFiles).toEqual({ paths: ['a.ts'], omittedCount: 3 })
+      expect(migrated.state?.text).toBe('legacy unverified')
+      expect(migrated.budgetAnchor).toBeUndefined()
+      expect(fs.readFileSync(file, 'utf8')).toBe(raw)
+      store.saveContextSnapshot(session.id, migrated)
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).version).toBe(3)
+    })
     it('saveContextSnapshot 写入后可 loadContextSnapshot 读回', () => {
       const store = new SessionStore(tmpDir)
       const session = store.create('/project/root')
@@ -849,7 +864,7 @@ describe('SessionStore', () => {
       store.saveContextSnapshot(session.id, snapshot)
       const loaded = store.loadContextSnapshot(session.id)
 
-      expect(loaded).toEqual(snapshot)
+      expect(loaded).toEqual({ ...snapshot, version: 3, revision: 0 })
     })
 
     it('版本不符的快照返回 null', () => {

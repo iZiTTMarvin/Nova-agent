@@ -5,8 +5,9 @@ import { sanitizeToolOutput } from '../tool-input-sanitizer'
 export function toRendererRunSnapshot(snapshot: RunSnapshot | null): RunSnapshot | null {
   if (!snapshot?.turnDraft) return snapshot
   const { userDelivery: _delivery, ...draft } = snapshot.turnDraft
-  return { ...snapshot, turnDraft: { ...draft, blocks: draft.blocks.map(block =>
-    block.type === 'tool' && block.result !== undefined
-      ? { ...block, result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') }
-      : block) } }
+  return { ...snapshot, turnDraft: { ...draft, blocks: draft.blocks.map(block => {
+    if (block.type !== 'tool') return block
+    const { delivery: _toolDelivery, ...displayBlock } = block
+    return { ...displayBlock, ...(block.result !== undefined ? { result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') } : {}) }
+  }) } }
 }

@@ -17,6 +17,9 @@ import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
 import {
+  freezeToolDelivery,
+  projectAssistantContent,
+  serializeToolArguments,
   createRequestProjectionArchiveCache,
   projectRequestMessages,
   type ActiveToolResultPrunePolicy,
@@ -29,8 +32,8 @@ import type { StreamProcessor } from '../stream/StreamProcessor'
 import type { TurnStreamResult } from '../stream/streamTypes'
 import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
-import { ContextBudgetExceededError } from '../ContextBudgetManager'
-import { measureRequestPayloadChars } from '../compaction/estimateNextRequestTokens'
+import type { RequestBudgetMeasurement } from '../../model/requestBudget'
+import type { UsageSource } from '../../../shared/model/types'
 
 /** 将 toolCall.arguments 字符串解析为对象，供空参护栏统计 */
 function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown> {
@@ -69,18 +72,8 @@ export interface RunAgentLoopParams {
   /** 执行工具批次；门面负责注入权限与截断策略。 */
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
   onToolResultCommitted?: (content: ChatMessage['content']) => void
-  /**
-   * 主动阈值压缩（请求投影之后调用，摘要输入回放主请求前缀）。
-   * 返回 true 表示已压缩，循环应回到顶部重新投影。
-   */
-  runCompactionIfThreshold: (projection: SummaryProjection) => Promise<boolean>
-  /**
-   * 工具写回后、下一轮模型请求前的 mid-turn 主动压缩。
-   * 编排层保证 fail-open：即便本回调抛错也不终止 turn。
-   */
-  runMidTurnCompaction?: (projection: SummaryProjection) => Promise<void>
-  /** 记录本轮发出请求的 usage 锚点（input tokens + 当时 payload 字符） */
-  recordRequestAnchor?: (inputTokens: number, payloadChars: number) => void
+  prepareMainRequest: (messages: ChatMessage[], tools: import('../../model/types').ToolDefinition[] | undefined, projection: SummaryProjection) => Promise<{ status: 'within' | 'compacted'; revision: number }>
+  observeMainRequest: (inputTokens: number, request: RequestBudgetMeasurement, source: UsageSource, revision: number) => void
   /** 上下文变化后更新压缩 token 簿记 */
   updateTokenEstimate: () => void
   /** 指数退避 sleep（透传给 StreamProcessor） */
@@ -204,7 +197,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       chatMessages = preChatHook?.messages ?? chatMessages
       // 请求投影：把本次模型请求看到的消息与权威上下文分离。
       // 投影结果只赋给 chatMessages，绝不写回 context.messages（权威事实保留全文）。
-      // enforceInlineBudget 恢复成功后的 continue 会回到循环顶重新执行投影，
+      // 预算压缩成功后的 continue 会回到循环顶重新执行投影，
       // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
       const projection = await projectRequestMessages({
         messages: chatMessages,
@@ -214,31 +207,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       })
       chatMessages = projection.messages
 
-      // ── 主动阈值压缩（Service 内部持有 overflow 守卫）──
-      // 发生在请求投影之后：摘要输入回放主请求前缀；压缩成功回到循环顶重投影。
-      if (await p.runCompactionIfThreshold(summaryProjection)) continue
-
-      // 轮内预算校验：只估算不改写，超预算走压缩恢复链
-      if (config.enforceInlineBudget) {
-        const budget = config.enforceInlineBudget(chatMessages)
-        if (budget.status === 'requires_compaction') {
-          const ok = config.runOverflowCompaction
-            && (await config.runOverflowCompaction('standard', summaryProjection)
-              || await config.runOverflowCompaction('aggressive', summaryProjection))
-          if (!ok) {
-            throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
-          }
-          continue
-        }
-      }
+      const nativeTools = context.dialect === 'xml' ? undefined : tools
+      const permit = await p.prepareMainRequest(chatMessages, nativeTools, summaryProjection)
+      if (permit.status === 'compacted') continue
       p.updateTokenEstimate()
 
-      // native 为默认主路径：向 API 下发 tools，由服务端解析各家原生格式（DSML 等）。
-      // xml 为兜底路径（用户 override 或 ollama 等本地推理）：不传 tools，
-      // 改由 XmlToolScanner 从正文扫描 <invoke>。防空转由 StopPolicyExtension 空参护栏兜底。
-      const nativeTools = context.dialect === 'xml' ? undefined : tools
-
-      const requestPayloadChars = measureRequestPayloadChars(chatMessages)
       const turnResult: TurnStreamResult = await streamProcessor.run({
         messageId,
         chatMessages,
@@ -263,8 +236,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         return { ended: 'error' }
       }
 
-      if (turnResult.promptTokens !== undefined && p.recordRequestAnchor) {
-        p.recordRequestAnchor(turnResult.promptTokens, requestPayloadChars)
+      if (turnResult.promptTokens !== undefined && turnResult.requestBudget && turnResult.usageSource) {
+        p.observeMainRequest(turnResult.promptTokens, turnResult.requestBudget, turnResult.usageSource, permit.revision)
       }
 
       const {
@@ -295,9 +268,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       await hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
 
       const commitResponse = (): void => {
+        assistantMsg.content = projectAssistantContent(assistantMsg.content)
         const calls = toolCalls.map(call => {
           const args = parseToolCallArgsRecord(call.arguments)
-          call.arguments = JSON.stringify(args)
+          call.arguments = serializeToolArguments(args)
           return { id: call.id, name: call.name, arguments: args }
         })
         emit({ type: 'assistant_step', messageId, step: stepOrigin.step,
@@ -350,7 +324,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         for (const outcome of batchResult.outcomes) {
           if (outcome.skippedByAbort) continue
           const content = toToolContent(outcome.resultText, outcome.resultImages)
-          context.messages.push({
+          const toolMessage = await freezeToolDelivery({ messages: [], policy: requestProjectionPolicy, archiveCache: requestProjectionArchiveCache, archive: archiveWriter }, {
             role: 'tool',
             content,
             toolCallId: outcome.toolCall.id,
@@ -358,6 +332,9 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
           })
+          if (p.signal() || p.abortSignal()?.aborted) return { ended: 'normal', cancelled: true }
+          if (toolMessage.toolDelivery) emit({ type: 'tool_delivery', messageId, toolCallId: outcome.toolCall.id, delivery: toolMessage.toolDelivery })
+          context.messages.push(toolMessage)
           p.onToolResultCommitted?.(content)
         }
         p.updateTokenEstimate()
@@ -365,34 +342,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           turnCompletedByControl = true
           break
         }
-        // 工具写回后、下一轮模型前：mid-turn 主动压缩。
-        // fail-open 由编排层兜底：端口拒绝不得终止 turn，交给后续溢出恢复。
-        if (p.runMidTurnCompaction) {
-          try {
-            await p.runMidTurnCompaction(summaryProjection)
-          } catch {
-            // mid-turn 只做预防性整形，任何失败都保持原投影继续。
-          }
-        }
-        // 工具批次后轮内预算校验：超预算走压缩恢复链
-        if (config.enforceInlineBudget) {
-          const projectedAfterTools = await projectRequestMessages({
-            messages: context.messages,
-            policy: requestProjectionPolicy,
-            archiveCache: requestProjectionArchiveCache,
-            archive: archiveWriter
-          })
-          const budget = config.enforceInlineBudget(projectedAfterTools.messages)
-          if (budget.status === 'requires_compaction') {
-            const ok = config.runOverflowCompaction
-              && (await config.runOverflowCompaction('standard', summaryProjection)
-                || await config.runOverflowCompaction('aggressive', summaryProjection))
-            if (!ok) {
-              throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
-            }
-            continue
-          }
-        }
+
       }
 
       if (batchResult.aborted || p.signal() || p.abortSignal()?.aborted) {

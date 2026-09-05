@@ -6,7 +6,7 @@ import {
   applyLedgerToolVisibility,
   renderMinimalEngineeringPolicy
 } from '../../../runtime/agent'
-import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
+
 import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
@@ -73,18 +73,18 @@ export function prepareSubagentRuntime(
     ),
     ledger?.entries.length ?? 0
   )
-  const toolSummary = visibleToolDefinitions
+  const toolSummaryRenderer = (definitions: typeof visibleToolDefinitions) => definitions
     .map((tool) => `- ${tool.name}: ${tool.description.split('\n')[0]}`)
     .join('\n')
-  const systemPrompt = SystemPromptBuilder.build({
+  const systemPromptLayers = {
     agentRole: input.profile.systemPrompt,
     baseRules: BASE_RULES_MINIMAL,
     projectRules: null,
     skillContext: '',
     modeInstruction: 'You are a sub-agent. Be concise. Return a structured summary.',
     taskPolicy: renderMinimalEngineeringPolicy(),
-    toolSummary
-  })
+    toolSummary: toolSummaryRenderer(visibleToolDefinitions)
+  }
 
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
@@ -105,7 +105,8 @@ export function prepareSubagentRuntime(
     childModel.contextWindow
   )
   const agentLoop = new AgentLoop(modelPool, eventBus, {
-    systemPrompt,
+    systemPromptLayers,
+    toolSummaryRenderer,
     maxToolRounds: input.profile.maxToolRounds,
     contextWindow,
     supportsVision: childModel.supportsVision,

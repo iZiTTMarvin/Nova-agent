@@ -20,6 +20,7 @@ function setContextState(overrides?: Partial<{
     hitRate: number
     lastRoundHitRate: number
     estimatedSavedInputTokens: number
+    cacheCountCoverage: { reportedPositive: number; reportedZero: number; unreported: number }
   } | null
 }>) {
   useAppStore.setState({
@@ -49,7 +50,8 @@ function setContextState(overrides?: Partial<{
       totalCachedTokens: 390,
       hitRate: 0.39,
       lastRoundHitRate: 0.39,
-      estimatedSavedInputTokens: 390
+      estimatedSavedInputTokens: 390,
+      cacheCountCoverage: { reportedPositive: 1, reportedZero: 0, unreported: 0 }
     },
     ...overrides
   })
@@ -99,6 +101,19 @@ describe('ContextIndicator', () => {
     expect(renderer.container.querySelector('.context-usage__summary')?.textContent ?? '').toContain('39.0%')
     expect(renderer.container.querySelectorAll('.context-usage__label')).toHaveLength(0)
 
+    renderer.unmount()
+  })
+
+  it.each(['provider', 'anchored-estimate'] as const)('展示预算 Owner 的总量、窗口与来源 %s', source => {
+    const current = useAppStore.getState().contextBreakdown!
+    useAppStore.setState({ contextBreakdown: { ...current, budget: { status: 'compact', estimatedTokens: 400_000,
+      contextWindow: 500_000, threshold: 400_000, marginTokens: source === 'provider' ? 0 : 256, source, reason: 'compatible-main-anchor' } } })
+    const renderer = renderDom(React.createElement(ContextIndicator))
+    act(() => {
+      renderer.container.querySelector('.context-indicator-wrap')?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      vi.advanceTimersByTime(100)
+    })
+    expect(renderer.container.querySelector('.context-popover__total')?.textContent).toBe('400K / 500K' + (source === 'provider' ? ' 实际' : ' 估算') + ' (80%)')
     renderer.unmount()
   })
 
