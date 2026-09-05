@@ -1,4 +1,7 @@
 import type { ModelClient, ChatOptions } from '../../model/ModelClient'
+import { randomUUID } from 'crypto'
+import type { ChatRequestPurpose, UsageSource } from '../../../shared/model/types'
+import { metricUsageAdoption } from '../../../shared/diagnostics/metrics'
 import type { ChatMessage, MessageOrigin } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
@@ -224,22 +227,27 @@ export class CompactionService {
       cutAt: recentMessages[0]?.origin ?? null
     }
 
+    const usageSources: UsageSource[] = []
+    let adopted = false
     try {
-      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal)
+      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
       if (!outputs || abortSignal?.aborted) return false
 
-      if (!await this.applyCompactionResult(
+      adopted = await this.applyCompactionResult(
         parts,
         outputs,
         projection,
         'mid-turn',
         () => !abortSignal?.aborted && !this.disposed
-      )) return false
+      )
+      if (!adopted) return false
       if (abortSignal?.aborted) return false
       this.notifyCompaction('mid-turn')
       return true
     } catch {
       return false
+    } finally {
+      for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
     }
   }
 
@@ -277,27 +285,31 @@ export class CompactionService {
     if (this.compressingForOverflow || abortSignal?.aborted) return false
 
     this.compressingForOverflow = true
+    const usageSources: UsageSource[] = []
+    let adopted = false
     try {
       const extraTailTokens = mode === 'aggressive' ? getTailTokenBudget(this.contextWindow) : 0
       const parts = this.splitOverflowContext(extraTailTokens)
       if (parts.oldMessages.length === 0) return false
 
-      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal)
+      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
       if (!outputs || abortSignal?.aborted) return false
 
-      if (!await this.applyCompactionResult(
+      adopted = await this.applyCompactionResult(
         parts,
         outputs,
         projection,
         'overflow',
         () => !abortSignal?.aborted && !this.disposed
-      )) return false
+      )
+      if (!adopted) return false
       if (abortSignal?.aborted) return false
       this.notifyCompaction('overflow')
       return true
     } catch {
       return false
     } finally {
+      for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
       this.compressingForOverflow = false
     }
   }
@@ -313,19 +325,26 @@ export class CompactionService {
     const parts = this.splitThresholdContext()
     if (parts.oldMessages.length === 0) return false
 
-    const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal)
-    if (!outputs || abortSignal?.aborted || !canApply()) return false
+    const usageSources: UsageSource[] = []
+    let adopted = false
+    try {
+      const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
+      if (!outputs || abortSignal?.aborted || !canApply()) return false
 
-    if (!await this.applyCompactionResult(
-      parts,
-      outputs,
-      projection,
-      trigger,
-      () => !abortSignal?.aborted && !this.disposed && canApply()
-    )) return false
-    if (abortSignal?.aborted || !canApply()) return false
-    this.notifyCompaction(trigger)
-    return true
+      adopted = await this.applyCompactionResult(
+        parts,
+        outputs,
+        projection,
+        trigger,
+        () => !abortSignal?.aborted && !this.disposed && canApply()
+      )
+      if (!adopted) return false
+      if (abortSignal?.aborted || !canApply()) return false
+      this.notifyCompaction(trigger)
+      return true
+    } finally {
+      for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
+    }
   }
 
   private async runScheduledIdleCompaction(): Promise<void> {
@@ -418,7 +437,8 @@ export class CompactionService {
   private async requestCompactionOutputs(
     parts: CompactionParts,
     projection: SummaryProjection,
-    abortSignal?: AbortSignal
+    abortSignal: AbortSignal | undefined,
+    usageSources: UsageSource[]
   ): Promise<{ stub: string | null; state: string } | null> {
     if (abortSignal?.aborted) return null
 
@@ -446,8 +466,8 @@ export class CompactionService {
     ]
 
     const [stubText, rawState] = await Promise.all([
-      this.streamCompactionText(stubContext, abortSignal),
-      this.streamCompactionText(stateContext, abortSignal)
+      this.streamCompactionText(stubContext, 'compaction-stub', usageSources, abortSignal),
+      this.streamCompactionText(stateContext, 'compaction-state', usageSources, abortSignal)
     ])
     if (abortSignal?.aborted) return null
     if (!rawState) return null
@@ -467,6 +487,8 @@ export class CompactionService {
             ].join('\n')
           )
         ],
+        'compaction-tighten',
+        usageSources,
         abortSignal
       )
       if (abortSignal?.aborted) return null
@@ -482,16 +504,21 @@ export class CompactionService {
 
   private async streamCompactionText(
     messages: ChatMessage[],
+    purpose: ChatRequestPurpose,
+    usageSources: UsageSource[],
     abortSignal?: AbortSignal
   ): Promise<string | null> {
     const chatOptions: ChatOptions = {
       abortSignal,
       includeInternalMessages: true,
-      purpose: 'compaction-summary',
+      purpose,
+      observation: { logicalRequestId: randomUUID(), runId: this.context.runId, sessionId: this.context.sessionId },
       ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
     }
 
     let text = ''
+    let source: UsageSource | undefined
+    let acceptedText = false
     try {
       const stream = this.modelClient.chat(messages, undefined, chatOptions)
       for await (const event of stream) {
@@ -499,9 +526,12 @@ export class CompactionService {
         if (event.type === 'text_delta') {
           text += event.delta
         } else if (event.type === 'wire_snapshot') {
+          source = event.source
           this.cacheDiagnostics.recordWireSnapshot(event.snapshot, {
-            purpose: 'compaction-summary'
+            purpose
           })
+        } else if (event.type === 'usage' && event.source) {
+          source = event.source
         } else if (
           event.type === 'context_overflow'
           || event.type === 'error'
@@ -510,12 +540,15 @@ export class CompactionService {
           return null
         }
       }
+    const trimmed = text.trim()
+    acceptedText = trimmed.length > 0
+    if (acceptedText && source) usageSources.push(source)
+    return trimmed.length > 0 ? trimmed : null
     } catch {
       return null
+    } finally {
+      if (!acceptedText && source) metricUsageAdoption(source, false, 'compaction-context')
     }
-
-    const trimmed = text.trim()
-    return trimmed.length > 0 ? trimmed : null
   }
 
   /**

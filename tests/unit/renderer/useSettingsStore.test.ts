@@ -30,6 +30,7 @@ function usage(partial: Partial<NormalizedUsage> & Pick<NormalizedUsage, 'prompt
     outputTokens: output,
     rawUsage: partial.rawUsage ?? {},
     usageDialect: partial.usageDialect ?? 'openai',
+    cacheReadReport: partial.cacheReadReport ?? 'reported',
     promptTokens: partial.promptTokens,
     completionTokens: partial.completionTokens,
     cachedTokens: partial.cachedTokens,
@@ -42,6 +43,17 @@ function usage(partial: Partial<NormalizedUsage> & Pick<NormalizedUsage, 'prompt
 describe('useSettingsStore.handleUsage', () => {
   beforeEach(() => {
     resetSettingsStoreForTests()
+  })
+
+  it('缺失缓存计数仍保留全部输入，并单列覆盖范围', () => {
+    for (const [cachedTokens, cacheReadReport] of [[80, 'reported'], [0, 'reported'], [0, 'unreported']] as const) {
+      useSettingsStore.getState().handleUsage(usage({ promptTokens: 100, completionTokens: 10, cachedTokens, cacheWriteTokens: 0, cacheReadReport }))
+    }
+    expect(useSettingsStore.getState().sessionUsage).toMatchObject({
+      totalPromptTokens: 300,
+      hitRate: 80 / 300,
+      cacheCountCoverage: { reportedZero: 1, reportedPositive: 1, unreported: 1 }
+    })
   })
 
   it('第一次调用累计基础用量', () => {

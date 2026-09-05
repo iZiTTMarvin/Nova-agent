@@ -14,6 +14,7 @@ import {
   resetMetricsForTests,
   registerMetricSink
 } from '../../../../src/shared/diagnostics/metrics'
+import { initLaunchIdentity, resetLaunchIdentityForTests } from '../../../../src/shared/diagnostics/launchIdentity'
 
 describe('结构化指标埋点', () => {
   const prev = process.env.NOVA_METRICS
@@ -24,9 +25,21 @@ describe('结构化指标埋点', () => {
   })
 
   afterEach(() => {
+    resetLaunchIdentityForTests()
     resetMetricsForTests()
     if (prev === undefined) delete process.env.NOVA_METRICS
     else process.env.NOVA_METRICS = prev
+  })
+
+  it('同一启动的构建身份保持固定，并随每条指标传给既有 sink', () => {
+    resetLaunchIdentityForTests()
+    const launch = initLaunchIdentity({ appVersion: 'fixture-version', buildFingerprint: 'fixture-build', host: 'node' })
+    expect(initLaunchIdentity({ buildFingerprint: 'other-build' })).toBe(launch)
+    process.env.NOVA_METRICS = '1'
+    const stored: string[] = []
+    registerMetricSink(event => stored.push(JSON.stringify(event)))
+    recordMetric('attempt.start', { count: 1 })
+    expect(JSON.parse(stored[0])).toMatchObject({ launchId: launch.launchId, buildFingerprint: 'fixture-build', appVersion: 'fixture-version' })
   })
 
   it('默认关闭时 recordMetric 为 no-op', () => {

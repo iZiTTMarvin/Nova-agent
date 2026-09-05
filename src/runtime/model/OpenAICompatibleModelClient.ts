@@ -5,7 +5,12 @@
  */
 import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from './types'
+import { randomUUID } from 'crypto'
+import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, DowngradeCapability } from './types'
+import { resolveRouteIdentity } from './routeIdentity'
+import { deriveTransportDurations, toTransportAttemptMetric } from './transportObservation'
+import { metricTransportAttempt, metricUsageReport, recordMetric } from '../../shared/diagnostics/metrics'
+import { toUsageReportMetric } from './usage'
 import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
@@ -32,7 +37,6 @@ import {
 } from './ModelTransport'
 
 /** 会话级可禁用的请求能力（内存态，loop 重建后重新探测） */
-type DowngradeCapability = 'prompt_cache_key' | 'reasoning_content' | 'clear_thinking'
 
 /**
  * 诊断开关：NOVA_WIRE_DUMP_DIR 指向目录时，把每次出站请求体原样落盘。
@@ -207,8 +211,43 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 最终 body 就绪后计算语义快照（降级重试若剥离 key 会在成功/失败出口再算）
     const snapshotEvent = (): ChatEvent => ({
       type: 'wire_snapshot',
-      snapshot: computeWireSnapshot(body, this.cacheProfile)
+      snapshot: computeWireSnapshot(body, this.cacheProfile, JSON.stringify(body)),
+      source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose }
     })
+
+    const logicalRequestId = options?.observation?.logicalRequestId ?? randomUUID()
+    const purpose = options?.purpose ?? 'main'
+    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: options?.reasoningEffort ?? this.config.reasoningEffort, cacheProfile: this.cacheProfile.id })
+    let dispatchIndexWithinCall = 0
+    let physicalAttemptId = ''
+    let observedAttempt: Awaited<ReturnType<typeof transportFetch>>['attempt'] | undefined
+    let observedSnapshot: ReturnType<typeof computeWireSnapshot> | undefined
+    let observedResponse: Response | undefined
+    let rawUsage: Record<string, unknown> | null = null
+    let downgrade: DowngradeCapability | null = null
+    const reportAttempt = (): void => {
+      if (!observedAttempt || !observedSnapshot) return
+      const timing = observedAttempt.getTiming()
+      const source = { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose }
+      const usage = normalizeUsage(rawUsage)
+      metricTransportAttempt({
+        ...toTransportAttemptMetric({
+          physicalAttemptId, dispatchIndexWithinCall, purpose, route,
+          outcome: observedAttempt.getOutcome() ?? 'abandoned',
+          timing, durations: deriveTransportDurations(timing),
+          wireBodyHash: observedSnapshot.rawBodyHash,
+          wireBodyBytes: observedSnapshot.rawBodyBytes,
+          canonicalBodyHash: observedSnapshot.exactBodyHash,
+          downgrade,
+          providerRequestId: observedResponse?.headers.get('x-request-id') ?? null,
+          usageReport: usage ? 'reported' : 'missing'
+        }, { logicalRequestId }),
+        runId: options?.observation?.runId ?? undefined,
+        sessionId: options?.observation?.sessionId ?? undefined
+      })
+      metricUsageReport({ ...toUsageReportMetric(usage, source), physicalAttemptId })
+      observedAttempt = undefined
+    }
 
     let response: Response
     let attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
@@ -216,9 +255,21 @@ export class OpenAICompatibleModelClient implements ModelClient {
       response: Response
       attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
     }> => {
+      reportAttempt()
+      dispatchIndexWithinCall++
+      physicalAttemptId = randomUUID()
+      rawUsage = null
+      observedResponse = undefined
       const wireBody = JSON.stringify(body)
+      observedSnapshot = computeWireSnapshot(body, this.cacheProfile, wireBody)
+      recordMetric('transport.dispatch', { dispatchIndexWithinCall, wireBodyBytes: observedSnapshot.rawBodyBytes }, {
+        id: logicalRequestId,
+        tags: { physicalAttemptId, routeId: route.routeId, purpose,
+          runId: options?.observation?.runId ?? 'unavailable', sessionId: options?.observation?.sessionId ?? 'unavailable',
+          wireBodyHash: observedSnapshot.rawBodyHash, canonicalBodyHash: observedSnapshot.exactBodyHash }
+      })
       dumpWireBody(wireBody)
-      return transportFetch({
+      const result = await transportFetch({
         url,
         method: 'POST',
         headers: {
@@ -228,10 +279,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
         body: wireBody,
         userSignal: options?.abortSignal,
         timeouts: options?.transportTimeouts,
-        fetchImpl: this.config.fetchImpl
+        fetchImpl: this.config.fetchImpl,
+        onAttempt: value => { observedAttempt = value }
       })
+      observedResponse = result.response
+      return result
     }
 
+    try {
     try {
       const result = await doFetch()
       response = result.response
@@ -248,6 +303,8 @@ export class OpenAICompatibleModelClient implements ModelClient {
         response.status === 400 ? detectDowngradeCapability(text, body) : null
 
       if (downgradeCap && !requestDisabled.has(downgradeCap)) {
+        reportAttempt()
+        downgrade = downgradeCap
         // 可观测档案的 reasoning_content 400：先尝试切换到另一个字段变体，仍失败才降级剥离。
         // 切换而非直接剥离，避免在 provider 其实支持 reasoning（仅字段名不同）时丢失思考链回放。
         const triedFieldSwitch =
@@ -360,7 +417,6 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>()
     let finishReason = ''
     /** 末尾 usage chunk 的原始数据（stream_options.include_usage=true 时由服务端发送） */
-    let rawUsage: Record<string, unknown> | null = null
 
     const bodyStream = response.body
     if (!bodyStream) {
@@ -563,11 +619,14 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (rawUsage) {
       const usage = normalizeUsage(rawUsage)
       if (usage) {
-        yield { type: 'usage', usage }
+        yield { type: 'usage', usage, source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
       }
     }
 
     yield { type: 'message_end', finishReason: finishReason || 'stop' }
+    } finally {
+      reportAttempt()
+    }
   }
 
   /**

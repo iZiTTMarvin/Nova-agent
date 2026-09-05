@@ -23,6 +23,8 @@
 
  */
 import { randomUUID } from 'crypto'
+import type { UsageSource } from '../../../shared/model/types'
+import { metricUsageAdoption } from '../../../shared/diagnostics/metrics'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
 import { resolveCacheProfile } from '../../model/cacheProfile'
 import { recordMetric } from '../../../shared/diagnostics/metrics'
@@ -93,6 +95,7 @@ export class StreamProcessor {
   private contextOverflowRetryCount = 0
   /** 上一 attempt 已向 UI 发出 retrying；下次 run 开始时收回横幅 */
   private resumeAfterRetry = false
+  private logicalRequestId: string | undefined
 
   private static readonly MAX_CONTEXT_OVERFLOW_RETRIES = 3
 
@@ -118,6 +121,7 @@ export class StreamProcessor {
    * retry 重跑本轮时不调用——AttemptController 跨 retry 累积计数。
    */
   resetRetryState(): void {
+    this.logicalRequestId = undefined
     this.attemptController.reset()
     this.contextOverflowRetryAttempted = false
     this.contextOverflowRetryCount = 0
@@ -140,6 +144,8 @@ export class StreamProcessor {
 
     // 每次模型尝试分配唯一 attemptId；恢复预算只由模型错误路径消耗。
     const attemptId = this.attemptController.beginAttempt()
+    this.logicalRequestId ??= randomUUID()
+    let usageSource: UsageSource | undefined
     const attemptStartedAt = Date.now()
     let ttftRecorded = false
     metricAttemptStart(attemptId)
@@ -149,11 +155,15 @@ export class StreamProcessor {
     }
   
     const finish = <T extends TurnStreamResult>(result: T): T => {
+      if (usageSource) metricUsageAdoption(usageSource, result.kind === 'assistant', 'main-result')
+      if (result.kind !== 'retry') this.logicalRequestId = undefined
       metricAttemptEnd(attemptId, Date.now() - attemptStartedAt, result.kind)
       return result
     }
 
     const stream = this.modelPool.chat(chatMessages, nativeTools, {
+      purpose: 'main',
+      observation: { logicalRequestId: this.logicalRequestId, runId: context.runId, sessionId: context.sessionId },
       ...(signal ? { abortSignal: signal } : {}),
       ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {}),
       // 'auto' 是合法覆盖值（显式不发送参数），仅 undefined 才视为无覆盖
@@ -346,6 +356,7 @@ export class StreamProcessor {
             break
 
           case 'wire_snapshot':
+            usageSource = event.source
             {
               // 语义快照写入诊断层并做分段 first-diff 比较
               const snapshotDiag = this.cacheDiagnostics.recordWireSnapshot(event.snapshot)
@@ -482,6 +493,7 @@ export class StreamProcessor {
           }
 
           case 'usage':
+            usageSource = event.source
             roundSawUsage = true
             roundPromptTokens = event.usage.promptTokens
             {
@@ -497,6 +509,7 @@ export class StreamProcessor {
                 usage: event.usage,
                 cacheProfileId: profile.id
               })
+              if (event.usage.cacheReadReport !== 'unreported') {
               const dropDiag = this.cacheDiagnostics.checkCacheReadDrop(event.usage.cachedTokens)
               if (dropDiag.cacheBreakDetected) {
                 this.emit({ type: 'cache_diagnostic', messageId, diagnostic: dropDiag })
@@ -513,6 +526,7 @@ export class StreamProcessor {
               )
               if (reuseDiag.cacheBreakDetected) {
                 this.emit({ type: 'cache_diagnostic', messageId, diagnostic: reuseDiag })
+              }
               }
             }
             this.emitContextBreakdown(messageId, event.usage.promptTokens)

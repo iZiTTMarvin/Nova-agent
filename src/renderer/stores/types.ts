@@ -126,6 +126,7 @@ export type SessionMessagePayload = Message & { _toolCallResults?: Record<string
 
 /** 会话级 token 用量聚合统计 */
 export interface SessionUsageStats {
+  cacheCountCoverage: import('../../shared/model/types').CacheCountCoverage
   totalUncachedInputTokens: number
   totalCacheReadTokens: number
   totalCacheWriteTokens: number

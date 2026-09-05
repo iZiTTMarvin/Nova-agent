@@ -172,10 +172,10 @@ describe('CacheDiagnostics wire 级 first-diff', () => {
     diag.recordWireSnapshot(makeSnapshot({ messageKeys: ['h1', 'h2'] }))
     const result = diag.recordWireSnapshot(
       makeSnapshot({ messageKeys: ['totally', 'different'], exactBodyHash: 'x' }),
-      { purpose: 'compaction-summary' }
+      { purpose: 'compaction-state' }
     )
     expect(result.cacheBreakDetected).toBe(true)
-    expect(result.prefixDiff?.purpose).toBe('compaction-summary')
+    expect(result.prefixDiff?.purpose).toBe('compaction-state')
   })
 
   it('正常复用也保留最后一次 expected 与 actual 观测', () => {

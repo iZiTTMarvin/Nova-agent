@@ -24,10 +24,25 @@ export type CacheProfileId =
   | 'openai'
   | 'generic'
 
+/**
+ * 稳定的模型配置引用（provider + model entry），不含任何凭据。
+ * baseUrl / apiKey 可被编辑，本引用不变；用于路由身份与预算锚点的兼容性判断。
+ */
+export interface ModelRouteRef {
+  providerId: string
+  modelEntryId: string
+}
+
 export interface ModelConfig {
   baseUrl: string
   apiKey: string
   modelId: string
+  /**
+   * 由注册表解析出的稳定配置引用。
+   * 仅在配置来自 LlmRegistry 解析时存在；临时/ad-hoc 配置为 undefined，
+   * 下游路由身份必须把它记为无稳定引用，不得由 baseUrl 反推伪造。
+   */
+  routeRef?: ModelRouteRef
   /**
    * 缓存策略（兼容字段，保留不删）。默认 'auto'。
    * 'anthropic' 适用于 Anthropic 原生 API 或中转，会对最后 2 条消息打 cache_control 标记。

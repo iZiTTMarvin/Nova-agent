@@ -5,11 +5,22 @@
 
 import type { ToolTruncationMeta } from '../../shared/tools/types'
 import type { NormalizedUsage } from '../../shared/model/types'
-import type { CacheStrategy, CacheProfileId } from '../../shared/config/types'
+import type { CacheStrategy, CacheProfileId, ModelRouteRef } from '../../shared/config/types'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 
-export type { NormalizedUsage, UsageDialect } from '../../shared/model/types'
+export type {
+  NormalizedUsage,
+  UsageDialect,
+  CacheCountReport,
+  UsageReport
+} from '../../shared/model/types'
 export { computeCacheHitRate } from '../../shared/model/types'
+
+/**
+ * 网关不兼容后被会话级禁用的请求能力（协议适配层概念，唯一类型来源）。
+ * 每次因降级而重发都是一次新的物理 attempt，不得藏在同一次派发下。
+ */
+export type DowngradeCapability = 'prompt_cache_key' | 'reasoning_content' | 'clear_thinking'
 
 // ── 消息格式 ──────────────────────────────────────────────
 
@@ -123,6 +134,11 @@ export interface ModelClientConfig {
   apiKey: string
   modelId: string
   /**
+   * 注册表稳定引用；用于解析无密钥路由身份（观测分账与预算锚点兼容性）。
+   * ad-hoc 配置缺省时路由身份记为无稳定引用，不由 baseUrl 反推伪造。
+   */
+  routeRef?: ModelRouteRef
+  /**
    * 缓存策略（兼容字段）。唯一类型来源：shared/config/types.CacheStrategy。
    * 与 cacheProfile 一并交给 resolveCacheProfile；缺省时按 URL/modelId 自动判定。
    */
@@ -157,7 +173,7 @@ export type ChatEvent =
   | { type: 'tool_call'; toolCall: ChatToolCall }
   | { type: 'message_start' }
   | { type: 'message_end'; finishReason: 'stop' | 'tool_calls' | string }
-  | { type: 'usage'; usage: NormalizedUsage }
+  | { type: 'usage'; usage: NormalizedUsage; source?: import('../../shared/model/types').UsageSource }
   | { type: 'error'; error: string; failure?: import('./failureTypes').ModelFailure }
   | { type: 'context_overflow'; rawError: string }
   | { type: 'cancelled' }
@@ -173,7 +189,7 @@ export type ChatEvent =
    */
   | {
       type: 'capability_downgrade'
-      capability: 'prompt_cache_key' | 'reasoning_content' | 'clear_thinking'
+      capability: DowngradeCapability
       detail: string
     }
   /**
@@ -182,4 +198,5 @@ export type ChatEvent =
   | {
       type: 'wire_snapshot'
       snapshot: import('./requestFingerprint').WireSnapshot
+      source?: import('../../shared/model/types').UsageSource
     }

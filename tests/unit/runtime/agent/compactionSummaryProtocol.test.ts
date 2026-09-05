@@ -264,7 +264,7 @@ describe('压缩摘要前缀回放', () => {
     expect(oldCount).toBeGreaterThan(0)
 
     const expectedTailLength = oldMessages[oldMessages.length - 1]?.role === 'user' ? 2 : 1
-    for (const summaryCall of calls) {
+    for (const [index, summaryCall] of calls.entries()) {
       for (let i = 0; i <= oldCount; i++) {
         expect(JSON.stringify(summaryCall.messages[i])).toBe(JSON.stringify(mainView[i]))
       }
@@ -275,7 +275,7 @@ describe('压缩摘要前缀回放', () => {
       if (expectedTailLength === 2) {
         expect(tail[0].role).toBe('assistant')
       }
-      expect(summaryCall.options?.purpose).toBe('compaction-summary')
+      expect(summaryCall.options?.purpose).toBe(index === 0 ? 'compaction-stub' : 'compaction-state')
     }
 
     expect(extractTextFromContent(calls[0].messages.at(-1)!.content)).toContain('被折叠的这一段')

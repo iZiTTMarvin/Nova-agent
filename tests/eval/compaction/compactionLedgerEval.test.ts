@@ -10,6 +10,7 @@ import {
   type CompactionLedger
 } from '../../../src/runtime/sessions'
 import { restoreFromLedger, persistCompactionSnapshot } from '../../../src/runtime/sessions/contextSnapshot'
+import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
 import {
   createRequestProjectionArchiveCache,
   projectRequestMessages,
@@ -142,6 +143,8 @@ async function projectForEval(
 
 describe('账本式交接压缩确定性 A/B 评估', () => {
   it('量化快照、轮内恢复、前缀稳定性与折叠历史回读', async () => {
+    // 防止 SessionIndexHost 模块级连接缓存跨测试文件泄漏
+    resetSessionIndexHostForTests()
     const tempDir = mkdtempSync(join(tmpdir(), 'nova-compaction-eval-'))
     try {
       const snapshotScenarios = [
@@ -396,6 +399,8 @@ describe('账本式交接压缩确定性 A/B 评估', () => {
       expect(metrics.projectionSafety.multilineReductionPercent).toBeGreaterThan(0)
       expect(metrics.projectionSafety.nonInflating).toBe(true)
     } finally {
+      // 先经 Owner 关闭索引连接，再删临时目录，避免 Windows 上 messages-index.sqlite EBUSY
+      resetSessionIndexHostForTests()
       rmSync(tempDir, { recursive: true, force: true })
     }
   })

@@ -72,7 +72,7 @@ describe.each(PROVIDER_IDS)('真实 API 缓存门禁（压缩）：%s', provider
         ).toBeGreaterThanOrEqual(2)
 
         // 按用途标记识别摘要调用；未触发说明场景失效，门禁红
-        const summaryRequests = all.filter(r => r.purpose === 'compaction-summary')
+        const summaryRequests = all.filter(r => r.purpose.startsWith('compaction-'))
         expect(
           summaryRequests.length,
           `压缩未在对话内触发（未观察到 compaction-summary 请求）。` +

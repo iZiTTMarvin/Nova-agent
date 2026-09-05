@@ -4,18 +4,15 @@
  * version 2 配置结构：多个服务商，每个服务商下多个模型；
  * 运行时通过 resolveModelConfig 合并为 OpenAI 兼容 ModelConfig。
  */
-import type { ModelConfig, ReasoningEffort } from './types'
+import type { ModelConfig, ModelRouteRef, ReasoningEffort } from './types'
 import { lookupModelCapability } from './modelRegistry'
 export type { ReasoningEffort } from './types'
 
 /** 预设服务商 ID */
 export type PresetProviderId = 'minimax' | 'glm' | 'deepseek'
 
-/** 活跃模型引用（provider + model entry） */
-export interface ActiveModelRef {
-  providerId: string
-  modelEntryId: string
-}
+/** 活跃模型引用（provider + model entry）；与运行时路由身份共用同一形状 */
+export type ActiveModelRef = ModelRouteRef
 
 /** 服务商下的单个模型条目 */
 export interface ModelEntry {
@@ -275,6 +272,7 @@ export function resolveModelReference(
       baseUrl,
       apiKey,
       modelId,
+      routeRef: { providerId: target.providerId, modelEntryId: target.modelEntryId },
       ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
       ...(entry.supportsVision !== undefined ? { supportsVision: entry.supportsVision } : {}),
       ...(entry.reasoningEffort && entry.reasoningEffort !== 'auto'

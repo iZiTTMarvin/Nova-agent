@@ -80,7 +80,7 @@ export function resolveLiveProvider(id: LiveProviderId): ResolvedLiveProvider | 
 export interface CapturedRequest {
   /** 请求到达序号，从 1 开始 */
   index: number
-  purpose: 'main' | 'compaction-summary'
+  purpose: NonNullable<ChatOptions['purpose']>
   messageCount: number
   usage?: NormalizedUsage
 }
@@ -110,7 +110,7 @@ export class CapturingModelClient implements ModelClient {
   ): AsyncIterable<ChatEvent> {
     this.records.push({
       index: this.records.length + 1,
-      purpose: options?.purpose === 'compaction-summary' ? 'compaction-summary' : 'main',
+      purpose: options?.purpose ?? 'main',
       messageCount: messages.length
     })
     const record = this.records[this.records.length - 1]

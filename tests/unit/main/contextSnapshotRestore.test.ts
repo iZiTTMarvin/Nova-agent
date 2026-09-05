@@ -7,6 +7,7 @@ import { EventBus } from '../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 import { makeCompactionLedger } from '../../../src/test-support/builders/compactionLedger'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
+import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
 import {
   persistCompactionSnapshot,
   restoreFromLedger,
@@ -37,11 +38,15 @@ describe('上下文账本恢复', () => {
   let store: SessionStore
 
   beforeEach(() => {
+    // 防止 SessionIndexHost 模块级连接缓存跨测试文件泄漏
+    resetSessionIndexHostForTests()
     tmpDir = mkdtempSync(join(tmpdir(), 'nova-ctx-snapshot-'))
     store = new SessionStore(tmpDir)
   })
 
   afterEach(() => {
+    // 先经 Owner 关闭索引连接，再删临时目录，避免 Windows 上 messages-index.sqlite EBUSY
+    resetSessionIndexHostForTests()
     rmSync(tmpDir, { recursive: true, force: true })
   })
 

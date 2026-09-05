@@ -141,7 +141,8 @@ describe('saveModelConfig', () => {
     saveModelConfig(validConfig, tmpDir)
     const loaded = loadModelConfig(tmpDir)
     expect(loaded).not.toBeNull()
-    expect(loaded).toEqual(validConfig)
+    expect(loaded).toEqual({ ...validConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel })
+    expect(loadModelConfig(tmpDir)?.routeRef).toEqual(loaded?.routeRef)
   })
 
   it('返回值是 trim 后的合法配置', () => {
@@ -174,7 +175,7 @@ describe('saveModelConfig', () => {
     saveModelConfig(updatedConfig, tmpDir)
 
     const loaded = loadModelConfig(tmpDir)
-    expect(loaded).toEqual(updatedConfig)
+    expect(loaded).toEqual({ ...updatedConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel })
   })
 
   it('配置文件带缩进格式化（可读性）', () => {
@@ -221,7 +222,7 @@ describe('loadModelConfig', () => {
   it('保存后可以完整加载回来', () => {
     saveModelConfig(validConfig, tmpDir)
     const loaded = loadModelConfig(tmpDir)
-    expect(loaded).toEqual(validConfig)
+    expect(loaded).toEqual({ ...validConfig, routeRef: loadLlmRegistry(tmpDir)?.activeModel })
   })
 
   it('损坏的配置文件返回 null（容错）', () => {

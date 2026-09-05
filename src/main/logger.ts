@@ -6,11 +6,23 @@
 import log from 'electron-log'
 import { app } from 'electron'
 import path from 'path'
+import { readFileSync } from 'fs'
+import { createHash } from 'crypto'
+import { initLaunchIdentity } from '../shared/diagnostics/launchIdentity'
+import { registerMetricSink } from '../shared/diagnostics/metrics'
 
 const MAX_LOG_BYTES = 20 * 1024 * 1024
 
 /** 初始化文件日志与全局异常钩子（主进程入口最早调用） */
 export function initMainLogger(): typeof log {
+  let buildFingerprint = 'unknown'
+  try {
+    buildFingerprint = createHash('sha256').update(readFileSync(__filename)).digest('hex')
+  } catch {
+    // 无法读取入口 bundle 时保持 unknown。
+  }
+  initLaunchIdentity({ appVersion: app.getVersion(), buildFingerprint, host: 'electron-main' })
+  registerMetricSink(event => log.info('[nova-metrics]', event))
   const logsDir = path.join(app.getPath('userData'), 'logs')
 
   log.transports.file.resolvePathFn = (_variables, message) => {

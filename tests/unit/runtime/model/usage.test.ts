@@ -3,6 +3,16 @@ import { normalizeUsage } from '../../../../src/runtime/model/usage'
 import { computeCacheHitRate } from '../../../../src/shared/model/types'
 
 describe('normalizeUsage', () => {
+  it('缺字段、非法计数、明确零和正数保持不同含义', () => {
+    for (const raw of [true, 'invalid', 1, []]) expect(normalizeUsage(raw)).toBeNull()
+    for (const value of [undefined, null, '', -1, 'bad']) {
+      expect(normalizeUsage({ prompt_tokens: 100, prompt_tokens_details: { cached_tokens: value } })?.cacheReadReport).toBe('unreported')
+    }
+    expect(normalizeUsage({ prompt_tokens: 100, prompt_tokens_details: {} })?.cacheReadReport).toBe('unreported')
+    for (const value of [0, 80]) {
+      expect(normalizeUsage({ prompt_tokens: 100, prompt_tokens_details: { cached_tokens: value } })).toMatchObject({ cacheReadReport: 'reported', cacheReadTokens: value })
+    }
+  })
   describe('OpenAI 格式', () => {
     it('解析 prompt_tokens_details.cached_tokens 并派生四元组', () => {
       const result = normalizeUsage({

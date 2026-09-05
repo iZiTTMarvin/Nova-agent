@@ -52,11 +52,9 @@ describe('OpenAICompatibleModelClient abort 支持', () => {
 
     // 快速创建一个 mock fetch
     const originalFetch = globalThis.fetch
-    let fetchCalled = false
+    let capturedSignal: AbortSignal | null | undefined
     globalThis.fetch = async (_url: string, init?: RequestInit) => {
-      fetchCalled = true
-      // 验证 signal 被传入
-      expect(init?.signal).toBe(controller.signal)
+      capturedSignal = init?.signal
 
       return new Response(
         createSSEStream([textDelta('hi'), messageEnd()]),
@@ -73,7 +71,11 @@ describe('OpenAICompatibleModelClient abort 支持', () => {
       events.push(event)
     }
 
-    expect(fetchCalled).toBe(true)
+    expect(capturedSignal).toBeInstanceOf(AbortSignal)
+    expect(capturedSignal?.aborted).toBe(false)
+    expect(events.filter(event => event.type === 'error')).toEqual([])
+    expect(events).toContainEqual({ type: 'text_delta', delta: 'hi' })
+    expect(events.at(-1)).toEqual({ type: 'message_end', finishReason: 'stop' })
     globalThis.fetch = originalFetch
   })
 

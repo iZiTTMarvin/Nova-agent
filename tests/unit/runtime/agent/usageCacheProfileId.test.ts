@@ -11,6 +11,8 @@ import type { ChatEvent, NormalizedUsage } from '../../../../src/runtime/model/t
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
+import { getMetricBuffer, registerMetricSink, resetMetricsForTests } from '../../../../src/shared/diagnostics/metrics'
 
 const loops: AgentLoop[] = []
 
@@ -56,6 +58,36 @@ async function runDrained(loop: AgentLoop, eventBus: EventBus, text: string): Pr
 }
 
 describe('usage 事件 cacheProfileId', () => {
+  it('主对话消费关联实际物理 usage，缺少缓存字段不产生未命中告警', async () => {
+    const previous = process.env.NOVA_METRICS
+    process.env.NOVA_METRICS = '1'
+    registerMetricSink(() => {})
+    try {
+      const config = { baseUrl: 'https://example.test/v1', apiKey: 'fixture', modelId: 'model' }
+      const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async () => new Response(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":2}}\n\ndata: [DONE]\n\n'
+      ) })
+      const pool = new ModelClientPool({ primary: client, primaryConfig: config })
+      const bus = new EventBus()
+      const loop = new AgentLoop(pool, bus, { permissionManager: new PermissionManager() })
+      loops.push(loop)
+      const events: AgentEvent[] = []
+      bus.on(event => events.push(event))
+      await loop.sendMessage('hello', agentRoute())
+      const reports = getMetricBuffer().filter(e => e.category === 'usage.report')
+      const adoptions = getMetricBuffer().filter(e => e.category === 'usage.adoption')
+      expect(reports).toHaveLength(1)
+      expect(adoptions).toHaveLength(1)
+      expect(adoptions[0].tags?.physicalAttemptId).toBe(reports[0].tags?.physicalAttemptId)
+      expect(adoptions[0].values.adopted).toBe(1)
+      expect(reports[0].tags).toMatchObject({ purpose: 'main', cacheCountCoverage: 'unreported' })
+      expect(events.filter(e => e.type === 'cache_diagnostic')).toEqual([])
+    } finally {
+      resetMetricsForTests()
+      if (previous === undefined) delete process.env.NOVA_METRICS
+      else process.env.NOVA_METRICS = previous
+    }
+  })
   it('主模型 usage 携带 resolveCacheProfile 得到的 profileId', async () => {
     const client = new MockModelClient()
     client.addResponse({

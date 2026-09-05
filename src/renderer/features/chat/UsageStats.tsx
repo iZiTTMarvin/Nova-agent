@@ -37,6 +37,8 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
   }
 
   const hitPercent = (sessionUsage!.hitRate * 100).toFixed(1)
+  const coverage = sessionUsage!.cacheCountCoverage
+  const hitLabel = coverage.unreported > 0 ? `至少 ${hitPercent}%` : `${hitPercent}%`
   const denom =
     sessionUsage!.totalUncachedInputTokens +
       sessionUsage!.totalCacheReadTokens +
@@ -49,8 +51,9 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
       <section className="context-usage">
         <div className="context-usage__header">
           <span className="context-usage__title">平均缓存命中率</span>
-          <span className="context-usage__summary">{hitPercent}%</span>
+          <span className="context-usage__summary">{hitLabel}</span>
         </div>
+        {coverage.unreported > 0 && <p className="context-usage__hint">{coverage.unreported} 次用量未报告缓存计数；以上为已报告命中的下界，包含所有输入。</p>}
 
         <div className="context-usage__bar" aria-hidden="true">
           <div
@@ -71,7 +74,7 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
               <div className="context-usage__profile-header">
                 <span className="context-usage__profile-id">{profileId}</span>
                 <span className="context-usage__profile-hit">
-                  {(stats.hitRate * 100).toFixed(1)}%
+                  {stats.cacheCountCoverage.unreported > 0 ? '至少 ' : ''}{(stats.hitRate * 100).toFixed(1)}%
                 </span>
               </div>
             </div>
@@ -83,7 +86,7 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
   return (
     <div
       className="usage-stats"
-      title={`平均缓存命中率: ${hitPercent}%`}
+      title={`平均缓存命中率: ${hitLabel}；缓存计数缺失 ${coverage.unreported} 次`}
     >
       <div className="usage-stats__bar">
         <div
@@ -97,7 +100,7 @@ export const UsageStats: React.FC<UsageStatsProps> = ({ variant = 'compact' }) =
           }}
         />
       </div>
-      <span className="usage-stats__hit">{hitPercent}%</span>
+      <span className="usage-stats__hit">{hitLabel}</span>
     </div>
   )
 }

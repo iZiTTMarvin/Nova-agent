@@ -11,6 +11,11 @@
  */
 import type { ChatEvent, TransportFetchImpl } from './types'
 import type { ModelFailure, ModelFailureKind } from './failureTypes'
+import {
+  createTransportTiming,
+  type TransportOutcome,
+  type TransportTiming
+} from './transportObservation'
 
 /** 规范化错误类别（写入 ChatEvent.error 文本，供 Recovery 匹配） */
 export type TransportErrorClass =
@@ -54,6 +59,11 @@ export interface TransportFetchInit {
   timeouts?: Partial<ModelTransportTimeouts>
   /** 自定义传输实现（headless 代理注入）；缺省使用全局 fetch */
   fetchImpl?: TransportFetchImpl
+  /**
+   * 派发前交出本次物理 attempt 句柄，供调用方记录观测。
+   * 纯观测钩子：不改变超时、取消与错误语义；派发失败时调用方仍能拿到已 settle 的 attempt。
+   */
+  onAttempt?: (attempt: TransportAttempt) => void
 }
 
 /** 单次 read 结果 */
@@ -69,17 +79,22 @@ export class TransportAttempt {
   private readonly onUserAbort: () => void
   private totalTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
+  /** 本地时序；只由本 attempt 单调填入，阶段未发生时保持 null */
+  private readonly timing: TransportTiming
+  private outcome: TransportOutcome | null = null
 
   constructor(userSignal: AbortSignal | undefined, totalMs: number | undefined) {
+    this.timing = createTransportTiming(performance.timeOrigin + performance.now())
     this.userSignal = userSignal
-    this.onUserAbort = () => this.controller.abort()
+    this.onUserAbort = () => this.abort()
     if (userSignal) {
-      if (userSignal.aborted) this.controller.abort()
+      if (userSignal.aborted) this.abort()
       else userSignal.addEventListener('abort', this.onUserAbort, { once: true })
     }
     if (totalMs && totalMs > 0) {
       // 总时长覆盖 headers 与整个 body；abort reason 带 timeout_total，避免误判 cancelled
       this.totalTimer = setTimeout(() => {
+        this.timing.abortRequestedAt ??= performance.timeOrigin + performance.now()
         this.controller.abort(
           new Error(formatTransportError('timeout_total', `总时长超时（${totalMs}ms）`))
         )
@@ -95,6 +110,41 @@ export class TransportAttempt {
     return Boolean(this.userSignal?.aborted)
   }
 
+  /** 响应对象已到（响应头可用）。首次调用生效，不覆盖更早的时间戳。 */
+  markHeaders(): void {
+    if (this.timing.headersAt === null) this.timing.headersAt = performance.timeOrigin + performance.now()
+  }
+
+  /**
+   * 记录一次模型语义事件。只有协议层真正解析到语义时才调用；
+   * SSE comment / keepalive / role / usage 都不算语义进展。
+   */
+  markSemantic(): void {
+    const now = performance.timeOrigin + performance.now()
+    if (this.timing.firstSemanticAt === null) this.timing.firstSemanticAt = now
+    this.timing.lastSemanticAt = now
+  }
+
+  /**
+   * 记录本地终态。首次调用生效：终态唯一，后来的清理不得改写已确定的结局。
+   * 本地 settle 不代表供应商已停止生成或停止计费。
+   */
+  settle(outcome: TransportOutcome): void {
+    if (this.outcome !== null) return
+    this.outcome = outcome
+    if (outcome !== 'abandoned') this.timing.settledAt = performance.timeOrigin + performance.now()
+  }
+
+  /** 当前时序快照（只读投影） */
+  getTiming(): TransportTiming {
+    return { ...this.timing }
+  }
+
+  /** 当前本地终态；尚未 settle 时为 null */
+  getOutcome(): TransportOutcome | null {
+    return this.outcome
+  }
+
   /** 结束 attempt，释放总时长 timer 与用户取消监听。幂等。 */
   dispose(): void {
     if (this.closed) return
@@ -105,6 +155,7 @@ export class TransportAttempt {
   }
 
   abort(): void {
+    this.timing.abortRequestedAt ??= performance.timeOrigin + performance.now()
     this.controller.abort()
   }
 }
@@ -180,6 +231,7 @@ function withTimeout<T>(
 export async function transportFetch(init: TransportFetchInit): Promise<TransportFetchResult> {
   const timeouts = { ...DEFAULT_TRANSPORT_TIMEOUTS, ...init.timeouts }
   const attempt = new TransportAttempt(init.userSignal, timeouts.totalMs)
+  init.onAttempt?.(attempt)
 
   try {
     const doFetch = init.fetchImpl ?? fetch
@@ -195,8 +247,10 @@ export async function transportFetch(init: TransportFetchInit): Promise<Transpor
       'timeout_connect',
       `建连超时（${timeouts.connectMs}ms）`
     )
+    attempt.markHeaders()
     return { response, attempt }
   } catch (err) {
+    attempt.settle(attempt.cancelledByUser ? 'cancelled' : 'transport_error')
     attempt.dispose()
     if (attempt.cancelledByUser || (err as Error)?.name === 'AbortError') {
       // 用户取消优先
@@ -271,6 +325,7 @@ export class TransportBodyReader {
   markSemanticEvent(): void {
     if (this.closed) return
     this.sawSemanticEvent = true
+    this.attempt.markSemantic()
     this.armSemanticTimer()
   }
 
@@ -303,6 +358,7 @@ export class TransportBodyReader {
       if (result.done) {
         this.closed = true
         this.clearSemanticTimer()
+        this.attempt.settle(this.attempt.cancelledByUser ? 'cancelled' : 'completed')
         this.attempt.dispose()
         return { done: true }
       }
@@ -329,6 +385,7 @@ export class TransportBodyReader {
     this.attempt.dispose()
     this.attempt.abort()
     await this.cancelReader()
+    this.attempt.settle(this.attempt.cancelledByUser ? 'cancelled' : 'transport_error')
   }
 
   private async cancelReader(): Promise<void> {
@@ -350,6 +407,8 @@ export class TransportBodyReader {
     this.closed = true
     this.clearSemanticTimer()
     this.removeUserAbortListener()
+    // 走到这里说明流没有以 EOF 收尾：用户取消记 cancelled，其余记 abandoned（本地终态不可判定）
+    this.attempt.settle(this.attempt.cancelledByUser ? 'cancelled' : 'abandoned')
     this.attempt.dispose()
     try {
       this.reader.releaseLock()
@@ -382,6 +441,7 @@ export async function readErrorResponseBody(
 ): Promise<string> {
   const body = response.body
   if (!body) {
+    attempt.settle('http_error')
     attempt.dispose()
     return 'unknown'
   }
@@ -420,6 +480,7 @@ export async function readErrorResponseBody(
     } catch {
       /* 忽略已释放锁 */
     }
+    attempt.settle('http_error')
     attempt.dispose()
   }
 }

@@ -11,7 +11,7 @@ import {
 } from '../../shared/config/llmRegistry'
 import { resolveContextWindow } from '../../shared/config/types'
 import type { ChatRequestPurpose, NormalizedUsage } from '../../shared/model/types'
-import { computeCacheHitRate } from '../../shared/model/types'
+import { computeCacheHitRate, EMPTY_CACHE_COUNT_COVERAGE, addCacheCountCoverage, cacheCountCoverageBucket, mergeCacheCountCoverage } from '../../shared/model/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 import type { SessionUsageStats } from './types'
 
@@ -92,6 +92,7 @@ export interface CacheDiagnosticUi {
 }
 
 const EMPTY_USAGE: SessionUsageStats = {
+  cacheCountCoverage: EMPTY_CACHE_COUNT_COVERAGE,
   totalUncachedInputTokens: 0,
   totalCacheReadTokens: 0,
   totalCacheWriteTokens: 0,
@@ -140,6 +141,7 @@ function accumulateUsage(prev: SessionUsageStats, usage: NormalizedUsage): Sessi
     : prev.totalCacheMissTokens
 
   const next: SessionUsageStats = {
+    cacheCountCoverage: addCacheCountCoverage(prev.cacheCountCoverage, cacheCountCoverageBucket(usage)),
     totalUncachedInputTokens: totalUncached,
     totalCacheReadTokens: totalCacheRead,
     totalCacheWriteTokens: totalCacheWrite,
@@ -181,6 +183,7 @@ function aggregateUsageBuckets(buckets: Record<string, SessionUsageStats>): Sess
   }
 
   const next: SessionUsageStats = {
+    cacheCountCoverage: values.reduce((sum, b) => mergeCacheCountCoverage(sum, b.cacheCountCoverage), EMPTY_CACHE_COUNT_COVERAGE),
     totalUncachedInputTokens: totalUncached,
     totalCacheReadTokens: totalCacheRead,
     totalCacheWriteTokens: totalCacheWrite,

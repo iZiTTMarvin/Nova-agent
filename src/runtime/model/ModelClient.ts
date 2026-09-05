@@ -10,6 +10,12 @@ export type { ChatRequestPurpose } from '../../shared/model/types'
 
 /** 模型调用时的可选参数 */
 export interface ChatOptions {
+  /** 只读观测关联，不参与请求序列化或恢复决策。 */
+  observation?: {
+    logicalRequestId: string
+    runId?: string | null
+    sessionId?: string | null
+  }
   /** 取消信号，触发时中断上游模型请求 */
   abortSignal?: AbortSignal
   /**

@@ -13,6 +13,8 @@ import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
+import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
+import { getMetricBuffer, registerMetricSink, resetMetricsForTests } from '../../../../src/shared/diagnostics/metrics'
 
 /** 恒等投影：单测里摘要输入与权威消息逐条一致，便于断言服务侧行为 */
 
@@ -65,6 +67,39 @@ function createService(options?: {
 }
 
 describe('CompactionService', () => {
+  it('真实客户端的 stub/state 保持并行，usage 与上下文采纳独立关联', async () => {
+    const previous = process.env.NOVA_METRICS
+    process.env.NOVA_METRICS = '1'
+    registerMetricSink(() => {})
+    const releases: Array<() => void> = []
+    const client = new OpenAICompatibleModelClient({
+      baseUrl: 'https://example.test/v1', apiKey: 'fixture', modelId: 'model',
+      fetchImpl: async () => new Promise<Response>(resolve => {
+        releases.push(() => resolve(new Response('data: {"choices":[{"delta":{"content":"summary"},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":2}}\n\ndata: [DONE]\n\n')))
+      })
+    })
+    const { service } = createService({ client: { chat: client.chat.bind(client), getCalls: () => [] } })
+    try {
+      const pending = service.runThresholdCompaction(identitySummaryProjection)
+      await vi.waitFor(() => expect(releases).toHaveLength(2))
+      releases.forEach(release => release())
+      expect(await pending).toBe(true)
+      const reported = getMetricBuffer().filter(e => e.category === 'usage.report')
+      const adopted = getMetricBuffer().filter(e => e.category === 'usage.adoption')
+      expect(reported.map(e => e.tags?.purpose).sort()).toEqual(['compaction-state', 'compaction-stub'])
+      expect(new Set(reported.map(e => e.id)).size).toBe(2)
+      expect(reported.map(e => e.tags?.cacheCountCoverage)).toEqual(['unreported', 'unreported'])
+      expect(adopted).toHaveLength(2)
+      expect(adopted.map(e => e.tags?.physicalAttemptId).sort()).toEqual(reported.map(e => e.tags?.physicalAttemptId).sort())
+      expect(adopted.every(e => e.values.adopted === 1)).toBe(true)
+      expect(reported.reduce((sum, e) => sum + e.values.promptTokens, 0)).toBe(200)
+    } finally {
+      service.dispose()
+      resetMetricsForTests()
+      if (previous === undefined) delete process.env.NOVA_METRICS
+      else process.env.NOVA_METRICS = previous
+    }
+  })
   it('threshold 未命中时不调用摘要模型', async () => {
     const messages: ChatMessage[] = [
       { role: 'system', content: 'system prompt' },
@@ -121,10 +156,10 @@ describe('CompactionService', () => {
 
     const summaryCalls = client.getCalls()
     expect(summaryCalls).toHaveLength(2)
-    for (const summaryCall of summaryCalls) {
+    for (const [index, summaryCall] of summaryCalls.entries()) {
       expect(summaryCall.options).toMatchObject({
         includeInternalMessages: true,
-        purpose: 'compaction-summary'
+        purpose: index === 0 ? 'compaction-stub' : 'compaction-state'
       })
       expect(summaryCall.options?.promptCacheKey).toBe('routing-key-1')
       expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(true)
@@ -152,9 +187,9 @@ describe('CompactionService', () => {
 
     // overflow 与 threshold 共用同一摘要调用点：无路由 key 的会话同样不携带
     expect(client.getCalls()).toHaveLength(2)
-    for (const summaryCall of client.getCalls()) {
+    for (const [index, summaryCall] of client.getCalls().entries()) {
       expect(summaryCall.options?.promptCacheKey).toBeUndefined()
-      expect(summaryCall.options?.purpose).toBe('compaction-summary')
+      expect(summaryCall.options?.purpose).toBe(index === 0 ? 'compaction-stub' : 'compaction-state')
     }
   })
 

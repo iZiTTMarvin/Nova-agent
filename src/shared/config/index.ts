@@ -1,4 +1,4 @@
-export { type ModelConfig, type CacheStrategy, type CacheProfileId } from './types'
+export { type ModelConfig, type ModelRouteRef, type CacheStrategy, type CacheProfileId } from './types'
 export {
   type LlmRegistry,
   type ProviderConfig,
