@@ -591,7 +591,8 @@ export class RunCoordinator {
     draft: {
       messageId: string
       attemptId?: string
-      blocks: Array<Record<string, unknown>>
+      blocks: import('../../shared/session/types').MessageBlock[]
+      userDelivery?: import('../../shared/session/types').UserDeliveryFacts
       finalized?: boolean
     }
   ): RunSnapshot | null {
@@ -600,8 +601,9 @@ export class RunCoordinator {
     const now = Date.now()
     snap.turnDraft = {
       messageId: draft.messageId,
+      ...(draft.userDelivery ? { userDelivery: { ...draft.userDelivery } } : {}),
       attemptId: draft.attemptId ?? snap.currentAttempt?.attemptId ?? 'default',
-      blocks: draft.blocks.map(b => ({ ...b })),
+      blocks: structuredClone(draft.blocks),
       finalized: draft.finalized ?? false,
       updatedAt: now
     }
@@ -980,7 +982,8 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
     turnDraft: snap.turnDraft
       ? {
           ...snap.turnDraft,
-          blocks: snap.turnDraft.blocks.map(b => ({ ...b }))
+          ...(snap.turnDraft.userDelivery ? { userDelivery: { ...snap.turnDraft.userDelivery } } : {}),
+          blocks: structuredClone(snap.turnDraft.blocks)
         }
       : snap.turnDraft,
     commandAcks: snap.commandAcks?.map(a => ({ ...a })),

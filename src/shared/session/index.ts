@@ -1,5 +1,6 @@
 export {
   type Mode,
+  type UserDeliveryFacts,
   type PermissionMode,
   type MessageRole,
   type ToolCall,

@@ -68,7 +68,9 @@ describe('消息 block 单一事实源', () => {
     const normalized = normalizeMessageToBlocksSource(legacy)
     expect(normalized.blocks).toBeDefined()
     expect(normalized.blocks!.length).toBeGreaterThanOrEqual(2)
-    expect(normalized.messageSchemaVersion).toBe(MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE)
+    expect(normalized.messageSchemaVersion).toBe(1)
+    expect(normalized.userDelivery).toBeUndefined()
+    expect(normalized.blocks!.every(b => !('responseStep' in b))).toBe(true)
     expect(normalized.content).toBe('hi')
   })
 
@@ -117,5 +119,37 @@ describe('消息 block 单一事实源', () => {
     })
     const tool = blocks.find(b => b.type === 'tool')
     expect(tool?.status).toBe('error')
+  })
+
+  it('新事实版本往返只保存一份工具正文并保留 step、reasoning 与注入归属', () => {
+    const original: SessionMessage = { id: 'a', parentId: 'u', role: 'assistant', content: '', timestamp: 1,
+      messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE,
+      userDelivery: { userMessageId: 'u', sessionPrefix: '当时目录', modeInstruction: '当时模式' },
+      blocks: [{ type: 'thinking', content: '推理', providerId: 'deepseek', responseStep: 0 },
+        { type: 'tool', toolCallId: 't', toolName: 'read', arguments: { path: 'a' }, status: 'success',
+          result: '完整正文', artifactId: 'abc123', responseStep: 0 }] }
+    const disk = serializeMessageForDisk(original)
+    expect(disk.content).toBe('')
+    expect(disk.toolCalls).toBeUndefined()
+    const restored = normalizeMessageToBlocksSource(JSON.parse(JSON.stringify(disk)))
+    expect(restored.blocks).toEqual(original.blocks)
+    expect(restored.userDelivery).toEqual(original.userDelivery)
+    expect(restored.toolCalls![0]).toMatchObject({ result: '完整正文', artifactId: 'abc123' })
+  })
+
+  it.each([99, -1])('未知消息版本 %s 拒绝读取而非降级成旧版', version => {
+    expect(() => normalizeMessageToBlocksSource({ id: 'a', parentId: null, role: 'assistant',
+      content: '', timestamp: 1, messageSchemaVersion: version })).toThrow('Unsupported message schema')
+  })
+
+  it.each([
+    { userDelivery: { userMessageId: 'u', modeInstruction: 4, sessionPrefix: null } },
+    { blocks: [{ type: 'text', content: 'x', responseStep: -1 }] },
+    { blocks: [{ type: 'text', content: 'x', responseStep: 2 }, { type: 'text', content: 'y', responseStep: 1 }] },
+    { blocks: [{ type: 'tool', toolCallId: 't', toolName: 'read', arguments: [], status: 'success' }] }
+  ])('损坏的新事实元数据拒绝提交 %#', invalid => {
+    const message = JSON.parse(JSON.stringify({ id: 'a', parentId: null, role: 'assistant',
+      content: '', timestamp: 1, messageSchemaVersion: 2, ...invalid }))
+    expect(() => serializeMessageForDisk(message)).toThrow(/Invalid/)
   })
 })

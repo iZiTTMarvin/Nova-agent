@@ -22,11 +22,9 @@ import type { AgentEvent } from '../types'
 import type { HookManager } from '../core/HookManager'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import type { PermissionCheckResult } from '../../permissions/PermissionCoordinator'
-import { sanitizeToolOutput } from '../../../shared/tool-input-sanitizer'
 import {
-  needsRepair,
   parseNativeArguments,
-  repairNativeArguments
+  resolveNativeArguments
 } from '../stream/nativeArgsRepair'
 import { validateAndRepairToolArgs } from './toolShapeValidation'
 
@@ -487,8 +485,7 @@ async function executePreparedToolCall(
     messageId: options.messageId,
     toolCallId: item.toolCall.id,
     toolName: item.toolCall.name,
-    // 在主进程 emit 前对工具输出做截断，防止大 result 撑爆渲染端 heap
-    result: sanitizeToolOutput(item.toolCall.name, resultText, failed),
+    result: resultText,
     failed,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {}),
@@ -538,7 +535,7 @@ async function runSequentialBatch(
           messageId: options.messageId,
           toolCallId: items[j].toolCall.id,
           toolName: items[j].toolCall.name,
-          result: sanitizeToolOutput(items[j].toolCall.name, outcome.resultText, true),
+          result: outcome.resultText,
           failed: true
         })
       }
@@ -586,7 +583,7 @@ async function runWithConcurrencyLimit(
               messageId: options.messageId,
               toolCallId: items[i].toolCall.id,
               toolName: items[i].toolCall.name,
-              result: sanitizeToolOutput(items[i].toolCall.name, outcome.resultText, true),
+              result: outcome.resultText,
               failed: true
             })
           } else {
@@ -665,34 +662,9 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
     }
 
     const toolCall = options.toolCalls[index]
-    const parsedArguments = parseNativeArguments(toolCall.arguments)
-    let args = parsedArguments.args
-    if (parsedArguments.repairKind) {
-      options.emit({
-        type: 'repair_diagnostic',
-        messageId: options.messageId,
-        kind: parsedArguments.repairKind,
-        toolCallId: toolCall.id,
-        toolName: toolCall.name
-      })
-    }
-    if (needsRepair(toolCall.arguments, args)) {
-      args = repairNativeArguments(
-        toolCall.name,
-        toolCall.arguments,
-        args,
-        diagnostic => {
-          options.emit({
-            type: 'repair_diagnostic',
-            messageId: options.messageId,
-            kind: diagnostic.kind,
-            toolCallId: toolCall.id,
-            toolName: toolCall.name
-          })
-        },
-        toolCall.id
-      )
-    }
+    let args = resolveNativeArguments(toolCall, diagnostic => {
+      options.emit({ type: 'repair_diagnostic', messageId: options.messageId, ...diagnostic })
+    })
     let tool = options.toolRegistry?.getTool(toolCall.name)
     // 精确未命中时尝试大小写自愈：唯一命中则按正确名字走全流程。
     // prepared 中的 toolCall 换成浅拷贝的纠正名（toolCallId 不变，协议配对不受影响），
@@ -882,7 +854,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         messageId: options.messageId,
         toolCallId: item.toolCall.id,
         toolName: item.toolCall.name,
-        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true),
+        result: outcome.resultText,
         failed: true
       })
       continue
@@ -895,7 +867,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         messageId: options.messageId,
         toolCallId: item.toolCall.id,
         toolName: item.toolCall.name,
-        result: sanitizeToolOutput(item.toolCall.name, item.precheckOutcome.resultText, true),
+        result: item.precheckOutcome.resultText,
         failed: true
       })
       continue
@@ -943,7 +915,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         messageId: options.messageId,
         toolCallId: item.toolCall.id,
         toolName: item.toolCall.name,
-        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, false),
+        result: outcome.resultText,
         failed: false
       })
       continue
@@ -957,7 +929,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
         messageId: options.messageId,
         toolCallId: item.toolCall.id,
         toolName: item.toolCall.name,
-        result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true),
+        result: outcome.resultText,
         failed: true
       })
       continue
@@ -1006,7 +978,7 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
             messageId: options.messageId,
             toolCallId: item.toolCall.id,
             toolName: item.toolCall.name,
-            result: sanitizeToolOutput(item.toolCall.name, outcome.resultText, true),
+            result: outcome.resultText,
             failed: true
           })
         }

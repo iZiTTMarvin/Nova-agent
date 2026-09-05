@@ -114,8 +114,8 @@ describe('会话持久化：deepseek reasoning 恢复', () => {
   })
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
     resetSessionIndexHostForTests()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   it('应用重启：落盘后 deepseek 恢复为多子轮 + reasoning', () => {

@@ -381,7 +381,7 @@ export async function sendAgentMessage(
   const isRegenerate = params.regenerate === true
 
   // 构建用户消息内容（含图片时为 ContentBlock[]，否则为 string）
-  // modeInstruction 统一由 AgentLoop.sendMessage 追加，持久化中不包含
+  // 用户原文独立落盘；当时的投递注入随 assistant 草稿保存。
   let sendContent: string | ContentBlock[]
   let persistContent: string | SerializableContentBlock[] | null = null
   let persistBlocks: MessageBlock[] = []
@@ -666,6 +666,7 @@ function handleAgentEvent(
   event: AgentEvent,
   context: HandleAgentEventContext
 ): void {
+  if (!context.runCoordinator.isExecutionCurrent(context.runId, context.executionGeneration)) return
   projectAgentEventToRun(
     {
       runCoordinator: context.runCoordinator,
@@ -687,6 +688,8 @@ function forwardAgentEvent(
   event: AgentEvent,
   context: ForwardAgentEventContext
 ): void {
+  if (context.executionGeneration != null &&
+      !getRunCoordinator().isExecutionCurrent(context.runId, context.executionGeneration)) return
   context.stallMark?.(event.type)
   stampSessionId(event, context.sessionId)
   if (context.parentSessionId) stampParentSessionId(event, context.parentSessionId)

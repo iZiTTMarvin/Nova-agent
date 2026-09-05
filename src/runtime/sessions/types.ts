@@ -4,7 +4,7 @@
  * 会话消息以树形存储（parentId 链 + currentLeafId），激活路径为当前展示与喂模型的线性视图。
  * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
-import type { Mode, MessageBlock, PermissionMode } from '../../shared/session'
+import type { Mode, MessageBlock, PermissionMode, UserDeliveryFacts } from '../../shared/session'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   SessionKind,
@@ -231,6 +231,7 @@ export function extractTextFromSerializableContent(
 
 /** 会话中单条消息的持久化格式 */
 export interface SessionMessage {
+  userDelivery?: UserDeliveryFacts
   id: string
   /** 父节点 id；顶层节点（森林根）为 null */
   parentId: string | null
@@ -252,7 +253,7 @@ export interface SessionMessage {
   blocks?: MessageBlock[]
   /**
    * 单条消息 schema 子版本（与 SessionData.schemaVersion 独立）。
-   * 1 = blocks 为事实源；缺省视为旧格式，加载时按需迁移。
+   * 1 = 旧 blocks；2 = 完成响应和投递事实。缺省按旧格式读取，不补造丢失信息。
    */
   messageSchemaVersion?: number
   /** 工具消息关联的 toolCallId */

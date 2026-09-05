@@ -140,10 +140,11 @@ export interface ToolCommitRecord {
  * 终态 finalize 后写入 SessionStore，再从 snapshot 清除。
  */
 export interface TurnDraft {
+  userDelivery?: import('../session/types').UserDeliveryFacts
   messageId: string
   attemptId: string
   /** 有序消息块（与 MessageBlock 同构的可序列化结构） */
-  blocks: Array<Record<string, unknown>>
+  blocks: import('../session/types').MessageBlock[]
   /** 是否已幂等写入 SessionStore */
   finalized: boolean
   updatedAt: number

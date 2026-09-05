@@ -736,10 +736,7 @@ export class AgentLoop {
 
     const modeInstruction = this.getCurrentModeInstruction()
 
-    // Session context 前缀（合并方案）：只在当前上下文里不存在"仍有效的锚点"时拼接，
-    // 并放到本轮 user 消息 content 最前面。它是真实 user 消息的一部分（不标
-    // internal），模型能真正看到；不落盘（持久化在 agentHandler 中用原始 content，
-    // 早于 sendMessage）。null 表示当前 context 已有有效锚点，跳过。
+    // 已有有效锚点时不重复注入；当时的片段随完成消息事实保存，用户原文保持独立。
     const sessionPrefix = this.getSessionContextPrefix()
     /** 把 sessionPrefix 拼到一段文本前（prefix 为空时原样返回） */
     const withPrefix = (text: string): string =>
@@ -774,6 +771,10 @@ export class AgentLoop {
       this.ctx.messages.push({ role: 'assistant', content: dispatched.assistantPrelude })
     }
     userText = dispatched.userText
+    if (userMessageId) {
+      this.eventBus.emit({ type: 'user_delivery', messageId,
+        facts: { userMessageId, sessionPrefix, modeInstruction } })
+    }
     const userOrigin = userMessageId
       ? { messageId: userMessageId, step: 0 }
       : undefined

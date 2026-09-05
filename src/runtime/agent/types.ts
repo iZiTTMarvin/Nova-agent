@@ -17,6 +17,7 @@ import type { ShapeRepairKind } from './execution/toolShapeValidation'
 import type { ToolProcessHandle } from '../tools/types'
 import type { PermissionManager } from '../permissions/PermissionManager'
 import type { CompactionLedger, TouchedFilesSnapshot } from '../sessions'
+import type { UserDeliveryFacts } from '../../shared/session/types'
 
 /**
  * repair_diagnostic 事件的分型联合，唯一来源。
@@ -29,6 +30,8 @@ export type { HookEvent }
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
+  | { type: 'user_delivery'; messageId: string; facts: UserDeliveryFacts; sessionId?: string }
+  | { type: 'assistant_step'; messageId: string; step: number; content: string; reasoningContent?: string; reasoningProviderId?: string; toolCalls: import('../../shared/session/types').ToolCall[]; sessionId?: string }
   | { type: 'message_start'; messageId: string; sessionId?: string }
   | { type: 'thinking_delta'; messageId: string; delta: string; providerId?: string; sessionId?: string }
   | { type: 'text_delta'; messageId: string; delta: string; sessionId?: string }

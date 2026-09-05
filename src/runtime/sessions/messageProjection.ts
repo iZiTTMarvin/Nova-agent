@@ -13,7 +13,7 @@ import { extractTextFromSerializableContent } from './types'
 import { isToolFailureText } from '../../shared/toolResultStatus'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
-export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 1
+export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 2
 
 /**
  * 从 blocks 投影出 content 文本（仅 text 块拼接）。
@@ -35,7 +35,7 @@ export function projectContentFromBlocks(
 /**
  * 从 blocks 投影出 toolCalls（兼容 SessionToolCall / shared ToolCall）。
  * 无 tool 块时回退已有 toolCalls。
- * 若 fallback 中同 id 带有 artifactId / truncationMeta，合并保留（blocks 上无这些字段）。
+ * 旧消息的 artifact 元数据可来自 fallback；新消息由 tool block 拥有。
  */
 export function projectToolCallsFromBlocks(
   blocks: MessageBlock[] | undefined,
@@ -54,8 +54,8 @@ export function projectToolCallsFromBlocks(
       name: b.toolName,
       arguments: JSON.stringify(b.arguments ?? {}),
       ...(b.result !== undefined ? { result: b.result } : {}),
-      ...(prev?.artifactId ? { artifactId: prev.artifactId } : {}),
-      ...(prev?.truncationMeta ? { truncationMeta: prev.truncationMeta } : {})
+      ...((b.artifactId ?? prev?.artifactId) ? { artifactId: b.artifactId ?? prev?.artifactId } : {}),
+      ...((b.truncationMeta ?? prev?.truncationMeta) ? { truncationMeta: b.truncationMeta ?? prev?.truncationMeta } : {})
     })
   }
   return fromBlocks.length > 0 ? fromBlocks : fallback
@@ -112,6 +112,10 @@ export function buildBlocksFromLegacyFields(message: {
  * 不强制写盘；调用方决定是否持久化。
  */
 export function normalizeMessageToBlocksSource(message: SessionMessage): SessionMessage {
+  if (message.messageSchemaVersion !== undefined && ![1, 2].includes(message.messageSchemaVersion)) {
+    throw new Error('Unsupported message schema version')
+  }
+  if (message.messageSchemaVersion === 2) validateMessageFacts(message)
   // 丢弃历史自动验证字段（功能已移除）
   const { verificationSummary: _drop, ...rest } = message as SessionMessage & {
     verificationSummary?: unknown
@@ -126,7 +130,7 @@ export function normalizeMessageToBlocksSource(message: SessionMessage): Session
       ...cleaned,
       content,
       ...(toolCalls ? { toolCalls } : { toolCalls: undefined }),
-      messageSchemaVersion: cleaned.messageSchemaVersion ?? MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
+      messageSchemaVersion: cleaned.messageSchemaVersion ?? 1
     }
   }
 
@@ -135,7 +139,7 @@ export function normalizeMessageToBlocksSource(message: SessionMessage): Session
   if (blocks.length === 0) {
     return {
       ...cleaned,
-      messageSchemaVersion: cleaned.messageSchemaVersion ?? MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
+      messageSchemaVersion: cleaned.messageSchemaVersion ?? 1
     }
   }
 
@@ -145,14 +149,13 @@ export function normalizeMessageToBlocksSource(message: SessionMessage): Session
     // content/toolCalls 保留作兼容序列化，但语义上是 projection
     content: projectContentFromBlocks(blocks, cleaned.content),
     toolCalls: projectToolCallsFromBlocks(blocks, cleaned.toolCalls),
-    messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
+    messageSchemaVersion: cleaned.messageSchemaVersion ?? 1
   }
 }
 
 /**
  * 新写入落盘形态：blocks 为正文事实源，不双写 content。
- * toolCalls 仅保留 artifactId / truncationMeta 等无法放入 blocks 的旁路元数据。
- * 读取时由 normalizeMessageToBlocksSource 投影 content，并合并 artifact 元数据。
+ * artifact 元数据随 tool block 保存；旧 toolCalls 元数据在此一次性归入 blocks。
  */
 export function serializeMessageForDisk(message: SessionMessage): SessionMessage {
   const normalized = normalizeMessageToBlocksSource(message)
@@ -160,22 +163,50 @@ export function serializeMessageForDisk(message: SessionMessage): SessionMessage
     // 无 blocks 的旧形态：保留 content 以便可读
     return normalized
   }
-  const metaToolCalls = (normalized.toolCalls ?? [])
-    .filter(tc => tc.artifactId || tc.truncationMeta)
-    .map(tc => ({
-      id: tc.id,
-      name: tc.name,
-      arguments: tc.arguments,
-      ...(tc.result !== undefined ? { result: tc.result } : {}),
-      ...(tc.artifactId ? { artifactId: tc.artifactId } : {}),
-      ...(tc.truncationMeta ? { truncationMeta: tc.truncationMeta } : {})
-    }))
-  return {
+  const blocks = normalized.blocks.map(block => {
+    if (block.type !== 'tool') return block
+    const tc = normalized.toolCalls?.find(tc => tc.id === block.toolCallId)
+    return { ...block,
+      ...(tc?.artifactId ? { artifactId: tc.artifactId } : {}),
+      ...(tc?.truncationMeta ? { truncationMeta: tc.truncationMeta } : {}) }
+  })
+  const serialized: SessionMessage = {
     ...normalized,
     // 磁盘正文事实源：blocks；content 置空，加载时再投影
     content: '',
-    ...(metaToolCalls.length > 0 ? { toolCalls: metaToolCalls } : { toolCalls: undefined }),
+    blocks,
+    toolCalls: undefined,
     messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE
+  }
+  validateMessageFacts(serialized)
+  return serialized
+}
+
+function validateMessageFacts(message: SessionMessage): void {
+  const delivery = message.userDelivery
+  if (delivery !== undefined && (!delivery || typeof delivery.userMessageId !== 'string' ||
+      !delivery.userMessageId || typeof delivery.modeInstruction !== 'string' ||
+      (delivery.sessionPrefix !== null && typeof delivery.sessionPrefix !== 'string'))) {
+    throw new Error('Invalid user delivery facts')
+  }
+  if (message.blocks !== undefined && !Array.isArray(message.blocks)) throw new Error('Invalid message blocks')
+  let previousStep = -1
+  for (const block of message.blocks ?? []) {
+    if (!block || typeof block !== 'object') throw new Error('Invalid message block')
+    if (block.type === 'image') continue
+    if (!['thinking', 'text', 'tool'].includes(block.type)) throw new Error('Invalid message block type')
+    if (block.responseStep !== undefined) {
+      if (!Number.isInteger(block.responseStep) || block.responseStep < 0 || block.responseStep < previousStep) {
+        throw new Error('Invalid response step')
+      }
+      previousStep = block.responseStep
+    }
+    if (block.type === 'tool') {
+      if (typeof block.toolCallId !== 'string' || typeof block.toolName !== 'string' ||
+          !block.arguments || typeof block.arguments !== 'object' || Array.isArray(block.arguments) ||
+          !['running', 'success', 'error'].includes(block.status) ||
+          (block.result !== undefined && typeof block.result !== 'string')) throw new Error('Invalid tool facts')
+    } else if (typeof block.content !== 'string') throw new Error('Invalid response content')
   }
 }
 

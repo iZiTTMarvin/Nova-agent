@@ -2,7 +2,7 @@ import type { AgentEvent } from '../../../runtime/agent'
 import { readManifest } from '../../../runtime/checkpoints/manifest'
 import type { SessionMessageAppend, AppendMessageResult } from '../../../runtime/sessions/types'
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../../runtime/sessions/messageProjection'
-import type { MessageBlock } from '../../../shared/session/types'
+import type { MessageBlock, UserDeliveryFacts } from '../../../shared/session/types'
 import { appendTerminalErrorToBlocks } from '../../../shared/session/terminalErrorBlocks'
 import { retainCommittedBlocksForRetry } from '../../../shared/session/retainCommittedBlocksForRetry'
 import { getSessionStore } from '../../services/SessionStoreHost'
@@ -57,10 +57,40 @@ function resolveStreamForEvent(
  * 累积流式事件内容
  */
 export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx: MessageContext): void {
+  if (ctx.runId && ctx.executionGeneration != null &&
+      !getRunCoordinator().isExecutionCurrent(ctx.runId, ctx.executionGeneration)) return
+  if ('messageId' in event && event.messageId && event.type !== 'message_start') {
+    const existing = activeStreams.get(event.messageId)
+    if (existing && !resolveStreamForEvent(event.messageId, ctx)) return
+    if (existing?.cancelled && event.type !== 'message_end' && event.type !== 'error') return
+  }
   // 注意：tool_call_start / tool_call_delta 是流式增量事件，不写 stream 累积器。
   // 持久化只关心最终完整 tool_call（由 tool_call 事件写入），增量不落盘。
   // 累积器以有序 blocks 为唯一事实源；content/toolCalls 仅在 message_end 投影。
   switch (event.type) {
+    case 'user_delivery': {
+      const stream = resolveStreamForEvent(event.messageId, ctx)
+      if (!stream) break
+      stream.userDelivery = { ...event.facts }
+      persistTurnDraft(ctx.runId, event.messageId, stream.blocks, false, ctx.executionGeneration, stream.userDelivery)
+      break
+    }
+    case 'assistant_step': {
+      const stream = resolveStreamForEvent(event.messageId, ctx)
+      if (!stream) break
+      stampThinkingDuration(stream)
+      const thinking = [...stream.blocks].reverse().find(block => block.type === 'thinking' && block.responseStep === undefined)
+      stream.blocks = stream.blocks.filter(block => block.type !== 'image' && block.responseStep !== undefined)
+      if (event.reasoningContent) stream.blocks.push({ type: 'thinking', content: event.reasoningContent,
+        responseStep: event.step,
+        ...(event.reasoningProviderId ? { providerId: event.reasoningProviderId } : {}),
+        ...(thinking?.type === 'thinking' && thinking.durationMs !== undefined ? { durationMs: thinking.durationMs } : {}) })
+      stream.blocks.push({ type: 'text', content: event.content, responseStep: event.step })
+      for (const call of event.toolCalls) stream.blocks.push({ type: 'tool', toolCallId: call.id,
+        toolName: call.name, arguments: call.arguments, status: 'running', responseStep: event.step })
+      persistTurnDraft(ctx.runId, event.messageId, stream.blocks, false, ctx.executionGeneration, stream.userDelivery)
+      break
+    }
     case 'message_start': {
       const snapStarted = ctx.runId
         ? getRunCoordinator().getSnapshot(ctx.runId)?.turnStartedAt
@@ -80,7 +110,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
         const last = stream.blocks[stream.blocks.length - 1]
-        if (last && last.type === 'thinking') {
+        if (last && last.type === 'thinking' && last.responseStep === undefined) {
           last.content += event.delta
         } else {
           stream.thinkingStartedAt = Date.now()
@@ -97,7 +127,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (stream) {
         const last = stream.blocks[stream.blocks.length - 1]
-        if (last && last.type === 'text') {
+        if (last && last.type === 'text' && last.responseStep === undefined) {
           last.content += event.delta
         } else {
           stampThinkingDuration(stream)
@@ -136,8 +166,10 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           stream.blocks[blockIdx] = {
             ...block,
             status: isError ? 'error' : 'success',
-            result: event.result
-          } as typeof block
+            result: event.result,
+            ...(event.artifactId ? { artifactId: event.artifactId } : {}),
+            ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
+          }
         }
         // 工具结果边界：turnDraft 是执行中唯一事实源（fsync via RunStore）
         persistTurnDraft(ctx.runId, event.messageId, stream.blocks, false, ctx.executionGeneration)
@@ -169,7 +201,8 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             blocks,
             event.interrupted,
             ctx.executionGeneration,
-            stream.turnStartedAt
+            stream.turnStartedAt,
+            stream.userDelivery
           )
         } catch (err) {
           console.error('[message_end] finalize 失败，保留 turnDraft:', err)
@@ -202,7 +235,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         if (blocks.length === 0 && ctx.runId) {
           const draft = getRunCoordinator().getSnapshot(ctx.runId)?.turnDraft
           if (draft?.blocks?.length) {
-            blocks = draft.blocks as unknown as MessageBlock[]
+            blocks = draft.blocks
           }
         }
 
@@ -215,13 +248,14 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             finalBlocks,
             true,
             ctx.executionGeneration,
-            stream.turnStartedAt
+            stream.turnStartedAt,
+            stream.userDelivery
           )
         } catch (err) {
-          console.error('[error] finalize 失败，回退仅存错误文案:', err)
-          saveErrorMessage(sessionId, event.messageId, event.error, stream.turnStartedAt)
+          console.error('[error] finalize 失败，保留完整草稿:', err)
         }
       } else {
+        if (ctx.runId && getRunCoordinator().getSnapshot(ctx.runId)?.turnDraft?.messageId === event.messageId) break
         const turnStartedAt = ctx.runId
           ? getRunCoordinator().getSnapshot(ctx.runId)?.turnStartedAt ?? Date.now()
           : Date.now()
@@ -329,12 +363,14 @@ function saveAssistantMessage(
   blocks: MessageBlock[],
   interrupted?: boolean,
   turnStartedAt?: number,
-  turnEndedAt: number = Date.now()
+  turnEndedAt: number = Date.now(),
+  userDelivery?: UserDeliveryFacts
 ): AppendMessageResult {
   const sessionStore = getSessionStore()
   const projected = projectAssistantFieldsFromBlocks(blocks)
   const assistantMessage: SessionMessageAppend = {
     id: messageId,
+    ...(userDelivery ? { userDelivery } : {}),
     role: 'assistant',
     content: projected.content,
     toolCalls: projected.toolCalls,
@@ -370,8 +406,11 @@ function finalizeAssistantTurn(
   blocks: MessageBlock[],
   interrupted?: boolean,
   executionGeneration?: number,
-  turnStartedAt?: number
+  turnStartedAt?: number,
+  userDelivery?: UserDeliveryFacts
 ): void {
+  if (runId && executionGeneration != null &&
+      !getRunCoordinator().isExecutionCurrent(runId, executionGeneration)) return
   // 终态统一收口：SessionStore 消息与 turnDraft receipt 都只写无 running 态的 blocks
   const settledBlocks = settleRunningBlocksAsInterrupted(blocks)
   const turnEndedAt = Date.now()
@@ -381,8 +420,11 @@ function finalizeAssistantTurn(
 
   // 1) 确保草稿仍为 active（未 finalized）
   if (runId) {
-    persistTurnDraft(runId, messageId, settledBlocks, false, executionGeneration)
+    persistTurnDraft(runId, messageId, settledBlocks, false, executionGeneration, userDelivery)
   }
+  // 草稿提交会同步通知订阅者；重入失效后不得转交正式消息。
+  if (runId && executionGeneration != null &&
+      !getRunCoordinator().isExecutionCurrent(runId, executionGeneration)) return
 
   // 2) SessionStore 幂等追加
   const appendResult = saveAssistantMessage(
@@ -391,7 +433,8 @@ function finalizeAssistantTurn(
     settledBlocks,
     interrupted,
     resolvedTurnStartedAt,
-    turnEndedAt
+    turnEndedAt,
+    userDelivery
   )
   if (!appendResult.ok) {
     throw new Error(`SessionStore 追加失败: ${appendResult.error}`)
@@ -399,9 +442,11 @@ function finalizeAssistantTurn(
 
   // 3) 写 message_finalized receipt（turnDraft.finalized=true）
   if (runId) {
-    persistTurnDraft(runId, messageId, settledBlocks, true, executionGeneration)
+    persistTurnDraft(runId, messageId, settledBlocks, true, executionGeneration, userDelivery)
     // 4) 清除草稿
-    getRunCoordinator().clearTurnDraft(runId)
+    if (executionGeneration == null || getRunCoordinator().isExecutionCurrent(runId, executionGeneration)) {
+      getRunCoordinator().clearTurnDraft(runId)
+    }
   }
 }
 
@@ -415,7 +460,8 @@ function persistTurnDraft(
   messageId: string,
   blocks: MessageBlock[],
   finalized = false,
-  executionGeneration?: number
+  executionGeneration?: number,
+  userDelivery?: UserDeliveryFacts
 ): void {
   if (!runId) return
   const coord = getRunCoordinator()
@@ -431,7 +477,8 @@ function persistTurnDraft(
   // 落盘失败必须抛出，不得吞掉后继续宣称可恢复
   coord.upsertTurnDraft(runId, {
     messageId,
-    blocks: blocks as unknown as Array<Record<string, unknown>>,
+    blocks,
+    userDelivery: userDelivery ?? activeStreams.get(messageId)?.userDelivery,
     finalized
   })
 }

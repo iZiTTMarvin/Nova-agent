@@ -4,6 +4,14 @@ import type {
 } from '../subagents'
 import type { ComposePlanApproval, ComposeStageEntry } from '../composeLifecycle'
 import type { TodoItem } from '../todo/types'
+import type { ToolTruncationMeta } from '../tools/types'
+
+/** 当时投递的注入片段；用户原文仍由 userMessageId 指向的消息拥有。 */
+export interface UserDeliveryFacts {
+  userMessageId: string
+  sessionPrefix: string | null
+  modeInstruction: string
+}
 
 /** 运行模式：plan 只读分析、default 协作模式、auto 高自动化 */
 /**
@@ -33,6 +41,7 @@ export interface ToolCall {
 /** 思考块 */
 export interface ThinkingBlock {
   type: 'thinking'
+  responseStep?: number
   content: string
   /**
    * 产生该 thinking 的缓存档案 ID（如 glm / kimi / deepseek）。
@@ -48,17 +57,21 @@ export interface ThinkingBlock {
 /** 正文块 */
 export interface TextBlock {
   type: 'text'
+  responseStep?: number
   content: string
 }
 
 /** 工具调用块 */
 export interface ToolBlock {
   type: 'tool'
+  responseStep?: number
   toolCallId: string
   toolName: string
   arguments: Record<string, unknown>
   status: 'running' | 'success' | 'error'
   result?: string
+  artifactId?: string
+  truncationMeta?: ToolTruncationMeta
 }
 
 /** 图片块（用户消息中携带的图片，用于 UI 流式渲染） */

@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import type { AgentEvent, RecoveryState } from '../../../runtime/agent'
 import type { RendererRecoveryState } from '../../../shared/ipc/types'
+import { sanitizeToolOutput } from '../../../shared/tool-input-sanitizer'
 import {
   flushMainDeltaCoalescer,
   pushMainTextDelta,
@@ -80,7 +81,7 @@ export function forwardEventToRenderer(
         messageId: event.messageId,
         toolCallId: event.toolCallId,
         toolName: event.toolName,
-        result: event.result,
+        result: sanitizeToolOutput(event.toolName, event.result, event.failed),
         sessionId: event.sessionId,
         ...(event.failed !== undefined ? { failed: event.failed } : {}),
         ...(event.artifactId ? { artifactId: event.artifactId } : {}),

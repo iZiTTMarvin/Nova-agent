@@ -7,6 +7,7 @@ import type { Mode, PermissionMode, MessageBlock } from '../../../shared/session
  * 绑定 turn 的 runId / executionGeneration，用于 late-event fencing 与 dispose。
  */
 export interface StreamAccumulator {
+  userDelivery?: import('../../../shared/session/types').UserDeliveryFacts
   blocks: MessageBlock[]
   /**
    * 是否在累积过程中被取消。

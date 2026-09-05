@@ -11,6 +11,7 @@ import {
   type RunCoordinator
 } from '../../runtime/run'
 import type { RunEventRecord, RunSnapshot } from '../../shared/run/types'
+import { toRendererRunSnapshot } from '../../shared/run/rendererProjection'
 
 let coordinator: RunCoordinator | null = null
 let executionRegistry: RunExecutionRegistry | null = null
@@ -31,7 +32,7 @@ function broadcastSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
   const win = getMainWindowRef?.()
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
   win.webContents.send('run:snapshot', {
-    snapshot,
+    snapshot: toRendererRunSnapshot(snapshot),
     event: {
       sequence: event.sequence,
       type: event.type,

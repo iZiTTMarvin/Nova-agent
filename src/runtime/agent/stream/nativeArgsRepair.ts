@@ -91,6 +91,18 @@ export function parseNativeArguments(argumentsStr: string): ParsedNativeArgument
   }
 }
 
+/** 在丢弃原始字符串前完成已有修复，供流提交与直接工具执行共用。 */
+export function resolveNativeArguments(
+  call: ChatToolCall,
+  onRepair: (diagnostic: RepairDiagnostic) => void
+): Record<string, unknown> {
+  const parsed = parseNativeArguments(call.arguments)
+  if (parsed.repairKind) onRepair({ kind: parsed.repairKind, toolCallId: call.id, toolName: call.name })
+  return needsRepair(call.arguments, parsed.args)
+    ? repairNativeArguments(call.name, call.arguments, parsed.args, onRepair, call.id)
+    : parsed.args
+}
+
 function asArgumentRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)

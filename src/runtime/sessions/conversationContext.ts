@@ -212,6 +212,7 @@ export function projectAssistantWithReasoningReplay(
   let reasoning = ''
   let reasoningProviderId: string | undefined
   let text = ''
+  let explicitResponsePending = false
   let pendingTools: Array<{
     block: Extract<MessageBlock, { type: 'tool' }>
     tc: SessionToolCall | undefined
@@ -264,10 +265,11 @@ export function projectAssistantWithReasoningReplay(
     reasoningProviderId = undefined
     text = ''
     pendingTools = []
+    explicitResponsePending = false
   }
 
   const flushFinalAssistant = (): void => {
-    if (!text && !reasoning) return
+    if (!text && !reasoning && !explicitResponsePending) return
     const assistant: ChatMessage = {
       role: 'assistant',
       content: sanitizeAssistantContent(text),
@@ -278,11 +280,21 @@ export function projectAssistantWithReasoningReplay(
     reasoning = ''
     reasoningProviderId = undefined
     text = ''
+    explicitResponsePending = false
   }
 
+  let responseStep: number | undefined
   for (const block of blocks) {
-    if (block.type === 'thinking') {
+    const explicitStep = block.type === 'image' ? undefined : block.responseStep
+    if (explicitStep !== undefined && explicitStep !== responseStep) {
       if (pendingTools.length > 0) flushToolSubTurn()
+      else flushFinalAssistant()
+      step = explicitStep
+      responseStep = explicitStep
+      explicitResponsePending = true
+    }
+    if (block.type === 'thinking') {
+      if (explicitStep === undefined && pendingTools.length > 0) flushToolSubTurn()
       // 跨档案 thinking 保留在存档，但不进入模型回传
       if (
         currentProviderId &&
@@ -295,7 +307,7 @@ export function projectAssistantWithReasoningReplay(
         reasoningProviderId = block.providerId
       }
     } else if (block.type === 'text') {
-      if (pendingTools.length > 0) flushToolSubTurn()
+      if (explicitStep === undefined && pendingTools.length > 0) flushToolSubTurn()
       text += block.content
     } else if (block.type === 'tool') {
       pendingTools.push({ block, tc: toolCallById.get(block.toolCallId) })

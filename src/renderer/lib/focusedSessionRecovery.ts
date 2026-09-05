@@ -22,7 +22,9 @@ export function createAssistantMessage(
   }
 }
 
-function parseTurnDraftBlock(value: Record<string, unknown>): MessageBlock | null {
+function parseTurnDraftBlock(input: unknown): MessageBlock | null {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Record<string, unknown>
   if (value.type === 'text' && typeof value.content === 'string') {
     return { type: 'text', content: value.content }
   }

@@ -152,6 +152,7 @@ export interface LoopEndResult {
 export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult> {
   const { messageId, userText, context, config, streamProcessor, hookManager, emit } = p
   let toolRound = 0
+  let responseStep = 0
   let turnCompletedByControl = false
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
@@ -276,7 +277,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       } =
         turnResult
 
-      const stepOrigin = { messageId, step: toolRound }
+      const stepOrigin = { messageId, step: responseStep++ }
       const assistantMsg: ChatMessage = { role: 'assistant', content: assistantContent, origin: stepOrigin }
       if (toolCalls.length > 0) assistantMsg.toolCalls = toolCalls
       // 运行时字段：供后续模型历史回传；不进 UI / SessionMessage.content
@@ -293,7 +294,19 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
 
       await hookManager.trigger({ event: 'postMessage', messageId, message: assistantMsg })
 
+      const commitResponse = (): void => {
+        const calls = toolCalls.map(call => {
+          const args = parseToolCallArgsRecord(call.arguments)
+          call.arguments = JSON.stringify(args)
+          return { id: call.id, name: call.name, arguments: args }
+        })
+        emit({ type: 'assistant_step', messageId, step: stepOrigin.step,
+          content: typeof assistantMsg.content === 'string' ? assistantMsg.content : assistantContent,
+          reasoningContent, reasoningProviderId, toolCalls: calls })
+      }
+
       if (toolCalls.length === 0) {
+        commitResponse()
         const continuation = await config.assistantCompletionPolicy?.({
           messageId,
           toolRound,
@@ -321,6 +334,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       if (repairedIds.length > 0) {
         assistantMsg.content = stripTextToolCalls(assistantContent)
       }
+
+      commitResponse()
 
       // 解析 repair 后的参数，供停止策略的空参护栏统计
       const toolCallsThisRound = toolCalls.map(tc => ({

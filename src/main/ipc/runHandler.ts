@@ -2,6 +2,7 @@
  * Run 相关 IPC：snapshot 查询、等待徽标、强制终止、interrupted 恢复入口
  */
 import { handle } from './secureIpc'
+import { toRendererRunSnapshot } from '../../shared/run/rendererProjection'
 import {
   RUN_GET_SNAPSHOT,
   RUN_LIST_WAITING,
@@ -17,7 +18,7 @@ export function registerRunHandler(): void {
       ? coord.getSnapshot(params.runId)
       : coord.getSnapshotForSession(params.sessionId)
     return {
-      snapshot,
+      snapshot: toRendererRunSnapshot(snapshot),
       waitingSessions: coord.listWaitingSessions()
     }
   })
@@ -51,7 +52,7 @@ export function registerRunHandler(): void {
       if (getActiveRunId() === params.runId) {
         setActiveRunId(null)
       }
-      return { ok: !!snapshot, snapshot, lingering: true, abortError: reason }
+      return { ok: !!snapshot, snapshot: toRendererRunSnapshot(snapshot), lingering: true, abortError: reason }
     }
 
     if (result.abortError) {
@@ -68,7 +69,7 @@ export function registerRunHandler(): void {
       // lingering handle 保留至 settled 自动注销；禁止此处 unregister
       return {
         ok: !!snapshot,
-        snapshot,
+        snapshot: toRendererRunSnapshot(snapshot),
         lingering: true,
         abortError: result.abortError
       }
@@ -87,7 +88,7 @@ export function registerRunHandler(): void {
       if (getActiveRunId() === params.runId) {
         setActiveRunId(null)
       }
-      return { ok: !!snapshot, snapshot, lingering: false }
+      return { ok: !!snapshot, snapshot: toRendererRunSnapshot(snapshot), lingering: false }
     }
 
     // grace 超时：提交 interrupted + 失效 generation；**不得** unregister lingering handle
@@ -100,7 +101,7 @@ export function registerRunHandler(): void {
     if (getActiveRunId() === params.runId) {
       setActiveRunId(null)
     }
-    return { ok: !!snapshot, snapshot, lingering: true }
+    return { ok: !!snapshot, snapshot: toRendererRunSnapshot(snapshot), lingering: true }
   })
 
   handle(RUN_INTERRUPTED_ACTION, async (_event, params: {
@@ -118,7 +119,7 @@ export function registerRunHandler(): void {
         ok: true,
         steps: snap.toolCommits ?? [],
         message: `共 ${(snap.toolCommits ?? []).length} 个工具步骤`,
-        snapshot: snap
+        snapshot: toRendererRunSnapshot(snap)
       }
     }
 
@@ -129,7 +130,7 @@ export function registerRunHandler(): void {
         steps: committed,
         message:
           '无可回滚的文件副作用凭证。请使用会话消息回退 / 逐文件 checkpoint；未执行任何文件回滚。',
-        snapshot: snap
+        snapshot: toRendererRunSnapshot(snap)
       }
     }
 
@@ -139,7 +140,7 @@ export function registerRunHandler(): void {
     return {
       ok: false,
       message: `未知动作 ${params.action}`,
-      snapshot: snap
+      snapshot: toRendererRunSnapshot(snap)
     }
   })
 }

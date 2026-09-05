@@ -1,5 +1,6 @@
 import type { Message, MessageBlock, ToolBlock } from '../../shared/session'
 import { extractTextFromSerializableContent, type SessionMessage } from '../../runtime/sessions/types'
+import { sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 
 function parseToolArguments(argumentsValue: string | Record<string, unknown> | undefined): Record<string, unknown> {
   if (!argumentsValue) {
@@ -29,6 +30,7 @@ function normalizeBlocks(blocks: SessionMessage['blocks']): MessageBlock[] | und
 
     const toolBlock: ToolBlock = {
       ...block,
+      ...(block.result !== undefined ? { result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') } : {}),
       arguments: parseToolArguments(block.arguments as string | Record<string, unknown> | undefined)
     }
     return toolBlock
@@ -43,7 +45,7 @@ export function toSharedMessage(
   if (msg.toolCalls) {
     for (const tc of msg.toolCalls) {
       if (tc.result !== undefined) {
-        toolCallResults[tc.id] = tc.result
+        toolCallResults[tc.id] = sanitizeToolOutput(tc.name, tc.result)
       }
     }
   }

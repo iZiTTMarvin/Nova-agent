@@ -30,7 +30,7 @@ import { resolveCacheProfile } from '../../model/cacheProfile'
 import { recordMetric } from '../../../shared/diagnostics/metrics'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
-import { parseNativeArguments, repairEmptyArgsFromContent } from './nativeArgsRepair'
+import { resolveNativeArguments, repairEmptyArgsFromContent } from './nativeArgsRepair'
 import { AttemptController } from '../recovery/AttemptController'
 import type { RecoveryStateMachine } from '../recovery/RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
@@ -293,26 +293,21 @@ export class StreamProcessor {
           case 'tool_call':
             finishReason = 'tool_calls'
             {
-              const parsed = parseNativeArguments(event.toolCall.arguments)
-              const toolCall = parsed.repairKind
-                ? { ...event.toolCall, arguments: JSON.stringify(parsed.args) }
-                : event.toolCall
-              toolCalls.push(toolCall)
-              if (parsed.repairKind) {
+              const args = resolveNativeArguments(event.toolCall, diagnostic => {
                 this.emit({
                   type: 'repair_diagnostic',
                   messageId,
-                  kind: parsed.repairKind,
-                  toolCallId: toolCall.id,
-                  toolName: toolCall.name
+                  ...diagnostic
                 })
-              }
+              })
+              const toolCall = { ...event.toolCall, arguments: JSON.stringify(args) }
+              toolCalls.push(toolCall)
               this.emit({
                 type: 'tool_call',
                 messageId,
                 toolCallId: toolCall.id,
                 toolName: toolCall.name,
-                args: parsed.args
+                args
               })
             }
             break
