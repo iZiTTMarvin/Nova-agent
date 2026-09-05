@@ -824,13 +824,13 @@ describe('SessionStore', () => {
       const raw = JSON.stringify({ version: 2, entries: [{ id: 'c1', shadows: { from: origin, to: origin }, stub: 'pointer', touchedFiles, trigger: 'threshold', createdAt: 1 }], state: { text: 'legacy unverified', coversThrough: origin, taskVerbatim: null, realityLine: '', revision: 1 }, tailFrom: null, updatedAt: 1 })
       fs.writeFileSync(file, raw)
       const migrated = store.loadContextSnapshot(session.id)!
-      expect(migrated.version).toBe(3)
+      expect(migrated.version).toBe(4)
       expect(migrated.entries[0].touchedFiles).toEqual({ paths: ['a.ts'], omittedCount: 3 })
       expect(migrated.state?.text).toBe('legacy unverified')
       expect(migrated.budgetAnchor).toBeUndefined()
       expect(fs.readFileSync(file, 'utf8')).toBe(raw)
       store.saveContextSnapshot(session.id, migrated)
-      expect(JSON.parse(fs.readFileSync(file, 'utf8')).version).toBe(3)
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).version).toBe(4)
     })
     it('saveContextSnapshot 写入后可 loadContextSnapshot 读回', () => {
       const store = new SessionStore(tmpDir)
@@ -864,7 +864,7 @@ describe('SessionStore', () => {
       store.saveContextSnapshot(session.id, snapshot)
       const loaded = store.loadContextSnapshot(session.id)
 
-      expect(loaded).toEqual({ ...snapshot, version: 3, revision: 0 })
+      expect(loaded).toEqual({ ...snapshot, version: 4, revision: 0, state: { ...snapshot.state, validation: 'legacy-unverified' } })
     })
 
     it('版本不符的快照返回 null', () => {

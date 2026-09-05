@@ -50,7 +50,6 @@ import {
   type SessionStore
 } from '../../../runtime/sessions'
 import {
-  persistCompactionSnapshot,
   restoreOrInjectHistory
 } from '../../../runtime/sessions/contextSnapshot'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
@@ -371,12 +370,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     permissionMode: session.permissionMode,
     permissionManager,
     collectCompactionTouchedFiles: messageIds =>
-      collectTouchedFilesForSession(sessionsDir, sessionId, messageIds),
-    onCompaction: (_compactedContext, meta) => {
-      if (!persistCompactionSnapshot(sessionStore, sessionId, meta.ledger)) {
-        console.error(`[onCompaction] 找不到会话 ${sessionId}，快照未写`)
-      }
-    }
+      collectTouchedFilesForSession(sessionsDir, sessionId, messageIds)
   })
   loop = agentLoop
 
@@ -422,7 +416,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setOnSkillRootAdded((dir) => {
     sessionStore.addGrantedSkillRoot(sessionId, dir)
   })
-  agentLoop.setSessionContext(sessionStore, sessionId)
   agentLoop.setActivePlanPath(session.activePlan?.path)
   agentLoop.setSwitchModeHandler(async (targetMode, _reason) => {
     const currentSession = sessionStore.load(sessionId)
@@ -537,12 +530,13 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       cacheStrategy: providerForCache.cacheStrategy
     }
   )
-  restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), {
-    resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
+  const historyProjection = {
+    resolveImageUrl: (url: string) => resolveToDataUrl(getImageStore(), url),
     reasoningReplay: activeCacheProfile.reasoningReplay,
-    currentProviderId: activeCacheProfile.id,
-    sessionStore
-  })
+    currentProviderId: activeCacheProfile.id
+  }
+  agentLoop.setSessionContext(sessionStore, sessionId, historyProjection)
+  restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), { ...historyProjection, sessionStore })
 
   // 跨回合诊断快照：读回上一轮状态并绑定持久化回调
   const prevDiagState = loadDiagnosticState(sessionsDir, sessionId)

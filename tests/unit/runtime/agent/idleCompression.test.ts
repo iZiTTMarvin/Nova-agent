@@ -1,3 +1,4 @@
+import { handoffJson } from '../../../../src/test-support/builders/compactionLedger'
 import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { IdleCompressionTimer } from '../../../../src/runtime/agent/compaction/IdleCompressionTimer'
@@ -184,6 +185,7 @@ function createIdleService(
     messages?: ChatMessage[]
     idlePolicy?: 'anthropic-short-ttl' | 'provider-managed' | 'unknown'
     onCompaction?: () => void
+    canWrite?: () => boolean
   }
 ) {
   const messages = options?.messages ?? [
@@ -208,6 +210,7 @@ function createIdleService(
     cacheDiagnostics: new CacheDiagnostics(),
     contextWindow: 100,
     onCompaction: options?.onCompaction,
+    canWrite: options?.canWrite,
     getIdleCacheProfile: () => ({
       idlePolicy: options?.idlePolicy ?? 'anthropic-short-ttl'
     }),
@@ -223,6 +226,15 @@ describe('CompactionService idle ownership', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('完成 turn 的写入资格过期后，idle 使用自身 generation 提交', async () => {
+    const client = new MockModelClient().addHandoffPair({ events: [{ type: 'text_delta', delta: '继续任务' }, { type: 'message_end', finishReason: 'stop' }] })
+    const { service, context } = createIdleService(client, { canWrite: () => false })
+    expect(service.scheduleIdle()).toBe(true)
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    expect(context.compactionState?.revision).toBe(1)
+    service.dispose()
   })
 
   it.each([
@@ -302,7 +314,7 @@ describe('CompactionService idle ownership', () => {
       async *chat() {
         callCount++
         if (callCount <= 2) throw new Error('summary failed')
-        yield { type: 'text_delta', delta: 'idle summary' }
+        yield { type: 'text_delta', delta: handoffJson('idle summary') }
         yield { type: 'message_end', finishReason: 'stop' }
       }
     }
@@ -346,7 +358,7 @@ describe('CompactionService idle ownership', () => {
           yield { type: 'message_end', finishReason: 'stop' }
           return
         }
-        yield { type: 'text_delta', delta: 'fresh summary' }
+        yield { type: 'text_delta', delta: handoffJson('fresh summary') }
         yield { type: 'message_end', finishReason: 'stop' }
       }
     }

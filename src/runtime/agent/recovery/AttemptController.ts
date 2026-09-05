@@ -113,6 +113,8 @@ export class AttemptController {
     failure?: ModelFailure,
     hasNoObservableOutput = false
   ): AttemptDecision {
+    if (failure?.dispatchOutcome === 'unknown') return { action: 'fail', error: failure.message }
+    if (!hasNoObservableOutput) return { action: 'fail', error }
     // classify 的 attempt 参数语义：当前错误前已消耗的恢复次数（从 0 起）。
     const completedBeforeThis = this.providerAttempt
     const errState = this.recovery.classify(error, completedBeforeThis, failure)

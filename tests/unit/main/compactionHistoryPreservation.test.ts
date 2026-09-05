@@ -1,286 +1,153 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, rmSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { randomUUID } from 'crypto'
-import { AgentLoop } from '../../../src/runtime/agent/AgentLoop'
-import { EventBus } from '../../../src/runtime/agent/EventBus'
+import { SessionStore, buildConversationContext, type BuildConversationContextOptions } from '../../../src/runtime/sessions'
+import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
+import { restoreFromLedger } from '../../../src/runtime/sessions/contextSnapshot'
+import { CompactionService } from '../../../src/runtime/agent/compaction/CompactionService'
+import { createAgentContext } from '../../../src/runtime/agent/core/AgentContext'
+import { defaultContextBudgetManager } from '../../../src/runtime/agent/ContextBudgetManager'
+import { CacheDiagnostics } from '../../../src/runtime/model/cacheDiagnostics'
+import { createReadState } from '../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
-import { buildConversationContext } from '../../../src/runtime/sessions'
-import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
-import { ToolRegistry } from '../../../src/runtime/tools/ToolRegistry'
-import { extractTextFromContent } from '../../../src/runtime/model/types'
-import type { ChatMessage } from '../../../src/runtime/model/types'
-import type { SessionData, SessionMessage } from '../../../src/runtime/sessions/types'
-import { extractTextFromSerializableContent } from '../../../src/runtime/sessions/types'
-import type { ToolContext, ToolResult } from '../../../src/runtime/tools/types'
-import { agentRoute } from '../../../src/runtime/agent/turn'
-import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
+import { identitySummaryProjection } from '../../../src/test-support/builders/identitySummaryProjection'
+import * as atomicFile from '../../../src/runtime/storage/atomicFile'
 
-/**
- * 止血测试：压缩触发后 session.messages 不得被截断。
- *
- * 说明：agentHandler 里的 onCompaction 是 IPC 内联闭包，删成 no-op 后
- * 无法直接单测 handler 本体。本文件用两层护栏：
- * 1. legacyOnCompactionOverwrite —— 复刻已删除的旧版落盘逻辑，证明「覆盖会截断」可被测出；
- * 2. 真实 AgentLoop 压缩 + 不落盘回调 —— 对照 capturedContext，断言 Store 未被改写。
- *
- * 后续将改为单测 SessionStore.saveContextSnapshot（只写快照、不碰 messages）。
- */
-
-function createTestRegistry(): ToolRegistry {
-  const registry = new ToolRegistry()
-  registry.register({
-    name: 'ls',
-    description: '列出目录',
-    parameters: {
-      type: 'object',
-      properties: { path: { type: 'string' } }
-    },
-    async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
-      return { success: true, output: `目录内容: ${args.path ?? '.'}` }
-    }
-  })
-  return registry
-}
-
-/**
- * 复刻此前 agentHandler.onCompaction 的落盘逻辑（仅用于测试对照）。
- * 生产代码已删除；若有人把同等逻辑接回 handler，本 helper 的断言模式应能抓出回归。
- */
-function legacyOnCompactionOverwrite(
-  store: SessionStore,
-  sessionId: string,
-  compactedContext: ChatMessage[]
-): void {
-  const compactedSession = store.load(sessionId)
-  if (!compactedSession) return
-
-  const toolResults = new Map<string, {
-    result: string
-    artifactId?: string
-    truncationMeta?: import('../../../src/runtime/tools/types').ToolTruncationMeta
-  }>()
-  for (const m of compactedContext) {
-    if (m.role === 'tool' && m.toolCallId) {
-      toolResults.set(m.toolCallId, {
-        result: extractTextFromSerializableContent(m.content),
-        ...(m.artifactId ? { artifactId: m.artifactId } : {}),
-        ...(m.truncationMeta ? { truncationMeta: m.truncationMeta } : {})
-      })
-    }
-  }
-
-  const compactedMessages: SessionMessage[] = compactedContext
-    .filter(m => m.role !== 'system' && m.role !== 'tool' && !m.internal)
-    .map((m, idx) => {
-      const msg: SessionMessage = {
-        id: `compacted_${randomUUID().slice(0, 8)}_${idx}`,
-        role: m.role as SessionMessage['role'],
-        content: extractTextFromSerializableContent(m.content),
-        toolCallId: m.toolCallId,
-        timestamp: Date.now()
-      }
-
-      if (m.toolCalls && m.toolCalls.length > 0) {
-        msg.toolCalls = m.toolCalls.map(tc => {
-          const info = toolResults.get(tc.id)
-          return {
-            id: tc.id,
-            name: tc.name,
-            arguments: tc.arguments,
-            ...(info?.result !== undefined ? { result: info.result } : {}),
-            ...(info?.artifactId ? { artifactId: info.artifactId } : {}),
-            ...(info?.truncationMeta ? { truncationMeta: info.truncationMeta } : {})
-          }
-        })
-      }
-
-      return msg
-    })
-
-  compactedSession.messages = compactedMessages
-  store.save(compactedSession)
-}
-
-/** 构造带多轮对话 + 工具调用的会话，贴近真实持久化结构（经 appendMessage 写入树链） */
-function makeLongSession(store: SessionStore): SessionData {
-  const session = store.create('/tmp/project', 'default')
-
-  for (let i = 0; i < 12; i++) {
-    store.appendMessage(session.id, {
-      id: `user_${i}`,
-      role: 'user',
-      content: `第 ${i + 1} 轮用户问题：` + 'x'.repeat(500),
-      timestamp: i * 10
-    })
-    store.appendMessage(session.id, {
-      id: `assistant_${i}`,
-      role: 'assistant',
-      content: `第 ${i + 1} 轮助手回复：` + 'y'.repeat(500),
-      toolCalls: i % 3 === 0
-        ? [{ id: `tc_${i}`, name: 'ls', arguments: '{"path":"."}', result: 'a.ts\nb.ts' }]
-        : undefined,
-      timestamp: i * 10 + 1
-    })
-  }
-
-  return store.load(session.id)!
-}
-
-/** 注入足以触发阈值压缩的历史（与 AgentLoop.test.ts 压缩用例对齐） */
-function injectCompactionTriggerHistory(loop: AgentLoop): void {
-  const history: ChatMessage[] = []
-  for (let i = 0; i < 24; i++) {
-    history.push(
-      { role: 'user', content: 'x'.repeat(20_000) },
-      { role: 'assistant', content: 'y'.repeat(20_000) }
-    )
-  }
-  loop.injectHistory(history)
-}
-
-describe('压缩不截断 session.messages', () => {
-  let tmpDir: string
+describe('持久化压缩提交', () => {
+  let directory: string
   let store: SessionStore
-
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'nova-compaction-preserve-'))
-    store = new SessionStore(tmpDir)
+    directory = mkdtempSync(join(tmpdir(), 'nova-compaction-commit-'))
+    store = new SessionStore(directory)
   })
-
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    vi.restoreAllMocks()
+    resetSessionIndexHostForTests()
+    rmSync(directory, { recursive: true, force: true })
   })
-
-  it('反向证明：旧版 onCompaction 覆盖逻辑会截断历史（测试本身有鉴别力）', () => {
-    const session = makeLongSession(store)
-    const originalCount = session.messages.length
-    expect(originalCount).toBe(24)
-
-    // 模拟压缩后的运行时上下文：仅保留最近几条非 system 消息
-    const compactedContext: ChatMessage[] = [
-      { role: 'system', content: '冻结 prompt + 摘要' },
-      { role: 'user', content: '最近用户消息' },
-      { role: 'assistant', content: '最近助手回复' }
-    ]
-
-    legacyOnCompactionOverwrite(store, session.id, compactedContext)
-
-    const after = store.load(session.id)!
-    expect(after.messages.length).toBeLessThan(originalCount)
-    expect(after.messages.every(m => m.id.startsWith('compacted_'))).toBe(true)
-    // 早期消息 id 被整体替换，无法找回
-    expect(after.messages.some(m => m.id === 'user_0')).toBe(false)
-  })
-
-  it('真实压缩触发后 onCompaction 不落盘，SessionStore 历史完整保留', async () => {
-    const session = makeLongSession(store)
-    const originalMessages = structuredClone(session.messages)
-    const sessionId = session.id
-
-    const client = new MockModelClient()
-    client.addCompactionPair({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '这是对话摘要。' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '继续' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-
-    const eventBus = new EventBus()
-    let capturedContext: ChatMessage[] | null = null
-
-    // agentHandler 行为：不传落盘逻辑（此处用空回调捕获 compactedContext 做对照）
-    const loop = new AgentLoop(client, eventBus, {
-      permissionManager: new PermissionManager(),
-      systemPrompt: '你是助手。',
-      maxToolRounds: 20,
-      onCompaction: (compactedContext, _meta) => {
-        capturedContext = compactedContext
-        // 写快照，不写 session.messages（与 agentHandler 一致）
-      }
-    })
-    loop.setToolRegistry(createTestRegistry())
-    injectCompactionTriggerHistory(loop)
-
-    await loop.sendMessage('触发压缩', agentRoute())
-
-    expect(capturedContext).not.toBeNull()
-    // 压缩后运行时上下文应远小于完整 session 历史（否则对照无意义）
-    const nonSystemCount = capturedContext!.filter(m => m.role !== 'system').length
-    expect(nonSystemCount).toBeLessThan(originalMessages.length)
-
-    // 主断言：Store 未被 onCompaction 改写
-    const reloaded = store.load(sessionId)!
-    expect(reloaded.messages).toEqual(originalMessages)
-
-    // 对照：若对同一份 compactedContext 误接旧版覆盖，会截断（证明主断言有鉴别力）
-    const shadowDir = mkdtempSync(join(tmpdir(), 'nova-compaction-shadow-'))
-    const shadowStore = new SessionStore(shadowDir)
-    const shadowSession = structuredClone(session)
-    shadowStore.save(shadowSession)
-    legacyOnCompactionOverwrite(shadowStore, shadowSession.id, capturedContext!)
-    const shadowAfter = shadowStore.load(shadowSession.id)!
-    expect(shadowAfter.messages.length).toBeLessThan(originalMessages.length)
-    rmSync(shadowDir, { recursive: true, force: true })
-  })
-
-  it('压缩后仍可通过 buildConversationContext + injectHistory 恢复完整历史', async () => {
-    const session = makeLongSession(store)
-
-    const client = new MockModelClient()
-    client.addCompactionPair({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '摘要内容' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-    client.addResponse({
-      events: [
-        { type: 'message_start' },
-        { type: 'text_delta', delta: '好的' },
-        { type: 'message_end', finishReason: 'stop' }
-      ]
-    })
-
-    const eventBus = new EventBus()
-    const loop = new AgentLoop(client, eventBus, {
-      permissionManager: new PermissionManager(),
-      systemPrompt: '你是助手。',
-      maxToolRounds: 20
-    })
-    loop.setToolRegistry(createTestRegistry())
-    injectCompactionTriggerHistory(loop)
-
-    await loop.sendMessage('触发压缩', agentRoute())
-
-    // 模拟下一次 SEND_MESSAGE：从 SessionStore 全量重建
-    const reloaded = store.load(session.id)!
-    const history = buildConversationContext(reloaded, reloaded.mode)
-
-    const recoveryLoop = new AgentLoop(client, eventBus, {
-      permissionManager: new PermissionManager(),
-      systemPrompt: '你是助手。'
-    })
-    recoveryLoop.setToolRegistry(createTestRegistry())
-    recoveryLoop.injectHistory(history)
-
-    const ctx = recoveryLoop.getContext()
-    const userTexts = ctx
-      .filter(m => m.role === 'user')
-      .map(m => extractTextFromContent(m.content))
-
-    for (const msg of reloaded.messages.filter(m => m.role === 'user')) {
-      expect(userTexts.some(t => t.includes(msg.content.slice(0, 20)))).toBe(true)
+  function fixture(projection: BuildConversationContextOptions = {}, multimodal = false, thinking = false) {
+    const session = store.create(directory, 'default')
+    for (let i = 0; i < 24; i++) {
+      const text = i === 0 ? '实现账单导出。\n必须保留金额单位 CNY。' : `继续工作 ${i}`
+      store.appendMessage(session.id, { id: `u${i}`, role: 'user', content: multimodal ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: 'nova-image://fixture.png' } }] : text, timestamp: i * 2 })
+      store.appendMessage(session.id, { id: `a${i}`, role: 'assistant', content: 'x'.repeat(1000), timestamp: i * 2 + 1,
+        ...(thinking ? { blocks: [{ type: 'thinking' as const, content: 'thought', providerId: 'fixture' }, { type: 'text' as const, content: 'x'.repeat(1000) }] } : {}) })
     }
+    const context = createAgentContext({ readState: createReadState(), messages: [{ role: 'system', content: 'system' }, ...buildConversationContext(store.load(session.id)!, 'default', projection)],
+      systemPrompt: 'system', sessionStore: store, sessionId: session.id })
+    const model = new MockModelClient().addHandoffPair({ events: [{ type: 'text_delta', delta: '继续实现导出' }, { type: 'message_end', finishReason: 'stop' }] })
+    const diagnostics = new CacheDiagnostics()
+    let authority = true
+    const service = new CompactionService({ context, modelClient: model, contextWindow: 4000,
+      contextBudgetManager: defaultContextBudgetManager, cacheDiagnostics: diagnostics,
+      canWrite: () => authority, getIdleCacheProfile: () => null, idleProjection: identitySummaryProjection,
+      getSystemPrompt: () => 'system\nhistory_read' })
+    service.setHistoryProjection(projection)
+    const file = join(directory, 'sessions', session.id, 'messages.jsonl')
+    return { session, context, service, diagnostics, original: readFileSync(file), file, expire: () => { authority = false } }
+  }
+  it('原档案不变，重启的 system 与完整尾部相等', async () => {
+    const f = fixture()
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(ledger).toEqual(f.context.compactionState)
+    expect(ledger.revision).toBe(1)
+    expect(ledger.state?.validation).toBe('verified')
+    expect(ledger.state?.handoff?.facts.map(fact => fact.value)).toContain('必须保留金额单位 CNY。')
+    expect(readFileSync(f.file)).toEqual(f.original)
+    const restored = restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt)
+    expect(restored.kind).toBe('restored')
+    expect(restored.messages).toEqual(f.context.messages)
+    f.service.dispose()
+  })
+  it('原子写入失败不发布新状态或纪元', async () => {
+    const f = fixture()
+    const original = f.context.messages
+    vi.spyOn(atomicFile, 'atomicWriteFileSync').mockImplementation(() => { throw new Error('disk full') })
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(false)
+    expect(f.context.messages).toBe(original)
+    expect(f.context.compactionState).toBeNull()
+    expect(store.loadContextSnapshot(f.session.id)).toBeNull()
+    expect(f.diagnostics.getEpochReason()).toBe('session_init')
+    expect(readFileSync(f.file)).toEqual(f.original)
+    f.service.dispose()
+  })
+  it('未落盘的 assistant 尾部不能获得提交回执', async () => {
+    const f = fixture()
+    f.context.messages.push({ role: 'assistant', content: '未提交', origin: { messageId: 'inflight', step: 0 } })
+    const original = structuredClone(f.context.messages)
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(false)
+    expect(f.context.messages).toEqual(original)
+    expect(store.loadContextSnapshot(f.session.id)).toBeNull()
+    f.service.dispose()
+  })
+  it('最终投影等待时 generation 失效，旧候选不能提交', async () => {
+    const f = fixture()
+    let calls = 0
+    const projection = { project: async (messages: typeof f.context.messages) => {
+      if (++calls === 4) f.expire()
+      return messages
+    } }
+    expect(await f.service.runThresholdCompaction(projection)).toBe(false)
+    expect(store.loadContextSnapshot(f.session.id)).toBeNull()
+    expect(f.context.compactionState).toBeNull()
+    f.service.dispose()
+  })
+  it('磁盘提交后取消仍完成内存发布，重启读取相同 revision', async () => {
+    const f = fixture()
+    const controller = new AbortController()
+    const save = store.saveContextSnapshot.bind(store)
+    vi.spyOn(store, 'saveContextSnapshot').mockImplementation((id, ledger) => { save(id, ledger); controller.abort() })
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection, controller.signal)).toBe(true)
+    expect(f.context.compactionState).toEqual(new SessionStore(directory).loadContextSnapshot(f.session.id))
+    expect(f.diagnostics.getEpochReason()).toBe('compaction')
+    f.service.dispose()
+  })
+  it('写盘后发布前退出，重启从已提交 revision 恢复完整尾部', async () => {
+    const f = fixture()
+    const original = structuredClone(f.context.messages)
+    const save = store.saveContextSnapshot.bind(store)
+    vi.spyOn(store, 'saveContextSnapshot').mockImplementation((id, ledger) => { save(id, ledger); throw new Error('process exited') })
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(false)
+    expect(f.context.messages).toEqual(original)
+    const ledger = new SessionStore(directory).loadContextSnapshot(f.session.id)!
+    expect(ledger.revision).toBe(1)
+    const restored = restoreFromLedger(store.load(f.session.id)!, ledger, 'system\nhistory_read')
+    expect(restored.kind).toBe('restored')
+    const tailIndex = original.findIndex(message => message.origin?.messageId === ledger.tailFrom?.messageId && message.origin?.step === ledger.tailFrom?.step)
+    expect(restored.messages.slice(-original.slice(tailIndex).length)).toEqual(original.slice(tailIndex))
+    expect(readFileSync(f.file)).toEqual(f.original)
+    f.service.dispose()
+  })
+  it('同 revision 的第二份候选无法覆盖已提交快照', async () => {
+    const f = fixture()
+    const original = structuredClone(f.context.messages)
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(store.commitCompaction(f.session.id, { ...ledger, updatedAt: ledger.updatedAt + 1 }, 0, original)).toBe(false)
+    expect(store.loadContextSnapshot(f.session.id)).toEqual(ledger)
+    f.service.dispose()
+  })
+  it.each(['none', 'tool-call-history', 'all-history'] as const)('%s 恢复投影的 thinking 历史可提交，原始正文改动仍拒绝', async reasoningReplay => {
+    const projection = { reasoningReplay, currentProviderId: 'fixture' }
+    const f = fixture(projection, false, true)
+    const original = structuredClone(f.context.messages)
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt, projection).messages).toEqual(f.context.messages)
+    original.at(-1)!.content = '未持久化改动'
+    expect(store.commitCompaction(f.session.id, { ...ledger, revision: 2 }, 1, original, projection)).toBe(false)
+    f.service.dispose()
+  })
+  it('图文中的必需事实与解析后的图片尾部可完整提交恢复', async () => {
+    const projection = { resolveImageUrl: () => 'data:image/png;base64,fixture' }
+    const f = fixture(projection, true)
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(ledger.state?.handoff?.facts.map(fact => fact.quote)).toContain('必须保留金额单位 CNY。')
+    expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt, projection).messages).toEqual(f.context.messages)
+    expect(readFileSync(f.file)).toEqual(f.original)
+    f.service.dispose()
   })
 })

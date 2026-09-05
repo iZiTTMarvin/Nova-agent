@@ -638,7 +638,7 @@ describe('黄金测试 §9.11 上下文溢出压缩', () => {
     // （/context.?overflow/i, /token.*limit/i, /maximum context/i）才会被 classify 为 recovering。
     client.addResponse({ events: [{ type: 'message_start' }, { type: 'context_overflow', rawError: 'context overflow token limit' }] })
     // 压缩调用：返回摘要
-    client.addCompactionPair({ events: [{ type: 'text_delta', delta: '这是摘要' }, { type: 'message_end', finishReason: 'stop' }] })
+    client.addHandoffPair({ events: [{ type: 'text_delta', delta: '这是摘要' }, { type: 'message_end', finishReason: 'stop' }] })
     // 压缩后重试：成功
     client.addResponse({
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: '恢复完成' }, usage(60), { type: 'message_end', finishReason: 'stop' }]
@@ -675,8 +675,8 @@ describe('黄金测试 §9.11 上下文溢出压缩', () => {
     // 正常调用溢出（rawError 匹配 OVERFLOW_PATTERNS）
     client.addResponse({ events: [{ type: 'context_overflow', rawError: 'context overflow' }] })
     // standard 压缩调用：也溢出（runOverflowCompaction 回滚返回 false）
-    client.addCompactionPair({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
-    client.addCompactionPair({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
+    client.addHandoffPair({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
+    client.addHandoffPair({ events: [{ type: 'context_overflow', rawError: 'still context overflow' }] })
 
     const { loop, eventBus } = createLoop({ modelId: 'gpt-4o', client })
     // runOverflowCompaction 需要 oldMessages 非空（尾部按 token 预算切，窗口过大会整段落入 tail），
@@ -703,7 +703,7 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
     vi.useFakeTimers()
     const client = new MockModelClient()
     // 压缩调用：返回摘要
-    client.addCompactionPair({ events: [{ type: 'text_delta', delta: '历史摘要' }, { type: 'message_end', finishReason: 'stop' }] })
+    client.addHandoffPair({ events: [{ type: 'text_delta', delta: '历史摘要' }, { type: 'message_end', finishReason: 'stop' }] })
     // 压缩后正常调用
     client.addResponse({
       events: [{ type: 'message_start' }, { type: 'text_delta', delta: '答复' }, usage(50), { type: 'message_end', finishReason: 'stop' }]

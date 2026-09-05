@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareAgentRuntime } from '../../../src/main/agent/runtime/AgentRuntimeFactory'
 import { calculateContextBreakdown } from '../../../src/runtime/agent'
 import { SessionStore } from '../../../src/runtime/sessions'
+import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { createReadState } from '../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
@@ -37,6 +38,7 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
   const roots: string[] = []
 
   afterEach(() => {
+    resetSessionIndexHostForTests()
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 

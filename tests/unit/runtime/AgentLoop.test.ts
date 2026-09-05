@@ -956,7 +956,7 @@ describe('AgentLoop', () => {
    */
   it('压缩时上下文以 user 结尾，模型收到的压缩上下文不会出现连续 user', async () => {
     const client = new MockModelClient()
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '这是对话摘要。' },
@@ -1037,7 +1037,7 @@ describe('AgentLoop', () => {
 
   it('restoreCompactedContext 恢复压缩层级，后续压缩从该层级递增', async () => {
     const client = new MockModelClient()
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '新的摘要' },
@@ -1084,7 +1084,7 @@ describe('AgentLoop', () => {
         { type: 'context_overflow', rawError: 'context length exceeded' }
       ]
     })
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '这是紧急摘要。' },
@@ -1138,7 +1138,7 @@ describe('AgentLoop', () => {
       ]
     })
     // 2. Layer 1 压缩的 stub+state 都溢出
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'context_overflow', rawError: 'compaction input too long' }
@@ -1176,14 +1176,14 @@ describe('AgentLoop', () => {
       ]
     })
     // 2. Layer 1 压缩失败
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'error', error: 'API Error' }
       ]
     })
     // 3. Layer 2 压缩失败
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'error', error: 'API Error' }
@@ -1823,7 +1823,7 @@ describe('AgentLoop', () => {
       client.addResponse({
         events: [{ type: 'message_start' }, { type: 'context_overflow', rawError: 'context overflow token limit' }]
       })
-      client.addCompactionPair({
+      client.addHandoffPair({
         events: [{ type: 'text_delta', delta: '压缩摘要' }, { type: 'message_end', finishReason: 'stop' }]
       })
     }

@@ -8,6 +8,7 @@ import { OpenAICompatibleModelClient } from '../../../src/runtime/model/OpenAICo
 import { computeWireSnapshot } from '../../../src/runtime/model/requestFingerprint'
 import { createRunCoordinator } from '../../../src/runtime/run'
 import { SessionStore } from '../../../src/runtime/sessions'
+import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { ImageStore } from '../../../src/runtime/storage/ImageStore'
 import { createReadState } from '../../../src/runtime/tools/editTool'
@@ -98,6 +99,7 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
   const roots: string[] = []
 
   afterEach(() => {
+    resetSessionIndexHostForTests()
     for (const root of roots.splice(0)) {
       rmSync(root, { recursive: true, force: true })
     }

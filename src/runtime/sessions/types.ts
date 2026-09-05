@@ -312,7 +312,7 @@ export const SESSION_MESSAGES_FILE = 'messages.jsonl'
 export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
 
 /** 当前账本结构版本；不符则丢弃并全量重建 */
-export const CONTEXT_SNAPSHOT_VERSION = 3
+export const CONTEXT_SNAPSHOT_VERSION = 4
 
 export type LedgerTrigger = 'threshold' | 'mid-turn' | 'overflow' | 'idle'
 export interface TouchedFilesSnapshot {
@@ -332,12 +332,34 @@ export interface LedgerEntry {
 
 /** 当前唯一可变的工作记忆；至多一份 */
 export interface StateDoc {
+  handoff?: StructuredHandoff
+  validation?: 'verified' | 'legacy-unverified'
   text: string
   coversThrough: MessageOrigin
   taskVerbatim: { text: string; origin: MessageOrigin } | null
   /** 提交瞬间冻结的现实提示，渲染期只读 */
   realityLine: string
   revision: number
+}
+
+export interface HandoffFact {
+  id: string
+  category: 'task' | 'constraint' | 'decision' | 'failure' | 'todo'
+  owner: string
+  value: string
+  origin: MessageOrigin
+  quote: string
+  required: boolean
+}
+
+export interface StructuredHandoff {
+  schemaVersion: 1
+  goal: string
+  nextActions: string
+  keyContext: string
+  progress: string
+  decisions: string
+  facts: HandoffFact[]
 }
 
 /**

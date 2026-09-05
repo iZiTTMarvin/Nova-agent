@@ -11,7 +11,8 @@ import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { ContextBudgetExceededError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
-import type { AgentContext } from '../core/AgentContext'
+import { getEffectiveToolDefinitions, type AgentContext } from '../core/AgentContext'
+import { collectRequiredFacts, validateHandoff } from './handoffValidation'
 import { formatPointerStub } from '../core/renderHandoffPacket'
 import type { SummaryProjection } from '../../request-projection'
 import type { CompactionMeta } from '../types'
@@ -21,8 +22,12 @@ import {
   type LedgerEntry,
   type LedgerTrigger,
   type StateDoc,
+  type StructuredHandoff,
+  renderStructuredHandoff,
+  extractTextFromSerializableContent,
   type TouchedFilesSnapshot
 } from '../../sessions'
+import type { BuildConversationContextOptions } from '../../sessions'
 import { estimateContextTokens, estimateTokens } from '../tokenEstimator'
 import { IdleCompressionTimer } from './IdleCompressionTimer'
 import {
@@ -39,7 +44,6 @@ import {
   rebuildWithCompression,
   shouldScheduleIdleCompaction,
   splitForCompactionByTokens,
-  truncateStateFromEnd
 } from './compaction'
 
 type OverflowMode = 'standard' | 'aggressive'
@@ -75,21 +79,14 @@ interface CompactionParts {
   oldMessages: ChatMessage[]
   recentMessages: ChatMessage[]
   cutAt: MessageOrigin | null
+  authority?: { revision: number; routeId: string; envelopeHash: string; messages: string }
 }
 
-/**
- * 上下文压缩执行与压缩生命周期的唯一 owner。
- *
- * Service 直接更新 AgentContext 中的权威 messages 和压缩簿记，不维护平行上下文。
- * active turn 与 idle compaction 使用物理隔离的 AbortController；新消息通过 idle
- * generation 使晚到摘要失去写回资格，不依赖共享数组回滚。
- * 主请求必须通过最终投影预算；压缩失败时禁止超预算续发。
- *
- * 摘要请求回放主对话前缀：输入是调用方传入的投影视图切片（活跃轮次复用主请求
- * 同一归档缓存实例），reasoning 不剥离、由客户端按档案回放策略序列化，会话亲和
- * 档案携带 Cache Routing Key——摘要调用从全价 cache miss 变为服务端前缀命中。
- */
+interface CompactionOutputs { stub: string | null; state: string; handoff: StructuredHandoff }
+
+/** 管理压缩候选与提交资格；持久化成功后统一发布上下文和缓存纪元。 */
 export class CompactionService {
+  private historyProjection: BuildConversationContextOptions = {}
   private readonly measureRequest: NonNullable<CompactionServiceOptions['measureRequest']>
   private readonly canWrite: () => boolean
   private budget: ContextBreakdown['budget']
@@ -262,11 +259,10 @@ export class CompactionService {
         () => !abortSignal?.aborted && !this.disposed
       )
       if (!adopted) return false
-      if (abortSignal?.aborted) return false
       this.notifyCompaction('mid-turn')
       return true
     } catch {
-      return false
+      return adopted
     } finally {
       for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
     }
@@ -323,11 +319,10 @@ export class CompactionService {
         () => !abortSignal?.aborted && !this.disposed
       )
       if (!adopted) return false
-      if (abortSignal?.aborted) return false
       this.notifyCompaction('overflow')
       return true
     } catch {
-      return false
+      return adopted
     } finally {
       for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
       this.compressingForOverflow = false
@@ -359,9 +354,11 @@ export class CompactionService {
         () => !abortSignal?.aborted && !this.disposed && canApply()
       )
       if (!adopted) return false
-      if (abortSignal?.aborted || !canApply()) return false
       this.notifyCompaction(trigger)
       return true
+    } catch (error) {
+      recordMetric('compaction.rejected', {}, { tags: { reason: 'candidate-or-persistence-failed', error: error instanceof Error ? error.message : String(error) } })
+      return adopted
     } finally {
       for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
     }
@@ -459,8 +456,11 @@ export class CompactionService {
     projection: SummaryProjection,
     abortSignal: AbortSignal | undefined,
     usageSources: UsageSource[]
-  ): Promise<{ stub: string | null; state: string } | null> {
+  ): Promise<CompactionOutputs | null> {
     if (abortSignal?.aborted) return null
+    const measurement = this.measureRequest(this.context.messages, getEffectiveToolDefinitions(this.context))
+    parts.authority = { revision: this.context.compactionState?.revision ?? 0, routeId: measurement.routeId,
+      envelopeHash: measurement.envelopeHash, messages: JSON.stringify(this.context.messages) }
 
     const systemMessage = this.context.messages.find(message => message.role === 'system')
     const projectedAll = await projection.project(this.context.messages)
@@ -473,6 +473,16 @@ export class CompactionService {
       ...projectedOld
     ]
     const priorState = this.context.compactionState?.state?.text
+    const previousFacts = this.context.compactionState?.state?.handoff?.facts ?? []
+    const archive = this.context.sessionStore && this.context.sessionId ? this.context.sessionStore.load(this.context.sessionId) : null
+    const sourceMessages = parts.oldMessages.map(message => {
+      const raw = message.role === 'user' ? archive?.messages.find(raw => raw.id === message.origin?.messageId) : undefined
+      return raw ? { ...message, content: extractTextFromSerializableContent(raw.content) } : message
+    })
+    const required = collectRequiredFacts(sourceMessages, previousFacts)
+    const instruction = [buildStateInstruction(priorState),
+      'facts 中每项含 id/category/owner/value/origin{messageId,step}/quote/required。以下必需事实逐字段保留，不得改写、改归属或删除。额外事实只能引用原始 user 原句，owner 为该 messageId，value=quote。',
+      JSON.stringify(required)].join('\n')
     const stubContext = [
       ...prefix,
       ...buildCompactionRequestTail(lastRole, buildStubPrompt())
@@ -481,7 +491,7 @@ export class CompactionService {
       ...prefix,
       ...buildCompactionRequestTail(
         lastRole,
-        buildStateInstruction(priorState)
+        instruction
       )
     ]
 
@@ -490,20 +500,25 @@ export class CompactionService {
       this.streamCompactionText(stateContext, 'compaction-state', usageSources, abortSignal)
     ])
     if (abortSignal?.aborted) return null
-    if (!rawState) return null
+    if (!rawState) {
+      recordMetric('compaction.rejected', {}, { tags: { reason: 'missing-state-text' } })
+      return null
+    }
 
     const stateBudget = getStateTokenBudget(this.contextWindow)
-    let state = boundSummaryText(rawState, stateBudget)
-    if (estimateTokens(state) > stateBudget) {
+    let candidate = rawState
+    let handoff = validateHandoff(candidate, sourceMessages, required, previousFacts)
+    if (!handoff || estimateTokens(renderStructuredHandoff(handoff)) > stateBudget) {
       const tightened = await this.streamCompactionText(
         [
           ...prefix,
           ...buildCompactionRequestTail(
             lastRole,
             [
-              '请把下面这份状态文档收紧。保留「目标」和「下一步」，可以大幅压缩「关键决策」。只输出收紧后的五段摘要。',
+              instruction,
+              '修正并收紧以下原始候选，保留全部必需事实和五项内容。只输出完整 JSON；不得截断字段。',
               '',
-              state
+              rawState
             ].join('\n')
           )
         ],
@@ -512,13 +527,24 @@ export class CompactionService {
         abortSignal
       )
       if (abortSignal?.aborted) return null
-      if (tightened) state = tightened
+      if (!tightened) return null
+      candidate = tightened
+      handoff = validateHandoff(candidate, sourceMessages, required, previousFacts)
     }
-    state = truncateStateFromEnd(state, stateBudget)
+    if (!handoff) {
+      recordMetric('compaction.rejected', { requiredFacts: required.length }, { tags: { reason: 'invalid-handoff' } })
+      return null
+    }
+    const state = renderStructuredHandoff(handoff)
+    if (estimateTokens(state) > stateBudget) {
+      recordMetric('compaction.rejected', { stateBudget, requiredFacts: required.length }, { tags: { reason: 'state-budget' } })
+      return null
+    }
 
     return {
       stub: stubText,
-      state
+      state,
+      handoff
     }
   }
 
@@ -560,10 +586,10 @@ export class CompactionService {
           return null
         }
       }
-    const trimmed = text.trim()
-    acceptedText = trimmed.length > 0
-    if (acceptedText && source) usageSources.push(source)
-    return trimmed.length > 0 ? trimmed : null
+      const trimmed = text.trim()
+      acceptedText = trimmed.length > 0
+      if (acceptedText && source) usageSources.push(source)
+      return trimmed.length > 0 ? trimmed : null
     } catch {
       return null
     } finally {
@@ -577,12 +603,18 @@ export class CompactionService {
    */
   private async applyCompactionResult(
     parts: CompactionParts,
-    outputs: { stub: string | null; state: string },
+    outputs: CompactionOutputs,
     projection: SummaryProjection,
     trigger: LedgerTrigger,
     canApply: () => boolean = () => true
   ): Promise<boolean> {
-    if (!canApply()) return false
+    const eligible = (): boolean => {
+      const authority = parts.authority
+      const current = this.measureRequest(this.context.messages, getEffectiveToolDefinitions(this.context))
+      return !this.disposed && (trigger === 'idle' || this.canWrite()) && canApply() && Boolean(authority && authority.revision === (this.context.compactionState?.revision ?? 0) &&
+        authority.routeId === current.routeId && authority.envelopeHash === current.envelopeHash && authority.messages === JSON.stringify(this.context.messages))
+    }
+    if (!eligible()) return false
 
     const tail = parts.recentMessages
     const beforeProjected = await projection.project(this.context.messages)
@@ -592,13 +624,19 @@ export class CompactionService {
     const systemPrompt = this.getSystemPrompt?.(ledger.entries.length) ?? this.context.systemPrompt
     const rebuilt = rebuildWithCompression(systemPrompt, ledger, tail)
     const projected = await projection.project(rebuilt)
-    if (!canApply()) return false
+    if (!eligible()) return false
     const afterTokens = estimateContextTokens(projected)
     if (afterTokens >= beforeTokens) return false
 
     const budget = this.contextBudgetManager.enforceInline(projected)
     if (budget.status === 'requires_compaction') {
       throw new ContextBudgetExceededError(budget.estimatedTokens, budget.serializedBytes, true)
+    }
+    if (this.context.sessionStore && this.context.sessionId) {
+      if (!this.context.sessionStore.commitCompaction(this.context.sessionId, ledger, parts.authority!.revision, this.context.messages, this.historyProjection)) {
+        recordMetric('compaction.rejected', { revision: ledger.revision ?? 0 }, { tags: { reason: 'durable-frontier-or-revision' } })
+        return false
+      }
     }
     this.context.systemPrompt = systemPrompt
     this.context.messages = rebuilt
@@ -607,12 +645,15 @@ export class CompactionService {
     this.context.userTurnsSinceCompaction = 0
     this.updateTokenEstimate()
     this.cacheDiagnostics.bumpEpoch('compaction')
+    recordMetric('compaction.committed', { revision: ledger.revision ?? 0, facts: outputs.handoff.facts.length }, { tags: {
+      routeId: parts.authority!.routeId, envelopeHash: parts.authority!.envelopeHash, trigger,
+      durability: this.context.sessionStore ? 'persisted' : 'ephemeral' } })
     return true
   }
 
   private buildNextLedger(
     parts: CompactionParts,
-    outputs: { stub: string | null; state: string },
+    outputs: CompactionOutputs,
     trigger: LedgerTrigger
   ): CompactionLedger {
     const tail = parts.recentMessages
@@ -651,6 +692,8 @@ export class CompactionService {
       revision: (prev?.revision ?? 0) + 1,
       entries,
       state: {
+        validation: 'verified',
+        handoff: outputs.handoff,
         text: outputs.state,
         coversThrough: to,
         taskVerbatim: this.resolveTaskVerbatim(parts, prev?.state?.taskVerbatim ?? null),
@@ -697,5 +740,9 @@ export class CompactionService {
       trigger,
       ledger
     })
+  }
+
+  setHistoryProjection(options: BuildConversationContextOptions): void {
+    this.historyProjection = { ...options, from: undefined }
   }
 }

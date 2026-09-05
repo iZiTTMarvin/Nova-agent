@@ -21,7 +21,6 @@ import {
 import { ArtifactStore } from '../../../runtime/artifacts/ArtifactStore'
 import type { SessionStore } from '../../../runtime/sessions'
 import {
-  persistCompactionSnapshot,
   restoreOrInjectHistory
 } from '../../../runtime/sessions/contextSnapshot'
 import type {
@@ -122,20 +121,7 @@ export function prepareSubagentRuntime(
         input.sessionsDir,
         input.childSession.id,
         messageIds
-      ),
-    onCompaction: (_compactedContext, meta) => {
-      if (
-        !persistCompactionSnapshot(
-          input.sessionStore,
-          input.childSession.id,
-          meta.ledger
-        )
-      ) {
-        console.error(
-          `[SubagentRuntimeFactory] 找不到 Child Session ${input.childSession.id}，压缩快照未写`
-        )
-      }
-    }
+      )
   })
   agentLoop.setWorkingDir(input.workingDirectory)
   agentLoop.setWorkspaceRoot(input.childSession.workspaceRoot)
@@ -147,7 +133,7 @@ export function prepareSubagentRuntime(
   }
   // 子代理不执行主会话的 Plan / Compose 产品流程，避免注入不适用的模式指令。
   agentLoop.setModeInstructionProvider(() => '')
-  agentLoop.setSessionContext(input.sessionStore, input.childSession.id)
+  agentLoop.setSessionContext(input.sessionStore, input.childSession.id, { resolveImageUrl: input.resolveImageUrl })
   agentLoop.setReadState(input.readState)
   agentLoop.setArtifactStore(new ArtifactStore(input.sessionsDir))
   for (const skillRoot of input.profile.skillRoots ?? []) {

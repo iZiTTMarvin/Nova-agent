@@ -7,7 +7,6 @@ import {
   boundSummaryText,
   foldLedgerEntriesToBudget,
   splitForCompactionByTokens,
-  truncateStateFromEnd,
   rebuildWithCompression,
   rollbackBefore,
   COMPACTION_THRESHOLD,
@@ -166,51 +165,11 @@ describe('compaction', () => {
   })
 
   describe('buildCompactionPrompt', () => {
-    it('包含摘要要求', () => {
+    it('要求结构化字段、来源与完整 JSON', () => {
       const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('摘要')
-    })
-
-    it('不要求模型写工作区路径', () => {
-      const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('不要写 Working directory')
-      expect(prompt).not.toContain('摘要开头先用一行注明当前工作区')
-    })
-
-    it('包含 artifact:// 感知提示', () => {
-      const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('artifact://')
-      expect(prompt).toContain('只保留结论')
-    })
-
-    it('包含五个固定段标题', () => {
-      const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('## 目标')
-      expect(prompt).toContain('## 进展')
-      expect(prompt).toContain('## 关键决策')
-      expect(prompt).toContain('## 下一步')
-      expect(prompt).toContain('## 关键上下文')
-    })
-
-    it('进展分已完成与进行中两个子列表，下一步为有序列表', () => {
-      const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('已完成')
-      expect(prompt).toContain('进行中')
-      expect(prompt).toContain('有序列表')
-    })
-
-    it('关键上下文要求精确路径与错误信息，缺失时写 (none)', () => {
-      const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('文件路径')
-      expect(prompt).toContain('错误信息')
-      expect(prompt).toContain('(none)')
-    })
-
-    it('只输出摘要：不继续对话、不复述、不加前缀说明', () => {
-      const prompt = buildCompactionPrompt()
-      expect(prompt).toContain('不要继续对话')
-      expect(prompt).toContain('只输出摘要')
-      expect(prompt).toContain('不要加任何前缀说明')
+      for (const field of ['schemaVersion', 'goal', 'nextActions', 'keyContext', 'progress', 'decisions', 'facts', 'origin', 'required']) expect(prompt).toContain(field)
+      expect(prompt).toContain('完整 JSON')
+      expect(prompt).toContain('不得虚构')
     })
   })
 
@@ -359,8 +318,8 @@ describe('compaction', () => {
       const instruction = tail[tail.length - 1]
       expect(instruction.internal).toBe(true)
       const text = extractTextFromContent(instruction.content)
-      expect(text).toContain('## 目标')
-      expect(text).toContain('## 关键上下文')
+      expect(text).toContain('goal（目标）')
+      expect(text).toContain('keyContext（关键上下文）')
       expect(text).toContain('前序摘要')
       expect(text).toContain('前一版摘要内容')
       expect(text).toContain('不要推翻重写')
@@ -403,26 +362,6 @@ describe('compaction', () => {
       expect(oldMessages.concat(recentMessages).map(m => m.content)).toEqual(
         messages.filter(m => m.role !== 'system').map(m => m.content)
       )
-    })
-  })
-
-  describe('truncateStateFromEnd', () => {
-    it('超预算时从末尾丢掉关键决策，保住下一步', () => {
-      const text = [
-        '## 目标',
-        '完成压缩',
-        '## 下一步',
-        '1. 继续',
-        '## 关键上下文',
-        '(none)',
-        '## 进展',
-        '- 已完成: 设计',
-        '## 关键决策',
-        '- 采用账本'
-      ].join('\n')
-      const truncated = truncateStateFromEnd(text, 8)
-      expect(truncated).toContain('## 下一步')
-      expect(truncated).not.toContain('## 关键决策')
     })
   })
 

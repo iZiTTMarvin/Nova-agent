@@ -69,7 +69,7 @@ describe('上下文账本恢复', () => {
     }
 
     const client = new MockModelClient()
-    client.addCompactionPair({
+    client.addHandoffPair({
       events: [
         { type: 'message_start' },
         { type: 'text_delta', delta: '压缩摘要文本' },
@@ -102,9 +102,9 @@ describe('上下文账本恢复', () => {
 
     const ledger = store.loadContextSnapshot(session.id)
     expect(ledger).not.toBeNull()
-    expect(ledger!.state?.text).toBe('压缩摘要文本')
+    expect(ledger!.state?.handoff?.goal).toBe('压缩摘要文本')
     expect(ledger).not.toHaveProperty('recentMessages')
-    expect(JSON.stringify(ledger)).not.toContain('历史问题 0')
+    expect(JSON.stringify(ledger)).not.toContain('历史回复 0')
 
     store.appendMessage(session.id, {
       id: 'user_delta_1',
@@ -195,6 +195,11 @@ describe('上下文账本恢复', () => {
     restoreOrInjectHistory(loop, loaded, ledger)
 
     const ctx = loop.getContext()
+    expect(ctx.filter(message => message.role !== 'system')).toEqual([
+      { role: 'assistant', content: '', toolCalls: [{ id: 'tc_b', name: 'edit', arguments: '{"path":"b.ts"}' }], origin: { messageId: 'a1', step: 1 } },
+      { role: 'tool', content: 'edited b.ts', toolCallId: 'tc_b', origin: { messageId: 'a1', step: 1 } },
+      { role: 'assistant', content: '已完成两处修复。', origin: { messageId: 'a1', step: 2 } }
+    ])
     const toolCallIds = ctx.flatMap(m => m.toolCalls?.map(tc => tc.id) ?? [])
     expect(toolCallIds).toEqual(['tc_b'])
     expect(ctx.filter(m => m.role === 'tool').map(m => m.toolCallId)).toEqual(['tc_b'])

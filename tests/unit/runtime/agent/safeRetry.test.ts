@@ -3,7 +3,7 @@
  *
  * 覆盖安全重试验收标准：
  * - 已产生 tool call / 正文 / reasoning 后的流式错误 → 不重试，走终态失败
- * - 首字节前的网络错误 → 重试，退避序列符合 maka（base 1s，max 32s，jitter 上界 0.25）
+ * - 派发结果未知的网络错误不重放；明确拒绝的可重试响应保留有限退避
  * - Retry-After: <秒数> → 用该值，忽略指数退避
  * - Retry-After: <HTTP-date> → 正确解析
  * - 结构化 ModelFailure 是重试决策的真源，不再依赖字符串正则
@@ -117,17 +117,19 @@ describe('httpStatusToFailure', () => {
 // ── thrownToFailure ───────────────────────────────────────
 
 describe('thrownToFailure', () => {
-  it('timeout 类 → timeout + retryable', () => {
+  it('timeout 类保留远端未知状态并禁止重放', () => {
     const msg = formatTransportError('timeout_connect', '建连超时')
     const f = thrownToFailure('timeout_connect', msg)
     expect(f.kind).toBe('timeout')
-    expect(f.retryable).toBe(true)
+    expect(f.retryable).toBe(false)
+    expect(f.dispatchOutcome).toBe('unknown')
   })
 
-  it('network_reset → network + retryable', () => {
+  it('network_reset 保留远端未知状态并禁止重放', () => {
     const f = thrownToFailure('network_reset', 'ECONNRESET')
     expect(f.kind).toBe('network')
-    expect(f.retryable).toBe(true)
+    expect(f.retryable).toBe(false)
+    expect(f.dispatchOutcome).toBe('unknown')
   })
 })
 
@@ -284,11 +286,9 @@ describe('AttemptController 安全重试门闩', () => {
 
   it('有 fallback 时，重试耗尽且瞬态 → 切 fallback', () => {
     const { controller, pool } = createController({ random: () => 0, fallbackCount: 1 })
-    // 每次都已产生输出（hasNoObservableOutput=false）→ 不重试，但 providerAttempt 持续递增；
-    // 达到 maxAttempts(10) 后 decideFallback 触发切换。
     let d: ReturnType<AttemptController['onError']> | undefined
     for (let i = 0; i < 10; i++) {
-      d = controller.onError('429 rate limit', rateLimitFailure, false)
+      d = controller.onError('429 rate limit', rateLimitFailure, true)
       if (d.action === 'fallback') break
       controller.beginAttempt()
     }
@@ -428,6 +428,20 @@ async function runOnce(processor: StreamProcessor): Promise<{ kind: string }> {
 }
 
 describe('StreamProcessor 安全重试门闩', () => {
+  it('只有 tool 起始与参数增量后失败，也不能自动重放', async () => {
+    const client: ModelClient = {
+      async *chat() {
+        yield { type: 'tool_call_start', toolCallId: 'partial', toolName: 'write', index: 0 }
+        yield { type: 'tool_call_delta', toolCallId: 'partial', argumentsDelta: '{' }
+        yield { type: 'error', error: '429 rate limit', failure: { kind: 'rate_limit', retryable: true, message: '429' } }
+      },
+      updateConfig() {}
+    }
+    const { processor, emitted } = createProcessor(client)
+    expect((await runOnce(processor)).kind).toBe('error')
+    expect(emitted.filter(event => event.type === 'tool_call')).toHaveLength(0)
+    expect(emitted.filter(event => event.type === 'attempt_failed')).toHaveLength(0)
+  })
   it('已产生正文后的 429 → 不重试（返回 error）', async () => {
     const { processor, emitted } = createProcessor(clientTextThenError())
     const result = await runOnce(processor)

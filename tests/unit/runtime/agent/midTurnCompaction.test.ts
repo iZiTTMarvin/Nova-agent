@@ -116,7 +116,7 @@ describe('CompactionService mid-turn', () => {
   it('超高水位时压缩，保留 tool 对完整与 tail', async () => {
     const messages = buildHistoryForMidTurn({ fillerChars: 20_000, pairs: 4 })
     const onCompaction = vi.fn()
-    const client = new MockModelClient().addCompactionPair({
+    const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: 'mid-turn summary' },
         { type: 'message_end', finishReason: 'stop' }
@@ -143,7 +143,7 @@ describe('CompactionService mid-turn', () => {
 
     expect(onCompaction).toHaveBeenCalledWith(
       context.messages,
-      expect.objectContaining({ trigger: 'mid-turn', summary: 'mid-turn summary' })
+      expect.objectContaining({ trigger: 'mid-turn', summary: expect.stringContaining('mid-turn summary') })
     )
     expect(extractTextFromContent(context.messages[0].content)).toContain('mid-turn summary')
     const nonSystem = context.messages.filter(m => m.role !== 'system')

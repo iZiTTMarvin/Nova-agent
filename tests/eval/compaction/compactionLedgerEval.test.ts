@@ -23,6 +23,7 @@ import { createReadState } from '../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../src/runtime/tools/types'
 
 interface CompactionEvalMetrics {
+  evidenceKind: 'synthetic-structure-only'
   snapshot: {
     scenarios: Array<{
       name: string
@@ -57,10 +58,10 @@ interface CompactionEvalMetrics {
     nonInflating: boolean
   }
   foldedHistoryRecall: {
-    baselinePercent: number
-    ledgerPercent: number
+    baselinePercent: null
+    literalReadPercent: number
     queries: number
-    improvementPercentagePoints: number
+    improvementPercentagePoints: null
   }
 }
 
@@ -268,7 +269,7 @@ describe('账本式交接压缩确定性 A/B 评估', () => {
       store.appendMessage(recallSession.id, {
         id: 'u-facts',
         role: 'user',
-        content: foldedFacts.join('\n'),
+        content: foldedFacts.map((value, index) => `任务约束 ${index + 1}: ${value}`).join('\n'),
         timestamp: 1
       })
       store.appendMessage(recallSession.id, {
@@ -316,18 +317,20 @@ describe('账本式交接压缩确定性 A/B 评估', () => {
         artifactStore: artifacts
       }
       let recalled = 0
-      for (const query of foldedFacts) {
+      for (const [index, expected] of foldedFacts.entries()) {
+        const query = `任务约束 ${index + 1}`
         const result = await historyReadTool.execute(
           { operation: 'search', query },
           toolContext
         )
-        const output = JSON.parse(result.output) as { matched?: number }
-        if (result.success && (output.matched ?? 0) > 0) recalled++
+        const read = await historyReadTool.execute({ operation: 'read', checkpoint: 'c1' }, toolContext)
+        if (result.success && read.success && read.output.includes(expected)) recalled++
       }
 
       const baselineRequest = requestStats(legacyRestored)
       const ledgerRequest = requestStats(restored.messages)
       const metrics: CompactionEvalMetrics = {
+        evidenceKind: 'synthetic-structure-only',
         snapshot: {
           scenarios: snapshotScenarios,
           minimumReductionPercent: Math.min(
@@ -373,12 +376,10 @@ describe('账本式交接压缩确定性 A/B 评估', () => {
             && previousRoundEnd.diagnostics.estimatedTokensSaved >= 0
         },
         foldedHistoryRecall: {
-          baselinePercent: 0,
-          ledgerPercent: roundPercent(recalled / foldedFacts.length * 100),
+          baselinePercent: null,
+          literalReadPercent: roundPercent(recalled / foldedFacts.length * 100),
           queries: foldedFacts.length,
-          improvementPercentagePoints: roundPercent(
-            recalled / foldedFacts.length * 100
-          )
+          improvementPercentagePoints: null
         }
       }
 
@@ -393,8 +394,8 @@ describe('账本式交接压缩确定性 A/B 评估', () => {
       expect(metrics.prefixStability.ledgerReusablePrefixPercent).toBe(100)
       expect(metrics.prefixStability.improvementPercentagePoints).toBeGreaterThan(0)
       expect(metrics.prefixStability.estimatedTokensSavedPerProjectedRequest).toBeGreaterThan(0)
-      expect(metrics.foldedHistoryRecall.ledgerPercent).toBe(100)
-      expect(metrics.foldedHistoryRecall.improvementPercentagePoints).toBe(100)
+      expect(metrics.foldedHistoryRecall.literalReadPercent).toBe(100)
+      expect(metrics.foldedHistoryRecall.improvementPercentagePoints).toBeNull()
       expect(metrics.projectionSafety.singleLineReductionPercent).toBeGreaterThan(0)
       expect(metrics.projectionSafety.multilineReductionPercent).toBeGreaterThan(0)
       expect(metrics.projectionSafety.nonInflating).toBe(true)

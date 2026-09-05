@@ -6,6 +6,10 @@ import {
   type StateDoc
 } from '../../runtime/sessions'
 
+export function handoffJson(goal: string): string {
+  return JSON.stringify({ schemaVersion: 1, goal, nextActions: '继续任务', keyContext: '(none)', progress: '(none)', decisions: '(none)', facts: [] })
+}
+
 export function makeCompactionLedger(opts?: {
   summary?: string
   entryCount?: number

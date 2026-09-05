@@ -1,4 +1,5 @@
 export { SessionStore, deriveChildSessionId } from './SessionStore'
+export { parseStructuredHandoff, renderStructuredHandoff } from './handoffState'
 export type {
   SessionSummary,
   SessionData,
@@ -11,6 +12,8 @@ export type {
   LedgerEntry,
   LedgerTrigger,
   StateDoc,
+  HandoffFact,
+  StructuredHandoff,
   SubagentSessionData,
   TouchedFilesSnapshot
 } from './types'

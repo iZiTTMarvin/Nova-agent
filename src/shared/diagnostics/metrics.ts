@@ -40,6 +40,8 @@ export type MetricCategory =
   | 'usage.report'
   | 'usage.adoption'
   | 'budget.assessment'
+  | 'compaction.rejected'
+  | 'compaction.committed'
   | 'session.append'
   | 'readState.set'
   | 'readState.evict'

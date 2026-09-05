@@ -269,6 +269,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       response: Response
       attempt: Awaited<ReturnType<typeof transportFetch>>['attempt']
     }> => {
+      if (options?.abortSignal?.aborted) throw Object.assign(new Error('cancelled'), { name: 'AbortError' })
       reportAttempt()
       dispatchIndexWithinCall++
       physicalAttemptId = randomUUID()
@@ -430,6 +431,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     // 累积 tool_calls，SSE 每个 chunk 可能只包含部分信息
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>()
     let finishReason = ''
+    let sawDone = false
     /** 末尾 usage chunk 的原始数据（stream_options.include_usage=true 时由服务端发送） */
 
     const bodyStream = response.body
@@ -474,6 +476,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
           const trimmed = line.trim()
           if (!trimmed) continue
           if (trimmed === 'data: [DONE]') {
+            sawDone = true
             bodyReader.markSemanticEvent()
             continue
           }
@@ -608,6 +611,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
       yield { type: 'cancelled' }
       return
     }
+    if ((!finishReason && !sawDone) || (pendingToolCalls.size > 0 && !finishReason)) {
+      yield transportErrorToChatEvent(new Error('network_reset: SSE ended before model completion'))
+      return
+    }
 
     // 冲刷 think 标签状态机残留内容
     for (const seg of thinkTagParser.flush()) {
@@ -638,7 +645,15 @@ export class OpenAICompatibleModelClient implements ModelClient {
     }
 
     yield { type: 'message_end', finishReason: finishReason || 'stop' }
+    } catch (error) {
+      yield transportErrorToChatEvent(error)
     } finally {
+      if (observedAttempt && !observedAttempt.getOutcome()) {
+        observedAttempt.abort()
+        void observedResponse?.body?.cancel().catch(() => {})
+        observedAttempt.settle(options?.abortSignal?.aborted ? 'cancelled' : 'abandoned')
+        observedAttempt.dispose()
+      }
       reportAttempt()
     }
   }

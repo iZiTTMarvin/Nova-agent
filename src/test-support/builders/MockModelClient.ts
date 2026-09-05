@@ -7,6 +7,7 @@ import type { ModelClient, ChatOptions } from '../../runtime/model/ModelClient'
 
 export interface MockResponse {
   events: ChatEvent[]
+  handoff?: boolean
 }
 
 export class MockModelClient implements ModelClient {
@@ -25,6 +26,11 @@ export class MockModelClient implements ModelClient {
     return this.addResponse(stub).addResponse(state)
   }
 
+  /** 生命周期 fixture 的有效结构化响应；协议拒绝测试仍传原始 events。 */
+  addHandoffPair(state: MockResponse, stub: MockResponse = state): this {
+    return this.addResponse(stub).addResponse({ ...state, handoff: true })
+  }
+
   /** 获取所有历史调用 */
   getCalls(): { messages: ChatMessage[]; tools?: ToolDefinition[]; options?: ChatOptions }[] {
     return this.calls
@@ -41,6 +47,15 @@ export class MockModelClient implements ModelClient {
 
     const response = this.responses[this.callIndex] ?? { events: [] }
     this.callIndex++
+
+    if (response.handoff && response.events.some(event => event.type === 'text_delta')) {
+      const goal = response.events.filter(event => event.type === 'text_delta').map(event => event.delta).join('').trim()
+      const instruction = messages.at(-1)?.content
+      const facts: unknown = typeof instruction === 'string' ? JSON.parse(instruction.slice(instruction.lastIndexOf('\n') + 1)) : []
+      yield { type: 'text_delta', delta: JSON.stringify({ schemaVersion: 1, goal, nextActions: '继续任务', keyContext: '(none)', progress: '(none)', decisions: '(none)', facts }) }
+      for (const event of response.events) if (event.type !== 'text_delta') yield event
+      return
+    }
 
     for (const event of response.events) {
       yield event

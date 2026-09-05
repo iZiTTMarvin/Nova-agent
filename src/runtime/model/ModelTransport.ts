@@ -132,7 +132,7 @@ export class TransportAttempt {
   settle(outcome: TransportOutcome): void {
     if (this.outcome !== null) return
     this.outcome = outcome
-    if (outcome !== 'abandoned') this.timing.settledAt = performance.timeOrigin + performance.now()
+    this.timing.settledAt = performance.timeOrigin + performance.now()
   }
 
   /** 当前时序快照（只读投影） */
@@ -202,22 +202,33 @@ export function classifyThrownError(err: unknown): TransportErrorClass {
 function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
-  attempt: AbortController,
+  attempt: TransportAttempt,
   cls: TransportErrorClass,
   detail: string
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup()
+      reject(attempt.signal.reason ?? Object.assign(new Error('cancelled'), { name: 'AbortError' }))
+    }
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      attempt.signal.removeEventListener('abort', onAbort)
+    }
     const timer = setTimeout(() => {
-      attempt.abort()
+      cleanup()
       reject(new Error(formatTransportError(cls, detail)))
+      attempt.abort()
     }, ms)
+    if (attempt.signal.aborted) onAbort()
+    else attempt.signal.addEventListener('abort', onAbort, { once: true })
     promise.then(
       v => {
-        clearTimeout(timer)
+        cleanup()
         resolve(v)
       },
       err => {
-        clearTimeout(timer)
+        cleanup()
         reject(err)
       }
     )
@@ -235,12 +246,19 @@ export async function transportFetch(init: TransportFetchInit): Promise<Transpor
 
   try {
     const doFetch = init.fetchImpl ?? fetch
+    if (attempt.signal.aborted) throw Object.assign(new Error('cancelled'), { name: 'AbortError' })
     const response = await withTimeout(
       doFetch(init.url, {
         method: init.method ?? 'POST',
         headers: init.headers,
         body: init.body,
         signal: attempt.signal
+      }).then(response => {
+        if (attempt.signal.aborted) {
+          void response.body?.cancel().catch(() => {})
+          throw Object.assign(new Error('cancelled'), { name: 'AbortError' })
+        }
+        return response
       }),
       timeouts.connectMs,
       attempt,
@@ -288,7 +306,10 @@ export class TransportBodyReader {
   private rejectSemanticFailure: ((reason: Error) => void) | null = null
   private readonly semanticFailurePromise: Promise<never>
   private readonly onUserAbort = (): void => {
-    // 某些 mock/自定义 ReadableStream 不会响应 fetch signal，需主动释放 reader。
+    this.semanticFailure ??= this.attempt.cancelledByUser
+      ? Object.assign(new Error('cancelled'), { name: 'AbortError' })
+      : this.attempt.signal.reason instanceof Error ? this.attempt.signal.reason : new Error('network_reset: request aborted')
+    this.rejectSemanticFailure?.(this.semanticFailure)
     void this.cancel()
   }
 
@@ -311,10 +332,10 @@ export class TransportBodyReader {
     this.semanticFailurePromise = new Promise<never>((_, reject) => {
       this.rejectSemanticFailure = reject
     })
-    if (opts.userSignal) {
-      if (opts.userSignal.aborted) void this.cancel()
-      else opts.userSignal.addEventListener('abort', this.onUserAbort, { once: true })
-    }
+    // 消费者可以停在 yield 处；watchdog 拒绝仍需有接收者。
+    void this.semanticFailurePromise.catch(() => {})
+    if (this.attempt.signal.aborted) this.onUserAbort()
+    else this.attempt.signal.addEventListener('abort', this.onUserAbort, { once: true })
     this.armSemanticTimer()
   }
 
@@ -330,6 +351,7 @@ export class TransportBodyReader {
   }
 
   private armSemanticTimer(): void {
+    if (this.closed) return
     if (this.semanticTimer) clearTimeout(this.semanticTimer)
     const timeoutMs = this.sawSemanticEvent ? this.idleMs : this.firstByteMs
     const cls: TransportErrorClass = this.sawSemanticEvent ? 'timeout_idle' : 'timeout_first_byte'
@@ -347,6 +369,7 @@ export class TransportBodyReader {
 
   /** 读取下一块；超时/网络错误抛分类 Error */
   async read(): Promise<TransportReadResult> {
+    if (this.semanticFailure) throw this.semanticFailure
     if (this.closed) return { done: true }
     if (this.attempt.cancelledByUser) {
       await this.cancel()
@@ -358,6 +381,8 @@ export class TransportBodyReader {
       if (result.done) {
         this.closed = true
         this.clearSemanticTimer()
+        this.removeUserAbortListener()
+        this.reader.releaseLock()
         this.attempt.settle(this.attempt.cancelledByUser ? 'cancelled' : 'completed')
         this.attempt.dispose()
         return { done: true }
@@ -368,6 +393,7 @@ export class TransportBodyReader {
       if (this.attempt.cancelledByUser) {
         throw Object.assign(new Error('cancelled'), { name: 'AbortError' })
       }
+      if (this.semanticFailure) throw this.semanticFailure
       const msg = String((err as Error)?.message ?? err)
       // 已是分类错误则原样抛出
       if (/^timeout_|^network_reset:/.test(msg)) throw err
@@ -384,8 +410,8 @@ export class TransportBodyReader {
     this.removeUserAbortListener()
     this.attempt.dispose()
     this.attempt.abort()
-    await this.cancelReader()
     this.attempt.settle(this.attempt.cancelledByUser ? 'cancelled' : 'transport_error')
+    void this.cancelReader()
   }
 
   private async cancelReader(): Promise<void> {
@@ -407,14 +433,11 @@ export class TransportBodyReader {
     this.closed = true
     this.clearSemanticTimer()
     this.removeUserAbortListener()
-    // 走到这里说明流没有以 EOF 收尾：用户取消记 cancelled，其余记 abandoned（本地终态不可判定）
+    // 走到这里说明流没有以 EOF 收尾：用户取消记 cancelled，其余记 abandoned（远端结果未知）
     this.attempt.settle(this.attempt.cancelledByUser ? 'cancelled' : 'abandoned')
     this.attempt.dispose()
-    try {
-      this.reader.releaseLock()
-    } catch {
-      /* ignore */
-    }
+    this.attempt.abort()
+    void this.cancelReader()
   }
 
   private clearSemanticTimer(): void {
@@ -423,7 +446,7 @@ export class TransportBodyReader {
   }
 
   private removeUserAbortListener(): void {
-    this.userSignal?.removeEventListener('abort', this.onUserAbort)
+    this.attempt.signal.removeEventListener('abort', this.onUserAbort)
   }
 }
 
@@ -450,6 +473,11 @@ export async function readErrorResponseBody(
   let timer: ReturnType<typeof setTimeout> | null = null
   let bytes = 0
   const chunks: Uint8Array[] = []
+  let rejectAbort: (reason: unknown) => void = () => {}
+  const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject })
+  const onAbort = (): void => rejectAbort(attempt.signal.reason ?? Object.assign(new Error('cancelled'), { name: 'AbortError' }))
+  if (attempt.signal.aborted) onAbort()
+  else attempt.signal.addEventListener('abort', onAbort, { once: true })
   try {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
@@ -458,7 +486,7 @@ export async function readErrorResponseBody(
       }, timeoutMs)
     })
     while (true) {
-      const result = await Promise.race([reader.read(), timeout])
+      const result = await Promise.race([reader.read(), timeout, aborted])
       if (result.done) break
       if (!result.value) continue
       bytes += result.value.byteLength
@@ -467,20 +495,18 @@ export async function readErrorResponseBody(
     }
     return new TextDecoder().decode(concatChunks(chunks, bytes))
   } catch {
+    if (attempt.cancelledByUser) throw Object.assign(new Error('cancelled'), { name: 'AbortError' })
     return 'unknown'
   } finally {
     if (timer) clearTimeout(timer)
-    try {
-      await reader.cancel()
-    } catch {
-      /* 忽略已关闭 reader */
-    }
+    attempt.signal.removeEventListener('abort', onAbort)
+    void reader.cancel().catch(() => {})
     try {
       reader.releaseLock()
     } catch {
       /* 忽略已释放锁 */
     }
-    attempt.settle('http_error')
+    attempt.settle(attempt.cancelledByUser ? 'cancelled' : 'http_error')
     attempt.dispose()
   }
 }
@@ -528,7 +554,8 @@ function thrownFailureKind(cls: TransportErrorClass): ModelFailureKind {
 export function thrownToFailure(cls: TransportErrorClass, message: string): ModelFailure {
   // cancelled 不应进入失败路径（调用方已先行返回 cancelled 事件）
   const kind = thrownFailureKind(cls)
-  return { kind, retryable: true, message }
+  return { kind, retryable: false, dispatchOutcome: 'unknown',
+    message: `${message}；请求可能已送达，远端结果与费用未知，已停止自动重试。` }
 }
 
 /**

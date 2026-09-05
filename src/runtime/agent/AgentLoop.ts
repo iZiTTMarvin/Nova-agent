@@ -520,8 +520,9 @@ export class AgentLoop {
    * 工具执行时由 toolBatchExecutor 透传到 ToolContext。
    * todo_write 等需要写会话元数据的工具会用到；其他工具不受影响。
    */
-  setSessionContext(sessionStore: SessionStore, sessionId: string): void {
+  setSessionContext(sessionStore: SessionStore, sessionId: string, historyProjection: import('../sessions').BuildConversationContextOptions = {}): void {
     this.ctx.sessionStore = sessionStore
+    this.compactionService.setHistoryProjection(historyProjection)
     this.setSessionId(sessionId)
   }
 
@@ -878,7 +879,7 @@ export class AgentLoop {
       hookManager: this.hookManager,
       emit: (event) => this.eventBus.emit(event),
       emitContextBreakdown: (mid, promptTokens) => this.emitContextBreakdown(mid, promptTokens),
-      signal: () => this.cancelled,
+      signal: () => this.cancelled || (this.assertExecutionCurrent?.() === false),
       abortSignal: () => this.abortController?.signal,
       executeBatch,
       onToolResultCommitted: this.config.onToolResultCommitted,
@@ -1050,7 +1051,17 @@ export class AgentLoop {
 
   /** 异步 sleep（恢复重试用） */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms))
+    const signal = this.abortController?.signal
+    if (signal?.aborted) return Promise.resolve()
+    return new Promise(resolve => {
+      const finish = (): void => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', finish)
+        resolve()
+      }
+      const timer = setTimeout(finish, ms)
+      signal?.addEventListener('abort', finish, { once: true })
+    })
   }
 
   /** 取消当前执行 */

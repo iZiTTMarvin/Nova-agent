@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { persistCompactionSnapshot } from '../../../../src/runtime/sessions/contextSnapshot'
 import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
 import { historyReadTool } from '../../../../src/runtime/tools/historyRead'
@@ -27,6 +28,7 @@ describe('history_read', () => {
   })
 
   afterEach(() => {
+    resetSessionIndexHostForTests()
     rmSync(tmpDir, { recursive: true, force: true })
   })
 

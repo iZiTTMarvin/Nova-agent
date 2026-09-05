@@ -136,31 +136,11 @@ export function shouldCompact(
  */
 export function buildCompactionPrompt(): string {
   return [
-    '请对上面的对话历史生成一份结构化摘要。不要继续对话，只输出摘要。',
-    '工作区路径与已改文件由系统在交接包中提供，不要写 Working directory 或实时文件清单。',
-    '随后严格按以下固定结构输出，五个段落标题不得更改或省略：',
-    '',
-    '## 目标',
-    '用户要达成什么。',
-    '',
-    '## 下一步',
-    '按执行顺序列出有序列表。',
-    '',
-    '## 关键上下文',
-    '精确的文件路径、函数名、命令与错误信息；没有则写 "(none)"。',
-    '',
-    '## 进展',
-    '分「已完成」「进行中」两个子列表。',
-    '',
-    '## 关键决策',
-    '每项决策附一句简要理由。',
-    '',
-    '要求：',
-    '- 丢弃冗余的思考过程、重复的工具输出、过时的中间状态。',
-    '- 遇到含 artifact:// 的工具结果时，摘要里只保留结论，不要复述大段输出。',
-    '- 摘要中可保留 artifact:// 指针，供后续 read 续读。',
-    '- 摘要之后，对话将从切点之后的原文尾部继续。',
-    '- 只输出摘要文本，不要复述对话，不要加任何前缀说明。'
+    '请对上面的对话历史生成结构化交接，只输出完整 JSON，不继续对话。',
+    'schemaVersion=1；goal（目标）、nextActions（下一步）、keyContext（关键上下文）、progress（进展）、decisions（关键决策）均为非空字符串；没有内容写 (none)。',
+    'facts 为事实数组。每项包含 id、category、owner、value、origin{messageId,step}、quote、required。',
+    '保留系统列出的所有必需事实及归属；只引用有来源的原始 user 原句。不得虚构已完成或已验证结论。',
+    '丢弃重复工具正文、冗余思考；保留必要 artifact:// 指针。工作区和文件清单由系统提供。'
   ].join('\n')
 }
 
@@ -187,40 +167,6 @@ export function getStateTokenBudget(contextWindow: number): number {
     MAX_STATE_ESTIMATED_TOKENS,
     Math.max(MIN_STATE_ESTIMATED_TOKENS, Math.floor(contextWindow * STATE_WINDOW_RATIO))
   )
-}
-
-const STATE_SECTION_HEADINGS = ['## 目标', '## 下一步', '## 关键上下文', '## 进展', '## 关键决策'] as const
-
-/** 超预算从末尾按段截断，先丢「关键决策」，保住「目标 / 下一步」。 */
-export function truncateStateFromEnd(text: string, maxTokens: number): string {
-  if (estimateTokens(text) <= maxTokens) return text
-  const sections = splitStateSections(text)
-  while (sections.length > 1 && estimateTokens(joinStateSections(sections)) > maxTokens) {
-    sections.pop()
-  }
-  const joined = joinStateSections(sections)
-  return estimateTokens(joined) <= maxTokens ? joined : boundSummaryText(joined, maxTokens)
-}
-
-function splitStateSections(text: string): string[] {
-  const matches = STATE_SECTION_HEADINGS
-    .map(heading => ({ heading, index: text.indexOf(heading) }))
-    .filter(item => item.index >= 0)
-    .sort((a, b) => a.index - b.index)
-  if (matches.length === 0) return [text]
-  const sections: string[] = []
-  const prefix = text.slice(0, matches[0]!.index).trim()
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i]!.index
-    const end = i + 1 < matches.length ? matches[i + 1]!.index : text.length
-    const body = text.slice(start, end).trim()
-    sections.push(i === 0 && prefix ? `${prefix}\n\n${body}` : body)
-  }
-  return sections
-}
-
-function joinStateSections(sections: string[]): string {
-  return sections.filter(Boolean).join('\n\n')
 }
 
 export function buildRealityLine(

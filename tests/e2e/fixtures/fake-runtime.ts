@@ -232,15 +232,20 @@ export class FakeRuntime {
     })
 
     let finished = false
+    const abortController = new AbortController()
     res.on('close', () => {
-      if (!finished) record.aborted = true
+      if (!finished) {
+        record.aborted = true
+        abortController.abort()
+        if (turn.kind === 'hold') this.holds.get(turn.id)?.resolve()
+      }
     })
 
     try {
       if (turn.kind === 'text') {
         const chunks = turn.chunks ?? [turn.text]
         for (const chunk of chunks) {
-          if (turn.chunkDelayMs) await delay(turn.chunkDelayMs)
+          if (turn.chunkDelayMs) await delay(turn.chunkDelayMs, undefined, { signal: abortController.signal })
           if (res.destroyed) return
           writeSse(res, contentChunk(chunk))
         }
@@ -296,7 +301,7 @@ export class FakeRuntime {
       }
 
       for (const event of turn.events) {
-        if (event.delayMs) await delay(event.delayMs)
+        if (event.delayMs) await delay(event.delayMs, undefined, { signal: abortController.signal })
         if (res.destroyed) return
         writeSse(res, event.payload)
       }

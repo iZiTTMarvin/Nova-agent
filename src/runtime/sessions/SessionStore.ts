@@ -1,4 +1,8 @@
 import { parseRequestBudgetAnchor, type RequestBudgetAnchor } from '../model/requestBudget'
+import { parseStructuredHandoff, renderStructuredHandoff } from './handoffState'
+import { classifyLedgerRestore } from './ledgerValidation'
+import { buildConversationContext, type BuildConversationContextOptions } from './conversationContext'
+import type { ChatMessage } from '../model/types'
 /**
  * SessionStore — 会话持久化管理
  *
@@ -151,8 +155,14 @@ function parseStateDoc(value: unknown): StateDoc | null {
     taskVerbatim?: unknown
     realityLine?: unknown
     revision?: unknown
+    handoff?: unknown
+    validation?: unknown
   }
   const coversThrough = parseMessageOrigin(candidate.coversThrough)
+  if (candidate.validation !== undefined && candidate.validation !== 'verified' && candidate.validation !== 'legacy-unverified') return null
+  const handoff = candidate.handoff === undefined ? undefined : parseStructuredHandoff(candidate.handoff)
+  if (handoff === null || (candidate.validation === 'verified' && !handoff) ||
+    (handoff && (candidate.validation !== 'verified' || candidate.text !== renderStructuredHandoff(handoff)))) return null
   let taskVerbatim: StateDoc['taskVerbatim']
   if (candidate.taskVerbatim === null) {
     taskVerbatim = null
@@ -178,6 +188,8 @@ function parseStateDoc(value: unknown): StateDoc | null {
     return null
   }
   return {
+    validation: handoff ? 'verified' : 'legacy-unverified',
+    ...(handoff ? { handoff } : {}),
     text: candidate.text,
     coversThrough,
     taskVerbatim,
@@ -253,7 +265,7 @@ function parseCompactionLedger(value: unknown): CompactionLedger | null {
     revision?: unknown
     budgetAnchor?: unknown
   }
-  if ((candidate.version !== 2 && candidate.version !== CONTEXT_SNAPSHOT_VERSION) || !Array.isArray(candidate.entries)) return null
+  if ((candidate.version !== 2 && candidate.version !== 3 && candidate.version !== CONTEXT_SNAPSHOT_VERSION) || !Array.isArray(candidate.entries)) return null
 
   const entries: LedgerEntry[] = []
   for (const [index, rawEntry] of candidate.entries.entries()) {
@@ -1382,6 +1394,28 @@ export class SessionStore {
     const canonical = parseCompactionLedger(snapshot)
     if (!canonical) throw new Error('Invalid context snapshot')
     atomicWriteFileSync(filePath, JSON.stringify(canonical, null, 2), 'utf8')
+  }
+
+  /** 同步原子替换是提交点；未落盘的完成步必须留在原上下文。 */
+  commitCompaction(sessionId: string, ledger: CompactionLedger, expectedRevision: number, messages: readonly ChatMessage[], projection: BuildConversationContextOptions = {}): boolean {
+    const current = this.loadContextSnapshot(sessionId)
+    const file = path.join(this.resolveSessionDir(sessionId), SESSION_CONTEXT_SNAPSHOT_FILE)
+    if ((!current && fs.existsSync(file)) || (current?.revision ?? 0) !== expectedRevision || ledger.revision !== expectedRevision + 1) return false
+    const session = this.load(sessionId)
+    if (!session || classifyLedgerRestore(session, ledger) !== 'restored') return false
+    const archived = buildConversationContext(session, session.mode, projection)
+    const full = buildConversationContext(session, session.mode, { resolveImageUrl: projection.resolveImageUrl, reasoningReplay: 'all-history' })
+    const fact = (message: ChatMessage): string => JSON.stringify({ role: message.role, content: message.content,
+      toolCalls: message.toolCalls, toolCallId: message.toolCallId, origin: message.origin, reasoningContent: message.reasoningContent })
+    const visible = messages.filter(message => message.role !== 'system' && !message.internal)
+    if (visible.some(message => !message.origin)) return false
+    const first = visible[0]
+    const start = archived.findIndex(message => message.origin?.messageId === first?.origin?.messageId && message.origin?.step === first?.origin?.step)
+    if (start < 0 || archived.length - start !== visible.length) return false
+    // 新生成的子轮保留完整 thinking；旧历史必须等于本次恢复的合法投影。
+    if (visible.some((message, index) => fact(message) !== fact(archived[start + index]) && fact(message) !== fact(full[start + index]))) return false
+    this.saveContextSnapshot(sessionId, ledger)
+    return true
   }
 
   /** 条件写入同一快照，旧实例不能覆盖较新的上下文 revision。 */

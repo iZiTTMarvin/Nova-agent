@@ -5,6 +5,8 @@
  * 通过 ChatOptions.transportTimeouts 把窗口压到秒级，避免单测等待默认 30–90s。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { getEventListeners } from 'node:events'
+import { TransportBodyReader, transportFetch } from '../../../../src/runtime/model/ModelTransport'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
 import type { ChatEvent } from '../../../../src/runtime/model/types'
 
@@ -51,6 +53,45 @@ afterEach(() => {
 })
 
 describe('ModelTransport 故障注入', () => {
+  it('同 signal 连续一百次 EOF 后 listener 和 reader lock 回到基线', async () => {
+    const signal = new AbortController().signal
+    const baseline = getEventListeners(signal, 'abort').length
+    for (let i = 0; i < 100; i++) {
+      const body = new ReadableStream<Uint8Array>({ start(controller) { controller.close() } })
+      const reader = new TransportBodyReader(body, { userSignal: signal })
+      expect(await reader.read()).toEqual({ done: true })
+      reader.release()
+      expect(body.locked).toBe(false)
+      expect(getEventListeners(signal, 'abort')).toHaveLength(baseline)
+    }
+  })
+
+  it('忽略取消的 fetch 本地立即结束，晚到响应被释放', async () => {
+    const controller = new AbortController()
+    let finish!: (response: Response) => void
+    const cancel = vi.fn()
+    const pending = transportFetch({ url: 'http://localhost', userSignal: controller.signal,
+      fetchImpl: () => new Promise<Response>(resolve => { finish = resolve }) })
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejected
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+    finish(new Response(new ReadableStream({ cancel })))
+    await Promise.resolve()
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('停在首个 wire yield 处也取消 HTTP body 并清理 listener', async () => {
+    const signal = new AbortController().signal
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({ cancel })
+    const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async () => new Response(body) })
+    const iterator = client.chat([{ role: 'user', content: 'hello' }], undefined, { abortSignal: signal })[Symbol.asyncIterator]()
+    expect((await iterator.next()).value.type).toBe('wire_snapshot')
+    await iterator.return?.()
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(getEventListeners(signal, 'abort')).toHaveLength(0)
+  })
   it('永不返回响应头 → 在 connect timeout 窗口内结束 attempt', async () => {
     vi.stubGlobal(
       'fetch',

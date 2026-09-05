@@ -195,7 +195,7 @@ export interface AgentLoopConfig {
   ) => TouchedFilesSnapshot
   /**
    * 压缩回调：上下文压缩完成后触发，携带重建后的完整上下文与元数据。
-   * agentHandler 通过此回调将压缩态写入 context-snapshot.json，不修改 session.messages。
+   * 仅观察已提交结果；持久化由 CompactionService 请求 SessionStore 完成。
    */
   onCompaction?: (
     compactedContext: import('../model/types').ChatMessage[],

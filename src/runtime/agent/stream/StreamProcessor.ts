@@ -180,6 +180,7 @@ export class StreamProcessor {
     let roundSawUsage = false
     let roundPromptTokens: number | undefined
     let shouldRetryChat = false
+    let sawToolDelta = false
 
     const dialect = context.dialect
     const scanner = dialect === 'xml' ? new XmlToolScanner() : null
@@ -284,10 +285,12 @@ export class StreamProcessor {
             break
 
           case 'tool_call_start':
+            sawToolDelta = true
             this.emit({ type: 'tool_call_start', messageId, toolCallId: event.toolCallId, toolName: event.toolName })
             break
 
           case 'tool_call_delta':
+            sawToolDelta = true
             this.emit({ type: 'tool_call_delta', messageId, toolCallId: event.toolCallId, argumentsDelta: event.argumentsDelta })
             break
 
@@ -425,6 +428,7 @@ export class StreamProcessor {
             // 安全重试门闩：已产生可观察输出的失败不得重试。
             // hasNoObservableOutput 只看 toolCalls / 正文 / reasoning，不看 usage。
             const hasNoObservableOutput =
+              !sawToolDelta &&
               toolCalls.length === 0 &&
               assistantContent.length === 0 &&
               rawContent.length === 0 &&
@@ -461,6 +465,7 @@ export class StreamProcessor {
                   attempt: decision.attempt
                 })
                 await params.sleep(decision.backoffMs)
+                if (params.isCancelled() || signal?.aborted) return finish({ kind: 'cancelled' })
                 shouldRetryChat = true
                 break
               }
@@ -544,13 +549,17 @@ export class StreamProcessor {
       const errMsg = `network_reset: ${(streamErr as Error)?.message ?? String(streamErr)}`
       // 流读取异常也走门闩：已产生可观察输出则不重试。
       const hasNoObservableOutput =
+        !sawToolDelta &&
         toolCalls.length === 0 &&
         assistantContent.length === 0 &&
         rawContent.length === 0 &&
         reasoningContent.length === 0
       const errState = this.attemptController.classifyForEmit(errMsg)
       await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-      const decision = this.attemptController.onError(errMsg, undefined, hasNoObservableOutput)
+      const decision = this.attemptController.onError(errMsg, {
+        kind: 'network', retryable: false, dispatchOutcome: 'unknown',
+        message: `${errMsg}；远端结果与费用未知，已停止自动重试。`
+      }, hasNoObservableOutput)
       const willRetry = decision.action === 'retry' || decision.action === 'fallback'
       if (willRetry) {
         if (decision.action === 'retry') {
@@ -572,6 +581,7 @@ export class StreamProcessor {
             attempt: decision.attempt
           })
           await params.sleep(decision.backoffMs)
+          if (params.isCancelled() || signal?.aborted) return finish({ kind: 'cancelled' })
           return finish({ kind: 'retry' })
         }
         case 'fallback': {

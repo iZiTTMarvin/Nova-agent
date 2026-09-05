@@ -16,4 +16,9 @@ test('流式请求中止后 run 进入终态且输入区恢复', async ({ nova }
 
   await expect.poll(async () => (await nova.getRunSnapshot())?.status).toBe('cancelled')
   await expect(nova.page.getByText('SHOULD_NOT_RENDER', { exact: false })).toHaveCount(0)
+  nova.provider.enqueue({ kind: 'text', text: 'CANCEL_RECOVERY_OK' })
+  await nova.sendPrompt('继续对话')
+  await nova.waitUntilIdle()
+  await expect(nova.page.getByText('CANCEL_RECOVERY_OK', { exact: false })).toBeVisible()
+  await expect(nova.page.getByText('SHOULD_NOT_RENDER', { exact: false })).toHaveCount(0)
 })

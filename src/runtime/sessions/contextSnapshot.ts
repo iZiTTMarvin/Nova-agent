@@ -16,10 +16,10 @@ import {
   type CompactionLedger,
   type SessionData
 } from './types'
-import type { MessageOrigin } from '../model/types'
-import { getSessionActiveMessages } from './tree'
 
-export type LedgerRestoreKind = 'restored' | 'empty-tail' | 'invalid'
+import { classifyLedgerRestore, type LedgerRestoreKind } from './ledgerValidation'
+export { classifyLedgerRestore } from './ledgerValidation'
+export type { LedgerRestoreKind } from './ledgerValidation'
 
 export interface RestoreFromLedgerResult {
   kind: LedgerRestoreKind
@@ -35,62 +35,6 @@ export interface RestoreHistoryOptions {
   currentProviderId?: string
   /** 坐标失效（切分支）时清空账本 */
   sessionStore?: SessionStore
-}
-
-function originMessageId(origin: MessageOrigin | null | undefined): string | null {
-  const id = origin?.messageId
-  return id ? id : null
-}
-
-function originKey(origin: MessageOrigin | null | undefined): string | null {
-  const id = originMessageId(origin)
-  return id && origin ? `${id}\0${origin.step}` : null
-}
-
-/**
- * tailFrom 尚未落盘时按空尾部恢复；已提交条目与状态坐标必须仍在激活路径。
- */
-export function classifyLedgerRestore(
-  session: SessionData,
-  ledger: CompactionLedger
-): Exclude<LedgerRestoreKind, never> {
-  const activeIds = new Set(getSessionActiveMessages(session).map(m => m.id))
-  const allIds = new Set(session.messages.map(m => m.id))
-  const activeOriginPositions = new Map<string, { first: number; last: number }>()
-  for (const [index, message] of buildConversationContext(session, session.mode).entries()) {
-    const key = originKey(message.origin)
-    if (!key) continue
-    const current = activeOriginPositions.get(key)
-    activeOriginPositions.set(key, {
-      first: current?.first ?? index,
-      last: index
-    })
-  }
-
-  const locate = (
-    origin: MessageOrigin | null | undefined
-  ): 'ok' | 'missing' | 'off-path' | 'invalid-step' | 'skip' => {
-    const id = originMessageId(origin)
-    if (!id) return 'skip'
-    if (!allIds.has(id)) return 'missing'
-    if (!activeIds.has(id)) return 'off-path'
-    const key = originKey(origin)
-    return key && activeOriginPositions.has(key) ? 'ok' : 'invalid-step'
-  }
-
-  for (const entry of ledger.entries) {
-    if (locate(entry.shadows.from) !== 'ok') return 'invalid'
-    if (locate(entry.shadows.to) !== 'ok') return 'invalid'
-    const from = activeOriginPositions.get(originKey(entry.shadows.from)!)!
-    const to = activeOriginPositions.get(originKey(entry.shadows.to)!)!
-    if (from.first > to.last) return 'invalid'
-  }
-  if (ledger.state && locate(ledger.state.coversThrough) !== 'ok') return 'invalid'
-
-  const tailStatus = locate(ledger.tailFrom)
-  if (tailStatus === 'off-path' || tailStatus === 'invalid-step') return 'invalid'
-  if (tailStatus === 'missing') return 'empty-tail'
-  return 'restored'
 }
 
 export function restoreFromLedger(

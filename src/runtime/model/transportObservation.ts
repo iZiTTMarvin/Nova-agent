@@ -14,7 +14,7 @@ export type TransportOutcome =
   | 'transport_error'
   /** 用户或上层取消 */
   | 'cancelled'
-  /** 消费者提前退出，流未走完，本地终态不可判定 */
+  /** 消费者提前退出，已本地结算，远端结果未知 */
   | 'abandoned'
 
 /** 物理 attempt 的墙钟时间戳（ms）。 */

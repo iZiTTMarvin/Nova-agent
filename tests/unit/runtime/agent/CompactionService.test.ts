@@ -12,7 +12,7 @@ import type { CompactionMeta } from '../../../../src/runtime/agent/types'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
-import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
+import { makeCompactionLedger, handoffJson } from '../../../../src/test-support/builders/compactionLedger'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
 import { getMetricBuffer, registerMetricSink, resetMetricsForTests } from '../../../../src/shared/diagnostics/metrics'
 
@@ -75,7 +75,7 @@ describe('CompactionService', () => {
     const client = new OpenAICompatibleModelClient({
       baseUrl: 'https://example.test/v1', apiKey: 'fixture', modelId: 'model',
       fetchImpl: async () => new Promise<Response>(resolve => {
-        releases.push(() => resolve(new Response('data: {"choices":[{"delta":{"content":"summary"},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":2}}\n\ndata: [DONE]\n\n')))
+        releases.push(() => resolve(new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: handoffJson('summary') }, finish_reason: 'stop' }] })}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":2}}\n\ndata: [DONE]\n\n`)))
       })
     })
     const { service } = createService({ client: { chat: client.chat.bind(client), getCalls: () => [] } })
@@ -119,7 +119,7 @@ describe('CompactionService', () => {
     original[1].reasoningContent = 'internal reasoning'
     const context = createContext(original)
     context.userTurnsSinceCompaction = 7
-    const client = new MockModelClient().addCompactionPair({
+    const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: '  compacted summary  ' },
         { type: 'message_end', finishReason: 'stop' }
@@ -146,12 +146,12 @@ describe('CompactionService', () => {
     expect(onCompaction).toHaveBeenCalledTimes(1)
     const meta = onCompaction.mock.calls[0][1]
     expect(meta).toMatchObject({
-      summary: 'compacted summary',
+      summary: expect.stringContaining('compacted summary'),
       compactionLevel: 1,
       trigger: 'threshold'
     })
     expect(meta.ledger.entries).toHaveLength(1)
-    expect(meta.ledger.state?.text).toBe('compacted summary')
+    expect(meta.ledger.state?.handoff.goal).toBe('compacted summary')
     expect(context.compactionState).toBe(meta.ledger)
 
     const summaryCalls = client.getCalls()
@@ -169,7 +169,7 @@ describe('CompactionService', () => {
   it('standard overflow 成功时保留最近消息与 pulled-back 消息的原始顺序', async () => {
     const original = createMessages(32)
     const context = createContext(original)
-    const client = new MockModelClient().addCompactionPair({
+    const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: 'overflow summary' },
         { type: 'message_end', finishReason: 'stop' }
@@ -218,7 +218,7 @@ describe('CompactionService', () => {
       }))
     ]
     const context = createContext(original)
-    const client = new MockModelClient().addCompactionPair({
+    const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: 'tool-safe summary' },
         { type: 'message_end', finishReason: 'stop' }
@@ -245,8 +245,8 @@ describe('CompactionService', () => {
     const context = createContext(original)
     const overflowFail = { events: [{ type: 'context_overflow' as const, rawError: 'still too large' }] }
     const client = new MockModelClient()
-      .addCompactionPair(overflowFail)
-      .addCompactionPair({
+      .addHandoffPair(overflowFail)
+      .addHandoffPair({
         events: [
           { type: 'text_delta', delta: 'aggressive summary' },
           { type: 'message_end', finishReason: 'stop' }
@@ -270,8 +270,8 @@ describe('CompactionService', () => {
     context.userTurnsSinceCompaction = 6
     context.lastEstimatedTokens = 1234
     const client = new MockModelClient()
-      .addCompactionPair({ events: [{ type: 'error', error: 'standard failed' }] })
-      .addCompactionPair({ events: [{ type: 'context_overflow', rawError: 'aggressive failed' }] })
+      .addHandoffPair({ events: [{ type: 'error', error: 'standard failed' }] })
+      .addHandoffPair({ events: [{ type: 'context_overflow', rawError: 'aggressive failed' }] })
     const onCompaction = vi.fn()
     const { service, cacheDiagnostics } = createService({ context, client, onCompaction })
 
@@ -327,7 +327,7 @@ describe('CompactionService', () => {
         return messages
       }
     }
-    const client = new MockModelClient().addCompactionPair({
+    const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: 'compacted summary' },
         { type: 'message_end', finishReason: 'stop' }
@@ -351,13 +351,13 @@ describe('CompactionService', () => {
     const original = createMessages()
     const context = createContext(original)
     const client = new MockModelClient()
-      .addCompactionPair({
+      .addHandoffPair({
         events: [
           { type: 'text_delta', delta: '第一版摘要' },
           { type: 'message_end', finishReason: 'stop' }
         ]
       })
-      .addCompactionPair({
+      .addHandoffPair({
         events: [
           { type: 'text_delta', delta: '第二版摘要' },
           { type: 'message_end', finishReason: 'stop' }
@@ -383,7 +383,7 @@ describe('CompactionService', () => {
     expect(systemText).not.toContain('第一版摘要')
     expect(systemText.split('第二版摘要')).toHaveLength(2)
     expect(systemText).not.toContain('[对话历史摘要]')
-    expect(context.compactionState?.state?.text).toBe('第二版摘要')
+    expect(context.compactionState?.state?.handoff?.goal).toBe('第二版摘要')
     expect(context.compactionState?.entries.length).toBe(2)
   })
 
@@ -394,7 +394,7 @@ describe('CompactionService', () => {
       .addResponse({ events: [{ type: 'error', error: 'stub failed' }] })
       .addResponse({
         events: [
-          { type: 'text_delta', delta: 'state still ok' },
+          { type: 'text_delta', delta: handoffJson('state still ok') },
           { type: 'message_end', finishReason: 'stop' }
         ]
       })
@@ -403,7 +403,7 @@ describe('CompactionService', () => {
 
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
 
-    expect(context.compactionState?.state?.text).toBe('state still ok')
+    expect(context.compactionState?.state?.handoff?.goal).toBe('state still ok')
     expect(context.compactionState?.entries).toHaveLength(1)
     expect(context.compactionState?.entries[0]?.stub).toContain('history_read')
     expect(context.compactionState?.entries[0]?.stub).not.toContain('stub failed')
@@ -475,7 +475,7 @@ describe('CompactionService', () => {
       { role: 'assistant' as const, content: 'ack-' + 'y'.repeat(80) }
     ]
     const foldedCtx = createContext(folded)
-    const foldedClient = new MockModelClient().addCompactionPair({
+    const foldedClient = new MockModelClient().addHandoffPair({
       events: [{ type: 'text_delta', delta: 's' }, { type: 'message_end', finishReason: 'stop' }]
     })
     const { service: foldedService } = createService({ context: foldedCtx, client: foldedClient })
@@ -496,7 +496,7 @@ describe('CompactionService', () => {
       }
     ]
     const tailedCtx = createContext(tailed)
-    const tailedClient = new MockModelClient().addCompactionPair({
+    const tailedClient = new MockModelClient().addHandoffPair({
       events: [{ type: 'text_delta', delta: 's' }, { type: 'message_end', finishReason: 'stop' }]
     })
     const { service: tailedService } = createService({ context: tailedCtx, client: tailedClient })
@@ -525,13 +525,13 @@ describe('CompactionService', () => {
       }
     ])
     const client = new MockModelClient()
-      .addCompactionPair({
+      .addHandoffPair({
         events: [
           { type: 'text_delta', delta: 'first-state' },
           { type: 'message_end', finishReason: 'stop' }
         ]
       })
-      .addCompactionPair({
+      .addHandoffPair({
         events: [
           { type: 'text_delta', delta: 'second-state' },
           { type: 'message_end', finishReason: 'stop' }
@@ -564,7 +564,7 @@ describe('CompactionService', () => {
     ]
     original[1] = { ...original[1], origin: { messageId: 'u-task', step: 0 } }
     const context = createContext(original)
-    const client = new MockModelClient().addCompactionPair({
+    const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: 'frozen-state' },
         { type: 'message_end', finishReason: 'stop' }
