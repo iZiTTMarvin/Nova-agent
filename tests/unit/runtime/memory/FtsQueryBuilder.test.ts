@@ -64,6 +64,14 @@ describe('FtsQueryBuilder（纯逻辑）', () => {
   })
 
   describe('trigram OR 回退', () => {
+    it('混合查询保留末尾完整错误码，不用英文子串制造无关命中', () => {
+      const query = buildTrigramOrFallbackQuery('请检查这段很长的工具输出并回忆之前如何处理这个问题 NODE_MODULE_VERSION')!
+      expect(query).toContain('"NODE"')
+      expect(query).toContain('"MODULE"')
+      expect(query).toContain('"VERSION"')
+      expect(query).not.toContain('"MOD"')
+      expect(query.split(' OR ').length).toBeLessThanOrEqual(TRIGRAM_OR_FALLBACK_MAX_TERMS)
+    })
     it('滑窗 trigram 引号包裹后 OR 连接，含空格窗口安全', () => {
       const query = buildTrigramOrFallbackQuery('PR 标题格式约定怎么写')
       expect(query).not.toBeNull()

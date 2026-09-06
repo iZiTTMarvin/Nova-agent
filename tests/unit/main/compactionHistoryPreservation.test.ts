@@ -13,6 +13,8 @@ import { createReadState } from '../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 import { identitySummaryProjection } from '../../../src/test-support/builders/identitySummaryProjection'
 import * as atomicFile from '../../../src/runtime/storage/atomicFile'
+import { formatMemorySearchResults } from '../../../src/runtime/tools/memorySearch'
+import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator'
 
 describe('持久化压缩提交', () => {
   let directory: string
@@ -26,13 +28,18 @@ describe('持久化压缩提交', () => {
     resetSessionIndexHostForTests()
     rmSync(directory, { recursive: true, force: true })
   })
-  function fixture(projection: BuildConversationContextOptions = {}, multimodal = false, thinking = false) {
+  function fixture(projection: BuildConversationContextOptions = {}, multimodal = false, thinking = false, memory = false) {
     const session = store.create(directory, 'default')
     for (let i = 0; i < 24; i++) {
       const text = i === 0 ? '实现账单导出。\n必须保留金额单位 CNY。' : `继续工作 ${i}`
       store.appendMessage(session.id, { id: `u${i}`, role: 'user', content: multimodal ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: 'nova-image://fixture.png' } }] : text, timestamp: i * 2 })
       store.appendMessage(session.id, { id: `a${i}`, role: 'assistant', content: 'x'.repeat(1000), timestamp: i * 2 + 1,
-        ...(thinking ? { blocks: [{ type: 'thinking' as const, content: 'thought', providerId: 'fixture' }, { type: 'text' as const, content: 'x'.repeat(1000) }] } : {}) })
+        ...(memory ? { blocks: [{ type: 'tool' as const, toolCallId: `memory${i}`, toolName: 'memory_search',
+          arguments: { query: '导出' }, status: 'success' as const, result: formatMemorySearchResults([{
+            id: 'export', group: 'document', kind: 'document', relPath: 'export.md', body: '历史导出约定：使用 UTF8 BOM；必须核对当前工作区。',
+            advisory: false, historicalNote: null
+          }], '导出') }, { type: 'text' as const, content: 'x'.repeat(1000) }] }
+          : thinking ? { blocks: [{ type: 'thinking' as const, content: 'thought', providerId: 'fixture' }, { type: 'text' as const, content: 'x'.repeat(1000) }] } : {}) })
     }
     const context = createAgentContext({ readState: createReadState(), messages: [{ role: 'system', content: 'system' }, ...buildConversationContext(store.load(session.id)!, 'default', projection)],
       systemPrompt: 'system', sessionStore: store, sessionId: session.id })
@@ -60,6 +67,30 @@ describe('持久化压缩提交', () => {
     expect(restored.kind).toBe('restored')
     expect(restored.messages).toEqual(f.context.messages)
     f.service.dispose()
+  })
+
+  it('多轮记忆检索沿原有预算压缩，提交和重载保持档案与调用配对', async () => {
+    const control = fixture()
+    const memory = fixture({}, false, false, true)
+    const controlTokens = estimateContextTokens(control.context.messages)
+    const memoryTokens = estimateContextTokens(memory.context.messages)
+    expect(memoryTokens).toBeGreaterThan(controlTokens)
+    expect(memory.context.messages.filter(message => message.role === 'tool')).toHaveLength(24)
+    for (const f of [control, memory]) {
+      expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+      expect(estimateContextTokens(f.context.messages)).toBeLessThan(4000)
+      const reopened = new SessionStore(directory)
+      const ledger = reopened.loadContextSnapshot(f.session.id)!
+      expect(ledger.state?.validation).toBe('verified')
+      const restored = restoreFromLedger(reopened.load(f.session.id)!, ledger, f.context.systemPrompt)
+      expect(restored.kind).toBe('restored')
+      expect(restored.messages).toEqual(f.context.messages)
+      for (const message of restored.messages.filter(message => message.role === 'tool')) {
+        expect(restored.messages.some(candidate => candidate.toolCalls?.some(call => call.id === message.toolCallId))).toBe(true)
+      }
+      expect(readFileSync(f.file)).toEqual(f.original)
+      f.service.dispose()
+    }
   })
   it('原子写入失败不发布新状态或纪元', async () => {
     const f = fixture()

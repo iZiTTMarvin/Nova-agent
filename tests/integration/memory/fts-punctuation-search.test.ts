@@ -62,4 +62,19 @@ describe('含标点 CJK 查询 FTS 集成', () => {
     expect(subHits.some((h) => h.relPath === 'facts.md')).toBe(true)
     expect(subHits[0].body).toContain('部署密令')
   })
+
+  it('长中文说明后的错误码能召回完整命中，不匹配英文碎片', () => {
+    const { scopeId } = setup()
+    service!.upsertMarkdown(scopeId, 'native.md', 'NODE_MODULE_VERSION 不一致时按 Electron 宿主重编原生模块。')
+    service!.upsertMarkdown(scopeId, 'theme.md', '暗色主题 MODE 通过颜色变量设置。')
+    const hits = service!.search(scopeId, '请检查这段很长的工具输出并回忆之前如何处理这个问题 NODE_MODULE_VERSION')
+    expect(hits.map(hit => hit.relPath)).toEqual(['native.md'])
+  })
+
+  it('英文词超过配额时仍能召回中文约定', () => {
+    const { scopeId } = setup()
+    service!.upsertMarkdown(scopeId, 'deployment.md', '部署错误需要先核对环境配置。')
+    const query = `${Array.from({ length: 25 }, (_, i) => `word${i}`).join(' ')} 部署错误`
+    expect(service!.search(scopeId, query).map(hit => hit.relPath)).toEqual(['deployment.md'])
+  })
 })

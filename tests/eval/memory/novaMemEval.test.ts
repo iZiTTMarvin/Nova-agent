@@ -7,7 +7,7 @@
  * - 跨项目泄漏率（Scope Leakage）= 0
  * - 已撤回记忆默认检索率（Retracted）= 0
  * - observed 全局偏好必须有晋升门槛：单项目观察不得直接 active，
- *   pending 不得进入默认检索与 prefetch 注入。
+ *   pending 不得进入默认检索与 工具输出。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
@@ -21,7 +21,7 @@ import { MemoryService } from '@runtime/memory/MemoryService'
 import { StructuredMemoryRetriever } from '@runtime/memory/retrieval/StructuredMemoryRetriever'
 import { DocumentMemoryRetriever } from '@runtime/memory/retrieval/DocumentMemoryRetriever'
 import { MemoryRetrievalService } from '@runtime/memory/retrieval/MemoryRetrievalService'
-import { MemoryPrefetchService } from '@runtime/memory/retrieval/MemoryPrefetchService'
+import { formatMemorySearchResults } from '@runtime/tools/memorySearch'
 import { MemoryCandidateProcessor } from '@runtime/memory/policy/MemoryCandidateProcessor'
 import type { MemoryCandidate } from '@runtime/memory/types'
 import { buildSeedDrafts, EVAL_CASES, EVAL_CATEGORY_COUNTS } from './evalCases'
@@ -35,11 +35,9 @@ describe('NovaMemEval（确定性评测门禁）', () => {
   let repo: MemoryRepository
   let service: MemoryService
   let retrieval: MemoryRetrievalService
-  let prefetch: MemoryPrefetchService
   let scopeA: string
   let scopeB: string
   let outcomes: EvalCaseOutcome[]
-  let injectedChars: number[]
 
   beforeAll(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'nova-memeval-'))
@@ -64,7 +62,6 @@ describe('NovaMemEval（确定性评测门禁）', () => {
       documentRetriever: new DocumentMemoryRetriever(service),
       now: () => FIXED_NOW
     })
-    prefetch = new MemoryPrefetchService(retrieval)
   })
 
   afterAll(() => {
@@ -127,33 +124,20 @@ describe('NovaMemEval（确定性评测门禁）', () => {
     expect(metrics.retractedLeakRate).toBe(0)
   })
 
-  it('prefetch 注入块：预算内、无命中为 null、平均注入字符有观测值', async () => {
-    injectedChars = []
+  it('工具输出保留检索结果，无关查询明确返回空结果', async () => {
     for (const evalCase of EVAL_CASES) {
-      if (evalCase.expectedBehavior === 'abstention') {
-        const block = await prefetch.buildInjectionBlock({
-          query: evalCase.query,
-          projectScopeId: scopeA,
-          workspaceRoot: join(tempDir, 'ws-a')
-        })
-        expect(block, `无关查询 ${evalCase.id} 不应注入记忆块`).toBeNull()
-        continue
-      }
-      const block = await prefetch.buildInjectionBlock({
-        query: evalCase.query,
-        projectScopeId: scopeA,
-        workspaceRoot: join(tempDir, 'ws-a')
-      })
-      if (block !== null) {
-        expect(block.length).toBeLessThanOrEqual(2400)
-        injectedChars.push(block.length)
+      const results = await retrieval.search({ query: evalCase.query,
+        projectScopeId: evalCase.perspective === 'project-b' ? scopeB : scopeA,
+        history: evalCase.history ?? false, limit: 5 })
+      const text = formatMemorySearchResults(results, evalCase.query)
+      if (evalCase.expectedBehavior === 'abstention' || results.length === 0) {
+        expect(evalCase.expectedMemoryIds).toEqual([])
+        expect(results).toEqual([])
+        expect(text).toContain('未找到相关记忆')
+      } else {
+        expect(text).toContain(`找到 ${results.length} 条相关记忆`)
       }
     }
-    // eslint-disable-next-line no-console
-    console.info(
-      `[NovaMemEval] prefetch 平均注入 ${injectedChars.length ? Math.round(injectedChars.reduce((a, b) => a + b, 0) / injectedChars.length) : 0} 字符（${injectedChars.length}/${EVAL_CASES.length} 用例注入）`
-    )
-    expect(injectedChars.length).toBeGreaterThan(0)
   })
 
   it('observed 全局偏好晋升门槛：单项目观察 → pending 且不进默认检索；跨两项目 → active', async () => {
@@ -184,11 +168,11 @@ describe('NovaMemEval（确定性评测门禁）', () => {
     ).find((r) => r.memoryKey === 'editor.habit')
     expect(afterFirst?.status).toBe('pending')
 
-    // pending 不进入默认检索与 prefetch
+    // pending 不进入默认检索与工具输出
     const defaultHits = await retrieval.search({ query: '编辑器习惯用什么', projectScopeId: scopeA, limit: 5 })
     expect(defaultHits.map((r) => r.id)).not.toContain(afterFirst!.id)
-    const block = await prefetch.buildInjectionBlock({ query: '编辑器习惯用什么', projectScopeId: scopeA })
-    expect(block === null || !block.includes('Neovim')).toBe(true)
+    const result = await retrieval.search({ query: '编辑器习惯用什么', projectScopeId: scopeA })
+    expect(formatMemorySearchResults(result, '编辑器习惯')).not.toContain('Neovim')
 
     // 第二个不同项目的观察触发晋升
     clock += 60_000

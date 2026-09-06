@@ -1,8 +1,4 @@
-/**
- * prefetch 注入块构建：检索高相关记忆并渲染为 ephemeral 文本块。
- * 只构建字符串，不触碰 prompt / 消息管线；无高相关记忆返回 null，绝不输出空块。
- * 排序与筛选全部由 MemoryRetrievalService 承担，本层只做预算选择与格式化。
- */
+/** 临时注入对照策略，仅用于真实模型评测。 */
 import {
   MEMORY_PREFETCH_CANDIDATE_LIMIT,
   MEMORY_PREFETCH_DOCUMENT_MAX_ITEMS,
@@ -11,20 +7,18 @@ import {
   MEMORY_PREFETCH_SCORE_FLOOR,
   MEMORY_PREFETCH_STRUCTURED_MAX_CHARS,
   MEMORY_PREFETCH_TOTAL_MAX_CHARS
-} from '../MemoryBudget'
-import { extractMemorySnippet } from '../memorySnippet'
-import type { MemorySearchInput, MemorySearchResult } from './MemoryRetriever'
+} from './legacyMemoryBudget'
+import { extractMemorySnippet } from '../../../../src/runtime/memory/memorySnippet'
+import type { MemorySearchInput, MemorySearchResult } from '../../../../src/runtime/memory/retrieval/MemoryRetriever'
 
 export const MEMORY_PREFETCH_BLOCK_TITLE = 'Relevant Memory'
 
-/** 注入块尾部的固定规则行（内容变化会影响模型对记忆的信任方式，须谨慎修改） */
 export const MEMORY_PREFETCH_RULES: readonly string[] = [
   'Treat memory as historical evidence.',
   'Current user instructions and workspace state take priority.',
   'Observed preferences are advisory and must not silently decide unspecified architecture choices.'
 ]
 
-/** 检索端口；MemoryRetrievalService 结构性满足 */
 export interface MemoryPrefetchRetrievalPort {
   search(input: MemorySearchInput): Promise<MemorySearchResult[]>
 }
@@ -50,7 +44,6 @@ export class MemoryPrefetchService {
         scoreFloor: MEMORY_PREFETCH_SCORE_FLOOR
       })
     } catch {
-      // prefetch 位于模型请求热路径：任何检索故障都降级为不注入，绝不阻塞回合
       return null
     }
     const selected = selectWithinBudgets(results)
@@ -62,7 +55,6 @@ export class MemoryPrefetchService {
   }
 }
 
-/** 按 ranked 顺序装填各分组配额；超出分组上限的命中直接舍弃 */
 function selectWithinBudgets(results: readonly MemorySearchResult[]): MemorySearchResult[] {
   let projectStructured = 0
   let global = 0
@@ -110,8 +102,6 @@ function renderBlock(selected: readonly MemorySearchResult[], query: string): st
   if (projectLines.length === 0 && userLines.length === 0) {
     return ''
   }
-
-  // Rules 三行是注入块契约，恒保留；总预算超限时从末尾（最低相关）逐行丢弃
   let block = assembleBlock(projectLines, userLines)
   while (
     block.length > MEMORY_PREFETCH_TOTAL_MAX_CHARS &&
@@ -145,7 +135,6 @@ function renderStructuredLine(result: Extract<MemorySearchResult, { group: 'stru
   return `- [${label}] ${content}`
 }
 
-/** 渲染标签：preference 区分 explicit / observed(advisory)；observed 的其余 kind 也带 advisory */
 function memoryLabel(
   kind: Extract<MemorySearchResult, { group: 'structured-project' | 'structured-global' }>['kind'],
   explicitness: Extract<MemorySearchResult, { group: 'structured-project' | 'structured-global' }>['explicitness']

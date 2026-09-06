@@ -31,6 +31,7 @@ import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 import { getMemoryService, getMemoryCandidateProcessor } from './MemoryServiceHost'
 import { drainAndPersistSync } from './MemoryConsolidationHost'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
+import { buildConversationContext } from '../../runtime/sessions'
 
 /** sessionId → 自上次提炼以来的用户回合数 */
 const userTurnsSinceExtract = new Map<string, number>()
@@ -136,8 +137,8 @@ export async function runMemoryExtract(
   const observations = capture.drainForExtract(sessionId)
   const session = sessionStore.load(sessionId)
   const recentMessages = projectExtractionMessages(
-    (session?.messages ?? []).slice(-MEMORY_EXTRACT_WINDOW_SIZE) as ChatMessage[]
-  )
+    session ? buildConversationContext(session, session.mode) : []
+  ).slice(-MEMORY_EXTRACT_WINDOW_SIZE)
 
   if (recentMessages.length === 0 && observations.length === 0) {
     capture.drainWorkingBuffer(sessionId)

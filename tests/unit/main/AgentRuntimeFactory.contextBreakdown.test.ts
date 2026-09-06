@@ -55,7 +55,7 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
       sessionId: session.id,
       projectPath: workspace,
       sessionsDir,
-      novaSettings: DEFAULT_NOVA_SETTINGS,
+      novaSettings: { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: true },
       modelClient: new MockModelClient(),
       getImageStore: () => ({} as any),
       readState: createReadState(),
@@ -70,6 +70,8 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
     expect(prepared.frozenPrompt).toContain('=== Agent Role ===')
     expect(prepared.frozenPrompt).toContain('=== Base Rules ===')
     expect(prepared.frozenPrompt).toContain('=== Available Tools ===')
+    expect(prepared.frozenPrompt).toContain('memory_search')
+    expect(prepared.agentLoop.getHookManager().count('context')).toBe(0)
 
     // 2. 模拟将 frozenPrompt 持久化到会话
     session.frozenSystemPrompt = prepared.frozenPrompt

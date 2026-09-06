@@ -63,17 +63,18 @@ export class MemoryExtractor {
       const projected = projectExtractionMessages(input.recentMessages).slice(
         -MEMORY_EXTRACT_WINDOW_SIZE
       )
-      if (projected.length === 0 && input.observations.length === 0) {
+      const observations = input.observations.filter(observation => observation.toolName !== 'memory_search')
+      if (projected.length === 0 && observations.length === 0) {
         return null
       }
 
       const messages = buildExtractMessages({
         sessionId: input.sessionId,
         messages: projected,
-        observations: input.observations
+        observations
       })
       const raw = await this.deps.chat(messages, { reasoningEffort: EXTRACT_REASONING_EFFORT })
-      const provenance = buildEvidenceProvenance(projected, input.observations)
+      const provenance = buildEvidenceProvenance(projected, observations)
       const parsed = parseMemoryCandidateResponse(raw, provenance)
       return parsed === null ? null : parsed.candidates
     } catch {
@@ -88,7 +89,13 @@ export class MemoryExtractor {
  * 这类内容禁止作为提炼输入，否则注入的记忆会被再次「学习」。
  */
 export function projectExtractionMessages(messages: readonly ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => !m.internal && !m.skipCacheMarker && m.role !== 'system')
+  const memoryCalls = new Set(messages.flatMap(message =>
+    (message.toolCalls ?? []).filter(call => call.name === 'memory_search').map(call => call.id)
+  ))
+  return messages.filter((m) => !m.internal && !m.skipCacheMarker && m.role !== 'system'
+    && !(m.role === 'assistant' && !extractTextFromContent(m.content).trim()
+      && m.toolCalls?.length && m.toolCalls.every(call => call.name === 'memory_search'))
+    && !(m.role === 'tool' && m.toolCallId && memoryCalls.has(m.toolCallId)))
 }
 
 /** 从投影后的消息与 observation 构建证据溯源域 */
@@ -110,6 +117,7 @@ export function buildEvidenceProvenance(
     }
   }
   for (const obs of observations) {
+    if (obs.toolName === 'memory_search') continue
     toolTexts.push(normalizeForMatch([obs.title, ...obs.facts].join('\n')))
   }
   return { userTexts, toolTexts }

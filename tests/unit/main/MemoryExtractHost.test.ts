@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ChatMessage } from '../../../src/runtime/model/types'
 import type { SessionStore } from '../../../src/runtime/sessions/SessionStore'
+import type { SessionMessage } from '../../../src/runtime/sessions'
 
 const extractMock = vi.fn()
 const processMock = vi.fn()
@@ -69,8 +70,8 @@ async function loadHost() {
   return await import('../../../src/main/services/MemoryExtractHost')
 }
 
-function fakeSessionStore(messages: ChatMessage[]): SessionStore {
-  return { load: () => ({ messages }) } as unknown as SessionStore
+function fakeSessionStore(messages: Array<ChatMessage | SessionMessage>): SessionStore {
+  return { load: () => ({ mode: 'default', messages: messages.map((message, i) => ({ id: `m${i}`, timestamp: i, ...message })) }) } as unknown as SessionStore
 }
 
 describe('MemoryExtractHost 候选管线', () => {
@@ -78,6 +79,18 @@ describe('MemoryExtractHost 候选管线', () => {
     vi.clearAllMocks()
     loadNovaSettingsMock.mockReturnValue({ memoryEnabled: true })
     extractMock.mockReset()
+  })
+
+  it('持久化记忆查询先展平过滤再截窗，保留真实用户证据', async () => {
+    extractMock.mockResolvedValue([])
+    const messages: SessionMessage[] = [{ id: 'user', timestamp: 0, role: 'user', content: '以后导出必须使用 UTF8 BOM' }]
+    for (let i = 0; i < 55; i++) messages.push({ id: `memory${i}`, timestamp: i + 1, role: 'assistant', content: '',
+      blocks: [{ type: 'tool', toolCallId: `call${i}`, toolName: 'memory_search', arguments: { query: '导出' }, status: 'success', result: '旧记忆正文' }] })
+    const { runMemoryExtract } = await loadHost()
+    await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore(messages), {} as never)
+    expect(extractMock.mock.calls[0][0].recentMessages).toEqual([
+      expect.objectContaining({ role: 'user', content: '以后导出必须使用 UTF8 BOM' })
+    ])
   })
 
   it('提炼成功：候选交给 processor 落库，episodic 走零 LLM 观测格式化', async () => {

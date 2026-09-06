@@ -1,7 +1,7 @@
 /**
  * 检索层集成测试（better-sqlite3 @ Node ABI）：
  * scope 隔离、supersede/retracted/needs_verification 的默认与 history 行为、
- * 结构化+文档混合检索、中文召回、source 懒校验与 prefetch 注入块构建。
+ * 结构化+文档混合检索、中文召回、source 懒校验与 工具结果格式化。
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, statSync } from 'fs'
@@ -16,7 +16,7 @@ import { computeFingerprint } from '@runtime/memory/FtsQueryBuilder'
 import { StructuredMemoryRetriever } from '@runtime/memory/retrieval/StructuredMemoryRetriever'
 import { DocumentMemoryRetriever } from '@runtime/memory/retrieval/DocumentMemoryRetriever'
 import { MemoryRetrievalService } from '@runtime/memory/retrieval/MemoryRetrievalService'
-import { MemoryPrefetchService } from '@runtime/memory/retrieval/MemoryPrefetchService'
+import { formatMemorySearchResults } from '@runtime/tools/memorySearch'
 import { MemoryVerifier } from '@runtime/memory/lifecycle/MemoryVerifier'
 
 describe('检索层（MemoryRetrievalService + 真 SQLite）', () => {
@@ -25,7 +25,6 @@ describe('检索层（MemoryRetrievalService + 真 SQLite）', () => {
   let repo: MemoryRepository
   let service: MemoryService | null = null
   let retrieval: MemoryRetrievalService
-  let prefetch: MemoryPrefetchService
   let workspaceA: string
   let workspaceB: string
   let scopeA: string
@@ -67,7 +66,6 @@ describe('检索层（MemoryRetrievalService + 真 SQLite）', () => {
       documentRetriever: new DocumentMemoryRetriever(service),
       verifier: new MemoryVerifier({ repository: repo })
     })
-    prefetch = new MemoryPrefetchService(retrieval)
     scopeA = computeWorkspaceHash(workspaceA)
     scopeB = computeWorkspaceHash(workspaceB)
   }
@@ -294,7 +292,7 @@ describe('检索层（MemoryRetrievalService + 真 SQLite）', () => {
     expect(repo.findById('mem_hist_src')?.status).toBe('active')
   })
 
-  it('prefetch：真实数据构建注入块，含 Project/User 分组与 Rules 三行', async () => {
+  it('工具输出：真实检索保留项目、用户来源和 advisory 标记', async () => {
     setup()
     service!.upsertMarkdown(scopeA, 'MEMORY.md', '# 项目记忆\n部署一律使用 pnpm。')
     repo.insertRecord(
@@ -311,23 +309,24 @@ describe('检索层（MemoryRetrievalService + 真 SQLite）', () => {
       })
     )
 
-    const block = await prefetch.buildInjectionBlock({
+    const results = await retrieval.search({
       query: 'pnpm',
       projectScopeId: scopeA,
       workspaceRoot: workspaceA
     })
-    expect(block).not.toBeNull()
-    expect(block!.startsWith('=== Relevant Memory ===')).toBe(true)
+    const block = formatMemorySearchResults(results, 'pnpm')
+    expect(block).toContain('Project memory:')
+    expect(block).toContain('Global user memory:')
     expect(block!).toContain('[convention] 包管理器使用 pnpm')
-    expect(block!).toContain('[observed preference, advisory] 用户偏好使用 pnpm 管理依赖')
-    expect(block!).toContain('Rules:\n- Treat memory as historical evidence.')
+    expect(block!).toContain('[preference] (observed / advisory) 用户偏好使用 pnpm 管理依赖')
+    expect(block).toContain('当前用户指令与工作区事实优先')
 
-    const empty = await prefetch.buildInjectionBlock({
+    const empty = await retrieval.search({
       query: '完全不相关的查询词组',
       projectScopeId: scopeB,
       workspaceRoot: workspaceB
     })
-    expect(empty).toBeNull()
+    expect(empty).toEqual([])
   })
 
   it('两路检索全部失败时上抛（供工具层给出可理解错误）', async () => {

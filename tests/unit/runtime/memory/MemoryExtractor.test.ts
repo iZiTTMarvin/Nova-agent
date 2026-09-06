@@ -40,6 +40,25 @@ function candidateJson(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('projectExtractionMessages（自我污染防护·输入投影层）', () => {
+  it('只有记忆查询时不发起无有效证据的提炼', async () => {
+    const chat = vi.fn()
+    const extractor = new MemoryExtractor({ chat })
+    await extractor.extract({ sessionId: 's', observations: [], recentMessages: [
+      { role: 'assistant', content: '', toolCalls: [{ id: 'm', name: 'memory_search', arguments: '{}' }] },
+      { role: 'tool', toolCallId: 'm', content: '旧记忆' }
+    ] })
+    expect(chat).not.toHaveBeenCalled()
+  })
+  it('主动读取的旧记忆不能作为新的工具证据', () => {
+    const input: ChatMessage[] = [
+      { role: 'assistant', content: '', toolCalls: [{ id: 'memory-1', name: 'memory_search', arguments: '{}' }] },
+      { role: 'tool', toolCallId: 'memory-1', content: '此前决定用旧架构' },
+      { role: 'tool', toolCallId: 'read-1', content: '当前源码使用新架构' }
+    ]
+    const projected = projectExtractionMessages(input)
+    expect(projected.some(message => message.toolCallId === 'memory-1')).toBe(false)
+    expect(buildEvidenceProvenance(projected, []).toolTexts).toEqual(['当前源码使用新架构'])
+  })
   it('剔除 internal / skipCacheMarker / system 消息，保留真实会话消息', () => {
     const input: ChatMessage[] = [
       { role: 'system', content: 'system prompt' },

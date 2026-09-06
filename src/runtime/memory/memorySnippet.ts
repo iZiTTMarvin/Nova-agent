@@ -1,6 +1,6 @@
 /**
  * 文档记忆片段提取：从命中正文取围绕 query 的摘录（非整篇 body）。
- * prefetch 注入块与 memory_search 结果渲染共用，保证两处片段口径一致。
+ * 为 memory_search 结果提取有界的相关片段。
  */
 import { sanitizeTrigramQuery } from './FtsQueryBuilder'
 import { truncateAtLineOrHeaderBoundary } from './truncateEssence'

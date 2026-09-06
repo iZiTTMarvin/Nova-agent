@@ -204,6 +204,8 @@ export class ObservationCapture {
     toolName: string
     args: Record<string, unknown>
   }): void {
+    // 检索旧记忆不是新的工作区证据。
+    if (params.toolName === 'memory_search') return
     const pathArg = resolveToolArg(params.args, 'path')
     if (pathArg && isSensitiveFilePath(pathArg)) {
       return

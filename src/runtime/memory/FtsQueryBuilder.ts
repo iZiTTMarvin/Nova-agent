@@ -54,19 +54,35 @@ export function buildTrigramMatchQuery(raw: string): string | null {
   return cleaned
 }
 
-/** OR 回退查询的 trigram 词项上限：限制 MATCH 串规模，长查询取前缀窗口 */
+/** OR 回退词项上限：限制 MATCH 串规模 */
 export const TRIGRAM_OR_FALLBACK_MAX_TERMS = 24
 
 /**
  * trigram 短语未命中时的 OR 回退：把查询切成滑窗 trigram 后 OR 连接。
  * 整串短语要求查询是内容的确切子串，自然语言提问几乎不可能命中；
  * 回退让「共享若干三字词元」的记录进入候选，再交给 BM25 与分数地板排序裁剪。
- * 词项为 3 字符（trigram 分词器的最小词元），按出现顺序去重并截断。
+ * 混合查询优先完整英文标识符，中文三字窗口均匀覆盖剩余配额。
  */
 export function buildTrigramOrFallbackQuery(raw: string): string | null {
   const cleaned = sanitizeTrigramQuery(raw)
   if (cleaned.length < TRIGRAM_MIN_QUERY_LEN) {
     return null
+  }
+  // 完整标识符优先，避免前面的自然语言耗尽配额或英文碎片误命中。
+  const words = cleaned.match(/[a-zA-Z0-9]{3,}/g) ?? []
+  const cjk = cleaned.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+/g) ?? []
+  if (cjk.length > 0 && words.length > 0) {
+    const grams = cjk.flatMap((part) => Array.from(
+      { length: Math.max(0, part.length - 2) }, (_, index) => part.slice(index, index + 3)
+    ))
+    const uniqueGrams = [...new Set(grams)]
+    const reserved = Math.min(uniqueGrams.length, TRIGRAM_OR_FALLBACK_MAX_TERMS / 2)
+    const candidates = [...new Set(words)].slice(0, TRIGRAM_OR_FALLBACK_MAX_TERMS - reserved)
+    const remaining = TRIGRAM_OR_FALLBACK_MAX_TERMS - candidates.length
+    for (let i = 0; i < Math.min(remaining, uniqueGrams.length); i += 1) {
+      candidates.push(uniqueGrams[Math.floor(i * uniqueGrams.length / Math.min(remaining, uniqueGrams.length))])
+    }
+    return candidates.slice(0, TRIGRAM_OR_FALLBACK_MAX_TERMS).map((term) => `"${term}"`).join(' OR ') || null
   }
   const terms: string[] = []
   const seen = new Set<string>()

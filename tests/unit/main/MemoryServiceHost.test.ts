@@ -108,17 +108,14 @@ describe('MemoryServiceHost reconcile 调度', () => {
       getMemoryRepository,
       getMemoryCandidateProcessor,
       getMemoryRetrievalService,
-      getMemoryPrefetchService
     } = await import('../../../src/main/services/MemoryServiceHost')
     getMemoryService()
     const repo = getMemoryRepository()
     const processor = getMemoryCandidateProcessor()
     const retrieval = getMemoryRetrievalService()
-    const prefetch = getMemoryPrefetchService()
     expect(getMemoryRepository()).toBe(repo)
     expect(getMemoryCandidateProcessor()).toBe(processor)
     expect(getMemoryRetrievalService()).toBe(retrieval)
-    expect(getMemoryPrefetchService()).toBe(prefetch)
 
     const { resetMemoryServiceForTests } = await import(
       '../../../src/main/services/MemoryServiceHost'
@@ -128,6 +125,5 @@ describe('MemoryServiceHost reconcile 调度', () => {
     expect(getMemoryRepository()).not.toBe(repo)
     expect(getMemoryCandidateProcessor()).not.toBe(processor)
     expect(getMemoryRetrievalService()).not.toBe(retrieval)
-    expect(getMemoryPrefetchService()).not.toBe(prefetch)
   })
 })

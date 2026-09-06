@@ -431,7 +431,7 @@ export const MemorySettingsPanel: React.FC = () => {
                   启用跨会话记忆
                 </span>
                 <p className="memory-settings-panel__toggle-hint">
-                  一键开启全部能力：工具轨迹自动采集、低频提炼为结构化记忆、对话前自动召回相关记忆、模型可主动检索跨会话记忆。关闭后以上能力全部停止。
+                  开启后，Nova 会从对话与工具轨迹中提炼记忆，并在需要时检索此前的项目约定、偏好和经验。关闭后停止学习和检索。
                 </p>
               </div>
               <CheckboxInput

@@ -80,7 +80,7 @@ export function formatMemorySearchResults(results: readonly MemorySearchResult[]
     }
   }
 
-  lines.push('', '提示：记忆为历史证据，使用前请与当前工作区核对。')
+  lines.push('', '使用这些线索缩小探索范围：直接核对命中的文件或符号，避免重复遍历。记忆为历史证据，当前用户指令与工作区事实优先；observed 偏好仅供参考。')
   return lines.join('\n')
 }
 

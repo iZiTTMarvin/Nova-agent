@@ -1,5 +1,5 @@
 /**
- * 文档记忆片段提取测试：prefetch 注入块与 memory_search 共用的片段口径。
+ * 文档记忆片段提取测试：memory_search 的片段口径。
  */
 import { describe, it, expect } from 'vitest'
 import { extractMemorySnippet } from '../../../../src/runtime/memory/memorySnippet'
