@@ -58,7 +58,9 @@ test('已发布旧版可以检测、下载、安装新版并保留会话', async
     expect(await nova.app.evaluate(({ app }) => app.getVersion())).toBe(previousVersion)
     await nova.runTurnToCompletion({ prompt: '保留升级前的会话', text: 'NOVA_BEFORE_UPGRADE' })
     const sessionId = (await nova.getWorkspace()).currentSessionId
-    const available = await nova.invoke('app:update:check')
+    await nova.invoke('app:update:check')
+    await expect.poll(async () => (await nova!.invoke('app:update:get-state')).status).toBe('available')
+    const available = await nova.invoke('app:update:get-state')
     expect(available).toMatchObject({ status: 'available', currentVersion: previousVersion, update: { version } })
     const downloaded = await nova.invoke('app:update:download')
     expect(downloaded).toMatchObject({ status: 'ready', update: { version } })
@@ -72,7 +74,7 @@ test('已发布旧版可以检测、下载、安装新版并保留会话', async
     await closed
     await expect.poll(async () => {
       const result = await exec('powershell.exe', ['-NoProfile', '-Command',
-        "$p = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NOVA_UPGRADE_EXE }; if ($p) { (Get-Item -LiteralPath $env:NOVA_UPGRADE_EXE).VersionInfo.ProductVersion }"],
+        "$p = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NOVA_UPGRADE_EXE }; if ($p) { (Get-Item -LiteralPath $env:NOVA_UPGRADE_EXE).VersionInfo.FileVersion }"],
       { env: { ...process.env, NOVA_UPGRADE_EXE: executablePath } })
       return result.stdout.trim()
     }, { timeout: 90_000 }).toBe(version)
