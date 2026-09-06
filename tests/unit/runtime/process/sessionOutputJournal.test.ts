@@ -1,10 +1,12 @@
 /**
  * 会话输出日志单测：游标分页、溢出落盘、滚动窗口丢弃、通知与幂等。
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import * as fs from 'node:fs'
+import { finished } from 'node:stream/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   READ_PAGE_MAX_BYTES,
   READ_PAGE_MAX_LINES,
@@ -14,19 +16,29 @@ import {
 } from '../../../../src/runtime/process/journal'
 
 const spillDirs: string[] = []
+const spillStreams: fs.WriteStream[] = []
+const createWriteStream = fs.createWriteStream
 
-afterEach(() => {
-  for (const dir of spillDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+vi.mock('node:fs', async importOriginal => ({
+  ...await importOriginal<typeof import('node:fs')>()
+}))
+
+beforeEach(() => {
+  vi.spyOn(fs, 'createWriteStream').mockImplementation((...args) => {
+    const stream = createWriteStream(...args)
+    spillStreams.push(stream)
+    return stream
+  })
 })
 
-async function waitUntil(cond: () => boolean, timeoutMs = 3000): Promise<void> {
-  const start = Date.now()
-  for (;;) {
-    if (cond()) return
-    if (Date.now() - start > timeoutMs) throw new Error('等待条件超时')
-    await new Promise((r) => setTimeout(r, 10))
+afterEach(async () => {
+  vi.restoreAllMocks()
+  for (const stream of spillStreams.splice(0)) {
+    if (!stream.writableEnded) stream.end()
+    await finished(stream, { cleanup: true })
   }
-}
+  for (const dir of spillDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
 
 describe('SessionOutputJournal', () => {
   it('游标按页推进：全部页拼接等于全部输出，页受行数/字节上限约束', () => {
@@ -86,6 +98,9 @@ describe('SessionOutputJournal', () => {
     const total = parts.join('')
     expect(Buffer.byteLength(total)).toBeGreaterThan(SPILL_THRESHOLD_BYTES)
     journal.settle()
+    expect(spillStreams).toHaveLength(1)
+    await Promise.all(spillStreams.map(stream => finished(stream, { cleanup: true })))
+    expect(spillStreams[0].closed).toBe(true)
 
     const before = journal.unreadBytes()
     const first = journal.readUnread()
@@ -95,8 +110,6 @@ describe('SessionOutputJournal', () => {
       expect(spill.path).toMatch(/nova-bash-[0-9a-f]{16}\.log$/)
       expect(spill.totalBytes).toBe(Buffer.byteLength(total))
       expect(spill.totalLines).toBe(1200)
-      // 写流 end 是异步落盘，等待文件完整
-      await waitUntil(() => existsSync(spill.path) && readFileSync(spill.path, 'utf8') === total)
       expect(readFileSync(spill.path, 'utf8')).toBe(total)
     }
     // settle 后未读内容仍可继续分页读取；交付量与读前 unreadBytes 对账且为总输出的后缀

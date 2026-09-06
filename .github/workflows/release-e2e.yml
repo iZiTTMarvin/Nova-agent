@@ -157,7 +157,7 @@ jobs:
           name: Nova Agent ${{ steps.release-metadata.outputs.tag }}
           body_path: ${{ steps.release-metadata.outputs.release_notes_path }}
           generate_release_notes: false
-          draft: false
+          draft: true
           prerelease: ${{ contains(steps.release-metadata.outputs.tag, '-') }}
           fail_on_unmatched_files: true
           files: |
@@ -166,6 +166,19 @@ jobs:
             release/latest.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Expose complete release assets
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ($env:RELEASE_TAG.Contains('-')) {
+            gh release edit "$env:RELEASE_TAG" --draft=false --latest=false
+          } else {
+            gh release edit "$env:RELEASE_TAG" --draft=false --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot publish complete release' }
 
       - name: Verify public GitHub update from previous version
         id: public-upgrade
