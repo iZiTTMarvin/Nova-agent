@@ -90,7 +90,7 @@ jobs:
           "UPGRADE_FROM_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Verify previous version upgrade before publication
-        run: npm --prefix tests/e2e exec -- playwright test upgrade
+        run: npm --prefix tests/e2e run test:upgrade
 
       - name: Preserve upgrade preflight evidence
         uses: actions/upload-artifact@v4
@@ -172,7 +172,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           UPGRADE_PUBLIC_FEED: 'true'
-        run: npm --prefix tests/e2e exec -- playwright test upgrade
+        run: npm --prefix tests/e2e run test:upgrade
 
       - name: Withdraw release if public upgrade fails
         if: failure() && steps.public-upgrade.outcome == 'failure'

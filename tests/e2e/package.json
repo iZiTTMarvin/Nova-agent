@@ -8,7 +8,8 @@
     "test:weight": "playwright test weight",
     "test:fault": "playwright test fault --grep-invert @stress",
     "test:stress": "playwright test fault/stress.spec.ts",
-    "test:packaged": "playwright test packaged"
+    "test:packaged": "playwright test packaged",
+    "test:upgrade": "playwright test upgrade"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"

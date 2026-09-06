@@ -180,8 +180,7 @@ test('工具调用流中途失败后重载：工具块保持终态不转圈', as
   const sessionId = state.currentSessionId
   if (!sessionId) throw new Error('session id missing')
 
-  // 第一条流仅发出工具调用增量即以 [DONE] 截止（没有完整参数/回包），
-  // 随后 provider 报错：轮次以失败收尾，落盘工具块必须收敛为终态
+  // 不完整工具流的远端结果未知，必须直接失败而不是再次请求供应商。
   nova.provider.enqueue(
     {
       kind: 'raw',
@@ -211,17 +210,17 @@ test('工具调用流中途失败后重载：工具块保持终态不转圈', as
         },
         { payload: '[DONE]' }
       ]
-    },
-    { kind: 'error', status: 400, body: { error: { message: 'NOVA_E2E_STREAM_FAILURE' } } }
+    }
   )
 
   await nova.sendPrompt('触发工具调用中断')
   await expect.poll(async () => (await nova.getRunSnapshot(sessionId))?.status, { timeout: 15_000 })
-    .toMatch(/^(failed|cancelled)$/)
+    .toBe('failed')
   await nova.waitUntilIdle()
 
   // 轮次以失败收敛：错误文案可见，对话不残留 live 转圈行
-  await expect(nova.page.getByText('NOVA_E2E_STREAM_FAILURE', { exact: false })).toBeVisible()
+  await expect(nova.page.getByText('远端结果与费用未知，已停止自动重试。', { exact: false })).toBeVisible()
+  expect(nova.provider.requests).toHaveLength(1)
   await expect(nova.page.locator('.tool-trace-row--live')).toHaveCount(0)
 
   // 重载后：错误终态保持，无 live 转圈行、无「中断生成」，会话可继续输入
@@ -230,7 +229,8 @@ test('工具调用流中途失败后重载：工具块保持终态不转圈', as
   await expect(nova.page.locator('.tool-trace-row--live')).toHaveCount(0)
   await expect(nova.page.getByRole('button', { name: '中断生成' })).toHaveCount(0)
   await expect(nova.page.getByLabel('消息输入')).toBeEditable()
-  await expect(nova.page.getByText('NOVA_E2E_STREAM_FAILURE', { exact: false })).toBeVisible()
+  await expect(nova.page.getByText('远端结果与费用未知，已停止自动重试。', { exact: false })).toBeVisible()
+  expect(nova.provider.requests).toHaveLength(1)
 
   expect(nova.pageErrors).toEqual([])
 })
