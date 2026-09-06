@@ -31,7 +31,8 @@ describe('llmRegistry', () => {
       baseUrl: 'https://api.deepseek.com/v1',
       apiKey: 'sk-test',
       modelId: 'deepseek-chat',
-      contextWindow: 64000
+      contextWindow: 64000,
+      routeRef: registry.activeModel
     })
   })
 

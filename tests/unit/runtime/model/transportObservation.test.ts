@@ -36,7 +36,7 @@ describe('物理请求观测', () => {
     try {
       const pending = reader.read()
       controller.abort()
-      await pending
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError', message: 'cancelled' })
       expect(attempt.getOutcome()).toBe('cancelled')
       expect(attempt.getTiming().abortRequestedAt).not.toBeNull()
       expect(attempt.getTiming().settledAt).not.toBeNull()
@@ -106,7 +106,7 @@ describe('物理请求观测', () => {
     }
     const last = getMetricBuffer().filter(e => e.category === 'transport.attempt').at(-1)!
     expect(last.tags?.outcome).toBe('abandoned')
-    expect(last.values.settledAt).toBeUndefined()
+    expect(last.values.settledAt).toBeGreaterThanOrEqual(last.values.dispatchedAt)
     expect(getMetricBuffer().filter(e => e.category === 'usage.report').at(-1)?.tags?.usageReport).toBe('missing')
   })
 

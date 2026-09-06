@@ -5,7 +5,7 @@
 ## 两条流水线
 
 - `Quality Gate`（`.github/workflows/quality.yml`）：推到 `dev`/`main`、向 `dev` 提 PR、定时、手动都会触发。固定步骤依次为类型检查、E2E 脚手架类型检查、全量单测、生产构建；推送时加跑 Electron smoke 与 lifecycle，定时才跑 fault 与 stress。
-- `Windows Release`（`.github/workflows/release-e2e.yml`）：只在 `v*.*.*` 标签与手动指定标签时触发，独自跑类型检查、全量单测、打包与产物校验。发版构建的单测失败会直接卡住发版，与日常门禁红绿无关但跑的是同一套用例。
+- `Windows Release`（`.github/workflows/release-e2e.yml`）：标签推送执行发布；手动运行在选定分支验证候选版本，不发布。门禁包含类型检查、全量单测、真实桌面生命周期、打包、安装包哈希和旧版升级。旧版使用公开安装程序，发布前仅将测试安装的更新源指向候选产物；通过真实更新 IPC 下载、安装并检查重启、版本、会话保留与继续对话。发布后通过原有 GitHub 更新源重复验收；失败自动撤回为草稿。NSIS 安装只在一次性 Windows runner 中执行。
 
 `Quality Gate` 同分支新推送会自动取消旧运行，旧运行的结果不必再看（发版流水线不取消，见其 `cancel-in-progress: false`）。
 

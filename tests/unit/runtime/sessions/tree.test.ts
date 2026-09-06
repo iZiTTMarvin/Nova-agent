@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   computeActivePath,
   buildChildrenIndex,
@@ -87,34 +87,21 @@ describe('computeActivePath', () => {
     expect(optimized.map(m => m.id)).toEqual(messages.map(m => m.id))
   })
 
-  it('深度 1200 链：push+reverse 耗时应明显低于 unshift 参考', () => {
-    const depth = 1200
-    const messages: SessionMessage[] = []
-    for (let i = 0; i < depth; i++) {
-      messages.push(msg(`n${i}`, i === 0 ? null : `n${i - 1}`, 'user', i))
+  it('深链构建不使用反复移动已有元素的头插操作', () => {
+    const messages = Array.from({ length: 1200 }, (_, i) =>
+      msg(`n${i}`, i === 0 ? null : `n${i - 1}`, 'user', i)
+    )
+    const unshift = vi.spyOn(Array.prototype, 'unshift')
+    let result: SessionMessage[]
+    let headInsertions: number
+    try {
+      result = computeActivePath(messages, 'n1199')
+      headInsertions = unshift.mock.calls.length
+    } finally {
+      unshift.mockRestore()
     }
-    const leaf = `n${depth - 1}`
-
-    // 预热让两个实现进入稳定 JIT 区，再放大迭代拉开量级差距；
-    // 裸墙钟对比在并行负载下会被噪声翻转，导致算法守护测试偶发误报
-    for (let i = 0; i < 5; i++) {
-      computeActivePath(messages, leaf)
-      computeActivePathUnshiftReference(messages, leaf)
-    }
-
-    const t0 = performance.now()
-    for (let i = 0; i < 250; i++) {
-      computeActivePath(messages, leaf)
-    }
-    const optimizedMs = performance.now() - t0
-
-    const t1 = performance.now()
-    for (let i = 0; i < 250; i++) {
-      computeActivePathUnshiftReference(messages, leaf)
-    }
-    const referenceMs = performance.now() - t1
-
-    expect(optimizedMs).toBeLessThan(referenceMs)
+    expect(headInsertions).toBe(0)
+    expect(result).toEqual(messages)
   })
 })
 

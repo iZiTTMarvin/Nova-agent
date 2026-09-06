@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing vX.Y.Z tag to rebuild and publish
+        description: Candidate vX.Y.Z version to validate on the selected branch (does not publish)
         required: true
         type: string
 
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Setup Node
@@ -60,6 +60,12 @@ jobs:
       - name: Install Electron E2E harness
         run: npm run test:e2e:install
 
+      - name: Typecheck Electron E2E harness
+        run: npm run test:e2e:typecheck
+
+      - name: Build and verify desktop lifecycle
+        run: npm run test:e2e
+
       - name: Build Windows release
         shell: pwsh
         run: |
@@ -69,6 +75,29 @@ jobs:
 
       - name: Verify packaged Electron app
         run: npm --prefix tests/e2e run test:packaged
+
+      - name: Download previously published installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $previous = gh release view --json tagName --jq .tagName
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve previous release' }
+          if ($previous -eq $env:RELEASE_TAG) { throw 'Release already exists; refusing to replace published assets' }
+          $version = $previous.TrimStart('v')
+          gh release download $previous --pattern "NovaAgent-Setup-$version.exe" --dir "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download previous installer' }
+          "UPGRADE_FROM_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Verify previous version upgrade before publication
+        run: npm --prefix tests/e2e exec -- playwright test upgrade
+
+      - name: Preserve upgrade preflight evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-preflight
+          path: test-results/e2e
+          retention-days: 14
 
       - name: Upload packaged E2E diagnostics
         if: failure()
@@ -113,9 +142,15 @@ jobs:
             throw 'latest.yml 未指向当前版本的 NSIS 安装包'
           }
 
+          $hash = [Convert]::ToBase64String([Security.Cryptography.SHA512]::HashData([IO.File]::ReadAllBytes((Join-Path $releaseDir $setupName))))
+          if ($latestYml -notmatch "(?m)^sha512:\s*$([regex]::Escape($hash))\s*$") {
+            throw 'latest.yml 的 SHA-512 与安装包不一致'
+          }
+
           Write-Host "已验证 NSIS 安装包、blockmap 与 latest.yml ($env:RELEASE_VERSION)"
 
       - name: Publish GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-metadata.outputs.tag }}
@@ -131,3 +166,28 @@ jobs:
             release/latest.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify public GitHub update from previous version
+        id: public-upgrade
+        if: github.event_name == 'push'
+        env:
+          UPGRADE_PUBLIC_FEED: 'true'
+        run: npm --prefix tests/e2e exec -- playwright test upgrade
+
+      - name: Withdraw release if public upgrade fails
+        if: failure() && steps.public-upgrade.outcome == 'failure'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$env:RELEASE_TAG" --draft
+
+      - name: Upload release acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-acceptance
+          path: |
+            test-results/e2e
+            playwright-report/e2e
+          if-no-files-found: ignore
+          retention-days: 14
