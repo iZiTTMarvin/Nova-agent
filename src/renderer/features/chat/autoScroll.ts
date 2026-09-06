@@ -120,7 +120,7 @@ export function syncAutoScrollModeOnScroll(input: SyncAutoScrollModeInput): Auto
   }
 
   const atBottom = distance <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX
-  if (atBottom && input.autoScrollMode === 'off') {
+  if (atBottom && input.autoScrollMode === 'off' && !input.isProgrammaticScroll) {
     // 无论是否在输出，回到底部都应离开 off；按钮显隐另由 shouldShowScrollToBottom 决定
     return input.isOutputting ? 'stream' : 'user'
   }

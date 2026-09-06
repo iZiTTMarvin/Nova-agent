@@ -144,6 +144,16 @@ describe('autoScroll', () => {
     expect(getDistanceFromBottom(metrics)).toBeGreaterThan(STREAMING_AUTO_SCROLL_STOP_THRESHOLD_PX)
   })
 
+  it('用户已停止跟随后，迟到的程序滚动事件不能重新开启跟随', () => {
+    expect(syncAutoScrollModeOnScroll({
+      metrics: { scrollHeight: 2000, scrollTop: 1600, clientHeight: 400 },
+      previousScrollTop: 1600,
+      autoScrollMode: 'off',
+      isOutputting: true,
+      isProgrammaticScroll: true
+    })).toBe('off')
+  })
+
   it('syncAutoScrollModeOnScroll 回到底部且仍在输出时应恢复 stream', () => {
     const metrics = {
       scrollHeight: 1000,
