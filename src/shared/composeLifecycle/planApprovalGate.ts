@@ -2,7 +2,7 @@ import { getComposeStageCursor } from './transitions'
 import type { ComposePlanApproval, ComposeStageEntry } from './types'
 
 /**
- * 计划确认门判定（仅 apply complete 使用）：从「计划」阶段 complete 出去前必须有批准。
+ * 计划确认门判定（仅 apply complete 使用）：从「图」阶段 complete 出去前必须有批准。
  *
  * 工具路径（stage_transition）与手动 IPC 路径（compose:apply-stage-transition）
  * 共用这一份判定，避免两处口径漂移。放行方式由调用方编排：
@@ -15,7 +15,7 @@ export function getPlanCompleteDenial(
 ): string | null {
   if (!stages) return null // 无阶段表时由 apply 统一建表/报错
   const cursor = getComposeStageCursor(stages)
-  if (cursor.currentStageId !== 'plan') return null
+  if (cursor.currentStageId !== 'blueprint') return null
   if (approval?.status === 'approved') return null
-  return '计划尚未获得用户批准，无法完成「计划」阶段。请通过当前任务的计划审阅交互等待用户决定。'
+  return '一页纸尚未获得用户确认，无法完成「图」阶段。请通过当前任务的计划审阅交互等待用户决定。'
 }

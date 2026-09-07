@@ -3,11 +3,18 @@ import { PLAN_REVIEW_IGNORED_RESULT_MARKER } from '../../../shared/planReview'
 import {
   COMPOSE_STAGE_IDS,
   COMPOSE_STAGE_LABELS,
+  getComposeStageCursor,
   getPlanCompleteDenial,
+  getStageCompleteDenial,
   isComposeStageId,
   type ComposeStageAction,
-  type ComposeStageEntry
+  type ComposeStageEntry,
+  type ComposeStageFacts
 } from '../../../shared/composeLifecycle'
+
+export interface StageTransitionToolDeps {
+  getStageFacts: (sessionId: string) => ComposeStageFacts
+}
 
 function failed(error: string): ToolResult {
   return { success: false, output: '', error }
@@ -50,7 +57,7 @@ function formatSuccessOutput(
 ): string {
   const prevInProgress =
     previousStages?.find(s => s.status === 'in_progress') ??
-    (previousStages == null ? { id: 'brainstorm' as const } : undefined)
+    (previousStages == null ? { id: 'interview' as const } : undefined)
 
   if (action.type === 'complete') {
     const doneId = prevInProgress?.id
@@ -79,104 +86,114 @@ function formatSuccessOutput(
   return `已回退到「${labelOf(action.targetStage)}」阶段，其间阶段已重置。原因：${action.reason}`
 }
 
-export const stageTransitionTool: ToolExecutor = {
-  name: 'stage_transition',
-  description:
-    '仅 compose 模式：推进生命周期阶段。' +
-    'complete 完成当前阶段并进入下一阶段；' +
-    'skip 跳过当前阶段（必须给原因）；' +
-    'return 回退到更早阶段（必须给 targetStage 与原因）。',
-  executionMode: 'sequential',
-  isConcurrencySafe: () => false,
-  parameters: {
-    type: 'object',
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['complete', 'skip', 'return'],
-        description: '阶段转换动作：完成、跳过或回退'
+export function createStageTransitionTool(deps: StageTransitionToolDeps): ToolExecutor {
+  return {
+    name: 'stage_transition',
+    description:
+      '仅 compose 模式：推进生命周期阶段。' +
+      'complete 完成当前阶段并进入下一阶段；' +
+      'skip 跳过当前阶段（必须给原因）；' +
+      'return 回退到更早阶段（必须给 targetStage 与原因）。',
+    executionMode: 'sequential',
+    isConcurrencySafe: () => false,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['complete', 'skip', 'return'],
+          description: '阶段转换动作：完成、跳过或回退'
+        },
+        reason: {
+          type: 'string',
+          description: '跳过或回退时必填的原因'
+        },
+        targetStage: {
+          type: 'string',
+          enum: [...COMPOSE_STAGE_IDS],
+          description: '回退目标阶段（仅 return 时必填）'
+        }
       },
-      reason: {
-        type: 'string',
-        description: '跳过或回退时必填的原因'
-      },
-      targetStage: {
-        type: 'string',
-        enum: [...COMPOSE_STAGE_IDS],
-        description: '回退目标阶段（仅 return 时必填）'
-      }
+      required: ['action'],
+      additionalProperties: false
     },
-    required: ['action'],
-    additionalProperties: false
-  },
 
-  async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
-    if (context.mode !== 'compose') {
-      return failed('stage_transition 仅在 compose 模式可用')
-    }
+    async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
+      if (context.mode !== 'compose') {
+        return failed('stage_transition 仅在 compose 模式可用')
+      }
 
-    const parsed = parseAction(args)
-    if (typeof parsed === 'string') {
-      return failed(parsed)
-    }
+      const parsed = parseAction(args)
+      if (typeof parsed === 'string') {
+        return failed(parsed)
+      }
 
-    const sessionStore = context.sessionStore
-    const sessionId = context.sessionId
-    if (!sessionStore || !sessionId) {
-      return failed('缺少会话上下文，无法推进生命周期阶段')
-    }
+      const sessionStore = context.sessionStore
+      const sessionId = context.sessionId
+      if (!sessionStore || !sessionId) {
+        return failed('缺少会话上下文，无法推进生命周期阶段')
+      }
 
-    if (parsed.type === 'complete') {
-      const stages = sessionStore.getComposeStages(sessionId)
-      const denial = getPlanCompleteDenial(
-        stages,
-        // 无阶段表时无需读批准状态，交由 apply 统一报错/建表
-        stages ? sessionStore.getComposePlanApproval(sessionId) : null
-      )
-      if (denial) {
-        if (!context.requestPlanReview || !context.invocationRef) {
-          return failed('当前宿主无法发起计划审阅')
-        }
-        const resolution = await context.requestPlanReview(context.invocationRef)
-        if (resolution.decision === 'revise') {
-          return failed(`用户要求修改计划：${resolution.feedback}`)
-        }
-        if (resolution.decision === 'ignore') {
-          return {
-            success: true,
-            output: `${PLAN_REVIEW_IGNORED_RESULT_MARKER}；计划未批准，仍停留在「计划」阶段。`,
-            control: { type: 'turn_complete' }
+      if (parsed.type === 'complete') {
+        const stages = sessionStore.getComposeStages(sessionId)
+        // 无阶段表时不编造事实门，交给 apply 建表/报错；无进行中阶段也不拦。
+        const currentStageId = stages ? getComposeStageCursor(stages).currentStageId : null
+        if (currentStageId) {
+          const denial = getStageCompleteDenial(currentStageId, deps.getStageFacts(sessionId))
+          if (denial) {
+            return failed(denial)
           }
         }
 
-        const approved = sessionStore.approveComposePlan(sessionId, { auto: false })
-        if (!approved) return failed('会话不存在')
-        context.eventBus?.emit({
-          type: 'compose_plan_approval_updated',
-          sessionId,
-          approval: approved
-        })
+        const planDenial = getPlanCompleteDenial(
+          stages,
+          stages ? sessionStore.getComposePlanApproval(sessionId) : null
+        )
+        if (planDenial) {
+          if (!context.requestPlanReview || !context.invocationRef) {
+            return failed('当前宿主无法发起计划审阅')
+          }
+          const resolution = await context.requestPlanReview(context.invocationRef)
+          if (resolution.decision === 'revise') {
+            return failed(`用户要求修改计划：${resolution.feedback}`)
+          }
+          if (resolution.decision === 'ignore') {
+            return {
+              success: true,
+              output: `${PLAN_REVIEW_IGNORED_RESULT_MARKER}；计划未批准，仍停留在「图」阶段。`,
+              control: { type: 'turn_complete' }
+            }
+          }
+
+          const approved = sessionStore.approveComposePlan(sessionId, { auto: false })
+          if (!approved) return failed('会话不存在')
+          context.eventBus?.emit({
+            type: 'compose_plan_approval_updated',
+            sessionId,
+            approval: approved
+          })
+        }
       }
-    }
 
-    const result = sessionStore.applyComposeStageTransition(sessionId, parsed)
-    if (result === null) {
-      return failed('会话不存在')
-    }
-    if (result.status === 'rejected') {
-      return failed(result.error)
-    }
+      const result = sessionStore.applyComposeStageTransition(sessionId, parsed)
+      if (result === null) {
+        return failed('会话不存在')
+      }
+      if (result.status === 'rejected') {
+        return failed(result.error)
+      }
 
-    context.eventBus?.emit({
-      type: 'compose_stages_updated',
-      sessionId,
-      stages: result.stages,
-      reviewLoops: result.reviewLoops
-    })
+      context.eventBus?.emit({
+        type: 'compose_stages_updated',
+        sessionId,
+        stages: result.stages,
+        reviewLoops: result.reviewLoops
+      })
 
-    return {
-      success: true,
-      output: formatSuccessOutput(parsed, result.stages, result.previousStages)
+      return {
+        success: true,
+        output: formatSuccessOutput(parsed, result.stages, result.previousStages)
+      }
     }
   }
 }

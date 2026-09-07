@@ -13,9 +13,10 @@ export {
   createInitialStageTable,
   applyStageTransition,
   getComposeStageCursor,
-  isComposeReviewReturnLimited,
-  COMPOSE_MAX_REVIEW_LOOPS,
+  isComposeInspectReturnLimited,
+  COMPOSE_MAX_INSPECT_LOOPS,
   type ComposeStageCursor
 } from './transitions'
 export { getComposeStageToolDenial } from './stageToolGating'
 export { getPlanCompleteDenial } from './planApprovalGate'
+export { getStageCompleteDenial, type ComposeStageFacts } from './stageFacts'

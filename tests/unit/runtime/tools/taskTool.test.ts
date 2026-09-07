@@ -53,12 +53,12 @@ describe('task tool spawn adapter', () => {
     const { tool } = setup()
     expect(tool.name).toBe('task')
     expect(tool.description).toBe(
-      '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。'
+      '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。XForge 下用 critic 挑刺一页纸、inspector 独立核验。'
     )
     expect(tool.parameters).toEqual({
       type: 'object',
       properties: {
-        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose' },
+        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose / critic / inspector' },
         task: { type: 'string', description: '子任务描述' },
         model: {
           type: 'object',
@@ -125,6 +125,27 @@ describe('task tool spawn adapter', () => {
     )
     expect(spawn.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ isolation: 'shared' })
+    )
+  })
+
+  it('critic 走 readonly isolation，inspector 走 shared isolation', async () => {
+    const { tool, spawn } = setup()
+    await tool.execute({ subagent_type: 'explore', task: 'survey' }, context())
+    await tool.execute({ subagent_type: 'critic', task: 'critique plan' }, context())
+    await tool.execute({ subagent_type: 'inspector', task: 'verify plan' }, context())
+    await tool.execute({ subagent_type: 'code', task: 'edit file' }, context())
+
+    expect(spawn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ profileId: 'explore', isolation: 'readonly' })
+    )
+    expect(spawn.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ profileId: 'critic', isolation: 'readonly' })
+    )
+    expect(spawn.mock.calls[2]?.[0]).toEqual(
+      expect.objectContaining({ profileId: 'inspector', isolation: 'shared' })
+    )
+    expect(spawn.mock.calls[3]?.[0]).toEqual(
+      expect.objectContaining({ profileId: 'code', isolation: 'shared' })
     )
   })
 

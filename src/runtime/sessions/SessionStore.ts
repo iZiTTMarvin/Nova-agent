@@ -1186,7 +1186,7 @@ export class SessionStore {
         session: SessionData
         stages: ComposeStageEntry[]
         previousStages: ComposeStageEntry[] | null
-        /** 修复-复审循环计数随结果透出，调用方经事件转发供 renderer 预禁用回退入口 */
+        /** 从「验」回退的循环计数随结果透出，调用方经事件转发供 renderer 预禁用回退入口 */
         reviewLoops: number
       }
     | { status: 'rejected'; error: string }
@@ -1220,7 +1220,7 @@ export class SessionStore {
 
   /**
    * 读取计划确认门状态。旧会话或尚未保存过计划的会话视为 pending——
-   * 硬门默认关闭，stage_transition 无法把「计划」阶段 complete 掉。
+   * 硬门默认关闭，stage_transition 无法把「图」阶段 complete 掉。
    */
   getComposePlanApproval(sessionId: string): ComposePlanApproval | null {
     const session = this.load(sessionId)

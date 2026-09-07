@@ -183,17 +183,17 @@ export type SessionDetail = Session & {
   /** 当前激活叶子 id；正常 UI 不依赖，调试与 Tier 1 上下文用 */
   currentLeafId?: string | null
   /**
-   * compose 生命周期阶段表。仅 compose 会话由 stage_transition 工具写入；
+   * compose 生命周期五阶段表。仅 compose 会话由 stage_transition 工具写入；
    * 旧会话缺省，renderer 按初始表投影纯显示，不回填落盘。
    */
   composeStages?: ComposeStageEntry[]
   /**
-   * 修复-复审循环计数（审查阶段回退放行次数，代码兜底上限 3）。
+   * 从「验」回退的循环计数（代码兜底上限 2）。
    * 随详情水合阶段条，用于预禁用已达上限的回退入口；旧会话缺省视为 0。
    */
   composeReviewLoops?: number
   /**
-   * 计划阶段确认门状态。仅 compose 会话由 save_plan / stage_transition / 批准 IPC 写入；
+   * 「图」阶段确认门状态。仅 compose 会话由 save_plan / stage_transition / 批准 IPC 写入；
    * 旧会话缺省，renderer 视为 pending。
    */
   composePlanApproval?: ComposePlanApproval

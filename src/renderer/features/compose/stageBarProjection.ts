@@ -1,9 +1,9 @@
 /**
  * 阶段条投影纯函数（测试 seam）
  *
- * 把持久化阶段表投影成六个固定节点的渲染 props：
+ * 把持久化阶段表投影成五个固定节点的渲染 props：
  * - stages 为 null/undefined（新会话/旧会话）时按初始表投影，纯显示不落盘
- * - 防御性按 COMPOSE_STAGE_IDS 顺序对齐，缺失阶段补 pending，保证恒为六节点
+ * - 防御性按 COMPOSE_STAGE_IDS 顺序对齐，缺失阶段补 pending，保证恒为五节点
  * - 回退目标列表与 applyStageTransition 的校验口径一致：当前游标之前的阶段
  */
 import {
@@ -24,7 +24,7 @@ export interface StageNodeProjection {
   note?: string
   completedAt?: number
   isCurrent: boolean
-  /** 仅「开发」节点：会话 todo 的聚合进度，驱动 `开发 ● 3/5` 标签与可展开明细 */
+  /** 仅「锤」节点：会话 todo 的聚合进度，驱动 `锤 ● 3/5` 标签与可展开明细 */
   progress?: { completed: number; total: number }
 }
 
@@ -44,7 +44,7 @@ export interface StageBarProjection {
 
 export function projectStageBar(
   stages: ComposeStageEntry[] | null | undefined,
-  implementProgress?: { completed: number; total: number }
+  buildProgress?: { completed: number; total: number }
 ): StageBarProjection {
   const source = stages ?? createInitialStageTable()
   const byId = new Map(source.map((entry) => [entry.id, entry]))
@@ -59,7 +59,7 @@ export function projectStageBar(
     }
     if (entry?.note !== undefined) node.note = entry.note
     if (entry?.completedAt !== undefined) node.completedAt = entry.completedAt
-    if (id === 'implement' && implementProgress) node.progress = implementProgress
+    if (id === 'build' && buildProgress) node.progress = buildProgress
     return node
   })
 

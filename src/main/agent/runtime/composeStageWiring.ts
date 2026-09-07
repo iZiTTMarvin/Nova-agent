@@ -14,6 +14,8 @@ import {
   type ComposeStageId
 } from '../../../shared/composeLifecycle'
 
+export { createComposeStageFactsProvider } from './composeStageFacts'
+
 /** 当前进行中阶段；旧会话无阶段表时按初始表处理，生命周期终态返回 null */
 function currentStageId(sessionStore: SessionStore, sessionId: string): ComposeStageId | null {
   const stages = sessionStore.getComposeStages(sessionId) ?? createInitialStageTable()

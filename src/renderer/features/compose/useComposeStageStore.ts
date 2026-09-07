@@ -13,7 +13,7 @@ import type { ComposePlanApproval, ComposeStageEntry } from '../../../shared/com
 export interface ComposeStageUpdate {
   sessionId: string
   stages: ComposeStageEntry[]
-  /** 修复-复审循环计数；事件推送必有，缺省按 0 处理 */
+  /** 从「验」回退的循环计数；事件推送必有，缺省按 0 处理 */
   reviewLoops?: number
 }
 
@@ -27,7 +27,7 @@ interface ComposeStageStoreState {
   bySession: Record<string, ComposeStageEntry[] | null>
   /** 按 sessionId 缓存的计划确认门状态；null = 已知该会话但尚无批准记录（视为 pending） */
   planApprovalBySession: Record<string, ComposePlanApproval | null>
-  /** 按 sessionId 缓存的修复-复审循环计数；缺省视为 0（旧会话） */
+  /** 按 sessionId 缓存的从「验」回退循环计数；缺省视为 0（旧会话） */
   reviewLoopsBySession: Record<string, number>
 }
 
@@ -36,7 +36,7 @@ interface ComposeStageStoreActions {
   applyUpdate: (update: ComposeStageUpdate) => void
   /** 会话水合时写入持久化阶段表（磁盘为事实源，事件推送先于持久化不会发生） */
   setSessionStages: (sessionId: string, stages: ComposeStageEntry[] | null) => void
-  /** 会话水合时写入持久化的修复-复审循环计数 */
+  /** 会话水合时写入持久化的从「验」回退循环计数 */
   setSessionReviewLoops: (sessionId: string, loops: number) => void
   /** 处理来自 main 进程的计划确认门更新事件 */
   applyPlanApprovalUpdate: (update: ComposePlanApprovalUpdate) => void
@@ -86,7 +86,7 @@ export const useComposeStageStore = create<ComposeStageStoreState & ComposeStage
   }
 }))
 
-/** 选中某会话的修复-复审循环计数（缺省 0：旧会话无记录先于上限） */
+/** 选中某会话的从「验」回退循环计数（缺省 0：旧会话无记录先于上限） */
 export function selectSessionComposeReviewLoops(
   state: ComposeStageStoreState,
   sessionId: string | null

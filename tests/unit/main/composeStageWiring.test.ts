@@ -3,7 +3,7 @@
  *
  * 只断言外部行为：
  * - provider 输出随阶段表切换而变化，终态只回基础指令；
- * - overlay 在构思/计划阶段拒绝越界工具，且在 compose 的 auto 语义下仍然拒绝
+ * - overlay 在问/图阶段拒绝越界工具，且在 compose 的 auto 语义下仍然拒绝
  *   （overlay 优先于 PermissionManager 的基础判定）。
  */
 import { describe, expect, it } from 'vitest'
@@ -51,23 +51,23 @@ const TERMINAL_STAGES: ComposeStageEntry[] = createInitialStageTable().map(entry
 }))
 
 describe('createComposeModeInstructionProvider', () => {
-  it('旧会话无阶段表时按初始表注入构思指南', () => {
+  it('旧会话无阶段表时按初始表注入问指南', () => {
     const { store } = mockSessionStore(null)
     const provider = createComposeModeInstructionProvider(store, 'sess_1')
     const text = provider()
     expect(text).toContain(getModeInstruction('compose'))
-    expect(text).toContain('[当前阶段: 构思 — 阶段指南]')
+    expect(text).toContain('[当前阶段: 问 — 阶段指南]')
   })
 
   it('输出随阶段表切换而变化', () => {
-    const { store, setStages } = mockSessionStore(stagesWithInProgress('brainstorm'))
+    const { store, setStages } = mockSessionStore(stagesWithInProgress('interview'))
     const provider = createComposeModeInstructionProvider(store, 'sess_1')
-    expect(provider()).toContain('[当前阶段: 构思 — 阶段指南]')
+    expect(provider()).toContain('[当前阶段: 问 — 阶段指南]')
 
-    setStages(stagesWithInProgress('verify'))
+    setStages(stagesWithInProgress('inspect'))
     const next = provider()
-    expect(next).toContain('[当前阶段: 验证 — 阶段指南]')
-    expect(next).not.toContain('[当前阶段: 构思')
+    expect(next).toContain('[当前阶段: 验 — 阶段指南]')
+    expect(next).not.toContain('[当前阶段: 问')
   })
 
   it('生命周期终态后只回基础模式指令', () => {
@@ -79,28 +79,28 @@ describe('createComposeModeInstructionProvider', () => {
 })
 
 describe('createComposeStageToolPolicy', () => {
-  it('构思阶段拒绝写工具、放行只读与 stage_transition', () => {
-    const { store } = mockSessionStore(stagesWithInProgress('brainstorm'))
+  it('问阶段拒绝写工具、放行只读与 stage_transition', () => {
+    const { store } = mockSessionStore(stagesWithInProgress('interview'))
     const policy = createComposeStageToolPolicy(store, 'sess_1')
     expect(policy('write', {}).allowed).toBe(false)
-    expect(policy('write', {}).reason).toContain('构思')
+    expect(policy('write', {}).reason).toContain('问')
     expect(policy('read', {}).allowed).toBe(true)
     expect(policy('stage_transition', {}).allowed).toBe(true)
   })
 
-  it('计划阶段放行 save_plan、拒绝 bash', () => {
-    const { store } = mockSessionStore(stagesWithInProgress('plan'))
+  it('图阶段放行 save_plan、拒绝 bash', () => {
+    const { store } = mockSessionStore(stagesWithInProgress('blueprint'))
     const policy = createComposeStageToolPolicy(store, 'sess_1')
     expect(policy('save_plan', {}).allowed).toBe(true)
     expect(policy('bash', {}).allowed).toBe(false)
-    expect(policy('bash', {}).reason).toContain('计划')
+    expect(policy('bash', {}).reason).toContain('图')
   })
 
-  it('开发及以后不干预，终态后不再收放', () => {
-    const { store: implementStore } = mockSessionStore(stagesWithInProgress('implement'))
-    const implement = createComposeStageToolPolicy(implementStore, 'sess_1')
-    expect(implement('write', {}).allowed).toBe(true)
-    expect(implement('bash', {}).allowed).toBe(true)
+  it('锤及以后不干预，终态后不再收放', () => {
+    const { store: buildStore } = mockSessionStore(stagesWithInProgress('build'))
+    const build = createComposeStageToolPolicy(buildStore, 'sess_1')
+    expect(build('write', {}).allowed).toBe(true)
+    expect(build('bash', {}).allowed).toBe(true)
 
     const { store: terminalStore } = mockSessionStore(TERMINAL_STAGES)
     const terminal = createComposeStageToolPolicy(terminalStore, 'sess_1')
@@ -123,11 +123,11 @@ describe('createComposeStageToolPolicy', () => {
     const baseline = await coordinator.checkPermission('write', { path: 'a.ts' }, 'msg-1')
     expect(baseline.allowed).toBe(true)
 
-    const { store } = mockSessionStore(stagesWithInProgress('brainstorm'))
+    const { store } = mockSessionStore(stagesWithInProgress('interview'))
     coordinator.setToolAuthorizationPolicy(createComposeStageToolPolicy(store, 'sess_1'))
     const gated = await coordinator.checkPermission('write', { path: 'a.ts' }, 'msg-2')
     expect(gated.allowed).toBe(false)
-    expect(gated.reason).toContain('构思')
+    expect(gated.reason).toContain('问')
     // overlay 拒绝不再弹权限确认
     expect(events).toHaveLength(0)
 

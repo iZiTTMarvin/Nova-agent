@@ -15,7 +15,9 @@ export const BUILTIN_SUBAGENT_IDS = {
   explore: 'explore',
   code: 'code',
   review: 'review',
-  generalPurpose: 'general-purpose'
+  generalPurpose: 'general-purpose',
+  critic: 'critic',
+  inspector: 'inspector'
 } as const
 
 export type BuiltinSubagentId = (typeof BUILTIN_SUBAGENT_IDS)[keyof typeof BUILTIN_SUBAGENT_IDS]
@@ -24,7 +26,9 @@ const BUILTIN_SUBAGENT_ID_LIST: readonly BuiltinSubagentId[] = [
   BUILTIN_SUBAGENT_IDS.explore,
   BUILTIN_SUBAGENT_IDS.code,
   BUILTIN_SUBAGENT_IDS.review,
-  BUILTIN_SUBAGENT_IDS.generalPurpose
+  BUILTIN_SUBAGENT_IDS.generalPurpose,
+  BUILTIN_SUBAGENT_IDS.critic,
+  BUILTIN_SUBAGENT_IDS.inspector
 ]
 
 export function isBuiltinSubagentId(value: string): value is BuiltinSubagentId {

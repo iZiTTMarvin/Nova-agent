@@ -23,9 +23,16 @@ import type { Mode, PermissionMode } from '../../shared/session/types'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
+import {
+  COMPOSE_STAGE_IDS,
+  createInitialStageTable,
+  type ComposeStageEntry,
+  type ComposeStageId,
+  type ComposeStageStatus
+} from '../../shared/composeLifecycle'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 18
+export const CURRENT_SESSION_SCHEMA_VERSION = 19
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -339,6 +346,124 @@ export function migrateV17ToV18(data: unknown): SessionData {
   }
 }
 
+const LEGACY_COMPOSE_STAGE_MAP: Record<string, ComposeStageId> = {
+  brainstorm: 'interview',
+  plan: 'blueprint',
+  implement: 'build',
+  verify: 'inspect',
+  review: 'inspect',
+  report: 'deliver'
+}
+
+function isComposeStageStatus(value: unknown): value is ComposeStageStatus {
+  return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'skipped'
+}
+
+function resetUnsafeComposeStages(): ComposeStageEntry[] {
+  const stages = createInitialStageTable()
+  const current = stages.find(entry => entry.status === 'in_progress')
+  if (current) current.note = '旧六阶段表无法安全映射，已重置'
+  return stages
+}
+
+function meaningfulNote(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function mergeInspectEntry(
+  verify: Record<string, unknown> | undefined,
+  review: Record<string, unknown> | undefined
+): ComposeStageEntry {
+  const verifyStatus = verify && isComposeStageStatus(verify.status) ? verify.status : 'pending'
+  const reviewStatus = review && isComposeStageStatus(review.status) ? review.status : 'pending'
+  const notes = [meaningfulNote(verify?.note), meaningfulNote(review?.note)].filter(
+    (note): note is string => note !== undefined
+  )
+  const uniqueNotes = [...new Set(notes)]
+  const completedAts = [verify?.completedAt, review?.completedAt].filter(
+    (value): value is number => typeof value === 'number'
+  )
+
+  let status: ComposeStageStatus = 'pending'
+  if (verifyStatus === 'in_progress' || reviewStatus === 'in_progress') {
+    status = 'in_progress'
+  } else if (verifyStatus === 'completed' || reviewStatus === 'completed') {
+    status = 'completed'
+  } else if (verifyStatus === 'skipped' && reviewStatus === 'skipped') {
+    status = 'skipped'
+  }
+
+  const entry: ComposeStageEntry = { id: 'inspect', status }
+  if (uniqueNotes.length > 0) entry.note = uniqueNotes.join('；')
+  if (status === 'completed' || status === 'skipped') {
+    if (completedAts.length > 0) entry.completedAt = Math.max(...completedAts)
+  }
+  return entry
+}
+
+function mapLegacyComposeStages(raw: unknown): ComposeStageEntry[] {
+  if (!Array.isArray(raw)) return resetUnsafeComposeStages()
+
+  const byOldId = new Map<string, Record<string, unknown>>()
+  for (const item of raw) {
+    if (!isPlainObject(item) || typeof item.id !== 'string' || !isComposeStageStatus(item.status)) {
+      return resetUnsafeComposeStages()
+    }
+    if (!(item.id in LEGACY_COMPOSE_STAGE_MAP)) return resetUnsafeComposeStages()
+    if (byOldId.has(item.id)) return resetUnsafeComposeStages()
+    byOldId.set(item.id, item)
+  }
+
+  const mappedById = new Map<ComposeStageId, ComposeStageEntry>()
+  for (const [oldId, mappedId] of Object.entries(LEGACY_COMPOSE_STAGE_MAP)) {
+    if (mappedId === 'inspect') continue
+    const src = byOldId.get(oldId)
+    if (!src) continue
+    const entry: ComposeStageEntry = {
+      id: mappedId,
+      status: src.status as ComposeStageStatus
+    }
+    const note = meaningfulNote(src.note)
+    if (note) entry.note = note
+    if (
+      typeof src.completedAt === 'number' &&
+      (entry.status === 'completed' || entry.status === 'skipped')
+    ) {
+      entry.completedAt = src.completedAt
+    }
+    mappedById.set(mappedId, entry)
+  }
+  mappedById.set('inspect', mergeInspectEntry(byOldId.get('verify'), byOldId.get('review')))
+
+  const stages: ComposeStageEntry[] = COMPOSE_STAGE_IDS.map(
+    id => mappedById.get(id) ?? { id, status: 'pending' as const }
+  )
+
+  const inProgressCount = stages.filter(entry => entry.status === 'in_progress').length
+  const terminal =
+    inProgressCount === 0 &&
+    stages.length > 0 &&
+    stages.every(entry => entry.status === 'completed' || entry.status === 'skipped')
+  if (inProgressCount > 1 || (inProgressCount === 0 && !terminal)) {
+    return resetUnsafeComposeStages()
+  }
+  return stages
+}
+
+/** 六阶段 composeStages 映射为五阶段；无表的会话只升版本。enteredAt 缺省不补。 */
+export function migrateV18ToV19(data: unknown): SessionData {
+  const session = data as SessionData
+  const rawStages = (data as { composeStages?: unknown }).composeStages
+  if (rawStages === undefined) {
+    return { ...session, schemaVersion: 19 }
+  }
+  return {
+    ...session,
+    schemaVersion: 19,
+    composeStages: mapLegacyComposeStages(rawStages)
+  }
+}
+
 function loadDefaultPermissionMode(): PermissionMode {
   try {
     return loadNovaSettings().defaultPermissionMode
@@ -549,7 +674,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV14ToV15, // v14 → v15
   migrateV15ToV16, // v15 → v16
   migrateV16ToV17, // v16 → v17
-  migrateV17ToV18 // v17 → v18
+  migrateV17ToV18, // v17 → v18
+  migrateV18ToV19 // v18 → v19
 ]
 
 /**

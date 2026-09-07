@@ -119,11 +119,11 @@ interface SessionDataBase {
    * 由 stage_transition 工具维护；旧会话无此字段时按原行为运行，不强制进入阶段流程。
    */
   composeStages?: ComposeStageEntry[]
-  /** 审查回退开发的循环计数（代码兜底上限，旧会话缺省视为 0） */
+  /** 从「验」回退的循环计数（代码兜底上限 2，旧会话缺省视为 0） */
   composeReviewLoops?: number
   /**
-   * 计划阶段的确认门状态。缺省视为 pending——批准前 stage_transition
-   * 无法把「计划」阶段 complete 掉。save_plan 每次成功写入都会重置为 pending。
+   * 「图」阶段的确认门状态。缺省视为 pending——批准前 stage_transition
+   * 无法把「图」阶段 complete 掉。save_plan 每次成功写入都会重置为 pending。
    */
   composePlanApproval?: ComposePlanApproval
   /** 侧边栏展示的会话标题 */

@@ -16,13 +16,17 @@ import {
   COMPOSE_APPLY_STAGE_TRANSITION
 } from '../../shared/ipc/channels'
 import {
+  getComposeStageCursor,
   getPlanCompleteDenial,
+  getStageCompleteDenial,
   isComposeStageId,
   type ComposeStageAction
 } from '../../shared/composeLifecycle'
 import { getSessionStore } from '../services/SessionStoreHost'
 import { getRunCoordinator } from '../services/RunCoordinatorHost'
+import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
 import { getMainWindow } from '../mainWindowRef'
+import { createComposeStageFactsProvider } from '../agent/runtime/composeStageWiring'
 
 /** 边界校验：外部输入按 unknown 收敛为合法 ComposeStageAction，形状非法直接拒绝 */
 function parseComposeStageAction(raw: unknown): ComposeStageAction | null {
@@ -66,11 +70,25 @@ export function registerComposeStageHandler(): void {
       return { ok: false as const, error: '当前会话仍有未处理的交互请求，无法手动推进阶段。' }
     }
 
-    // 手动完成「计划」阶段 = 用户自行放行确认门：写批准留痕并推送事件后继续推进。
-    // 判定与 stage_transition 工具共用 shared 函数，工具非 auto 路径拒绝、此路径放行，
-    // 放行权差异只体现在这一处编排，不在两处复制校验。
+    // 手动完成「图」阶段 = 用户自行放行确认门：写批准留痕并推送事件后继续推进。
+    // 事实门与工具共用；计划确认门的放行权差异只体现在这一处编排。
     if (action.type === 'complete') {
       const stages = sessionStore.getComposeStages(sessionId)
+      const currentStageId = stages ? getComposeStageCursor(stages).currentStageId : null
+      if (currentStageId) {
+        let projection
+        try {
+          projection = getSubagentProjectionService()
+        } catch {
+          projection = null
+        }
+        const facts = projection
+          ? createComposeStageFactsProvider({ sessionStore, projection })(sessionId)
+          : { criticCompleted: false, inspectorPassed: false }
+        const stageDenial = getStageCompleteDenial(currentStageId, facts)
+        if (stageDenial) return { ok: false as const, error: stageDenial }
+      }
+
       const denial = getPlanCompleteDenial(
         stages,
         stages ? sessionStore.getComposePlanApproval(sessionId) : null

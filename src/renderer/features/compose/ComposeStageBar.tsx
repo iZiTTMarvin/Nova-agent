@@ -2,16 +2,16 @@
  * ComposeStageBar — compose 主会话顶部的生命周期阶段条
  *
  * 职责：
- * - 六节点横排细线串联，实时反映阶段表（当前呼吸高亮 / 完成 ✓ / 跳过 ⊘ / 待办灰）
+ * - 五节点横排细线串联，实时反映阶段表（当前呼吸高亮 / 完成 ✓ / 跳过 ⊘ / 待办灰）
  * - 点击已完成/已跳过（或带回退原因的进行中）节点展开详情：状态、原因、完成时间；
- *   计划阶段附带 active plan 标题/路径与「打开计划文件」入口
+ *   「图」阶段附带 active plan 标题/路径与「打开计划文件」入口
  * - 右端「⋯」菜单提供手动推进/回退兜底：完成需经菜单点击，跳过/回退必须填原因，
  *   统一走 compose:apply-stage-transition（与 stage_transition 工具同一套校验）；
  *   阶段表只由 main 推送的 agent:compose-stages-updated 更新，本地不做乐观写
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  isComposeReviewReturnLimited,
+  isComposeInspectReturnLimited,
   type ComposeStageAction,
   type ComposeStageId,
   type ComposeStageStatus
@@ -53,18 +53,18 @@ function formatStageTime(ts: number): string {
   }).format(new Date(ts))
 }
 
-/** 节点是否可展开详情：完成/跳过必有记录；进行中仅在携带回退原因或有开发进度时可展开 */
+/** 节点是否可展开详情：完成/跳过必有记录；进行中仅在携带回退原因或有锤进度时可展开 */
 function canExpandNode(node: StageNodeProjection): boolean {
   return (
     node.status === 'completed' ||
     node.status === 'skipped' ||
     !!node.note ||
-    (node.id === 'implement' && !!node.progress)
+    (node.id === 'build' && !!node.progress)
   )
 }
 
 function nodeLabel(node: StageNodeProjection): string {
-  // 清单被清空（total=0）时不拼进度，避免出现「开发 ● 0/0」这种噪声标签
+  // 清单被清空（total=0）时不拼进度，避免出现「锤 ● 0/0」这种噪声标签
   return node.progress && node.progress.total > 0
     ? `${node.label} ● ${node.progress.completed}/${node.progress.total}`
     : node.label
@@ -87,11 +87,11 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
   const stages = useComposeStageStore((state) => selectSessionComposeStages(state, sessionId))
   const reviewLoops = useComposeStageStore((state) => selectSessionComposeReviewLoops(state, sessionId))
   const todoState = useTodoStore((state) => selectSessionTodoState(state, sessionId))
-  const implementProgress = todoState ? { completed: todoState.completed, total: todoState.total } : undefined
-  const projection = projectStageBar(stages, implementProgress)
-  // 审查阶段的回退受修复-复审循环上限约束：入口预禁用，后端兜底拒绝保持不变
-  const reviewReturnLimited = useMemo(
-    () => isComposeReviewReturnLimited(stages ?? [], reviewLoops),
+  const buildProgress = todoState ? { completed: todoState.completed, total: todoState.total } : undefined
+  const projection = projectStageBar(stages, buildProgress)
+  // 「验」的回退受循环上限约束：入口预禁用，后端兜底拒绝保持不变
+  const inspectReturnLimited = useMemo(
+    () => isComposeInspectReturnLimited(stages ?? [], reviewLoops),
     [stages, reviewLoops]
   )
 
@@ -121,7 +121,7 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
   }, [sessionId, closeOverlays])
 
   useEffect(() => {
-    if (expandedStageId !== 'plan') return
+    if (expandedStageId !== 'blueprint') return
     let cancelled = false
     setPlanLoading(true)
     setPlanDoc(null)
@@ -295,8 +295,8 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
             type="button"
             role="menuitem"
             className="compose-stage-bar__menu-item"
-            disabled={projection.returnTargets.length === 0 || reviewReturnLimited}
-            title={reviewReturnLimited
+            disabled={projection.returnTargets.length === 0 || inspectReturnLimited}
+            title={inspectReturnLimited
               ? '已达审阅修改上限'
               : projection.returnTargets.length > 0 ? '回退到之前的阶段（需填写原因）' : '当前没有可回退的阶段'}
             onClick={() => {
@@ -388,7 +388,7 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
               完成于 {formatStageTime(expandedNode.completedAt)}
             </p>
           )}
-          {expandedNode.id === 'plan' && (
+          {expandedNode.id === 'blueprint' && (
             <div className="compose-stage-bar__plan">
               {planLoading && <span className="compose-stage-bar__plan-hint">正在读取计划…</span>}
               {!planLoading && planDoc && (
@@ -410,7 +410,7 @@ export const ComposeStageBar: React.FC<ComposeStageBarProps> = ({
               {planError && <span className="compose-stage-bar__plan-error">{planError}</span>}
             </div>
           )}
-          {expandedNode.id === 'implement' && (
+          {expandedNode.id === 'build' && (
             <div className="compose-stage-bar__todos">
               {todoState && todoState.todos.length > 0 ? (
                 todoState.todos.map((todo, index) => <TodoItemRow key={`${todo.content}-${index}`} todo={todo} />)

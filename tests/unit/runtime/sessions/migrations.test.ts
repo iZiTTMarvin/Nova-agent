@@ -383,7 +383,7 @@ describe('migrateSessionData', () => {
     expect(migrated.kind).toBe('primary')
   })
 
-  it('v12 会话含阶段表与循环计数：迁移到当前版本后原样保留', () => {
+  it('v12 会话含阶段表与循环计数：迁移到当前版本后映射为五阶段表', () => {
     const v12 = {
       schemaVersion: 12,
       kind: 'primary',
@@ -407,7 +407,13 @@ describe('migrateSessionData', () => {
 
     const migrated = migrateSessionData(v12)
     expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
-    expect(migrated.composeStages).toEqual(v12.composeStages)
+    expect(migrated.composeStages).toEqual([
+      { id: 'interview', status: 'completed', completedAt: 1 },
+      { id: 'blueprint', status: 'completed', completedAt: 2 },
+      { id: 'build', status: 'in_progress', note: '复审后返工' },
+      { id: 'inspect', status: 'pending' },
+      { id: 'deliver', status: 'pending' }
+    ])
     expect(migrated.composeReviewLoops).toBe(1)
   })
 
@@ -570,15 +576,15 @@ describe('migrateSessionData', () => {
       subagent
     })
 
-    expect(primary).toMatchObject({ schemaVersion: 18, mode: 'plan' })
+    expect(primary).toMatchObject({ schemaVersion: 19, mode: 'plan' })
     expect(child).toMatchObject({
-      schemaVersion: 18,
+      schemaVersion: 19,
       mode: 'default',
       messages,
       currentLeafId: 'm1',
       subagent
     })
-    expect(historicalComposeChild).toMatchObject({ schemaVersion: 18, mode: 'compose' })
+    expect(historicalComposeChild).toMatchObject({ schemaVersion: 19, mode: 'compose' })
   })
 
   it('完全访问持久值按当前 schema 原样恢复', () => {
@@ -597,6 +603,195 @@ describe('migrateSessionData', () => {
     })
 
     expect(migrated.permissionMode).toBe('full_access')
+  })
+
+  it('v18 六阶段表标准映射为五阶段，且不回填 enteredAt', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: 18,
+      kind: 'primary',
+      id: 'sess_v18_standard',
+      workspaceRoot: '/tmp/ws',
+      mode: 'compose',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      composeStages: [
+        { id: 'brainstorm', status: 'completed', completedAt: 10 },
+        { id: 'plan', status: 'in_progress', note: '正在写方案' },
+        { id: 'implement', status: 'pending' },
+        { id: 'verify', status: 'pending' },
+        { id: 'review', status: 'pending' },
+        { id: 'report', status: 'pending' }
+      ]
+    })
+
+    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.composeStages).toEqual([
+      { id: 'interview', status: 'completed', completedAt: 10 },
+      { id: 'blueprint', status: 'in_progress', note: '正在写方案' },
+      { id: 'build', status: 'pending' },
+      { id: 'inspect', status: 'pending' },
+      { id: 'deliver', status: 'pending' }
+    ])
+    expect(migrated.composeStages?.every(entry => entry.enteredAt === undefined)).toBe(true)
+  })
+
+  it('v18 verify completed + review in_progress → inspect in_progress', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: 18,
+      kind: 'primary',
+      id: 'sess_v18_inspect_progress',
+      workspaceRoot: '/tmp/ws',
+      mode: 'compose',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      composeStages: [
+        { id: 'brainstorm', status: 'completed', completedAt: 1 },
+        { id: 'plan', status: 'completed', completedAt: 2 },
+        { id: 'implement', status: 'completed', completedAt: 3 },
+        { id: 'verify', status: 'completed', completedAt: 4 },
+        { id: 'review', status: 'in_progress', note: '正在审查' },
+        { id: 'report', status: 'pending' }
+      ]
+    })
+
+    expect(migrated.composeStages?.find(s => s.id === 'inspect')).toEqual({
+      id: 'inspect',
+      status: 'in_progress',
+      note: '正在审查'
+    })
+    expect(migrated.composeStages?.filter(s => s.status === 'in_progress')).toHaveLength(1)
+  })
+
+  it('v18 verify completed + review completed → inspect completed，completedAt 取较晚者', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: 18,
+      kind: 'primary',
+      id: 'sess_v18_inspect_done',
+      workspaceRoot: '/tmp/ws',
+      mode: 'compose',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      composeStages: [
+        { id: 'brainstorm', status: 'completed', completedAt: 1 },
+        { id: 'plan', status: 'completed', completedAt: 2 },
+        { id: 'implement', status: 'completed', completedAt: 3 },
+        { id: 'verify', status: 'completed', completedAt: 40 },
+        { id: 'review', status: 'completed', completedAt: 50, note: '审查通过' },
+        { id: 'report', status: 'in_progress' }
+      ]
+    })
+
+    expect(migrated.composeStages?.find(s => s.id === 'inspect')).toEqual({
+      id: 'inspect',
+      status: 'completed',
+      note: '审查通过',
+      completedAt: 50
+    })
+    expect(migrated.composeStages?.find(s => s.id === 'deliver')).toMatchObject({
+      id: 'deliver',
+      status: 'in_progress'
+    })
+  })
+
+  it('v18 verify in_progress + review pending → inspect in_progress', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: 18,
+      kind: 'primary',
+      id: 'sess_v18_verify_progress',
+      workspaceRoot: '/tmp/ws',
+      mode: 'compose',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      composeStages: [
+        { id: 'brainstorm', status: 'completed', completedAt: 1 },
+        { id: 'plan', status: 'completed', completedAt: 2 },
+        { id: 'implement', status: 'completed', completedAt: 3 },
+        { id: 'verify', status: 'in_progress', note: '正在跑验证' },
+        { id: 'review', status: 'pending' },
+        { id: 'report', status: 'pending' }
+      ]
+    })
+
+    expect(migrated.composeStages?.find(s => s.id === 'inspect')).toEqual({
+      id: 'inspect',
+      status: 'in_progress',
+      note: '正在跑验证'
+    })
+  })
+
+  it('v18 映射后多个 in_progress 时整表重置并写入说明 note', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: 18,
+      kind: 'primary',
+      id: 'sess_v18_unsafe',
+      workspaceRoot: '/tmp/ws',
+      mode: 'compose',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      composeStages: [
+        { id: 'brainstorm', status: 'completed', completedAt: 1 },
+        { id: 'plan', status: 'completed', completedAt: 2 },
+        { id: 'implement', status: 'in_progress' },
+        { id: 'verify', status: 'in_progress' },
+        { id: 'review', status: 'pending' },
+        { id: 'report', status: 'pending' }
+      ]
+    })
+
+    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.composeStages?.map(s => s.id)).toEqual([
+      'interview',
+      'blueprint',
+      'build',
+      'inspect',
+      'deliver'
+    ])
+    expect(migrated.composeStages?.filter(s => s.status === 'in_progress')).toHaveLength(1)
+    expect(migrated.composeStages?.[0]).toMatchObject({
+      id: 'interview',
+      status: 'in_progress',
+      note: '旧六阶段表无法安全映射，已重置'
+    })
+    expect(migrated.composeStages?.slice(1).every(s => s.status === 'pending')).toBe(true)
+  })
+
+  it('v18 无 composeStages 只升版本，不造阶段表', () => {
+    const migrated = migrateSessionData({
+      schemaVersion: 18,
+      kind: 'primary',
+      id: 'sess_v18_bare',
+      workspaceRoot: '/tmp/ws',
+      mode: 'default',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.composeStages).toBeUndefined()
   })
 
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {

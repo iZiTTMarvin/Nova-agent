@@ -6,8 +6,8 @@ import {
   type ComposeStageId
 } from './types'
 
-/** 修复-复审循环上限：审查阶段发起的回退放行次数（与阶段指南口径一致，applyStageTransition 兜底拒绝） */
-export const COMPOSE_MAX_REVIEW_LOOPS = 3
+/** 从「验」回退的次数上限（与阶段指南口径一致，applyStageTransition 兜底拒绝） */
+export const COMPOSE_MAX_INSPECT_LOOPS = 2
 
 export interface ComposeStageCursor {
   /** 当前进行中阶段；终态或异常表为 null */
@@ -41,11 +41,12 @@ export function getComposeStageCursor(
   }
 }
 
-export function createInitialStageTable(): ComposeStageEntry[] {
-  return COMPOSE_STAGE_IDS.map((id, index) => ({
-    id,
-    status: index === 0 ? 'in_progress' : 'pending'
-  }))
+export function createInitialStageTable(now = Date.now()): ComposeStageEntry[] {
+  return COMPOSE_STAGE_IDS.map((id, index) =>
+    index === 0
+      ? { id, status: 'in_progress' as const, enteredAt: now }
+      : { id, status: 'pending' as const }
+  )
 }
 
 function cloneStages(stages: ComposeStageEntry[]): ComposeStageEntry[] {
@@ -67,12 +68,22 @@ function pendingEntry(id: ComposeStageEntry['id']): ComposeStageEntry {
   return { id, status: 'pending' }
 }
 
+function inProgressEntry(
+  id: ComposeStageId,
+  now: number,
+  extra?: { note?: string }
+): ComposeStageEntry {
+  const entry: ComposeStageEntry = { id, status: 'in_progress', enteredAt: now }
+  if (extra?.note !== undefined) entry.note = extra.note
+  return entry
+}
+
 /**
  * 对阶段表应用一次转换。current 为空时先物化初始表（懒创建）。
  * 非法转换返回中文可读原因，不抛异常。
  *
- * reviewLoops 为修复-复审循环计数；审查阶段发出的回退放行时 +1，
- * 其余转换原样返回，超 3 次拒绝（代码兜底，与阶段指南口径一致）。
+ * reviewLoops 为从「验」回退的循环计数；验阶段发出的回退放行时 +1，
+ * 其余转换原样返回，超上限拒绝（代码兜底，与阶段指南口径一致）。
  */
 export function applyStageTransition(
   current: ComposeStageEntry[] | null | undefined,
@@ -80,7 +91,7 @@ export function applyStageTransition(
   now: number,
   reviewLoops?: number
 ): { ok: true; stages: ComposeStageEntry[]; reviewLoops: number } | { ok: false; error: string } {
-  const stages = current == null ? createInitialStageTable() : cloneStages(current)
+  const stages = current == null ? createInitialStageTable(now) : cloneStages(current)
   const loops = reviewLoops ?? 0
   const inProgressCount = stages.filter(entry => entry.status === 'in_progress').length
   if (inProgressCount > 1) {
@@ -104,10 +115,7 @@ export function applyStageTransition(
       completedAt: now
     }
     if (inProgressIdx + 1 < stages.length) {
-      stages[inProgressIdx + 1] = {
-        id: stages[inProgressIdx + 1].id,
-        status: 'in_progress'
-      }
+      stages[inProgressIdx + 1] = inProgressEntry(stages[inProgressIdx + 1].id, now)
     }
     return { ok: true, stages, reviewLoops: loops }
   }
@@ -128,10 +136,7 @@ export function applyStageTransition(
       completedAt: now
     }
     if (inProgressIdx + 1 < stages.length) {
-      stages[inProgressIdx + 1] = {
-        id: stages[inProgressIdx + 1].id,
-        status: 'in_progress'
-      }
+      stages[inProgressIdx + 1] = inProgressEntry(stages[inProgressIdx + 1].id, now)
     }
     return { ok: true, stages, reviewLoops: loops }
   }
@@ -151,13 +156,13 @@ export function applyStageTransition(
     return { ok: false, error: '只能回退到当前进行中阶段之前的阶段' }
   }
 
-  // 审查阶段发出的任何回退都计为一次修复-复审返工（不限于回退开发，
-  // 否则经回退计划等路径可绕开上限无限重审）：超上限拒绝并让主 Agent 停住向用户说明
-  const isReviewReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'review'
-  if (isReviewReturn && loops >= COMPOSE_MAX_REVIEW_LOOPS) {
+  // 「验」发出的任何回退都计为一次返工（不限于回退「锤」，
+  // 否则经回退「图」等路径可绕开上限无限重验）：超上限拒绝并让主 Agent 停住向用户说明
+  const isInspectReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'inspect'
+  if (isInspectReturn && loops >= COMPOSE_MAX_INSPECT_LOOPS) {
     return {
       ok: false,
-      error: `修复-复审循环已达上限（${COMPOSE_MAX_REVIEW_LOOPS} 次）。请向用户说明审查结论与阻塞点，停在审查阶段等待用户决定。`
+      error: `从「验」回退已达上限（${COMPOSE_MAX_INSPECT_LOOPS} 次）。请向用户说明核验结论与阻塞点，停在「验」等待用户决定，不要再回退到「锤」。`
     }
   }
 
@@ -165,23 +170,19 @@ export function applyStageTransition(
   for (let i = targetIdx + 1; i <= resetUntil; i++) {
     stages[i] = pendingEntry(stages[i].id)
   }
-  stages[targetIdx] = {
-    id: stages[targetIdx].id,
-    status: 'in_progress',
-    note: reason
-  }
-  return { ok: true, stages, reviewLoops: isReviewReturn ? loops + 1 : loops }
+  stages[targetIdx] = inProgressEntry(stages[targetIdx].id, now, { note: reason })
+  return { ok: true, stages, reviewLoops: isInspectReturn ? loops + 1 : loops }
 }
 
 /**
- * 审查阶段发起的回退是否已达循环上限（仅当前阶段为 review 时可能受限）。
+ * 「验」发起的回退是否已达循环上限（仅当前阶段为 inspect 时可能受限）。
  * 与 applyStageTransition 的兜底拒绝口径共用同一常量，UI 据此预禁用回退入口。
  */
-export function isComposeReviewReturnLimited(
+export function isComposeInspectReturnLimited(
   stages: ReadonlyArray<Pick<ComposeStageEntry, 'id' | 'status'>>,
   reviewLoops?: number
 ): boolean {
   const inProgressIdx = stages.findIndex(entry => entry.status === 'in_progress')
-  const isReviewReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'review'
-  return isReviewReturn && (reviewLoops ?? 0) >= COMPOSE_MAX_REVIEW_LOOPS
+  const isInspectReturn = inProgressIdx >= 0 && stages[inProgressIdx].id === 'inspect'
+  return isInspectReturn && (reviewLoops ?? 0) >= COMPOSE_MAX_INSPECT_LOOPS
 }

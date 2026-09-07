@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import type { SubAgentSpec } from '../../../src/shared/settings/types'
+import { BUILTIN_SUBAGENT_IDS } from '../../../src/shared/subagents/presetIdentity'
 
 const { state, handlers } = vi.hoisted(() => ({
   state: { novaHome: '', workspace: '' },
@@ -65,7 +66,9 @@ describe('subagentsHandler IPC（global/project 层级语义）', () => {
       diagnostics: unknown[]
       tools: Array<{ name: string; effects: string[]; selectable: boolean }>
     }>('subagents:list', {})
-    expect(result.items.map(i => i.id).sort()).toEqual(['code', 'explore', 'general-purpose', 'review'])
+    expect(result.items.map(i => i.id).sort()).toEqual(
+      Object.values(BUILTIN_SUBAGENT_IDS).slice().sort()
+    )
     expect(result.items.every(i => i.builtin)).toBe(true)
     expect(result.diagnostics).toEqual([])
     expect(result.tools.find(tool => tool.name === 'read')).toEqual({

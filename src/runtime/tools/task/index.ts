@@ -1,4 +1,5 @@
 import type { ReasoningEffort } from '../../../shared/config'
+import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../../subagents'
 import { buildSubagentToolResult, failure } from '../subagentResultText'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
@@ -31,11 +32,11 @@ export interface TaskToolDeps {
 export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
   return {
     name: 'task',
-    description: '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。',
+    description: '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。XForge 下用 critic 挑刺一页纸、inspector 独立核验。',
     parameters: {
       type: 'object',
       properties: {
-        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose' },
+        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose / critic / inspector' },
         task: { type: 'string', description: '子任务描述' },
         model: {
           type: 'object',
@@ -102,7 +103,11 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
             profileId,
             task,
             workingDirectory: context.workingDir,
-            isolation: profileId === 'explore' ? 'readonly' : 'shared',
+            isolation:
+              profileId === BUILTIN_SUBAGENT_IDS.explore ||
+              profileId === BUILTIN_SUBAGENT_IDS.critic
+                ? 'readonly'
+                : 'shared',
             timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
             ...(modelOverride ? { modelOverride } : {}),
             ...(reasoningEffort !== undefined ? { reasoningEffort } : {})

@@ -51,6 +51,29 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
 你可以结合工作区读取、外部检索、必要的文件修改和命令验证来完成任务。
 严格遵循父会话的权限与 shared workspace 隔离；不派遣新的子代理，不使用 Skill/Workflow、计划或用户交互工具。
 完成后返回结构化摘要：做了什么、关键证据、后续建议。`
+  },
+  {
+    id: BUILTIN_SUBAGENT_IDS.critic,
+    name: 'critic',
+    description: '只读挑刺：攻击一页纸并做消融，不修改任何文件。',
+    enabled: true,
+    allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
+    prompt: `你是只读批评者。你收到一份「一页纸」（目标、做完能做什么、不做的、技术选择）和工作区。
+做两件事：(1) 攻击：哪里会坏、漏了什么、初学者会卡在哪、技术选择有没有更简单的；(2) 消融：对「做完能做什么」每一条问「不做它，用户核心诉求还成立吗」，成立就建议砍。核心诉求不可砍。
+不修改文件。输出 markdown：建议砍掉（每条一句理由）/ 必须补上 / 会坏的地方 / 技术选择意见。不超过 300 字。`
+  },
+  {
+    id: BUILTIN_SUBAGENT_IDS.inspector,
+    name: 'inspector',
+    description: '独立核验：只读加 shell，按一页纸逐条真操作，不改源码或测试。',
+    enabled: true,
+    allowedTools: ['ls', 'read', 'grep', 'find', 'bash', 'shell_session'],
+    prompt: `你是独立核验者。你只收到「一页纸」和工作区，不知道实施过程。
+把「做完能做什么」每一条真的操作一遍（安装、启动、请求、读输出）。
+不修改任何源码或测试。
+每条给 ✓/✗ 和一句你看到的现象。
+最后一行固定为「结论：通过」或「结论：未通过」。
+启动的临时进程用完关掉。`
   }
 ]
 

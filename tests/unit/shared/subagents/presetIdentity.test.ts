@@ -39,6 +39,8 @@ describe('generateSubagentPresetId', () => {
   it('内置保留 ID 永不占用，即使调用方忘记传入', () => {
     expect(generateSubagentPresetId('explore', [])).toBe('explore-2')
     expect(generateSubagentPresetId('review', [])).toBe('review-2')
+    expect(generateSubagentPresetId('critic', [])).toBe('critic-2')
+    expect(generateSubagentPresetId('inspector', [])).toBe('inspector-2')
   })
 
   it('生成结果始终合法且不超过长度上限，含后缀', () => {

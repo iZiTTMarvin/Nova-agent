@@ -106,7 +106,7 @@ export type AgentEvent =
       type: 'compose_stages_updated'
       sessionId: string
       stages: ComposeStageEntry[]
-      /** 修复-复审循环计数随事件透出，renderer 据此预禁用已达上限的回退入口 */
+      /** 从「验」回退的循环计数随事件透出，renderer 据此预禁用已达上限的回退入口 */
       reviewLoops: number
     }
   | {

@@ -49,6 +49,33 @@ describe('SubAgentConfig', () => {
     expect(names).toContain('explore')
     expect(names).toContain('code')
     expect(names).toContain('review')
+    expect(names).toContain('critic')
+    expect(names).toContain('inspector')
+  })
+
+  it('内置 critic 子代理为只读挑刺 profile', () => {
+    const spec = getSubAgentSpec('critic')
+    expect(spec?.description).toMatch(/挑刺|消融/)
+    expect(spec?.allowedTools).toEqual(['ls', 'read', 'grep', 'find', 'code_context'])
+    expect(spec?.allowedTools.some(t => t === 'edit' || t === 'write' || t === 'bash')).toBe(false)
+    expect(spec?.prompt).toContain('不修改文件')
+    expect(spec?.prompt).toMatch(/建议砍掉/)
+    expect(spec?.prompt).toMatch(/必须补上/)
+    expect(spec?.prompt).toMatch(/会坏的地方/)
+    expect(spec?.prompt).toMatch(/技术选择意见/)
+    expect(spec?.prompt).toMatch(/300/)
+  })
+
+  it('内置 inspector 子代理为独立核验 profile', () => {
+    const spec = getSubAgentSpec('inspector')
+    expect(spec?.description).toMatch(/核验/)
+    expect(spec?.allowedTools).toEqual(['ls', 'read', 'grep', 'find', 'bash', 'shell_session'])
+    expect(spec?.allowedTools).toContain('bash')
+    expect(spec?.allowedTools).not.toContain('edit')
+    expect(spec?.allowedTools).not.toContain('write')
+    expect(spec?.prompt).toMatch(/不修改任何源码/)
+    expect(spec?.prompt).toContain('结论：通过')
+    expect(spec?.prompt).toContain('结论：未通过')
   })
 
   it('BUILTIN_SUBAGENTS 至少 3 个', () => {

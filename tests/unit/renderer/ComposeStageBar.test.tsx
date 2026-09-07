@@ -21,12 +21,11 @@ function seedTodos(todos: TodoItem[], sessionId = 'sess_1'): void {
 
 function midFlowStages(): ComposeStageEntry[] {
   return [
-    { id: 'brainstorm', status: 'completed', completedAt: 1_700_000_000_000 },
-    { id: 'plan', status: 'skipped', note: '需求简单，直接进入开发', completedAt: 1_700_000_060_000 },
-    { id: 'implement', status: 'in_progress' },
-    { id: 'verify', status: 'pending' },
-    { id: 'review', status: 'pending' },
-    { id: 'report', status: 'pending' }
+    { id: 'interview', status: 'completed', completedAt: 1_700_000_000_000 },
+    { id: 'blueprint', status: 'skipped', note: '需求简单，直接进入开发', completedAt: 1_700_000_060_000 },
+    { id: 'build', status: 'in_progress' },
+    { id: 'inspect', status: 'pending' },
+    { id: 'deliver', status: 'pending' }
   ]
 }
 
@@ -59,24 +58,24 @@ describe('ComposeStageBar', () => {
     })
   })
 
-  it('渲染六个中文阶段名', () => {
+  it('渲染五个中文阶段名', () => {
     seedStages(null)
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
     const text = renderer.container.textContent ?? ''
-    for (const label of ['构思', '计划', '开发', '验证', '审查', '收尾']) {
+    for (const label of ['问', '图', '锤', '验', '交']) {
       expect(text).toContain(label)
     }
-    expect(renderer.container.querySelectorAll('.compose-stage-bar__node')).toHaveLength(6)
+    expect(renderer.container.querySelectorAll('.compose-stage-bar__node')).toHaveLength(5)
     renderer.unmount()
   })
 
-  it('会话无阶段表时按初始表投影：构思为当前呼吸态节点（aria-current=step）', () => {
+  it('会话无阶段表时按初始表投影：问为当前呼吸态节点（aria-current=step）', () => {
     seedStages(null)
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
     const current = queryNode(renderer.container, 'in_progress')
     expect(current).not.toBeNull()
     expect(current!.getAttribute('aria-current')).toBe('step')
-    expect(current!.textContent).toContain('构思')
+    expect(current!.textContent).toContain('问')
     renderer.unmount()
   })
 
@@ -102,7 +101,7 @@ describe('ComposeStageBar', () => {
     click(queryNode(renderer.container, 'completed')!)
     const detail = renderer.container.querySelector('.compose-stage-bar__detail')
     expect(detail).not.toBeNull()
-    expect(detail!.textContent).toContain('构思')
+    expect(detail!.textContent).toContain('问')
     expect(detail!.textContent).toContain('已完成')
     expect(detail!.textContent).toContain('完成于')
 
@@ -191,7 +190,7 @@ describe('ComposeStageBar', () => {
     click(skipItem)
 
     const form = renderer.container.querySelector('.compose-stage-bar__form')!
-    expect(form.textContent).toContain('跳过「开发」')
+    expect(form.textContent).toContain('跳过「锤」')
 
     const confirm = Array.from(form.querySelectorAll('button')).find((btn) =>
       btn.textContent === '确认跳过'
@@ -224,9 +223,9 @@ describe('ComposeStageBar', () => {
     click(returnItem)
 
     const form = renderer.container.querySelector('.compose-stage-bar__form')!
-    // 当前为开发，可回退目标只有构思/计划
+    // 当前为锤，可回退目标只有问/图
     const targets = Array.from(form.querySelectorAll('.compose-stage-bar__form-target'))
-    expect(targets.map((target) => target.textContent)).toEqual(['构思', '计划'])
+    expect(targets.map((target) => target.textContent)).toEqual(['问', '图'])
 
     click(targets[1])
     typeInto(form.querySelector('input')!, '方案有遗漏，回到计划补充')
@@ -241,7 +240,7 @@ describe('ComposeStageBar', () => {
 
     expect(mockInvoke).toHaveBeenCalledWith('compose:apply-stage-transition', {
       sessionId: 'sess_1',
-      action: { type: 'return', targetStage: 'plan', reason: '方案有遗漏，回到计划补充' }
+      action: { type: 'return', targetStage: 'blueprint', reason: '方案有遗漏，回到计划补充' }
     })
     renderer.unmount()
   })
@@ -279,12 +278,11 @@ describe('ComposeStageBar', () => {
 
   it('终态时完成/跳过菜单项禁用，回退仍可用', () => {
     seedStages([
-      { id: 'brainstorm', status: 'completed', completedAt: 1 },
-      { id: 'plan', status: 'completed', completedAt: 2 },
-      { id: 'implement', status: 'completed', completedAt: 3 },
-      { id: 'verify', status: 'skipped', note: '无代码改动', completedAt: 4 },
-      { id: 'review', status: 'completed', completedAt: 5 },
-      { id: 'report', status: 'completed', completedAt: 6 }
+      { id: 'interview', status: 'completed', completedAt: 1 },
+      { id: 'blueprint', status: 'completed', completedAt: 2 },
+      { id: 'build', status: 'completed', completedAt: 3 },
+      { id: 'inspect', status: 'skipped', note: '无代码改动', completedAt: 4 },
+      { id: 'deliver', status: 'completed', completedAt: 5 }
     ])
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
     expect(queryNode(renderer.container, 'in_progress')).toBeNull()
@@ -300,7 +298,7 @@ describe('ComposeStageBar', () => {
     renderer.unmount()
   })
 
-  it('开发节点聚合会话 todo 进度，标签显示为「开发 ● 完成/总数」', () => {
+  it('锤节点聚合会话 todo 进度，标签显示为「锤 ● 完成/总数」', () => {
     seedStages(midFlowStages())
     seedTodos([
       { content: '接入登录接口', status: 'completed', priority: 'high' },
@@ -309,13 +307,13 @@ describe('ComposeStageBar', () => {
     ])
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
 
-    const implementNode = queryNode(renderer.container, 'in_progress')
-    expect(implementNode).not.toBeNull()
-    expect(implementNode!.textContent).toContain('开发 ● 1/3')
+    const buildNode = queryNode(renderer.container, 'in_progress')
+    expect(buildNode).not.toBeNull()
+    expect(buildNode!.textContent).toContain('锤 ● 1/3')
     renderer.unmount()
   })
 
-  it('点击开发节点展开任务清单明细', () => {
+  it('点击锤节点展开任务清单明细', () => {
     seedStages(midFlowStages())
     seedTodos([
       { content: '接入登录接口', status: 'completed', priority: 'high' },
@@ -333,7 +331,7 @@ describe('ComposeStageBar', () => {
     renderer.unmount()
   })
 
-  it('开发节点没有任务清单时展示提示文案', () => {
+  it('锤节点没有任务清单时展示提示文案', () => {
     seedStages(midFlowStages())
     seedTodos([])
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
@@ -345,20 +343,19 @@ describe('ComposeStageBar', () => {
   })
 })
 
-describe('ComposeStageBar 修复-复审循环上限', () => {
-  function reviewInProgressStages(): ComposeStageEntry[] {
+describe('ComposeStageBar 从验回退循环上限', () => {
+  function inspectInProgressStages(): ComposeStageEntry[] {
     return [
-      { id: 'brainstorm', status: 'completed', completedAt: 1 },
-      { id: 'plan', status: 'completed', completedAt: 2 },
-      { id: 'implement', status: 'completed', completedAt: 3 },
-      { id: 'verify', status: 'completed', completedAt: 4 },
-      { id: 'review', status: 'in_progress' },
-      { id: 'report', status: 'pending' }
+      { id: 'interview', status: 'completed', completedAt: 1 },
+      { id: 'blueprint', status: 'completed', completedAt: 2 },
+      { id: 'build', status: 'completed', completedAt: 3 },
+      { id: 'inspect', status: 'in_progress' },
+      { id: 'deliver', status: 'pending' }
     ]
   }
 
   function openReturnItem(reviewLoops: number): { renderer: ReturnType<typeof renderDom>; item: HTMLButtonElement } {
-    seedStages(reviewInProgressStages())
+    seedStages(inspectInProgressStages())
     useComposeStageStore.getState().setSessionReviewLoops('sess_1', reviewLoops)
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)
     click(renderer.container.querySelector('.compose-stage-bar__menu-trigger')!)
@@ -368,19 +365,19 @@ describe('ComposeStageBar 修复-复审循环上限', () => {
     return { renderer, item }
   }
 
-  it('审查阶段计数达上限时回退入口预禁用并提示', () => {
-    const { renderer, item } = openReturnItem(3)
+  it('验阶段计数达上限时回退入口预禁用并提示', () => {
+    const { renderer, item } = openReturnItem(2)
     expect(item.disabled).toBe(true)
     expect(item.getAttribute('title')).toBe('已达审阅修改上限')
     renderer.unmount()
   })
 
-  it('未达上限时回退入口可用；非审查阶段不受计数影响', () => {
-    const below = openReturnItem(2)
+  it('未达上限时回退入口可用；非验阶段不受计数影响', () => {
+    const below = openReturnItem(1)
     expect(below.item.disabled).toBe(false)
     below.renderer.unmount()
 
-    // 计数高但当前不是审查阶段（如开发进行中）：上限只约束审查阶段发起的回退
+    // 计数高但当前不是验阶段（如锤进行中）：上限只约束验阶段发起的回退
     seedStages(midFlowStages())
     useComposeStageStore.getState().setSessionReviewLoops('sess_1', 5)
     const renderer = renderDom(<ComposeStageBar sessionId="sess_1" interactionLocked={false} />)

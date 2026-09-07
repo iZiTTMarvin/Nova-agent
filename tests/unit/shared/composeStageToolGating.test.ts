@@ -25,78 +25,78 @@ const READONLY_TOOLS = [
 const NON_READONLY_TOOLS = ['edit', 'write', 'bash', 'save_plan', 'task', 'invoke_skill']
 
 describe('compose 阶段工具门禁', () => {
-  describe('构思阶段：仅放行只读工具', () => {
+  describe('问阶段：仅放行只读工具', () => {
     it.each(READONLY_TOOLS)('放行 %s', (toolName) => {
-      expect(getComposeStageToolDenial('brainstorm', toolName)).toBeNull()
+      expect(getComposeStageToolDenial('interview', toolName)).toBeNull()
     })
 
     it.each(NON_READONLY_TOOLS)('拒绝 %s', (toolName) => {
-      const denial = getComposeStageToolDenial('brainstorm', toolName)
+      const denial = getComposeStageToolDenial('interview', toolName)
       expect(denial).not.toBeNull()
-      expect(denial).toContain('构思')
+      expect(denial).toContain('问')
       expect(denial).toContain(toolName)
     })
 
     it('未知工具一律拒绝', () => {
-      const denial = getComposeStageToolDenial('brainstorm', 'some_future_tool')
+      const denial = getComposeStageToolDenial('interview', 'some_future_tool')
       expect(denial).not.toBeNull()
-      expect(denial).toContain('构思')
+      expect(denial).toContain('问')
     })
 
     it('拒绝文案说明如何解锁', () => {
-      const denial = getComposeStageToolDenial('brainstorm', 'write')
+      const denial = getComposeStageToolDenial('interview', 'write')
       expect(denial).toContain('stage_transition')
-      expect(denial).toContain('确认')
+      expect(denial).toContain('访谈')
+      expect(denial).toContain('一页纸')
     })
   })
 
-  describe('计划阶段：只读 + save_plan', () => {
+  describe('图阶段：只读 + save_plan', () => {
     it.each(READONLY_TOOLS)('放行 %s', (toolName) => {
-      expect(getComposeStageToolDenial('plan', toolName)).toBeNull()
+      expect(getComposeStageToolDenial('blueprint', toolName)).toBeNull()
     })
 
     it('放行 save_plan（计划文档是唯一允许的文件副作用）', () => {
-      expect(getComposeStageToolDenial('plan', 'save_plan')).toBeNull()
+      expect(getComposeStageToolDenial('blueprint', 'save_plan')).toBeNull()
     })
 
     it.each(['edit', 'write', 'bash', 'task', 'invoke_skill'])('拒绝 %s', (toolName) => {
-      const denial = getComposeStageToolDenial('plan', toolName)
+      const denial = getComposeStageToolDenial('blueprint', toolName)
       expect(denial).not.toBeNull()
-      expect(denial).toContain('计划')
+      expect(denial).toContain('图')
       expect(denial).toContain(toolName)
     })
 
     it('未知工具一律拒绝', () => {
-      const denial = getComposeStageToolDenial('plan', 'some_future_tool')
+      const denial = getComposeStageToolDenial('blueprint', 'some_future_tool')
       expect(denial).not.toBeNull()
-      expect(denial).toContain('计划')
+      expect(denial).toContain('图')
     })
 
     it('拒绝文案说明如何解锁', () => {
-      const denial = getComposeStageToolDenial('plan', 'bash')
+      const denial = getComposeStageToolDenial('blueprint', 'bash')
       expect(denial).toContain('stage_transition')
-      expect(denial).toContain('批准')
+      expect(denial).toContain('锤')
     })
   })
 
   describe('shell_session 会话工具：按 action 收放', () => {
-    // write 可执行任意内容，brainstorm 与 plan 阶段一律拒绝；
-    // read/interrupt/stop 是只读观察，各阶段都必须可用（否则 default 起的进程在阶段内失明）。
-    it('brainstorm 与 plan 阶段拒绝 write、放行只读 action', () => {
-      expect(getComposeStageToolDenial('brainstorm', 'shell_session', { action: 'write' })).toContain('写入')
-      expect(getComposeStageToolDenial('plan', 'shell_session', { action: 'write' })).toContain('写入')
-      expect(getComposeStageToolDenial('brainstorm', 'shell_session', { action: 'read' })).toBeNull()
-      expect(getComposeStageToolDenial('plan', 'shell_session', { action: 'interrupt' })).toBeNull()
-      expect(getComposeStageToolDenial('plan', 'shell_session', { action: 'stop' })).toBeNull()
+    it('interview 与 blueprint 阶段拒绝 write、放行只读 action', () => {
+      expect(getComposeStageToolDenial('interview', 'shell_session', { action: 'write' })).toContain('写入')
+      expect(getComposeStageToolDenial('blueprint', 'shell_session', { action: 'write' })).toContain('写入')
+      expect(getComposeStageToolDenial('interview', 'shell_session', { action: 'write' })).toContain('锤')
+      expect(getComposeStageToolDenial('interview', 'shell_session', { action: 'read' })).toBeNull()
+      expect(getComposeStageToolDenial('blueprint', 'shell_session', { action: 'interrupt' })).toBeNull()
+      expect(getComposeStageToolDenial('blueprint', 'shell_session', { action: 'stop' })).toBeNull()
     })
 
-    it('开发及以后不干预任何 action', () => {
-      expect(getComposeStageToolDenial('implement', 'shell_session', { action: 'write' })).toBeNull()
+    it('锤及以后不干预任何 action', () => {
+      expect(getComposeStageToolDenial('build', 'shell_session', { action: 'write' })).toBeNull()
     })
   })
 
-  describe('开发及以后：不干预', () => {
-    const OPEN_STAGES = ['implement', 'verify', 'review', 'report'] as const
+  describe('锤及以后：不干预', () => {
+    const OPEN_STAGES = ['build', 'inspect', 'deliver'] as const
     const ALL_TOOLS = [...READONLY_TOOLS, ...NON_READONLY_TOOLS, 'some_future_tool']
 
     it.each(OPEN_STAGES)('%s 阶段放行全部工具', (stage) => {
@@ -106,9 +106,8 @@ describe('compose 阶段工具门禁', () => {
     })
   })
 
-  it('六阶段都有确定行为（无遗漏分支）', () => {
+  it('五阶段都有确定行为（无遗漏分支）', () => {
     for (const stage of COMPOSE_STAGE_IDS) {
-      // 每个阶段对写工具和只读工具都必须返回确定结果，不抛异常
       expect(() => {
         getComposeStageToolDenial(stage, 'write')
         getComposeStageToolDenial(stage, 'read')

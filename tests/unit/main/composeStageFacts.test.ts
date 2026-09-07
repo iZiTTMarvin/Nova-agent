@@ -1,0 +1,276 @@
+import { describe, expect, it } from 'vitest'
+import { createComposeStageFactsProvider } from '../../../src/main/agent/runtime/composeStageWiring'
+import type { SessionStore } from '../../../src/runtime/sessions/SessionStore'
+import type { SessionData, SessionMessage } from '../../../src/runtime/sessions/types'
+import {
+  createInitialStageTable,
+  type ComposeStageEntry
+} from '../../../src/shared/composeLifecycle'
+import { BUILTIN_SUBAGENT_IDS } from '../../../src/shared/subagents/presetIdentity'
+import type { SubagentActivityProjection } from '../../../src/shared/subagents'
+
+const PARENT = 'sess_parent'
+const ENTERED_AT = 1_000
+
+function blueprintStages(enteredAt: number): ComposeStageEntry[] {
+  const stages = createInitialStageTable()
+  stages[0] = { id: 'interview', status: 'completed', completedAt: 1 }
+  stages[1] = { id: 'blueprint', status: 'in_progress', enteredAt }
+  return stages
+}
+
+function inspectStages(enteredAt: number): ComposeStageEntry[] {
+  const stages = createInitialStageTable()
+  stages[0] = { id: 'interview', status: 'completed', completedAt: 1 }
+  stages[1] = { id: 'blueprint', status: 'completed', completedAt: 2 }
+  stages[2] = { id: 'build', status: 'completed', completedAt: 3 }
+  stages[3] = { id: 'inspect', status: 'in_progress', enteredAt }
+  return stages
+}
+
+function projection(opts: {
+  profileId: string
+  status: SubagentActivityProjection['status']
+  childSessionId: string
+  startedAt?: number
+  completedAt?: number
+}): SubagentActivityProjection {
+  return {
+    childSessionId: opts.childSessionId,
+    childRunId: `run_${opts.childSessionId}`,
+    parentSessionId: PARENT,
+    profile: {
+      profileId: opts.profileId,
+      name: opts.profileId,
+      permissionCeiling: 'read_only'
+    },
+    taskLabel: opts.profileId,
+    status: opts.status,
+    artifactCount: 0,
+    ...(opts.startedAt !== undefined ? { startedAt: opts.startedAt } : {}),
+    ...(opts.completedAt !== undefined ? { completedAt: opts.completedAt } : {})
+  }
+}
+
+function childSession(
+  id: string,
+  messages: SessionMessage[]
+): SessionData {
+  return {
+    schemaVersion: 19,
+    kind: 'primary',
+    id,
+    workspaceRoot: '/tmp/ws',
+    mode: 'default',
+    permissionMode: 'request_approval',
+    messages,
+    currentLeafId: messages[messages.length - 1]?.id ?? null,
+    createdAt: 1,
+    updatedAt: 1
+  }
+}
+
+function inspectorMessages(opts: {
+  toolName: 'bash' | 'shell_session'
+  result: string
+  conclusion: string
+  toolStatus?: 'success' | 'error'
+}): SessionMessage[] {
+  return [
+    {
+      id: 'u1',
+      parentId: null,
+      role: 'user',
+      content: '按一页纸核验',
+      timestamp: 1
+    },
+    {
+      id: 'a1',
+      parentId: 'u1',
+      role: 'assistant',
+      content: opts.conclusion,
+      timestamp: 2,
+      blocks: [
+        {
+          type: 'tool',
+          toolCallId: 't1',
+          toolName: opts.toolName,
+          arguments: {},
+          status: opts.toolStatus ?? 'success',
+          result: opts.result
+        },
+        { type: 'text', content: opts.conclusion }
+      ]
+    }
+  ]
+}
+
+function provider(opts: {
+  stages: ComposeStageEntry[] | null
+  runs: SubagentActivityProjection[]
+  children?: Record<string, SessionData>
+}) {
+  const sessionStore = {
+    getComposeStages: () => opts.stages,
+    load: (id: string) => opts.children?.[id] ?? null
+  } as unknown as SessionStore
+  return createComposeStageFactsProvider({
+    sessionStore,
+    projection: {
+      listByParentSessionId: (parentId: string) =>
+        opts.runs.filter(run => run.parentSessionId === parentId)
+    }
+  })
+}
+
+describe('createComposeStageFactsProvider', () => {
+  it('批评者 run 在 enteredAt 之前不算完成', () => {
+    const facts = provider({
+      stages: blueprintStages(ENTERED_AT),
+      runs: [
+        projection({
+          profileId: BUILTIN_SUBAGENT_IDS.critic,
+          status: 'completed',
+          childSessionId: 'child_critic',
+          startedAt: ENTERED_AT - 1,
+          completedAt: ENTERED_AT + 50
+        })
+      ]
+    })(PARENT)
+    expect(facts.criticCompleted).toBe(false)
+  })
+
+  it('批评者 run 在 enteredAt 当时或之后且 status=completed 才算', () => {
+    const atBoundary = provider({
+      stages: blueprintStages(ENTERED_AT),
+      runs: [
+        projection({
+          profileId: BUILTIN_SUBAGENT_IDS.critic,
+          status: 'completed',
+          childSessionId: 'child_critic',
+          startedAt: ENTERED_AT,
+          completedAt: ENTERED_AT + 10
+        })
+      ]
+    })(PARENT)
+    expect(atBoundary.criticCompleted).toBe(true)
+
+    const cancelled = provider({
+      stages: blueprintStages(ENTERED_AT),
+      runs: [
+        projection({
+          profileId: BUILTIN_SUBAGENT_IDS.critic,
+          status: 'cancelled',
+          childSessionId: 'child_critic',
+          startedAt: ENTERED_AT + 1,
+          completedAt: ENTERED_AT + 2
+        })
+      ]
+    })(PARENT)
+    expect(cancelled.criticCompleted).toBe(false)
+  })
+
+  it('核验：exitCode 0 且结论通过才算；非 0 或结论未通过都不算', () => {
+    const childId = 'child_insp'
+    const baseRun = projection({
+      profileId: BUILTIN_SUBAGENT_IDS.inspector,
+      status: 'completed',
+      childSessionId: childId,
+      startedAt: ENTERED_AT + 1,
+      completedAt: ENTERED_AT + 2
+    })
+
+    const passed = provider({
+      stages: inspectStages(ENTERED_AT),
+      runs: [baseRun],
+      children: {
+        [childId]: childSession(
+          childId,
+          inspectorMessages({
+            toolName: 'bash',
+            result:
+              '[命令退出码: 0（命令已执行完成；非 0 不一定是错误，请阅读下方输出判断）]\nhello',
+            conclusion: '结论：通过'
+          })
+        )
+      }
+    })(PARENT)
+    expect(passed.inspectorPassed).toBe(true)
+
+    const bashSuccessNoMarker = provider({
+      stages: inspectStages(ENTERED_AT),
+      runs: [baseRun],
+      children: {
+        [childId]: childSession(
+          childId,
+          inspectorMessages({
+            toolName: 'bash',
+            result: '(命令执行成功，无输出)',
+            conclusion: '结论：通过'
+          })
+        )
+      }
+    })(PARENT)
+    expect(bashSuccessNoMarker.inspectorPassed).toBe(true)
+
+    const nonZero = provider({
+      stages: inspectStages(ENTERED_AT),
+      runs: [baseRun],
+      children: {
+        [childId]: childSession(
+          childId,
+          inspectorMessages({
+            toolName: 'bash',
+            result:
+              '[命令退出码: 1（命令已执行完成；非 0 不一定是错误，请阅读下方输出判断）]\nfail',
+            conclusion: '结论：通过',
+            toolStatus: 'success'
+          })
+        )
+      }
+    })(PARENT)
+    expect(nonZero.inspectorPassed).toBe(false)
+
+    const rejected = provider({
+      stages: inspectStages(ENTERED_AT),
+      runs: [baseRun],
+      children: {
+        [childId]: childSession(
+          childId,
+          inspectorMessages({
+            toolName: 'shell_session',
+            result: 'output\n[会话已终止，退出码: 0]',
+            conclusion: '结论：未通过'
+          })
+        )
+      }
+    })(PARENT)
+    expect(rejected.inspectorPassed).toBe(false)
+  })
+
+  it('核验：shell_session 退出码 0 且结论通过算过', () => {
+    const childId = 'child_insp'
+    const facts = provider({
+      stages: inspectStages(ENTERED_AT),
+      runs: [
+        projection({
+          profileId: BUILTIN_SUBAGENT_IDS.inspector,
+          status: 'completed',
+          childSessionId: childId,
+          startedAt: ENTERED_AT + 5
+        })
+      ],
+      children: {
+        [childId]: childSession(
+          childId,
+          inspectorMessages({
+            toolName: 'shell_session',
+            result: 'ok\n[会话已终止，退出码: 0]',
+            conclusion: '逐条核验完毕。\n结论：通过'
+          })
+        )
+      }
+    })(PARENT)
+    expect(facts.inspectorPassed).toBe(true)
+  })
+})

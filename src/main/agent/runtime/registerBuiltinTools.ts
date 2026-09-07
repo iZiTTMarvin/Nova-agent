@@ -26,7 +26,8 @@ import { getModelDirectory } from '../../../shared/config'
 import { loadLlmRegistry } from '../../../runtime/model/config'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
-import { stageTransitionTool } from '../../../runtime/tools/stageTransition'
+import { createStageTransitionTool } from '../../../runtime/tools/stageTransition'
+import type { ComposeStageFacts } from '../../../shared/composeLifecycle'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { historyReadTool } from '../../../runtime/tools/historyRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
@@ -70,6 +71,11 @@ export interface BuiltinToolRegistrationDeps {
   codeIndexEnabled: boolean
   /** 查询端可随 workspace 生命周期更换，不参与工具是否注册。 */
   getCodeContextQueryPort: () => CodeContextQueryPort | null
+  /**
+   * compose 阶段完成的运行时事实。缺省视为两项均未满足（拒绝完成「图」「验」）；
+   * 测试注册工具时不必接投影服务。
+   */
+  getStageFacts?: (sessionId: string) => ComposeStageFacts
 }
 
 /**
@@ -111,7 +117,13 @@ export function registerBuiltinTools(
   toolRegistry.register(askQuestionTool)
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
-  toolRegistry.register(stageTransitionTool)
+  toolRegistry.register(
+    createStageTransitionTool({
+      getStageFacts:
+        deps.getStageFacts ??
+        (() => ({ criticCompleted: false, inspectorPassed: false }))
+    })
+  )
   toolRegistry.register(
     createInvokeSkillTool({
       skillRegistry: deps.skillRegistry,

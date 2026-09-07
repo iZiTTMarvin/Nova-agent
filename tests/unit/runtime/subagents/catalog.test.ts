@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentConfig'
 import { buildSubagentCatalog } from '../../../../src/runtime/subagents'
 import type { LlmRegistry } from '../../../../src/shared/config'
 import type { SubAgentSpec } from '../../../../src/shared/settings/types'
@@ -126,5 +127,11 @@ describe('buildSubagentCatalog', () => {
       name: '旧显示名已改',
       status: 'available'
     })
+  })
+
+  it('catalog 含内置 critic 与 inspector', () => {
+    const ids = buildSubagentCatalog(BUILTIN_SUBAGENTS, registry()).map(entry => entry.profileId)
+    expect(ids).toContain('critic')
+    expect(ids).toContain('inspector')
   })
 })

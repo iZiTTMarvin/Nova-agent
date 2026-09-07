@@ -131,12 +131,11 @@ describe('forwardEventToRenderer（recovery / hook IPC）', () => {
   it('compose_stages_updated → agent:compose-stages-updated', () => {
     const win = makeMainWindow()
     const stages = [
-      { id: 'brainstorm' as const, status: 'completed' as const, completedAt: 1 },
-      { id: 'plan' as const, status: 'in_progress' as const },
-      { id: 'implement' as const, status: 'pending' as const },
-      { id: 'verify' as const, status: 'pending' as const },
-      { id: 'review' as const, status: 'pending' as const },
-      { id: 'report' as const, status: 'pending' as const }
+      { id: 'interview' as const, status: 'completed' as const, completedAt: 1 },
+      { id: 'blueprint' as const, status: 'in_progress' as const },
+      { id: 'build' as const, status: 'pending' as const },
+      { id: 'inspect' as const, status: 'pending' as const },
+      { id: 'deliver' as const, status: 'pending' as const }
     ]
     const event: AgentEvent = {
       type: 'compose_stages_updated',

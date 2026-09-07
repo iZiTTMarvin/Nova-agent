@@ -48,7 +48,7 @@ describe('SessionStore composeStages', () => {
     const before = store.getComposeStages(session.id)
     const rejected = store.applyComposeStageTransition(session.id, {
       type: 'return',
-      targetStage: 'review',
+      targetStage: 'inspect',
       reason: '越级'
     })
     expect(rejected).toMatchObject({ status: 'rejected' })
@@ -93,19 +93,19 @@ describe('SessionStore composeStages', () => {
     expect(store2.load(session.id)?.composeStages).toEqual(applied.stages)
   })
 
-  it('review→implement 回退计数落盘，重建 store 后仍在', () => {
+  it('inspect→build 回退计数落盘，重建 store 后仍在', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create(path.resolve(tmpDir, 'workspace'), 'compose')
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       const r = store.applyComposeStageTransition(session.id, { type: 'complete' })
       expect(r).toMatchObject({ status: 'applied' })
-      if (!r || r.status !== 'applied') throw new Error('无法推进到审查阶段')
+      if (!r || r.status !== 'applied') throw new Error('无法推进到验阶段')
     }
 
     const applied = store.applyComposeStageTransition(session.id, {
       type: 'return',
-      targetStage: 'implement',
-      reason: '审查发现问题'
+      targetStage: 'build',
+      reason: '核验发现问题'
     })
     expect(applied).toMatchObject({ status: 'applied' })
     if (!applied || applied.status !== 'applied') return
@@ -116,42 +116,42 @@ describe('SessionStore composeStages', () => {
     expect(fresh.load(session.id)?.composeReviewLoops).toBe(1)
   })
 
-  it('第 4 次 review→implement 回退拒绝，阶段表与计数不被破坏', () => {
+  it('第 3 次 inspect→build 回退拒绝，阶段表与计数不被破坏', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create(path.resolve(tmpDir, 'workspace'), 'compose')
 
-    const completeToReview = (count: number): void => {
+    const completeToInspect = (count: number): void => {
       for (let i = 0; i < count; i++) {
         const r = store.applyComposeStageTransition(session.id, { type: 'complete' })
         expect(r).toMatchObject({ status: 'applied' })
-        if (!r || r.status !== 'applied') throw new Error('无法推进到审查阶段')
+        if (!r || r.status !== 'applied') throw new Error('无法推进到验阶段')
       }
     }
 
-    completeToReview(4)
-    for (let i = 0; i < 3; i++) {
+    completeToInspect(3)
+    for (let i = 0; i < 2; i++) {
       const ret = store.applyComposeStageTransition(session.id, {
         type: 'return',
-        targetStage: 'implement',
+        targetStage: 'build',
         reason: `返工 ${i + 1}`
       })
       expect(ret).toMatchObject({ status: 'applied' })
-      if (!ret || ret.status !== 'applied') throw new Error('修复-复审回退应被放行')
+      if (!ret || ret.status !== 'applied') throw new Error('从验回退应被放行')
       expect(ret.session.composeReviewLoops).toBe(i + 1)
-      // 回到开发修复后重新推进：implement、verify 各 complete 一次再入审查
-      completeToReview(2)
+      // 回到锤修复后再入验：只需 complete 1 次
+      completeToInspect(1)
     }
 
     const before = store.getComposeStages(session.id)
-    const fourth = store.applyComposeStageTransition(session.id, {
+    const third = store.applyComposeStageTransition(session.id, {
       type: 'return',
-      targetStage: 'implement',
-      reason: '第 4 次回退'
+      targetStage: 'build',
+      reason: '第 3 次回退'
     })
-    expect(fourth).toMatchObject({ status: 'rejected' })
-    if (!fourth || fourth.status !== 'rejected') return
-    expect(fourth.error).toMatch(/上限/)
+    expect(third).toMatchObject({ status: 'rejected' })
+    if (!third || third.status !== 'rejected') return
+    expect(third.error).toMatch(/上限/)
     expect(store.getComposeStages(session.id)).toEqual(before)
-    expect(store.load(session.id)?.composeReviewLoops).toBe(3)
+    expect(store.load(session.id)?.composeReviewLoops).toBe(2)
   })
 })

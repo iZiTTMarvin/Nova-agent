@@ -16,7 +16,12 @@ import {
   type ComposeStageAction,
   type ComposeStageEntry
 } from '../../../src/shared/composeLifecycle'
+import { BUILTIN_SUBAGENT_IDS } from '../../../src/shared/subagents/presetIdentity'
+import type { SubagentActivityProjection } from '../../../src/shared/subagents'
 
+const { mockProjectionState } = vi.hoisted(() => ({
+  mockProjectionState: { runs: [] as SubagentActivityProjection[] }
+}))
 const mockHandle = vi.fn()
 const mockSend = vi.fn()
 const mockSelectSession = vi.fn()
@@ -134,7 +139,10 @@ vi.mock('../../../src/main/services/WorkspaceService', () => ({
   })
 }))
 vi.mock('../../../src/main/services/SubagentProjectionServiceHost', () => ({
-  getSubagentProjectionService: () => ({ listByParentSessionId: () => [] })
+  getSubagentProjectionService: () => ({
+    listByParentSessionId: (parentId: string) =>
+      mockProjectionState.runs.filter(run => run.parentSessionId === parentId)
+  })
 }))
 vi.mock('../../../src/runtime/checkpoints/restore', () => ({ rejectFile: vi.fn() }))
 vi.mock('../../../src/runtime/checkpoints/diffState', () => ({ buildMessageDiffState: vi.fn() }))
@@ -154,12 +162,39 @@ function registeredHandler(channel: string): HandlerFn {
   return call[1] as HandlerFn
 }
 
-/** 构思已完成、计划进行中的阶段表（触发计划确认门的场景） */
+/** 「图」进行中的阶段表（触发计划确认门的场景） */
 function planInProgressStages(): ComposeStageEntry[] {
   const stages = createInitialStageTable()
-  stages[0] = { id: 'brainstorm', status: 'completed', completedAt: 1 }
-  stages[1] = { id: 'plan', status: 'in_progress' }
+  stages[0] = { id: 'interview', status: 'completed', completedAt: 1 }
+  stages[1] = { id: 'blueprint', status: 'in_progress' }
   return stages
+}
+
+function inspectInProgressStages(): ComposeStageEntry[] {
+  const stages = createInitialStageTable()
+  stages[0] = { id: 'interview', status: 'completed', completedAt: 1 }
+  stages[1] = { id: 'blueprint', status: 'completed', completedAt: 2 }
+  stages[2] = { id: 'build', status: 'completed', completedAt: 3 }
+  stages[3] = { id: 'inspect', status: 'in_progress' }
+  return stages
+}
+
+function completedCriticRun(parentSessionId = 'sess_1'): SubagentActivityProjection {
+  return {
+    childSessionId: 'child_critic',
+    childRunId: 'run_critic',
+    parentSessionId,
+    profile: {
+      profileId: BUILTIN_SUBAGENT_IDS.critic,
+      name: 'critic',
+      permissionCeiling: 'read_only'
+    },
+    taskLabel: '挑刺',
+    status: 'completed',
+    startedAt: 100,
+    completedAt: 200,
+    artifactCount: 0
+  }
 }
 
 describe('composeStageHandler（compose:apply-stage-transition）', () => {
@@ -176,6 +211,7 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     sessionMode = 'compose'
     sessionKind = 'primary'
     pendingInteractions = []
+    mockProjectionState.runs = []
     registerComposeStageHandler()
   })
 
@@ -188,8 +224,8 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
 
     expect(result).toMatchObject({ ok: true })
     const stages = (result as { ok: true; stages: ComposeStageEntry[] }).stages
-    expect(stages[0]).toMatchObject({ id: 'brainstorm', status: 'completed', completedAt: 1_000 })
-    expect(stages[1]).toMatchObject({ id: 'plan', status: 'in_progress' })
+    expect(stages[0]).toMatchObject({ id: 'interview', status: 'completed', completedAt: 1_000 })
+    expect(stages[1]).toMatchObject({ id: 'blueprint', status: 'in_progress' })
 
     // 推送 payload 与工具事件一致，renderer 阶段条只订阅这一个事件源
     expect(mockSend).toHaveBeenCalledWith('agent:compose-stages-updated', {
@@ -199,11 +235,11 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     })
   })
 
-  it('非法转换（构思直接回退到审查）：返回中文可读 error，不推送事件', async () => {
+  it('非法转换（问直接回退到验）：返回中文可读 error，不推送事件', async () => {
     const handler = registeredHandler('compose:apply-stage-transition')
     const result = await handler(makeTrustedEvent(), {
       sessionId: 'sess_1',
-      action: { type: 'return', targetStage: 'review', reason: '想跳回审查' }
+      action: { type: 'return', targetStage: 'inspect', reason: '想跳回验' }
     })
 
     expect(result).toEqual({ ok: false, error: '只能回退到当前进行中阶段之前的阶段' })
@@ -281,12 +317,12 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     const handler = registeredHandler('compose:apply-stage-transition')
     const result = await handler(makeTrustedEvent(), {
       sessionId: 'sess_1',
-      action: { type: 'skip', reason: '需求已澄清，无需构思' }
+      action: { type: 'skip', reason: '需求已澄清，无需访谈' }
     })
 
     expect(result).toMatchObject({ ok: true })
     const stages = (result as { ok: true; stages: ComposeStageEntry[] }).stages
-    expect(stages[0]).toMatchObject({ status: 'skipped', note: '需求已澄清，无需构思' })
+    expect(stages[0]).toMatchObject({ status: 'skipped', note: '需求已澄清，无需访谈' })
     expect(mockSend).toHaveBeenCalledWith('agent:compose-stages-updated', {
       sessionId: 'sess_1',
       stages,
@@ -329,6 +365,7 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
 
   it('手动完成计划阶段：未批准时写批准留痕（auto:false）并推送批准事件，随后正常推进', async () => {
     currentStages = planInProgressStages()
+    mockProjectionState.runs = [completedCriticRun()]
     const handler = registeredHandler('compose:apply-stage-transition')
     const result = await handler(makeTrustedEvent(), {
       sessionId: 'sess_1',
@@ -341,13 +378,14 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
       approval: { status: 'approved', approvedAt: 1_000, auto: false }
     })
     const stages = (result as { ok: true; stages: ComposeStageEntry[] }).stages
-    expect(stages[1]).toMatchObject({ id: 'plan', status: 'completed' })
-    expect(stages[2]).toMatchObject({ id: 'implement', status: 'in_progress' })
+    expect(stages[1]).toMatchObject({ id: 'blueprint', status: 'completed' })
+    expect(stages[2]).toMatchObject({ id: 'build', status: 'in_progress' })
   })
 
   it('计划已批准时手动 complete 不再重复写批准', async () => {
     currentStages = planInProgressStages()
     currentApproval = { status: 'approved', approvedAt: 1, auto: false }
+    mockProjectionState.runs = [completedCriticRun()]
     const handler = registeredHandler('compose:apply-stage-transition')
     const result = await handler(makeTrustedEvent(), {
       sessionId: 'sess_1',
@@ -371,10 +409,10 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     expect(mockStore.approveComposePlan).not.toHaveBeenCalled()
     expect(mockSend).not.toHaveBeenCalledWith('agent:compose-plan-approval-updated', expect.anything())
     const stages = (result as { ok: true; stages: ComposeStageEntry[] }).stages
-    expect(stages[1]).toMatchObject({ id: 'plan', status: 'skipped' })
+    expect(stages[1]).toMatchObject({ id: 'blueprint', status: 'skipped' })
   })
 
-  it('非计划阶段（构思进行中）complete 不触碰批准状态', async () => {
+  it('非图阶段（问进行中）complete 不触碰批准状态', async () => {
     currentStages = createInitialStageTable()
     const handler = registeredHandler('compose:apply-stage-transition')
     const result = await handler(makeTrustedEvent(), {
@@ -385,6 +423,41 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     expect(result).toMatchObject({ ok: true })
     expect(mockStore.approveComposePlan).not.toHaveBeenCalled()
     expect(mockSend).not.toHaveBeenCalledWith('agent:compose-plan-approval-updated', expect.anything())
+  })
+
+  it('图阶段无 critic 时手动 complete 被拒，不写阶段表、不写批准', async () => {
+    currentStages = planInProgressStages()
+    const handler = registeredHandler('compose:apply-stage-transition')
+    const result = await handler(makeTrustedEvent(), {
+      sessionId: 'sess_1',
+      action: { type: 'complete' }
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        '一页纸还没有经过批评者挑刺。先派 critic 子代理审一遍，把砍掉和补上的写进一页纸，再完成本阶段。'
+    })
+    expect(mockStore.approveComposePlan).not.toHaveBeenCalled()
+    expect(mockStore.applyComposeStageTransition).not.toHaveBeenCalled()
+    expect(mockSend).not.toHaveBeenCalled()
+  })
+
+  it('验阶段无核验通过时手动 complete 被拒，不写阶段表', async () => {
+    currentStages = inspectInProgressStages()
+    const handler = registeredHandler('compose:apply-stage-transition')
+    const result = await handler(makeTrustedEvent(), {
+      sessionId: 'sess_1',
+      action: { type: 'complete' }
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        '还没有独立核验通过的记录。派 inspector 子代理按一页纸逐条操作；未通过就回到「锤」修，通过后再完成本阶段。'
+    })
+    expect(mockStore.applyComposeStageTransition).not.toHaveBeenCalled()
+    expect(mockSend).not.toHaveBeenCalled()
   })
 })
 

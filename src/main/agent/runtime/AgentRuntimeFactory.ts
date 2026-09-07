@@ -70,8 +70,10 @@ import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
 import {
   createComposeModeInstructionProvider,
+  createComposeStageFactsProvider,
   createComposeStageToolPolicy
 } from './composeStageWiring'
+import { getSubagentProjectionService } from '../../services/SubagentProjectionServiceHost'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 import {
@@ -265,7 +267,16 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     codeModeWorkerPath: join(__dirname, 'codeModeWorker.js'),
     memoryEnabled: novaSettings.memoryEnabled,
     codeIndexEnabled: session.codeIndexEnabled === true,
-    getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null)
+    getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null),
+    getStageFacts: sid => {
+      let projection
+      try {
+        projection = getSubagentProjectionService()
+      } catch {
+        return { criticCompleted: false, inspectorPassed: false }
+      }
+      return createComposeStageFactsProvider({ sessionStore, projection })(sid)
+    }
   })
 
   toolAvailability.bindRegisteredToolNames(
