@@ -211,6 +211,15 @@ function isTerminalStatus(status: RunStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
 }
 
+function projectInterrupted(snapshot: RunSnapshot | null): Pick<RunViewState, 'interruptedRunId' | 'interruptedSessionId' | 'interruptedSteps'> {
+  const interrupted = snapshot?.status === 'interrupted' ? snapshot : null
+  return {
+    interruptedRunId: interrupted?.runId ?? null,
+    interruptedSessionId: interrupted?.sessionId ?? null,
+    interruptedSteps: (interrupted?.toolCommits ?? []).map(({ toolCallId, toolName, phase }) => ({ toolCallId, toolName, phase }))
+  }
+}
+
 /**
  * 终态 snapshot 是否归属当前取消动作：
  * - 明确了目标 runId 时按 runId 精确匹配（跨会话到达的终态同样确认取消，不受当前视图影响）；
@@ -261,7 +270,12 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       try {
         const result = await window.api.invoke('run:get-snapshot', { sessionId })
         // 防御：测试 mock / 旧主进程可能返回 undefined
-        const snap = result?.snapshot ?? null
+        const received = result?.snapshot ?? null
+        const current = get().snapshotsByRunId[get().activeRunIdBySessionId[sessionId]]
+        const snap = received && current && (
+          received.createdAt < current.createdAt ||
+          (received.runId === current.runId && received.sequence < current.sequence)
+        ) ? current : received
         // 同一会话更新后的旧响应不能覆盖新事实。
         if (get().pullTokenByRunId[pullKey] !== token) return
         const snapshotsByRunId = snap
@@ -292,17 +306,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
             ? { ...get().pullTokenByRunId, [snap.runId]: token }
             : get().pullTokenByRunId,
           ...(shouldWriteWaitingSessions ? { waitingSessions: nextWaitingSessions } : {}),
-          interruptedRunId: snap?.status === 'interrupted' ? snap.runId : get().interruptedRunId,
-          interruptedSessionId:
-            snap?.status === 'interrupted' ? snap.sessionId : get().interruptedSessionId,
-          interruptedSteps:
-            snap?.status === 'interrupted'
-              ? (snap.toolCommits ?? []).map(c => ({
-                  toolCallId: c.toolCallId,
-                  toolName: c.toolName,
-                  phase: c.phase
-                }))
-              : get().interruptedSteps
+          ...(isSelected ? projectInterrupted(snap) : {})
         })
 
         // 投影交互到 agent store
@@ -358,21 +362,13 @@ export const useRunStore = create<RunViewState>((set, get) => ({
     const nextWaitingCount = getWaitingBadgeCountForSnapshot(snapshot)
     const shouldRefreshWaiting = previousWaitingCount !== nextWaitingCount
 
-    const activeRunIdBySessionId = {
+    const active = state.snapshotsByRunId[state.activeRunIdBySessionId[snapshot.sessionId]]
+    const isLatestRun = !active || active.runId === snapshot.runId || snapshot.createdAt >= active.createdAt
+    const activeRunIdBySessionId = isLatestRun ? {
       ...state.activeRunIdBySessionId,
       [snapshot.sessionId]: snapshot.runId
-    }
-    const isSelected = state.selectedSessionId === null || state.selectedSessionId === snapshot.sessionId
-    // interrupted 恢复/完成后清理 interruptedRunId（连同归属会话一起清理）
-    let interruptedRunId = state.interruptedRunId
-    let interruptedSessionId = state.interruptedSessionId
-    if (snapshot.status === 'interrupted') {
-      interruptedRunId = snapshot.runId
-      interruptedSessionId = snapshot.sessionId
-    } else if (interruptedRunId === snapshot.runId) {
-      interruptedRunId = null
-      interruptedSessionId = null
-    }
+    } : state.activeRunIdBySessionId
+    const isSelected = isLatestRun && (state.selectedSessionId === null || state.selectedSessionId === snapshot.sessionId)
     set({
       // 非当前会话事件只写自己的分桶，绝不篡改兼容 snapshot。
       snapshot: isSelected ? snapshot : state.snapshot,
@@ -383,15 +379,17 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         ...state.lastSequenceByRunId,
         [snapshot.runId]: event.sequence
       },
-      interruptedRunId,
-      interruptedSessionId
+      ...(isLatestRun && (
+        (isSelected && snapshot.status === 'interrupted') ||
+        state.interruptedSessionId === snapshot.sessionId || state.interruptedRunId === snapshot.runId
+      ) ? projectInterrupted(snapshot) : {})
     })
 
     void (async () => {
       const { useChatStore } = await import('./useChatStore')
       const currentSessionId = useChatStore.getState().currentSessionId
       // 只投影当前会话的交互
-      if (snapshot.sessionId === currentSessionId) {
+      if (isLatestRun && snapshot.sessionId === currentSessionId) {
         projectInteractionsToAgentStore(snapshot, currentSessionId)
       }
       if (shouldRefreshWaiting) {
@@ -522,9 +520,10 @@ export const useRunStore = create<RunViewState>((set, get) => ({
     if (action === 'continue') {
       // 继续 = 代用户发一条新消息走正常消息链（新轮次新 run），成功后清除中断横幅。
       // 不能把旧 run 转 resuming：主 loop 没有 resuming 消费入口，转换会永久占用会话 turn。
+      const continuedRunId = get().interruptedRunId
       const sent = await useChatStore.getState().sendMessage(CONTINUE_AFTER_INTERRUPT_PROMPT)
-      if (sent) {
-        set({ interruptedRunId: null, interruptedSessionId: null, interruptedSteps: [] })
+      if (sent && get().interruptedRunId === continuedRunId) {
+        set(projectInterrupted(null))
       }
       return
     }

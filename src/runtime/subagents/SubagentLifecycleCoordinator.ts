@@ -23,6 +23,12 @@ export class SubagentLifecycleCoordinator {
     private readonly scheduler: SubagentScheduler
   ) {}
 
+  getRootRunId(runId: string): string {
+    const child = this.sessionStore.listInternal().find(session =>
+      session.kind === 'subagent' && session.subagent.lineage.spawnRunId === runId)
+    return child?.kind === 'subagent' ? child.subagent.lineage.rootRunId : runId
+  }
+
   listDescendantRunIds(parentRunId: string): string[] {
     const childRunIdsByParent = new Map<string, string[]>()
     for (const summary of this.sessionStore.listInternal()) {

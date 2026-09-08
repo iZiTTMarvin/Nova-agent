@@ -25,6 +25,7 @@ vi.mock('../../../src/main/index', () => ({
   setCurrentMode: vi.fn()
 }))
 vi.mock('../../../src/main/services/SkillServiceHost', () => ({
+  reloadSkillsForWorkspace: vi.fn(),
   getSkillService: () => ({
     getWorkspaceRoot: () => '/workspace',
     load: vi.fn(),
@@ -81,6 +82,16 @@ describe('WorkspaceService subagent deletion', () => {
     }
     return store.createChildIfAbsent(command).session
   }
+
+  it('最新活动属于子任务时，启动打开所属父会话', () => {
+    const parent = store.create(path.join(tempRoot, 'workspace'))
+    const child = createChild(parent.id, 'startup')
+    store.updateTitle(child.id, '最新子任务', 'manual')
+    const { service } = createService()
+    service.initOnStartup()
+    expect(service.getState().currentSessionId).toBe(parent.id)
+    expect(service.getState().availableSessions.some(session => session.id === child.id)).toBe(true)
+  })
 
   function createService() {
     const assertNoNonTerminalRunsForSessions = vi.fn()

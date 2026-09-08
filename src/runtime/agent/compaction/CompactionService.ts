@@ -1,4 +1,4 @@
-import { measureRequestBudget, type RequestBudgetAnchor, type RequestBudgetMeasurement } from '../../model/requestBudget'
+import { measureRequestBudget, REQUEST_ESTIMATOR_VERSION, type RequestBudgetAnchor, type RequestBudgetMeasurement } from '../../model/requestBudget'
 import type { ToolDefinition } from '../../model/types'
 import type { ContextBreakdown } from '../../../shared/agent/contextBreakdown'
 import type { ModelClient, ChatOptions } from '../../model/ModelClient'
@@ -10,7 +10,7 @@ import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
-import { ContextBudgetExceededError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
+import { ContextBudgetExceededError, ContextRecoveryFailedError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import { getEffectiveToolDefinitions, type AgentContext } from '../core/AgentContext'
 import { collectRequiredFacts, validateHandoff } from './handoffValidation'
 import { formatPointerStub } from '../core/renderHandoffPacket'
@@ -150,10 +150,16 @@ export class CompactionService {
     const threshold = Math.floor(contextWindow * 0.8)
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow })
     const anchor = this.context.compactionState?.budgetAnchor
-    const compatible = anchor && anchor.estimatorVersion === 1 && anchor.routeId === request.routeId &&
+    const requestUnits = request.budgetUnits ?? request.serializedBytes
+    const anchorUnits = anchor?.estimatorVersion === REQUEST_ESTIMATOR_VERSION
+      ? anchor.budgetUnits ?? anchor.serializedBytes
+      : anchor?.serializedBytes ?? 0
+    const estimatorCompatible = anchor?.estimatorVersion === REQUEST_ESTIMATOR_VERSION ||
+      (anchor?.estimatorVersion === 1 && requestUnits === request.serializedBytes)
+    const compatible = anchor && estimatorCompatible && anchor.routeId === request.routeId &&
       anchor.envelopeHash === request.envelopeHash && anchor.messageCount <= request.prefixHashes.length &&
-      anchor.prefixHash === request.prefixHashes[anchor.messageCount - 1] && request.serializedBytes >= anchor.serializedBytes
-    const deltaBytes = compatible ? request.serializedBytes - anchor.serializedBytes : request.serializedBytes
+      anchor.prefixHash === request.prefixHashes[anchor.messageCount - 1] && requestUnits >= anchorUnits
+    const deltaBytes = compatible ? requestUnits - anchorUnits : requestUnits
     // 未知 tokenizer 使用字节保守增量；不把字符差伪装成实际 token 差。
     const marginTokens = compatible && deltaBytes === 0 ? 0 : Math.max(256, Math.ceil(deltaBytes * 0.05))
     const estimatedTokens = (compatible ? anchor.inputTokens : 0) + deltaBytes + marginTokens
@@ -175,9 +181,10 @@ export class CompactionService {
     const previous = this.context.compactionState
     const revision = previous?.revision ?? 0
     if (expectedRevision !== revision) return false
-    const anchor: RequestBudgetAnchor = { estimatorVersion: 1, revision: revision + 1,
+    const anchor: RequestBudgetAnchor = { estimatorVersion: REQUEST_ESTIMATOR_VERSION, revision: revision + 1,
       routeId: request.routeId, envelopeHash: request.envelopeHash, messageCount: request.prefixHashes.length,
-      prefixHash: request.prefixHashes.at(-1)!, serializedBytes: request.serializedBytes, inputTokens, source }
+      prefixHash: request.prefixHashes.at(-1)!, serializedBytes: request.serializedBytes,
+      budgetUnits: request.budgetUnits ?? request.serializedBytes, inputTokens, source }
     if (this.context.sessionStore && this.context.sessionId &&
         !this.context.sessionStore.saveBudgetAnchor(this.context.sessionId, anchor, revision)) return false
     if (!this.canWrite()) return false
@@ -193,9 +200,13 @@ export class CompactionService {
     const request = this.measureRequest(messages, tools)
     const budget = this.assessNextRequest(request)
     if (budget.status === 'within') return { status: 'within', revision: this.context.compactionState?.revision ?? 0 }
-    if (budget.status === 'blocked') throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, false)
-    const compacted = await this.runCompaction('threshold', projection, signal, this.canWrite)
-    if (!compacted) throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, true)
+    // 恢复历史会使旧 usage 锚点失效；先压缩可归档前缀，再用新请求校验预算。
+    if (budget.status === 'blocked' && this.splitThresholdContext().oldMessages.length === 0) {
+      throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, false)
+    }
+    const result = await this.runCompaction('threshold', projection, signal, this.canWrite)
+    if (result.failure) throw result.failure
+    if (!result.adopted) throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, true)
     return { status: 'compacted', revision: this.context.compactionState?.revision ?? 0 }
   }
 
@@ -217,7 +228,7 @@ export class CompactionService {
     const projected = await projection.project(this.context.messages)
     if (this.assessNextRequest(this.measureRequest(projected)).status === 'within') return false
 
-    return this.runCompaction('threshold', projection, abortSignal)
+    return (await this.runCompaction('threshold', projection, abortSignal)).adopted
   }
 
   /**
@@ -334,17 +345,17 @@ export class CompactionService {
     projection: SummaryProjection,
     abortSignal?: AbortSignal,
     canApply: () => boolean = () => true
-  ): Promise<boolean> {
-    if (abortSignal?.aborted) return false
+  ): Promise<{ adopted: boolean; failure?: ContextRecoveryFailedError | ContextBudgetExceededError }> {
+    if (abortSignal?.aborted) return { adopted: false }
 
     const parts = this.splitThresholdContext()
-    if (parts.oldMessages.length === 0) return false
+    if (parts.oldMessages.length === 0) return { adopted: false }
 
     const usageSources: UsageSource[] = []
     let adopted = false
     try {
       const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
-      if (!outputs || abortSignal?.aborted || !canApply()) return false
+      if (!outputs || abortSignal?.aborted || !canApply()) return { adopted: false }
 
       adopted = await this.applyCompactionResult(
         parts,
@@ -353,12 +364,15 @@ export class CompactionService {
         trigger,
         () => !abortSignal?.aborted && !this.disposed && canApply()
       )
-      if (!adopted) return false
+      if (!adopted) return { adopted: false, failure: new ContextRecoveryFailedError('commit-rejected') }
       this.notifyCompaction(trigger)
-      return true
+      return { adopted: true }
     } catch (error) {
       recordMetric('compaction.rejected', {}, { tags: { reason: 'candidate-or-persistence-failed', error: error instanceof Error ? error.message : String(error) } })
-      return adopted
+      if (adopted) return { adopted: true }
+      const failure = error instanceof ContextRecoveryFailedError || error instanceof ContextBudgetExceededError
+        ? error : new ContextRecoveryFailedError('commit-rejected')
+      return { adopted: false, failure }
     } finally {
       for (const source of usageSources) metricUsageAdoption(source, adopted, 'compaction-context')
     }
@@ -495,14 +509,17 @@ export class CompactionService {
       )
     ]
 
-    const [stubText, rawState] = await Promise.all([
+    const [stubResult, stateResult] = await Promise.allSettled([
       this.streamCompactionText(stubContext, 'compaction-stub', usageSources, abortSignal),
       this.streamCompactionText(stateContext, 'compaction-state', usageSources, abortSignal)
     ])
     if (abortSignal?.aborted) return null
+    if (stateResult.status === 'rejected') throw stateResult.reason
+    const stubText = stubResult.status === 'fulfilled' ? stubResult.value : null
+    const rawState = stateResult.value
     if (!rawState) {
       recordMetric('compaction.rejected', {}, { tags: { reason: 'missing-state-text' } })
-      return null
+      throw new ContextRecoveryFailedError('empty-summary')
     }
 
     const stateBudget = getStateTokenBudget(this.contextWindow)
@@ -527,18 +544,18 @@ export class CompactionService {
         abortSignal
       )
       if (abortSignal?.aborted) return null
-      if (!tightened) return null
+      if (!tightened) throw new ContextRecoveryFailedError('empty-summary')
       candidate = tightened
       handoff = validateHandoff(candidate, sourceMessages, required, previousFacts)
     }
     if (!handoff) {
       recordMetric('compaction.rejected', { requiredFacts: required.length }, { tags: { reason: 'invalid-handoff' } })
-      return null
+      throw new ContextRecoveryFailedError('invalid-summary')
     }
     const state = renderStructuredHandoff(handoff)
     if (estimateTokens(state) > stateBudget) {
       recordMetric('compaction.rejected', { stateBudget, requiredFacts: required.length }, { tags: { reason: 'state-budget' } })
-      return null
+      throw new ContextRecoveryFailedError('summary-budget')
     }
 
     return {
@@ -578,11 +595,11 @@ export class CompactionService {
           })
         } else if (event.type === 'usage' && event.source) {
           source = event.source
-        } else if (
-          event.type === 'context_overflow'
-          || event.type === 'error'
-          || event.type === 'cancelled'
-        ) {
+        } else if (event.type === 'context_overflow') {
+          throw new ContextRecoveryFailedError('request-overflow')
+        } else if (event.type === 'error') {
+          throw new ContextRecoveryFailedError('request-failed')
+        } else if (event.type === 'cancelled') {
           return null
         }
       }
@@ -590,8 +607,9 @@ export class CompactionService {
       acceptedText = trimmed.length > 0
       if (acceptedText && source) usageSources.push(source)
       return trimmed.length > 0 ? trimmed : null
-    } catch {
-      return null
+    } catch (error) {
+      if (abortSignal?.aborted) return null
+      throw error instanceof ContextRecoveryFailedError ? error : new ContextRecoveryFailedError('request-failed')
     } finally {
       if (!acceptedText && source) metricUsageAdoption(source, false, 'compaction-context')
     }

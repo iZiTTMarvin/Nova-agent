@@ -12,6 +12,10 @@ import {
 import type { MessageBlock } from '../../../src/shared/session/types'
 
 describe('appendTerminalErrorToBlocks', () => {
+  it('摘要校验失败明确保留历史，不误导用户删除消息', () => {
+    expect(formatTerminalErrorMessage('ContextRecoveryFailed: invalid-summary'))
+      .toBe('模型返回的历史摘要未通过完整性校验，本轮已停止。原始记录已保留，可重试继续任务。')
+  })
   it('只转换预算终态错误，其他错误原文保持不变', () => {
     expect(formatTerminalErrorMessage(
       'ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'

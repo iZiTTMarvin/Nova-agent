@@ -131,6 +131,12 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     const request = state.pendingPermissionRequest
     return request && request.sessionId === projection.childSessionId ? request : null
   })
+  const permissionInput = anchoredPermissionRequest?.toolName === 'shell_session'
+    ? anchoredPermissionRequest.args.input
+    : anchoredPermissionRequest?.args.command
+  const permissionCommands = anchoredPermissionRequest?.commands?.length
+    ? anchoredPermissionRequest.commands
+    : typeof permissionInput === 'string' ? [permissionInput] : []
 
   const toggleOpen = (): void => {
     if (!open && containerRef.current) {
@@ -175,6 +181,11 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
       {anchoredPermissionRequest && (
         <div className="subagent-activity-row__permission">
           <div className="subagent-activity-row__permission-label">子代理请求权限</div>
+          {permissionCommands.length > 0 && (
+            <pre className="subagent-activity-row__permission-command" aria-label="待授权命令">
+              {permissionCommands.join('\n')}
+            </pre>
+          )}
           <InlinePermissionBar request={anchoredPermissionRequest} />
         </div>
       )}

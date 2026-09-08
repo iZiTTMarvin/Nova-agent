@@ -1,5 +1,5 @@
 /* SubagentActivityRow — 子代理紧凑活动行
-   动效语言与 ComposeStageBar 统一：2s ease-in-out 呼吸、240ms 状态过渡、
+   动效语言：2s ease-in-out 呼吸、240ms 状态过渡、
    prefers-reduced-motion 降级；颜色全部走主题变量，深浅色自适应。 */
 
 .subagent-activity-row {
@@ -194,6 +194,17 @@
   font-size: 10px;
   font-weight: 600;
   line-height: 14px;
+}
+
+.subagent-activity-row__permission-command {
+  margin: 4px 0;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (prefers-reduced-motion: reduce) {

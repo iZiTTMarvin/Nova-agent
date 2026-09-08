@@ -2,15 +2,16 @@
  * SubagentDetailPopover — 子代理活动行的悬浮详情面板
  *
  * 锚定在活动行上、向上展开（bottom 锚定），展示子代理运行期间的真实工作流：
- * 工具调用记录、思考摘要与最终报告。运行中通过订阅投影 store 的 sequence/status
- * 变化重拉消息，保持实时；面板只读，不提供任何写操作，也不跳转子会话。
+ * 历史消息与 RunCoordinator 草稿合并展示；流式更新复用 run 快照投影。
+ * 面板只读，不跳转子会话。
  */
 import React, { useEffect, useMemo, useState } from 'react'
 import type { Message, MessageBlock } from '../../../shared/session'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
+import type { RunSnapshot } from '../../../shared/run/types'
 import { MarkdownRenderer } from '../chat/MarkdownRenderer'
 import { formatSubagentModelLine } from './modelLine'
-import { useSubagentProjectionStore } from './projection'
+import { useRunStore } from '../../stores/useRunStore'
 import type { PopoverAnchor } from './SubagentActivityRow'
 
 /** 每页拉取的尾部消息条数；子代理为短会话，单页通常即可覆盖全部。 */
@@ -99,7 +100,7 @@ function collectToolRows(messages: readonly Message[]): ToolRow[] {
       rows.push(toToolRow(block))
     }
   }
-  return rows.slice(0, MAX_TOOL_ROWS)
+  return rows.slice(-MAX_TOOL_ROWS)
 }
 
 function collectThinkingText(messages: readonly Message[]): string {
@@ -111,7 +112,7 @@ function collectThinkingText(messages: readonly Message[]): string {
       }
     }
   }
-  return parts.join('\n\n').slice(0, MAX_THINKING_CHARS)
+  return parts.join('\n\n').slice(-MAX_THINKING_CHARS)
 }
 
 /** 最后一条 assistant 文本消息：运行中即最新进展，终态即最终报告。 */
@@ -136,7 +137,10 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
   onClose
 }) => {
   const [messages, setMessages] = useState<Message[] | null>(null)
-  const [fetchTick, setFetchTick] = useState(0)
+  const [initialSnapshot, setInitialSnapshot] = useState<RunSnapshot | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const liveSnapshot = useRunStore(state => state.snapshotsByRunId[projection.childRunId] ?? null)
+  const terminal = ['completed', 'failed', 'cancelled', 'interrupted'].includes(projection.status)
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight)
   const panel = useMemo(
     () => computePanelGeometry(anchor, viewportHeight),
@@ -152,8 +156,16 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
 
   useEffect(() => {
     let cancelled = false
+    setMessages(null)
+    setInitialSnapshot(null)
+    setLoadError(false)
     void (async () => {
       try {
+        const snapshotResult = await window.api.invoke('run:get-snapshot', {
+          sessionId: projection.childSessionId, runId: projection.childRunId
+        })
+        if (cancelled) return
+        setInitialSnapshot(snapshotResult?.snapshot ?? null)
         const collected: Message[] = []
         let beforeId: string | undefined
         for (let page = 0; page < MAX_POPOVER_PAGES; page++) {
@@ -169,29 +181,28 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
         }
         setMessages(collected)
       } catch {
-        // 加载失败保留空态，不打断父消息流
-        setMessages([])
+        if (!cancelled) {
+          setMessages([])
+          setLoadError(true)
+        }
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [projection.childSessionId, fetchTick])
+  }, [projection.childSessionId, projection.childRunId, terminal])
 
-  // 运行中：投影 sequence/status 推进时重拉消息，保持面板与执行同步
-  useEffect(() => {
-    const unsubscribe = useSubagentProjectionStore.subscribe((state, prevState) => {
-      const current = state.byChildRunId[projection.childRunId]
-      const previous = prevState.byChildRunId[projection.childRunId]
-      if (
-        current &&
-        (current.sequence !== previous?.sequence || current.status !== previous?.status)
-      ) {
-        setFetchTick((tick) => tick + 1)
-      }
-    })
-    return unsubscribe
-  }, [projection.childRunId])
+  const displayedMessages = useMemo(() => {
+    const snapshot = liveSnapshot && (!initialSnapshot || liveSnapshot.sequence >= initialSnapshot.sequence)
+      ? liveSnapshot : initialSnapshot
+    const draft = snapshot?.sessionId === projection.childSessionId ? snapshot.turnDraft : null
+    if (!draft) return messages ?? []
+    const draftMessage: Message = {
+      id: draft.messageId, sessionId: projection.childSessionId, role: 'assistant',
+      content: '', blocks: draft.blocks, timestamp: draft.updatedAt
+    }
+    return [...(messages ?? []).filter(message => message.id !== draft.messageId), draftMessage]
+  }, [messages, liveSnapshot, initialSnapshot, projection.childSessionId])
 
   // Esc 关闭；点击背板关闭（背板覆盖全屏，面板自身冒泡禁止）
   useEffect(() => {
@@ -203,16 +214,16 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
   }, [onClose])
 
   const toolRows = useMemo(
-    () => (messages ? collectToolRows(messages) : []),
-    [messages]
+    () => collectToolRows(displayedMessages),
+    [displayedMessages]
   )
   const thinkingText = useMemo(
-    () => (messages ? collectThinkingText(messages) : ''),
-    [messages]
+    () => collectThinkingText(displayedMessages),
+    [displayedMessages]
   )
   const finalReport = useMemo(
-    () => (messages ? collectFinalReport(messages) : ''),
-    [messages]
+    () => collectFinalReport(displayedMessages),
+    [displayedMessages]
   )
   const loading = messages === null
 
@@ -251,6 +262,7 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
         </header>
 
         <div className="subagent-detail-popover__body">
+          {loadError && <p className="subagent-detail-popover__empty">历史记录读取失败，请重新打开详情。</p>}
           <section className="subagent-detail-popover__section">
             <h3 className="subagent-detail-popover__section-title">工具调用</h3>
             {loading ? (
@@ -285,7 +297,7 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
           </section>
 
           <section className="subagent-detail-popover__section">
-            <h3 className="subagent-detail-popover__section-title">最终报告</h3>
+            <h3 className="subagent-detail-popover__section-title">{terminal ? '最终报告' : '最新进展'}</h3>
             {loading ? (
               <p className="subagent-detail-popover__empty">加载中…</p>
             ) : finalReport ? (

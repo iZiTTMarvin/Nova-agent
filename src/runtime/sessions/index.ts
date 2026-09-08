@@ -65,3 +65,4 @@ export {
   findSubtreeLeaf
 } from './tree'
 export type { BranchMeta } from './tree'
+export { recoverSessionTurnDrafts } from './turnDraftRecovery'

@@ -4,13 +4,18 @@ import type { RiskLevel } from '../types'
  * 静态命令分类器无法证明任意 shell 命令是安全的。
  * 未命中危险模式只代表「没命中已知高风险模式」，不代表已证明安全。
  */
-const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; reason: string; posixOnly?: boolean }> = [
   { pattern: /\bsudo\b/, reason: '需要超级用户权限' },
   { pattern: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*--no-preserve-root)/, reason: '强制递归删除' },
   { pattern: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+|--recursive\b)/, reason: '递归删除目录' },
   { pattern: /(^|[\s;&|`(])eval\s/, reason: '在当前 shell 中执行任意字符串' },
-  { pattern: /(^|[\s;&|`(])(source|\.)\s+\S/, reason: '在当前 shell 中执行脚本（source）' },
-  { pattern: /`[^`]+`/, reason: '通过反引号执行任意命令，可能隐藏危险关键字' },
+  { pattern: /(^|[\s;&|`(])source\s+\S/, reason: '在当前 shell 中执行脚本（source）' },
+  // 点号只有位于命令入口时才是脚本执行；路径参数中的 . 表示当前目录。
+  {
+    pattern: /(^|[;&|`()\r\n{!]|\b(?:then|do|else|if|elif|while|until|time|command|builtin|exec))\s*(?:[A-Za-z_]\w*=\S+\s+)*\.\s+\S/,
+    reason: '在当前 shell 中执行脚本（source）'
+  },
+  { pattern: /`[^`]+`/, reason: '通过反引号执行任意命令，可能隐藏危险关键字', posixOnly: true },
   { pattern: /\bcurl\b.*\|\s*(sh|bash|zsh)/, reason: '从网络下载并直接执行脚本' },
   { pattern: /\bwget\b.*\|\s*(sh|bash|zsh)/, reason: '从网络下载并直接执行脚本' },
   { pattern: /\bchmod\s+([0-7]{3,4}|[+-][rwx])/, reason: '修改文件权限' },
@@ -48,13 +53,18 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bschtasks\s+\/(create|delete)\s+/i, reason: '创建或删除计划任务' },
 ]
 
-export function assessCommandRisk(command: string): {
+export function assessCommandRisk(command: string, shellName = 'unknown'): {
   riskLevel: RiskLevel
   isDangerous: boolean
   reason: string
 } {
-  for (const { pattern, reason } of DANGEROUS_PATTERNS) {
-    if (pattern.test(command)) {
+  const isPowerShell = shellName === 'pwsh' || shellName === 'powershell'
+  // PowerShell 反引号用于转义；同时检查去转义形式，避免隐藏危险命令名。
+  const unescaped = isPowerShell ? command.replace(/`/g, '') : command
+  const invokesPosixShell = /\b(?:bash|zsh|sh|wsl)(?:\.exe)?\b/i.test(unescaped)
+  for (const { pattern, reason, posixOnly } of DANGEROUS_PATTERNS) {
+    if (posixOnly && isPowerShell && !invokesPosixShell) continue
+    if (pattern.test(command) || pattern.test(unescaped)) {
       return { riskLevel: 'high', isDangerous: true, reason }
     }
   }

@@ -1,5 +1,6 @@
 import {
   COMPOSE_STAGE_IDS,
+  COMPOSE_STAGE_LABELS,
   isComposeStageId,
   type ComposeStageAction,
   type ComposeStageEntry,
@@ -129,6 +130,9 @@ export function applyStageTransition(
       return { ok: false, error: '生命周期已结束，无法再跳过阶段' }
     }
     const currentId = stages[inProgressIdx].id
+    if (currentId === 'blueprint' || currentId === 'inspect') {
+      return { ok: false, error: `「${COMPOSE_STAGE_LABELS[currentId]}」不能跳过；请完成审阅或核验后使用 complete，受阻时停在当前阶段说明原因。` }
+    }
     stages[inProgressIdx] = {
       id: currentId,
       status: 'skipped',

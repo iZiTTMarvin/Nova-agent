@@ -12,6 +12,8 @@ import {
   useAgentStore
 } from '../../../src/renderer/stores/useAgentStore'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
+import type { RunSnapshot } from '../../../src/shared/run/types'
+import { useRunStore } from '../../../src/renderer/stores/useRunStore'
 import { renderDom, act } from './renderDom'
 
 const mockInvoke = vi.fn()
@@ -50,6 +52,7 @@ describe('SubagentActivityRow', () => {
   beforeEach(() => {
     useSubagentProjectionStore.getState().resetForTests()
     resetAgentStoreForTests()
+    useRunStore.getState().resetForTests()
     mockInvoke.mockReset()
     mockOn.mockReset()
     // 就地替换 bridge（不重建 window，避免丢失 jsdom 原型上的 matchMedia）
@@ -87,6 +90,31 @@ describe('SubagentActivityRow', () => {
       .not.toBeNull()
     expect(output).toContain('Reading src/')
     expect(output).toContain('正在工作')
+    renderer.unmount()
+  })
+
+  it('执行中的详情合并 run 草稿，并随快照更新而不反复读取历史', async () => {
+    const snapshot: RunSnapshot = {
+      runId: 'internal-run-id', kind: 'agent', workspaceId: '/ws', sessionId: 'sess-child',
+      messageId: 'draft', status: 'running', sequence: 1, pendingInteractions: [],
+      currentAttempt: null, progress: null, lastHeartbeatAt: 1, createdAt: 1, updatedAt: 1,
+      turnDraft: { messageId: 'draft', attemptId: 'attempt', finalized: false, updatedAt: 1,
+        blocks: [{ type: 'tool', toolName: 'read', toolCallId: 'read-live', arguments: { path: 'index.html' }, status: 'running' }] }
+    }
+    mockInvoke.mockImplementation((channel: string) => Promise.resolve(channel === 'run:get-snapshot'
+      ? { snapshot } : { messages: [], hasMore: false }))
+    const renderer = renderDom(<SubagentActivityRow projection={baseProjection({ status: 'running' })} />)
+    act(() => renderer.container.querySelector<HTMLButtonElement>('.subagent-activity-row__trigger')!.click())
+    await flushAsync()
+    expect(document.body.querySelector('.subagent-detail-popover')?.textContent).toContain('index.html')
+    const historyReads = mockInvoke.mock.calls.filter(([channel]) => channel === 'load-session-messages').length
+    act(() => useRunStore.setState({ snapshotsByRunId: { [snapshot.runId]: {
+      ...snapshot, sequence: 2, turnDraft: { ...snapshot.turnDraft!, blocks: [
+        ...snapshot.turnDraft!.blocks, { type: 'thinking', content: '正在核对表单' }
+      ] }
+    } } }))
+    expect(document.body.querySelector('.subagent-detail-popover')?.textContent).toContain('正在核对表单')
+    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'load-session-messages')).toHaveLength(historyReads)
     renderer.unmount()
   })
 
@@ -335,6 +363,7 @@ describe('SubagentActivityRow', () => {
       renderer.container.querySelector('.subagent-activity-row__permission-label')?.textContent
     ).toContain('子代理')
     expect(bar?.textContent ?? '').toContain('运行测试命令')
+    expect(bar?.textContent ?? '').toContain('npm test')
 
     const deny = renderer.container.querySelector<HTMLButtonElement>(
       '.inline-perm__btn--deny'

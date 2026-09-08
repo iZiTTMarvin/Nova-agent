@@ -11,6 +11,7 @@ import {
 import type { RunCoordinator } from '../run/RunCoordinator'
 import {
   deriveChildSessionId,
+  recoverSessionTurnDrafts,
   extractTextFromSerializableContent,
   getSessionActiveMessages,
   type SessionData,
@@ -413,6 +414,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     command: FollowupSubagentCommand,
     identity: SpawnIdentity
   ): SubagentSessionData | null {
+    recoverSessionTurnDrafts(command.previousChildSessionId, this.deps.sessionStore, this.deps.runCoordinator)
     const messageId = deriveFollowupUserMessageId(identity.spawnKey)
     const append = this.deps.sessionStore.appendMessageFast(command.previousChildSessionId, {
       id: messageId,

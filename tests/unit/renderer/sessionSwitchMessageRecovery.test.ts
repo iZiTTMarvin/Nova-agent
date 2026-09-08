@@ -10,6 +10,7 @@ import {
   useChatStore
 } from '../../../src/renderer/stores/useChatStore'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 
 const sessionId = 'session-A'
 const messageId = 'assistant-A'
@@ -97,6 +98,14 @@ describe('运行中会话切回恢复', () => {
     resetChatStoreForTests()
     resetWorkspaceDispatcherForTests()
     useRunStore.getState().resetForTests()
+  })
+
+  it('切换到空工作区会结束加载，迟到水合不会重新挂起 spinner', async () => {
+    useWorkspaceStore.getState().setSessionLoading(true)
+    const state = workspaceState(sessionId, 1)
+    dispatchWorkspaceChange({ ...state, currentSessionId: null, availableSessions: [] })
+    await vi.waitFor(() => expect(useWorkspaceStore.getState().isSessionLoading).toBe(false))
+    expect(useChatStore.getState().currentSessionId).toBeNull()
   })
 
   it('切回运行中会话时用 turnDraft 恢复 assistant 消息', async () => {

@@ -9,7 +9,7 @@ const CHAT_STATE_KEYS = [
   'recoveryState', 'recoveryHints', 'hookErrors', 'rollbackErrors', 'hasMoreMessagesAbove',
   'isLoadingOlderMessages', 'oldestLoadedMessageId', 'suspendHeadTrim', 'liveTurn',
   'loadSessions', 'selectSession', 'deleteSession', 'renameSession', 'setSessionPinned', 'createNewSession',
-  'sendMessage', 'regenerateAssistant', 'switchBranch', 'editResend', 'acceptFile',
+  'sendMessage', 'sendNextPendingMessage', 'regenerateAssistant', 'switchBranch', 'editResend', 'acceptFile',
   'rejectFile', 'acceptAllFiles', 'rejectAllFiles', 'loadMessageDiffs', 'clearMessageDiffs',
   'loadOlderMessages', 'finishBranchMetaRefresh', 'dismissTier1BranchNotice', 'applyStreamDeltas',
   'handleMessageStart', 'handleAttemptFailed', 'handleThinkingDelta', 'handleTextDelta',
@@ -28,7 +28,6 @@ describe('chat store shape baseline', () => {
     const actual = Object.keys(useChatStore.getState()).sort()
     const expected = [...CHAT_STATE_KEYS].sort()
     expect(actual).toEqual(expected)
-    expect(actual).toHaveLength(67)
   })
 
   it('resetChatStoreForTests 恢复全部状态字段默认值', () => {

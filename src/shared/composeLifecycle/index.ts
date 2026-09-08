@@ -20,3 +20,4 @@ export {
 export { getComposeStageToolDenial } from './stageToolGating'
 export { getPlanCompleteDenial } from './planApprovalGate'
 export { getStageCompleteDenial, type ComposeStageFacts } from './stageFacts'
+export { parseCapabilityItems } from './blueprint'

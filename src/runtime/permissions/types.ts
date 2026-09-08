@@ -19,6 +19,8 @@ export interface PermissionQuery {
   sessionId: string
   workspaceRoot: string
   permissionMode: PermissionMode
+  /** 与工具执行共用的 shell 覆盖；省略时使用平台默认发现。 */
+  shellPath?: string
   /** 能力上限（如只读子代理）；优先于 Permission Mode baseline。 */
   capabilityCeiling?: PermissionCapabilityCeiling | null
 }

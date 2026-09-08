@@ -133,7 +133,9 @@ export class RunCoordinator {
     const fromDisk = this.store.findSnapshotsBySession(sessionId)
     if (fromDisk.length === 0) return null
     const nonTerminal = fromDisk.find(s => !isTerminalRunStatus(s.status))
-    return cloneSnapshot(nonTerminal ?? fromDisk[0])
+    // 草稿恢复和终态 hook 会更新旧 run，不能据此把旧轮当成最新一轮。
+    const latest = fromDisk.reduce((current, candidate) => candidate.createdAt > current.createdAt ? candidate : current)
+    return cloneSnapshot(nonTerminal ?? latest)
   }
 
   /** 按会话列举全部 run 快照（内存优先覆盖磁盘，按 createdAt 升序、同刻按 runId 稳定排序）。 */

@@ -19,50 +19,53 @@ describe('getComposeStageGuide', () => {
     }
   })
 
-  it('问：软确认门与只读边界', () => {
+  it('每份指南正文不超过 25 行', () => {
+    for (const stageId of COMPOSE_STAGE_IDS) {
+      const body = getComposeStageGuide(stageId).replace(/^[^\n]+\n/, '')
+      expect(body.split('\n').length, stageId).toBeLessThanOrEqual(25)
+    }
+  })
+
+  it('问：askQuestion 标推荐，只读边界', () => {
     const guide = getComposeStageGuide('interview')
-    expect(guide).toContain('确认')
+    expect(guide).toContain('askQuestion')
+    expect(guide).toContain('推荐')
     expect(guide).toContain('只读')
     expect(guide).toContain('stage_transition')
   })
 
-  it('图：save_plan 写计划文档，用户批准的硬确认门', () => {
+  it('图：一页纸、critic 挑刺、save_plan', () => {
     const guide = getComposeStageGuide('blueprint')
+    expect(guide).toContain('一页纸')
+    expect(guide).toContain('critic')
     expect(guide).toContain('save_plan')
-    expect(guide).toContain('.nova/plans/')
-    expect(guide).toContain('批准')
     expect(guide).toContain('stage_transition')
   })
 
-  it('锤：亲自实现、不派子代理，完成标准为计划任务全部完成', () => {
+  it('锤：todo_write 导入条目，小任务亲自写，大任务派 code', () => {
     const guide = getComposeStageGuide('build')
+    expect(guide).toContain('todo_write')
     expect(guide).toContain('亲自')
-    expect(guide).toContain('不派遣子代理')
-    expect(guide).toContain('验收标准')
+    expect(guide).toContain('code')
+    expect(guide).toContain('stage_transition')
   })
 
-  it('验：唯一只读子代理 + 循环上限', () => {
+  it('验：派 inspector，未通过 return build', () => {
     const guide = getComposeStageGuide('inspect')
-    expect(guide).toContain('task')
-    expect(guide).toContain('只读子代理')
-    expect(guide).toContain('3 次')
-    expect(guide).toContain('return')
+    expect(guide).toContain('inspector')
+    expect(guide).toContain('return build')
+    expect(guide).toContain('两轮')
+    expect(guide).toContain('stage_transition')
   })
 
-  it('验：brief 四要素与 review 子代理类型完整（自然语言交接约定）', () => {
-    const guide = getComposeStageGuide('inspect')
-    expect(guide).toContain('需求背景')
-    expect(guide).toContain('计划文档位置')
-    expect(guide).toContain('改动清单')
-    expect(guide).toContain('验证证据')
-    expect(guide).toContain('subagent_type: review')
-    expect(guide).toContain('markdown')
-  })
-
-  it('交：自然语言总结交付与遗留问题', () => {
+  it('交：三段收尾', () => {
     const guide = getComposeStageGuide('deliver')
-    expect(guide).toContain('总结')
-    expect(guide).toContain('遗留问题')
+    expect(guide).toContain('怎么用')
+    expect(guide).toContain('我验了什么')
+    expect(guide).toContain('没做的')
+    expect(guide).not.toContain('证据')
+    expect(guide).not.toContain('回执')
+    expect(guide).not.toContain('覆盖率')
     expect(guide).toContain('stage_transition')
   })
 })

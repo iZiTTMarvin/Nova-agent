@@ -67,6 +67,39 @@ function createService(options?: {
 }
 
 describe('CompactionService', () => {
+  it.each([
+    [{ type: 'error', error: 'provider unavailable' }, 'request-failed'],
+    [{ type: 'context_overflow', rawError: 'too long' }, 'request-overflow'],
+    [{ type: 'message_end', finishReason: 'stop' }, 'empty-summary'],
+    [{ type: 'text_delta', delta: 'invalid JSON' }, 'invalid-summary']
+  ] as const)('摘要失败保留原因和历史，不误报为用户消息过长：%s', async (event, reason) => {
+    const context = createContext(createMessages(60))
+    const original = context.messages
+    const client = new MockModelClient()
+      .addResponse({ events: [{ type: 'text_delta', delta: 'stub' }] })
+      .addResponse({ events: [event] })
+      .addResponse({ events: [{ type: 'text_delta', delta: 'still invalid JSON' }] })
+    const { service } = createService({ context, contextWindow: 2_000, client })
+    await expect(service.prepareMainRequest(original, undefined, identitySummaryProjection))
+      .rejects.toThrow(`ContextRecoveryFailed: ${reason}`)
+    expect(context.messages).toBe(original)
+    expect(context.compactionState).toBeNull()
+    service.dispose()
+  })
+  it('恢复后的无锚点长历史先压缩可归档前缀，再允许主请求', async () => {
+    const context = createContext(createMessages(60))
+    const { service, client } = createService({ context, contextWindow: 2_000,
+      client: new MockModelClient().addHandoffPair({ events: [
+        { type: 'text_delta', delta: '已完成历史工作，继续当前任务。' },
+        { type: 'message_end', finishReason: 'stop' }
+      ] })
+    })
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection))
+      .resolves.toMatchObject({ status: 'compacted' })
+    expect(context.messages.length).toBeLessThan(61)
+    expect(client.getCalls().length).toBeGreaterThan(0)
+    service.dispose()
+  })
   it('真实客户端的 stub/state 保持并行，usage 与上下文采纳独立关联', async () => {
     const previous = process.env.NOVA_METRICS
     process.env.NOVA_METRICS = '1'

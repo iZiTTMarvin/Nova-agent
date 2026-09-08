@@ -7,16 +7,41 @@
  * - 挂起的权限请求在启动对账时收敛为已取消，不再残留「等待你处理」徽标
  * - 轮次失败/中断后，落盘工具块为终态：重载后仍是终态而非永久执行中
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import sharp from 'sharp'
 import path from 'node:path'
 import type { ElectronApplication } from '@playwright/test'
 import {
   RUN_LIST_WAITING,
+  SAVE_MODEL_CONFIG,
   WORKSPACE_SET_PERMISSION_MODE
 } from '../../../src/shared/ipc/channels'
 import { expect, launchNova, test, type NovaHarness } from '../fixtures/nova'
 
 const CONTINUE_PROMPT = '请从中断处继续完成刚才的任务。'
+
+test('读取截图后继续回答，图片传输体积不会被误判为文本上下文溢出', async ({ nova }) => {
+  await nova.invoke(SAVE_MODEL_CONFIG, {
+    baseUrl: nova.provider.baseUrl, apiKey: 'nova-e2e-key', modelId: 'MiniMax-M3',
+    contextWindow: 200_000, supportsVision: true, cacheProfile: 'generic', toolDialect: 'native'
+  })
+  const png = await sharp(randomBytes(640 * 480 * 3), { raw: { width: 640, height: 480, channels: 3 } }).png().toBuffer()
+  await writeFile(path.join(nova.workspacePath, 'review.png'), png)
+  nova.provider.enqueue(
+    { kind: 'tool', name: 'read', arguments: { path: 'review.png' }, callId: 'read-review' },
+    { kind: 'text', text: 'NOVA_IMAGE_REVIEW_COMPLETE' }
+  )
+  await nova.sendPrompt('查看截图并继续审阅')
+  await expect(nova.page.getByText('NOVA_IMAGE_REVIEW_COMPLETE', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+  expect(nova.provider.requests).toHaveLength(2)
+  const wire = JSON.stringify(nova.provider.requests[1].body.messages)
+  expect(wire.includes('data:image/png;base64,')).toBe(true)
+  expect(wire.length).toBeGreaterThan(720_000)
+  expect((await nova.getRunSnapshot())?.status).toBe('completed')
+  expect(nova.pageErrors).toEqual([])
+})
 
 /** 关闭主进程（不取消运行），保证 run 以非终态落盘供下次启动对账 */
 async function quitAppWithoutCancelling(app: ElectronApplication): Promise<void> {
@@ -86,17 +111,37 @@ test('运行中退出重启后按中断终态恢复，「继续分析」代发�
       .toBe('interrupted')
 
     // 工具块为终态（成功落盘）而非转圈，输入可继续使用
+    await resumed.page.getByRole('button', { name: /已停止 · 工作了/ }).click()
+    await expect(resumed.page.locator('.tool-trace-row').filter({ hasText: 'interrupt-target.txt' }))
+      .toBeVisible()
     await expect(resumed.page.locator('.tool-trace-row--live')).toHaveCount(0)
     await expect(resumed.page.getByRole('button', { name: '中断生成' })).toHaveCount(0)
     await expect(resumed.page.getByLabel('消息输入')).toBeEditable()
+    await expect.poll(async () => resumed.page.locator('.chat-panel').evaluate(panel => {
+      const scroll = panel.querySelector('.chat-messages')
+      const dock = panel.querySelector('.chat-panel__composer-area')
+      return scroll && dock ? parseFloat(getComputedStyle(scroll).paddingBottom) - dock.getBoundingClientRect().height : -1
+    })).toBeGreaterThanOrEqual(16)
     expect(await readFile(path.join(nova.workspacePath, 'interrupt-target.txt'), 'utf8'))
       .toContain('nova e2e interrupt')
 
     // 「继续分析」代发新消息开新轮次
-    resumed.provider.enqueue({ kind: 'text', text: 'NOVA_E2E_RECOVERED' })
+    resumed.provider.enqueue({ kind: 'hold', id: 'resume-hold', text: 'NOVA_E2E_RECOVERED' })
     await resumed.page.getByRole('button', { name: '继续分析' }).click()
 
     await resumed.provider.waitForRequestCount(3)
+    await expect(resumed.page.getByRole('button', { name: '继续分析' })).toHaveCount(0)
+    await expect(resumed.page.getByRole('button', { name: '中断生成' })).toBeVisible()
+    await resumed.page.reload()
+    await expect(resumed.page.getByRole('button', { name: '中断生成' })).toBeVisible()
+    await expect(resumed.page.getByRole('button', { name: '继续分析' })).toHaveCount(0)
+    await expect.poll(async () => {
+      const tail = await resumed.page.locator('.chat-messages__tail-status').boundingBox()
+      const dock = await resumed.page.locator('.chat-panel__composer-area').boundingBox()
+      return tail && dock ? dock.y - (tail.y + tail.height) : -1
+    }).toBeGreaterThanOrEqual(0)
+    resumed.provider.release('resume-hold')
+    expect(JSON.stringify(resumed.provider.requests[2].body.messages)).toContain('interrupt-target.txt')
     await expect(resumed.page.getByText(CONTINUE_PROMPT, { exact: false })).toBeVisible()
     await expect(resumed.page.getByText('NOVA_E2E_RECOVERED', { exact: false })).toBeVisible()
     await expect(resumed.page.getByRole('button', { name: '继续分析' })).toHaveCount(0)

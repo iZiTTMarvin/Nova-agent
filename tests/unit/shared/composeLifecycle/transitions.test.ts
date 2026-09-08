@@ -36,6 +36,12 @@ describe('createInitialStageTable', () => {
 })
 
 describe('applyStageTransition', () => {
+  it.each([1, 3])('不能跳过必须审阅或核验的阶段（游标 %s）', (count) => {
+    const stages = completeThrough(createInitialStageTable(NOW), count)
+    expect(applyStageTransition(stages, { type: 'skip', reason: '暂时无法验证' }, NOW)).toMatchObject({
+      ok: false, error: expect.stringContaining('不能跳过')
+    })
+  })
   it('complete 顺序推进到下一阶段，并给新进行中阶段写入 enteredAt', () => {
     const result = applyStageTransition(createInitialStageTable(NOW), { type: 'complete' }, NOW)
     expect(result).toEqual({
@@ -205,7 +211,7 @@ describe('applyStageTransition', () => {
     let stages = createInitialStageTable(NOW)
     const actions = [
       { type: 'complete' as const },
-      { type: 'skip' as const, reason: '跳过计划' },
+      { type: 'complete' as const },
       { type: 'return' as const, targetStage: 'interview' as const, reason: '重来' },
       { type: 'complete' as const },
       { type: 'complete' as const }
@@ -309,7 +315,7 @@ describe('applyStageTransition', () => {
     if (!complete.ok) return
     expect(complete.reviewLoops).toBe(1)
 
-    const skip = applyStageTransition(atInspect, { type: 'skip', reason: '无需核验' }, NOW, 2)
+    const skip = applyStageTransition(createInitialStageTable(NOW), { type: 'skip', reason: '用户已有需求' }, NOW, 2)
     expect(skip.ok).toBe(true)
     if (!skip.ok) return
     expect(skip.reviewLoops).toBe(2)

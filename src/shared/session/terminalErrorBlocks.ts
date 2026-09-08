@@ -7,6 +7,16 @@ export const CONTEXT_BUDGET_EXCEEDED_NOTICE =
 
 /** 将内部预算错误转换为用户可执行的提示，其他错误保留原文。 */
 export function formatTerminalErrorMessage(error: string): string {
+  if (error.startsWith('ContextRecoveryFailed:')) {
+    const reason = error.slice('ContextRecoveryFailed:'.length).trim()
+    const detail = reason === 'invalid-summary' ? '模型返回的历史摘要未通过完整性校验'
+      : reason === 'empty-summary' ? '模型没有返回历史摘要'
+      : reason === 'request-overflow' ? '摘要请求超过模型可接收的上下文'
+      : reason === 'summary-budget' ? '历史摘要仍超出可用预算'
+      : reason === 'commit-rejected' ? '历史摘要未能安全保存'
+      : '历史摘要请求失败'
+    return `${detail}，本轮已停止。原始记录已保留，可重试继续任务。`
+  }
   return error.startsWith('ContextBudgetExceeded:')
     ? CONTEXT_BUDGET_EXCEEDED_NOTICE
     : error

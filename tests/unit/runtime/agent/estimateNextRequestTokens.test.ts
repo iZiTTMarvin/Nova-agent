@@ -14,18 +14,18 @@ import { identitySummaryProjection } from '../../../../src/test-support/builders
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
-import type { RequestBudgetMeasurement } from '../../../../src/runtime/model/requestBudget'
+import { parseRequestBudgetAnchor, type RequestBudgetMeasurement } from '../../../../src/runtime/model/requestBudget'
 
 const roots: string[] = []
 afterEach(() => { resetSessionIndexHostForTests(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })) })
 const source = (r: RequestBudgetMeasurement) => ({ routeId: r.routeId, purpose: 'main' as const, logicalRequestId: 'logical', physicalAttemptId: 'physical' })
 const config = { baseUrl: 'https://a.test/v1', apiKey: 'fixture', modelId: 'deepseek-v4-flash', contextWindow: 500_000 }
 const messages: ChatMessage[] = [{ role: 'system', content: 'system' }, { role: 'user', content: '原文🙂' }]
-function setup() {
+function setup(activeConfig = config) {
   const root = mkdtempSync(join(tmpdir(), 'nova-budget-')); roots.push(root)
   const store = new SessionStore(root), session = store.create(root)
-  const pool = new ModelClientPool({ primary: new OpenAICompatibleModelClient(config), primaryConfig: config,
-    fallbacks: [{ config: { ...config, baseUrl: 'https://b.test/v1' }, client: new OpenAICompatibleModelClient({ ...config, baseUrl: 'https://b.test/v1' }) }] })
+  const pool = new ModelClientPool({ primary: new OpenAICompatibleModelClient(activeConfig), primaryConfig: activeConfig,
+    fallbacks: [{ config: { ...activeConfig, baseUrl: 'https://b.test/v1' }, client: new OpenAICompatibleModelClient({ ...activeConfig, baseUrl: 'https://b.test/v1' }) }] })
   let current = true
   const context = createAgentContext({ readState: createReadState(), messages: structuredClone(messages), sessionStore: store, sessionId: session.id })
   const make = () => new CompactionService({ context, modelClient: new MockModelClient(), contextBudgetManager: defaultContextBudgetManager,
@@ -35,6 +35,19 @@ function setup() {
 }
 
 describe('同路由最终投影预算', () => {
+  it('MiniMax 读图按视觉输入预留预算，不把 Base64 当作文本 token', () => {
+    const { service, pool: client } = setup({ ...config, modelId: 'MiniMax-M3', contextWindow: 200_000 })
+    const before = client.measureRequest(messages)
+    expect(service.observeMainRequest(18_908, before, source(before))).toBe(true)
+    const imageMessages: ChatMessage[] = [...messages, { role: 'user', content: [
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(720_000)}` } }
+    ] }]
+    const measured = client.measureRequest(imageMessages)
+    expect(measured.serializedBytes).toBeGreaterThan(720_000)
+    expect(service.assessNextRequest(measured)).toMatchObject({ status: 'within', source: 'anchored-estimate' })
+    const hugeText = client.measureRequest([...messages, { role: 'user', content: 'A'.repeat(720_000) }])
+    expect(service.assessNextRequest(hugeText).status).toBe('compact')
+  })
   it.each([399_999, 400_000, 400_001])('500K 窗口的正常等号边界 %i', tokens => {
     const { service, pool } = setup(), request = pool.measureRequest(messages)
     expect(service.observeMainRequest(tokens, request, source(request))).toBe(true)
@@ -45,6 +58,7 @@ describe('同路由最终投影预算', () => {
     expect(service.observeMainRequest(390_000, request, source(request))).toBe(true)
     const persisted = store.loadContextSnapshot(session.id)!
     expect(persisted.entries).toEqual([])
+    expect(parseRequestBudgetAnchor({ ...persisted.budgetAnchor, budgetUnits: 'invalid' })).toBeNull()
     context.compactionState = null
     const restored = make(); restored.restoreBudget(persisted)
     const next = pool.measureRequest([...messages, { role: 'assistant', content: '后缀'.repeat(100) }])

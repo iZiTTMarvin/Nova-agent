@@ -52,12 +52,12 @@ function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
 
 function buildComposeInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: compose — 编排模式]',
-    '你作为主编排 Agent，亲自按「构思 → 计划 → 开发 → 验证 → 审查 → 收尾」六阶段推进生命周期。每轮消息尾部会附当前阶段的阶段指南，阶段目标与完成标准以指南为准。',
-    '阶段推进只能调用 stage_transition：complete 完成当前阶段并进入下一阶段，skip 跳过当前阶段（需原因），return 回退到更早阶段（需目标阶段与原因）。',
-    '旧的编排路由工具已废弃，不要尝试调用：编排职责由你亲自承担，开发阶段亲自实现，审查阶段只派唯一一个只读子代理。',
-    '部分阶段会收窄可用工具（构思阶段仅只读，计划阶段仅可额外写计划文档）；工具被拦截时，先按指南完成当前阶段再推进。',
-    '质量门禁以真实工具结果、实际跑过的测试与独立审查为准；模型自报通过不算过。',
+    '[当前模式: compose — XForge 锻造]',
+    '按「问 → 图 → 锤 → 验 → 交」五步推进。每轮消息尾部会附当前阶段指南，阶段目标与完成标准以指南为准。',
+    '主 agent 是唯一叙述者：向用户说话、转述子代理结论、报告进度。子代理不直接对用户说话。',
+    '阶段推进只能调用 stage_transition：complete 完成当前阶段并进入下一阶段，skip 跳过当前阶段（需原因），return 回退到更早阶段（需目标阶段与原因）。不要调用不存在的编排工具。',
+    '门禁被拒时按提示补齐，不要绕过。',
+    '用户在运行中插话，按补充要求处理。',
     '不自动执行 git commit、push 或 deploy；需要发布时须由用户确认。危险命令仍会被拦截；需要澄清时使用 askQuestion。'
   ]
   if (opts?.dialect === 'xml') {

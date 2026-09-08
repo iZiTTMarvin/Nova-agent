@@ -153,8 +153,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
     const { useAgentStore } = await import('../../useAgentStore')
     useAgentStore.getState().clearCancelFallback()
 
-    // turn boundary 自动 dispatch 挂起消息
-    await dispatchNextPendingMessage({ getState: get, setState: set })
+    // 明确暂停后保留排队内容，等待用户继续；只在正常结束后自动发送。
+    if (!interrupted) await dispatchNextPendingMessage({ getState: get, setState: set })
 
     // 分叉轮次正常结束：补 bump revision 拉取 branch 元信息（翻页器）
     await get().finishBranchMetaRefresh()
@@ -303,10 +303,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       }
     })
 
-    // cancel 兜底路径也是 turn boundary。派发下一条消息前必须清除旧轮次定时器，
-    // 避免迟到的 fallback 作用于刚启动的新轮次。
+    // 停止后清除旧轮次定时器；排队内容保留，等待用户继续。
     const { useAgentStore } = await import('../../useAgentStore')
     useAgentStore.getState().clearCancelFallback()
-    await dispatchNextPendingMessage({ getState: get, setState: set })
   }
 })

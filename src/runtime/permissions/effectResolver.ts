@@ -1,6 +1,7 @@
 import type { PathAccessKind, SessionPathGrant, ToolEffect } from '../../shared/permissions/types'
 import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
 import { resolveToolArg } from '../tools/toolArgResolver'
+import { getShellConfig } from '../tools/bash'
 import { resolvePathAccess } from './pathAccess/pathAccessPolicy'
 import { listPathGrantsForAccess } from './pathAccess/sessionPathGrants'
 import { assessCommandRisk } from './risk/bashRisk'
@@ -65,7 +66,13 @@ export function resolvePermissionEffects(query: PermissionQuery): EffectResoluti
   const reasons: string[] = []
   if (descriptor.risk === 'dynamic' && query.toolName === 'bash') {
     const command = resolveToolArg(query.args, 'command') ?? ''
-    const risk = assessCommandRisk(command)
+    let shellName: string
+    try {
+      shellName = getShellConfig(query.shellPath).name
+    } catch {
+      return { ok: false, reason: '无法确定命令使用的 Shell' }
+    }
+    const risk = assessCommandRisk(command, shellName)
     riskLevel = risk.riskLevel
     if (risk.isDangerous) reasons.push(risk.reason)
   }

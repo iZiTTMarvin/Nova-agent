@@ -36,6 +36,19 @@ describe('Steering Queue', () => {
     expect(queue[1].text).toBe('问题 2')
   })
 
+  it.each(['message_end', 'cancel_fallback'])('暂停边界 %s 保留队列，显式继续才发出', async (boundary) => {
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.getState().handleMessageStart('paused')
+    useChatStore.getState().enqueuePendingMessage('补充要求', [])
+    if (boundary === 'message_end') await useChatStore.getState().handleMessageEnd('paused', true)
+    else await useChatStore.getState().markRunningAsCancelled()
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['补充要求'])
+    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(0)
+    await useChatStore.getState().sendNextPendingMessage()
+    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(1)
+    expect(useChatStore.getState().pendingUserMessages).toEqual([])
+  })
+
   it('removePendingMessage 应按索引移除', () => {
     useChatStore.getState().enqueuePendingMessage('问题 1', [])
     useChatStore.getState().enqueuePendingMessage('问题 2', [])
@@ -77,23 +90,6 @@ describe('Steering Queue', () => {
     expect(mockInvoke).toHaveBeenCalledWith('send-message', expect.objectContaining({
       content: '后续问题'
     }))
-  })
-
-  it('turn boundary: cancel (interrupted message-end) 后也应 dispatch 挂起消息', async () => {
-    // 1. 模拟助手正在运行
-    useChatStore.getState().handleMessageStart('msg_cancel')
-    useChatStore.getState().enqueuePendingMessage('cancel 后继续', [])
-    expect(useChatStore.getState().pendingUserMessages).toHaveLength(1)
-
-    // 2. cancel 后的 message-end（interrupted=true）
-    mockInvoke.mockResolvedValue(undefined)
-    await useChatStore.getState().handleMessageEnd('msg_cancel', true)
-
-    // 3. 队列首条应被 dispatch
-    const state = useChatStore.getState()
-    expect(state.pendingUserMessages).toHaveLength(0)
-    expect(state.isGenerating).toBe(true)
-    expect(state.messages[state.messages.length - 1].id).toContain('user') // 追加了用户消息
   })
 
   it('挂起消息按 FIFO 顺序 dispatch', async () => {

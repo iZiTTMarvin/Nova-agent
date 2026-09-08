@@ -93,6 +93,8 @@ describe('SubagentLifecycleCoordinator', () => {
     const abortGrandchild = registerSettlingHandle('run-grandchild')
     const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
 
+    expect(lifecycle.getRootRunId('run-grandchild')).toBe('run-parent')
+    expect(lifecycle.getRootRunId('run-parent')).toBe('run-parent')
     const result = await lifecycle.cancelRunTree('run-parent', 'test_cancel')
 
     expect(result.requestedRunIds).toEqual(['run-parent', 'run-child', 'run-grandchild'])

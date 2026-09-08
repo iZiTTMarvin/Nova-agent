@@ -2,6 +2,7 @@
  * Agent turn 生命周期：SEND_MESSAGE 主链（preflight → persist → start/resume → execute → cleanup）
  */
 import { BrowserWindow, app } from 'electron'
+import { recoverSessionTurnDrafts } from '../../../runtime/sessions'
 import {
   AgentLoop,
   getSubAgentSpec,
@@ -176,6 +177,7 @@ export async function sendAgentMessage(
   }
 
   const sessionStore = getSessionStore()
+  recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
   const session = sessionStore.load(params.sessionId)
   if (!session) {
     throw new Error(`会话 ${params.sessionId} 不存在`)

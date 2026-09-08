@@ -84,6 +84,7 @@ import {
   applyMessagePatches,
   clearMessagePatches,
   readMessagePatches,
+  SESSION_MESSAGE_PATCHES_FILE,
   type MessagePatchEvent
 } from './messagePatches'
 import {
@@ -499,6 +500,45 @@ export class SessionStore {
     } catch {
       // 索引写失败不阻断 save
     }
+  }
+
+  /** 中断草稿补回原用户消息之后；后续追问接回该记录，已有回答分支保持独立。 */
+  recoverAssistantMessage(sessionId: string, message: SessionMessageAppend & { role: 'assistant' }, userMessageId: string): void {
+    const session = this.load(sessionId)
+    if (!session) throw new Error(`会话 ${sessionId} 不存在`)
+    const parentIndex = session.messages.findIndex(m => m.id === userMessageId && m.role === 'user')
+    if (parentIndex < 0) throw new Error('中断记录缺少原始用户消息，保留草稿等待恢复')
+    const existing = session.messages.find(m => m.id === message.id)
+    if (existing && (existing.role !== 'assistant' || existing.parentId !== userMessageId)) {
+      throw new Error('中断记录身份与已有消息冲突')
+    }
+    if (!existing && session.currentLeafId === userMessageId) {
+      const result = this.appendMessageFast(sessionId, message)
+      if (!result.ok) throw new Error(`中断记录归档失败: ${result.error}`)
+      return
+    }
+    if (!existing) {
+      session.messages.splice(parentIndex + 1, 0, normalizeMessageToBlocksSource({ ...message, parentId: userMessageId }))
+      session.messages = session.messages.map(m =>
+        m.role === 'user' && m.parentId === userMessageId ? { ...m, parentId: message.id } : m
+      )
+    }
+    if (session.currentLeafId === userMessageId) session.currentLeafId = message.id
+    const dir = this.resolveSessionDir(sessionId)
+    // 先原子提交消息图，再更新派生元数据；任一步失败都可用原草稿幂等重试。
+    if (!existing) {
+      const backupDir = path.join(dir, 'recovery', createHash('sha256').update(message.id).digest('hex').slice(0, 16))
+      fs.mkdirSync(backupDir, { recursive: true })
+      for (const file of [SESSION_MESSAGES_FILE, SESSION_DATA_FILE, SESSION_MESSAGE_PATCHES_FILE]) {
+        const backup = path.join(backupDir, file)
+        const original = path.join(dir, file)
+        if (fs.existsSync(original) && !fs.existsSync(backup)) fs.copyFileSync(original, backup, fs.constants.COPYFILE_EXCL)
+      }
+      writeMessagesJsonl(dir, session.messages.map(serializeMessageForDisk))
+      clearMessagePatches(dir)
+      closeSessionIndex(dir)
+    }
+    this.saveMetadata(session, { recomputeMessageCount: true })
   }
 
   /**

@@ -1,7 +1,7 @@
 import type { ChatStoreApi } from './storeApi'
 
 /**
- * turn boundary（message-end / error / cancel 兜底）自动派发 steering 队列首条消息。
+ * 正常结束、错误终态或用户显式继续时派发队列首条消息；暂停不自动派发。
  *
  * getState 必须在 setState 之外先调用，保证读到的 pendingUserMessages 是最新值；
  * 先同步移除队首避免同一条被多次派发，再复用 sendMessage 主路径

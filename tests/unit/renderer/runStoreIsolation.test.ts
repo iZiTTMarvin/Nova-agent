@@ -222,4 +222,19 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
     expect(useRunStore.getState().interruptedRunId).toBeNull()
     expect(useRunStore.getState().interruptedSessionId).toBeNull()
   })
+
+  it('旧快照拉取期间新轮开始，迟到响应不能恢复旧中断提示', async () => {
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const old = { ...makeSnap('old', 'sessA', 5, 'interrupted'), createdAt: 1 }
+    const current = { ...makeSnap('new', 'sessA', 1), createdAt: 2 }
+    let resolvePull!: (result: unknown) => void
+    mockInvoke.mockImplementation(() => new Promise(resolve => { resolvePull = resolve }))
+    const pending = useRunStore.getState().pullSnapshot('sessA')
+    useRunStore.getState().handleSnapshotEvent(current, { sequence: 1, type: 'running', at: 2 })
+    resolvePull({ snapshot: old, waitingSessions: [] })
+    await pending
+    expect(useRunStore.getState().snapshot?.runId).toBe('new')
+    expect(useRunStore.getState().interruptedRunId).toBeNull()
+    expect(useRunStore.getState().interruptedSteps).toEqual([])
+  })
 })

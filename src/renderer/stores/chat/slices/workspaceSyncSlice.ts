@@ -69,10 +69,13 @@ export function createWorkspaceSyncSlice(
 
       const targetSessionId = next.currentSessionId
       const hydrationEpoch = nextHydrationEpoch()
-      if (!targetSessionId) return
-
       void (async () => {
         const { useWorkspaceStore } = await import('../../useWorkspaceStore')
+        if (!isHydrationEpochCurrent(hydrationEpoch)) return
+        if (!targetSessionId) {
+          useWorkspaceStore.getState().setSessionLoading(false)
+          return
+        }
         if (sessionChanged) {
           useWorkspaceStore.getState().setSessionLoading(true)
         }
@@ -200,7 +203,9 @@ export function createWorkspaceSyncSlice(
           // （重启/切回），从后代 run snapshot 恢复投影到父会话权限条
           if (sessionChanged && get().currentSessionId === targetSessionId) {
             const { projectDescendantPendingPermissions } = await import('../../useAgentStore')
-            await projectDescendantPendingPermissions(targetSessionId)
+            void projectDescendantPendingPermissions(targetSessionId).catch(err => {
+              console.error('[useChatStore] 恢复子任务权限失败:', err)
+            })
           }
         } catch (err) {
           console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)

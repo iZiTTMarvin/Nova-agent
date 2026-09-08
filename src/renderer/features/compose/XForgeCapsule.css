@@ -1,0 +1,213 @@
+/* XForge 胶囊：沿用聊天区字号、间距与主题变量，不另起仪表盘密度 */
+
+.xforge-capsule {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: min(280px, calc(100% - 24px));
+  font-family: var(--font-sans);
+  pointer-events: auto;
+}
+
+@media (min-width: 768px) {
+  .xforge-capsule {
+    right: 24px;
+  }
+}
+
+.xforge-capsule__chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--border-cream);
+  border-radius: 999px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-whisper, 0 1px 2px rgba(0, 0, 0, 0.04));
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.xforge-capsule__chip:hover,
+.xforge-capsule--expanded .xforge-capsule__chip {
+  color: var(--text-primary);
+  background: var(--bg-sand);
+  border-color: var(--border-warm);
+}
+
+.xforge-capsule__glyph {
+  display: inline-block;
+  transform-origin: 55% 70%;
+}
+
+.xforge-capsule__count {
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+}
+
+.xforge-capsule__chip[data-running="true"] .xforge-capsule__glyph {
+  animation: xforge-consider 3.6s ease-in-out infinite;
+}
+
+.xforge-capsule__chip[data-running="true"][data-stage="blueprint"] .xforge-capsule__glyph {
+  animation-name: xforge-unfold;
+}
+
+.xforge-capsule__chip[data-running="true"][data-stage="build"] .xforge-capsule__glyph {
+  animation-name: xforge-forge;
+}
+
+.xforge-capsule__chip[data-running="true"][data-stage="inspect"] .xforge-capsule__glyph {
+  animation-name: xforge-inspect;
+}
+
+.xforge-capsule__chip[data-running="true"][data-stage="deliver"] .xforge-capsule__glyph {
+  animation-name: xforge-unfold;
+}
+
+@keyframes xforge-consider {
+  0%, 28%, 100% { transform: rotate(0); }
+  12% { transform: rotate(-9deg); }
+  20% { transform: rotate(3deg); }
+}
+
+@keyframes xforge-unfold {
+  0%, 32%, 100% { transform: translateY(0); opacity: 1; }
+  16% { transform: translateY(-1px); opacity: 0.72; }
+}
+
+@keyframes xforge-forge {
+  0%, 32%, 100% { transform: rotate(0) translateY(0); }
+  10%, 22% { transform: rotate(-14deg) translateY(-1px); }
+  15%, 27% { transform: rotate(5deg) translateY(1px); }
+}
+
+@keyframes xforge-inspect {
+  0%, 34%, 100% { transform: translateX(0); }
+  12% { transform: translateX(-1px); }
+  24% { transform: translateX(1px); }
+}
+
+.xforge-capsule__panel {
+  margin-top: 6px;
+  width: 260px;
+  max-width: 100%;
+  max-height: min(22rem, calc(100vh - 14rem));
+  overflow: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popup);
+  transform-origin: top right;
+  animation: popup-scale-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.xforge-capsule__section {
+  flex-shrink: 0;
+  min-height: 1.25em;
+}
+
+.xforge-capsule__plan-body {
+  max-height: min(12rem, 30vh);
+  overflow: auto;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.xforge-capsule__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.xforge-capsule__checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xforge-capsule__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.xforge-capsule__check--done {
+  color: var(--text-muted);
+}
+
+.xforge-capsule__mark {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-success, var(--text-muted));
+}
+
+.xforge-capsule__check:not(.xforge-capsule__check--done) .xforge-capsule__mark {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.xforge-capsule__activity {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.xforge-capsule__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.xforge-capsule__btn {
+  border: 1px solid var(--border-warm);
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.xforge-capsule__btn:hover:not(:disabled) {
+  background: var(--bg-sand);
+  color: var(--text-primary);
+}
+
+.xforge-capsule__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xforge-capsule__panel,
+  .xforge-capsule__chip,
+  .xforge-capsule__chip[data-running="true"][data-stage] .xforge-capsule__glyph {
+    animation: none;
+    transition: none;
+  }
+}

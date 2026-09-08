@@ -109,7 +109,7 @@ it.each([20, 20_000])('工具写回后唯一预算 Owner 决定是否继续，�
   expect(streamCalls).toBe(size === 20 ? 2 : 1)
   expect(result.ended).toBe(size === 20 ? 'normal' : 'error')
   expect(context.messages.find(m => m.role === 'tool')?.content).toBe('x'.repeat(size))
-  if (size > 20) expect(error).toContain('ContextBudgetExceeded')
+  if (size > 20) expect(error).toBe('ContextRecoveryFailed: empty-summary')
 })
 
 describe('CompactionService mid-turn', () => {

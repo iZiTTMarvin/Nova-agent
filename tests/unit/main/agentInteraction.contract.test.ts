@@ -31,16 +31,16 @@ vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getActiveRunId: () => null
 }))
 
-vi.mock('../../../src/main/services/SubagentLifecycleHost', () => ({
-  getSubagentLifecycleCoordinator: () => ({ cancelRunTree: vi.fn() })
-}))
+const lifecycle = vi.hoisted(() => ({ getRootRunId: vi.fn(), cancelRunTree: vi.fn() }))
+vi.mock('../../../src/main/services/SubagentLifecycleHost', () => ({ getSubagentLifecycleCoordinator: () => lifecycle }))
 
 vi.mock('../../../src/main/agent/events', () => ({
   markActiveStreamsCancelled: vi.fn()
 }))
 
 vi.mock('../../../src/main/agent/turn', () => ({
-  getAgentLoopForRun: loopLookup.byRun
+  getAgentLoopForRun: loopLookup.byRun,
+  disposeIdleLoopForSession: vi.fn()
 }))
 
 import {
@@ -62,6 +62,26 @@ describe('AgentInteractionController 契约', () => {
     loopLookup.current.mockReturnValue(null)
     loopLookup.byRun.mockReturnValue(undefined)
     pendingAskQuestions.clear()
+  })
+
+  it('明确拒绝子代理权限只暂停其根任务，重复回执不重复取消', async () => {
+    const found = { interactionId: 'permission', runId: 'child', sessionId: 'child-session',
+      messageId: 'message', type: 'permission', status: 'pending', version: 1, payload: { requestId: 'permission' } }
+    coordinator.findInteraction.mockReturnValue(found)
+    coordinator.getSnapshot.mockImplementation((runId: string) => ({ runId,
+      sessionId: runId === 'child' ? 'child-session' : 'root-session', status: 'waiting_user', executionGeneration: 1 }))
+    executionRegistry.get.mockReturnValue({ generation: 1 })
+    executionRegistry.isCurrent.mockReturnValue(true)
+    loopLookup.byRun.mockReturnValue({ hasPendingPermission: () => true, respondPermission: vi.fn() })
+    lifecycle.getRootRunId.mockReturnValue('root')
+    lifecycle.cancelRunTree.mockResolvedValue({ requestedRunIds: ['root', 'child'] })
+    coordinator.inbox.answer.mockReturnValueOnce({ ok: true, firstApplied: true })
+      .mockReturnValueOnce({ ok: true, firstApplied: false })
+    const command = { requestId: 'permission', decision: 'deny' as const, commandId: 'reject', expectedVersion: 1 }
+    await respondPermission(command)
+    await respondPermission(command)
+    expect(lifecycle.cancelRunTree).toHaveBeenCalledTimes(1)
+    expect(lifecycle.cancelRunTree).toHaveBeenCalledWith('root', 'cancel_execution')
   })
 
   it('permission requestId 与 durable payload 错配时拒绝，不唤醒 AgentLoop', async () => {

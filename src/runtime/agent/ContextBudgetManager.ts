@@ -29,6 +29,13 @@ export class ContextBudgetExceededError extends Error {
   }
 }
 
+export class ContextRecoveryFailedError extends Error {
+  constructor(readonly reason: 'request-failed' | 'request-overflow' | 'empty-summary' | 'invalid-summary' | 'summary-budget' | 'commit-rejected') {
+    super(`ContextRecoveryFailed: ${reason}`)
+    this.name = 'ContextRecoveryFailedError'
+  }
+}
+
 export interface ContextBudgetOptions {
   /** 估算 token 硬上限；超限则继续压缩，仍超则失败 */
   maxEstimatedTokens?: number

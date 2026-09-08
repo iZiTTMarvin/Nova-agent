@@ -591,6 +591,45 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     renderer.unmount()
   })
 
+  it('发送被接收即清空原稿，整轮结束不清空后来输入的补充', async () => {
+    let finish!: () => void
+    mockInvoke.mockImplementation((channel: string) => channel === 'send-message'
+      ? new Promise<void>(resolve => { finish = resolve }) : Promise.resolve(undefined))
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
+    act(() => {
+      editable.textContent = '原始请求'
+      editable.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      renderer.container.querySelector<HTMLElement>('[aria-label="发送"]')!.click()
+    })
+    expect(editable.textContent).not.toContain('原始请求')
+    act(() => {
+      editable.textContent = '尚未发送的补充'
+      editable.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { finish() })
+    expect(editable.textContent).toContain('尚未发送的补充')
+    renderer.unmount()
+  })
+
+  it('运行中 Enter 将补充放入已有队列', async () => {
+    const renderer = renderDom(React.createElement(ChatPanel))
+    act(() => { useChatStore.setState({ isGenerating: true, sendInFlight: true }) })
+    const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
+    act(() => {
+      editable.textContent = '页面标题叫小账本'
+      editable.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['页面标题叫小账本'])
+    expect(editable.textContent).not.toContain('页面标题叫小账本')
+    renderer.unmount()
+  })
+
   it('拒绝后解除分叉锁再次发送：同一草稿正常发出并清空', async () => {
     const renderer = renderDom(React.createElement(ChatPanel))
     const editable = renderer.container.querySelector(

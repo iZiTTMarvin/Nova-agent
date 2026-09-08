@@ -12,7 +12,7 @@
  */
 import { dialog, BrowserWindow, app } from 'electron'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
-import type { SessionData } from '../../runtime/sessions/types'
+import type { SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
@@ -232,7 +232,14 @@ export class WorkspaceService {
   initOnStartup(): void {
     const store = this.deps.getSessionStore()
     const sessions = store.list()
-    const selected = sessions[0] ?? null
+    let selected: SessionSummary | null = sessions[0] ?? null
+    const visited = new Set<string>()
+    while (selected?.kind === 'subagent' && !visited.has(selected.id)) {
+      visited.add(selected.id)
+      const parentId: string = selected.subagent.lineage.parentSessionId
+      selected = sessions.find(session => session.id === parentId) ?? null
+    }
+    if (selected?.kind !== 'primary') selected = sessions.find(session => session.kind === 'primary') ?? null
     const previousRoot = this.state.currentProjectPath
     // 列表摘要不含会话级覆盖字段；启动选中态需读一次详情以恢复思考强度覆盖
     const selectedDetail = selected ? store.load(selected.id) : null

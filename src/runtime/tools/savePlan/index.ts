@@ -9,6 +9,7 @@ import { resolveAndValidateToolPath } from '../ToolRegistry'
 import { isPathWithinRoot, toWorkspaceRelativePath } from '../../permissions/pathAccess'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import { assertSideEffectAllowed } from '../types'
+import { parseCapabilityItems } from '../../../shared/composeLifecycle'
 
 const MAX_PLAN_CONTENT_CHARS = 1_000_000
 const MAX_PLAN_TITLE_CODE_POINTS = 120
@@ -178,7 +179,7 @@ function chooseNewPlanPath(planDirectory: string, title: string, now: Date): str
 export const savePlanTool: ToolExecutor = {
   name: 'save_plan',
   description:
-    '把完整实施计划保存为当前项目内的 Markdown 文档。' +
+    '把当前模式要求的计划保存为项目内的 Markdown 文档。' +
     '路径由 Runtime 固定生成在 .nova/plans/，调用方不能指定任意路径；' +
     '同一会话使用相同标题时会修订当前计划，新标题会生成新的可读文件名。',
   executionMode: 'sequential',
@@ -193,7 +194,7 @@ export const savePlanTool: ToolExecutor = {
       content: {
         type: 'string',
         description:
-          '完整 Markdown 计划正文，必须包含目标、范围、架构依据、实施步骤、保护行为、风险、验证和回退。'
+          'Markdown 正文。compose 模式使用四个二级标题：你要的东西、做完你能做什么（编号列出可操作能力）、我决定不做的、技术选择。plan 模式包含目标、范围、架构依据、实施步骤、保护行为、风险、验证和回退。'
       }
     },
     required: ['title', 'content']
@@ -226,6 +227,9 @@ export const savePlanTool: ToolExecutor = {
     const session = context.sessionStore.load(context.sessionId)
     if (!session) {
       return { success: false, output: '', error: '当前会话不存在' }
+    }
+    if (session.mode === 'compose' && parseCapabilityItems(content).length === 0) {
+      return { success: false, output: '', error: '一页纸必须包含「## 做完你能做什么」，并在其下用编号列表写出可操作、可观察的能力。请修订正文后重新保存。' }
     }
     if (resolve(session.workspaceRoot).toLowerCase() !== resolve(context.workingDir).toLowerCase()) {
       return { success: false, output: '', error: '会话工作区与当前工具工作区不一致' }
@@ -311,7 +315,9 @@ export const savePlanTool: ToolExecutor = {
           success: true,
           output:
             `计划已保存到 "${relativePath}"，并登记为当前会话的 active plan。` +
-            '请立即调用 switch_mode(mode: default) 发起计划审阅，不要先结束本轮。'
+            (session.mode === 'compose'
+              ? '请完成 critic 审阅与修订，再调用 stage_transition(action: complete) 发起用户确认；不要切换模式。'
+              : '请立即调用 switch_mode(mode: default) 发起计划审阅，不要先结束本轮。')
         }
       })
     } catch (error) {

@@ -99,6 +99,14 @@ describe('PlanApprovalCard', () => {
     renderer.unmount()
   })
 
+  it('compose 源标题为确认一页纸，批准说明进入锤', () => {
+    const renderer = renderDom(<PlanApprovalCard review={{ ...review, source: 'compose' }} />)
+    expect(renderer.container.querySelector('.plan-approval-card__title')?.textContent).toBe('确认一页纸')
+    expect(renderer.container.textContent).toContain('进入「锤」')
+    expect(renderer.container.textContent).not.toContain('进入开发阶段')
+    renderer.unmount()
+  })
+
   it('忽略使用同一命令通道且不携带 feedback', async () => {
     const renderer = renderDom(<PlanApprovalCard review={{ ...review, source: 'compose' }} />)
     act(() => button(renderer.container, '忽略').click())
@@ -161,6 +169,8 @@ describe('忽略终态', () => {
     const cards = renderer.container.querySelectorAll('.plan-approval-card--ignored')
     expect(cards).toHaveLength(2)
     expect(cards[0].textContent).toContain('已忽略')
+    expect(cards[0].textContent).toContain('实施计划')
+    expect(cards[1].textContent).toContain('确认一页纸')
     expect(cards[0].querySelector('button')).toBeNull()
     expect(cards[0].querySelector('textarea')).toBeNull()
     renderer.unmount()

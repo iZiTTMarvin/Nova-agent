@@ -63,6 +63,25 @@ describe('RunCoordinator', () => {
     expect(t2?.sequence).toBe(seq)
   })
 
+  it('旧中断轮晚于新轮更新，冷启动仍选择新轮', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000)
+      const old = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+      coord.upsertTurnDraft(old.runId, { messageId: 'old-message', blocks: [{ type: 'text', content: 'interrupted work' }] })
+      coord.commitTerminal({ runId: old.runId, status: 'interrupted' })
+      vi.setSystemTime(2_000)
+      const latest = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+      coord.commitTerminal({ runId: latest.runId, status: 'failed' })
+      vi.setSystemTime(3_000)
+      coord.clearTurnDraft(old.runId)
+      expect(store.findSnapshotsBySession('s1')[0].runId).toBe(old.runId)
+      expect(new RunCoordinator({ store }).getSnapshotForSession('s1')?.runId).toBe(latest.runId)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('completed + incompleteReason 落盘并在重载后保留', () => {
     const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
     coord.markRunning(snap.runId)

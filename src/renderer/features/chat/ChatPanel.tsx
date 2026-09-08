@@ -62,8 +62,7 @@ import { createComposerSkillTrigger } from '../skills/composerSkillTrigger'
 import { useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
-import { ComposeStageBar } from '../compose/ComposeStageBar'
-import { shouldShowComposeStageBar } from '../compose/stageBarProjection'
+import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
 import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
@@ -231,12 +230,24 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }, [rejectFile])
 
   const [inputVal, setInputVal] = useState('')
+  /** compose 点「补充要求」后的输入框提示；切会话即清，避免带到非 compose */
+  const [composeSupplementHint, setComposeSupplementHint] = useState(false)
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSkills = useSkillsStore(state => state.setSkills)
   const composerInputHandleRef = useRef<ChatComposerInputHandle>(null)
+  const isComposeSession = currentSession?.mode === 'compose'
+
+  useEffect(() => {
+    setComposeSupplementHint(false)
+  }, [currentSessionId])
+
+  const handleComposeSupplement = useCallback(() => {
+    setComposeSupplementHint(true)
+    composerInputHandleRef.current?.focus()
+  }, [])
   const composerBoxRef = useRef<HTMLDivElement>(null)
   const slashSkillsRef = useRef(slashSkills)
   slashSkillsRef.current = slashSkills
@@ -537,9 +548,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
-    // 并发模型：仅拦截「当前会话」仍在跑的情况（isGenerating 已按 runStatus 派生）。
-    // 其它会话在后台跑不再拦截本会话发送。
-    if (isGenerating || sendInFlight) return
     if (!modelConfig) {
       alert("请先在设置中配置 LLM 服务商与模型！")
       useSettingsStore.getState().openLlmSettings()
@@ -553,6 +561,12 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
     const text = inputVal.trim()
     const images = imageAttachments
+    const sendingSessionId = useChatStore.getState().currentSessionId
+    const clearAcceptedDraft = () => {
+      if (useChatStore.getState().currentSessionId !== sendingSessionId) return
+      setInputVal(current => current === inputVal ? '' : current)
+      setImageAttachments(current => current === images ? [] : current)
+    }
 
     // 用户主动发送：无论之前是否上滚离开底部，都恢复跟随，让用户看到自己刚发的消息。
     autoScrollModeRef.current = 'stream'
@@ -566,23 +580,21 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     // dispatchNextPending 已尝试 drain 但队列为空提前返回）。此处必须重读最新 isGenerating，
     // 不能用本次 render 捕获的旧值——否则会用过期 true 把消息塞进队列，而轮次已结束、再无
     // message_end 来 drain，消息永久卡在 steering 队列。
-    const stillGenerating = useChatStore.getState().isGenerating
+    const latestSendState = useChatStore.getState()
+    if (latestSendState.currentSessionId !== sendingSessionId) return
+    const stillGenerating = latestSendState.isGenerating || latestSendState.sendInFlight
 
     // Steering Queue：Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
     if (stillGenerating) {
       enqueuePendingMessage(text, images)
-      setInputVal('')
-      setImageAttachments([])
+      clearAcceptedDraft()
       return
     }
 
     // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列。
     // sendMessage 返回 false 表示被守卫拦截（如分叉准备窗口、缺工作区），
     // 此时必须保留草稿，不能让用户刚输入的内容凭空消失。
-    const accepted = await sendMessage(text, images)
-    if (!accepted) return
-    setInputVal('')
-    setImageAttachments([])
+    await sendMessage(text, images, { onAccepted: clearAcceptedDraft })
   }
 
   /**
@@ -756,7 +768,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       if (rafId !== null) cancelAnimationFrame(rafId)
       ro.disconnect()
     }
-  }, [isEmptyState])
+  }, [isEmptyState, isSessionLoading])
 
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
@@ -770,9 +782,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       {currentSession?.kind === 'subagent' ? (
         <SubagentSessionHeader originalTask={currentSubagentTask} />
       ) : null}
-      {/* compose 主会话的常驻阶段条：挂在消息流条件块之外，空状态新会话也显示 */}
-      {currentSession && shouldShowComposeStageBar(currentSession) ? (
-        <ComposeStageBar sessionId={currentSession.id} interactionLocked={isGenerating} />
+      {currentSession && shouldShowXForgeCapsule(currentSession) ? (
+        <XForgeCapsule
+          sessionId={currentSession.id}
+          interactionLocked={isGenerating}
+          isRunning={isGenerating && !isPausedForUserInput && !cancellingForCurrentSession}
+          onRequestSupplement={handleComposeSupplement}
+        />
       ) : null}
       {/* 拖拽高亮遮罩 */}
       {isDragOver && (
@@ -863,8 +879,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           <div className="steering-queue">
             <div className="steering-queue__header">
               <span className="steering-queue__title">
-                已排队 {pendingUserMessages.length} 条消息（Agent 完成后自动发送）
+                已排队 {pendingUserMessages.length} 条消息（{isGenerating ? '本轮正常结束后发送' : '等待继续'}）
               </span>
+              {!isGenerating && !sendInFlight && (
+                <Button label="发送排队消息" variant="secondary" size="sm" onClick={() => void useChatStore.getState().sendNextPendingMessage()}>
+                  发送排队消息
+                </Button>
+              )}
             </div>
             <div className="steering-queue__list">
               {pendingUserMessages.map((msg, idx) => (
@@ -985,7 +1006,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 
             {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条。
-                compose 模式下任务清单收进阶段条「开发」节点展开面板，不再重复展示这条独立 dock。 */}
+                compose 模式下任务清单由右上胶囊展开查看，不再重复展示这条独立 dock。 */}
             {currentMode !== 'compose' && (
               <div className="w-full pointer-events-auto">
                 <TodoPanel
@@ -1042,9 +1063,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 label="消息输入"
                 placeholder={pendingAskQuestion
                   ? '请先回答上方问题，再发送新消息（或输入排队）'
-                  : isGenerating
-                    ? 'Agent 正在运行，输入将进入排队队列...'
-                    : '向 Nova 提问或分配编程任务...'}
+                  : isGenerating && isComposeSession
+                    ? '按 Enter 排队，本轮结束后处理；需立即调整可先暂停…'
+                    : isGenerating
+                      ? 'Agent 正在运行，输入将进入排队队列...'
+                      : isComposeSession && composeSupplementHint
+                        ? '输入补充要求并发送'
+                        : '向 Nova 提问或分配编程任务...'}
                 value={inputVal}
                 onChange={handleInputChange}
                 onKeyDown={handleComposerKeyDown}

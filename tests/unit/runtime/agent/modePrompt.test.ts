@@ -12,7 +12,7 @@ describe('buildStableSystemPrompt', () => {
     expect(prompt).toContain('D:\\work')
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('compose')
+    expect(prompt).toContain('compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。')
   })
 
   it('headless 运行面不注入交互模式与编排说明', () => {
@@ -34,7 +34,7 @@ describe('getStableSystemPrompt', () => {
     const prompt = getStableSystemPrompt()
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('compose')
+    expect(prompt).toContain('compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。')
   })
 
   it('多次调用返回逐字节相同内容', () => {

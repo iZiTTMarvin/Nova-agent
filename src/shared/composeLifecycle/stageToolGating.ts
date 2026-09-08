@@ -4,6 +4,7 @@
  * 在基础权限判定之前生效。
  */
 import { getToolPermissionDescriptor } from '../permissions/toolEffects'
+import { BUILTIN_SUBAGENT_IDS } from '../subagents/presetIdentity'
 import { COMPOSE_STAGE_LABELS, type ComposeStageId } from './types'
 
 function isComposeReadonlyTool(toolName: string): boolean {
@@ -15,6 +16,11 @@ function isComposeReadonlyTool(toolName: string): boolean {
       effect === 'network.read' ||
       effect === 'session.write'
   )
+}
+
+function isBlueprintCriticTask(args?: Record<string, unknown>): boolean {
+  const profileId = typeof args?.subagent_type === 'string' ? args.subagent_type.trim() : ''
+  return profileId === BUILTIN_SUBAGENT_IDS.critic
 }
 
 /**
@@ -56,6 +62,10 @@ export function getComposeStageToolDenial(
   }
 
   if (isComposeReadonlyTool(toolName) || toolName === 'save_plan') {
+    return null
+  }
+  // 图阶段必须能派 critic 挑刺一页纸；其它子代理仍拒绝
+  if (toolName === 'task' && isBlueprintCriticTask(args)) {
     return null
   }
   return (

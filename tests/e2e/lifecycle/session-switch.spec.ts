@@ -1,6 +1,16 @@
 import { expect, test } from '../fixtures/nova'
 import { isTerminalRunStatus } from '../../../src/shared/run/types'
 
+test('读取旧会话详情不会改变当前选择或重新进入加载状态', async ({ nova }) => {
+  const old = await nova.getWorkspace()
+  if (!old.currentSessionId) throw new Error('session id missing')
+  const current = await nova.createSession()
+  await nova.invoke('load-session', { sessionId: old.currentSessionId })
+  expect((await nova.getWorkspace()).currentSessionId).toBe(current.currentSessionId)
+  await expect(nova.page.locator('.chat-session-loading')).toHaveCount(0)
+  await expect(nova.page.getByLabel('消息输入')).toBeEditable()
+})
+
 test('旧会话迟到完成后，当前会话不会被旧结果污染', async ({ nova }) => {
   nova.provider.enqueue({
     kind: 'hold',

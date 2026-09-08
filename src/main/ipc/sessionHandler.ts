@@ -7,6 +7,8 @@
  * 3. 接受文件改动（accept-file）：标记文件已审查
  */
 import { app } from 'electron'
+import { recoverSessionTurnDrafts } from '../../runtime/sessions'
+import { getRunCoordinator } from '../services/RunCoordinatorHost'
 import { handle } from './secureIpc'
 import {
   LOAD_SESSIONS,
@@ -116,11 +118,11 @@ export function registerSessionHandler(): void {
 
   // 加载单个会话的完整数据（含消息历史）
   handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
+    recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
     const data = sessionStore.load(params.sessionId)
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
-    getWorkspaceService().selectSession(data.id)
     return toSessionDetail(data, { tailOnly: true })
   })
 

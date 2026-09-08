@@ -1143,6 +1143,23 @@ describe('SubagentExecutionService', () => {
       }
     }
 
+    it('子会话未被打开过也会在 followup 前恢复中断输出', async () => {
+      const child = createTargetChild()
+      const runId = child.subagent.lineage.spawnRunId
+      coordinator.startRun({ runId, kind: 'agent', sessionId: child.id, workspaceId: workspace })
+      coordinator.markRunning(runId, 'interrupted-child-output')
+      coordinator.upsertTurnDraft(runId, { messageId: 'interrupted-child-output', userDelivery: {
+        userMessageId: child.messages[0].id, sessionPrefix: null, modeInstruction: ''
+      }, blocks: [{ type: 'text', content: '已检查首页，尚未检查移动端' }] })
+      coordinator.commitTerminal({ runId, status: 'interrupted', reason: 'process_exit' })
+      const { service, prepareTurn } = createService()
+      await service.followup(followupCommand(child.id), { invocationRef: followupRef() })
+      const restored = prepareTurn.mock.calls[0][0].childSession.messages
+      expect(restored.map(message => message.id).slice(0, 2)).toEqual([child.messages[0].id, 'interrupted-child-output'])
+      expect(restored[1].blocks).toContainEqual({ type: 'text', content: '已检查首页，尚未检查移动端' })
+      expect(coordinator.getSnapshot(runId)?.turnDraft).toBeNull()
+    })
+
     it('复用既有 childSessionId，产生与出生 spawnRunId 不同的新 run', async () => {
       const { service } = createService()
       const birth = await service.spawn(command(), { invocationRef: invocationRef() })

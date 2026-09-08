@@ -163,6 +163,7 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
       )}
 
       {permissionError && <div className="inline-perm__error">{permissionError}</div>}
+      <div className="inline-perm__reason">拒绝将暂停当前任务，等待你的下一步指令。</div>
 
       {isPathRequest ? (
         <div className="inline-perm__actions">

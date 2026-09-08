@@ -60,11 +60,21 @@ describe('compose 阶段工具门禁', () => {
       expect(getComposeStageToolDenial('blueprint', 'save_plan')).toBeNull()
     })
 
-    it.each(['edit', 'write', 'bash', 'task', 'invoke_skill'])('拒绝 %s', (toolName) => {
+    it('放行 critic 子代理 task', () => {
+      expect(getComposeStageToolDenial('blueprint', 'task', { subagent_type: 'critic' })).toBeNull()
+    })
+
+    it.each(['edit', 'write', 'bash', 'invoke_skill'])('拒绝 %s', (toolName) => {
       const denial = getComposeStageToolDenial('blueprint', toolName)
       expect(denial).not.toBeNull()
       expect(denial).toContain('图')
       expect(denial).toContain(toolName)
+    })
+
+    it('拒绝非 critic 的 task', () => {
+      expect(getComposeStageToolDenial('blueprint', 'task', { subagent_type: 'code' })).toContain('task')
+      expect(getComposeStageToolDenial('blueprint', 'task', { subagent_type: 'explore' })).toContain('task')
+      expect(getComposeStageToolDenial('blueprint', 'task', { subagent_type: 'inspector' })).toContain('task')
     })
 
     it('未知工具一律拒绝', () => {

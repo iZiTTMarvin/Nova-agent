@@ -37,6 +37,8 @@ import { resolveToolArg } from '../toolArgResolver'
 import { isDestructiveBashCommand } from './classifyCommand'
 import { acquireWriterLeaseOrConflict } from '../../workspace'
 
+export { getShellConfig } from './shell'
+
 /** 前台等待边界：到点进程仍存活则登记为持久会话并返回 ref。模型不可见的时间旋钮一律不给。 */
 const DEFAULT_YIELD_AFTER_MS = 120_000
 // 宿主级覆盖（E2E / 运维），与 NOVA_STALL_DEBUG 等既有旋钮同类；不设置则用默认边界。

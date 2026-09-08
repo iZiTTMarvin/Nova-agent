@@ -1,7 +1,7 @@
 import type { AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import type { PermissionDecision } from '../../../shared/permissions/types'
 import type { PathAccessKind } from '../../../shared/permissions/types'
-import type { InteractionAnswerResult, PendingInteraction } from '../../../shared/run/types'
+import { isTerminalRunStatus, type InteractionAnswerResult, type PendingInteraction } from '../../../shared/run/types'
 import type {
   PlanReviewCommand,
   PlanReviewResolution
@@ -202,6 +202,13 @@ export async function respondPermission(params: {
   }
 
   // 仅 firstApplied 时执行副作用：按 durable run 直达其 AgentLoop resolver。
+  if (!granted && found && !durableOnlyRecovery) {
+    // 拒绝是任务暂停边界；不让父代理或子代理通过改写命令继续被拒操作。
+    const rootRunId = getSubagentLifecycleCoordinator().getRootRunId(found.runId)
+    const root = coord.getSnapshot(rootRunId)
+    await cancelExecution({ runId: root && !isTerminalRunStatus(root.status) ? rootRunId : found.runId })
+    return durableResult
+  }
   if (loopForRun?.hasPendingPermission(params.requestId)) {
     loopForRun.respondPermission(params.requestId, granted)
     return durableResult

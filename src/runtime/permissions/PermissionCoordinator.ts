@@ -74,6 +74,7 @@ export interface PermissionCoordinatorDeps {
     sessionId: string
     workspaceRoot: string
     permissionMode: PermissionMode
+    shellPath?: string
     capabilityCeiling: PermissionCapabilityCeiling | null
   }
   /**

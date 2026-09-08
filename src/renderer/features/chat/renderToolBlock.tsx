@@ -55,7 +55,12 @@ export function renderToolBlock(
       return <PlanApprovalCard key={block.toolCallId} review={context.pendingPlanReview} />
     }
     if (isPlanReviewIgnoredResult(block.result)) {
-      return <PlanApprovalIgnoredCard key={block.toolCallId} />
+      return (
+        <PlanApprovalIgnoredCard
+          key={block.toolCallId}
+          source={block.toolName === 'stage_transition' ? 'compose' : 'plan'}
+        />
+      )
     }
     return null
   }

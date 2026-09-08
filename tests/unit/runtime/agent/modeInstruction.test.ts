@@ -48,14 +48,24 @@ describe('modeInstruction', () => {
     expect(instruction).toContain('不要滥用计划模式')
   })
 
-  it('Compose 由主 Agent 亲自按阶段推进，不再路由编排工具', () => {
+  it('Compose 为 XForge 锻造五步，主 agent 是唯一叙述者', () => {
     const instruction = getModeInstruction('compose')
-    expect(instruction).not.toContain('start_workflow')
-    expect(instruction).toContain('亲自')
-    expect(instruction).toContain('stage_transition')
-    expect(instruction).toContain('构思')
+    expect(instruction).toContain('[当前模式: compose — XForge 锻造]')
+    expect(instruction).toContain('问 → 图 → 锤 → 验 → 交')
+    expect(instruction).toContain('唯一叙述者')
     expect(instruction).toContain('阶段指南')
-    expect(instruction).toContain('已废弃')
+    expect(instruction).toContain('stage_transition')
+    expect(instruction).toContain('complete')
+    expect(instruction).toContain('skip')
+    expect(instruction).toContain('return')
+    expect(instruction).toContain('askQuestion')
+  })
+
+  it('Compose 门禁被拒时按提示补齐，不绕过', () => {
+    const instruction = getModeInstruction('compose')
+    expect(instruction).toContain('被拒')
+    expect(instruction).toContain('补齐')
+    expect(instruction).toContain('不要绕过')
   })
 
   it('Compose 保留不自动发布与危险命令拦截约束', () => {

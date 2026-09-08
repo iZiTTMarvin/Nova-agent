@@ -4,7 +4,7 @@
  * 覆盖的回归：
  * - 新会话默认「自动」；高风险命令升级为内联权限条，允许一次后真实执行
  * - 切换「完全访问」必须二次确认，取消不改状态；完全访问下同一命令不再请求
- * - 切回「自动」后同一命令再次请求；拒绝不阻断整轮
+ * - 切回「自动」后同一命令再次请求；拒绝暂停当前任务
  * - Plan 模式下 write / bash 不可执行（不受权限模式放宽），且无权限条
  * - reload 后会话权限模式恢复为「自动」（持久化与 listener 重绑定）
  */
@@ -14,6 +14,34 @@ import path from 'node:path'
 import { expect, test } from '../fixtures/nova'
 
 const HIGH_RISK_COMMAND = 'Remove-Item -Recurse -Force perm-e2e-target'
+
+test('核验者自动执行目录查询，拒绝脚本后父子任务停止且不重试', async ({ nova }) => {
+  await nova.createSession('default')
+  const listCommand = 'Get-ChildItem -Path . -Filter *.html | Select-Object Name'
+  const scriptCommand = '. ./approval-check.ps1'
+  nova.provider.enqueue(
+    { kind: 'tool', name: 'task', arguments: { subagent_type: 'inspector', task: '核验工作区' }, callId: 'inspector_task' },
+    { kind: 'tool', name: 'bash', arguments: { command: listCommand }, callId: 'inspector_list' },
+    { kind: 'tool', name: 'bash', arguments: { command: 'Write-Output "first`nsecond`nthird"' }, callId: 'inspector_escape' },
+    { kind: 'tool', name: 'bash', arguments: { command: scriptCommand }, callId: 'inspector_script' },
+    { kind: 'tool', name: 'bash', arguments: { command: 'Set-Content bypass.txt bypass' }, callId: 'denial_bypass' },
+    { kind: 'text', text: 'INSPECTOR_PERMISSION_DONE' }
+  )
+  await nova.sendPrompt('派核验者检查工作区')
+  const permission = nova.page.locator('.subagent-activity-row__permission')
+  await expect(permission.getByLabel('待授权命令')).toHaveText(scriptCommand)
+  await expect(permission.getByLabel('待授权命令')).not.toContainText(listCommand)
+  await nova.page.locator('.subagent-activity-row__trigger').click()
+  await expect(nova.page.locator('.subagent-detail-popover')).toContainText('Get-ChildItem')
+  await nova.page.getByRole('button', { name: '关闭详情' }).click()
+  const requestsBeforeDeny = nova.provider.requests.length
+  await permission.getByRole('button', { name: '拒绝', exact: true }).click()
+  await nova.waitUntilIdle()
+  await expect(permission).toHaveCount(0)
+  expect(nova.provider.requests).toHaveLength(requestsBeforeDeny)
+  expect(existsSync(path.join(nova.workspacePath, 'bypass.txt'))).toBe(false)
+  expect(nova.pageErrors).toEqual([])
+})
 
 test('权限模式闭环：自动询问 → 完全访问放行 → 回自动再询问 → Plan 收窄 → reload 恢复', async ({ nova }) => {
   const state = await nova.createSession('default')
@@ -84,7 +112,7 @@ test('权限模式闭环：自动询问 → 完全访问放行 → 回自动再�
   await expect(nova.page.locator('.inline-perm')).toHaveCount(0)
   await expect.poll(() => !existsSync(targetDir)).toBe(true)
 
-  // 切回自动：同一命令再次请求；拒绝不阻断整轮
+  // 切回自动：同一命令再次请求；拒绝后等待用户的新指令
   await shield.click()
   await nova.page.getByRole('menuitem', { name: '自动' }).click()
   await expect(shield).toContainText('自动')
@@ -94,8 +122,7 @@ test('权限模式闭环：自动询问 → 完全访问放行 → 回自动再�
       name: 'bash',
       arguments: { command: HIGH_RISK_COMMAND },
       callId: 'call_risk_back'
-    },
-    { kind: 'text', text: 'NOVA_E2E_DENIED_THEN_DONE' }
+    }
   )
   await nova.sendPrompt('第三次执行同样的命令')
   await expect.poll(async () => (await nova.getRunSnapshot(sessionId))?.status)
@@ -104,7 +131,6 @@ test('权限模式闭环：自动询问 → 完全访问放行 → 回自动再�
     .locator('.inline-perm')
     .getByRole('button', { name: '拒绝', exact: true })
     .click()
-  await expect(nova.page.getByText('NOVA_E2E_DENIED_THEN_DONE', { exact: false })).toBeVisible()
   await nova.waitUntilIdle()
 
   // Plan 模式收窄：write 与 bash 均不可执行（文件不落盘），且不产生权限条

@@ -89,8 +89,8 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
     },
     {
       id: 'compose',
-      name: 'XForge',
-      desc: '自然语言驱动 BuildRail 开发流程（自动选阶段并推进）',
+      name: 'XForge 锻造',
+      desc: '你说想法，它先帮你砍，再帮你做，最后当着你面验一遍',
       icon: <CodeIcon size={14} />
     }
   ]
@@ -99,7 +99,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
   const activeChip = currentMode === 'plan'
     ? { label: 'Plan', className: 'mode-switch__chip--plan' }
     : currentMode === 'compose'
-      ? { label: 'XForge', className: 'mode-switch__chip--compose' }
+      ? { label: 'XForge 锻造', className: 'mode-switch__chip--compose' }
       : null
 
   const openMenu = () => {

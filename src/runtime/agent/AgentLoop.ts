@@ -220,6 +220,7 @@ export class AgentLoop {
         sessionId: this.ctx.sessionId ?? '',
         workspaceRoot: this.ctx.workspaceRoot ?? this.ctx.workingDir ?? process.cwd(),
         permissionMode: this.ctx.permissionMode,
+        shellPath: this.ctx.shellPath,
         capabilityCeiling: this.ctx.permissionCeiling
       }),
       ...(config?.permissionAskDeniedReason !== undefined

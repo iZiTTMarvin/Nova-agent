@@ -1,8 +1,7 @@
 import type { MessageBlock } from '../../../../shared/session/types'
-import type { ImageAttachment } from '../../../lib/image-attachments'
 import type { ExtendedMessage } from '../types'
 import { MAX_PENDING_MESSAGES } from '../constants'
-import { commitMessageList, setRollbackErrorPatch } from '../internal'
+import { commitMessageList, dispatchNextPendingMessage, setRollbackErrorPatch } from '../internal'
 import type { ChatSliceCreator, SendSliceState } from '../types'
 
 export function initialSendState(): Pick<SendSliceState, 'sendInFlight' | 'pendingUserMessages'> {
@@ -20,10 +19,7 @@ export function resetSendOnSessionSwitch(): Pick<SendSliceState, 'sendInFlight' 
 export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => ({
   ...initialSendState(),
 
-  sendMessage: async (content: string, images?: ImageAttachment[], options?: {
-    /** IPC 失败时恢复乐观截断前的消息树 */
-    rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
-  }): Promise<boolean> => {
+  sendMessage: async (content, images, options): Promise<boolean> => {
     const { currentSessionId, isGenerating, sendInFlight, branchForkInProgress } = get()
     if (isGenerating || sendInFlight) return false
     // 分叉准备窗口（prepare → send 两段 IPC 之间）锁住普通发送，避免乐观截断覆盖
@@ -37,6 +33,9 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
     const { useWorkspaceStore } = await import('../../useWorkspaceStore')
     const currentProject = useWorkspaceStore.getState().currentProjectPath
     if (!currentProject) return false
+    const latest = get()
+    if (latest.currentSessionId !== currentSessionId || latest.isGenerating || latest.sendInFlight) return false
+    if (latest.branchForkInProgress && !options?.rollbackSnapshot) return false
 
     const activeSessionId = currentSessionId || 'session_default'
 
@@ -80,6 +79,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
       }
     })
 
+    options?.onAccepted?.()
     try {
       // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
       await window.api.invoke('send-message', {
@@ -145,6 +145,8 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
       }
     })
   },
+
+  sendNextPendingMessage: () => dispatchNextPendingMessage({ getState: get, setState: set }),
 
   removePendingMessage: (index) => {
     set(state => ({
