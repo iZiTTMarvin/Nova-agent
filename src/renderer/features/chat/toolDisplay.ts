@@ -57,6 +57,8 @@ export function getToolDisplayName(toolName: string): string {
       return '切换运行模式 (switch_mode)'
     case 'stage_transition':
       return '推进生命周期阶段 (stage_transition)'
+    case 'inspection_report':
+      return '提交核验结果 (inspection_report)'
     case 'load_tools':
       return '加载工具组 (load_tools)'
     default:

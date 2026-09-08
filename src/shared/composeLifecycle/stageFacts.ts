@@ -3,8 +3,12 @@ import type { ComposeStageId } from './types'
 export interface ComposeStageFacts {
   /** 当前阶段 enteredAt 之后，是否存在已完成的 critic 子代理 run */
   criticCompleted: boolean
-  /** 当前阶段 enteredAt 之后，是否存在已完成的 inspector 子代理 run，其子会话含 exitCode===0 的 bash/shell_session，且最后一条 assistant 文本含「结论：通过」 */
+  /** 本阶段最新核验运行已完成，且有正式 pass 与实际 shell 证据。 */
   inspectorPassed: boolean
+  inspection?: {
+    issue: 'missing_report' | 'missing_evidence' | 'failed' | 'not_completed'
+    childSessionId: string
+  }
 }
 
 const BLUEPRINT_CRITIC_DENIAL =
@@ -22,6 +26,18 @@ export function getStageCompleteDenial(
     return BLUEPRINT_CRITIC_DENIAL
   }
   if (stageId === 'inspect' && !facts.inspectorPassed) {
+    const inspection = facts.inspection
+    if (inspection) {
+      const followup = `使用 task_followup（child_session_id: ${inspection.childSessionId}）让原 inspector `
+      if (inspection.issue === 'missing_report') {
+        return `核验已执行，但缺少本阶段有效的 inspection_report 正式结果。${followup}基于已有核验记录补交 verdict 与 summary；不要重复跑已完成的检查或写文件代交。`
+      }
+      if (inspection.issue === 'missing_evidence') {
+        return `核验结果缺少本阶段实际命令成功执行的记录。${followup}实际操作核验后重新提交 inspection_report。`
+      }
+      if (inspection.issue === 'failed') return '独立核验正式结果为未通过。请按核验报告回到「锤」修正，再重新核验；不要重复提交阶段完成。'
+      return '最新 inspector 核验运行尚未成功完成。请检查子任务状态，等待运行结束或处理失败后续跑，不能用更早的通过结果放行。'
+    }
     return INSPECT_INSPECTOR_DENIAL
   }
   return null

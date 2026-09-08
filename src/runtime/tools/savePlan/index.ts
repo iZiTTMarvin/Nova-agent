@@ -9,7 +9,7 @@ import { resolveAndValidateToolPath } from '../ToolRegistry'
 import { isPathWithinRoot, toWorkspaceRelativePath } from '../../permissions/pathAccess'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import { assertSideEffectAllowed } from '../types'
-import { parseCapabilityItems } from '../../../shared/composeLifecycle'
+import { formatBlueprintContent } from '../../../shared/composeLifecycle'
 
 const MAX_PLAN_CONTENT_CHARS = 1_000_000
 const MAX_PLAN_TITLE_CODE_POINTS = 120
@@ -194,7 +194,12 @@ export const savePlanTool: ToolExecutor = {
       content: {
         type: 'string',
         description:
-          'Markdown 正文。compose 模式使用四个二级标题：你要的东西、做完你能做什么（编号列出可操作能力）、我决定不做的、技术选择。plan 模式包含目标、范围、架构依据、实施步骤、保护行为、风险、验证和回退。'
+          'Markdown 正文。compose 模式说明你要的东西、我决定不做的、技术选择；能力清单由 capabilities 参数生成，无需在正文重复。plan 模式包含目标、范围、架构依据、实施步骤、保护行为、风险、验证和回退。'
+      },
+      capabilities: {
+        type: 'array', minItems: 1, maxItems: 100,
+        items: { type: 'string', minLength: 1, maxLength: 1000 },
+        description: 'compose 模式必填：可操作、可观察的验收能力，每项一行纯文本；程序自动生成展示标题与编号。其他模式不使用。'
       }
     },
     required: ['title', 'content']
@@ -202,7 +207,7 @@ export const savePlanTool: ToolExecutor = {
 
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const title = typeof args.title === 'string' ? normalizePlanTitle(args.title) : ''
-    const content = typeof args.content === 'string' ? args.content.trimEnd() : ''
+    let content = typeof args.content === 'string' ? args.content.trimEnd() : ''
     if (!title) {
       return { success: false, output: '', error: 'title 不能为空' }
     }
@@ -228,8 +233,17 @@ export const savePlanTool: ToolExecutor = {
     if (!session) {
       return { success: false, output: '', error: '当前会话不存在' }
     }
-    if (session.mode === 'compose' && parseCapabilityItems(content).length === 0) {
-      return { success: false, output: '', error: '一页纸必须包含「## 做完你能做什么」，并在其下用编号列表写出可操作、可观察的能力。请修订正文后重新保存。' }
+    if (session.mode === 'compose') {
+      const capabilities = args.capabilities
+      if (!Array.isArray(capabilities) || capabilities.length === 0 || capabilities.length > 100 ||
+          !capabilities.every((item: unknown): item is string =>
+            typeof item === 'string' && item.trim().length > 0 && item.length <= 1000 && !/[\r\n]/.test(item))) {
+        return { success: false, output: '', error: '请在 capabilities 参数中提供 1–100 条可操作、可观察的能力，每项为 1–1000 字符的单行文本；正文标题和编号由程序生成。' }
+      }
+      content = formatBlueprintContent(content, [...new Set(capabilities.map(item => item.trim()))])
+      if (content.length > MAX_PLAN_CONTENT_CHARS) {
+        return { success: false, output: '', error: `计划正文超过 ${MAX_PLAN_CONTENT_CHARS} 字符限制` }
+      }
     }
     if (resolve(session.workspaceRoot).toLowerCase() !== resolve(context.workingDir).toLowerCase()) {
       return { success: false, output: '', error: '会话工作区与当前工具工作区不一致' }

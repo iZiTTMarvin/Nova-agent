@@ -51,7 +51,7 @@ function toolResults(messages: readonly Message[], toolName: string): string[] {
   )
 }
 
-test('XForge 手动批准：批评者与核验者跑完后走完五步', async ({ nova }) => {
+async function verifyInspectionFlow(nova: NovaHarness, repairMissingReport: boolean): Promise<void> {
   test.setTimeout(90_000)
   const state = await nova.createSession('compose')
   const sessionId = state.currentSessionId
@@ -72,7 +72,8 @@ test('XForge 手动批准：批评者与核验者跑完后走完五步', async (
       name: 'save_plan',
       arguments: {
         title: '番茄钟计划',
-        content: PLAN_CONTENT
+        content: PLAN_CONTENT,
+        capabilities: ['打开页面能看到计时器']
       },
       callId: 'call_save_plan'
     },
@@ -135,13 +136,38 @@ test('XForge 手动批准：批评者与核验者跑完后走完五步', async (
       callId: 'call_inspector'
     },
     { kind: 'tool', name: 'bash', arguments: { command: 'echo ok' }, callId: 'call_inspector_bash' },
-    { kind: 'text', text: '打开页面能看到计时器 ✓ 标题可见。\n结论：通过' },
+    ...(repairMissingReport ? [] : [{ kind: 'tool' as const, name: 'inspection_report', arguments: { verdict: 'pass', summary: '打开页面能看到计时器，实际命令成功执行' }, callId: 'call_inspection_report' }]),
+    { kind: 'text', text: '打开页面能看到计时器 ✓ 标题可见。\n总体:通过' },
     { kind: 'tool', name: 'stage_transition', arguments: { action: 'complete' }, callId: 'call_inspect_done' },
     { kind: 'text', text: 'NOVA_E2E_XFORGE_REPORT' }
   )
 
   await approve.click()
   await expect(nova.page.getByText('NOVA_E2E_XFORGE_REPORT', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+  if (repairMissingReport) {
+    await expectCapsuleStage(nova.page, '验')
+    const messages = await loadMessages(nova, sessionId)
+    expect(toolResults(messages, 'stage_transition').some(result => result.includes('缺少本阶段有效的 inspection_report'))).toBe(true)
+    const childSessionId = toolResults(messages, 'task').at(-1)?.match(/sess_sub_[a-f0-9]+/)?.[0]
+    if (!childSessionId) throw new Error('inspector child identity missing')
+    // reload 后从持久化会话继续，补交不重复执行已完成的 shell 检查。
+    await nova.page.reload()
+    await expectCapsuleStage(nova.page, '验')
+    nova.provider.enqueue(
+      { kind: 'tool', name: 'task_followup', arguments: { child_session_id: childSessionId, task: '基于已有核验记录补交 inspection_report，不重跑检查' }, callId: 'call_followup' },
+      { kind: 'tool', name: 'inspection_report', arguments: { verdict: 'pass', summary: '原会话核验命令成功，补交结论' }, callId: 'call_report_repair' },
+      { kind: 'text', text: '全部检查成功，已补交。' },
+      { kind: 'tool', name: 'stage_transition', arguments: { action: 'complete' }, callId: 'call_inspect_repaired' },
+      { kind: 'text', text: 'NOVA_E2E_INSPECTION_REPAIRED' }
+    )
+    await nova.sendPrompt('补交正式核验结果并继续')
+    await expect(nova.page.getByText('NOVA_E2E_INSPECTION_REPAIRED', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    const childMessages = await loadMessages(nova, childSessionId)
+    expect(toolResults(childMessages, 'bash')).toHaveLength(1)
+    expect(toolResults(childMessages, 'inspection_report')).toHaveLength(1)
+  }
   await expectCapsuleStage(nova.page, '交')
   await expect(nova.page.getByLabel('实施计划审批')).toHaveCount(0)
   await nova.waitUntilIdle()
@@ -151,6 +177,14 @@ test('XForge 手动批准：批评者与核验者跑完后走完五步', async (
   expect(await readFile(path.join(nova.workspacePath, 'tomato-timer.html'), 'utf8'))
     .toContain('Nova E2E Tomato Timer')
   expect(nova.pageErrors).toEqual([])
+}
+
+test('XForge 手动批准：核验正式结果不依赖正文措辞', async ({ nova }) => {
+  await verifyInspectionFlow(nova, false)
+})
+
+test('XForge 手动批准：核验缺少正式结果后原会话补交', async ({ nova }) => {
+  await verifyInspectionFlow(nova, true)
 })
 
 test('无 critic 时无法完成图阶段', async ({ nova }) => {
@@ -168,7 +202,8 @@ test('无 critic 时无法完成图阶段', async ({ nova }) => {
       name: 'save_plan',
       arguments: {
         title: '番茄钟计划',
-        content: PLAN_CONTENT
+        content: PLAN_CONTENT,
+        capabilities: ['打开页面能看到计时器']
       },
       callId: 'call_save_plan'
     },

@@ -104,6 +104,7 @@ vi.mock('../../../src/main/services/SessionStoreHost', () => ({
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => ({
+    listSnapshotsForSession: () => [],
     inbox: { listPendingForSession: () => pendingInteractions }
   })
 }))
@@ -397,7 +398,7 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
     expect(mockSend).not.toHaveBeenCalledWith('agent:compose-plan-approval-updated', expect.anything())
   })
 
-  it('手动跳过计划阶段：不写批准留痕（跳过即放弃审批流，与工具语义一致）', async () => {
+  it('手动跳过图阶段被拒绝，不能绕过审阅或产生批准留痕', async () => {
     currentStages = planInProgressStages()
     const handler = registeredHandler('compose:apply-stage-transition')
     const result = await handler(makeTrustedEvent(), {
@@ -405,11 +406,10 @@ describe('composeStageHandler（compose:apply-stage-transition）', () => {
       action: { type: 'skip', reason: '需求简单，直接开发' }
     })
 
-    expect(result).toMatchObject({ ok: true })
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('不能跳过') })
     expect(mockStore.approveComposePlan).not.toHaveBeenCalled()
     expect(mockSend).not.toHaveBeenCalledWith('agent:compose-plan-approval-updated', expect.anything())
-    const stages = (result as { ok: true; stages: ComposeStageEntry[] }).stages
-    expect(stages[1]).toMatchObject({ id: 'blueprint', status: 'skipped' })
+    expect(currentStages[1]).toMatchObject({ id: 'blueprint', status: 'in_progress' })
   })
 
   it('非图阶段（问进行中）complete 不触碰批准状态', async () => {
@@ -482,7 +482,7 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
 
     expect(detail.id).toBe('sess_1')
     expect(detail.composeStages).toEqual(sessionComposeStages)
-    expect(mockSelectSession).toHaveBeenCalledWith('sess_1')
+    expect(mockSelectSession).not.toHaveBeenCalled()
   })
 
   it('旧会话无 composeStages 字段时透出 undefined，由 renderer 按初始表投影', async () => {

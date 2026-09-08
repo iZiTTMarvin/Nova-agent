@@ -20,4 +20,5 @@ export {
 export { getComposeStageToolDenial } from './stageToolGating'
 export { getPlanCompleteDenial } from './planApprovalGate'
 export { getStageCompleteDenial, type ComposeStageFacts } from './stageFacts'
-export { parseCapabilityItems } from './blueprint'
+export { parseCapabilityItems, formatBlueprintContent } from './blueprint'
+export { parseInspectionVerdict, parseInspectionReport, INSPECTION_REPORT_INSTRUCTION, type InspectionReport } from './inspection'

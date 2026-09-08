@@ -55,6 +55,39 @@ describe('SubagentRuntimeFactory', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
+  it.each(['inspector', 'critic'])('宿主仅为 inspector 补齐核验协议，冻结旧 %s profile 不被改写', profileId => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-inspector-runtime-'))
+    roots.push(sessionsDir)
+    const store = new SessionStore(sessionsDir)
+    const parent = store.create(sessionsDir, 'compose')
+    for (let i = 0; i < 3; i++) store.applyComposeStageTransition(parent.id, { type: 'complete' })
+    const profile = resolveSubagentProfileSnapshot({
+      id: profileId, name: profileId, description: '只读核验',
+      prompt: '最后一行固定为结论：通过或结论：未通过', allowedTools: ['read']
+    }, profileId)
+    const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId(`old-${profileId}`), workspaceRoot: sessionsDir,
+      mode: 'default', permissionMode: 'request_approval', task: '补交结果',
+      subagent: {
+        header: testHeader, profile,
+        lineage: {
+          parentSessionId: parent.id, parentRunId: 'parent-run', rootRunId: 'parent-run', depth: 1,
+          spawnKey: `old-${profileId}`, spawnRunId: 'old-run',
+          origin: { kind: 'task_tool', parentMessageId: 'parent-message', parentToolCallId: 'parent-call' }
+        }
+      }
+    }).session
+    const prepared = prepareSubagentRuntime({
+      profile, task: '补交结果', workingDirectory: sessionsDir, isolation: 'readonly', childSession: child,
+      parentRunId: 'parent-run', rootRunId: 'parent-run', registry: testRegistry,
+      resolveTool: () => undefined, sessionStore: store, sessionsDir, readState: createReadState()
+    })
+    const prompt = prepared.agentLoop.getFrozenSystemPrompt()
+    expect(prompt.includes('inspection_report')).toBe(profileId === 'inspector')
+    expect(store.load(child.id)?.subagent?.profile).toEqual(profile)
+    prepared.agentLoop.dispose()
+  })
+
   it('重建 interrupted Child AgentLoop 时回灌历史，并忽略未注册的 profile 工具', async () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-runtime-'))
     roots.push(sessionsDir)

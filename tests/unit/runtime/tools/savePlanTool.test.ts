@@ -8,6 +8,7 @@ import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { writerLeaseRegistry } from '../../../../src/runtime/workspace'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
+import { parseCapabilityItems } from '../../../../src/shared/composeLifecycle'
 
 let tempRoot: string
 let workspace: string
@@ -45,13 +46,29 @@ function context(): ToolContext {
 }
 
 describe('save_plan', () => {
+  it('能力通过参数提交，正文标题任意；修订时旧清单被替换且持久化投影一致', async () => {
+    const composeSessionId = store.create(workspace, 'compose').id
+    const ctx = { ...context(), sessionId: composeSessionId }
+    const first = await savePlanTool.execute({ title: '计划', content: '# 任意标题\n目的说明', capabilities: ['打开计时器'] }, ctx)
+    expect(first.success, first.error).toBe(true)
+    const planPath = path.join(workspace, store.load(composeSessionId)!.activePlan!.path)
+    expect(parseCapabilityItems(fs.readFileSync(planPath, 'utf8'))).toEqual(['打开计时器'])
+    const revised = await savePlanTool.execute({ title: '计划', content: fs.readFileSync(planPath, 'utf8'), capabilities: ['暂停计时器'] }, ctx)
+    expect(revised.success, revised.error).toBe(true)
+    expect(parseCapabilityItems(fs.readFileSync(planPath, 'utf8'))).toEqual(['暂停计时器'])
+    expect(fs.readFileSync(planPath, 'utf8')).toContain('目的说明')
+    for (const capabilities of [[], [' '], ['一行\n## 注入标题'], [42]]) {
+      expect((await savePlanTool.execute({ title: '计划', content: '正文', capabilities }, ctx)).success).toBe(false)
+    }
+    expect(parseCapabilityItems(fs.readFileSync(planPath, 'utf8'))).toEqual(['暂停计时器'])
+  })
   it('compose 拒绝不可展示的计划；合法一页纸保存后指向阶段确认', async () => {
     const composeSessionId = store.create(workspace, 'compose').id
     const ctx = { ...context(), sessionId: composeSessionId }
     const rejected = await savePlanTool.execute({ title: '计划', content: '# 十二段技术方案' }, ctx)
     expect(rejected.success).toBe(false)
     expect(store.load(composeSessionId)?.activePlan).toBeUndefined()
-    const saved = await savePlanTool.execute({ title: '计划', content: ONE_PAGE }, ctx)
+    const saved = await savePlanTool.execute({ title: '计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] }, ctx)
     expect(saved.success).toBe(true)
     expect(saved.output).toContain('stage_transition')
     expect(saved.output).not.toContain('switch_mode')
@@ -147,7 +164,7 @@ describe('save_plan', () => {
     expect(store.getComposePlanApproval(composeSessionId)).toMatchObject({ status: 'approved' })
 
     await savePlanTool.execute(
-      { title: '修订计划', content: ONE_PAGE },
+      { title: '修订计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
       { ...context(), sessionId: composeSessionId }
     )
 
@@ -161,7 +178,7 @@ describe('save_plan', () => {
     store.approveComposePlan(composeSessionId, { auto: false })
 
     await savePlanTool.execute(
-      { title: '开发中修订计划', content: ONE_PAGE },
+      { title: '开发中修订计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
       { ...context(), sessionId: composeSessionId }
     )
 
@@ -175,7 +192,7 @@ describe('save_plan', () => {
     const events: unknown[] = []
 
     await savePlanTool.execute(
-      { title: '修订计划', content: ONE_PAGE },
+      { title: '修订计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
       { ...context(), sessionId: composeSessionId, eventBus: { emit: (e: unknown) => events.push(e) } as never }
     )
 
@@ -193,7 +210,7 @@ describe('save_plan', () => {
     const events: unknown[] = []
 
     await savePlanTool.execute(
-      { title: '初版计划', content: ONE_PAGE },
+      { title: '初版计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
       { ...context(), sessionId: composeSessionId, eventBus: { emit: (e: unknown) => events.push(e) } as never }
     )
 

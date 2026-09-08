@@ -8,6 +8,7 @@
 import { getSubAgentSpecFromStore, listCustomPresets } from '../../subagents'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import type { SubAgentSpec } from '../../../shared/settings/types'
+import { INSPECTION_REPORT_INSTRUCTION } from '../../../shared/composeLifecycle'
 
 export type { SubAgentSpec }
 
@@ -72,7 +73,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
 把「做完能做什么」每一条真的操作一遍（安装、启动、请求、读输出）。
 不修改任何源码或测试。
 每条给 ✓/✗ 和一句你看到的现象。
-最后一行固定为「结论：通过」或「结论：未通过」。
+${INSPECTION_REPORT_INSTRUCTION}
 启动的临时进程用完关掉。`
   }
 ]

@@ -8,6 +8,7 @@ import {
 } from '../../../src/shared/composeLifecycle'
 import { BUILTIN_SUBAGENT_IDS } from '../../../src/shared/subagents/presetIdentity'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
+import { resolveSubagentProfileSnapshot } from '../../../src/runtime/subagents'
 
 const PARENT = 'sess_parent'
 const ENTERED_AT = 1_000
@@ -58,7 +59,17 @@ function childSession(
 ): SessionData {
   return {
     schemaVersion: 19,
-    kind: 'primary',
+    kind: 'subagent',
+    subagent: {
+      lineage: {
+        parentSessionId: PARENT, parentRunId: 'parent-run', rootRunId: 'parent-run', depth: 1,
+        spawnKey: id, spawnRunId: `run_${id}`,
+        origin: { kind: 'task_tool', parentMessageId: 'parent-message', parentToolCallId: id }
+      },
+      profile: resolveSubagentProfileSnapshot({
+        id: 'inspector', name: 'inspector', description: '核验', prompt: '核验', allowedTools: ['bash']
+      }, 'inspector')
+    },
     id,
     workspaceRoot: '/tmp/ws',
     mode: 'default',
@@ -75,6 +86,7 @@ function inspectorMessages(opts: {
   result: string
   conclusion: string
   toolStatus?: 'success' | 'error'
+  verdict?: 'pass' | 'fail' | null
 }): SessionMessage[] {
   return [
     {
@@ -89,7 +101,7 @@ function inspectorMessages(opts: {
       parentId: 'u1',
       role: 'assistant',
       content: opts.conclusion,
-      timestamp: 2,
+      timestamp: ENTERED_AT + 1,
       blocks: [
         {
           type: 'tool',
@@ -99,7 +111,15 @@ function inspectorMessages(opts: {
           status: opts.toolStatus ?? 'success',
           result: opts.result
         },
-        { type: 'text', content: opts.conclusion }
+        { type: 'text', content: opts.conclusion },
+        ...(opts.verdict === null ? [] : [{
+          type: 'tool' as const, toolCallId: 'report', toolName: 'inspection_report',
+          arguments: { verdict: opts.verdict ?? 'pass', summary: '实际核验结果' }, status: 'success' as const,
+          result: JSON.stringify({
+            verdict: opts.verdict ?? 'pass', summary: '实际核验结果', parentSessionId: PARENT,
+            stageEnteredAt: ENTERED_AT, childRunId: 'run_child_insp', messageId: 'a1'
+          })
+        }])
       ]
     }
   ]
@@ -124,6 +144,49 @@ function provider(opts: {
 }
 
 describe('createComposeStageFactsProvider', () => {
+  it('后续损坏、串会话、旧阶段或未通过结果不能被先前 pass 掩盖', () => {
+    const valid = {
+      verdict: 'pass', summary: '核验记录', parentSessionId: PARENT,
+      stageEnteredAt: ENTERED_AT, childRunId: 'run_child_insp', messageId: 'a1'
+    }
+    for (const result of [
+      '{broken',
+      ...[
+        { parentSessionId: 'other' }, { childRunId: 'old-run' }, { stageEnteredAt: 0 },
+        { messageId: 'other-message' }, { verdict: 'unknown' }, { verdict: 'fail' }
+      ].map(change => JSON.stringify({ ...valid, ...change }))
+    ]) {
+      const messages = inspectorMessages({ toolName: 'bash', result: 'ok', conclusion: '报告措辞任意' })
+      messages[1].blocks!.push({
+        type: 'tool', toolCallId: 'later-report', toolName: 'inspection_report', arguments: {}, status: 'success', result
+      })
+      const facts = provider({
+        stages: inspectStages(ENTERED_AT),
+        runs: [projection({ profileId: BUILTIN_SUBAGENT_IDS.inspector, status: 'completed', childSessionId: 'child_insp', startedAt: ENTERED_AT + 1 })],
+        children: { child_insp: childSession('child_insp', messages) }
+      })(PARENT)
+      expect(facts.inspectorPassed, result).toBe(false)
+    }
+  })
+  it('正式核验结果不受报告措辞和冒号影响', () => {
+    const childId = 'child_insp'
+    const messages = inspectorMessages({ toolName: 'bash', result: 'ok', conclusion: '总体:通过', verdict: null })
+    messages[1].blocks!.push({
+      type: 'tool', toolCallId: 'report', toolName: 'inspection_report',
+      arguments: { verdict: 'pass', summary: '实际操作通过' }, status: 'success',
+      result: JSON.stringify({
+        verdict: 'pass', summary: '实际操作通过', parentSessionId: PARENT,
+        stageEnteredAt: ENTERED_AT, childRunId: `run_${childId}`,
+        messageId: 'a1'
+      })
+    })
+    const facts = provider({
+      stages: inspectStages(ENTERED_AT),
+      runs: [projection({ profileId: BUILTIN_SUBAGENT_IDS.inspector, status: 'completed', childSessionId: childId, startedAt: ENTERED_AT + 1 })],
+      children: { [childId]: childSession(childId, messages) }
+    })(PARENT)
+    expect(facts.inspectorPassed).toBe(true)
+  })
   it('批评者 run 在 enteredAt 之前不算完成', () => {
     const facts = provider({
       stages: blueprintStages(ENTERED_AT),
@@ -240,7 +303,7 @@ describe('createComposeStageFactsProvider', () => {
           inspectorMessages({
             toolName: 'shell_session',
             result: 'output\n[会话已终止，退出码: 0]',
-            conclusion: '结论：未通过'
+            conclusion: '结论：未通过', verdict: 'fail'
           })
         )
       }
