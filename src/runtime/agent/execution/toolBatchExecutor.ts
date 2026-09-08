@@ -1,5 +1,5 @@
 import type { ChatToolCall } from '../../model/types'
-import type { ContentBlock } from '../../model/types'
+export { toToolContent } from '../../request-projection/messageFacts'
 import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
 import type { Mode } from '../../../shared/session/types'
 import type { SessionStore } from '../../sessions/SessionStore'
@@ -486,6 +486,7 @@ async function executePreparedToolCall(
     toolCallId: item.toolCall.id,
     toolName: item.toolCall.name,
     result: resultText,
+    ...(resultImages?.length ? { resultImages } : {}),
     failed,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {}),
@@ -992,20 +993,4 @@ export async function executeToolBatch(options: ToolBatchExecutionOptions): Prom
 
   const outcomes = [...precheckOutcomes, ...executionOutcomes].sort((a, b) => a.index - b.index)
   return { outcomes, aborted }
-}
-
-export function toToolContent(resultText: string, resultImages?: ImageContent[]): string | ContentBlock[] {
-  if (!resultImages || resultImages.length === 0) {
-    return resultText
-  }
-
-  return [
-    { type: 'text', text: resultText },
-    ...resultImages.map(img => ({
-      type: 'image_url' as const,
-      image_url: {
-        url: `data:${img.mimeType};base64,${img.data}`
-      }
-    }))
-  ]
 }

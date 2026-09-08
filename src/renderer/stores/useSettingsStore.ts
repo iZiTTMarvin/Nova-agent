@@ -378,7 +378,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setContextBreakdown: (payload) => {
-    set({ contextBreakdown: payload })
+    set(state => state.contextBreakdown?.sessionId === payload.sessionId && state.contextBreakdown.capturedAt > payload.capturedAt
+      ? state : { contextBreakdown: payload })
   },
 
   setCacheDiagnostic: (diagnostic) => {

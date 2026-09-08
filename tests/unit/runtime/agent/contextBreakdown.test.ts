@@ -290,6 +290,7 @@ describe('calculateContextBreakdown（AgentLoop 运行时口径）', () => {
       {
         role: 'assistant',
         content: '',
+        reasoningContent: '核对历史来源'.repeat(100),
         toolCalls: [{ id: 'tc-read', name: 'read', arguments: '{"path":"a.ts"}' }]
       },
       {
@@ -321,7 +322,7 @@ describe('calculateContextBreakdown（AgentLoop 运行时口径）', () => {
     })
 
     expect(payload.breakdown.messages).toBe(
-      runtimeMessages.reduce((sum, message) => sum + estimateChatMessageTokens(message), 0)
+      runtimeMessages.reduce((sum, message) => sum + estimateChatMessageTokens(message) + estimateTokens(message.reasoningContent ?? ''), 0)
     )
     expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()

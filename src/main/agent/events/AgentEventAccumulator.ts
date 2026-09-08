@@ -68,6 +68,16 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
   // 持久化只关心最终完整 tool_call（由 tool_call 事件写入），增量不落盘。
   // 累积器以有序 blocks 为唯一事实源；content/toolCalls 仅在 message_end 投影。
   switch (event.type) {
+    case 'context_instruction': {
+      const stream = resolveStreamForEvent(event.messageId, ctx)
+      if (!stream) break
+      const block = stream.blocks.find(b => b.type === 'text' && b.responseStep === event.afterStep)
+      if (block?.type !== 'text') throw new Error('Continuation has no committed response')
+      if (block.continuation !== undefined && block.continuation !== event.content) throw new Error('Conflicting continuation')
+      block.continuation = event.content
+      persistTurnDraft(ctx.runId, event.messageId, stream.blocks, false, ctx.executionGeneration, stream.userDelivery)
+      break
+    }
     case 'tool_delivery': {
       const stream = resolveStreamForEvent(event.messageId, ctx)
       if (!stream) break
@@ -176,6 +186,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             ...block,
             status: isError ? 'error' : 'success',
             result: event.result,
+            ...(event.resultImages?.length ? { resultImages: event.resultImages.map(image => ({ ...image })) } : {}),
             ...(event.artifactId ? { artifactId: event.artifactId } : {}),
             ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
           }

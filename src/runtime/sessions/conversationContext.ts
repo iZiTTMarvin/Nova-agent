@@ -18,7 +18,7 @@ import { isReasoningSourceCompatible } from '../model/reasoningSource'
 import type { SessionData, SessionMessage, SessionToolCall } from './types'
 import { getSessionActiveMessages } from './tree'
 import type { Mode, MessageBlock } from '../../shared/session/types'
-import { projectUserContent, projectAssistantContent as sanitizeAssistantContent, serializeToolArguments } from '../request-projection'
+import { projectUserContent, projectAssistantContent as sanitizeAssistantContent, serializeToolArguments, toToolContent } from '../request-projection'
 
 /** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
 function isInternalImageUrl(url: string): boolean {
@@ -196,6 +196,7 @@ export function projectAssistantWithReasoningReplay(
   let reasoning = ''
   let reasoningProviderId: string | undefined
   let text = ''
+  let continuation: string | undefined
   let explicitResponsePending = false
   let pendingTools: Array<{
     block: Extract<MessageBlock, { type: 'tool' }>
@@ -208,6 +209,13 @@ export function projectAssistantWithReasoningReplay(
     if (reasoningReplay === 'all-history' || hasToolCalls) {
       assistant.reasoningContent = reasoning
       if (reasoningProviderId) assistant.reasoningProviderId = reasoningProviderId
+    }
+  }
+
+  const flushContinuation = (): void => {
+    if (continuation !== undefined) {
+      out.push({ role: 'user', content: continuation, origin: archiveOrigin(msg.id, step), contextInstruction: true })
+      continuation = undefined
     }
   }
 
@@ -236,7 +244,7 @@ export function projectAssistantWithReasoningReplay(
       }
       out.push({
         role: 'tool',
-        content: result,
+        content: toToolContent(result, block.resultImages),
         ...(block.delivery ? { toolDelivery: block.delivery } : {}),
         toolCallId: block.toolCallId,
         origin,
@@ -245,6 +253,7 @@ export function projectAssistantWithReasoningReplay(
       })
     }
 
+    flushContinuation()
     step += 1
     reasoning = ''
     reasoningProviderId = undefined
@@ -262,6 +271,7 @@ export function projectAssistantWithReasoningReplay(
     }
     attachReasoning(assistant, false)
     out.push(assistant)
+    flushContinuation()
     reasoning = ''
     reasoningProviderId = undefined
     text = ''
@@ -294,6 +304,7 @@ export function projectAssistantWithReasoningReplay(
     } else if (block.type === 'text') {
       if (explicitStep === undefined && pendingTools.length > 0) flushToolSubTurn()
       text += block.content
+      if (block.continuation !== undefined) continuation = block.continuation
     } else if (block.type === 'tool') {
       pendingTools.push({ block, tc: toolCallById.get(block.toolCallId) })
     }

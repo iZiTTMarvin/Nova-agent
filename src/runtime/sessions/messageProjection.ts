@@ -14,7 +14,7 @@ import { extractTextFromSerializableContent } from './types'
 import { isToolFailureText } from '../../shared/toolResultStatus'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
-export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 3
+export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 4
 
 /**
  * 从 blocks 投影出 content 文本（仅 text 块拼接）。
@@ -31,6 +31,17 @@ export function projectContentFromBlocks(
     .filter((b): b is Extract<MessageBlock, { type: 'text' }> => b.type === 'text')
     .map(b => b.content)
     .join('')
+}
+
+function projectMessageContent(message: SessionMessage, blocks: MessageBlock[]): SessionMessage['content'] {
+  if (message.role !== 'user' || !blocks.some(block => block.type === 'image')) {
+    return projectContentFromBlocks(blocks, message.content)
+  }
+  return blocks.flatMap<SerializableContentBlock>(block => {
+    if (block.type === 'text') return [{ type: 'text', text: block.content }]
+    if (block.type === 'image') return [{ type: 'image_url', image_url: { url: block.dataUrl } }]
+    return []
+  })
 }
 
 /**
@@ -76,7 +87,17 @@ export function buildBlocksFromLegacyFields(message: {
       ? message.content
       : extractTextFromSerializableContent(message.content)
 
-  if (text) {
+  if (message.role === 'user' && Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (part.type === 'text') blocks.push({ type: 'text', content: part.text })
+      else {
+        const url = part.image_url.url
+        const subtype = /\.(png|jpe?g|gif|webp)$/i.exec(url)?.[1]?.replace(/^jpg$/i, 'jpeg').toLowerCase()
+        blocks.push({ type: 'image', dataUrl: url, fileName: 'image',
+          mimeType: /^data:(image\/[^;,]+)/.exec(url)?.[1] ?? `image/${subtype ?? 'png'}` })
+      }
+    }
+  } else if (text) {
     blocks.push({ type: 'text', content: text })
   }
 
@@ -113,10 +134,10 @@ export function buildBlocksFromLegacyFields(message: {
  * 不强制写盘；调用方决定是否持久化。
  */
 export function normalizeMessageToBlocksSource(message: SessionMessage): SessionMessage {
-  if (message.messageSchemaVersion !== undefined && ![1, 2, 3].includes(message.messageSchemaVersion)) {
+  if (message.messageSchemaVersion !== undefined && ![1, 2, 3, 4].includes(message.messageSchemaVersion)) {
     throw new Error('Unsupported message schema version')
   }
-  if (message.messageSchemaVersion === 2 || message.messageSchemaVersion === 3) validateMessageFacts(message)
+  if (message.messageSchemaVersion !== undefined && message.messageSchemaVersion >= 2) validateMessageFacts(message)
   // 丢弃历史自动验证字段（功能已移除）
   const { verificationSummary: _drop, ...rest } = message as SessionMessage & {
     verificationSummary?: unknown
@@ -125,7 +146,7 @@ export function normalizeMessageToBlocksSource(message: SessionMessage): Session
   const cleaned = rest as SessionMessage
 
   if (cleaned.blocks && cleaned.blocks.length > 0) {
-    const content = projectContentFromBlocks(cleaned.blocks, cleaned.content)
+    const content = projectMessageContent(cleaned, cleaned.blocks)
     const toolCalls = projectToolCallsFromBlocks(cleaned.blocks, cleaned.toolCalls)
     return {
       ...cleaned,
@@ -148,7 +169,7 @@ export function normalizeMessageToBlocksSource(message: SessionMessage): Session
     ...cleaned,
     blocks,
     // content/toolCalls 保留作兼容序列化，但语义上是 projection
-    content: projectContentFromBlocks(blocks, cleaned.content),
+    content: projectMessageContent(cleaned, blocks),
     toolCalls: projectToolCallsFromBlocks(blocks, cleaned.toolCalls),
     messageSchemaVersion: cleaned.messageSchemaVersion ?? 1
   }
@@ -203,6 +224,9 @@ function validateMessageFacts(message: SessionMessage): void {
       previousStep = block.responseStep
     }
     if (block.type === 'tool') {
+      if (block.resultImages !== undefined && (!Array.isArray(block.resultImages) || block.resultImages.some(image =>
+        !image || typeof image.data !== 'string' || !image.data || typeof image.mimeType !== 'string' ||
+        !/^image\/(png|jpeg|gif|webp)$/.test(image.mimeType)))) throw new Error('Invalid tool images')
       const delivery = block.delivery
       if (delivery && (delivery.version !== 1 || !/^[a-f0-9]{64}$/.test(delivery.bodySha256) ||
           !['original', 'archive'].includes(delivery.kind) ||
@@ -212,6 +236,10 @@ function validateMessageFacts(message: SessionMessage): void {
           !['running', 'success', 'error'].includes(block.status) ||
           (block.result !== undefined && typeof block.result !== 'string')) throw new Error('Invalid tool facts')
     } else if (typeof block.content !== 'string') throw new Error('Invalid response content')
+    if (block.type === 'text' && block.continuation !== undefined &&
+        (typeof block.continuation !== 'string' || !block.continuation.trim() || block.responseStep === undefined)) {
+      throw new Error('Invalid response continuation')
+    }
   }
 }
 

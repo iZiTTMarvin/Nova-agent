@@ -14,6 +14,9 @@ import { MockModelClient } from '../../../src/test-support/builders/MockModelCli
 import { identitySummaryProjection } from '../../../src/test-support/builders/identitySummaryProjection'
 import * as atomicFile from '../../../src/runtime/storage/atomicFile'
 import { formatMemorySearchResults } from '../../../src/runtime/tools/memorySearch'
+import { projectUserContent } from '../../../src/runtime/request-projection'
+import { getModeInstruction } from '../../../src/runtime/agent/promptBuilder/modeInstruction'
+import type { SessionMessage } from '../../../src/shared/session'
 import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator'
 
 describe('持久化压缩提交', () => {
@@ -54,6 +57,21 @@ describe('持久化压缩提交', () => {
     const file = join(directory, 'sessions', session.id, 'messages.jsonl')
     return { session, context, service, diagnostics, original: readFileSync(file), file, expire: () => { authority = false } }
   }
+  it.each(['default', 'plan', 'compose'] as const)('%s 本轮投影留在尾部，提交后完成归档与重启保持一致', async mode => {
+    const f = fixture()
+    const facts = { userMessageId: 'current-user', sessionPrefix: '当前工作区', modeInstruction: getModeInstruction(mode) }
+    store.appendMessage(f.session.id, { id: facts.userMessageId, role: 'user', content: '继续', timestamp: 100 })
+    const current = { role: 'user' as const, content: projectUserContent('继续', facts), origin: { messageId: facts.userMessageId, step: 0 } }
+    f.context.messages.push(current)
+    await expect(f.service.prepareMainRequest(f.context.messages, undefined, identitySummaryProjection)).resolves.toMatchObject({ status: 'compacted' })
+    expect(f.context.messages.at(-1)).toEqual(current)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(ledger.state?.coversThrough.messageId).not.toBe(facts.userMessageId)
+    store.appendMessage(f.session.id, { id: 'current-assistant', role: 'assistant', content: '完成', userDelivery: facts, timestamp: 101 })
+    f.context.messages.push({ role: 'assistant', content: '完成', origin: { messageId: 'current-assistant', step: 0 } })
+    expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt).messages).toEqual(f.context.messages)
+    f.service.dispose()
+  })
   it('原档案不变，重启的 system 与完整尾部相等', async () => {
     const f = fixture()
     expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
@@ -104,13 +122,22 @@ describe('持久化压缩提交', () => {
     expect(readFileSync(f.file)).toEqual(f.original)
     f.service.dispose()
   })
-  it('未落盘的 assistant 尾部不能获得提交回执', async () => {
+  it.each([false, true])('未归档尾部包含工具=%s，保留完整尾部并只提交历史前缀', async withTool => {
     const f = fixture()
-    f.context.messages.push({ role: 'assistant', content: '未提交', origin: { messageId: 'inflight', step: 0 } })
+    const draft: SessionMessage = { id: 'inflight', role: 'assistant', content: '未提交', timestamp: 100,
+      ...(withTool ? { blocks: [
+        { type: 'text', content: '未提交', responseStep: 0 },
+        { type: 'tool', toolCallId: 'call', toolName: 'read', arguments: {}, status: 'success', result: '已读取', responseStep: 0 }
+      ] } : {}) }
+    const tail = buildConversationContext({ ...store.load(f.session.id)!, messages: [draft], currentLeafId: draft.id }, 'default')
+    f.context.messages.push(...tail)
     const original = structuredClone(f.context.messages)
-    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(false)
-    expect(f.context.messages).toEqual(original)
-    expect(store.loadContextSnapshot(f.session.id)).toBeNull()
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    expect(f.context.messages.slice(-tail.length)).toEqual(original.slice(-tail.length))
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(ledger.state?.coversThrough.messageId).not.toBe('inflight')
+    store.appendMessage(f.session.id, draft)
+    expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt).messages).toEqual(f.context.messages)
     f.service.dispose()
   })
   it('最终投影等待时 generation 失效，旧候选不能提交', async () => {
@@ -167,7 +194,7 @@ describe('持久化压缩提交', () => {
     expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
     const ledger = store.loadContextSnapshot(f.session.id)!
     expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt, projection).messages).toEqual(f.context.messages)
-    original.at(-1)!.content = '未持久化改动'
+    original[1].content = '未持久化改动'
     expect(store.commitCompaction(f.session.id, { ...ledger, revision: 2 }, 1, original, projection)).toBe(false)
     f.service.dispose()
   })

@@ -64,7 +64,7 @@ describe('同路由最终投影预算', () => {
     const next = pool.measureRequest([...messages, { role: 'assistant', content: '后缀'.repeat(100) }])
     const result = restored.assessNextRequest(next)
     expect(result.source).toBe('anchored-estimate')
-    expect(result.estimatedTokens).toBe(390_000 + next.serializedBytes - request.serializedBytes + result.marginTokens)
+    expect(result.estimatedTokens).toBe(390_000 + next.budgetUnits! - request.budgetUnits! + result.marginTokens)
     expect(restored.assessNextRequest(request).estimatedTokens).toBe(390_000)
   })
   it('旧 route、旧 generation、摘要和旧 revision 不能覆盖 main 锚点', () => {
@@ -81,7 +81,7 @@ describe('同路由最终投影预算', () => {
     expect(service.observeMainRequest(1, request, source(request))).toBe(false)
     expect(store.loadContextSnapshot(session.id)).toEqual(saved)
   })
-  it('旧正文替换和工具信封变化使锚点失效，未知超大 reasoning 被阻止', async () => {
+  it('旧正文和信封使锚点失效，reasoning 按 token 估算而非字节判定', async () => {
     const { service, pool, context } = setup(), request = pool.measureRequest(messages)
     service.observeMainRequest(390_000, request, source(request))
     expect(service.assessNextRequest(pool.measureRequest([{ ...messages[0], content: '另一份 system' }, messages[1]])).source).toBe('conservative-estimate')
@@ -89,17 +89,44 @@ describe('同路由最终投影预算', () => {
     const huge: ChatMessage[] = [{ role: 'assistant', content: 'tiny', reasoningContent: '中'.repeat(200_000), toolCalls: [{ id: 'a', name: 'read', arguments: '{}' }] }, { role: 'tool', toolCallId: 'a', content: 'ok' }]
     const measured = pool.measureRequest(huge)
     expect(measured.serializedBytes).toBeGreaterThan(600_000)
-    expect(service.assessNextRequest(measured).status).toBe('blocked')
+    expect(service.assessNextRequest(measured).status).toBe('within')
     const before = structuredClone(context.messages)
-    await expect(service.prepareMainRequest(huge, undefined, identitySummaryProjection)).rejects.toMatchObject({ attemptedCompaction: false })
+    await expect(service.prepareMainRequest(huge, undefined, identitySummaryProjection)).resolves.toMatchObject({ status: 'within' })
     expect(context.messages).toEqual(before)
   })
-  it('400K 压缩失败保持现场且拒绝下一主请求', async () => {
+  it('400K 无可折叠前缀时保留原文，实际高水位才阻断', async () => {
     const { service, pool, context } = setup(), request = pool.measureRequest(messages)
     service.observeMainRequest(400_000, request, source(request))
     const before = structuredClone(context.messages)
-    await expect(service.prepareMainRequest(messages, undefined, identitySummaryProjection)).rejects.toMatchObject({ attemptedCompaction: true })
+    await expect(service.prepareMainRequest(messages, undefined, identitySummaryProjection)).resolves.toMatchObject({ status: 'within' })
+    expect(service.observeMainRequest(499_000, request, source(request), 1)).toBe(true)
+    await expect(service.prepareMainRequest(messages, undefined, identitySummaryProjection)).rejects.toMatchObject({ attemptedCompaction: false })
     expect(context.messages).toEqual(before)
+  })
+  it('system 单字节变化不再把字节数当 token，下一次 usage 可重新校准', () => {
+    const { service, pool } = setup({ ...config, contextWindow: 200_000 })
+    const original: ChatMessage[] = [{ role: 'system', content: 'A' }, { role: 'user', content: 'x'.repeat(345_000) }]
+    const before = pool.measureRequest(original)
+    expect(service.observeMainRequest(90_033, before, source(before))).toBe(true)
+    const after = pool.measureRequest([{ ...original[0], content: 'B' }, original[1]])
+    expect(service.assessNextRequest(after)).toMatchObject({ status: 'within', reason: 'incompatible-anchor' })
+    expect(service.assessNextRequest(after).estimatedTokens).toBeLessThan(100_000)
+    expect(service.observeMainRequest(90_034, after, source(after), 1)).toBe(true)
+    expect(service.assessNextRequest(after)).toMatchObject({ estimatedTokens: 90_034, source: 'provider' })
+  })
+  it.each([1, 2] as const)('旧估算版本 %i 仅对相同请求保留实测，不跨单位计算增量', version => {
+    const { service, pool, context } = setup()
+    const request = pool.measureRequest(messages)
+    service.observeMainRequest(1_000, request, source(request))
+    const ledger = context.compactionState!
+    const legacy = { ...ledger.budgetAnchor!, estimatorVersion: version, budgetUnits: request.serializedBytes }
+    expect(parseRequestBudgetAnchor(legacy)).toEqual(legacy)
+    service.restoreBudget({ ...ledger, budgetAnchor: legacy })
+    expect(service.assessNextRequest(request)).toMatchObject({ source: 'provider', estimatedTokens: 1_000 })
+    const appended = pool.measureRequest([...messages, { role: 'assistant', content: '后续' }])
+    expect(service.assessNextRequest(appended)).toMatchObject({ source: 'conservative-estimate', status: 'within' })
+    expect(service.observeMainRequest(1_010, appended, source(appended), 1)).toBe(true)
+    expect(context.compactionState?.budgetAnchor?.estimatorVersion).toBe(3)
   })
   it('未知快照版本不被锚点写入覆盖', () => {
     const { root, session, store, service, pool } = setup()

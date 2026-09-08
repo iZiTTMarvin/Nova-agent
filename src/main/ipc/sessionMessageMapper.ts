@@ -24,11 +24,15 @@ function normalizeBlocks(blocks: SessionMessage['blocks']): MessageBlock[] | und
   }
 
   return blocks.map((block) => {
+    if (block.type === 'text') {
+      const { continuation: _continuation, ...displayBlock } = block
+      return displayBlock
+    }
     if (block.type !== 'tool') {
       return block
     }
 
-    const { delivery: _delivery, ...displayBlock } = block
+    const { delivery: _delivery, resultImages: _images, ...displayBlock } = block
     const toolBlock: ToolBlock = {
       ...displayBlock,
       ...(block.result !== undefined ? { result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') } : {}),

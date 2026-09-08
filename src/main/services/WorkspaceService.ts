@@ -10,7 +10,7 @@
  * - renderer 只订阅 workspace:changed，不反向写其它 store。
  * - 会话列表（availableSessions）随状态一起广播，避免 renderer 二次拉取。
  */
-import { dialog, BrowserWindow, app } from 'electron'
+import { dialog, BrowserWindow } from 'electron'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
@@ -32,37 +32,18 @@ import {
   isAgentTurnInProgress,
   isSessionTurnInProgress
 } from '../agent/state'
-import { reloadSkillsForWorkspace, getSkillService } from './SkillServiceHost'
+import { reloadSkillsForWorkspace } from './SkillServiceHost'
 import { disposeIdleLoopForSession } from '../agent/turn'
 import { clearSteeringQueue } from '../agent/turn/SteeringQueue'
 import { planReviewWaiters } from '../agent/interaction/planReviewWaiters'
-import { calculateContextBreakdown } from '../../runtime/agent'
-import { loadModelConfig } from '../../runtime/model/config'
-import { resolveContextWindow } from '../../shared/config/types'
+import { buildSessionContextBreakdown } from './SessionContextView'
 import { readPlanDocumentInWorkspace } from '../../runtime/plans'
 import type { RunCoordinator } from '../../runtime/run'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 /** 计算并直接推送某会话的上下文容量拆分给 renderer */
-function pushContextBreakdownForSession(session: SessionData, getMainWindow: () => BrowserWindow | null): void {
-  const skillService = getSkillService()
-  if (skillService.getWorkspaceRoot() !== session.workspaceRoot) {
-    skillService.load(session.workspaceRoot)
-  }
-  const skills = skillService.getRegistry().listForContext()
-
-  const persistedConfig = loadModelConfig(app.getPath('userData'))
-  const contextLimit = resolveContextWindow(
-    persistedConfig?.modelId ?? '',
-    persistedConfig?.contextWindow
-  )
-
-  const { payload } = calculateContextBreakdown({
-    session,
-    skills,
-    toolDefinitions: [],
-    contextLimit
-  })
+function pushContextBreakdownForSession(session: SessionData, getMainWindow: () => BrowserWindow | null, store: SessionStore): void {
+  const payload = buildSessionContextBreakdown(session, store)
 
   const win = getMainWindow()
   if (win && !win.isDestroyed()) {
@@ -298,7 +279,7 @@ export class WorkspaceService {
     }
     this.notifyWorkspaceRootChanged(previousRoot, selectedPath)
     this.broadcast()
-    pushContextBreakdownForSession(data, this.deps.getMainWindow)
+    pushContextBreakdownForSession(data, this.deps.getMainWindow, this.deps.getSessionStore())
     return this.getState()
   }
 
@@ -322,7 +303,7 @@ export class WorkspaceService {
     }
     this.notifyWorkspaceRootChanged(previousRoot, params.workspaceRoot)
     this.broadcast()
-    pushContextBreakdownForSession(data, this.deps.getMainWindow)
+    pushContextBreakdownForSession(data, this.deps.getMainWindow, this.deps.getSessionStore())
     return this.getState()
   }
 
@@ -399,7 +380,7 @@ export class WorkspaceService {
             reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
             availableSessions: remaining
           }
-          pushContextBreakdownForSession(detail, this.deps.getMainWindow)
+          pushContextBreakdownForSession(detail, this.deps.getMainWindow, this.deps.getSessionStore())
         } else {
           this.state = { ...this.state, availableSessions: remaining }
         }
@@ -480,7 +461,7 @@ export class WorkspaceService {
     }
     this.notifyWorkspaceRootChanged(previousRoot, detail.workspaceRoot)
     this.broadcast()
-    pushContextBreakdownForSession(detail, this.deps.getMainWindow)
+    pushContextBreakdownForSession(detail, this.deps.getMainWindow, this.deps.getSessionStore())
     return this.getState()
   }
   /** 切换运行模式（并持久化到目标会话） */
@@ -518,7 +499,7 @@ export class WorkspaceService {
     // 模式变更可能影响 system prompt 长度，重新推送上下文拆分
     const session = targetIsCurrent && sessionId ? store.load(sessionId) : null
     if (session) {
-      pushContextBreakdownForSession(session, this.deps.getMainWindow)
+      pushContextBreakdownForSession(session, this.deps.getMainWindow, this.deps.getSessionStore())
     }
     return this.getState()
   }
@@ -780,7 +761,7 @@ export class WorkspaceService {
       } else {
         this.tier1BranchContext = null
       }
-      pushContextBreakdownForSession(refreshed, this.deps.getMainWindow)
+      pushContextBreakdownForSession(refreshed, this.deps.getMainWindow, this.deps.getSessionStore())
     } else {
       this.tier1BranchContext = null
     }

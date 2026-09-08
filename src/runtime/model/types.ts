@@ -44,6 +44,8 @@ export function extractTextFromContent(content: string | ContentBlock[]): string
 
 /** 发送给模型的消息 */
 export interface ChatMessage {
+  /** 已投递的运行时续做指令，不能作为原始用户约束。 */
+  contextInstruction?: boolean
   toolDelivery?: import('../../shared/session/types').ToolDelivery
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | ContentBlock[]

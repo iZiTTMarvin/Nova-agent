@@ -279,6 +279,12 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           reasoningContent, reasoningProviderId, toolCalls: calls })
       }
 
+      const appendContinuation = (instruction: string): void => {
+        emit({ type: 'context_instruction', messageId, afterStep: stepOrigin.step, content: instruction })
+        context.messages.push({ role: 'user', content: instruction, origin: stepOrigin, contextInstruction: true })
+        p.updateTokenEstimate()
+      }
+
       if (toolCalls.length === 0) {
         commitResponse()
         const continuation = await config.assistantCompletionPolicy?.({
@@ -290,8 +296,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         })
         const instruction = continuation?.instruction.trim()
         if (!instruction) break
-        context.messages.push({ role: 'user', content: instruction })
-        p.updateTokenEstimate()
+        appendContinuation(instruction)
         continue
       }
 
@@ -355,8 +360,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       if (modeTransition?.type === 'mode_transition' && config.getModeTransitionInstruction) {
         const instruction = config.getModeTransitionInstruction(modeTransition).trim()
         if (instruction) {
-          context.messages.push({ role: 'user', content: instruction })
-          p.updateTokenEstimate()
+          appendContinuation(instruction)
         }
         // 模式切换是控制面动作，不消耗任务工具轮数；即使发生在上限边界，
         // 也必须保证新模式至少获得一次模型调用来继续当前任务。
@@ -385,8 +389,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           break
         }
         if (stopDecision) {
-          context.messages.push({ role: 'user', content: stopDecision.instruction })
-          p.updateTokenEstimate()
+          appendContinuation(stopDecision.instruction)
         }
       }
 

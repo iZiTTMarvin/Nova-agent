@@ -6,8 +6,12 @@ export function toRendererRunSnapshot(snapshot: RunSnapshot | null): RunSnapshot
   if (!snapshot?.turnDraft) return snapshot
   const { userDelivery: _delivery, ...draft } = snapshot.turnDraft
   return { ...snapshot, turnDraft: { ...draft, blocks: draft.blocks.map(block => {
+    if (block.type === 'text') {
+      const { continuation: _continuation, ...displayBlock } = block
+      return displayBlock
+    }
     if (block.type !== 'tool') return block
-    const { delivery: _toolDelivery, ...displayBlock } = block
+    const { delivery: _toolDelivery, resultImages: _images, ...displayBlock } = block
     return { ...displayBlock, ...(block.result !== undefined ? { result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') } : {}) }
   }) } }
 }

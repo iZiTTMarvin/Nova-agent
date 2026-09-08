@@ -1,6 +1,6 @@
 import { parseRequestBudgetAnchor, type RequestBudgetAnchor } from '../model/requestBudget'
 import { parseStructuredHandoff, renderStructuredHandoff } from './handoffState'
-import { classifyLedgerRestore } from './ledgerValidation'
+import { classifyLedgerRestore, durableCompactionPrefixLength } from './ledgerValidation'
 import { buildConversationContext, type BuildConversationContextOptions } from './conversationContext'
 import type { ChatMessage } from '../model/types'
 /**
@@ -1436,24 +1436,24 @@ export class SessionStore {
     atomicWriteFileSync(filePath, JSON.stringify(canonical, null, 2), 'utf8')
   }
 
-  /** 同步原子替换是提交点；未落盘的完成步必须留在原上下文。 */
+  /** 可安全折叠的已归档前缀长度；入参与返回值都按运行时可见消息计数。 */
+  getCompactionPrefixLength(sessionId: string, visible: readonly ChatMessage[], projection: BuildConversationContextOptions = {}): number {
+    const session = this.load(sessionId)
+    return session ? durableCompactionPrefixLength(session, visible, projection) : 0
+  }
+
+  /** 同步原子替换是提交点；只校验被折叠前缀，执行中尾部继续保留。 */
   commitCompaction(sessionId: string, ledger: CompactionLedger, expectedRevision: number, messages: readonly ChatMessage[], projection: BuildConversationContextOptions = {}): boolean {
     const current = this.loadContextSnapshot(sessionId)
     const file = path.join(this.resolveSessionDir(sessionId), SESSION_CONTEXT_SNAPSHOT_FILE)
     if ((!current && fs.existsSync(file)) || (current?.revision ?? 0) !== expectedRevision || ledger.revision !== expectedRevision + 1) return false
     const session = this.load(sessionId)
     if (!session || classifyLedgerRestore(session, ledger) !== 'restored') return false
-    const archived = buildConversationContext(session, session.mode, projection)
-    const full = buildConversationContext(session, session.mode, { resolveImageUrl: projection.resolveImageUrl, reasoningReplay: 'all-history' })
-    const fact = (message: ChatMessage): string => JSON.stringify({ role: message.role, content: message.content,
-      toolCalls: message.toolCalls, toolCallId: message.toolCallId, origin: message.origin, reasoningContent: message.reasoningContent })
     const visible = messages.filter(message => message.role !== 'system' && !message.internal)
-    if (visible.some(message => !message.origin)) return false
-    const first = visible[0]
-    const start = archived.findIndex(message => message.origin?.messageId === first?.origin?.messageId && message.origin?.step === first?.origin?.step)
-    if (start < 0 || archived.length - start !== visible.length) return false
-    // 新生成的子轮保留完整 thinking；旧历史必须等于本次恢复的合法投影。
-    if (visible.some((message, index) => fact(message) !== fact(archived[start + index]) && fact(message) !== fact(full[start + index]))) return false
+    const cut = visible.findIndex(message => message.origin && ledger.tailFrom && message.origin.messageId === ledger.tailFrom.messageId && message.origin.step === ledger.tailFrom.step)
+    if (cut <= 0 || cut > durableCompactionPrefixLength(session, visible, projection)) return false
+    const covered = visible[cut - 1].origin
+    if (!covered || covered.messageId !== ledger.state?.coversThrough.messageId || covered.step !== ledger.state.coversThrough.step) return false
     this.saveContextSnapshot(sessionId, ledger)
     return true
   }

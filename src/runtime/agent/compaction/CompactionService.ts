@@ -12,7 +12,7 @@ import type { CacheProfile } from '../../model/cacheProfile'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { ContextBudgetExceededError, ContextRecoveryFailedError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import { getEffectiveToolDefinitions, type AgentContext } from '../core/AgentContext'
-import { collectRequiredFacts, validateHandoff } from './handoffValidation'
+import { collectRequiredFacts, completeHandoff } from './handoffValidation'
 import { formatPointerStub } from '../core/renderHandoffPacket'
 import type { SummaryProjection } from '../../request-projection'
 import type { CompactionMeta } from '../types'
@@ -44,6 +44,7 @@ import {
   rebuildWithCompression,
   shouldScheduleIdleCompaction,
   splitForCompactionByTokens,
+  alignToToolGroupBoundary,
 } from './compaction'
 
 type OverflowMode = 'standard' | 'aggressive'
@@ -81,6 +82,8 @@ interface CompactionParts {
   cutAt: MessageOrigin | null
   authority?: { revision: number; routeId: string; envelopeHash: string; messages: string }
 }
+
+type CompactionApplyResult = { adopted: true } | { adopted: false; reason: 'stale-context' | 'no-reduction' | 'commit-rejected' }
 
 interface CompactionOutputs { stub: string | null; state: string; handoff: StructuredHandoff }
 
@@ -150,24 +153,23 @@ export class CompactionService {
     const threshold = Math.floor(contextWindow * 0.8)
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow })
     const anchor = this.context.compactionState?.budgetAnchor
-    const requestUnits = request.budgetUnits ?? request.serializedBytes
-    const anchorUnits = anchor?.estimatorVersion === REQUEST_ESTIMATOR_VERSION
-      ? anchor.budgetUnits ?? anchor.serializedBytes
-      : anchor?.serializedBytes ?? 0
-    const estimatorCompatible = anchor?.estimatorVersion === REQUEST_ESTIMATOR_VERSION ||
-      (anchor?.estimatorVersion === 1 && requestUnits === request.serializedBytes)
+    const requestUnits = request.budgetUnits ?? Math.ceil(request.serializedBytes / 4)
+    const sameEstimator = anchor?.estimatorVersion === REQUEST_ESTIMATOR_VERSION
+    // 旧字节估算锚点只复用完全相同请求的 usage；追加量不能跨版本相减。
+    const exactLegacy = anchor && !sameEstimator && anchor.messageCount === request.prefixHashes.length && anchor.serializedBytes === request.serializedBytes
+    const anchorUnits = sameEstimator ? anchor.budgetUnits! : requestUnits
+    const estimatorCompatible = sameEstimator || exactLegacy
     const compatible = anchor && estimatorCompatible && anchor.routeId === request.routeId &&
       anchor.envelopeHash === request.envelopeHash && anchor.messageCount <= request.prefixHashes.length &&
       anchor.prefixHash === request.prefixHashes[anchor.messageCount - 1] && requestUnits >= anchorUnits
-    const deltaBytes = compatible ? requestUnits - anchorUnits : requestUnits
-    // 未知 tokenizer 使用字节保守增量；不把字符差伪装成实际 token 差。
-    const marginTokens = compatible && deltaBytes === 0 ? 0 : Math.max(256, Math.ceil(deltaBytes * 0.05))
-    const estimatedTokens = (compatible ? anchor.inputTokens : 0) + deltaBytes + marginTokens
+    const deltaTokens = compatible ? requestUnits - anchorUnits : requestUnits
+    const marginTokens = compatible && deltaTokens === 0 ? 0 : Math.max(256, Math.ceil(deltaTokens * 0.05))
+    const estimatedTokens = (compatible ? anchor.inputTokens : 0) + deltaTokens + marginTokens
     const reason = compatible ? 'compatible-main-anchor' : anchor ? 'incompatible-anchor' : 'no-main-usage'
-    const status = !compatible && estimatedTokens > highWaterTokens ? 'blocked'
+    const status = compatible && deltaTokens === 0 && estimatedTokens > highWaterTokens ? 'blocked'
       : estimatedTokens >= threshold ? 'compact' : 'within'
     this.budget = { status, estimatedTokens, contextWindow, threshold, marginTokens,
-      source: compatible ? deltaBytes === 0 ? 'provider' : 'anchored-estimate' : 'conservative-estimate', reason }
+      source: compatible ? deltaTokens === 0 ? 'provider' : 'anchored-estimate' : 'conservative-estimate', reason }
     recordMetric('budget.assessment', { estimatedTokens, threshold, contextWindow, marginTokens, serializedBytes: request.serializedBytes,
       revision: this.context.compactionState?.revision ?? 0 }, { id: this.context.runId ?? undefined,
       tags: { status, reason, source: this.budget.source, routeId: request.routeId, tokenizerId: request.tokenizerId, envelopeHash: request.envelopeHash, prefixHash: request.prefixHashes.at(-1) ?? '' } })
@@ -184,7 +186,7 @@ export class CompactionService {
     const anchor: RequestBudgetAnchor = { estimatorVersion: REQUEST_ESTIMATOR_VERSION, revision: revision + 1,
       routeId: request.routeId, envelopeHash: request.envelopeHash, messageCount: request.prefixHashes.length,
       prefixHash: request.prefixHashes.at(-1)!, serializedBytes: request.serializedBytes,
-      budgetUnits: request.budgetUnits ?? request.serializedBytes, inputTokens, source }
+      budgetUnits: request.budgetUnits ?? Math.ceil(request.serializedBytes / 4), inputTokens, source }
     if (this.context.sessionStore && this.context.sessionId &&
         !this.context.sessionStore.saveBudgetAnchor(this.context.sessionId, anchor, revision)) return false
     if (!this.canWrite()) return false
@@ -196,7 +198,7 @@ export class CompactionService {
   restoreBudget(ledger: CompactionLedger): void { this.context.compactionState = ledger }
 
   async prepareMainRequest(messages: ChatMessage[], tools: ToolDefinition[] | undefined, projection: SummaryProjection, signal?: AbortSignal): Promise<{ status: 'within' | 'compacted'; revision: number }> {
-    if (!this.canWrite() || signal?.aborted) throw new Error('Request budget authority expired')
+    if (!this.canWrite() || signal?.aborted) throw new ContextRecoveryFailedError('authority-expired')
     const request = this.measureRequest(messages, tools)
     const budget = this.assessNextRequest(request)
     if (budget.status === 'within') return { status: 'within', revision: this.context.compactionState?.revision ?? 0 }
@@ -205,12 +207,19 @@ export class CompactionService {
       throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, false)
     }
     const result = await this.runCompaction('threshold', projection, signal, this.canWrite)
+    if (!this.canWrite() || signal?.aborted) throw new ContextRecoveryFailedError('authority-expired')
     if (result.failure) throw result.failure
-    if (!result.adopted) throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, true)
+    if (!result.adopted) {
+      const hardBudget = this.contextBudgetManager.enforceInline(messages)
+      if (hardBudget.status === 'requires_compaction') throw new ContextBudgetExceededError(hardBudget.estimatedTokens, hardBudget.serializedBytes, true)
+      if (budget.status === 'blocked') throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, true)
+      return { status: 'within', revision: this.context.compactionState?.revision ?? 0 }
+    }
     return { status: 'compacted', revision: this.context.compactionState?.revision ?? 0 }
   }
 
   restoreCompactedContext(ledger: CompactionLedger, tail: ChatMessage[]): void {
+    this.context.systemPrompt = this.getSystemPrompt?.(ledger.entries.length) ?? this.context.systemPrompt
     this.context.messages = rebuildWithCompression(this.context.systemPrompt, ledger, tail)
     this.context.compactionState = ledger
     this.context.compactionLevel = ledger.entries.length
@@ -244,10 +253,7 @@ export class CompactionService {
     const projectedContext = await projection.project(this.context.messages)
     if (this.assessNextRequest(this.measureRequest(projectedContext)).status === 'within') return false
 
-    const { oldMessages, recentMessages } = splitForCompactionByTokens(
-      this.context.messages,
-      getTailTokenBudget(this.contextWindow)
-    )
+    const { oldMessages, recentMessages } = this.splitOverflowContext(0)
     if (oldMessages.length === 0) return false
 
     const parts: CompactionParts = {
@@ -262,13 +268,14 @@ export class CompactionService {
       const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
       if (!outputs || abortSignal?.aborted) return false
 
-      adopted = await this.applyCompactionResult(
+      const application = await this.applyCompactionResult(
         parts,
         outputs,
         projection,
         'mid-turn',
         () => !abortSignal?.aborted && !this.disposed
       )
+      adopted = application.adopted
       if (!adopted) return false
       this.notifyCompaction('mid-turn')
       return true
@@ -322,13 +329,14 @@ export class CompactionService {
       const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
       if (!outputs || abortSignal?.aborted) return false
 
-      adopted = await this.applyCompactionResult(
+      const application = await this.applyCompactionResult(
         parts,
         outputs,
         projection,
         'overflow',
         () => !abortSignal?.aborted && !this.disposed
       )
+      adopted = application.adopted
       if (!adopted) return false
       this.notifyCompaction('overflow')
       return true
@@ -357,14 +365,17 @@ export class CompactionService {
       const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
       if (!outputs || abortSignal?.aborted || !canApply()) return { adopted: false }
 
-      adopted = await this.applyCompactionResult(
+      const application = await this.applyCompactionResult(
         parts,
         outputs,
         projection,
         trigger,
         () => !abortSignal?.aborted && !this.disposed && canApply()
       )
-      if (!adopted) return { adopted: false, failure: new ContextRecoveryFailedError('commit-rejected') }
+      adopted = application.adopted
+      if (!application.adopted) return application.reason === 'no-reduction'
+        ? { adopted: false }
+        : { adopted: false, failure: new ContextRecoveryFailedError(application.reason) }
       this.notifyCompaction(trigger)
       return { adopted: true }
     } catch (error) {
@@ -437,23 +448,47 @@ export class CompactionService {
   }
 
   private splitThresholdContext(): CompactionParts {
-    const { oldMessages, recentMessages } = splitForCompactionByTokens(
-      this.context.messages,
-      getTailTokenBudget(this.contextWindow)
-    )
-    return {
-      oldMessages,
-      recentMessages,
-      cutAt: recentMessages[0]?.origin ?? null
-    }
+    return this.splitOverflowContext(0)
   }
 
   private splitOverflowContext(extraTailTokens: number): CompactionParts {
-    const { oldMessages, recentMessages } = splitForCompactionByTokens(
+    let { oldMessages, recentMessages } = splitForCompactionByTokens(
       this.context.messages,
       getTailTokenBudget(this.contextWindow),
       extraTailTokens
     )
+    const all = [...oldMessages, ...recentMessages]
+    const system = this.context.messages.filter(message => message.role === 'system')
+    const tools = this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context)
+    const units = (messages: ChatMessage[]): number => {
+      const measured = this.measureRequest(messages, tools)
+      return measured.budgetUnits ?? Math.ceil(measured.serializedBytes / 4)
+    }
+    const baseUnits = units(system)
+    const tailBudget = getTailTokenBudget(this.contextWindow) + extraTailTokens
+    // 尾部须满足与主请求相同的计量，包含 reasoning 和视觉预留；切点保持完整工具组。
+    if (units([...system, ...recentMessages]) - baseUnits > tailBudget) {
+      const boundaries = all.map((_, index) => index)
+        .filter(index => index >= oldMessages.length && alignToToolGroupBoundary(all, index) === index)
+      let low = 0
+      let high = boundaries.length - 1
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2)
+        const tailUnits = units([...system, ...all.slice(boundaries[mid])]) - baseUnits
+        if (tailUnits > tailBudget) low = mid + 1
+        else high = mid
+      }
+      const cut = boundaries[low] ?? oldMessages.length
+      oldMessages = all.slice(0, cut)
+      recentMessages = all.slice(cut)
+    }
+    if (this.context.sessionStore && this.context.sessionId) {
+      // all 即运行时可见消息（压缩指令只存在于临时请求数组，不进上下文），与前沿计数同口径。
+      const frontier = this.context.sessionStore.getCompactionPrefixLength(this.context.sessionId, all, this.historyProjection)
+      const cut = alignToToolGroupBoundary(all, Math.min(oldMessages.length, frontier))
+      oldMessages = all.slice(0, cut)
+      recentMessages = all.slice(cut)
+    }
     return {
       oldMessages,
       recentMessages,
@@ -489,13 +524,14 @@ export class CompactionService {
     const priorState = this.context.compactionState?.state?.text
     const previousFacts = this.context.compactionState?.state?.handoff?.facts ?? []
     const archive = this.context.sessionStore && this.context.sessionId ? this.context.sessionStore.load(this.context.sessionId) : null
+    const archivedUsers = new Map((archive?.messages ?? []).filter(message => message.role === 'user').map(message => [message.id, message]))
     const sourceMessages = parts.oldMessages.map(message => {
-      const raw = message.role === 'user' ? archive?.messages.find(raw => raw.id === message.origin?.messageId) : undefined
+      const raw = message.role === 'user' && !message.contextInstruction && message.origin ? archivedUsers.get(message.origin.messageId) : undefined
       return raw ? { ...message, content: extractTextFromSerializableContent(raw.content) } : message
     })
     const required = collectRequiredFacts(sourceMessages, previousFacts)
     const instruction = [buildStateInstruction(priorState),
-      'facts 中每项含 id/category/owner/value/origin{messageId,step}/quote/required。以下必需事实逐字段保留，不得改写、改归属或删除。额外事实只能引用原始 user 原句，owner 为该 messageId，value=quote。',
+      '以下必需事实由程序原样保留，facts 输出 [] 即可，不需要复制。叙述部分必须尊重这些原句；额外事实只能引用原始 user 原句，owner 为该 messageId，value=quote。',
       JSON.stringify(required)].join('\n')
     const stubContext = [
       ...prefix,
@@ -524,7 +560,7 @@ export class CompactionService {
 
     const stateBudget = getStateTokenBudget(this.contextWindow)
     let candidate = rawState
-    let handoff = validateHandoff(candidate, sourceMessages, required, previousFacts)
+    let handoff = completeHandoff(candidate, sourceMessages, required, previousFacts)
     if (!handoff || estimateTokens(renderStructuredHandoff(handoff)) > stateBudget) {
       const tightened = await this.streamCompactionText(
         [
@@ -546,7 +582,7 @@ export class CompactionService {
       if (abortSignal?.aborted) return null
       if (!tightened) throw new ContextRecoveryFailedError('empty-summary')
       candidate = tightened
-      handoff = validateHandoff(candidate, sourceMessages, required, previousFacts)
+      handoff = completeHandoff(candidate, sourceMessages, required, previousFacts)
     }
     if (!handoff) {
       recordMetric('compaction.rejected', { requiredFacts: required.length }, { tags: { reason: 'invalid-handoff' } })
@@ -625,26 +661,30 @@ export class CompactionService {
     projection: SummaryProjection,
     trigger: LedgerTrigger,
     canApply: () => boolean = () => true
-  ): Promise<boolean> {
+  ): Promise<CompactionApplyResult> {
     const eligible = (): boolean => {
       const authority = parts.authority
       const current = this.measureRequest(this.context.messages, getEffectiveToolDefinitions(this.context))
       return !this.disposed && (trigger === 'idle' || this.canWrite()) && canApply() && Boolean(authority && authority.revision === (this.context.compactionState?.revision ?? 0) &&
         authority.routeId === current.routeId && authority.envelopeHash === current.envelopeHash && authority.messages === JSON.stringify(this.context.messages))
     }
-    if (!eligible()) return false
+    if (!eligible()) return { adopted: false, reason: 'stale-context' }
 
     const tail = parts.recentMessages
     const beforeProjected = await projection.project(this.context.messages)
-    const beforeTokens = estimateContextTokens(beforeProjected)
+    const requestUnits = (messages: ChatMessage[]): number => {
+      const measured = this.measureRequest(messages, this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context))
+      return measured.budgetUnits ?? Math.ceil(measured.serializedBytes / 4)
+    }
+    const beforeUnits = requestUnits(beforeProjected)
 
     const ledger = this.buildNextLedger(parts, outputs, trigger)
     const systemPrompt = this.getSystemPrompt?.(ledger.entries.length) ?? this.context.systemPrompt
     const rebuilt = rebuildWithCompression(systemPrompt, ledger, tail)
     const projected = await projection.project(rebuilt)
-    if (!eligible()) return false
-    const afterTokens = estimateContextTokens(projected)
-    if (afterTokens >= beforeTokens) return false
+    if (!eligible()) return { adopted: false, reason: 'stale-context' }
+    const afterUnits = requestUnits(projected)
+    if (afterUnits >= beforeUnits) return { adopted: false, reason: 'no-reduction' }
 
     const budget = this.contextBudgetManager.enforceInline(projected)
     if (budget.status === 'requires_compaction') {
@@ -653,7 +693,7 @@ export class CompactionService {
     if (this.context.sessionStore && this.context.sessionId) {
       if (!this.context.sessionStore.commitCompaction(this.context.sessionId, ledger, parts.authority!.revision, this.context.messages, this.historyProjection)) {
         recordMetric('compaction.rejected', { revision: ledger.revision ?? 0 }, { tags: { reason: 'durable-frontier-or-revision' } })
-        return false
+        return { adopted: false, reason: 'commit-rejected' }
       }
     }
     this.context.systemPrompt = systemPrompt
@@ -666,7 +706,7 @@ export class CompactionService {
     recordMetric('compaction.committed', { revision: ledger.revision ?? 0, facts: outputs.handoff.facts.length }, { tags: {
       routeId: parts.authority!.routeId, envelopeHash: parts.authority!.envelopeHash, trigger,
       durability: this.context.sessionStore ? 'persisted' : 'ephemeral' } })
-    return true
+    return { adopted: true }
   }
 
   private buildNextLedger(
@@ -729,7 +769,7 @@ export class CompactionService {
   ): StateDoc['taskVerbatim'] {
     const current = [...this.context.messages]
       .reverse()
-      .find(message => message.role === 'user' && !message.internal)
+      .find(message => message.role === 'user' && !message.internal && !message.contextInstruction)
     if (!current) return previous
     const folded = parts.oldMessages.some(message =>
       message === current

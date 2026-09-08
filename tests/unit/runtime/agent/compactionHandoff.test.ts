@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collectRequiredFacts, validateHandoff } from '../../../../src/runtime/agent/compaction/handoffValidation'
+import { collectRequiredFacts, completeHandoff, validateHandoff } from '../../../../src/runtime/agent/compaction/handoffValidation'
 import { CompactionService } from '../../../../src/runtime/agent/compaction/CompactionService'
 import { createAgentContext } from '../../../../src/runtime/agent/core/AgentContext'
 import { defaultContextBudgetManager } from '../../../../src/runtime/agent/ContextBudgetManager'
@@ -16,6 +16,13 @@ const fact: HandoffFact = { id: 'currency', category: 'constraint', owner: 'u1',
 const document = { schemaVersion: 1, goal: '账单导出', nextActions: '实现导出', keyContext: '金额格式', progress: '待实现', decisions: '保留单位', facts: [fact] }
 
 describe('交接事实校验', () => {
+  it('程序补全必需事实，允许完整 JSON 的代码围栏，仍拒绝冲突和伪造', () => {
+    const candidate = `\`\`\`json\n${JSON.stringify({ ...document, facts: [] })}\n\`\`\``
+    expect(completeHandoff(candidate, [source], [fact], [])).toEqual(document)
+    expect(completeHandoff(JSON.stringify({ ...document, facts: [{ ...fact, value: '删除单位' }] }), [source], [fact], [])).toBeNull()
+    expect(completeHandoff(`说明\n${JSON.stringify(document)}`, [source], [fact], [])).toBeNull()
+    expect(collectRequiredFacts([{ ...source, contextInstruction: true }], [])).toEqual([])
+  })
   it('必需集合来自用户任务、显式约束及已验证事实，ID 随来源稳定', () => {
     const inherited = { ...fact, id: 'inherited', origin: { messageId: 'old', step: 0 }, owner: 'old' }
     const facts = collectRequiredFacts([source, { role: 'assistant', content: '必须删除单位' }], [inherited])

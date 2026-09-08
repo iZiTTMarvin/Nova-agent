@@ -36,9 +36,9 @@ export interface BreakdownInputs {
   session: SessionData
   /**
    * 技能 token 数（已估算）或技能清单（由本函数内部估算）。
-   * AgentLoop 持有 skillsTokenBudget，可直接传数字；主进程加载会话时传清单。
+   * AgentLoop 可传已知预算；缺省从冻结提示词提取，加载历史无需切换技能工作区。
    */
-  skills: number | SkillManifest[]
+  skills?: number | SkillManifest[]
   /** 工具定义列表（OpenAI function schema 对象） */
   toolDefinitions: unknown[]
   /** 模型上下文窗口上限，用于计算百分比 */
@@ -62,11 +62,12 @@ export interface BreakdownResult {
 export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownResult {
   const { session, skills, toolDefinitions, contextLimit } = inputs
 
-  const skillsTokens = typeof skills === 'number'
+  const fullSystemPrompt = session.frozenSystemPrompt ?? getStableSystemPrompt()
+  const skillsTokens = skills === undefined
+    ? estimateTokens(extractPromptLayer(fullSystemPrompt, 'Skills'))
+    : typeof skills === 'number'
     ? Math.max(0, skills)
     : estimateTokens(buildSkillContext(skills))
-
-  const fullSystemPrompt = session.frozenSystemPrompt ?? getStableSystemPrompt()
 
   // tools 桶从 frozen prompt 的 Available Tools 层提取，避免与 JSON schema 重复计算
   const toolSummaryText = extractPromptLayer(fullSystemPrompt, 'Available Tools')
@@ -89,7 +90,7 @@ export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownRes
   // 与 injectHistory / 模型 prompt 同口径：展开 tool result，计入 arguments
   const runtimeMessages = inputs.runtimeMessages ?? buildConversationContext(session, session.mode)
   const messagesTokens = runtimeMessages.reduce(
-    (sum, m) => sum + estimateChatMessageTokens(m),
+    (sum, m) => sum + estimateChatMessageTokens(m) + estimateTokens(m.reasoningContent ?? ''),
     0
   )
   const otherTokens = 0

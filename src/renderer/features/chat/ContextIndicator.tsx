@@ -172,7 +172,7 @@ export const ContextIndicator: React.FC = () => {
       .map(r => ({
         ...r,
         tokens: bd[r.key] ?? 0,
-        percent: total > 0 ? ((bd[r.key] ?? 0) / total * 100).toFixed(1) : '0.0'
+        percent: contextBreakdown.totalEstimated > 0 ? ((bd[r.key] ?? 0) / contextBreakdown.totalEstimated * 100).toFixed(1) : '0.0'
       }))
       .sort((a, b) => b.tokens - a.tokens)
   }, [contextBreakdown, total])
@@ -211,7 +211,7 @@ export const ContextIndicator: React.FC = () => {
                 {total > 0
                   ? `${formatTokens(total)} / ${formatTokens(effectiveLimit)}`
                   : '等待 LLM 调用…'}
-                {contextBreakdown?.budget && <span>{contextBreakdown.budget.source === 'provider' ? ' 实际' : ' 估算'}</span>}
+                {contextBreakdown?.budget && <span>{contextBreakdown.budget.source === 'provider' ? ' 实际' : contextBreakdown.budget.source === 'conservative-estimate' ? ' 本地估算' : ' 估算'}</span>}
                 {total > 0 && <span className="context-popover__pct"> ({percent}%)</span>}
               </span>
             </div>

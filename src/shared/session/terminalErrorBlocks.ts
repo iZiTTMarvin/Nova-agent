@@ -9,11 +9,14 @@ export const CONTEXT_BUDGET_EXCEEDED_NOTICE =
 export function formatTerminalErrorMessage(error: string): string {
   if (error.startsWith('ContextRecoveryFailed:')) {
     const reason = error.slice('ContextRecoveryFailed:'.length).trim()
+    // 执行权被接管不是失败，不提示重试（新请求已在处理）。
+    if (reason === 'authority-expired') return '本轮执行已被新的请求接管，历史保持不变。'
     const detail = reason === 'invalid-summary' ? '模型返回的历史摘要未通过完整性校验'
       : reason === 'empty-summary' ? '模型没有返回历史摘要'
       : reason === 'request-overflow' ? '摘要请求超过模型可接收的上下文'
       : reason === 'summary-budget' ? '历史摘要仍超出可用预算'
       : reason === 'commit-rejected' ? '历史摘要未能安全保存'
+      : reason === 'stale-context' ? '会话上下文已变化，旧摘要未被采纳'
       : '历史摘要请求失败'
     return `${detail}，本轮已停止。原始记录已保留，可重试继续任务。`
   }

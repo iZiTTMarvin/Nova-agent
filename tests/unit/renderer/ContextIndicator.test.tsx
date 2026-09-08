@@ -104,7 +104,7 @@ describe('ContextIndicator', () => {
     renderer.unmount()
   })
 
-  it.each(['provider', 'anchored-estimate'] as const)('展示预算 Owner 的总量、窗口与来源 %s', source => {
+  it.each(['provider', 'anchored-estimate', 'conservative-estimate'] as const)('展示预算 Owner 的总量、窗口与来源 %s', source => {
     const current = useAppStore.getState().contextBreakdown!
     useAppStore.setState({ contextBreakdown: { ...current, budget: { status: 'compact', estimatedTokens: 400_000,
       contextWindow: 500_000, threshold: 400_000, marginTokens: source === 'provider' ? 0 : 256, source, reason: 'compatible-main-anchor' } } })
@@ -113,7 +113,10 @@ describe('ContextIndicator', () => {
       renderer.container.querySelector('.context-indicator-wrap')?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
       vi.advanceTimersByTime(100)
     })
-    expect(renderer.container.querySelector('.context-popover__total')?.textContent).toBe('400K / 500K' + (source === 'provider' ? ' 实际' : ' 估算') + ' (80%)')
+    expect(renderer.container.querySelector('.context-popover__total')?.textContent).toBe('400K / 500K' + (source === 'provider' ? ' 实际' : source === 'conservative-estimate' ? ' 本地估算' : ' 估算') + ' (80%)')
+    const messageRow = [...renderer.container.querySelectorAll('.context-popover__row')]
+      .find(row => row.querySelector('.context-popover__label')?.textContent === '消息')
+    expect(messageRow?.querySelector('.context-popover__pct')?.textContent).toBe('41.8%')
     renderer.unmount()
   })
 

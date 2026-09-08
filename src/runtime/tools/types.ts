@@ -9,6 +9,7 @@ import type { EventBus } from '../agent/EventBus'
 import type { ReadState } from './editTool'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
 import type { ToolTruncationMeta } from '../../shared/tools/types'
+import type { ImageContent } from '../../shared/tools/types'
 import type { Mode } from '../../shared/session/types'
 import type { ModelClient } from '../model/ModelClient'
 import type { PlanReviewResolution } from '../../shared/planReview'
@@ -184,12 +185,7 @@ export function assertSideEffectAllowed(context: ToolContext, label = '操作'):
 }
 
 /** 图片内容块，用于多模态工具结果（如 readTool 读取图片） */
-export interface ImageContent {
-  /** base64 编码的图片数据 */
-  data: string
-  /** 图片 MIME 类型（image/jpeg、image/png、image/gif、image/webp） */
-  mimeType: string
-}
+export type { ImageContent } from '../../shared/tools/types'
 
 /** 运行中进程的会话句柄：ref 用于后续轮询/续接，state 标记进程当前是否仍在跑 */
 export interface ToolProcessHandle {

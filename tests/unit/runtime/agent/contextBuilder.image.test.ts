@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { buildConversationContext, resolveImageUrlsInMessages } from '../../../../src/runtime/sessions'
 import type { SessionData, SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
+import { normalizeMessageToBlocksSource, serializeMessageForDisk } from '../../../../src/runtime/sessions/messageProjection'
 
 const NOVA_URL = 'nova-image://sess_test/abc123.png'
 const BASE64_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGawjM9AQAAAABJRU5ErkJggg=='
@@ -42,7 +43,11 @@ describe('contextBuilder 图片 URL 转换', () => {
           { type: 'image_url', image_url: { url: NOVA_URL } }
         ]
       }
-      const session = buildSession([userMsg])
+      const disk = serializeMessageForDisk(userMsg)
+      expect(disk.content).toBe('')
+      const restored = normalizeMessageToBlocksSource(disk)
+      expect(restored.content).toEqual(userMsg.content)
+      const session = buildSession([restored])
 
       const ctx = buildConversationContext(session, 'default', (url) =>
         url === NOVA_URL ? BASE64_URL : url

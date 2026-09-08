@@ -139,7 +139,8 @@ export function buildCompactionPrompt(): string {
     '请对上面的对话历史生成结构化交接，只输出完整 JSON，不继续对话。',
     'schemaVersion=1；goal（目标）、nextActions（下一步）、keyContext（关键上下文）、progress（进展）、decisions（关键决策）均为非空字符串；没有内容写 (none)。',
     'facts 为事实数组。每项包含 id、category、owner、value、origin{messageId,step}、quote、required。',
-    '保留系统列出的所有必需事实及归属；只引用有来源的原始 user 原句。不得虚构已完成或已验证结论。',
+    '必需事实及归属由程序原样保留。facts 可输出 []；只引用有来源的原始 user 原句，不得虚构已完成或已验证结论。',
+    '{"schemaVersion":1,"goal":"目标","nextActions":"下一步","keyContext":"关键上下文","progress":"进展","decisions":"关键决策","facts":[]}',
     '丢弃重复工具正文、冗余思考；保留必要 artifact:// 指针。工作区和文件清单由系统提供。'
   ].join('\n')
 }
@@ -330,7 +331,7 @@ export function splitForCompactionByTokens(
 /** 将切点前移到工具调用组起点，确保 assistant(toolCalls) 与 tool 结果同在尾部。 */
 export function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: number): number {
   // 从切点位置向前扫描，如果当前消息是 tool 角色，继续前移
-  while (splitIndex > 0 && messages[splitIndex]?.role === 'tool') {
+  while (splitIndex > 0 && (messages[splitIndex]?.role === 'tool' || messages[splitIndex]?.contextInstruction)) {
     splitIndex--
   }
 

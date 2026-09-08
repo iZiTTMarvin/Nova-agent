@@ -89,6 +89,7 @@ describe('上下文账本恢复', () => {
       permissionManager: new PermissionManager(),
       systemPromptLayers: { agentRole: '你是助手。', toolSummary: 'ls' },
       toolSummaryRenderer: definitions => definitions.map(d => d.name).join('\n'),
+      contextWindow: 40_000,
       maxToolRounds: 20,
       onCompaction: (_ctx, meta) => persistCompactionSnapshot(store, session.id, meta.ledger)
     })

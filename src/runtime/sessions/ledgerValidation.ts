@@ -1,8 +1,35 @@
-import { buildConversationContext } from './conversationContext'
+import { buildConversationContext, type BuildConversationContextOptions } from './conversationContext'
 import { getSessionActiveMessages } from './tree'
 import type { CompactionLedger, SessionData } from './types'
 import { extractTextFromSerializableContent } from './types'
-import type { MessageOrigin } from '../model/types'
+import type { ChatMessage, MessageOrigin } from '../model/types'
+
+/**
+ * 仅允许折叠已归档的相同前缀，并留一个可恢复的尾部坐标。
+ * `visible` 必须是运行时可见消息（已去掉 system 与 internal），索引口径与返回值一致。
+ */
+export function durableCompactionPrefixLength(session: SessionData, visible: readonly ChatMessage[], projection: BuildConversationContextOptions): number {
+  const archived = buildConversationContext(session, session.mode, projection)
+  const sameOrigin = (a: ChatMessage, b: ChatMessage): boolean => Boolean(a.origin && b.origin && a.origin.messageId === b.origin.messageId && a.origin.step === b.origin.step)
+  const start = archived.findIndex(message => visible[0] && sameOrigin(message, visible[0]))
+  if (start < 0) return 0
+  const fact = (message: ChatMessage): string => JSON.stringify({ role: message.role, content: message.content,
+    toolCalls: message.toolCalls, toolCallId: message.toolCallId, origin: message.origin, reasoningContent: message.reasoningContent })
+  // 子轮新生成的完整 thinking 只在归档投影比对失败时才需要，全量回放按需构建一次。
+  let fullCache: ChatMessage[] | null = null
+  const matchesArchive = (index: number, message: ChatMessage): boolean => {
+    if (fact(message) === fact(archived[index])) return true
+    fullCache ??= buildConversationContext(session, session.mode, { resolveImageUrl: projection.resolveImageUrl, reasoningReplay: 'all-history' })
+    const replayed = fullCache[index]
+    return replayed !== undefined && fact(message) === fact(replayed)
+  }
+  let count = 0
+  while (count < visible.length && start + count < archived.length && visible[count].origin &&
+    matchesArchive(start + count, visible[count])) count++
+  // 不匹配的 user 投影可以保留；无归档坐标的草稿须连同前一条归档消息保留。
+  while (count > 0 && (!visible[count] || !archived[start + count] || !sameOrigin(visible[count], archived[start + count]))) count--
+  return count
+}
 
 export type LedgerRestoreKind = 'restored' | 'empty-tail' | 'invalid'
 

@@ -30,6 +30,7 @@ export type { HookEvent }
 
 /** Agent 产出的结构化事件 */
 export type AgentEvent =
+  | { type: 'context_instruction'; messageId: string; afterStep: number; content: string; sessionId?: string }
   | { type: 'user_delivery'; messageId: string; facts: UserDeliveryFacts; sessionId?: string }
   | { type: 'assistant_step'; messageId: string; step: number; content: string; reasoningContent?: string; reasoningProviderId?: string; toolCalls: import('../../shared/session/types').ToolCall[]; sessionId?: string }
   | { type: 'tool_delivery'; messageId: string; toolCallId: string; delivery: import('../../shared/session/types').ToolDelivery; sessionId?: string }
@@ -39,7 +40,7 @@ export type AgentEvent =
   | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string; sessionId?: string }
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string; sessionId?: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown>; sessionId?: string; parentToolCallId?: string }
-  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processHandle?: ToolProcessHandle }
+  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; resultImages?: import('../../shared/tools/types').ImageContent[]; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processHandle?: ToolProcessHandle }
   | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string; externalPaths?: string[]; pathAccess?: 'read' | 'write' }
   | {
       type: 'diff_update'

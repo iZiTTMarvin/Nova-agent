@@ -9,6 +9,7 @@
  * 历史折叠的治理由 compaction 子模块各自处理。
  */
 import type { ChatMessage } from '../model/types'
+import { estimateTextTokens } from '../../shared/model/tokenEstimate'
 
 /** 轮内预算校验结果（只估算，不改写） */
 export type InlineBudgetResult =
@@ -30,7 +31,7 @@ export class ContextBudgetExceededError extends Error {
 }
 
 export class ContextRecoveryFailedError extends Error {
-  constructor(readonly reason: 'request-failed' | 'request-overflow' | 'empty-summary' | 'invalid-summary' | 'summary-budget' | 'commit-rejected') {
+  constructor(readonly reason: 'request-failed' | 'request-overflow' | 'empty-summary' | 'invalid-summary' | 'summary-budget' | 'commit-rejected' | 'stale-context' | 'authority-expired') {
     super(`ContextRecoveryFailed: ${reason}`)
     this.name = 'ContextRecoveryFailedError'
   }
@@ -45,11 +46,11 @@ export interface ContextBudgetOptions {
   reservedOutputTokens?: number
 }
 
-/** 粗估：JSON 字符数/4 ≈ token；字节字段保留 UTF-8 计量供显式硬上限使用 */
+/** 文本估算与请求预算同口径；UTF-8 字节保留为独立硬上限。 */
 export function estimateContextSize(messages: ChatMessage[]): { tokens: number; bytes: number } {
   const json = JSON.stringify(messages)
   const bytes = Buffer.byteLength(json, 'utf8')
-  const tokens = Math.ceil(json.length / 4)
+  const tokens = estimateTextTokens(json)
   return { tokens, bytes }
 }
 

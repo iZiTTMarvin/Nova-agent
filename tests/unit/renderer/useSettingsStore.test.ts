@@ -1,6 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSettingsStore, resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
 import type { NormalizedUsage } from '../../../src/runtime/model/types'
+import type { ContextBreakdown } from '../../../src/shared/agent/contextBreakdown'
+
+it('迟到的会话详情不覆盖较新的上下文事件，切换会话仍采用目标详情', () => {
+  resetSettingsStoreForTests()
+  const current: ContextBreakdown = { sessionId: 'a', messageId: 'm', capturedAt: 20,
+    totalEstimated: 100, promptTokensActual: 0, contextLimit: 200_000,
+    breakdown: { systemPrompt: 10, tools: 10, skills: 10, messages: 70, other: 0 } }
+  const store = useSettingsStore.getState()
+  store.setContextBreakdown(current)
+  store.setContextBreakdown({ ...current, capturedAt: 10, totalEstimated: 50 })
+  expect(useSettingsStore.getState().contextBreakdown).toEqual(current)
+  const next = { ...current, sessionId: 'b', capturedAt: 10 }
+  store.setContextBreakdown(next)
+  expect(useSettingsStore.getState().contextBreakdown).toEqual(next)
+})
 
 // 模拟 window.api，避免 loadModelConfig 等 IPC 调用失败
 const mockInvoke = vi.fn()

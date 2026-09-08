@@ -1,17 +1,18 @@
 /**
  * Token 估算工具
- * 用 char/CHARS_PER_TOKEN 粗估 token 数，用于触发上下文压缩的阈值判断
+ * 与请求预算复用文本估算；实际用量由供应商 usage 校准。
  */
 import type { ChatMessage, ContentBlock } from '../model/types'
 import { extractTextFromContent } from '../model/types'
+import { estimateTextTokens } from '../../shared/model/tokenEstimate'
 
-/** 字符→token 换算比（英文约 4、中文约 2，取折中）；mid-turn 估算必须复用此常量 */
+/** ASCII 文本的字符换算比。 */
 export const CHARS_PER_TOKEN = 4
 
 /** 粗略估算文本的 token 数 */
 export function estimateTokens(text: string): number {
   if (!text) return 0
-  return Math.ceil(text.length / CHARS_PER_TOKEN)
+  return estimateTextTokens(text)
 }
 
 /** 估算一组消息的总 token 数 */

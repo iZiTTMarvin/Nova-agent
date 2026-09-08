@@ -67,6 +67,46 @@ function createService(options?: {
 }
 
 describe('CompactionService', () => {
+  it.each([false, true])('摘要不缩小时保留原文，取消=%s 时不得签发请求许可', async cancel => {
+    const context = createContext()
+    const original = context.messages
+    const client = new MockModelClient().addHandoffPair({ events: [
+      { type: 'text_delta', delta: '继续任务' }, { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const { service } = createService({ context, client })
+    const controller = new AbortController()
+    let calls = 0
+    const projection = { project: async (messages: ChatMessage[]) => {
+      if (++calls === 3) {
+        if (cancel) controller.abort()
+        return original
+      }
+      return messages
+    } }
+    const pending = service.prepareMainRequest(original, undefined, projection, controller.signal)
+    if (cancel) await expect(pending).rejects.toMatchObject({ reason: 'authority-expired' })
+    else await expect(pending).resolves.toMatchObject({ status: 'within' })
+    expect(context.messages).toBe(original)
+    expect(context.compactionState).toBeNull()
+    service.dispose()
+  })
+  it('长思考历史压缩后一次回到预算内，不能只按可见正文保留过大的尾部', async () => {
+    const context = createContext([
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: '保留金额单位 CNY', origin: { messageId: 'u', step: 0 } },
+      ...Array.from({ length: 24 }, (_, step): ChatMessage => ({ role: 'assistant', content: '检查',
+        reasoningContent: '核对来源'.repeat(2000), origin: { messageId: 'a', step } }))
+    ])
+    const client = new MockModelClient().addHandoffPair({ events: [
+      { type: 'text_delta', delta: '继续核对金额来源' }, { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const { service } = createService({ context, client, contextWindow: 200_000 })
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection)).resolves.toMatchObject({ status: 'compacted' })
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection)).resolves.toMatchObject({ status: 'within' })
+    expect(context.compactionState?.state?.handoff?.facts.some(fact => fact.value === '保留金额单位 CNY')).toBe(true)
+    expect(context.messages.at(-1)?.origin).toEqual({ messageId: 'a', step: 23 })
+    service.dispose()
+  })
   it.each([
     [{ type: 'error', error: 'provider unavailable' }, 'request-failed'],
     [{ type: 'context_overflow', rawError: 'too long' }, 'request-overflow'],
@@ -257,7 +297,7 @@ describe('CompactionService', () => {
         { type: 'message_end', finishReason: 'stop' }
       ]
     })
-    const { service } = createService({ context, client, contextWindow: 2_000 })
+    const { service } = createService({ context, client, contextWindow: 10_000 })
 
     await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(true)
 

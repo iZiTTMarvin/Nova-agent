@@ -64,11 +64,14 @@ export interface TextBlock {
   type: 'text'
   responseStep?: number
   content: string
+  /** 该响应及工具结果之后投递的运行时指令；不属于用户原文或可见回复。 */
+  continuation?: string
 }
 
 /** 工具调用块 */
 export interface ToolBlock {
   type: 'tool'
+  resultImages?: import('../tools/types').ImageContent[]
   delivery?: ToolDelivery
   responseStep?: number
   toolCallId: string
@@ -170,6 +173,7 @@ export type Session = PrimarySession | SubagentSession
 
 /** 会话详情（含完整消息列表，用于加载历史对话） */
 export type SessionDetail = Session & {
+  contextBreakdown?: import('../agent/contextBreakdown').ContextBreakdown
   messages: Message[]
   /** 当前会话直接拥有的 Child Session 投影，可由 durable owners 重新构建。 */
   subagentProjections: SubagentActivityProjection[]

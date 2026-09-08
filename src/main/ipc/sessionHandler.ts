@@ -39,6 +39,7 @@ import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
+import { buildSessionContextBreakdown } from '../services/SessionContextView'
 
 /** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果与分支元信息 */
 function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
@@ -123,7 +124,7 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
-    return toSessionDetail(data, { tailOnly: true })
+    return { ...toSessionDetail(data, { tailOnly: true }), contextBreakdown: buildSessionContextBreakdown(data, sessionStore) }
   })
 
   // 按游标加载更早的消息页（只读，不触发会话切换副作用）

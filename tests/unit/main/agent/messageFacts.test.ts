@@ -56,7 +56,48 @@ function setup() {
 }
 
 describe('消息事实提交往返', () => {
-  it.each([8035, 12000])('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 %i', async (size) => {
+  it('重复失败后的恢复指令在重启后仍保留于已发送的请求前缀', async () => {
+    const { session, bus, ctx } = setup()
+    sessionStore.appendMessageFast(session.id, { id: 'u', role: 'user', content: '继续实现', timestamp: 1 })
+    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+    const bodies: Array<{ messages: Array<{ role: string; content: string }>; [key: string]: unknown }> = []
+    const registry = new ToolRegistry()
+    registry.register({ name: 'probe', description: 'probe', parameters: { type: 'object', properties: { value: { type: 'number' } } },
+      execute: async () => ({ success: false, output: '前置条件未满足' }) })
+    const makeLoop = () => {
+      const client = new OpenAICompatibleModelClient({ baseUrl: 'https://offline.test/v1', apiKey: 'fixture', modelId: 'MiniMax-M3', contextWindow: 200_000,
+        fetchImpl: async (_url, init) => {
+          bodies.push(JSON.parse(String(init?.body)))
+          const n = bodies.length
+          const delta = n <= 4 ? { content: `<think>检查前置条件 ${n}</think>`, tool_calls: [{ index: 0, id: `t${n}`, type: 'function', function: { name: 'probe', arguments: '{"value":1}' } }] } : { content: '继续成功' }
+          return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: n <= 4 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 90_033, completion_tokens: 10 } })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } })
+        } })
+      const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access', contextWindow: 200_000 })
+      loop.setToolRegistry(registry)
+      loop.setSessionContext(sessionStore, session.id)
+      return loop
+    }
+    const first = makeLoop()
+    expect((await first.sendMessage('继续实现', agentRoute(), { userMessageId: 'u' })).status).toBe('incomplete')
+    const previous = bodies.at(-1)!
+    expect(previous.messages.some(m => m.role === 'user' && m.content.includes('[Runtime guard]'))).toBe(true)
+    first.dispose()
+    const restored = makeLoop()
+    restoreOrInjectHistory(restored, sessionStore.load(session.id)!, sessionStore.loadContextSnapshot(session.id), { reasoningReplay: 'all-history', currentProviderId: 'minimax' })
+    const budgets: Array<Extract<Parameters<typeof accumulateStreamEvent>[1], { type: 'context_breakdown' }>['budget']> = []
+    bus.on(event => { if (event.type === 'context_breakdown') budgets.push(event.budget) })
+    expect((await restored.sendMessage('继续', agentRoute())).status).toBe('completed')
+    expect(budgets[0]).toMatchObject({ status: 'within', reason: 'compatible-main-anchor', source: 'anchored-estimate' })
+    expect(budgets[0]!.estimatedTokens).toBeLessThan(100_000)
+    const next = bodies.at(-1)!
+    expect(JSON.stringify(next.messages.slice(0, previous.messages.length))).toBe(JSON.stringify(previous.messages))
+    restored.dispose()
+  })
+  it.each([
+    { size: 8035, image: false },
+    { size: 12000, image: false },
+    { size: 50, image: true }
+  ])('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image', async ({ size, image }) => {
     const { root, session, bus, ctx } = setup()
     sessionStore.appendMessageFast(session.id, { id: 'u', role: 'user', content: '原始问题', timestamp: 1 })
     bus.on(event => accumulateStreamEvent(session.id, event, ctx))
@@ -70,10 +111,11 @@ describe('消息事实提交往返', () => {
       return new Response('data: ' + JSON.stringify({ choices: [{ delta, finish_reason: index <= 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 1000 + index, completion_tokens: 10 } }) + '\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
     })
     const registry = new ToolRegistry()
-    registry.register({ name: 'probe', description: 'probe', parameters: { type: 'object', properties: { value: { type: 'number' } } }, execute: async () => ({ success: true, output: '中'.repeat(size) }) })
+    registry.register({ name: 'probe', description: 'probe', parameters: { type: 'object', properties: { value: { type: 'number' } } }, execute: async () => ({ success: true, output: '中'.repeat(size),
+      ...(image ? { images: [{ mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWuoAAAAASUVORK5CYII=' }] } : {}) }) })
     registry.register({ name: 'archive_read', description: '读取归档', parameters: { type: 'object', properties: {} }, execute: async () => ({ success: true, output: 'readable' }) })
     const makeLoop = () => {
-      const client = new OpenAICompatibleModelClient({ baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key', modelId: 'deepseek-chat', cacheProfile: 'deepseek' })
+      const client = new OpenAICompatibleModelClient({ baseUrl: 'https://offline.test/v1', apiKey: 'test-key', modelId: image ? 'MiniMax-M3' : 'deepseek-chat', cacheProfile: image ? 'minimax' : 'deepseek' })
       const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access' })
       loop.setToolRegistry(registry)
       loop.setSessionContext(sessionStore, session.id)
@@ -89,7 +131,7 @@ describe('消息事实提交往返', () => {
     expect(snapshot.budgetAnchor?.inputTokens).toBe(1003)
     expect(snapshot.revision).toBe(3)
     expect(snapshot.entries).toEqual([])
-    restoreOrInjectHistory(restored, sessionStore.load(session.id)!, snapshot, { reasoningReplay: 'tool-call-history', currentProviderId: 'deepseek' })
+    restoreOrInjectHistory(restored, sessionStore.load(session.id)!, snapshot, { reasoningReplay: image ? 'all-history' : 'tool-call-history', currentProviderId: image ? 'minimax' : 'deepseek' })
     restored.setModeInstructionProvider(() => '新模式只影响新消息')
     expect((await restored.sendMessage('下一题', agentRoute())).status).toBe('completed')
     expect(sessionStore.loadContextSnapshot(session.id)?.revision).toBe(4)
@@ -145,7 +187,7 @@ describe('消息事实提交往返', () => {
     expect(restored.filter(m => m.toolCalls).map(m => m.toolCalls)).toEqual(sent.map(m => m.toolCalls))
     expect(coordinator.getSnapshot(run.runId)?.turnDraft).toBeNull()
     const assistant = loaded.messages.find(m => m.role === 'assistant')!
-    expect(assistant.messageSchemaVersion).toBe(3)
+    expect(assistant.messageSchemaVersion).toBe(4)
     expect(assistant.userDelivery).toMatchObject({ userMessageId: 'user', modeInstruction: '当时的模式指令' })
     const delivery = assistant.userDelivery!
     expect(client.getCalls()[0].messages.find(m => m.origin?.messageId === 'user')?.content)

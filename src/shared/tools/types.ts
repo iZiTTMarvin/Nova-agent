@@ -5,3 +5,8 @@ export interface ToolTruncationMeta {
   shownLines?: number
   truncated: boolean
 }
+/** 工具返回的图片正文；持久化保留当时的字节，不重新读取可变工作区文件。 */
+export interface ImageContent {
+  data: string
+  mimeType: string
+}

@@ -1,5 +1,6 @@
 import type { UserDeliveryFacts } from '../../shared/session/types'
 import type { ChatMessage } from '../model/types'
+import type { ImageContent } from '../../shared/tools/types'
 import { stripLeakedToolMarkup } from '../../shared/tool-call-text-fallback'
 
 /** 首发与恢复只使用当时记录的注入，不重算过去的环境。 */
@@ -23,4 +24,12 @@ export function projectAssistantContent(content: ChatMessage['content']): ChatMe
 
 export function serializeToolArguments(args: Record<string, unknown>): string {
   return JSON.stringify(args)
+}
+
+export function toToolContent(resultText: string, resultImages?: ImageContent[]): ChatMessage['content'] {
+  if (!resultImages?.length) return resultText
+  return [
+    { type: 'text', text: resultText },
+    ...resultImages.map(img => ({ type: 'image_url' as const, image_url: { url: `data:${img.mimeType};base64,${img.data}` } }))
+  ]
 }

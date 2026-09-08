@@ -16,6 +16,10 @@ describe('appendTerminalErrorToBlocks', () => {
     expect(formatTerminalErrorMessage('ContextRecoveryFailed: invalid-summary'))
       .toBe('模型返回的历史摘要未通过完整性校验，本轮已停止。原始记录已保留，可重试继续任务。')
   })
+  it('执行权被接管不提示重试，也不暴露内部标识', () => {
+    expect(formatTerminalErrorMessage('ContextRecoveryFailed: authority-expired'))
+      .toBe('本轮执行已被新的请求接管，历史保持不变。')
+  })
   it('只转换预算终态错误，其他错误原文保持不变', () => {
     expect(formatTerminalErrorMessage(
       'ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'

@@ -85,7 +85,7 @@ function buildHistoryForMidTurn(opts: { fillerChars: number; pairs: number }): C
   return messages
 }
 
-it.each([20, 20_000])('工具写回后唯一预算 Owner 决定是否继续，结果长度 %i', async size => {
+it.each([20, 20_000, 80_000])('工具写回后唯一预算 Owner 决定是否继续，结果长度 %i', async size => {
   const context = createContext([{ role: 'system', content: 's' }, { role: 'user', content: 'go' }])
   context.dialect = 'native'
   const { service } = createService({ context, contextWindow: 8000 })
@@ -106,10 +106,10 @@ it.each([20, 20_000])('工具写回后唯一预算 Owner 决定是否继续，�
     observeMainRequest: (tokens, request, source, revision) => { service.observeMainRequest(tokens, request, source, revision) },
     updateTokenEstimate: () => service.updateTokenEstimate(), sleep: async () => {}, onTerminalError: text => { error = text }
   })
-  expect(streamCalls).toBe(size === 20 ? 2 : 1)
-  expect(result.ended).toBe(size === 20 ? 'normal' : 'error')
+  expect(streamCalls).toBe(size <= 20_000 ? 2 : 1)
+  expect(result.ended).toBe(size <= 20_000 ? 'normal' : 'error')
   expect(context.messages.find(m => m.role === 'tool')?.content).toBe('x'.repeat(size))
-  if (size > 20) expect(error).toBe('ContextRecoveryFailed: empty-summary')
+  if (size > 20_000) expect(error).toBe('ContextRecoveryFailed: empty-summary')
 })
 
 describe('CompactionService mid-turn', () => {
