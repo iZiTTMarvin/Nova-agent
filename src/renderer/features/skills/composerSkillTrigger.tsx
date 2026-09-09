@@ -58,11 +58,12 @@ export function createComposerSkillTrigger(
   return {
     character: '/',
     searchSource,
-    menuLabel: '技能',
+    menuLabel: '技能与命令',
     emptySearchResultsText: opts?.emptySearchResultsText ?? '没有匹配的技能',
     loadingText: '搜索中…',
     renderItem: (item): ReactNode => {
       const candidate = (item as ComposerSkillItem).auxiliaryData
+      const kindLabel = candidate.kind === 'skill' ? 'skill' : 'command'
       const profileNote =
         candidate.kind === 'skill'
           ? getDiagnostics().find(
@@ -74,6 +75,7 @@ export function createComposerSkillTrigger(
           <span className="composer-skill-trigger__title">
             <span className="composer-skill-trigger__slash">/</span>
             {candidate.name}
+            <span className="composer-skill-trigger__kind"> ({kindLabel})</span>
           </span>
           {candidate.description ? (
             <span className="composer-skill-trigger__desc">

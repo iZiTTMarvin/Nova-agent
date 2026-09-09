@@ -48,9 +48,9 @@ test('/ 触发显示项目技能，点击或键盘选中后插入 slash 文本�
   expect(nova.pageErrors).toEqual([])
 })
 
-test('+ 菜单展示技能入口，空草稿写入 / 打开同一份目录', async ({ nova }) => {
+test('+ 菜单展示技能与命令入口，空草稿写入 / 打开同一份目录', async ({ nova }) => {
   await nova.page.getByRole('button', { name: '添加工作流、上下文与工具' }).click()
-  const entry = nova.page.getByRole('menuitem', { name: '技能' })
+  const entry = nova.page.getByRole('menuitem', { name: '技能与命令' })
   await expect(entry).toBeVisible()
   await entry.click()
   await expect(nova.page.getByLabel('消息输入')).toContainText('/')
