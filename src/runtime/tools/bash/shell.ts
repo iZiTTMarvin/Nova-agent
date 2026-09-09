@@ -149,12 +149,12 @@ export function getShellEnv(binDirs: string[] = []): NodeJS.ProcessEnv {
  */
 const processTreeKillers = new WeakMap<ChildProcess, () => Promise<void>>()
 
-export function killProcessTree(process: ChildProcess | number | undefined): Promise<void> {
-  if (typeof process !== 'object') return createProcessTreeKiller(process)()
-  let kill = processTreeKillers.get(process)
+export function killProcessTree(child: ChildProcess | number | undefined): Promise<void> {
+  if (typeof child !== 'object') return createProcessTreeKiller(child)()
+  let kill = processTreeKillers.get(child)
   if (!kill) {
-    kill = createProcessTreeKiller(process.pid)
-    processTreeKillers.set(process, kill)
+    kill = createProcessTreeKiller(child.pid)
+    processTreeKillers.set(child, kill)
   }
   return kill()
 }
@@ -243,8 +243,9 @@ function isMissingProcess(error: unknown): boolean {
 
 /** taskkill 以退出码 128 报告进程不存在：根已退出即树终止目标已达成（改父后代本就无法经根发现）。 */
 function isTaskkillProcessNotFound(error: unknown): boolean {
-  return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'number' &&
-    (error as unknown as { code: number }).code === 128
+  if (!(error instanceof Error)) return false
+  const { code } = error as NodeJS.ErrnoException
+  return typeof code === 'number' && code === 128
 }
 
 function safeKill(pid: number, signal: NodeJS.Signals): void {

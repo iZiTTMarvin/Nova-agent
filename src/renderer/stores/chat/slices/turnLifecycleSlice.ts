@@ -62,6 +62,10 @@ export function resetTurnLifecycleOnSessionSwitch(): Pick<
 export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState> = (set, get) => ({
   ...initialTurnLifecycleState(),
 
+  handleRunActive: snapshot => {
+    set({ sendInFlight: false, currentGeneratingMessageId: snapshot.messageId || null, activeAgentSessionId: snapshot.sessionId })
+  },
+
   handleRunTerminal: async snapshot => {
     if (get().currentSessionId !== snapshot.sessionId) return
     set({ sendInFlight: false, branchForkInProgress: false })
@@ -69,7 +73,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       ? get().handleError(snapshot.messageId, snapshot.terminalReason ?? '执行失败')
       : get().handleMessageEnd(snapshot.messageId, snapshot.status === 'cancelled' || snapshot.status === 'interrupted')
     // 消息对账不拥有运行终态，慢或失败的 load-session 不阻塞队列。
-    const dispatch = snapshot.status === 'completed' && !snapshot.incompleteReason || snapshot.status === 'failed'
+    // 取消与异常中断不自动续发；截断轮次与旧版一致，终态仍触发一次派发。
+    const dispatch = snapshot.status === 'completed' || snapshot.status === 'failed'
       ? get().sendNextPendingMessage()
       : Promise.resolve()
     await Promise.all([reconcile, dispatch])

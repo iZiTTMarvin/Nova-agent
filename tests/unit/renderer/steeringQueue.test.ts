@@ -74,6 +74,13 @@ describe('Steering Queue', () => {
     expect(useChatStore.getState().messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['Q1'])
   })
 
+  it('截断轮次的终态快照同样派发队首，排队消息不滞留', async () => {
+    startTurn()
+    useChatStore.getState().enqueuePendingMessage('Q1', [])
+    publishRunSnapshot(makeRunSnapshot({ status: 'completed', sequence: 2, incompleteReason: 'max_tool_rounds' }))
+    await vi.waitFor(() => expect(sentContents()).toEqual(['Q1']))
+  })
+
   it('终态消息对账未完成时也派发队首，恢复对账后不重复发送', async () => {
     startTurn()
     useChatStore.getState().enqueuePendingMessage('Q1', [])
