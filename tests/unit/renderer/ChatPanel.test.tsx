@@ -464,11 +464,14 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     expect(renderer.container.querySelector('.chat-messages__interruption')?.textContent).toContain('任务意外中断')
     expect(renderer.container.querySelector('.chat-panel__composer-area')?.textContent).not.toContain('任务意外中断')
     expect(renderer.container.textContent).not.toMatch(/继续分析|回滚本轮|查看已执行步骤/)
-    act(() => {
-      const snapshot = useRunStore.getState().snapshot!
-      useRunStore.setState({ snapshot: { ...snapshot, terminalReason: 'cancel_execution:grace_expired' } })
-    })
-    expect(renderer.container.querySelector('.chat-messages__interruption')?.textContent).toContain('未能及时退出')
+    // 用户主动停止（含 grace 超时与强制终止）保持沉默，不产生中断提示。
+    for (const terminalReason of ['cancel_execution:grace_expired', 'force_terminate', 'force_terminate_grace_expired']) {
+      act(() => {
+        const snapshot = useRunStore.getState().snapshot!
+        useRunStore.setState({ snapshot: { ...snapshot, terminalReason } })
+      })
+      expect(renderer.container.querySelector('.chat-messages__interruption')).toBeNull()
+    }
     act(() => {
       const snapshot = useRunStore.getState().snapshot!
       useRunStore.setState({ snapshot: { ...snapshot, status: 'cancelled', terminalReason: 'cancel_execution' } })

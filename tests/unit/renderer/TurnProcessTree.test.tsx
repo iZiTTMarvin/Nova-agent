@@ -73,6 +73,7 @@ describe('TurnProcessTree', () => {
     renderer.render(<TurnProcessTree {...props} isLive={false} interrupted />)
     expect(renderer.container.querySelector('.turn-process-collapsible')?.getAttribute('data-expanded')).toBe('true')
     expect(renderer.container.querySelector('.trace-process')).toBe(trace)
+    expect(renderer.container.querySelector('.turn-process-tree__header-title')?.textContent).toBe('已工作')
     expect(renderer.container.textContent).not.toContain('已停止')
     renderer.unmount()
 

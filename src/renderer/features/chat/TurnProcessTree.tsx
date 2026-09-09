@@ -106,8 +106,7 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
 
   const headerTitle = formatWorkedHeader({
     phase: model.phase,
-    durationMs: model.durationMs,
-    interrupted
+    durationMs: model.durationMs
   })
 
   const groups = groupTimeline(model.timeline)

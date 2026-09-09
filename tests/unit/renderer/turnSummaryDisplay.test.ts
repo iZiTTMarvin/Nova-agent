@@ -38,11 +38,4 @@ describe('formatWorkedHeader', () => {
   it('无时间戳降级已工作', () => {
     expect(formatWorkedHeader({ phase: 'completed' })).toBe('已工作')
   })
-
-  it('中断仅保留工作记录入口，不额外宣告停止', () => {
-    expect(formatWorkedHeader({ phase: 'completed', durationMs: 10_000, interrupted: true })).toBe(
-      '工作记录'
-    )
-    expect(formatWorkedHeader({ phase: 'completed', interrupted: true })).toBe('工作记录')
-  })
 })

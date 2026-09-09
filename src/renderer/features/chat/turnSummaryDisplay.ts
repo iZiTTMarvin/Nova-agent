@@ -15,12 +15,11 @@ export interface WorkedHeaderOptions {
   phase: 'live' | 'completed'
   durationMs?: number
   elapsedMs?: number
-  interrupted?: boolean
 }
 
-/** 运行时显示工作时长；中断后仅保留查看过程的入口。 */
+/** 停止与完成共用「已工作」标题；停止是用户意图，不单独宣告。 */
 export function formatWorkedHeader(options: WorkedHeaderOptions): string {
-  const { phase, durationMs, elapsedMs, interrupted } = options
+  const { phase, durationMs, elapsedMs } = options
 
   if (phase === 'live') {
     const elapsed = elapsedMs ?? durationMs
@@ -28,10 +27,6 @@ export function formatWorkedHeader(options: WorkedHeaderOptions): string {
       return `工作中 ${formatDurationMs(elapsed)}`
     }
     return '工作中'
-  }
-
-  if (interrupted) {
-    return '工作记录'
   }
 
   if (durationMs !== undefined && durationMs >= 0) {

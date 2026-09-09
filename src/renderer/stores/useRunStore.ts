@@ -70,16 +70,12 @@ export function selectPendingPlanReview(
   return projectPendingPlanReview(snapshot)
 }
 
-/** 异常提示直接来自当前 run；正常取消不产生恢复入口。 */
+/** 用户停止保持沉默；仅非取消原因的中断提示一句。 */
 export function getRunInterruptionNotice(snapshot: RunSnapshot | null): string | null {
   if (snapshot?.status !== 'interrupted') return null
   const reason = snapshot.terminalReason ?? ''
-  if (reason.startsWith('cancel_execution:') || reason.startsWith('force_terminate')) {
-    return reason.endsWith('grace_expired')
-      ? '停止时部分任务未能及时退出，请检查执行记录。'
-      : '停止过程出现异常，请检查执行记录。'
-  }
-  return '任务意外中断，请检查已有内容后继续发送消息。'
+  if (reason.startsWith('cancel_execution') || reason.startsWith('force_terminate')) return null
+  return '任务意外中断，可直接继续发送消息。'
 }
 
 export interface WaitingSessionBadge {
