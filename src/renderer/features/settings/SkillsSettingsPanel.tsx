@@ -39,18 +39,17 @@ export const SkillsSettingsPanel: React.FC = () => {
     setSettings(s)
   }, [])
 
+  const handleReload = useCallback(async () => {
+    await window.nova.skill.reload(currentProject)
+    await refreshSkills()
+  }, [currentProject, refreshSkills])
+
   useEffect(() => {
     void loadSettings()
     void refreshSkills()
     const unsub = window.nova.skill.onChange(list => setSkills(list))
     return unsub
   }, [loadSettings, refreshSkills, setSkills])
-
-  useEffect(() => {
-    if (currentProject) {
-      void window.nova.skill.reload(currentProject)
-    }
-  }, [currentProject])
 
   const sorted = [...skills].sort((a, b) => a.name.localeCompare(b.name))
   const visible = expanded ? sorted : sorted.slice(0, COLLAPSE_LIMIT)
@@ -122,6 +121,14 @@ export const SkillsSettingsPanel: React.FC = () => {
             variant="bare"
             action={
               <>
+                <Button
+                  label={skillsI18n.reload}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleReload()}
+                >
+                  {skillsI18n.reload}
+                </Button>
                 <Button
                   label={importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
                   variant="secondary"

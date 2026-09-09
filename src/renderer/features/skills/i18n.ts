@@ -31,6 +31,7 @@ export const skillsI18n = {
   showAll: '显示全部',
   showLess: '收起',
   empty: '暂无技能',
+  reload: '刷新列表',
   delete: '删除',
   builtinNoDelete: '内置技能不可删除',
   createTitle: '新建技能',

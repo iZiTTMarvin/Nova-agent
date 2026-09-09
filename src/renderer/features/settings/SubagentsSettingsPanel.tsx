@@ -156,6 +156,19 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback
 }
 
+function routeAfterLoad(previous: Route, items: readonly SubagentListItem[]): Route {
+  if (previous.kind === 'detail' && items.some(item => item.id === previous.id)) return previous
+  return items[0] ? { kind: 'detail', id: items[0].id } : { kind: 'list' }
+}
+
+interface SubagentCatalog {
+  items: SubagentListItem[]
+  tools: SubagentToolOption[]
+  diagnostics: SubagentPresetDiagnostic[]
+  route: Route
+  loading: boolean
+}
+
 function FieldError({ message }: { message?: string }) {
   if (!message) return null
   return <span className="subagent-form__error" role="alert">{message}</span>
@@ -164,15 +177,18 @@ function FieldError({ message }: { message?: string }) {
 export const SubagentsSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
   const llmRegistry = useSettingsStore(state => state.llmRegistry)
-  const [items, setItems] = useState<SubagentListItem[]>([])
-  const [tools, setTools] = useState<SubagentToolOption[]>([])
-  const [diagnostics, setDiagnostics] = useState<SubagentPresetDiagnostic[]>([])
-  const [route, setRoute] = useState<Route>({ kind: 'list' })
+  const [catalog, setCatalog] = useState<SubagentCatalog>({
+    items: [],
+    tools: [],
+    diagnostics: [],
+    route: { kind: 'list' },
+    loading: true
+  })
+  const { items, tools, diagnostics, route, loading } = catalog
   const [draft, setDraft] = useState<SubagentPresetDraft>(() =>
     createDraft('', FALLBACK_TEMPLATE, [])
   )
   const [fieldErrors, setFieldErrors] = useState<SubagentFieldErrors>({})
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [actionId, setActionId] = useState<string | null>(null)
   const [pageError, setPageError] = useState<string | null>(null)
@@ -180,27 +196,39 @@ export const SubagentsSettingsPanel: React.FC = () => {
   const mountedRef = useRef(true)
   const loadGenerationRef = useRef(0)
 
+  const setRoute = (update: Route | ((previous: Route) => Route)) => {
+    setCatalog(prev => ({
+      ...prev,
+      route: typeof update === 'function' ? update(prev.route) : update
+    }))
+  }
+
   const selected = route.kind === 'detail'
     ? items.find(item => item.id === route.id) ?? null
     : null
 
   const loadList = useCallback(async (): Promise<SubagentListItem[] | null> => {
     const generation = ++loadGenerationRef.current
-    if (mountedRef.current) setLoading(true)
+    if (mountedRef.current) {
+      setCatalog(prev => ({ ...prev, loading: true }))
+    }
     try {
       const result = await window.api.invoke('subagents:list', { workspaceRoot: currentProject })
       if (!mountedRef.current || generation !== loadGenerationRef.current) return null
-      setItems(result.items)
-      setDiagnostics(result.diagnostics)
-      setTools(result.tools)
+      setCatalog(prev => ({
+        items: result.items,
+        diagnostics: result.diagnostics,
+        tools: result.tools,
+        loading: false,
+        route: routeAfterLoad(prev.route, result.items)
+      }))
       return result.items
     } catch (error) {
       if (mountedRef.current && generation === loadGenerationRef.current) {
         setPageError(errorMessage(error, '加载子代理失败。'))
+        setCatalog(prev => ({ ...prev, loading: false }))
       }
       return null
-    } finally {
-      if (mountedRef.current && generation === loadGenerationRef.current) setLoading(false)
     }
   }, [currentProject])
 
@@ -213,13 +241,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    void loadList().then(nextItems => {
-      if (!nextItems) return
-      setRoute(previous => {
-        if (previous.kind === 'detail' && nextItems.some(item => item.id === previous.id)) return previous
-        return nextItems[0] ? { kind: 'detail', id: nextItems[0].id } : { kind: 'list' }
-      })
-    })
+    void loadList()
   }, [loadList])
 
   useEffect(() => {
@@ -300,7 +322,10 @@ export const SubagentsSettingsPanel: React.FC = () => {
         location: draft.location,
         workspaceRoot: currentProject
       })
-      setItems(previous => [...previous.filter(item => item.id !== saved.id), saved])
+      setCatalog(previous => ({
+        ...previous,
+        items: [...previous.items.filter(item => item.id !== saved.id), saved]
+      }))
       setDraft(itemDraft(saved))
       setRoute({ kind: 'detail', id: saved.id })
       await loadList()
@@ -335,7 +360,10 @@ export const SubagentsSettingsPanel: React.FC = () => {
         location: selected.origin === 'project' ? 'project' : 'global',
         workspaceRoot: currentProject
       })
-      setItems(previous => previous.map(item => item.id === saved.id ? saved : item))
+      setCatalog(previous => ({
+        ...previous,
+        items: previous.items.map(item => item.id === saved.id ? saved : item)
+      }))
       setDraft(itemDraft(saved))
       await loadList()
     } catch (error) {
@@ -356,7 +384,10 @@ export const SubagentsSettingsPanel: React.FC = () => {
         location: item.origin === 'project' ? 'project' : 'global',
         workspaceRoot: currentProject
       })
-      setItems(previous => previous.map(candidate => candidate.id === saved.id ? saved : candidate))
+      setCatalog(previous => ({
+        ...previous,
+        items: previous.items.map(candidate => candidate.id === saved.id ? saved : candidate)
+      }))
       if (route.kind === 'detail' && route.id === saved.id) setDraft(itemDraft(saved))
     } catch (error) {
       setPageError(errorMessage(error, '更新启用状态失败。'))
@@ -436,7 +467,13 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
       <div className="settings-split subagent-workspace">
         <aside className="settings-split__list subagent-list" aria-label="子代理列表">
-          {loading && <p className="settings-panel__muted">加载中…</p>}
+          {loading && (
+            <div className="subagent-list__skeleton" aria-busy="true" aria-label="加载子代理">
+              <div className="subagent-list__skeleton-row" />
+              <div className="subagent-list__skeleton-row" />
+              <div className="subagent-list__skeleton-row" />
+            </div>
+          )}
           {!loading && items.length === 0 && (
             <div className="subagent-empty">
               <strong>还没有可用的子代理</strong>

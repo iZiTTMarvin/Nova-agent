@@ -4,11 +4,14 @@ import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsModal } from '../../../src/renderer/features/settings/SettingsModal'
 import { useSettingsStore, resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
+import { GET_APP_UPDATE_STATE } from '../../../src/shared/ipc/channels'
+import { createNovaSkillMock } from './_novaSkillMock'
 import { renderDom, act } from './renderDom'
 
 describe('SettingsModal 设置导航与视觉样式', () => {
   beforeEach(() => {
     resetSettingsStoreForTests()
+    sessionStorage.clear()
     Object.defineProperty(window, 'scrollTo', {
       configurable: true,
       value: vi.fn()
@@ -57,11 +60,18 @@ describe('SettingsModal 设置导航与视觉样式', () => {
         if (channel === 'load-llm-registry') {
           return Promise.resolve(null)
         }
+        if (channel === GET_APP_UPDATE_STATE) {
+          return Promise.resolve(null)
+        }
+        if (channel === 'subagents:list') {
+          return Promise.resolve({ items: [], diagnostics: [], tools: [] })
+        }
         return Promise.resolve(undefined)
       }),
       on: vi.fn(() => () => {}),
       removeAllListeners: vi.fn()
     } as never
+    window.nova = { skill: createNovaSkillMock() } as never
   })
 
   it('未打开时不渲染任何内容', () => {
@@ -170,6 +180,70 @@ describe('SettingsModal 设置导航与视觉样式', () => {
     })
 
     expect(useSettingsStore.getState().isConfigModalOpen).toBe(false)
+    unmount()
+  })
+
+  it('切换分区保活已访问面板，再次进入不重挂载，关闭后整体卸载', async () => {
+    useSettingsStore.setState({ isConfigModalOpen: true })
+    const invoke = window.api.invoke as ReturnType<typeof vi.fn>
+    const { container, unmount } = renderDom(<SettingsModal />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(container.querySelectorAll('.settings-shell__tab')).toHaveLength(1)
+    expect(container.querySelector('.settings-shell__tab--enter')).not.toBeNull()
+    const settingsGetOnMount = invoke.mock.calls.filter(call => call[0] === 'settings:get').length
+
+    const modelButton = [...container.querySelectorAll<HTMLButtonElement>('.settings-nav__item')].find(
+      btn => btn.textContent?.includes('模型')
+    )!
+    await act(async () => {
+      modelButton.click()
+      await new Promise<void>(resolve => {
+        requestAnimationFrame(() => resolve())
+      })
+    })
+
+    const tabsAfterSwitch = [...container.querySelectorAll<HTMLElement>('.settings-shell__tab')]
+    expect(tabsAfterSwitch).toHaveLength(2)
+    expect(tabsAfterSwitch.filter(tab => tab.hidden)).toHaveLength(1)
+    expect(container.querySelector('.settings-shell__tab:not([hidden])')?.className).toContain(
+      'settings-shell__tab--enter'
+    )
+
+    const generalButton = [...container.querySelectorAll<HTMLButtonElement>('.settings-nav__item')].find(
+      btn => btn.textContent?.includes('通用')
+    )!
+    await act(async () => {
+      generalButton.click()
+    })
+
+    expect(container.querySelectorAll('.settings-shell__tab')).toHaveLength(2)
+    expect(invoke.mock.calls.filter(call => call[0] === 'settings:get').length).toBe(settingsGetOnMount)
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.settings-shell__back')!.click()
+    })
+    expect(container.querySelector('.settings-shell__tab')).toBeNull()
+    unmount()
+  })
+
+  it('技能分区挂载只读取当前列表，不触发全量扫描', async () => {
+    useSettingsStore.setState({ isConfigModalOpen: true, currentProject: 'D:\\workspace' })
+    const { container, unmount } = renderDom(<SettingsModal />)
+    const skillsButton = [...container.querySelectorAll<HTMLButtonElement>('.settings-nav__item')].find(
+      btn => btn.textContent?.includes('技能')
+    )!
+    await act(async () => {
+      skillsButton.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.nova.skill.list).toHaveBeenCalled()
+    expect(window.nova.skill.reload).not.toHaveBeenCalled()
     unmount()
   })
 })

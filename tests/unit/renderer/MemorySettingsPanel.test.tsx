@@ -297,4 +297,21 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     expect(text).not.toContain('自动合并到 MEMORY.md')
     renderer.unmount()
   })
+
+  it('挂载后不按时间轮询记忆 IPC', async () => {
+    setupInvokeMock()
+    const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
+    useSettingsStore.setState({ currentProject: '/tmp/project' })
+
+    const renderer = renderDom(<MemorySettingsPanel />)
+    await flushAsync()
+    const callCount = mockInvoke.mock.calls.length
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 80))
+    })
+
+    expect(mockInvoke.mock.calls.length).toBe(callCount)
+    renderer.unmount()
+  })
 })

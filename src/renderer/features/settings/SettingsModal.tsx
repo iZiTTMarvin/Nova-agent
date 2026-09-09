@@ -172,20 +172,51 @@ function readStoredSection(): SettingsSection {
   return 'general'
 }
 
+const SETTINGS_PANELS: Record<SettingsSection, React.FC> = {
+  general: GeneralSettingsPanel,
+  llm: LlmSettingsPanel,
+  subagents: SubagentsSettingsPanel,
+  memory: MemorySettingsPanel,
+  rules: RulesSettingsPanel,
+  skills: SkillsSettingsPanel,
+  codeindex: CodeIndexSettingsPanel,
+  websearch: WebSearchSettingsPanel,
+  permissions: PermissionsSettingsPanel,
+  storage: StorageSettingsPanel
+}
+
 export const SettingsModal: React.FC = () => {
   const isOpen = useSettingsStore(state => state.isConfigModalOpen)
   const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
+  if (!isOpen) return null
+  return <SettingsModalSession onClose={() => setConfigModalOpen(false)} />
+}
+
+const SettingsModalSession: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [section, setSection] = useState<SettingsSection>(readStoredSection)
+  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([readStoredSection()]))
+  const [enterActive, setEnterActive] = useState(true)
+  const firstSectionRef = useRef(true)
   const navRefs = useRef<Partial<Record<SettingsSection, HTMLElement | null>>>({})
 
   useEffect(() => {
-    if (isOpen) {
-      setSection(readStoredSection())
+    if (firstSectionRef.current) {
+      firstSectionRef.current = false
+      return
     }
-  }, [isOpen])
+    setEnterActive(false)
+    const frame = requestAnimationFrame(() => setEnterActive(true))
+    return () => cancelAnimationFrame(frame)
+  }, [section])
 
   const selectSection = (id: SettingsSection) => {
     setSection(id)
+    setVisited(prev => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
     try {
       sessionStorage.setItem(NAV_STORAGE_KEY, id)
     } catch {
@@ -219,16 +250,14 @@ export const SettingsModal: React.FC = () => {
     }
   }
 
-  if (!isOpen) return null
-
   const active = findNavMeta(section)
 
   return (
     <Dialog
-      isOpen={isOpen}
+      isOpen
       variant="fullscreen"
       onOpenChange={open => {
-        if (!open) setConfigModalOpen(false)
+        if (!open) onClose()
       }}
       padding={0}
       className="settings-shell"
@@ -239,7 +268,7 @@ export const SettingsModal: React.FC = () => {
           <button
             type="button"
             className="settings-shell__back"
-            onClick={() => setConfigModalOpen(false)}
+            onClick={onClose}
             aria-label="返回应用"
           >
             <ArrowLeftIcon size={16} className="settings-shell__back-icon" />
@@ -283,22 +312,32 @@ export const SettingsModal: React.FC = () => {
           </nav>
         </aside>
 
-        <main className="settings-shell__pane" role="tabpanel" aria-label={active.label}>
+        <main className="settings-shell__pane" aria-label={active.label}>
           <header className="settings-shell__header">
             <h2 className="settings-shell__title">{active.label}</h2>
             <p className="settings-shell__desc">{active.description}</p>
           </header>
-          <div key={section} className="settings-shell__content">
-            {section === 'general' && <GeneralSettingsPanel />}
-            {section === 'llm' && <LlmSettingsPanel />}
-            {section === 'subagents' && <SubagentsSettingsPanel />}
-            {section === 'memory' && <MemorySettingsPanel />}
-            {section === 'rules' && <RulesSettingsPanel />}
-            {section === 'skills' && <SkillsSettingsPanel />}
-            {section === 'codeindex' && <CodeIndexSettingsPanel />}
-            {section === 'websearch' && <WebSearchSettingsPanel />}
-            {section === 'permissions' && <PermissionsSettingsPanel />}
-            {section === 'storage' && <StorageSettingsPanel />}
+          <div className="settings-shell__content">
+            {SECTION_IDS.map(id => {
+              if (!visited.has(id)) return null
+              const Panel = SETTINGS_PANELS[id]
+              const isActive = section === id
+              return (
+                <div
+                  key={id}
+                  className={
+                    isActive && enterActive
+                      ? 'settings-shell__tab settings-shell__tab--enter'
+                      : 'settings-shell__tab'
+                  }
+                  hidden={!isActive}
+                  role="tabpanel"
+                  aria-label={findNavMeta(id).label}
+                >
+                  <Panel />
+                </div>
+              )
+            })}
           </div>
         </main>
       </div>

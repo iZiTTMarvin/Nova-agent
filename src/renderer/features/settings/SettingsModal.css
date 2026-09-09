@@ -245,6 +245,21 @@
   flex-direction: column;
   padding: 18px 32px 28px;
   overflow: hidden;
+}
+
+.settings-shell__tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-shell__tab[hidden] {
+  display: none !important;
+}
+
+.settings-shell__tab--enter {
   animation: settings-tab-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -1628,7 +1643,9 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-shell,
   .settings-shell__pane,
-  .settings-shell__content {
+  .settings-shell__content,
+  .settings-shell__tab,
+  .settings-shell__tab--enter {
     animation: none;
   }
   .settings-shell__back {
@@ -1639,6 +1656,19 @@
 /* ── 子代理设置 ── */
 .subagents-settings {
   gap: 10px;
+}
+
+.subagent-list__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 4px;
+}
+
+.subagent-list__skeleton-row {
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-sand, var(--bg-card)));
 }
 
 .subagent-workspace {

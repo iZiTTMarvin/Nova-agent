@@ -168,4 +168,31 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
     expect((input(container, '稳定 ID') as HTMLInputElement).value).not.toBe('explore')
     unmount()
   })
+
+  it('加载中显示骨架；列表与初始详情一次提交', async () => {
+    let resolveList: ((value: SubagentsListResult) => void) | undefined
+    const invoke = vi.fn((channel: string) => {
+      if (channel === 'subagents:list') {
+        return new Promise<SubagentsListResult>(resolve => {
+          resolveList = resolve
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+    global.window.api = { invoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() } as never
+
+    const { container, unmount } = renderDom(<SubagentsSettingsPanel />)
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('加载中…')
+
+    await act(async () => {
+      resolveList?.(listResult)
+    })
+    await flush()
+
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(container.textContent).toContain('内置能力 · 只读')
+    expect(container.textContent).toContain('explore')
+    unmount()
+  })
 })
