@@ -41,6 +41,7 @@ import {
   isMemoryExtractEnabled
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
+import { recoverInterruptedTurnDraftsOnStartup } from '../../runtime/sessions/turnDraftRecovery'
 import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
@@ -140,7 +141,8 @@ export function registerIpcHandlers(): ImageStore {
   registerPermissionHandler()
 
   // RunCoordinator：权威运行快照 / Interaction Inbox / 启动对账
-  initRunCoordinatorHost(getMainWindow)
+  const { coordinator, interrupted } = initRunCoordinatorHost(getMainWindow)
+  recoverInterruptedTurnDraftsOnStartup(interrupted, getSessionStore(), coordinator)
   registerRunHandler()
   initSubagentProjectionServiceHost()
   registerSubagentProjectionHandler()

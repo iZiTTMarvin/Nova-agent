@@ -74,19 +74,20 @@ function broadcastSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
  */
 export function initRunCoordinatorHost(
   getMainWindow: () => BrowserWindow | null
-): RunCoordinator {
+): { coordinator: RunCoordinator; interrupted: RunSnapshot[] } {
   getMainWindowRef = getMainWindow
+  let interrupted: RunSnapshot[] = []
   if (!coordinator) {
     const runsRoot = join(app.getPath('userData'), 'runs')
     coordinator = createRunCoordinator(runsRoot, broadcastSnapshot)
-    const interrupted = coordinator.reconcileOnStartup()
+    interrupted = coordinator.reconcileOnStartup()
     if (interrupted.length > 0) {
       console.info(
         `[RunCoordinator] 启动对账：${interrupted.length} 个未终态 run 已标记为 interrupted`
       )
     }
   }
-  return coordinator
+  return { coordinator, interrupted }
 }
 
 export function getRunCoordinator(): RunCoordinator {

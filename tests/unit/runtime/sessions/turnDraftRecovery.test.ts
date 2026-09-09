@@ -6,7 +6,7 @@ import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { RunStore } from '../../../../src/runtime/run/RunStore'
 import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
-import { recoverSessionTurnDrafts } from '../../../../src/runtime/sessions/turnDraftRecovery'
+import { recoverSessionTurnDrafts, recoverInterruptedTurnDraftsOnStartup } from '../../../../src/runtime/sessions/turnDraftRecovery'
 import { buildConversationContext } from '../../../../src/runtime/sessions/conversationContext'
 import * as atomicFile from '../../../../src/runtime/storage/atomicFile'
 
@@ -102,5 +102,61 @@ describe('中断草稿归档', () => {
     recoverSessionTurnDrafts(sessionId, store, reboot())
     expect(store.loadActivePath(sessionId)?.messages.map(m => m.id)).toEqual(['user', 'assistant'])
     expect(store.load(sessionId)?.messageCount).toBe(2)
+  })
+
+  it('对账后未打开会话也会写入中断回复，且可幂等', () => {
+    const { store, sessionId, runId, reboot } = setup()
+    const coordinator = reboot()
+    recoverInterruptedTurnDraftsOnStartup(
+      [{ sessionId, turnDraft: coordinator.getSnapshot(runId)?.turnDraft ?? null }],
+      store,
+      coordinator
+    )
+    const restored = store.loadActivePath(sessionId)!
+    expect(restored.messages.map(m => m.id)).toEqual(['user', 'assistant'])
+    expect(coordinator.getSnapshot(runId)?.turnDraft).toBeNull()
+    const file = join(root, 'sessions', sessionId, 'messages.jsonl')
+    const bytes = readFileSync(file, 'utf8')
+    recoverInterruptedTurnDraftsOnStartup(
+      [{ sessionId, turnDraft: { messageId: 'assistant', attemptId: 'default', blocks: [], finalized: false, updatedAt: 1 } }],
+      store,
+      coordinator
+    )
+    expect(readFileSync(file, 'utf8')).toBe(bytes)
+  })
+
+  it('启动归档捕获坏草稿，不阻断其它会话', () => {
+    const store = new SessionStore(root)
+    const good = store.create(root)
+    const bad = store.create(root)
+    store.appendMessageFast(good.id, { id: 'user-good', role: 'user', content: '好', timestamp: 1 })
+    store.appendMessageFast(bad.id, { id: 'user-bad', role: 'user', content: '坏', timestamp: 1 })
+    const runStore = new RunStore({ runsRoot: join(root, 'runs') })
+    const coordinator = new RunCoordinator({ store: runStore })
+    const goodRun = coordinator.startRun({ kind: 'agent', sessionId: good.id, workspaceId: root })
+    coordinator.markRunning(goodRun.runId, 'assistant-good')
+    coordinator.upsertTurnDraft(goodRun.runId, {
+      messageId: 'assistant-good',
+      userDelivery: { userMessageId: 'user-good', modeInstruction: '执行', sessionPrefix: null },
+      blocks: [{ type: 'text', content: '已完成' }]
+    })
+    const badRun = coordinator.startRun({ kind: 'agent', sessionId: bad.id, workspaceId: root })
+    coordinator.markRunning(badRun.runId, 'assistant-bad')
+    coordinator.upsertTurnDraft(badRun.runId, {
+      messageId: 'assistant-bad',
+      blocks: [{ type: 'text', content: '缺坐标' }]
+    })
+    const next = new RunCoordinator({ store: runStore })
+    const interrupted = next.reconcileOnStartup()
+    const errors: unknown[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args)
+    })
+    expect(() => recoverInterruptedTurnDraftsOnStartup(interrupted, store, next)).not.toThrow()
+    spy.mockRestore()
+    expect(store.loadActivePath(good.id)?.messages.map(m => m.id)).toEqual(['user-good', 'assistant-good'])
+    expect(store.loadActivePath(bad.id)?.messages.map(m => m.id)).toEqual(['user-bad'])
+    expect(next.getSnapshot(badRun.runId)?.turnDraft).not.toBeNull()
+    expect(errors.length).toBeGreaterThan(0)
   })
 })
