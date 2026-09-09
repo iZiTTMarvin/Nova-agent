@@ -40,6 +40,10 @@ import { buildSessionContextBreakdown } from './SessionContextView'
 import { readPlanDocumentInWorkspace } from '../../runtime/plans'
 import type { RunCoordinator } from '../../runtime/run'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+import {
+  clearSessionWhitelist,
+  hydrateSessionWhitelistFromSession
+} from '../../runtime/permissions/PermissionManager'
 
 /** 计算并直接推送某会话的上下文容量拆分给 renderer */
 function pushContextBreakdownForSession(session: SessionData, getMainWindow: () => BrowserWindow | null, store: SessionStore): void {
@@ -234,6 +238,7 @@ export class WorkspaceService {
     if (selected) {
       reloadSkillsForWorkspace(selected.workspaceRoot)
     }
+    hydrateSessionWhitelistFromSession(selectedDetail)
     this.notifyWorkspaceRootChanged(previousRoot, selected?.workspaceRoot ?? null)
   }
 
@@ -303,6 +308,7 @@ export class WorkspaceService {
     }
     this.notifyWorkspaceRootChanged(previousRoot, params.workspaceRoot)
     this.broadcast()
+    hydrateSessionWhitelistFromSession(data)
     pushContextBreakdownForSession(data, this.deps.getMainWindow, this.deps.getSessionStore())
     return this.getState()
   }
@@ -349,6 +355,7 @@ export class WorkspaceService {
       const detail = store.load(id)
       if (detail) this.leaveSession(id, detail.workspaceRoot)
       store.delete(id)
+      clearSessionWhitelist(id)
       deleteReadStateForSession(id)
       disposeIdleLoopForSession(id)
       clearSteeringQueue(id)
@@ -380,6 +387,7 @@ export class WorkspaceService {
             reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
             availableSessions: remaining
           }
+          hydrateSessionWhitelistFromSession(detail)
           pushContextBreakdownForSession(detail, this.deps.getMainWindow, this.deps.getSessionStore())
         } else {
           this.state = { ...this.state, availableSessions: remaining }
@@ -461,6 +469,7 @@ export class WorkspaceService {
     }
     this.notifyWorkspaceRootChanged(previousRoot, detail.workspaceRoot)
     this.broadcast()
+    hydrateSessionWhitelistFromSession(detail)
     pushContextBreakdownForSession(detail, this.deps.getMainWindow, this.deps.getSessionStore())
     return this.getState()
   }

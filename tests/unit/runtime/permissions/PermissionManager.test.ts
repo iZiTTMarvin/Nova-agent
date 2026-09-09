@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import {
   PermissionManager,
   clearSessionWhitelist,
-  grantSessionPermission
+  grantSessionPermission,
+  hydrateSessionWhitelist
 } from '../../../../src/runtime/permissions/PermissionManager'
+import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { resolveModeBaseline } from '../../../../src/runtime/permissions/permissionBaseline'
 import type { PermissionQuery } from '../../../../src/runtime/permissions/types'
 import type { Mode, PermissionMode } from '../../../../src/shared/session/types'
@@ -85,6 +91,89 @@ describe('PermissionManager', () => {
     )
     expect(result.decision).toBe('ask')
     clearSessionWhitelist(sessionId)
+  })
+
+  it('hydrate 后同前缀命令放行，deny 与拼接段未命中仍拒绝', () => {
+    const sessionId = 'session-hydrate-allow'
+    hydrateSessionWhitelist(sessionId, ['git', 'npm'])
+    expect(
+      manager.check(query('bash', { command: 'git status' }, 'request_approval', sessionId), 'default')
+        .decision
+    ).toBe('allow')
+    expect(
+      manager.check(
+        query('bash', { command: 'git status && echo hi' }, 'request_approval', sessionId),
+        'default'
+      ).decision
+    ).toBe('ask')
+
+    manager.setRules([{
+      id: 'deny-push',
+      toolName: 'bash',
+      behavior: 'deny',
+      scope: 'global',
+      commandPrefix: 'git push',
+      createdAt: Date.now()
+    }])
+    expect(
+      manager.check(
+        query('bash', { command: 'git push origin main' }, 'request_approval', sessionId),
+        'default'
+      ).decision
+    ).toBe('deny')
+    clearSessionWhitelist(sessionId)
+  })
+
+  it('hydrate 以会话元数据替换内存，其他会话不受影响', () => {
+    const sessionId = 'session-hydrate-replace'
+    const otherId = 'session-hydrate-other'
+    grantSessionPermission(sessionId, 'git')
+    grantSessionPermission(sessionId, 'npm')
+    hydrateSessionWhitelist(sessionId, ['git'])
+    expect(
+      manager.check(query('bash', { command: 'git status' }, 'request_approval', sessionId), 'default')
+        .decision
+    ).toBe('allow')
+    expect(
+      manager.check(query('bash', { command: 'npm test' }, 'request_approval', sessionId), 'default')
+        .decision
+    ).toBe('ask')
+    expect(
+      manager.check(query('bash', { command: 'git status' }, 'request_approval', otherId), 'default')
+        .decision
+    ).toBe('ask')
+    clearSessionWhitelist(sessionId)
+    clearSessionWhitelist(otherId)
+  })
+
+  it('落盘前缀在清空内存后可由 hydrate 恢复', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-perm-whitelist-'))
+    resetSessionIndexHostForTests()
+    try {
+      const store = new SessionStore(root)
+      const session = store.create(path.join(root, 'ws'))
+      store.addBashSessionAllowPrefix(session.id, 'git')
+      clearSessionWhitelist(session.id)
+      expect(
+        manager.check(
+          query('bash', { command: 'git status' }, 'request_approval', session.id),
+          'default'
+        ).decision
+      ).toBe('ask')
+
+      const reloaded = store.load(session.id)
+      hydrateSessionWhitelist(session.id, reloaded?.bashSessionAllowPrefixes)
+      expect(
+        manager.check(
+          query('bash', { command: 'git status' }, 'request_approval', session.id),
+          'default'
+        ).decision
+      ).toBe('allow')
+      clearSessionWhitelist(session.id)
+    } finally {
+      resetSessionIndexHostForTests()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it.each([

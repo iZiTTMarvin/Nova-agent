@@ -1345,6 +1345,30 @@ export class SessionStore {
   }
 
   /**
+   * 登记本会话允许的 bash 命令前缀（幂等）。
+   * 旧会话无此字段视为空列表；空白前缀忽略。
+   */
+  addBashSessionAllowPrefix(sessionId: string, commandPrefix: string): SessionData | null {
+    const trimmed = commandPrefix.trim()
+    if (!trimmed) return this.load(sessionId)
+
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    const existing = Array.isArray(session.bashSessionAllowPrefixes)
+      ? session.bashSessionAllowPrefixes.filter(
+          (prefix): prefix is string => typeof prefix === 'string' && prefix.trim().length > 0
+        ).map(prefix => prefix.trim())
+      : []
+    if (existing.includes(trimmed)) return session
+
+    session.bashSessionAllowPrefixes = [...existing, trimmed]
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /**
    * 确保会话有 cacheRoutingKey：已有则原样返回，否则懒生成 UUID 并只写元数据。
    * 不重写 messages.jsonl；同一会话树分支共享此 key。
    */

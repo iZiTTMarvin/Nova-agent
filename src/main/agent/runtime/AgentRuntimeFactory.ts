@@ -36,7 +36,10 @@ import {
   resolveCodeModeToolBindings
 } from '../../../runtime/code-mode'
 import type { ReadState } from '../../../runtime/tools/editTool'
-import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
+import {
+  PermissionManager,
+  hydrateSessionWhitelistFromSession
+} from '../../../runtime/permissions/PermissionManager'
 import type { ToolAuthorizationPolicy } from '../../../runtime/permissions/PermissionCoordinator'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
 import {
@@ -241,6 +244,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
   permissionManager.setRules(listPermissionRules(projectPath))
+  hydrateSessionWhitelistFromSession(session)
 
   const toolRegistry = new ToolRegistry()
   // Tool Economy 三态由内部策略决定（默认 off = 全量工具面，行为与历史一致）；

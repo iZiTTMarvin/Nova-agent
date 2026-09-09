@@ -10,7 +10,11 @@
 import { handle } from './secureIpc'
 import { dirname } from 'path'
 import { statSync } from 'fs'
-import { grantSessionPermission } from '../../runtime/permissions/PermissionManager'
+import {
+  grantSessionPermission,
+  hydrateSessionWhitelist
+} from '../../runtime/permissions/PermissionManager'
+import { getSessionStore } from '../services/SessionStoreHost'
 import { addSessionPathGrant, canonicalizeTargetPath } from '../../runtime/permissions/pathAccess'
 import { assertCanGrantSessionPath } from '../agent/interaction'
 import {
@@ -101,10 +105,14 @@ export function registerPermissionHandler(): void {
   })
 
   handle(PERMISSION_GRANT_SESSION_SCOPE, async (_event, params: unknown) => {
-    grantSessionPermission(
-      readStringField(params, 'sessionId'),
-      readStringField(params, 'commandPrefix')
-    )
+    const sessionId = readStringField(params, 'sessionId')
+    const commandPrefix = readStringField(params, 'commandPrefix')
+    const session = getSessionStore().addBashSessionAllowPrefix(sessionId, commandPrefix)
+    if (session) {
+      hydrateSessionWhitelist(sessionId, session.bashSessionAllowPrefixes)
+      return
+    }
+    grantSessionPermission(sessionId, commandPrefix)
   })
 
   handle(

@@ -147,6 +147,11 @@ interface SessionDataBase {
    */
   grantedSkillRoots?: string[]
   /**
+   * 本会话允许的 bash 命令前缀。重启后打开同一会话仍生效；删会话即清除。
+   * 旧会话缺省视为空，无需升 schema。
+   */
+  bashSessionAllowPrefixes?: string[]
+  /**
    * 会话级缓存路由 key（匿名 UUID）。
    * 首次需要时懒生成并持久化；同一会话树各分支复用，不同会话绝不共享。
    * 不派生自标题 / 工作区路径 / apiKey。body 注入由后续阶段按 profile 白名单完成。

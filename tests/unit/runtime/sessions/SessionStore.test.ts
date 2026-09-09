@@ -600,6 +600,38 @@ describe('SessionStore', () => {
     })
   })
 
+  describe('bashSessionAllowPrefixes 持久化', () => {
+    it('addBashSessionAllowPrefix 幂等写入并跨 load 恢复', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+
+      const once = store.addBashSessionAllowPrefix(session.id, 'git')
+      expect(once?.bashSessionAllowPrefixes).toEqual(['git'])
+
+      const twice = store.addBashSessionAllowPrefix(session.id, ' git ')
+      expect(twice?.bashSessionAllowPrefixes).toEqual(['git'])
+
+      const npm = store.addBashSessionAllowPrefix(session.id, 'npm')
+      expect(npm?.bashSessionAllowPrefixes).toEqual(['git', 'npm'])
+
+      const reloaded = store.load(session.id)
+      expect(reloaded?.bashSessionAllowPrefixes).toEqual(['git', 'npm'])
+      expect(reloaded?.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    })
+
+    it('空白前缀忽略，旧会话缺省视为未放行', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.addBashSessionAllowPrefix(session.id, '   ')
+      expect(store.load(session.id)?.bashSessionAllowPrefixes).toBeUndefined()
+    })
+
+    it('会话不存在时返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      expect(store.addBashSessionAllowPrefix('missing', 'git')).toBeNull()
+    })
+  })
+
   describe('todo 持久化', () => {
     it('初始会话 getTodos 返回空数组', () => {
       const store = new SessionStore(tmpDir)

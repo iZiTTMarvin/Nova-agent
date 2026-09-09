@@ -34,13 +34,46 @@ export function isSafeAutomaticModeTransition(
 
 const sessionWhitelists = new Map<string, Set<string>>()
 
+function normalizedWhitelistPrefixes(prefixes: readonly unknown[] | undefined): Set<string> {
+  const next = new Set<string>()
+  if (!prefixes) return next
+  for (const item of prefixes) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed) next.add(trimmed)
+  }
+  return next
+}
+
+/** 运行时白名单；持久化列表由 SessionStore 持有，加载/切换会话时 hydrate。 */
+export function hydrateSessionWhitelist(
+  sessionId: string,
+  prefixes: readonly unknown[] | undefined
+): void {
+  const next = normalizedWhitelistPrefixes(prefixes)
+  if (next.size === 0) {
+    sessionWhitelists.delete(sessionId)
+    return
+  }
+  sessionWhitelists.set(sessionId, next)
+}
+
+export function hydrateSessionWhitelistFromSession(
+  session: { id: string; bashSessionAllowPrefixes?: readonly string[] } | null | undefined
+): void {
+  if (!session) return
+  hydrateSessionWhitelist(session.id, session.bashSessionAllowPrefixes)
+}
+
 export function grantSessionPermission(sessionId: string, commandPrefix: string): void {
+  const trimmed = commandPrefix.trim()
+  if (!trimmed) return
   let whitelist = sessionWhitelists.get(sessionId)
   if (!whitelist) {
     whitelist = new Set()
     sessionWhitelists.set(sessionId, whitelist)
   }
-  whitelist.add(commandPrefix)
+  whitelist.add(trimmed)
 }
 
 export function clearSessionWhitelist(sessionId: string): void {
@@ -91,7 +124,7 @@ export class PermissionManager {
     if (query.toolName === 'bash' && command) {
       const whitelist = sessionWhitelists.get(query.sessionId)
       if (whitelist && isCommandFullyWhitelisted(command, whitelist)) {
-        return { decision: 'allow', reason: '本会话临时白名单允许执行该命令' }
+        return { decision: 'allow', reason: '本会话允许执行该命令' }
       }
     }
 

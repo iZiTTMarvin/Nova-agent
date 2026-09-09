@@ -13,7 +13,10 @@ import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import type { ToolExecutor } from '../../../runtime/tools/types'
 import type { ReadState } from '../../../runtime/tools/editTool'
-import { PermissionManager } from '../../../runtime/permissions/PermissionManager'
+import {
+  PermissionManager,
+  hydrateSessionWhitelistFromSession
+} from '../../../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../../../runtime/permissions/PermissionService'
 import {
   CheckpointManager,
@@ -100,6 +103,7 @@ export function prepareSubagentRuntime(
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
   permissionManager.setRules(listPermissionRules(input.workingDirectory))
+  hydrateSessionWhitelistFromSession(input.childSession)
 
   const childHeader = input.childSession.subagent.header
   if (!childHeader) {

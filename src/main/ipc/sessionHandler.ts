@@ -37,6 +37,7 @@ import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS, GET_SESSION_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
+import { hydrateSessionWhitelistFromSession } from '../../runtime/permissions/PermissionManager'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
 import { buildSessionContextBreakdown } from '../services/SessionContextView'
@@ -124,6 +125,7 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
+    hydrateSessionWhitelistFromSession(data)
     return { ...toSessionDetail(data, { tailOnly: true }), contextBreakdown: buildSessionContextBreakdown(data, sessionStore) }
   })
 

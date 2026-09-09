@@ -3,7 +3,7 @@ import {
   PermissionCoordinator,
   type PermissionCoordinatorDeps
 } from '../../../../src/runtime/permissions/PermissionCoordinator'
-import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { PermissionManager, hydrateSessionWhitelist, clearSessionWhitelist } from '../../../../src/runtime/permissions/PermissionManager'
 import type { Mode } from '../../../../src/shared/session/types'
 
 type EmittedEvent = Parameters<PermissionCoordinatorDeps['emit']>[0]
@@ -278,5 +278,41 @@ describe('PermissionCoordinator requestId 隔离', () => {
     b.coordinator.respondPermission(b.events[0].requestId, false)
     expect((await pendingA).allowed).toBe(true)
     expect((await pendingB).allowed).toBe(false)
+  })
+})
+
+describe('PermissionCoordinator 本会话白名单', () => {
+  it('hydrate 后同前缀 bash 直接放行，不弹确认', async () => {
+    hydrateSessionWhitelist('session-1', ['git'])
+    const { coordinator, events } = createCoordinator({ manager: new PermissionManager() })
+
+    const result = await coordinator.checkPermission('bash', { command: 'git status' }, 'msg-1')
+    expect(result.allowed).toBe(true)
+    expect(events).toHaveLength(0)
+    clearSessionWhitelist('session-1')
+  })
+
+  it('deny 规则优先于本会话白名单', async () => {
+    hydrateSessionWhitelist('session-1', ['git'])
+    const manager = new PermissionManager()
+    manager.setRules([{
+      id: 'deny-push',
+      toolName: 'bash',
+      behavior: 'deny',
+      scope: 'global',
+      commandPrefix: 'git push',
+      createdAt: Date.now()
+    }])
+    const { coordinator, events } = createCoordinator({ manager })
+
+    const result = await coordinator.checkPermission(
+      'bash',
+      { command: 'git push origin main' },
+      'msg-1'
+    )
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toContain('拒绝规则')
+    expect(events).toHaveLength(0)
+    clearSessionWhitelist('session-1')
   })
 })
