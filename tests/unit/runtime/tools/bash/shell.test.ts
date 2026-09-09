@@ -101,6 +101,12 @@ describe('shell', () => {
         await killProcessTree(pid)
         // 杀完不要求做额外断言——只要不抛异常即可
       })
+
+      it('Windows：根进程已自然退出后终止视为已确认，不误报失败', async () => {
+        const child = spawn('cmd', ['/d', '/s', '/c', 'exit 0'], { windowsHide: true, stdio: 'ignore' })
+        await waitForChildProcess(child)
+        await expect(killProcessTree(child)).resolves.toBeUndefined()
+      })
     } else {
       it('Unix：权限拒绝不能伪装成进程已退出', async () => {
         const child = spawn('sleep', ['30'], { stdio: 'ignore' })
