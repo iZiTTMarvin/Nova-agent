@@ -137,6 +137,8 @@ export interface RecoverySliceState {
 export interface TurnLifecycleSliceState {
   /** 权威终态到达时封存展示并推进队列，不等待历史水合才更新 busy。 */
   handleRunTerminal: (snapshot: import('../../../shared/run/types').RunSnapshot) => Promise<void>
+  /** 非终态快照确认发送已被接受：收拢运行字段的唯一写入入口，外部 store 不得直写。 */
+  handleRunActive: (snapshot: import('../../../shared/run/types').RunSnapshot) => void
   currentGeneratingMessageId: string | null
   /** 当前 Agent 轮次归属的会话 ID（切走后用于过滤旧会话事件） */
   activeAgentSessionId: string | null

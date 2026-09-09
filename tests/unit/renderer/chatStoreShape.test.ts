@@ -14,7 +14,7 @@ const CHAT_STATE_KEYS = [
   'loadOlderMessages', 'finishBranchMetaRefresh', 'dismissTier1BranchNotice', 'applyStreamDeltas',
   'handleMessageStart', 'handleAttemptFailed', 'handleThinkingDelta', 'handleTextDelta',
   'handleToolCallStart', 'handleToolCallDelta', 'handleToolCall', 'handleToolResult',
-  'handleRunTerminal', 'handleDiffUpdate', 'handleMessageEnd', 'handleError', 'handleRecoveryState',
+  'handleRunTerminal', 'handleRunActive', 'handleDiffUpdate', 'handleMessageEnd', 'handleError', 'handleRecoveryState',
   'handleRecoveryHint', 'handleHookError', 'enqueuePendingMessage',
   'removePendingMessage', 'clearPendingMessages', 'syncFromWorkspace'
 ] as const

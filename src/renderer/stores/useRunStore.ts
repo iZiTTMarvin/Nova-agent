@@ -65,7 +65,7 @@ export interface RunViewState {
   lastSequenceByRunId: Record<string, number>
   /** 仅由工作区会话选择更新，查询和广播不能改变焦点。 */
   selectedSessionId: string | null
-  pullTokenByRunId: Record<string, number>
+  pullTokenBySessionId: Record<string, number>
   waitingSessions: WaitingSessionBadge[]
   cancelling: boolean
   cancellingSessionId: string | null
@@ -167,7 +167,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   activeRunIdBySessionId: {},
   lastSequenceByRunId: {},
   selectedSessionId: null,
-  pullTokenByRunId: {},
+  pullTokenBySessionId: {},
   waitingSessions: [],
   cancelling: false,
   cancellingSessionId: null,
@@ -184,15 +184,14 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   pullSnapshot: sessionId => {
     const existing = pullInFlightBySession.get(sessionId)
     if (existing) return existing
-    const pullKey = `session:${sessionId}`
-    const token = (get().pullTokenByRunId[pullKey] ?? 0) + 1
+    const token = (get().pullTokenBySessionId[sessionId] ?? 0) + 1
     const initialSnapshot = selectSessionSnapshot(get(), sessionId)
-    set({ pullTokenByRunId: { ...get().pullTokenByRunId, [pullKey]: token } })
+    set({ pullTokenBySessionId: { ...get().pullTokenBySessionId, [sessionId]: token } })
     let promise: Promise<void>
     promise = (async () => {
       try {
         const result = await window.api.invoke('run:get-snapshot', { sessionId })
-        if (get().pullTokenByRunId[pullKey] !== token) return
+        if (get().pullTokenBySessionId[sessionId] !== token) return
         const snapshot = result?.snapshot ?? null
         if (snapshot) {
           if (snapshot.sessionId !== sessionId) throw new Error('快照会话身份不匹配')
@@ -254,11 +253,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
         if (enteredTerminal && isTerminalRunStatus(latest.status)) {
           await chat.handleRunTerminal(snapshot)
         } else if (!isTerminalRunStatus(latest.status)) {
-          useChatStore.setState({
-            sendInFlight: false,
-            currentGeneratingMessageId: latest.messageId || null,
-            activeAgentSessionId: latest.sessionId
-          })
+          chat.handleRunActive(latest)
         }
       }
     })().catch(err => console.error('[useRunStore] 终态展示对账失败:', err))
@@ -329,7 +324,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
     refreshWaitingBadgesSeq++
     set({
       snapshot: null, lastSequence: 0, snapshotsByRunId: {}, activeRunIdBySessionId: {},
-      lastSequenceByRunId: {}, selectedSessionId: null, pullTokenByRunId: {}, waitingSessions: [],
+      lastSequenceByRunId: {}, selectedSessionId: null, pullTokenBySessionId: {}, waitingSessions: [],
       cancelling: false, cancellingSessionId: null, cancelGraceExceeded: false, forceTerminateRunId: null
     })
   }
