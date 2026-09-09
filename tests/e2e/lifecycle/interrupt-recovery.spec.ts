@@ -2,8 +2,7 @@
  * 中断与恢复关键路径 E2E
  *
  * 覆盖的回归：
- * - 运行中进程退出后，重启对账把 run 收敛为 interrupted（工具块不再转圈），「继续分析」
- *   代发新消息开新轮次
+ * - 运行中进程退出后，重启对账把 run 收敛为 interrupted（工具块不再转圈），可以发送新消息继续任务
  * - 挂起的权限请求在启动对账时收敛为已取消，不再残留「等待你处理」徽标
  * - 轮次失败/中断后，落盘工具块为终态：重载后仍是终态而非永久执行中
  */
@@ -76,7 +75,7 @@ async function relaunchSameProfile(
   })
 }
 
-test('运行中退出重启后按中断终态恢复，「继续分析」代发新消息开新轮次', async ({ nova }, testInfo) => {
+test('运行中退出重启后按中断终态恢复，手动继续开新轮次', async ({ nova }, testInfo) => {
   const state = await nova.createSession('default')
   const sessionId = state.currentSessionId
   if (!sessionId) throw new Error('session id missing')
@@ -104,14 +103,14 @@ test('运行中退出重启后按中断终态恢复，「继续分析」代发�
   try {
     await resumed.selectSession(sessionId)
 
-    // 启动对账：run 收敛为 interrupted，中断横幅出现
-    await expect(resumed.page.getByText('上次任务异常中断', { exact: false })).toBeVisible()
-    await expect(resumed.page.getByRole('button', { name: '继续分析' })).toBeVisible()
+    // 启动对账：run 收敛为 interrupted，消息流显示异常提示
+    await expect(resumed.page.getByText('任务意外中断', { exact: false })).toBeVisible()
+    await expect(resumed.page.getByRole('button', { name: '继续分析' })).toHaveCount(0)
     await expect.poll(async () => (await resumed.getRunSnapshot(sessionId))?.status)
       .toBe('interrupted')
 
     // 工具块为终态（成功落盘）而非转圈，输入可继续使用
-    await resumed.page.getByRole('button', { name: /已停止 · 工作了/ }).click()
+    await expect(resumed.page.getByTestId('turn-process-header')).toHaveAttribute('aria-expanded', 'true')
     await expect(resumed.page.locator('.tool-trace-row').filter({ hasText: 'interrupt-target.txt' }))
       .toBeVisible()
     await expect(resumed.page.locator('.tool-trace-row--live')).toHaveCount(0)
@@ -125,9 +124,9 @@ test('运行中退出重启后按中断终态恢复，「继续分析」代发�
     expect(await readFile(path.join(nova.workspacePath, 'interrupt-target.txt'), 'utf8'))
       .toContain('nova e2e interrupt')
 
-    // 「继续分析」代发新消息开新轮次
+    // 手动继续开新轮次
     resumed.provider.enqueue({ kind: 'hold', id: 'resume-hold', text: 'NOVA_E2E_RECOVERED' })
-    await resumed.page.getByRole('button', { name: '继续分析' }).click()
+    await resumed.sendPrompt(CONTINUE_PROMPT)
 
     await resumed.provider.waitForRequestCount(3)
     await expect(resumed.page.getByRole('button', { name: '继续分析' })).toHaveCount(0)
@@ -192,7 +191,7 @@ test('挂起权限请求在重启对账后收敛为已取消，不残留「等�
     await resumed.selectSession(sessionId)
 
     // 对账：run 为 interrupted，挂起权限请求已收敛为已取消，等待列表为空
-    await expect(resumed.page.getByText('上次任务异常中断', { exact: false })).toBeVisible()
+    await expect(resumed.page.getByText('任务意外中断', { exact: false })).toBeVisible()
     await expect.poll(async () => (await resumed.getRunSnapshot(sessionId))?.status)
       .toBe('interrupted')
     await expect.poll(async () => {
@@ -205,9 +204,9 @@ test('挂起权限请求在重启对账后收敛为已取消，不残留「等�
     await expect(resumed.page.getByLabel('等待你处理')).toHaveCount(0)
     await resumed.selectSession(sessionId)
 
-    // 继续分析仍可开新轮次
+    // 发送消息仍可开新轮次
     resumed.provider.enqueue({ kind: 'text', text: 'NOVA_E2E_RECOVERED_AFTER_PERM' })
-    await resumed.page.getByRole('button', { name: '继续分析' }).click()
+    await resumed.sendPrompt(CONTINUE_PROMPT)
 
     await resumed.provider.waitForRequestCount(2)
     await expect(resumed.page.getByText('NOVA_E2E_RECOVERED_AFTER_PERM', { exact: false })).toBeVisible()

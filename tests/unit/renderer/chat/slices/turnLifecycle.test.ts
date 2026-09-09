@@ -189,6 +189,24 @@ describe('turnLifecycleSlice', () => {
     expect(state.messages[0].turnEndedAt).toBeTypeOf('number')
   })
 
+  it('取消确认先于 message-end 时，已完成工具和纯文本轮次也必须原子标记中断', async () => {
+    const history = { id: 'history', role: 'assistant' as const, content: '历史回答', timestamp: 1 }
+    const completedTool = { type: 'tool' as const, toolCallId: 'done', toolName: 'write', arguments: { path: 'done.txt' }, status: 'success' as const, result: 'ok' }
+    for (const blocks of [undefined, [completedTool]]) {
+      useChatStore.setState({
+        messages: [history, { id: 'active', role: 'assistant', content: '已有内容', timestamp: 2, blocks }],
+        messageIndexById: { history: 0, active: 1 },
+        currentGeneratingMessageId: 'active', isGenerating: true
+      })
+      await useChatStore.getState().markRunningAsCancelled()
+      const state = useChatStore.getState()
+      expect(state.isGenerating).toBe(false)
+      expect(state.messages[1]).toMatchObject({ interrupted: true, content: '已有内容' })
+      expect(state.messages[1].blocks).toEqual(blocks)
+      expect(state.messages[0]).toBe(history)
+    }
+  })
+
   it('终态后 steering 队列恰好出队一次', async () => {
     useChatStore.getState().handleMessageStart('msg_turn')
     useChatStore.getState().enqueuePendingMessage('排队消息', [])

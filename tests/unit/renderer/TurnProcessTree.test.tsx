@@ -62,6 +62,31 @@ function renderTree(
 }
 
 describe('TurnProcessTree', () => {
+  it('停止保留过程展示与子节点，重挂载仍可查看并手动折叠', () => {
+    const props = {
+      model: buildCompletedModel(), messageId: 'msg-1', blocks: [],
+      isCurrentAssistantGenerating: false, isTurnActiveForThisMsg: false,
+      isPausedForInput: false
+    }
+    const renderer = renderDom(<TurnProcessTree {...props} isLive />)
+    const trace = renderer.container.querySelector('.trace-process')
+    renderer.render(<TurnProcessTree {...props} isLive={false} interrupted />)
+    expect(renderer.container.querySelector('.turn-process-collapsible')?.getAttribute('data-expanded')).toBe('true')
+    expect(renderer.container.querySelector('.trace-process')).toBe(trace)
+    expect(renderer.container.textContent).not.toContain('已停止')
+    renderer.unmount()
+
+    const restored = renderTree(false, undefined, undefined, buildCompletedModel(), true)
+    expect(restored.container.querySelector('.trace-process')).not.toBeNull()
+    act(() => restored.container.querySelector<HTMLElement>('[data-testid="turn-process-header"]')?.click())
+    expect(restored.container.querySelector('.turn-process-collapsible')?.getAttribute('data-expanded')).toBe('false')
+    restored.unmount()
+
+    const collapsed = renderTree(false, false, undefined, buildCompletedModel(), true)
+    expect(collapsed.container.querySelector('.turn-process-collapsible')?.getAttribute('data-expanded')).toBe('false')
+    collapsed.unmount()
+  })
+
   it('completed 默认折叠整个工作过程（含计划卡），仅最终文本保持挂载', () => {
     const renderer = renderTree(false)
     const collapsible = renderer.container.querySelector('.turn-process-collapsible')

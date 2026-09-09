@@ -61,8 +61,7 @@ import type {
 import type { AskQuestionItem, AskQuestionAnswer } from '../askQuestion/types'
 import type {
   RunSnapshot,
-  InteractionAnswerResult,
-  ToolCommitRecord
+  InteractionAnswerResult
 } from '../run/types'
 import type {
   MemoryScopeFileEntry,
@@ -185,21 +184,6 @@ export interface IpcCommands {
   'run:force-terminate': {
     params: { runId: string }
     result: { ok: boolean; snapshot: RunSnapshot | null }
-  }
-  /** interrupted run 恢复入口 */
-  'run:interrupted-action': {
-    params: {
-      runId: string
-      /** 继续走 renderer 正常消息链，不经过本通道 */
-      action: 'rollback' | 'inspect'
-    }
-    result: {
-      ok: boolean
-      /** inspect：已执行工具步骤；rollback：操作结果说明 */
-      steps?: ToolCommitRecord[]
-      message?: string
-      snapshot?: RunSnapshot | null
-    }
   }
   'save-model-config': {
     params: ModelConfig

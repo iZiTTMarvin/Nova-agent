@@ -89,9 +89,9 @@ describe('force-terminate 必须 abort 执行句柄', () => {
         join(__dirname, '../../../../src/main/ipc/runHandler.ts'),
         'utf-8'
       )
-      // handle(RUN_FORCE_TERMINATE, ...) 整段直到下一个 handle(
+      // 强制终止是最后注册的 handler
       const start = src.indexOf('handle(RUN_FORCE_TERMINATE')
-      const end = src.indexOf('handle(RUN_INTERRUPTED_ACTION')
+      const end = src.length
       expect(start).toBeGreaterThanOrEqual(0)
       expect(end).toBeGreaterThan(start)
       const forceBlock = src.slice(start, end)

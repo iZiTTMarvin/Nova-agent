@@ -259,8 +259,10 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         // 取消兜底也是 turn boundary：把未封存的活跃文本/思考回收进消息，保留部分回答。
         const live = state.liveTurn[msg.id]
         const base = live ? appendLiveBlock(msg, live) : msg
-        if (!base.blocks && !base.toolCalls && !live) return msg
-        let changed = !!live
+        // 取消确认可能先于 message-end；当前轮次必须与生成态一起收口。
+        const isCurrentTurn = msg.role === 'assistant' && msg.id === state.currentGeneratingMessageId
+        if (!base.blocks && !base.toolCalls && !live && !isCurrentTurn) return msg
+        let changed = !!live || isCurrentTurn
 
         const blocks = base.blocks?.map(b => {
           if (b.type !== 'tool') return b

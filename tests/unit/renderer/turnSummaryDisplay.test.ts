@@ -39,10 +39,10 @@ describe('formatWorkedHeader', () => {
     expect(formatWorkedHeader({ phase: 'completed' })).toBe('已工作')
   })
 
-  it('interrupted 以已停止为主状态', () => {
+  it('中断仅保留工作记录入口，不额外宣告停止', () => {
     expect(formatWorkedHeader({ phase: 'completed', durationMs: 10_000, interrupted: true })).toBe(
-      '已停止 · 工作了 10 秒'
+      '工作记录'
     )
-    expect(formatWorkedHeader({ phase: 'completed', interrupted: true })).toBe('已停止')
+    expect(formatWorkedHeader({ phase: 'completed', interrupted: true })).toBe('工作记录')
   })
 })

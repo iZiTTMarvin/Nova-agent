@@ -356,9 +356,9 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
 /**
  * 取消/中断状态归属会话的视图回归。
  *
- * 回归对象：useRunStore 的 cancelling / interruptedRunId 是全局字段，A 会话停止后
+ * 回归对象：useRunStore 的 cancelling 是全局字段，A 会话停止后
  * 切到 B，A 的终态 snapshot 不再确认取消 → B 的停止按钮被 A 的取消态禁用、
- * 8 秒后误显示「强制终止」；A 的 interrupted 横幅也出现在任意会话。
+ * 8 秒后误显示「强制终止」；异常提示也必须按当前会话隔离。
  */
 describe('ChatPanel → 取消/中断状态归属会话', () => {
   beforeEach(() => {
@@ -434,31 +434,46 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     renderer.unmount()
   })
 
-  it('中断横幅只在归属会话渲染，不跨会话出现', () => {
+  it('异常提示只出现在所属会话消息流，正常停止不显示恢复操作', () => {
     act(() => {
       useChatStore.setState({
         currentSessionId: 'sessB',
-        sessions: [primarySession('sessB')]
+        sessions: [primarySession('sessB')],
+        messages: [{ id: 'msgA', role: 'assistant', content: '保留内容', timestamp: 1 }]
       })
       useRunStore.setState({
-        interruptedRunId: 'runA',
-        interruptedSessionId: 'sessA',
-        interruptedSteps: []
+        snapshot: {
+          runId: 'runA', sessionId: 'sessA', kind: 'agent', workspaceId: '/ws',
+          status: 'interrupted', terminalReason: 'process_exit', sequence: 1,
+          createdAt: 1, updatedAt: 1, lastHeartbeatAt: 1, messageId: 'msgA',
+          pendingInteractions: [], currentAttempt: null, progress: null
+        }
       })
     })
 
     const renderer = renderDom(React.createElement(ChatPanel))
     expect(renderer.container.textContent ?? '').not.toContain('上次任务异常中断')
 
-    // 切回属主会话 A：横幅恢复
+    // 切回所属会话后，在消息流中显示具体问题。
     act(() => {
       useChatStore.setState({
         currentSessionId: 'sessA',
         sessions: [primarySession('sessA')]
       })
     })
-    expect(renderer.container.textContent ?? '').toContain('上次任务异常中断')
-    expect(renderer.container.textContent ?? '').toContain('继续分析')
+    expect(renderer.container.querySelector('.chat-messages__interruption')?.textContent).toContain('任务意外中断')
+    expect(renderer.container.querySelector('.chat-panel__composer-area')?.textContent).not.toContain('任务意外中断')
+    expect(renderer.container.textContent).not.toMatch(/继续分析|回滚本轮|查看已执行步骤/)
+    act(() => {
+      const snapshot = useRunStore.getState().snapshot!
+      useRunStore.setState({ snapshot: { ...snapshot, terminalReason: 'cancel_execution:grace_expired' } })
+    })
+    expect(renderer.container.querySelector('.chat-messages__interruption')?.textContent).toContain('未能及时退出')
+    act(() => {
+      const snapshot = useRunStore.getState().snapshot!
+      useRunStore.setState({ snapshot: { ...snapshot, status: 'cancelled', terminalReason: 'cancel_execution' } })
+    })
+    expect(renderer.container.querySelector('.chat-messages__interruption')).toBeNull()
     renderer.unmount()
   })
 

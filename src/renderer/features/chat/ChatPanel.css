@@ -221,6 +221,13 @@
   margin: 0;
 }
 
+.chat-messages__interruption {
+  padding: 8px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .chat-messages__history-hint {
   align-self: center;
   font-size: 0.78rem;

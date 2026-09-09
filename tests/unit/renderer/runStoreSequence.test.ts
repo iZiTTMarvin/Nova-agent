@@ -2,7 +2,7 @@
  * Renderer sequence 不得回退
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { useRunStore, getRunInterruptionNotice } from '../../../src/renderer/stores/useRunStore'
 import type { RunSnapshot } from '../../../src/shared/run/types'
 
 function snap(partial: Partial<RunSnapshot> & Pick<RunSnapshot, 'runId' | 'sessionId' | 'sequence' | 'status'>): RunSnapshot {
@@ -29,8 +29,7 @@ describe('useRunStore sequence 回退防护', () => {
       activeRunIdBySessionId: {},
       lastSequenceByRunId: {},
       selectedSessionId: 'sA',
-      pullTokenByRunId: {},
-      interruptedRunId: null
+      pullTokenByRunId: {}
     })
   })
 
@@ -59,17 +58,17 @@ describe('useRunStore sequence 回退防护', () => {
   })
 
   it('新轮开始即移除旧中断提示；旧轮迟到终态不能覆盖新轮', () => {
-    const old = snap({ runId: 'old', sessionId: 'sA', sequence: 10, status: 'interrupted', createdAt: 1 })
+    const old = snap({ runId: 'old', sessionId: 'sA', sequence: 10, status: 'interrupted', terminalReason: 'process_exit', createdAt: 1 })
     const current = snap({ runId: 'new', sessionId: 'sA', sequence: 1, status: 'running', createdAt: 2 })
     const store = useRunStore.getState()
     store.handleSnapshotEvent(old, { sequence: 10, type: 'terminal', at: 1 })
-    expect(useRunStore.getState().interruptedRunId).toBe('old')
+    expect(getRunInterruptionNotice(useRunStore.getState().snapshot)).toContain('任务意外中断')
     store.handleSnapshotEvent(current, { sequence: 1, type: 'running', at: 2 })
-    expect(useRunStore.getState().interruptedRunId).toBeNull()
+    expect(getRunInterruptionNotice(useRunStore.getState().snapshot)).toBeNull()
     store.handleSnapshotEvent({ ...old, sequence: 11 }, { sequence: 11, type: 'outbox', at: 3 })
     expect(useRunStore.getState().snapshot?.runId).toBe('new')
     expect(useRunStore.getState().activeRunIdBySessionId.sA).toBe('new')
-    expect(useRunStore.getState().interruptedRunId).toBeNull()
+    expect(getRunInterruptionNotice(useRunStore.getState().snapshot)).toBeNull()
     expect(useRunStore.getState().snapshotsByRunId.old.sequence).toBe(11)
   })
 

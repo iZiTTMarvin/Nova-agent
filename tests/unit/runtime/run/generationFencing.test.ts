@@ -156,7 +156,7 @@ describe('generation fencing 与 lingering handle', () => {
       'utf-8'
     )
     const start = src.indexOf('handle(RUN_FORCE_TERMINATE')
-    const end = src.indexOf('handle(RUN_INTERRUPTED_ACTION')
+    const end = src.length
     const block = src.slice(start, end)
     // 不得在 grace/lingering 分支无 generation 地 unregister
     expect(block).toMatch(/invalidateExecutionGeneration/)

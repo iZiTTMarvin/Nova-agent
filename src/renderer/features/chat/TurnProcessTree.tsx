@@ -81,19 +81,19 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
   const userToggledRef = useRef(persistedUserOpen !== undefined)
   const prevIsLiveRef = useRef(isLive)
 
-  // live 默认展开；completed 默认折叠
-  const [userOpen, setUserOpen] = useState(persistedUserOpen ?? isLive)
+  // 中断保留阅读现场；历史中断轮次也默认展示过程。
+  const [userOpen, setUserOpen] = useState(persistedUserOpen ?? (isLive || interrupted))
   const open = userOpen
 
-  // live → completed：未手动操作时自动收起；重新 live 时自动展开
+  // 只有正常完成才自动收起，停止不改变展开状态。
   useEffect(() => {
     const wasLive = prevIsLiveRef.current
     prevIsLiveRef.current = isLive
 
-    if (wasLive !== isLive && !userToggledRef.current) {
+    if (wasLive !== isLive && !userToggledRef.current && (isLive || !interrupted)) {
       setUserOpen(isLive)
     }
-  }, [isLive])
+  }, [isLive, interrupted])
 
   const toggle = useCallback(() => {
     userToggledRef.current = true

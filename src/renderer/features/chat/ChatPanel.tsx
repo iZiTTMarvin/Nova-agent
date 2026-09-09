@@ -11,6 +11,7 @@ import { useAgentStore } from '../../stores/useAgentStore'
 import {
   arePendingPlanReviewsEqual,
   selectPendingPlanReview,
+  getRunInterruptionNotice,
   useRunStore
 } from '../../stores/useRunStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -161,11 +162,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const cancellingSessionId = useRunStore(state => state.cancellingSessionId)
   const cancelGraceExceeded = useRunStore(state => state.cancelGraceExceeded)
   const forceTerminate = useRunStore(state => state.forceTerminate)
-  const interruptedRunId = useRunStore(state => state.interruptedRunId)
-  const interruptedSessionId = useRunStore(state => state.interruptedSessionId)
-  const interruptedAction = useRunStore(state => state.interruptedAction)
-  const clearInterrupted = useRunStore(state => state.clearInterrupted)
-  const interruptedSteps = useRunStore(state => state.interruptedSteps)
+  const interruptionNotice = useRunStore(state =>
+    state.snapshot?.sessionId === currentSessionId ? getRunInterruptionNotice(state.snapshot) : null
+  )
   const pendingPlanReview = useRunStore(
     state => selectPendingPlanReview(state.snapshot),
     arePendingPlanReviewsEqual
@@ -185,10 +184,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const cancellingForCurrentSession =
     cancelling && (cancellingSessionId == null || cancellingSessionId === currentSessionId)
   const graceExceededForCurrentSession = cancelGraceExceeded && cancellingForCurrentSession
-  const interruptedForCurrentSession =
-    !!interruptedRunId &&
-    (interruptedSessionId == null || interruptedSessionId === currentSessionId)
-
   const currentGeneratingTurnStartedAt = useMemo(() => {
     if (!currentGeneratingMessageId) return undefined
     const generatingMsg = messages.find(m => m.id === currentGeneratingMessageId)
@@ -867,8 +862,14 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           pendingPlanReview={pendingPlanReview}
         />
 
+        {interruptionNotice && (
+          <div className="chat-messages__interruption" role="status">
+            {interruptionNotice}
+          </div>
+        )}
+
         {/* 流尾状态指示器：在 Agent 运行时稳稳挂在消息流最底部（零抖动） */}
-        {isGenerating && !isPausedForUserInput && (
+        {isGenerating && !isPausedForUserInput && !cancellingForCurrentSession && (
           <div className="chat-messages__tail-status">
             <AssistantPendingIndicator turnStartedAt={currentGeneratingTurnStartedAt} />
           </div>
@@ -940,46 +941,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 size="sm"
                 className="chat-cross-turn-notice__stop"
                 onClick={() => void forceTerminate()}
-              />
-            </div>
-          )}
-
-          {/* interrupted run：继续分析 / 回滚本轮 / 查看已执行步骤 */}
-          {interruptedForCurrentSession && currentSession?.kind !== 'subagent' && (
-            <div className="chat-cross-turn-notice" role="status">
-              <span className="chat-cross-turn-notice__text">
-                上次任务异常中断
-                {interruptedSteps.length > 0
-                  ? `（已记录 ${interruptedSteps.length} 个工具步骤）`
-                  : ''}
-              </span>
-              <Button
-                label="继续分析"
-                variant="secondary"
-                size="sm"
-                className="chat-cross-turn-notice__stop"
-                onClick={() => void interruptedAction('continue')}
-              />
-              <Button
-                label="回滚本轮"
-                variant="secondary"
-                size="sm"
-                className="chat-cross-turn-notice__stop"
-                onClick={() => void interruptedAction('rollback')}
-              />
-              <Button
-                label="查看已执行步骤"
-                variant="secondary"
-                size="sm"
-                className="chat-cross-turn-notice__stop"
-                onClick={() => void interruptedAction('inspect')}
-              />
-              <Button
-                label="关闭"
-                variant="ghost"
-                size="sm"
-                className="chat-cross-turn-notice__stop"
-                onClick={() => clearInterrupted()}
               />
             </div>
           )}

@@ -23,7 +23,7 @@ function makeSnap(
   runId: string,
   sessionId: string,
   sequence: number,
-  status: 'running' | 'completed' | 'cancelled' | 'interrupted' = 'running'
+  status: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'interrupted' = 'running'
 ) {
   return {
     runId,
@@ -159,6 +159,27 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
     expect(useRunStore.getState().cancelling).toBe(false)
   })
 
+  it('取消中快照不能提前宣布结束；后台取消确认不能停止前台另一会话', async () => {
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
+    resetChatStoreForTests()
+    useChatStore.setState({ currentSessionId: 'sessA', isGenerating: true, currentGeneratingMessageId: 'msg_runA' })
+    useRunStore.setState({ selectedSessionId: 'sessA' })
+    useRunStore.getState().beginLocalCancel('runA')
+    useRunStore.getState().handleSnapshotEvent(makeSnap('runA', 'sessA', 1, 'cancelling'), { sequence: 1, type: 'cancelling', at: 1 })
+    // 等待异步投影处理完，不能在 import 返回前读取旧状态制造假绿。
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(useRunStore.getState().cancelling).toBe(true)
+    expect(useChatStore.getState().isGenerating).toBe(true)
+
+    useChatStore.setState({ currentSessionId: 'sessB', currentGeneratingMessageId: 'msg_runB' })
+    useRunStore.setState({ selectedSessionId: 'sessB' })
+    useRunStore.getState().handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'cancelled'), { sequence: 2, type: 'terminal', at: 2 })
+    await vi.waitFor(() => expect(useRunStore.getState().cancelling).toBe(false))
+    expect(useChatStore.getState().isGenerating).toBe(true)
+    expect(useChatStore.getState().currentGeneratingMessageId).toBe('msg_runB')
+  })
+
   it('pull 到其他会话的终态不提前清空取消；本会话终态才收敛', async () => {
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
     const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
@@ -192,8 +213,9 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
     expect(useRunStore.getState().cancellingSessionId).toBeNull()
   })
 
-  it('interrupted 归属会话：跨会话事件不覆盖，run 离开 interrupted 后清理', async () => {
+  it('中断快照归属会话：跨会话事件不覆盖，当前 run 终态正常更新', async () => {
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    useRunStore.setState({ selectedSessionId: 'sessA' })
     const store = useRunStore.getState()
 
     store.handleSnapshotEvent(makeSnap('runA', 'sessA', 1, 'interrupted'), {
@@ -201,26 +223,25 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
       type: 'interrupted',
       at: Date.now()
     })
-    expect(useRunStore.getState().interruptedRunId).toBe('runA')
-    expect(useRunStore.getState().interruptedSessionId).toBe('sessA')
+    expect(useRunStore.getState().snapshot?.runId).toBe('runA')
+    expect(useRunStore.getState().snapshot?.sessionId).toBe('sessA')
 
-    // B 的普通运行事件不动 A 的中断横幅归属
+    // B 的普通运行事件不覆盖 A 的快照
     store.handleSnapshotEvent(makeSnap('runB', 'sessB', 1), {
       sequence: 1,
       type: 'running',
       at: Date.now()
     })
-    expect(useRunStore.getState().interruptedRunId).toBe('runA')
-    expect(useRunStore.getState().interruptedSessionId).toBe('sessA')
+    expect(useRunStore.getState().snapshot?.runId).toBe('runA')
+    expect(useRunStore.getState().snapshot?.sessionId).toBe('sessA')
 
-    // runA 离开 interrupted（恢复/完成）→ 横幅连同归属一起清理
+    // runA 的后续状态继续由同一快照投影
     store.handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'completed'), {
       sequence: 2,
       type: 'terminal',
       at: Date.now()
     })
-    expect(useRunStore.getState().interruptedRunId).toBeNull()
-    expect(useRunStore.getState().interruptedSessionId).toBeNull()
+    expect(useRunStore.getState().snapshot?.status).toBe('completed')
   })
 
   it('旧快照拉取期间新轮开始，迟到响应不能恢复旧中断提示', async () => {
@@ -234,7 +255,6 @@ describe('Renderer 按 runId 隔离 snapshot', () => {
     resolvePull({ snapshot: old, waitingSessions: [] })
     await pending
     expect(useRunStore.getState().snapshot?.runId).toBe('new')
-    expect(useRunStore.getState().interruptedRunId).toBeNull()
-    expect(useRunStore.getState().interruptedSteps).toEqual([])
+    expect(useRunStore.getState().snapshot?.status).toBe('running')
   })
 })

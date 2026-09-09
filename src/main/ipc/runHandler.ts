@@ -1,13 +1,12 @@
 /**
- * Run 相关 IPC：snapshot 查询、等待徽标、强制终止、interrupted 恢复入口
+ * Run 相关 IPC：snapshot 查询、等待徽标、强制终止
  */
 import { handle } from './secureIpc'
 import { toRendererRunSnapshot } from '../../shared/run/rendererProjection'
 import {
   RUN_GET_SNAPSHOT,
   RUN_LIST_WAITING,
-  RUN_FORCE_TERMINATE,
-  RUN_INTERRUPTED_ACTION
+  RUN_FORCE_TERMINATE
 } from '../../shared/ipc/channels'
 import { getRunCoordinator, getRunExecutionRegistry, getActiveRunId, setActiveRunId } from '../services/RunCoordinatorHost'
 
@@ -102,45 +101,5 @@ export function registerRunHandler(): void {
       setActiveRunId(null)
     }
     return { ok: !!snapshot, snapshot: toRendererRunSnapshot(snapshot), lingering: true }
-  })
-
-  handle(RUN_INTERRUPTED_ACTION, async (_event, params: {
-    runId: string
-    action: 'rollback' | 'inspect'
-  }) => {
-    const coord = getRunCoordinator()
-    const snap = coord.getSnapshot(params.runId)
-    if (!snap) {
-      return { ok: false, message: 'run 不存在', snapshot: null }
-    }
-
-    if (params.action === 'inspect') {
-      return {
-        ok: true,
-        steps: snap.toolCommits ?? [],
-        message: `共 ${(snap.toolCommits ?? []).length} 个工具步骤`,
-        snapshot: toRendererRunSnapshot(snap)
-      }
-    }
-
-    if (params.action === 'rollback') {
-      const committed = (snap.toolCommits ?? []).filter(c => c.phase === 'committed')
-      return {
-        ok: false,
-        steps: committed,
-        message:
-          '无可回滚的文件副作用凭证。请使用会话消息回退 / 逐文件 checkpoint；未执行任何文件回滚。',
-        snapshot: toRendererRunSnapshot(snap)
-      }
-    }
-
-    // 没有 continue 分支：继续必须由 renderer 代发新消息开新轮次。
-    // interrupted → resuming 只保留给子代理恢复路径（SubagentExecutionService），
-    // 主 run 无 resuming 消费入口，转换后入场锁会被永久占用。
-    return {
-      ok: false,
-      message: `未知动作 ${params.action}`,
-      snapshot: toRendererRunSnapshot(snap)
-    }
   })
 }

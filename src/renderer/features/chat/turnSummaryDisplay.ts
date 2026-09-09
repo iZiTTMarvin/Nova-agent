@@ -18,7 +18,7 @@ export interface WorkedHeaderOptions {
   interrupted?: boolean
 }
 
-/** 状态标题：工作中 X 秒 / 已工作 X 分 X 秒；用户中断时以「已停止」为主状态 */
+/** 运行时显示工作时长；中断后仅保留查看过程的入口。 */
 export function formatWorkedHeader(options: WorkedHeaderOptions): string {
   const { phase, durationMs, elapsedMs, interrupted } = options
 
@@ -31,10 +31,7 @@ export function formatWorkedHeader(options: WorkedHeaderOptions): string {
   }
 
   if (interrupted) {
-    if (durationMs !== undefined && durationMs >= 0) {
-      return `已停止 · 工作了 ${formatDurationMs(durationMs)}`
-    }
-    return '已停止'
+    return '工作记录'
   }
 
   if (durationMs !== undefined && durationMs >= 0) {
