@@ -157,6 +157,37 @@ describe('RunCoordinator', () => {
     }
   })
 
+  it('批量查询保留事件重放、会话隔离、内存优先与返回值隔离', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000)
+      for (const [runId, sessionId] of [['run-a', 's1'], ['run-b', 's2'], ['run-other', 's3']]) {
+        coord.startRun({ kind: 'agent', runId, workspaceId: '/ws', sessionId })
+      }
+      const base = store.loadSnapshot('run-b')!
+      fs.appendFileSync(path.join(tmpDir, 'run-b', 'events.jsonl'), JSON.stringify({
+        runId: 'run-b', sequence: base.sequence + 1, type: 'terminal', at: 2_000,
+        payload: { status: 'failed', reason: 'replayed' }
+      }) + '\n')
+      const cold = new RunCoordinator({ store })
+      const sessions = new Set(['s1', 's2', 'missing'])
+      const snapshots = cold.listSnapshotsForSessions(sessions)
+      expect(snapshots.map(snap => [snap.runId, snap.status])).toEqual([
+        ['run-a', 'queued'], ['run-b', 'failed']
+      ])
+      expect(store.loadSnapshot('run-b')).toMatchObject({ sequence: base.sequence + 1, terminalReason: 'replayed' })
+      expect(coord.listSnapshotsForSessions(sessions).map(snap => snap.status)).toEqual(['queued', 'queued'])
+      snapshots[0].status = 'cancelled'
+      expect(cold.listSnapshotsForSession('s1')[0].status).toBe('queued')
+      vi.setSystemTime(3_000)
+      coord.startRun({ kind: 'agent', runId: 'run-new', workspaceId: '/ws', sessionId: 's2' })
+      expect(cold.listSnapshotsForSessions(sessions).map(snap => snap.runId)).toEqual(['run-a', 'run-b', 'run-new'])
+      expect(cold.listSnapshotsForSessions(new Set())).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('InteractionInbox 持久化并支持幂等回答', () => {
     const snap = coord.startRun({
       kind: 'agent',

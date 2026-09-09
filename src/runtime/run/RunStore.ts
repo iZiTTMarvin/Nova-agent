@@ -235,10 +235,16 @@ export class RunStore {
 
   /** 按 sessionId 查找最新非终态或最近 snapshot */
   findSnapshotsBySession(sessionId: string): RunSnapshot[] {
+    return this.findSnapshotsBySessions(new Set([sessionId]))
+  }
+
+  /** 一次目录扫描与事件重放，读取所需会话的快照。 */
+  findSnapshotsBySessions(sessionIds: ReadonlySet<string>): RunSnapshot[] {
+    if (sessionIds.size === 0) return []
     const result: RunSnapshot[] = []
     for (const runId of this.listRunIds()) {
       const snap = this.loadSnapshotWithReplay(runId)
-      if (snap && snap.sessionId === sessionId) {
+      if (snap && sessionIds.has(snap.sessionId)) {
         result.push(snap)
       }
     }

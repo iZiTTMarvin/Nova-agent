@@ -140,12 +140,18 @@ export class RunCoordinator {
 
   /** 按会话列举全部 run 快照（内存优先覆盖磁盘，按 createdAt 升序、同刻按 runId 稳定排序）。 */
   listSnapshotsForSession(sessionId: string): RunSnapshot[] {
+    return this.listSnapshotsForSessions(new Set([sessionId]))
+  }
+
+  /** 批量查询复用同一次磁盘读取；返回独立快照，内存权威状态仍优先。 */
+  listSnapshotsForSessions(sessionIds: ReadonlySet<string>): RunSnapshot[] {
+    if (sessionIds.size === 0) return []
     const byRunId = new Map<string, RunSnapshot>()
-    for (const snap of this.store.findSnapshotsBySession(sessionId)) {
+    for (const snap of this.store.findSnapshotsBySessions(sessionIds)) {
       byRunId.set(snap.runId, snap)
     }
     for (const snap of this.runs.values()) {
-      if (snap.sessionId === sessionId) byRunId.set(snap.runId, snap)
+      if (sessionIds.has(snap.sessionId)) byRunId.set(snap.runId, snap)
     }
     return [...byRunId.values()]
       .sort((left, right) => left.createdAt - right.createdAt || left.runId.localeCompare(right.runId))

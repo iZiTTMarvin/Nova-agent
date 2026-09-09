@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubagentProjectionService } from '../../../src/main/agent/subagents'
-import { createRunCoordinator } from '../../../src/runtime/run'
+import { createRunCoordinator, RunStore } from '../../../src/runtime/run'
 import { SessionStore, deriveChildSessionId } from '../../../src/runtime/sessions'
 import { createFollowupSpawnIdentity } from '../../../src/runtime/subagents'
 import { writeManifest, getFilesDir } from '../../../src/runtime/checkpoints/manifest'
@@ -265,32 +265,39 @@ describe('SubagentProjectionService', () => {
     }))
   })
 
-  it('启动批量轻投影只扫一次 metadata，不读取终态 transcript', () => {
-    const child = createChild('call-light', 'run-light')
-    coordinator.startRun({
-      kind: 'agent',
-      runId: 'run-light',
-      workspaceId: workspace,
-      sessionId: child.id
+  it('启动批量轻投影只读取一遍会话目录与运行日志，不读取终态 transcript', () => {
+    const children = Array.from({ length: 4 }, (_, index) => {
+      const runId = `run-light-${index}`
+      const child = createChild(`call-light-${index}`, runId)
+      coordinator.startRun({ kind: 'agent', runId, workspaceId: workspace, sessionId: child.id })
+      coordinator.markRunning(runId, `msg-light-${index}`)
+      coordinator.commitTerminal({ runId, status: 'completed' })
+      return child
     })
-    coordinator.markRunning('run-light', 'msg-light')
-    coordinator.commitTerminal({ runId: 'run-light', status: 'completed' })
     const listInternal = vi.spyOn(sessionStore, 'listInternal')
     const load = vi.spyOn(sessionStore, 'load')
+    const replay = vi.spyOn(RunStore.prototype, 'loadSnapshotWithReplay')
 
-    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
-    const projections = service.listLightweightByParentSessionIds([parentSessionId])
-
-    expect(listInternal).toHaveBeenCalledTimes(1)
-    expect(load).not.toHaveBeenCalled()
-    expect(projections).toEqual([
-      expect.objectContaining({
-        childSessionId: child.id,
-        taskLabel: 'inspect runtime',
-        status: 'completed'
+    try {
+      const service = new SubagentProjectionService({
+        sessionStore, runCoordinator: createRunCoordinator(join(tempRoot, 'runs'))
       })
-    ])
-    expect(projections[0]).not.toHaveProperty('summary')
+      const projections = service.listLightweightByParentSessionIds([parentSessionId])
+
+      expect(listInternal).toHaveBeenCalledTimes(1)
+      expect(load).not.toHaveBeenCalled()
+      expect(projections.map(projection => ({
+        childSessionId: projection.childSessionId, status: projection.status,
+        taskLabel: projection.taskLabel, summary: projection.summary
+      }))).toEqual(children.map(child => ({
+        childSessionId: child.id, status: 'completed',
+        taskLabel: 'inspect runtime',
+        summary: undefined
+      })))
+      expect(replay).toHaveBeenCalledTimes(children.length)
+    } finally {
+      replay.mockRestore()
+    }
   })
 
   it('interrupted child 的 pending interaction 仍从父行投影为等待授权', () => {

@@ -30,6 +30,12 @@ interface FollowupAttribution {
   readonly childSessionId: string
 }
 
+/** 一次同步投影请求的只读输入与派生归属，请求结束即丢弃。 */
+interface ProjectionReadContext {
+  readonly runsBySession: ReadonlyMap<string, readonly RunSnapshot[]>
+  readonly followupIndexes: Map<string, Map<string, FollowupAttribution>>
+}
+
 /** 只读 join 服务：Child Session 与 RunSnapshot 仍由各自 Owner 持久化。 */
 export class SubagentProjectionService {
   constructor(private readonly deps: SubagentProjectionServiceDeps) {}
@@ -58,18 +64,24 @@ export class SubagentProjectionService {
     parentSessionIds: ReadonlySet<string>,
     includeTerminalDetails: boolean
   ): SubagentActivityProjection[] {
-    // 一次投影请求内共享的 followup 归属索引（parentSessionId → index），请求结束即丢弃
-    const followupIndexes = new Map<string, Map<string, FollowupAttribution>>()
-    return summaries
+    const children = summaries
       .filter(
         (session): session is SubagentSummary =>
           session.kind === 'subagent' &&
           parentSessionIds.has(session.subagent.lineage.parentSessionId)
       )
       .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-      .flatMap((session) =>
-        this.projectRuns(session, includeTerminalDetails, followupIndexes)
-      )
+    if (children.length === 0) return []
+
+    const sessionIds = new Set(children.flatMap(child => [child.id, child.subagent.lineage.parentSessionId]))
+    const runsBySession = new Map<string, RunSnapshot[]>()
+    for (const snapshot of this.deps.runCoordinator.listSnapshotsForSessions(sessionIds)) {
+      const runs = runsBySession.get(snapshot.sessionId) ?? []
+      runs.push(snapshot)
+      runsBySession.set(snapshot.sessionId, runs)
+    }
+    const reads: ProjectionReadContext = { runsBySession, followupIndexes: new Map() }
+    return children.flatMap(session => this.projectRuns(session, includeTerminalDetails, reads))
   }
 
   getByParentToolCallId(
@@ -124,10 +136,12 @@ export class SubagentProjectionService {
   private projectRuns(
     session: SubagentSummary,
     includeTerminalDetails: boolean,
-    followupIndexes?: Map<string, Map<string, FollowupAttribution>>
+    reads?: ProjectionReadContext
   ): SubagentActivityProjection[] {
     const { lineage } = session.subagent
-    const runs = this.deps.runCoordinator.listSnapshotsForSession(session.id)
+    const runs = reads
+      ? reads.runsBySession.get(session.id) ?? []
+      : this.deps.runCoordinator.listSnapshotsForSession(session.id)
     if (runs.length === 0) {
       const snapshot = this.deps.runCoordinator.getSnapshot(lineage.spawnRunId)
       return [
@@ -142,7 +156,7 @@ export class SubagentProjectionService {
     // 只有存在出生之外的 run 才需要正向归属；单 run 子会话不触发父会话扫描
     const followupIndex = runs.every((run) => run.runId === lineage.spawnRunId)
       ? undefined
-      : this.getFollowupIndex(lineage.parentSessionId, followupIndexes)
+      : this.getFollowupIndex(lineage.parentSessionId, reads)
     const lastRunId = runs[runs.length - 1]!.runId
     return runs.map((snapshot) => {
       const isBirth = snapshot.runId === lineage.spawnRunId
@@ -299,12 +313,13 @@ export class SubagentProjectionService {
   /** 请求内缓存：同一父会话的多个子会话共享一次扫描。 */
   private getFollowupIndex(
     parentSessionId: string,
-    cache?: Map<string, Map<string, FollowupAttribution>>
+    reads?: ProjectionReadContext
   ): Map<string, FollowupAttribution> {
-    const cached = cache?.get(parentSessionId)
+    const cached = reads?.followupIndexes.get(parentSessionId)
     if (cached) return cached
-    const index = this.buildFollowupIndex(parentSessionId)
-    cache?.set(parentSessionId, index)
+    const index = this.buildFollowupIndex(parentSessionId,
+      reads ? reads.runsBySession.get(parentSessionId) ?? [] : undefined)
+    reads?.followupIndexes.set(parentSessionId, index)
     return index
   }
 
@@ -314,11 +329,12 @@ export class SubagentProjectionService {
    * 父会话消息的 toolCalls 提供参数与消息归属；hash 复用执行层导出的同一纯函数。
    */
   private buildFollowupIndex(
-    parentSessionId: string
+    parentSessionId: string,
+    runs?: readonly RunSnapshot[]
   ): Map<string, FollowupAttribution> {
     const index = new Map<string, FollowupAttribution>()
     const parentRunIdByToolCallId = new Map<string, string>()
-    for (const run of this.deps.runCoordinator.listSnapshotsForSession(parentSessionId)) {
+    for (const run of runs ?? this.deps.runCoordinator.listSnapshotsForSession(parentSessionId)) {
       for (const commit of run.toolCommits ?? []) {
         if (commit.toolName === 'task_followup') {
           parentRunIdByToolCallId.set(commit.toolCallId, run.runId)
