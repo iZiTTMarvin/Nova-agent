@@ -24,6 +24,8 @@ export interface AgentState {
   pendingAskQuestion: AskQuestionRequest | null
   /** askQuestion 提交中（ACK 前不删 pending） */
   isSubmittingAskQuestion: boolean
+  /** 提交/跳过 ACK 失败或异常时的可见错误；成功或新请求时清空 */
+  askQuestionError: string | null
   // ── Actions ──
   /**
    * 中断当前流式生成。
@@ -65,12 +67,60 @@ function newCommandId(): string {
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
 }
 
+async function submitAskQuestionResponse(
+  get: () => AgentState,
+  set: (partial: Partial<AgentState>) => void,
+  answers: AskQuestionAnswer[]
+): Promise<void> {
+  const pending = get().pendingAskQuestion
+  if (!pending || get().isSubmittingAskQuestion) return
+  const requestId = pending.requestId
+  const fallback = answers.length === 0 ? '跳过提问失败' : '提交答案失败'
+  set({ isSubmittingAskQuestion: true, askQuestionError: null })
+  const commandId = newCommandId()
+  try {
+    const result = await window.api.invoke('respond-ask-question', {
+      requestId,
+      answers,
+      commandId,
+      expectedVersion: pending.version,
+      interactionId: pending.interactionId ?? pending.requestId
+    })
+    if (get().pendingAskQuestion?.requestId !== requestId) {
+      set({ isSubmittingAskQuestion: false })
+      return
+    }
+    if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+      set({
+        isSubmittingAskQuestion: false,
+        askQuestionError: result.message || fallback
+      })
+      if (pending.sessionId) {
+        const { useRunStore } = await import('./useRunStore')
+        void useRunStore.getState().pullSnapshot(pending.sessionId)
+      }
+      return
+    }
+    set({ pendingAskQuestion: null, isSubmittingAskQuestion: false, askQuestionError: null })
+  } catch (err) {
+    if (get().pendingAskQuestion?.requestId !== requestId) {
+      set({ isSubmittingAskQuestion: false })
+      return
+    }
+    set({
+      isSubmittingAskQuestion: false,
+      askQuestionError: err instanceof Error ? err.message : fallback
+    })
+  }
+}
+
 export const useAgentStore = create<AgentState>((set, get) => ({
   pendingPermissionRequest: null,
   isSubmittingPermission: false,
   permissionError: null,
   pendingAskQuestion: null,
   isSubmittingAskQuestion: false,
+  askQuestionError: null,
 
   cancelExecution: async (targetRunId?: string) => {
     try {
@@ -105,7 +155,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           isSubmittingPermission: false,
           permissionError: null,
           pendingAskQuestion: null,
-          isSubmittingAskQuestion: false
+          isSubmittingAskQuestion: false,
+          askQuestionError: null
         })
       }
 
@@ -177,71 +228,22 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   handleAskQuestionRequest: (request: AskQuestionRequest) => {
-    set({ pendingAskQuestion: request, isSubmittingAskQuestion: false })
+    set({ pendingAskQuestion: request, isSubmittingAskQuestion: false, askQuestionError: null })
   },
 
   clearAskQuestionRequest: (requestId: string) => {
     const current = get().pendingAskQuestion
     if (current?.requestId === requestId) {
-      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false })
+      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false, askQuestionError: null })
     }
   },
 
   respondAskQuestion: async (answers: AskQuestionAnswer[]) => {
-    const pending = get().pendingAskQuestion
-    if (!pending || get().isSubmittingAskQuestion) return
-    // ACK 前只置 submitting，不提前删 pending
-    set({ isSubmittingAskQuestion: true })
-    const commandId = newCommandId()
-    try {
-      const result = await window.api.invoke('respond-ask-question', {
-        requestId: pending.requestId,
-        answers,
-        commandId,
-        expectedVersion: pending.version,
-        interactionId: pending.interactionId ?? pending.requestId
-      })
-      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
-        set({ isSubmittingAskQuestion: false })
-        if (pending.sessionId) {
-          const { useRunStore } = await import('./useRunStore')
-          void useRunStore.getState().pullSnapshot(pending.sessionId)
-        }
-        return
-      }
-      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false })
-    } catch (err) {
-      console.error('respondAskQuestion 失败:', err)
-      set({ isSubmittingAskQuestion: false })
-    }
+    await submitAskQuestionResponse(get, set, answers)
   },
 
   dismissAskQuestion: async () => {
-    const pending = get().pendingAskQuestion
-    if (!pending || get().isSubmittingAskQuestion) return
-    set({ isSubmittingAskQuestion: true })
-    const commandId = newCommandId()
-    try {
-      const result = await window.api.invoke('respond-ask-question', {
-        requestId: pending.requestId,
-        answers: [],
-        commandId,
-        expectedVersion: pending.version,
-        interactionId: pending.interactionId ?? pending.requestId
-      })
-      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
-        set({ isSubmittingAskQuestion: false })
-        if (pending.sessionId) {
-          const { useRunStore } = await import('./useRunStore')
-          void useRunStore.getState().pullSnapshot(pending.sessionId)
-        }
-        return
-      }
-      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false })
-    } catch (err) {
-      console.error('dismissAskQuestion 失败:', err)
-      set({ isSubmittingAskQuestion: false })
-    }
+    await submitAskQuestionResponse(get, set, [])
   },
 
   resetAgentRuntime: () => {
@@ -250,7 +252,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       isSubmittingPermission: false,
       permissionError: null,
       pendingAskQuestion: null,
-      isSubmittingAskQuestion: false
+      isSubmittingAskQuestion: false,
+      askQuestionError: null
     })
   }
 }))
@@ -262,7 +265,8 @@ export function resetAgentStoreForTests(): void {
     isSubmittingPermission: false,
     permissionError: null,
     pendingAskQuestion: null,
-    isSubmittingAskQuestion: false
+    isSubmittingAskQuestion: false,
+    askQuestionError: null
   })
 }
 

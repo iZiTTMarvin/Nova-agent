@@ -24,6 +24,8 @@ import './AskQuestionPanel.css'
  */
 export const AskQuestionPanel: React.FC = () => {
   const pending = useAgentStore(state => state.pendingAskQuestion)
+  const isSubmitting = useAgentStore(state => state.isSubmittingAskQuestion)
+  const askQuestionError = useAgentStore(state => state.askQuestionError)
   const respondAskQuestion = useAgentStore(state => state.respondAskQuestion)
   const dismissAskQuestion = useAgentStore(state => state.dismissAskQuestion)
 
@@ -201,6 +203,10 @@ export const AskQuestionPanel: React.FC = () => {
         </div>
       </div>
 
+      {askQuestionError && (
+        <div className="ask-question-error" role="alert">{askQuestionError}</div>
+      )}
+
       <div className="ask-question-footer">
         <div className="ask-question-nav">
           {currentStep > 0 && (
@@ -209,6 +215,7 @@ export const AskQuestionPanel: React.FC = () => {
               variant="secondary"
               size="sm"
               onClick={goPrev}
+              isDisabled={isSubmitting}
               className="ask-question-btn-secondary"
             >
               上一题
@@ -220,20 +227,21 @@ export const AskQuestionPanel: React.FC = () => {
               variant="primary"
               size="sm"
               onClick={goNext}
+              isDisabled={isSubmitting}
               className="ask-question-btn-primary"
             >
               下一题
             </Button>
           ) : (
             <Button
-              label="提交答案"
+              label={isSubmitting ? '提交中…' : '提交答案'}
               variant="primary"
               size="sm"
               onClick={handleSubmit}
-              isDisabled={!canSubmit()}
+              isDisabled={!canSubmit() || isSubmitting}
               className="ask-question-btn-primary"
             >
-              提交答案
+              {isSubmitting ? '提交中…' : '提交答案'}
             </Button>
           )}
         </div>
@@ -242,6 +250,7 @@ export const AskQuestionPanel: React.FC = () => {
           variant="ghost"
           size="sm"
           onClick={handleDismiss}
+          isDisabled={isSubmitting}
           className="ask-question-btn-dismiss"
         >
           跳过全部

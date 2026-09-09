@@ -100,6 +100,15 @@
   width: 100%;
 }
 
+.ask-question-error {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid rgba(181, 51, 51, 0.18);
+  background-color: rgba(181, 51, 51, 0.08);
+  color: var(--color-error, #b53333);
+}
+
 .ask-question-footer {
   display: flex;
   justify-content: space-between;

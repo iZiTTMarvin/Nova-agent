@@ -350,3 +350,100 @@ describe('AskQuestionPanel 状态清理', () => {
     renderer.unmount()
   })
 })
+
+describe('AskQuestionPanel 提交反馈', () => {
+  it('提交中禁用按钮并显示提交中', async () => {
+    let resolveInvoke: ((value: unknown) => void) | undefined
+    mockInvoke.mockImplementation(() => new Promise(resolve => {
+      resolveInvoke = resolve
+    }))
+    useAgentStore.setState({
+      pendingAskQuestion: makeRequest([{ question: '选择框架', options: ['React', 'Vue'] }])
+    })
+    const renderer = renderPanel()
+    act(() => findAllByType(renderer.container, 'input')[0].click())
+
+    await act(async () => {
+      findButton(renderer.container, '提交答案').click()
+      await Promise.resolve()
+    })
+
+    const submit = findButton(renderer.container, '提交中…')
+    expect(submit.disabled).toBe(true)
+    expect(findButton(renderer.container, '跳过全部').disabled).toBe(true)
+    expect(useAgentStore.getState().pendingAskQuestion).not.toBeNull()
+
+    await act(async () => {
+      resolveInvoke?.(undefined)
+      await Promise.resolve()
+    })
+    renderer.unmount()
+  })
+
+  it('ACK 失败时保留提问并显示 inline 错误', async () => {
+    mockInvoke.mockResolvedValue({ ok: false, message: '版本不匹配，请重试', firstApplied: false, code: 'version_mismatch' })
+    useAgentStore.setState({
+      pendingAskQuestion: makeRequest([{ question: '选择框架', options: ['React', 'Vue'] }])
+    })
+    const renderer = renderPanel()
+    act(() => findAllByType(renderer.container, 'input')[0].click())
+
+    await act(async () => {
+      findButton(renderer.container, '提交答案').click()
+      await Promise.resolve()
+    })
+
+    expect(useAgentStore.getState().pendingAskQuestion).not.toBeNull()
+    expect(renderer.container.querySelector('.ask-question-error')?.textContent).toBe('版本不匹配，请重试')
+    expect(findButton(renderer.container, '提交答案').disabled).toBe(false)
+    renderer.unmount()
+  })
+
+  it('提交异常时保留提问并显示失败原因', async () => {
+    mockInvoke.mockRejectedValue(new Error('网络中断'))
+    useAgentStore.setState({
+      pendingAskQuestion: makeRequest([{ question: '选择框架', options: ['React', 'Vue'] }])
+    })
+    const renderer = renderPanel()
+    act(() => findAllByType(renderer.container, 'input')[0].click())
+
+    await act(async () => {
+      findButton(renderer.container, '提交答案').click()
+      await Promise.resolve()
+    })
+
+    expect(useAgentStore.getState().pendingAskQuestion).not.toBeNull()
+    expect(renderer.container.querySelector('.ask-question-error')?.textContent).toBe('网络中断')
+    renderer.unmount()
+  })
+
+  it('成功返回时仅清除匹配的提问', async () => {
+    let resolveInvoke: ((value: unknown) => void) | undefined
+    mockInvoke.mockImplementation(() => new Promise(resolve => {
+      resolveInvoke = resolve
+    }))
+    const first = makeRequest([{ question: '第一轮', options: ['A', 'B'] }])
+    useAgentStore.setState({ pendingAskQuestion: first })
+    const renderer = renderPanel()
+    act(() => findAllByType(renderer.container, 'input')[0].click())
+
+    await act(async () => {
+      findButton(renderer.container, '提交答案').click()
+      await Promise.resolve()
+    })
+
+    const next = { ...makeRequest([{ question: '第二轮', options: ['C', 'D'] }]), requestId: 'req_2' }
+    act(() => {
+      useAgentStore.getState().handleAskQuestionRequest(next)
+    })
+
+    await act(async () => {
+      resolveInvoke?.(undefined)
+      await Promise.resolve()
+    })
+
+    expect(useAgentStore.getState().pendingAskQuestion?.requestId).toBe('req_2')
+    expect(() => findByText(renderer.container, '第二轮')).not.toThrow()
+    renderer.unmount()
+  })
+})
