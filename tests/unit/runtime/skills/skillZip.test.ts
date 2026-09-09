@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { execSync } from 'child_process'
 import {
+  createZipFromDirectory,
   extractZip,
   findSkillRoot,
   validateSkillDirectory,
@@ -93,6 +94,24 @@ describe('skillZip', () => {
     const root = findSkillRoot(extractDir)
     const { name } = validateSkillDirectory(root)
     expect(name).toBe('zip-skill')
+  })
+
+  it('createZipFromDirectory 打包目录，解压后结构与内容一致', async () => {
+    const skillDir = join(workDir, 'pack-skill')
+    mkdirSync(join(skillDir, 'notes'), { recursive: true })
+    mkdirSync(join(skillDir, 'empty'), { recursive: true })
+    writeFileSync(join(skillDir, 'SKILL.md'), md('pack-skill'))
+    writeFileSync(join(skillDir, 'notes', 'a.txt'), 'hello')
+
+    const zipPath = join(workDir, 'pack.zip')
+    await createZipFromDirectory(skillDir, zipPath, 'pack-skill')
+
+    const extractDir = join(workDir, 'out')
+    await extractZip(zipPath, extractDir)
+    const root = findSkillRoot(extractDir)
+    expect(validateSkillDirectory(root).name).toBe('pack-skill')
+    expect(existsSync(join(root, 'notes', 'a.txt'))).toBe(true)
+    expect(existsSync(join(root, 'empty'))).toBe(true)
   })
 
   it('isZipPath 识别扩展名', () => {

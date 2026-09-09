@@ -14,7 +14,9 @@ const mockInvoke = vi.fn()
 describe('turnLifecycleSlice', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     resetAgentStoreForTests()
     resetChatStoreForTests()
     resetWorkspaceStoreForTests()
@@ -143,6 +145,33 @@ describe('turnLifecycleSlice', () => {
     expect(state.recoveryState).toEqual({})
     expect(state.recoveryHints).toEqual({})
     expect(state.hookErrors).toEqual({})
+  })
+
+  it('未落盘的本地错误消息会被默认对账擦掉，skipReconcile 时保留', async () => {
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'load-session') {
+        return {
+          id: 'sess-1',
+          workspaceRoot: '/tmp/project',
+          mode: 'default',
+          createdAt: 1,
+          updatedAt: 2,
+          messageCount: 0,
+          messages: [],
+          hasMoreMessagesAbove: false
+        }
+      }
+      return undefined
+    })
+    useChatStore.setState({ currentSessionId: 'sess-1' })
+
+    await useChatStore.getState().handleError('msg_err_wiped', '未找到技能 /typo')
+    expect(useChatStore.getState().messages.some(m => m.id === 'msg_err_wiped')).toBe(false)
+
+    await useChatStore.getState().handleError('msg_err_kept', '未找到技能 /typo', { skipReconcile: true })
+    const kept = useChatStore.getState().messages.find(m => m.id === 'msg_err_kept')
+    expect(kept?.isError).toBe(true)
+    expect(kept?.content).toContain('未找到技能 /typo')
   })
 
   it('markRunningAsCancelled 清空轮次运行态（含发送锁与分叉锁）', async () => {

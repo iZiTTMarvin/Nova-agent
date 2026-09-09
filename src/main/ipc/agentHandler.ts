@@ -40,7 +40,7 @@ export function registerAgentHandler(
   ensureProcessCleanupWired()
 
   handle(SEND_MESSAGE, async (_event, params) => {
-    await sendAgentMessage(params, { getMainWindow, getModelClient, getImageStore })
+    return sendAgentMessage(params, { getMainWindow, getModelClient, getImageStore })
   })
 
   handle(CANCEL_EXECUTION, async (_event, params) => cancelExecution(params ?? {}))

@@ -33,15 +33,15 @@ export const skillApi: NovaSkillApi = {
 
   import: (input) => ipcRenderer.invoke(SKILL_IMPORT, input),
 
-  export: (name) => ipcRenderer.invoke(SKILL_EXPORT, name),
+  export: (name, destPath) => ipcRenderer.invoke(SKILL_EXPORT, { name, destPath }),
 
   reload: (workspaceRoot) => ipcRenderer.invoke(SKILL_RELOAD, workspaceRoot),
 
   pickImportFile: () => ipcRenderer.invoke(SKILL_PICK_IMPORT),
 
   onChange: (cb) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: { skills: import('../shared/skills/types').SkillSummary[] }) => {
-      cb(data.skills)
+    const handler = (_event: Electron.IpcRendererEvent, data: { snapshot: import('../shared/skills/types').SkillCatalogSnapshot }) => {
+      cb(data.snapshot)
     }
     ipcRenderer.on(SKILL_CHANGED, handler)
     return () => {

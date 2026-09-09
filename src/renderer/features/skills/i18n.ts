@@ -21,12 +21,14 @@ export function skillSourceLabel(source: SkillSource): string {
 
 export const skillsI18n = {
   panelTitle: '技能',
-  panelDesc: '技能是可被 / 命令或模型调用的指令模板。内置技能随应用分发，也可在本地或项目中自定义。',
+  panelDesc: '技能是可被 / 唤起或由模型调用的指令模板。内置技能随应用分发，也可在本地或项目中自定义。',
   loadThirdParty: '加载第三方 skill',
   loadThirdPartyHint: '开启后读取 Claude Code 技能目录，与 Nova 内置/本地技能合并展示。',
   create: '+ 新建',
   import: '导入',
   use: '使用',
+  export: '导出',
+  exportSuccess: (path: string) => `已导出到 ${path}`,
   toggle: '启用模型调用',
   showAll: '显示全部',
   showLess: '收起',

@@ -27,6 +27,9 @@ interface ModeSwitchProps {
   supportsVision?: boolean
   onSelectImage?: () => void
   onSelectSkills?: () => void
+  /** 技能目录不可用时禁用「技能」项，原因由调用方按快照给出 */
+  skillsDisabled?: boolean
+  skillsDisabledReason?: string
 }
 
 interface ModeMenuItemProps {
@@ -34,6 +37,7 @@ interface ModeMenuItemProps {
   description?: string
   icon: React.ReactNode
   isActive?: boolean
+  isDisabled?: boolean
   onClick: () => void
 }
 
@@ -43,6 +47,7 @@ const ModeMenuItem: React.FC<ModeMenuItemProps> = ({
   description,
   icon,
   isActive = false,
+  isDisabled = false,
   onClick
 }) => (
   <Button
@@ -53,6 +58,7 @@ const ModeMenuItem: React.FC<ModeMenuItemProps> = ({
     role="menuitem"
     tabIndex={-1}
     icon={icon}
+    isDisabled={isDisabled}
     endContent={isActive ? <CheckSmallIcon size={16} /> : undefined}
     className={`mode-switch__menu-item${isActive ? ' mode-switch__menu-item--active' : ''}`}
     onClick={onClick}
@@ -67,7 +73,9 @@ const ModeMenuItem: React.FC<ModeMenuItemProps> = ({
 export const ModeSwitch: React.FC<ModeSwitchProps> = ({
   supportsVision = false,
   onSelectImage,
-  onSelectSkills
+  onSelectSkills,
+  skillsDisabled = false,
+  skillsDisabledReason
 }) => {
   const currentMode = useSettingsStore(state => state.currentMode)
   const setMode = useSettingsStore(state => state.setMode)
@@ -184,7 +192,9 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
             {onSelectSkills && (
               <ModeMenuItem
                 icon={<SparklesIcon size={14} />}
-                label="技能与命令"
+                label="技能"
+                description={skillsDisabled ? skillsDisabledReason : undefined}
+                isDisabled={skillsDisabled}
                 onClick={() => {
                   setIsOpen(false)
                   onSelectSkills()

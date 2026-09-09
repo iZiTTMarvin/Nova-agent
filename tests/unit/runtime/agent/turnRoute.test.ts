@@ -118,7 +118,7 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     }
   })
 
-  it('system_notice（未找到的 slash）→ agent', () => {
+  it('未找到的 slash → slash_rejected（不进 agent 执行）', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
     const registry = createRegistry(root, [])
@@ -126,9 +126,10 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
       content: '/nonexistent-skill',
       skillRegistry: registry
     }))
-    expect(route.kind).toBe('agent')
-    if (route.kind === 'agent') {
-      expect(route.dispatch.kind).toBe('system_notice')
+    expect(route.kind).toBe('slash_rejected')
+    if (route.kind === 'slash_rejected') {
+      expect(route.rejection.reason).toBe('not_found')
+      expect(route.rejection.skillName).toBe('nonexistent-skill')
     }
   })
 
@@ -164,10 +165,10 @@ describe('agentRoute 工厂', () => {
   })
 
   it('可传入自定义 dispatch', () => {
-    const route = agentRoute({ kind: 'system_notice', text: '提示' })
+    const route = agentRoute({ kind: 'inject', assistantContent: 'a', userContent: 'u' })
     expect(route.kind).toBe('agent')
     if (route.kind === 'agent') {
-      expect(route.dispatch.kind).toBe('system_notice')
+      expect(route.dispatch.kind).toBe('inject')
     }
   })
 })

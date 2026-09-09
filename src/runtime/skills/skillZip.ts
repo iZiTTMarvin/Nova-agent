@@ -1,11 +1,12 @@
 /**
- * Skill zip 解压与目录发现（Task 8）
+ * Skill zip 解压、打包与目录发现
  */
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import type { WriteStream } from 'fs'
 import { dirname, join, normalize, sep } from 'path'
 import { tmpdir } from 'os'
 import * as yauzl from 'yauzl'
+import * as yazl from 'yazl'
 import { parseSkillMarkdown } from './frontmatter'
 
 const SKILL_FILE = 'SKILL.md'
@@ -134,6 +135,42 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
       })
       zipfile.on('error', (e: Error) => fail(e))
     })
+  })
+}
+
+/**
+ * 打包技能目录为 zip，条目统一收进 `<rootPrefix>/` 单层目录（与导入格式对称）。
+ * 空子目录以显式目录条目保留；符号链接跟随目标，断链时直接报错不静默跳过。
+ */
+export function createZipFromDirectory(srcDir: string, zipPath: string, rootPrefix: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    mkdirSync(dirname(zipPath), { recursive: true })
+    const zipfile = new yazl.ZipFile()
+    const out = createWriteStream(zipPath)
+    out.on('close', () => resolve())
+    out.on('error', (e: Error) => reject(e))
+    zipfile.outputStream.on('error', (e: Error) => reject(e))
+    zipfile.outputStream.pipe(out)
+
+    const enqueue = (dir: string, prefix: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const abs = join(dir, entry)
+        const rel = prefix ? `${prefix}/${entry}` : entry
+        if (statSync(abs).isDirectory()) {
+          zipfile.addEmptyDirectory(`${rootPrefix}/${rel}/`)
+          enqueue(abs, rel)
+        } else {
+          zipfile.addFile(abs, `${rootPrefix}/${rel}`)
+        }
+      }
+    }
+    try {
+      enqueue(srcDir, '')
+    } catch (err) {
+      reject(err as Error)
+      return
+    }
+    zipfile.end()
   })
 }
 

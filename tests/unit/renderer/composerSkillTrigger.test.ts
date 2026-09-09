@@ -47,8 +47,9 @@ describe('createComposerSkillTrigger', () => {
     expect(results).toEqual([])
   })
 
-  it('character 为 /，用于官方 trigger 菜单', () => {
+  it('character 为 /，菜单文案只称技能', () => {
     const trigger = createComposerSkillTrigger(() => [FRONTEND_SKILL])
     expect(trigger.character).toBe('/')
+    expect(trigger.menuLabel).toBe('技能')
   })
 })

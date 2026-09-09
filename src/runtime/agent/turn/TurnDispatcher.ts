@@ -6,6 +6,8 @@
  * 不发事件、不操作 checkpoint、不提交 durable run、不解析第二次 route。
  * session prefix / mode instruction / context 写入 / skill root 登记 / 终态收尾
  * 全部由 AgentLoop 根据返回值统一执行。
+ *
+ * slash_rejected 由发送边界过滤，dispatcher 收到即 fail closed。
  */
 import { extractTextFromContent, type ContentBlock } from '../../model/types'
 import type { SkillManifest } from '../../skills/types'
@@ -71,6 +73,8 @@ export class TurnDispatcher {
           throw new Error('route 为 skill_fork 但未注入 skillForkRunner')
         }
         break
+      case 'slash_rejected':
+        throw new Error('route 为 slash_rejected，发送边界必须先过滤')
       case 'agent':
         break
     }
@@ -101,6 +105,10 @@ export class TurnDispatcher {
         return { kind: 'handled', assistantSummary: result.summary }
       }
 
+      case 'slash_rejected': {
+        throw new Error('route 为 slash_rejected，发送边界必须先过滤')
+      }
+
       case 'agent': {
         const dispatch = route.dispatch
         if (dispatch.kind === 'inject') {
@@ -111,9 +119,6 @@ export class TurnDispatcher {
             assistantPrelude: dispatch.assistantContent,
             ...(dispatch.skillDirectory ? { grantedSkillRoot: dispatch.skillDirectory } : {})
           }
-        }
-        if (dispatch.kind === 'system_notice') {
-          return { kind: 'continue', userContent: dispatch.text, userText: dispatch.text }
         }
         // passthrough：原始输入直接进入 Agent kernel
         return {

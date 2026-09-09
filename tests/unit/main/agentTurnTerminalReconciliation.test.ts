@@ -14,6 +14,7 @@ const snapHolder = vi.hoisted(() => ({
 }))
 const coordinator = vi.hoisted(() => ({
   listActiveRuns: vi.fn(() => [] as any[]),
+  listSnapshotsForSession: vi.fn(() => [] as any[]),
   getSnapshotForSession: vi.fn(() => null),
   getSnapshot: vi.fn(() => snapHolder.current),
   startRun: vi.fn((params: any) => ({
@@ -136,6 +137,10 @@ vi.mock('../../../src/main/agent/runtime', async (importOriginal) => {
     }))
   }
 })
+
+vi.mock('../../../src/main/services/SkillServiceHost', () => ({
+  ensureSkillRegistryForWorkspace: vi.fn(() => registryHolder.current)
+}))
 
 import { sendAgentMessage } from '../../../src/main/agent/turn/AgentTurnService'
 

@@ -25,19 +25,24 @@ describe('invokeSkill', () => {
     expect(invokeSkill({ input: 'hello', registry: reg }).kind).toBe('passthrough')
   })
 
-  it('not_found → system_notice', () => {
+  it('not_found → rejected（带原因码与推荐）', () => {
     const reg = registryWith({})
     const r = invokeSkill({ input: '/missing', registry: reg })
-    expect(r.kind).toBe('system_notice')
-    if (r.kind === 'system_notice') {
-      expect(r.text).toContain('未找到')
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') {
+      expect(r.rejection.reason).toBe('not_found')
+      expect(r.rejection.skillName).toBe('missing')
     }
   })
 
-  it('not_user_invocable → system_notice', () => {
+  it('not_user_invocable → rejected', () => {
     const reg = registryWith({ x: md('x', 'b', 'user-invocable: false\n') })
     const r = invokeSkill({ input: '/x', registry: reg })
-    expect(r.kind).toBe('system_notice')
+    expect(r.kind).toBe('rejected')
+    if (r.kind === 'rejected') {
+      expect(r.rejection.reason).toBe('not_user_invocable')
+      expect(r.rejection.suggestions).toEqual([])
+    }
   })
 
   it('inject 展开 body', () => {

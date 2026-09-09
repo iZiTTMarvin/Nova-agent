@@ -39,6 +39,11 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
       get: () => undefined,
       list: () => []
     })
+  }),
+  ensureSkillRegistryForWorkspace: () => ({
+    listForContext: () => [],
+    get: () => undefined,
+    list: () => []
   })
 }))
 

@@ -77,14 +77,18 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
 
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: {
         skill: {
           onChange: vi.fn(() => () => {}),
-          list: vi.fn(() => []),
-          reload: vi.fn()
+          list: vi.fn(() =>
+            Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })
+          ),
+          reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] }))
         }
       }
     })
@@ -202,10 +206,12 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     resetChatStoreForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
     })
     // rAF 桩成不回调，隔离出 setInterval 轮询路径
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
@@ -287,10 +293,12 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
     resetChatStoreForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
     })
   })
 
@@ -368,10 +376,12 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     useRunStore.getState().resetForTests()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
     })
   })
 
@@ -553,10 +563,12 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     useRunStore.getState().resetForTests()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
     })
     // jsdom 未实现 scrollTo；发送成功追加消息会触发自动滚动 effect
     Object.defineProperty(window.HTMLElement.prototype, 'scrollTo', {
@@ -612,7 +624,8 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
   it('发送被接收即清空原稿，整轮结束不清空后来输入的补充', async () => {
     let finish!: () => void
     mockInvoke.mockImplementation((channel: string) => channel === 'send-message'
-      ? new Promise<void>(resolve => { finish = resolve }) : Promise.resolve(undefined))
+      ? new Promise<{ accepted: true }>(resolve => { finish = () => resolve({ accepted: true }) })
+      : Promise.resolve(undefined))
     const renderer = renderDom(React.createElement(ChatPanel))
     const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
     act(() => {
@@ -685,6 +698,43 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     expect(editable!.textContent ?? '').not.toContain('保留后成功发送的草稿')
     renderer.unmount()
   })
+
+  it('主进程本地拒绝无效 slash：草稿恢复、乐观消息回滚、展示原因与推荐', async () => {
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message'
+        ? { accepted: false, rejection: { reason: 'not_found', skillName: 'typo', suggestions: ['todo'] } }
+        : undefined
+    )
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const editable = renderer.container.querySelector(
+      '[contenteditable="true"]'
+    ) as HTMLElement | null
+
+    act(() => {
+      editable!.textContent = '/typo 参数'
+      editable!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const sendBtn = renderer.container.querySelector<HTMLElement>('[aria-label="发送"]')
+    await act(async () => {
+      sendBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 草稿恢复为发送文本，可直接修改重发
+    expect(editable!.textContent).toContain('/typo 参数')
+    // 乐观用户消息已回滚，只剩一条可见的拒绝原因
+    const state = useChatStore.getState()
+    expect(state.messages.filter(m => m.role === 'user')).toHaveLength(0)
+    const errors = state.messages.filter(m => m.isError)
+    expect(errors).toHaveLength(1)
+    expect(errors[0].content).toContain('未找到技能 /typo')
+    expect(errors[0].content).toContain('/todo')
+    expect(state.isGenerating).toBe(false)
+    expect(state.sendInFlight).toBe(false)
+    renderer.unmount()
+  })
 })
 
 /**
@@ -700,10 +750,12 @@ describe('ChatPanel → 阅读宽度冻结接口', () => {
     resetChatStoreForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
-      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => []), reload: vi.fn() } }
+      nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
     })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())

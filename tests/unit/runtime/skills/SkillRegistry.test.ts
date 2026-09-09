@@ -79,6 +79,20 @@ describe('SkillRegistry', () => {
     expect(reg.listForContext().length).toBe(30)
   })
 
+  it('上下文投影记录收录集与省略数，收录集按名称固定排序', () => {
+    for (let i = 0; i < 35; i++) {
+      writeSkill(globalDir, `s${i}`, md(`s${i}`, `d${i}`))
+    }
+    const reg = SkillRegistry.load({ globalDir, ...noBuiltin })
+    const projection = reg.getContextProjection()
+    expect(projection.eligible).toBe(35)
+    expect(projection.included).toHaveLength(30)
+    expect(projection.omittedCount).toBe(5)
+    const names = projection.included.map(s => s.name)
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
+    expect(reg.listForContext()).toEqual(projection.included)
+  })
+
   it('目录不存在时不崩溃', () => {
     const reg = SkillRegistry.load({ globalDir: join(tmpdir(), 'nonexistent-nova-skills'), ...noBuiltin })
     expect(reg.listForContext()).toEqual([])

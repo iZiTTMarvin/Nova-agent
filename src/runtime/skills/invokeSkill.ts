@@ -15,14 +15,6 @@ export interface InvokeSkillOptions {
 
 const DEFAULT_USER_PROMPT = '请按上述技能指令执行。'
 
-function buildNoticeText(reason: string, skillName: string, suggestions: string[]): string {
-  const lines = [`[系统提示] 无法调用技能 /${skillName}：${reason}`]
-  if (suggestions.length > 0) {
-    lines.push(`你是否想要：${suggestions.map(s => `/${s}`).join('、')}？`)
-  }
-  return lines.join('\n')
-}
-
 export function expandSkillBody(skill: SkillManifest, args: string | undefined, ctx: TemplateContext): string {
   const { content, warnings } = expandTemplate(skill.body, {
     ...ctx,
@@ -46,15 +38,14 @@ export function invokeSkill(opts: InvokeSkillOptions): SkillDispatchResult {
   }
 
   if (!parsed.found) {
-    const reasonMap = {
-      not_found: '未找到该技能',
-      not_user_invocable: '该技能不允许用户直接调用',
-      agent_not_allowed: '当前代理配置不允许使用该技能'
-    } as const
-    const reason = parsed.reason ? reasonMap[parsed.reason] : '未知原因'
+    // matched 且 !found 时 reason/skillName 恒有值（三条 found:false 分支都带）
     return {
-      kind: 'system_notice',
-      text: buildNoticeText(reason, parsed.skillName ?? '', parsed.suggestions)
+      kind: 'rejected',
+      rejection: {
+        reason: parsed.reason ?? 'not_found',
+        skillName: parsed.skillName ?? '',
+        suggestions: parsed.suggestions
+      }
     }
   }
 

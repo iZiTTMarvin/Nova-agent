@@ -22,7 +22,14 @@ import { loadModelConfig } from '../../../runtime/model/config'
 import { loadLlmRegistry } from '../../../runtime/model/config'
 import { resolveSupportsVision } from '../../../shared/config/types'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
-import type { SessionMessageAppend, SerializableContentBlock } from '../../../runtime/sessions/types'
+import type {
+  SessionData,
+  SessionMessageAppend,
+  SerializableContentBlock
+} from '../../../runtime/sessions/types'
+import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
+import type { IpcCommands } from '../../../shared/ipc/types'
+import type { SkillSlashRejection } from '../../../shared/skills/types'
 import type { MessageBlock, Mode, PermissionMode } from '../../../shared/session/types'
 import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
@@ -34,6 +41,7 @@ import { loadNovaSettings } from '../../../runtime/settings/novaSettings'
 import { syncTavilyApiKeyFromSettings } from '../../../runtime/settings/syncTavilyApiKey'
 import { subscribeObservationCapture } from '../../../runtime/memory/MemoryObservationBridge'
 import { getSessionStore } from '../../services/SessionStoreHost'
+import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { ensureObservationCaptureForSession } from '../../services/MemoryConsolidationHost'
 import { onUserTurnCompleteForExtract } from '../../services/MemoryExtractHost'
@@ -158,23 +166,8 @@ export interface SendAgentMessageDeps {
 export async function sendAgentMessage(
   params: SendAgentMessageParams,
   deps: SendAgentMessageDeps
-): Promise<void> {
+): Promise<IpcCommands['send-message']['result']> {
   const { getMainWindow, getModelClient, getImageStore } = deps
-
-  // 并发模型：不同会话可同时跑，同一会话同时最多一个 turn。
-  // 该会话已有占用 turn 的 run 时，按占用者决定处理方式：编排运行中直接拒绝并回运行态信号，
-  // 其余情况推入 steering queue 等当前 turn 结束后处理；其它会话不受影响。
-  if (handleEntryLock(params)) return
-
-  // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 本会话挂起的 askQuestion 请求，
-  // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
-  // 按会话过滤：并发下其它会话正在等待的提问不受影响。
-  dismissPendingAskQuestionsForSession(params.sessionId)
-
-  const modelClient = getModelClient()
-  if (!modelClient) {
-    throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
-  }
 
   const sessionStore = getSessionStore()
   recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
@@ -184,6 +177,33 @@ export async function sendAgentMessage(
   }
   if (session.kind === 'subagent') {
     throw new Error('Child Session 由父任务的执行服务管理，不能从普通消息入口启动新 turn')
+  }
+  const projectPath = session.workspaceRoot
+
+  // 无效 slash 在入口锁之前本地拒绝：不排队、不落盘、不建 run、不调模型。
+  // registry 先对齐本会话工作区，避免用错工作区的目录误拒项目技能。
+  const slashRejection = preflightSlashRejection(
+    params,
+    session,
+    ensureSkillRegistryForWorkspace(projectPath)
+  )
+  if (slashRejection) {
+    return { accepted: false, rejection: slashRejection }
+  }
+
+  // 并发模型：不同会话可同时跑，同一会话同时最多一个 turn。
+  // 该会话已有占用 turn 的 run 时，按占用者决定处理方式：编排运行中直接拒绝并回运行态信号，
+  // 其余情况推入 steering queue 等当前 turn 结束后处理；其它会话不受影响。
+  if (handleEntryLock(params)) return { accepted: true }
+
+  // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 本会话挂起的 askQuestion 请求，
+  // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
+  // 按会话过滤：并发下其它会话正在等待的提问不受影响。
+  dismissPendingAskQuestionsForSession(params.sessionId)
+
+  const modelClient = getModelClient()
+  if (!modelClient) {
+    throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
   }
 
   // Preflight：不得在这些可预见的输入错误前创建 run。
@@ -198,7 +218,6 @@ export async function sendAgentMessage(
     }
   }
 
-  const projectPath = session.workspaceRoot
   const sessionsDir = sessionStore.getSessionsDir()
   const novaSettings = loadNovaSettings()
 
@@ -232,7 +251,7 @@ export async function sendAgentMessage(
   // 可能同时通过入口检查。在装配 / 持久化 / startRun 前再查一次：若该 session 期间已被
   // 另一个 turn 占用，按同一套入口锁规则处理后直接返回，绝不产生同会话双 run。
   // 此处位于 try/finally 之前，return 不会触发任何清理副作用。
-  if (handleEntryLock(params)) return
+  if (handleEntryLock(params)) return { accepted: true }
 
   // session 持久化副作用留在 TurnService：factory 只装配，不写 session
   const promptCacheKey = sessionStore.ensureCacheRoutingKey(params.sessionId) ?? undefined
@@ -449,6 +468,11 @@ export async function sendAgentMessage(
     skillRegistry: prepared.skillRegistry,
     workspacePath: projectPath
   })
+  // 新发送已在入口锁前 preflight；此处兜底重发（regenerate 取叶子文本）的拒绝。
+  // 拒绝不落盘、不建 run、不进执行器。
+  if (turnRoute.kind === 'slash_rejected') {
+    return { accepted: false, rejection: turnRoute.rejection }
+  }
 
   // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
   if (!isRegenerate && persistContent !== null) {
@@ -566,6 +590,37 @@ export async function sendAgentMessage(
     // 同会话排队消息：当前 turn 终态后，取出队首发起新 turn（递归，FIFO）
     drainSteeringQueue(params.sessionId, deps)
   }
+  return { accepted: true }
+}
+
+/**
+ * slash 发送 preflight：无效输入在入口锁之前本地拒绝，不排队。
+ * regenerate 取激活叶子文本判定；含图片走 ContentBlock[]（passthrough），不拒绝。
+ * 叶子缺失等输入错误留给既有 preflight 抛错，这里只看 slash 本身。
+ */
+function preflightSlashRejection(
+  params: SendAgentMessageParams,
+  session: SessionData,
+  skillRegistry: SkillRegistry
+): SkillSlashRejection | null {
+  let text: string
+  if (params.regenerate === true) {
+    if (params.images && params.images.length > 0) return null
+    const activePath = getSessionActiveMessages(session)
+    const leafUser = activePath[activePath.length - 1]
+    if (!leafUser || leafUser.role !== 'user') return null
+    text = extractTextFromSerializableContent(leafUser.content)
+  } else {
+    if (params.images && params.images.length > 0) return null
+    text = params.content
+  }
+  const route = resolveAgentTurnRoute({
+    content: text,
+    mode: session.mode,
+    skillRegistry,
+    workspacePath: session.workspaceRoot
+  })
+  return route.kind === 'slash_rejected' ? route.rejection : null
 }
 
 /**

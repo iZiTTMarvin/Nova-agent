@@ -6,6 +6,7 @@
 import type { ContentBlock } from '../../model/types'
 import type { Mode } from '../../../shared/session/types'
 import type { RunKind } from '../../../shared/run/types'
+import type { SkillSlashRejection } from '../../../shared/skills/types'
 import type { SkillRegistry } from '../../skills/SkillRegistry'
 import type { SkillDispatchResult, SkillManifest } from '../../skills/types'
 import { invokeSkill } from '../../skills/invokeSkill'
@@ -16,13 +17,14 @@ import { invokeSkill } from '../../skills/invokeSkill'
  */
 export type AgentDispatch = Extract<
   SkillDispatchResult,
-  { kind: 'passthrough' | 'inject' | 'system_notice' }
+  { kind: 'passthrough' | 'inject' }
 >
 
 /** 已解析的 Turn 路由（不可变事实，只负责分类） */
 export type AgentTurnRoute =
   | { kind: 'agent'; dispatch: AgentDispatch }
   | { kind: 'skill_fork'; skill: SkillManifest; args: string }
+  | { kind: 'slash_rejected'; rejection: SkillSlashRejection }
 
 export interface ResolveTurnRouteInput {
   content: string | ContentBlock[]
@@ -65,7 +67,12 @@ export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRo
     return { kind: 'skill_fork', skill: dispatch.skill, args: dispatch.args }
   }
 
-  // inject / system_notice / passthrough → agent
+  // 无效 slash 由发送边界本地拒绝，不进入执行器
+  if (dispatch.kind === 'rejected') {
+    return { kind: 'slash_rejected', rejection: dispatch.rejection }
+  }
+
+  // inject / passthrough → agent
   return { kind: 'agent', dispatch }
 }
 

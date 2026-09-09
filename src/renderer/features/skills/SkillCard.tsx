@@ -2,7 +2,7 @@
  * SkillCard — 设置页技能列表项
  */
 import React from 'react'
-import type { SkillSummary } from '../../../shared/skills/types'
+import type { SkillCatalogDiagnostic, SkillSummary } from '../../../shared/skills/types'
 import { skillSourceLabel, skillsI18n } from './i18n'
 import { Button } from '@astryxdesign/core/Button'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
@@ -10,15 +10,19 @@ import './SkillCard.css'
 
 export interface SkillCardProps {
   skill: SkillSummary
+  diagnostics?: SkillCatalogDiagnostic[]
   onToggle: (name: string, enabled: boolean) => void
   onUse: (name: string) => void
+  onExport: (name: string) => void
   onDelete?: (name: string) => void
 }
 
 export const SkillCard: React.FC<SkillCardProps> = ({
   skill,
+  diagnostics,
   onToggle,
   onUse,
+  onExport,
   onDelete
 }) => {
   const canDelete = skill.source === 'global' || skill.source === 'project'
@@ -48,12 +52,27 @@ export const SkillCard: React.FC<SkillCardProps> = ({
         )}
       </div>
       <p className="skill-card__desc">{skill.descriptionZh || skill.description}</p>
+      {diagnostics && diagnostics.length > 0 && (
+        <ul className="skill-card__diagnostics">
+          {diagnostics.map((d, i) => (
+            <li key={`${d.code}:${i}`} className="skill-card__diagnostic">
+              {d.message}
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="skill-card__actions">
         <Button
           label={skillsI18n.use}
           variant="secondary"
           size="sm"
           onClick={() => onUse(skill.name)}
+        />
+        <Button
+          label={skillsI18n.export}
+          variant="ghost"
+          size="sm"
+          onClick={() => onExport(skill.name)}
         />
         {canDelete && onDelete && (
           <Button

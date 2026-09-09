@@ -63,6 +63,24 @@ describe('parseSlashCommand', () => {
     expect(r.reason).toBe('not_user_invocable')
   })
 
+  it('invalid 技能按不可调用拒绝，不进入 inject', () => {
+    const dir = join(tmpdir(), `slash-invalid-${Date.now()}`)
+    mkdirSync(join(dir, 'bad-skill'), { recursive: true })
+    writeFileSync(join(dir, 'bad-skill', 'SKILL.md'), '---\nname: bad-skill\n---\n')
+    const reg = SkillRegistry.load({ globalDir: dir, builtinDir: join(dir, 'empty-builtin') })
+    const r = parseSlashCommand('/bad-skill', reg)
+    expect(r.matched).toBe(true)
+    expect(r.found).toBe(false)
+    expect(r.reason).toBe('not_user_invocable')
+  })
+
+  it('hidden 技能不作为用户 slash 命中', () => {
+    const reg = makeRegistry({ orch: md('orch', 'd', 'hidden: true\n') })
+    const r = parseSlashCommand('/orch', reg)
+    expect(r.found).toBe(false)
+    expect(r.reason).toBe('not_user_invocable')
+  })
+
   it('agent_not_allowed', () => {
     const reg = makeRegistry({ explore: md('explore', 'd', 'agent: explore\n') })
     const r = parseSlashCommand('/explore', reg, 'default')

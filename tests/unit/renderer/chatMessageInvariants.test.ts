@@ -31,7 +31,9 @@ describe('chat message invariants baseline', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockInvoke.mockReset()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     resetAgentStoreForTests()
     resetChatStoreForTests()
     resetWorkspaceStoreForTests()
@@ -443,7 +445,7 @@ describe('chat message invariants baseline', () => {
           messages: []
         }
       }
-      if (channel === 'send-message') return undefined
+      if (channel === 'send-message') return { accepted: true }
       return undefined
     })
 

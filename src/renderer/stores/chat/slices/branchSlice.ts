@@ -6,6 +6,7 @@ import {
   resetDiffProjectionForBranchChange,
   setRollbackErrorPatch
 } from '../internal'
+import { slashRejectionText } from '../../../lib/slashRejection'
 
 export function initialBranchState(): Pick<
   BranchSliceState,
@@ -87,11 +88,13 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
       set({ pendingBranchMetaReload: true })
 
       try {
-        await window.api.invoke('send-message', {
+        const result = await window.api.invoke('send-message', {
           sessionId,
           content: '',
           regenerate: true
         })
+        // 重发叶子是已失效 slash 时走同一回滚路径展示原因
+        if (!result.accepted) throw new Error(slashRejectionText(result.rejection))
       } catch (err) {
         set({
           ...commitMessageList(get(), {
@@ -123,11 +126,12 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
     set({ pendingBranchMetaReload: true, isGenerating: true, sendInFlight: true, activeAgentSessionId: sessionId })
 
     try {
-      await window.api.invoke('send-message', {
+      const result = await window.api.invoke('send-message', {
         sessionId,
         content: '',
         regenerate: true
       })
+      if (!result.accepted) throw new Error(slashRejectionText(result.rejection))
     } catch (err) {
       set({
         branchForkInProgress: false,

@@ -67,7 +67,7 @@ import {
 } from '../../../runtime/memory'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { RunCoordinator } from '../../../runtime/run/RunCoordinator'
-import { getSkillService } from '../../services/SkillServiceHost'
+import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getMemoryRetrievalService } from '../../services/MemoryServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { activeStreams } from '../events'
@@ -222,11 +222,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     persistedConfig?.supportsVision
   )
 
-  const skillService = getSkillService()
-  if (skillService.getWorkspaceRoot() !== projectPath) {
-    skillService.load(projectPath)
-  }
-  const skillRegistry = skillService.getRegistry()
+  const skillRegistry = ensureSkillRegistryForWorkspace(projectPath)
 
   const projectRules = discoverProjectRules(projectPath)?.text ?? ''
   /** 行为契约层：模板化 base rules，与模式指令（挂 user 尾部）分离以保缓存前缀稳定 */

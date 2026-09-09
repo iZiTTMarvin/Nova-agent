@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { execSync } from 'child_process'
-import { SkillService } from '../../../../src/runtime/skills/SkillService'
+import { SkillService, toCatalogDiagnostics } from '../../../../src/runtime/skills/SkillService'
+import { extractZip, findSkillRoot, validateSkillDirectory } from '../../../../src/runtime/skills/skillZip'
 import { saveNovaSettings } from '../../../../src/runtime/settings/novaSettings'
 
 const md = (name: string, desc: string) =>
@@ -102,9 +103,29 @@ describe('SkillService', () => {
     expect(service2.get('my-global')?.enabled).toBe(false)
   })
 
-  it('export stub 抛出未实现', () => {
+  it('export 打包技能目录并补全 .zip 后缀', async () => {
     service.load(null)
-    expect(() => service.export('my-global')).toThrow(/尚未实现/)
+    const zipPath = await service.export('my-global', join(tmpdir(), `nova-export-${Date.now()}`))
+    expect(zipPath.endsWith('.zip')).toBe(true)
+    expect(existsSync(zipPath)).toBe(true)
+
+    const extractDir = join(tmpdir(), `nova-export-out-${Date.now()}`)
+    await extractZip(zipPath, extractDir)
+    expect(validateSkillDirectory(findSkillRoot(extractDir)).name).toBe('my-global')
+
+    rmSync(zipPath, { force: true })
+    rmSync(extractDir, { recursive: true, force: true })
+  })
+
+  it('export 不存在的技能或缺 SKILL.md 时报错', async () => {
+    service.load(null)
+    await expect(service.export('no-such-skill', join(tmpdir(), 'x'))).rejects.toThrow(/不存在/)
+
+    service.create({ name: 'broken-export', description: 'd', body: 'x', location: 'global' })
+    rmSync(join(globalDir, 'broken-export', 'SKILL.md'))
+    await expect(
+      service.export('broken-export', join(tmpdir(), `nova-export-${Date.now()}`))
+    ).rejects.toThrow(/缺少 SKILL.md/)
   })
 
   it('import 从 zip 解压并写入 global 目录', async () => {
@@ -170,5 +191,74 @@ describe('SkillService', () => {
 
     service.load(null)
     expect(service.get('proj-only')).toBeNull()
+  })
+
+  it('目录诊断覆盖加载失败与来源遮蔽，且排序稳定', () => {
+    // 无效 frontmatter：无 description 且正文为空；带 agent 字段也不叠加次级诊断
+    const badDir = join(globalDir, 'bad-skill')
+    mkdirSync(badDir, { recursive: true })
+    writeFileSync(join(badDir, 'SKILL.md'), '---\nname: bad-skill\nagent: compose\n---\n')
+    // 同名遮蔽：global 覆盖 builtin
+    const dupDir = join(globalDir, 'onboard')
+    mkdirSync(dupDir, { recursive: true })
+    writeFileSync(join(dupDir, 'SKILL.md'), md('onboard', 'global override'))
+    // 模式受限：仅 compose 可用
+    const gatedDir = join(globalDir, 'compose-only')
+    mkdirSync(gatedDir, { recursive: true })
+    writeFileSync(
+      join(gatedDir, 'SKILL.md'),
+      '---\nname: compose-only\ndescription: gated\nagent: compose\n---\nbody'
+    )
+
+    service.load(null)
+    service.toggle('my-global', false)
+    const diagnostics = toCatalogDiagnostics(service.getRegistry())
+
+    const loadError = diagnostics.find(d => d.code === 'load_error' && d.skillName === 'bad-skill')
+    expect(loadError).toBeDefined()
+    expect(loadError?.path).toContain('bad-skill')
+    expect(
+      diagnostics.filter(d => d.skillName === 'bad-skill').every(d => d.code === 'load_error')
+    ).toBe(true)
+
+    const shadowed = diagnostics.find(d => d.code === 'shadowed' && d.skillName === 'onboard')
+    expect(shadowed?.message).toContain('builtin')
+
+    const restricted = diagnostics.find(
+      d => d.code === 'profile_restricted' && d.skillName === 'compose-only'
+    )
+    expect(restricted?.message).toContain('compose')
+
+    const disabled = diagnostics.find(
+      d => d.code === 'model_disabled' && d.skillName === 'my-global'
+    )
+    expect(disabled).toBeDefined()
+
+    const keys = diagnostics.map(d => d.skillName ?? d.path ?? '')
+    expect([...keys].sort((a, b) => a.localeCompare(b))).toEqual(keys)
+
+    // 目录列表本身按名称稳定排序
+    const names = service.list().map(s => s.name)
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
+  })
+
+  it('模型预算超限时给出省略诊断与结构化投影', () => {
+    for (let i = 0; i < 33; i++) {
+      const dir = join(globalDir, `bulk-${i}`)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'SKILL.md'), md(`bulk-${i}`, `bulk ${i}`))
+    }
+    service.load(null)
+
+    // 可能叠加真实第三方目录，只断言超限与数字一致性
+    const budget = service.getModelBudget()
+    expect(budget.cap).toBe(30)
+    expect(budget.eligible).toBeGreaterThan(30)
+
+    const diag = toCatalogDiagnostics(service.getRegistry()).find(d => d.code === 'budget_omitted')
+    expect(diag).toBeDefined()
+    expect(diag?.message).toContain('30')
+    expect(diag?.message).toContain(String(budget.eligible))
+    expect(diag?.skillName).toBeUndefined()
   })
 })

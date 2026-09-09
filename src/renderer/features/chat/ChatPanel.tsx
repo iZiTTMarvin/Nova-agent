@@ -60,7 +60,7 @@ import {
   type ImageAttachment
 } from '../../lib/image-attachments'
 import { createComposerSkillTrigger } from '../skills/composerSkillTrigger'
-import { useSkillsStore } from '../skills/store'
+import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
 import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
@@ -230,8 +230,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
+  const skillsLoading = useSkillsStore(state => state.loading)
+  const skillsError = useSkillsStore(state => state.error)
+  const skillsDiagnostics = useSkillsStore(state => state.diagnostics)
   const refreshSkills = useSkillsStore(state => state.refresh)
-  const setSkills = useSkillsStore(state => state.setSkills)
+  const setSnapshot = useSkillsStore(state => state.setSnapshot)
   const composerInputHandleRef = useRef<ChatComposerInputHandle>(null)
   const isComposeSession = currentSession?.mode === 'compose'
 
@@ -246,11 +249,29 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const composerBoxRef = useRef<HTMLDivElement>(null)
   const slashSkillsRef = useRef(slashSkills)
   slashSkillsRef.current = slashSkills
+  const skillsDiagnosticsRef = useRef(skillsDiagnostics)
+  skillsDiagnosticsRef.current = skillsDiagnostics
 
-  // skills 变更时不重建 trigger，避免打断已打开的 `/` 菜单。
+  // 空态文案按可用性区分：加载失败、无可用技能、有技能但无匹配是三种状态。
+  // trigger 只在文案类别翻转时重建，日常 skills 变更不重建，避免打断已打开的 `/` 菜单。
+  const hasUsableSkill = toUserInvocableSkills(slashSkills).length > 0
+  const skillEmptyText = skillsError
+    ? '技能目录加载失败'
+    : hasUsableSkill ? '没有匹配的技能' : '暂无可用技能'
+  // `+` 菜单项与受控 `/` 插入共用同一门控：刷新中、失败或无可用时禁用并给出原因。
+  const skillsEntryState = skillsLoading
+    ? { disabled: true, reason: '技能目录刷新中…' }
+    : skillsError
+      ? { disabled: true, reason: '技能目录加载失败' }
+      : !hasUsableSkill
+        ? { disabled: true, reason: '暂无可用技能' }
+        : { disabled: false, reason: undefined }
   const skillTrigger = useMemo(
-    () => createComposerSkillTrigger(() => slashSkillsRef.current),
-    []
+    () => createComposerSkillTrigger(() => slashSkillsRef.current, {
+      emptySearchResultsText: skillEmptyText,
+      getDiagnostics: () => skillsDiagnosticsRef.current
+    }),
+    [skillEmptyText]
   )
   const composerTriggers = useMemo<ChatComposerTrigger[]>(
     () => [skillTrigger],
@@ -260,13 +281,14 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
   useEffect(() => {
     void refreshSkills()
-    const unsub = window.nova.skill.onChange(list => setSkills(list))
+    const unsub = window.nova.skill.onChange(snapshot => setSnapshot(snapshot))
     return unsub
-  }, [refreshSkills, setSkills])
+  }, [refreshSkills, setSnapshot])
 
   useEffect(() => {
     if (currentProject) {
-      void window.nova.skill.reload(currentProject)
+      // 失败由 skill:changed 错误快照广播，这里只避免未处理拒绝
+      void window.nova.skill.reload(currentProject).catch(() => {})
     }
   }, [currentProject])
 
@@ -562,6 +584,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       setInputVal(current => current === inputVal ? '' : current)
       setImageAttachments(current => current === images ? [] : current)
     }
+    // 本地拒绝恢复草稿：只在输入框仍空时回填，避免覆盖用户新输入
+    const restoreRejectedDraft = (rejectedText: string) => {
+      if (useChatStore.getState().currentSessionId !== sendingSessionId) return
+      setInputVal(current => current === '' ? rejectedText : current)
+    }
 
     // 用户主动发送：无论之前是否上滚离开底部，都恢复跟随，让用户看到自己刚发的消息。
     autoScrollModeRef.current = 'stream'
@@ -589,7 +616,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     // 旧轮次已结束（dismiss 后 message_end 先到）：直接发送，避免消息滞留队列。
     // sendMessage 返回 false 表示被守卫拦截（如分叉准备窗口、缺工作区），
     // 此时必须保留草稿，不能让用户刚输入的内容凭空消失。
-    await sendMessage(text, images, { onAccepted: clearAcceptedDraft })
+    await sendMessage(text, images, { onAccepted: clearAcceptedDraft, onRejected: restoreRejectedDraft })
   }
 
   /**
@@ -600,12 +627,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Enter' || e.shiftKey || e.altKey) return
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
-    // 触发菜单打开但未消费 Enter（无高亮/无结果）时，禁止把草稿当消息发出。
+    // 菜单打开时不发送：高亮项的 Enter 交给官方 trigger；无高亮也不要把草稿当消息发出。
     if (e.currentTarget.getAttribute('aria-expanded') === 'true') {
       e.preventDefault()
-      e.currentTarget.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-      )
       return
     }
     e.preventDefault()
@@ -613,7 +637,14 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }
 
   const handleSlashButton = () => {
-    setInputVal(prev => (prev.startsWith('/') ? prev : `/${prev}`))
+    if (skillsEntryState.disabled) return
+    // 官方 trigger 靠输入 `/` 打开同一份 Palette。空草稿才写入触发符；
+    // 已有非 slash 内容不改写，避免把「hello」变成「/hello」。
+    setInputVal(prev => {
+      if (prev.startsWith('/')) return prev
+      if (prev.trim() === '') return '/'
+      return prev
+    })
     requestAnimationFrame(() => {
       composerInputHandleRef.current?.focus()
     })
@@ -1048,6 +1079,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                     supportsVision={supportsVision}
                     onSelectImage={() => fileInputRef.current?.click()}
                     onSelectSkills={handleSlashButton}
+                    skillsDisabled={skillsEntryState.disabled}
+                    skillsDisabledReason={skillsEntryState.reason}
                   />
                   {currentSession && (
                     <PermissionModeButton

@@ -69,6 +69,21 @@
   overflow: hidden;
 }
 
+.skill-card__diagnostics {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skill-card__diagnostic {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 .skill-card__actions {
   display: flex;
   gap: 8px;

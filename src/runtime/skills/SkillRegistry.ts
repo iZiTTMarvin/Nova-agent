@@ -4,7 +4,12 @@
  */
 import { join } from 'path'
 import { homedir } from 'os'
-import { SkillLoader, resolveDevBuiltinDir, type SkillLoaderOptions } from './SkillLoader'
+import {
+  SkillLoader,
+  resolveDevBuiltinDir,
+  type SkillContextProjection,
+  type SkillLoaderOptions
+} from './SkillLoader'
 import type { LoadError, SkillManifest, SkillSource } from './types'
 
 export interface SkillRegistryLoadOptions extends SkillLoaderOptions {
@@ -81,6 +86,10 @@ export class SkillRegistry {
 
   listForContext(profile?: string): SkillManifest[] {
     return this.loader.listForContext(profile)
+  }
+
+  getContextProjection(profile?: string): SkillContextProjection {
+    return this.loader.listForContextProjection(profile)
   }
 
   listUserInvocable(): SkillManifest[] {

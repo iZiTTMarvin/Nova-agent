@@ -2,6 +2,7 @@ import type { MessageBlock } from '../../../../shared/session/types'
 import type { ExtendedMessage } from '../types'
 import { MAX_PENDING_MESSAGES } from '../constants'
 import { commitMessageList, dispatchNextPendingMessage, setRollbackErrorPatch } from '../internal'
+import { slashRejectionText } from '../../../lib/slashRejection'
 import type { ChatSliceCreator, SendSliceState } from '../types'
 
 export function initialSendState(): Pick<SendSliceState, 'sendInFlight' | 'pendingUserMessages'> {
@@ -82,7 +83,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
     options?.onAccepted?.()
     try {
       // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
-      await window.api.invoke('send-message', {
+      const result = await window.api.invoke('send-message', {
         sessionId: activeSessionId,
         content,
         userMessageId: userMsg.id,
@@ -92,6 +93,24 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
           mimeType: img.mimeType
         }))
       })
+      if (!result.accepted) {
+        // 本地拒绝：输入未落盘。普通发送移除乐观用户消息、恢复草稿，
+        // 错误消息跳过对账直接展示（无落盘就无可对账的新状态）；
+        // 分叉延续发送仍抛给快照回滚统一路径。
+        if (!options?.rollbackSnapshot) {
+          set(state => ({
+            ...commitMessageList(state, {
+              nextMessages: state.messages.filter(m => m.id !== userMsg.id),
+              skipWindowTrim: true
+            })
+          }))
+          options?.onRejected?.(content)
+          set({ sendInFlight: false, activeAgentSessionId: null, isGenerating: false })
+          await get().handleError('msg_err_' + Date.now(), slashRejectionText(result.rejection), { skipReconcile: true })
+          return true
+        }
+        throw new Error(slashRejectionText(result.rejection))
+      }
     } catch (err) {
       if (options?.rollbackSnapshot) {
         set({

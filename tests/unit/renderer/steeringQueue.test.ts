@@ -37,7 +37,9 @@ describe('Steering Queue', () => {
   })
 
   it.each(['message_end', 'cancel_fallback'])('暂停边界 %s 保留队列，显式继续才发出', async (boundary) => {
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     useChatStore.getState().handleMessageStart('paused')
     useChatStore.getState().enqueuePendingMessage('补充要求', [])
     if (boundary === 'message_end') await useChatStore.getState().handleMessageEnd('paused', true)
@@ -79,7 +81,9 @@ describe('Steering Queue', () => {
     expect(useChatStore.getState().pendingUserMessages).toHaveLength(1)
 
     // 3. 主进程推 message-end（正常完成）
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     await useChatStore.getState().handleMessageEnd('msg_running')
 
     // 4. 队列首条应被 dispatch 触发 sendMessage
@@ -97,7 +101,9 @@ describe('Steering Queue', () => {
     useChatStore.getState().enqueuePendingMessage('Q1', [])
     useChatStore.getState().enqueuePendingMessage('Q2', [])
 
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     await useChatStore.getState().handleMessageEnd('msg_main')
 
     // 第一次 dispatch 把 Q1 发出，会创建新的 user 消息 + 设置 isGenerating
@@ -122,7 +128,9 @@ describe('Steering Queue', () => {
   })
 
   it('dispatch 发送被守卫拒绝：消息放回队首，不丢失、不重复发送', async () => {
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     useChatStore.getState().handleMessageStart('msg_reject')
     useChatStore.getState().enqueuePendingMessage('Q1', [])
     useChatStore.getState().enqueuePendingMessage('Q2', [])
@@ -144,7 +152,9 @@ describe('Steering Queue', () => {
   })
 
   it('dispatch 发送抛错：消息放回队首等下次派发', async () => {
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     useChatStore.getState().handleMessageStart('msg_throw')
     useChatStore.getState().enqueuePendingMessage('Q1', [])
     useChatStore.getState().enqueuePendingMessage('Q2', [])

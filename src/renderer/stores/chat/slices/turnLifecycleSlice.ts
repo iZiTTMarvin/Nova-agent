@@ -160,7 +160,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
     await get().finishBranchMetaRefresh()
   },
 
-  handleError: async (messageId: string, error: string) => {
+  handleError: async (messageId: string, error: string, opts?: { skipReconcile?: boolean }) => {
     const displayError = formatTerminalErrorMessage(error)
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
@@ -236,7 +236,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       }
     })
 
-    if (currentSessionId) {
+    if (currentSessionId && !opts?.skipReconcile) {
       try {
         await reconcileFocusedSession({ getState: get, setState: set }, currentSessionId)
       } catch (reloadError) {

@@ -31,7 +31,9 @@ describe('branchSlice', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockInvoke.mockReset()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     resetChatStoreForTests()
     resetWorkspaceStoreForTests()
     useWorkspaceStore.setState({ currentProjectPath: '/tmp/project' })
@@ -62,6 +64,30 @@ describe('branchSlice', () => {
       Object.fromEntries(messages.map((m, i) => [m.id, i]))
     )
     expect(state.rollbackErrors.msg_3).toBe('IPC 断开')
+    expect(state.branchForkInProgress).toBe(false)
+    expect(state.isGenerating).toBe(false)
+    expect(state.pendingBranchMetaReload).toBe(false)
+  })
+
+  it('regenerateAssistant 叶子 slash 已失效时回滚并展示拒绝原因', async () => {
+    const messages = seedMessages(4)
+    vi.spyOn(useWorkspaceStore.getState(), 'prepareRegenerate').mockResolvedValue()
+    vi.spyOn(useWorkspaceStore.getState(), 'bumpMessagesRevision').mockResolvedValue()
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'send-message') {
+        return {
+          accepted: false,
+          rejection: { reason: 'not_found', skillName: 'gone', suggestions: [] }
+        }
+      }
+      return undefined
+    })
+
+    await useChatStore.getState().regenerateAssistant('sess-1', 'msg_3')
+
+    const state = useChatStore.getState()
+    expect(state.messages).toEqual(messages)
+    expect(state.rollbackErrors.msg_3).toContain('未找到技能 /gone')
     expect(state.branchForkInProgress).toBe(false)
     expect(state.isGenerating).toBe(false)
     expect(state.pendingBranchMetaReload).toBe(false)
@@ -122,7 +148,9 @@ describe('branchSlice', () => {
     expect(rejected).toBe(false)
     expect(mockInvoke).not.toHaveBeenCalled()
 
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message' ? { accepted: true } : undefined
+    )
     const allowed = await useChatStore.getState().sendMessage('延续发送', [], {
       rollbackSnapshot: { messages: [], messageIndexById: {} }
     })

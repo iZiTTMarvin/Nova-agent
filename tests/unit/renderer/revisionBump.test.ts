@@ -98,7 +98,7 @@ describe('_revision bump', () => {
     const { useWorkspaceStore } = await import('../../../src/renderer/stores/useWorkspaceStore')
     useWorkspaceStore.setState({ currentProjectPath: '/test/project' })
 
-    vi.mocked(mockInvoke).mockResolvedValue(undefined)
+    vi.mocked(mockInvoke).mockResolvedValue({ accepted: true })
     await useChatStore.getState().sendMessage('hello')
     const userMsg = useChatStore.getState().messages[0]
     expect(userMsg.role).toBe('user')

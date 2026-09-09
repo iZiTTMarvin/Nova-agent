@@ -9,8 +9,16 @@ import { parseSkillMarkdown } from './frontmatter'
 import type { LoadError, SkillManifest, SkillSource } from './types'
 
 const SKILL_FILE = 'SKILL.md'
-const MAX_CONTEXT_SKILLS = 30
+/** 单会话模型上下文收录技能上限（条数） */
+export const MAX_CONTEXT_SKILLS = 30
 const SKIP_DIRS = new Set(['node_modules', '.git', '.archive'])
+
+/** 模型上下文投影：收录集固定按名称排序，省略数明确记录 */
+export interface SkillContextProjection {
+  included: SkillManifest[]
+  eligible: number
+  omittedCount: number
+}
 
 /** 各来源优先级（数值越大越优先） */
 export const SOURCE_PRIORITY: Record<SkillSource, number> = {
@@ -26,7 +34,7 @@ export interface SkillLoaderOptions {
   builtinDir?: string
   globalDir?: string
   projectDir?: string
-  /** 第三方 Claude skill 缓存目录（Task 13 写入，MVP 可选传入） */
+  /** 第三方 Claude skill 缓存目录，可选 */
   thirdPartyDir?: string
 }
 
@@ -241,14 +249,25 @@ export class SkillLoader {
     return [...this.skills.values()]
   }
 
-  /** 模型可见技能：enabled + modelInvocable + agent 域 + 上限 30。 */
+  /** 模型可见技能：enabled + modelInvocable + agent 域 + 上限 30，按名称固定排序。 */
   listForContext(profile?: string): SkillManifest[] {
-    const filtered = [...this.skills.values()].filter(s => {
-      if (!s.enabled || !s.modelInvocable || s.invalid) return false
-      if (s.hidden) return false
-      return SkillLoader.isAgentAllowed(s, profile)
-    })
-    return filtered.slice(0, MAX_CONTEXT_SKILLS)
+    return this.listForContextProjection(profile).included
+  }
+
+  /** 与 listForContext 同一选择逻辑的结构化投影（收录集/总数/省略数） */
+  listForContextProjection(profile?: string): SkillContextProjection {
+    const eligible = [...this.skills.values()]
+      .filter(s => {
+        if (!s.enabled || !s.modelInvocable || s.invalid) return false
+        if (s.hidden) return false
+        return SkillLoader.isAgentAllowed(s, profile)
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return {
+      included: eligible.slice(0, MAX_CONTEXT_SKILLS),
+      eligible: eligible.length,
+      omittedCount: Math.max(0, eligible.length - MAX_CONTEXT_SKILLS)
+    }
   }
 
   /** 用户可 slash 调用的技能（不含 hidden） */

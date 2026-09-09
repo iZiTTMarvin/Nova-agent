@@ -62,6 +62,7 @@
     "sharp": "^0.34.5",
     "web-tree-sitter": "0.26.12",
     "yauzl": "^3.4.0",
+    "yazl": "^3.3.1",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
@@ -71,6 +72,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/yauzl": "^3.3.0",
+    "@types/yazl": "^3.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@vscode/tree-sitter-wasm": "0.3.1",
     "autoprefixer": "^10.5.0",

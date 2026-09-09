@@ -4,7 +4,7 @@
  * - 每种 route 都调用且仅调用对应执行器，参数原样透传；
  * - 执行器抛错原样向上传播（终态归 AgentLoop finalizer，dispatcher 不吞错、不转译）；
  * - route 与执行器不匹配时 fail closed；
- * - agent 路径把 inject / system_notice / passthrough 规范化为声明式 continue 结果；
+ * - agent 路径把 inject / passthrough 规范化为声明式 continue 结果；
  * - dispatcher 构造依赖中没有 EventBus / CheckpointManager，结构上不可能发终态事件
  *   或操作 checkpoint，测试以"返回值为纯数据"锁定该契约。
  */
@@ -161,17 +161,15 @@ describe('TurnDispatcher agent 路径规范化（continue）', () => {
     }
   })
 
-  it('system_notice：通知文本作为 userContent/userText', async () => {
+  it('slash_rejected：发送边界必须先过滤，执行器收到即 fail closed', async () => {
     const dispatcher = new TurnDispatcher({})
-    const outcome = await dispatcher.dispatch(
-      '/none',
-      { kind: 'agent', dispatch: { kind: 'system_notice', text: '[系统提示] 无法调用技能' } },
-      dispatchCtx()
+    const route = {
+      kind: 'slash_rejected' as const,
+      rejection: { reason: 'not_found' as const, skillName: 'none', suggestions: [] }
+    }
+    expect(() => dispatcher.assertRouteExecutable(route)).toThrow(/发送边界必须先过滤/)
+    await expect(dispatcher.dispatch('/none', route, dispatchCtx())).rejects.toThrow(
+      /发送边界必须先过滤/
     )
-    expect(outcome).toEqual({
-      kind: 'continue',
-      userContent: '[系统提示] 无法调用技能',
-      userText: '[系统提示] 无法调用技能'
-    })
   })
 })

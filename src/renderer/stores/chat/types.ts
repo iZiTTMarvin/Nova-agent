@@ -150,7 +150,12 @@ export interface TurnLifecycleSliceState {
    * 调用方拿到 Promise resolve 时 store 状态已稳定（pending 已 dispatch）。
    */
   handleMessageEnd: (messageId: string, interrupted?: boolean) => Promise<void>
-  handleError: (messageId: string, error: string) => Promise<void>
+  /**
+   * 展示终态错误。skipReconcile 仅用于发送前本地拒绝：
+   * 输入未落盘，主进程无可对账的新状态，跳过 load-session 重载，
+   * 否则刚追加的本地错误消息会被权威快照擦掉。
+   */
+  handleError: (messageId: string, error: string, opts?: { skipReconcile?: boolean }) => Promise<void>
 
   /**
    * 把当前所有 running tool 块标记为 error（"用户取消执行"）。
@@ -197,6 +202,8 @@ export interface SendSliceState {
     images?: ImageAttachment[],
     options?: {
       onAccepted?: () => void
+      /** 主进程本地拒绝 slash 时恢复草稿（仅普通发送；分叉延续发送不碰 composer 草稿） */
+      onRejected?: (text: string) => void
       rollbackSnapshot?: { messages: ExtendedMessage[]; messageIndexById: Record<string, number> }
     }
   ) => Promise<boolean>

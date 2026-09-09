@@ -32,12 +32,6 @@
   font-weight: 500;
 }
 
-.composer-skill-trigger__kind {
-  font-weight: 500;
-  color: var(--text-muted);
-  font-size: var(--font-size-caption, 12px);
-}
-
 .composer-skill-trigger__desc {
   font-size: var(--font-size-caption, 12px);
   color: var(--text-muted);
@@ -46,4 +40,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.composer-skill-trigger__note {
+  margin-left: 6px;
+  color: var(--text-secondary, #6b6760);
 }

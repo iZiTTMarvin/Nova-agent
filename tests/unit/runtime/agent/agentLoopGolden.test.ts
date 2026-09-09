@@ -11,7 +11,7 @@
  *  3. 单工具调用（XML）        12. 主动阈值压缩
  *  4. 多工具并行               13. 重复失败熔断
  *  5. XML 兜底解析             14. maxToolRounds 上限
- *  6. native 空参修复          15. skill fork/inject/system_notice/passthrough
+ *  6. native 空参修复          15. skill fork/inject/passthrough
  *  7. 权限 ask → 允许/拒绝     16. cancel 主流程
  *  8. 权限打断（cancel）       17. error 态不启动 idleTimer
  *  9. 模型瞬时错误重试         18. context_breakdown 兜底
@@ -872,13 +872,13 @@ describe('恢复预算与正常工具续轮隔离', () => {
 })
 
 // ============================================================
-// 场景 15：skill fork / inject / system_notice / passthrough
-// 需要构造 SkillRegistry。为避免依赖完整 skill 子系统，这里验证 dispatch 的四条分支
-// 对事件序列的影响：passthrough / system_notice / inject 走默认模型调用路径；
+// 场景 15：skill fork / inject / passthrough（rejected 由发送边界过滤，不进 loop）
+// 需要构造 SkillRegistry。为避免依赖完整 skill 子系统，这里验证 dispatch 分支
+// 对事件序列的影响：passthrough / inject 走默认模型调用路径；
 // fork 在 runSkillForkDeps 缺失时退化为 passthrough。
-// 重点断言：四种输入都能正常走到 message_start → ... → message_end。
+// 重点断言：输入能正常走到 message_start → ... → message_end。
 // ============================================================
-describe('黄金测试 §9.15 skill 调度四分支', () => {
+describe('黄金测试 §9.15 skill 调度分支', () => {
   it('passthrough（无 registry）→ 走默认路径，正常 message_start/end', async () => {
     const client = new MockModelClient()
     client.addResponse({

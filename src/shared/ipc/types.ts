@@ -17,8 +17,12 @@ import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
 import type { ComposePlanApproval, ComposeStageAction, ComposeStageEntry } from '../composeLifecycle'
 import type {
+  SkillCatalogSnapshot,
+  SkillSlashRejection,
   SkillSummary,
   SkillCreateInput,
+  SkillExportInput,
+  SkillExportResult,
   SkillImportInput,
   SkillReloadResult
 } from '../skills/types'
@@ -160,7 +164,11 @@ export interface IpcCommands {
       /** true 时跳过用户消息 append，从当前 leaf（user）取内容重新生成 assistant */
       regenerate?: boolean
     }
-    result: void
+    /**
+     * accepted 为 false 时输入未落盘、未建 run、未调模型；
+     * renderer 回滚乐观消息、恢复草稿并展示 rejection。
+     */
+    result: { accepted: true } | { accepted: false; rejection: SkillSlashRejection }
   }
   'cancel-execution': {
     /** 未传时保持兼容：取消主进程当前绑定的执行；传入时精确取消该 run。 */
@@ -306,7 +314,7 @@ export interface IpcCommands {
   }
   'skill:list': {
     params: void
-    result: SkillSummary[]
+    result: SkillCatalogSnapshot
   }
   'skill:get': {
     params: string
@@ -333,8 +341,8 @@ export interface IpcCommands {
     result: SkillSummary
   }
   'skill:export': {
-    params: string
-    result: { zipPath: string }
+    params: SkillExportInput
+    result: SkillExportResult
   }
   'skill:reload': {
     params: string | null | undefined
@@ -811,7 +819,7 @@ export interface IpcEvents {
     isMaximized: boolean
   }
   'skill:changed': {
-    skills: SkillSummary[]
+    snapshot: SkillCatalogSnapshot
   }
   /** 工作区状态变更广播（PRD §5.1）。主进程是唯一写入方。 */
   'workspace:changed': {

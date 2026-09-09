@@ -79,7 +79,7 @@ export function parseSlashCommand(
     }
   }
 
-  if (!skill.userInvocable) {
+  if (!skill.userInvocable || skill.invalid || skill.hidden) {
     return {
       matched: true,
       found: false,

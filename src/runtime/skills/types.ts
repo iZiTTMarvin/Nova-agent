@@ -3,7 +3,11 @@
  * 对齐 docs/skill-system-design.md §5.1（MVP 不含 brand / encrypted）
  */
 import type { HookEvent } from '../../shared/agent/types'
-import type { SkillSource } from '../../shared/skills/types'
+import type {
+  SkillSlashRejection,
+  SkillSlashRejectionReason,
+  SkillSource
+} from '../../shared/skills/types'
 
 export type { SkillSource }
 
@@ -18,7 +22,7 @@ export interface LoadError {
 export interface SlashParseResult {
   matched: boolean
   found: boolean
-  reason?: 'not_found' | 'not_user_invocable' | 'agent_not_allowed'
+  reason?: SkillSlashRejectionReason
   skillName?: string
   args?: string
   skill?: SkillManifest
@@ -73,7 +77,7 @@ export interface SkillManifest {
 /** invokeSkill 调度结果 */
 export type SkillDispatchResult =
   | { kind: 'passthrough' }
-  | { kind: 'system_notice'; text: string }
+  | { kind: 'rejected'; rejection: SkillSlashRejection }
   | { kind: 'fork'; skill: SkillManifest; args: string }
   | {
       kind: 'inject'

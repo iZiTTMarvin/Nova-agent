@@ -1,16 +1,17 @@
 /**
  * SkillService — 桌面端技能管理单例
- * 封装加载、CRUD、启停持久化；import/export 为 stub（Task 8 实现）
+ * 封装加载、CRUD、启停持久化与导入导出
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { syncClaudeCodeSkills } from './ClaudeCodeSkillAdapter'
 import { SkillRegistry } from './SkillRegistry'
-import { resolveBuiltinSkillsDir } from './SkillLoader'
+import { MAX_CONTEXT_SKILLS, resolveBuiltinSkillsDir } from './SkillLoader'
 import { loadNovaSettings } from '../settings/novaSettings'
 import {
   createTempSkillDir,
+  createZipFromDirectory,
   downloadHttpsToFile,
   extractZip,
   findSkillRoot,
@@ -19,9 +20,11 @@ import {
 } from './skillZip'
 import type { SkillManifest } from './types'
 import type {
+  SkillCatalogDiagnostic,
   SkillCreateInput,
   SkillCreateLocation,
   SkillImportInput,
+  SkillModelBudget,
   SkillReloadResult,
   SkillSummary
 } from '../../shared/skills/types'
@@ -60,6 +63,60 @@ export function toSkillSummary(skill: SkillManifest): SkillSummary {
     forkAgent: skill.forkAgent,
     hidden: skill.hidden ?? false
   }
+}
+
+/**
+ * 把注册表的加载错误、来源遮蔽、模式限制与模型开关投影为目录诊断。
+ * 无效技能只保留加载错误，不叠加次级说明。排序稳定（名称 → 路径 → code），
+ * 不依赖文件系统枚举顺序。
+ */
+export function toCatalogDiagnostics(registry: SkillRegistry): SkillCatalogDiagnostic[] {
+  const diagnostics: SkillCatalogDiagnostic[] = registry.getErrors().map(e => ({
+    code: 'load_error' as const,
+    message: e.message,
+    ...(e.skillName ? { skillName: e.skillName } : {}),
+    path: e.path
+  }))
+  for (const [name, source] of Object.entries(registry.getShadowed()).sort(([a], [b]) =>
+    a.localeCompare(b)
+  )) {
+    diagnostics.push({
+      code: 'shadowed',
+      message: `技能「${name}」被高优先级来源覆盖，${source} 版本未生效`,
+      skillName: name
+    })
+  }
+  for (const skill of registry.getLoader().listAll()) {
+    if (skill.invalid) continue
+    if (skill.agent !== undefined) {
+      const agents = Array.isArray(skill.agent) ? skill.agent : [skill.agent]
+      diagnostics.push({
+        code: 'profile_restricted',
+        message: `仅 ${agents.join('、')} 模式可用`,
+        skillName: skill.name
+      })
+    }
+    if (skill.modelInvocable && !skill.enabled) {
+      diagnostics.push({
+        code: 'model_disabled',
+        message: '已关闭模型调用',
+        skillName: skill.name
+      })
+    }
+  }
+  // 预算压力是目录级的（未按会话 profile 过滤），超过上限才出现一条
+  const budget = registry.getContextProjection()
+  if (budget.omittedCount > 0) {
+    diagnostics.push({
+      code: 'budget_omitted',
+      message: `模型上下文最多收录前 ${MAX_CONTEXT_SKILLS} 个技能，目录有 ${budget.eligible} 个模型可用技能`
+    })
+  }
+  diagnostics.sort((a, b) =>
+    (a.skillName ?? a.path ?? '').localeCompare(b.skillName ?? b.path ?? '') ||
+    a.code.localeCompare(b.code)
+  )
+  return diagnostics
 }
 
 export class SkillService {
@@ -277,9 +334,20 @@ export class SkillService {
     }
   }
 
-  /** Task 8 实现体；当前 stub */
-  export(_name: string): never {
-    throw new Error('技能导出尚未实现')
+  /**
+   * 导出技能目录为 zip（与导入格式对称的 `<name>/` 单层包）。
+   * 仅要求 SKILL.md 存在，不校验 frontmatter 有效性：导出的是磁盘原样，
+   * 有效性由导入侧把关。
+   */
+  async export(name: string, destPath: string): Promise<string> {
+    const skill = this.getRegistry().get(name)
+    if (!skill) throw new Error(`技能不存在：${name}`)
+    if (!existsSync(join(skill.directory, 'SKILL.md'))) {
+      throw new Error(`技能「${name}」目录缺少 SKILL.md，无法导出`)
+    }
+    const zipPath = destPath.toLowerCase().endsWith('.zip') ? destPath : `${destPath}.zip`
+    await createZipFromDirectory(skill.directory, zipPath, name)
+    return zipPath
   }
 
   getReloadResult(): SkillReloadResult {
@@ -287,6 +355,14 @@ export class SkillService {
     return {
       count: registry.getLoader().listAll().length,
       errors: registry.getErrors().map(e => `${e.path}: ${e.message}`)
+    }
+  }
+
+  /** 目录级模型预算投影（未按会话 profile 过滤） */
+  getModelBudget(): SkillModelBudget {
+    return {
+      cap: MAX_CONTEXT_SKILLS,
+      eligible: this.getRegistry().getContextProjection().eligible
     }
   }
 

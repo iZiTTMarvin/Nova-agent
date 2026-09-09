@@ -10,10 +10,9 @@ import type {
   ChatComposerTriggerItem
 } from '@astryxdesign/core/Chat'
 import type { SearchSource } from '@astryxdesign/core/Typeahead'
-import type { SkillSummary } from '../../../shared/skills/types'
+import type { SkillCatalogDiagnostic, SkillSummary } from '../../../shared/skills/types'
 import {
   filterAndRankCandidates,
-  listSlashCommands,
   skillsToCandidates,
   type SlashCandidate
 } from './slashCandidates'
@@ -31,13 +30,15 @@ function toSearchable(candidate: SlashCandidate): ComposerSkillItem {
   }
 }
 
-function rankQuery(
-  query: string,
-  skills: SkillSummary[],
-  commands: SlashCandidate[]
-): ComposerSkillItem[] {
-  const candidates = [...skillsToCandidates(skills), ...commands]
-  return filterAndRankCandidates(query, candidates).map(toSearchable)
+function rankQuery(query: string, skills: SkillSummary[]): ComposerSkillItem[] {
+  return filterAndRankCandidates(query, skillsToCandidates(skills)).map(toSearchable)
+}
+
+export interface ComposerSkillTriggerOptions {
+  /** 无结果时的空态文案；调用方按目录可用性传入，无可用与无匹配用不同文案 */
+  emptySearchResultsText?: string
+  /** 目录诊断；模式受限类在候选项上给出发送前提示 */
+  getDiagnostics?: () => SkillCatalogDiagnostic[]
 }
 
 /**
@@ -45,45 +46,42 @@ function rankQuery(
  * 避免 skills 变更时重建 trigger（会打断已打开的菜单）。
  */
 export function createComposerSkillTrigger(
-  getSkills: () => SkillSummary[]
+  getSkills: () => SkillSummary[],
+  opts?: ComposerSkillTriggerOptions
 ): ChatComposerTrigger {
-  let commandsCache: SlashCandidate[] | null = null
-  let commandsPromise: Promise<SlashCandidate[]> | null = null
-
-  const loadCommands = (): Promise<SlashCandidate[]> => {
-    if (commandsCache) return Promise.resolve(commandsCache)
-    if (!commandsPromise) {
-      commandsPromise = listSlashCommands().then(list => {
-        commandsCache = list
-        return list
-      })
-    }
-    return commandsPromise
-  }
-
+  const getDiagnostics = opts?.getDiagnostics ?? (() => [])
   const searchSource: SearchSource<ComposerSkillItem> = {
-    bootstrap: async () => rankQuery('', getSkills(), await loadCommands()),
-    search: async query => rankQuery(query, getSkills(), await loadCommands())
+    bootstrap: async () => rankQuery('', getSkills()),
+    search: async query => rankQuery(query, getSkills())
   }
 
   return {
     character: '/',
     searchSource,
-    menuLabel: '技能与命令',
-    emptySearchResultsText: '没有匹配的技能',
+    menuLabel: '技能',
+    emptySearchResultsText: opts?.emptySearchResultsText ?? '没有匹配的技能',
     loadingText: '搜索中…',
     renderItem: (item): ReactNode => {
       const candidate = (item as ComposerSkillItem).auxiliaryData
-      const kindLabel = candidate.kind === 'skill' ? 'skill' : 'command'
+      const profileNote =
+        candidate.kind === 'skill'
+          ? getDiagnostics().find(
+            d => d.skillName === candidate.name && d.code === 'profile_restricted'
+          )?.message
+          : undefined
       return (
         <span className="composer-skill-trigger__item">
           <span className="composer-skill-trigger__title">
             <span className="composer-skill-trigger__slash">/</span>
             {candidate.name}
-            <span className="composer-skill-trigger__kind"> ({kindLabel})</span>
           </span>
           {candidate.description ? (
-            <span className="composer-skill-trigger__desc">{candidate.description}</span>
+            <span className="composer-skill-trigger__desc">
+              {candidate.description}
+              {profileNote ? (
+                <span className="composer-skill-trigger__note">{profileNote}</span>
+              ) : null}
+            </span>
           ) : null}
         </span>
       )

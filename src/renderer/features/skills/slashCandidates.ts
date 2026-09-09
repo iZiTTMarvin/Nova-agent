@@ -1,5 +1,6 @@
 /**
- * Slash 补全候选项 — skill + command 合并排序
+ * Slash 补全候选项 — 技能与命令同源排序。命令候选位已预留，
+ * 待原生命令 Owner（如压缩、goal）落地后接入，当前仅有技能候选。
  */
 import type { SkillSummary } from '../../../shared/skills/types'
 
@@ -8,11 +9,6 @@ export interface SlashCandidate {
   description: string
   kind: 'skill' | 'command'
   source?: string
-}
-
-/** v1：command 列表占位，Task 15 接入 .claude/commands */
-export async function listSlashCommands(): Promise<SlashCandidate[]> {
-  return []
 }
 
 export function skillsToCandidates(skills: SkillSummary[]): SlashCandidate[] {

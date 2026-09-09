@@ -1,7 +1,8 @@
 /**
  * Skill IPC 处理器 — 暴露 skill:* 命令
  */
-import { dialog, BrowserWindow } from 'electron'
+import { app, dialog, BrowserWindow } from 'electron'
+import { join } from 'path'
 import { handle } from './secureIpc'
 import {
   SKILL_LIST,
@@ -16,16 +17,17 @@ import {
   SKILL_PICK_IMPORT
 } from '../../shared/ipc/channels'
 import {
+  getCatalogSnapshot,
   getSkillService,
   refreshSkillsAfterMutation,
   reloadSkillsForWorkspace
 } from '../services/SkillServiceHost'
-import type { SkillCreateInput, SkillImportInput } from '../../shared/skills/types'
+import type { SkillCreateInput, SkillExportInput, SkillImportInput } from '../../shared/skills/types'
 
 export function registerSkillHandler(getMainWindow?: () => BrowserWindow | null): void {
   const service = () => getSkillService()
 
-  handle(SKILL_LIST, async () => service().list())
+  handle(SKILL_LIST, async () => getCatalogSnapshot())
 
   handle(SKILL_GET, async (_event, name: string) => service().get(name))
 
@@ -70,8 +72,25 @@ export function registerSkillHandler(getMainWindow?: () => BrowserWindow | null)
     return result.filePaths[0]
   })
 
-  handle(SKILL_EXPORT, async (_event, name: string) => {
-    return service().export(name)
+  handle(SKILL_EXPORT, async (_event, input: SkillExportInput) => {
+    if (input.destPath) {
+      const zipPath = await service().export(input.name, input.destPath)
+      return { canceled: false, zipPath }
+    }
+    const window = getMainWindow?.() ?? null
+    const dialogOptions = {
+      title: '导出技能',
+      defaultPath: join(app.getPath('downloads'), `${input.name}.zip`),
+      filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }]
+    }
+    const result = window
+      ? await dialog.showSaveDialog(window, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions)
+    if (result.canceled || !result.filePath) {
+      return { canceled: true }
+    }
+    const zipPath = await service().export(input.name, result.filePath)
+    return { canceled: false, zipPath }
   })
 
   handle(SKILL_RELOAD, async (_event, workspaceRoot?: string | null) => {

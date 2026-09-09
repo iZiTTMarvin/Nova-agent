@@ -11,6 +11,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 // ---- hoisted mocks：服务宿主与运行时装配 ----
 const coordinator = vi.hoisted(() => ({
   listActiveRuns: vi.fn(() => [] as any[]),
+  listSnapshotsForSession: vi.fn(() => [] as any[]),
   getSnapshotForSession: vi.fn(() => null),
   getSnapshot: vi.fn(() => ({
     runId: 'run-agent', kind: 'agent', status: 'running',
@@ -106,6 +107,16 @@ vi.mock('../../../src/shared/config/types', async (importOriginal) => {
 
 vi.mock('../../../src/main/services/SessionStoreHost', () => ({
   getSessionStore: () => sessionStore
+}))
+
+vi.mock('../../../src/main/services/SkillServiceHost', () => ({
+  getSkillService: vi.fn(),
+  bindSkillServiceWindow: vi.fn(),
+  getCatalogSnapshot: vi.fn(),
+  emitSkillChanged: vi.fn(),
+  reloadSkillsForWorkspace: vi.fn(),
+  refreshSkillsAfterMutation: vi.fn(),
+  ensureSkillRegistryForWorkspace: vi.fn(() => registryHolder.current)
 }))
 
 
@@ -327,6 +338,34 @@ describe('sendAgentMessage 路由行为级集成', () => {
       expect.objectContaining({ kind: 'agent' })
     )
     expect(sentRoutes[0].kind).toBe('agent')
+  })
+
+  it('无效 slash 本地拒绝：不落盘、不建 run、不进执行器', async () => {
+    registryHolder.current = createRegistry([{ name: 'onboard' }])
+    sessionStore.load.mockReturnValue(makeSession('default'))
+
+    const result = await sendAgentMessage({ sessionId: 'sess-1', content: '/nonexistent-skill' }, deps)
+
+    expect(result).toEqual({
+      accepted: false,
+      rejection: expect.objectContaining({ reason: 'not_found', skillName: 'nonexistent-skill' })
+    })
+    expect(sessionStore.appendMessageFast).not.toHaveBeenCalled()
+    expect(coordinator.startRun).not.toHaveBeenCalled()
+    expect(stubAgentLoop.sendMessage).not.toHaveBeenCalled()
+    expect(sentRoutes).toHaveLength(0)
+  })
+
+  it('有效 slash 仍走正常执行并返回 accepted', async () => {
+    registryHolder.current = createRegistry([{ name: 'onboard' }])
+    sessionStore.load.mockReturnValue(makeSession('default'))
+
+    const result = await sendAgentMessage({ sessionId: 'sess-1', content: '/onboard 做点事' }, deps)
+
+    expect(result).toEqual({ accepted: true })
+    expect(coordinator.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'agent' })
+    )
   })
 
   it('compose 图片消息 → 创建 agent run', async () => {

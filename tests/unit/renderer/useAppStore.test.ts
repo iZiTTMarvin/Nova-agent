@@ -451,9 +451,13 @@ describe('useAppStore Zustand Store', () => {
     })
     useChatStore.setState({ lastMessagesRevision: 0 })
 
-    mockInvoke
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_edit', messagesRevision: 0 }))
-      .mockResolvedValueOnce(undefined) // send-message
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'workspace:edit-resend') {
+        return makeWorkspaceState({ currentSessionId: 'sess_edit', messagesRevision: 0 })
+      }
+      if (channel === 'send-message') return { accepted: true }
+      return undefined
+    })
 
     await useAppStore.getState().editResend('sess_edit', 'u1', '你好呀')
 
@@ -490,7 +494,7 @@ describe('useAppStore Zustand Store', () => {
       messages: [],
       messageIndexById: {}
     })
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockResolvedValue({ accepted: true })
 
     await useChatStore.getState().sendMessage('你好')
 
@@ -521,9 +525,13 @@ describe('useAppStore Zustand Store', () => {
       messageIndexById: { u1: 0, a1: 1 }
     })
 
-    mockInvoke
-      .mockResolvedValueOnce(makeWorkspaceState({ currentSessionId: 'sess_regen', messagesRevision: 0 }))
-      .mockResolvedValueOnce(undefined)
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'workspace:regenerate') {
+        return makeWorkspaceState({ currentSessionId: 'sess_regen', messagesRevision: 0 })
+      }
+      if (channel === 'send-message') return { accepted: true }
+      return undefined
+    })
 
     await useAppStore.getState().regenerateAssistant('sess_regen', 'a1')
 
