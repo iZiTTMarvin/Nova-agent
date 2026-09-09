@@ -256,10 +256,12 @@ export class RunStore {
     }
   }
 
-  /** 扫描未终态 run（启动对账）；先做事件尾部重放 */
+  /** 扫描未终态 run（启动对账）；已终态只读 snapshot，不重放 events */
   listNonTerminalSnapshots(): RunSnapshot[] {
     const result: RunSnapshot[] = []
     for (const runId of this.listRunIds()) {
+      const peek = this.loadSnapshot(runId)
+      if (!peek || isTerminalRunStatus(peek.status)) continue
       const snap = this.loadSnapshotWithReplay(runId)
       if (snap && !isTerminalRunStatus(snap.status)) {
         result.push(snap)
@@ -273,15 +275,17 @@ export class RunStore {
     return this.findSnapshotsBySessions(new Set([sessionId]))
   }
 
-  /** 一次目录扫描与事件重放，读取所需会话的快照。 */
+  /** 一次目录扫描；先看 snapshot 的 sessionId 与状态，终态不重放 events。 */
   findSnapshotsBySessions(sessionIds: ReadonlySet<string>): RunSnapshot[] {
     if (sessionIds.size === 0) return []
     const result: RunSnapshot[] = []
     for (const runId of this.listRunIds()) {
-      const snap = this.loadSnapshotWithReplay(runId)
-      if (snap && sessionIds.has(snap.sessionId)) {
-        result.push(snap)
-      }
+      const peek = this.loadSnapshot(runId)
+      if (!peek || !sessionIds.has(peek.sessionId)) continue
+      const snap = isTerminalRunStatus(peek.status)
+        ? peek
+        : this.loadSnapshotWithReplay(runId)
+      if (snap) result.push(snap)
     }
     result.sort((a, b) => b.updatedAt - a.updatedAt)
     return result

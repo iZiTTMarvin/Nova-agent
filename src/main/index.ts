@@ -6,6 +6,8 @@ import { resolveAppIconPath } from './appIcon'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { registerIpcHandlers } from './ipc/registerHandlers'
+import { runStartupStorageGc } from './ipc/storageHandler'
+import { cleanupStaleAtomicTmpFiles } from '../runtime/storage/atomicFile'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { syncTavilyApiKeyFromSettings } from '../runtime/settings/syncTavilyApiKey'
 import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
@@ -242,11 +244,13 @@ async function bootstrap(): Promise<void> {
   //      原 await spawn(timeout:5000) 是首屏 LCP 5.57s 的主因，改后台执行后不再阻塞窗口诞生。
   //    - getSkillService().load(null)：builtin 技能预热，send-message/selectSession 有 load(projectPath) 兜底。
   //    - syncTavilyApiKeyFromSettings：仅设置环境变量供 web_search，非首屏路径。
-  //    注意：runStartupStorageGc 仍在 registerIpcHandlers 内同步执行（次要耗时，且为减小改动面保留）。
+  //    - 临时文件清理与存储 GC：不阻塞首屏，对账已在窗口诞生前完成。
   setImmediate(() => {
     void probeRipgrep()
     getSkillService().load(null)
     syncTavilyApiKeyFromSettings()
+    cleanupStaleAtomicTmpFiles(app.getPath('userData'))
+    runStartupStorageGc()
   })
 
   app.on('activate', () => {

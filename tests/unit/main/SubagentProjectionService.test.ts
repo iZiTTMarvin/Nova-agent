@@ -294,7 +294,7 @@ describe('SubagentProjectionService', () => {
         taskLabel: 'inspect runtime',
         summary: undefined
       })))
-      expect(replay).toHaveBeenCalledTimes(children.length)
+      expect(replay).not.toHaveBeenCalled()
     } finally {
       replay.mockRestore()
     }

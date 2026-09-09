@@ -603,4 +603,32 @@ describe('RunCoordinator', () => {
     expect(txSpy).toHaveBeenCalledTimes(1)
     expect(broadcasts).toEqual(['heartbeat'])
   })
+
+  it('启动对账只重放未结束的任务，已结束的不读事件日志', () => {
+    for (let i = 0; i < 40; i++) {
+      const snap = coord.startRun({
+        kind: 'agent',
+        workspaceId: '/ws',
+        sessionId: `done-${i}`,
+        runId: `run_done_${i}`
+      })
+      coord.markRunning(snap.runId, `m${i}`)
+      coord.commitTerminal({ runId: snap.runId, status: 'completed' })
+    }
+    const live = coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 'live',
+      runId: 'run_live'
+    })
+    coord.markRunning(live.runId, 'm-live')
+
+    const loadEvents = vi.spyOn(store, 'loadEvents')
+    const coord2 = new RunCoordinator({ store })
+    const interrupted = coord2.reconcileOnStartup()
+    expect(interrupted).toHaveLength(1)
+    expect(interrupted[0]!.runId).toBe('run_live')
+    expect(interrupted[0]!.status).toBe('interrupted')
+    expect(loadEvents.mock.calls.map(call => call[0])).toEqual(['run_live'])
+  })
 })

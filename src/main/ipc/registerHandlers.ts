@@ -1,6 +1,5 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { cleanupStaleAtomicTmpFiles } from '../../runtime/storage/atomicFile'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import { handle } from './secureIpc'
 import { PING } from '../../shared/ipc/channels'
@@ -15,7 +14,7 @@ import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
 import { registerUpdaterHandler } from './updaterHandler'
-import { registerStorageHandler, runStartupStorageGc } from './storageHandler'
+import { registerStorageHandler } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
 import { registerFsHandler } from './fsHandler'
 import { registerImageHandler } from './imageHandler'
@@ -54,9 +53,6 @@ import { loadNovaSettings } from '../../runtime/settings/novaSettings'
  * （协议 handler 必须在 createMainWindow 之前注册，与 IPC handler 共用同一落盘实例）。
  */
 export function registerIpcHandlers(): ImageStore {
-  // 清理上次崩溃遗留的原子写 .tmp 文件
-  cleanupStaleAtomicTmpFiles(app.getPath('userData'))
-
   // ping/pong 基础连通测试
   handle(PING, async () => {
     return 'pong'
@@ -117,7 +113,7 @@ export function registerIpcHandlers(): ImageStore {
     if (!nextRoot) return
     const currentSessionId = workspaceService.getState().currentSessionId
     const currentSession = currentSessionId
-      ? getSessionStore().load(currentSessionId)
+      ? getSessionStore().loadMetadata(currentSessionId)
       : null
     if (currentSession?.codeIndexEnabled === true) {
       ensureCodeGraphForWorkspace(nextRoot)
@@ -126,7 +122,7 @@ export function registerIpcHandlers(): ImageStore {
   workspaceService.initOnStartup()
   const startupState = workspaceService.getState()
   const startupSession = startupState.currentSessionId
-    ? getSessionStore().load(startupState.currentSessionId)
+    ? getSessionStore().loadMetadata(startupState.currentSessionId)
     : null
   // 全局设置只影响新会话；当前会话快照仍启用时也必须维护它正在使用的缓存。
   scheduleCodeGraphStartupGc(
@@ -159,9 +155,6 @@ export function registerIpcHandlers(): ImageStore {
   // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。
   const imageStore = new ImageStore(join(app.getPath('userData'), 'sessions'))
   registerImageHandler(() => imageStore)
-
-  // 启动时静默执行一次存储 GC（清理临时日志 + 陈旧快照）
-  runStartupStorageGc()
 
   return imageStore
 }

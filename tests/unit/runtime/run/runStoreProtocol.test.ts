@@ -1,7 +1,7 @@
 /**
  * RunStore 统一落盘协议：event→fsync→snapshot；尾部重放；非法 runId
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, appendFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -326,5 +326,37 @@ describe('terminal outbox 崩溃恢复', () => {
     const after = coord.getSnapshot(snap.runId)!
     const entry = after.terminalOutbox?.find(e => e.hookName === 'onFail')
     expect(entry?.status).toBe('pending')
+  })
+
+  it('大量已结束任务时，扫描未结束任务只重放那一个', () => {
+    const coord = createRunCoordinator(tmp)
+    for (let i = 0; i < 40; i++) {
+      const snap = coord.startRun({
+        kind: 'agent',
+        workspaceId: 'ws',
+        sessionId: `s${i}`,
+        runId: `run_done_${i}`
+      })
+      coord.markRunning(snap.runId)
+      coord.commitTerminal({ runId: snap.runId, status: 'completed' })
+    }
+    const live = coord.startRun({
+      kind: 'agent',
+      workspaceId: 'ws',
+      sessionId: 'live',
+      runId: 'run_live'
+    })
+    coord.markRunning(live.runId)
+
+    const store = new RunStore({ runsRoot: tmp })
+    const loadEvents = vi.spyOn(store, 'loadEvents')
+    const listed = store.listNonTerminalSnapshots()
+    expect(listed.map(snap => snap.runId)).toEqual(['run_live'])
+    expect(loadEvents.mock.calls.map(call => call[0])).toEqual(['run_live'])
+
+    loadEvents.mockClear()
+    const found = store.findSnapshotsBySessions(new Set(['live', 's0']))
+    expect(found.map(snap => snap.runId).sort()).toEqual(['run_done_0', 'run_live'])
+    expect(loadEvents.mock.calls.map(call => call[0])).toEqual(['run_live'])
   })
 })
