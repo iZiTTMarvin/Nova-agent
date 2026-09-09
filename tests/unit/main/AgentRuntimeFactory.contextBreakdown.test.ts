@@ -98,4 +98,50 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
 
     prepared.agentLoop.dispose()
   })
+
+  it('桌面 loop 对仅思考无正文的 stop 自动续做一次', async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-factory-continue-'))
+    roots.push(sessionsDir)
+    const workspace = resolve(sessionsDir, 'workspace')
+    const store = new SessionStore(sessionsDir)
+    const session = store.create(workspace)
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'thinking_delta', delta: '还需要继续' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '已完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+
+    const prepared = prepareAgentRuntime({
+      session,
+      sessionStore: store,
+      sessionId: session.id,
+      projectPath: workspace,
+      sessionsDir,
+      novaSettings: { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: false },
+      modelClient: client,
+      getImageStore: () => ({} as never),
+      readState: createReadState(),
+      pendingAskQuestions: new Map(),
+      runCoordinator: {
+        inbox: { enqueue: vi.fn() },
+        getSnapshot: () => null
+      } as never
+    })
+
+    const { agentRoute } = await import('../../../src/runtime/agent/turn')
+    const outcome = await prepared.agentLoop.sendMessage('继续任务', agentRoute())
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(client.getCalls()).toHaveLength(2)
+    prepared.agentLoop.dispose()
+  })
 })

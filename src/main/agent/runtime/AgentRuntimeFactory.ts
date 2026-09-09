@@ -17,7 +17,8 @@ import {
   renderBaseRules,
   renderMinimalEngineeringPolicy,
   getSubAgentSpec,
-  listSubAgents
+  listSubAgents,
+  createAssistantCompletionPolicy
 } from '../../../runtime/agent'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
@@ -382,6 +383,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       collectTouchedFilesForSession(sessionsDir, sessionId, messageIds)
   })
   loop = agentLoop
+  agentLoop.setAssistantCompletionPolicy(createAssistantCompletionPolicy())
 
   agentLoop.setWorkingDir(projectPath)
   // 工作区根供写者租约按工作区分桶；runId 在 startRun 后由 AgentTurnService 注入

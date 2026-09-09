@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs'
 import { resolve } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { AgentLoop, EventBus } from '../runtime/agent'
+import { AgentLoop, EventBus, createAssistantCompletionPolicy } from '../runtime/agent'
 import { agentRoute } from '../runtime/agent/turn'
 import {
   buildStableSystemPrompt,
@@ -48,7 +48,6 @@ import {
 } from './summary'
 import { buildAtifTrajectory } from './atif'
 import { parseArgs, type CliOptions } from './cliOptions'
-import { headlessAssistantCompletionPolicy } from './completionPolicy'
 import { PermissionManager } from '../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../runtime/permissions/PermissionService'
 import {
@@ -271,9 +270,7 @@ async function main(): Promise<void> {
   loop.setRunRef(runId)
   loop.setMode('default')
   loop.setModeInstructionProvider(getHeadlessExecutionInstruction)
-  if (options.deadlineSeconds !== undefined) {
-    loop.setAssistantCompletionPolicy(headlessAssistantCompletionPolicy)
-  }
+  loop.setAssistantCompletionPolicy(createAssistantCompletionPolicy())
 
   let error: string | undefined
   let report: HeadlessTurnReport

@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareSubagentRuntime } from '../../../src/main/agent/runtime/SubagentRuntimeFactory'
+import { AgentLoop } from '../../../src/runtime/agent'
 import { extractTextFromContent } from '../../../src/runtime/model/types'
 import { agentRoute } from '../../../src/runtime/agent/turn'
 import { createEmptyCodeContextPack } from '../../../src/runtime/code-graph/context'
@@ -85,6 +86,63 @@ describe('SubagentRuntimeFactory', () => {
     const prompt = prepared.agentLoop.getFrozenSystemPrompt()
     expect(prompt.includes('inspection_report')).toBe(profileId === 'inspector')
     expect(store.load(child.id)?.subagent?.profile).toEqual(profile)
+    prepared.agentLoop.dispose()
+  })
+
+  it('子代理 loop 装配同一完成策略：仅思考最多续做一次，有正文不续做', async () => {
+    const spy = vi.spyOn(AgentLoop.prototype, 'setAssistantCompletionPolicy')
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-continue-'))
+    roots.push(sessionsDir)
+    const store = new SessionStore(sessionsDir)
+    const parent = store.create(sessionsDir, 'default')
+    const profile = resolveSubagentProfileSnapshot({
+      id: 'explore', name: 'explore', description: '只读探索',
+      prompt: '探索', allowedTools: ['read']
+    }, 'explore')
+    const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('continue-policy'), workspaceRoot: sessionsDir,
+      mode: 'default', permissionMode: 'request_approval', task: '探索',
+      subagent: {
+        header: testHeader, profile,
+        lineage: {
+          parentSessionId: parent.id, parentRunId: 'parent-run', rootRunId: 'parent-run', depth: 1,
+          spawnKey: 'continue-policy', spawnRunId: 'child-run',
+          origin: { kind: 'task_tool', parentMessageId: 'parent-message', parentToolCallId: 'parent-call' }
+        }
+      }
+    }).session
+    const prepared = prepareSubagentRuntime({
+      profile, task: '探索', workingDirectory: sessionsDir, isolation: 'readonly', childSession: child,
+      parentRunId: 'parent-run', rootRunId: 'parent-run', registry: testRegistry,
+      resolveTool: () => undefined, sessionStore: store, sessionsDir, readState: createReadState()
+    })
+    expect(spy).toHaveBeenCalled()
+    const policy = spy.mock.calls[0]?.[0]
+    expect(policy).toEqual(expect.any(Function))
+    const first = await policy!({
+      messageId: 'm1',
+      toolRound: 0,
+      finishReason: 'stop',
+      assistantContent: '',
+      reasoningContent: '还在想'
+    })
+    expect(first?.instruction).toBeTruthy()
+    const second = await policy!({
+      messageId: 'm1',
+      toolRound: 1,
+      finishReason: 'stop',
+      assistantContent: '',
+      reasoningContent: '仍然没有正文'
+    })
+    expect(second).toBeUndefined()
+    const withText = await policy!({
+      messageId: 'm2',
+      toolRound: 0,
+      finishReason: 'stop',
+      assistantContent: '已经完成',
+      reasoningContent: '思考'
+    })
+    expect(withText).toBeUndefined()
     prepared.agentLoop.dispose()
   })
 

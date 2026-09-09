@@ -20,6 +20,8 @@ import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ChatEvent } from '../../../../src/runtime/model/types'
 import type { ToolBatchExecutionResult } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
+import type { AgentLoopConfig as LoopConfig } from '../../../../src/runtime/agent/core/loopTypes'
+import { createAssistantCompletionPolicy } from '../../../../src/runtime/agent/assistantCompletionPolicy'
 
 /** 构造最小可用 AgentContext（native 方言，不触发 XML scanner） */
 function createNativeContext() {
@@ -52,6 +54,16 @@ function textResponse(): { events: ChatEvent[] } {
   }
 }
 
+function reasoningOnlyResponse(): { events: ChatEvent[] } {
+  return {
+    events: [
+      { type: 'message_start' },
+      { type: 'thinking_delta', delta: '内部推理' },
+      { type: 'message_end', finishReason: 'stop' }
+    ]
+  }
+}
+
 /** 直测内核：不接停止策略（AgentLoop 门面才接线），暴露循环条件自身的退出路径 */
 async function runKernel(
   client: MockModelClient,
@@ -60,6 +72,7 @@ async function runKernel(
     signal?: () => boolean
     executeBatch?: () => Promise<ToolBatchExecutionResult>
     onToolResultCommitted?: () => void
+    assistantCompletionPolicy?: LoopConfig['assistantCompletionPolicy']
   } = {}
 ) {
   const modelPool = new ModelClientPool({
@@ -96,7 +109,10 @@ async function runKernel(
       maxToolRounds,
       toolExecution: 'parallel',
       maxParallelToolCalls: 4,
-      supportsVision: false
+      supportsVision: false,
+      ...(opts.assistantCompletionPolicy
+        ? { assistantCompletionPolicy: opts.assistantCompletionPolicy }
+        : {})
     },
     streamProcessor: processor,
     hookManager: new HookManager(),
@@ -194,5 +210,38 @@ describe('runAgentLoop 停止原因', () => {
     expect(endResult.ended).toBe('normal')
     expect(endResult.cancelled).toBe(true)
     expect(endResult.stopReason).toBeUndefined()
+  })
+
+  it('仅思考无正文时续做一次，仍不设 stopReason', async () => {
+    const client = new MockModelClient()
+    client.addResponse(reasoningOnlyResponse())
+    client.addResponse(textResponse())
+
+    const endResult = await runKernel(client, 10, {
+      assistantCompletionPolicy: createAssistantCompletionPolicy()
+    })
+
+    expect(endResult.ended).toBe('normal')
+    expect(endResult.stopReason).toBeUndefined()
+    expect(client.getCalls()).toHaveLength(2)
+  })
+
+  it('已有正文或已发工具时不续做', async () => {
+    const client = new MockModelClient()
+    client.addResponse(textResponse())
+    const endText = await runKernel(client, 10, {
+      assistantCompletionPolicy: createAssistantCompletionPolicy()
+    })
+    expect(endText.stopReason).toBeUndefined()
+    expect(client.getCalls()).toHaveLength(1)
+
+    const toolsClient = new MockModelClient()
+    toolsClient.addResponse(toolCallResponse('t1'))
+    toolsClient.addResponse(textResponse())
+    const endTools = await runKernel(toolsClient, 10, {
+      assistantCompletionPolicy: createAssistantCompletionPolicy()
+    })
+    expect(endTools.stopReason).toBeUndefined()
+    expect(toolsClient.getCalls()).toHaveLength(2)
   })
 })

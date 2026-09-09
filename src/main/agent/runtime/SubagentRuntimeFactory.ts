@@ -4,7 +4,8 @@ import {
   EventBus,
   projectEffectiveToolDefinitions,
   applyLedgerToolVisibility,
-  renderMinimalEngineeringPolicy
+  renderMinimalEngineeringPolicy,
+  createAssistantCompletionPolicy
 } from '../../../runtime/agent'
 
 import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
@@ -136,6 +137,7 @@ export function prepareSubagentRuntime(
   })
   agentLoop.setWorkingDir(input.workingDirectory)
   agentLoop.setWorkspaceRoot(input.childSession.workspaceRoot)
+  agentLoop.setAssistantCompletionPolicy(createAssistantCompletionPolicy())
   agentLoop.setToolRegistry(toolRegistry)
   agentLoop.setMode(input.childSession.mode)
   // compose 阶段门禁 overlay 随父会话继承：子代理能力只能比父会话更窄。

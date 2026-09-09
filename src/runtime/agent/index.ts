@@ -29,6 +29,11 @@ export {
 export { BUILTIN_SUBAGENTS, getSubAgentSpec, listSubAgents } from './core/SubAgentConfig'
 export type { SubAgentSpec } from './core/SubAgentConfig'
 export {
+  createAssistantCompletionPolicy,
+  ASSISTANT_CONTINUATION_INSTRUCTION,
+  HEADLESS_CONTINUATION_INSTRUCTION
+} from './assistantCompletionPolicy'
+export {
   resolveTaskPolicy,
   buildEconomyHardConstraints,
   buildHeavyGuidance
