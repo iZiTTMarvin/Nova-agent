@@ -169,7 +169,7 @@ function createProcessTreeKiller(pid: number | undefined): () => Promise<void> {
     if (process.platform === 'win32') {
       await new Promise<void>((resolve, reject) => {
         execFile('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, timeout: 5000 }, error => {
-          if (error) reject(error)
+          if (error && !isTaskkillProcessNotFound(error)) reject(error)
           else resolve()
         })
       })
@@ -239,6 +239,12 @@ function createProcessTreeKiller(pid: number | undefined): () => Promise<void> {
 
 function isMissingProcess(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ESRCH'
+}
+
+/** taskkill 以退出码 128 报告进程不存在：根已退出即树终止目标已达成（改父后代本就无法经根发现）。 */
+function isTaskkillProcessNotFound(error: unknown): boolean {
+  return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'number' &&
+    (error as unknown as { code: number }).code === 128
 }
 
 function safeKill(pid: number, signal: NodeJS.Signals): void {
