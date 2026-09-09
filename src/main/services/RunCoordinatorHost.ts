@@ -12,10 +12,28 @@ import {
 } from '../../runtime/run'
 import type { RunEventRecord, RunSnapshot } from '../../shared/run/types'
 import { toRendererRunSnapshot } from '../../shared/run/rendererProjection'
+import { SnapshotBroadcastCoalescer } from './runSnapshotBroadcast'
 
 let coordinator: RunCoordinator | null = null
 let executionRegistry: RunExecutionRegistry | null = null
 let getMainWindowRef: (() => BrowserWindow | null) | null = null
+const destroyGuardedContents = new WeakSet<BrowserWindow['webContents']>()
+
+const snapshotBroadcast = new SnapshotBroadcastCoalescer((snapshot, event) => {
+  const win = getMainWindowRef?.()
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    snapshotBroadcast.cancel()
+    return
+  }
+  win.webContents.send('run:snapshot', {
+    snapshot: toRendererRunSnapshot(snapshot),
+    event: {
+      sequence: event.sequence,
+      type: event.type,
+      at: event.at
+    }
+  })
+})
 
 /** 当前 SEND_MESSAGE 绑定的 runId（兼容旧 agentTurnInProgress） */
 let activeRunId: string | null = null
@@ -28,17 +46,26 @@ export function setActiveRunId(runId: string | null): void {
   activeRunId = runId
 }
 
+function guardWindowLifetime(win: BrowserWindow): void {
+  const contents = win.webContents
+  if (destroyGuardedContents.has(contents)) return
+  destroyGuardedContents.add(contents)
+  contents.once('destroyed', () => {
+    snapshotBroadcast.cancel()
+  })
+  win.once('closed', () => {
+    snapshotBroadcast.cancel()
+  })
+}
+
 function broadcastSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
   const win = getMainWindowRef?.()
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
-  win.webContents.send('run:snapshot', {
-    snapshot: toRendererRunSnapshot(snapshot),
-    event: {
-      sequence: event.sequence,
-      type: event.type,
-      at: event.at
-    }
-  })
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    snapshotBroadcast.cancel()
+    return
+  }
+  guardWindowLifetime(win)
+  snapshotBroadcast.push(snapshot, event)
 }
 
 /**
@@ -79,6 +106,7 @@ export function getRunExecutionRegistry(): RunExecutionRegistry {
 
 /** 测试用：重置单例 */
 export function resetRunCoordinatorHostForTests(): void {
+  snapshotBroadcast.cancel()
   coordinator = null
   executionRegistry = null
   activeRunId = null

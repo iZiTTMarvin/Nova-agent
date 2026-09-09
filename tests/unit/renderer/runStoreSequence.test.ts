@@ -1,7 +1,7 @@
 /**
  * Renderer sequence 不得回退
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
 import type { RunSnapshot } from '../../../src/shared/run/types'
 
@@ -71,5 +71,29 @@ describe('useRunStore sequence 回退防护', () => {
     expect(useRunStore.getState().activeRunIdBySessionId.sA).toBe('new')
     expect(useRunStore.getState().interruptedRunId).toBeNull()
     expect(useRunStore.getState().snapshotsByRunId.old.sequence).toBe(11)
+  })
+
+  it('序号缺口会重拉权威快照，不直接套用跳跃事件', () => {
+    const invoke = vi.fn().mockResolvedValue({ snapshot: null, waitingSessions: [] })
+    global.window = {
+      ...global.window,
+      api: {
+        invoke,
+        on: vi.fn(),
+        removeAllListeners: vi.fn()
+      }
+    } as unknown as Window & typeof globalThis
+
+    const runId = 'runGap'
+    useRunStore.getState().handleSnapshotEvent(
+      snap({ runId, sessionId: 'sA', sequence: 2, status: 'running' }),
+      { sequence: 2, type: 'heartbeat', at: 1 }
+    )
+    useRunStore.getState().handleSnapshotEvent(
+      snap({ runId, sessionId: 'sA', sequence: 5, status: 'running' }),
+      { sequence: 5, type: 'turn_draft_upsert', at: 2 }
+    )
+    expect(useRunStore.getState().lastSequenceByRunId[runId]).toBe(2)
+    expect(invoke).toHaveBeenCalledWith('run:get-snapshot', { sessionId: 'sA' })
   })
 })
