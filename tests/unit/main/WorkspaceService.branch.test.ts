@@ -34,6 +34,7 @@ vi.mock('../../../src/main/index', () => ({
 }))
 
 vi.mock('../../../src/main/services/SkillServiceHost', () => ({
+  reloadSkillsForWorkspace: vi.fn(),
   getSkillService: () => ({
     getWorkspaceRoot: () => '/ws',
     load: vi.fn(),
@@ -274,5 +275,51 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     expect(() =>
       service.prepareEditResend({ sessionId: session.id, messageId: 'u1' })
     ).toThrow('生成中，请先停止当前回复')
+  })
+
+  it('selectSession 不扫全部会话、不全量读对话记录', () => {
+    const first = store.create('/ws')
+    const second = store.create('/ws')
+    service.initOnStartup()
+    expect(service.getState().currentSessionId).toBe(second.id)
+
+    const listSpy = vi.spyOn(store, 'list')
+    const loadSpy = vi.spyOn(store, 'load')
+    const before = service.getState().availableSessions
+
+    service.selectSession(first.id)
+
+    expect(listSpy).not.toHaveBeenCalled()
+    expect(loadSpy).not.toHaveBeenCalled()
+    expect(service.getState().availableSessions).toBe(before)
+    expect(service.getState().currentSessionId).toBe(first.id)
+    expect(service.getState().currentProjectPath).toBe('/ws')
+  })
+
+  it('initOnStartup 选中会话不读完整对话记录', () => {
+    const session = store.create('/ws')
+    store.updateReasoningEffortOverride(session.id, 'high')
+    const loadSpy = vi.spyOn(store, 'load')
+    service.initOnStartup()
+    expect(loadSpy).not.toHaveBeenCalled()
+    expect(service.getState().currentSessionId).toBe(session.id)
+    expect(service.getState().reasoningEffortOverride).toBe('high')
+  })
+
+  it('切走后不再为过期会话全量计算上下文', async () => {
+    const first = store.create('/ws')
+    const second = store.create('/ws')
+    service.initOnStartup()
+    service.selectSession(first.id)
+
+    const loadSpy = vi.spyOn(store, 'load')
+    service.scheduleContextBreakdown(first.id)
+    service.selectSession(second.id)
+    loadSpy.mockClear()
+
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    expect(loadSpy).not.toHaveBeenCalled()
   })
 })

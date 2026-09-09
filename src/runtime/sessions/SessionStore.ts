@@ -101,6 +101,13 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 
 const MAX_SPAWN_KEY_LENGTH = 8_192
 
+/** 打开会话时的展示页：尾页消息 + 激活路径总数，不把任务文案写入元数据 */
+export interface SessionDisplayLoad {
+  session: SessionData
+  hasMore: boolean
+  subagentTask?: string
+}
+
 export function deriveChildSessionId(spawnKey: string): string {
   const normalized = spawnKey.trim()
   if (!normalized || normalized.length > MAX_SPAWN_KEY_LENGTH) {
@@ -563,6 +570,86 @@ export class SessionStore {
     const metadata = this.toMetadata(toWrite)
     const filePath = path.join(dir, SESSION_DATA_FILE)
     atomicWriteFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
+  }
+
+  /**
+   * 打开会话用的展示页：元数据 + 激活路径尾页（含分叉元信息）。
+   * 走与 load() 相同的迁移入口，但不读完整 messages.jsonl；索引失败时回退全量 load 再裁尾。
+   * messageCount 为激活路径总数，不是尾页 length。
+   */
+  loadForDisplay(
+    sessionId: string,
+    options: { tailLimit: number }
+  ): SessionDisplayLoad | null {
+    let sessionDir: string
+    try {
+      sessionDir = this.resolveSessionDir(sessionId)
+    } catch {
+      return null
+    }
+    const filePath = path.join(sessionDir, SESSION_DATA_FILE)
+    if (!fs.existsSync(filePath)) return null
+
+    const tailLimit = options.tailLimit
+    try {
+      const migrated = migrateSessionFile(this.sessionsDir, sessionId)
+      const metadata: SessionData = migrated
+        ?? (migrateSessionData(JSON.parse(fs.readFileSync(filePath, 'utf8'))) as SessionData)
+
+      try {
+        const viaIndex = this.loadMessagesPageViaIndex(sessionDir, metadata, { limit: tailLimit })
+        if (viaIndex) {
+          const session: SessionData = {
+            ...metadata,
+            messages: viaIndex.messages,
+            currentLeafId: metadata.currentLeafId ?? null,
+            messageCount: viaIndex.totalCount
+          }
+          return {
+            session,
+            hasMore: viaIndex.hasMore,
+            ...(session.kind === 'subagent'
+              ? {
+                  subagentTask: this.resolveSubagentTaskText(
+                    sessionDir,
+                    session,
+                    viaIndex.messages,
+                    viaIndex.hasMore
+                  )
+                }
+              : {})
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[SessionStore] 展示页索引读取失败，回退全量 load session=${sessionId}:`,
+          err
+        )
+      }
+
+      return this.loadForDisplayViaFullRead(sessionId, tailLimit)
+    } catch (err) {
+      console.error(`[SessionStore] 加载会话展示页 ${sessionId} 失败:`, err)
+      return null
+    }
+  }
+
+  /**
+   * 只读 session.json 元数据（走迁移入口，不读 messages.jsonl）。
+   * 返回体 messages 为空，供切换/启动读取模式、思考强度与白名单前缀。
+   */
+  loadMetadata(sessionId: string): SessionData | null {
+    try {
+      const filePath = path.join(this.resolveSessionDir(sessionId), SESSION_DATA_FILE)
+      if (!fs.existsSync(filePath)) return null
+      const migrated = migrateSessionFile(this.sessionsDir, sessionId)
+      const metadata = migrated
+        ?? (migrateSessionData(JSON.parse(fs.readFileSync(filePath, 'utf8'))) as SessionData)
+      return { ...metadata, messages: [] }
+    } catch (err) {
+      console.error(`[SessionStore] 加载会话元数据 ${sessionId} 失败:`, err)
+      return null
+    }
   }
 
   /**
@@ -1555,7 +1642,9 @@ export class SessionStore {
 
       try {
         const viaIndex = this.loadMessagesPageViaIndex(sessionDir, metadata, options)
-        if (viaIndex) return viaIndex
+        if (viaIndex) {
+          return { messages: viaIndex.messages, hasMore: viaIndex.hasMore }
+        }
       } catch (err) {
         console.warn(
           `[SessionStore] SQLite 分页失败，回退全量读 session=${sessionId}:`,
@@ -1619,7 +1708,7 @@ export class SessionStore {
     sessionDir: string,
     metadata: SessionData,
     options: { beforeId?: string; limit: number }
-  ): { messages: SessionMessage[]; hasMore: boolean } | null {
+  ): { messages: SessionMessage[]; hasMore: boolean; totalCount: number } | null {
     const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
     const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
     const leafId = metadata.currentLeafId ?? null
@@ -1630,7 +1719,7 @@ export class SessionStore {
 
     const activeCount = sqlite.activeCount()
     if (activeCount === 0 || options.limit <= 0) {
-      return { messages: [], hasMore: false }
+      return { messages: [], hasMore: false, totalCount: activeCount }
     }
 
     let fromDepth: number
@@ -1644,11 +1733,11 @@ export class SessionStore {
     } else {
       const before = sqlite.getEntry(options.beforeId)
       if (!before || before.activeDepth === null) {
-        return { messages: [], hasMore: false }
+        return { messages: [], hasMore: false, totalCount: activeCount }
       }
       const beforeDepth = before.activeDepth
       if (beforeDepth <= 0) {
-        return { messages: [], hasMore: false }
+        return { messages: [], hasMore: false, totalCount: activeCount }
       }
       const start = Math.max(0, beforeDepth - options.limit)
       fromDepth = start
@@ -1662,8 +1751,73 @@ export class SessionStore {
 
     return {
       messages: attachBranchMeta(pageMessages, branchContext),
-      hasMore
+      hasMore,
+      totalCount: activeCount
     }
+  }
+
+  private loadForDisplayViaFullRead(
+    sessionId: string,
+    tailLimit: number
+  ): SessionDisplayLoad | null {
+    const full = this.load(sessionId)
+    if (!full) return null
+    const allMessages = ensureMessageParentChain(full.messages)
+    const currentLeafId = resolveCurrentLeafId(allMessages, full.currentLeafId)
+    const active = computeActivePath(allMessages, currentLeafId)
+    const page = sliceMessagesPage(active, { limit: tailLimit })
+    const session: SessionData = {
+      ...full,
+      messages: attachBranchMeta(page.messages, allMessages),
+      currentLeafId,
+      messageCount: active.length
+    }
+    const firstUser = active.find(message => message.role === 'user')
+    return {
+      session,
+      hasMore: page.hasMore,
+      ...(session.kind === 'subagent'
+        ? {
+            subagentTask: firstUser
+              ? extractTextFromSerializableContent(firstUser.content)
+              : ''
+          }
+        : {})
+    }
+  }
+
+  /** 子代理任务取激活路径首条 user；不在尾页时按索引随机读，禁止为此全量读 jsonl。 */
+  private resolveSubagentTaskText(
+    sessionDir: string,
+    metadata: SessionData,
+    pageMessages: SessionMessage[],
+    hasMore: boolean
+  ): string {
+    const fromPage = (): string => {
+      const user = pageMessages.find(message => message.role === 'user')
+      return user ? extractTextFromSerializableContent(user.content) : ''
+    }
+    if (!hasMore) return fromPage()
+
+    try {
+      const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
+      const fileSize = fs.existsSync(jsonlPath) ? fs.statSync(jsonlPath).size : 0
+      const sqlite = ensureSessionIndexFresh(sessionDir, fileSize, metadata.currentLeafId ?? null)
+      const total = sqlite.activeCount()
+      let depth = 0
+      while (depth < total) {
+        const batch = Math.min(8, total - depth)
+        const rows = sqlite.queryActivePathRange(depth, batch)
+        if (rows.length === 0) break
+        const msgs = this.readAndHydrateMessages(sessionDir, rows)
+        const user = msgs.find(message => message.role === 'user')
+        if (user) return extractTextFromSerializableContent(user.content)
+        depth += rows.length
+      }
+    } catch (err) {
+      console.warn(`[SessionStore] 读取子代理任务文案失败 session=${metadata.id}:`, err)
+    }
+    return fromPage()
   }
 
   /** 按索引行随机读 jsonl 字节 → patch → blocks 投影 */

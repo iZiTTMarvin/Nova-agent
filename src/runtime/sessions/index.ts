@@ -1,4 +1,5 @@
 export { SessionStore, deriveChildSessionId } from './SessionStore'
+export type { SessionDisplayLoad } from './SessionStore'
 export { parseStructuredHandoff, renderStructuredHandoff } from './handoffState'
 export type {
   SessionSummary,

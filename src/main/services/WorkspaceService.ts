@@ -151,9 +151,10 @@ export class WorkspaceService {
     if (!prevId || prevId === exceptSessionId) {
       return
     }
-    const prevDetail = store.load(prevId)
-    if (prevDetail) {
-      this.leaveSession(prevId, prevDetail.workspaceRoot)
+    const fromList = this.state.availableSessions.find(session => session.id === prevId)
+    const workspaceRoot = fromList?.workspaceRoot ?? store.loadMetadata(prevId)?.workspaceRoot
+    if (workspaceRoot) {
+      this.leaveSession(prevId, workspaceRoot)
     }
   }
 
@@ -226,8 +227,8 @@ export class WorkspaceService {
     }
     if (selected?.kind !== 'primary') selected = sessions.find(session => session.kind === 'primary') ?? null
     const previousRoot = this.state.currentProjectPath
-    // 列表摘要不含会话级覆盖字段；启动选中态需读一次详情以恢复思考强度覆盖
-    const selectedDetail = selected ? store.load(selected.id) : null
+    // 选中详情只读元数据（白名单与思考强度），不读对话正文
+    const selectedDetail = selected ? store.loadMetadata(selected.id) : null
     this.state = {
       currentSessionId: selected?.id ?? null,
       currentProjectPath: selected?.workspaceRoot ?? null,
@@ -453,25 +454,86 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store, sessionId)
-    const detail = store.load(sessionId)
-    if (!detail) {
+    const meta = store.loadMetadata(sessionId)
+    if (!meta) {
       throw new Error(`会话 ${sessionId} 不存在`)
     }
 
     // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
     // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
     this.state = {
-      currentSessionId: detail.id,
-      currentProjectPath: detail.workspaceRoot,
-      currentMode: detail.mode,
-      reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
-      availableSessions: store.list()
+      currentSessionId: meta.id,
+      currentProjectPath: meta.workspaceRoot,
+      currentMode: meta.mode,
+      reasoningEffortOverride: meta.reasoningEffortOverride ?? null,
+      availableSessions: this.retainAvailableSessions(meta)
     }
-    this.notifyWorkspaceRootChanged(previousRoot, detail.workspaceRoot)
+    this.notifyWorkspaceRootChanged(previousRoot, meta.workspaceRoot)
     this.broadcast()
-    hydrateSessionWhitelistFromSession(detail)
-    pushContextBreakdownForSession(detail, this.deps.getMainWindow, this.deps.getSessionStore())
+    hydrateSessionWhitelistFromSession(meta)
     return this.getState()
+  }
+
+  /**
+   * 打开会话后延后全量计算上下文拆分。切走后不再为过期 sessionId 读全文。
+   */
+  scheduleContextBreakdown(sessionId: string): void {
+    setImmediate(() => {
+      if (this.state.currentSessionId !== sessionId) return
+      const store = this.deps.getSessionStore()
+      const full = store.load(sessionId)
+      if (!full) return
+      pushContextBreakdownForSession(full, this.deps.getMainWindow, store)
+    })
+  }
+
+  /** 只更新被选中那一条摘要，不扫全部会话目录 */
+  private retainAvailableSessions(meta: SessionData): SessionSummary[] {
+    const current = this.state.availableSessions
+    const index = current.findIndex(session => session.id === meta.id)
+    if (index >= 0) return current
+    const next = [...current, this.summaryFromMetadata(meta)]
+    next.sort((a, b) => {
+      const byUpdated = b.updatedAt - a.updatedAt
+      return byUpdated !== 0 ? byUpdated : b.createdAt - a.createdAt
+    })
+    return next
+  }
+
+  private summaryFromMetadata(data: SessionData): SessionSummary {
+    const base = {
+      id: data.id,
+      workspaceRoot: data.workspaceRoot,
+      mode: data.mode,
+      permissionMode: data.permissionMode,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+      messageCount: data.messageCount ?? 0,
+      title: data.title,
+      titleSource: data.titleSource,
+      ...(data.pinned ? { pinned: true as const } : {}),
+      ...(data.reasoningEffortOverride
+        ? { reasoningEffortOverride: data.reasoningEffortOverride }
+        : {})
+    }
+    if (data.kind === 'subagent') {
+      return {
+        ...base,
+        kind: 'subagent',
+        subagent: {
+          lineage: {
+            parentSessionId: data.subagent.lineage.parentSessionId,
+            depth: data.subagent.lineage.depth
+          },
+          profile: {
+            profileId: data.subagent.profile.profileId,
+            name: data.subagent.profile.name,
+            permissionCeiling: data.subagent.profile.permissionCeiling
+          }
+        }
+      }
+    }
+    return { ...base, kind: 'primary' }
   }
   /** 切换运行模式（并持久化到目标会话） */
   setMode(params: {

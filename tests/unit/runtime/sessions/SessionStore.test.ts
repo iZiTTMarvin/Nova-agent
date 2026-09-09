@@ -1315,4 +1315,45 @@ describe('SessionStore', () => {
       expect(store.loadMessagesPage('no-such', { limit: 10 })).toBeNull()
     })
   })
+
+  describe('loadForDisplay', () => {
+    it('不足一页时 hasMore 为 false，messageCount 等于尾页条数', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      for (let i = 0; i < 5; i++) {
+        store.appendMessage(session.id, {
+          id: `msg_${i}`,
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          content: `content-${i}`,
+          timestamp: i + 1
+        })
+      }
+      const display = store.loadForDisplay(session.id, { tailLimit: 20 })
+      expect(display).not.toBeNull()
+      expect(display!.session.messages).toHaveLength(5)
+      expect(display!.session.messageCount).toBe(5)
+      expect(display!.hasMore).toBe(false)
+    })
+
+    it('不存在的会话返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      expect(store.loadForDisplay('no-such', { tailLimit: 20 })).toBeNull()
+    })
+
+    it('loadMetadata 不含消息体', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      store.appendMessage(session.id, {
+        id: 'u1',
+        role: 'user',
+        content: 'hello',
+        timestamp: 1
+      })
+      const meta = store.loadMetadata(session.id)
+      expect(meta).not.toBeNull()
+      expect(meta!.messages).toEqual([])
+      expect(meta!.id).toBe(session.id)
+      expect(meta!.workspaceRoot).toBe('/project/root')
+    })
+  })
 })

@@ -40,7 +40,6 @@ import { getWorkspaceService } from '../services/WorkspaceService'
 import { hydrateSessionWhitelistFromSession } from '../../runtime/permissions/PermissionManager'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
-import { buildSessionContextBreakdown } from '../services/SessionContextView'
 
 /** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果与分支元信息 */
 function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
@@ -48,17 +47,28 @@ function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _
   return msg.branch ? { ...shared, branch: msg.branch } : shared
 }
 
-/** 将持久化 SessionData 转换为共享 SessionDetail 格式（含消息历史） */
-function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): SessionDetail {
-  const tailOnly = options?.tailOnly ?? false
-  const activeMessages = getSessionActiveMessages(data)
-  const totalCount = activeMessages.length
-  const sourceMessages = tailOnly
-    ? activeMessages.slice(-INITIAL_SESSION_DISPLAY_PAGE_SIZE)
-    : activeMessages
-  const allMessages = ensureMessageParentChain(data.messages)
-  const withBranch = attachBranchMeta(sourceMessages, allMessages)
-  const currentLeafId = resolveCurrentLeafId(allMessages, data.currentLeafId)
+/** 将持久化 SessionData 转换为共享 SessionDetail 格式 */
+function toSessionDetail(
+  data: SessionData,
+  options?: { displayPage?: boolean; hasMore?: boolean; subagentTask?: string }
+): SessionDetail {
+  const displayPage = options?.displayPage === true
+  const activeMessages = displayPage ? data.messages : getSessionActiveMessages(data)
+  const totalCount = displayPage
+    ? (data.messageCount ?? activeMessages.length)
+    : activeMessages.length
+  const allMessages = displayPage
+    ? data.messages
+    : ensureMessageParentChain(data.messages)
+  const withBranch = displayPage
+    ? activeMessages
+    : attachBranchMeta(activeMessages, allMessages)
+  const currentLeafId = displayPage
+    ? (data.currentLeafId ?? null)
+    : resolveCurrentLeafId(allMessages, data.currentLeafId)
+  const hasMoreMessagesAbove = displayPage
+    ? (options?.hasMore ?? totalCount > activeMessages.length)
+    : undefined
 
   const base = {
     id: data.id,
@@ -68,10 +78,11 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     messageCount: totalCount,
-    hasMoreMessagesAbove: tailOnly ? totalCount > sourceMessages.length : undefined,
+    hasMoreMessagesAbove,
     currentLeafId,
     // compose 阶段表随会话详情透出，renderer 水合阶段条；旧会话为 undefined
     composeStages: data.composeStages,
+    composeReviewLoops: data.composeReviewLoops,
     // 计划确认门状态随详情水合，renderer 据此决定审阅卡是否已放行；旧会话为 undefined
     composePlanApproval: data.composePlanApproval,
     // 会话级待办随详情水合，renderer 恢复 TodoPanel 与 compose 阶段条进度；旧会话为 undefined
@@ -84,6 +95,11 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
   }
   if (data.kind === 'subagent') {
     const taskMessage = data.messages.find((message) => message.role === 'user')
+    const subagentTask = options?.subagentTask !== undefined
+      ? options.subagentTask
+      : (taskMessage
+        ? extractTextFromSerializableContent(taskMessage.content)
+        : '')
     return {
       ...base,
       kind: 'subagent',
@@ -98,9 +114,7 @@ function toSessionDetail(data: SessionData, options?: { tailOnly?: boolean }): S
           permissionCeiling: data.subagent.profile.permissionCeiling
         }
       },
-      subagentTask: taskMessage
-        ? extractTextFromSerializableContent(taskMessage.content)
-        : ''
+      subagentTask
     }
   }
   return { ...base, kind: 'primary' }
@@ -118,15 +132,22 @@ export function registerSessionHandler(): void {
   })
 
 
-  // 加载单个会话的完整数据（含消息历史）
+  // 加载单个会话的展示页（尾部消息）；上下文拆分延后全量计算后推送
   handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
     recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
-    const data = sessionStore.load(params.sessionId)
-    if (!data) {
+    const display = sessionStore.loadForDisplay(params.sessionId, {
+      tailLimit: INITIAL_SESSION_DISPLAY_PAGE_SIZE
+    })
+    if (!display) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
-    hydrateSessionWhitelistFromSession(data)
-    return { ...toSessionDetail(data, { tailOnly: true }), contextBreakdown: buildSessionContextBreakdown(data, sessionStore) }
+    hydrateSessionWhitelistFromSession(display.session)
+    getWorkspaceService().scheduleContextBreakdown(params.sessionId)
+    return toSessionDetail(display.session, {
+      displayPage: true,
+      hasMore: display.hasMore,
+      subagentTask: display.subagentTask
+    })
   })
 
   // 按游标加载更早的消息页（只读，不触发会话切换副作用）

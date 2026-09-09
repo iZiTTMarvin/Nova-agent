@@ -68,6 +68,11 @@ const mockStore = {
       composeStages: sessionComposeStages
     }
   }),
+  loadForDisplay: vi.fn((sessionId: string) => {
+    const data = mockStore.load(sessionId)
+    if (!data) return null
+    return { session: data, hasMore: false }
+  }),
   save: vi.fn(),
   getSessionsDir: () => '/tmp/test-sessions',
   getComposeStages: vi.fn(() => currentStages),
@@ -136,7 +141,9 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
 vi.mock('../../../src/main/services/WorkspaceService', () => ({
   getWorkspaceService: () => ({
     selectSession: mockSelectSession,
-    createSession: mockCreateSession
+    createSession: mockCreateSession,
+    getState: () => ({ currentSessionId: 'sess_1' }),
+    scheduleContextBreakdown: vi.fn()
   })
 }))
 vi.mock('../../../src/main/services/SubagentProjectionServiceHost', () => ({
