@@ -1,5 +1,8 @@
+import { useRunStore, selectSessionIsRunning } from '../../../src/renderer/stores/useRunStore'
+import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
+import { useSettingsStore, resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
+import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useAppStore } from '../../../src/renderer/stores/useAppStore'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 import { resetWorkspaceDispatcherForTests } from '../../../src/renderer/stores/workspaceDispatcher'
@@ -49,7 +52,7 @@ function makeWorkspaceState(overrides: Partial<{
   }
 }
 
-describe('useAppStore Zustand Store', () => {
+describe('useChatStore Zustand Store', () => {
   beforeEach(() => {
     vi.clearAllMocks()
 
@@ -66,25 +69,10 @@ describe('useAppStore Zustand Store', () => {
 
     // 重置 store 状态到默认值
     resetChatStoreForTests()
-    useAppStore.setState({
-      currentProject: null,
-      currentMode: 'default',
-      sessions: [],
-      currentSessionId: null,
-      messages: [],
-      messageIndexById: {},
-      isGenerating: false,
-      currentGeneratingMessageId: null,
-      modelConfig: null,
-      isConfigModalOpen: false,
-      pendingPermissionRequest: null,
-      isSubmittingPermission: false,
-      permissionError: null,
-      messageDiffs: {},
-      loadingDiffs: new Set(),
-      loadingDiffPlaceholders: {},
-      streamingToolArgs: {}
-    })
+    useRunStore.getState().resetForTests()
+    resetSettingsStoreForTests()
+
+    resetAgentStoreForTests()
     // PRD §5.1：重置 workspace store 与 dispatcher 内部状态
     useWorkspaceStore.setState({
       currentSessionId: null,
@@ -101,22 +89,22 @@ describe('useAppStore Zustand Store', () => {
     mockInvoke.mockResolvedValue(makeWorkspaceState({ currentMode: 'plan' }))
 
     // 执行模式切换
-    await useAppStore.getState().setMode('plan')
+    await useSettingsStore.getState().setMode('plan')
 
     // 验证调用了 workspace IPC（单一事实源）
     expect(mockInvoke).toHaveBeenCalledWith('workspace:set-mode', { mode: 'plan' })
     // 验证 store 的值已被 dispatcher 同步更新
-    expect(useAppStore.getState().currentMode).toBe('plan')
+    expect(useSettingsStore.getState().currentMode).toBe('plan')
   })
 
   it('应该能正确处理主进程推送的 assistant 消息流式开始事件', () => {
     const testMsgId = 'assistant-msg-1'
     
     // 触发 handleMessageStart
-    useAppStore.getState().handleMessageStart(testMsgId)
+    useChatStore.getState().handleMessageStart(testMsgId)
 
-    const state = useAppStore.getState()
-    expect(state.isGenerating).toBe(false) // 这里只追加消息壳，sendMessage 才设置 isGenerating
+    const state = useChatStore.getState()
+    expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(false)
     expect(state.currentGeneratingMessageId).toBe(testMsgId)
     expect(state.messages.length).toBe(1)
     expect(state.messages[0]).toEqual(expect.objectContaining({
@@ -131,12 +119,12 @@ describe('useAppStore Zustand Store', () => {
     const testMsgId = 'assistant-msg-1'
     
     // 先开始消息
-    useAppStore.getState().handleMessageStart(testMsgId)
+    useChatStore.getState().handleMessageStart(testMsgId)
     // 触发两次文本追加
-    useAppStore.getState().handleTextDelta(testMsgId, '你好')
-    useAppStore.getState().handleTextDelta(testMsgId, '，我是 Nova。')
+    useChatStore.getState().handleTextDelta(testMsgId, '你好')
+    useChatStore.getState().handleTextDelta(testMsgId, '，我是 Nova。')
 
-    const state = useAppStore.getState()
+    const state = useChatStore.getState()
     expect(state.messages[0].content).toBe('你好，我是 Nova。')
   })
 
@@ -144,11 +132,11 @@ describe('useAppStore Zustand Store', () => {
     const testMsgId = 'assistant-msg-1'
     
     // 1. 初始化消息
-    useAppStore.getState().handleMessageStart(testMsgId)
+    useChatStore.getState().handleMessageStart(testMsgId)
 
     // 2. 触发工具调用开始执行
-    useAppStore.getState().handleToolCall(testMsgId, 'tc_ls_1', 'ls', { path: './' })
-    let state = useAppStore.getState()
+    useChatStore.getState().handleToolCall(testMsgId, 'tc_ls_1', 'ls', { path: './' })
+    let state = useChatStore.getState()
     
     expect(state.messages[0].toolCalls?.length).toBe(1)
     const toolCall = state.messages[0].toolCalls![0]
@@ -158,8 +146,8 @@ describe('useAppStore Zustand Store', () => {
     expect(toolCall.arguments).toEqual({ path: './' })
 
     // 3. 触发工具执行成功并回传结果
-    useAppStore.getState().handleToolResult(testMsgId, 'tc_ls_1', 'ls', 'file1.txt\nfile2.txt')
-    state = useAppStore.getState()
+    useChatStore.getState().handleToolResult(testMsgId, 'tc_ls_1', 'ls', 'file1.txt\nfile2.txt')
+    state = useChatStore.getState()
 
     const toolResult = state.messages[0].toolCalls![0]
     expect(toolResult.status).toBe('success')
@@ -168,64 +156,50 @@ describe('useAppStore Zustand Store', () => {
 
   it('当工具执行失败时应该能正确标记状态为 error', () => {
     const testMsgId = 'assistant-msg-1'
-    useAppStore.getState().handleMessageStart(testMsgId)
-    useAppStore.getState().handleToolCall(testMsgId, 'tc_read_1', 'read', { path: 'none.txt' })
+    useChatStore.getState().handleMessageStart(testMsgId)
+    useChatStore.getState().handleToolCall(testMsgId, 'tc_read_1', 'read', { path: 'none.txt' })
     
     // 回传失败结果
-    useAppStore.getState().handleToolResult(testMsgId, 'tc_read_1', 'read', '工具执行失败: 文件不存在')
-    const state = useAppStore.getState()
+    useChatStore.getState().handleToolResult(testMsgId, 'tc_read_1', 'read', '工具执行失败: 文件不存在')
+    const state = useChatStore.getState()
 
     const toolResult = state.messages[0].toolCalls![0]
     expect(toolResult.status).toBe('error')
     expect(toolResult.result).toBe('工具执行失败: 文件不存在')
   })
 
-  it('应该保存来自主进程的权限请求', () => {
-    useAppStore.getState().handlePermissionRequest({
-      messageId: 'msg_1',
-      requestId: 'req_1',
-      toolName: 'bash',
-      args: { command: 'npm test' },
-      riskLevel: 'low',
-      reason: '命令执行'
+  it('权限请求由快照恢复，ACK 不能清除仍然 pending 的请求', async () => {
+    useChatStore.setState({ currentSessionId: 'sess_1' })
+    useRunStore.getState().selectSession('sess_1')
+    const snapshot = makeRunSnapshot({
+      status: 'waiting_user',
+      pendingInteractions: [{
+        interactionId: 'req_2', runId: 'run_1', sessionId: 'sess_1', messageId: 'msg_1',
+        type: 'permission', status: 'pending', version: 1, createdAt: 1,
+        payload: { requestId: 'req_2', toolName: 'bash', args: { command: 'npm run build' }, riskLevel: 'low', reason: '命令执行' }
+      }]
     })
-
-    const state = useAppStore.getState()
-    expect(state.pendingPermissionRequest).toEqual({
-      messageId: 'msg_1',
-      requestId: 'req_1',
-      toolName: 'bash',
-      args: { command: 'npm test' },
-      riskLevel: 'low',
-      reason: '命令执行'
+    publishRunSnapshot(snapshot)
+    await useRunStore.getState().refreshInteractionProjection()
+    expect(useAgentStore.getState().pendingPermissionRequest).toMatchObject({
+      requestId: 'req_2', runId: 'run_1', sessionId: 'sess_1', version: 1,
+      args: { command: 'npm run build' }
     })
-    expect(state.permissionError).toBeNull()
-  })
-
-  it('用户回应权限请求后应回传主进程并清空挂起状态', async () => {
-    mockInvoke.mockResolvedValue(undefined)
-    useAppStore.getState().handlePermissionRequest({
-      messageId: 'msg_2',
-      requestId: 'req_2',
-      toolName: 'bash',
-      args: { command: 'npm run build' },
-      riskLevel: 'low',
-      reason: '命令执行'
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'respond-permission') return { ok: true }
+      if (channel === 'run:get-snapshot') return { snapshot, waitingSessions: [] }
+      return undefined
     })
-
-    await useAppStore.getState().respondPermissionRequest('allow')
-
-    // 回答携带 commandId（幂等）；其余字段与旧契约兼容
-    expect(mockInvoke).toHaveBeenCalledWith(
-      'respond-permission',
-      expect.objectContaining({
-        requestId: 'req_2',
-        decision: 'allow',
-        commandId: expect.any(String)
-      })
-    )
-    expect(useAppStore.getState().pendingPermissionRequest).toBeNull()
-    expect(useAppStore.getState().isSubmittingPermission).toBe(false)
+    await useAgentStore.getState().respondPermissionRequest('allow')
+    expect(mockInvoke).toHaveBeenCalledWith('respond-permission', expect.objectContaining({
+      requestId: 'req_2', interactionId: 'req_2', expectedVersion: 1,
+      decision: 'allow', commandId: expect.any(String)
+    }))
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('req_2')
+    expect(useAgentStore.getState().isSubmittingPermission).toBe(false)
+    publishRunSnapshot({ ...snapshot, sequence: 2, status: 'running', pendingInteractions: [] })
+    await useRunStore.getState().refreshInteractionProjection()
+    expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
   })
 
   it('加载历史会话时应正确恢复工具调用结果和错误状态', async () => {
@@ -262,11 +236,11 @@ describe('useAppStore Zustand Store', () => {
 
     // selectSession 不再自动调 loadMessageDiffs，无需 mock get-message-diffs
 
-    await useAppStore.getState().selectSession('sess_1')
+    await useChatStore.getState().selectSession('sess_1')
     // 等待 syncFromWorkspace 内部异步 load-session 完成
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    const message = useAppStore.getState().messages[0]
+    const message = useChatStore.getState().messages[0]
     expect(message.toolCalls?.[0].result).toBe('工具执行失败: 测试失败')
     expect(message.toolCalls?.[0].status).toBe('error')
   })
@@ -298,10 +272,10 @@ describe('useAppStore Zustand Store', () => {
 
     // selectSession 不再自动调 loadMessageDiffs
 
-    await useAppStore.getState().selectSession('sess_blocks')
+    await useChatStore.getState().selectSession('sess_blocks')
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(useAppStore.getState().messages[0].blocks).toEqual([
+    expect(useChatStore.getState().messages[0].blocks).toEqual([
       { type: 'thinking', content: '先看目录' },
       { type: 'text', content: '规划结论' }
     ])
@@ -331,12 +305,12 @@ describe('useAppStore Zustand Store', () => {
 
     // selectSession 不再自动调 loadMessageDiffs
 
-    await useAppStore.getState().selectSession('sess_legacy')
+    await useChatStore.getState().selectSession('sess_legacy')
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await useAppStore.getState().selectSession('sess_legacy')
+    await useChatStore.getState().selectSession('sess_legacy')
 
-    const message = useAppStore.getState().messages[0]
+    const message = useChatStore.getState().messages[0]
     expect(message.content).toBe('真正正文')
     expect(message.blocks).toEqual([{ type: 'text', content: '真正正文' }])
   })
@@ -372,7 +346,7 @@ describe('useAppStore Zustand Store', () => {
         ]
       })
 
-    await useAppStore.getState().switchBranch('sess_1', 'msg_user_2')
+    await useChatStore.getState().switchBranch('sess_1', 'msg_user_2')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:switch-branch', {
@@ -381,8 +355,8 @@ describe('useAppStore Zustand Store', () => {
     })
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'load-session', { sessionId: 'sess_1' })
 
-    const state = useAppStore.getState()
-    expect(state.currentMode).toBe('compose')
+    const state = useChatStore.getState()
+    expect(useSettingsStore.getState().currentMode).toBe('compose')
     expect(state.messages[0].toolCalls?.[0].result).toBe('构建成功')
     expect(state.messages[0].toolCalls?.[0].status).toBe('success')
   })
@@ -406,9 +380,9 @@ describe('useAppStore Zustand Store', () => {
         ]
       })
 
-    await useAppStore.getState().selectSession('sess_rev')
+    await useChatStore.getState().selectSession('sess_rev')
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(useAppStore.getState().messages).toHaveLength(2)
+    expect(useChatStore.getState().messages).toHaveLength(2)
     expect(useChatStore.getState().lastMessagesRevision).toBe(0)
 
     mockInvoke.mockClear()
@@ -428,8 +402,8 @@ describe('useAppStore Zustand Store', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(mockInvoke).toHaveBeenCalledWith('load-session', { sessionId: 'sess_rev' })
-    expect(useAppStore.getState().messages).toHaveLength(1)
-    expect(useAppStore.getState().messages[0].id).toBe('u1')
+    expect(useChatStore.getState().messages).toHaveLength(1)
+    expect(useChatStore.getState().messages[0].id).toBe('u1')
   })
 
   it('editResend 应先分叉准备再发送新内容', async () => {
@@ -440,8 +414,10 @@ describe('useAppStore Zustand Store', () => {
       availableSessions: [],
       initialized: true
     })
-    useAppStore.setState({
-      currentProject: '/project/root',
+    useSettingsStore.setState({
+      currentProject: '/project/root'
+    })
+    useChatStore.setState({
       currentSessionId: 'sess_edit',
       messages: [
         { id: 'u1', sessionId: 'sess_edit', role: 'user', content: '你好', timestamp: 1, _revision: 0 },
@@ -459,7 +435,7 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
 
-    await useAppStore.getState().editResend('sess_edit', 'u1', '你好呀')
+    await useChatStore.getState().editResend('sess_edit', 'u1', '你好呀')
 
     expect(mockInvoke).toHaveBeenCalledWith('workspace:edit-resend', {
       sessionId: 'sess_edit',
@@ -473,7 +449,7 @@ describe('useAppStore Zustand Store', () => {
       userMessageId: expect.stringMatching(/^msg_\d+_user$/)
     }))
     // 乐观截断后 sendMessage 会追加新用户消息
-    const after = useAppStore.getState()
+    const after = useChatStore.getState()
     expect(after.messages).toHaveLength(1)
     expect(after.messages[0].content).toBe('你好呀')
     expect(after.messages[0].role).toBe('user')
@@ -515,8 +491,10 @@ describe('useAppStore Zustand Store', () => {
       availableSessions: [],
       initialized: true
     })
-    useAppStore.setState({
-      currentProject: '/project/root',
+    useSettingsStore.setState({
+      currentProject: '/project/root'
+    })
+    useChatStore.setState({
       currentSessionId: 'sess_regen',
       messages: [
         { id: 'u1', sessionId: 'sess_regen', role: 'user', content: '你好', timestamp: 1, _revision: 0 },
@@ -533,7 +511,7 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
 
-    await useAppStore.getState().regenerateAssistant('sess_regen', 'a1')
+    await useChatStore.getState().regenerateAssistant('sess_regen', 'a1')
 
     expect(mockInvoke).toHaveBeenCalledWith('workspace:regenerate', {
       sessionId: 'sess_regen',
@@ -546,8 +524,8 @@ describe('useAppStore Zustand Store', () => {
       content: '',
       regenerate: true
     }))
-    expect(useAppStore.getState().messages).toHaveLength(1)
-    expect(useAppStore.getState().messages[0].id).toBe('u1')
+    expect(useChatStore.getState().messages).toHaveLength(1)
+    expect(useChatStore.getState().messages[0].id).toBe('u1')
   })
 
   it('finishBranchMetaRefresh 应在 pending 时 bump revision 并触发 load-session', async () => {
@@ -629,16 +607,18 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
 
-    await useAppStore.getState().editResend('sess_fail', 'u1', '你好呀')
+    await useChatStore.getState().editResend('sess_fail', 'u1', '你好呀')
 
     expect(mockInvoke).toHaveBeenCalledWith('workspace:bump-messages-revision')
     expect(useChatStore.getState().pendingBranchMetaReload).toBe(false)
     expect(useChatStore.getState().branchForkInProgress).toBe(false)
-    expect(useChatStore.getState().isGenerating).toBe(false)
+    expect(useChatStore.getState().sendInFlight).toBe(false)
   })
 
   it('loadMessageDiffs 应缓存 diff 与审查状态', async () => {
-    useAppStore.setState({ currentSessionId: 'sess_1' })
+    useChatStore.setState({
+      currentSessionId: 'sess_1'
+    })
     mockInvoke.mockImplementation(async (channel: string) => {
       if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
       if (channel === 'get-message-diffs') {
@@ -650,9 +630,9 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
 
-    await useAppStore.getState().loadMessageDiffs('sess_1', 'msg_1')
+    await useChatStore.getState().loadMessageDiffs('sess_1', 'msg_1')
 
-    expect(useAppStore.getState().messageDiffs['msg_1']).toEqual({
+    expect(useChatStore.getState().messageDiffs['msg_1']).toEqual({
       diffs: [
         {
           filePath: 'src/app.ts',
@@ -667,30 +647,30 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('handleDiffUpdate(live) 不应写入 messageDiffs，而应把 messageId 标记为 loading', () => {
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       'msg_live_1',
       'live',
       [{ filePath: 'src/live.ts', status: 'modified' }],
       {}
     )
 
-    const state = useAppStore.getState()
+    const state = useChatStore.getState()
     expect(state.messageDiffs['msg_live_1']).toBeUndefined()
     expect(state.loadingDiffs.has('msg_live_1')).toBe(true)
   })
 
   it('handleDiffUpdate(final) 应写入完整 diff 数据并清除 loading 标记', () => {
     // 先模拟一次 live 占位
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       'msg_final_1',
       'live',
       [{ filePath: 'src/final.ts', status: 'modified' }],
       {}
     )
-    expect(useAppStore.getState().loadingDiffs.has('msg_final_1')).toBe(true)
+    expect(useChatStore.getState().loadingDiffs.has('msg_final_1')).toBe(true)
 
     // 再模拟 final：携带完整 hunks
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       'msg_final_1',
       'final',
       [{
@@ -701,7 +681,7 @@ describe('useAppStore Zustand Store', () => {
       { 'src/final.ts': 'pending' as const }
     )
 
-    const state = useAppStore.getState()
+    const state = useChatStore.getState()
     expect(state.loadingDiffs.has('msg_final_1')).toBe(false)
     expect(state.messageDiffs['msg_final_1']).toEqual({
       diffs: [{
@@ -714,14 +694,14 @@ describe('useAppStore Zustand Store', () => {
   })
 
   it('handleDiffUpdate 应实时写入当前消息的 diff 元数据', () => {
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       'msg_1',
       'final',
       [{ filePath: 'src/live.ts', status: 'modified', hunks: [] }],
       {}
     )
 
-    expect(useAppStore.getState().messageDiffs['msg_1']).toEqual({
+    expect(useChatStore.getState().messageDiffs['msg_1']).toEqual({
       diffs: [{ filePath: 'src/live.ts', status: 'modified', hunks: [] }],
       reviews: {}
     })
@@ -729,7 +709,7 @@ describe('useAppStore Zustand Store', () => {
 
   it('acceptFile 应更新本地缓存中的审查状态', async () => {
     mockInvoke.mockResolvedValueOnce(undefined)
-    useAppStore.setState({
+    useChatStore.setState({
       currentSessionId: 'sess_1',
       messageDiffs: {
         msg_1: {
@@ -739,19 +719,19 @@ describe('useAppStore Zustand Store', () => {
       }
     })
 
-    await useAppStore.getState().acceptFile('sess_1', 'msg_1', 'src/app.ts')
+    await useChatStore.getState().acceptFile('sess_1', 'msg_1', 'src/app.ts')
 
     expect(mockInvoke).toHaveBeenCalledWith('accept-file', {
       sessionId: 'sess_1',
       messageId: 'msg_1',
       filePath: 'src/app.ts'
     })
-    expect(useAppStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('accepted')
+    expect(useChatStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('accepted')
   })
 
   it('rejectFile 应更新本地缓存中的 rejected 状态', async () => {
     mockInvoke.mockResolvedValueOnce(undefined)
-    useAppStore.setState({
+    useChatStore.setState({
       currentSessionId: 'sess_1',
       messageDiffs: {
         msg_1: {
@@ -761,14 +741,14 @@ describe('useAppStore Zustand Store', () => {
       }
     })
 
-    await useAppStore.getState().rejectFile('sess_1', 'msg_1', 'src/app.ts')
+    await useChatStore.getState().rejectFile('sess_1', 'msg_1', 'src/app.ts')
 
     expect(mockInvoke).toHaveBeenCalledWith('reject-file', {
       sessionId: 'sess_1',
       messageId: 'msg_1',
       filePath: 'src/app.ts'
     })
-    expect(useAppStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('rejected')
+    expect(useChatStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('rejected')
   })
 
   it('rejectFile 失败时应继续向上抛错，供 UI 显示错误', async () => {
@@ -778,11 +758,13 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    useAppStore.setState({ currentSessionId: 'sess_1' })
+    useChatStore.setState({
+      currentSessionId: 'sess_1'
+    })
 
     try {
       await expect(
-        useAppStore.getState().rejectFile('sess_1', 'msg_1', 'src/app.ts')
+        useChatStore.getState().rejectFile('sess_1', 'msg_1', 'src/app.ts')
       ).rejects.toThrow('boom')
     } finally {
       consoleErrorSpy.mockRestore()
@@ -797,18 +779,20 @@ describe('useAppStore Zustand Store', () => {
     const messageId = 'msg_t1_regression'
     const sessionId = 'sess_t1'
 
-    useAppStore.setState({ currentSessionId: sessionId })
+    useChatStore.setState({
+      currentSessionId: sessionId
+    })
 
     // 1. 模拟 message_start + tool_call + tool_result（与 store 实际接收事件一致）
-    useAppStore.getState().handleMessageStart(messageId)
-    useAppStore.getState().handleToolCall(messageId, 'tc_w_1', 'write', { path: 'src/foo.ts' })
-    useAppStore.getState().handleToolResult(messageId, 'tc_w_1', 'write', '写入成功')
+    useChatStore.getState().handleMessageStart(messageId)
+    useChatStore.getState().handleToolCall(messageId, 'tc_w_1', 'write', { path: 'src/foo.ts' })
+    useChatStore.getState().handleToolResult(messageId, 'tc_w_1', 'write', '写入成功')
 
     // 此时还没有 diff_update：messageDiffs 应为空
-    expect(useAppStore.getState().messageDiffs[messageId]).toBeUndefined()
+    expect(useChatStore.getState().messageDiffs[messageId]).toBeUndefined()
 
     // 2. 模拟 emitLiveDiffUpdate 推送 phase: 'live'
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       messageId,
       'live',
       [{ filePath: 'src/foo.ts', status: 'modified' }],
@@ -816,9 +800,9 @@ describe('useAppStore Zustand Store', () => {
     )
 
     // 关键断言：live 阶段不应写入 messageDiffs（避免 DiffViewer 渲染 +0 -0）
-    expect(useAppStore.getState().messageDiffs[messageId]).toBeUndefined()
-    expect(useAppStore.getState().loadingDiffs.has(messageId)).toBe(true)
-    expect(useAppStore.getState().loadingDiffPlaceholders[messageId]).toEqual([
+    expect(useChatStore.getState().messageDiffs[messageId]).toBeUndefined()
+    expect(useChatStore.getState().loadingDiffs.has(messageId)).toBe(true)
+    expect(useChatStore.getState().loadingDiffPlaceholders[messageId]).toEqual([
       { filePath: 'src/foo.ts', status: 'modified' }
     ])
 
@@ -838,12 +822,12 @@ describe('useAppStore Zustand Store', () => {
       return undefined
     })
     // handleMessageEnd 内部会调 loadMessageDiffs(currentSessionId, messageId)
-    useAppStore.getState().handleMessageEnd(messageId)
+    useChatStore.getState().handleMessageEnd(messageId)
     // 等微任务：loadMessageDiffs 是 async
     await new Promise(resolve => setTimeout(resolve, 0))
 
     // 最终状态：拿到完整 hunks，loading 标记被清除
-    const finalState = useAppStore.getState()
+    const finalState = useChatStore.getState()
     expect(finalState.loadingDiffs.has(messageId)).toBe(false)
     expect(finalState.messageDiffs[messageId]?.diffs[0].hunks).toEqual([
       { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }
@@ -861,7 +845,7 @@ describe('useAppStore Zustand Store', () => {
     const messageId = 'msg_late_live'
 
     // 1. 模拟 final 已经先到（loadMessageDiffs 完成）
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       messageId,
       'final',
       [{
@@ -871,11 +855,11 @@ describe('useAppStore Zustand Store', () => {
       }],
       {}
     )
-    expect(useAppStore.getState().messageDiffs[messageId]).toBeDefined()
-    expect(useAppStore.getState().loadingDiffs.has(messageId)).toBe(false)
+    expect(useChatStore.getState().messageDiffs[messageId]).toBeDefined()
+    expect(useChatStore.getState().loadingDiffs.has(messageId)).toBe(false)
 
     // 2. 模拟迟到的 live 事件（被 setImmediate 排队晚到）
-    useAppStore.getState().handleDiffUpdate(
+    useChatStore.getState().handleDiffUpdate(
       messageId,
       'live',
       [{ filePath: 'src/foo.ts', status: 'modified' }],
@@ -883,7 +867,7 @@ describe('useAppStore Zustand Store', () => {
     )
 
     // 关键断言：messageDiffs 不应被清掉，loadingDiffs 不应被重新打开
-    const state = useAppStore.getState()
+    const state = useChatStore.getState()
     expect(state.messageDiffs[messageId]?.diffs[0].hunks).toEqual([
       { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, content: ' a\n+b' }
     ])
@@ -896,27 +880,27 @@ describe('useAppStore Zustand Store', () => {
    */
   describe('messageIndexById 索引与 delta 优化', () => {
     it('handleMessageStart 应同步维护 messageIndexById', () => {
-      useAppStore.getState().handleMessageStart('msg_idx_1')
-      const state = useAppStore.getState()
+      useChatStore.getState().handleMessageStart('msg_idx_1')
+      const state = useChatStore.getState()
       expect(state.messageIndexById['msg_idx_1']).toBe(0)
       expect(state.messages[0].id).toBe('msg_idx_1')
     })
 
     it('多次追加消息后索引应正确反映位置', () => {
-      useAppStore.getState().handleMessageStart('msg_a')
-      useAppStore.getState().handleMessageStart('msg_b')
-      const state = useAppStore.getState()
+      useChatStore.getState().handleMessageStart('msg_a')
+      useChatStore.getState().handleMessageStart('msg_b')
+      const state = useChatStore.getState()
       expect(state.messageIndexById['msg_a']).toBe(0)
       expect(state.messageIndexById['msg_b']).toBe(1)
     })
 
     it('handleThinkingDelta 应通过索引定位消息，不影响其他消息', () => {
-      useAppStore.getState().handleMessageStart('msg_first')
-      useAppStore.getState().handleMessageStart('msg_second')
+      useChatStore.getState().handleMessageStart('msg_first')
+      useChatStore.getState().handleMessageStart('msg_second')
 
-      useAppStore.getState().handleThinkingDelta('msg_second', '思考中...')
+      useChatStore.getState().handleThinkingDelta('msg_second', '思考中...')
 
-      const state = useAppStore.getState()
+      const state = useChatStore.getState()
       // 第二条消息应该更新
       expect(state.messages[1].thinking).toBe('思考中...')
       // 第一条消息应保持不变
@@ -924,45 +908,45 @@ describe('useAppStore Zustand Store', () => {
     })
 
     it('handleTextDelta 应通过索引定位消息，不影响其他消息', () => {
-      useAppStore.getState().handleMessageStart('msg_text_1')
-      useAppStore.getState().handleMessageStart('msg_text_2')
+      useChatStore.getState().handleMessageStart('msg_text_1')
+      useChatStore.getState().handleMessageStart('msg_text_2')
 
-      useAppStore.getState().handleTextDelta('msg_text_2', '你好')
-      useAppStore.getState().handleTextDelta('msg_text_1', '世界')
+      useChatStore.getState().handleTextDelta('msg_text_2', '你好')
+      useChatStore.getState().handleTextDelta('msg_text_1', '世界')
 
-      const state = useAppStore.getState()
+      const state = useChatStore.getState()
       expect(state.messages[0].content).toBe('世界')
       expect(state.messages[1].content).toBe('你好')
     })
 
     it('handleToolCall 应通过索引定位消息并正确追加工具调用', () => {
-      useAppStore.getState().handleMessageStart('msg_tc')
-      useAppStore.getState().handleToolCall('msg_tc', 'tc_1', 'ls', { path: './' })
+      useChatStore.getState().handleMessageStart('msg_tc')
+      useChatStore.getState().handleToolCall('msg_tc', 'tc_1', 'ls', { path: './' })
 
-      const state = useAppStore.getState()
+      const state = useChatStore.getState()
       expect(state.messages[0].toolCalls?.length).toBe(1)
       expect(state.messages[0].toolCalls![0].name).toBe('ls')
     })
 
     it('handleToolResult 应通过索引定位消息并正确更新工具状态', () => {
-      useAppStore.getState().handleMessageStart('msg_tr')
-      useAppStore.getState().handleToolCall('msg_tr', 'tc_tr_1', 'read', { path: 'a.ts' })
-      useAppStore.getState().handleToolResult('msg_tr', 'tc_tr_1', 'read', '文件内容')
+      useChatStore.getState().handleMessageStart('msg_tr')
+      useChatStore.getState().handleToolCall('msg_tr', 'tc_tr_1', 'read', { path: 'a.ts' })
+      useChatStore.getState().handleToolResult('msg_tr', 'tc_tr_1', 'read', '文件内容')
 
-      const state = useAppStore.getState()
+      const state = useChatStore.getState()
       expect(state.messages[0].toolCalls![0].status).toBe('success')
       expect(state.messages[0].toolCalls![0].result).toBe('文件内容')
     })
 
     it('两个工具结果反序到达时，仍应更新到各自的卡片和 toolCall', () => {
-      useAppStore.getState().handleMessageStart('msg_order')
-      useAppStore.getState().handleToolCall('msg_order', 'tc_a', 'read', { path: 'a.ts' })
-      useAppStore.getState().handleToolCall('msg_order', 'tc_b', 'grep', { pattern: 'foo' })
+      useChatStore.getState().handleMessageStart('msg_order')
+      useChatStore.getState().handleToolCall('msg_order', 'tc_a', 'read', { path: 'a.ts' })
+      useChatStore.getState().handleToolCall('msg_order', 'tc_b', 'grep', { pattern: 'foo' })
 
-      useAppStore.getState().handleToolResult('msg_order', 'tc_b', 'grep', 'grep 结果')
-      useAppStore.getState().handleToolResult('msg_order', 'tc_a', 'read', 'read 结果')
+      useChatStore.getState().handleToolResult('msg_order', 'tc_b', 'grep', 'grep 结果')
+      useChatStore.getState().handleToolResult('msg_order', 'tc_a', 'read', 'read 结果')
 
-      const state = useAppStore.getState()
+      const state = useChatStore.getState()
       expect(state.messages[0].toolCalls?.[0].id).toBe('tc_a')
       expect(state.messages[0].toolCalls?.[0].result).toBe('read 结果')
       expect(state.messages[0].toolCalls?.[1].id).toBe('tc_b')
@@ -982,14 +966,14 @@ describe('useAppStore Zustand Store', () => {
     })
 
     it('不存在的 messageId 应静默忽略，不修改状态', () => {
-      useAppStore.getState().handleMessageStart('msg_exists')
-      const before = useAppStore.getState().messages.length
+      useChatStore.getState().handleMessageStart('msg_exists')
+      const before = useChatStore.getState().messages.length
 
-      useAppStore.getState().handleThinkingDelta('msg_nonexistent', '不会出现')
-      useAppStore.getState().handleTextDelta('msg_nonexistent', '不会出现')
-      useAppStore.getState().handleToolCall('msg_nonexistent', 'tc_x', 'ls', {})
+      useChatStore.getState().handleThinkingDelta('msg_nonexistent', '不会出现')
+      useChatStore.getState().handleTextDelta('msg_nonexistent', '不会出现')
+      useChatStore.getState().handleToolCall('msg_nonexistent', 'tc_x', 'ls', {})
 
-      const after = useAppStore.getState()
+      const after = useChatStore.getState()
       expect(after.messages.length).toBe(before)
       expect(after.messages[0].content).toBe('')
     })

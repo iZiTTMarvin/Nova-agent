@@ -24,6 +24,7 @@ import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
 import { registerComposeStageHandler } from './composeStageHandler'
 import { registerPlanFileHandler } from './planFileHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
+import { disposeIdleLoopForSession } from '../agent/turn'
 import { getRunCoordinator, initRunCoordinatorHost } from '../services/RunCoordinatorHost'
 import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
@@ -89,6 +90,7 @@ export function registerIpcHandlers(): ImageStore {
   // SessionStore 已由 registerSessionHandler 初始化，这里构建 WorkspaceService 并注册其 IPC。
   // 启动时从磁盘加载会话列表，让 renderer 首屏即可拿到 availableSessions。
   const workspaceService = initWorkspaceService({
+    disposeIdleLoopForSession,
     getSessionStore,
     getMainWindow,
     getRunCoordinator,

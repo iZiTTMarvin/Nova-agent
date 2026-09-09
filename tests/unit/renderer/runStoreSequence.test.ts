@@ -72,7 +72,17 @@ describe('useRunStore sequence 回退防护', () => {
     expect(useRunStore.getState().snapshotsByRunId.old.sequence).toBe(11)
   })
 
-  it('序号缺口会重拉权威快照，不直接套用跳跃事件', () => {
+  it('run 创建时尚未绑定消息，后续消息身份和终态仍被接受', () => {
+    const initial = snap({ runId: 'binding', sessionId: 'sA', sequence: 1, status: 'queued', messageId: '' })
+    const bound = { ...initial, sequence: 3, status: 'running' as const, messageId: 'assistant-1' }
+    const terminal = { ...bound, sequence: 9, status: 'completed' as const }
+    for (const snapshot of [initial, bound, terminal]) {
+      useRunStore.getState().handleSnapshotEvent(snapshot, { sequence: snapshot.sequence, type: 'snapshot', at: 1 })
+    }
+    expect(useRunStore.getState().snapshot).toEqual(terminal)
+  })
+
+  it('完整快照允许合帧跳号，直接接受最新状态而不补拉', () => {
     const invoke = vi.fn().mockResolvedValue({ snapshot: null, waitingSessions: [] })
     global.window = {
       ...global.window,
@@ -92,7 +102,8 @@ describe('useRunStore sequence 回退防护', () => {
       snap({ runId, sessionId: 'sA', sequence: 5, status: 'running' }),
       { sequence: 5, type: 'turn_draft_upsert', at: 2 }
     )
-    expect(useRunStore.getState().lastSequenceByRunId[runId]).toBe(2)
-    expect(invoke).toHaveBeenCalledWith('run:get-snapshot', { sessionId: 'sA' })
+    expect(useRunStore.getState().lastSequenceByRunId[runId]).toBe(5)
+    expect(useRunStore.getState().snapshot?.sequence).toBe(5)
+    expect(invoke).not.toHaveBeenCalledWith('run:get-snapshot', { sessionId: 'sA' })
   })
 })

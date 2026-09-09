@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
+import { useChatStore } from '../../../src/renderer/stores/useChatStore'
+import { useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
+
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContextIndicator, formatTokens } from '../../../src/renderer/features/chat/ContextIndicator'
-import { useAppStore } from '../../../src/renderer/stores/useAppStore'
 import { act, renderDom } from './renderDom'
 
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
@@ -23,9 +25,9 @@ function setContextState(overrides?: Partial<{
     cacheCountCoverage: { reportedPositive: number; reportedZero: number; unreported: number }
   } | null
 }>) {
-  useAppStore.setState({
-    contextLimit: 200_000,
-    contextBreakdown: {
+  useSettingsStore.setState({
+      contextLimit: 200_000,
+      contextBreakdown: {
       sessionId: 'sess_context_indicator',
       messageId: '',
       breakdown: {
@@ -40,7 +42,7 @@ function setContextState(overrides?: Partial<{
       capturedAt: 1,
       contextLimit: 200_000
     },
-    sessionUsage: {
+      sessionUsage: {
       totalUncachedInputTokens: 610,
       totalCacheReadTokens: 390,
       totalCacheWriteTokens: 80,
@@ -105,9 +107,11 @@ describe('ContextIndicator', () => {
   })
 
   it.each(['provider', 'anchored-estimate', 'conservative-estimate'] as const)('展示预算 Owner 的总量、窗口与来源 %s', source => {
-    const current = useAppStore.getState().contextBreakdown!
-    useAppStore.setState({ contextBreakdown: { ...current, budget: { status: 'compact', estimatedTokens: 400_000,
-      contextWindow: 500_000, threshold: 400_000, marginTokens: source === 'provider' ? 0 : 256, source, reason: 'compatible-main-anchor' } } })
+    const current = useSettingsStore.getState().contextBreakdown!
+    useSettingsStore.setState({
+      contextBreakdown: { ...current, budget: { status: 'compact', estimatedTokens: 400_000,
+      contextWindow: 500_000, threshold: 400_000, marginTokens: source === 'provider' ? 0 : 256, source, reason: 'compatible-main-anchor' } }
+    })
     const renderer = renderDom(React.createElement(ContextIndicator))
     act(() => {
       renderer.container.querySelector('.context-indicator-wrap')?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))

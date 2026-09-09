@@ -4,7 +4,7 @@ import {
   useChatStore
 } from '../../../../../src/renderer/stores/useChatStore'
 import { useWorkspaceStore } from '../../../../../src/renderer/stores/useWorkspaceStore'
-import { useRunStore } from '../../../../../src/renderer/stores/useRunStore'
+import { useRunStore, selectSessionIsRunning } from '../../../../../src/renderer/stores/useRunStore'
 import type { RunSnapshot } from '../../../../../src/shared/run/types'
 
 function unresolved<T>(): Promise<T> {
@@ -31,6 +31,7 @@ function snap(
 describe('chat workspace sync reset ownership', () => {
   beforeEach(() => {
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     global.window = {
       ...global.window,
       api: {
@@ -60,7 +61,6 @@ describe('chat workspace sync reset ownership', () => {
       branchForkInProgress: true,
       tier1BranchContext: { branchMessageId: 'message-a', branchType: 'tier1', siblingCount: 2, selectedSiblingIndex: 1 },
       tier1StaleDiffMessageIds: ['message-a'],
-      isGenerating: true,
       currentGeneratingMessageId: 'message-a',
       activeAgentSessionId: 'session-a',
       sendInFlight: true,
@@ -104,7 +104,7 @@ describe('chat workspace sync reset ownership', () => {
     expect(state.pendingBranchMetaReload).toBe(false)
     expect(state.tier1BranchContext).toBeNull()
     expect(state.tier1StaleDiffMessageIds).toEqual([])
-    expect(state.isGenerating).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
     expect(state.activeAgentSessionId).toBeNull()
     expect(state.sendInFlight).toBe(false)
@@ -132,7 +132,6 @@ describe('chat workspace sync reset ownership', () => {
       lastMessagesRevision: 1,
       messages: [message],
       messageIndexById: { 'message-a': 0 },
-      isGenerating: true,
       currentGeneratingMessageId: 'message-a',
       activeAgentSessionId: 'session-a',
       sendInFlight: true,
@@ -150,6 +149,8 @@ describe('chat workspace sync reset ownership', () => {
       tier1StaleDiffMessageIds: ['message-a']
     })
 
+    const running = snap({ runId: 'run-a', sessionId: 'session-a', sequence: 1, status: 'running', messageId: 'message-a' })
+    useRunStore.getState().handleSnapshotEvent(running, { sequence: 1, type: 'snapshot', at: 1 })
     useChatStore.getState().syncFromWorkspace({
       currentSessionId: 'session-a',
       availableSessions: [],
@@ -161,7 +162,7 @@ describe('chat workspace sync reset ownership', () => {
     const state = useChatStore.getState()
     expect(state.messages).toEqual([message])
     expect(state.messageIndexById).toEqual({ 'message-a': 0 })
-    expect(state.isGenerating).toBe(true)
+    expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(true)
     expect(state.currentGeneratingMessageId).toBe('message-a')
     expect(state.activeAgentSessionId).toBe('session-a')
     expect(state.sendInFlight).toBe(true)
@@ -217,7 +218,7 @@ describe('chat workspace sync reset ownership', () => {
     expect(useChatStore.getState().loadingDiffs.size).toBe(0)
   })
 
-  it('切到收尾会话：message-end 先到而 pull 快照过期时，水合不复活 isGenerating', async () => {
+  it('切到收尾会话：terminal snapshot 先到而 pull 快照过期时，水合不复活运行态', async () => {
     const runningSnapshot = snap({
       runId: 'run-b',
       sessionId: 'session-b',
@@ -287,21 +288,17 @@ describe('chat workspace sync reset ownership', () => {
     })
 
     // pull 尚未返回：目标轮次先结束，renderer 已回到非生成态
+    useRunStore.getState().handleSnapshotEvent(terminalSnapshot, { sequence: 12, type: 'terminal', at: 12 })
     await useChatStore.getState().handleMessageEnd('message-b')
-    expect(useChatStore.getState().isGenerating).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), useChatStore.getState().currentSessionId)).toBe(false)
 
     // 过期的 running 快照此时才到达
     resolvePull({ snapshot: runningSnapshot, waitingSessions: [] })
 
-    // 先等水合完成：终态复核（第二次 run:get-snapshot）已发出，
-    // 再断言生成态未被过期的 running 快照复活
-    await vi.waitFor(() => {
-      expect(snapshotCalls.length).toBeGreaterThanOrEqual(2)
-    })
-    expect(snapshotCalls).toEqual(['session-b', 'session-b'])
-    await vi.waitFor(() => {
-      expect(useChatStore.getState().isGenerating).toBe(false)
-    })
+    await useRunStore.getState().pullSnapshot('session-b')
+    expect(snapshotCalls).toEqual(['session-b'])
+    expect(selectSessionIsRunning(useRunStore.getState(), 'session-b')).toBe(false)
+    expect(useRunStore.getState().snapshotsByRunId['run-b'].sequence).toBe(12)
     expect(useChatStore.getState().currentGeneratingMessageId).toBeNull()
     expect(useChatStore.getState().activeAgentSessionId).toBeNull()
   })

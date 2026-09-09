@@ -123,16 +123,17 @@ export class SessionOutputJournal {
     }
   }
 
-  /** 释放内存与溢出流（范围终态清理时调用）；幂等 */
-  dispose(): void {
-    if (this.disposed) return
+  /** 放弃输出保留，但不把释放缓冲伪装成进程退出。 */
+  releaseOutput(): void {
     this.disposed = true
     this.closeSpill()
     this.releaseWindow()
-    if (!this.settled) {
-      this.settled = true
-      this.emit(this.settledListeners)
-    }
+  }
+
+  /** 释放内存与溢出流（范围终态清理时调用）；幂等 */
+  dispose(): void {
+    this.releaseOutput()
+    this.settle()
   }
 
   private openSpill(): void {

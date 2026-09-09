@@ -1,4 +1,4 @@
-import { projectUserContent } from '../request-projection'
+import { projectUserMessages } from '../request-projection'
 /**
  * AgentLoop — 核心消息-模型-工具循环的门面类。
  * 接收用户消息，组织上下文，调用模型，处理工具调用，通过 EventBus 向外发射流式事件。
@@ -18,7 +18,7 @@ import {
 } from '../permissions/PermissionCoordinator'
 import { replaceSkillPathGrants } from '../permissions/pathAccess'
 import type { CompactionLedger, SessionStore } from '../sessions'
-import type { Mode } from '../../shared/session/types'
+import type { Mode, UserDeliveryFacts } from '../../shared/session/types'
 import type { TruncationStage } from '../tools/grep-types'
 import { createTruncationPipeline } from '../tools/TruncationPipeline'
 import { EventBus } from './EventBus'
@@ -713,6 +713,12 @@ export class AgentLoop {
       checkpointBegun = true
 
       this.eventBus.emit({ type: 'message_start', messageId })
+      if (route.kind === 'skill_fork' && options?.userMessageId) {
+        this.eventBus.emit({
+          type: 'user_delivery', messageId,
+          facts: { userMessageId: options.userMessageId, sessionPrefix: null, modeInstruction: '' }
+        })
+      }
 
       outcome = await this.runTurn(content, route, messageId, options?.userMessageId)
     } catch (err) {
@@ -767,7 +773,9 @@ export class AgentLoop {
       // 执行器已完成产品路径：摘要写入上下文并推给 UI，不进入 Agent kernel
       this.ctx.messages.push({ role: 'assistant', content: dispatched.assistantSummary })
       this.eventBus.emit({ type: 'text_delta', messageId, delta: dispatched.assistantSummary })
-      return this.settledTurnOutcome()
+      if (this.cancelled) return { status: 'cancelled' }
+      if (dispatched.outcome.status === 'failed') await this.notifyErrorHook(messageId, dispatched.outcome.error.message)
+      return dispatched.outcome
     }
 
     // continue：按规范化输入准备上下文，然后进入 runAgentLoop
@@ -775,26 +783,21 @@ export class AgentLoop {
       // slash / 自动路由 inject：把该 skill 目录登记为额外只读根
       this.addSkillRoot(dispatched.grantedSkillRoot)
     }
-    if (dispatched.assistantPrelude !== undefined) {
-      this.ctx.messages.push({ role: 'assistant', content: dispatched.assistantPrelude })
-    }
     userText = dispatched.userText
-    if (userMessageId) {
-      this.eventBus.emit({ type: 'user_delivery', messageId,
-        facts: { userMessageId, sessionPrefix, modeInstruction } })
+    const facts: UserDeliveryFacts = {
+      userMessageId: userMessageId ?? '', sessionPrefix, modeInstruction,
+      ...(dispatched.assistantPrelude !== undefined ? {
+        skillInput: { assistantPrelude: dispatched.assistantPrelude, userContent: dispatched.userText }
+      } : {})
     }
-    const userOrigin = userMessageId
-      ? { messageId: userMessageId, step: 0 }
-      : undefined
-    this.ctx.messages.push({
-      role: 'user',
-      content: projectUserContent(dispatched.userContent, { userMessageId: userMessageId ?? '', sessionPrefix, modeInstruction }),
-      ...(userOrigin ? { origin: userOrigin } : {})
-    })
+    if (userMessageId) {
+      this.eventBus.emit({ type: 'user_delivery', messageId, facts })
+    }
+    this.ctx.messages.push(...projectUserMessages(content, userMessageId, facts))
 
     // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。
     // 硬上限在压缩之后、发模型之前套用（见 runAgentLoop），避免大历史无法进入压缩。
-    this.compactionService.recordUserTurn()
+    this.compactionService.updateTokenEstimate()
 
     // AgentLoop 装配 kernel 依赖，并在 kernel 返回后统一处理终态。
     const activeToolCountBeforeBatch = (): number =>
@@ -921,7 +924,6 @@ export class AgentLoop {
    * 正常返回路径的轮次结果：取消标志已置位时收敛为 cancelled；
    * kernel 报告停止原因（熔断 / 轮数耗尽 / 空参护栏）时收敛为 incomplete——
    * 轮次确实结束，仍发 message_end，只是不声称任务完成。
-   * 产品分派（handled）路径不经过 kernel，没有 stopReason，恒为 completed。
    */
   private settledTurnOutcome(endResult?: LoopEndResult): AgentTurnOutcome {
     if (this.cancelled) return { status: 'cancelled' }
@@ -954,7 +956,7 @@ export class AgentLoop {
    *   成功轮次遇到关闭失败按 failed 收尾（forward 快照缺失会破坏分支重放），
    *   已失败轮次只记录次生错误，不覆盖原始错误；
    * - 清空本轮引用（currentMessageId / abortController）并收敛 state；
-   * - 发出恰好一个持久化终态事件：failed → error，completed/incomplete/cancelled → message_end，
+   * - 发出恰好一个持久化终态事件：failed → error，其余 → message_end，
    *   error 之后不得再补发 message_end；
    * - 只在 completed / incomplete 时启动空闲压缩计时器：cancel 通常意味着模型走偏，
    *   failed 的上下文已损坏，两者后台压缩都只会烧 token 或在用户不知情时改写历史。
@@ -1000,7 +1002,7 @@ export class AgentLoop {
       this.eventBus.emit({
         type: 'message_end',
         messageId,
-        ...(outcome.status === 'cancelled' ? { interrupted: true } : {})
+        ...(outcome.status === 'cancelled' || outcome.status === 'interrupted' ? { interrupted: true } : {})
       })
     }
 

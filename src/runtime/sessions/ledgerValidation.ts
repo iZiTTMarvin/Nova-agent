@@ -2,6 +2,7 @@ import { buildConversationContext, type BuildConversationContextOptions } from '
 import { getSessionActiveMessages } from './tree'
 import type { CompactionLedger, SessionData } from './types'
 import { extractTextFromSerializableContent } from './types'
+import { alignToUserInputBoundary } from '../request-projection'
 import type { ChatMessage, MessageOrigin } from '../model/types'
 
 /**
@@ -28,7 +29,7 @@ export function durableCompactionPrefixLength(session: SessionData, visible: rea
     matchesArchive(start + count, visible[count])) count++
   // 不匹配的 user 投影可以保留；无归档坐标的草稿须连同前一条归档消息保留。
   while (count > 0 && (!visible[count] || !archived[start + count] || !sameOrigin(visible[count], archived[start + count]))) count--
-  return count
+  return alignToUserInputBoundary(visible, count)
 }
 
 export type LedgerRestoreKind = 'restored' | 'empty-tail' | 'invalid'
@@ -81,7 +82,9 @@ export function classifyLedgerRestore(
     if (locate(entry.shadows.to) !== 'ok') return 'invalid'
     const from = activeOriginPositions.get(originKey(entry.shadows.from)!)!
     const to = activeOriginPositions.get(originKey(entry.shadows.to)!)!
-    if (from.first > to.last || from.first !== previousEnd + 1) return 'invalid'
+    if (from.first > to.last || from.first !== previousEnd + 1 ||
+        alignToUserInputBoundary(conversation, from.first) !== from.first ||
+        alignToUserInputBoundary(conversation, to.last + 1) !== to.last + 1) return 'invalid'
     previousEnd = to.last
   }
   if (ledger.state && locate(ledger.state.coversThrough) !== 'ok') return 'invalid'

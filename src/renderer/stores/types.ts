@@ -2,8 +2,7 @@
  * 渲染器专用的扩展类型
  *
  * 仅在 renderer 内部使用，不污染 shared 层。
- * 把 useAppStore 拆分为 useChatStore / useAgentStore / useSettingsStore 之后，
- * 这部分类型被三个 store 共同依赖，所以集中放在独立文件，避免循环引用。
+ * 由聊天、权限和设置投影共享；领域 slice 从各自契约导入。
  */
 import type {
   Message,

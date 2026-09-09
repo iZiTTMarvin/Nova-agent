@@ -142,6 +142,9 @@ async function executeRead(ref: string, context: ToolContext): Promise<ToolResul
   return {
     success: true,
     output,
+    processOutcome: view.state === 'exited'
+      ? { state: 'exited', exitCode: view.exitCode }
+      : { state: 'running' },
     processHandle: { ref, state: view.state },
     ...(view.state === 'exited' && view.exitCode !== null ? { exitCode: view.exitCode } : {}),
     ...(spill.artifactId ? { artifactId: spill.artifactId } : {})
@@ -172,6 +175,7 @@ async function executeWrite(
     output: `已写入 ${input.length} 字节；进程当前${
       state === 'running' ? '仍在运行' : '已退出'
     }。后续输出用 read 读取`,
+    processOutcome: state === 'exited' ? { state, exitCode: null } : { state },
     processHandle: { ref, state }
   }
 }
@@ -195,6 +199,7 @@ async function executeInterrupt(ref: string, context: ToolContext): Promise<Tool
   return {
     success: true,
     output: `已向进程发送中断信号，进程当前${state === 'running' ? '仍在运行' : '已退出'}`,
+    processOutcome: state === 'exited' ? { state, exitCode: null } : { state },
     processHandle: { ref, state }
   }
 }
@@ -219,6 +224,7 @@ async function executeStop(ref: string, context: ToolContext): Promise<ToolResul
   return {
     success: true,
     output,
+    processOutcome: { state: 'exited', exitCode },
     processHandle: { ref, state: 'exited' },
     ...(exitCode !== null ? { exitCode } : {}),
     ...(spill.artifactId ? { artifactId: spill.artifactId } : {})

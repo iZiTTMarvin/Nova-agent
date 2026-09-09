@@ -35,17 +35,6 @@ const snapshotBroadcast = new SnapshotBroadcastCoalescer((snapshot, event) => {
   })
 })
 
-/** 当前 SEND_MESSAGE 绑定的 runId（兼容旧 agentTurnInProgress） */
-let activeRunId: string | null = null
-
-export function getActiveRunId(): string | null {
-  return activeRunId
-}
-
-export function setActiveRunId(runId: string | null): void {
-  activeRunId = runId
-}
-
 function guardWindowLifetime(win: BrowserWindow): void {
   const contents = win.webContents
   if (destroyGuardedContents.has(contents)) return
@@ -110,6 +99,5 @@ export function resetRunCoordinatorHostForTests(): void {
   snapshotBroadcast.cancel()
   coordinator = null
   executionRegistry = null
-  activeRunId = null
   getMainWindowRef = null
 }

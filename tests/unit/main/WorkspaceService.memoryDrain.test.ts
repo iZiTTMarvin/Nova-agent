@@ -60,6 +60,7 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     const session = store.create('/ws/project-a', 'default')
 
     const service = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
       getSessionStore: () => store,
       getMainWindow: () => null,
       getRunCoordinator: () => ({
@@ -92,6 +93,7 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     const b = store.create('/ws/b', 'default')
 
     const service = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
       getSessionStore: () => store,
       getMainWindow: () => null,
       getRunCoordinator: () => ({

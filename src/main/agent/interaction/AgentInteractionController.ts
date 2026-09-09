@@ -9,8 +9,7 @@ import type {
 import type { ToolInvocationRef } from '../../../runtime/tools/types'
 import {
   getRunCoordinator,
-  getRunExecutionRegistry,
-  getActiveRunId
+  getRunExecutionRegistry
 } from '../../services/RunCoordinatorHost'
 import { markActiveStreamsCancelled } from '../events'
 import { getAgentLoopForRun, disposeIdleLoopForSession } from '../turn'
@@ -103,33 +102,45 @@ function planReviewResolution(command: PlanReviewCommand): PlanReviewResolution 
   return { decision: command.decision }
 }
 
-export async function cancelExecution(params: { runId?: string } = {}): Promise<{ runId: string | null; status: string }> {
-  const runId = params.runId ?? getActiveRunId()
+export function dismissRunTreeInteractions(runId: string): void {
   const coord = getRunCoordinator()
-  const beforeCancel = runId ? coord.getSnapshot(runId) : null
-  if (runId && beforeCancel) {
-    const cancelled = await getSubagentLifecycleCoordinator().cancelRunTree(
-      runId,
-      'cancel_execution'
-    )
-    for (const cancelledRunId of cancelled.requestedRunIds) {
-      markActiveStreamsCancelled(cancelledRunId)
-      dismissPendingAskQuestionsForRun(cancelledRunId)
-      planReviewWaiters.cancelForRun(cancelledRunId)
+  const registry = getRunExecutionRegistry()
+  const lifecycle = getSubagentLifecycleCoordinator()
+  // waiter 必须在等待执行收敛前释放，否则提问工具与取消会互等。
+  for (const targetRunId of [runId, ...lifecycle.listDescendantRunIds(runId)]) {
+    const target = coord.getSnapshot(targetRunId)
+    if (!target) continue
+    const handle = registry.get(targetRunId)
+    const generation = handle?.generation ?? target.executionGeneration
+    if (
+      !isTerminalRunStatus(target.status) &&
+      coord.getSnapshotForSession(target.sessionId)?.runId === targetRunId &&
+      generation === target.executionGeneration
+    ) {
+      disposeIdleLoopForSession(target.sessionId)
+      clearSteeringQueue(target.sessionId)
     }
-
-    // 会话层面的清理：取消后 idle 压缩窗口不再需要，排队消息也不再处理。
-    // 两者都按 sessionId 精确清理，不影响并发中的其它会话。
-    const sessionId = beforeCancel.sessionId
-    if (sessionId) {
-      disposeIdleLoopForSession(sessionId)
-      clearSteeringQueue(sessionId)
-    }
+    markActiveStreamsCancelled(targetRunId)
+    dismissPendingAskQuestionsForRun(targetRunId, generation)
+    planReviewWaiters.cancelForRun(targetRunId)
   }
+}
 
-  // 有执行句柄时终态由 sendMessage finally 确认；无句柄 run 已在上方同步终止。
-  const snap = runId ? coord.getSnapshot(runId) : null
-  return { runId, status: snap?.status ?? 'idle' }
+export async function cancelExecution(params: { runId: string }): Promise<{ runId: string; status: string }> {
+  const runId = params?.runId
+  if (typeof runId !== 'string' || runId.trim().length === 0) {
+    throw new Error('取消执行缺少 runId')
+  }
+  const coord = getRunCoordinator()
+  const beforeCancel = coord.getSnapshot(runId)
+  if (!beforeCancel || beforeCancel.runId !== runId) {
+    throw new Error(`取消执行的 run ${runId} 不存在`)
+  }
+  dismissRunTreeInteractions(runId)
+  await getSubagentLifecycleCoordinator().cancelRunTree(runId, 'cancel_execution')
+
+  const snap = coord.getSnapshot(runId)
+  return { runId, status: snap?.status ?? beforeCancel.status }
 }
 
 export async function respondPermission(params: {
@@ -396,11 +407,11 @@ export async function respondAskQuestion(params: {
     if (!entry) {
       return identityMismatchResult(`askQuestion ${params.requestId} 没有进程内 waiter`, found)
     }
-    if (entry.runId !== found.runId) {
-      return identityMismatchResult(
-        `askQuestion run 不匹配：interaction.runId=${found.runId}, waiter.runId=${entry.runId}`,
-        found
-      )
+    if (
+      entry.runId !== found.runId || entry.sessionId !== found.sessionId ||
+      entry.executionGeneration !== coord.getSnapshot(found.runId)?.executionGeneration
+    ) {
+      return identityMismatchResult('askQuestion waiter 的 run/session/generation 身份不匹配', found)
     }
   }
 

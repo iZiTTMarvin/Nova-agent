@@ -43,7 +43,7 @@ export function registerAgentHandler(
     return sendAgentMessage(params, { getMainWindow, getModelClient, getImageStore })
   })
 
-  handle(CANCEL_EXECUTION, async (_event, params) => cancelExecution(params ?? {}))
+  handle(CANCEL_EXECUTION, async (_event, params) => cancelExecution(params))
 
   handle(RESPOND_PERMISSION, async (_event, params) => respondPermission(params))
 

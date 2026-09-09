@@ -10,6 +10,10 @@ export function nextHydrationEpoch(): number {
   return ++focusedSessionHydrationEpoch
 }
 
+export function getHydrationEpoch(): number {
+  return focusedSessionHydrationEpoch
+}
+
 /** 判断给定 epoch 是否仍是当前轮次 */
 export function isHydrationEpochCurrent(epoch: number): boolean {
   return epoch === focusedSessionHydrationEpoch

@@ -11,6 +11,7 @@ import { useAgentStore } from '../../stores/useAgentStore'
 import {
   arePendingPlanReviewsEqual,
   selectPendingPlanReview,
+  selectSessionIsRunning,
   getRunInterruptionNotice,
   useRunStore
 } from '../../stores/useRunStore'
@@ -119,9 +120,10 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
   // ── chat store（消息/会话/diff/流式） ──
   const messages = useChatStore(state => state.messages)
-  const isGenerating = useChatStore(state => state.isGenerating)
   const sendInFlight = useChatStore(state => state.sendInFlight)
   const currentSessionId = useChatStore(state => state.currentSessionId)
+  const runtimeRunning = useRunStore(state => selectSessionIsRunning(state, currentSessionId))
+  const isGenerating = runtimeRunning || sendInFlight
   const currentSubagentTask = useChatStore(state => state.currentSubagentTask)
   const currentSession = useChatStore(state =>
     state.sessions.find((session) => session.id === state.currentSessionId)
@@ -608,13 +610,10 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     // 未 resolve 的 askQuestion 阻塞、永不到达 message_end → 互等死锁。
     await preSendGate({ hasPendingAskQuestion: !!pendingAskQuestion, dismissAskQuestion })
 
-    // 竞态修复：await 跨了一个 IPC 往返，期间旧轮次可能已 message_end（isGenerating 翻 false、
-    // dispatchNextPending 已尝试 drain 但队列为空提前返回）。此处必须重读最新 isGenerating，
-    // 不能用本次 render 捕获的旧值——否则会用过期 true 把消息塞进队列，而轮次已结束、再无
-    // message_end 来 drain，消息永久卡在 steering 队列。
+    // 提问答复可能已经使旧 run 进入终态，发送前重新读取权威快照。
     const latestSendState = useChatStore.getState()
     if (latestSendState.currentSessionId !== sendingSessionId) return
-    const stillGenerating = latestSendState.isGenerating || latestSendState.sendInFlight
+    const stillGenerating = selectSessionIsRunning(useRunStore.getState(), sendingSessionId) || latestSendState.sendInFlight
 
     // Steering Queue：Agent 正在运行时，新消息进入挂起队列，turn boundary 自动 dispatch
     if (stillGenerating) {

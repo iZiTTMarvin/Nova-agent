@@ -220,6 +220,8 @@ export interface ToolResult {
    * 不能从 success 推断。
    */
   exitCode?: number
+  /** 随工具结果持久化的进程退出确认事实。 */
+  processOutcome?: import('../../shared/tools/types').ToolProcessOutcome
   /** 成功执行后交给 AgentLoop 的结构化控制信号。 */
   control?: ToolControlSignal
   /**

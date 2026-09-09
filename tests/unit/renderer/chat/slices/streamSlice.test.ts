@@ -179,7 +179,7 @@ describe('streamSlice', () => {
       'tc_run_code'
     )
 
-    await useChatStore.getState().markRunningAsCancelled()
+    await useChatStore.getState().handleMessageEnd('msg_cancel_code', true)
     const parent = useChatStore.getState().messages[0]?.blocks?.find(
       block => block.type === 'tool' && block.toolCallId === 'tc_run_code'
     )

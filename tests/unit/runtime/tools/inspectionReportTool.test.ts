@@ -63,7 +63,7 @@ function facts(runs = [run], sessionStore = store) {
   return createComposeStageFactsProvider({ sessionStore, projection: { listByParentSessionId: () => runs } })(parentId)
 }
 
-const shell: MessageBlock = { type: 'tool', toolName: 'bash', toolCallId: 'shell-call', arguments: {}, status: 'success', result: 'ok' }
+const shell: MessageBlock = { type: 'tool', toolName: 'bash', toolCallId: 'shell-call', arguments: {}, status: 'success', result: 'ok', processOutcome: { state: 'exited', exitCode: 0 } }
 
 async function submit(verdict: 'pass' | 'fail' = 'pass', evidence: MessageBlock[] = [shell]) {
   const args = { verdict, summary: '逐条实际操作并观察输出' }
@@ -93,10 +93,28 @@ describe('inspection_report', () => {
   it.each([
     { evidence: [] },
     { evidence: [{ ...shell, status: 'error' as const, result: '[命令退出码: 0]' }] },
-    { evidence: [{ ...shell, result: '[命令退出码: 1]' }] }
+    { evidence: [{ ...shell, processOutcome: { state: 'exited' as const, exitCode: 1 }, result: 'all checks passed' }] },
+    { evidence: [{ ...shell, processOutcome: { state: 'running' as const }, result: '[命令退出码: 0]' }] },
+    { evidence: [{ ...shell, processOutcome: { state: 'unconfirmed' as const } }] },
+    { evidence: [{ ...shell, processOutcome: { state: 'exited' as const, exitCode: null } }] },
+    { evidence: [{ ...shell, processOutcome: undefined, result: '[进程仍在运行 ref: psn_abcdefghijkl]' }] }
   ])('缺少真实成功命令不允许仅凭 pass 放行：%j', async ({ evidence }) => {
     await submit('pass', evidence)
     expect(facts()).toMatchObject({ inspectorPassed: false, inspection: { issue: 'missing_evidence' } })
+  })
+
+  it.each(['bash', 'shell_session'])('结构化 %s 退出证据不受展示文本影响，落盘后仍可放行', async toolName => {
+    await submit('pass', [{ ...shell, toolName, result: 'localized output [命令退出码: 9]' }])
+    expect(facts([run], new SessionStore(root)).inspectorPassed).toBe(true)
+  })
+
+  it.each([
+    { toolName: 'bash', result: 'old foreground success' },
+    { toolName: 'shell_session', result: '[会话已结束，退出码: 0]' },
+    { toolName: 'shell_session', result: '[会话已终止，退出码: 0]' }
+  ])('单一兼容入口读取旧版命令证据：%j', async old => {
+    await submit('pass', [{ ...shell, ...old, processOutcome: undefined }])
+    expect(facts().inspectorPassed).toBe(true)
   })
 
   it('旧报告只含自然语言时指向原 inspector 补交，保留已有证据', async () => {

@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceService } from '../../../src/main/services/WorkspaceService'
 import { SessionStore, deriveChildSessionId } from '../../../src/runtime/sessions/SessionStore'
 import type { CreateChildSessionCommand } from '../../../src/runtime/sessions/types'
+import { RunCoordinator, RunStore } from '../../../src/runtime/run'
+import { processRegistry } from '../../../src/runtime/process'
+import { EventEmitter } from 'node:events'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp/nova-test-userdata') },
@@ -44,6 +47,8 @@ describe('WorkspaceService subagent deletion', () => {
   })
 
   afterEach(() => {
+    processRegistry.resetForTests()
+    vi.restoreAllMocks()
     fs.rmSync(tempRoot, { recursive: true, force: true })
   })
 
@@ -94,24 +99,26 @@ describe('WorkspaceService subagent deletion', () => {
   })
 
   function createService() {
-    const assertNoNonTerminalRunsForSessions = vi.fn()
-    const deleteRunsForSessions = vi.fn(() => 0)
+    const runStore = new RunStore({ runsRoot: path.join(tempRoot, 'runs') })
+    const coordinator = new RunCoordinator({ store: runStore })
+    const assertNoNonTerminalRunsForSessions = vi.spyOn(coordinator, 'assertNoNonTerminalRunsForSessions')
+    const deleteRunsForSessions = vi.spyOn(coordinator, 'deleteRunsForSessions')
+    const idleSessions = new Set(store.listInternal().map(session => session.id))
     const service = new WorkspaceService({
+      disposeIdleLoopForSession: sessionId => { idleSessions.delete(sessionId) },
       getSessionStore: () => store,
       getMainWindow: () => null,
-      getRunCoordinator: () => ({
-        assertNoNonTerminalRunsForSessions,
-        deleteRunsForSessions
-      })
+      getRunCoordinator: () => coordinator
     })
     service.setBroadcaster(() => {})
-    return { service, assertNoNonTerminalRunsForSessions, deleteRunsForSessions }
+    return { service, idleSessions, coordinator, runStore, assertNoNonTerminalRunsForSessions, deleteRunsForSessions }
   }
 
   it('删除父会话时按后序回收明确 child subtree 与对应 run', async () => {
     const parent = store.create(path.join(tempRoot, 'workspace'))
     const child = createChild(parent.id, 'one')
-    const { service, assertNoNonTerminalRunsForSessions, deleteRunsForSessions } = createService()
+    const other = store.create(path.join(tempRoot, 'other-workspace'))
+    const { service, idleSessions, assertNoNonTerminalRunsForSessions, deleteRunsForSessions } = createService()
     service.selectSession(child.id)
 
     await service.deleteSession(parent.id)
@@ -122,7 +129,49 @@ describe('WorkspaceService subagent deletion', () => {
       new Set([child.id, parent.id])
     )
     expect(deleteRunsForSessions).toHaveBeenCalledWith(new Set([child.id, parent.id]))
-    expect(service.getState().currentSessionId).toBeNull()
+    expect(service.getState().currentSessionId).toBe(other.id)
+    expect(idleSessions).toEqual(new Set([other.id]))
+    expect(store.load(other.id)).not.toBeNull()
+  })
+
+  it('父树任一进程清理失败时保留全部历史、焦点与 run，重试成功后才删除', async () => {
+    const parent = store.create(path.join(tempRoot, 'workspace'))
+    const child = createChild(parent.id, 'failure')
+    const grandchild = createChild(child.id, 'nested-failure')
+    const other = store.create(path.join(tempRoot, 'other-workspace'))
+    const { service, coordinator, runStore, idleSessions } = createService()
+    const selected = [parent, child, grandchild]
+    for (const [index, session] of selected.entries()) {
+      coordinator.startRun({ runId: `delete-run-${index}`, kind: 'agent', sessionId: session.id, workspaceId: tempRoot })
+      coordinator.commitTerminal({ runId: `delete-run-${index}`, status: 'completed' })
+    }
+    service.selectSession(grandchild.id)
+    const beforeState = service.getState()
+    const beforeSessions = selected.map(session => store.load(session.id))
+    const beforeRuns = selected.map((_, index) => runStore.loadSnapshot(`delete-run-${index}`))
+    const beforeIdle = new Set(idleSessions)
+    let fail = true
+    const childProcess = Object.assign(new EventEmitter(), { exitCode: null as number | null, signalCode: null })
+    processRegistry.register({
+      owner: { sessionId: parent.id, runId: 'delete-run-0' }, source: 'main-run',
+      command: 'persistent', workdir: tempRoot, destructive: false, seedOutput: '', checkpointBaseline: null,
+      child: childProcess, writeStdin: async () => {},
+      killTree: async () => {
+        if (fail) throw new Error('descendant denied')
+        childProcess.exitCode = 0
+        childProcess.emit('close')
+      }
+    })
+    await expect(service.deleteSession(parent.id)).rejects.toThrow('未删除会话')
+    expect(selected.map(session => store.load(session.id))).toEqual(beforeSessions)
+    expect(service.getState()).toEqual(beforeState)
+    expect(selected.map((_, index) => runStore.loadSnapshot(`delete-run-${index}`))).toEqual(beforeRuns)
+    expect(idleSessions).toEqual(beforeIdle)
+    fail = false
+    await service.deleteSession(parent.id)
+    expect(selected.map(session => store.load(session.id))).toEqual([null, null, null])
+    expect(selected.map((_, index) => coordinator.getSnapshot(`delete-run-${index}`))).toEqual([null, null, null])
+    expect(service.getState().currentSessionId).toBe(other.id)
   })
 
   it('禁止绕过父会话单独删除 Child Session', async () => {

@@ -147,61 +147,127 @@ export function getShellEnv(binDirs: string[] = []): NodeJS.ProcessEnv {
  *   这是 Kilocode 的渐进式终止策略——给进程清理资源的机会，
  *   比直接 SIGKILL 更稳健。
  */
-export async function killProcessTree(pid: number | undefined): Promise<void> {
-  if (!pid) return
+const processTreeKillers = new WeakMap<ChildProcess, () => Promise<void>>()
 
-  if (process.platform === 'win32') {
-    await new Promise<void>((resolve) => {
-      execFile('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }, () => resolve())
-    })
-    return
+export function killProcessTree(process: ChildProcess | number | undefined): Promise<void> {
+  if (typeof process !== 'object') return createProcessTreeKiller(process)()
+  let kill = processTreeKillers.get(process)
+  if (!kill) {
+    kill = createProcessTreeKiller(process.pid)
+    processTreeKillers.set(process, kill)
   }
-
-  // Unix：先 SIGTERM，3 秒后升级 SIGKILL
-  await tryKillTree(pid, 'SIGTERM')
-  await new Promise(resolve => setTimeout(resolve, 3000))
-  await tryKillTree(pid, 'SIGKILL')
+  return kill()
 }
 
-async function tryKillTree(rootPid: number, signal: NodeJS.Signals): Promise<void> {
-  const descendants = await listDescendantPids(rootPid)
-  for (const childPid of [...descendants].reverse()) {
-    safeKill(childPid, signal)
+function createProcessTreeKiller(pid: number | undefined): () => Promise<void> {
+  const targets = new Map<number, string>()
+  let pending: Promise<void> | undefined
+  let capturedRoot = false
+  let confirmed = false
+  const terminate = async () => {
+    if (!pid || confirmed) return
+    if (process.platform === 'win32') {
+      await new Promise<void>((resolve, reject) => {
+        execFile('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, timeout: 5000 }, error => {
+          if (error) reject(error)
+          else resolve()
+        })
+      })
+      confirmed = true
+      return
+    }
+
+    const processes = await listProcesses()
+    const roots = new Set<number>()
+    if (!capturedRoot) {
+      capturedRoot = true
+      if (processes.has(pid)) roots.add(pid)
+    }
+    for (const [target, identity] of targets) {
+      if (processes.get(target)?.identity === identity) roots.add(target)
+    }
+    const capture = (root: number) => {
+      const entry = processes.get(root)
+      if (!entry || targets.has(root)) return
+      targets.set(root, entry.identity)
+    }
+    for (const root of roots) capture(root)
+    for (const root of roots) {
+      for (const [childPid, entry] of processes) {
+        if (entry.parentPid === root && !roots.has(childPid)) {
+          roots.add(childPid)
+          capture(childPid)
+        }
+      }
+    }
+
+    // 保留首次捕获的身份；重试时子进程可能已被重新托管，PID 也可能复用。
+    const failures: unknown[] = []
+    const signalTargets = async (signal: NodeJS.Signals) => {
+      const current = await listProcesses()
+      for (const [target, identity] of [...targets].reverse()) {
+        const entry = current.get(target)
+        if (!entry || entry.identity !== identity || entry.zombie) {
+          targets.delete(target)
+          continue
+        }
+        try { safeKill(target, signal) } catch (error) { failures.push(error) }
+      }
+    }
+    await signalTargets('SIGTERM')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    await signalTargets('SIGKILL')
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const current = await listProcesses()
+      for (const [target, identity] of targets) {
+        const entry = current.get(target)
+        if (!entry || entry.identity !== identity || entry.zombie) targets.delete(target)
+      }
+      if (targets.size === 0) {
+        confirmed = true
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    throw new AggregateError(failures, `进程树退出未确认: ${[...targets.keys()].join(', ')}${failures.length ? `; ${failures.map(String).join('; ')}` : ''}`)
   }
-  safeKill(rootPid, signal)
+  return () => {
+    if (!pending) pending = terminate().finally(() => { pending = undefined })
+    return pending
+  }
+}
+
+function isMissingProcess(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ESRCH'
 }
 
 function safeKill(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(pid, signal)
-  } catch {
-    // 进程已退出，忽略 ESRCH 等错误
+  } catch (error) {
+    if (!isMissingProcess(error)) throw error
   }
 }
 
-async function listDescendantPids(rootPid: number): Promise<number[]> {
-  const queue: number[] = [rootPid]
-  const descendants: number[] = []
-
-  while (queue.length > 0) {
-    const current = queue.shift()
-    if (current === undefined) break
-    const directChildren = await listDirectChildPids(current)
-    descendants.push(...directChildren)
-    queue.push(...directChildren)
-  }
-
-  return descendants
+interface ProcessIdentity {
+  parentPid: number
+  identity: string
+  zombie: boolean
 }
 
-async function listDirectChildPids(pid: number): Promise<number[]> {
-  return new Promise<number[]>((resolve) => {
-    execFile('ps', ['-o', 'pid=', '--ppid', String(pid)], { windowsHide: true }, (_error, stdout) => {
-      const pids = stdout
-        .split('\n')
-        .map(line => Number.parseInt(line.trim(), 10))
-        .filter(Number.isFinite)
-      resolve(pids)
+async function listProcesses(): Promise<Map<number, ProcessIdentity>> {
+  return new Promise((resolve, reject) => {
+    execFile('ps', ['-A', '-o', 'pid=,ppid=,lstart=,stat='], { windowsHide: true, timeout: 1000 }, (error, stdout) => {
+      if (error) return reject(error)
+      const processes = new Map<number, ProcessIdentity>()
+      for (const line of stdout.split('\n')) {
+        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+?)\s+(\S+)$/)
+        if (!match) continue
+        processes.set(Number(match[1]), {
+          parentPid: Number(match[2]), identity: match[3], zombie: match[4].startsWith('Z')
+        })
+      }
+      resolve(processes)
     })
   })
 }

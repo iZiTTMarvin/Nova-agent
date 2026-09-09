@@ -31,7 +31,6 @@ import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { IpcCommands } from '../../../shared/ipc/types'
 import type { SkillSlashRejection } from '../../../shared/skills/types'
 import type { MessageBlock, Mode, PermissionMode } from '../../../shared/session/types'
-import type { AskQuestionAnswer, AskQuestionItem } from '../../../shared/askQuestion/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
 import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
@@ -47,8 +46,7 @@ import { ensureObservationCaptureForSession } from '../../services/MemoryConsoli
 import { onUserTurnCompleteForExtract } from '../../services/MemoryExtractHost'
 import {
   getRunCoordinator,
-  getRunExecutionRegistry,
-  setActiveRunId
+  getRunExecutionRegistry
 } from '../../services/RunCoordinatorHost'
 import {
   getReadStateForSession,
@@ -65,6 +63,7 @@ import {
   resolveToDataUrl
 } from '../runtime'
 import {
+  createAskQuestionHandler,
   pendingAskQuestions,
   dismissPendingAskQuestionsForSession,
   dismissPendingAskQuestionsForRun
@@ -333,37 +332,6 @@ export async function sendAgentMessage(
         resolveImageUrl: (url) => resolveToDataUrl(getImageStore(), url),
         ...(childPromptCacheKey ? { promptCacheKey: childPromptCacheKey } : {})
       })
-      const childRunId = input.childSession.subagent.lineage.spawnRunId
-      childPrepared.agentLoop.setAskQuestionHandler(
-        (requestId: string, questions: AskQuestionItem[]): Promise<AskQuestionAnswer[]> =>
-          new Promise<AskQuestionAnswer[]>((resolve) => {
-            pendingAskQuestions.set(requestId, {
-              sessionId: input.childSession.id,
-              runId: childRunId,
-              resolve,
-              eventBus: childPrepared.eventBus
-            })
-            const messageId = runCoordinator.getSnapshot(childRunId)?.messageId ?? ''
-            const interaction = runCoordinator.inbox.enqueue({
-              runId: childRunId,
-              sessionId: input.childSession.id,
-              messageId,
-              type: 'askQuestion',
-              interactionId: requestId,
-              payload: { requestId, questions }
-            })
-            childPrepared.eventBus.emit({
-              type: 'ask_question_request',
-              requestId,
-              questions,
-              sessionId: input.childSession.id,
-              messageId,
-              runId: childRunId,
-              interactionId: interaction.interactionId,
-              version: interaction.version
-            })
-          })
-      )
       return childPrepared
     },
     onEvent: (event, context) => {
@@ -382,6 +350,13 @@ export async function sendAgentMessage(
     },
     onExecutionStarted: (context) => {
       agentLoopsByRunId.set(context.runId, context.agentLoop)
+      context.agentLoop.setAskQuestionHandler(createAskQuestionHandler({
+        sessionId: context.childSessionId,
+        getRunRefs: () => context,
+        runCoordinator,
+        pending: pendingAskQuestions,
+        eventBus: context.agentLoop.getEventBus()
+      }))
     },
     onExecutionSettled: (context) => {
       agentLoopsByRunId.delete(context.runId)
@@ -545,7 +520,7 @@ export async function sendAgentMessage(
     subscribeObservationCapture(eventBus, params.sessionId)
   }
 
-  // Execution：startRun 起的全部出口必须汇入同一 cleanup（registry / loop 索引 / activeRunId / streams）。
+  // Execution：startRun 起的全部出口必须汇入同一 cleanup（registry / loop 索引 / streams）。
   // 同会话的「未 settled 执行」已在入口锁 isSessionTurnInProgress 中拦截（进入 steering queue）；
   // 不同会话允许并发持有各自执行句柄，此处不再做全局互斥。
 
@@ -561,7 +536,6 @@ export async function sendAgentMessage(
       userMessageId: turnUserMessageId,
       onStarted: (context) => {
         agentLoopsByRunId.set(context.runId, loopForRun)
-        setActiveRunId(context.runId)
       },
       afterOutcome: (outcome) => {
         // incomplete 轮次同样已结束（被停止策略截断），对话内容照样值得提炼
@@ -579,7 +553,6 @@ export async function sendAgentMessage(
         planReviewWaiters.cancelForRun(context.runId)
         disposeTurnStreams(context.runId, context.executionGeneration)
         writerLeaseRegistry.release(context.resourceOwnerRunId)
-        setActiveRunId(null)
       }
     })
   } finally {

@@ -1,260 +1,187 @@
-/**
- * 护栏：Renderer RunStore 必须按 runId 隔离，禁止跨会话覆盖。
- *
- * 当前缺陷：单一 snapshot/lastSequence 接收所有 run 广播。
- */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { selectSessionIsRunning, useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
+import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
+import type { RunSnapshot } from '../../../src/shared/run/types'
 
-const mockInvoke = vi.fn()
-
-beforeEach(() => {
-  global.window = {
-    ...global.window,
-    api: {
-      invoke: mockInvoke,
-      on: vi.fn(),
-      removeAllListeners: vi.fn()
-    }
-  } as unknown as Window & typeof globalThis
-  mockInvoke.mockResolvedValue({ snapshot: null, waitingSessions: [] })
-})
-
-function makeSnap(
-  runId: string,
-  sessionId: string,
-  sequence: number,
-  status: 'running' | 'cancelling' | 'completed' | 'cancelled' | 'interrupted' = 'running'
-) {
+const invoke = vi.fn()
+function makeSnap(runId: string, sessionId: string, sequence: number, status: RunSnapshot['status'] = 'running', createdAt = 1): RunSnapshot {
   return {
-    runId,
-    kind: 'agent' as const,
-    workspaceId: '/ws',
-    sessionId,
-    messageId: `msg_${runId}`,
-    status,
-    sequence,
-    pendingInteractions: [],
-    currentAttempt: null,
-    progress: null,
-    lastHeartbeatAt: Date.now(),
-    createdAt: Date.now(),
-    updatedAt: Date.now()
+    runId, sessionId, sequence, status, createdAt, updatedAt: sequence,
+    kind: 'agent', workspaceId: '/ws', messageId: `msg_${runId}`,
+    pendingInteractions: [], currentAttempt: null, progress: null, lastHeartbeatAt: 1
   }
 }
+function publish(snapshot: RunSnapshot): void {
+  useRunStore.getState().handleSnapshotEvent(snapshot, { sequence: snapshot.sequence, type: 'snapshot', at: snapshot.updatedAt })
+}
+function focus(sessionId: string): void {
+  useChatStore.setState({ currentSessionId: sessionId })
+  useRunStore.getState().selectSession(sessionId)
+}
 
-describe('Renderer 按 runId 隔离 snapshot', () => {
-  beforeEach(async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    useRunStore.getState().resetForTests()
+beforeEach(() => {
+  resetChatStoreForTests()
+  useRunStore.getState().resetForTests()
+  useWorkspaceStore.setState({ currentProjectPath: '/ws' })
+  invoke.mockReset().mockImplementation(async (channel, params) => {
+    if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
+    if (channel === 'run:list-waiting') return []
+    if (channel === 'load-session') return { id: params.sessionId, messages: [] }
+    if (channel === 'get-message-diffs') return { diffs: [], reviews: {} }
+    return undefined
   })
+  global.window = { ...global.window, api: { invoke, on: vi.fn(), removeAllListeners: vi.fn() } } as unknown as Window & typeof globalThis
+})
+afterEach(() => vi.restoreAllMocks())
 
-  it('A/B 会话事件互不覆盖；sequence 仅在同 runId 内比较', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const store = useRunStore.getState()
-
-    store.handleSnapshotEvent(makeSnap('runA', 'sessA', 1), {
-      sequence: 1,
-      type: 'running',
-      at: Date.now()
-    })
-    store.handleSnapshotEvent(makeSnap('runB', 'sessB', 1), {
-      sequence: 1,
-      type: 'running',
-      at: Date.now()
-    })
-
-    const state = useRunStore.getState() as {
-      snapshotsByRunId?: Record<string, { runId: string; sessionId: string; sequence: number }>
-      lastSequenceByRunId?: Record<string, number>
-      snapshot?: { runId: string } | null
-    }
-
-    // 契约：必须按 runId 分桶，不能只剩最后一个 snapshot
-    expect(state.snapshotsByRunId).toBeDefined()
-    expect(state.snapshotsByRunId!['runA']?.sessionId).toBe('sessA')
-    expect(state.snapshotsByRunId!['runB']?.sessionId).toBe('sessB')
-    expect(state.lastSequenceByRunId!['runA']).toBe(1)
-    expect(state.lastSequenceByRunId!['runB']).toBe(1)
-
-    // 同 sequence 的不同 run 都能保留
-    store.handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'completed'), {
-      sequence: 2,
-      type: 'terminal',
-      at: Date.now()
-    })
-    const after = useRunStore.getState() as typeof state
-    expect(after.snapshotsByRunId!['runA']?.sequence).toBe(2)
-    expect(after.snapshotsByRunId!['runB']?.sequence).toBe(1)
-  })
-
-  it('pullSnapshot 旧请求晚到不得覆盖新会话（pullToken）', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-
-    let resolveA!: (v: unknown) => void
-    const promiseA = new Promise((r) => {
-      resolveA = r
-    })
-
-    mockInvoke.mockImplementation(async (channel: string, params?: { sessionId?: string }) => {
-      if (channel === 'run:get-snapshot') {
-        if (params?.sessionId === 'sessA') {
-          await promiseA
-          return { snapshot: makeSnap('runA', 'sessA', 9), waitingSessions: [] }
-        }
-        return { snapshot: makeSnap('runB', 'sessB', 1), waitingSessions: [] }
-      }
-      if (channel === 'run:list-waiting') return []
-      return null
-    })
-
-    const pullA = useRunStore.getState().pullSnapshot('sessA')
+describe('Renderer 按 run/session 隔离权威投影', () => {
+  it('A/B 正常跳号互不串扰，查询 B 不改变 A 的选择或展示', async () => {
+    focus('sessA')
+    publish(makeSnap('runA', 'sessA', 1))
+    publish(makeSnap('runB', 'sessB', 1))
+    publish(makeSnap('runB', 'sessB', 9))
+    expect(invoke).not.toHaveBeenCalledWith('run:get-snapshot', { sessionId: 'sessB' })
+    invoke.mockResolvedValueOnce({ snapshot: makeSnap('runB', 'sessB', 10), waitingSessions: [] })
     await useRunStore.getState().pullSnapshot('sessB')
-
-    // B 已就位后，A 的旧响应才到达
-    resolveA(undefined)
-    await pullA
-
-    const state = useRunStore.getState() as {
-      snapshotsByRunId?: Record<string, { sessionId: string }>
-      selectedSessionId?: string | null
-      activeRunIdBySessionId?: Record<string, string>
-      snapshot?: { sessionId: string } | null
-    }
-
-    expect(state.snapshotsByRunId).toBeDefined()
-    expect(state.snapshotsByRunId!['runB']?.sessionId).toBe('sessB')
-    // 当前选择器若指向 B，展示不得被 A 覆盖
-    if (state.selectedSessionId === 'sessB' || state.activeRunIdBySessionId?.['sessB']) {
-      expect(state.activeRunIdBySessionId!['sessB']).toBe('runB')
-    }
-    // A 的事实仍保留在分桶中，但不得抹掉 B
-    expect(state.snapshotsByRunId!['runA']?.sessionId).toBe('sessA')
+    expect(useRunStore.getState().selectedSessionId).toBe('sessA')
+    expect(useRunStore.getState().snapshot?.runId).toBe('runA')
+    expect(useRunStore.getState().lastSequenceByRunId).toEqual({ runA: 1, runB: 10 })
+    publish(makeSnap('runA', 'sessA', 5, 'completed'))
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sessA')).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sessB')).toBe(true)
   })
 
-  it('活动 runId 尚未投影时，当前会话终态 snapshot 仍能结束 cancelling', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
-    resetChatStoreForTests()
-    useChatStore.setState({
-      currentSessionId: 'sessA',
-      isGenerating: true,
-      currentGeneratingMessageId: 'msg_runA'
+  it('A 的拉取响应迟到不覆盖后来选中的 B', async () => {
+    focus('sessA')
+    let resolveA!: (value: unknown) => void
+    invoke.mockImplementation((channel, params) => {
+      if (channel === 'run:get-snapshot' && params.sessionId === 'sessA') return new Promise(resolve => { resolveA = resolve })
+      return Promise.resolve({ snapshot: makeSnap('runB', 'sessB', 1), waitingSessions: [] })
     })
+    const pull = useRunStore.getState().pullSnapshot('sessA')
+    focus('sessB')
+    await useRunStore.getState().pullSnapshot('sessB')
+    resolveA({ snapshot: makeSnap('runA', 'sessA', 9), waitingSessions: [] })
+    await pull
+    expect(useRunStore.getState().snapshot?.runId).toBe('runB')
+    expect(useRunStore.getState().snapshotsByRunId.runA.sequence).toBe(9)
+  })
 
+  it.each(['old', 'null'] as const)('查询中的新广播优先于迟到的 %s 响应', async response => {
+    focus('sessA')
+    let resolvePull!: (value: unknown) => void
+    invoke.mockImplementation(() => new Promise(resolve => { resolvePull = resolve }))
+    const pull = useRunStore.getState().pullSnapshot('sessA')
+    publish(makeSnap('new', 'sessA', 1, 'running', 2))
+    resolvePull({ snapshot: response === 'old' ? makeSnap('old', 'sessA', 5, 'interrupted', 1) : null, waitingSessions: [] })
+    await pull
+    expect(useRunStore.getState().snapshot?.runId).toBe('new')
+    expect(useRunStore.getState().snapshot?.status).toBe('running')
+  })
+
+  it('未知 runId 的取消按显式选中会话收敛，不接受别的会话终态', async () => {
+    focus('sessA')
+    useChatStore.setState({ sendInFlight: true, currentGeneratingMessageId: 'msg_runA' })
     useRunStore.getState().beginLocalCancel(null)
+    publish(makeSnap('runB', 'sessB', 2, 'cancelled'))
     expect(useRunStore.getState().cancelling).toBe(true)
-
-    useRunStore.getState().handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'cancelled'), {
-      sequence: 2,
-      type: 'cancelled',
-      at: Date.now()
-    })
-
-    await vi.waitFor(() => {
-      expect(useRunStore.getState().cancelling).toBe(false)
-      expect(useChatStore.getState().isGenerating).toBe(false)
-    })
-
+    publish(makeSnap('runA', 'sessA', 2, 'cancelled'))
+    await vi.waitFor(() => expect(useChatStore.getState().sendInFlight).toBe(false))
+    expect(useRunStore.getState().cancelling).toBe(false)
+    expect(useChatStore.getState().currentGeneratingMessageId).toBeNull()
     useRunStore.getState().beginLocalCancel('runA')
     expect(useRunStore.getState().cancelling).toBe(false)
   })
 
-  it('取消中快照不能提前宣布结束；后台取消确认不能停止前台另一会话', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
-    resetChatStoreForTests()
-    useChatStore.setState({ currentSessionId: 'sessA', isGenerating: true, currentGeneratingMessageId: 'msg_runA' })
-    useRunStore.setState({ selectedSessionId: 'sessA' })
+  it('后台 A 取消确认不会停止前台 B；cancelling 快照仍属于运行中', async () => {
+    focus('sessA')
+    publish(makeSnap('runA', 'sessA', 1, 'cancelling'))
     useRunStore.getState().beginLocalCancel('runA')
-    useRunStore.getState().handleSnapshotEvent(makeSnap('runA', 'sessA', 1, 'cancelling'), { sequence: 1, type: 'cancelling', at: 1 })
-    // 等待异步投影处理完，不能在 import 返回前读取旧状态制造假绿。
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(useRunStore.getState().cancelling).toBe(true)
-    expect(useChatStore.getState().isGenerating).toBe(true)
-
-    useChatStore.setState({ currentSessionId: 'sessB', currentGeneratingMessageId: 'msg_runB' })
-    useRunStore.setState({ selectedSessionId: 'sessB' })
-    useRunStore.getState().handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'cancelled'), { sequence: 2, type: 'terminal', at: 2 })
-    await vi.waitFor(() => expect(useRunStore.getState().cancelling).toBe(false))
-    expect(useChatStore.getState().isGenerating).toBe(true)
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sessA')).toBe(true)
+    focus('sessB')
+    publish(makeSnap('runB', 'sessB', 1))
+    useChatStore.getState().handleMessageStart('msg_runB')
+    publish(makeSnap('runA', 'sessA', 2, 'cancelled'))
+    await Promise.resolve()
+    expect(useRunStore.getState().cancelling).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sessB')).toBe(true)
     expect(useChatStore.getState().currentGeneratingMessageId).toBe('msg_runB')
   })
 
-  it('pull 到其他会话的终态不提前清空取消；本会话终态才收敛', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
-    resetChatStoreForTests()
-    useChatStore.setState({ currentSessionId: 'sessA' })
-    useRunStore.setState({ selectedSessionId: 'sessA' })
-
-    useRunStore.getState().beginLocalCancel(null)
-    expect(useRunStore.getState().cancelling).toBe(true)
-    expect(useRunStore.getState().cancellingSessionId).toBe('sessA')
-
-    // B 的 pull 返回 B 的终态 run：不得提前清空 A 的取消
-    mockInvoke.mockImplementation(async (channel: string) => {
-      if (channel === 'run:get-snapshot') {
-        return { snapshot: makeSnap('runB', 'sessB', 9, 'completed'), waitingSessions: [] }
-      }
-      return { snapshot: null, waitingSessions: [] }
-    })
-    await useRunStore.getState().pullSnapshot('sessB')
-    expect(useRunStore.getState().cancelling).toBe(true)
-
-    // A 的 pull 返回 A 的取消终态：取消收敛
-    mockInvoke.mockImplementation(async (channel: string) => {
-      if (channel === 'run:get-snapshot') {
-        return { snapshot: makeSnap('runA', 'sessA', 9, 'cancelled'), waitingSessions: [] }
-      }
-      return { snapshot: null, waitingSessions: [] }
-    })
-    await useRunStore.getState().pullSnapshot('sessA')
-    expect(useRunStore.getState().cancelling).toBe(false)
-    expect(useRunStore.getState().cancellingSessionId).toBeNull()
+  it('message-end 缺失且对账失败时，terminal 仍结束 busy 并保留流式回答', async () => {
+    focus('sessA')
+    publish(makeSnap('runA', 'sessA', 1))
+    useChatStore.getState().handleMessageStart('msg_runA')
+    useChatStore.getState().applyStreamDeltas([{ kind: 'text', messageId: 'msg_runA', delta: '保留回答' }])
+    invoke.mockRejectedValue(new Error('对账不可用'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    publish(makeSnap('runA', 'sessA', 8, 'completed'))
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sessA')).toBe(false)
+    await vi.waitFor(() => expect(useChatStore.getState().currentGeneratingMessageId).toBeNull())
+    expect(useChatStore.getState().sendInFlight).toBe(false)
+    expect(useChatStore.getState().liveTurn).toEqual({})
+    expect(useChatStore.getState().messages[0].blocks).toContainEqual({ type: 'text', content: '保留回答' })
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sessA')).toBe(false)
   })
 
-  it('中断快照归属会话：跨会话事件不覆盖，当前 run 终态正常更新', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    useRunStore.setState({ selectedSessionId: 'sessA' })
-    const store = useRunStore.getState()
-
-    store.handleSnapshotEvent(makeSnap('runA', 'sessA', 1, 'interrupted'), {
-      sequence: 1,
-      type: 'interrupted',
-      at: Date.now()
+  it.each([
+    ['sessB', 'throw'], ['sessB', 'reject'], ['sessA', 'throw'], ['sessA', 'reject']
+  ] as const)('旧发送 %s / %s 回执不能修改新会话生命周期的草稿和发送锁', async (target, failure) => {
+    focus('sessA')
+    let finishOld!: (value: unknown) => void
+    let rejectOld!: (error: Error) => void
+    let sendCount = 0
+    invoke.mockImplementation((channel, params) => {
+      if (channel === 'send-message') {
+        sendCount++
+        return sendCount === 1
+          ? new Promise((resolve, reject) => { finishOld = resolve; rejectOld = reject })
+          : new Promise(() => {})
+      }
+      if (channel === 'load-session') return Promise.resolve({ id: params.sessionId, messages: [] })
+      if (channel === 'run:get-snapshot') return Promise.resolve({ snapshot: null, waitingSessions: [] })
+      return Promise.resolve([])
     })
-    expect(useRunStore.getState().snapshot?.runId).toBe('runA')
-    expect(useRunStore.getState().snapshot?.sessionId).toBe('sessA')
-
-    // B 的普通运行事件不覆盖 A 的快照
-    store.handleSnapshotEvent(makeSnap('runB', 'sessB', 1), {
-      sequence: 1,
-      type: 'running',
-      at: Date.now()
-    })
-    expect(useRunStore.getState().snapshot?.runId).toBe('runA')
-    expect(useRunStore.getState().snapshot?.sessionId).toBe('sessA')
-
-    // runA 的后续状态继续由同一快照投影
-    store.handleSnapshotEvent(makeSnap('runA', 'sessA', 2, 'completed'), {
-      sequence: 2,
-      type: 'terminal',
-      at: Date.now()
-    })
-    expect(useRunStore.getState().snapshot?.status).toBe('completed')
+    const firstSend = useChatStore.getState().sendMessage('旧输入')
+    await vi.waitFor(() => expect(sendCount).toBe(1))
+    const switchTo = async (sessionId: string) => {
+      useChatStore.getState().syncFromWorkspace({
+        currentSessionId: sessionId, availableSessions: [], messagesRevision: 1,
+        tier1BranchContext: null, tier1StaleDiffMessageIds: []
+      })
+      await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('load-session', { sessionId }))
+      await vi.waitFor(() => expect(useWorkspaceStore.getState().isSessionLoading).toBe(false))
+    }
+    await switchTo('sessB')
+    if (target === 'sessA') await switchTo('sessA')
+    void useChatStore.getState().sendMessage('新输入')
+    await vi.waitFor(() => expect(sendCount).toBe(2))
+    const requestId = useChatStore.getState().sendRequestId
+    if (failure === 'throw') rejectOld(new Error('旧发送失败'))
+    else finishOld({ accepted: false, rejection: { reason: 'not_found', skillName: 'gone', suggestions: [] } })
+    await firstSend
+    expect(useChatStore.getState().currentSessionId).toBe(target)
+    expect(useChatStore.getState().sendRequestId).toBe(requestId)
+    expect(useChatStore.getState().sendInFlight).toBe(true)
+    expect(useChatStore.getState().messages.map(message => message.content)).toEqual(['新输入'])
   })
 
-  it('旧快照拉取期间新轮开始，迟到响应不能恢复旧中断提示', async () => {
-    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const old = { ...makeSnap('old', 'sessA', 5, 'interrupted'), createdAt: 1 }
-    const current = { ...makeSnap('new', 'sessA', 1), createdAt: 2 }
-    let resolvePull!: (result: unknown) => void
-    mockInvoke.mockImplementation(() => new Promise(resolve => { resolvePull = resolve }))
-    const pending = useRunStore.getState().pullSnapshot('sessA')
-    useRunStore.getState().handleSnapshotEvent(current, { sequence: 1, type: 'running', at: 2 })
-    resolvePull({ snapshot: old, waitingSessions: [] })
-    await pending
-    expect(useRunStore.getState().snapshot?.runId).toBe('new')
-    expect(useRunStore.getState().snapshot?.status).toBe('running')
+  it('首次 terminal 单独推进队列，不等待水合，也不被 message-end 或 outbox 再次推进', async () => {
+    focus('sessA')
+    publish(makeSnap('runA', 'sessA', 1))
+    useChatStore.getState().handleMessageStart('msg_runA')
+    useChatStore.getState().enqueuePendingMessage('Q1', [])
+    useChatStore.getState().enqueuePendingMessage('Q2', [])
+    invoke.mockImplementation(channel => channel === 'load-session' || channel === 'send-message'
+      ? new Promise(() => {}) : Promise.resolve([]))
+    publish(makeSnap('runA', 'sessA', 2, 'completed'))
+    await vi.waitFor(() => expect(invoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(1))
+    publish(makeSnap('runA', 'sessA', 9, 'completed'))
+    void useChatStore.getState().handleMessageEnd('msg_runA')
+    await Promise.resolve()
+    expect(invoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(1)
+    expect(useChatStore.getState().pendingUserMessages.map(message => message.text)).toEqual(['Q2'])
+    expect(useChatStore.getState().sendInFlight).toBe(true)
   })
 })

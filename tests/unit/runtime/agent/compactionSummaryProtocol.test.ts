@@ -108,7 +108,6 @@ describe('压缩摘要质量协议', () => {
     const original = createMessages()
     const context = createContext(original)
     context.compactionLevel = 1
-    context.userTurnsSinceCompaction = 4
     const onCompaction = vi.fn()
     // 被折叠的 oldMessages 约 900 字符（≈225 估算 token），摘要明显更大
     // 无换行，避免 boundSummaryText 在 maxChars 前回退到首行就把摘要裁没
@@ -120,7 +119,6 @@ describe('压缩摘要质量协议', () => {
 
     expect(context.messages).toBe(original)
     expect(context.compactionLevel).toBe(1)
-    expect(context.userTurnsSinceCompaction).toBe(4)
     expect(cacheDiagnostics.getEpochReason()).toBe('session_init')
     expect(onCompaction).not.toHaveBeenCalled()
   })
@@ -155,7 +153,6 @@ describe('压缩摘要质量协议', () => {
     expect(tail.length).toBeGreaterThan(0)
     expect(original.slice(-tail.length)).toEqual(tail)
     expect(context.compactionLevel).toBe(1)
-    expect(context.userTurnsSinceCompaction).toBe(0)
     expect(onCompaction).toHaveBeenCalledTimes(1)
     expect(onCompaction.mock.calls[0][1]).toMatchObject({
       summary: expect.stringContaining('简短摘要'),

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const coordinator = vi.hoisted(() => ({
   findInteraction: vi.fn(),
   getSnapshot: vi.fn(),
+  getSnapshotForSession: vi.fn(),
   inbox: {
     answer: vi.fn(),
     cancelAllForRun: vi.fn()
@@ -27,11 +28,14 @@ const loopLookup = vi.hoisted(() => ({
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
-  getRunExecutionRegistry: () => executionRegistry,
-  getActiveRunId: () => null
+  getRunExecutionRegistry: () => executionRegistry
 }))
 
-const lifecycle = vi.hoisted(() => ({ getRootRunId: vi.fn(), cancelRunTree: vi.fn() }))
+const lifecycle = vi.hoisted(() => ({
+  getRootRunId: vi.fn(),
+  listDescendantRunIds: vi.fn(() => []),
+  cancelRunTree: vi.fn()
+}))
 vi.mock('../../../src/main/services/SubagentLifecycleHost', () => ({ getSubagentLifecycleCoordinator: () => lifecycle }))
 
 vi.mock('../../../src/main/agent/events', () => ({
@@ -57,6 +61,7 @@ describe('AgentInteractionController 契约', () => {
     vi.clearAllMocks()
     coordinator.findInteraction.mockReturnValue(null)
     coordinator.getSnapshot.mockReturnValue(null)
+    coordinator.getSnapshotForSession.mockReturnValue(null)
     executionRegistry.get.mockReturnValue(null)
     executionRegistry.isCurrent.mockReturnValue(false)
     loopLookup.current.mockReturnValue(null)
@@ -181,6 +186,7 @@ describe('AgentInteractionController 契约', () => {
     executionRegistry.isCurrent.mockReturnValue(true)
     const resolve = vi.fn()
     pendingAskQuestions.set('aq_1', {
+      executionGeneration: 7,
       sessionId: 's1',
       runId: 'run_2',
       resolve,
@@ -558,6 +564,7 @@ describe('AgentInteractionController 契约', () => {
     const resolve = vi.fn()
     const emit = vi.fn()
     pendingAskQuestions.set('aq_1', {
+      executionGeneration: 7,
       sessionId: 's1',
       runId: 'run_1',
       resolve,

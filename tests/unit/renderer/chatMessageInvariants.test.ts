@@ -240,7 +240,7 @@ describe('chat message invariants baseline', () => {
     assertMessageIndexConsistent()
   })
 
-  it('markRunningAsCancelled 更新运行中工具后保持索引一致', async () => {
+  it('取消消息更新运行中工具后保持索引一致', async () => {
     const messages = buildMessages(2)
     messages[1] = {
       ...messages[1],
@@ -268,7 +268,7 @@ describe('chat message invariants baseline', () => {
       currentGeneratingMessageId: 'msg_1'
     })
 
-    await useChatStore.getState().markRunningAsCancelled()
+    await useChatStore.getState().handleMessageEnd('msg_1', true)
     const cancelled = useChatStore.getState().messages[1]
     expect(cancelled.blocks?.[0]).toMatchObject({ status: 'error', result: '用户取消执行' })
     assertMessageIndexConsistent()

@@ -1,10 +1,9 @@
-import type { RunSnapshot, RunStatus } from '../../../../shared/run/types'
 import type { SessionDetail } from '../../../../shared/session/types'
 import {
   mergeFocusedSessionMessages,
   restoreTurnDraftMessage
 } from '../../../lib/focusedSessionRecovery'
-import { useRunStore } from '../../useRunStore'
+import { selectSessionIsRunning, selectSessionSnapshot, useRunStore } from '../../useRunStore'
 import {
   commitMessageList,
   foldLiveTurnIntoMessages,
@@ -23,15 +22,6 @@ interface WorkspaceSyncDependencies {
 
 export function initialWorkspaceSyncState(): Pick<WorkspaceSyncSliceState, 'lastMessagesRevision'> {
   return { lastMessagesRevision: 0 }
-}
-
-function isTerminalRunStatus(status: RunStatus): boolean {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'cancelled' ||
-    status === 'interrupted'
-  )
 }
 
 export function createWorkspaceSyncSlice(
@@ -61,6 +51,7 @@ export function createWorkspaceSyncSlice(
         Object.assign(patch, dependencies.buildSessionChangePatch())
       }
       set(patch)
+      useRunStore.getState().selectSession(next.currentSessionId)
 
       if (!sessionChanged && !revisionChanged) return
 
@@ -69,6 +60,14 @@ export function createWorkspaceSyncSlice(
 
       const targetSessionId = next.currentSessionId
       const hydrationEpoch = nextHydrationEpoch()
+      if (sessionChanged && targetSessionId) {
+        void import('../../../lib/agentEventGate').then(async ({ isDescendantSessionOf }) => {
+          if (!isHydrationEpochCurrent(hydrationEpoch)) return
+          await Promise.all(get().sessions
+            .filter(session => isDescendantSessionOf(session.id, targetSessionId))
+            .map(session => useRunStore.getState().pullSnapshot(session.id)))
+        }).catch(err => console.error('[useChatStore] 子任务交互恢复失败:', err))
+      }
       void (async () => {
         const { useWorkspaceStore } = await import('../../useWorkspaceStore')
         if (!isHydrationEpochCurrent(hydrationEpoch)) return
@@ -82,6 +81,7 @@ export function createWorkspaceSyncSlice(
         try {
           // load-session 与 run snapshot 并行启动；应用时先消费 snapshot，
           // 再合并持久化历史，避免运行中切回会话时撕裂覆盖草稿。
+          const messageIdsAtRequest = new Set(get().messages.map(message => message.id))
           const detailResult = window.api.invoke('load-session', {
             sessionId: targetSessionId
           })
@@ -104,30 +104,8 @@ export function createWorkspaceSyncSlice(
             return
           }
 
-          const targetRunId = useRunStore.getState().activeRunIdBySessionId[targetSessionId]
-          let snapshot = sessionChanged && targetRunId
-            ? useRunStore.getState().snapshotsByRunId[targetRunId] ?? null
-            : null
-
-          // 水合前终态复核：pull 快照可能截于轮次终态提交之前（收尾会话的
-          // message-end 与 pull 响应竞态），直接采用会把已结束轮次复活成
-          // isGenerating=true。向主进程复核一次权威快照：同一 run 已终态则以终态为准。
-          if (sessionChanged && targetRunId && snapshot && !isTerminalRunStatus(snapshot.status)) {
-            try {
-              const verified = (await window.api.invoke('run:get-snapshot', {
-                sessionId: targetSessionId
-              })) as { snapshot?: RunSnapshot | null } | null
-              if (verified?.snapshot && verified.snapshot.runId === targetRunId) {
-                snapshot = verified.snapshot
-              }
-            } catch {
-              // 复核失败沿用 pull 快照，不阻塞水合
-            }
-          }
-
-          const targetRunning = sessionChanged
-            ? !!snapshot && !isTerminalRunStatus(snapshot.status)
-            : get().isGenerating
+          const snapshot = selectSessionSnapshot(useRunStore.getState(), targetSessionId)
+          const targetRunning = selectSessionIsRunning(useRunStore.getState(), targetSessionId)
           const draft = targetRunning && snapshot
             ? restoreTurnDraftMessage(targetSessionId, snapshot)
             : null
@@ -148,12 +126,12 @@ export function createWorkspaceSyncSlice(
                 [],
                 liveFolded,
                 targetRunning ? snapshot?.messageId ?? null : null,
-                draft
+                draft,
+                new Set(liveFolded.filter(message => !messageIdsAtRequest.has(message.id)).map(message => message.id))
               )
               return {
                 ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
-                isGenerating: targetRunning,
-                currentGeneratingMessageId: targetRunning ? snapshot?.messageId ?? null : null,
+                currentGeneratingMessageId: targetRunning ? snapshot?.messageId || null : null,
                 activeAgentSessionId: targetRunning ? targetSessionId : null,
                 ...(hasLive ? { liveTurn: {} } : {})
               }
@@ -180,13 +158,14 @@ export function createWorkspaceSyncSlice(
               state.messages,
               state.liveTurn
             )
+            const currentSnapshot = selectSessionSnapshot(useRunStore.getState(), targetSessionId)
+            const currentRunning = selectSessionIsRunning(useRunStore.getState(), targetSessionId)
             const messages = mergeFocusedSessionMessages(
               restored,
               liveFolded,
-              sessionChanged
-                ? targetRunning ? snapshot?.messageId ?? null : null
-                : state.currentGeneratingMessageId,
-              draft
+              currentRunning ? currentSnapshot?.messageId ?? state.currentGeneratingMessageId : null,
+              currentRunning && currentSnapshot ? restoreTurnDraftMessage(targetSessionId, currentSnapshot) : null,
+              new Set(liveFolded.filter(message => !messageIdsAtRequest.has(message.id)).map(message => message.id))
             )
             return {
               ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
@@ -199,14 +178,6 @@ export function createWorkspaceSyncSlice(
             }
           })
 
-          // 切会话后该项目仍在场：子代理 pending 权限请求不随事件重放
-          // （重启/切回），从后代 run snapshot 恢复投影到父会话权限条
-          if (sessionChanged && get().currentSessionId === targetSessionId) {
-            const { projectDescendantPendingPermissions } = await import('../../useAgentStore')
-            void projectDescendantPendingPermissions(targetSessionId).catch(err => {
-              console.error('[useChatStore] 恢复子任务权限失败:', err)
-            })
-          }
         } catch (err) {
           console.error('[useChatStore] syncFromWorkspace 加载会话消息失败:', err)
         } finally {

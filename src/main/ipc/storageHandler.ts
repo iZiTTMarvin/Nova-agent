@@ -48,10 +48,10 @@ export function registerStorageHandler(): void {
   })
 
   handle(STORAGE_DELETE_SESSION, async (_event, params: { sessionId: string }) => {
-    clearSessionWhitelist(params.sessionId)
-    clearSessionPathGrants(params.sessionId)
     // 本入口绕过编排删除，持久进程必须先终止，否则留下孤儿进程
     await processRegistry.terminateForSession(params.sessionId)
+    clearSessionWhitelist(params.sessionId)
+    clearSessionPathGrants(params.sessionId)
     return deleteSessionCompletely(appDataPath, params.sessionId)
   })
 

@@ -1,3 +1,4 @@
+import { selectSessionIsRunning, useRunStore } from '../../useRunStore'
 import type { MessageBlock } from '../../../../shared/session/types'
 import type { ExtendedMessage } from '../types'
 import { MAX_PENDING_MESSAGES } from '../constants'
@@ -5,15 +6,15 @@ import { commitMessageList, dispatchNextPendingMessage, setRollbackErrorPatch } 
 import { slashRejectionText } from '../../../lib/slashRejection'
 import type { ChatSliceCreator, SendSliceState } from '../types'
 
-export function initialSendState(): Pick<SendSliceState, 'sendInFlight' | 'pendingUserMessages'> {
-  return { sendInFlight: false, pendingUserMessages: [] }
+export function initialSendState(): Pick<SendSliceState, 'sendInFlight' | 'sendRequestId' | 'pendingUserMessages'> {
+  return { sendInFlight: false, sendRequestId: null, pendingUserMessages: [] }
 }
 
 /**
  * 切会话时丢弃发送中标记与 steering 队列：挂起消息属于旧会话语境，
  * 不得跨会话自动派发。
  */
-export function resetSendOnSessionSwitch(): Pick<SendSliceState, 'sendInFlight' | 'pendingUserMessages'> {
+export function resetSendOnSessionSwitch(): Pick<SendSliceState, 'sendInFlight' | 'sendRequestId' | 'pendingUserMessages'> {
   return initialSendState()
 }
 
@@ -21,8 +22,8 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
   ...initialSendState(),
 
   sendMessage: async (content, images, options): Promise<boolean> => {
-    const { currentSessionId, isGenerating, sendInFlight, branchForkInProgress } = get()
-    if (isGenerating || sendInFlight) return false
+    const { currentSessionId, sendInFlight, branchForkInProgress } = get()
+    if (selectSessionIsRunning(useRunStore.getState(), currentSessionId) || sendInFlight) return false
     // 分叉准备窗口（prepare → send 两段 IPC 之间）锁住普通发送，避免乐观截断覆盖
     // 刚追加的用户消息；editResend 自身的延续发送（带 rollbackSnapshot）在此窗口放行
     if (branchForkInProgress && !options?.rollbackSnapshot) return false
@@ -35,10 +36,12 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
     const currentProject = useWorkspaceStore.getState().currentProjectPath
     if (!currentProject) return false
     const latest = get()
-    if (latest.currentSessionId !== currentSessionId || latest.isGenerating || latest.sendInFlight) return false
+    if (latest.currentSessionId !== currentSessionId || selectSessionIsRunning(useRunStore.getState(), currentSessionId) || latest.sendInFlight) return false
     if (latest.branchForkInProgress && !options?.rollbackSnapshot) return false
 
     const activeSessionId = currentSessionId || 'session_default'
+    const requestId = crypto.randomUUID()
+    const isCurrentRequest = () => get().sendRequestId === requestId && get().currentSessionId === currentSessionId
 
     // 构建用户消息 blocks（含图片 ImageBlock）
     const blocks: MessageBlock[] = []
@@ -74,8 +77,8 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
           nextMessages,
           nextIndex: { ...state.messageIndexById, [userMsg.id]: nextMessages.length - 1 }
         }),
-        isGenerating: true,
         sendInFlight: true,
+        sendRequestId: requestId,
         activeAgentSessionId: activeSessionId
       }
     })
@@ -93,6 +96,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
           mimeType: img.mimeType
         }))
       })
+      if (!isCurrentRequest()) return true
       if (!result.accepted) {
         // 本地拒绝：输入未落盘。普通发送移除乐观用户消息、恢复草稿，
         // 错误消息跳过对账直接展示（无落盘就无可对账的新状态）；
@@ -105,13 +109,14 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
             })
           }))
           options?.onRejected?.(content)
-          set({ sendInFlight: false, activeAgentSessionId: null, isGenerating: false })
+          set({ sendInFlight: false, activeAgentSessionId: null })
           await get().handleError('msg_err_' + Date.now(), slashRejectionText(result.rejection), { skipReconcile: true })
           return true
         }
         throw new Error(slashRejectionText(result.rejection))
       }
     } catch (err) {
+      if (!isCurrentRequest()) return true
       if (options?.rollbackSnapshot) {
         set({
           ...commitMessageList(get(), {
@@ -121,7 +126,6 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
           }),
           sendInFlight: false,
           activeAgentSessionId: null,
-          isGenerating: false,
           branchForkInProgress: false,
           pendingBranchMetaReload: false
         })
@@ -131,11 +135,14 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
         } catch (reloadErr) {
           console.error('[sendMessage] 回滚后重载会话失败:', reloadErr)
         }
+        if (!isCurrentRequest()) return true
         set(state => setRollbackErrorPatch(state, userMsg.id, (err as Error).message))
         return true
       }
-      set({ sendInFlight: false, activeAgentSessionId: null, isGenerating: false })
+      set({ sendInFlight: false, activeAgentSessionId: null })
       await get().handleError('msg_err_' + Date.now(), (err as Error).message)
+    } finally {
+      if (isCurrentRequest()) set({ sendRequestId: null })
     }
     return true
   },

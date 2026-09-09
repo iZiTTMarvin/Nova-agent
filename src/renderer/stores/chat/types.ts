@@ -1,6 +1,6 @@
 /**
  * chat store 对外契约：ChatState 形状、流式 delta 批量结构与 slice 创建器类型。
- * 字段名、类型与 action 签名是 useAppStore facade 与全部组件 selector 的依赖面，
+ * 字段名、类型与 action 签名是组件 selector 的依赖面，
  * 修改前必须同步 chatStoreShape 护栏测试。
  */
 import type { StateCreator } from 'zustand'
@@ -135,8 +135,8 @@ export interface RecoverySliceState {
 
 /** turnLifecycleSlice 拥有的轮次运行态与终态 handler。 */
 export interface TurnLifecycleSliceState {
-  /** 与消息生成生命周期强绑定，写入由 sendMessage / handleMessageStart / handleError 触发 */
-  isGenerating: boolean
+  /** 权威终态到达时封存展示并推进队列，不等待历史水合才更新 busy。 */
+  handleRunTerminal: (snapshot: import('../../../shared/run/types').RunSnapshot) => Promise<void>
   currentGeneratingMessageId: string | null
   /** 当前 Agent 轮次归属的会话 ID（切走后用于过滤旧会话事件） */
   activeAgentSessionId: string | null
@@ -156,12 +156,6 @@ export interface TurnLifecycleSliceState {
    * 否则刚追加的本地错误消息会被权威快照擦掉。
    */
   handleError: (messageId: string, error: string, opts?: { skipReconcile?: boolean }) => Promise<void>
-
-  /**
-   * 把当前所有 running tool 块标记为 error（"用户取消执行"）。
-   * 由 useAgentStore.cancelExecution 触发，保留旧 useAppStore 的兜底行为。
-   */
-  markRunningAsCancelled: () => void
 }
 
 /** sessionSlice 拥有的会话列表与当前会话，及会话 CRUD。 */
@@ -189,6 +183,8 @@ export interface SessionSliceState {
 export interface SendSliceState {
   /** 发送请求已发出、尚未收到首个流式事件（防连点） */
   sendInFlight: boolean
+  /** 当前发送 IPC 的身份；快照接管 busy 后仍用于拒绝迟到回执。 */
+  sendRequestId: string | null
   /**
    * Steering Queue 等待派发的用户消息。
    * Agent 运行期间用户仍可输入，输入的消息会进入此队列，

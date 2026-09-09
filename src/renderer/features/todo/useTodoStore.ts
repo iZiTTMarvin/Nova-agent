@@ -7,7 +7,7 @@
  * - 暴露给 TodoPanel 组件消费的 selector：当前会话的 todos / view / 进度统计
  *
  * 设计要点：
- * - 使用 zustand 局部 store（与 useAppStore 平级，但不混入消息状态）
+ * - 使用独立 zustand store，不混入消息状态
  * - view 由后端计算并随事件下发，前端不做二次计算
  * - 会话详情水合时经 setSessionTodos 从持久化恢复（磁盘是事实源：todo_write 先落盘后推送）
  */

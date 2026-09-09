@@ -84,8 +84,11 @@ export interface ChatMessage {
    * 跨档案回放时由序列化门控剥离；缺省视为与当前档案兼容。
    */
   reasoningProviderId?: string
+  /** 与紧随其后的 user 构成不可拆投递单元；仅存在于本地投影。 */
+  inputPrelude?: boolean
   /**
-   * 运行时档案坐标：user 的 step 恒为 0；assistant/tool 为该 SessionMessage 内工具组序号。
+   * 运行时档案坐标：普通 user 为 step 0；技能 prelude/user 为 step 0/1。
+   * assistant/tool 为该 SessionMessage 内工具组序号。
    * 与 internal 一样只存在于本地上下文，API 序列化时剥离。
    */
   origin?: MessageOrigin

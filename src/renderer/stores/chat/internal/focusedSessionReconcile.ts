@@ -3,6 +3,7 @@ import { mergeFocusedSessionMessages } from '../../../lib/focusedSessionRecovery
 import { foldLiveTurnIntoMessages } from './liveTurn'
 import { commitMessageList } from './commitMessages'
 import { restoreSessionMessages } from './restoreMessages'
+import { getHydrationEpoch, isHydrationEpochCurrent } from './hydrationEpoch'
 import type { ChatStoreApi } from './storeApi'
 
 function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
@@ -29,12 +30,16 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
  * messages 里的空壳，迟到的 load-session 会用旧持久化内容覆盖实时流式文本。
  */
 export async function reconcileFocusedSession(api: ChatStoreApi, sessionId: string): Promise<void> {
+  const epoch = getHydrationEpoch()
+  const messageIdsAtRequest = new Set(api.getState().messages.map(message => message.id))
   const detail: SessionDetail = await window.api.invoke('load-session', { sessionId })
-  if (api.getState().currentSessionId !== sessionId) return
+  if (api.getState().currentSessionId !== sessionId || !isHydrationEpochCurrent(epoch)) return
 
   const restored = restoreSessionMessages(detail.messages)
   api.setState(state => {
-    if (state.currentSessionId !== sessionId) return state
+    if (state.currentSessionId !== sessionId || !isHydrationEpochCurrent(epoch)) return state
+    // 乐观分支截断或历史窗口变化后，不用旧查询重新填回已移除的路径。
+    if ([...messageIdsAtRequest].some(id => state.messageIndexById[id] === undefined)) return state
     const { messages: messagesForMerge, hasLive } = foldLiveTurnIntoMessages(
       state.messages,
       state.liveTurn
@@ -43,7 +48,8 @@ export async function reconcileFocusedSession(api: ChatStoreApi, sessionId: stri
       restored,
       messagesForMerge,
       state.currentGeneratingMessageId,
-      null
+      null,
+      new Set(messagesForMerge.filter(message => !messageIdsAtRequest.has(message.id)).map(message => message.id))
     )
     return {
       ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),

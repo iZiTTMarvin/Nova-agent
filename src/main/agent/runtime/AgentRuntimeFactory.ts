@@ -48,7 +48,6 @@ import {
   collectTouchedFilesForSession
 } from '../../../runtime/checkpoints'
 import type { ModelClient } from '../../../runtime/model/ModelClient'
-import type { AskQuestionItem, AskQuestionAnswer } from '../../../shared/askQuestion/types'
 import {
   getSessionActiveMessages,
   type SessionData,
@@ -70,7 +69,7 @@ import type { RunCoordinator } from '../../../runtime/run/RunCoordinator'
 import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getMemoryRetrievalService } from '../../services/MemoryServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
-import { activeStreams } from '../events'
+import { createAskQuestionHandler, type PendingAskQuestionEntry } from '../interaction/askQuestionWaiters'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
 import {
@@ -93,14 +92,6 @@ export interface AgentRuntimeRunRefs {
   runId: string
   resourceOwnerRunId: string
   executionGeneration: number
-}
-
-export interface PendingAskQuestionEntry {
-  /** 归属会话：并发下 dismiss 必须按会话过滤，避免误杀其它会话的提问 */
-  sessionId: string
-  runId: string
-  resolve: (answers: AskQuestionAnswer[]) => void
-  eventBus: EventBus
 }
 
 export interface PreparedAgentRuntime {
@@ -441,42 +432,13 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   agentLoop.setArtifactStore(artifactStore)
   agentLoop.setReadState(readState)
 
-  const askQuestionHandler = (
-    requestId: string,
-    questions: AskQuestionItem[]
-  ): Promise<AskQuestionAnswer[]> => {
-    return new Promise<AskQuestionAnswer[]>((resolve) => {
-      pendingAskQuestions.set(requestId, {
-        sessionId,
-        runId: runRefs.runId,
-        resolve,
-        eventBus
-      })
-      const messageId =
-        [...activeStreams.keys()].at(-1) ??
-        runCoordinator.getSnapshot(runRefs.runId)?.messageId ??
-        ''
-      const interaction = runCoordinator.inbox.enqueue({
-        runId: runRefs.runId,
-        sessionId,
-        messageId,
-        type: 'askQuestion',
-        interactionId: requestId,
-        payload: { requestId, questions }
-      })
-      eventBus.emit({
-        type: 'ask_question_request',
-        requestId,
-        questions,
-        sessionId,
-        messageId,
-        runId: runRefs.runId,
-        interactionId: interaction.interactionId,
-        version: interaction.version
-      })
-    })
-  }
-  agentLoop.setAskQuestionHandler(askQuestionHandler)
+  agentLoop.setAskQuestionHandler(createAskQuestionHandler({
+    sessionId,
+    getRunRefs: () => runRefs,
+    runCoordinator,
+    pending: pendingAskQuestions,
+    eventBus
+  }))
   agentLoop.setPlanReviewHandler((ref) => {
     if (
       ref.sessionId !== sessionId ||

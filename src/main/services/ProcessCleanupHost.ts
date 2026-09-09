@@ -13,22 +13,13 @@ import { getRunCoordinator } from './RunCoordinatorHost'
  */
 export function wireProcessCleanup(coord: Pick<RunCoordinator, 'onTerminalHook'>): void {
   coord.onTerminalHook('onCancel', (ctx) => {
-    terminateForRun(ctx.snapshot.runId, true)
+    return processRegistry.terminateForRun(ctx.snapshot.runId, { includeMainRun: true })
   })
   for (const hook of ['onComplete', 'onFail', 'onInterrupt'] as const) {
     coord.onTerminalHook(hook, (ctx) => {
-      terminateForRun(ctx.snapshot.runId, false)
+      return processRegistry.terminateForRun(ctx.snapshot.runId, { includeMainRun: false })
     })
   }
-}
-
-function terminateForRun(runId: string, includeMainRun: boolean): void {
-  // hook 抛错会被 RunCoordinator 标记 failed 重试，终止失败不能阻塞终态交付
-  processRegistry
-    .terminateForRun(runId, { includeMainRun })
-    .catch((err: unknown) => {
-      console.error(`[ProcessCleanupHost] run 终态终止进程失败 runId=${runId}:`, err)
-    })
 }
 
 let wired = false

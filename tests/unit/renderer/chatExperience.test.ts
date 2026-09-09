@@ -1,11 +1,17 @@
 // @vitest-environment jsdom
 
+import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
+import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
+import { useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
+import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import type { ExtendedMessage } from '../../../src/renderer/stores/types'
+
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { StreamingFileCard } from '../../../src/renderer/features/chat/StreamingFileCard'
 import { ThinkingBlock } from '../../../src/renderer/features/chat/ThinkingBlock'
-import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
 import { sanitizeToolInput } from '../../../src/shared/tool-input-sanitizer'
 import { act, renderDom } from './renderDom'
@@ -28,30 +34,31 @@ function buildMessageIndex(messages: ExtendedMessage[]): Record<string, number> 
 }
 
 function resetStore(messages: ExtendedMessage[] = []) {
-  useAppStore.setState({
+  useSettingsStore.setState({
     currentProject: 'D:/visual_ProgrammingSoftware/A_Projects/nova-agent',
     currentMode: 'default',
+    modelConfig: MODEL_CONFIG,
+    isConfigModalOpen: false
+  })
+  useChatStore.setState({
     sessions: [],
     currentSessionId: 'sess_chat_experience',
     messages,
     messageIndexById: buildMessageIndex(messages),
-    isGenerating: false,
     currentGeneratingMessageId: null,
-    modelConfig: MODEL_CONFIG,
-    isConfigModalOpen: false,
-    pendingPermissionRequest: null,
-    isSubmittingPermission: false,
-    permissionError: null,
     messageDiffs: {},
     loadingDiffs: new Set(),
     loadingDiffPlaceholders: {},
     streamingToolArgs: {}
   })
+  resetAgentStoreForTests()
 }
 
 describe('聊天体验回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     // MessageItem mount 时会调 get-message-diffs，需要提供默认 mock
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'get-message-diffs') {
@@ -102,11 +109,11 @@ describe('聊天体验回归', () => {
       }
     ]
     resetStore(messages)
-    useAppStore.setState({
-      isGenerating: true,
+    useChatStore.setState({
       currentGeneratingMessageId: 'msg_assistant'
     })
 
+    publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_chat_experience', messageId: 'msg_assistant' }))
     const renderer = renderDom(React.createElement(ChatPanel))
     const pending = renderer.container.querySelector('.assistant-pending')
     expect(pending?.querySelector('.assistant-pending__label')?.textContent).toBe('正在思考')
@@ -225,8 +232,14 @@ describe('聊天体验回归', () => {
   })
 
   it('底部工具栏不再常驻显示独立 UsageStats，避免与上下文指示器混淆', () => {
-    useAppStore.setState({
+    useSettingsStore.setState({
       sessionUsage: {
+        totalUncachedInputTokens: 610,
+        totalCacheReadTokens: 390,
+        totalOutputTokens: 120,
+        lastRoundHitRate: 0.39,
+        estimatedSavedInputTokens: 390,
+        cacheCountCoverage: { reportedPositive: 1, reportedZero: 0, unreported: 0 },
         totalPromptTokens: 1000,
         totalCompletionTokens: 120,
         totalCachedTokens: 390,

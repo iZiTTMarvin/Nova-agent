@@ -56,6 +56,28 @@ describe('executeToolBatch', () => {
     vi.restoreAllMocks()
   })
 
+  it.each<ToolResult>([
+    { success: true, output: 'localized success', processOutcome: { state: 'exited', exitCode: 0 } },
+    { success: true, output: 'background launched', processOutcome: { state: 'running' } },
+    { success: true, output: 'command failed', processOutcome: { state: 'exited', exitCode: 2 } },
+    { success: false, output: 'partial output', error: 'termination failed', processOutcome: { state: 'unconfirmed' } }
+  ])('工具结果退出事实穿过事件和 outcome，不从输出或 success 推断：%j', async toolResult => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'bash', async () => toolResult)
+    const events: AgentEvent[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'command', name: 'bash', arguments: '{}' }],
+      messageId: 'process-evidence', toolRegistry: registry, workingDir: process.cwd(),
+      mode: 'default', supportsVision: true, checkpointManager: null,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: event => { events.push(event) }, applyTruncation: () => 'changed display'
+    })
+    expect(result.outcomes[0].processOutcome).toEqual(toolResult.processOutcome)
+    const event = events.find(event => event.type === 'tool_result')
+    expect(event).toMatchObject({ type: 'tool_result', processOutcome: toolResult.processOutcome, failed: !toolResult.success })
+  })
+
   it('并发安全工具会并发执行，tool_result 按完成顺序发出，outcomes 按原始顺序返回', async () => {
     const registry = new ToolRegistry()
     const releaseRead = deferred<void>()

@@ -1,262 +1,143 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  resetChatStoreForTests,
-  useChatStore
-} from '../../../src/renderer/stores/useChatStore'
+import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
-import {
-  projectDescendantPendingPermissions,
-  resetAgentStoreForTests,
-  useAgentStore
-} from '../../../src/renderer/stores/useAgentStore'
+import { resetAgentStoreForTests, useAgentStore } from '../../../src/renderer/stores/useAgentStore'
 import type { RunSnapshot } from '../../../src/shared/run/types'
 import type { Session } from '../../../src/shared/session/types'
 
-function snap(
-  partial: Partial<RunSnapshot> & Pick<RunSnapshot, 'runId' | 'sessionId' | 'sequence' | 'status'>
-): RunSnapshot {
-  return {
-    kind: 'agent',
-    workspaceId: '/ws',
-    messageId: 'm',
-    pendingInteractions: [],
-    currentAttempt: null,
-    progress: null,
-    lastHeartbeatAt: 1,
-    createdAt: 1,
-    updatedAt: 1,
-    ...partial
-  }
-}
-
-function primarySession(id: string): Session {
-  return {
-    id,
-    workspaceRoot: 'w',
-    mode: 'default',
-    createdAt: 1,
-    updatedAt: 1,
-    messageCount: 0,
-    kind: 'primary'
-  }
-}
-
-function subagentSession(id: string, parentId: string): Session {
-  return {
-    id,
-    workspaceRoot: 'w',
-    mode: 'default',
-    createdAt: 1,
-    updatedAt: 1,
-    messageCount: 0,
-    kind: 'subagent',
-    subagent: {
+function session(id: string, parentId?: string): Session {
+  const base = { id, workspaceRoot: 'w', mode: 'default' as const, createdAt: 1, updatedAt: 1, messageCount: 0 }
+  return parentId ? {
+    ...base, kind: 'subagent', subagent: {
       lineage: { parentSessionId: parentId, depth: 1 },
       profile: { profileId: 'explore', name: 'Explore', permissionCeiling: 'read_only' }
     }
+  } : { ...base, kind: 'primary' }
+}
+
+function snapshot(sessionId: string, requestId?: string, sequence = 1): RunSnapshot {
+  const runId = `run-${sessionId}`
+  const messageId = `msg-${sessionId}`
+  return {
+    runId, sessionId, messageId, kind: 'agent', workspaceId: 'w',
+    status: requestId ? 'waiting_user' : 'running', sequence,
+    currentAttempt: null, progress: null, lastHeartbeatAt: 1, createdAt: 1, updatedAt: sequence,
+    pendingInteractions: requestId ? [{
+      interactionId: requestId, runId, sessionId, messageId,
+      type: 'permission', status: 'pending', createdAt: 1, version: 3,
+      payload: {
+        requestId, toolName: 'bash', args: { command: 'pwd' }, riskLevel: 'low',
+        reason: '执行命令', commands: ['pwd', 'ls'], toolCallIds: ['tc-1', 'tc-2'],
+        externalPaths: ['/external'], pathAccess: 'read'
+      }
+    }] : []
   }
 }
 
-function childPermissionSnapshot(overrides: {
-  status?: RunSnapshot['status']
-  interactionStatus?: 'pending' | 'submitting' | 'answered'
-} = {}): RunSnapshot {
-  return snap({
-    runId: 'run-child',
-    sessionId: 's-child',
-    sequence: 5,
-    status: overrides.status ?? 'waiting_user',
-    messageId: 'msg-child',
-    pendingInteractions: [
-      {
-        interactionId: 'perm-child',
-        runId: 'run-child',
-        sessionId: 's-child',
-        messageId: 'msg-child',
-        type: 'permission',
-        status: overrides.interactionStatus ?? 'pending',
-        createdAt: 1,
-        version: 3,
-        payload: {
-          requestId: 'perm-child',
-          toolName: 'bash',
-          args: { command: 'pwd' },
-          riskLevel: 'low',
-          reason: '子代理请求执行命令'
-        }
-      }
-    ]
-  })
+async function publish(s: RunSnapshot): Promise<void> {
+  useRunStore.getState().handleSnapshotEvent(s, { sequence: s.sequence, type: 'interaction', at: s.updatedAt })
+  await useRunStore.getState().refreshInteractionProjection()
 }
 
-describe('子代理权限请求：重启/切回恢复与响应送达', () => {
-  beforeEach(() => {
-    resetChatStoreForTests()
-    resetAgentStoreForTests()
-    useRunStore.getState().resetForTests()
-    global.window = {
-      ...global.window,
-      api: {
-        invoke: vi.fn(() => Promise.resolve(undefined)),
-        on: vi.fn(() => () => {}),
-        removeAllListeners: vi.fn()
-      }
-    } as unknown as Window & typeof globalThis
+const invoke = vi.fn()
+
+beforeEach(() => {
+  resetChatStoreForTests()
+  resetAgentStoreForTests()
+  useRunStore.getState().resetForTests()
+  invoke.mockReset().mockImplementation(async channel => channel === 'run:list-waiting' ? [] : undefined)
+  global.window = { ...global.window, api: { invoke, on: vi.fn(), removeAllListeners: vi.fn() } } as unknown as Window & typeof globalThis
+  useChatStore.setState({
+    currentSessionId: 'parent',
+    sessions: [session('parent'), session('child', 'parent'), session('sibling', 'parent'), session('grandchild', 'child'), session('other', 'unrelated')]
+  })
+  useRunStore.getState().selectSession('parent')
+})
+
+describe('子代理权限请求的权威快照投影', () => {
+  it('重启/切回恢复完整的子请求身份与批量命令，不改变焦点', async () => {
+    const child = snapshot('child', 'perm-child')
+    invoke.mockImplementation(async channel => channel === 'run:get-snapshot'
+      ? { snapshot: child, waitingSessions: [] } : [])
+    await useRunStore.getState().pullSnapshot('child')
+    expect(useRunStore.getState().selectedSessionId).toBe('parent')
+    expect(useAgentStore.getState().pendingPermissionRequest).toEqual({
+      messageId: child.messageId, requestId: 'perm-child', runId: child.runId, sessionId: 'child',
+      interactionId: 'perm-child', version: 3, toolName: 'bash', args: { command: 'pwd' },
+      riskLevel: 'low', reason: '执行命令', commands: ['pwd', 'ls'], toolCallIds: ['tc-1', 'tc-2'],
+      externalPaths: ['/external'], pathAccess: 'read'
+    })
   })
 
-  it('重启/切回后从后代会话 snapshot 恢复权限请求到父会话权限条', async () => {
-    useChatStore.setState({
-      currentSessionId: 's-parent',
-      sessions: [primarySession('s-parent'), subagentSession('s-child', 's-parent')]
-    })
-    useRunStore.setState({
-      selectedSessionId: 's-parent',
-      activeRunIdBySessionId: { 's-child': 'run-child' },
-      snapshotsByRunId: { 'run-child': childPermissionSnapshot() }
-    })
-
-    await projectDescendantPendingPermissions('s-parent')
-
-    const request = useAgentStore.getState().pendingPermissionRequest
-    expect(request).not.toBeNull()
-    expect(request?.sessionId).toBe('s-child')
-    expect(request?.requestId).toBe('perm-child')
-    expect(request?.toolName).toBe('bash')
-    expect(request?.reason).toBe('子代理请求执行命令')
-    expect(request?.version).toBe(3)
-    expect(request?.interactionId).toBe('perm-child')
-    expect(request?.messageId).toBe('msg-child')
+  it('父快照持续更新不会清除子权限，父请求结束后自动显示后代请求', async () => {
+    await publish(snapshot('child', 'perm-child'))
+    await publish(snapshot('parent', undefined, 2))
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm-child')
+    await publish(snapshot('parent', 'perm-parent', 3))
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm-parent')
+    await publish(snapshot('parent', undefined, 4))
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm-child')
   })
 
-  it('回复送达按子 run 原始 requestId/interactionId/version 组装', async () => {
-    useAgentStore.getState().handlePermissionRequest({
-      messageId: 'msg-child',
-      requestId: 'perm-child',
-      toolName: 'bash',
-      args: { command: 'pwd' },
-      riskLevel: 'low',
-      reason: '',
-      sessionId: 's-child',
-      interactionId: 'perm-child',
-      version: 3
+  it('按子请求版本提交，权威答复后连续显示下一条，不等待父快照', async () => {
+    const child = snapshot('child', 'perm-a')
+    const sibling = snapshot('sibling', 'perm-b')
+    await publish(child)
+    await publish(sibling)
+    invoke.mockImplementation(async channel => {
+      if (channel === 'respond-permission') return { ok: true }
+      if (channel === 'run:get-snapshot') return { snapshot: snapshot('child', undefined, 2), waitingSessions: [] }
+      return []
     })
-
     await useAgentStore.getState().respondPermissionRequest('allow')
-
-    expect(vi.mocked(window.api.invoke)).toHaveBeenCalledWith('respond-permission', {
-      requestId: 'perm-child',
-      decision: 'allow',
-      commandId: expect.any(String),
-      expectedVersion: 3,
-      interactionId: 'perm-child'
+    expect(invoke).toHaveBeenCalledWith('respond-permission', {
+      requestId: 'perm-a', decision: 'allow', commandId: expect.any(String), expectedVersion: 3, interactionId: 'perm-a'
     })
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm-b')
+    expect(useRunStore.getState().selectedSessionId).toBe('parent')
+  })
+
+  it.each(['success', 'error'] as const)('旧请求迟到的 %s 回执不清除新请求的提交状态', async result => {
+    await publish(snapshot('child', 'perm-a'))
+    let resolveFirst!: (value: unknown) => void
+    let rejectFirst!: (error: Error) => void
+    let resolveSecond!: (value: unknown) => void
+    const firstResponse = new Promise((resolve, reject) => { resolveFirst = resolve; rejectFirst = reject })
+    const secondResponse = new Promise(resolve => { resolveSecond = resolve })
+    invoke.mockImplementation((channel, params) => {
+      if (channel === 'respond-permission') return params.requestId === 'perm-a' ? firstResponse : secondResponse
+      if (channel === 'run:get-snapshot') return Promise.resolve({ snapshot: snapshot('child', 'perm-b', 2), waitingSessions: [] })
+      return Promise.resolve([])
+    })
+    const first = useAgentStore.getState().respondPermissionRequest('allow')
+    await publish(snapshot('child', 'perm-b', 2))
+    const second = useAgentStore.getState().respondPermissionRequest('allow')
+    if (result === 'success') resolveFirst({ ok: true })
+    else rejectFirst(new Error('旧请求失败'))
+    await first
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm-b')
+    expect(useAgentStore.getState().isSubmittingPermission).toBe(true)
+    expect(useAgentStore.getState().permissionError).toBeNull()
+    resolveSecond({ ok: true })
+    await second
+  })
+
+  it('同一请求的心跳快照不解除本地提交锁', async () => {
+    await publish(snapshot('child', 'perm-a'))
+    useAgentStore.setState({ isSubmittingPermission: true })
+    await publish(snapshot('child', 'perm-a', 8))
+    expect(useAgentStore.getState().isSubmittingPermission).toBe(true)
+  })
+
+  it('不投影非后代请求，深层后代权限仍可见，已回答或终态请求不可见', async () => {
+    await publish(snapshot('other', 'perm-other'))
     expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
-  })
-
-  it('父会话已有自身权限请求时不覆盖为后代请求', async () => {
-    useChatStore.setState({
-      currentSessionId: 's-parent',
-      sessions: [primarySession('s-parent'), subagentSession('s-child', 's-parent')]
-    })
-    useRunStore.setState({
-      selectedSessionId: 's-parent',
-      activeRunIdBySessionId: { 's-child': 'run-child' },
-      snapshotsByRunId: { 'run-child': childPermissionSnapshot() }
-    })
-    useAgentStore.getState().handlePermissionRequest({
-      messageId: 'msg-parent',
-      requestId: 'perm-parent',
-      toolName: 'bash',
-      args: {},
-      riskLevel: 'low',
-      reason: '父会话自身请求',
-      sessionId: 's-parent'
-    })
-
-    await projectDescendantPendingPermissions('s-parent')
-
-    const request = useAgentStore.getState().pendingPermissionRequest
-    expect(request?.requestId).toBe('perm-parent')
-    expect(request?.sessionId).toBe('s-parent')
-  })
-
-  it('非后代会话的运行快照不投影到当前会话', async () => {
-    useChatStore.setState({
-      currentSessionId: 's-parent',
-      sessions: [
-        primarySession('s-parent'),
-        subagentSession('s-other', 's-unrelated')
-      ]
-    })
-    useRunStore.setState({
-      selectedSessionId: 's-parent',
-      activeRunIdBySessionId: { 's-other': 'run-other' },
-      snapshotsByRunId: { 'run-other': childPermissionSnapshot() }
-    })
-
-    await projectDescendantPendingPermissions('s-parent')
-
+    const grandchild = snapshot('grandchild', 'perm-grandchild')
+    await publish(grandchild)
+    expect(useAgentStore.getState().pendingPermissionRequest?.sessionId).toBe('grandchild')
+    await publish({ ...grandchild, sequence: 2, pendingInteractions: grandchild.pendingInteractions.map(i => ({ ...i, status: 'answered' })) })
     expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
-  })
-
-  it('深层后代（孙代理）权限请求同样恢复', async () => {
-    useChatStore.setState({
-      currentSessionId: 's-parent',
-      sessions: [
-        primarySession('s-parent'),
-        subagentSession('s-child', 's-parent'),
-        subagentSession('s-grandchild', 's-child')
-      ]
-    })
-    useRunStore.setState({
-      selectedSessionId: 's-parent',
-      activeRunIdBySessionId: { 's-grandchild': 'run-grandchild' },
-      snapshotsByRunId: {
-        'run-grandchild': snap({
-          runId: 'run-grandchild',
-          sessionId: 's-grandchild',
-          sequence: 7,
-          status: 'waiting_user',
-          messageId: 'msg-grandchild',
-          pendingInteractions: [
-            {
-              interactionId: 'perm-grandchild',
-              runId: 'run-grandchild',
-              sessionId: 's-grandchild',
-              messageId: 'msg-grandchild',
-              type: 'permission',
-              status: 'pending',
-              createdAt: 1,
-              version: 1,
-              payload: { requestId: 'perm-grandchild', toolName: 'read', args: {}, riskLevel: 'low', reason: '' }
-            }
-          ]
-        })
-      }
-    })
-
-    await projectDescendantPendingPermissions('s-parent')
-
-    const request = useAgentStore.getState().pendingPermissionRequest
-    expect(request?.sessionId).toBe('s-grandchild')
-    expect(request?.requestId).toBe('perm-grandchild')
-  })
-
-  it('交互已 answered 时不投影', async () => {
-    useChatStore.setState({
-      currentSessionId: 's-parent',
-      sessions: [primarySession('s-parent'), subagentSession('s-child', 's-parent')]
-    })
-    useRunStore.setState({
-      selectedSessionId: 's-parent',
-      activeRunIdBySessionId: { 's-child': 'run-child' },
-      snapshotsByRunId: {
-        'run-child': childPermissionSnapshot({ interactionStatus: 'answered' })
-      }
-    })
-
-    await projectDescendantPendingPermissions('s-parent')
-
+    await publish({ ...grandchild, sequence: 3, status: 'cancelled' })
     expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
   })
 })

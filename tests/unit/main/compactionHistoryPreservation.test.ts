@@ -14,7 +14,9 @@ import { MockModelClient } from '../../../src/test-support/builders/MockModelCli
 import { identitySummaryProjection } from '../../../src/test-support/builders/identitySummaryProjection'
 import * as atomicFile from '../../../src/runtime/storage/atomicFile'
 import { formatMemorySearchResults } from '../../../src/runtime/tools/memorySearch'
-import { projectUserContent } from '../../../src/runtime/request-projection'
+import { projectUserContent, projectUserMessages } from '../../../src/runtime/request-projection'
+import { sliceMessagesFromOrigin } from '../../../src/runtime/sessions/conversationContext'
+import { splitForCompactionByTokens } from '../../../src/runtime/agent/compaction/compaction'
 import { getModeInstruction } from '../../../src/runtime/agent/promptBuilder/modeInstruction'
 import type { SessionMessage } from '../../../src/shared/session'
 import { estimateContextTokens } from '../../../src/runtime/agent/tokenEstimator'
@@ -72,6 +74,53 @@ describe('持久化压缩提交', () => {
     expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt).messages).toEqual(f.context.messages)
     f.service.dispose()
   })
+  it('技能输入不可拆，未归档的技能与工具尾部不阻塞旧前缀提交', async () => {
+    const f = fixture()
+    const facts = { userMessageId: 'skill-user', sessionPrefix: null, modeInstruction: '',
+      skillInput: { assistantPrelude: '技能正文'.repeat(80), userContent: '按上述技能执行' } }
+    store.appendMessage(f.session.id, { id: facts.userMessageId, role: 'user', content: '/skill 参数', timestamp: 100 })
+    const input = projectUserMessages('/skill 参数', facts.userMessageId, facts)
+    expect(input.map(message => message.origin)).toEqual([{ messageId: 'skill-user', step: 0 }, { messageId: 'skill-user', step: 1 }])
+    expect(splitForCompactionByTokens(input, 1)).toEqual({ oldMessages: [], recentMessages: input })
+    expect(sliceMessagesFromOrigin(input, { messageId: 'skill-user', step: 1 })).toEqual(input)
+    const draft: SessionMessage = { id: 'skill-assistant', role: 'assistant', content: '', timestamp: 101,
+      userDelivery: facts, blocks: [
+        { type: 'text', content: '检查中', responseStep: 0 },
+        { type: 'tool', toolCallId: 'read', toolName: 'read', arguments: {}, status: 'success', result: '读取结果', responseStep: 0 }
+      ] }
+    const response = buildConversationContext({ ...store.load(f.session.id)!, messages: [draft], currentLeafId: draft.id }, 'default')
+    const tail = [...input, ...response]
+    f.context.messages.push(...tail)
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    expect(f.context.messages.slice(-tail.length)).toEqual(tail)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(ledger.state?.coversThrough.messageId).not.toBe('skill-user')
+    expect(ledger.state?.coversThrough.messageId).not.toBe('skill-assistant')
+    store.appendMessage(f.session.id, draft)
+    expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt).messages).toEqual(f.context.messages)
+    f.service.dispose()
+  })
+
+  it('已归档技能整体折叠，冻结任务事实在重启后仍通过来源校验', async () => {
+    const f = fixture()
+    const original = store.load(f.session.id)!
+    const facts = { userMessageId: 'u0', sessionPrefix: null, modeInstruction: '',
+      skillInput: { assistantPrelude: '技能正文', userContent: '必须保留金额单位 CNY。' } }
+    const messages = original.messages.map(message => message.id === 'a0' ? { ...message, userDelivery: facts } : message)
+    store.save({ ...original, messages })
+    f.context.messages = [{ role: 'system', content: 'system' }, ...buildConversationContext(store.load(f.session.id)!, 'default')]
+    expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)
+    const ledger = store.loadContextSnapshot(f.session.id)!
+    expect(ledger.state?.handoff?.facts).toContainEqual(expect.objectContaining({ origin: { messageId: 'u0', step: 1 }, quote: '必须保留金额单位 CNY。' }))
+    expect(restoreFromLedger(store.load(f.session.id)!, ledger, f.context.systemPrompt).messages).toEqual(f.context.messages)
+    const invalid = structuredClone(ledger)
+    invalid.entries[0].shadows.to = { messageId: 'u0', step: 0 }
+    invalid.state!.coversThrough = { messageId: 'u0', step: 0 }
+    invalid.tailFrom = { messageId: 'u0', step: 1 }
+    expect(restoreFromLedger(store.load(f.session.id)!, invalid, f.context.systemPrompt).kind).toBe('invalid')
+    f.service.dispose()
+  })
+
   it('原档案不变，重启的 system 与完整尾部相等', async () => {
     const f = fixture()
     expect(await f.service.runThresholdCompaction(identitySummaryProjection)).toBe(true)

@@ -8,8 +8,9 @@ import {
   appendLiveBlock,
   bumpRevision,
   commitMessageList,
-  dispatchNextPendingMessage,
   emptyStreamTransientState,
+  getHydrationEpoch,
+  isHydrationEpochCurrent,
   omitRecoveryFieldsForMessage,
   reconcileFocusedSession,
   removeLiveTurnEntry
@@ -39,10 +40,9 @@ function cancelToolBlock(block: RendererToolBlock): RendererToolBlock {
 
 export function initialTurnLifecycleState(): Pick<
   TurnLifecycleSliceState,
-  'isGenerating' | 'currentGeneratingMessageId' | 'activeAgentSessionId'
+  'currentGeneratingMessageId' | 'activeAgentSessionId'
 > {
   return {
-    isGenerating: false,
     currentGeneratingMessageId: null,
     activeAgentSessionId: null
   }
@@ -54,7 +54,7 @@ export function initialTurnLifecycleState(): Pick<
  */
 export function resetTurnLifecycleOnSessionSwitch(): Pick<
   TurnLifecycleSliceState,
-  'isGenerating' | 'currentGeneratingMessageId' | 'activeAgentSessionId'
+  'currentGeneratingMessageId' | 'activeAgentSessionId'
 > {
   return initialTurnLifecycleState()
 }
@@ -62,7 +62,21 @@ export function resetTurnLifecycleOnSessionSwitch(): Pick<
 export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState> = (set, get) => ({
   ...initialTurnLifecycleState(),
 
+  handleRunTerminal: async snapshot => {
+    if (get().currentSessionId !== snapshot.sessionId) return
+    set({ sendInFlight: false, branchForkInProgress: false })
+    const reconcile = snapshot.status === 'failed'
+      ? get().handleError(snapshot.messageId, snapshot.terminalReason ?? '执行失败')
+      : get().handleMessageEnd(snapshot.messageId, snapshot.status === 'cancelled' || snapshot.status === 'interrupted')
+    // 消息对账不拥有运行终态，慢或失败的 load-session 不阻塞队列。
+    const dispatch = snapshot.status === 'completed' && !snapshot.incompleteReason || snapshot.status === 'failed'
+      ? get().sendNextPendingMessage()
+      : Promise.resolve()
+    await Promise.all([reconcile, dispatch])
+  },
+
   handleMessageEnd: async (messageId: string, interrupted?: boolean) => {
+    const epoch = getHydrationEpoch()
     set(state => {
       const nextMessages = state.messages.slice()
       const idx = state.messageIndexById[messageId]
@@ -102,6 +116,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
             interrupted: true,
             blocks,
             toolCalls,
+            turnStartedAt: base.turnStartedAt ?? base.timestamp,
             turnEndedAt: Date.now()
           })
         } else {
@@ -113,11 +128,10 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       }
       const patch: Partial<ChatState> = {
         ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-        isGenerating: false,
-        currentGeneratingMessageId: null,
-        activeAgentSessionId: null,
-        sendInFlight: false,
-        branchForkInProgress: false,
+        ...(state.currentGeneratingMessageId === messageId ? {
+          currentGeneratingMessageId: null,
+          activeAgentSessionId: null
+        } : {}),
         ...omitRecoveryFieldsForMessage(state, messageId),
         // 中断时清空所有流式工具参数累积
         ...(interrupted ? emptyStreamTransientState() : {})
@@ -137,6 +151,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       }
     }
 
+    if (get().currentSessionId !== sessionIdAtEnd || !isHydrationEpochCurrent(epoch)) return
+
     // 更新当前会话的消息数属性，并自动加载 diff
     const { currentSessionId, sessions, messages } = get()
     if (currentSessionId) {
@@ -148,19 +164,12 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       })
     }
 
-    // 正常完成路径：清除 agent store 的 5s 兜底定时器。
-    // 即使是 interrupted 路径，message-end 已正常到达，定时器也不应再触发。
-    const { useAgentStore } = await import('../../useAgentStore')
-    useAgentStore.getState().clearCancelFallback()
-
-    // 明确暂停后保留排队内容，等待用户继续；只在正常结束后自动发送。
-    if (!interrupted) await dispatchNextPendingMessage({ getState: get, setState: set })
-
     // 分叉轮次正常结束：补 bump revision 拉取 branch 元信息（翻页器）
     await get().finishBranchMetaRefresh()
   },
 
   handleError: async (messageId: string, error: string, opts?: { skipReconcile?: boolean }) => {
+    const epoch = getHydrationEpoch()
     const displayError = formatTerminalErrorMessage(error)
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
@@ -170,11 +179,10 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       const live = state.liveTurn[messageId]
       // 无条件清空与按会话判断等价：error 事件经 gateAgentEvent 只放行当前会话
       const commonFields = {
-        isGenerating: false,
-        currentGeneratingMessageId: null,
-        activeAgentSessionId: null,
-        sendInFlight: false,
-        branchForkInProgress: false,
+        ...(state.currentGeneratingMessageId === messageId ? {
+          currentGeneratingMessageId: null,
+          activeAgentSessionId: null
+        } : {}),
         // error 路径不发射 message-end，此处同步清理恢复状态，避免残留
         ...omitRecoveryFieldsForMessage(state, messageId)
       }
@@ -244,69 +252,9 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       }
     }
 
-    // error 终态同样是 turn boundary：派发队列首条，防止「已排队 N 条」
-    // 滞留到用户手动发消息才触发（还会打乱 FIFO 顺序）
-    await dispatchNextPendingMessage({ getState: get, setState: set })
-
+    if (get().currentSessionId !== currentSessionId || !isHydrationEpochCurrent(epoch)) return
     if (get().pendingBranchMetaReload) {
       await get().finishBranchMetaRefresh()
     }
-  },
-
-  markRunningAsCancelled: async () => {
-    set(state => {
-      const nextMessages = state.messages.map(msg => {
-        // 取消兜底也是 turn boundary：把未封存的活跃文本/思考回收进消息，保留部分回答。
-        const live = state.liveTurn[msg.id]
-        const base = live ? appendLiveBlock(msg, live) : msg
-        // 取消确认可能先于 message-end；当前轮次必须与生成态一起收口。
-        const isCurrentTurn = msg.role === 'assistant' && msg.id === state.currentGeneratingMessageId
-        if (!base.blocks && !base.toolCalls && !live && !isCurrentTurn) return msg
-        let changed = !!live || isCurrentTurn
-
-        const blocks = base.blocks?.map(b => {
-          if (b.type !== 'tool') return b
-          const cancelled = cancelToolBlock(b as RendererToolBlock)
-          if (cancelled !== b) changed = true
-          return cancelled
-        })
-
-        const toolCalls = base.toolCalls?.map(tc => {
-          if (tc.status === 'running') {
-            changed = true
-            const { argumentsRaw: _tcDrop, ...restTc } = tc
-            return { ...restTc, status: 'error' as const, result: '用户取消执行' }
-          }
-          return tc
-        })
-
-        return changed
-          ? bumpRevision({
-            ...base,
-            interrupted: true,
-            blocks,
-            toolCalls,
-            turnStartedAt: base.turnStartedAt ?? base.timestamp,
-            turnEndedAt: Date.now()
-          })
-          : msg
-      })
-
-      return {
-        ...commitMessageList(state, { nextMessages, nextIndex: state.messageIndexById, skipWindowTrim: true }),
-        isGenerating: false,
-        currentGeneratingMessageId: null,
-        // 取消兜底不带会话参数，候选轮次必属当前会话，无条件清空即可
-        activeAgentSessionId: null,
-        sendInFlight: false,
-        branchForkInProgress: false,
-        liveTurn: {},
-        ...emptyStreamTransientState()
-      }
-    })
-
-    // 停止后清除旧轮次定时器；排队内容保留，等待用户继续。
-    const { useAgentStore } = await import('../../useAgentStore')
-    useAgentStore.getState().clearCancelFallback()
   }
 })

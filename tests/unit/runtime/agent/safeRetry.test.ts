@@ -366,7 +366,6 @@ function nativeContext(): AgentContext {
     artifactStore: null,
     readState: { readFiles: new Set() } as unknown as AgentContext['readState'],
     compactionLevel: 0,
-    userTurnsSinceCompaction: 0,
     lastEstimatedTokens: 0,
     compactionState: null,
     skillsTokenBudget: 0

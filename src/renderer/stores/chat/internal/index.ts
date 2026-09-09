@@ -34,6 +34,7 @@ export {
 } from './diffState'
 export { omitRecoveryFieldsForMessage } from './recoveryFields'
 export {
+  getHydrationEpoch,
   invalidateHydrationEpoch,
   isHydrationEpochCurrent,
   nextHydrationEpoch

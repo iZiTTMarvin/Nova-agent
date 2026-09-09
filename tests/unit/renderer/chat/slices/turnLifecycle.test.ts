@@ -1,3 +1,5 @@
+import { makeRunSnapshot, publishRunSnapshot } from '../../runSnapshotFixture'
+import { useRunStore, selectSessionIsRunning } from '../../../../../src/renderer/stores/useRunStore'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAgentStoreForTests } from '../../../../../src/renderer/stores/useAgentStore'
 import {
@@ -19,6 +21,7 @@ describe('turnLifecycleSlice', () => {
     )
     resetAgentStoreForTests()
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetWorkspaceStoreForTests()
     useWorkspaceStore.setState({ currentProjectPath: '/tmp/project' })
     global.window = {
@@ -31,18 +34,19 @@ describe('turnLifecycleSlice', () => {
     } as unknown as Window & typeof globalThis
   })
 
-  it('handleMessageEnd 后轮次运行态回到终态', async () => {
+  it('handleMessageEnd 封存显示但不终止权威运行', async () => {
+    publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess-1' }))
     useChatStore.getState().handleMessageStart('msg_1')
-    useChatStore.setState({ isGenerating: true, activeAgentSessionId: 'sess-1' })
+    useChatStore.setState({ activeAgentSessionId: 'sess-1' })
 
     await useChatStore.getState().handleMessageEnd('msg_1')
 
     const state = useChatStore.getState()
-    expect(state.isGenerating).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
     expect(state.activeAgentSessionId).toBeNull()
     expect(state.sendInFlight).toBe(false)
     expect(state.messages[0].turnEndedAt).toBeTypeOf('number')
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sess-1')).toBe(true)
   })
 
   it('handleMessageEnd(interrupted) 标记 running tool 为取消错误并清空流式参数', async () => {
@@ -66,7 +70,6 @@ describe('turnLifecycleSlice', () => {
         _revision: 0
       }],
       messageIndexById: { msg_int: 0 },
-      isGenerating: true,
       currentGeneratingMessageId: 'msg_int',
       streamingToolArgs: { tc_1: '{"pa' }
     })
@@ -101,7 +104,6 @@ describe('turnLifecycleSlice', () => {
         _revision: 0
       }],
       messageIndexById: { msg_ok: 0 },
-      isGenerating: true,
       currentGeneratingMessageId: 'msg_ok'
     })
 
@@ -120,7 +122,6 @@ describe('turnLifecycleSlice', () => {
     useChatStore.getState().handleRecoveryHint('msg_err', '重试中', 1)
     useChatStore.getState().handleHookError('msg_err', 'tool_before', 'hook 崩了')
     useChatStore.setState({
-      isGenerating: true,
       activeAgentSessionId: 'sess-1',
       sendInFlight: true,
       branchForkInProgress: true
@@ -136,12 +137,11 @@ describe('turnLifecycleSlice', () => {
       type: 'text',
       content: '部分输出\n\n⚠️ 模型连接失败'
     })
-    expect(state.isGenerating).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
-    // error 事件只属于当前会话，运行态/发送锁/分叉锁必须无条件收敛，不能残留阻塞下次发送
+    // 消息错误不拥有运行结束或发送锁的生命周期。
     expect(state.activeAgentSessionId).toBeNull()
-    expect(state.sendInFlight).toBe(false)
-    expect(state.branchForkInProgress).toBe(false)
+    expect(state.sendInFlight).toBe(true)
+    expect(state.branchForkInProgress).toBe(true)
     expect(state.recoveryState).toEqual({})
     expect(state.recoveryHints).toEqual({})
     expect(state.hookErrors).toEqual({})
@@ -174,7 +174,7 @@ describe('turnLifecycleSlice', () => {
     expect(kept?.content).toContain('未找到技能 /typo')
   })
 
-  it('markRunningAsCancelled 清空轮次运行态（含发送锁与分叉锁）', async () => {
+  it('取消终态清空本轮展示状态与发送、分叉锁', async () => {
     useChatStore.setState({
       messages: [{
         id: 'msg_cancel',
@@ -192,17 +192,18 @@ describe('turnLifecycleSlice', () => {
         _revision: 0
       }],
       messageIndexById: { msg_cancel: 0 },
-      isGenerating: true,
       currentGeneratingMessageId: 'msg_cancel',
       activeAgentSessionId: 'sess-1',
       sendInFlight: true,
       branchForkInProgress: true
     })
 
-    await useChatStore.getState().markRunningAsCancelled()
+    useChatStore.setState({ currentSessionId: 'sess-1' })
+    await useChatStore.getState().handleRunTerminal(makeRunSnapshot({
+      sessionId: 'sess-1', messageId: 'msg_cancel', status: 'cancelled'
+    }))
 
     const state = useChatStore.getState()
-    expect(state.isGenerating).toBe(false)
     expect(state.currentGeneratingMessageId).toBeNull()
     expect(state.activeAgentSessionId).toBeNull()
     expect(state.sendInFlight).toBe(false)
@@ -225,44 +226,25 @@ describe('turnLifecycleSlice', () => {
       useChatStore.setState({
         messages: [history, { id: 'active', role: 'assistant', content: '已有内容', timestamp: 2, blocks }],
         messageIndexById: { history: 0, active: 1 },
-        currentGeneratingMessageId: 'active', isGenerating: true
+        currentGeneratingMessageId: 'active'
       })
-      await useChatStore.getState().markRunningAsCancelled()
+      await useChatStore.getState().handleMessageEnd('active', true)
       const state = useChatStore.getState()
-      expect(state.isGenerating).toBe(false)
       expect(state.messages[1]).toMatchObject({ interrupted: true, content: '已有内容' })
       expect(state.messages[1].blocks).toEqual(blocks)
       expect(state.messages[0]).toBe(history)
     }
   })
 
-  it('终态后 steering 队列恰好出队一次', async () => {
+  it.each(['message_end', 'error'] as const)('%s 只封存显示，不派发 steering 队列', async event => {
+    publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess-1', messageId: 'msg_turn' }))
     useChatStore.getState().handleMessageStart('msg_turn')
     useChatStore.getState().enqueuePendingMessage('排队消息', [])
-    useChatStore.getState().enqueuePendingMessage('第二条', [])
-
-    await useChatStore.getState().handleMessageEnd('msg_turn')
-
-    const state = useChatStore.getState()
-    expect(state.pendingUserMessages).toHaveLength(1)
-    expect(state.pendingUserMessages[0].text).toBe('第二条')
-    const sendCalls = mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')
-    expect(sendCalls).toHaveLength(1)
-    expect(sendCalls[0][1]).toMatchObject({ content: '排队消息' })
-  })
-
-  it('handleError 终态后 steering 队列被派发（error 也是 turn boundary）', async () => {
-    useChatStore.getState().handleMessageStart('msg_err')
-    useChatStore.getState().enqueuePendingMessage('error 后排队消息', [])
-    useChatStore.setState({ isGenerating: true })
-
-    await useChatStore.getState().handleError('msg_err', '模型连接失败')
-
-    const state = useChatStore.getState()
-    expect(state.pendingUserMessages).toHaveLength(0)
-    const sendCalls = mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')
-    expect(sendCalls).toHaveLength(1)
-    expect(sendCalls[0][1]).toMatchObject({ content: 'error 后排队消息' })
+    if (event === 'error') await useChatStore.getState().handleError('msg_turn', '模型连接失败')
+    else await useChatStore.getState().handleMessageEnd('msg_turn')
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['排队消息'])
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sess-1')).toBe(true)
+    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toEqual([])
   })
 
   it('无消息块时只转换预算错误，其他终态错误保留原文', async () => {

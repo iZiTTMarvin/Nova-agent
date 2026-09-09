@@ -87,7 +87,11 @@ export type ScanSourceTreeResult = {
 }
 
 /** 从源码文本提取所有可静态识别的模块说明符 */
-export function extractModuleSpecifiers(sourceText: string, fileName = 'virtual.ts'): ExtractImportsResult {
+export function extractModuleSpecifiers(
+  sourceText: string,
+  fileName = 'virtual.ts',
+  staticValuesOnly = false
+): ExtractImportsResult {
   const scriptKind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const sourceFile = ts.createSourceFile(
     fileName,
@@ -102,19 +106,34 @@ export function extractModuleSpecifiers(sourceText: string, fileName = 'virtual.
 
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      specifiers.push({ specifier: node.moduleSpecifier.text, kind: 'import' })
+      const clause = node.importClause
+      const bindings = clause?.namedBindings
+      const typeOnly = clause?.isTypeOnly || (
+        !clause?.name && bindings && ts.isNamedImports(bindings) &&
+        bindings.elements.length > 0 && bindings.elements.every(element => element.isTypeOnly)
+      )
+      if (!staticValuesOnly || !typeOnly) {
+        specifiers.push({ specifier: node.moduleSpecifier.text, kind: 'import' })
+      }
     } else if (
       ts.isExportDeclaration(node) &&
       node.moduleSpecifier &&
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
-      specifiers.push({ specifier: node.moduleSpecifier.text, kind: 'export-from' })
-    } else if (ts.isImportTypeNode(node)) {
+      const clause = node.exportClause
+      const typeOnly = node.isTypeOnly || (
+        clause && ts.isNamedExports(clause) && clause.elements.length > 0 &&
+        clause.elements.every(element => element.isTypeOnly)
+      )
+      if (!staticValuesOnly || !typeOnly) {
+        specifiers.push({ specifier: node.moduleSpecifier.text, kind: 'export-from' })
+      }
+    } else if (ts.isImportTypeNode(node) && !staticValuesOnly) {
       const literal = getImportTypeLiteral(node)
       if (literal) {
         specifiers.push({ specifier: literal, kind: 'import-type' })
       }
-    } else if (ts.isCallExpression(node)) {
+    } else if (ts.isCallExpression(node) && !staticValuesOnly) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         const arg = node.arguments[0]
         if (arg && ts.isStringLiteralLike(arg)) {

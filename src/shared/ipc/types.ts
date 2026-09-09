@@ -171,10 +171,10 @@ export interface IpcCommands {
     result: { accepted: true } | { accepted: false; rejection: SkillSlashRejection }
   }
   'cancel-execution': {
-    /** 未传时保持兼容：取消主进程当前绑定的执行；传入时精确取消该 run。 */
-    params: { runId?: string } | void
-    /** 立即返回 cancelling 快照；终态需等 run:snapshot */
-    result: { runId: string | null; status: string }
+    /** 精确取消指定 run tree；缺少身份时拒绝，不推断当前执行。 */
+    params: { runId: string }
+    /** 返回权威快照状态；后续变化通过 run:snapshot 发布。 */
+    result: { runId: string; status: string }
   }
   /** snapshot-first：按 session 拉取权威 Run 快照 */
   'run:get-snapshot': {

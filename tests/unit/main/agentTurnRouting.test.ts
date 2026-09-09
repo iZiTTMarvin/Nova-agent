@@ -84,8 +84,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
-  getRunExecutionRegistry: () => executionRegistry,
-  setActiveRunId: vi.fn()
+  getRunExecutionRegistry: () => executionRegistry
 }))
 
 vi.mock('../../../src/main/services/WorkspaceService', () => ({

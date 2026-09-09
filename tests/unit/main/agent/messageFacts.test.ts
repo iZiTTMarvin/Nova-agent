@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { createHash } from 'crypto'
@@ -14,7 +14,11 @@ import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
-import { agentRoute } from '../../../../src/runtime/agent/turn'
+import { agentRoute, resolveAgentTurnRoute } from '../../../../src/runtime/agent/turn'
+import { TurnDispatcher } from '../../../../src/runtime/agent/turn/TurnDispatcher'
+import { recoverSessionTurnDrafts } from '../../../../src/runtime/sessions/turnDraftRecovery'
+import type { SkillManifest } from '../../../../src/runtime/skills/types'
+import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { buildConversationContext } from '../../../../src/runtime/sessions'
 import { restoreOrInjectHistory } from '../../../../src/runtime/sessions/contextSnapshot'
 import { toSharedMessage } from '../../../../src/main/ipc/sessionMessageMapper'
@@ -94,13 +98,30 @@ describe('消息事实提交往返', () => {
     restored.dispose()
   })
   it.each([
-    { size: 8035, image: false },
-    { size: 12000, image: false },
-    { size: 50, image: true }
-  ])('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image', async ({ size, image }) => {
-    const { root, session, bus, ctx } = setup()
-    sessionStore.appendMessageFast(session.id, { id: 'u', role: 'user', content: '原始问题', timestamp: 1 })
-    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+    { size: 8035, image: false, skill: true },
+    { size: 12000, image: false, skill: false },
+    { size: 50, image: true, skill: false }
+  ])('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image / skill=$skill', async ({ size, image, skill }) => {
+    const { root, session, run, runStore, bus, ctx } = setup()
+    const input = skill ? '/f 原始问题' : '原始问题'
+    const skillDir = join(root, 'skills', 'f')
+    const skillFile = join(skillDir, 'SKILL.md')
+    if (skill) {
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(skillFile, '---\nname: f\ndescription: frozen skill\n---\n冻结技能正文 <%= arguments %>')
+    }
+    const route = resolveAgentTurnRoute({ content: input, mode: 'default',
+      skillRegistry: skill ? SkillRegistry.load({ globalDir: join(root, 'skills') }) : null })
+    sessionStore.appendMessageFast(session.id, { id: 'u', role: 'user', content: input, timestamp: 1 })
+    bus.on(event => {
+      accumulateStreamEvent(session.id, event, ctx)
+      if (skill && event.type === 'user_delivery') {
+        expect(runStore.loadSnapshot(run.runId)?.turnDraft?.blocks).toEqual([])
+        expect(runStore.loadSnapshot(run.runId)?.turnDraft?.userDelivery?.skillInput).toEqual({
+          assistantPrelude: '冻结技能正文 原始问题', userContent: '请按上述技能指令执行。\n\n参数：原始问题'
+        })
+      }
+    })
     const bodies: Array<{ messages: unknown[]; [key: string]: unknown }> = []
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
       bodies.push(JSON.parse(String(init?.body)))
@@ -124,7 +145,18 @@ describe('消息事实提交往返', () => {
       return loop
     }
     const first = makeLoop()
-    expect((await first.sendMessage('原始问题', agentRoute(), { userMessageId: 'u' })).status).toBe('completed')
+    expect((await first.sendMessage(input, route, { userMessageId: 'u' })).status).toBe('completed')
+    expect(sessionStore.load(session.id)!.messages[0].content).toBe(input)
+    if (skill) {
+      writeFileSync(skillFile, '---\nname: f\ndescription: updated skill\n---\n新技能正文不能改写历史')
+      expect(resolveAgentTurnRoute({ content: input, mode: 'default', skillRegistry: SkillRegistry.load({ globalDir: join(root, 'skills') }) }))
+        .toMatchObject({ dispatch: { assistantContent: '新技能正文不能改写历史' } })
+      const delivered = first.getContext().filter(message => message.origin?.messageId === 'u')
+      expect(delivered.map(message => message.origin?.step)).toEqual([0, 1])
+      expect(delivered.map(message => message.role)).toEqual(['assistant', 'user'])
+      expect(JSON.stringify(bodies[0].messages)).toContain('冻结技能正文 原始问题')
+      expect(JSON.stringify(bodies[0].messages)).not.toContain('inputPrelude')
+    }
     const previous = bodies.at(-1)!
     const restored = makeLoop()
     const snapshot = sessionStore.loadContextSnapshot(session.id)!
@@ -187,7 +219,7 @@ describe('消息事实提交往返', () => {
     expect(restored.filter(m => m.toolCalls).map(m => m.toolCalls)).toEqual(sent.map(m => m.toolCalls))
     expect(coordinator.getSnapshot(run.runId)?.turnDraft).toBeNull()
     const assistant = loaded.messages.find(m => m.role === 'assistant')!
-    expect(assistant.messageSchemaVersion).toBe(4)
+    expect(assistant.messageSchemaVersion).toBe(5)
     expect(assistant.userDelivery).toMatchObject({ userMessageId: 'user', modeInstruction: '当时的模式指令' })
     const delivery = assistant.userDelivery!
     expect(client.getCalls()[0].messages.find(m => m.origin?.messageId === 'user')?.content)
@@ -247,6 +279,43 @@ describe('消息事实提交往返', () => {
     expect(draft.userDelivery?.sessionPrefix).toBe('prefix')
     expect(draft.blocks.find(b => b.type === 'tool')).toMatchObject({ result: '完整正文' })
     expect(sessionStore.load(session.id)!.messages).toEqual([])
+  })
+
+  it.each(['completed', 'failed', 'throw'] as const)('直接 fork %s 的归档失败后可恢复父用户坐标', async status => {
+    const { root, session, run, bus, ctx } = setup()
+    sessionStore.appendMessageFast(session.id, { id: 'user-fork', role: 'user', content: '/fork args', timestamp: 1 })
+    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+    const loop = new AgentLoop(new MockModelClient(), bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access' })
+    loop.setModeInstructionProvider(() => '未投递给父模型的模式指令')
+    loop.setTurnDispatcher(new TurnDispatcher({ skillForkRunner: async () => {
+      if (status === 'throw') throw new Error('fork dispatch failed')
+      return { status, success: status === 'completed', summary: 'child summary' }
+    } }))
+    const skill: SkillManifest = {
+      name: 'fork', description: 'fork', directory: root, body: '仅交给子代理的正文', source: 'virtual',
+      sourcePath: join(root, 'SKILL.md'), userInvocable: true, modelInvocable: true,
+      enabled: true, warnings: [], hasSupportingFiles: false
+    }
+    const append = vi.spyOn(sessionStore, 'appendMessageFast').mockReturnValueOnce({ ok: false, status: 'failed', error: 'disk_failure' })
+    try {
+      const outcome = await loop.sendMessage('/fork args', { kind: 'skill_fork', skill, args: 'args' }, { userMessageId: 'user-fork' })
+      expect(outcome.status).toBe(status === 'throw' ? 'failed' : status)
+      append.mockRestore()
+      expect(coordinator.getSnapshot(run.runId)?.turnDraft?.userDelivery).toEqual({
+        userMessageId: 'user-fork', sessionPrefix: null, modeInstruction: ''
+      })
+      coordinator.commitTerminal({ runId: run.runId, status: 'interrupted', reason: 'restart' })
+      recoverSessionTurnDrafts(session.id, sessionStore, coordinator)
+      expect(coordinator.getSnapshot(run.runId)?.turnDraft).toBeNull()
+      const messages = sessionStore.load(session.id)!.messages
+      expect(messages).toHaveLength(2)
+      expect(messages[0]).toMatchObject({ id: 'user-fork', content: '/fork args' })
+      expect(messages[1].userDelivery?.userMessageId).toBe('user-fork')
+      expect(JSON.stringify(messages[1])).not.toContain('未投递给父模型')
+      expect(JSON.stringify(messages[1])).not.toContain('仅交给子代理')
+    } finally {
+      loop.dispose()
+    }
   })
 
   it('未知消息格式从真实磁盘读取失败且原始文件不变', () => {

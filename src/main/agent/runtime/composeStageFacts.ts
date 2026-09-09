@@ -8,6 +8,7 @@ import type { SessionData } from '../../../runtime/sessions/types'
 import { parseInspectionReport, type ComposeStageFacts } from '../../../shared/composeLifecycle'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
+import { readToolProcessOutcome } from '../../../shared/tools/processOutcome'
 import type { MessageBlock } from '../../../shared/session'
 
 export interface ComposeStageFactsProviderDeps {
@@ -16,9 +17,6 @@ export interface ComposeStageFactsProviderDeps {
     listByParentSessionId(parentSessionId: string): SubagentActivityProjection[]
   }
 }
-
-const BASH_EXIT_RE = /\[命令退出码:\s*(\d+)/
-const SHELL_SESSION_EXIT_RE = /\[会话已终止，退出码:\s*(\d+)/
 
 function runTime(run: SubagentActivityProjection): number {
   return run.startedAt ?? run.completedAt ?? 0
@@ -34,22 +32,6 @@ function isCompletedProfileRun(
     run.status === 'completed' &&
     runTime(run) >= enteredAt
   )
-}
-
-function persistedExitCode(block: Extract<MessageBlock, { type: 'tool' }>): number | null {
-  if (block.status !== 'success') return null
-  const result = block.result ?? ''
-  if (block.toolName === 'bash') {
-    const match = result.match(BASH_EXIT_RE)
-    if (match) return Number(match[1])
-    // bash 只给非 0 退出码写标记；success 且无标记即 exit 0
-    return block.status === 'success' ? 0 : null
-  }
-  if (block.toolName === 'shell_session') {
-    const match = result.match(SHELL_SESSION_EXIT_RE)
-    return match ? Number(match[1]) : null
-  }
-  return null
 }
 
 function isToolBlock(block: MessageBlock): block is Extract<MessageBlock, { type: 'tool' }> {
@@ -71,7 +53,8 @@ function inspectorReportIssue(
     if (message.role !== 'assistant' || (message.turnStartedAt ?? message.timestamp) < enteredAt) continue
     for (const block of message.blocks ?? []) {
       if (!isToolBlock(block)) continue
-      if (persistedExitCode(block) === 0) hasEvidence = true
+      const process = readToolProcessOutcome(block)
+      if (block.status === 'success' && process?.state === 'exited' && process.exitCode === 0) hasEvidence = true
       if (block.toolName !== 'inspection_report') continue
       issue = 'missing_report'
       if (block.status !== 'success') continue

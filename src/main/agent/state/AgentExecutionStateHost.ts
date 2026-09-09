@@ -9,7 +9,6 @@
  */
 import { createReadState, type ReadState } from '../../../runtime/tools/editTool'
 import {
-  getActiveRunId,
   getRunCoordinator,
   getRunExecutionRegistry
 } from '../../services/RunCoordinatorHost'
@@ -63,7 +62,7 @@ export function isAgentTurnInProgress(): boolean {
       run.status === 'cancelling'
     )
   } catch {
-    return getActiveRunId() !== null
+    return false
   }
 }
 
@@ -86,37 +85,7 @@ export function isSessionTurnInProgress(sessionId: string): boolean {
     }
     return false
   } catch {
-    // 协调器尚未初始化时，回退到全局 activeRunId 的会话比对
-    const bound = getActiveRunId()
-    if (!bound) return false
-    try {
-      const snap = getRunCoordinator().getSnapshot(bound)
-      return snap?.sessionId === sessionId
-    } catch {
-      return false
-    }
-  }
-}
-
-/** 供跨会话守卫：当前活跃轮次所属会话 id（无进行中轮次时为 null） */
-export function getActiveTurnSessionId(): string | null {
-  try {
-    const active = getRunCoordinator().listActiveRuns().filter(run =>
-      run.status === 'running' ||
-      run.status === 'retrying' ||
-      run.status === 'resuming' ||
-      run.status === 'cancelling'
-    )
-    if (active.length === 0) return null
-    // 优先当前 SEND_MESSAGE 绑定的 run
-    const bound = getActiveRunId()
-    if (bound) {
-      const snap = active.find(s => s.runId === bound)
-      if (snap) return snap.sessionId
-    }
-    return active[0]?.sessionId ?? null
-  } catch {
-    return null
+    return false
   }
 }
 

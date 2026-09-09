@@ -53,6 +53,7 @@ describe('WorkspaceService mode gate', () => {
     fs.mkdirSync(workspace)
     store = new SessionStore(path.join(root, 'app-data'))
     service = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
       getSessionStore: () => store,
       getMainWindow: () => null
     })

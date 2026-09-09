@@ -696,7 +696,7 @@ describe('黄金测试 §9.11 上下文溢出压缩', () => {
 // ============================================================
 // 场景 12：主动阈值压缩
 // 期望：触发 runCompaction → onCompaction 回调
-// 编排：把 contextWindow 设得很小，让 shouldCompact 在第一轮就触发
+// 编排：显式窗口与大历史确保主请求预算在第一轮就触发压缩
 // ============================================================
 describe('黄金测试 §9.12 主动阈值压缩', () => {
   it('上下文超阈值 → runCompaction → onCompaction 回调被调用', async () => {
@@ -714,8 +714,7 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
       modelId: 'gpt-4o',
       client,
       config: {
-        // 默认 200k 窗口：阈值≈160k；注入大历史触发压缩，压缩后硬预算仍可满足。
-        // 勿用极小 contextWindow（如 200）：压缩后保留的最近消息仍会超过硬上限。
+        contextWindow: 32_000,
         onCompaction: () => {
           compactionCalled = true
         }
@@ -731,9 +730,12 @@ describe('黄金测试 §9.12 主动阈值压缩', () => {
     }
     loop.injectHistory(history)
 
-    await runAndCollectDrained(loop, eventBus, '继续')
+    const events = await runAndCollectDrained(loop, eventBus, '继续')
 
     expect(compactionCalled).toBe(true)
+    expect(events.filter(event => event.type === 'error')).toEqual([])
+    expect(events.filter(event => event.type === 'message_end')).toHaveLength(1)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'text_delta', delta: '答复' }))
   })
 })
 

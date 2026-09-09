@@ -74,7 +74,8 @@ function parseTurnDraftBlock(input: unknown): MessageBlock | null {
 export function restoreTurnDraftMessage(
   sessionId: string,
   snapshot: RunSnapshot
-): ExtendedMessage {
+): ExtendedMessage | null {
+  if (!snapshot.messageId) return null
   const message = createAssistantMessage(
     sessionId,
     snapshot.messageId,
@@ -149,20 +150,21 @@ export function restoreTurnDraftMessage(
 }
 
 /**
- * 已持久化的同 id 消息是终态权威。只保留权威快照指向的未持久化消息，
- * 避免同会话切分支时把旧 active path 混入新历史。
+ * 已持久化的同 id 消息是终态权威；保留当前草稿和查询开始后新追加的消息。
+ * 调用方须先校验会话/分支水合版本，不能把旧 active path 混入新历史。
  */
 export function mergeFocusedSessionMessages(
   persisted: ExtendedMessage[],
   live: ExtendedMessage[],
   activeLiveMessageId: string | null,
-  draft: ExtendedMessage | null
+  draft: ExtendedMessage | null,
+  preserveLiveMessageIds: ReadonlySet<string> = new Set()
 ): ExtendedMessage[] {
   const persistedIds = new Set(persisted.map(message => message.id))
   const merged = [...persisted]
 
   for (const message of live) {
-    if (message.id === activeLiveMessageId && !persistedIds.has(message.id)) {
+    if ((message.id === activeLiveMessageId || preserveLiveMessageIds.has(message.id)) && !persistedIds.has(message.id)) {
       merged.push(message)
     }
   }

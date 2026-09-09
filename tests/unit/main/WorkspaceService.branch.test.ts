@@ -24,8 +24,7 @@ vi.mock('../../../src/runtime/agent', () => ({
 vi.mock('../../../src/main/agent/state', () => ({
   clearReadStateForSession: vi.fn(),
   deleteReadStateForSession: vi.fn(),
-  isAgentTurnInProgress: vi.fn(() => false),
-  getActiveTurnSessionId: vi.fn(() => null)
+  isAgentTurnInProgress: vi.fn(() => false)
 }))
 
 vi.mock('../../../src/main/index', () => ({
@@ -62,6 +61,7 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     vi.mocked(isAgentTurnInProgress).mockReturnValue(false)
 
     service = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
       getSessionStore: () => store,
       getMainWindow: () => null
     })
