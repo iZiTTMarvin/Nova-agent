@@ -14,7 +14,8 @@ import {
   parseRetryAfter,
   httpStatusToFailure,
   thrownToFailure,
-  formatTransportError
+  formatTransportError,
+  transportErrorToChatEvent
 } from '../../../../src/runtime/model/ModelTransport'
 import {
   RecoveryStateMachine,
@@ -117,19 +118,57 @@ describe('httpStatusToFailure', () => {
 // ── thrownToFailure ───────────────────────────────────────
 
 describe('thrownToFailure', () => {
-  it('timeout 类保留远端未知状态并禁止重放', () => {
-    const msg = formatTransportError('timeout_connect', '建连超时')
-    const f = thrownToFailure('timeout_connect', msg)
+  it('已拿到响应头后的 timeout 保留远端未知状态并禁止重放', () => {
+    const msg = formatTransportError('timeout_idle', '模型语义事件空闲超时')
+    const f = thrownToFailure('timeout_idle', msg, { headersReceived: true })
     expect(f.kind).toBe('timeout')
+    expect(f.retryable).toBe(false)
+    expect(f.dispatchOutcome).toBe('unknown')
+    expect(f.message).toMatch(/已停止自动重试/)
+  })
+
+  it('未拿到响应头的 timeout_connect 可重试，不宣称远端未知', () => {
+    const msg = formatTransportError('timeout_connect', '建连超时')
+    const f = thrownToFailure('timeout_connect', msg, { headersReceived: false })
+    expect(f.kind).toBe('timeout')
+    expect(f.retryable).toBe(true)
+    expect(f.dispatchOutcome).toBeUndefined()
+    expect(f.message).not.toMatch(/已停止自动重试/)
+  })
+
+  it('已拿到响应头后的 network_reset 保留远端未知状态并禁止重放', () => {
+    const f = thrownToFailure('network_reset', 'ECONNRESET', { headersReceived: true })
+    expect(f.kind).toBe('network')
     expect(f.retryable).toBe(false)
     expect(f.dispatchOutcome).toBe('unknown')
   })
 
-  it('network_reset 保留远端未知状态并禁止重放', () => {
-    const f = thrownToFailure('network_reset', 'ECONNRESET')
-    expect(f.kind).toBe('network')
-    expect(f.retryable).toBe(false)
-    expect(f.dispatchOutcome).toBe('unknown')
+  it('未拿到响应头的 fetch failed 可重试，并展开 cause', () => {
+    const err = Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET', name: 'SocketError' })
+    })
+    const event = transportErrorToChatEvent(err, { headersReceived: false })
+    expect(event.type).toBe('error')
+    if (event.type !== 'error') return
+    expect(event.failure?.kind).toBe('network')
+    expect(event.failure?.retryable).toBe(true)
+    expect(event.failure?.dispatchOutcome).toBeUndefined()
+    expect(event.error).toMatch(/fetch failed/i)
+    expect(event.error).toMatch(/UND_ERR_SOCKET|other side closed/i)
+    expect(event.error).not.toMatch(/已停止自动重试/)
+  })
+
+  it('Chromium 网络栈错误按建连超时 / 网络重置分类，未拿到响应头时可重试', () => {
+    const reset = transportErrorToChatEvent(new Error('net::ERR_CONNECTION_RESET'), { headersReceived: false })
+    expect(reset.type).toBe('error')
+    if (reset.type !== 'error') return
+    expect(reset.failure).toMatchObject({ kind: 'network', retryable: true })
+    expect(reset.error).toMatch(/^network_reset: .*ERR_CONNECTION_RESET/)
+
+    const timedOut = transportErrorToChatEvent(new Error('net::ERR_CONNECTION_TIMED_OUT'), { headersReceived: false })
+    if (timedOut.type !== 'error') return
+    expect(timedOut.failure).toMatchObject({ kind: 'timeout', retryable: true })
+    expect(timedOut.error).toMatch(/^timeout_connect: /)
   })
 })
 
@@ -209,6 +248,13 @@ describe('AttemptController 安全重试门闩', () => {
   it('首字节前网络错误（无可观察输出）→ 重试', () => {
     const { controller } = createController({ random: () => 0 })
     const decision = controller.onError('network_reset: boom', rateLimitFailure, true)
+    expect(decision.action).toBe('retry')
+  })
+
+  it('未确认送达的 fetch failed 在无输出时重试', () => {
+    const { controller } = createController({ random: () => 0 })
+    const f = thrownToFailure('network_reset', 'network_reset: fetch failed', { headersReceived: false })
+    const decision = controller.onError(f.message, f, true)
     expect(decision.action).toBe('retry')
   })
 

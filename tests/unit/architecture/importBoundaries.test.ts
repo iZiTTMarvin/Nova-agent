@@ -446,6 +446,17 @@ describe('import boundary production gate', () => {
     expect(callers).toEqual([])
   })
 
+  it('主进程只能经统一工厂构造模型客户端，保证全部模型请求走 Chromium 网络栈', () => {
+    const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
+    const constructors = listSrcTypeScriptFiles(repoRoot).filter((file) => {
+      if (!file.startsWith('src/main/')) return false
+      const source = fs.readFileSync(path.join(repoRoot, ...file.split('/')), 'utf8')
+      return /new\s+OpenAICompatibleModelClient\s*\(/.test(source)
+    })
+
+    expect(constructors).toEqual(['src/main/services/createModelClient.ts'])
+  })
+
   it('Code Graph 生产写连接只能由 Index Worker 构建路径打开', () => {
     const repoRoot = findRepoRoot(path.resolve(import.meta.dirname, '../../..'))
     const exists = createFsExists(repoRoot)

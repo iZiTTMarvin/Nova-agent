@@ -231,7 +231,8 @@ async function main(): Promise<void> {
     modelId: options.model,
     cacheProfile: resolveCacheProfile(options.baseUrl, options.model).id,
     reasoningEffort: options.reasoningEffort,
-    supportsVision: false,
+    supportsVision: false
+  }, {
     // 隔离评测 / 企业内网只放行代理出网；无代理环境变量时返回 undefined，行为不变
     fetchImpl: createEnvProxyFetch()
   })

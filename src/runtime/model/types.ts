@@ -116,11 +116,10 @@ export interface ToolDefinition {
 
 // ── 模型配置 ─────────────────────────────────────────────
 
-/** 创建 ModelClient 实例所需的配置 */
 /**
  * transportFetch 使用的 fetch 子集签名。
- * headless 在只放行代理出网的环境（隔离评测容器、企业内网）注入代理实现；
- * 缺省使用全局 fetch，Electron 等既有调用方行为不变。
+ * 由宿主在构造客户端时注入：Electron 主进程注入 Chromium 网络栈（遵循系统代理与系统证书），
+ * headless 注入环境变量代理实现；缺省使用 Node 全局 fetch（直连、不读系统代理）。
  */
 export type TransportFetchImpl = (
   url: string,
@@ -132,6 +131,15 @@ export type TransportFetchImpl = (
   }
 ) => Promise<Response>
 
+/**
+ * 客户端的传输依赖。与 ModelClientConfig 分离：传输由进程装配决定，
+ * 不属于用户可切换的模型配置，updateConfig 不得改动它。
+ */
+export interface ModelClientTransport {
+  fetchImpl?: TransportFetchImpl
+}
+
+/** 创建 ModelClient 实例所需的配置 */
 export interface ModelClientConfig {
   contextWindow?: number
   toolDialect?: import('../../shared/config/types').ModelConfig['toolDialect']
@@ -164,8 +172,6 @@ export interface ModelClientConfig {
    * 用于 API 层视觉投影（剥离 / provider 适配），与 UI 门控共用同一语义。
    */
   supportsVision?: boolean
-  /** 自定义传输实现；缺省走全局 fetch。见 TransportFetchImpl。 */
-  fetchImpl?: TransportFetchImpl
 }
 
 // ── 流式事件 ─────────────────────────────────────────────

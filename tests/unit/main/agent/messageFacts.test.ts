@@ -65,7 +65,7 @@ describe('消息事实提交往返', () => {
     registry.register({ name: 'probe', description: 'probe', parameters: { type: 'object', properties: { value: { type: 'number' } } },
       execute: async () => ({ success: false, output: '前置条件未满足' }) })
     const makeLoop = () => {
-      const client = new OpenAICompatibleModelClient({ baseUrl: 'https://offline.test/v1', apiKey: 'fixture', modelId: 'MiniMax-M3', contextWindow: 200_000,
+      const client = new OpenAICompatibleModelClient({ baseUrl: 'https://offline.test/v1', apiKey: 'fixture', modelId: 'MiniMax-M3', contextWindow: 200_000 }, {
         fetchImpl: async (_url, init) => {
           bodies.push(JSON.parse(String(init?.body)))
           const n = bodies.length

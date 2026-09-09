@@ -146,7 +146,8 @@ describe('CompactionService', () => {
     registerMetricSink(() => {})
     const releases: Array<() => void> = []
     const client = new OpenAICompatibleModelClient({
-      baseUrl: 'https://example.test/v1', apiKey: 'fixture', modelId: 'model',
+      baseUrl: 'https://example.test/v1', apiKey: 'fixture', modelId: 'model'
+    }, {
       fetchImpl: async () => new Promise<Response>(resolve => {
         releases.push(() => resolve(new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: handoffJson('summary') }, finish_reason: 'stop' }] })}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":2}}\n\ndata: [DONE]\n\n`)))
       })

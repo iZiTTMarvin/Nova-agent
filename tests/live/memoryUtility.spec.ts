@@ -7,7 +7,7 @@ import { AgentLoop, EventBus } from '../../src/runtime/agent'
 import { agentRoute } from '../../src/runtime/agent/turn'
 import { OpenAICompatibleModelClient } from '../../src/runtime/model/OpenAICompatibleModelClient'
 import type { ModelClient, ChatOptions } from '../../src/runtime/model/ModelClient'
-import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig } from '../../src/runtime/model/types'
+import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, TransportFetchImpl } from '../../src/runtime/model/types'
 import { ToolRegistry } from '../../src/runtime/tools/ToolRegistry'
 import { readTool } from '../../src/runtime/tools/readTool'
 import { lsTool } from '../../src/runtime/tools/lsTool'
@@ -127,7 +127,7 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
           const config: ModelClientConfig = { apiKey: apiKey!, baseUrl: process.env.MEMORY_AB_BASE_URL ?? 'https://api.commandcode.ai/provider/v1',
             modelId: process.env.MEMORY_AB_MODEL ?? 'deepseek/deepseek-v4-flash', reasoningEffort: 'max', supportsVision: false, contextWindow: 128_000 }
           const wireRequests: { model: unknown; reasoningEffort: unknown; messages: unknown }[] = []
-          config.fetchImpl = async (url, init) => {
+          const recordingFetch: TransportFetchImpl = async (url, init) => {
             const body: unknown = JSON.parse(init.body ?? '{}')
             if (typeof body === 'object' && body !== null) wireRequests.push({
               model: 'model' in body ? body.model : null,
@@ -136,7 +136,7 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
             })
             return fetch(url, init)
           }
-          const client = new Recorder(config)
+          const client = new Recorder(config, new OpenAICompatibleModelClient(config, { fetchImpl: recordingFetch }))
           const bus = new EventBus()
           const calls: { turn: number; name: string; args: unknown }[] = []
           bus.on(event => { if (event.type === 'tool_call') calls.push({ turn: client.turn, name: event.toolName, args: event.args }) })

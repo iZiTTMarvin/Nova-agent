@@ -23,6 +23,8 @@ import {
 import { fetchProviderModels } from '../../runtime/model/fetchProviderModels'
 import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
 import { getModelClient, setModelClient } from '../services/ModelClientHost'
+import { createModelClient } from '../services/createModelClient'
+import { electronTransportFetch } from '../network/electronTransportFetch'
 
 /** 返回渲染层前掩码所有 provider 的 apiKey */
 function maskRegistryForRenderer(registry: LlmRegistry): LlmRegistry {
@@ -67,7 +69,7 @@ function applyModelConfigToClient(config: ModelConfig): void {
       activeClient.setCacheStrategy(strategy)
     }
   } else {
-    const client = new OpenAICompatibleModelClient(config)
+    const client = createModelClient(config)
     client.setCacheStrategy(strategy)
     setModelClient(client)
   }
@@ -127,7 +129,7 @@ export function registerConfigHandler(): void {
   handle(
     FETCH_PROVIDER_MODELS,
     async (_event, params: { baseUrl: string; apiKey: string }) => {
-      return fetchProviderModels(params)
+      return fetchProviderModels({ ...params, fetchImpl: electronTransportFetch })
     }
   )
 }

@@ -26,7 +26,8 @@ import { loadLlmRegistry, loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
 import { preferredToolDialect } from '../../../runtime/model/dialect'
 import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
-import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
+import type { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
+import { createModelClient } from '../../services/createModelClient'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { ToolAvailability, resolveToolEconomyMode } from '../../../runtime/tools/availability'
@@ -139,7 +140,7 @@ export function buildModelPoolWithFallbacks(primary: ModelClient): ModelClient |
     for (const fb of cfg.fallbacks) {
       try {
         if (!fb.baseUrl || !fb.apiKey || !fb.modelId) continue
-        const fbClient = new OpenAICompatibleModelClient(fb)
+        const fbClient = createModelClient(fb)
         // 按 fallback 自身 baseUrl/modelId 解析 profile，禁止沿用主模型
         const fbProfile = resolveCacheProfile(fb.baseUrl, fb.modelId, {
           cacheProfile: fb.cacheProfile,

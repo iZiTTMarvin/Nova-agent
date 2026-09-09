@@ -301,6 +301,27 @@ second\tline"}`
     expect(second.assistantContent).toBe('ok')
   })
 
+  it('retry：未确认送达的 structured fetch failed 在无输出时重试', async () => {
+    const client = new MockModelClient()
+    client.addResponse({
+      events: [{
+        type: 'error',
+        error: 'network_reset: fetch failed',
+        failure: { kind: 'network', retryable: true, message: 'network_reset: fetch failed' }
+      }]
+    })
+    client.addResponse({
+      events: [
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const { processor } = createProcessor(client)
+    expect((await runOnce(processor)).kind).toBe('retry')
+    const second = await runOnce(processor)
+    expect(second.kind).toBe('assistant')
+  })
+
   it('已产生 reasoning 后的错误不重试（走终态失败）', async () => {
     // thinking_delta 已落地 → reasoning 非空 → hasNoObservableOutput=false → 不重试
     const client = new MockModelClient()

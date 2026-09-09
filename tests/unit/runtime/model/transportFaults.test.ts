@@ -85,7 +85,7 @@ describe('ModelTransport 故障注入', () => {
     const signal = new AbortController().signal
     const cancel = vi.fn()
     const body = new ReadableStream<Uint8Array>({ cancel })
-    const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async () => new Response(body) })
+    const client = new OpenAICompatibleModelClient(config, { fetchImpl: async () => new Response(body) })
     const iterator = client.chat([{ role: 'user', content: 'hello' }], undefined, { abortSignal: signal })[Symbol.asyncIterator]()
     expect((await iterator.next()).value.type).toBe('wire_snapshot')
     await iterator.return?.()
@@ -194,9 +194,34 @@ describe('ModelTransport 故障注入', () => {
 
     const client = new OpenAICompatibleModelClient(config)
     const events = await collectWithDeadline(client, 2_000)
-    const errEvent = events.find(e => e.type === 'error') as { type: 'error'; error: string } | undefined
+    const errEvent = events.find(e => e.type === 'error') as Extract<ChatEvent, { type: 'error' }> | undefined
     expect(errEvent).toBeDefined()
     expect(errEvent!.error).toMatch(/network_reset|ECONNRESET|重置/i)
+    expect(errEvent!.failure?.retryable).toBe(false)
+    expect(errEvent!.failure?.dispatchOutcome).toBe('unknown')
+  })
+
+  it('建连阶段 fetch failed → 可重试且不宣称远端未知', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('other side closed'), {
+          code: 'UND_ERR_SOCKET',
+          name: 'SocketError'
+        })
+      })
+    })
+
+    const client = new OpenAICompatibleModelClient(config)
+    const events = await collectWithDeadline(client, 2_000)
+    const errEvent = events.find(e => e.type === 'error') as
+      | Extract<ChatEvent, { type: 'error' }>
+      | undefined
+    expect(errEvent).toBeDefined()
+    expect(errEvent!.error).toMatch(/fetch failed/i)
+    expect(errEvent!.error).toMatch(/UND_ERR_SOCKET|other side closed/i)
+    expect(errEvent!.error).not.toMatch(/已停止自动重试/)
+    expect(errEvent!.failure?.retryable).toBe(true)
+    expect(errEvent!.failure?.dispatchOutcome).toBeUndefined()
   })
 
   it('非 2xx 错误体无限流 → 超时后取消 reader 并结束 attempt', async () => {

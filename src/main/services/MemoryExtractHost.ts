@@ -9,7 +9,7 @@ import { app } from 'electron'
 import type { ChatMessage } from '../../runtime/model/types'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import type { ModelClientPool } from '../../runtime/model/ModelClientPool'
-import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
+import { createModelClient } from './createModelClient'
 import { loadModelConfig } from '../../runtime/model/config'
 import {
   MemoryExtractor,
@@ -204,7 +204,7 @@ async function persistFallback(
  * pool 上 updateConfig（哪怕 finally 改回），主对话那一轮的 reasoningEffort
  * 会被悄悄降级，构成静默的并发数据竞争。
  *
- * 因此每次调用都新建 OpenAICompatibleModelClient（带 reasoningEffort=low），
+ * 因此每次调用都新建独立 client（带 reasoningEffort=low），
  * 不触碰主 pool。modelPool 参数仅保留以兼容调用签名，实际不使用。
  */
 export function createExtractChatFn(
@@ -235,7 +235,7 @@ function buildExtractModelClient(reasoningEffort: 'low' = 'low'): ModelClient | 
     if (!config?.apiKey?.trim()) {
       return null
     }
-    return new OpenAICompatibleModelClient({ ...config, reasoningEffort })
+    return createModelClient({ ...config, reasoningEffort })
   } catch {
     return null
   }

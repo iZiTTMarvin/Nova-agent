@@ -174,24 +174,71 @@ export function formatTransportError(cls: TransportErrorClass, detail: string): 
   return `${cls}: ${detail}`
 }
 
+interface FlattenedThrownError {
+  combined: string
+  codes: string
+  detail: string
+}
+
+/** 展开 undici/Node 的 cause 链：顶层往往只有 `fetch failed`。 */
+function flattenThrownError(err: unknown): FlattenedThrownError {
+  const messages: string[] = []
+  const codes: string[] = []
+  let current: unknown = err
+  for (let depth = 0; depth < 5 && current != null; depth++) {
+    if (typeof current !== 'object') {
+      const text = String(current)
+      if (text && text !== '[object Object]') messages.push(text)
+      break
+    }
+    const rec = current as {
+      name?: unknown
+      message?: unknown
+      code?: unknown
+      cause?: unknown
+      reason?: unknown
+    }
+    if (typeof rec.code === 'string' && rec.code) codes.push(rec.code)
+    const name = typeof rec.name === 'string' && rec.name && rec.name !== 'Error' ? rec.name : ''
+    const message = typeof rec.message === 'string' ? rec.message : ''
+    const piece = [name, message].filter(Boolean).join(': ')
+    if (piece) messages.push(piece)
+    current = rec.cause ?? rec.reason
+  }
+  const uniqueMessages = [...new Set(messages.filter(Boolean))]
+  const detail = uniqueMessages.length === 0
+    ? String(err ?? 'unknown')
+    : uniqueMessages.length === 1
+      ? uniqueMessages[0]!
+      : `${uniqueMessages[0]} (${uniqueMessages.slice(1).join('; ')})`
+  return { combined: `${uniqueMessages.join(' ')} ${codes.join(' ')}`, codes: codes.join(' '), detail }
+}
+
 /** 从未知错误推断类别 */
 export function classifyThrownError(err: unknown): TransportErrorClass {
-  const msg = String((err as Error)?.message ?? err ?? '')
-  const reasonMsg = String((err as { cause?: unknown })?.cause ?? (err as { reason?: unknown })?.reason ?? '')
-  const combined = `${msg} ${reasonMsg}`
+  const { combined, codes } = flattenThrownError(err)
+  const haystack = `${combined} ${codes}`
 
-  if (/timeout_total/i.test(combined)) return 'timeout_total'
+  if (/timeout_total/i.test(haystack)) return 'timeout_total'
   if ((err as Error)?.name === 'AbortError') {
     return 'cancelled'
   }
-  const code = String((err as NodeJS.ErrnoException)?.code ?? '')
-  if (/ECONNRESET/i.test(combined) || /ECONNRESET/i.test(code) || /network_reset/i.test(combined)) {
+  if (/UND_ERR_CONNECT_TIMEOUT|CONNECT_TIMEOUT/i.test(haystack)) return 'timeout_connect'
+  if (/UND_ERR_HEADERS_TIMEOUT/i.test(haystack)) return 'timeout_first_byte'
+  // Chromium 网络栈（Electron net.fetch）以 net::ERR_* 报错
+  if (/net::ERR_(CONNECTION_)?TIMED_OUT/i.test(haystack)) return 'timeout_connect'
+  if (/net::ERR_/i.test(haystack)) return 'network_reset'
+  if (
+    /ECONNRESET|UND_ERR_SOCKET|UND_ERR_DESTROYED|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|ETIMEDOUT|network_reset/i.test(
+      haystack
+    )
+  ) {
     return 'network_reset'
   }
-  if (/timeout_connect/i.test(combined)) return 'timeout_connect'
-  if (/timeout_first_byte|first.?byte/i.test(combined)) return 'timeout_first_byte'
-  if (/timeout_idle|idle/i.test(combined)) return 'timeout_idle'
-  if (/timeout/i.test(combined)) return 'timeout_idle'
+  if (/timeout_connect/i.test(haystack)) return 'timeout_connect'
+  if (/timeout_first_byte|first.?byte/i.test(haystack)) return 'timeout_first_byte'
+  if (/timeout_idle|idle/i.test(haystack)) return 'timeout_idle'
+  if (/timeout/i.test(haystack)) return 'timeout_idle'
   return 'network_reset'
 }
 
@@ -281,7 +328,7 @@ export async function transportFetch(init: TransportFetchInit): Promise<Transpor
     if ((err as Error)?.name === 'AbortError') {
       throw Object.assign(new Error('cancelled'), { name: 'AbortError' })
     }
-    throw new Error(formatTransportError(cls, (err as Error)?.message ?? String(err)))
+    throw new Error(formatTransportError(cls, flattenThrownError(err).detail))
   }
 }
 
@@ -398,7 +445,7 @@ export class TransportBodyReader {
       // 已是分类错误则原样抛出
       if (/^timeout_|^network_reset:/.test(msg)) throw err
       const thrownCls = classifyThrownError(err)
-      throw new Error(formatTransportError(thrownCls, msg))
+      throw new Error(formatTransportError(thrownCls, flattenThrownError(err).detail))
     }
   }
 
@@ -520,17 +567,27 @@ function concatChunks(chunks: Uint8Array[], bytes: number): Uint8Array {
   }
   return output
 }
+export interface TransportErrorEventOptions {
+  /** 是否已收到 HTTP 响应头。未传时：建连超时视为未收到，其余视为已收到。 */
+  headersReceived?: boolean
+}
+
 /**
  * 将 transport 层异常转为 ChatEvent（供 ModelClient yield）。
  * 用户取消 → cancelled；其余 → error（携带结构化 failure，供重试决策消费）。
  */
-export function transportErrorToChatEvent(err: unknown): ChatEvent {
+export function transportErrorToChatEvent(
+  err: unknown,
+  opts?: TransportErrorEventOptions
+): ChatEvent {
   const cls = classifyThrownError(err)
   if (cls === 'cancelled') {
     return { type: 'cancelled' }
   }
-  const msg = String((err as Error)?.message ?? err)
-  const failure = thrownToFailure(cls, msg)
+  const headersReceived = opts?.headersReceived ?? cls !== 'timeout_connect'
+  const raw = String((err as Error)?.message ?? err)
+  const msg = /^(timeout_|network_reset:|http_)/.test(raw) ? raw : formatTransportError(cls, flattenThrownError(err).detail)
+  const failure = thrownToFailure(cls, msg, { headersReceived })
   return { type: 'error', error: failure.message, failure }
 }
 
@@ -551,9 +608,18 @@ function thrownFailureKind(cls: TransportErrorClass): ModelFailureKind {
 }
 
 /** 把抛出的 transport 异常归一化为结构化失败 */
-export function thrownToFailure(cls: TransportErrorClass, message: string): ModelFailure {
+export function thrownToFailure(
+  cls: TransportErrorClass,
+  message: string,
+  opts?: { headersReceived?: boolean }
+): ModelFailure {
   // cancelled 不应进入失败路径（调用方已先行返回 cancelled 事件）
   const kind = thrownFailureKind(cls)
+  const headersReceived = opts?.headersReceived ?? true
+  // 未拿到响应头：请求未确认送达，允许重试。已拿到响应头后断流：远端可能已计费，禁止自动重放。
+  if (!headersReceived) {
+    return { kind, retryable: true, message }
+  }
   return { kind, retryable: false, dispatchOutcome: 'unknown',
     message: `${message}；请求可能已送达，远端结果与费用未知，已停止自动重试。` }
 }

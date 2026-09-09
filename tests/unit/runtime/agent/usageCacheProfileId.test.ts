@@ -64,7 +64,7 @@ describe('usage 事件 cacheProfileId', () => {
     registerMetricSink(() => {})
     try {
       const config = { baseUrl: 'https://example.test/v1', apiKey: 'fixture', modelId: 'model' }
-      const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async () => new Response(
+      const client = new OpenAICompatibleModelClient(config, { fetchImpl: async () => new Response(
         'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":2}}\n\ndata: [DONE]\n\n'
       ) })
       const pool = new ModelClientPool({ primary: client, primaryConfig: config })

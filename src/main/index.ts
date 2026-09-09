@@ -10,7 +10,7 @@ import { runStartupStorageGc } from './ipc/storageHandler'
 import { cleanupStaleAtomicTmpFiles } from '../runtime/storage/atomicFile'
 import { registerAgentHandler } from './ipc/agentHandler'
 import { syncTavilyApiKeyFromSettings } from '../runtime/settings/syncTavilyApiKey'
-import { OpenAICompatibleModelClient } from '../runtime/model/OpenAICompatibleModelClient'
+import { createModelClient } from './services/createModelClient'
 import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
 import { resolveActiveModelConfig } from '../shared/config/llmRegistry'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
@@ -55,7 +55,7 @@ function loadModelConfigOnStartup(): void {
   try {
     const config = loadModelConfig(app.getPath('userData'))
     if (config) {
-      const client = new OpenAICompatibleModelClient(config)
+      const client = createModelClient(config)
       const profile = resolveCacheProfile(config.baseUrl, config.modelId, {
         cacheProfile: config.cacheProfile,
         cacheStrategy: config.cacheStrategy
@@ -69,7 +69,7 @@ function loadModelConfigOnStartup(): void {
     if (registry) {
       const active = resolveActiveModelConfig(registry)
       if (active) {
-        const client = new OpenAICompatibleModelClient(active)
+        const client = createModelClient(active)
         const profile = resolveCacheProfile(active.baseUrl, active.modelId, {
           cacheProfile: active.cacheProfile,
           cacheStrategy: active.cacheStrategy

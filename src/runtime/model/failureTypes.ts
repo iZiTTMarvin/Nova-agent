@@ -27,7 +27,7 @@ export type ModelFailureKind =
  * retryAfterMs 来自 Retry-After 头，存在时覆盖指数退避。
  */
 export interface ModelFailure {
-  /** 请求可能已被接收，远端生成结果与费用无法确认。 */
+  /** 已拿到响应头后断流：请求可能已被接收，远端生成结果与费用无法确认。未拿到响应头时不要设此字段。 */
   dispatchOutcome?: 'unknown'
   kind: ModelFailureKind
   retryable: boolean

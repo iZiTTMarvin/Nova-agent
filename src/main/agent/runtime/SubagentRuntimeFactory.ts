@@ -8,7 +8,7 @@ import {
   createAssistantCompletionPolicy
 } from '../../../runtime/agent'
 
-import { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
+import { createModelClient } from '../../services/createModelClient'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import type { ToolExecutor } from '../../../runtime/tools/types'
@@ -110,7 +110,7 @@ export function prepareSubagentRuntime(
     throw new Error('Child Session 缺少模型 header，无法准备执行')
   }
   const childModel = resolveChildModelFromHeader(input.registry, childHeader)
-  const modelClient = new OpenAICompatibleModelClient(childModel.modelConfig)
+  const modelClient = createModelClient(childModel.modelConfig)
   const modelPool = new ModelClientPool({
     primary: modelClient,
     primaryConfig: childModel.modelConfig

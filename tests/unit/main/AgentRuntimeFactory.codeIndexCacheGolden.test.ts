@@ -68,7 +68,8 @@ function createCapturingClient(onBody: (body: Record<string, unknown>) => void) 
     baseUrl: 'https://cache-golden.invalid/v1',
     apiKey: 'test-key',
     modelId: 'cache-golden',
-    cacheProfile: 'generic',
+    cacheProfile: 'generic'
+  }, {
     fetchImpl: async (_input, init) => {
       if (typeof init?.body !== 'string') {
         throw new Error('最终请求体不是 JSON 文本')

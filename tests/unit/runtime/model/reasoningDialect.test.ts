@@ -87,4 +87,32 @@ describe('buildReasoningParams', () => {
     const params = buildReasoningParams('glm-4.6', '', 'high')
     expect(params).toEqual({ reasoning_effort: 'high' })
   })
+
+  it('MiniMax 官方端点 + high：注入 thinking.adaptive，不发 reasoning_effort', () => {
+    const params = buildReasoningParams('MiniMax-M3', 'https://api.minimaxi.com/v1', 'high')
+    expect(params).toEqual({ thinking: { type: 'adaptive' } })
+    expect(params).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('MiniMax 国际站与旧域名同样走官方思考方言', () => {
+    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimax.io/v1', 'medium')).toEqual({
+      thinking: { type: 'adaptive' }
+    })
+    expect(buildReasoningParams('MiniMax-M2.5', 'https://api.minimax.chat/v1', 'low')).toEqual({
+      thinking: { type: 'adaptive' }
+    })
+  })
+
+  it('MiniMax + none/minimal：显式 disabled，而不是省略', () => {
+    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimaxi.com/v1', 'none')).toEqual({
+      thinking: { type: 'disabled' }
+    })
+    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimaxi.com/v1', 'minimal')).toEqual({
+      thinking: { type: 'disabled' }
+    })
+  })
+
+  it('MiniMax + auto：不注入，沿用服务商默认开思考', () => {
+    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimaxi.com/v1', 'auto')).toBeNull()
+  })
 })

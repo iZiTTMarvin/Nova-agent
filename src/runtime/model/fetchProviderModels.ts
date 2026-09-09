@@ -1,9 +1,13 @@
 /**
  * 从服务商 API 拉取可用模型列表（OpenAI 兼容 /models 端点）
  */
+import type { TransportFetchImpl } from './types'
+
 export interface FetchModelsParams {
   baseUrl: string
   apiKey: string
+  /** 宿主注入的传输实现；缺省走 Node 全局 fetch */
+  fetchImpl?: TransportFetchImpl
 }
 
 export interface FetchModelsResult {
@@ -36,7 +40,8 @@ export async function fetchProviderModels(params: FetchModelsParams): Promise<Fe
   const url = `${baseUrl}/models`
 
   try {
-    const response = await fetch(url, {
+    const doFetch = params.fetchImpl ?? fetch
+    const response = await doFetch(url, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${apiKey}`,

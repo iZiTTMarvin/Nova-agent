@@ -51,7 +51,7 @@ describe('物理请求观测', () => {
       resetMetricsForTests()
       registerMetricSink(() => {})
       const bodies: string[] = []
-      const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async (_url, init) => {
+      const client = new OpenAICompatibleModelClient(config, { fetchImpl: async (_url, init) => {
         bodies.push(String(init?.body))
         return bodies.length === 1
           ? new Response('{"error":{"message":"Unknown parameter: prompt_cache_key"}}', { status: 400 })
@@ -93,7 +93,7 @@ describe('物理请求观测', () => {
   it('重复正文按不同物理尝试计账，消费者提前退出仍有缺失记录', async () => {
     process.env.NOVA_METRICS = '1'
     registerMetricSink(() => {})
-    const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async () => response() })
+    const client = new OpenAICompatibleModelClient(config, { fetchImpl: async () => response() })
     await drain(client)
     await drain(client)
     const attempts = getMetricBuffer().filter(e => e.category === 'transport.attempt')
@@ -121,7 +121,7 @@ describe('物理请求观测', () => {
   it('连接失败只记一次物理尝试，缺失阶段和 usage 不补零', async () => {
     process.env.NOVA_METRICS = '1'
     registerMetricSink(() => {})
-    const client = new OpenAICompatibleModelClient({ ...config, fetchImpl: async () => { throw new Error('ECONNRESET') } })
+    const client = new OpenAICompatibleModelClient(config, { fetchImpl: async () => { throw new Error('ECONNRESET') } })
     expect((await drain(client)).at(-1)?.type).toBe('error')
     const attempts = getMetricBuffer().filter(e => e.category === 'transport.attempt')
     expect(attempts).toHaveLength(1)

@@ -8,7 +8,15 @@ import { measureRequestBudget, type RequestBudgetMeasurement } from './requestBu
 import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import type { ChatMessage, ChatEvent, ToolDefinition, ModelClientConfig, DowngradeCapability } from './types'
+import type {
+  ChatMessage,
+  ChatEvent,
+  ToolDefinition,
+  ModelClientConfig,
+  ModelClientTransport,
+  DowngradeCapability,
+  TransportFetchImpl
+} from './types'
 import { resolveRouteIdentity } from './routeIdentity'
 import { deriveTransportDurations, toTransportAttemptMetric } from './transportObservation'
 import { metricTransportAttempt, metricUsageReport, recordMetric } from '../../shared/diagnostics/metrics'
@@ -71,9 +79,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
    * 不写回静态 cacheProfile 表。
    */
   private observedReasoningField: ObservedReasoningField | undefined
+  /** 进程级传输实现；构造时固定，切换模型配置不影响出网路径 */
+  private readonly fetchImpl: TransportFetchImpl | undefined
 
-  constructor(config: ModelClientConfig) {
+  constructor(config: ModelClientConfig, transport?: ModelClientTransport) {
     this.config = config
+    this.fetchImpl = transport?.fetchImpl
     this.cacheProfile = this.resolveProfile(config)
     this.initObservedReasoningField()
   }
@@ -239,6 +250,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
     let observedResponse: Response | undefined
     let rawUsage: Record<string, unknown> | null = null
     let downgrade: DowngradeCapability | null = null
+    const transportErrorEvent = (err: unknown): ChatEvent =>
+      transportErrorToChatEvent(err, {
+        headersReceived: (observedAttempt?.getTiming().headersAt ?? null) !== null
+      })
     const reportAttempt = (): void => {
       if (!observedAttempt || !observedSnapshot) return
       const timing = observedAttempt.getTiming()
@@ -294,7 +309,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
         body: wireBody,
         userSignal: options?.abortSignal,
         timeouts: options?.transportTimeouts,
-        fetchImpl: this.config.fetchImpl,
+        fetchImpl: this.fetchImpl,
         onAttempt: value => { observedAttempt = value }
       })
       observedResponse = result.response
@@ -308,7 +323,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       attempt = result.attempt
     } catch (err) {
       yield snapshotEvent()
-      yield transportErrorToChatEvent(err)
+      yield transportErrorEvent(err)
       return
     }
 
@@ -335,7 +350,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
             attempt = retry.attempt
           } catch (err) {
             yield snapshotEvent()
-            yield transportErrorToChatEvent(err)
+            yield transportErrorEvent(err)
             return
           }
           if (response.ok) {
@@ -357,7 +372,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
               attempt = stripRetry.attempt
             } catch (err) {
               yield snapshotEvent()
-              yield transportErrorToChatEvent(err)
+              yield transportErrorEvent(err)
               return
             }
             if (!response.ok) {
@@ -389,7 +404,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
             attempt = retry.attempt
           } catch (err) {
             yield snapshotEvent()
-            yield transportErrorToChatEvent(err)
+            yield transportErrorEvent(err)
             return
           }
           if (!response.ok) {
@@ -460,7 +475,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
         try {
           readResult = await bodyReader.read()
         } catch (err) {
-          yield transportErrorToChatEvent(err)
+          yield transportErrorEvent(err)
           return
         }
         if (readResult.done) break
@@ -612,7 +627,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       return
     }
     if ((!finishReason && !sawDone) || (pendingToolCalls.size > 0 && !finishReason)) {
-      yield transportErrorToChatEvent(new Error('network_reset: SSE ended before model completion'))
+      yield transportErrorEvent(new Error('network_reset: SSE ended before model completion'))
       return
     }
 
@@ -646,7 +661,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     yield { type: 'message_end', finishReason: finishReason || 'stop' }
     } catch (error) {
-      yield transportErrorToChatEvent(error)
+      yield transportErrorEvent(error)
     } finally {
       if (observedAttempt && !observedAttempt.getOutcome()) {
         observedAttempt.abort()
