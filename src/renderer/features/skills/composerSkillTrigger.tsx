@@ -1,11 +1,12 @@
 /**
  * Composer `/` trigger — 把 slash 候选接到 ChatComposerInput 的官方 SearchSource。
  *
- * 选中后插入纯文本 `/${name} `（不是 chip）：用户可继续敲参数；官方 trigger
- * 在空白边界处自动关闭菜单，因此不会再拦截参数阶段的 Enter。
+ * 选中后插入行内 token 芯片，序列化值仍是 `/${name}`：草稿、发送与拒绝路径
+ * 继续走纯文本协议。官方 trigger 在空白边界关闭菜单，不拦截参数阶段 Enter。
  */
 import type { ReactNode } from 'react'
 import type {
+  ChatComposerToken,
   ChatComposerTrigger,
   ChatComposerTriggerItem
 } from '@astryxdesign/core/Chat'
@@ -20,6 +21,15 @@ import './composerSkillTrigger.css'
 
 export type ComposerSkillItem = ChatComposerTriggerItem & {
   auxiliaryData: SlashCandidate
+}
+
+/** 技能芯片：羊皮纸 yellow badge，序列化为 `/${name}` */
+export function skillComposerToken(name: string): ChatComposerToken {
+  return {
+    value: `/${name}`,
+    label: `/${name}`,
+    variant: 'yellow'
+  }
 }
 
 function toSearchable(candidate: SlashCandidate): ComposerSkillItem {
@@ -90,7 +100,7 @@ export function createComposerSkillTrigger(
     },
     onSelect: item => {
       const candidate = (item as ComposerSkillItem).auxiliaryData
-      return `/${candidate.name} `
+      return skillComposerToken(candidate.name)
     }
   }
 }

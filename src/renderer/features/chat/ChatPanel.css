@@ -221,6 +221,10 @@
   margin: 0;
 }
 
+.chat-composer__input [data-astryx-token] {
+  margin-inline: 2px;
+}
+
 .chat-messages__interruption {
   padding: 8px 0;
   color: var(--text-secondary);

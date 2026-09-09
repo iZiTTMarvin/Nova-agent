@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { WORKSPACE_SELECT_PROJECT } from '../../../src/shared/ipc/channels'
 import { expect, test, type NovaHarness } from '../fixtures/nova'
+import type { Locator } from '@playwright/test'
 
 const SKILL_MD = (name: string, desc: string) =>
   `---\nname: ${name}\ndescription: ${desc}\n---\n# ${name}\n`
@@ -20,13 +21,20 @@ async function reloadRenderer(nova: NovaHarness): Promise<void> {
   await expect(nova.page.getByLabel('消息输入')).toBeVisible()
 }
 
+async function expectSkillChip(input: Locator, name: string): Promise<void> {
+  const chip = input.locator('[data-astryx-token]')
+  await expect(chip).toHaveCount(1)
+  await expect(chip).toHaveAttribute('data-astryx-token-value', `/${name}`)
+  await expect(chip).toContainText(`/${name}`)
+}
+
 async function openSkills(nova: NovaHarness): Promise<void> {
   await nova.page.getByRole('button', { name: '设置' }).click()
   await nova.page.getByRole('tab', { name: '技能' }).click()
   await expect(nova.page.getByRole('button', { name: '刷新列表' })).toBeVisible()
 }
 
-test('/ 触发显示项目技能，点击或键盘选中后插入 slash 文本；无匹配显示空态', async ({ nova }) => {
+test('/ 触发显示项目技能，点击或键盘选中后插入技能芯片；无匹配显示空态', async ({ nova }) => {
   await writeProjectSkill(nova.workspacePath, 'e2e-demo', 'E2E 演示技能')
   await reloadRenderer(nova)
 
@@ -35,13 +43,13 @@ test('/ 触发显示项目技能，点击或键盘选中后插入 slash 文本�
   const item = nova.page.locator('.composer-skill-trigger__item', { hasText: 'e2e-demo' })
   await expect(item).toBeVisible()
   await item.click()
-  await expect(input).toContainText('/e2e-demo ')
+  await expectSkillChip(input, 'e2e-demo')
   await expect(item).toHaveCount(0)
 
   await input.fill('/e2e')
   await expect(item).toBeVisible()
   await input.press('Enter')
-  await expect(input).toContainText('/e2e-demo ')
+  await expectSkillChip(input, 'e2e-demo')
 
   await input.fill('/zzzz-no-such-skill')
   await expect(nova.page.getByText('没有匹配的技能')).toBeVisible()

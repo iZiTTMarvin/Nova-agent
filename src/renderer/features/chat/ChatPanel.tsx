@@ -59,7 +59,7 @@ import {
   MAX_IMAGE_COUNT,
   type ImageAttachment
 } from '../../lib/image-attachments'
-import { createComposerSkillTrigger } from '../skills/composerSkillTrigger'
+import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
@@ -292,15 +292,25 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     }
   }, [currentProject])
 
-  // 设置页「使用技能」预填 composer
+  // 设置页「使用技能」预填 composer：纯 slash 插入芯片，其余仍写明文
   useEffect(() => {
-    if (composerPrefill) {
-      setInputVal(composerPrefill)
-      clearComposerPrefill()
+    if (!composerPrefill) return
+    const text = composerPrefill
+    clearComposerPrefill()
+    const slash = /^\/(\S+)\s*$/.exec(text.trim())
+    if (slash?.[1]) {
+      setInputVal('')
       requestAnimationFrame(() => {
-        composerInputHandleRef.current?.focus()
+        const handle = composerInputHandleRef.current
+        handle?.focus()
+        handle?.insertToken(skillComposerToken(slash[1]))
       })
+      return
     }
+    setInputVal(text)
+    requestAnimationFrame(() => {
+      composerInputHandleRef.current?.focus()
+    })
   }, [composerPrefill, clearComposerPrefill])
 
   useEffect(() => {

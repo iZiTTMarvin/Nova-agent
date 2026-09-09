@@ -1,10 +1,13 @@
 /**
- * Composer `/` trigger：选中插入纯文本，参数阶段不再由自研浮层拦截 Enter。
+ * Composer `/` trigger：选中插入行内芯片，参数阶段不再由自研浮层拦截 Enter。
  *
  * 官方 useTriggerMenu 在空白边界关闭菜单；本文件锁 SearchSource 排序与 onSelect 契约。
  */
 import { describe, expect, it } from 'vitest'
-import { createComposerSkillTrigger } from '../../../src/renderer/features/skills/composerSkillTrigger'
+import {
+  createComposerSkillTrigger,
+  skillComposerToken
+} from '../../../src/renderer/features/skills/composerSkillTrigger'
 import type { SkillSummary } from '../../../src/shared/skills/types'
 import type { ComposerSkillItem } from '../../../src/renderer/features/skills/composerSkillTrigger'
 
@@ -23,13 +26,13 @@ const FRONTEND_SKILL: SkillSummary = {
 }
 
 describe('createComposerSkillTrigger', () => {
-  it('前缀查询命中技能，onSelect 插入带尾随空格的 slash 文本', async () => {
+  it('前缀查询命中技能，onSelect 插入序列化为 slash 的行内芯片', async () => {
     const trigger = createComposerSkillTrigger(() => [FRONTEND_SKILL])
     const results = await trigger.searchSource.search('frontend')
     expect(results.map(r => r.label)).toEqual(['frontend-design'])
 
     const selected = trigger.onSelect(results[0] as ComposerSkillItem)
-    expect(selected).toBe('/frontend-design ')
+    expect(selected).toEqual(skillComposerToken('frontend-design'))
   })
 
   it('空查询返回可调用技能列表（bootstrap / search）', async () => {
