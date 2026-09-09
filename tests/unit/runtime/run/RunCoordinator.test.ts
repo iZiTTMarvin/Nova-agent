@@ -7,6 +7,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { RunStore } from '../../../../src/runtime/run/RunStore'
 import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
+import { applyAgentEventToRun } from '../../../../src/runtime/agent/turn'
 
 describe('RunCoordinator', () => {
   let tmpDir: string
@@ -456,5 +457,150 @@ describe('RunCoordinator', () => {
     // 再次提交同终态应被硬终态短路；hasFired 应从 outbox 读到
     expect(coord2.hasFiredTerminalHook(snap.runId, 'tid_outbox', 'onComplete')).toBe(true)
     expect(calls2).toBe(0)
+  })
+
+  it('一次工具调用+结果边界：各只落盘一次并广播一次，事件序号连续', () => {
+    const broadcasts: Array<{ type: string; sequence: number }> = []
+    const txSpy = vi.spyOn(store, 'commitTransaction')
+    const batchSpy = vi.spyOn(store, 'commitTransactionBatch')
+    coord = new RunCoordinator({
+      store,
+      onSnapshot: (_snap, event) => {
+        broadcasts.push({ type: event.type, sequence: event.sequence })
+      }
+    })
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId, 'msg_tool')
+    const ctx = {
+      runCoordinator: coord,
+      runId: snap.runId,
+      resourceOwnerRunId: snap.runId,
+      sessionId: 's1'
+    }
+    const applyBoundary = (event: Parameters<typeof applyAgentEventToRun>[1]): void => {
+      applyAgentEventToRun(ctx, event, () => {
+        coord.upsertTurnDraft(snap.runId, {
+          messageId: 'msg_tool',
+          blocks: [{ type: 'tool', toolCallId: 'tc1', toolName: 'read', status: 'running' }]
+        })
+      })
+    }
+
+    const beforeCall = coord.getSnapshot(snap.runId)!.sequence
+    txSpy.mockClear()
+    batchSpy.mockClear()
+    broadcasts.length = 0
+
+    applyBoundary({
+      type: 'tool_call',
+      messageId: 'msg_tool',
+      toolCallId: 'tc1',
+      toolName: 'read',
+      args: {}
+    })
+    expect(txSpy).not.toHaveBeenCalled()
+    expect(batchSpy).toHaveBeenCalledTimes(1)
+    expect(broadcasts).toHaveLength(1)
+    expect(broadcasts[0]?.type).toBe('turn_draft_upsert')
+    const afterCall = coord.getSnapshot(snap.runId)!.sequence
+    expect(afterCall).toBe(beforeCall + 4)
+    const callEvents = store.loadEvents(snap.runId).events.filter(event => event.sequence > beforeCall)
+    expect(callEvents.map(event => event.type)).toEqual([
+      'heartbeat',
+      'tool_phase',
+      'tool_phase',
+      'turn_draft_upsert'
+    ])
+    expect(callEvents.map(event => event.sequence)).toEqual([
+      beforeCall + 1,
+      beforeCall + 2,
+      beforeCall + 3,
+      beforeCall + 4
+    ])
+    expect(callEvents[1]?.payload).toMatchObject({ phase: 'prepared' })
+    expect(callEvents[2]?.payload).toMatchObject({ phase: 'executing' })
+    expect(store.loadSnapshot(snap.runId)?.sequence).toBe(afterCall)
+    expect(coord.getSnapshot(snap.runId)?.toolCommits?.[0]?.phase).toBe('executing')
+
+    const beforeResult = afterCall
+    txSpy.mockClear()
+    batchSpy.mockClear()
+    broadcasts.length = 0
+
+    applyBoundary({
+      type: 'tool_result',
+      messageId: 'msg_tool',
+      toolCallId: 'tc1',
+      toolName: 'read',
+      result: 'ok'
+    })
+    expect(txSpy).not.toHaveBeenCalled()
+    expect(batchSpy).toHaveBeenCalledTimes(1)
+    expect(broadcasts).toHaveLength(1)
+    expect(broadcasts[0]?.type).toBe('turn_draft_upsert')
+    const afterResult = coord.getSnapshot(snap.runId)!.sequence
+    expect(afterResult).toBe(beforeResult + 2)
+    const resultEvents = store.loadEvents(snap.runId).events.filter(event => event.sequence > beforeResult)
+    expect(resultEvents.map(event => event.type)).toEqual(['tool_phase', 'turn_draft_upsert'])
+    expect(resultEvents.map(event => event.sequence)).toEqual([beforeResult + 1, beforeResult + 2])
+    expect(store.loadSnapshot(snap.runId)?.sequence).toBe(afterResult)
+    expect(coord.getSnapshot(snap.runId)?.toolCommits?.[0]?.phase).toBe('committed')
+  })
+
+  it('嵌套 batch 合并为一次落盘；空 batch 不写盘', () => {
+    const broadcasts: Array<string> = []
+    const txSpy = vi.spyOn(store, 'commitTransaction')
+    const batchSpy = vi.spyOn(store, 'commitTransactionBatch')
+    coord = new RunCoordinator({
+      store,
+      onSnapshot: (_snap, event) => {
+        broadcasts.push(event.type)
+      }
+    })
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId, 'msg_tool')
+    const before = coord.getSnapshot(snap.runId)!.sequence
+    txSpy.mockClear()
+    batchSpy.mockClear()
+    broadcasts.length = 0
+
+    coord.batch(snap.runId, () => {})
+    expect(txSpy).not.toHaveBeenCalled()
+    expect(batchSpy).not.toHaveBeenCalled()
+    expect(broadcasts).toHaveLength(0)
+    expect(coord.getSnapshot(snap.runId)?.sequence).toBe(before)
+
+    coord.batch(snap.runId, () => {
+      coord.heartbeat(snap.runId, { label: 'outer' })
+      coord.batch(snap.runId, () => {
+        coord.recordToolPhase(snap.runId, 'tc1', 'read', 'prepared')
+      })
+      coord.upsertTurnDraft(snap.runId, {
+        messageId: 'msg_tool',
+        blocks: [{ type: 'text', content: 'draft' }]
+      })
+    })
+    expect(txSpy).not.toHaveBeenCalled()
+    expect(batchSpy).toHaveBeenCalledTimes(1)
+    expect(broadcasts).toEqual(['turn_draft_upsert'])
+    expect(coord.getSnapshot(snap.runId)?.sequence).toBe(before + 3)
+  })
+
+  it('单独 heartbeat 仍立即落盘', () => {
+    const broadcasts: Array<string> = []
+    const txSpy = vi.spyOn(store, 'commitTransaction')
+    coord = new RunCoordinator({
+      store,
+      onSnapshot: (_snap, event) => {
+        broadcasts.push(event.type)
+      }
+    })
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId)
+    txSpy.mockClear()
+    broadcasts.length = 0
+    coord.heartbeat(snap.runId, { label: '思考中' })
+    expect(txSpy).toHaveBeenCalledTimes(1)
+    expect(broadcasts).toEqual(['heartbeat'])
   })
 })

@@ -30,21 +30,23 @@ export function projectAgentEventToRun(
       // 不记录 run 工具相位，仅作观测事件转发，避免污染 run 状态
       if (event.parentToolCallId) break
       const idempotent = isIdempotentToolName(event.toolName)
-      runCoordinator.heartbeat(runId, { label: `调用 ${event.toolName}` })
-      runCoordinator.recordToolPhase(
-        runId,
-        event.toolCallId,
-        event.toolName,
-        'prepared',
-        { idempotent }
-      )
-      runCoordinator.recordToolPhase(
-        runId,
-        event.toolCallId,
-        event.toolName,
-        'executing',
-        { idempotent }
-      )
+      runCoordinator.batch(runId, () => {
+        runCoordinator.heartbeat(runId, { label: `调用 ${event.toolName}` })
+        runCoordinator.recordToolPhase(
+          runId,
+          event.toolCallId,
+          event.toolName,
+          'prepared',
+          { idempotent }
+        )
+        runCoordinator.recordToolPhase(
+          runId,
+          event.toolCallId,
+          event.toolName,
+          'executing',
+          { idempotent }
+        )
+      })
       break
     }
     case 'tool_result': {
@@ -90,6 +92,23 @@ export function projectAgentEventToRun(
       break
     default:
       break
+  }
+}
+
+/** 工具边界把投影与随后的草稿落盘收进同一事务。 */
+export function applyAgentEventToRun(
+  context: AgentEventRunProjectionContext,
+  event: AgentEvent,
+  afterProject?: () => void
+): void {
+  const apply = (): void => {
+    projectAgentEventToRun(context, event)
+    afterProject?.()
+  }
+  if (event.type === 'tool_call' || event.type === 'tool_result') {
+    context.runCoordinator.batch(context.runId, apply)
+  } else {
+    apply()
   }
 }
 

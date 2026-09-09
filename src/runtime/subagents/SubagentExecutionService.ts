@@ -5,7 +5,7 @@ import type { AgentEvent, AgentLoop, EventBus } from '../agent'
 import {
   AgentTurnExecutor,
   agentRoute,
-  projectAgentEventToRun,
+  applyAgentEventToRun,
   type AgentTurnRunRefs
 } from '../agent/turn'
 import type { RunCoordinator } from '../run/RunCoordinator'
@@ -655,17 +655,19 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     const unsubscribe = prepared.eventBus.on((event) => {
       const currentContext = eventContext()
       const adapted = this.deps.adaptEvent?.(event, currentContext) ?? event
-      projectAgentEventToRun(
+      applyAgentEventToRun(
         {
           runCoordinator: this.deps.runCoordinator,
           runId: currentContext.runId,
           resourceOwnerRunId: currentContext.resourceOwnerRunId,
           sessionId: currentContext.childSessionId
         },
-        adapted
+        adapted,
+        () => {
+          this.deps.runCoordinator.touchHeartbeat(currentContext.runId)
+          this.deps.onEvent?.(adapted, currentContext)
+        }
       )
-      this.deps.runCoordinator.touchHeartbeat(currentContext.runId)
-      this.deps.onEvent?.(adapted, currentContext)
     })
     let timedOut = false
     let parentCancelled = false

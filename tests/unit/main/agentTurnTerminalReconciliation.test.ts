@@ -26,6 +26,7 @@ const coordinator = vi.hoisted(() => ({
   bindExecutionGeneration: vi.fn(),
   isExecutionCurrent: vi.fn(() => true),
   touchHeartbeat: vi.fn(),
+  batch: vi.fn((_runId: string, fn: () => unknown) => fn()),
   getStallLiveness: vi.fn(() => null),
   inbox: { enqueue: vi.fn(() => ({ interactionId: 'i', version: 1 })), cancelAllForRun: vi.fn() },
   onTerminalHook: vi.fn()

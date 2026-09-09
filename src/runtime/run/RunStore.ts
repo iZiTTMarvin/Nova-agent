@@ -1,8 +1,9 @@
 /**
  * RunStore — 原子 snapshot + append-only events
  *
- * 唯一落盘协议（所有状态变化必须走 commitTransaction）：
- *   next sequence → append event → fsync event → reduce snapshot → atomic replace snapshot
+ * 唯一落盘协议（所有状态变化必须走 commitTransaction / commitTransactionBatch）：
+ *   单次：next sequence → append event → fsync → atomic replace snapshot
+ *   批量：各事件独立 type 与序号，一次写入多行并单次 fsync，快照只原子写一次
  *
  * 启动恢复：读取 snapshot.sequence，重放 events 中更大的合法事件。
  * 损坏末行可忽略；中间损坏不得跳过后续假装一致。
@@ -69,43 +70,77 @@ export class RunStore {
   }
 
   /**
-   * 唯一持久化提交入口。
-   * 调用方传入「已 reduce 的下一快照」与事件类型；本方法分配 sequence 并按协议落盘。
+   * 单次持久化提交。内部走批量入口，保持 event → fsync → snapshot 顺序。
    */
   commitTransaction(
     nextSnapshot: RunSnapshot,
     eventType: string,
     payload?: Record<string, unknown>
   ): RunEventRecord {
+    const [event] = this.commitTransactionBatch(nextSnapshot, [
+      { type: eventType, sequence: nextSnapshot.sequence, payload }
+    ])
+    if (!event) {
+      throw new Error('commitTransaction 未写入事件')
+    }
+    return event
+  }
+
+  /**
+   * 多事件一次落盘：各事件独立 type / sequence，events.jsonl 一次写入 + 单次 fsync，
+   * snapshot.json 只原子写一次（sequence 为最后一条）。空数组不写盘。
+   */
+  commitTransactionBatch(
+    nextSnapshot: RunSnapshot,
+    events: ReadonlyArray<{
+      type: string
+      sequence: number
+      payload?: Record<string, unknown>
+      at?: number
+    }>
+  ): RunEventRecord[] {
+    if (events.length === 0) return []
     assertSafeRunId(nextSnapshot.runId)
+    const last = events[events.length - 1]
+    if (last.sequence !== nextSnapshot.sequence) {
+      throw new Error(
+        `commitTransactionBatch 序号不一致：last=${last.sequence} snapshot=${nextSnapshot.sequence}`
+      )
+    }
+    for (let i = 1; i < events.length; i++) {
+      if (events[i].sequence !== events[i - 1].sequence + 1) {
+        throw new Error('commitTransactionBatch 序号必须严格连续')
+      }
+    }
+
     const dir = this.runDir(nextSnapshot.runId)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
 
-    const sequence = nextSnapshot.sequence
-    const event: RunEventRecord = {
-      sequence,
+    const now = Date.now()
+    const records: RunEventRecord[] = events.map(event => ({
+      sequence: event.sequence,
       runId: nextSnapshot.runId,
-      type: eventType,
-      at: Date.now(),
-      payload
-    }
+      type: event.type,
+      at: event.at ?? now,
+      payload: event.payload
+    }))
 
-    // 1) append event + fsync
-    this.appendEventFsynced(event)
-    // 2) atomic replace snapshot（含已递增的 sequence）
+    this.appendEventsFsynced(records)
     atomicWriteFileSync(this.snapshotPath(nextSnapshot.runId), JSON.stringify(nextSnapshot, null, 2))
-    return event
+    return records
   }
 
-  /** 追加事件并 fsync，确保崩溃前事件已落盘 */
-  private appendEventFsynced(event: RunEventRecord): void {
-    const filePath = this.eventsPath(event.runId)
-    const line = JSON.stringify(event) + '\n'
+  /** 追加若干事件后单次 fsync；崩溃时一批同生共死。 */
+  private appendEventsFsynced(events: readonly RunEventRecord[]): void {
+    if (events.length === 0) return
+    const runId = events[0].runId
+    const filePath = this.eventsPath(runId)
+    const chunk = events.map(event => JSON.stringify(event) + '\n').join('')
     const fd = fs.openSync(filePath, 'a')
     try {
-      fs.writeSync(fd, line, null, 'utf8')
+      fs.writeSync(fd, chunk, null, 'utf8')
       fs.fsyncSync(fd)
     } finally {
       fs.closeSync(fd)

@@ -25,6 +25,7 @@ const coordinator = vi.hoisted(() => ({
   setMessageId: vi.fn(),
   recordToolPhase: vi.fn(),
   heartbeat: vi.fn(),
+  batch: vi.fn((_runId: string, fn: () => unknown) => fn()),
   commitTerminal: vi.fn(),
   bindExecutionGeneration: vi.fn(),
   isExecutionCurrent: vi.fn(() => true),

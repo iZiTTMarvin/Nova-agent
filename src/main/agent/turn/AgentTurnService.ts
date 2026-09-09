@@ -11,7 +11,7 @@ import {
 import { writerLeaseRegistry } from '../../../runtime/workspace'
 import {
   AgentTurnExecutor,
-  projectAgentEventToRun,
+  applyAgentEventToRun,
   resolveAgentTurnRoute
 } from '../../../runtime/agent/turn'
 import {
@@ -669,21 +669,23 @@ function handleAgentEvent(
   context: HandleAgentEventContext
 ): void {
   if (!context.runCoordinator.isExecutionCurrent(context.runId, context.executionGeneration)) return
-  projectAgentEventToRun(
+  applyAgentEventToRun(
     {
       runCoordinator: context.runCoordinator,
       runId: context.runId,
       resourceOwnerRunId: context.resourceOwnerRunId,
       sessionId: context.sessionId
     },
-    event
+    event,
+    () => {
+      try {
+        context.runCoordinator.touchHeartbeat(context.runId)
+      } catch {
+        // 事件投影不能因并发终态导致 renderer 事件丢失。
+      }
+      forwardAgentEvent(event, context)
+    }
   )
-  try {
-    context.runCoordinator.touchHeartbeat(context.runId)
-  } catch {
-    // 事件投影不能因并发终态导致 renderer 事件丢失。
-  }
-  forwardAgentEvent(event, context)
 }
 
 function forwardAgentEvent(

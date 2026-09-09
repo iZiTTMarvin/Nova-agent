@@ -42,6 +42,13 @@ export interface TerminalHookContext {
 
 export type TerminalHookHandler = (ctx: TerminalHookContext) => void | Promise<void>
 
+interface PendingRunEvent {
+  type: string
+  sequence: number
+  payload?: Record<string, unknown>
+  at: number
+}
+
 export interface RunCoordinatorOptions {
   store: RunStore
   /** 可选：状态变更时回调（主进程据此推 IPC） */
@@ -59,6 +66,9 @@ export class RunCoordinator {
   private readonly firedTerminalHooks = new Set<string>()
   private readonly terminalHookHandlers = new Map<TerminalHookName, Set<TerminalHookHandler>>()
   readonly inbox: InteractionInbox
+  /** 嵌套 batch 合并到外层；depth=0 时才落盘。 */
+  private readonly batchDepthByRun = new Map<string, number>()
+  private readonly pendingBatchEvents = new Map<string, PendingRunEvent[]>
 
   constructor(opts: RunCoordinatorOptions) {
     this.store = opts.store
@@ -884,6 +894,19 @@ export class RunCoordinator {
     return snap?.terminalOutbox?.some(e => e.key === key && e.status === 'delivered') ?? false
   }
 
+  /**
+   * 作用域内 commit 只 reduce 内存并收集事件，离开后一次批量落盘并广播最新快照。
+   * 嵌套调用合并到外层；空作用域不写盘。
+   */
+  batch<T>(runId: string, fn: () => T): T {
+    this.enterBatch(runId)
+    try {
+      return fn()
+    } finally {
+      this.leaveBatch(runId)
+    }
+  }
+
   // ── 内部 ─────────────────────────────────────────────────
 
   private requireMutable(runId: string): RunSnapshot | null {
@@ -905,13 +928,44 @@ export class RunCoordinator {
     eventType: string,
     payload?: Record<string, unknown>
   ): void {
-    // 唯一落盘入口：先递增 sequence，再 event→fsync→atomic snapshot→broadcast
     snapshot.sequence += 1
     snapshot.updatedAt = Date.now()
     this.runs.set(snapshot.runId, snapshot)
     this.indexSession(snapshot.sessionId, snapshot.runId)
+    if ((this.batchDepthByRun.get(snapshot.runId) ?? 0) > 0) {
+      const pending = this.pendingBatchEvents.get(snapshot.runId) ?? []
+      pending.push({
+        type: eventType,
+        sequence: snapshot.sequence,
+        payload,
+        at: snapshot.updatedAt
+      })
+      this.pendingBatchEvents.set(snapshot.runId, pending)
+      return
+    }
     const event = this.store.commitTransaction(snapshot, eventType, payload)
     this.onSnapshot?.(cloneSnapshot(snapshot), event)
+  }
+
+  private enterBatch(runId: string): void {
+    this.batchDepthByRun.set(runId, (this.batchDepthByRun.get(runId) ?? 0) + 1)
+  }
+
+  private leaveBatch(runId: string): void {
+    const next = (this.batchDepthByRun.get(runId) ?? 1) - 1
+    if (next > 0) {
+      this.batchDepthByRun.set(runId, next)
+      return
+    }
+    this.batchDepthByRun.delete(runId)
+    const events = this.pendingBatchEvents.get(runId)
+    this.pendingBatchEvents.delete(runId)
+    if (!events || events.length === 0) return
+    const snap = this.runs.get(runId)
+    if (!snap) return
+    const records = this.store.commitTransactionBatch(snap, events)
+    const last = records[records.length - 1]
+    if (last) this.onSnapshot?.(cloneSnapshot(snap), last)
   }
 
   /**

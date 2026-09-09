@@ -218,6 +218,50 @@ describe('RunStore 落盘协议与 sequence', () => {
     expect(after.sequence).toBeGreaterThan(seq0)
     expect(after.commandAcks?.some(a => a.commandId === 'cmd1')).toBe(true)
   })
+
+  it('批量事务一次写入多行事件并只写一次快照，重放形状不变', () => {
+    const store = new RunStore({ runsRoot: tmp })
+    const base = {
+      runId: 'run_batch1',
+      kind: 'agent' as const,
+      workspaceId: 'ws',
+      sessionId: 's1',
+      messageId: '',
+      status: 'running' as const,
+      sequence: 1,
+      pendingInteractions: [],
+      currentAttempt: null,
+      progress: null,
+      lastHeartbeatAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    store.commitTransaction({ ...base }, 'run_started')
+    expect(store.commitTransactionBatch({ ...base, sequence: 1 }, [])).toEqual([])
+
+    const records = store.commitTransactionBatch(
+      { ...base, sequence: 3, status: 'running' },
+      [
+        { type: 'heartbeat', sequence: 2, payload: { label: '调用 read' } },
+        { type: 'tool_phase', sequence: 3, payload: { phase: 'prepared' } }
+      ]
+    )
+    expect(records.map(event => event.sequence)).toEqual([2, 3])
+    const { events } = store.loadEvents('run_batch1')
+    expect(events.map(event => event.type)).toEqual(['run_started', 'heartbeat', 'tool_phase'])
+    expect(JSON.parse(readFileSync(join(tmp, 'run_batch1', 'snapshot.json'), 'utf8')).sequence).toBe(3)
+
+    expect(() =>
+      store.commitTransactionBatch({ ...base, sequence: 6 }, [
+        { type: 'heartbeat', sequence: 4 },
+        { type: 'tool_phase', sequence: 6 }
+      ])
+    ).toThrow(/连续/)
+
+    const replayed = store.loadSnapshotWithReplay('run_batch1')
+    expect(replayed?.sequence).toBe(3)
+    expect(replayed?.status).toBe('running')
+  })
 })
 
 describe('terminal outbox 崩溃恢复', () => {

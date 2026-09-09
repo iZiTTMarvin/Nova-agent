@@ -25,5 +25,6 @@ export {
 } from './AgentTurnExecutor'
 export {
   projectAgentEventToRun,
+  applyAgentEventToRun,
   type AgentEventRunProjectionContext
 } from './projectAgentEventToRun'
